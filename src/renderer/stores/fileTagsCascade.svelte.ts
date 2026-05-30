@@ -37,6 +37,10 @@ export interface TagCascadeStore {
   renameTag(oldName: string, newName: string): string[];
   deleteTag(tagName: string): string[];
   ensureTag(tagName: string, color?: string): void;
+  // Phase 4.3 (2026-05-30) — the retry path drains the registry write
+  // synchronously after the commit, mirroring renameTagEverywhere /
+  // removeTagEverywhere. The real fileTagsStore satisfies this by construction.
+  flushPendingSave(): Promise<{ ok: boolean }>;
 }
 
 /**
@@ -283,5 +287,9 @@ export async function rewriteAndCommitRetry(
   } else {
     commitTagRenameInMemory(store, oldName, newName);
   }
+  // Phase 4.3 (2026-05-30) — drain the registry write before the board flush,
+  // same crash-window guard as the non-retry renameTagEverywhere /
+  // removeTagEverywhere paths.
+  await store.flushPendingSave();
   await flushTagRewriteBoardWrites(verb);
 }

@@ -100,7 +100,12 @@ const ALLOWLIST = {
   // markdown classifier's dirty-check onto the shared `isPathPending`
   // authority (net-neutral rename) and E5 recorded the `tagsAffected` sink in
   // the external-rename cascade's sentinel write; +3 LOC.
-  'src/renderer/stores/vaultExternalChanges.ts': 1530,
+  // AUDIT_REMEDIATION_PLAN Phase 2 / 7.9 — the file was over its prior 1530
+  // ceiling (1538 LOC). Extracted the partial-read retry bookkeeping + the
+  // attachment-delete grace window (module-scoped timing state + reset
+  // helpers) into `lib/vault/externalChangeWindows.ts`; the store keeps its
+  // public API via re-export. New snapshot: 1460 LOC.
+  'src/renderer/stores/vaultExternalChanges.ts': 1460,
   // tileCommands.ts dropped off the allowlist (AUDIT_REMEDIATION_PLAN_2026-05-29
   // Phase 5 / C-3): the tag-driven commands (AddTileTag / RemoveTileTag /
   // AddPathTag / RemovePathTag / ToggleTagFade) moved to the new sibling

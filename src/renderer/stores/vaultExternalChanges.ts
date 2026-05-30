@@ -39,72 +39,39 @@ import {
 import type { DocumentState } from './document.svelte';
 import type { VaultContext } from './vaultStoreTypes';
 import { onVaultSwap } from '../core/vaultLifecycle';
+import {
+  PARTIAL_READ_MAX_RETRIES,
+  isPartialReadRetryInflight,
+  getPartialReadRetryCount,
+  clearPartialReadRetryCount,
+  schedulePartialReadRetry,
+  resetPartialReadRetryInflight,
+  noteRecentRename,
+  wasRecentlyRenamed,
+  clearRecentRenames,
+  ATTACHMENT_DELETE_GRACE_MS,
+} from '../lib/vault/externalChangeWindows';
 
 /**
  * Vault slice — external-edit pipeline. Diff prior vs next file metadata,
  * classify the change, and dispatch sync-frontmatter / reload-silently /
  * prompt-user / partial-read-retry / ignore. Cache and editor state are kept
  * in sync without a tab switch.
+ *
+ * The partial-read retry bookkeeping and the attachment-delete grace window
+ * (module-scoped timing state + their reset helpers) live in
+ * `../lib/vault/externalChangeWindows` (extracted in Phase 2 / audit plan 7.9
+ * to keep this orchestrator under its file-size ceiling). `resetPartialRead-
+ * RetryInflight` and `_resetAttachmentDeleteGraceForTests` are re-exported
+ * below so existing import sites (tests) keep working unchanged.
  */
 
-/**
- * Phase 22 M9 — paths currently inside a partial-read retry window. Prevents
- * an infinite re-classify loop when an external write stays mid-flight across
- * the retry interval. A path is removed once its delayed re-read fires.
- *
- * Phase 3 / 3.2 — replaced the fixed 500 ms interval with a bounded backoff
- * schedule (500 / 1500 / 3000 ms, max 3 attempts) so a perpetually-mid-write
- * file no longer loops indefinitely. After exhaustion we surface a "file
- * shrank externally — reload or keep your view?" toast so the user
- * explicitly chooses.
- */
-const PARTIAL_READ_RETRY_BACKOFF_MS = [500, 1500, 3000] as const;
-const PARTIAL_READ_MAX_RETRIES = PARTIAL_READ_RETRY_BACKOFF_MS.length;
-const partialReadRetryInflight = new Set<VaultPath>();
-/**
- * Per-path retry counter. Incremented on each scheduled retry; cleared on
- * successful re-classification (the next pass returns sync-frontmatter /
- * reload-silently / ignore) or after the user dismisses the exhaustion
- * toast.
- */
-const partialReadRetryCount = new Map<VaultPath, number>();
-
-/**
- * Phase A.5 — tracks the scheduled retry `setTimeout` handles so a vault
- * swap can `clearTimeout` them before they fire against the new vault.
- *
- * Before this map, `resetPartialReadRetryInflight()` cleared the
- * in-flight Set + counter map, but the pending `setTimeout`s still
- * fired their handler. If the new vault had a same-named file, the late
- * timer routed `handleExternalMarkdownChanges([rel])` against the new
- * vault's metadata using the old vault's baseline — a silent
- * misclassification that could overwrite content.
- */
-const partialReadRetryTimers = new Map<VaultPath, ReturnType<typeof setTimeout>>();
-
-/**
- * Phase 3 / 3.4 — clears the partial-read in-flight registry on vault swap.
- * Without this, a same-named file in the new vault could be erroneously
- * deduped from re-classification because the prior vault's retry window
- * left its relative path in the Set. Called from `vault.svelte.ts:openVault`
- * alongside the other vault-swap reset hooks (resetWriteTracking,
- * cancelAllPendingWrites, historyStore.clear).
- *
- * Phase 3 / 3.2 — also clears the per-path retry counter so an exhausted
- * retry in the OUTGOING vault doesn't immediately surface its
- * confirmation toast under the INCOMING vault.
- *
- * Phase A.5 — also `clearTimeout`s every pending retry. The Set-clear
- * alone wasn't enough because the timers still fired their callback,
- * which re-entered the classifier against whatever vault was open at
- * fire time.
- */
-export function resetPartialReadRetryInflight(): void {
-  for (const timer of partialReadRetryTimers.values()) clearTimeout(timer);
-  partialReadRetryTimers.clear();
-  partialReadRetryInflight.clear();
-  partialReadRetryCount.clear();
-}
+// Phase 2 / 7.9 — re-export the moved symbols so external import paths
+// (`@renderer/stores/vaultExternalChanges`) stay byte-compatible.
+export {
+  resetPartialReadRetryInflight,
+  _resetAttachmentDeleteGraceForTests,
+} from '../lib/vault/externalChangeWindows';
 
 /**
  * Phase 31 B2.1 — threshold above which per-file dirty-editor toasts collapse
@@ -114,41 +81,6 @@ export function resetPartialReadRetryInflight(): void {
  * blanket the screen and make picking through them practically impossible.
  */
 const PROMPT_AGGREGATION_THRESHOLD = 5;
-
-/**
- * D.4 — grace window (ms) for the deferred attachment-delete prompt. Tracks
- * the most recently observed `vault:file-renamed` event for each oldPath.
- * When `handleExternalAttachmentChanges` would otherwise prompt for a
- * deleted file, it first sleeps `ATTACHMENT_DELETE_GRACE_MS` and re-checks
- * whether a rename for the same path landed in the interim. If yes, the
- * cross-folder external move (which the watcher reports as a deleted-old +
- * created-new pair before the correlator pairs them) gets suppressed
- * instead of surfacing a spurious "deleted externally" toast.
- *
- * 500 ms covers the typical correlator latency (debounce + a single tick
- * for the synthetic-rename emit) without delaying the genuine delete case
- * meaningfully — a delete the user actually intends is also still "5+
- * seconds ago by the time they're looking at the toast".
- */
-const ATTACHMENT_DELETE_GRACE_MS = 500;
-const recentRenamedOldPaths = new Map<VaultPath, number>();
-
-function noteRecentRename(oldRel: string): void {
-  recentRenamedOldPaths.set(vaultPath(oldRel), Date.now());
-  // Bound the map size by pruning entries older than 2× grace. We don't
-  // need stale entries lingering past the window — the consumer only
-  // looks back ATTACHMENT_DELETE_GRACE_MS.
-  const horizon = Date.now() - ATTACHMENT_DELETE_GRACE_MS * 2;
-  for (const [path, ts] of recentRenamedOldPaths) {
-    if (ts < horizon) recentRenamedOldPaths.delete(path);
-  }
-}
-
-function wasRecentlyRenamed(oldRel: string): boolean {
-  const ts = recentRenamedOldPaths.get(vaultPath(oldRel));
-  if (ts === undefined) return false;
-  return Date.now() - ts < ATTACHMENT_DELETE_GRACE_MS;
-}
 
 export function makeExternalChangesSlice(ctx: VaultContext) {
   return {
@@ -194,7 +126,7 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
         // baseline, the file is now clean+equivalent, etc.). Drop the
         // retry budget so a future transient shrink starts fresh.
         if (decision.action !== 'partial-read-retry') {
-          partialReadRetryCount.delete(relKey);
+          clearPartialReadRetryCount(relKey);
         }
 
         // F4 — pending-local-write guard. The classifier only sees OPEN
@@ -366,26 +298,22 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
             // the new (likely-genuine) shrunk content via Reload, or
             // leave the editor pointing at the pre-shrink baseline.
             vaultIndexStore.restoreMetadata(rel, previous);
-            if (partialReadRetryInflight.has(relKey)) break;
-            const attempt = partialReadRetryCount.get(relKey) ?? 0;
+            if (isPartialReadRetryInflight(relKey)) break;
+            const attempt = getPartialReadRetryCount(relKey);
             if (attempt >= PARTIAL_READ_MAX_RETRIES) {
-              partialReadRetryCount.delete(relKey);
+              clearPartialReadRetryCount(relKey);
               promptPartialReadExhausted(rel);
               break;
             }
-            partialReadRetryInflight.add(relKey);
-            partialReadRetryCount.set(relKey, attempt + 1);
             const handler = this.handleExternalMarkdownChanges.bind(this);
-            const delay = PARTIAL_READ_RETRY_BACKOFF_MS[attempt];
-            // Phase A.5 — record the timer handle so vault-swap reset can
-            // clearTimeout before it fires. The callback also clears its
-            // own entry on dispatch so the map stays bounded.
-            const timer = setTimeout(() => {
-              partialReadRetryTimers.delete(relKey);
-              partialReadRetryInflight.delete(relKey);
+            // Phase A.5 — `schedulePartialReadRetry` marks the path
+            // in-flight, bumps the attempt counter, and tracks the timer
+            // handle so vault-swap reset can clearTimeout before it fires.
+            // The callback clears its own entries on dispatch so the maps
+            // stay bounded.
+            schedulePartialReadRetry(relKey, attempt, () => {
               void handler([rel]);
-            }, delay);
-            partialReadRetryTimers.set(relKey, timer);
+            });
             break;
           }
           case 'ignore':
@@ -714,22 +642,16 @@ async function runExternalRenameCascade(
   }
 }
 
-/**
- * D.4 — test seam for the grace-window timer. Allows unit tests to drain
- * the recent-rename map deterministically without depending on real
- * `Date.now()` progression.
- */
-export function _resetAttachmentDeleteGraceForTests(): void {
-  recentRenamedOldPaths.clear();
-}
-
 // Phase 4 (Consolidation 2026-05-25) — vault-swap reset registration.
 // Drops the partial-read retry timers + counter and the recent-rename
 // grace map. A same-named file in the new vault would otherwise be
 // deduped from re-classification by a stale entry from the prior vault.
+// The reset bodies live in `lib/vault/externalChangeWindows`; this store
+// keeps the `'vaultExternalChanges'` swap subscription (the
+// characterization test asserts that subscriber name exists).
 onVaultSwap('pre-swap', 'vaultExternalChanges', () => {
   resetPartialReadRetryInflight();
-  recentRenamedOldPaths.clear();
+  clearRecentRenames();
 });
 
 /**

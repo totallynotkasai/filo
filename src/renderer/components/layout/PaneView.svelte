@@ -13,7 +13,7 @@
    * zoom, select) read board/canvas/selection state. Activation also
    * retargets the focused tab.
    */
-  import { onMount, setContext } from 'svelte';
+  import { onMount, onDestroy, setContext } from 'svelte';
   import BoardRouter from '../boards/BoardRouter.svelte';
   import { workspaceStore } from '../../stores/workspace.svelte';
   import { tabStore } from '../../stores/tabs.svelte';
@@ -71,6 +71,15 @@
     if (workspaceStore.activePaneId === null) {
       workspaceStore.setActivePane(paneId);
     }
+  });
+
+  // Audit 3.2 — closing a pane drops the scope reference, but a fly-to RAF
+  // started in this pane keeps ticking (and would persist a stale viewport)
+  // because nothing routes a closing pane through canvas.setBoard(null).
+  // Tear the canvas scope down explicitly so the animation frame is cancelled
+  // and any pending viewport persist is flushed.
+  onDestroy(() => {
+    scope.canvas.destroy();
   });
 
   function activate() {

@@ -52,6 +52,8 @@ export interface CanvasScope {
   toggleSnap(): void;
   toggleWaypointsVisible(): void;
   setWaypointsVisible(v: boolean): void;
+  /** Pane-teardown hook: cancels the in-flight fly and flushes the viewport. */
+  destroy(): void;
 }
 
 /**
@@ -157,6 +159,13 @@ export function createCanvasScope(): CanvasScope {
     },
 
     setBoard(boardId: string | null) {
+      // Audit 3.2 — kill any in-flight camera fly before re-pointing the
+      // scope. Otherwise the RAF keeps ticking after the board changes and,
+      // on completion, persists the OLD board's fly target as the NEW board's
+      // viewport. This single funnel covers board switch, board clear
+      // (setBoard(null)), and vault swap (tabs clear → BoardRouter →
+      // setBoard(null)).
+      cancelFlyTo();
       flushPendingViewport();
       currentBoardId = boardId;
       if (!boardId) {
@@ -307,6 +316,16 @@ export function createCanvasScope(): CanvasScope {
 
     setWaypointsVisible(v: boolean) {
       waypointsVisible = v;
+    },
+
+    destroy() {
+      // Audit 3.2 — pane-teardown hook (PaneView onDestroy). Cancel the
+      // in-flight fly so a closed pane's RAF stops ticking, and flush any
+      // pending viewport persist so the board's last camera move isn't lost.
+      // flushPendingViewport no-ops when nothing is pending and when the
+      // board is no longer in the cache (e.g. mid vault-swap teardown).
+      cancelFlyTo();
+      flushPendingViewport();
     },
   };
 

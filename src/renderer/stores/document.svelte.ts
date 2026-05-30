@@ -315,6 +315,25 @@ export const documentStore = {
    * Both views will reactively pick up the change.
    */
   updateContent(docId: string, htmlContent: string, markdownBody?: string, writerId?: string) {
+    // Phase 7.6 — dev tripwire. `body` is body-only by contract; frontmatter
+    // lives in frontmatterCache. hydrateFromDisk strips the fence today, but a
+    // regression that fed a full file (frontmatter + body) here would double
+    // the frontmatter on the next serialize. We require BOTH fences so a body
+    // that merely opens with a thematic-break `---` doesn't false-positive.
+    // Non-fatal (warn, not throw) — never block editing on a heuristic.
+    if (
+      import.meta.env.DEV &&
+      markdownBody !== undefined &&
+      /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.test(markdownBody)
+    ) {
+      console.error(
+        `[documentStore] updateContent received what looks like a full file ` +
+          `(leading frontmatter block) as markdownBody for docId=${docId} — body ` +
+          `must be body-only; frontmatter lives in frontmatterCache. A full-file ` +
+          `body would duplicate the frontmatter on save (Phase 7.6 regression?).`,
+      );
+    }
+
     const doc = openDocuments.get(docId);
     if (!doc) return;
 

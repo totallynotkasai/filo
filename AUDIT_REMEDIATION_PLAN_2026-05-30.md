@@ -39,7 +39,7 @@ one commit per item where practical.
 | 4 | Tag & rename consistency | 5 | Registry drift, broken refs |
 | 5 | Correctness polish | 7 | Undo order, stale reads, structure |
 | 6 | UX & accessibility | 5 | a11y failures, no-confirm delete |
-| 7 | Hygiene, docs, low-priority | 8 | Doc drift, documented limitations |
+| 7 | Hygiene, docs, low-priority | 9 | Doc drift, documented limitations |
 
 Verified non-issues and the 18/18 remediation-claim re-check are in the appendices —
 **read Appendix C before "fixing" anything that looks deliberate.**
@@ -534,6 +534,18 @@ Capture these in CLAUDE.md / a KNOWN_LIMITATIONS doc so they're not re-discovere
 - **Self-write suppression window** (2000+1000ms) — on a very slow disk/AV, the app's own write
   can be reclassified as an external edit. Monitor; widen the window only if it bites.
 
+### 7.9 🔬 `vaultExternalChanges.ts` is over its file-size ceiling — **low** (pre-existing; surfaced by 0.3)
+- **Files:** `src/renderer/stores/vaultExternalChanges.ts` (1538 LOC); `scripts/check-file-sizes.mjs` (ceiling 1530)
+- **Problem:** The file sits 8 LOC over its allowlist ceiling, so `ci:file-sizes` — and therefore the full
+  `ci:verify` — fails. This predates the remediation work (byte-identical at the initial commit `f3370fe`) and
+  only became visible once Phase 0.3 made CI run the full gate set. The gate's policy forbids *raising* a
+  ceiling, so the fix must shrink the file, not bump the number.
+- **Fix:** Split a cohesive slice of the external-edit classification/reconciliation logic out into
+  `src/renderer/lib/vault/` (CLAUDE.md "one concern per file"), keeping the store's public API identical, then
+  **lower** the ceiling in `check-file-sizes.mjs` to the slimmed LOC. Do not raise the ceiling.
+- **Test:** `npm run ci:verify` green end-to-end (file-size gate passes).
+- **Effort:** M
+
 ---
 
 ## Appendix A — Severity index
@@ -542,7 +554,7 @@ Capture these in CLAUDE.md / a KNOWN_LIMITATIONS doc so they're not re-discovere
 |---|---|---|---|---|---|---|---|
 | **high** | 1.1, 1.2 | 2.1 | — | — | — | — | — |
 | **medium** | 1.3, 1.4 | 2.2–2.6 | 3.1, 3.2, 3.3 | 4.1–4.5 | 5.1–5.4 | 6.1 | — |
-| **low** | — | — | 3.4 | — | 5.5, 5.6, 5.7 | 6.2–6.5 | 7.1–7.8 |
+| **low** | — | — | 3.4 | — | 5.5, 5.6, 5.7 | 6.2–6.5 | 7.1–7.9 |
 
 Phase 0 items are not severity-rated — they are prerequisites.
 

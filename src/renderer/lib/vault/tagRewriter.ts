@@ -145,6 +145,18 @@ function locateTagsField(yamlSource: string): LocatedTagsField | null {
   return null;
 }
 
+/**
+ * True when the YAML source has a top-level `tags:` key (any shape). Used by
+ * `addTagToMarkdown` to distinguish "frontmatter has no tags field at all"
+ * (safe to insert a fresh block via a line edit) from "tags field present but
+ * `locateTagsField` declined it" (anchor/alias → take the load→dump fallback).
+ * A nested or commented `tags:` won't match (`^tags`), so a fresh top-level
+ * block is inserted in that case — top-level is the canonical location.
+ */
+function hasTagsHeader(yamlSource: string): boolean {
+  return yamlSource.split('\n').some((line) => TAGS_HEADER_RE.test(line));
+}
+
 function renderTagsField(loc: LocatedTagsField, nextTags: string[]): string[] {
   if (nextTags.length === 0) {
     if (loc.style === 'scalar' || loc.style === 'flow') {
@@ -289,11 +301,30 @@ export function addTagToMarkdown(rawContent: string, tag: string): string {
   const bareTag = tag.replace(/^#/, '').trim();
   if (!bareTag) return rawContent;
 
-  const { yamlSource, body, hasFrontmatter } = splitFrontmatter(rawContent);
+  const { yamlSource, body, hasFrontmatter, trailingNewline } = splitFrontmatter(rawContent);
 
   if (!hasFrontmatter) {
     const trailing = body.length === 0 || body.endsWith('\n') ? '' : '\n';
     return `---\ntags:\n  - ${bareTag}\n---\n${body}${trailing}`;
+  }
+
+  // Phase 7.4 — frontmatter present but no `tags:` field: insert a fresh block
+  // via a line-level edit so the rest of the YAML (comments, key order, blank
+  // lines) survives byte-for-byte. The load→dump fallback below would discard
+  // all of that for what is purely an additive change. Scoped to the no-field
+  // case only — a file that already has a `tags:` field keeps the dump path so
+  // its established string→array upgrade semantics are preserved.
+  if (!hasTagsHeader(yamlSource)) {
+    const lines = yamlSource.split('\n');
+    // Insert before a single trailing blank line (if any) so the block sits
+    // with the other keys and the frontmatter's trailing newline is preserved.
+    const insertAt =
+      lines.length > 0 && lines[lines.length - 1] === '' ? lines.length - 1 : lines.length;
+    lines.splice(insertAt, 0, 'tags:', `  - ${bareTag}`);
+    const newYaml = lines.join('\n');
+    return `---\n${newYaml}${trailingNewline ? '' : '\n'}---\n${body}${
+      body.length === 0 || body.endsWith('\n') ? '' : '\n'
+    }`;
   }
 
   const fm = loadYamlObject(yamlSource) ?? {};

@@ -11,6 +11,7 @@ import { tabStore } from './tabs.svelte';
 import { uiStore } from './ui.svelte';
 import { boardStore } from './board.svelte';
 import { boardCacheStore } from './boardCache.svelte';
+import { documentStore } from './document.svelte';
 import { workspaceStore } from './workspace.svelte';
 import { themeStore } from './theme.svelte';
 import { normalizePath, toPosix } from '../lib/utils/path';
@@ -660,6 +661,14 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
                 );
               }
             }
+            // Phase 4.4 (2026-05-30) — repoint any open document, mirroring the
+            // normal rename path (vaultFolderOps). The board loop above only
+            // fixes `.board.json` references; without this an editor already
+            // open when this in-session retry fires keeps writing to the OLD
+            // path, resurrecting it via mkdir-recursive on the next autosave.
+            for (const entry of entries) {
+              documentStore.propagateRename(entry.oldPath, entry.newPath);
+            }
             const retryFlush = await boardCacheStore.flushAllDirty();
             if (retryFlush.failed.length > 0) {
               uiStore.pushToast({
@@ -727,6 +736,15 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
       'Failed to check the rename-cascade recovery sentinel',
     );
   }
+}
+
+/**
+ * Test seam (Phase 4.4 / 4.5) — drives the recovery sentinel sequencer
+ * directly so the rename-cascade Retry / Discard handlers can be exercised
+ * without the full openVault path. Not referenced in production code.
+ */
+export function __runRecoverySequencerForTests(p: string): Promise<void> {
+  return runRecoverySequencer(p);
 }
 
 export const vaultStore = {

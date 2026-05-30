@@ -563,27 +563,12 @@ async function runRename(
         // TextTile.writeMarkdownToDisk keeps writing to the old descendant
         // path (recreating the old folder via mkdir-recursive on Phase 1's
         // atomic write) until the editor is reloaded.
-        const oldRelNorm = normalizePath(stripLeadingSlash(oldRel));
-        const newRelNorm = normalizePath(stripLeadingSlash(newRel));
-        const oldPrefix = oldRelNorm + '/';
-        const folderRenamesByDoc: Array<{ docId: string; next: string }> = [];
-        for (const doc of documentStore.documents.values()) {
-          const docPath = stripLeadingSlash(toPosix(doc.filename));
-          const docLower = docPath.toLowerCase();
-          if (docLower === oldRelNorm.toLowerCase()) {
-            // Exact-match case handled by the IPC rename target.
-            folderRenamesByDoc.push({ docId: doc.docId, next: newRelNorm });
-          } else if (docLower.startsWith(oldPrefix.toLowerCase())) {
-            // Descendant of a renamed folder: rewrite the prefix.
-            folderRenamesByDoc.push({
-              docId: doc.docId,
-              next: newRelNorm + docPath.slice(oldRelNorm.length),
-            });
-          }
-        }
-        for (const { docId, next } of folderRenamesByDoc) {
-          documentStore.updateFilename(docId, next);
-        }
+        //
+        // Phase 4.4 (2026-05-30) — the exact+prefix logic moved into
+        // `documentStore.propagateRename` so the rename-cascade recovery
+        // retry can call the identical code instead of a divergent
+        // exact-match-only snippet.
+        documentStore.propagateRename(oldRel, newRel);
 
         // Propagate the rename into `activeRootFolder` if it pointed at the
         // renamed folder (or lived inside it). Without this, the next

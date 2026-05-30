@@ -1,7 +1,7 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import type { RichTextAnnotation } from '../schema/document';
 import { uiStore } from './ui.svelte';
-import { samePath } from '../lib/utils/path';
+import { samePath, normalizePath, stripLeadingSlash, toPosix } from '../lib/utils/path';
 import { forceWriteForDocument } from '../lib/boards/markdownWriteRegistry';
 import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
 import { onVaultSwap } from '../core/vaultLifecycle';
@@ -386,6 +386,45 @@ export const documentStore = {
     };
 
     openDocuments.set(docId, updated);
+  },
+
+  /**
+   * Phase 4.4 (2026-05-30) — repoints every open document affected by a
+   * rename so its registered writer keeps targeting the moved path. Handles
+   * the exact-match file rename (`Notes/old.md` → `Notes/new.md`) and the
+   * folder-rename case where the open document is a *descendant* of the moved
+   * folder (`Notes/Daily.md` → `Archive/Daily.md` when `Notes` → `Archive`).
+   *
+   * Mirrors the board-side `boardStore.propagateRename`. Both the in-app
+   * rename path (vaultFolderOps) and the rename-cascade recovery retry
+   * (vault.svelte.ts) call this so the two can't drift — the recovery retry
+   * previously skipped the descendant case entirely. Returns the number of
+   * documents repointed.
+   */
+  propagateRename(oldRel: string, newRel: string): number {
+    const oldRelNorm = normalizePath(stripLeadingSlash(oldRel));
+    const newRelNorm = normalizePath(stripLeadingSlash(newRel));
+    if (!oldRelNorm || !newRelNorm) return 0;
+    const oldRelLower = oldRelNorm.toLowerCase();
+    const oldPrefixLower = `${oldRelLower}/`;
+    const updates: Array<{ docId: string; next: string }> = [];
+    for (const doc of openDocuments.values()) {
+      const docPath = stripLeadingSlash(toPosix(doc.filename));
+      const docLower = docPath.toLowerCase();
+      if (docLower === oldRelLower) {
+        // Exact-match file rename.
+        updates.push({ docId: doc.docId, next: newRelNorm });
+      } else if (docLower.startsWith(oldPrefixLower)) {
+        // Descendant of a renamed folder: rewrite the prefix, preserving the
+        // tail's on-disk case (slice off the matched prefix length).
+        updates.push({ docId: doc.docId, next: newRelNorm + docPath.slice(oldRelNorm.length) });
+      }
+    }
+    for (const { docId, next } of updates) {
+      const doc = openDocuments.get(docId);
+      if (doc) openDocuments.set(docId, { ...doc, filename: next });
+    }
+    return updates.length;
   },
 
   /**

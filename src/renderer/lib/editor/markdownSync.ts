@@ -206,6 +206,16 @@ function normaliseForRoundTripCompare(s: string): string {
     // Normalise list bullet style — tiptap-markdown emits `*` or `-`
     // inconsistently depending on configuration. Treat them as equivalent.
     .replace(/^(\s*)[*+]\s/gm, '$1- ')
+    // Normalise emphasis delimiters — prosemirror-markdown always serialises
+    // emphasis as `*italic*` / `**bold**`, so a disk file using the underscore
+    // forms (`_italic_` / `__bold__`, common in Obsidian) would otherwise be
+    // flagged as a lossy round-trip and opened read-only (audit 2.4). The same
+    // transform runs on BOTH sides of the comparison, so it can never turn a
+    // genuine difference into a false match. `__` before `_` so bold collapses
+    // before the italic pass; intraword underscores (snake_case) lack the word
+    // boundary the italic pass requires and are left untouched.
+    .replace(/__([^_\n]+)__/g, '**$1**')
+    .replace(/\b_([^_\n]+)_\b/g, '*$1*')
     // Strip leading/trailing whitespace on the whole file
     .trim();
 }

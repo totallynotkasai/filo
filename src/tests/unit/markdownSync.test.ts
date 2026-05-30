@@ -283,6 +283,18 @@ describe('markdownSync — isLossyMarkdownRoundTrip', () => {
     expect(isLossyMarkdownRoundTrip('+ item', '- item')).toBe(false);
   });
 
+  it('returns false when only emphasis delimiter style differs (underscore vs asterisk)', () => {
+    // prosemirror-markdown serialises emphasis with asterisks; an Obsidian
+    // file using underscores must NOT be flagged lossy (audit 2.4) and held
+    // read-only just because the delimiter style differs.
+    expect(isLossyMarkdownRoundTrip('a _italic_ b', 'a *italic* b')).toBe(false);
+    expect(isLossyMarkdownRoundTrip('a __bold__ b', 'a **bold** b')).toBe(false);
+    expect(isLossyMarkdownRoundTrip('_italic_', '*italic*')).toBe(false);
+    // Intraword underscores (snake_case) are not emphasis and survive, while a
+    // real underscore emphasis in the same line still normalises to a match.
+    expect(isLossyMarkdownRoundTrip('_em_ and snake_case', '*em* and snake_case')).toBe(false);
+  });
+
   it('returns true when an Obsidian callout is dropped', () => {
     const input = '> [!note]\n> body of callout';
     const tiptapOutput = '> body of callout'; // callout marker stripped

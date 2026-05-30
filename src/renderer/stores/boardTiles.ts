@@ -53,9 +53,15 @@ export function makeTilesSlice(ctx: BoardContext) {
         : ({ ...tile, boardId: current?.id ?? '' } as Tile);
       const parsed = TileSchema.safeParse(stamped);
       if (!parsed.success) {
-        console.warn('[boardStore.addTile] Zod validation warning:', parsed.error.issues);
+        // Hard-reject: persisting a Zod-invalid tile writes a malformed shape
+        // to disk, where the next loadBoard silently drops it — losing the
+        // placement (and any inline Link/Iframe/Timer data). Mirror updateTile's
+        // reject-and-warn rather than persisting the bad tile anyway. (Audit 1.2)
+        console.warn('[boardStore.addTile] Rejecting invalid tile:', parsed.error.issues);
+        uiStore.toast('Could not add tile — invalid data (see console)', 'error', 4000);
+        return;
       }
-      const validTile = parsed.success ? (parsed.data as Tile) : stamped;
+      const validTile = parsed.data as Tile;
       const w = validTile.renderedWidth ?? validTile.size.width;
       const h = validTile.renderedHeight ?? validTile.size.height;
       ctx.spatial.insert(validTile.id, validTile.position.x, validTile.position.y, w, h);
@@ -238,15 +244,21 @@ export function makeTilesSlice(ctx: BoardContext) {
       const boardId = ctx.getCurrent()?.id;
       const tiles = ctx.getTiles();
 
+      let dropped = 0;
       for (const { id, changes } of updates) {
         const existing = tiles[id];
         if (!existing) continue;
         const merged = { ...existing, ...changes, updatedAt: Date.now() } as Tile;
         const parsed = TileSchema.safeParse(merged);
         if (!parsed.success) {
-          console.warn(`[boardStore.batchUpdateTiles] Zod warning for ${id}:`, parsed.error.issues);
+          // Skip the bad update — persisting a Zod-invalid merged tile would
+          // write a malformed shape that loadBoard drops on next open. Mirror
+          // updateTile's hard-reject rather than persisting anyway. (Audit 1.2)
+          console.warn(`[boardStore.batchUpdateTiles] Rejecting invalid update for ${id}:`, parsed.error.issues);
+          dropped++;
+          continue;
         }
-        const validTile = (parsed.success ? parsed.data : merged) as Tile;
+        const validTile = parsed.data as Tile;
         boardCacheStore.persistUpdateTile(id, changes, boardId);
 
         if (
@@ -262,6 +274,13 @@ export function makeTilesSlice(ctx: BoardContext) {
 
       for (const s of spatialUpdates) {
         ctx.spatial.update(s.id, s.x, s.y, s.w, s.h);
+      }
+      if (dropped > 0) {
+        uiStore.toast(
+          `${dropped} tile update${dropped === 1 ? '' : 's'} skipped — invalid data (see console)`,
+          'error',
+          4000,
+        );
       }
     },
   };

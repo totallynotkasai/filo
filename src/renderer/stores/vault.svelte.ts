@@ -708,7 +708,7 @@ async function repairRenameCascade(
   verb: 'Retry' | 'Discard',
 ): Promise<number | null> {
   await boardCacheStore.ensureAllLoaded();
-  const repairedBoards = new Set<string>();
+  const repairedBoards = new SvelteSet<string>();
   for (const entry of entries) {
     try {
       for (const id of boardStore.propagateRename(entry.oldPath, entry.newPath)) {

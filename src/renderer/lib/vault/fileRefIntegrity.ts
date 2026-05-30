@@ -294,8 +294,9 @@ function basenameWithoutMd(relPath: string): string | null {
  * explicit `file:` field. When that file is renamed, we keep the tile in
  * sync so the next write lands on the correct path.
  *
- * Folder-aware. Each board type has its own convention folder
- * (mindmap → root, kanban → `Kanban/<name>/`, tasklist → `Tasks/`).
+ * Folder-aware. The convention folder per board type comes from
+ * `getConventionFolder` (mindmap & tasklist → vault root, plus the
+ * per-board / vault-wide pin cascade; kanban → `Kanban/<name>/`).
  * Three cases:
  *   - **Rename inside the convention folder**: update the tile title so the
  *     convention path still resolves. No explicit `filePath` needed.

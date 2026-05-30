@@ -151,6 +151,9 @@
   // ResizeObserver: keep spatial index accurate when the container's rendered size changes
   // (e.g. min-height constraints, content overflow). Only fires when delta > 2px.
   // Skipped in flowLayout mode — those tiles aren't on the canvas spatial index.
+  // Routed through updateOrDefer so a reflow mid-drag (image load, auto-height)
+  // doesn't perturb the index the smart guides read — it flushes on drag end
+  // (Phase 7.7).
   let containerElement = $state<HTMLDivElement | null>(null);
 
   $effect(() => {
@@ -164,7 +167,12 @@
         if (Math.abs(width - lastW) > 2 || Math.abs(height - lastH) > 2) {
           lastW = width;
           lastH = height;
-          spatialStore.update(tile.id, tile.position.x, tile.position.y, width, height);
+          spatialStore.updateOrDefer(tile.id, () => ({
+            x: tile.position.x,
+            y: tile.position.y,
+            width,
+            height,
+          }));
         }
       }
     });

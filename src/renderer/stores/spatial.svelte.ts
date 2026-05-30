@@ -23,6 +23,15 @@ export class SpatialScope {
   private _batchDepth = 0;
   private _pendingBump = false;
 
+  // Resize-driven updates deferred during a batch (multi-tile drag). Keyed by
+  // tile id (coalesced — last fire wins); the value is a thunk so the flush in
+  // endBatch() reads the tile's *final* position (a dragged tile commits its
+  // drop position before endBatch runs). See updateOrDefer / Phase 7.7.
+  private _deferredResizes = new Map<
+    string,
+    () => { x: number; y: number; width: number; height: number }
+  >();
+
   /**
    * Read-only access to the underlying SpatialIndex.
    * Use the store's insert/update/remove/clear methods for mutations so that
@@ -39,7 +48,18 @@ export class SpatialScope {
   endBatch() {
     if (this._batchDepth === 0) return;
     this._batchDepth--;
-    if (this._batchDepth === 0 && this._pendingBump) {
+    if (this._batchDepth !== 0) return;
+    // Depth returned to zero — flush resize updates deferred during the batch,
+    // reading each thunk now so a dragged tile's committed drop position wins.
+    if (this._deferredResizes.size > 0) {
+      for (const [id, geom] of this._deferredResizes) {
+        const g = geom();
+        this._index.update(id, g.x, g.y, g.width, g.height);
+      }
+      this._deferredResizes.clear();
+      this._pendingBump = true;
+    }
+    if (this._pendingBump) {
       this._pendingBump = false;
       this.revision++;
     }
@@ -63,12 +83,36 @@ export class SpatialScope {
     this.bumpRevision();
   }
 
+  /**
+   * Update an entry's geometry, or — if a batch (multi-tile drag) is in
+   * flight — defer it until endBatch(). Resize-driven updates (auto-height
+   * growth, image load) must NOT perturb the index mid-drag: tileDrag keeps
+   * the rbush consistent for non-dragged neighbours so the in-flight smart-
+   * guides query is stable, and a neighbour reflowing would snap the guides
+   * 1–5px (Phase 7.7). The geometry is passed as a thunk read at flush time,
+   * so a tile that reflows while being dragged still lands at its committed
+   * drop position (onPointerUp commits before endBatch). Coalesces by id.
+   */
+  updateOrDefer(
+    id: string,
+    geom: () => { x: number; y: number; width: number; height: number },
+  ) {
+    if (this._batchDepth > 0) {
+      this._deferredResizes.set(id, geom);
+      return;
+    }
+    const g = geom();
+    this.update(id, g.x, g.y, g.width, g.height);
+  }
+
   remove(id: string) {
+    this._deferredResizes.delete(id);
     this._index.remove(id);
     this.bumpRevision();
   }
 
   clear() {
+    this._deferredResizes.clear();
     this._index.clear();
     this.bumpRevision();
   }

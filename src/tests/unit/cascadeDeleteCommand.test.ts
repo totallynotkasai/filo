@@ -45,6 +45,8 @@ function makeMindMap(id: string, tileId: string, filePath: string): V7BoardFileD
         id: tileId,
         type: 'text',
         title: 'T',
+        contentId: `doc_${tileId}`,
+        style: { headerColor: '', bodyColor: '', borderColor: '' },
         boardId: id,
         position: { x: 0, y: 0 },
         size: { width: 100, height: 100 },

@@ -131,21 +131,14 @@ export function tileResizeAction(node: HTMLElement, options: TileResizeOptions) 
       currentOptions = newOptions;
     },
     destroy() {
-      // Sprint B / B3 — if the tile unmounts mid-resize, restore the captured
-      // start size (cancel-not-commit) and NEVER push a ResizeTileCommand.
-      // A half-committed resize leaves the tile at whatever interim size the
-      // pointer hit at unmount and produces no undo entry, so the user has
-      // no way back to the pre-gesture state.
-      const wasResizing = isResizing;
-      isResizing = false;
-      if (wasResizing && boardStore.getTile(currentOptions.tileId)) {
-        boardStore.updateTile(currentOptions.tileId, {
-          size: { width: startWidth, height: startHeight },
-        });
-      }
-      activePointerId = null;
-      document.body.style.cursor = '';
-      window.removeEventListener('keydown', onWindowKeyDown, true);
+      // Audit 3.4 — route teardown through cancelResize() (mirrors tileDrag's
+      // cancelDrag()). If the tile unmounts mid-resize it restores the captured
+      // start size (cancel-not-commit, Sprint B / B3 — never pushes a
+      // ResizeTileCommand), RELEASES the pointer capture (the old ad-hoc cleanup
+      // nulled activePointerId without releasing, leaking the capture and
+      // dropping in-flight pointer events for the gesture), and clears the
+      // cursor + keydown listener. cancelResize() no-ops when not resizing.
+      cancelResize();
       node.removeEventListener('pointerdown', onPointerDown);
       node.removeEventListener('pointermove', onPointerMove);
       node.removeEventListener('pointerup', onPointerUp);

@@ -32,6 +32,7 @@ import { reportError } from '../lib/utils/errorBus';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { invokeOk } from '../lib/utils/invokeOk';
 import { normalizePath, toPosix } from '../lib/utils/path';
+import { createId } from '../lib/utils/ids';
 import { uiStore } from './ui.svelte';
 import type { CacheContext } from './boardCacheTypes';
 import { makeConnectionsFramesSlice } from './boardCacheConnectionsFrames';
@@ -124,6 +125,48 @@ function getBoardWriteArgs(
 }
 
 /**
+ * Phase 7.5 — reverse-index memos (id → owning boardId) for the keyless
+ * persist paths. A tile / connection / frame / kanban column is created on
+ * exactly one board and never re-parented (V7 invariant), so a successful
+ * scan result stays valid for the entity's life. `resolveOwnerCached` caches
+ * scan hits and verifies-on-hit (O(1)) before trusting the memo — on a miss
+ * OR a stale hit it falls back to a full scan — so the memo can NEVER return
+ * a wrong board; it only turns the repeated O(boards×entities) scans on every
+ * keyless persist into O(1) after the first lookup. Cleared on vault close.
+ */
+const tileBoardMemo = new Map<string, string>();
+const connectionBoardMemo = new Map<string, string>();
+const frameBoardMemo = new Map<string, string>();
+const kanbanColumnBoardMemo = new Map<string, string>();
+
+function resetBoardOwnerMemos(): void {
+  tileBoardMemo.clear();
+  connectionBoardMemo.clear();
+  frameBoardMemo.clear();
+  kanbanColumnBoardMemo.clear();
+}
+
+function resolveOwnerCached(
+  memo: Map<string, string>,
+  id: string,
+  owns: (data: V7BoardFileData) => boolean,
+): string | null {
+  const cached = memo.get(id);
+  if (cached !== undefined) {
+    const data = boardCache[cached];
+    if (data && owns(data)) return cached;
+    memo.delete(id); // stale — fall through to a fresh scan
+  }
+  for (const [boardId, data] of Object.entries(boardCache)) {
+    if (owns(data)) {
+      memo.set(id, boardId);
+      return boardId;
+    }
+  }
+  return null;
+}
+
+/**
  * Resolves a tile's owning board ID.
  *
  * V7 invariant: a `tile.id` is unique across all boards. When the same `.md`
@@ -133,19 +176,16 @@ function getBoardWriteArgs(
  * Returning the first hit is therefore correct and unambiguous.
  */
 function findBoardIdForTile(tileId: string): string | null {
-  for (const [id, data] of Object.entries(boardCache)) {
+  return resolveOwnerCached(tileBoardMemo, tileId, (data) => {
     const b = data.board;
     if (b.type === 'mindmap') {
       const mm = b as MindMapBoard;
-      if ((mm.placements ?? {})[tileId] || (mm.inlineTiles ?? {})[tileId]) return id;
-      continue;
+      return Boolean((mm.placements ?? {})[tileId] || (mm.inlineTiles ?? {})[tileId]);
     }
     // V7: non-mind-map boards no longer have placements/inlineTiles. Tile
-    // identity is the tileDefs key; whichever board owns the def owns the
-    // tile.
-    if ((data.tileDefs ?? {})[tileId]) return id;
-  }
-  return null;
+    // identity is the tileDefs key; whichever board owns the def owns the tile.
+    return Boolean((data.tileDefs ?? {})[tileId]);
+  });
 }
 
 /**
@@ -157,10 +197,9 @@ function findBoardIdForTile(tileId: string): string | null {
  * connections eliminates the silent no-op when `conn.boardId === ''`.
  */
 function findBoardIdForConnection(connId: string): string | null {
-  for (const [id, data] of Object.entries(boardCache)) {
-    if ((data.connections ?? {})[connId]) return id;
-  }
-  return null;
+  return resolveOwnerCached(connectionBoardMemo, connId, (data) =>
+    Boolean((data.connections ?? {})[connId]),
+  );
 }
 
 /**
@@ -171,10 +210,9 @@ function findBoardIdForConnection(connId: string): string | null {
  * cache is the authoritative source for "which board owns this frame".
  */
 function findBoardIdForFrame(frameId: string): string | null {
-  for (const [id, data] of Object.entries(boardCache)) {
-    if ((data.frames ?? []).some((f) => f.id === frameId)) return id;
-  }
-  return null;
+  return resolveOwnerCached(frameBoardMemo, frameId, (data) =>
+    (data.frames ?? []).some((f) => f.id === frameId),
+  );
 }
 
 function kanbanBoard(boardId: string): KanbanBoard | null {
@@ -190,12 +228,11 @@ function kanbanBoard(boardId: string): KanbanBoard | null {
  * rare race where the active board is null when the mutation lands).
  */
 function findBoardIdForKanbanColumn(columnId: string): string | null {
-  for (const [id, data] of Object.entries(boardCache)) {
-    if (data.board.type !== 'kanban') continue;
+  return resolveOwnerCached(kanbanColumnBoardMemo, columnId, (data) => {
+    if (data.board.type !== 'kanban') return false;
     const kb = data.board as KanbanBoard;
-    if ((kb.columns ?? []).some((c) => c.id === columnId)) return id;
-  }
-  return null;
+    return (kb.columns ?? []).some((c) => c.id === columnId);
+  });
 }
 
 /**
@@ -361,6 +398,7 @@ export const boardCacheStore = {
   clear() {
     boardCache = {};
     boardPaths = {};
+    resetBoardOwnerMemos();
     resetUnresolvedWarnState();
   },
 
@@ -623,7 +661,11 @@ export const boardCacheStore = {
   ): Promise<Board | null> {
     const factory = boardDefaults[type as Board['type']];
     if (!factory) return null;
-    const boardId = `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    // Phase 7.5 — `${type}_${createId()}` (collision-resistant nanoid) replaces
+    // the old `${type}-${Date.now()}-${Math.random()}` recipe. The id is an
+    // opaque cache/path key (nothing parses its structure), so existing boards
+    // keep their old-format ids; only new boards get this shape.
+    const boardId = `${type}_${createId()}`;
     const board = factory(boardId, name, settings);
 
     const ok = await this.persistNewBoard(board);

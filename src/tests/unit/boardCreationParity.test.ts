@@ -176,6 +176,14 @@ describe('Phase 5 — board-creation parity', () => {
       });
       expect(created.collapsedSubtasks).toEqual([]);
     });
+
+    // Phase 7.5 — board ids are `${type}_${createId()}` (a 12-char nanoid),
+    // not the old `${type}-${Date.now()}-${Math.random()}` recipe.
+    it.each(ALL_TYPES)('generates a `%s_<nanoid>` id', async (type) => {
+      const created = await boardCacheStore.createBoard('Foo', type);
+      expect(created).not.toBeNull();
+      expect(created!.id).toMatch(new RegExp(`^${type}_[A-Za-z0-9_-]{12}$`));
+    });
   });
 
   describe('every factory output round-trips through BoardSchema', () => {

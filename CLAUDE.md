@@ -27,7 +27,7 @@ Package:        npm run package
 lint   → check (svelte-check) → test:unit:strict → build → ci:file-sizes → ci:type-casts → ci:ipc-parity
 ```
 
-- **`ci:file-sizes`** ([scripts/check-file-sizes.mjs](scripts/check-file-sizes.mjs)) — fails if any file in `src/main` or `src/renderer` exceeds 1000 LOC, with an explicit allowlist for the four currently grandfathered files. Allowlisted files may shrink but not grow past their snapshot.
+- **`ci:file-sizes`** ([scripts/check-file-sizes.mjs](scripts/check-file-sizes.mjs)) — fails if any file in `src/main` or `src/renderer` exceeds 1000 LOC, with an explicit allowlist for the seven currently grandfathered files. Allowlisted files may shrink but not grow past their snapshot (the ceilings sit at each file's current LOC).
 - **`ci:type-casts`** ([scripts/check-type-casts.mjs](scripts/check-type-casts.mjs)) — forbids `as any` and `as unknown as` in non-test source. Escape hatch: append `// allow-cast: <reason>` on the same line.
 - **`ci:ipc-parity`** ([scripts/check-ipc-parity.mjs](scripts/check-ipc-parity.mjs)) — asserts every `ipcMain.handle/on/once` channel name appears in the `IpcChannel` union in [src/shared/types.ts](src/shared/types.ts) and vice-versa. Pure main→renderer events are allowlisted inside the script.
 - **`test:unit:strict`** ([scripts/test-unit-strict.mjs](scripts/test-unit-strict.mjs)) — runs vitest and fails on the Phase 4 stderr-noise patterns (missing `window.filo` mock).
@@ -70,6 +70,7 @@ filo/
 ├── vitest.config.mts
 ├── playwright.config.ts
 ├── CLAUDE.md                          # This file
+├── KNOWN_LIMITATIONS.md               # Accepted trade-offs (do NOT "fix")
 ├── Filo_Design_Doc_Rework_V5.md
 │
 ├── src/
@@ -97,6 +98,8 @@ filo/
 │   │   │   ├── recentVaults.ts        # Persisted recent vault list
 │   │   │   ├── windowState.ts         # Window size/position (userData)
 │   │   │   └── sidebarState.ts        # Sidebar width/floating bounds (userData)
+│   │   ├── protocol/                  # Custom protocol handlers
+│   │   │   └── rangeHeader.ts         # HTTP Range parsing for media streaming
 │   │   ├── vault/                     # Main-side vault file primitives
 │   │   │   ├── fileOps.ts
 │   │   │   ├── boardFileOps.ts
@@ -117,6 +120,8 @@ filo/
 │   │   │   ├── commandRegistry.ts     # Keyboard-shortcut binding surface (no palette yet)
 │   │   │   ├── tileRegistry.ts        # Tile type registration
 │   │   │   ├── boardRegistry.ts       # Board type registration
+│   │   │   ├── boardDefaults.ts       # Per-type default board factories
+│   │   │   ├── vaultLifecycle.ts      # onVaultSwap pre/post-swap hook registry
 │   │   │   └── hotkeys.ts             # Keyboard shortcut binding
 │   │   │
 │   │   ├── stores/                    # Svelte 5 rune stores (.svelte.ts files)
@@ -217,6 +222,10 @@ filo/
 │   │   │   │   ├── tagsStorage.ts     # `.filo/tags.json` mutators
 │   │   │   │   ├── tagRewriteSweep.ts # Two-phase tag rename across .md
 │   │   │   │   ├── tagRewriter.ts     # Inline + frontmatter tag rewriting
+│   │   │   │   ├── tagRewriteSentinel.ts # `.filo/tag-rewrite-pending.json` crash-recovery
+│   │   │   │   ├── renameCascadeSentinel.ts # Rename-cascade crash-recovery sentinel
+│   │   │   │   ├── fileBaselineRegistry.ts # Pre-write drift baselines (mtime/size)
+│   │   │   │   ├── externalChangeWindows.ts # Self-write / attachment-delete timing windows
 │   │   │   │   └── vaultTreeSort.ts   # Sidebar sort/group helpers
 │   │   │   ├── boards/                # Board file load/save logic
 │   │   │   │   ├── boardLoader.ts
@@ -257,7 +266,7 @@ filo/
 │   │   │   │   └── tagExtension.ts
 │   │   │   ├── kanban/                # Kanban-board logic
 │   │   │   ├── tasklist/              # Task List logic
-│   │   │   ├── tasks/                 # Task-frontmatter helpers (shared)
+│   │   │   ├── tasks/                 # Task-frontmatter helpers, recurrence, quickAddParser (shared)
 │   │   │   ├── mindmap/               # Mind-map keyboard + selection
 │   │   │   ├── settings/              # Settings cascade helpers
 │   │   │   ├── styles/                # Override-cascade resolver
@@ -327,6 +336,8 @@ filo/
 │   │       │   ├── TaskListBoard.svelte
 │   │       │   ├── TaskItem.svelte
 │   │       │   ├── TaskListSideToolbar.svelte
+│   │       │   ├── SmartListTabs.svelte # Task List smart-list filter tabs
+│   │       │   ├── TaskQuickAddInput.svelte # Task List quick-add (natural-language) input
 │   │       │   ├── DocumentBoard.svelte
 │   │       │   ├── DocumentEditor.svelte
 │   │       │   └── SideToolbar.svelte # Mind-map side toolbar (move/new/etc.)
@@ -383,7 +394,8 @@ filo/
 │   │
 │   ├── shared/                        # Shared between main + renderer
 │   │   ├── types.ts                   # IpcChannel union, file-tree types
-│   │   └── ipcSchemas.ts              # Per-channel Zod payload validation
+│   │   ├── ipcSchemas.ts              # Per-channel Zod payload validation
+│   │   └── ipcEnvelope.ts             # IPC ok/error envelope + IpcEnvelopeError
 │   │
 │   └── tests/
 │       ├── unit/                      # Vitest unit tests

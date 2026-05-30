@@ -32,8 +32,11 @@ const ALLOWLIST = {
   // filtersAndViews.svelte.ts (−120 LOC); further sharding
   // (sectionDragController, taskLifecycle, sectionPopups) is deferred per
   // the Sprint 39 memory entry. Bump history in git log.
-  'src/renderer/components/boards/TaskListBoard.svelte': 2245,
-  'src/renderer/components/boards/KanbanSideToolbar.svelte': 1506,
+  // AUDIT_REMEDIATION_PLAN_2026-05-30 Phase 7.1 — tightened to current LOC
+  // (was 2245) to restore the ratchet's bite after Phase 5/6 trimming.
+  'src/renderer/components/boards/TaskListBoard.svelte': 2191,
+  // Phase 7.1 — tightened to current LOC (was 1506).
+  'src/renderer/components/boards/KanbanSideToolbar.svelte': 1490,
   // TaskItem row: title strip + notes panel + style cascade (headerColor /
   // bodyColor split across `.task-item` and `.task-notes-panel-inner`),
   // multi-select chrome, hover-reveal buttons, sticky note panel toggle.
@@ -61,7 +64,8 @@ const ALLOWLIST = {
   // shadow-placeholder rendering, outer `.kanban-column` drag handlers (so
   // OS file drops over the header don't paint the no-entry cursor), per-
   // column accent override, multi-card drag dimming. Bump history in git log.
-  'src/renderer/components/boards/KanbanColumn.svelte': 1200,
+  // Phase 7.1 — tightened to current LOC (was 1200).
+  'src/renderer/components/boards/KanbanColumn.svelte': 1198,
   // Vault store: lifecycle (open / close / swap / save), tree refresh + rename
   // queue (serialises external renames), recovery sentinels (.dirty +
   // tag-rewrite + rename-cascade, sequenced via awaitRecoveryDismiss),
@@ -76,7 +80,8 @@ const ALLOWLIST = {
   // `assertBaselinesSeeded` tripwire at the end of the vault commit (+import
   // +call +comment) and E5 added the rename-cascade recovery's tag-sink
   // re-assert + flush before clearing the sentinel; +~32 LOC.
-  'src/renderer/stores/vault.svelte.ts': 1425,
+  // Phase 7.1 — tightened to current LOC (was 1425).
+  'src/renderer/stores/vault.svelte.ts': 1389,
   // External-changes orchestrator: classifies fs-watcher events into
   // editor-dirty toast / silent reload / sync-frontmatter / deleted-file
   // prompt / properties-popup-dirty prompt. 500 ms attachment-delete grace

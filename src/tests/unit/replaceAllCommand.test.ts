@@ -8,6 +8,14 @@ import { parseMarkdown } from '@renderer/lib/vault/vaultIndex';
 import { ReplaceAllCommand, runReplaceAllCommand } from '@renderer/commands/replaceAllCommand';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
+import { documentStore } from '@renderer/stores/document.svelte';
+import {
+  registerForceWriter,
+  scheduleMarkdownWrite,
+  __resetMarkdownFileWriterForTests,
+  type WriteArgs,
+} from '@renderer/lib/vault/markdownFileWriter';
+import { isPathPending } from '@renderer/lib/boards/boardSaver';
 
 // ── Stubs ──
 
@@ -117,6 +125,8 @@ beforeEach(() => {
   boardCacheStore.clear();
   historyStore.clear();
   searchStore.reset();
+  documentStore.clear();
+  __resetMarkdownFileWriterForTests();
   seedVaultStub();
   historyStore.setActiveBoard('mm');
 });
@@ -125,6 +135,8 @@ afterEach(() => {
   delete (vaultStore as unknown as Record<string, unknown>).path;
   delete (vaultStore as unknown as Record<string, unknown>).project;
   searchStore.reset();
+  documentStore.clear();
+  __resetMarkdownFileWriterForTests();
 });
 
 // ── Tests ──
@@ -236,5 +248,86 @@ describe('ReplaceAllCommand — undo with hasFileSnapshots', () => {
   it('reports no snapshots when the plan is empty', () => {
     const command = new ReplaceAllCommand('/test/vault', []);
     expect(command.hasFileSnapshots()).toBe(false);
+  });
+});
+
+describe('ReplaceAllCommand — open-editor sync (audit 2.1)', () => {
+  // Registers an open document session for `relPath`, mirroring what a
+  // mounted TextTile / DocumentEditor does. The replace path must keep this
+  // in-memory copy in step with disk; otherwise the editor's next debounce
+  // re-saves its stale body and silently reverts the replace (or its undo).
+  function openEditorDoc(docId: string, relPath: string, body: string): void {
+    documentStore.loadDocument({
+      docId,
+      filename: relPath,
+      title: relPath.replace(/\.md$/, ''),
+      body,
+      htmlContent: `<p>${body}</p>`,
+      richText: [],
+    });
+  }
+
+  it('syncs an open editor to disk after execute and after undo', async () => {
+    const filesystem: FileMap = { 'a.md': 'hello frodo' };
+    installFiloStub(filesystem);
+    vaultIndexStore.restoreMetadata('a.md', parseMarkdown('a.md', filesystem['a.md']));
+    boardCacheStore.hydrate(
+      { mm: makeMindMap('Board', 'mm', { ta: makeTextDef('ta', 'A', 'a.md') }) },
+      { mm: 'a.board.json' },
+    );
+    openEditorDoc('doc-a', 'a.md', 'hello frodo');
+
+    searchStore.setQuery('frodo');
+    searchStore.setReplaceText('sam');
+    expect(searchStore.matches.length).toBe(1);
+
+    await runReplaceAllCommand();
+
+    // execute must sync the open in-memory document to the new disk content.
+    expect(filesystem['a.md']).toBe('hello sam');
+    expect(documentStore.getDocument('doc-a')?.body).toBe('hello sam');
+    expect(documentStore.getDocument('doc-a')?.isDirty).toBe(false);
+
+    await historyStore.undo();
+
+    // undo restores disk AND the open editor symmetrically.
+    expect(filesystem['a.md']).toBe('hello frodo');
+    expect(documentStore.getDocument('doc-a')?.body).toBe('hello frodo');
+    expect(documentStore.getDocument('doc-a')?.isDirty).toBe(false);
+  });
+
+  it('cancels an armed editor write for an affected path so it cannot re-clobber', async () => {
+    const filesystem: FileMap = { 'a.md': 'hello frodo' };
+    installFiloStub(filesystem);
+    vaultIndexStore.restoreMetadata('a.md', parseMarkdown('a.md', filesystem['a.md']));
+    boardCacheStore.hydrate(
+      { mm: makeMindMap('Board', 'mm', { ta: makeTextDef('ta', 'A', 'a.md') }) },
+      { mm: 'a.board.json' },
+    );
+    openEditorDoc('doc-a', 'a.md', 'hello frodo');
+
+    // The editor has a debounced write armed carrying its own (soon-to-be
+    // stale) body, registered as a force-writer for the doc — exactly as a
+    // mounted TextTile does.
+    const callerId = 'text-tile:doc-a';
+    const args: WriteArgs = {
+      vaultRoot: '/test/vault',
+      relPath: 'a.md',
+      frontmatter: {},
+      body: 'hello frodo',
+      callerId,
+      docId: 'doc-a',
+    };
+    registerForceWriter(callerId, 'doc-a', () => args);
+    scheduleMarkdownWrite(args);
+    expect(isPathPending('a.md')).toBe(true);
+
+    searchStore.setQuery('frodo');
+    searchStore.setReplaceText('sam');
+    await runReplaceAllCommand();
+
+    // The armed write would have fired 'hello frodo' back over 'hello sam'.
+    expect(isPathPending('a.md')).toBe(false);
+    expect(documentStore.getDocument('doc-a')?.body).toBe('hello sam');
   });
 });

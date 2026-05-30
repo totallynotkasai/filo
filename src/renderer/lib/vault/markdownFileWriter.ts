@@ -588,6 +588,23 @@ export function unregisterForceWriter(callerId: string): void {
 }
 
 /**
+ * Audit 2.1 — cancels every armed (debounced, not-yet-fired) markdown write
+ * belonging to an open editor on `docId`. Used by vault-wide rewrites
+ * (Replace All) that authoritatively rewrite a file on disk and then sync the
+ * open editor: a write still armed against the doc carries the editor's
+ * pre-rewrite body and would re-clobber the rewrite ~300ms later. Matches by
+ * docId via the force-writer registry (the same identity `forceWriteForDocument`
+ * uses), so only editor-backed writers (TextTile / DocumentEditor) are
+ * affected — exactly the "open editor" case.
+ */
+export function cancelMarkdownWritesForDocument(docId: string): void {
+  if (!docId) return;
+  for (const [callerId, entry] of forceWriters.entries()) {
+    if (entry.docId === docId) cancelMarkdownWrite(callerId);
+  }
+}
+
+/**
  * Forces every writer matching `docId` to commit its current in-memory body
  * to disk. Returns the same shape as the old `markdownWriteRegistry.forceWriteForDocument`
  * so existing consumers (the Keep-local handler in `vaultExternalChanges`)

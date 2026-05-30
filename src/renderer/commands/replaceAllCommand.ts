@@ -37,6 +37,9 @@ import { runVaultSearch, type SearchMatch } from '../lib/search/runSearch';
 import { invokeOk } from '../lib/utils/invokeOk';
 import { reportError } from '../lib/utils/errorBus';
 import { trackComponentWrite } from '../lib/boards/writeStateTracking';
+import { documentStore } from '../stores/document.svelte';
+import { parseMarkdownFile } from '../lib/editor/markdownSync';
+import { cancelMarkdownWritesForDocument } from '../lib/vault/markdownFileWriter';
 
 interface FilePlan {
   /** Vault-relative path of the .md file. */
@@ -179,17 +182,43 @@ export class ReplaceAllCommand extends Command {
   }
 
   async execute(): Promise<void> {
-    await this.writeAll(this.plans.map((p) => ({ path: p.path, content: p.nextContent })));
+    const items = this.plans.map((p) => ({ path: p.path, content: p.nextContent }));
+    await this.writeAll(items);
     // Refresh the vault index so the search panel's matches re-derive against
     // the new content. Without this, the next "Find" cycle would still see
     // the old offsets until the file watcher fires (which may have already
     // been suppressed by `trackComponentWrite`).
     await vaultIndexStore.applyChanges(this.plans.map((p) => p.path));
+    this.syncOpenEditors(items);
   }
 
   async undo(): Promise<void> {
-    await this.writeAll(this.plans.map((p) => ({ path: p.path, content: p.originalContent })));
+    const items = this.plans.map((p) => ({ path: p.path, content: p.originalContent }));
+    await this.writeAll(items);
     await vaultIndexStore.applyChanges(this.plans.map((p) => p.path));
+    this.syncOpenEditors(items);
+  }
+
+  /**
+   * Audit 2.1 — after the disk writes settle, bring every OPEN editor on an
+   * affected file back in step with what we just wrote. `writeAll` goes
+   * through `trackComponentWrite`, which suppresses the file-watcher event, so
+   * the normal external-change reconciliation never fires: an open TextTile /
+   * DocumentEditor keeps its stale in-memory body and its next debounced write
+   * would silently revert the replace (or, on undo, the restore). For each
+   * written path with a live document session we (1) cancel any armed editor
+   * write — it carries the pre-rewrite body — then (2) overwrite the in-memory
+   * document with the content just written so the editor's reload `$effect`
+   * re-renders from the disk-canonical content.
+   */
+  private syncOpenEditors(items: Array<{ path: string; content: string }>): void {
+    for (const item of items) {
+      const doc = documentStore.findByFilename(item.path);
+      if (!doc) continue;
+      cancelMarkdownWritesForDocument(doc.docId);
+      const parsed = parseMarkdownFile(item.content);
+      documentStore.applyReloadFromDisk(doc.docId, parsed.body, doc.richText, parsed.frontmatter);
+    }
   }
 
   private async writeAll(items: Array<{ path: string; content: string }>): Promise<void> {

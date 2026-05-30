@@ -20,6 +20,7 @@ import {
   readMarkdownForHydrate,
 } from '../lib/vault/markdownFileWriter';
 import { reportError } from '../lib/utils/errorBus';
+import { forceWriteForDocument } from '../lib/vault/markdownFileWriter';
 
 // ── Kanban Commands ──
 //
@@ -687,6 +688,21 @@ async function applyOrphanPatch(
 ): Promise<void> {
   const vaultRoot = vaultStore.path;
   if (!vaultRoot) return;
+
+  // Audit 2.2 — this command was created for an ORPHAN card (no editor open),
+  // but a Document editor may have been opened on this file between execute
+  // and undo. A blind disk write here would then be re-clobbered by the open
+  // editor's next debounced write (it assembles from its own frontmatter
+  // cache, which a raw disk write never touches). Route the patch through the
+  // live cache + the editor's own writer instead — mirroring the open-doc
+  // path KanbanCard takes up front. Fall through to the orphan disk write only
+  // when no live writer flushed (editor mid-mount / not yet registered).
+  const openDoc = documentStore.findByFilename(relPath);
+  if (openDoc) {
+    documentStore.mergeFrontmatter(openDoc.docId, patch);
+    const result = await forceWriteForDocument(openDoc.docId);
+    if (result.ok > 0) return;
+  }
 
   // Drain pending debounced writes so the prior in-memory state lands
   // first. Mirrors UpdateCardFieldCommand's flush-before-merge ordering.

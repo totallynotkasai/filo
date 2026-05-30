@@ -11,7 +11,6 @@ import { tabStore } from './tabs.svelte';
 import { uiStore } from './ui.svelte';
 import { boardStore } from './board.svelte';
 import { boardCacheStore } from './boardCache.svelte';
-import { documentStore } from './document.svelte';
 import { workspaceStore } from './workspace.svelte';
 import { themeStore } from './theme.svelte';
 import { normalizePath, toPosix } from '../lib/utils/path';
@@ -24,11 +23,8 @@ import {
   clearPendingRewrite,
   hasPartialTagRewriteState,
 } from '../lib/vault/tagRewriteSentinel';
-import {
-  readPendingRenameCascades,
-  clearPendingRenameCascade,
-  type RenameCascadeEntry,
-} from '../lib/vault/renameCascadeSentinel';
+import { readPendingRenameCascades } from '../lib/vault/renameCascadeSentinel';
+import { repairRenameCascade } from '../lib/vault/renameCascadeRepair';
 import { assertBaselinesSeeded } from '../lib/vault/fileBaselineRegistry';
 import {
   sortTree,
@@ -685,93 +681,6 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
       'Failed to check the rename-cascade recovery sentinel',
     );
   }
-}
-
-/**
- * Phase 4.5 (2026-05-30) — shared repair for the rename-cascade recovery
- * sentinel. Re-applies the board-ref + open-document + `.filo/tags.json`
- * cascade for every pending entry and clears the breadcrumb on full success.
- *
- * Both Retry and Discard run this. Discard repairs too rather than abandoning
- * the boards with broken refs — the renamed file is already on disk, so the
- * only honest outcomes are "repair the pointers" or "leave them broken"; we
- * repair, then the caller confirms what was fixed. `verb` only flavours the
- * failure toasts.
- *
- * Returns the number of board references repaired on success (sentinel
- * cleared), or `null` if a board/tags flush failed (sentinel kept so the next
- * vault open retries the whole cascade).
- */
-async function repairRenameCascade(
-  entries: RenameCascadeEntry[],
-  vaultPathArg: string,
-  verb: 'Retry' | 'Discard',
-): Promise<number | null> {
-  await boardCacheStore.ensureAllLoaded();
-  const repairedBoards = new SvelteSet<string>();
-  for (const entry of entries) {
-    try {
-      for (const id of boardStore.propagateRename(entry.oldPath, entry.newPath)) {
-        repairedBoards.add(id);
-      }
-    } catch (err) {
-      reportError(
-        'vault.rename-cascade-recovery',
-        err,
-        `Failed to re-apply rename cascade for ${entry.oldPath} → ${entry.newPath}`,
-      );
-    }
-  }
-  // Phase 4.4 — repoint any open document, mirroring the normal rename path.
-  // The board loop above only fixes `.board.json` references; without this an
-  // editor already open when an in-session repair fires keeps writing to the
-  // OLD path, resurrecting it via mkdir-recursive on the next autosave.
-  for (const entry of entries) {
-    documentStore.propagateRename(entry.oldPath, entry.newPath);
-  }
-  const flush = await boardCacheStore.flushAllDirty();
-  if (flush.failed.length > 0) {
-    uiStore.pushToast({
-      text: `${verb} partially succeeded — ${flush.failed.length} board file${flush.failed.length === 1 ? '' : 's'} still failed: ${flush.failed.join(', ')}. Open each board and re-save manually.`,
-      type: 'error',
-      duration: 0,
-    });
-    return null;
-  }
-  // E5 — re-assert the `.filo/tags.json` sink for every rename that touched
-  // it, then flush. renameFile/renameFolder are idempotent (no-op when the
-  // key already moved before the crash), so this safely closes the window
-  // between the disk rename and the original synchronous tag flush (F3)
-  // regardless of which side a crash interrupted. Keep the sentinel if the
-  // tag write fails so the next open retries the whole cascade.
-  let tagsReasserted = false;
-  for (const entry of entries) {
-    if (!entry.tagsAffected) continue;
-    fileTagsStore.renameFile(entry.oldPath, entry.newPath);
-    fileTagsStore.renameFolder(entry.oldPath, entry.newPath);
-    tagsReasserted = true;
-  }
-  if (tagsReasserted) {
-    const tagFlush = await fileTagsStore.flushPendingSave();
-    if (!tagFlush.ok) {
-      uiStore.pushToast({
-        text: `${verb} updated the board files but failed to persist tag membership to .filo/tags.json. Reopen the vault to retry.`,
-        type: 'error',
-        duration: 0,
-      });
-      return null;
-    }
-  }
-  for (const entry of entries) {
-    await clearPendingRenameCascade(vaultPathArg, entry.id).catch((err) => {
-      reportError(
-        'vault.rename-cascade-recovery',
-        err,
-        'Failed to clear rename-cascade sentinel after a successful repair',
-      );
-    });
-  }
-  return repairedBoards.size;
 }
 
 /**

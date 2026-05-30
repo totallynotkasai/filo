@@ -105,7 +105,14 @@ const ALLOWLIST = {
   // attachment-delete grace window (module-scoped timing state + reset
   // helpers) into `lib/vault/externalChangeWindows.ts`; the store keeps its
   // public API via re-export. New snapshot: 1460 LOC.
-  'src/renderer/stores/vaultExternalChanges.ts': 1460,
+  // AUDIT_REMEDIATION_PLAN_2026-05-30 Phase 4.2 — dropped the deleted file's
+  // `.filo/tags.json` membership from the three user-confirmed deletion
+  // handlers (promptDeletedFile Reload, bulk Reload-all, promptClosedBoard-
+  // FileMissing Mark-broken-refs) so an external delete doesn't orphan its
+  // tag entry. Three one-liners + comments scattered across those handlers;
+  // nothing cleanly extractable for +14 LOC. The deferred 7.9 split (extract
+  // the deletion-prompt cluster) will reclaim this. New snapshot: 1474 LOC.
+  'src/renderer/stores/vaultExternalChanges.ts': 1474,
   // tileCommands.ts dropped off the allowlist (AUDIT_REMEDIATION_PLAN_2026-05-29
   // Phase 5 / C-3): the tag-driven commands (AddTileTag / RemoveTileTag /
   // AddPathTag / RemovePathTag / ToggleTagFade) moved to the new sibling

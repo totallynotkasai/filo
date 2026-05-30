@@ -915,13 +915,7 @@ export const fileTagsStore = {
     }
 
     commitTagRenameInMemory(this, oldName, trimmed);
-    // Phase 4.3 (2026-05-30) — drain the registry write synchronously before
-    // the board flush. `commitTagRenameInMemory` only arms the 300ms misc
-    // debounce; a crash between here and `flushTagRewriteBoardWrites` would
-    // leave tile defs on disk carrying the NEW tag name while `tags.json`
-    // still lacks the definition (no colour / createdAt) — an orphan forward
-    // reference `pruneOrphanFileTags` can't repair. Same flush the rename
-    // cascade (F3) does for the same crash-window reason.
+    // Phase 4.3 (2026-05-30) — flush the debounced registry write before the board flush so a crash can't strand the renamed tag on disk without its tags.json definition (mirrors 4.1 / F3).
     await this.flushPendingSave();
     // Phase 23 M11 — flush the cascaded board writes so a `.board.json`
     // failure is reported through the same toast surface as the .md
@@ -973,9 +967,7 @@ export const fileTagsStore = {
     }
 
     commitTagRemovalInMemory(this, tagName);
-    // Phase 4.3 (2026-05-30) — see renameTagEverywhere; drain the registry
-    // write before the board flush so a crash can't strand the boards' new
-    // state against a stale `tags.json`.
+    // Phase 4.3 (2026-05-30) — see renameTagEverywhere; flush before the board flush.
     await this.flushPendingSave();
     // Phase 23 M11 — see renameTagEverywhere for the rationale on flushing.
     await flushTagRewriteBoardWrites('Tag removal');

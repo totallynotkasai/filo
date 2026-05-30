@@ -3,6 +3,7 @@ import type { RichTextAnnotation } from '../schema/document';
 import { uiStore } from './ui.svelte';
 import { samePath } from '../lib/utils/path';
 import { forceWriteForDocument } from '../lib/boards/markdownWriteRegistry';
+import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
 import { onVaultSwap } from '../core/vaultLifecycle';
 
 /**
@@ -44,6 +45,21 @@ let readOnlyVersion = $state(0);
 
 const openDocuments = new SvelteMap<string, DocumentState>();
 let activeDocId = $state<string | null>(null);
+
+/**
+ * Audit 3.3 — the vault these documents belong to. Bound to the INCOMING
+ * vault when `clear()` runs in the `document` pre-swap handler, which fires
+ * while the OUTGOING vault is still semantically active (the committed vault
+ * path hasn't flipped yet). A stale tile `$effect` from the outgoing vault
+ * that fires loadDocument before it unmounts would otherwise repopulate the
+ * map with the old vault's content; a subsequent debounced write would then
+ * emit that old vault-relative path into the new vault's root. `loadDocument`
+ * refuses inserts whose live `getActiveVaultPath()` doesn't match `boundVault`.
+ * `null` means unbound (first open / post-close) — the first load then adopts
+ * the live vault. Read via the `activeVaultPath` leaf (not `vaultStore`) to
+ * avoid an import cycle through vault.svelte.ts.
+ */
+let boundVault: string | null = null;
 
 /**
  * Per-writer dirty tracking (audit 2.3). Each open editor on a file (a
@@ -241,6 +257,18 @@ export const documentStore = {
       richText: doc.richText,
       isDirty: false,
     };
+
+    // Audit 3.3 — cross-vault repopulation guard. During a vault swap the
+    // pre-swap handler clears the map and binds the store to the incoming
+    // vault; until the committed vault path actually flips to that vault, any
+    // load is a stale call from an outgoing-vault component that hasn't
+    // unmounted yet, so return the constructed state WITHOUT inserting it (a
+    // no-op for the store). When unbound (first open), adopt the live vault.
+    const live = getActiveVaultPath();
+    if (boundVault !== null && live !== boundVault) {
+      return state;
+    }
+    if (boundVault === null) boundVault = live;
 
     openDocuments.set(doc.docId, state);
     return state;
@@ -442,8 +470,12 @@ export const documentStore = {
 
   /**
    * Clears all document state (called on project close/switch).
+   *
+   * Audit 3.3 — `nextVault` binds the store to the incoming vault so a stale
+   * outgoing-vault `loadDocument` is refused until `vaultStore.path` flips to
+   * it. Defaults to null (unbound) for non-swap callers and tests.
    */
-  clear() {
+  clear(nextVault: string | null = null) {
     openDocuments.clear();
     activeDocId = null;
     dirtyWriters.clear();
@@ -454,6 +486,7 @@ export const documentStore = {
       readOnlyDocs.clear();
       readOnlyVersion++;
     }
+    boundVault = nextVault;
   },
 
   /**
@@ -542,6 +575,8 @@ export const documentStore = {
 // Drops every loaded document, the frontmatter cache, mutation versions
 // and read-only flags so the new vault can't see fragments of the prior
 // vault's open documents.
-onVaultSwap('pre-swap', 'document', () => {
-  documentStore.clear();
+onVaultSwap('pre-swap', 'document', (event) => {
+  // Audit 3.3 — bind to the incoming vault so loadDocument refuses stale
+  // outgoing-vault loads until vaultStore.path flips to it.
+  documentStore.clear(event.nextVault);
 });

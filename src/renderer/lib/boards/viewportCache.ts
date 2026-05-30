@@ -17,6 +17,7 @@
 import { scheduleMiscWrite } from './miscWriteScheduler';
 import { registerResetCallback, registerTestResetCallback } from './writeStateTracking';
 import { invokeOk } from '../utils/invokeOk';
+import { setActiveVaultPath } from '../vault/activeVaultPath';
 
 export interface ViewportEntry {
   x: number;
@@ -42,6 +43,11 @@ export function seedViewportsCache(
 ): void {
   viewportsCache.clear();
   viewportsVaultRoot = vaultRoot;
+  // Publish the committed vault root for cross-vault guards (audit 3.3). This
+  // is the single commit-time call that receives the candidate path, so it
+  // doubles as the renderer's "active vault" signal for stores that must not
+  // import vaultStore (would form an import cycle).
+  setActiveVaultPath(vaultRoot);
   for (const [boardId, vp] of Object.entries(map ?? {})) {
     if (!vp || typeof vp !== 'object') continue;
     if (
@@ -61,6 +67,9 @@ export function seedViewportsCache(
 export function clearViewportsCache(): void {
   viewportsCache.clear();
   viewportsVaultRoot = null;
+  // Swap/close drops the active-vault signal too, so a cross-vault guard sees
+  // no committed vault during the swap window (audit 3.3).
+  setActiveVaultPath('');
 }
 
 export function getViewportFromCache(boardId: string): ViewportEntry | null {

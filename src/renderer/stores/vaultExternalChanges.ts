@@ -783,6 +783,10 @@ function promptBulkExternalChanges(prompts: PendingPrompt[], ctx: VaultContext):
               }
             } else {
               documentStore.unloadDocument(p.editorDoc.docId);
+              // Phase 4.2 (2026-05-30) — Reload-all accepted the deletion of
+              // this file; drop its tags.json membership (mirrors the single-
+              // file Reload). Keep-all re-creates the files, so it must not.
+              fileTagsStore.dropFile(p.rel);
             }
           }
         },
@@ -977,6 +981,11 @@ function promptClosedBoardFileMissing(
           // Ctrl+Z if they made a mistake. fileSnapshots empty because the
           // file is already gone — undo restores tiles but not bodies.
           boardStore.cascadeDeleteByVaultPath(rel, {}, vaultRoot);
+          // Phase 4.2 (2026-05-30) — the user confirmed the file is gone
+          // (no open editor case); drop its tags.json membership so the
+          // orphan entry doesn't linger until the next vault open. "Dismiss"
+          // leaves it intact in case the user restores the file from trash.
+          fileTagsStore.dropFile(rel);
         },
       },
       {
@@ -1217,6 +1226,11 @@ function promptDeletedFile(
           // (Phase 1), so we don't need to reach into their debounce
           // timers from here.
           documentStore.unloadDocument(editorDoc.docId);
+          // Phase 4.2 (2026-05-30) — the user accepted the deletion, so drop
+          // the file's `.filo/tags.json` membership too. Without this the
+          // orphan entry lingers until the next vault-open pruneOrphanFileTags.
+          // (Suppressed on Keep local — that path re-creates the file.)
+          fileTagsStore.dropFile(rel);
         },
       },
       {

@@ -38,7 +38,10 @@ describe('parseRecurrence', () => {
 });
 
 describe('nextDueDate: schedule mode (current due + interval)', () => {
-  const COMPLETED = new Date(2026, 4, 15); // irrelevant in schedule mode
+  // Pinned far in the past so the schedule-mode roll-forward (audit 1.4) never
+  // triggers for these cases — the task is completed long before its due date,
+  // so each asserts pure interval arithmetic (next = currentDue + one interval).
+  const COMPLETED = new Date(2020, 0, 1);
 
   it('daily advances by 1 day', () => {
     expect(nextDueDate('2026-05-10', 'daily', 'schedule', COMPLETED)).toBe('2026-05-11');
@@ -97,6 +100,35 @@ describe('nextDueDate: schedule mode (current due + interval)', () => {
   it('returns null when currentDue is malformed', () => {
     expect(nextDueDate('not-a-date', 'daily', 'schedule', COMPLETED)).toBeNull();
     expect(nextDueDate('2026-02-30', 'daily', 'schedule', COMPLETED)).toBeNull();
+  });
+});
+
+describe('nextDueDate: schedule mode rolls forward past overdue dates (audit 1.4)', () => {
+  it('a weekly task several intervals overdue advances to the next FUTURE occurrence', () => {
+    // due 2026-05-04, completed 2026-05-25 (3 weeks late): occurrences fall on
+    // 05-04 / 05-11 / 05-18 / 05-25 / 06-01 -> first strictly after 05-25 is 06-01.
+    const next = nextDueDate('2026-05-04', 'weekly', 'schedule', new Date(2026, 4, 25));
+    expect(next).toBe('2026-06-01');
+    // The whole point of the fix: next due is in the future, not still the past.
+    expect(next! > '2026-05-25').toBe(true);
+  });
+
+  it('an "every 3d" task many intervals overdue lands strictly in the future', () => {
+    // 05-01, 05-04, ..., 05-25, then 05-28 - first strictly after the 05-25 completion.
+    expect(nextDueDate('2026-05-01', 'every 3d', 'schedule', new Date(2026, 4, 25)))
+      .toBe('2026-05-28');
+  });
+
+  it('a task due exactly today rolls to the next interval (strictly future)', () => {
+    expect(nextDueDate('2026-05-25', 'weekly', 'schedule', new Date(2026, 4, 25)))
+      .toBe('2026-06-01');
+  });
+
+  it('a not-yet-overdue task still advances by exactly one interval (no over-roll)', () => {
+    // due 2026-05-20, completed early on 05-18: one interval (05-27) is already
+    // in the future, so it does not roll further.
+    expect(nextDueDate('2026-05-20', 'weekly', 'schedule', new Date(2026, 4, 18)))
+      .toBe('2026-05-27');
   });
 });
 

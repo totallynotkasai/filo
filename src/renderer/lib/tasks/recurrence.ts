@@ -131,15 +131,24 @@ export function nextDueDate(
   const parsed = parseRecurrence(recurrence);
   if (!parsed) return null;
 
-  let base: Date;
   if (mode === 'completion') {
-    base = startOfDay(completedOn);
-  } else {
-    if (!currentDue) return null;
-    const parsedDue = parseIsoDate(currentDue);
-    if (!parsedDue) return null;
-    base = parsedDue;
+    // Completion mode is unaffected by how overdue the task is:
+    // next = completion day + one interval.
+    return fmtDate(addInterval(startOfDay(completedOn), parsed));
   }
 
-  return fmtDate(addInterval(base, parsed));
+  // Schedule mode (audit 1.4): the next due date is the first occurrence on the
+  // fixed schedule that falls strictly AFTER today (the completion day).
+  // Advancing by a single interval would leave a long-overdue task still due in
+  // the past, so keep stepping the interval until we clear today.
+  if (!currentDue) return null;
+  const parsedDue = parseIsoDate(currentDue);
+  if (!parsedDue) return null;
+
+  const today = startOfDay(completedOn);
+  let next = addInterval(parsedDue, parsed);
+  while (next.getTime() <= today.getTime()) {
+    next = addInterval(next, parsed);
+  }
+  return fmtDate(next);
 }

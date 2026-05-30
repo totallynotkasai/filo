@@ -822,6 +822,15 @@ async function performDelete(ctx: VaultContext, itemPath: string): Promise<boole
           // for the folder case, both safe to call regardless of type.
           fileTagsStore.dropFile(rel);
           fileTagsStore.dropFolder(rel);
+          // Phase 4.1 (2026-05-30) — drain the tag drop synchronously, in the
+          // same critical section as the awaited board flush below. The drop
+          // helpers only arm the 300ms misc debounce; leaving it there means a
+          // crash between here and the cascade flush keeps a permanent orphan
+          // `fileTags` entry in `tags.json` (the file is gone but its tag
+          // membership lingers until the next vault-open `pruneOrphanFileTags`).
+          // The rename cascade flushes here for exactly this reason (F3) — this
+          // closes the same gap on the delete path.
+          await fileTagsStore.flushPendingSave();
           // B4 — clean up Document Boards whose `contentId` points at a
           // .md under the deleted path, even when the Document Board's
           // own `.board.json` lives outside the deleted tree. The

@@ -133,11 +133,17 @@ function getBoardWriteArgs(
  * OR a stale hit it falls back to a full scan — so the memo can NEVER return
  * a wrong board; it only turns the repeated O(boards×entities) scans on every
  * keyless persist into O(1) after the first lookup. Cleared on vault close.
+ *
+ * Plain (non-reactive) Maps: consulted imperatively during persist, never in a
+ * reactive ($derived/$effect) context — so SvelteMap isn't required (mirrors
+ * the tabs.svelte.ts reverse-index convention).
  */
+/* eslint-disable svelte/prefer-svelte-reactivity */
 const tileBoardMemo = new Map<string, string>();
 const connectionBoardMemo = new Map<string, string>();
 const frameBoardMemo = new Map<string, string>();
 const kanbanColumnBoardMemo = new Map<string, string>();
+/* eslint-enable svelte/prefer-svelte-reactivity */
 
 function resetBoardOwnerMemos(): void {
   tileBoardMemo.clear();

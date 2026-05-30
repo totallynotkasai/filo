@@ -27,6 +27,9 @@ export class SpatialScope {
   // tile id (coalesced — last fire wins); the value is a thunk so the flush in
   // endBatch() reads the tile's *final* position (a dragged tile commits its
   // drop position before endBatch runs). See updateOrDefer / Phase 7.7.
+  // Non-reactive internal cache — flushed imperatively in endBatch(), never read
+  // in a reactive context — so a plain Map (not SvelteMap) is correct.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
   private _deferredResizes = new Map<
     string,
     () => { x: number; y: number; width: number; height: number }

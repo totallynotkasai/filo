@@ -216,9 +216,14 @@ export class TaskListViewModel {
   // groupKey / capitalize / GROUP_ORDER live in `lib/tasks/taskListModel.ts`.
   groups = $derived.by<TaskGroup[]>(() => {
     const groupBy = this.deps.getGroupBy();
+    // Local midnight — mirrors `filteredRows` / `smartListCounts` so due-date
+    // grouping agrees with the smart lists, and is passed explicitly to keep
+    // `groupKey` deterministic rather than reading `new Date()` itself (audit 1.3).
+    const today = new SvelteDate();
+    today.setHours(0, 0, 0, 0);
     const buckets = new SvelteMap<string, TaskGroup>();
     for (const row of this.topLevelRows) {
-      const { key, label } = groupKey(row, groupBy);
+      const { key, label } = groupKey(row, groupBy, today);
       let g = buckets.get(key);
       if (!g) {
         g = { key, label, rows: [] };

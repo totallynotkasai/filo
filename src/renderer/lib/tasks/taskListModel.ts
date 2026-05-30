@@ -73,6 +73,20 @@ export const GROUP_ORDER: Record<GroupBy, string[]> = {
 };
 
 /**
+ * Parses a `YYYY-MM-DD` string as a LOCAL-time date (local midnight), not UTC.
+ * `new Date('2026-05-20')` parses an ISO date-only string as UTC midnight,
+ * which `setHours(0,0,0,0)` then rolls back to the *previous* local day in
+ * every UTC-negative zone (all of the Americas) — silently misfiling "today"
+ * / "overdue" and the due-date groups. Local construction avoids that drift.
+ * Returns `null` for anything that isn't a bare ISO date. Mirrors the inline
+ * parsers already used in `dueDateFormat.ts`. (Audit 1.1)
+ */
+function parseLocalDate(iso: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
+}
+
+/**
  * A future `startDate` defers a task: it hides from focused smart lists
  * (Today / Upcoming) until the start date arrives, but stays visible in All.
  * Mirrors Things' / OmniFocus' defer-date semantics.
@@ -83,8 +97,8 @@ export const GROUP_ORDER: Record<GroupBy, string[]> = {
  */
 export function isDeferred(r: TaskRow, today: Date): boolean {
   if (!r.startDate) return false;
-  const start = new Date(r.startDate);
-  if (Number.isNaN(start.getTime())) return false;
+  const start = parseLocalDate(r.startDate);
+  if (!start) return false;
   start.setHours(0, 0, 0, 0);
   return start.getTime() > today.getTime();
 }
@@ -97,8 +111,8 @@ export function smartListMatch(r: TaskRow, list: SmartListId, today: Date): bool
   if (list === 'completed') return r.completed;
   if (list === 'no-date') return !r.dueDate && !isDeferred(r, today);
   if (!r.dueDate) return false;
-  const due = new Date(r.dueDate);
-  if (Number.isNaN(due.getTime())) return false;
+  const due = parseLocalDate(r.dueDate);
+  if (!due) return false;
   due.setHours(0, 0, 0, 0);
   if (list === 'today') {
     return due.getTime() === today.getTime() && !r.completed && !isDeferred(r, today);
@@ -193,7 +207,7 @@ export function filterTaskRows(
   });
 }
 
-export function groupKey(r: TaskRow, groupBy: GroupBy): GroupKey {
+export function groupKey(r: TaskRow, groupBy: GroupBy, today: Date): GroupKey {
   if (groupBy === 'status') {
     if (r.completed) return { key: 'done', label: 'Done' };
     if (r.status === 'in-progress' || r.status === 'in_progress' || r.status === 'doing') {
@@ -208,9 +222,10 @@ export function groupKey(r: TaskRow, groupBy: GroupBy): GroupKey {
   }
   if (groupBy === 'dueDate') {
     if (!r.dueDate) return { key: 'no-date', label: 'No Due Date' };
-    const today = new Date(new Date().toDateString());
-    const due = new Date(r.dueDate);
-    if (due < today) return { key: 'overdue', label: 'Overdue' };
+    const due = parseLocalDate(r.dueDate);
+    if (!due) return { key: 'no-date', label: 'No Due Date' };
+    due.setHours(0, 0, 0, 0);
+    if (due.getTime() < today.getTime()) return { key: 'overdue', label: 'Overdue' };
     const diff = (due.getTime() - today.getTime()) / 86400000;
     if (diff < 1) return { key: 'today', label: 'Today' };
     if (diff < 7) return { key: 'this-week', label: 'This Week' };

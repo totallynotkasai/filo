@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
   smartListMatch,
   compareRows,
@@ -221,94 +221,92 @@ describe('compareRows — all sortBys', () => {
 
 describe('groupKey — all 6 groupBys including category', () => {
   it('groupBy "status" — completed rows go to "done"', () => {
-    expect(groupKey(makeRow({ completed: true }), 'status')).toEqual({
+    expect(groupKey(makeRow({ completed: true }), 'status', TODAY)).toEqual({
       key: 'done',
       label: 'Done',
     });
   });
 
   it('groupBy "status" — empty status → "todo"', () => {
-    expect(groupKey(makeRow(), 'status')).toEqual({ key: 'todo', label: 'To Do' });
+    expect(groupKey(makeRow(), 'status', TODAY)).toEqual({ key: 'todo', label: 'To Do' });
   });
 
   it('groupBy "status" — "in-progress" / "in_progress" / "doing" normalise to in-progress', () => {
-    expect(groupKey(makeRow({ status: 'in-progress' }), 'status').key).toBe('in-progress');
-    expect(groupKey(makeRow({ status: 'in_progress' }), 'status').key).toBe('in-progress');
-    expect(groupKey(makeRow({ status: 'doing' }), 'status').key).toBe('in-progress');
+    expect(groupKey(makeRow({ status: 'in-progress' }), 'status', TODAY).key).toBe('in-progress');
+    expect(groupKey(makeRow({ status: 'in_progress' }), 'status', TODAY).key).toBe('in-progress');
+    expect(groupKey(makeRow({ status: 'doing' }), 'status', TODAY).key).toBe('in-progress');
   });
 
   it('groupBy "status" — custom status preserves its raw key, capitalised label', () => {
-    expect(groupKey(makeRow({ status: 'blocked' }), 'status')).toEqual({
+    expect(groupKey(makeRow({ status: 'blocked' }), 'status', TODAY)).toEqual({
       key: 'blocked',
       label: 'Blocked',
     });
   });
 
   it('groupBy "priority" — uses raw priority key, "No Priority" label for none', () => {
-    expect(groupKey(makeRow({ priority: 'urgent' }), 'priority')).toEqual({
+    expect(groupKey(makeRow({ priority: 'urgent' }), 'priority', TODAY)).toEqual({
       key: 'urgent',
       label: 'Urgent',
     });
-    expect(groupKey(makeRow({ priority: 'none' }), 'priority')).toEqual({
+    expect(groupKey(makeRow({ priority: 'none' }), 'priority', TODAY)).toEqual({
       key: 'none',
       label: 'No Priority',
     });
   });
 
   it('groupBy "dueDate" — empty dueDate → "no-date"', () => {
-    expect(groupKey(makeRow(), 'dueDate').key).toBe('no-date');
+    expect(groupKey(makeRow(), 'dueDate', TODAY).key).toBe('no-date');
   });
 
+  // groupKey now takes an injected `today` (audit 1.3), so these are
+  // deterministic against the fixed TODAY (2026-05-16) rather than the clock.
   it('groupBy "dueDate" — past date → "overdue"', () => {
-    // groupKey reads `new Date()` internally; use a date guaranteed to be in
-    // the past to make this assertion stable regardless of the test clock.
-    const lastYear = new Date();
-    lastYear.setFullYear(lastYear.getFullYear() - 1);
-    const yyyy = lastYear.getFullYear();
-    const mm = String(lastYear.getMonth() + 1).padStart(2, '0');
-    const dd = String(lastYear.getDate()).padStart(2, '0');
-    expect(groupKey(makeRow({ dueDate: `${yyyy}-${mm}-${dd}` }), 'dueDate').key).toBe('overdue');
+    expect(groupKey(makeRow({ dueDate: '2026-05-10' }), 'dueDate', TODAY).key).toBe('overdue');
+  });
+
+  it('groupBy "dueDate" — due today → "today"', () => {
+    expect(groupKey(makeRow({ dueDate: '2026-05-16' }), 'dueDate', TODAY).key).toBe('today');
+  });
+
+  it('groupBy "dueDate" — within the week → "this-week"', () => {
+    expect(groupKey(makeRow({ dueDate: '2026-05-20' }), 'dueDate', TODAY).key).toBe('this-week');
   });
 
   it('groupBy "dueDate" — far-future date → "later"', () => {
-    const nextYear = new Date();
-    nextYear.setFullYear(nextYear.getFullYear() + 1);
-    const yyyy = nextYear.getFullYear();
-    const mm = String(nextYear.getMonth() + 1).padStart(2, '0');
-    const dd = String(nextYear.getDate()).padStart(2, '0');
-    expect(groupKey(makeRow({ dueDate: `${yyyy}-${mm}-${dd}` }), 'dueDate').key).toBe('later');
+    expect(groupKey(makeRow({ dueDate: '2026-09-01' }), 'dueDate', TODAY).key).toBe('later');
   });
 
   it('groupBy "tag" — empty tags → "untagged"; non-empty → first tag', () => {
-    expect(groupKey(makeRow(), 'tag')).toEqual({ key: 'untagged', label: 'Untagged' });
-    expect(groupKey(makeRow({ tags: ['work', 'errand'] }), 'tag')).toEqual({
+    expect(groupKey(makeRow(), 'tag', TODAY)).toEqual({ key: 'untagged', label: 'Untagged' });
+    expect(groupKey(makeRow({ tags: ['work', 'errand'] }), 'tag', TODAY)).toEqual({
       key: 'tag:work',
       label: '#work',
     });
   });
 
   it('groupBy "category" — empty/whitespace → "uncategorised"; non-empty → lowercased key + original label', () => {
-    expect(groupKey(makeRow(), 'category')).toEqual({
+    expect(groupKey(makeRow(), 'category', TODAY)).toEqual({
       key: 'uncategorised',
       label: 'Uncategorised',
     });
-    expect(groupKey(makeRow({ category: '   ' }), 'category')).toEqual({
+    expect(groupKey(makeRow({ category: '   ' }), 'category', TODAY)).toEqual({
       key: 'uncategorised',
       label: 'Uncategorised',
     });
-    expect(groupKey(makeRow({ category: 'Home' }), 'category')).toEqual({
+    expect(groupKey(makeRow({ category: 'Home' }), 'category', TODAY)).toEqual({
       key: 'category:home',
       label: 'Home',
     });
-    expect(groupKey(makeRow({ category: 'Work Stuff' }), 'category')).toEqual({
+    expect(groupKey(makeRow({ category: 'Work Stuff' }), 'category', TODAY)).toEqual({
       key: 'category:work stuff',
       label: 'Work Stuff',
     });
   });
 
   it('groupBy "none" — always returns a single bucket', () => {
-    expect(groupKey(makeRow(), 'none')).toEqual({ key: 'all', label: 'All Tasks' });
-    expect(groupKey(makeRow({ priority: 'urgent', tags: ['x'] }), 'none')).toEqual({
+    expect(groupKey(makeRow(), 'none', TODAY)).toEqual({ key: 'all', label: 'All Tasks' });
+    expect(groupKey(makeRow({ priority: 'urgent', tags: ['x'] }), 'none', TODAY)).toEqual({
       key: 'all',
       label: 'All Tasks',
     });
@@ -360,5 +358,45 @@ describe('smartListMatch — bucket sanity', () => {
       // ever loses a member.
       expect(() => smartListMatch(makeRow(), b, TODAY)).not.toThrow();
     }
+  });
+});
+
+describe('date parsing is local-time, not UTC (audit 1.1)', () => {
+  // Reproduce the off-by-one: in any UTC-negative zone `new Date('2026-05-16')`
+  // is UTC midnight = the *previous* local day, so the old code filed a
+  // due-today task as "overdue" and dropped it from the "today" list. Pinning
+  // the runner to America/New_York makes this a true regression guard — it
+  // fails on the pre-fix UTC-parsing code and passes on local construction.
+  const ORIGINAL_TZ = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = 'America/New_York';
+  });
+  afterAll(() => {
+    process.env.TZ = ORIGINAL_TZ;
+  });
+
+  function localMidnight(y: number, m: number, d: number): Date {
+    const t = new Date(y, m - 1, d);
+    t.setHours(0, 0, 0, 0);
+    return t;
+  }
+
+  it('smartListMatch files a task due today under "today", never "overdue"', () => {
+    const today = localMidnight(2026, 5, 16);
+    const row = makeRow({ dueDate: '2026-05-16' });
+    expect(smartListMatch(row, 'today', today)).toBe(true);
+    expect(smartListMatch(row, 'overdue', today)).toBe(false);
+    expect(smartListMatch(row, 'upcoming', today)).toBe(false);
+  });
+
+  it('groupKey files a task due today under "today", not "overdue"', () => {
+    const today = localMidnight(2026, 5, 16);
+    expect(groupKey(makeRow({ dueDate: '2026-05-16' }), 'dueDate', today).key).toBe('today');
+  });
+
+  it('isDeferred compares start dates in local time', () => {
+    const today = localMidnight(2026, 5, 16);
+    expect(isDeferred(makeRow({ startDate: '2026-05-17' }), today)).toBe(true);
+    expect(isDeferred(makeRow({ startDate: '2026-05-16' }), today)).toBe(false);
   });
 });

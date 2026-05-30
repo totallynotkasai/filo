@@ -3,6 +3,7 @@ import {
   writePendingRewrite,
   clearPendingRewrite,
   readPendingRewrite,
+  hasPartialTagRewriteState,
   type TagRewriteSentinelPayload,
 } from '@renderer/lib/vault/tagRewriteSentinel';
 
@@ -84,6 +85,7 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
       oldName: 'project-a',
       newName: 'project-alpha',
       plan: ['notes/foo.md', 'archive/bar.md'],
+      preexistingNewNamePaths: ['already/alpha.md'],
     };
     await writePendingRewrite('/vault', payload);
     const result = await readPendingRewrite('/vault');
@@ -97,6 +99,7 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
       oldName: 'obsolete',
       newName: null,
       plan: ['old/note.md'],
+      preexistingNewNamePaths: [],
     };
     await writePendingRewrite('/vault', payload);
     const result = await readPendingRewrite('/vault');
@@ -110,6 +113,7 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
       oldName: 'a',
       newName: 'b',
       plan: ['x.md'],
+      preexistingNewNamePaths: [],
     });
     await clearPendingRewrite('/vault');
     const result = await readPendingRewrite('/vault');
@@ -188,12 +192,14 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
       oldName: 'oldA',
       newName: 'newA',
       plan: ['a.md'],
+      preexistingNewNamePaths: [],
     };
     const payloadB: TagRewriteSentinelPayload = {
       timestamp: 2,
       oldName: 'oldB',
       newName: 'newB',
       plan: ['b.md'],
+      preexistingNewNamePaths: [],
     };
     // Fire both without awaiting — the mutex must queue them so write #1
     // (delayed) commits before write #2 starts.
@@ -223,7 +229,70 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
         oldName: 'a',
         newName: 'b',
         plan: ['x.md'],
+        preexistingNewNamePaths: [],
       }),
     ).rejects.toThrow();
+  });
+
+  it('reads a legacy sentinel without preexistingNewNamePaths as an empty list', async () => {
+    // Forward-compat: a sentinel written by an app version before Phase 7.3
+    // lacks the field. It must still recover (defaulted to []).
+    fs.files.set(
+      '/vault::.filo/tag-rewrite-pending.json',
+      JSON.stringify({ timestamp: 1, oldName: 'a', newName: 'b', plan: ['x.md'] }),
+    );
+    const result = await readPendingRewrite('/vault');
+    expect(result.unreadable).toBeFalsy();
+    expect(result.payload?.preexistingNewNamePaths).toEqual([]);
+  });
+
+  it('read on a sentinel with non-string preexistingNewNamePaths returns unreadable', async () => {
+    fs.files.set(
+      '/vault::.filo/tag-rewrite-pending.json',
+      JSON.stringify({
+        timestamp: 1,
+        oldName: 'a',
+        newName: 'b',
+        plan: ['x.md'],
+        preexistingNewNamePaths: [42],
+      }),
+    );
+    const result = await readPendingRewrite('/vault');
+    expect(result.unreadable).toBe(true);
+  });
+});
+
+describe('hasPartialTagRewriteState — Phase 7.3 exemption', () => {
+  const md = (path: string, ...tags: string[]) => ({ path, tags });
+
+  it('returns false for removals (newName === null)', () => {
+    expect(hasPartialTagRewriteState(null, [md('a.md', 'x')])).toBe(false);
+  });
+
+  it('returns false when no file carries newName', () => {
+    expect(
+      hasPartialTagRewriteState('alpha', [md('a.md', 'beta'), md('b.md', 'gamma')]),
+    ).toBe(false);
+  });
+
+  it('flags a file that gained newName via an interrupted sweep', () => {
+    expect(hasPartialTagRewriteState('alpha', [md('swept.md', 'alpha')], [])).toBe(true);
+  });
+
+  it('does NOT flag a file that legitimately carried newName before the rename', () => {
+    // The only newName carrier is in the pre-existing snapshot → not partial.
+    expect(
+      hasPartialTagRewriteState('alpha', [md('already.md', 'alpha')], ['already.md']),
+    ).toBe(false);
+  });
+
+  it('still flags a genuine partial when a non-exempt file also carries newName', () => {
+    expect(
+      hasPartialTagRewriteState(
+        'alpha',
+        [md('already.md', 'alpha'), md('swept.md', 'alpha')],
+        ['already.md'],
+      ),
+    ).toBe(true);
   });
 });

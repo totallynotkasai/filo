@@ -63,6 +63,16 @@ export interface TagRewriteSentinelPayload {
   newName: string | null;
   /** Vault-relative paths the rewrite was planning to touch. */
   plan: string[];
+  /**
+   * Phase 7.3 — vault-relative paths that already carried `newName` BEFORE
+   * the rewrite began (a merge-rename into an existing tag, or files the user
+   * had independently tagged). Recorded at write time so partial-state
+   * detection can exclude them: a file carrying `newName` only signals an
+   * interrupted sweep if it WASN'T already a `newName` carrier. Empty for
+   * removals (`newName === null`). Sentinels written before this field
+   * existed read back as `[]` (forward-compatible).
+   */
+  preexistingNewNamePaths: string[];
 }
 
 export interface ReadResult {
@@ -177,12 +187,21 @@ export function readPendingRewrite(vaultRoot: string): Promise<ReadResult> {
       ) {
         return { unreadable: true };
       }
+      // Phase 7.3 — `preexistingNewNamePaths` is required in new sentinels but
+      // absent in ones written by an older app version; tolerate absence
+      // (default `[]`) so an upgrade-across-a-pending-rewrite still recovers.
+      // When present it must be a string[], else the sentinel is corrupt.
+      const pre = parsed.preexistingNewNamePaths;
+      if (pre !== undefined && (!Array.isArray(pre) || !pre.every((p) => typeof p === 'string'))) {
+        return { unreadable: true };
+      }
       return {
         payload: {
           timestamp: parsed.timestamp,
           oldName: parsed.oldName,
           newName: parsed.newName,
           plan: parsed.plan,
+          preexistingNewNamePaths: pre ?? [],
         },
       };
     } catch {
@@ -193,11 +212,19 @@ export function readPendingRewrite(vaultRoot: string): Promise<ReadResult> {
 
 /**
  * IMPL_PLAN_2026-05-26 / Item 4 — Detect whether a tag rewrite (rename)
- * had partial progress at crash time. Returns true when ANY file in the
- * vault index already carries `newName` — meaning some files were
- * rewritten before the crash and some still carry `oldName`. The naive
- * "Discard plan" path would otherwise leave the vault split between the
- * two tag names with no warning.
+ * had partial progress at crash time. Returns true when a file in the vault
+ * index carries `newName` that WASN'T already a `newName` carrier before the
+ * rewrite — meaning some files were rewritten before the crash and some still
+ * carry `oldName`. The naive "Discard plan" path would otherwise leave the
+ * vault split between the two tag names with no warning.
+ *
+ * Phase 7.3 — `preexistingNewNamePaths` (snapshotted in the sentinel at write
+ * time) is excluded from the scan. Without it, a merge-rename into an existing
+ * tag — or any file the user had independently tagged with `newName` — falsely
+ * tripped "partial rewrite detected" on every subsequent open, since those
+ * files legitimately carried `newName` all along. (A file that carried BOTH
+ * tags pre-rename is also exempt; the sentinel records no per-path commit
+ * status, so erring toward fewer false alarms is the honest trade-off.)
  *
  * Always returns false for removals (`newName === null`) — the sentinel
  * format doesn't record per-path commit status, so there's no honest way
@@ -205,16 +232,18 @@ export function readPendingRewrite(vaultRoot: string): Promise<ReadResult> {
  * could broaden detection if removal partial-state turns out to bite
  * users in practice.
  *
- * Pure function over an iterable of `{ tags: readonly string[] }`. Lets
- * the recovery dialog be tested without mounting the vault index.
+ * Pure function over an iterable of `{ path, tags }`. Lets the recovery
+ * dialog be tested without mounting the vault index.
  */
 export function hasPartialTagRewriteState(
   newName: string | null,
-  metadata: Iterable<{ tags: readonly string[] }>,
+  metadata: Iterable<{ path: string; tags: readonly string[] }>,
+  preexistingNewNamePaths: Iterable<string> = [],
 ): boolean {
   if (newName === null) return false;
+  const exempt = new Set(preexistingNewNamePaths);
   for (const m of metadata) {
-    if (m.tags.includes(newName)) return true;
+    if (m.tags.includes(newName) && !exempt.has(m.path)) return true;
   }
   return false;
 }

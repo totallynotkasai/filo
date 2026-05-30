@@ -555,7 +555,7 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
     const res = await readPendingRewrite(newVaultPath);
     if (!isStillSameVault()) return;
     if (res.payload) {
-      const { oldName, newName, plan } = res.payload;
+      const { oldName, newName, plan, preexistingNewNamePaths } = res.payload;
       const verb = newName === null ? 'removal' : 'rename';
       const target = newName === null ? `"${oldName}"` : `"${oldName}" → "${newName}"`;
       // IMPL_PLAN_2026-05-26 / Item 4 — Detect partial-rewrite state. If
@@ -570,6 +570,7 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
       const newTagPresent = hasPartialTagRewriteState(
         newName,
         vaultIndexStore.allMetadata(),
+        preexistingNewNamePaths,
       );
       const body = newTagPresent
         ? `Filo found an unfinished tag ${verb} (${target}) and some files have already been rewritten in the previous session. Resume to finish — Discard will finalise the rewrite so the vault doesn't split between the old and new tag.`

@@ -190,6 +190,15 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
         oldName,
         newName,
         plan: plan.map((p) => p.path),
+        // Phase 7.3 — snapshot files that ALREADY carry `newName` before the
+        // sweep touches disk (a merge-rename into an existing tag, or files
+        // the user independently tagged). Partial-state detection excludes
+        // these so recovery doesn't falsely flag "some files already rewritten"
+        // on every open. Empty for removals.
+        preexistingNewNamePaths:
+          newName === null
+            ? []
+            : metadata.filter((m) => m.tags.includes(newName)).map((m) => m.path),
       });
     } catch (err) {
       reportError('tagRewriteSweep', err, 'Failed to write recovery sentinel, aborting');

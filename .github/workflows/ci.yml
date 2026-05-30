@@ -28,17 +28,13 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
-      - run: npm run lint
-      - run: npm run check
-      - run: npm run test:unit:strict
-      - run: npm run build
-      - run: npm run ci:file-sizes
-      - run: npm run ci:type-casts
-      - run: npm run ci:ipc-parity
-      - run: npm run ci:legacy-read
-      - run: npm run ci:vault-lifecycle-coverage
-      - run: npm run ci:no-adhoc-schedulers
-      - run: npm run ci:no-raw-disk-shape-ipc
+      # Phase 0.3 (audit 2026-05-30): run the FULL gate set. `npm run ci:verify`
+      # chains all 25 guards — lint -> check -> test:unit:strict -> build ->
+      # every ci:* script — in the correct order. The workflow previously ran
+      # only 11 of them, leaving 14 safety-critical guards unenforced (markdown
+      # read/write gateways, untrusted-sink discipline, direct-board-mutations,
+      # vault-scoped-state, command-snapshot discipline, versioned-config, etc.).
+      - run: npm run ci:verify
 
   coverage:
     # PR-only because v8 coverage instrumentation roughly doubles the

@@ -61,6 +61,7 @@
             {#each toast.actions as action, i (i)}
               <button
                 class="toast-action"
+                aria-label={`${action.label} — ${toast.text}`}
                 onclick={() => uiStore.invokeToastAction(toast.id, i)}
               >{action.label}</button>
             {/each}

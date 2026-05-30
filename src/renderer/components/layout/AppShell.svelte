@@ -814,7 +814,10 @@
     bottom: var(--tabbar-height, 36px);
     left: 0;
     width: 560px;
-    z-index: var(--z-modal-backdrop);
+    /* Audit 6.4 — paint one layer above the click-catcher backdrop
+       (--z-modal-backdrop, 3000) rather than sharing it. Sharing was correct
+       only by DOM order; --z-modal (3001) makes the stacking explicit. */
+    z-index: var(--z-modal);
     max-height: 80vh;
     background: var(--modal-bg);
     border-top: 1px solid var(--ui-border);

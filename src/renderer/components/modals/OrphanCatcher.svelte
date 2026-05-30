@@ -54,6 +54,11 @@
 
   function remove(info: OrphanInfo) {
     boardStore.removeTilesWithHistory([info.tileId]);
+    // Audit 6.1 — the per-row delete stays single-tap (see the bulk-delete
+    // note below) but was previously silent. Surface a toast with the undo
+    // hint so the action isn't invisible, matching the feedback the bulk
+    // paths get from their confirm dialog.
+    uiStore.toast('Tile deleted — Ctrl+Z to undo', 'info', 2500);
     rescan();
   }
 
@@ -61,7 +66,8 @@
   // so the destructive action picks up the in-app ConfirmDialog chrome
   // (focus management from C.6, reduced motion, unified Esc/Enter). The
   // per-row `remove` action stays single-tap because it operates on one
-  // already-named tile and the user already chose it.
+  // already-named tile and the user already chose it (it gives toast
+  // feedback instead of a confirm — see `remove` above).
   function removeAll() {
     const ids = results.map((r) => r.tileId);
     if (ids.length === 0) return;

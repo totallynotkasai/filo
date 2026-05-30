@@ -9,6 +9,7 @@
   import { boardCacheStore } from '../../stores/boardCache.svelte';
   import { createId } from '../../lib/utils/ids';
   import { freezeLegacyKanbanFolder } from '../../lib/vault/kanbanFolderFreeze';
+  import { computeKeyboardReorder } from '../../lib/boards/boardReorder';
   import type { BoardType } from '../../../shared/types';
   import type { Board } from '../../schema/index';
   import { boardRegistry } from '../../core/boardRegistry';
@@ -75,6 +76,11 @@
   // Drag-to-reorder state
   let dragBoardId = $state<string | null>(null);
   let dragOverBoardId = $state<string | null>(null);
+
+  // Audit 6.5 — keyboard reorder (Alt+ArrowUp/Down), the a11y equivalent of
+  // the drag-to-reorder path above. `boardListEl` lets us refocus the moved
+  // row after the keyed `{#each}` re-renders, mirroring TabBar's Alt+Arrow.
+  let boardListEl = $state<HTMLDivElement | null>(null);
 
   const boards = $derived(() => {
     const project = vaultStore.project;
@@ -275,6 +281,23 @@
     dragBoardId = null;
     dragOverBoardId = null;
   }
+
+  // ── Keyboard Reorder (Alt+ArrowUp / Alt+ArrowDown) ──
+  // Swap the focused board with its visible neighbour, applied to the full
+  // `project.boards` array by the pure helper so an active search filter can't
+  // corrupt the global order. Refocus the moved row so the user can keep
+  // pressing, exactly like TabBar's tab reorder.
+  function moveBoard(boardId: string, delta: -1 | 1) {
+    const project = vaultStore.project;
+    if (!project) return;
+    const updated = computeKeyboardReorder(project.boards, boards(), boardId, delta);
+    if (!updated) return;
+    project.boards = updated;
+    vaultStore.markMetaDirty();
+    requestAnimationFrame(() => {
+      boardListEl?.querySelector<HTMLElement>(`[data-board-id="${boardId}"]`)?.focus();
+    });
+  }
 </script>
 
 <div class="browser-content">
@@ -288,6 +311,7 @@
         class="search-input"
         type="text"
         placeholder="Search boards..."
+        aria-label="Search boards"
         bind:value={searchQuery}
       />
     </div>
@@ -327,7 +351,7 @@
     {/if}
   {/if}
 
-  <div class="board-list">
+  <div class="board-list" bind:this={boardListEl}>
     {#if boards().length === 0}
       <p class="empty-message">
         {searchQuery ? 'No boards match your search' : 'No boards yet. Create one to get started.'}
@@ -339,6 +363,7 @@
           class:selected={selectedBoardIds.has(board.id)}
           class:drag-over={dragOverBoardId === board.id && dragBoardId !== board.id}
           class:dragging={dragBoardId === board.id}
+          data-board-id={board.id}
           draggable="true"
           ondragstart={(e) => handleDragStart(board.id, e)}
           ondragover={(e) => handleDragOver(board.id, e)}
@@ -346,7 +371,17 @@
           ondrop={(e) => handleDrop(board.id, e)}
           ondragend={handleDragEnd}
           onclick={(e) => { if (renamingBoardId !== board.id) handleBoardClick(board, e); }}
-          onkeydown={(e) => { if (e.key === 'Enter' && renamingBoardId !== board.id) handleBoardClick(board, e); }}
+          onkeydown={(e) => {
+            if (renamingBoardId === board.id) return;
+            // Alt+ArrowUp/Down reorders the focused row (keyboard a11y
+            // equivalent of drag-reorder); Enter opens the board.
+            if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+              e.preventDefault();
+              moveBoard(board.id, e.key === 'ArrowUp' ? -1 : 1);
+            } else if (e.key === 'Enter') {
+              handleBoardClick(board, e);
+            }
+          }}
           role="button"
           tabindex="0"
         >

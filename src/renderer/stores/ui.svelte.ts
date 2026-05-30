@@ -418,6 +418,15 @@ onVaultSwap('pre-swap', 'ui', () => {
   contextMenu = { visible: false, x: 0, y: 0, items: [] };
   activeModal = null;
   relinkContext = null;
-  confirmDialog = null;
+  // Audit 3.1 — fire the confirm dialog's onCancel before clearing it.
+  // A pending `confirmCloseAnyway` (awaited inside tabStore.close /
+  // closeOthers) resolves ONLY via onConfirm/onCancel; nulling the dialog
+  // directly left that promise unresolved, suspending the close() forever
+  // and stranding a phantom tab. Mirrors cancelTopLayer's confirm branch.
+  if (confirmDialog) {
+    const cfg = confirmDialog;
+    confirmDialog = null;
+    cfg.onCancel?.();
+  }
   pendingSidebarRenameId = null;
 });

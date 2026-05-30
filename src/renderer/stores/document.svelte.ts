@@ -46,6 +46,28 @@ const openDocuments = new SvelteMap<string, DocumentState>();
 let activeDocId = $state<string | null>(null);
 
 /**
+ * Per-writer dirty tracking (audit 2.3). Each open editor on a file (a
+ * TextTile and/or a DocumentEditor share one docId) adds its stable
+ * `callerId` here when it has unsaved content and removes it on a successful
+ * flush. `DocumentState.isDirty` stays true while ANY writer is still dirty,
+ * so one editor flushing can't clear the shared flag out from under a sibling
+ * editor that still has unsaved keystrokes — which would let the sibling's
+ * reload `$effect` (gated on `isDirty`) reload from a stale store body and
+ * drop a keystroke for one cycle. Callers that pass no `writerId` keep the
+ * legacy "clear everything" semantics, so existing call sites are unaffected.
+ */
+const dirtyWriters = new SvelteMap<string, SvelteSet<string>>();
+
+function addDirtyWriter(docId: string, writerId: string): void {
+  let set = dirtyWriters.get(docId);
+  if (!set) {
+    set = new SvelteSet<string>();
+    dirtyWriters.set(docId, set);
+  }
+  set.add(writerId);
+}
+
+/**
  * Shared frontmatter live-cache keyed by docId. The four disk writers
  * (TextTile, DocumentEditor, PropertiesPopup, TaskListBoard) all read and
  * mutate this cache instead of carrying their own per-component copies.
@@ -264,9 +286,13 @@ export const documentStore = {
    * Updates document content (called from either tile editor or doc tab editor).
    * Both views will reactively pick up the change.
    */
-  updateContent(docId: string, htmlContent: string, markdownBody?: string) {
+  updateContent(docId: string, htmlContent: string, markdownBody?: string, writerId?: string) {
     const doc = openDocuments.get(docId);
     if (!doc) return;
+
+    // Audit 2.3 — register the editing writer so a sibling editor's flush
+    // can't clear `isDirty` while this writer still holds unsaved content.
+    if (writerId) addDirtyWriter(docId, writerId);
 
     const updated: DocumentState = {
       ...doc,
@@ -344,7 +370,21 @@ export const documentStore = {
   /**
    * Marks a document as clean after a successful save.
    */
-  markClean(docId: string) {
+  markClean(docId: string, writerId?: string) {
+    // Audit 2.3 — per-writer clear. Removing this writer leaves the doc dirty
+    // if a sibling editor on the same file is still unsaved; only a fully
+    // empty writer set (or a legacy no-writerId call) flips `isDirty` off.
+    if (writerId) {
+      const set = dirtyWriters.get(docId);
+      if (set) {
+        set.delete(writerId);
+        if (set.size > 0) return;
+        dirtyWriters.delete(docId);
+      }
+    } else {
+      dirtyWriters.delete(docId);
+    }
+
     const doc = openDocuments.get(docId);
     if (!doc) return;
 
@@ -364,7 +404,11 @@ export const documentStore = {
    * already there. Belt-and-braces against future refactors that might
    * accidentally call `markClean` ahead of a write that subsequently fails.
    */
-  markDirty(docId: string) {
+  markDirty(docId: string, writerId?: string) {
+    // Audit 2.3 — record the writer before the dirty-flag short-circuit so a
+    // second writer marking an already-dirty doc still registers (its later
+    // clean must not clear the flag while the first writer is still dirty).
+    if (writerId) addDirtyWriter(docId, writerId);
     const doc = openDocuments.get(docId);
     if (!doc) return;
     if (doc.isDirty) return;
@@ -384,6 +428,7 @@ export const documentStore = {
       activeDocId = null;
     }
     openDocuments.delete(docId);
+    dirtyWriters.delete(docId);
     if (frontmatterCache.has(docId)) {
       frontmatterCache.delete(docId);
       mutationVersions.delete(docId);
@@ -401,6 +446,7 @@ export const documentStore = {
   clear() {
     openDocuments.clear();
     activeDocId = null;
+    dirtyWriters.clear();
     frontmatterCache.clear();
     mutationVersions.clear();
     frontmatterVersionTick++;
@@ -475,6 +521,8 @@ export const documentStore = {
   ) {
     const doc = openDocuments.get(docId);
     if (!doc) return;
+    // Audit 2.3 — disk is now authoritative, so every writer is clean.
+    dirtyWriters.delete(docId);
     const updated: DocumentState = {
       ...doc,
       body: newBody,

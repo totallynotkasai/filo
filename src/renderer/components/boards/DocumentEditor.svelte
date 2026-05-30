@@ -229,7 +229,7 @@
     if (!callerId) return;
     try {
       await flushMarkdownWrite(callerId);
-      if (docState && !backingFileMissing) documentStore.markClean(docState.docId);
+      if (docState && !backingFileMissing) documentStore.markClean(docState.docId, callerId);
     } catch (err) {
       if (err instanceof IpcEnvelopeError && err.code === 'ENOENT' && docState) {
         backingFileMissing = true;
@@ -241,7 +241,7 @@
         return;
       }
       reportError('DocumentEditor', err, 'Failed to write markdown');
-      if (docState) documentStore.markDirty(docState.docId);
+      if (docState) documentStore.markDirty(docState.docId, callerId);
     }
   }
 
@@ -258,7 +258,7 @@
         if (!editor) return;
         const md = editorMarkdown(editor);
         if (docId) {
-          documentStore.updateContent(docId, html, md);
+          documentStore.updateContent(docId, html, md, callerId);
         }
         scheduleMarkdownWrite();
       },

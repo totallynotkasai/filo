@@ -137,7 +137,7 @@
     try {
       await flushMarkdownWrite(callerId);
       if (!destroyed && tile.contentId && !backingFileMissing) {
-        documentStore.markClean(tile.contentId);
+        documentStore.markClean(tile.contentId, callerId);
       }
     } catch (err) {
       if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
@@ -150,7 +150,7 @@
         return;
       }
       reportError('TextTile', err, 'Failed to write markdown');
-      if (tile.contentId) documentStore.markDirty(tile.contentId);
+      if (tile.contentId) documentStore.markDirty(tile.contentId, callerId);
     }
   }
 
@@ -169,7 +169,7 @@
         boardStore.updateTile(tile.id, { content: html });
 
         if (tile.contentId) {
-          documentStore.updateContent(tile.contentId, html, md);
+          documentStore.updateContent(tile.contentId, html, md, callerId);
         }
 
         const project = vaultStore.getData();

@@ -1,17 +1,20 @@
 import type {
   TaskListBoard as TaskListBoardType,
-  TaskPlacement,
   Tile,
 } from '../../schema/index';
 import { historyStore, type Command } from '../../stores/history.svelte';
 import { uiStore } from '../../stores/ui.svelte';
-import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
+import { documentStore } from '../../stores/document.svelte';
+import { vaultStore } from '../../stores/vault.svelte';
 import {
   BatchCommand,
   DeleteTaskCommand,
   UpdateTaskFieldCommand,
 } from '../../commands/index';
 import { collectDescendantIds } from './blockMove';
+import { buildDeleteSnapshots } from '../canvas/deleteTileSnapshots';
+import { withDrainedWrites, PendingWritesFailedError } from '../vault/vaultOperations';
+import { normalizePath } from '../utils/path';
 import type { TaskRow } from '../tasks/taskListModel';
 
 /**
@@ -30,14 +33,7 @@ import type { TaskRow } from '../tasks/taskListModel';
 export interface TaskDeletionDeps {
   getBoard: () => TaskListBoardType | null;
   getRows: () => TaskRow[];
-  getPlacements: () => TaskPlacement[];
   getTilesById: () => Record<string, Tile>;
-  /**
-   * Resolves the tile's canonical vault-relative `.md` path. Injected from
-   * the host so deletion stays consistent with the other slices (rename /
-   * frontmatter writer) which all funnel through the same resolver.
-   */
-  vaultPathForTile: (tile: Tile) => string;
   /**
    * Builds an UpdateTaskFieldCommand for the "keep subtasks" branch.
    * Returns null when the tile has no docId (predates live-cache
@@ -55,6 +51,7 @@ export interface TaskDeletionDeps {
 export interface TaskDeleter {
   deleteTaskPlacementOnly(tileId: string): void;
   deleteTask(tileId: string, anchor?: { x: number; y: number }): void;
+  deleteTaskWithFile(tileId: string): void;
   unparentChildren(parentId: string): void;
   deleteAllCompleted(): void;
 }
@@ -63,9 +60,7 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
   const {
     getBoard,
     getRows,
-    getPlacements,
     getTilesById,
-    vaultPathForTile,
     buildTaskFieldCommand,
     tickAndPersist,
     announce,
@@ -155,19 +150,16 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
   function deleteAllCompleted(): void {
     const board = getBoard();
     if (!board) return;
-    const placements = getPlacements();
-    const tilesById = getTilesById();
-    const completedTileIds: string[] = [];
-    for (const placement of placements) {
-      const tile = tilesById[placement.tileId];
-      if (!tile) continue;
-      const path = vaultPathForTile(tile);
-      const fm = (vaultIndexStore.getMetadata(path)?.frontmatter ?? {}) as Record<
-        string,
-        unknown
-      >;
-      if (fm.completed) completedTileIds.push(placement.tileId);
-    }
+    // Audit 5.2 — derive the completed set from the already-projected
+    // `rows`, whose `completed` flag is read documentStore-first (live, set
+    // synchronously by toggleCompleted) with a vaultIndex fallback. Reading
+    // `vaultIndexStore` directly here lagged ~300 ms behind a just-checked
+    // task, so a check-then-bulk-delete could silently skip it. `rows` is
+    // the UNFILTERED projection, so a hide-completed view filter doesn't
+    // narrow what this bulk action sees.
+    const completedTileIds = getRows()
+      .filter((r) => r.completed)
+      .map((r) => r.placement.tileId);
     if (completedTileIds.length === 0) {
       uiStore.toast('No completed tasks to delete', 'info', 2000);
       return;
@@ -195,9 +187,69 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
     });
   }
 
+  /**
+   * Audit 5.7 — opt-in "delete the backing file too" path. The default delete
+   * keeps the `.md` (and is instant + one-click); this confirms first because
+   * removing the file is the heavy, broken-ref-causing action. It pre-reads the
+   * body so a DeleteTaskCommand that owns the disk delete can restore it on undo.
+   */
+  function deleteTaskWithFile(tileId: string): void {
+    const board = getBoard();
+    if (!board) return;
+    const tile = getTilesById()[tileId];
+    if (!tile) return;
+    const title = tile.title || 'task';
+    uiStore.openConfirm({
+      title: 'Delete task and file',
+      body: `Delete "${title}" and its backing .md file from the vault? Any other tile or board referencing it becomes a broken link. Ctrl+Z restores both.`,
+      confirmLabel: 'Delete task & file',
+      danger: true,
+      onConfirm: () => {
+        void performTaskFileDelete(board.id, tileId, tile);
+      },
+    });
+  }
+
+  async function performTaskFileDelete(boardId: string, tileId: string, tile: Tile): Promise<void> {
+    const vaultRoot = normalizePath(vaultStore.path);
+    const contentId = (tile as Tile & { contentId?: string }).contentId ?? tileId;
+    try {
+      // Drain pending editor writes BEFORE snapshotting so the captured body
+      // reflects post-flush disk state (mirrors TileHeader's delete path).
+      await withDrainedWrites(async () => {
+        const { fileSnapshots, oversizedPaths } = await buildDeleteSnapshots([tile], vaultRoot);
+        const snapshot = fileSnapshots[0];
+        if (!snapshot) {
+          // Never delete a file we can't restore on undo: fall back to a
+          // placement-only delete and tell the user the file was kept.
+          uiStore.toast(
+            oversizedPaths.length > 0
+              ? 'Backing file is too large for an undo snapshot — removed the task only (file kept).'
+              : 'Backing file not found — removed the task only.',
+            'warning',
+            6000,
+          );
+          await historyStore.execute(new DeleteTaskCommand(boardId, tileId));
+        } else {
+          // Unload the doc so an open editor can't rewrite the file we delete.
+          documentStore.unloadDocument(contentId);
+          await historyStore.execute(
+            new DeleteTaskCommand(boardId, tileId, { fileSnapshot: snapshot, vaultRoot }),
+          );
+        }
+        tickAndPersist();
+        announce(`Task removed: ${tile.title || 'task'}`);
+      });
+    } catch (err) {
+      if (err instanceof PendingWritesFailedError) return;
+      throw err;
+    }
+  }
+
   return {
     deleteTaskPlacementOnly,
     deleteTask,
+    deleteTaskWithFile,
     unparentChildren,
     deleteAllCompleted,
   };

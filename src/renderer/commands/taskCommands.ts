@@ -1,6 +1,7 @@
 import { Command, cloneForSnapshot } from './Command';
 import { boardCacheStore } from '../stores/boardCache.svelte';
 import { documentStore } from '../stores/document.svelte';
+import { uiStore } from '../stores/ui.svelte';
 import type {
   TaskListBoard,
   TaskListSection,
@@ -14,6 +15,12 @@ import {
   scheduleFrontmatterWrite,
   flushAllPendingFrontmatterWrites,
 } from '../lib/boards/frontmatterWriteScheduler';
+import { trackComponentWrite } from '../lib/boards/writeStateTracking';
+import { reportError } from '../lib/utils/errorBus';
+import { invokeOk } from '../lib/utils/invokeOk';
+import { deleteVaultPath } from '../lib/vault/vaultOperations';
+import { IpcEnvelopeError } from '@shared/ipcEnvelope';
+import type { DeletedFileSnapshot } from './tileCommands';
 
 // ── Task List Commands ──
 //
@@ -25,7 +32,11 @@ import {
 //
 // Backing files are never created or removed by Command undo/redo — the
 // Vault API owns file-system side effects. Re-adding a placement after
-// undo simply links it back to the existing `.md`.
+// undo simply links it back to the existing `.md`. The one opt-in
+// exception (Audit 5.7) is `DeleteTaskCommand` with `DeleteTaskFileOptions`:
+// when the user explicitly chooses "Delete task & file", that command owns
+// the disk delete and restores the snapshotted body on undo, mirroring
+// Mind Map's `DeleteTilesCommand`.
 
 /**
  * Captures the current shape of a Task List board's sections + tasks +
@@ -122,6 +133,20 @@ export class AddTaskCommand extends Command {
   }
 }
 
+/**
+ * Audit 5.7 — opt-in backing-file delete. When the user picks "Delete task &
+ * file", the caller pre-reads the `.md` body (so undo can restore it) and
+ * passes it here. Absent these options the command is placement-only and the
+ * file is left on disk exactly as before — the default, undo-safe behaviour.
+ */
+export interface DeleteTaskFileOptions {
+  /** Pre-read backing-.md snapshot; present only when the user opted in and
+   *  the body was small enough to snapshot. */
+  fileSnapshot?: DeletedFileSnapshot;
+  /** Vault root; required when `fileSnapshot` is set. */
+  vaultRoot?: string;
+}
+
 export class DeleteTaskCommand extends Command {
   description: string;
   readonly targetBoardId: string;
@@ -130,13 +155,26 @@ export class DeleteTaskCommand extends Command {
   private snapshotDef: TileDefinition | null;
   private snapshotPlacement: TaskPlacement | null;
   private sectionsBefore: TaskListSection[] | null;
+  // Audit 5.7 — when set, execute() also deletes the backing .md and undo()
+  // writes the snapshotted body back BEFORE restoring the placement, mirroring
+  // DeleteTilesCommand. Null on the default placement-only path.
+  private fileSnapshot: DeletedFileSnapshot | null;
+  private vaultRoot: string | undefined;
+  /** Last execute()'s file-delete IPC (Promise.allSettled-wrapped; resolves
+   *  immediately on the placement-only path). Awaited by tests / redo. */
+  lastExecuteCompletion: Promise<unknown> = Promise.resolve();
+  /** Last undo()'s file-restore IPC. Awaited by tests / a sequencing redo. */
+  lastUndoCompletion: Promise<unknown> = Promise.resolve();
 
-  constructor(boardId: string, tileId: string) {
+  constructor(boardId: string, tileId: string, fileOpts: DeleteTaskFileOptions = {}) {
     super();
     this.targetBoardId = boardId;
     this.boardId = boardId;
     this.tileId = tileId;
-    this.description = `Delete task`;
+    this.description = fileOpts.fileSnapshot ? `Delete task and file` : `Delete task`;
+    // allow-shallow: DeletedFileSnapshot is flat { rel, content } primitives.
+    this.fileSnapshot = fileOpts.fileSnapshot ? { ...fileOpts.fileSnapshot } : null;
+    this.vaultRoot = fileOpts.vaultRoot;
     const cached = boardCacheStore.cache[boardId];
     this.snapshotDef = null;
     this.snapshotPlacement = null;
@@ -157,11 +195,71 @@ export class DeleteTaskCommand extends Command {
     }
   }
 
-  execute() {
+  async execute() {
+    // Placement removal stays synchronous (it runs before the first await), so
+    // existing callers / tests that assert on cache state right after execute()
+    // — and the placement-only path used by cascade / bulk delete — are
+    // unaffected.
     boardCacheStore.removeTaskPlacement(this.boardId, this.tileId);
+    if (this.vaultRoot && this.fileSnapshot) {
+      const vaultRoot = this.vaultRoot;
+      const rel = this.fileSnapshot.rel;
+      // Sequence behind any prior execute/undo IPC so a rapid Ctrl+Y / Ctrl+Z
+      // can't let this delete race the prior undo's restore write (the same
+      // guard DeleteTilesCommand uses). Both priors are allSettled wrappers,
+      // so awaiting them never rejects.
+      const prior = Promise.allSettled([this.lastExecuteCompletion, this.lastUndoCompletion]);
+      this.lastExecuteCompletion = prior.then(() => this.deleteBackingFile(vaultRoot, rel));
+      await this.lastExecuteCompletion;
+    } else {
+      this.lastExecuteCompletion = Promise.resolve();
+    }
   }
 
-  undo() {
+  private async deleteBackingFile(vaultRoot: string, rel: string): Promise<void> {
+    // Phase 25 L6 — vault:delete takes (vaultRoot, absoluteItemPath).
+    const absPath = `${vaultRoot}/${rel}`;
+    try {
+      const result = await deleteVaultPath(vaultRoot, absPath);
+      // ENOENT is the desired end state (file already gone) — suppress.
+      if (!result.success && result.code !== 'ENOENT') {
+        reportError(
+          'deleteTask.execute',
+          new Error(result.error ?? 'vault:delete returned !success'),
+          `Failed to delete ${rel}`,
+        );
+      }
+    } catch (err) {
+      if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') return;
+      reportError('deleteTask.execute', err, `Failed to delete ${rel}`);
+    }
+  }
+
+  async undo() {
+    // File-first: write the snapshotted body back BEFORE restoring the
+    // placement so `persistAddTaskPlacement`'s seed-check sees the file we
+    // just wrote and skips the empty-seed path (mirrors DeleteTilesCommand).
+    if (this.vaultRoot && this.fileSnapshot) {
+      const { rel, content } = this.fileSnapshot;
+      const vaultRoot = this.vaultRoot;
+      this.lastUndoCompletion = trackComponentWrite(vaultRoot, rel, async () =>
+        invokeOk('vault:write-file-text', vaultRoot, rel, content),
+      ).catch((err) => {
+        uiStore.toast(
+          `Task restored but file content could not be recovered: ${rel}`,
+          'error',
+          6000,
+        );
+        reportError('deleteTask.undo', err, `Failed to restore ${rel}`);
+      });
+      await this.lastUndoCompletion;
+    } else {
+      this.lastUndoCompletion = Promise.resolve();
+    }
+    this.restorePlacement();
+  }
+
+  private restorePlacement(): void {
     if (!this.snapshotDef || !this.snapshotPlacement) return;
     boardCacheStore.persistAddTaskPlacement(
       this.boardId,

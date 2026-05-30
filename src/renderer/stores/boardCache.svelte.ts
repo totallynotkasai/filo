@@ -502,8 +502,15 @@ export const boardCacheStore = {
   updateBoardSettings(boardId: string, settings: Record<string, unknown>) {
     const cached = boardCache[boardId];
     if (!cached) return;
-    (cached.board as { settings: Record<string, unknown> }).settings = settings;
-    boardCache = { ...boardCache, [boardId]: cached };
+    // Audit 5.5 — build a fresh `board` (and entry) instead of mutating
+    // `cached.board.settings` in place and then ref-copying the same entry.
+    // The in-place path left a transient window where the cache map still
+    // pointed at the old entry while `board.settings` had already changed,
+    // and diverged from the spread-to-update convention used everywhere
+    // else. The new board object also gives identity-comparison consumers
+    // a real change to observe.
+    const nextBoard = { ...cached.board, settings } as typeof cached.board;
+    boardCache = { ...boardCache, [boardId]: { ...cached, board: nextBoard } };
     this.markDirty(boardId);
   },
 

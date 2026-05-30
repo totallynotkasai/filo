@@ -1,4 +1,4 @@
-import { canvasStore } from '../../stores/canvas.svelte';
+import type { CanvasScope } from '../../stores/canvas.svelte';
 import { CANVAS_DEFAULTS } from '../../constants/defaults';
 
 /**
@@ -15,6 +15,13 @@ interface EdgePanState {
   rafId: number | null;
   mouseX: number;
   mouseY: number;
+  // Audit 5.4 — the canvas scope captured at start time. Edge-pan is a
+  // module singleton; routing through the global `canvasStore` facade made
+  // tick() pan whichever pane was active AT TICK TIME. Connection drawing
+  // doesn't use pointer capture, so activating another pane mid-draw made
+  // edge-pan scroll the wrong pane's canvas (and persist its viewport).
+  // Pinning the originating pane's scope keeps the pan on the right canvas.
+  scope: CanvasScope | null;
 }
 
 const state: EdgePanState = {
@@ -22,10 +29,13 @@ const state: EdgePanState = {
   rafId: null,
   mouseX: 0,
   mouseY: 0,
+  scope: null,
 };
 
 function tick() {
   if (!state.active) return;
+  const scope = state.scope;
+  if (!scope) return;
 
   const margin = CANVAS_DEFAULTS.edgePanMargin;
   const speed = CANVAS_DEFAULTS.edgePanSpeed;
@@ -48,18 +58,23 @@ function tick() {
   }
 
   if (dx !== 0 || dy !== 0) {
-    canvasStore.panBy(dx, dy);
+    scope.panBy(dx, dy);
   }
 
   state.rafId = requestAnimationFrame(tick);
 }
 
 /**
- * Starts edge-panning. Call when a drag operation begins.
+ * Starts edge-panning. Call when a drag operation begins, passing the
+ * pane-local canvas scope that should be panned for the duration of the
+ * gesture. (Tile drag is pointer-captured to the active pane, so it can
+ * pass the global facade; connection drawing must pass its own pane's
+ * scope because it has no pointer capture — see Audit 5.4.)
  */
-export function startEdgePan(): void {
+export function startEdgePan(scope: CanvasScope): void {
   if (state.active) return;
   state.active = true;
+  state.scope = scope;
   state.rafId = requestAnimationFrame(tick);
 }
 
@@ -68,6 +83,7 @@ export function startEdgePan(): void {
  */
 export function stopEdgePan(): void {
   state.active = false;
+  state.scope = null;
   if (state.rafId !== null) {
     cancelAnimationFrame(state.rafId);
     state.rafId = null;

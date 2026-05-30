@@ -336,7 +336,9 @@ export function makeKanbanSlice(ctx: CacheContext) {
 
       const { [tileId]: _removed, ...restDefs } = cached.tileDefs;
       void _removed;
-      ctx.updateEntry(boardId, { tileDefs: restDefs });
+      // Audit 5.6 — refresh the board identity alongside the in-place
+      // `columns` rewrite above (cache-identity convention).
+      ctx.updateEntry(boardId, { board: { ...kb }, tileDefs: restDefs });
       ctx.markDirty(boardId);
     },
 

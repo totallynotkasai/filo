@@ -214,7 +214,9 @@ export function tileDragAction(node: HTMLElement, options: TileDragOptions) {
     // loop never operates on stale data — keep this synchronous.
     if (!edgePanStarted) {
       updateEdgePanMouse(e.clientX, e.clientY);
-      startEdgePan();
+      // Tile drag is pointer-captured to the active pane, so the global
+      // facade resolves to the right canvas for the whole gesture (Audit 5.4).
+      startEdgePan(canvasStore);
       edgePanStarted = true;
     }
     updateEdgePanMouse(e.clientX, e.clientY);

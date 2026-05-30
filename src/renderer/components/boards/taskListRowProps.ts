@@ -77,6 +77,8 @@ export interface TaskListRowControllers {
 export interface TaskListRowCallbacks {
   onRenameTask: (row: TaskRow, newTitle: string) => void;
   onDeleteTask: (tileId: string, anchor?: { x: number; y: number }) => void;
+  /** Audit 5.7 — opt-in "delete task and its backing .md file" path. */
+  onDeleteWithFile: (tileId: string) => void;
   onOpenTask: (tile: Tile) => void;
   onAddSubtask: (tileId: string) => void;
   onToggleLocked: (tileId: string) => void;

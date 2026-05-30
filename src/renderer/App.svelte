@@ -11,6 +11,8 @@
   import { onError, reportError } from './lib/utils/errorBus';
   import { createErrorToastAggregator } from './lib/utils/errorToastAggregator';
   import { historyStore } from './stores/history.svelte';
+  import { tabStore } from './stores/tabs.svelte';
+  import { workspaceStore } from './stores/workspace.svelte';
 
   // Apply the default theme to the DOM on startup. Routing through
   // themeStore.setBuiltin keeps every theme switch on a single code path.
@@ -85,6 +87,28 @@
       }
       window.filo.send('app:ready-to-quit');
     })();
+  });
+
+  // Audit 5.3 — let the history store auto-switch to a command's originating
+  // board on undo/redo. Registered here (not inside history.svelte) because
+  // tabs.svelte.ts imports historyStore, so history can't import the tab /
+  // workspace stores back without a cycle. Returns true when the board is open
+  // and was brought into focus; false when it isn't open anywhere (history
+  // then keeps its switch-back toast and leaves the command on the stack).
+  historyStore.setBoardActivator((boardId) => {
+    const tab = tabStore.tabs.find((t) => t.boardId === boardId);
+    if (!tab) return false;
+    const leaf = workspaceStore.findLeafByTab(tab.id);
+    if (leaf) {
+      // Already shown in a (non-active) pane — focus that pane.
+      workspaceStore.setActivePane(leaf.id);
+    } else {
+      // Open as a tab but not shown in any pane — retarget the active pane.
+      const activeLeaf = workspaceStore.activeLeaf;
+      if (activeLeaf) workspaceStore.setLeafTab(activeLeaf.id, tab.id);
+    }
+    tabStore.setActive(tab.id);
+    return true;
   });
 
   // Write project font-size settings onto `:root` as CSS variables.

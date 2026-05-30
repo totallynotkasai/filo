@@ -50,6 +50,17 @@ const truncationNotified: Record<string, true> = {};
 let staleToastShown = false;
 
 /**
+ * Audit 5.3 — optional "bring the originating board into focus" hook. Given a
+ * boardId, returns true if that board is open and was activated, false if it
+ * isn't open anywhere. Registered by App.svelte, which can reach
+ * tabStore / workspaceStore without the import cycle that history → tabs would
+ * create (tabs.svelte.ts imports historyStore). undo() / redo() use it to
+ * auto-switch to a command's target board instead of wedging the stack behind
+ * a switch-back toast.
+ */
+let boardActivator: ((boardId: string) => boolean) | null = null;
+
+/**
  * Pure read of the active board's stack. Returns `null` when there's no
  * active board OR no stack has been allocated yet. Safe to call inside
  * `$derived` reads (canUndo / canRedo) — Svelte 5 forbids
@@ -354,6 +365,15 @@ export const historyStore = {
   },
 
   /**
+   * Audit 5.3 — registers the auto-switch hook (see `boardActivator`). App.svelte
+   * wires this so undo()/redo() can focus a command's originating board instead
+   * of wedging the stack. Pass null to clear (teardown / tests).
+   */
+  setBoardActivator(fn: ((boardId: string) => boolean) | null) {
+    boardActivator = fn;
+  },
+
+  /**
    * Executes a command and pushes it onto the active board's undo stack.
    * Clears the redo stack (new action invalidates redo history). Also
    * marks the project as dirty.
@@ -396,12 +416,20 @@ export const historyStore = {
     if (!stack || stack.undoStack.length === 0) return Promise.resolve();
     const command = stack.undoStack[stack.undoStack.length - 1];
     if (command.targetBoardId && command.targetBoardId !== activeBoardId) {
-      uiStore.toast(
-        `Switch to the originating board to undo this action.`,
-        'info',
-        3500,
-      );
-      return Promise.resolve();
+      // Audit 5.3 — auto-switch to the originating board when it's open, then
+      // undo it. The command carries its own boardId, so the mutation lands on
+      // the right board regardless of which stack filed it. When the board
+      // isn't open anywhere, keep the switch-back toast AND leave the command
+      // on the stack so it stays reachable once the user opens that board
+      // (rather than wedging every later undo behind it).
+      if (!(boardActivator?.(command.targetBoardId) ?? false)) {
+        uiStore.toast(
+          `Switch to the originating board to undo this action.`,
+          'info',
+          3500,
+        );
+        return Promise.resolve();
+      }
     }
     // UR-1 — snapshot the undo stack BEFORE the move so a body failure can
     // restore it (mirror of `commitExecute`/`rollbackExecute`). The stack
@@ -409,7 +437,10 @@ export const historyStore = {
     const preUndoStack = [...stack.undoStack];
     stack.undoStack = stack.undoStack.slice(0, -1);
     stack.redoStack = [...stack.redoStack, command];
-    if (activeBoardId) boardStore.markDirty(activeBoardId);
+    // Mark the board the command actually mutates (its target), not the
+    // possibly-just-switched active board.
+    const dirtyId = command.targetBoardId || activeBoardId;
+    if (dirtyId) boardStore.markDirty(dirtyId);
     return runChained(() => command.undo()).catch((err) => {
       rollbackUndo(command, preUndoStack);
       throw err;
@@ -428,19 +459,25 @@ export const historyStore = {
     if (!stack || stack.redoStack.length === 0) return Promise.resolve();
     const command = stack.redoStack[stack.redoStack.length - 1];
     if (command.targetBoardId && command.targetBoardId !== activeBoardId) {
-      uiStore.toast(
-        `Switch to the originating board to redo this action.`,
-        'info',
-        3500,
-      );
-      return Promise.resolve();
+      // Audit 5.3 — symmetric with undo(): auto-switch to the originating
+      // board when it's open, otherwise keep the switch-back toast without
+      // popping the command.
+      if (!(boardActivator?.(command.targetBoardId) ?? false)) {
+        uiStore.toast(
+          `Switch to the originating board to redo this action.`,
+          'info',
+          3500,
+        );
+        return Promise.resolve();
+      }
     }
     // UR-1 — snapshot the redo stack BEFORE the move so a body failure can
     // restore it, symmetric with `undo()` above.
     const preRedoStack = [...stack.redoStack];
     stack.redoStack = stack.redoStack.slice(0, -1);
     pushBoundedAndNotify(stack, command);
-    if (activeBoardId) boardStore.markDirty(activeBoardId);
+    const dirtyId = command.targetBoardId || activeBoardId;
+    if (dirtyId) boardStore.markDirty(dirtyId);
     return runChained(() => command.execute()).catch((err) => {
       rollbackRedo(command, preRedoStack);
       throw err;

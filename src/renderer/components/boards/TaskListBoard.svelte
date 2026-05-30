@@ -717,14 +717,13 @@
   const taskDeleter = makeTaskDeleter({
     getBoard: () => board,
     getRows: () => viewModel.rows,
-    getPlacements: () => placements,
     getTilesById: () => tilesById,
-    vaultPathForTile,
     buildTaskFieldCommand,
     tickAndPersist,
     announce,
   });
   const deleteTask = taskDeleter.deleteTask;
+  const deleteTaskWithFile = taskDeleter.deleteTaskWithFile;
   const deleteAllCompleted = taskDeleter.deleteAllCompleted;
 
   const fileDropHandler = makeFileDropHandler({
@@ -1455,6 +1454,7 @@
     rowCallbacks={{
       onRenameTask: renameTask,
       onDeleteTask: deleteTask,
+      onDeleteWithFile: deleteTaskWithFile,
       onOpenTask: openTaskAsDocument,
       onAddSubtask: addSubtaskFor,
       onToggleLocked: toggleTaskLocked,
@@ -1490,6 +1490,7 @@
     callbacks={{
       onRenameTask: renameTask,
       onDeleteTask: deleteTask,
+      onDeleteWithFile: deleteTaskWithFile,
       onOpenTask: openTaskAsDocument,
       onAddSubtask: addSubtaskFor,
       onToggleLocked: toggleTaskLocked,

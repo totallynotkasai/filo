@@ -39,7 +39,10 @@ const ALLOWLIST = {
   // multi-select chrome, hover-reveal buttons, sticky note panel toggle.
   // Wrapping border + radius engineering is non-obvious — see in-file
   // comments. Bump history in git log.
-  'src/renderer/components/boards/TaskItem.svelte': 1539,
+  // AUDIT_REMEDIATION_PLAN_2026-05-30 Phase 5.7 — added the optional
+  // "Delete Task & File…" context-menu entry (`onDeleteWithFile` prop +
+  // type + one menu row). +3 LOC. New snapshot: 1542 LOC.
+  'src/renderer/components/boards/TaskItem.svelte': 1542,
   // KanbanBoard orchestrator: column dndzone (svelte-dnd-action), per-column
   // card dndzone (replaces native HTML5), multi-card drag (`dragBlockIds`),
   // tag-editor popup + tile-style-popup wiring, BoardBackground mount,

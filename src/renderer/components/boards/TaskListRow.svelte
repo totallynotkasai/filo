@@ -140,6 +140,7 @@
     onSetNotes={(b: string) => controllers.writers.setNotesBody(row, b)}
     onRename={(t: string) => callbacks.onRenameTask(row, t)}
     onDelete={(anchor?: { x: number; y: number }) => callbacks.onDeleteTask(row.tile.id, anchor)}
+    onDeleteWithFile={() => callbacks.onDeleteWithFile(row.tile.id)}
     onOpen={() => callbacks.onOpenTask(row.tile)}
     onAddSubtask={() => callbacks.onAddSubtask(row.tile.id)}
     {canAddSubtask}

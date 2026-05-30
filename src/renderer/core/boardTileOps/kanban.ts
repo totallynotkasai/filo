@@ -95,7 +95,9 @@ export const kanbanTileOps: BoardTileOps<KanbanBoard> = {
         delete updatedConns[key];
       }
     }
-    ctx.updateEntry(boardId, { tileDefs: restDefs, connections: updatedConns });
+    // Audit 5.6 — refresh the board identity alongside the in-place
+    // `columns` rewrite above (cache-identity convention).
+    ctx.updateEntry(boardId, { board: { ...kb }, tileDefs: restDefs, connections: updatedConns });
 
     ctx.updateProjectConnectionsFrames(({ connections: projConns }) => {
       for (const [key, c] of Object.entries(projConns)) {

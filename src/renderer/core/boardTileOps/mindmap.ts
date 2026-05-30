@@ -93,7 +93,12 @@ export const mindmapTileOps: BoardTileOps<MindMapBoard> = {
       ];
       const { [tileId]: _d, ...restDefs } = cached.tileDefs;
       void _d;
-      ctx.updateEntry(boardId, { tileDefs: restDefs });
+      // Audit 5.6 — refresh the board's identity alongside the def update.
+      // The in-place `delete` above mutates `board.inlineTiles` without
+      // changing the `board` reference; spreading a fresh copy keeps the
+      // cache-identity convention so future identity-comparison consumers
+      // observe the change.
+      ctx.updateEntry(boardId, { board: { ...mm }, tileDefs: restDefs });
       ctx.markDirty(boardId);
       return;
     }
@@ -114,7 +119,9 @@ export const mindmapTileOps: BoardTileOps<MindMapBoard> = {
         delete updatedConns[key];
       }
     }
-    ctx.updateEntry(boardId, { tileDefs: restDefs, connections: updatedConns });
+    // Audit 5.6 — fresh `board` ref alongside the in-place `delete` of the
+    // placement above (cache-identity convention).
+    ctx.updateEntry(boardId, { board: { ...mm }, tileDefs: restDefs, connections: updatedConns });
 
     ctx.updateProjectConnectionsFrames(({ connections: projConns }) => {
       for (const [key, c] of Object.entries(projConns)) {

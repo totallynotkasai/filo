@@ -116,9 +116,12 @@
   });
 
   // ── Edge-pan during connection drawing ──
+  // Pass THIS pane's canvas scope (not the global facade). Connection
+  // drawing has no pointer capture, so if another pane is activated
+  // mid-draw the facade would route edge-pan to the wrong canvas (Audit 5.4).
   $effect(() => {
     if (connectionsStore.drawing) {
-      startEdgePan();
+      startEdgePan(canvasStore);
     } else {
       stopEdgePan();
     }

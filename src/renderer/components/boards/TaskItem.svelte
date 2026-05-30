@@ -56,6 +56,7 @@
     onSetNotes,
     onRename,
     onDelete,
+    onDeleteWithFile,
     onOpen,
     onAddSubtask,
     canAddSubtask = true,
@@ -99,6 +100,8 @@
     onSetNotes?: (body: string) => void;
     onRename: (title: string) => void;
     onDelete: (anchor?: { x: number; y: number }) => void;
+    /** Audit 5.7 — opt-in delete that also removes the backing .md file. */
+    onDeleteWithFile?: () => void;
     onOpen: () => void;
     onAddSubtask?: () => void;
     canAddSubtask?: boolean;
@@ -480,6 +483,7 @@
           : []),
         { id: 'div', label: '', divider: true },
         { id: 'delete', label: 'Delete Task', icon: 'M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2', danger: true, action: onDelete },
+        ...(onDeleteWithFile ? [{ id: 'delete-with-file', label: 'Delete Task & File…', icon: 'M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2', danger: true, action: onDeleteWithFile }] : []),
       ],
       tile.id,
     );

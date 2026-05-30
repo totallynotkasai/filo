@@ -11,6 +11,7 @@ test-results/
 .DS_Store
 Thumbs.db
 .vite/
+.claude/scheduled_tasks.lock
 
 # Icon rasters — regenerated from resources/icon.svg by `npm run icons`
 resources/icon.png

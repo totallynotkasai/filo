@@ -1,0 +1,106 @@
+import { describe, it, expect } from 'vitest';
+import {
+  isInsideVault,
+  vaultRelativeFromAbsolute,
+} from '@renderer/lib/canvas/vaultPath';
+import { samePath } from '@renderer/lib/utils/path';
+
+describe('isInsideVault', () => {
+  it('returns true for a file directly inside the vault (unix)', () => {
+    expect(isInsideVault('/vault/Notes.md', '/vault')).toBe(true);
+  });
+
+  it('returns true for a nested file inside the vault (unix)', () => {
+    expect(isInsideVault('/vault/Sub/Inner/Notes.md', '/vault')).toBe(true);
+  });
+
+  it('returns true for a file directly inside the vault (windows)', () => {
+    expect(isInsideVault('C:\\Vault\\Notes.md', 'C:\\Vault')).toBe(true);
+  });
+
+  it('is case-insensitive on the vault prefix', () => {
+    expect(isInsideVault('C:\\VAULT\\Notes.md', 'c:\\vault')).toBe(true);
+    expect(isInsideVault('/Vault/Sub/x.png', '/VAULT')).toBe(true);
+  });
+
+  it('returns false for a file outside the vault', () => {
+    expect(isInsideVault('/Users/me/Downloads/x.md', '/vault')).toBe(false);
+    expect(isInsideVault('/vaultish/x.md', '/vault')).toBe(false); // prefix-but-not-folder boundary
+  });
+
+  it('ignores trailing slashes on the vault path', () => {
+    expect(isInsideVault('/vault/Notes.md', '/vault/')).toBe(true);
+    expect(isInsideVault('/vault/Notes.md', '/vault//')).toBe(true);
+  });
+
+  it('returns false for empty inputs', () => {
+    expect(isInsideVault('', '/vault')).toBe(false);
+    expect(isInsideVault('/vault/x', '')).toBe(false);
+  });
+
+  it('treats the vault root itself as inside the vault', () => {
+    expect(isInsideVault('/vault', '/vault')).toBe(true);
+    expect(isInsideVault('/vault/', '/vault')).toBe(true);
+  });
+});
+
+describe('vaultRelativeFromAbsolute', () => {
+  it('returns the path relative to the vault, preserving original casing', () => {
+    expect(vaultRelativeFromAbsolute('/vault/Sub/Notes.md', '/vault')).toBe('Sub/Notes.md');
+  });
+
+  it('strips a windows-style vault prefix', () => {
+    expect(vaultRelativeFromAbsolute('C:\\Vault\\Sub\\Notes.md', 'C:\\Vault')).toBe('Sub/Notes.md');
+  });
+
+  it('preserves casing of the subpath even when vault prefix differs in case', () => {
+    expect(vaultRelativeFromAbsolute('/Vault/MyFolder/Notes.md', '/VAULT')).toBe(
+      'MyFolder/Notes.md',
+    );
+  });
+
+  it('returns an empty string when the path equals the vault', () => {
+    expect(vaultRelativeFromAbsolute('/vault', '/vault')).toBe('');
+    expect(vaultRelativeFromAbsolute('/vault/', '/vault')).toBe('');
+  });
+
+  it('returns an empty string for paths outside the vault', () => {
+    expect(vaultRelativeFromAbsolute('/elsewhere/x.md', '/vault')).toBe('');
+    expect(vaultRelativeFromAbsolute('/vaultish/x.md', '/vault')).toBe('');
+  });
+
+  it('returns an empty string for empty inputs', () => {
+    expect(vaultRelativeFromAbsolute('', '/vault')).toBe('');
+    expect(vaultRelativeFromAbsolute('/vault/x', '')).toBe('');
+  });
+});
+
+describe('samePath', () => {
+  it('returns true for identical vault-relative paths', () => {
+    expect(samePath('Notes/Foo.md', 'Notes/Foo.md')).toBe(true);
+  });
+
+  it('treats forward and backslashes as equivalent', () => {
+    expect(samePath('Notes\\Foo.md', 'Notes/Foo.md')).toBe(true);
+  });
+
+  it('is case-insensitive', () => {
+    expect(samePath('NOTES/Foo.md', 'notes/foo.md')).toBe(true);
+  });
+
+  it('ignores a leading slash', () => {
+    expect(samePath('/Notes/Foo.md', 'Notes/Foo.md')).toBe(true);
+  });
+
+  it('returns false for different files', () => {
+    expect(samePath('Foo.md', 'Notes/Foo.md')).toBe(false);
+    expect(samePath('Bar.md', 'Foo.md')).toBe(false);
+  });
+
+  it('returns false when either argument is null/undefined/empty', () => {
+    expect(samePath('', 'Foo.md')).toBe(false);
+    expect(samePath('Foo.md', '')).toBe(false);
+    expect(samePath(null, 'Foo.md')).toBe(false);
+    expect(samePath('Foo.md', undefined)).toBe(false);
+  });
+});

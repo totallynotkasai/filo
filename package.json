@@ -1,0 +1,190 @@
+{
+  "name": "filo",
+  "version": "0.1.0",
+  "description": "A Personal Knowledge Management desktop application with infinite canvas mind mapping",
+  "private": true,
+  "main": "dist/main/main.js",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "electron-vite build",
+    "preview": "node scripts/dev.mjs --preview",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "test:unit:coverage": "vitest run --coverage",
+    "test:unit:strict": "node scripts/test-unit-strict.mjs",
+    "test:e2e": "playwright test",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "format": "prettier --write src/",
+    "lint": "eslint .",
+    "ci:file-sizes": "node scripts/check-file-sizes.mjs",
+    "ci:type-casts": "node scripts/check-type-casts.mjs",
+    "ci:ipc-parity": "node scripts/check-ipc-parity.mjs",
+    "ci:legacy-read": "node scripts/check-legacy-read-file-text.mjs",
+    "ci:no-inline-path-normalize": "node scripts/check-inline-path-normalize.mjs",
+    "ci:no-inline-path-normalize-main": "node scripts/check-inline-path-normalize-main.mjs",
+    "ci:zindex-literals": "node scripts/check-zindex-literals.mjs",
+    "ci:direct-board-mutations": "node scripts/check-direct-board-mutations.mjs",
+    "ci:check-ipc-envelope-usage": "node scripts/check-ipc-envelope-usage.mjs",
+    "ci:vault-lifecycle-coverage": "node scripts/check-vault-lifecycle-coverage.mjs",
+    "ci:vault-scoped-state": "node scripts/check-vault-scoped-state.mjs",
+    "ci:dead-derived": "node scripts/check-dead-derived.mjs",
+    "ci:markdown-gateway": "node scripts/check-markdown-write-gateway.mjs",
+    "ci:no-adhoc-schedulers": "node scripts/check-no-adhoc-schedulers.mjs",
+    "ci:no-raw-disk-shape-ipc": "node scripts/check-no-raw-disk-shape-ipc.mjs",
+    "ci:command-snapshot-discipline": "node scripts/check-command-snapshot-discipline.mjs",
+    "ci:commands-target-board": "node scripts/check-commands-have-target-board.mjs",
+    "ci:untrusted-sinks": "node scripts/check-untrusted-sink-discipline.mjs",
+    "ci:vault-path-keys": "node scripts/check-vault-path-keys.mjs",
+    "ci:markdown-read-gateway": "node scripts/check-markdown-read-gateway.mjs",
+    "ci:versioned-config": "node scripts/check-versioned-config-loader.mjs",
+    "ci:verify": "npm run lint && npm run check && npm run test:unit:strict && npm run build && npm run ci:file-sizes && npm run ci:type-casts && npm run ci:ipc-parity && npm run ci:legacy-read && npm run ci:no-inline-path-normalize && npm run ci:no-inline-path-normalize-main && npm run ci:zindex-literals && npm run ci:direct-board-mutations && npm run ci:check-ipc-envelope-usage && npm run ci:vault-lifecycle-coverage && npm run ci:vault-scoped-state && npm run ci:dead-derived && npm run ci:markdown-gateway && npm run ci:markdown-read-gateway && npm run ci:no-adhoc-schedulers && npm run ci:no-raw-disk-shape-ipc && npm run ci:command-snapshot-discipline && npm run ci:commands-target-board && npm run ci:untrusted-sinks && npm run ci:vault-path-keys && npm run ci:versioned-config",
+    "icons": "node scripts/generate-icons.mjs",
+    "package": "npm run icons && npm run build && electron-builder --publish never",
+    "package:win": "npm run icons && npm run build && electron-builder --win --publish never",
+    "package:mac": "npm run icons && npm run build && electron-builder --mac --publish never",
+    "package:linux": "npm run icons && npm run build && electron-builder --linux --publish never",
+    "package:dir": "npm run icons && npm run build && electron-builder --dir --publish never"
+  },
+  "dependencies": {
+    "@tiptap/core": "^2.11.0",
+    "@tiptap/extension-code-block-lowlight": "^2.11.0",
+    "@tiptap/extension-color": "^2.11.0",
+    "@tiptap/extension-font-family": "^2.11.0",
+    "@tiptap/extension-highlight": "^2.11.0",
+    "@tiptap/extension-image": "^2.11.0",
+    "@tiptap/extension-link": "^2.11.0",
+    "@tiptap/extension-placeholder": "^2.11.0",
+    "@tiptap/extension-table": "^2.11.0",
+    "@tiptap/extension-table-cell": "^2.11.0",
+    "@tiptap/extension-table-header": "^2.11.0",
+    "@tiptap/extension-table-row": "^2.11.0",
+    "@tiptap/extension-task-item": "^2.11.0",
+    "@tiptap/extension-task-list": "^2.11.0",
+    "@tiptap/extension-text-align": "^2.11.0",
+    "@tiptap/extension-text-style": "^2.11.0",
+    "@tiptap/extension-underline": "^2.11.0",
+    "@tiptap/starter-kit": "^2.11.0",
+    "dompurify": "^3.2.0",
+    "focus-trap": "^7.6.0",
+    "gray-matter": "^4.0.3",
+    "html-to-image": "^1.11.0",
+    "js-yaml": "^4.1.0",
+    "jspdf": "^2.5.0",
+    "lowlight": "^3.2.0",
+    "minisearch": "^7.2.0",
+    "nanoid": "^5.0.9",
+    "rbush": "^4.0.1",
+    "remark-frontmatter": "^5.0.0",
+    "remark-parse": "^11.0.0",
+    "svelte-dnd-action": "^0.9.69",
+    "tiptap-markdown": "^0.8.10",
+    "unified": "^11.0.5",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.10.0",
+    "@playwright/test": "^1.49.0",
+    "@sveltejs/vite-plugin-svelte": "^5.0.0",
+    "@types/dompurify": "^3.0.5",
+    "@types/rbush": "^4.0.0",
+    "@vitest/coverage-v8": "^2.1.9",
+    "axe-core": "^4.10.0",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.0",
+    "electron-vite": "^5.0.0",
+    "eslint": "^10.4.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-svelte": "^3.17.1",
+    "fast-check": "^3.23.2",
+    "globals": "^17.6.0",
+    "jsdom": "^25.0.0",
+    "png-to-ico": "^3.0.1",
+    "png2icons": "^2.0.1",
+    "prettier": "^3.8.3",
+    "prettier-plugin-svelte": "^3.5.2",
+    "sharp": "^0.34.5",
+    "svelte": "^5.0.0",
+    "svelte-check": "^4.0.0",
+    "svelte-eslint-parser": "^1.6.1",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.59.3",
+    "vite": "^6.0.0",
+    "vitest": "^2.1.0"
+  },
+  "build": {
+    "appId": "com.filo.app",
+    "productName": "Filo",
+    "copyright": "Copyright © 2026 Filo",
+    "directories": {
+      "output": "release",
+      "buildResources": "resources"
+    },
+    "files": [
+      "dist/**/*",
+      "static/**/*",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "dist/main/main.js"
+    },
+    "extraResources": [
+      {
+        "from": "resources/icon.png",
+        "to": "icon.png"
+      }
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "resources/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Filo"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "resources/icon.icns",
+      "category": "public.app-category.productivity",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false
+    },
+    "dmg": {
+      "title": "Filo ${version}"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "resources/icon.png",
+      "category": "Office",
+      "maintainer": "Filo <noreply@filo.app>",
+      "synopsis": "Local-first visual PKM",
+      "description": "Filo is a local-first, visual-first Personal Knowledge Management desktop application combining mind maps, kanban, task lists, and documents in a single tool."
+    }
+  }
+}

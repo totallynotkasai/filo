@@ -1,0 +1,101 @@
+import type { CanvasScope } from '../../stores/canvas.svelte';
+import type { SelectionScope } from '../../stores/selection.svelte';
+import type { SpatialScope } from '../../stores/spatial.svelte';
+import { connectionsStore } from '../../stores/connections.svelte';
+import { screenToCanvas } from '../canvas/coordinates';
+
+/**
+ * Per-pane marquee-selection controller. Receives the pane's `canvas`,
+ * `selection`, and `spatial` scopes so shift-drag selection in one pane
+ * doesn't leak into the other pane's state.
+ */
+export class MarqueeSelectionController {
+  isSelecting = $state(false);
+  shiftPressed = $state(false);
+
+  private container: HTMLElement | null = null;
+  private readonly canvasScope: CanvasScope;
+  private readonly selectionScope: SelectionScope;
+  private readonly spatialScope: SpatialScope;
+
+  constructor(deps: {
+    canvas: CanvasScope;
+    selection: SelectionScope;
+    spatial: SpatialScope;
+  }) {
+    this.canvasScope = deps.canvas;
+    this.selectionScope = deps.selection;
+    this.spatialScope = deps.spatial;
+  }
+
+  setContainer(el: HTMLElement | null): void {
+    this.container = el;
+  }
+
+  setShiftPressed(pressed: boolean): void {
+    this.shiftPressed = pressed;
+  }
+
+  handlePointerDown(e: PointerEvent): void {
+    if (!this.container) return;
+    if (!e.shiftKey || e.button !== 0) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    this.isSelecting = true;
+
+    const rect = this.container.getBoundingClientRect();
+    const canvasPos = screenToCanvas(
+      e.clientX - rect.left,
+      e.clientY - rect.top,
+      this.canvasScope.transform,
+    );
+    this.selectionScope.startBox(canvasPos.x, canvasPos.y);
+
+    this.container.setPointerCapture(e.pointerId);
+  }
+
+  handlePointerMove(e: PointerEvent): void {
+    if (!this.container) return;
+
+    // Selection box update
+    if (this.isSelecting) {
+      const rect = this.container.getBoundingClientRect();
+      const canvasPos = screenToCanvas(
+        e.clientX - rect.left,
+        e.clientY - rect.top,
+        this.canvasScope.transform,
+      );
+      this.selectionScope.updateBox(canvasPos.x, canvasPos.y);
+
+      const box = this.selectionScope.boxRect;
+      if (box) {
+        const ids = this.spatialScope.queryViewport({
+          left: box.left,
+          top: box.top,
+          right: box.right,
+          bottom: box.bottom,
+        });
+        this.selectionScope.selectMultiple(ids);
+      }
+    }
+
+    // Connection drawing line follows mouse
+    if (connectionsStore.drawing) {
+      const rect = this.container.getBoundingClientRect();
+      const canvasPos = screenToCanvas(
+        e.clientX - rect.left,
+        e.clientY - rect.top,
+        this.canvasScope.transform,
+      );
+      connectionsStore.updateDrawing(canvasPos.x, canvasPos.y);
+    }
+  }
+
+  handlePointerUp(e: PointerEvent): void {
+    if (!this.isSelecting) return;
+    this.isSelecting = false;
+    this.selectionScope.endBox();
+    this.container?.releasePointerCapture(e.pointerId);
+  }
+}

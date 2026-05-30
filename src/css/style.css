@@ -1,0 +1,1082 @@
+/* ============================================================
+   Filo — Global Styles
+   Vanilla CSS with custom properties for theming.
+   ============================================================ */
+
+/* --- CSS Reset --- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: var(--font-system);
+  font-size: var(--font-size-base, 13px);
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--ui-bg);
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: inherit;
+}
+
+input, textarea, select {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+ul, ol {
+  list-style: none;
+}
+
+img, svg {
+  display: block;
+  max-width: 100%;
+}
+
+#app {
+  width: 100%;
+  height: 100%;
+}
+
+/* --- System Font Stack & Global Design Tokens --- */
+:root {
+  --font-system: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+  --font-mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+
+  /* Font sizes (px). Written by App.svelte from
+     project.settings.general.{globalFontSize,defaultBoardFontSize}.
+     Values here are the bootstrap fallbacks used before a vault loads. */
+  --font-size-base: 13px;
+  --font-size-tile-title: 14px;
+  --font-size-tile-body: 13px;
+  --font-size-connection-label: 12px;
+  --font-size-frame-title: 15px;
+
+  /* Per-surface UI scale factors (1.0 = 100%). Written by App.svelte from
+     project.settings.general.{globalToolbarScale,boardToolbarScale,
+     tabBarScale,minimapScale,waypointScale}. Bootstrap fallbacks. */
+  --ui-toolbar-scale: 1;
+  --ui-board-toolbar-scale: 1;
+  --ui-tabbar-scale: 1;
+  --ui-minimap-scale: 1;
+  --ui-waypoint-scale: 1;
+
+  /* Chrome heights. Written by AppShell.svelte as `base * scale` so
+     position:fixed descendants (sidebar, side toolbars, minimap, board
+     browser panel) can anchor below/above the toolbar / tab bar. */
+  --global-toolbar-height: 44px;
+  --tabbar-height: 36px;
+
+  /* Tag tokens — shared by every tag surface (TagBadge, tile footer,
+     Kanban card row, Task List inline row, Document board strip,
+     sidebar chips). Centralised so a future restyle is one edit. */
+  --tag-gap: 4px;
+  --tag-row-gap: 3px;
+  --tag-pad-x: 6px;
+  --tag-pad-y: 2px;
+  --tag-font-size-sm: 10px;
+  --tag-font-size-md: 11px;
+
+  /* Z-index scale — single source of truth for layered UI. Replaces the
+     former TS Z_INDEX constants. Component CSS and inline-style template
+     bindings both read these (Svelte: `style="z-index: var(--z-modal)"`).
+     The ci:no-zindex-literals gate enforces no new numeric z-index in
+     .svelte files outside the documented exceptions. */
+  --z-canvas-background: 0;
+  --z-frame: 100;
+  --z-connection-path: 200;
+  --z-tile: 300;
+  --z-tile-selected: 400;
+  --z-tile-dragging: 500;
+  /* Pane split-drop edges — overlays the target pane during a tab drag. */
+  --z-pane-drop-overlay: 500;
+  --z-connection-label: 600;
+  --z-connection-bubbles: 700;
+  --z-selection-box: 800;
+  /* Canvas HUD indicators (zoom level, connection-mode banner) — float above
+     all board content but below the global chrome. */
+  --z-canvas-hud: 900;
+  --z-sidebar: 1000;
+  --z-toolbar: 1100;
+  --z-tab-bar: 1100;
+  --z-side-toolbar: 1200;
+  --z-tooltip: 2100;
+  --z-minimap: 2300;
+  --z-tile-popup-overlay: 2300;
+  --z-tile-popup: 2400;
+  --z-column-menu: 2450;
+  --z-context-menu-overlay: 2500;
+  --z-context-menu: 2501;
+  /* Plain Dropdown menu panel (toolbar / sidebar / etc.). The
+     `--z-dropdown` slot above style popups is reserved for floating
+     ColorPicker panels that must paint above their parent style popup. */
+  --z-dropdown-panel: 2000;
+  --z-dropdown: 2600;
+  --z-modal-backdrop: 3000;
+  --z-modal: 3001;
+  /* Above-modal layer — nested ConfirmDialog over a Modal, TabBar
+     dropdown overlap during modals. */
+  --z-modal-above: 3100;
+  /* Popup-inside-modal pair (e.g. tag-menu in TagsBrowser). Overlay
+     captures click-outside; anchor positions the popup itself. */
+  --z-modal-popup-overlay: 4050;
+  --z-modal-popup: 4100;
+  --z-toast: 9999;
+  /* Skip-link target — must paint above absolutely everything when the
+     keyboard user focuses it. */
+  --z-skip-link: 10000;
+}
+
+/* ============================================================
+   THEME: Dark (Default) — Obsidian meets Google Material Dark
+   ============================================================ */
+[data-theme='dark'] {
+  /* Backgrounds — lightened from near-black to comfortable dark */
+  --ui-bg: #2b2b3d;
+  --ui-bg-secondary: #262640;
+  --ui-surface: #323250;
+  --ui-surface-hover: #3c3c5a;
+  --ui-surface-active: #45456a;
+  --ui-surface-raised: #383860;
+
+  /* Borders */
+  --ui-border: #4a4a6c;
+  --ui-border-light: #3e3e5e;
+  --ui-border-focus: #7c73ff;
+
+  /* Text */
+  --text-primary: #eaeaf2;
+  --text-secondary: #a8a8c0;
+  --text-tertiary: #787898;
+  --text-disabled: #585878;
+  --text-inverse: #2b2b3d;
+
+  /* Accent */
+  --accent-primary: #7c73ff;
+  --accent-primary-hover: #8b83ff;
+  --accent-primary-alpha: rgba(124, 115, 255, 0.15);
+  --accent-secondary: #4ecdc4;
+  --accent-warning: #ffd93d;
+  --accent-danger: #ff6b6b;
+  --accent-danger-hover: #ff5252;
+  --text-on-danger: #ffffff;
+  --status-error-alpha: rgba(255, 107, 107, 0.1);
+  --accent-success: #51cf66;
+  --accent-info: #74b9ff;
+
+  /* Priority colours — shared by Kanban card priority pills, Task List
+     priority chips, and any other priority affordance. Themes override
+     these per palette; the values here are the dark-mode defaults. */
+  --priority-urgent: #ff6b6b;
+  --priority-high: #ff922b;
+  --priority-medium: #ffd93d;
+  --priority-low: #51cf66;
+
+  /* Shadows */
+  --ui-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --ui-shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --ui-shadow-elevated: 0 4px 16px rgba(0, 0, 0, 0.38);
+
+  /* Scrollbar */
+  --scrollbar-track: #2b2b3d;
+  --scrollbar-thumb: #4a4a6c;
+  --scrollbar-thumb-hover: #5a5a7c;
+
+  /* Canvas */
+  --canvas-bg: #232338;
+  --canvas-pattern: rgba(255, 255, 255, 0.28);
+
+  /* Tile */
+  --tile-header-bg: #383860;
+  --tile-body-bg: #2e2e4a;
+  --tile-border: #4a4a6c;
+
+  /* Connections */
+  --connection-path-color: #7c73ff;
+  --connection-arrow-color: #7c73ff;
+  --connection-label-color: #eaeaf2;
+  --connection-bubble-fill: #323250;
+  --connection-bubble-stroke: #7c73ff;
+  --connection-bubble-stroke-hover: #8b83ff;
+  --connection-bubble-stroke-active: #8b83ff;
+  --connection-path-hover-glow: #7c73ff;
+  --connection-drawing-stroke: #7c73ff;
+  --connection-label-bg: #323250;
+  --connection-label-border: #4a4a6c;
+  --connection-label-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --connection-label-hover-border: #7c73ff;
+  --connection-label-editing-border: #7c73ff;
+  --connection-label-text-secondary: #a8a8c0;
+  --connection-label-text-primary: #eaeaf2;
+  --connection-label-btn-hover-bg: #3c3c5a;
+  --connection-label-btn-danger: #ff6b6b;
+  --connection-label-btn-danger-bg: rgba(211, 47, 47, 0.12);
+
+  /* Frames (canvas content — isolated from system-only theme toggle) */
+  --frame-selected-glow: #7c73ff;
+  --frame-header-text: #eaeaf2;
+  --frame-header-text-muted: #a8a8c0;
+  --frame-header-btn-hover-bg: #3c3c5a;
+  --frame-header-btn-hover-border: #7c73ff;
+  --frame-header-btn-danger: #ff6b6b;
+  --frame-header-btn-danger-bg: rgba(211, 47, 47, 0.12);
+  --frame-resize-handle: #787898;
+
+  /* Toolbar */
+  --toolbar-bg: #262640;
+  --toolbar-border: #3c3c5a;
+  --toolbar-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  --toolbar-divider: #3c3c5a;
+
+  /* Tab Bar */
+  --tabbar-bg: #262640;
+  --tabbar-border: #3c3c5a;
+  --tab-active-bg: #323250;
+  --tab-hover-bg: #2e2e4a;
+
+  /* Sidebar */
+  --sidebar-bg: #262640;
+  --sidebar-border: #3c3c5a;
+
+  /* Context Menu */
+  --menu-bg: #383860;
+  --menu-border: #4a4a6c;
+  --menu-hover: #45456a;
+  --menu-danger: #d32f2f;
+  --menu-danger-bg: rgba(211, 47, 47, 0.12);
+
+  /* Modal */
+  --modal-backdrop: rgba(0, 0, 0, 0.55);
+  --modal-bg: #323250;
+
+  /* Toast */
+  --toast-bg: #383860;
+  --toast-border: #4a4a6c;
+
+  /* Selection */
+  --selection-bg: rgba(124, 115, 255, 0.2);
+  --selection-border: rgba(124, 115, 255, 0.5);
+}
+
+/* ============================================================
+   THEME: Light — Clean Google Workspace feel
+   ============================================================ */
+[data-theme='light'] {
+  --ui-bg: #f8f9fa;
+  --ui-bg-secondary: #ffffff;
+  --ui-surface: #ffffff;
+  --ui-surface-hover: #f1f3f4;
+  --ui-surface-active: #e8eaed;
+  --ui-surface-raised: #ffffff;
+
+  --ui-border: #dadce0;
+  --ui-border-light: #e8eaed;
+  --ui-border-focus: #1a73e8;
+
+  --text-primary: #202124;
+  --text-secondary: #5f6368;
+  --text-tertiary: #80868b;
+  --text-disabled: #bdc1c6;
+  --text-inverse: #ffffff;
+
+  --accent-primary: #1a73e8;
+  --accent-primary-hover: #1765cc;
+  --accent-primary-alpha: rgba(26, 115, 232, 0.15);
+  --accent-secondary: #34a853;
+  --accent-warning: #f9ab00;
+  --accent-danger: #ea4335;
+  --accent-danger-hover: #c5312a;
+  --text-on-danger: #ffffff;
+  --status-error-alpha: rgba(234, 67, 53, 0.1);
+  --accent-success: #34a853;
+  --accent-info: #4285f4;
+
+  --priority-urgent: #d93025;
+  --priority-high: #b85500;
+  --priority-medium: #9c6e00;
+  --priority-low: #34a853;
+
+  --ui-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.08);
+  --ui-shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.12);
+  --ui-shadow-elevated: 0 2px 8px rgba(0, 0, 0, 0.1);
+
+  --scrollbar-track: #f8f9fa;
+  --scrollbar-thumb: #dadce0;
+  --scrollbar-thumb-hover: #bdc1c6;
+
+  --canvas-bg: #f0f0f4;
+  --canvas-pattern: rgba(0, 0, 0, 0.25);
+
+  --tile-header-bg: #f1f3f4;
+  --tile-body-bg: #ffffff;
+  --tile-border: #dadce0;
+
+  /* Connections */
+  --connection-path-color: #1a73e8;
+  --connection-arrow-color: #1a73e8;
+  --connection-label-color: #202124;
+  --connection-bubble-fill: #ffffff;
+  --connection-bubble-stroke: #1a73e8;
+  --connection-bubble-stroke-hover: #1765cc;
+  --connection-bubble-stroke-active: #1765cc;
+  --connection-path-hover-glow: #1a73e8;
+  --connection-drawing-stroke: #1a73e8;
+  --connection-label-bg: #ffffff;
+  --connection-label-border: #dadce0;
+  --connection-label-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.08);
+  --connection-label-hover-border: #1a73e8;
+  --connection-label-editing-border: #1a73e8;
+  --connection-label-text-secondary: #5f6368;
+  --connection-label-text-primary: #202124;
+  --connection-label-btn-hover-bg: #f1f3f4;
+  --connection-label-btn-danger: #ea4335;
+  --connection-label-btn-danger-bg: #ffebee;
+
+  /* Frames (canvas content — isolated from system-only theme toggle) */
+  --frame-selected-glow: #1a73e8;
+  --frame-header-text: #202124;
+  --frame-header-text-muted: #5f6368;
+  --frame-header-btn-hover-bg: #f1f3f4;
+  --frame-header-btn-hover-border: #1a73e8;
+  --frame-header-btn-danger: #ea4335;
+  --frame-header-btn-danger-bg: #ffebee;
+  --frame-resize-handle: #80868b;
+
+  --toolbar-bg: #ffffff;
+  --toolbar-border: #dadce0;
+  --toolbar-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  --toolbar-divider: #dadce0;
+
+  --tabbar-bg: #f8f9fa;
+  --tabbar-border: #dadce0;
+  --tab-active-bg: #ffffff;
+  --tab-hover-bg: #f1f3f4;
+
+  --sidebar-bg: #ffffff;
+  --sidebar-border: #dadce0;
+
+  --menu-bg: #ffffff;
+  --menu-border: #dadce0;
+  --menu-hover: #f1f3f4;
+  --menu-danger: #d32f2f;
+  --menu-danger-bg: #ffebee;
+
+  --modal-backdrop: rgba(0, 0, 0, 0.3);
+  --modal-bg: #ffffff;
+
+  /* Material toast pattern: intentionally dark on light bg for legibility */
+  --toast-bg: #323232;
+  --toast-border: transparent;
+
+  --selection-bg: rgba(26, 115, 232, 0.12);
+  --selection-border: rgba(26, 115, 232, 0.4);
+}
+
+/* ============================================================
+   THEME: Blueprint — Technical drafting aesthetic
+   ============================================================ */
+[data-theme='blueprint'] {
+  --ui-bg: #244e74;
+  --ui-bg-secondary: #2c5683;
+  --ui-surface: #356496;
+  --ui-surface-hover: #4376a8;
+  --ui-surface-active: #5185b8;
+  --ui-surface-raised: #3b6e9c;
+
+  --ui-border: #588db5;
+  --ui-border-light: #4478a0;
+  --ui-border-focus: #54b0f8;
+
+  --text-primary: #d4e8f5;
+  --text-secondary: #d8e8f4;
+  --text-tertiary: #6a9ec5;
+  --text-disabled: #4a80a8;
+  --text-inverse: #1a3550;
+
+  --accent-primary: #54b0f8;
+  --accent-primary-hover: #70bff9;
+  --accent-primary-alpha: rgba(84, 176, 248, 0.15);
+  --accent-secondary: #26c6da;
+  --accent-warning: #ffca28;
+  --accent-danger: #ff6b6b;
+  --accent-danger-hover: #ff5252;
+  --text-on-danger: #ffffff;
+  --status-error-alpha: rgba(239, 83, 80, 0.1);
+  --accent-success: #66bb6a;
+  --accent-info: #42a5f5;
+
+  --priority-urgent: #ffa0a0;
+  --priority-high: #ffa726;
+  --priority-medium: #ffd54f;
+  --priority-low: #a5d6a7;
+
+  --ui-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --ui-shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --ui-shadow-elevated: 0 4px 16px rgba(0, 0, 0, 0.45);
+
+  --scrollbar-track: #244e74;
+  --scrollbar-thumb: #588db5;
+  --scrollbar-thumb-hover: #6c9ec5;
+
+  --canvas-bg: #1f3f64;
+  --canvas-pattern: rgba(84, 176, 248, 0.30);
+
+  --tile-header-bg: #3b6e9c;
+  --tile-body-bg: #2c5683;
+  --tile-border: #588db5;
+
+  /* Connections */
+  --connection-path-color: #54b0f8;
+  --connection-arrow-color: #54b0f8;
+  --connection-label-color: #d4e8f5;
+  --connection-bubble-fill: #356496;
+  --connection-bubble-stroke: #54b0f8;
+  --connection-bubble-stroke-hover: #70bff9;
+  --connection-bubble-stroke-active: #70bff9;
+  --connection-path-hover-glow: #54b0f8;
+  --connection-drawing-stroke: #54b0f8;
+  --connection-label-bg: #356496;
+  --connection-label-border: #588db5;
+  --connection-label-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --connection-label-hover-border: #54b0f8;
+  --connection-label-editing-border: #54b0f8;
+  --connection-label-text-secondary: #d8e8f4;
+  --connection-label-text-primary: #d4e8f5;
+  --connection-label-btn-hover-bg: #4376a8;
+  --connection-label-btn-danger: #ff6b6b;
+  --connection-label-btn-danger-bg: rgba(239, 83, 80, 0.12);
+
+  /* Frames (canvas content — isolated from system-only theme toggle) */
+  --frame-selected-glow: #54b0f8;
+  --frame-header-text: #d4e8f5;
+  --frame-header-text-muted: #d8e8f4;
+  --frame-header-btn-hover-bg: #4376a8;
+  --frame-header-btn-hover-border: #54b0f8;
+  --frame-header-btn-danger: #ff6b6b;
+  --frame-header-btn-danger-bg: rgba(239, 83, 80, 0.12);
+  --frame-resize-handle: #6a9ec5;
+
+  --toolbar-bg: #2c5683;
+  --toolbar-border: #588db5;
+  --toolbar-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  --toolbar-divider: #588db5;
+
+  --tabbar-bg: #2c5683;
+  --tabbar-border: #588db5;
+  --tab-active-bg: #356496;
+  --tab-hover-bg: #305a86;
+
+  --sidebar-bg: #2c5683;
+  --sidebar-border: #588db5;
+
+  --menu-bg: #356496;
+  --menu-border: #588db5;
+  --menu-hover: #4376a8;
+  --menu-danger: #ff6b6b;
+  --menu-danger-bg: rgba(239, 83, 80, 0.12);
+
+  --modal-backdrop: rgba(0, 0, 0, 0.55);
+  --modal-bg: #356496;
+
+  --toast-bg: #3b6e9c;
+  --toast-border: #588db5;
+
+  --selection-bg: rgba(84, 176, 248, 0.18);
+  --selection-border: rgba(84, 176, 248, 0.45);
+}
+
+/* ============================================================
+   THEME: Retro — Warm vintage terminals
+   ============================================================ */
+[data-theme='retro'] {
+  --ui-bg: #564a3c;
+  --ui-bg-secondary: #5e5044;
+  --ui-surface: #66594d;
+  --ui-surface-hover: #726558;
+  --ui-surface-active: #7e7264;
+  --ui-surface-raised: #6e6154;
+
+  --ui-border: #8a7d6e;
+  --ui-border-light: #786b5d;
+  --ui-border-focus: #e8a94e;
+
+  --text-primary: #f0dcc0;
+  --text-secondary: #e8d0b8;
+  --text-tertiary: #b09a88;
+  --text-disabled: #706458;
+  --text-inverse: #3a3228;
+
+  --accent-primary: #e8a94e;
+  --accent-primary-hover: #f0b85e;
+  --accent-primary-alpha: rgba(232, 169, 78, 0.15);
+  --accent-secondary: #c87941;
+  --accent-warning: #e8c94e;
+  --accent-danger: #ff6b6b;
+  --accent-danger-hover: #ff5252;
+  --text-on-danger: #ffffff;
+  --status-error-alpha: rgba(224, 104, 104, 0.1);
+  --accent-success: #7ab648;
+  --accent-info: #5ea8c8;
+
+  --priority-urgent: #ffac99;
+  --priority-high: #ffb74d;
+  --priority-medium: #e8c94e;
+  --priority-low: #aed581;
+
+  --ui-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --ui-shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --ui-shadow-elevated: 0 4px 16px rgba(0, 0, 0, 0.38);
+
+  --scrollbar-track: #564a3c;
+  --scrollbar-thumb: #8a7d6e;
+  --scrollbar-thumb-hover: #9a8d7e;
+
+  --canvas-bg: #463c30;
+  --canvas-pattern: rgba(232, 169, 78, 0.28);
+
+  --tile-header-bg: #6e6154;
+  --tile-body-bg: #5e5044;
+  --tile-border: #8a7d6e;
+
+  /* Connections */
+  --connection-path-color: #e8a94e;
+  --connection-arrow-color: #e8a94e;
+  --connection-label-color: #f0dcc0;
+  --connection-bubble-fill: #66594d;
+  --connection-bubble-stroke: #e8a94e;
+  --connection-bubble-stroke-hover: #f0b85e;
+  --connection-bubble-stroke-active: #f0b85e;
+  --connection-path-hover-glow: #e8a94e;
+  --connection-drawing-stroke: #e8a94e;
+  --connection-label-bg: #66594d;
+  --connection-label-border: #8a7d6e;
+  --connection-label-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --connection-label-hover-border: #e8a94e;
+  --connection-label-editing-border: #e8a94e;
+  --connection-label-text-secondary: #e8d0b8;
+  --connection-label-text-primary: #f0dcc0;
+  --connection-label-btn-hover-bg: #726558;
+  --connection-label-btn-danger: #ff6b6b;
+  --connection-label-btn-danger-bg: rgba(224, 104, 104, 0.12);
+
+  /* Frames (canvas content — isolated from system-only theme toggle) */
+  --frame-selected-glow: #e8a94e;
+  --frame-header-text: #f0dcc0;
+  --frame-header-text-muted: #e8d0b8;
+  --frame-header-btn-hover-bg: #726558;
+  --frame-header-btn-hover-border: #e8a94e;
+  --frame-header-btn-danger: #ff6b6b;
+  --frame-header-btn-danger-bg: rgba(224, 104, 104, 0.12);
+  --frame-resize-handle: #b09a88;
+
+  --toolbar-bg: #5e5044;
+  --toolbar-border: #8a7d6e;
+  --toolbar-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  --toolbar-divider: #8a7d6e;
+
+  --tabbar-bg: #5e5044;
+  --tabbar-border: #8a7d6e;
+  --tab-active-bg: #66594d;
+  --tab-hover-bg: #645648;
+
+  --sidebar-bg: #5e5044;
+  --sidebar-border: #8a7d6e;
+
+  --menu-bg: #66594d;
+  --menu-border: #8a7d6e;
+  --menu-hover: #726558;
+  --menu-danger: #ff6b6b;
+  --menu-danger-bg: rgba(224, 104, 104, 0.12);
+
+  --modal-backdrop: rgba(0, 0, 0, 0.5);
+  --modal-bg: #66594d;
+
+  --toast-bg: #6e6154;
+  --toast-border: #8a7d6e;
+
+  --selection-bg: rgba(232, 169, 78, 0.18);
+  --selection-border: rgba(232, 169, 78, 0.45);
+}
+
+/* ============================================================
+   THEME: Nature — Earthy greens and warm neutrals
+   ============================================================ */
+[data-theme='nature'] {
+  --ui-bg: #455c3c;
+  --ui-bg-secondary: #4e6645;
+  --ui-surface: #56714b;
+  --ui-surface-hover: #647f58;
+  --ui-surface-active: #708d65;
+  --ui-surface-raised: #5e7950;
+
+  --ui-border: #7a9870;
+  --ui-border-light: #688460;
+  --ui-border-focus: #76cb7a;
+
+  --text-primary: #ddf0d8;
+  --text-secondary: #e4f0dc;
+  --text-tertiary: #90b888;
+  --text-disabled: #5a7a54;
+  --text-inverse: #2e3d28;
+
+  --accent-primary: #76cb7a;
+  --accent-primary-hover: #86d88a;
+  --accent-primary-alpha: rgba(118, 203, 122, 0.15);
+  --accent-secondary: #aed581;
+  --accent-warning: #ffcc02;
+  --accent-danger: #ff8080;
+  --accent-danger-hover: #ff6666;
+  --text-on-danger: #ffffff;
+  --status-error-alpha: rgba(229, 115, 115, 0.1);
+  --accent-success: #81c784;
+  --accent-info: #4fc3f7;
+
+  --priority-urgent: #ffb3b3;
+  --priority-high: #ffb74d;
+  --priority-medium: #ffd54f;
+  --priority-low: #c5e1a5;
+
+  --ui-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --ui-shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --ui-shadow-elevated: 0 4px 16px rgba(0, 0, 0, 0.38);
+
+  --scrollbar-track: #455c3c;
+  --scrollbar-thumb: #7a9870;
+  --scrollbar-thumb-hover: #8aa880;
+
+  --canvas-bg: #364e30;
+  --canvas-pattern: rgba(118, 203, 122, 0.28);
+
+  --tile-header-bg: #5e7950;
+  --tile-body-bg: #4e6645;
+  --tile-border: #7a9870;
+
+  /* Connections */
+  --connection-path-color: #76cb7a;
+  --connection-arrow-color: #76cb7a;
+  --connection-label-color: #ddf0d8;
+  --connection-bubble-fill: #56714b;
+  --connection-bubble-stroke: #76cb7a;
+  --connection-bubble-stroke-hover: #86d88a;
+  --connection-bubble-stroke-active: #86d88a;
+  --connection-path-hover-glow: #76cb7a;
+  --connection-drawing-stroke: #76cb7a;
+  --connection-label-bg: #56714b;
+  --connection-label-border: #7a9870;
+  --connection-label-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --connection-label-hover-border: #76cb7a;
+  --connection-label-editing-border: #76cb7a;
+  --connection-label-text-secondary: #e4f0dc;
+  --connection-label-text-primary: #ddf0d8;
+  --connection-label-btn-hover-bg: #647f58;
+  --connection-label-btn-danger: #ff8080;
+  --connection-label-btn-danger-bg: rgba(229, 115, 115, 0.12);
+
+  /* Frames (canvas content — isolated from system-only theme toggle) */
+  --frame-selected-glow: #76cb7a;
+  --frame-header-text: #ddf0d8;
+  --frame-header-text-muted: #e4f0dc;
+  --frame-header-btn-hover-bg: #647f58;
+  --frame-header-btn-hover-border: #76cb7a;
+  --frame-header-btn-danger: #ff8080;
+  --frame-header-btn-danger-bg: rgba(229, 115, 115, 0.12);
+  --frame-resize-handle: #90b888;
+
+  --toolbar-bg: #4e6645;
+  --toolbar-border: #7a9870;
+  --toolbar-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  --toolbar-divider: #7a9870;
+
+  --tabbar-bg: #4e6645;
+  --tabbar-border: #7a9870;
+  --tab-active-bg: #56714b;
+  --tab-hover-bg: #50684a;
+
+  --sidebar-bg: #4e6645;
+  --sidebar-border: #7a9870;
+
+  --menu-bg: #56714b;
+  --menu-border: #7a9870;
+  --menu-hover: #647f58;
+  --menu-danger: #ff8080;
+  --menu-danger-bg: rgba(229, 115, 115, 0.12);
+
+  --modal-backdrop: rgba(0, 0, 0, 0.5);
+  --modal-bg: #56714b;
+
+  --toast-bg: #5e7950;
+  --toast-border: #7a9870;
+
+  --selection-bg: rgba(118, 203, 122, 0.18);
+  --selection-border: rgba(118, 203, 122, 0.45);
+}
+
+/* ============================================================
+   Scrollbar Styles
+   ============================================================ */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* ============================================================
+   Animation Keyframes (from Design Doc)
+   ============================================================ */
+
+/* Toast slide-in */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Search match pulse */
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.02);
+  }
+}
+
+/* Minimap radar pulse for active media */
+@keyframes radar-pulse {
+  0%, 100% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 2px var(--accent-primary));
+  }
+  50% {
+    transform: scale(1.15);
+    filter: drop-shadow(0 0 8px var(--accent-primary));
+  }
+}
+
+/* Minimap active pip expanding ripple */
+@keyframes mm-pulse-anim {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(3);
+    opacity: 0;
+  }
+}
+
+/* Voice recording indicator */
+@keyframes pulse-red {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(239, 83, 80, 0.4);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 12px rgba(239, 83, 80, 0);
+  }
+}
+
+/* Modal/panel fade in */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Slide up (for modals — content slides up with fade) */
+@keyframes slideUp {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Slide down (for dropdown menus) */
+@keyframes slideDown {
+  from {
+    transform: translateY(-4px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Popup scale entry (style popups, sidebars) */
+@keyframes popIn {
+  from {
+    transform: scale(0.96);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* ============================================================
+   Accessibility: Reduced Motion
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01s !important;
+  }
+}
+
+/* ============================================================
+   Utility Classes
+   ============================================================ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ============================================================
+   Focus Visible
+   ============================================================
+   Keyboard users must always see a focus indicator. Component-level
+   `:focus { outline: none }` rules win on specificity, so prefer
+   `:focus:not(:focus-visible) { outline: none }` whenever an input
+   already has an alternate focus indicator (border-color change). */
+:focus-visible {
+  outline: 2px solid var(--ui-border-focus);
+  outline-offset: 2px;
+}
+
+button:focus:not(:focus-visible) {
+  outline: none;
+}
+
+input:focus:not(:focus-visible),
+textarea:focus:not(:focus-visible),
+select:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* ── Search highlight pulse (Find & Replace) ── */
+.search-highlight {
+  animation: search-pulse 0.6s ease 2;
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@keyframes search-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-primary) 0%, transparent); }
+  50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent-primary) 30%, transparent); }
+}
+
+/* ── Skip to main content (accessibility) ── */
+.skip-link {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 8px 16px;
+  background: var(--accent-primary);
+  color: var(--text-inverse);
+  z-index: var(--z-skip-link);
+  font-size: 14px;
+  border-radius: 0 0 6px 0;
+  transform: translateY(-100%);
+  transition: transform 0.15s ease;
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+/* ── High contrast mode adjustments ── */
+@media (forced-colors: active) {
+  :root {
+    --ui-border: ButtonBorder;
+    --text-primary: ButtonText;
+    --accent-primary: Highlight;
+  }
+}
+
+/* ============================================================
+   Tiptap Editor Base Styles
+   ============================================================ */
+/* ProseMirror's view runtime checks getComputedStyle(root).whiteSpace
+   on its editable root and emits a console warning when it isn't a
+   pre-* value. TipTap renders the contenteditable with both `.tiptap`
+   and `.ProseMirror` classes, so we target `.ProseMirror` here. */
+.ProseMirror {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+.tiptap {
+  outline: none;
+  min-height: 100%;
+}
+.tiptap p {
+  margin-top: 0;
+  margin-bottom: 1em;
+}
+/* Phase A.3 — visible blank-line gap between consecutive paragraphs. The
+   adjacent-sibling rule beats CSS margin collapse so the second paragraph's
+   margin-top always applies, matching the Word-style "Enter = blank line"
+   expectation. */
+.tiptap p + p {
+  margin-top: 0.4em;
+}
+.tiptap h1, .tiptap h2, .tiptap h3, .tiptap h4, .tiptap h5, .tiptap h6 {
+  margin-top: 0;
+  margin-bottom: 0.25em;
+  font-family: inherit;
+}
+.tiptap ul, .tiptap ol {
+  padding-left: 1.5em;
+  margin-bottom: 1em;
+}
+.tiptap ul {
+  list-style-type: disc;
+}
+.tiptap ol {
+  list-style-type: decimal;
+}
+.tiptap code {
+  background: var(--ui-surface-hover);
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+.tiptap pre {
+  background: var(--ui-surface-active);
+  padding: 1em;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  margin-bottom: 1em;
+}
+.tiptap pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+.tiptap a.tiptap-link {
+  color: var(--accent-info);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.tiptap .filo-tag,
+.filo-tag {
+  display: inline-block;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--accent-primary-alpha, rgba(84, 176, 248, 0.15));
+  color: var(--accent-primary);
+  font-weight: 500;
+  font-size: 0.95em;
+}
+.tiptap table {
+  border-collapse: collapse;
+  margin-bottom: 1em;
+  width: 100%;
+}
+.tiptap table th, .tiptap table td {
+  border: 1px solid var(--ui-border);
+  padding: 0.4em 0.8em;
+}
+.tiptap ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+}
+.tiptap ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+}
+.tiptap ul[data-type="taskList"] li > label {
+  margin-right: 0.5em;
+  user-select: none;
+  cursor: pointer;
+}
+
+/* ============================================================
+   Tile Specific Global Styles
+   ============================================================ */
+.tile-resize-handle {
+  cursor: se-resize;
+}
+
+/* ============================================================
+   Tag Popup Overlay
+   ----------------------------------------------------------------
+   Used by every surface that renders TagsPopupMenu via `use:portal`
+   (canvas TileContainer, KanbanCard, TaskItem, DocumentEditor). The
+   overlay sits below the popup so a click outside dismisses it; the
+   anchor positions the popup at the cursor. var(--z-tile-popup) is
+   2400, so the overlay uses var(--z-tile-popup-overlay) (2300) to stay
+   one layer below.
+   ============================================================ */
+.tag-popup-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-tile-popup-overlay);
+}
+
+.tag-popup-anchor {
+  animation: popIn 0.15s ease;
+}

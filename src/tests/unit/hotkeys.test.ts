@@ -1,0 +1,352 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import {
+  registerShortcut,
+  initKeyboardShortcuts,
+  getAllShortcuts,
+  getDefaultBinding,
+  getHotkeyOverrides,
+  setHotkeyOverrides,
+  setHotkeyOverride,
+  findBindingConflict,
+  formatShortcut,
+  parseShortcut,
+  bindingFromEvent,
+  serializeOverrides,
+  deserializeOverrides,
+  _resetForTests,
+} from '@renderer/core/hotkeys';
+
+describe('hotkeys', () => {
+  beforeEach(() => {
+    _resetForTests();
+  });
+
+  describe('formatShortcut / parseShortcut', () => {
+    it('round-trips Ctrl+Shift+N', () => {
+      const b = parseShortcut('Ctrl+Shift+N');
+      expect(b).toEqual({ key: 'N', ctrl: true, shift: true });
+      expect(formatShortcut(b!)).toBe('Ctrl+Shift+N');
+    });
+
+    it('handles single-letter no-modifier', () => {
+      const b = parseShortcut('Escape');
+      expect(b).toEqual({ key: 'Escape' });
+      expect(formatShortcut(b!)).toBe('Escape');
+    });
+
+    it('handles Cmd alias as ctrl', () => {
+      const b = parseShortcut('Cmd+S');
+      expect(b?.ctrl).toBe(true);
+      expect(b?.key).toBe('S');
+    });
+
+    it('returns null for empty / malformed strings', () => {
+      expect(parseShortcut('')).toBeNull();
+      expect(parseShortcut('Ctrl+')).toBeNull();
+    });
+  });
+
+  describe('bindingFromEvent', () => {
+    it('captures ctrl + key', () => {
+      const e = new KeyboardEvent('keydown', { key: 'n', ctrlKey: true });
+      expect(bindingFromEvent(e)).toEqual({ key: 'n', ctrl: true, shift: false, alt: false });
+    });
+
+    it('skips modifier-only events', () => {
+      const e = new KeyboardEvent('keydown', { key: 'Control', ctrlKey: true });
+      expect(bindingFromEvent(e)).toBeNull();
+    });
+
+    it('treats meta key as ctrl', () => {
+      const e = new KeyboardEvent('keydown', { key: 's', metaKey: true });
+      const b = bindingFromEvent(e);
+      expect(b?.ctrl).toBe(true);
+    });
+  });
+
+  describe('serialize / deserialize overrides', () => {
+    it('round-trips through hotkeys.json shape', () => {
+      const map = {
+        'tile:new': { key: 'F2', shift: true },
+        'history:undo': { key: 'Z', ctrl: true },
+      };
+      const json = serializeOverrides(map);
+      expect(json).toEqual({
+        'tile:new': 'Shift+F2',
+        'history:undo': 'Ctrl+Z',
+      });
+      expect(deserializeOverrides(json)).toEqual({
+        'tile:new': { key: 'F2', shift: true },
+        'history:undo': { key: 'Z', ctrl: true },
+      });
+    });
+
+    it('skips invalid entries on deserialise', () => {
+      const result = deserializeOverrides({ 'tile:new': '', 'history:undo': 'Ctrl+Z' });
+      expect(result).toEqual({ 'history:undo': { key: 'Z', ctrl: true } });
+    });
+  });
+
+  describe('overrides are applied to registered shortcuts', () => {
+    it('reflects an override in getAllShortcuts', () => {
+      registerShortcut({
+        commandId: 'tile:new',
+        key: 'n',
+        ctrl: true,
+        description: 'New Tile',
+        action: () => {},
+      });
+      setHotkeyOverride('tile:new', { key: 'F2' });
+      const all = getAllShortcuts();
+      const tileNew = all.find((s) => s.commandId === 'tile:new')!;
+      expect(tileNew.key).toBe('F2');
+      expect(tileNew.ctrl).toBe(false);
+    });
+
+    it('reset (null override) returns to default binding', () => {
+      registerShortcut({
+        commandId: 'tile:new',
+        key: 'n',
+        ctrl: true,
+        description: 'New Tile',
+        action: () => {},
+      });
+      setHotkeyOverride('tile:new', { key: 'F2' });
+      setHotkeyOverride('tile:new', null);
+      const tileNew = getAllShortcuts().find((s) => s.commandId === 'tile:new')!;
+      expect(tileNew.key).toBe('n');
+      expect(tileNew.ctrl).toBe(true);
+    });
+
+    it('applies overrides to shortcuts registered after the override is set', () => {
+      setHotkeyOverrides({ 'tile:new': { key: 'F2' } });
+      registerShortcut({
+        commandId: 'tile:new',
+        key: 'n',
+        ctrl: true,
+        description: 'New Tile',
+        action: () => {},
+      });
+      const tileNew = getAllShortcuts().find((s) => s.commandId === 'tile:new')!;
+      expect(tileNew.key).toBe('F2');
+    });
+
+    it('preserves the default binding for reset after registration', () => {
+      registerShortcut({
+        commandId: 'tile:new',
+        key: 'n',
+        ctrl: true,
+        description: 'New Tile',
+        action: () => {},
+      });
+      setHotkeyOverride('tile:new', { key: 'F2' });
+      const def = getDefaultBinding('tile:new');
+      expect(def).toEqual({ key: 'n', ctrl: true, shift: undefined, alt: undefined });
+    });
+
+    it('exposes current override map via getHotkeyOverrides', () => {
+      setHotkeyOverride('tile:new', { key: 'F2' });
+      expect(getHotkeyOverrides()).toEqual({ 'tile:new': { key: 'F2' } });
+    });
+  });
+
+  describe('findBindingConflict', () => {
+    beforeEach(() => {
+      registerShortcut({
+        commandId: 'history:undo',
+        key: 'z',
+        ctrl: true,
+        description: 'Undo',
+        action: () => {},
+      });
+      registerShortcut({
+        commandId: 'tile:new',
+        key: 'n',
+        ctrl: true,
+        description: 'New Tile',
+        action: () => {},
+      });
+    });
+
+    it('returns the conflicting commandId', () => {
+      const conflict = findBindingConflict({ key: 'z', ctrl: true });
+      expect(conflict).toBe('history:undo');
+    });
+
+    it('returns null when no conflict', () => {
+      const conflict = findBindingConflict({ key: 'x', ctrl: true, shift: true });
+      expect(conflict).toBeNull();
+    });
+
+    it('ignores the exemption commandId', () => {
+      const conflict = findBindingConflict({ key: 'z', ctrl: true }, 'history:undo');
+      expect(conflict).toBeNull();
+    });
+
+    it('detects conflicts that come from overrides', () => {
+      setHotkeyOverride('tile:new', { key: 'z', ctrl: true });
+      const conflict = findBindingConflict({ key: 'z', ctrl: true }, 'history:undo');
+      expect(conflict).toBe('tile:new');
+    });
+  });
+
+  describe('enabled (active-pane skip)', () => {
+    beforeEach(() => {
+      initKeyboardShortcuts();
+    });
+
+    function dispatchKey(init: KeyboardEventInit) {
+      const event = new KeyboardEvent('keydown', { ...init, bubbles: true, cancelable: true });
+      document.body.dispatchEvent(event);
+      return event;
+    }
+
+    it('skips a disabled shortcut and fires the next matching enabled one', () => {
+      const fired: string[] = [];
+      registerShortcut({
+        commandId: 'a', key: 'n', description: 'A',
+        enabled: () => false,
+        action: () => fired.push('a'),
+      });
+      registerShortcut({
+        commandId: 'b', key: 'n', description: 'B',
+        enabled: () => true,
+        action: () => fired.push('b'),
+      });
+
+      dispatchKey({ key: 'n' });
+      expect(fired).toEqual(['b']);
+    });
+
+    it('routes to the enabled match regardless of registration order', () => {
+      const fired: string[] = [];
+      // Enabled one registered FIRST this time — still the only one to fire.
+      registerShortcut({
+        commandId: 'b', key: 'n', description: 'B',
+        enabled: () => true,
+        action: () => fired.push('b'),
+      });
+      registerShortcut({
+        commandId: 'a', key: 'n', description: 'A',
+        enabled: () => false,
+        action: () => fired.push('a'),
+      });
+
+      dispatchKey({ key: 'n' });
+      expect(fired).toEqual(['b']);
+    });
+
+    it('fires nothing and does not preventDefault when every match is disabled', () => {
+      let fired = 0;
+      registerShortcut({
+        commandId: 'a', key: 'n', description: 'A',
+        enabled: () => false,
+        action: () => { fired += 1; },
+      });
+      registerShortcut({
+        commandId: 'b', key: 'n', description: 'B',
+        enabled: () => false,
+        action: () => { fired += 1; },
+      });
+
+      const event = dispatchKey({ key: 'n' });
+      expect(fired).toBe(0);
+      // A skipped shortcut must let the keystroke fall through, not eat it.
+      expect(event.defaultPrevented).toBe(false);
+    });
+
+    it('treats a missing enabled predicate as always-on', () => {
+      let fired = 0;
+      registerShortcut({
+        commandId: 'a', key: 'n', description: 'A',
+        action: () => { fired += 1; },
+      });
+
+      const event = dispatchKey({ key: 'n' });
+      expect(fired).toBe(1);
+      expect(event.defaultPrevented).toBe(true);
+    });
+  });
+
+  describe('allowInEditor', () => {
+    beforeEach(() => {
+      initKeyboardShortcuts();
+    });
+
+    // jsdom doesn't implement HTMLElement.isContentEditable (returns undefined
+    // even when contenteditable="true"), so we shim the property on a fresh
+    // element to exercise the production filter.
+    function makeEditable(): HTMLElement {
+      const el = document.createElement('div');
+      el.setAttribute('contenteditable', 'true');
+      Object.defineProperty(el, 'isContentEditable', { value: true, configurable: true });
+      document.body.appendChild(el);
+      return el;
+    }
+
+    function dispatchKey(target: HTMLElement, init: KeyboardEventInit) {
+      const event = new KeyboardEvent('keydown', { ...init, bubbles: true, cancelable: true });
+      target.dispatchEvent(event);
+    }
+
+    it('skips contenteditable-targeted shortcuts that do not opt in', () => {
+      let fired = 0;
+      registerShortcut({
+        commandId: 'history:undo',
+        key: 'z',
+        ctrl: true,
+        description: 'Undo',
+        action: () => { fired += 1; },
+      });
+
+      const editable = makeEditable();
+      try {
+        dispatchKey(editable, { key: 'z', ctrlKey: true });
+        expect(fired).toBe(0);
+      } finally {
+        editable.remove();
+      }
+    });
+
+    it('fires contenteditable-targeted shortcuts that opt in via allowInEditor', () => {
+      let fired = 0;
+      registerShortcut({
+        commandId: 'editor:insert-link',
+        key: 'k',
+        ctrl: true,
+        description: 'Insert Link',
+        allowInEditor: true,
+        action: () => { fired += 1; },
+      });
+
+      const editable = makeEditable();
+      try {
+        dispatchKey(editable, { key: 'k', ctrlKey: true });
+        expect(fired).toBe(1);
+      } finally {
+        editable.remove();
+      }
+    });
+
+    it('always blocks shortcuts inside form INPUT regardless of allowInEditor', () => {
+      let fired = 0;
+      registerShortcut({
+        commandId: 'editor:insert-link',
+        key: 'k',
+        ctrl: true,
+        description: 'Insert Link',
+        allowInEditor: true,
+        action: () => { fired += 1; },
+      });
+
+      const input = document.createElement('input');
+      document.body.appendChild(input);
+      try {
+        dispatchKey(input, { key: 'k', ctrlKey: true });
+        expect(fired).toBe(0);
+      } finally {
+        input.remove();
+      }
+    });
+  });
+});

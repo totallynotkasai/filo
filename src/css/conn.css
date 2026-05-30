@@ -1,0 +1,200 @@
+/* ============================================================
+   Filo — Connection Path & Label Styles
+   Phase 6: Connections and Frames
+   ============================================================ */
+
+/* ── Connection Bubbles ──
+   Use dedicated --connection-* vars (with system-var fallbacks for
+   any custom theme that hasn't been updated) so that toggling
+   "Apply System Colours Only" leaves bubbles untouched. */
+.connection-bubble {
+  fill: var(--connection-bubble-fill, var(--ui-surface));
+  stroke: var(--connection-bubble-stroke, var(--accent-primary));
+  stroke-width: 2;
+  cursor: pointer;
+  transition: fill 0.15s ease, r 0.15s ease, stroke 0.15s ease;
+  pointer-events: all;
+}
+
+.connection-bubble:hover {
+  fill: var(--connection-bubble-stroke, var(--accent-primary));
+  stroke: var(--connection-bubble-stroke-hover, var(--accent-primary-hover));
+  r: 8;
+}
+
+.connection-bubble.active-source {
+  fill: var(--connection-bubble-stroke, var(--accent-primary));
+  stroke: var(--connection-bubble-stroke-active, var(--accent-primary-hover));
+  r: 8;
+}
+
+/* ── Connection Paths ── */
+.connection-path {
+  transition: stroke-width 0.2s ease, stroke 0.2s ease;
+  pointer-events: stroke;
+}
+
+.connection-hit-area {
+  cursor: pointer;
+  pointer-events: stroke;
+}
+
+.connection-path-group:hover .connection-path {
+  stroke-width: 3;
+  filter: drop-shadow(0 0 4px var(--connection-path-hover-glow, var(--accent-primary)));
+}
+
+/* Phase C / C.4 — selection state. The visible stroke colour and width
+   are already overridden inline by ConnectionPath when selected so the
+   resolved theme colour can't win the cascade fight; the filter glow
+   here gives the selection a hover-style halo so it's recognisable
+   without focus-following the cursor. */
+.connection-path-group.selected .connection-path {
+  filter: drop-shadow(0 0 4px var(--connection-path-hover-glow, var(--accent-primary)));
+}
+
+/* ── Connection Arrows ── */
+.connection-arrow {
+  pointer-events: none;
+}
+
+/* ── Drawing Line (in-progress connection) ── */
+.drawing-line {
+  pointer-events: none;
+  animation: drawing-pulse 1s infinite ease-in-out;
+}
+
+@keyframes drawing-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+/* ── Orphan Catcher highlight ── */
+/* Drawn with an outline (no layout effect) and opacity-only animation to
+   respect the rule against animating size properties. */
+.tile-container.orphan-highlight {
+  outline: 2px solid var(--accent-warning, #e0a500);
+  outline-offset: 2px;
+  animation: orphan-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes orphan-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile-container.orphan-highlight {
+    animation: none;
+  }
+}
+
+/* ── Connection Labels ── */
+.connection-label-group {
+  pointer-events: auto;
+}
+
+.connection-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  max-width: 120px;
+  padding: 2px 8px;
+  background: var(--connection-label-bg, var(--ui-surface));
+  border: 1px solid var(--connection-label-border, var(--ui-border));
+  color: var(--connection-label-color);
+  border-radius: 6px;
+  font-size: var(--font-size-connection-label, 12px);
+  text-align: center;
+  cursor: grab;
+  user-select: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.2s ease;
+  box-shadow: var(--connection-label-shadow, var(--ui-shadow));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.connection-label:hover {
+  border-color: var(--connection-label-hover-border, var(--accent-primary));
+  box-shadow:
+    0 0 0 1px var(--connection-label-hover-border, var(--accent-primary)),
+    var(--connection-label-shadow, var(--ui-shadow));
+}
+
+.connection-label.editing {
+  cursor: text;
+  border-color: var(--connection-label-editing-border, var(--ui-border-focus));
+  box-shadow: 0 0 0 2px var(--connection-label-editing-border, var(--ui-border-focus));
+}
+
+.connection-label:not(.has-text) {
+  opacity: 0.5;
+  font-style: italic;
+}
+
+.connection-label .label-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connection-label .label-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: var(--font-size-connection-label, 12px);
+  text-align: center;
+  color: inherit;
+  padding: 0;
+}
+
+/* ── Label Controls ── */
+.label-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px;
+  background: var(--connection-label-bg, var(--ui-surface));
+  border: 1px solid var(--connection-label-border, var(--ui-border));
+  border-radius: 6px;
+  box-shadow: var(--connection-label-shadow, var(--ui-shadow));
+  animation: popIn 0.15s ease;
+}
+
+.label-ctrl-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  color: var(--connection-label-text-secondary, var(--text-secondary));
+  cursor: pointer;
+  border: none;
+  background: none;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.label-ctrl-btn:hover {
+  background: var(--connection-label-btn-hover-bg, var(--ui-surface-hover));
+  color: var(--connection-label-text-primary, var(--text-primary));
+}
+
+.label-ctrl-btn.danger:hover {
+  color: var(--connection-label-btn-danger, var(--accent-danger));
+  background: var(--connection-label-btn-danger-bg, var(--menu-danger-bg));
+}
+
+/* ── Visibility Toggle (eye icon on paths in connection mode) ── */
+.connection-visibility-toggle {
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.15s ease;
+}
+
+.connection-visibility-toggle:hover {
+  opacity: 1;
+}

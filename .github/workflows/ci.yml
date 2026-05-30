@@ -1,0 +1,114 @@
+name: CI
+
+# Phase 7 regression-prevention workflow. Locks in the gains from
+# audit Phases 0–6: lint, type-check, unit tests + stderr-clean,
+# build smoke, file-size ratchet, type-cast ratchet, IPC channel
+# parity, and an a11y axe scan. Full Electron E2E runs only on
+# main pushes and a nightly cron to keep PR CI fast.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  schedule:
+    - cron: '0 0 * * *' # nightly UTC midnight
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify (lint, types, tests, build, ratchets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run check
+      - run: npm run test:unit:strict
+      - run: npm run build
+      - run: npm run ci:file-sizes
+      - run: npm run ci:type-casts
+      - run: npm run ci:ipc-parity
+      - run: npm run ci:legacy-read
+      - run: npm run ci:vault-lifecycle-coverage
+      - run: npm run ci:no-adhoc-schedulers
+      - run: npm run ci:no-raw-disk-shape-ipc
+
+  coverage:
+    # PR-only because v8 coverage instrumentation roughly doubles the
+    # vitest runtime — `verify` stays fast for branch pushes. Thresholds
+    # live in vitest.config.mts under `test.coverage.thresholds`; raise
+    # them whenever new tests push the floor up (ratchet, never lower).
+    name: Coverage (PR only)
+    runs-on: ubuntu-latest
+    needs: verify
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run test:unit:coverage
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 7
+
+  a11y:
+    name: a11y (axe-core E2E subset)
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - run: xvfb-run --auto-servernum -- npx playwright test a11y.test.ts
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a11y-traces
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7
+
+  e2e:
+    name: Full E2E (main + nightly)
+    runs-on: ubuntu-latest
+    needs: verify
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - run: xvfb-run --auto-servernum -- npm run test:e2e
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-traces
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7

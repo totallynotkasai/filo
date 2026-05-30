@@ -1,0 +1,201 @@
+import { reportError } from '../lib/utils/errorBus';
+
+/**
+ * Vault lifecycle registry — single subscription point for vault-swap reset.
+ *
+ * Phase 4 (Consolidation 2026-05-25) — replaces the scattered inline reset
+ * chain previously inside `vault.svelte.ts:openVault` with a publish/subscribe
+ * registry. Every store / write scheduler / sentinel that holds vault-scoped
+ * state subscribes once at module load; the openVault path fires `pre-swap`
+ * before hydrating the new vault and `post-swap` after.
+ *
+ * Why two phases:
+ *  - `pre-swap` runs while the OUTGOING vault is still semantically active.
+ *    Handlers cancel debounced timers, flush sentinels against the outgoing
+ *    vaultRoot, drop history stacks. Any "save before swap" disk write has
+ *    already finished by the time the event fires (the dialog flow awaits
+ *    `vaultStore.save()` first); pre-swap handlers must not assume the
+ *    project is still hydrated.
+ *  - `post-swap` runs after the new vault is hydrated. The vaultIndex
+ *    rebuild lives here so it sees the freshly-loaded file tree.
+ *
+ * Ordering: handlers within a phase run sequentially, in registration order
+ * by default. A handler may declare `runAfter: ['handlerName']` so a
+ * dependent handler waits for its prerequisite. The dispatcher topologically
+ * sorts within each phase. Cycles fall back to registration order with a
+ * `reportError` so a misconfigured dependency surfaces but doesn't deadlock.
+ *
+ * Error policy: a handler that throws does NOT abort the swap. Failures are
+ * aggregated and reported via `reportError` after the phase completes. The
+ * vault swap is a user gesture; silently bailing mid-reset would leave the
+ * app in an inconsistent state worse than the original error.
+ */
+
+export type VaultSwapPhase = 'pre-swap' | 'post-swap';
+
+export interface VaultSwapEvent {
+  phase: VaultSwapPhase;
+  /**
+   * The vault path that is being swapped away from. `null` when the
+   * application is opening its first vault (no outgoing vault). Handlers
+   * that flush sentinels against the outgoing vault should short-circuit
+   * when this is null.
+   */
+  previousVault: string | null;
+  /**
+   * The vault path being opened. `null` when the swap is a vault CLOSE
+   * (Sprint B / B24) — the user is returning to the home screen rather
+   * than opening another vault. Handlers that need to hydrate against a
+   * new vault should short-circuit when this is null.
+   */
+  nextVault: string | null;
+  /**
+   * True when the user chose "Save" in the open-vault confirm dialog AND
+   * the save succeeded. False on "Don't Save" or when no confirm was
+   * shown (initial open). Drives the sentinel-clear branch in
+   * `writeStateTracking.resetWriteTracking` — only confirmed saves earn
+   * a `.filo/.dirty` clear; "Don't Save" preserves the sentinel so a
+   * later reopen surfaces the Recovery modal.
+   */
+  saveOutgoing: boolean;
+}
+
+export interface VaultSwapHandlerOptions {
+  /**
+   * Names of handlers (within the same phase) that must run before this one.
+   * The dispatcher topologically sorts within the phase so the dependency
+   * order is honoured even if the registration order differs.
+   */
+  runAfter?: string[];
+}
+
+interface RegisteredHandler {
+  name: string;
+  phase: VaultSwapPhase;
+  fn: (event: VaultSwapEvent) => void | Promise<void>;
+  runAfter: string[];
+}
+
+const handlers: RegisteredHandler[] = [];
+
+/**
+ * Subscribe to a vault-swap phase. Returns an unsubscribe function.
+ *
+ * Handler `name` must be unique within a phase — re-registering with the
+ * same `(phase, name)` pair overwrites the prior entry (matches the
+ * registry-pattern conventions used elsewhere in `src/renderer/core/`).
+ */
+export function onVaultSwap(
+  phase: VaultSwapPhase,
+  name: string,
+  fn: (event: VaultSwapEvent) => void | Promise<void>,
+  opts?: VaultSwapHandlerOptions,
+): () => void {
+  const existing = handlers.findIndex((h) => h.phase === phase && h.name === name);
+  const entry: RegisteredHandler = {
+    name,
+    phase,
+    fn,
+    runAfter: opts?.runAfter?.slice() ?? [],
+  };
+  if (existing >= 0) {
+    handlers[existing] = entry;
+  } else {
+    handlers.push(entry);
+  }
+  return () => {
+    const idx = handlers.findIndex((h) => h.phase === phase && h.name === name);
+    if (idx >= 0) handlers.splice(idx, 1);
+  };
+}
+
+/**
+ * Topologically sort a list of handlers using `runAfter`. Falls back to
+ * registration order on cycles (reports the cycle so it surfaces).
+ */
+function topoSort(group: RegisteredHandler[]): RegisteredHandler[] {
+  const byName = new Map<string, RegisteredHandler>();
+  for (const h of group) byName.set(h.name, h);
+
+  const visited = new Set<string>();
+  const onStack = new Set<string>();
+  const ordered: RegisteredHandler[] = [];
+  let cycleDetected = false;
+
+  function visit(node: RegisteredHandler): void {
+    if (visited.has(node.name)) return;
+    if (onStack.has(node.name)) {
+      cycleDetected = true;
+      return;
+    }
+    onStack.add(node.name);
+    for (const dep of node.runAfter) {
+      const depNode = byName.get(dep);
+      if (depNode) visit(depNode);
+    }
+    onStack.delete(node.name);
+    visited.add(node.name);
+    ordered.push(node);
+  }
+
+  for (const h of group) visit(h);
+
+  if (cycleDetected) {
+    reportError(
+      'vaultLifecycle.topoSort',
+      new Error('Cycle detected in vault-lifecycle runAfter dependencies; falling back to registration order.'),
+      'A vault-swap handler dependency forms a cycle. Inspect runAfter declarations.',
+    );
+    return group.slice();
+  }
+  return ordered;
+}
+
+/**
+ * Fires every handler subscribed to `event.phase` in dependency order.
+ * Errors thrown by individual handlers are surfaced via `reportError`
+ * but do not abort the chain — the vault swap is a user gesture and
+ * stopping mid-reset would leave the app in a worse state than the
+ * original error.
+ */
+export async function fireVaultSwap(event: VaultSwapEvent): Promise<void> {
+  const phaseHandlers = handlers.filter((h) => h.phase === event.phase);
+  if (phaseHandlers.length === 0) return;
+  const ordered = topoSort(phaseHandlers);
+  for (const handler of ordered) {
+    try {
+      await handler.fn(event);
+    } catch (err) {
+      reportError(
+        `vaultLifecycle.${event.phase}.${handler.name}`,
+        err,
+        `Vault-swap handler "${handler.name}" failed during ${event.phase}; continuing to remaining handlers.`,
+      );
+    }
+  }
+}
+
+/**
+ * Test-only: drops every registered handler. Call between tests so a
+ * subscription from a prior test doesn't leak into the next one's
+ * dispatch. Re-importing the store modules in the next test re-registers
+ * their handlers (the registrations live at module top level).
+ *
+ * Not exposed in production — handlers are registered for the process
+ * lifetime by design.
+ */
+export function __resetVaultLifecycleForTests(): void {
+  handlers.length = 0;
+}
+
+/**
+ * Test-only: returns the registered handler names per phase. Used by
+ * `check-vault-lifecycle-coverage` and the registry's own unit tests to
+ * assert subscription coverage without exposing the handler array.
+ */
+export function __getRegisteredHandlerNames(): Record<VaultSwapPhase, string[]> {
+  return {
+    'pre-swap': handlers.filter((h) => h.phase === 'pre-swap').map((h) => h.name),
+    'post-swap': handlers.filter((h) => h.phase === 'post-swap').map((h) => h.name),
+  };
+}

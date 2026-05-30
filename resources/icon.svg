@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1a1a2e"/>
+      <stop offset="100%" stop-color="#2c2c4e"/>
+    </linearGradient>
+    <linearGradient id="node" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7aa6ff"/>
+      <stop offset="100%" stop-color="#5a86df"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="1024" height="1024" rx="180" fill="url(#bg)"/>
+
+  <g stroke="#7aa6ff" stroke-width="14" stroke-linecap="round" fill="none" opacity="0.8">
+    <path d="M 512 360 Q 380 460 320 600"/>
+    <path d="M 512 360 Q 644 460 704 600"/>
+    <path d="M 320 600 Q 416 720 512 760"/>
+    <path d="M 704 600 Q 608 720 512 760"/>
+  </g>
+
+  <circle cx="512" cy="360" r="92" fill="url(#node)"/>
+  <circle cx="320" cy="600" r="72" fill="url(#node)"/>
+  <circle cx="704" cy="600" r="72" fill="url(#node)"/>
+  <circle cx="512" cy="760" r="72" fill="url(#node)"/>
+
+  <text x="512" y="396" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-weight="700" font-size="120" fill="#1a1a2e">F</text>
+</svg>

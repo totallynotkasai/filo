@@ -1,0 +1,18 @@
+node_modules/
+dist/
+release/
+coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo
+.env
+.env.local
+*.log
+.DS_Store
+Thumbs.db
+.vite/
+
+# Icon rasters — regenerated from resources/icon.svg by `npm run icons`
+resources/icon.png
+resources/icon.ico
+resources/icon.icns

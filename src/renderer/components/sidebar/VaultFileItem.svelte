@@ -1,0 +1,1000 @@
+<script lang="ts">
+  import { dragHandle, dragHandleZone, type DndEvent } from 'svelte-dnd-action';
+  import type { BoardType, FileTreeNode } from '../../../shared/types';
+  import { vaultStore } from '../../stores/vault.svelte';
+  import { uiStore } from '../../stores/ui.svelte';
+  import { tabStore } from '../../stores/tabs.svelte';
+  import { documentStore } from '../../stores/document.svelte';
+  import { boardCacheStore } from '../../stores/boardCache.svelte';
+  import { boardStore } from '../../stores/board.svelte';
+  import { createId } from '../../lib/utils/ids';
+  import { normalizePath, pathsEqual, stripLeadingSlash, toPosix } from '../../lib/utils/path';
+  import { getAnchorBelow } from '../../lib/utils/popupAnchor';
+  import { fileTagsStore } from '../../stores/fileTags.svelte';
+  import { reportError } from '../../lib/utils/errorBus';
+  import { copyFileIntoVault } from '../../lib/vault/vaultOperations';
+  import {
+    basenameOf,
+    describeMoveIntoFolderFailure,
+  } from '../../lib/vault/moveIntoFolderFeedback';
+  import TagBadge from '../tags/TagBadge.svelte';
+  import FileIcon from './FileIcon.svelte';
+  import VaultFileItem from './VaultFileItem.svelte';
+
+  /** svelte-dnd-action requires `id` on every item — node.path is unique. */
+  type DndNode = { id: string; node: FileTreeNode };
+
+  interface Props {
+    node: FileTreeNode;
+    depth?: number;
+    /**
+     * Retained for backwards compatibility with existing call sites that
+     * still pass a `role` value. The legacy `'popout'` branch (second
+     * BrowserWindow) was removed when the sidebar moved to an in-app
+     * floating panel; both values now behave identically.
+     */
+    role?: 'main' | 'popout';
+  }
+
+  let { node, depth = 0, role: _role = 'main' }: Props = $props();
+
+  let isRenaming = $state(false);
+  let renameValue = $state('');
+  let isDropTarget = $state(false);
+  let autoExpandTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Phase C / C.7 — auto-enter rename mode when this node was just created
+  // via the sidebar's "New Folder" button. The toolbar sets
+  // `uiStore.pendingSidebarRenameId` to the new folder's absolute path; the
+  // first VaultFileItem whose `node.path` matches consumes the flag,
+  // enters rename mode, and clears it so a re-render doesn't loop. We
+  // depend on `node.path` so a freshly-rendered node picks up the signal
+  // even when the tree refresh that surfaces it lands after the flag was
+  // set.
+  $effect(() => {
+    if (!uiStore.pendingSidebarRenameId) return;
+    if (uiStore.pendingSidebarRenameId === node.path) {
+      uiStore.setPendingSidebarRenameId(null);
+      startRename();
+    }
+  });
+
+  function vaultRelativePath(): string {
+    // The sidebar's node.path is absolute. Strip the vault root so tags.json
+    // keys stay vault-relative (the same shape used by board JSON, vault
+    // index, and the file watcher).
+    const root = normalizePath(vaultStore.path);
+    const abs = toPosix(node.path);
+    if (root && abs.startsWith(root)) return stripLeadingSlash(abs.slice(root.length));
+    return abs;
+  }
+
+  // Sidebar tag chips: show up to two tags after the filename for non-folder
+  // rows, with `+N` overflow when more are present. Clicking a chip opens the
+  // tag editor at the chip's anchor so the user can edit without first
+  // opening the file. Folder rows skip the chip cluster.
+  const SIDEBAR_TAG_VISIBLE = 2;
+  const sidebarTags = $derived(
+    node.isDirectory ? [] : fileTagsStore.tagsForFile(vaultRelativePath()),
+  );
+  const sidebarTagsVisible = $derived(sidebarTags.slice(0, SIDEBAR_TAG_VISIBLE));
+  const sidebarTagsOverflow = $derived(Math.max(0, sidebarTags.length - SIDEBAR_TAG_VISIBLE));
+
+  // ── Per-board "Default Folder" pin ──
+  // The bookmark sibling button next to the "Use as Root Directory" tree-icon
+  // pins this folder as the destination for the *currently active* board only.
+  // Cascade priority lives in `getActiveContentFolder`: vault-wide pin →
+  // per-board pin → vault root. `boardStore.settingsVersion` is read so the
+  // derived pin value re-evaluates on every settings mutation (Svelte 5's
+  // proxy tracker doesn't always notify when `settings.defaultFolder` is
+  // first stamped onto a board).
+  const activeBoard = $derived(boardStore.current);
+  const boardFolderRel = $derived.by(() => {
+    void boardStore.settingsVersion;
+    return (activeBoard?.settings as { defaultFolder?: string } | undefined)?.defaultFolder ?? '';
+  });
+  const boardFolderAbs = $derived(
+    boardFolderRel && vaultStore.path
+      ? `${vaultStore.path.replace(/[\\/]+$/, '')}/${boardFolderRel}`
+      : '',
+  );
+  const isBoardPinnedHere = $derived(
+    !!activeBoard && node.isDirectory && pathsEqual(boardFolderAbs, node.path),
+  );
+
+  function openTagEditor(e: MouseEvent) {
+    e.stopPropagation();
+    // The sidebar emits a global custom event picked up by VaultSidebar,
+    // which mounts a single TagEditor (file-path mode) at the row's anchor.
+    // Same dispatch idiom canvas tile headers use for `tile-tag-editor`.
+    const target = e.currentTarget as HTMLElement;
+    const anchor = getAnchorBelow(target);
+    target.dispatchEvent(new CustomEvent('vault-file-tag-editor', {
+      bubbles: true,
+      detail: {
+        filePath: vaultRelativePath(),
+        x: anchor.x,
+        y: anchor.y,
+      },
+    }));
+  }
+
+  const isExpanded = $derived(vaultStore.expandedFolders.has(node.path));
+  const isSelected = $derived(vaultStore.isSelected(node.path));
+
+  // Local mirror of children for svelte-dnd-action. The library expects to
+  // own the items array during a drag; a writable $derived lets us re-sync
+  // from `node.children` whenever the tree updates externally while still
+  // permitting the library to reassign during a drag gesture.
+  let childDndItems: DndNode[] = $derived(
+    (node.children ?? []).map((c) => ({ id: c.path, node: c })),
+  );
+
+  function onChildConsider(e: CustomEvent<DndEvent<DndNode>>) {
+    childDndItems = e.detail.items;
+  }
+  function onChildFinalize(e: CustomEvent<DndEvent<DndNode>>) {
+    childDndItems = e.detail.items;
+    if (vaultStore.sortField === 'none') {
+      vaultStore.setManualOrder(node.path, e.detail.items.map((i) => i.id));
+    }
+  }
+  const showExtensions = $derived(
+    vaultStore.project?.settings?.general?.showFileExtensions ?? false,
+  );
+  const displayName = $derived.by(() => {
+    if (node.isDirectory || showExtensions || !node.extension) return node.name;
+    return node.name.endsWith(node.extension)
+      ? node.name.slice(0, -node.extension.length)
+      : node.name;
+  });
+
+  function toggleExpand() {
+    if (node.isDirectory) {
+      vaultStore.toggleFolder(node.path);
+    }
+  }
+
+  function handleRowClick(e: MouseEvent) {
+    // Ctrl/Cmd builds up a selection without expanding folders so users can
+    // grab several files for a single drag-into-folder move.
+    if (e.ctrlKey || e.metaKey) {
+      vaultStore.toggleSelection(node.path);
+      return;
+    }
+    vaultStore.selectOnly(node.path);
+    toggleExpand();
+  }
+
+  // Normalised descendant check — used to forbid dropping a folder into its
+  // own subtree (which would orphan the move on disk).
+  function isDescendant(parent: string, child: string): boolean {
+    return normalizePath(child).startsWith(normalizePath(parent) + '/');
+  }
+
+  function isDropPayload(e: DragEvent): boolean {
+    const types = e.dataTransfer?.types;
+    if (!types) return false;
+    return (
+      types.includes('application/x-vault-file') ||
+      types.includes('application/x-vault-files') ||
+      types.includes('Files')
+    );
+  }
+
+  function handleFolderDragEnter(e: DragEvent) {
+    if (!node.isDirectory) return;
+    if (!isDropPayload(e)) return;
+    e.preventDefault();
+    isDropTarget = true;
+
+    // Auto-expand after 600ms hover so users can drop into nested folders
+    // without having to first click the disclosure chevron.
+    if (!isExpanded && autoExpandTimer == null) {
+      autoExpandTimer = setTimeout(() => {
+        autoExpandTimer = null;
+        if (!isExpanded) vaultStore.toggleFolder(node.path);
+      }, 600);
+    }
+  }
+
+  function handleFolderDragOver(e: DragEvent) {
+    if (!node.isDirectory) return;
+    if (!isDropPayload(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = e.dataTransfer.types.includes('Files') ? 'copy' : 'move';
+    }
+    isDropTarget = true;
+  }
+
+  function handleFolderDragLeave(e: DragEvent) {
+    // ondragleave fires when entering a child element; ignore those.
+    if (e.relatedTarget && (e.currentTarget as HTMLElement)?.contains(e.relatedTarget as Node)) {
+      return;
+    }
+    isDropTarget = false;
+    if (autoExpandTimer != null) {
+      clearTimeout(autoExpandTimer);
+      autoExpandTimer = null;
+    }
+  }
+
+  async function handleFolderDrop(e: DragEvent) {
+    if (!node.isDirectory) return;
+    e.preventDefault();
+    e.stopPropagation(); // don't bubble to the sidebar's root drop zone
+    isDropTarget = false;
+    if (autoExpandTimer != null) {
+      clearTimeout(autoExpandTimer);
+      autoExpandTimer = null;
+    }
+
+    // Branch 1a — internal multi-select move (Ctrl+click then drag).
+    const rawMulti = e.dataTransfer?.getData('application/x-vault-files');
+    if (rawMulti) {
+      try {
+        const payloads = JSON.parse(rawMulti) as { path: string }[];
+        for (const p of payloads) {
+          if (!p?.path) continue;
+          if (p.path === node.path) continue;
+          if (isDescendant(p.path, node.path)) continue;
+          const result = await vaultStore.moveIntoFolder(p.path, node.path);
+          if (!result.ok) {
+            uiStore.toast(
+              describeMoveIntoFolderFailure(result, basenameOf(p.path), node.name),
+              result.code === 'PERMISSION_DENIED' ? 'error' : 'warning',
+            );
+          }
+        }
+      } catch (err) {
+        reportError('VaultFileItem.folder-multi-drop', err, `Failed to move one or more files into "${node.name}"`);
+      }
+      vaultStore.clearSelection();
+      return;
+    }
+
+    // Branch 1b — internal single-item move (drag-from-sidebar).
+    const raw = e.dataTransfer?.getData('application/x-vault-file');
+    if (raw) {
+      try {
+        const payload = JSON.parse(raw) as { path: string };
+        if (!payload?.path) return;
+        if (payload.path === node.path) return;
+        if (isDescendant(payload.path, node.path)) return;
+        const result = await vaultStore.moveIntoFolder(payload.path, node.path);
+        if (!result.ok) {
+          uiStore.toast(
+            describeMoveIntoFolderFailure(result, basenameOf(payload.path), node.name),
+            result.code === 'PERMISSION_DENIED' ? 'error' : 'warning',
+          );
+        }
+      } catch (err) {
+        reportError('VaultFileItem.folder-drop', err, `Failed to move file into "${node.name}"`);
+      }
+      return;
+    }
+
+    // Branch 2 — OS-external file drop. Copy each file into this folder.
+    const files = e.dataTransfer?.files;
+    if (!files || files.length === 0) return;
+    const vaultRoot = vaultStore.path;
+    if (!vaultRoot) return;
+    const destFolder = vaultRelativePath();
+    for (const file of Array.from(files)) {
+      // Electron exposes the OS file path on `File`; `webUtils.getPathForFile`
+      // (preload-bridged) is the supported lookup under sandbox + isolation.
+      // Probe both behind a narrow type projection rather than a blanket
+      // escape hatch.
+      const fileWithPath = file as File & { path?: unknown };
+      let sourcePath: string | undefined =
+        typeof fileWithPath.path === 'string' ? fileWithPath.path : undefined;
+      if (!sourcePath) {
+        try {
+          sourcePath = window.filo.getPathForFile?.(file) ?? undefined;
+        } catch {
+          /* bridge unavailable in some windows */
+        }
+      }
+      if (!sourcePath) continue;
+      try {
+        // Phase R2 — drain pending writers before the copy so a
+        // debounced editor write targeting the destination folder
+        // doesn't race the new file's creation. `copyFileIntoVault`
+        // returns the envelope verbatim; non-success surfaces a toast
+        // via reportError below.
+        const res = await copyFileIntoVault(sourcePath, vaultRoot, destFolder);
+        if (!res.success) {
+          reportError(
+            'VaultFileItem.external-drop',
+            new Error(res.error ?? 'vault:copy-file returned !success'),
+            `Failed to copy "${file.name}" into "${node.name}"`,
+          );
+        }
+      } catch (err) {
+        reportError('VaultFileItem.external-drop', err, `Failed to copy "${file.name}" into "${node.name}"`);
+      }
+    }
+    await vaultStore.refreshTree();
+  }
+
+  function handleDoubleClick() {
+    if (node.isDirectory) return;
+    const lowerName = node.name.toLowerCase();
+    const ext = (node.extension ?? '').toLowerCase();
+    const relPath = vaultRelativePath();
+
+    // .board.json → open or focus the board tab. The tabStore dedupes by
+    // boardId, so a second double-click just focuses the existing tab.
+    if (lowerName.endsWith('.board.json')) {
+      const paths = boardCacheStore.paths;
+      const target = toPosix(relPath).toLowerCase();
+      const boardId = Object.keys(paths).find(
+        (id) => toPosix(paths[id]).toLowerCase() === target,
+      );
+      const board = boardId
+        ? vaultStore.project?.boards?.find((b) => b.id === boardId)
+        : undefined;
+      if (board) {
+        tabStore.open(board.id, board.name, board.type as BoardType, board.emoji ?? '');
+      } else {
+        uiStore.toast('Board not loaded yet — reopen the vault to load it', 'warning', 2500);
+      }
+      return;
+    }
+
+    // .md / .markdown → open or focus a document tab. If the file is
+    // already loaded as a TextTile elsewhere, findByFilename returns its
+    // docId so both views share the same documentStore entry.
+    if (ext === '.md' || ext === '.markdown') {
+      const title = node.name.replace(/\.(md|markdown)$/i, '');
+      const existing = documentStore.findByFilename(relPath);
+      let docId: string;
+      if (existing) {
+        docId = existing.docId;
+      } else {
+        docId = createId();
+        documentStore.loadDocument({
+          docId,
+          filename: relPath,
+          title,
+          body: '',
+          htmlContent: '',
+          richText: [],
+        });
+      }
+      documentStore.openDocumentTab(docId);
+      tabStore.open(docId, title, 'document' as BoardType);
+      return;
+    }
+
+    // Other file types: drag-to-canvas remains the open path.
+  }
+
+  let renameInputEl = $state<HTMLInputElement | null>(null);
+  function startRename() {
+    isRenaming = true;
+    renameValue = displayName;
+  }
+
+  // Auto-focus + select-all when the rename input mounts. Benefits both
+  // the context-menu Rename entry and the C.7 auto-rename-after-create
+  // path. `tick`-equivalent: the bind populates before this effect runs
+  // because Svelte mounts the input synchronously after isRenaming flips.
+  $effect(() => {
+    if (isRenaming && renameInputEl) {
+      renameInputEl.focus();
+      renameInputEl.select();
+    }
+  });
+
+  async function commitRename() {
+    if (!isRenaming) return; // Escape set isRenaming=false, then the input's blur fired here — don't commit the rename the user aborted.
+    isRenaming = false;
+    const draft = renameValue.trim();
+    if (!draft) return;
+    // Reconstruct the full filename. When the sidebar is hiding extensions,
+    // `displayName` excluded `node.extension`, so the user's input is the
+    // bare stem and we re-attach the extension. The `endsWith` guard
+    // handles the show-extensions case (input already has it) and the
+    // user-typed-extension-anyway case.
+    const ext = node.isDirectory ? '' : node.extension ?? '';
+    const finalName = ext && !draft.endsWith(ext) ? draft + ext : draft;
+    if (finalName === node.name) return;
+    const parentPath = node.path.substring(0, node.path.lastIndexOf(node.name));
+    const newAbsPath = parentPath + finalName;
+
+    // Phase 31 A3.2 — probe for overwrite before issuing the rename so the
+    // user can't silently destroy the destination file by renaming over it.
+    // The vault.rename pipeline itself runs `fs.rename` which on POSIX
+    // overwrites the target atomically (Windows surfaces EEXIST), so the
+    // renderer must intercept the collision before the IPC reaches the
+    // OS. Mirrors the pattern in boardTiles.renameTextTileBackingFile.
+    const vaultRoot = vaultStore.path;
+    if (vaultRoot) {
+      // Build the vault-relative path the IPC layer expects.
+      const root = normalizePath(vaultRoot);
+      const newAbsNorm = toPosix(newAbsPath);
+      const rootLower = root.toLowerCase();
+      const newRel = newAbsNorm.toLowerCase().startsWith(rootLower + '/')
+        ? newAbsNorm.slice(root.length + 1)
+        : newAbsNorm;
+      try {
+        const exists = await window.filo.invoke('vault:file-exists', vaultRoot, newRel);
+        if (exists) {
+          // Phase C / C.1 — route the overwrite confirm through the in-app
+          // ConfirmDialog so it inherits focus management (C.6), reduced
+          // motion, and the unified Esc/Enter handling.
+          const ok = await new Promise<boolean>((resolve) => {
+            uiStore.openConfirm({
+              title: 'Overwrite file?',
+              body: `"${finalName}" already exists in this folder. The existing file will be replaced and cannot be recovered.`,
+              confirmLabel: 'Overwrite',
+              danger: true,
+              onConfirm: () => resolve(true),
+              onCancel: () => resolve(false),
+            });
+          });
+          if (!ok) {
+            // User declined — preserve both files by aborting the rename.
+            return;
+          }
+        }
+      } catch (err) {
+        // Probe failure isn't fatal — the OS-level rename will surface
+        // EEXIST on Windows / overwrite on POSIX. Log and proceed.
+        console.warn('[VaultFileItem.commitRename] file-exists probe failed:', err);
+      }
+    }
+
+    const result = await vaultStore.rename(node.path, newAbsPath);
+    if (!result.success) {
+      if (result.code === 'ENOENT') {
+        // Source no longer on disk — silently drop the phantom tree entry.
+        await vaultStore.refreshTree();
+      } else if (result.strandedAt) {
+        // IMPL_PLAN_2026-05-26 / Item 2 — Windows case-only rename
+        // exhausted retries AND the rescue restore failed. Name the
+        // temp path so the user can recover the file via File Explorer
+        // rather than treating the failure as a data loss.
+        uiStore.pushToast({
+          text: `Rename failed and the file is currently saved as '${result.strandedAt}'. Recover it via File Explorer.`,
+          type: 'error',
+          duration: 0,
+        });
+        await vaultStore.refreshTree();
+      } else {
+        uiStore.toast(`Failed to rename '${node.name}'`, 'error', 3500);
+      }
+    }
+  }
+
+  function handleRenameKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      commitRename();
+    } else if (e.key === 'Escape') {
+      isRenaming = false;
+    }
+  }
+
+  async function handleDelete() {
+    // Phase 31 B1.5 — `vaultStore.delete` now surfaces IPC failures from
+    // inside the store (it has the error code; we don't). We don't need
+    // a wrapper toast here.
+    await vaultStore.delete(node.path);
+  }
+
+  async function revealInExplorer() {
+    try {
+      await window.filo.invoke('shell:show-item-in-folder', node.path);
+    } catch (err) {
+      reportError('VaultFileItem.reveal', err, `Could not reveal "${node.name}" in the file explorer`);
+    }
+  }
+
+  function openContextMenu(e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const cursor = { x: e.clientX, y: e.clientY };
+    const items = [
+      ...(node.isDirectory
+        ? []
+        : [{
+            id: 'edit-tags',
+            label: 'Edit tags',
+            action: () => {
+              // Match the icon button dispatch so the TagEditor mounts via
+              // VaultSidebar's single shared host instead of an inline popover.
+              document.dispatchEvent(new CustomEvent('vault-file-tag-editor', {
+                bubbles: true,
+                detail: { filePath: vaultRelativePath(), x: cursor.x, y: cursor.y },
+              }));
+            },
+          }]),
+      {
+        id: 'rename',
+        label: 'Rename',
+        action: () => startRename(),
+      },
+      {
+        id: 'reveal',
+        label: 'Reveal in File Explorer',
+        action: () => { void revealInExplorer(); },
+      },
+      { id: 'sep', divider: true, label: '' },
+      {
+        id: 'delete',
+        label: node.isDirectory ? 'Delete folder' : 'Delete file',
+        danger: true,
+        action: () => { void handleDelete(); },
+      },
+    ];
+    uiStore.showContextMenu(e.clientX, e.clientY, items);
+  }
+
+</script>
+
+<div class="vault-file-item" class:drop-target={isDropTarget} class:selected={isSelected} style="padding-left: {12 + depth * 16}px">
+  <!-- Sidebar reorder uses this explicit handle (svelte-dnd-action);
+       native HTML5 drag stays on `.file-row` so canvas/column/section
+       drops keep firing. See `.drag-handle` CSS below for rationale. -->
+  {#if vaultStore.sortField === 'none' && vaultStore.search === ''}
+    <span class="drag-handle" use:dragHandle aria-label="Drag to reorder {displayName}" title="Drag to reorder">
+      <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" aria-hidden="true"><circle cx="3" cy="3" r="1.2" /><circle cx="7" cy="3" r="1.2" /><circle cx="3" cy="7" r="1.2" /><circle cx="7" cy="7" r="1.2" /><circle cx="3" cy="11" r="1.2" /><circle cx="7" cy="11" r="1.2" /></svg>
+    </span>
+  {/if}
+  <button
+    class="file-row"
+    class:is-directory={node.isDirectory}
+    role="treeitem"
+    aria-level={depth + 1}
+    aria-selected={isSelected}
+    aria-expanded={node.isDirectory ? isExpanded : undefined}
+    onclick={handleRowClick}
+    ondblclick={handleDoubleClick}
+    oncontextmenu={openContextMenu}
+    title={node.path}
+    draggable={true}
+    ondragstart={(e) => {
+      if (!e.dataTransfer) return;
+      // svelte-dnd-action attaches `ondragstart = () => false` to the
+      // dndzone's direct child (`.vault-file-item`) via its `styleDraggable`
+      // helper. Our dragstart on `.file-row` bubbles up to that parent and
+      // the library's `() => false` handler aborts the drag — which is why
+      // a click-and-hold on the row produced no drag ghost. Stop the bubble
+      // here so the native HTML5 drag survives and the canvas / column /
+      // section drop handlers receive the `application/x-vault-file` payload.
+      e.stopPropagation();
+      const selected = vaultStore.selectedPaths;
+      // Multi-drag: when the user has Ctrl+selected several rows and is
+      // dragging one of them, ship the whole set under a plural MIME type
+      // and omit the singular `application/x-vault-file` so the canvas
+      // drop handler (which listens for the singular type) can't accept it.
+      if (selected.size > 1 && selected.has(node.path)) {
+        const ordered = Array.from(selected);
+        e.dataTransfer.setData('text/plain', ordered.join('\n'));
+        e.dataTransfer.setData(
+          'application/x-vault-files',
+          JSON.stringify(
+            ordered.map((path) => ({ path })),
+          ),
+        );
+        e.dataTransfer.effectAllowed = 'move';
+        return;
+      }
+      // Single-drag: keep the selection coherent with what's being dragged.
+      vaultStore.selectOnly(node.path);
+      e.dataTransfer.setData('text/plain', node.path);
+      e.dataTransfer.setData(
+        'application/x-vault-file',
+        JSON.stringify({
+          path: node.path,
+          name: node.name,
+          extension: node.extension,
+          isDirectory: node.isDirectory,
+        }),
+      );
+      // 'copyMove' lets the canvas drop handler treat it as a copy (place a
+      // tile referencing the file) while the sidebar drop handler treats it
+      // as a move (rename into a folder).
+      e.dataTransfer.effectAllowed = 'copyMove';
+    }}
+    ondragenter={handleFolderDragEnter}
+    ondragover={handleFolderDragOver}
+    ondragleave={handleFolderDragLeave}
+    ondrop={handleFolderDrop}
+  >
+    <span class="file-icon" aria-hidden="true">
+      <FileIcon {node} expanded={isExpanded} />
+    </span>
+
+    {#if isRenaming}
+      <input
+        class="rename-input"
+        type="text"
+        bind:this={renameInputEl}
+        bind:value={renameValue}
+        onblur={commitRename}
+        onkeydown={handleRenameKeydown}
+        aria-label="Rename {displayName}"
+      />
+    {:else}
+      <span class="file-name">{displayName}</span>
+      {#if sidebarTagsVisible.length > 0}
+        <span class="file-tag-chips" aria-label="Tags on {displayName}">
+          {#each sidebarTagsVisible as t (t)}
+            <TagBadge tagName={t} size="sm" variant="outline" as="span" />
+          {/each}
+          {#if sidebarTagsOverflow > 0}
+            <span class="file-tag-overflow" title={`+${sidebarTagsOverflow} more tags`}
+              >+{sidebarTagsOverflow}</span
+            >
+          {/if}
+        </span>
+      {/if}
+    {/if}
+  </button>
+
+  <div
+    class="file-actions"
+    class:has-pinned-active={
+      node.isDirectory && (
+        pathsEqual(vaultStore.activeRootFolderAbs, node.path) ||
+        isBoardPinnedHere
+      )
+    }
+  >
+    {#if node.isDirectory}
+      <!--
+        Default Folder for this Board (per-board pin). When active (blue),
+        new tiles created on the *currently active board* and files dropped
+        onto its canvas land in this folder. Disabled when no board is open.
+        Travels with the board (persisted in .board.json). Overridden by the
+        vault-wide "Use as Root Directory" pin when one is set.
+      -->
+      <button
+        class="action-btn board-folder-btn"
+        class:active={isBoardPinnedHere}
+        disabled={!activeBoard}
+        onclick={(e) => { e.stopPropagation(); boardStore.setBoardDefaultFolder(node.path); }}
+        title={activeBoard
+          ? `Default folder for board "${activeBoard.name}"`
+          : 'Open a board to set its default folder'}
+        aria-pressed={isBoardPinnedHere}
+        aria-label="Toggle default folder for current board on {node.name}"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+        </svg>
+      </button>
+      <!--
+        Root Directory toggle. When active (green), new tiles created on
+        the canvas and files dropped onto a board land inside this folder
+        instead of the vault root. Vault-wide, mutually exclusive — only
+        one folder can be the active root at a time. Persisted in
+        .filo/app.json. Stays visible even when the row isn't hovered so
+        the user can see at a glance which folder is currently selected.
+        Overrides the per-board pin above when set.
+      -->
+      <button
+        class="action-btn root-dir-btn"
+        class:active={pathsEqual(vaultStore.activeRootFolderAbs, node.path)}
+        onclick={(e) => { e.stopPropagation(); vaultStore.setActiveRootFolder(node.path); }}
+        title="Use as Root Directory for new tiles and dropped files"
+        aria-pressed={pathsEqual(vaultStore.activeRootFolderAbs, node.path)}
+        aria-label="Toggle Root Directory for {node.name}"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20 10a7 7 0 0 0-14 0"/>
+          <path d="M12 3v18"/>
+          <path d="M8 21h8"/>
+          <path d="M5 10h2"/>
+          <path d="M17 10h2"/>
+        </svg>
+      </button>
+    {:else}
+      <button class="action-btn" onclick={openTagEditor} title="Edit tags" aria-label="Edit tags for {node.name}">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+          <line x1="7" y1="7" x2="7.01" y2="7"/>
+        </svg>
+      </button>
+    {/if}
+    <button class="action-btn" onclick={startRename} title="Rename" aria-label="Rename {node.name}">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+      </svg>
+    </button>
+    <button class="action-btn danger" onclick={handleDelete} title="Delete" aria-label="Delete {node.name}">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <polyline points="3 6 5 6 21 6"/>
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+      </svg>
+    </button>
+  </div>
+
+</div>
+
+{#if node.isDirectory && isExpanded && node.children}
+  <!--
+    Per-folder dnd zone. Unique `type` per parent path so the library
+    won't accept items dragged in from other zones (cross-folder moves
+    remain a filesystem op handled by the existing HTML5 drop handler
+    on the folder row itself). Active only when Sort By is "None".
+  -->
+  <div
+    class="child-dnd-zone"
+    use:dragHandleZone={{
+      items: childDndItems,
+      type: `vault-order:${node.path}`,
+      // Disabled when search is active for the same reason as the root zone
+      // (see VaultSidebar.svelte) — partial item lists would clobber ranks.
+      dragDisabled: vaultStore.sortField !== 'none' || vaultStore.search !== '',
+      flipDurationMs: 150,
+      dropTargetStyle: {},
+    }}
+    onconsider={onChildConsider}
+    onfinalize={onChildFinalize}
+  >
+    {#each childDndItems as item (item.id)}
+      <VaultFileItem node={item.node} depth={depth + 1} />
+    {/each}
+  </div>
+{/if}
+
+<style>
+  .vault-file-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 26px;
+    margin: 0 4px;
+    border-radius: 4px;
+    /* Anchor for `.file-actions`'s absolute positioning (see below). */
+    position: relative;
+    transition: background-color 0.08s ease, box-shadow 0.08s ease;
+  }
+
+  .vault-file-item.drop-target {
+    background: var(--ui-surface-active, rgba(58, 134, 255, 0.18));
+    box-shadow: inset 0 0 0 1px var(--accent-primary, #3a86ff);
+  }
+
+  /* Multi-select highlight — applied when the user has Ctrl/Cmd-clicked
+     this row. Visually mirrors the drop-target idiom so the user reads
+     both states with the same vocabulary. */
+  .vault-file-item.selected {
+    background: var(--ui-surface-active, rgba(58, 134, 255, 0.18));
+    box-shadow: inset 0 0 0 1px var(--accent-primary, #3a86ff);
+  }
+  .vault-file-item.selected .file-row {
+    background: transparent;
+  }
+
+  /*
+   * Sidebar reorder handle. svelte-dnd-action's `dragHandle` action is
+   * bound here so its mousedown only initiates the in-vault reorder when
+   * the user grabs THIS element; pointerdown anywhere else on the row goes
+   * to the native HTML5 drag bound to `.file-row` (which carries the
+   * `application/x-vault-file` payload that boards consume). Without the
+   * split, dnd-action's item-wide pointer listener swallowed mousedown and
+   * the native dragstart never fired, so drops onto boards snapped back.
+   *
+   * Always-on at low opacity for discoverability; brightens on row hover
+   * so users see it without having to hunt. `cursor: grab` is set by the
+   * `dragHandle` action itself.
+   */
+  .drag-handle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 12px;
+    height: 18px;
+    margin-right: 2px;
+    color: var(--text-tertiary);
+    opacity: 0.35;
+    transition: opacity 0.12s ease, color 0.12s ease;
+    touch-action: none;
+  }
+  .vault-file-item:hover .drag-handle {
+    opacity: 0.85;
+    color: var(--text-secondary);
+  }
+  .drag-handle:focus-visible {
+    outline: 2px solid var(--accent-primary, #3a86ff);
+    outline-offset: 1px;
+    border-radius: 2px;
+    opacity: 1;
+  }
+
+  .file-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+    /* Right padding reserves the visual area for the absolutely-positioned
+       `.file-actions` overlay so the filename text never runs *underneath*
+       the action buttons. The padding stays whether buttons are visible
+       (hover) or not, matching the layout of the original flex-flow
+       version where `.file-actions` always reserved space. */
+    padding: 2px 100px 2px 6px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: var(--font-size-base);
+    font-family: var(--font-system);
+    cursor: pointer;
+    text-align: left;
+    transition: background-color 0.08s ease;
+  }
+
+  .file-row:hover {
+    background: var(--ui-surface-hover);
+  }
+
+  .file-row:active {
+    background: var(--ui-surface-active);
+  }
+
+  .file-row.is-directory {
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+
+  .file-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    color: var(--text-secondary);
+  }
+  .file-row.is-directory .file-icon {
+    color: var(--accent-primary);
+  }
+
+  .file-name {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  /* Tag chips after the filename. Sized like compact outline TagBadges so
+     they sit alongside the row text without crowding it; overflow chips
+     drop entirely when the row gets narrow. */
+  .file-tag-chips {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--tag-gap);
+    margin-left: 6px;
+    flex-shrink: 0;
+  }
+  .file-tag-overflow {
+    font-size: var(--tag-font-size-sm);
+    color: var(--text-tertiary);
+    padding: 0 4px;
+    border-radius: 4px;
+    background: var(--ui-surface-hover);
+  }
+
+  .rename-input {
+    flex: 1;
+    min-width: 0;
+    padding: 1px 4px;
+    border: 1px solid var(--ui-border-focus);
+    border-radius: 3px;
+    background: var(--ui-surface);
+    color: var(--text-primary);
+    font-size: var(--font-size-base);
+    font-family: var(--font-system);
+  }
+
+  .rename-input:focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  /*
+   * `.file-actions` is overlaid on the right edge of the row (absolute) so it
+   * doesn't steal flex space from `.file-row`. `.file-row` now spans the full
+   * row width, which means the user can grab the row from anywhere — not just
+   * the icon/name strip — to start an HTML5 drag to a board. The wrapper has
+   * `pointer-events: none` so the 2-px gaps between buttons fall *through* to
+   * `.file-row` underneath; the buttons themselves re-enable pointer events
+   * so their clicks still fire.
+   */
+  .file-actions {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    gap: 2px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.1s ease;
+  }
+
+  .vault-file-item:hover .file-actions,
+  .file-actions.has-pinned-active {
+    opacity: 1;
+  }
+
+  .action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background-color 0.1s ease, color 0.1s ease;
+  }
+  /*
+   * Re-enable pointer events on individual buttons only when the
+   * `.file-actions` wrapper is visible (row hover, or a pinned-active
+   * folder). When invisible, the buttons must remain non-interactive so
+   * mousedown on the right-hand area of the row falls *through* to
+   * `.file-row` underneath, starting an HTML5 drag.
+   */
+  .vault-file-item:hover .file-actions .action-btn,
+  .file-actions.has-pinned-active .action-btn {
+    pointer-events: auto;
+  }
+
+  .action-btn:hover {
+    background: var(--ui-surface-hover);
+    color: var(--text-primary);
+  }
+
+  .action-btn.danger:hover {
+    background: var(--menu-danger-bg);
+    color: var(--accent-danger);
+  }
+
+  /* Root Directory toggle — turns green when this folder is the active
+     drop destination for new tiles. When inactive, hidden siblings of
+     `.file-actions` (only revealed on row hover); when active, the parent
+     gets `.has-pinned-active` so the green icon stays visible always. */
+  .action-btn.root-dir-btn.active {
+    color: var(--accent-success, #2ea043);
+  }
+  .action-btn.root-dir-btn.active:hover {
+    color: var(--accent-success, #2ea043);
+    background: var(--ui-surface-hover);
+  }
+
+  /* Per-board "Default Folder" pin — turns blue when this folder is the
+     active board's default destination. Same hover behaviour as root-dir-btn:
+     hidden until row hover, but pinned-visible via .has-pinned-active. */
+  .action-btn.board-folder-btn.active {
+    color: var(--accent-primary, #1f6feb);
+  }
+  .action-btn.board-folder-btn.active:hover {
+    color: var(--accent-primary, #1f6feb);
+    background: var(--ui-surface-hover);
+  }
+  .action-btn[disabled] {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .action-btn[disabled]:hover {
+    background: transparent;
+    color: var(--text-secondary);
+  }
+
+  /* Wrapper around the dnd-action zone for nested children. Block layout
+     so the library can hit-test against its bounding box; default flow is
+     unchanged for the children themselves. */
+  .child-dnd-zone {
+    display: block;
+  }
+</style>

@@ -221,7 +221,20 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
         lowlight,
       }),
       Markdown.configure({
-        html: false,
+        // Audit 2.5 + 2.6 — `html: true` lets tiptap-markdown round-trip the
+        // marks it has no Markdown token for (underline, text colour, highlight,
+        // font family / size) and non-GFM tables (merged or multi-paragraph
+        // cells) as inline HTML, parsing that HTML back on load. With `html:
+        // false` those marks serialised to empty strings (silent formatting
+        // loss, 2.6) and such a table serialised to the literal sentinel
+        // `[table]`, destroying every cell's contents on the next write (2.5).
+        // ProseMirror's schema-constrained parse keeps the inbound HTML safe:
+        // unknown nodes/attrs (scripts, event handlers) are dropped, and
+        // TextStyle only re-reads colour / fontSize / fontFamily. Block indent
+        // (a global attr on paragraph/heading, which keep their GFM serialisers)
+        // is the one toolbar feature this does NOT persist — see
+        // `markdownHtmlMode.test.ts`.
+        html: true,
         tightLists: true,
         linkify: true,
         breaks: false,

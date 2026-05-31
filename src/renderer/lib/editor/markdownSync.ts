@@ -6,6 +6,7 @@ import {
   EMPTY_PARAGRAPH_SENTINEL,
   type BlockTokenizer,
 } from './emptyParagraphs';
+import { patchFrontmatterSource } from '../vault/frontmatterEngine';
 
 /**
  * Markdown round-trip helpers for TipTap editors backed by `.md` files.
@@ -296,6 +297,15 @@ export interface AssembleMarkdownOptions {
    * is re-serialised. Only meaningful alongside `rawFrontmatter`.
    */
   frontmatterDirty?: boolean;
+  /**
+   * Audit2 4.8 — the disk-baseline frontmatter source (persists across
+   * mutations, unlike `rawFrontmatter`). On a dirty re-serialise, the live
+   * object is diffed against this and only the changed keys are rewritten, so
+   * comments / key order / quoting on untouched keys survive (the source-
+   * preserving fix for the lossy round-trip). Omitted for new files (no
+   * baseline) ⇒ a full dump as before.
+   */
+  originalFrontmatter?: string;
 }
 
 /**
@@ -352,7 +362,15 @@ export function assembleMarkdownFile(
   }
 
   if (objectHasKeys) {
-    const yamlText = yaml.dump(fm, { lineWidth: -1, noRefs: true }).trimEnd();
+    // Audit2 4.8 — with the disk-baseline source in hand, re-serialise
+    // source-preservingly: diff the live object against it and rewrite only the
+    // changed keys, so comments / key order / quoting on untouched keys survive
+    // (fixes the lossy YAML round-trip). Falls back to a full dump for new files
+    // (no baseline) or a block the engine can't parse as a mapping.
+    const patched = options.originalFrontmatter
+      ? patchFrontmatterSource(options.originalFrontmatter, fm)
+      : null;
+    const yamlText = patched ?? yaml.dump(fm, { lineWidth: -1, noRefs: true }).trimEnd();
     const trailing = body.endsWith('\n') ? '' : '\n';
     return `${bomPrefix}---\n${yamlText}\n---\n${body}${trailing}`;
   }

@@ -1,5 +1,6 @@
 import yaml from 'js-yaml';
 import { parseTagsField } from '../utils/normalizeTagsField';
+import { patchFrontmatterSource } from './frontmatterEngine';
 
 /**
  * Frontmatter-only tag rewriter.
@@ -348,7 +349,11 @@ export function rewriteTagInMarkdown(
   if (!changed) return rawContent;
 
   fm.tags = tagsField.wasString ? next.join(', ') : next;
-  return reassemble(dumpYaml(fm), body, false, eol);
+  // Audit2 4.8 — the fallback no longer re-dumps the whole object (which dropped
+  // comments / key order). Patch the original YAML source source-preservingly via
+  // the `yaml` Document engine, keeping the lossy dump only as a last resort if
+  // the engine can't parse the block as a mapping.
+  return reassemble(patchFrontmatterSource(yamlSource, fm) ?? dumpYaml(fm), body, false, eol);
 }
 
 /**
@@ -385,7 +390,11 @@ export function removeTagFromMarkdown(rawContent: string, tag: string): string {
   if (next.length === tagsField.tags.length) return rawContent;
 
   fm.tags = tagsField.wasString ? next.join(', ') : next;
-  return reassemble(dumpYaml(fm), body, false, eol);
+  // Audit2 4.8 — the fallback no longer re-dumps the whole object (which dropped
+  // comments / key order). Patch the original YAML source source-preservingly via
+  // the `yaml` Document engine, keeping the lossy dump only as a last resort if
+  // the engine can't parse the block as a mapping.
+  return reassemble(patchFrontmatterSource(yamlSource, fm) ?? dumpYaml(fm), body, false, eol);
 }
 
 /**
@@ -449,5 +458,9 @@ export function addTagToMarkdown(rawContent: string, tag: string): string {
   // comma-separated string.
   fm.tags = tagsField.tags;
 
-  return reassemble(dumpYaml(fm), body, false, eol);
+  // Audit2 4.8 — the fallback no longer re-dumps the whole object (which dropped
+  // comments / key order). Patch the original YAML source source-preservingly via
+  // the `yaml` Document engine, keeping the lossy dump only as a last resort if
+  // the engine can't parse the block as a mapping.
+  return reassemble(patchFrontmatterSource(yamlSource, fm) ?? dumpYaml(fm), body, false, eol);
 }

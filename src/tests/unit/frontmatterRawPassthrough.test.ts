@@ -109,7 +109,7 @@ describe('writeMarkdownFile — body-only frontmatter passthrough (Audit2 1.2)',
     );
   });
 
-  it('re-dumps (losing the comment) once a frontmatter mutation invalidates the raw bytes', async () => {
+  it('source-preservingly patches frontmatter on a mutation (4.8 — comment kept)', async () => {
     const disk = ['---', '# pinned — keep this', 'zeta: 1', '---', 'old body'].join('\n');
     const parsed = parseMarkdownFile(disk);
     markHydrated('passthrough-dirty.md', false);
@@ -126,7 +126,11 @@ describe('writeMarkdownFile — body-only frontmatter passthrough (Audit2 1.2)',
     });
 
     const written = writtenText(invokes);
-    expect(written).not.toContain('# pinned'); // dumped → comment gone (FM changed)
+    // Audit2 4.8 — a mutation drops the clean-passthrough signal, but the engine
+    // now patches the RETAINED disk baseline source-preservingly: the comment
+    // and the untouched key survive, and only the new key is added (previously
+    // this re-dumped the whole object and lost the comment).
+    expect(written).toContain('# pinned — keep this');
     expect(written).toContain('status: done');
     expect(written).toContain('zeta: 1');
   });

@@ -112,6 +112,21 @@ let frontmatterVersionTick = $state(0);
 const rawFrontmatterCache = new SvelteMap<string, string>();
 
 /**
+ * Audit2 4.8 — the last frontmatter SOURCE bytes read from disk for a docId,
+ * retained ACROSS in-app mutations (unlike `rawFrontmatterCache`, whose
+ * clean-signal drops the entry the moment the object changes). On a dirty write
+ * the source-preserving engine (`patchFrontmatterSource`) diffs the live object
+ * against THIS baseline and re-emits only the changed keys, so comments / key
+ * order / quoting on every untouched key survive a metadata edit (the fix for
+ * the lossy-round-trip KNOWN_LIMITATION #1). Refreshed on every authoritative
+ * disk read; never cleared by a mutation (the file on disk still holds these
+ * bytes until our write lands, and comments don't change across edits). It is
+ * data-safe even when stale: the engine always emits the full live object, so
+ * the worst case is preserving comments from a slightly older read.
+ */
+const originalFrontmatterCache = new SvelteMap<string, string>();
+
+/**
  * Stores `rawFrontmatter` as the clean-bytes entry for `docId` when it is a
  * non-empty disk block, otherwise drops any existing entry. Centralises the
  * "presence == clean" rule so every seed / reload / mutation path agrees.
@@ -119,6 +134,10 @@ const rawFrontmatterCache = new SvelteMap<string, string>();
 function noteRawFrontmatter(docId: string, rawFrontmatter: string | undefined): void {
   if (rawFrontmatter !== undefined && rawFrontmatter.trim().length > 0) {
     rawFrontmatterCache.set(docId, rawFrontmatter);
+    // 4.8 — persist the disk baseline for source-preserving dirty writes. NOT
+    // dropped in the else branch: a mutation clears the clean signal above, but
+    // the engine still needs the original bytes to diff against.
+    originalFrontmatterCache.set(docId, rawFrontmatter);
   } else {
     rawFrontmatterCache.delete(docId);
   }
@@ -272,6 +291,17 @@ export const documentStore = {
   },
 
   /**
+   * Audit2 4.8 — the disk-baseline frontmatter source for `docId` (persists
+   * across mutations; see `originalFrontmatterCache`). The write gateway passes
+   * this to `assembleMarkdownFile` so a dirty (frontmatter-changed) save patches
+   * the original bytes source-preservingly instead of re-dumping the object.
+   */
+  getOriginalFrontmatterSource(docId: string): string | undefined {
+    void frontmatterVersionTick;
+    return originalFrontmatterCache.get(docId);
+  },
+
+  /**
    * Returns the docId's monotonic mutation counter — incremented on every
    * `mergeFrontmatter` / `setFrontmatter`. Writers capture this at schedule
    * time and compare against the post-write value to decide whether their
@@ -311,6 +341,9 @@ export const documentStore = {
     if (!frontmatterCache.has(docId)) return;
     frontmatterCache.delete(docId);
     rawFrontmatterCache.delete(docId);
+    // 4.8 — drop the disk baseline on doc unload so a future reopen re-reads
+    // fresh bytes rather than patching against a stale source.
+    originalFrontmatterCache.delete(docId);
     mutationVersions.delete(docId);
     frontmatterVersionTick++;
   },

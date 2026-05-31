@@ -11,29 +11,36 @@ note rather than a quick fix — each entry lists why it is the way it is.
 
 ---
 
-## 1. Lossy YAML frontmatter round-trip (non-tag writes)
+## 1. Lossy YAML frontmatter round-trip — now only for files Filo hasn't read
 
-**What:** When Filo rewrites a `.md` file's YAML frontmatter, it re-serializes
-the parsed object through `js-yaml`'s `dump`. A `load → dump` round-trip keeps
-only the *data* — YAML comments, blank lines, key ordering, and quote/indent
-style are discarded.
+**What (mostly fixed — Audit2 4.8):** Filo's frontmatter writes now go through a
+source-preserving engine built on the `yaml` package's Document/CST API: it
+diffs the live object against the on-disk frontmatter *source* and rewrites only
+the keys that actually changed, so YAML comments, key ordering, and quote/indent
+style on every untouched key survive a metadata edit. This is the path taken by
+every open document's metadata save (Text Tile / Document Board) and by the tag
+rewriter's fallback — so the old "good path silently falls back to a lossy dump"
+seam is gone.
 
-**Where:** `serializeMarkdownFile` in
+**Residual dump (lossless by nature):** The `js-yaml.dump` fallback still fires
+for a brand-new file (no on-disk baseline exists, so there are no comments to
+lose), for a frontmatter write whose backing file Filo never read into the
+document store (no baseline was captured), and for a block the Document engine
+can't parse as a mapping. In each case there is either nothing to preserve or
+nothing safely parseable to preserve.
+
+**Where:** [src/renderer/lib/vault/frontmatterEngine.ts](src/renderer/lib/vault/frontmatterEngine.ts)
+(the engine); the disk-baseline source is retained per-doc in
+[src/renderer/stores/document.svelte.ts](src/renderer/stores/document.svelte.ts)
+(`originalFrontmatterCache`) and threaded through
+[src/renderer/lib/vault/markdownFileWriter.ts](src/renderer/lib/vault/markdownFileWriter.ts)
+→ `assembleMarkdownFile` in
 [src/renderer/lib/editor/markdownSync.ts](src/renderer/lib/editor/markdownSync.ts).
 
-**Exceptions (preserved byte-for-byte):** Tag-only edits go through a targeted
-line-level rewriter ([src/renderer/lib/vault/tagRewriter.ts](src/renderer/lib/vault/tagRewriter.ts)) —
-tag rename, removal, and (as of Phase 7.4) inserting the *first* tag into a file
-with frontmatter but no `tags:` field. Adding a tag to a file that already has a
-`tags:` field still takes the dump path (its string→array upgrade semantics are
-relied upon).
-
-**Why accepted:** A full diff-and-patch of only the changed keys (e.g. via the
-`yaml` package's `Document` API) is a meaningful amount of work. Revisit only if
-Obsidian round-trip fidelity becomes a priority.
-
-**Impact:** Editing a note's metadata through Filo strips hand-authored YAML
-comments/formatting. File *content* is never lost.
+**Impact:** Negligible — hand-authored YAML comments/formatting now survive a
+metadata edit on any file Filo has open. Only a never-before-read file's first
+rewrite (which had no prior formatting to keep) is emitted in the package's
+default style. File *content* is never lost.
 
 ---
 

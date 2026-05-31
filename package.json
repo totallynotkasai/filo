@@ -80,6 +80,7 @@
     "svelte-dnd-action": "^0.9.69",
     "tiptap-markdown": "^0.8.10",
     "unified": "^11.0.5",
+    "yaml": "^2.9.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {

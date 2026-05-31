@@ -419,10 +419,17 @@ export async function writeMarkdownFile(args: WriteArgs): Promise<void> {
   // emit those bytes verbatim. `getRawFrontmatter` returns undefined once a
   // mutation invalidated them, in which case we re-dump the object as before.
   const rawFrontmatter = docId ? documentStore.getRawFrontmatter(docId) : undefined;
+  // Audit2 4.8 — the disk-baseline source (survives mutations) lets a dirty
+  // write patch the original frontmatter bytes source-preservingly instead of
+  // re-dumping the whole object.
+  const originalFrontmatter = docId
+    ? documentStore.getOriginalFrontmatterSource(docId)
+    : undefined;
   const fileText = assembleMarkdownFile(fm, body, {
     bom: state.hadBom,
     rawFrontmatter,
     frontmatterDirty: rawFrontmatter === undefined,
+    originalFrontmatter,
   });
   await trackComponentWrite(vaultRoot, relPath, async () => {
     await invokeOk('vault:write-existing-file-text', vaultRoot, relPath, fileText);

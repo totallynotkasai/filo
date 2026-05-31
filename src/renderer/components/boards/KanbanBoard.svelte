@@ -59,6 +59,7 @@
   import KanbanTemplatePicker from './KanbanTemplatePicker.svelte';
   import TagEditor from '../tags/TagEditor.svelte';
   import { onMount, onDestroy, untrack } from 'svelte';
+  import { createAriaAnnouncer } from '../../lib/utils/ariaAnnouncer.svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { dndzone } from 'svelte-dnd-action';
   import { historyStore, type Command } from '../../stores/history.svelte';
@@ -230,12 +231,12 @@
   // add/delete/rename, card add/move/delete on the row level. The local
   // announcement state fills that gap so SR users get parity with the
   // visible UI without duplicating toast traffic.
-  let announcement = $state('');
-  let announceClearTimer: ReturnType<typeof setTimeout> | null = null;
+  // Auto-clearing aria-live announcer; `dispose()` in onDestroy cancels the
+  // pending clear timer so a board unmounted within the window doesn't fire a
+  // late write against torn-down state (Audit 5.3).
+  const announcer = createAriaAnnouncer();
   function announce(message: string): void {
-    announcement = message === announcement ? `${message}​` : message;
-    if (announceClearTimer) clearTimeout(announceClearTimer);
-    announceClearTimer = setTimeout(() => { announcement = ''; announceClearTimer = null; }, 4000);
+    announcer.announce(message);
   }
 
   // ── Column lifecycle ──
@@ -812,6 +813,7 @@
     unregisterAddColumn?.();
     unregisterAddColumn = null;
     dragController.dispose();
+    announcer.dispose();
     // Drain any queued frontmatter writes so a board close during the
     // 300ms debounce window doesn't lose the user's last field edit.
     void flushAllPendingFrontmatterWrites();
@@ -1140,7 +1142,7 @@
     fires on column/card add, rename, delete, where the visual UI updates
     but no toast is dispatched. Phase C item 14.
   -->
-  <div class="kanban-sr-live" aria-live="polite" aria-atomic="true">{announcement}</div>
+  <div class="kanban-sr-live" aria-live="polite" aria-atomic="true">{announcer.message}</div>
 </div>
 
 {#if columnStylePopup && board}

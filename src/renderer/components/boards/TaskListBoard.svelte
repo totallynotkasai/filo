@@ -73,6 +73,7 @@
   } from '../../lib/vault/conventionPaths';
   import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
   import { onMount, onDestroy, untrack } from 'svelte';
+  import { createAriaAnnouncer } from '../../lib/utils/ariaAnnouncer.svelte';
   import { dndzone, type DndEvent } from 'svelte-dnd-action';
   import { registerCommandWithShortcut } from '../../core/commandRegistry';
   import { moveTaskBlock } from '../../lib/tasks/taskMove';
@@ -244,15 +245,12 @@
   // covered. The local `announcement` text fills the gap for single-row
   // ops (add task, delete task, toggle complete) where no toast fires —
   // SR users would otherwise hear nothing when the row list mutates.
-  let announcement = $state('');
-  let announceClearTimer: ReturnType<typeof setTimeout> | null = null;
+  // Auto-clearing aria-live announcer; `dispose()` in onDestroy cancels the
+  // pending clear timer so a board unmounted within the window doesn't fire a
+  // late write against torn-down state (Audit 5.3).
+  const announcer = createAriaAnnouncer();
   function announce(message: string): void {
-    // Re-assign to the same string would not re-trigger aria-live; pad
-    // with a zero-width-space when the message repeats so the live region
-    // does fire on every action.
-    announcement = message === announcement ? `${message}​` : message;
-    if (announceClearTimer) clearTimeout(announceClearTimer);
-    announceClearTimer = setTimeout(() => { announcement = ''; announceClearTimer = null; }, 4000);
+    announcer.announce(message);
   }
 
   // ── Filename utilities ──
@@ -1406,6 +1404,7 @@
     sectionDragCancelCleanup?.();
     sectionDragCancelCleanup = null;
     dragController.cancelDrag();
+    announcer.dispose();
   });
 
   // Bind the keydown handler to the scroll container in CAPTURE phase via an
@@ -1788,7 +1787,7 @@
     toast queue, covering the operations that DON'T toast (single-row
     add, subtask add, single delete). Phase C item 14.
   -->
-  <div class="tasklist-sr-live" aria-live="polite" aria-atomic="true">{announcement}</div>
+  <div class="tasklist-sr-live" aria-live="polite" aria-atomic="true">{announcer.message}</div>
 
   <!--
     Persistent keyboard hint footer — small, low-contrast, discoverable

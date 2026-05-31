@@ -245,6 +245,26 @@ export class DeleteTilesCommand extends Command {
       boardStore.removeTile(tile.id);
     }
 
+    // Audit 4.1 — remove the snapshotted connections symmetrically with
+    // `undo()`'s `restorePlacements`. `removeTile`'s cache-side sweep only
+    // touches the deleted tile's OWN board cache (and the project mirror),
+    // so a cross-board edge (one parked in another board's cache while
+    // referencing a deleted tile) — exactly what the all-boards snapshot
+    // scan in the constructor captures — would otherwise be re-added by
+    // undo and never re-removed by redo, leaving a dangling connection in
+    // the inactive board's `.board.json`. Mirror the undo routing: same-
+    // board edges through the active facade, other-board edges through the
+    // cache-only persist path. Both are safe no-ops when `removeTile`
+    // already swept the edge.
+    const activeId = boardStore.current?.id ?? null;
+    for (const conn of this.connections) {
+      if (conn.boardId === activeId) {
+        boardStore.removeConnection(conn.id);
+      } else {
+        boardCacheStore.persistRemoveConnection(conn.id, conn);
+      }
+    }
+
     // File deletes are owned by the command so the snapshot stored on the
     // instance is the same one that gets restored by undo(). Sequenced after
     // the synchronous placement removal so a write-error mid-execute can't

@@ -5,7 +5,7 @@
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { fileTagsStore } from '../../stores/fileTags.svelte';
   import { uiStore } from '../../stores/ui.svelte';
-  import { isValidTagName } from '../../lib/vault/tagsStorage';
+  import { isSafeNewTagName } from '../../lib/vault/tagsStorage';
   import { safeDeactivateTrap } from '../../lib/utils/focusTrapSafe';
 
   // BoardScope is only required for tile-mode (single / multi). In file-path
@@ -99,13 +99,14 @@
   function commitTag(rawName: string): void {
     const trimmed = rawName.trim().replace(/^#/, '');
     if (!trimmed) return;
-    // Sprint B / B6 — reject tag names that would round-trip incorrectly
-    // through YAML frontmatter (internal whitespace splits into two tags) or
-    // produce an empty registry key. Surface a toast so the user understands
-    // why the input was dropped.
-    if (!isValidTagName(trimmed)) {
+    // Sprint B / B6 + 1.5a — reject names that round-trip badly through YAML
+    // frontmatter (internal whitespace splits into two tags), produce an empty
+    // registry key, or that YAML reads as a non-string / indicator-led scalar
+    // (123, null, @home). The rewriter quotes on disk, but these make
+    // confusing tags; reject at the input boundary and toast so the user knows.
+    if (!isSafeNewTagName(trimmed)) {
       uiStore.toast(
-        `Tag "${trimmed}" is not valid — tag names cannot contain spaces`,
+        `Tag "${trimmed}" isn't a valid name — avoid spaces, plain numbers, and leading symbols like @ * : &`,
         'warning',
         3500,
       );

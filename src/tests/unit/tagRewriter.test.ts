@@ -357,3 +357,52 @@ describe('tag rewriter — CRLF files preserve endings + never corrupt (1.4)', (
     expect(fm.tags).toEqual(['bar']);
   });
 });
+
+// ── 1.5 + 1.6 ──────────────────────────────────────────────────────────────
+// renderTagsField emitted every surviving tag BARE, so (1.5) renaming a tag to
+// a YAML-special name (@home, 123, null) produced invalid or type-coerced YAML,
+// and (1.6) removing/renaming an UNRELATED tag stripped the quotes off a quoted
+// sibling — a file holding `[draft, "@home"]` lost the quotes on `@home` the
+// instant `draft` was removed → bare `@home` → unparseable. The fix renders
+// each scalar with exactly the quoting js-yaml needs (flow context, which is
+// also block-safe). The UI rejects such names on create/rename (1.5a); this is
+// the on-disk defence-in-depth for names authored externally (e.g. in Obsidian).
+describe('tag rewriter — emitted scalars are quoted so YAML never corrupts (1.5/1.6)', () => {
+  it('keeps a quoted flow-sibling quoted when an unrelated tag is removed (1.6)', () => {
+    const input = ['---', 'tags: [draft, "@home"]', '---', 'body'].join('\n');
+    const out = removeTagFromMarkdown(input, 'draft');
+    const fm = frontmatterObjectOf(out); // pre-fix: bare @home → js-yaml throws
+    expect(fm.tags).toEqual(['@home']);
+  });
+
+  it('keeps a quoted block-sibling quoted when an unrelated tag is removed (1.6)', () => {
+    const input = ['---', 'tags:', '  - draft', "  - '@home'", '---', 'body'].join('\n');
+    const out = removeTagFromMarkdown(input, 'draft');
+    const fm = frontmatterObjectOf(out);
+    expect(fm.tags).toEqual(['@home']);
+  });
+
+  it('quotes a renamed tag that needs it, round-tripping to the intended string (1.5)', () => {
+    // The UI blocks renaming TO @home, but the rewriter must still emit valid
+    // YAML if handed such a name (defence in depth).
+    const input = ['---', 'tags:', '  - foo', '  - keep', '---', 'body'].join('\n');
+    const out = rewriteTagInMarkdown(input, 'foo', '@home');
+    const fm = frontmatterObjectOf(out);
+    expect(fm.tags).toEqual(['@home', 'keep']);
+  });
+
+  it('quotes numeric / boolean / null names so they stay strings, not coerced (1.5)', () => {
+    for (const special of ['123', 'true', 'null']) {
+      const input = ['---', 'tags:', '  - foo', '---', 'body'].join('\n');
+      const out = rewriteTagInMarkdown(input, 'foo', special);
+      const fm = frontmatterObjectOf(out);
+      expect(fm.tags).toEqual([special]); // a string, not a number/bool/null
+    }
+  });
+
+  it('leaves an all-safe comma-string field in its original shape', () => {
+    const input = ['---', 'tags: foo, bar', '---', 'body'].join('\n');
+    const out = rewriteTagInMarkdown(input, 'foo', 'baz');
+    expect(out).toContain('tags: baz, bar'); // not needlessly upgraded to flow
+  });
+});

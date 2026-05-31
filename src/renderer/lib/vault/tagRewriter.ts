@@ -229,6 +229,20 @@ function tagsFieldIsAnchored(yamlSource: string): boolean {
   return false;
 }
 
+/**
+ * Renders a single tag scalar with exactly the quoting YAML requires, using
+ * js-yaml as the oracle (1.5 / 1.6). Dumps the tag as a one-element FLOW
+ * sequence (`[scalar]`) and slices off the brackets: flow is the strictest
+ * context (commas / brackets / leading indicator chars are all special there),
+ * so a scalar safe in flow is also safe as a block item. Without this the
+ * rewriter emitted every tag BARE — so `@home`, `123`, `null`, a comma-bearing
+ * name etc. produced invalid or type-coerced YAML, and removing one tag
+ * stripped the quotes off a quoted sibling (`[draft, "@home"]` → bare `@home`).
+ */
+function emitTagScalar(tag: string): string {
+  return yaml.dump([tag], { flowLevel: 0, lineWidth: -1 }).replace(/\n$/, '').slice(1, -1).trim();
+}
+
 function renderTagsField(loc: LocatedTagsField, nextTags: string[]): string[] {
   if (nextTags.length === 0) {
     if (loc.style === 'scalar' || loc.style === 'flow') {
@@ -237,14 +251,21 @@ function renderTagsField(loc: LocatedTagsField, nextTags: string[]): string[] {
     return ['tags:'];
   }
   if (loc.style === 'flow') {
-    return [`tags: [${nextTags.join(', ')}]`];
+    return [`tags: [${nextTags.map(emitTagScalar).join(', ')}]`];
   }
   if (loc.style === 'scalar') {
-    return [`tags: ${nextTags.join(', ')}`];
+    // The comma-separated string form can't host a quoted item (the quotes
+    // would re-parse as part of the tag). Keep the string shape only while
+    // every tag is bare-safe; the moment one needs quoting, upgrade to a flow
+    // sequence so the quoting is legal.
+    if (nextTags.every((t) => emitTagScalar(t) === t)) {
+      return [`tags: ${nextTags.join(', ')}`];
+    }
+    return [`tags: [${nextTags.map(emitTagScalar).join(', ')}]`];
   }
-  // Block / empty — emit block form
+  // Block / empty — emit block form, each item quoted iff YAML needs it.
   const rendered = ['tags:'];
-  for (const tag of nextTags) rendered.push(`  - ${tag}`);
+  for (const tag of nextTags) rendered.push(`  - ${emitTagScalar(tag)}`);
   return rendered;
 }
 
@@ -379,7 +400,7 @@ export function addTagToMarkdown(rawContent: string, tag: string): string {
   const { yamlSource, body, hasFrontmatter, hadTrailingNewline, eol } = splitFrontmatter(rawContent);
 
   if (!hasFrontmatter) {
-    return reassemble(`tags:\n  - ${bareTag}`, body, false, eol);
+    return reassemble(`tags:\n  - ${emitTagScalar(bareTag)}`, body, false, eol);
   }
 
   // Phase 7.4 — frontmatter present but no `tags:` field: insert a fresh block
@@ -394,7 +415,7 @@ export function addTagToMarkdown(rawContent: string, tag: string): string {
     // with the other keys and the frontmatter's trailing newline is preserved.
     const insertAt =
       lines.length > 0 && lines[lines.length - 1] === '' ? lines.length - 1 : lines.length;
-    lines.splice(insertAt, 0, 'tags:', `  - ${bareTag}`);
+    lines.splice(insertAt, 0, 'tags:', `  - ${emitTagScalar(bareTag)}`);
     return reassemble(lines.join('\n'), body, hadTrailingNewline, eol);
   }
 

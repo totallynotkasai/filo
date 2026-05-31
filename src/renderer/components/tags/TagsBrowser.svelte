@@ -5,6 +5,7 @@
   import IconButton from '../shared/IconButton.svelte';
   import ColorPicker from '../shared/ColorPicker.svelte';
   import TagsPopupMenu from './TagsPopupMenu.svelte';
+  import { isSafeNewTagName } from '../../lib/vault/tagsStorage';
 
   let activeColorPicker = $state<string | null>(null);
   let editingTagName = $state<string | null>(null);
@@ -90,8 +91,19 @@
   }
 
   function saveEdit() {
-    const trimmed = editName.trim();
+    const trimmed = editName.trim().replace(/^#/, '');
     if (editingTagName && trimmed && trimmed !== editingTagName) {
+      // 1.5a — validate the new name at the rename input boundary. The rewriter
+      // quotes on disk, but @home / 123 / null make confusing tags; existing
+      // tags are never re-validated. Keep the field open so the user can fix it.
+      if (!isSafeNewTagName(trimmed)) {
+        uiStore.toast(
+          `"${trimmed}" isn't a valid tag name — avoid spaces, plain numbers, and leading symbols like @ * : &`,
+          'warning',
+          4000,
+        );
+        return;
+      }
       // Detect orphaned children — a rename of `project` does NOT cascade
       // to `project/active` etc., so warn the user before they discover
       // the gap. Falls through silently when no children exist.

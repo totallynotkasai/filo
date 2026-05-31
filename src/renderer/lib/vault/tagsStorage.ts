@@ -10,6 +10,7 @@
  * `fileTags` to keep references consistent.
  */
 
+import yaml from 'js-yaml';
 import type { TagsFile, TagDefinition } from '../../schema/tagsFile';
 import {
   TagsFileSchema,
@@ -221,6 +222,36 @@ export function isValidTagName(name: string): boolean {
   if (!stripped) return false;
   if (/\s/.test(stripped)) return false;
   return true;
+}
+
+/**
+ * Stricter validation for a tag name the USER is creating or renaming TO
+ * (1.5a). Beyond {@link isValidTagName} (empty / internal whitespace), rejects:
+ *  - any name YAML reads as a NON-string scalar — numbers (`123`, `2024`),
+ *    booleans (`true`/`false`), `null`;
+ *  - any name starting with a YAML indicator char (`@ \` * & ! % | > : ?`); and
+ *  - any name that fails to parse as a bare scalar (`,` `[` `{` etc.).
+ *
+ * The frontmatter rewriter quotes emitted scalars (1.5b / 1.6), so such names
+ * are SAFE on disk — this guard exists only to stop the user MINTING confusing
+ * tags at the input boundary. It is deliberately NOT used by `ensureTag` or
+ * other programmatic paths, so a tag that already exists in a file (e.g. a
+ * legacy numeric tag authored elsewhere) is never re-validated or disturbed.
+ */
+export function isSafeNewTagName(name: string): boolean {
+  if (!isValidTagName(name)) return false;
+  const stripped = name.trim().replace(/^#/, '');
+  // js-yaml throws on most leading indicators, but `:` / `?` load as plain
+  // strings — reject the whole set explicitly to match the plan. (`#` is
+  // already stripped above as the tag-syntax convenience.)
+  if (/^[@`*&!%|>:?]/.test(stripped)) return false;
+  let loaded: unknown;
+  try {
+    loaded = yaml.load(stripped);
+  } catch {
+    return false;
+  }
+  return typeof loaded === 'string' && loaded === stripped;
 }
 
 /**

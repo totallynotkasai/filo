@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { TimerTile } from '../../schema/index';
-  import { onMount, onDestroy, getContext } from 'svelte';
+  import { onMount, onDestroy, getContext, untrack } from 'svelte';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { historyStore } from '../../stores/history.svelte';
   import { UpdateTimerConfigCommand, type TimerMode } from '../../commands/index';
@@ -23,7 +23,9 @@
   // forever, so the board's writes never flushed: any real edit to the board
   // was lost on a hard crash and the save indicator was pinned on "saving".
   // We now write the tile only on pause / stop / reset / unmount-while-running.
-  let liveRemaining = $state(tile.remaining);
+  // untrack: deliberately snapshot the initial value — the $effect below
+  // re-seeds it on genuine external changes, and tick() mutates it locally.
+  let liveRemaining = $state(untrack(() => tile.remaining));
   // Custom time input state (shown when clicking the display while stopped)
   let editingCustom = $state(false);
   let customInput = $state('');

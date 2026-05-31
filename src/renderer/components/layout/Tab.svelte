@@ -205,6 +205,7 @@
   <button
     class="tab-close"
     onclick={close}
+    tabindex={isActive ? 0 : -1}
     title="Close tab"
     aria-label="Close {tab.name}"
   >
@@ -323,7 +324,8 @@
   }
 
   .tab:hover .tab-close,
-  .tab.active .tab-close {
+  .tab.active .tab-close,
+  .tab:focus-within .tab-close {
     opacity: 1;
   }
 

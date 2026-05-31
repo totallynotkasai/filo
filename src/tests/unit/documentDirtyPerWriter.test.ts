@@ -64,3 +64,45 @@ describe('documentStore — per-writer dirty tracking (audit 2.3)', () => {
     expect(documentStore.getDocument('d')?.isDirty).toBe(false);
   });
 });
+
+/**
+ * Audit2 2.2 — each editor view's reload `$effect` must gate on its OWN
+ * writer's dirtiness, not the shared `isDirty` flag. Keying on the shared flag
+ * froze EVERY view the instant any one became dirty, so two views editing the
+ * same file inside one debounce window diverged and the last flush dropped the
+ * other's keystrokes. `isWriterDirty` is the primitive the per-view gate reads.
+ */
+describe('documentStore — per-writer reload gating (audit2 2.2)', () => {
+  beforeEach(() => documentStore.clear());
+
+  it('isWriterDirty is true only for writers that marked dirty (a sibling stays eligible to reload)', () => {
+    open('d');
+    documentStore.updateContent('d', '<p>a</p>', 'a', 'text-tile:d');
+    // The editing view is dirty; its own reload must be suppressed.
+    expect(documentStore.isWriterDirty('d', 'text-tile:d')).toBe(true);
+    // The sibling view never typed → still clean → its reload `$effect` is
+    // free to pick up the latest body even though the doc is (shared) dirty.
+    expect(documentStore.isWriterDirty('d', 'document-editor:d')).toBe(false);
+    expect(documentStore.getDocument('d')?.isDirty).toBe(true);
+  });
+
+  it('a writer that flushes becomes reload-eligible again while a sibling stays dirty', () => {
+    open('d');
+    documentStore.markDirty('d', 'text-tile:d');
+    documentStore.markDirty('d', 'document-editor:d');
+    documentStore.markClean('d', 'text-tile:d');
+    // text-tile flushed → eligible to reload the sibling's edits.
+    expect(documentStore.isWriterDirty('d', 'text-tile:d')).toBe(false);
+    // document-editor still holds unsaved content → must not reload.
+    expect(documentStore.isWriterDirty('d', 'document-editor:d')).toBe(true);
+    // Shared flag is still dirty (the old, too-coarse gate) — proving the
+    // per-writer gate is strictly finer-grained.
+    expect(documentStore.getDocument('d')?.isDirty).toBe(true);
+  });
+
+  it('an unknown / never-dirtied writer is reload-eligible', () => {
+    open('d');
+    expect(documentStore.isWriterDirty('d', 'text-tile:d')).toBe(false);
+    expect(documentStore.isWriterDirty('missing-doc', 'whatever')).toBe(false);
+  });
+});

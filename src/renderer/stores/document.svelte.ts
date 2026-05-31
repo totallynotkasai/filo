@@ -186,6 +186,24 @@ export const documentStore = {
   },
 
   /**
+   * Audit2 2.2 — true while `writerId` (one editor view, keyed by its stable
+   * callerId) still holds unsaved content for `docId`. Each editor's reload
+   * `$effect` gates on its OWN writer here instead of the shared `isDirty`
+   * flag: once any view dirties the doc, the shared flag would freeze EVERY
+   * view's reload, so two views editing the same file inside one debounce
+   * window diverge and the last writer's full-body flush silently drops the
+   * other's keystrokes (contradicting design decision #4). Gating per-writer
+   * lets a still-clean sibling reload the latest body before the user types
+   * into it, so both edits survive.
+   *
+   * Reactive — reads the SvelteMap/SvelteSet so a reading effect re-runs when
+   * the writer's dirty state flips.
+   */
+  isWriterDirty(docId: string, writerId: string): boolean {
+    return dirtyWriters.get(docId)?.has(writerId) ?? false;
+  },
+
+  /**
    * Finds the loaded document whose backing filename matches the given
    * vault-relative path (case-insensitive, slash-normalised). Returns
    * `null` when no editor currently holds that file.
@@ -209,6 +227,20 @@ export const documentStore = {
   getFrontmatter(docId: string): Record<string, unknown> | undefined {
     void frontmatterVersionTick;
     return frontmatterCache.get(docId);
+  },
+
+  /**
+   * Audit2 2.2 — whether the frontmatter live-cache already holds an entry for
+   * `docId`. The cached-body / adoption hydrate branches consult this before
+   * trusting the in-memory (body-only) `DocumentState.body` as a hydrate
+   * source: re-parsing frontmatter from a body-only string yields `{}`, and
+   * passing that to `setFrontmatter` would CLOBBER the real frontmatter a
+   * sibling view already seeded from disk — a later body-only save would then
+   * erase the file's frontmatter block. Reactive via the version tick.
+   */
+  hasFrontmatter(docId: string): boolean {
+    void frontmatterVersionTick;
+    return frontmatterCache.has(docId);
   },
 
   /**

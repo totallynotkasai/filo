@@ -254,7 +254,12 @@
         if (existing && existing.docId !== tile.contentId) {
           boardStore.updateTile(tile.id, { contentId: existing.docId });
           const parsed = parseMarkdownFile(existing.body ?? '');
-          documentStore.setFrontmatter(existing.docId, parsed.frontmatter);
+          // audit2 2.2 — do NOT re-seed frontmatter from `existing.body`: the
+          // store body is body-only by contract, so parseMarkdownFile yields
+          // {}, and seeding that would clobber the real FM the view that first
+          // opened `existing` already seeded from disk (a later body-only save
+          // would then erase the file's frontmatter block). The cache is
+          // authoritative once seeded; leave it untouched.
           lastLoadedBody = parsed.body;
           isUpdatingFromStore = true;
           applyLoadResult(loadMarkdownIntoEditor(editor, parsed.body), existing.docId);
@@ -268,9 +273,15 @@
       }
 
       const docState = tile.contentId ? documentStore.getDocument(tile.contentId) : null;
-      if (docState?.body) {
+      // audit2 2.2 — only adopt the in-memory (body-only) body as a hydrate
+      // source when this doc's frontmatter is already seeded (a sibling view
+      // read it from disk). Re-parsing FM from the body-only store body yields
+      // {}, and seeding that would clobber the real cached FM → a later
+      // body-only save erases the file's frontmatter block. When unseeded,
+      // fall through to the authoritative disk read below, which seeds FM
+      // correctly (and never erases).
+      if (docState?.body && tile.contentId && documentStore.hasFrontmatter(tile.contentId)) {
         const parsed = parseMarkdownFile(docState.body);
-        if (tile.contentId) documentStore.setFrontmatter(tile.contentId, parsed.frontmatter);
         lastLoadedBody = parsed.body;
         isUpdatingFromStore = true;
         applyLoadResult(loadMarkdownIntoEditor(editor, parsed.body));
@@ -335,16 +346,19 @@
   // Reactive reload — when another view (a sibling text tile or a document
   // editor) writes to the same docId, documentStore.body changes. We watch it
   // and refresh this tile's editor to keep the views in sync. Gated on
-  // `isDirty` so we don't reload mid-typing of another view (the writer's
-  // 300ms debounce will resolve, mark clean, and let us pick up the final
-  // text once); gated on `lastLoadedBody` so we don't echo our own writes.
+  // THIS view's own writer dirtiness (audit2 2.2) so we don't reload
+  // mid-typing of OUR editor, yet a still-clean view DOES pick up a sibling's
+  // edits immediately — keying on the shared `isDirty` instead froze every
+  // view the moment any one became dirty, so two views editing the same file
+  // diverged and the last debounce flush dropped the other's keystrokes.
+  // Gated on `lastLoadedBody` so we don't echo our own writes.
   $effect(() => {
     if (!editor) return;
     const docState = tile.contentId ? documentStore.getDocument(tile.contentId) : undefined;
     if (!docState) return;
     const body = docState.body;
     if (body === lastLoadedBody) return;
-    if (docState.isDirty) return;
+    if (tile.contentId && documentStore.isWriterDirty(tile.contentId, callerId)) return;
     // Sprint B / B21 — skip the reload while the user is mid-IME-composition
     // (CJK / dead-key flows). ProseMirror's `setContent` mid-composition
     // both interrupts the composition window AND can produce a broken

@@ -293,9 +293,14 @@
   async function hydrateFromDisk() {
     if (!editor) return;
     try {
-      if (docState?.body) {
+      // audit2 2.2 — only adopt the in-memory (body-only) body as a hydrate
+      // source when this doc's frontmatter is already seeded (a sibling view,
+      // e.g. the backing TextTile, read it from disk). Re-parsing FM from the
+      // body-only store body yields {}, and seeding that would clobber the real
+      // cached FM → a later body-only save erases the file's frontmatter block.
+      // When unseeded, fall through to the authoritative disk read below.
+      if (docState?.body && documentStore.hasFrontmatter(docState.docId)) {
         const parsed = parseMarkdownFile(docState.body);
-        documentStore.setFrontmatter(docState.docId, parsed.frontmatter);
         lastLoadedBody = docState.body;
         isUpdatingFromStore = true;
         const result = loadMarkdownIntoEditor(editor, parsed.body);
@@ -378,7 +383,10 @@
     if (!editor || !docState) return;
     const body = docState.body;
     if (body === lastLoadedBody) return;
-    if (docState.isDirty) return;
+    // audit2 2.2 — gate on THIS view's own writer, not the shared isDirty, so a
+    // clean DocumentEditor still reloads a sibling TextTile's latest body
+    // instead of diverging and clobbering it on the next debounce flush.
+    if (documentStore.isWriterDirty(docState.docId, callerId)) return;
     // The live cache is refreshed elsewhere — applyReloadFromDisk on external
     // edits, or another writer's setFrontmatter on hydrate. Strip any leading
     // frontmatter defensively in case body carries it.

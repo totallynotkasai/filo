@@ -21,15 +21,20 @@ Package:        npm run package
 
 ### CI gates (`.github/workflows/ci.yml`)
 
-`npm run ci:verify` runs every gate locally — exactly mirrors the GitHub Actions `verify` job:
+`npm run ci:verify` runs every gate locally and mirrors the GitHub Actions `verify` job. **The authoritative, ordered gate list is the `ci:verify` script in [package.json](package.json)** (regenerate from there, not from this doc, if it drifts). It chains:
 
 ```
-lint   → check (svelte-check) → test:unit:strict → build → ci:file-sizes → ci:type-casts → ci:ipc-parity
+lint → check (svelte-check) → test:unit:strict → build → 22 × ci:* guard scripts
 ```
+
+The guards are small `scripts/check-*.mjs` ratchets (22 of them, not enumerated here — see `package.json`). The load-bearing ones:
 
 - **`ci:file-sizes`** ([scripts/check-file-sizes.mjs](scripts/check-file-sizes.mjs)) — fails if any file in `src/main` or `src/renderer` exceeds 1000 LOC, with an explicit allowlist for the seven currently grandfathered files. Allowlisted files may shrink but not grow past their snapshot (the ceilings sit at each file's current LOC).
 - **`ci:type-casts`** ([scripts/check-type-casts.mjs](scripts/check-type-casts.mjs)) — forbids `as any` and `as unknown as` in non-test source. Escape hatch: append `// allow-cast: <reason>` on the same line.
 - **`ci:ipc-parity`** ([scripts/check-ipc-parity.mjs](scripts/check-ipc-parity.mjs)) — asserts every `ipcMain.handle/on/once` channel name appears in the `IpcChannel` union in [src/shared/types.ts](src/shared/types.ts) and vice-versa. Pure main→renderer events are allowlisted inside the script.
+- **`ci:frontmatter-invariant`** ([scripts/check-frontmatter-invariant.mjs](scripts/check-frontmatter-invariant.mjs)) — the frontmatter data-loss invariant: a hostile-corpus + fuzz suite asserting no write path silently drops a key, corrupts the YAML, or edits the body.
+- **`ci:markdown-gateway`** / **`ci:markdown-read-gateway`** — every markdown write / read must route through the canonical gateway ([src/renderer/lib/vault/markdownFileWriter.ts](src/renderer/lib/vault/markdownFileWriter.ts)), not ad-hoc `fs` / IPC.
+- **`ci:direct-board-mutations`** / **`ci:command-snapshot-discipline`** / **`ci:commands-target-board`** — undo/redo correctness ratchets (high-value mutators route through the command pattern; every Command snapshots its slice and carries a `targetBoardId`).
 - **`test:unit:strict`** ([scripts/test-unit-strict.mjs](scripts/test-unit-strict.mjs)) — runs vitest and fails on the Phase 4 stderr-noise patterns (missing `window.filo` mock).
 
 a11y axe-core scan runs on every push (after `verify`); full Electron E2E runs only on `main` pushes and a nightly cron.
@@ -118,9 +123,10 @@ filo/
 │   │   │
 │   │   ├── core/                      # Core application wiring
 │   │   │   ├── commandRegistry.ts     # Keyboard-shortcut binding surface (no palette yet)
-│   │   │   ├── tileRegistry.ts        # Tile type registration
-│   │   │   ├── boardRegistry.ts       # Board type registration
+│   │   │   ├── tileRegistry.ts        # Tile-type metadata + creation defaults (getTileDefaults); tile bodies render via board snippets, not a component map (Audit2 4.4)
+│   │   │   ├── boardRegistry.ts       # Board-type registration; `component` is a lazy () => import() loader so boards code-split out of the Home preload (Audit2 4.4)
 │   │   │   ├── boardDefaults.ts       # Per-type default board factories
+│   │   │   ├── boardTileOps/          # Per-board-type tile-op registries (mindmap/kanban/tasklist/document)
 │   │   │   ├── vaultLifecycle.ts      # onVaultSwap pre/post-swap hook registry
 │   │   │   └── hotkeys.ts             # Keyboard shortcut binding
 │   │   │
@@ -224,7 +230,9 @@ filo/
 │   │   │   │   ├── moveIntoFolder.ts
 │   │   │   │   ├── tagsStorage.ts     # `.filo/tags.json` mutators
 │   │   │   │   ├── tagRewriteSweep.ts # Two-phase tag rename across .md
-│   │   │   │   ├── tagRewriter.ts     # Inline + frontmatter tag rewriting
+│   │   │   │   ├── tagRewriter.ts     # Frontmatter tag rename/remove/add (line-level fast path; dump fallback now routes through frontmatterEngine)
+│   │   │   │   ├── frontmatterEngine.ts # Source-preserving FM serializer — `yaml` Document/CST API (Audit2 4.8)
+│   │   │   │   ├── markdownFileWriter.ts # CANONICAL markdown write gateway: per-caller debounce, BOM-preserving hydrate, unified drain (use THIS, not markdownWriteRegistry)
 │   │   │   │   ├── tagRewriteSentinel.ts # `.filo/tag-rewrite-pending.json` crash-recovery
 │   │   │   │   ├── renameCascadeSentinel.ts # Rename-cascade crash-recovery sentinel
 │   │   │   │   ├── fileBaselineRegistry.ts # Pre-write drift baselines (mtime/size)
@@ -240,7 +248,8 @@ filo/
 │   │   │   │   ├── configWriteScheduler.ts
 │   │   │   │   ├── miscWriteScheduler.ts
 │   │   │   │   ├── frontmatterWriteScheduler.ts
-│   │   │   │   ├── markdownWriteRegistry.ts
+│   │   │   │   ├── markdownWriteRegistry.ts # DEPRECATED shim → re-exports lib/vault/markdownFileWriter; new code imports the gateway directly
+│   │   │   │   ├── seedTextFileForNewTile.ts # Creates the backing .md for a new text tile
 │   │   │   │   ├── tileDefBuilder.ts
 │   │   │   │   ├── textTilePath.ts
 │   │   │   │   ├── viewportCache.ts
@@ -287,6 +296,7 @@ filo/
 │   │   │   │   ├── templateService.ts
 │   │   │   │   ├── layoutCapture.ts
 │   │   │   │   └── layoutTemplateStore.ts
+│   │   │   ├── search/                # Query parser + full-text search runner (MiniSearch)
 │   │   │   ├── spatialIndex.ts        # rbush wrapper
 │   │   │   └── utils/                 # Shared utilities
 │   │   │       ├── ids.ts             # nanoid wrapper
@@ -398,6 +408,8 @@ filo/
 │   ├── shared/                        # Shared between main + renderer
 │   │   ├── types.ts                   # IpcChannel union, file-tree types
 │   │   ├── ipcSchemas.ts              # Per-channel Zod payload validation
+│   │   ├── ipcContracts.ts            # Per-channel arg/result TYPE contracts (ChannelResult<C>, etc.)
+│   │   ├── untrusted.ts               # Branded `Untrusted<T>` + asSafe* validators (untrusted-sink discipline)
 │   │   └── ipcEnvelope.ts             # IPC ok/error envelope + IpcEnvelopeError
 │   │
 │   └── tests/
@@ -462,7 +474,7 @@ filo/
 ### Icons
 
 - **All icons must be SVG.** No emojis as icons, ever.
-- Store SVG icons inline as Svelte components alongside the component that uses them, or under `components/common/icons/` if reused across the app. (There is no `static/icons/` directory.)
+- Store SVG icons inline (as inline `<svg>` markup) in the component that uses them. There is **no** shared icon directory today — neither `components/common/icons/` nor `static/icons/` exists; a handful of reused glyphs are currently duplicated inline. If a shared set grows enough to warrant it, create `components/common/icons/` at that point and update this note.
 - Use lucide-style icons for consistency. If adding custom icons, match the 24×24 viewBox, 2px stroke convention.
 - **Exception — waypoint icons.** Mind Map waypoint icons are user-selectable content (a label the user picks for their own waypoint), not UI chrome, so they remain emoji. See `src/renderer/components/canvas/WaypointMarker.svelte`. Do not flag these in icon audits.
 
@@ -540,7 +552,7 @@ Boundary").
 
 Three registries power extensibility:
 
-- **TileRegistry** — Maps `TileType` string to component + factory + schema. Adding a new tile type means registering it here, not modifying switch statements elsewhere.
+- **TileRegistry** — Maps `TileType` string to its display metadata + creation defaults (`getTileDefaults`). Adding a new tile type means registering its defaults here. Tile *bodies* are rendered by the boards via Svelte snippets, not through the registry — the former `component` field was dropped in Audit2 4.4 (it had no readers, and its eager `*.svelte` imports pulled TipTap into the Home-screen preload).
 - **BoardRegistry** — Maps `BoardType` string to board component + toolbar component + schema.
 - **CommandRegistry** — Binds keyboard shortcuts via `registerCommandWithShortcut` using a verb:noun naming scheme. There is no command palette today; the former `registerCommand` / `unregisterCommand` no-op stubs were removed (Phase G.12) to avoid dead-API drift. When a palette lands, reintroduce them backed by a `Map<name, handler>` populated alongside the shortcut.
 
@@ -585,7 +597,7 @@ Themes overwrite Global Defaults. They are not a separate layer.
 - **Store file extension** — Must be `.svelte.ts` for runes to work. Plain `.ts` files cannot use `$state`.
 - **Electron context isolation** — `contextBridge` exposes a limited API object on `window`. The renderer calls `window.api.vault.read(path)`, NOT `require('fs')`.
 - **Board JSON `file` field** — Vault-relative paths, not absolute. e.g., `"Notes.md"` or `"subfolder/Notes.md"`.
-- **Frontmatter rewrites drop YAML comments/formatting** — When Filo writes a `.md` file's frontmatter (`serializeMarkdownFile` in `lib/editor/markdownSync.ts`), it re-serializes the parsed object through `js-yaml`'s `dump`. A `load → dump` round-trip keeps only the *data*: YAML comments, blank lines, key-ordering nuances, and quote/indent style are discarded. `lib/vault/tagRewriter.ts` does a targeted in-place rewrite that preserves formatting for tag-only edits (falling back to load/dump on unusual shapes), but every other frontmatter mutation takes the lossy path. This is a known, accepted limitation — revisit it (e.g. via the `yaml` package's `Document` API, or diffing-and-patching only the changed keys) only if Obsidian round-trip fidelity becomes a priority.
+- **Frontmatter writes are source-preserving (Audit2 4.8)** — When Filo rewrites a `.md` file's frontmatter, `assembleMarkdownFile` (`lib/editor/markdownSync.ts`) diffs the live object against the on-disk frontmatter *source* and patches only the changed keys through the `yaml` Document/CST engine (`lib/vault/frontmatterEngine.ts`), so comments, key order, and quoting on untouched keys survive. The lossy `js-yaml.dump` now only fires as a fallback for a new file (no baseline to preserve) or a block the engine can't parse as a mapping. `lib/vault/tagRewriter.ts` keeps a faster line-level path for tag-only edits; its fallback shares the same engine, so there is no longer a "good path silently falls back to a lossy one" seam. See KNOWN_LIMITATIONS #1.
 
 ---
 

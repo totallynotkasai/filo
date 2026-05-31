@@ -52,6 +52,36 @@ export function parseTagsField(value: unknown): ParsedTagsField {
 }
 
 /**
+ * Order-preserving tag list for the cache / display path. Applies the same
+ * cleaning as {@link normalizeTagsField} — drops empty / whitespace-only
+ * entries, strips a single leading `#`, and dedupes — but KEEPS the author's
+ * first-seen order instead of sorting. Use this wherever a tile def's cached
+ * tags should mirror the order the user wrote in the `.md` (e.g. frontmatter
+ * reconcile), so the on-screen chips match the file.
+ *
+ * Dedupe is by exact string (identical to `normalizeTagsField`), so this and
+ * `normalizeTagsField` always yield the SAME SET — they differ only in order.
+ * That parity matters: divergence comparison still routes through the sorted
+ * `normalizeTagsField` (see `frontmatterSync.valuesEqual`), so preserving the
+ * authored order here can never re-trigger a spurious divergence.
+ *
+ * Comparison / MiniSearch indexing must still use `normalizeTagsField`.
+ */
+export function orderPreservingTagsField(value: unknown): string[] {
+  const parsed = parseTagsField(value);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of parsed.tags) {
+    if (typeof raw !== 'string') continue;
+    const bare = raw.replace(/^#/, '');
+    if (!bare || seen.has(bare)) continue;
+    seen.add(bare);
+    out.push(bare);
+  }
+  return out;
+}
+
+/**
  * Canonical tag list. Used wherever Filo needs a stable, comparable view of a
  * `.md` file's frontmatter tags — equality checks, MiniSearch indexing,
  * divergence detection.
@@ -61,15 +91,10 @@ export function parseTagsField(value: unknown): ParsedTagsField {
  *   - Strips a single leading `#`.
  *   - Dedupes (exact-string equality).
  *   - Sorts ascending.
+ *
+ * This is `orderPreservingTagsField` + a stable sort, so the two never
+ * disagree on membership — only on order.
  */
 export function normalizeTagsField(value: unknown): string[] {
-  const parsed = parseTagsField(value);
-  const out: string[] = [];
-  for (const raw of parsed.tags) {
-    if (typeof raw !== 'string') continue;
-    const bare = raw.replace(/^#/, '');
-    if (!bare) continue;
-    out.push(bare);
-  }
-  return Array.from(new Set(out)).sort();
+  return orderPreservingTagsField(value).sort();
 }

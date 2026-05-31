@@ -67,10 +67,14 @@ describe('frontmatterSync.canonicalValues', () => {
     expect(canonicalValues(m2).title).toBe('Quick');
   });
 
-  it('normalizes tags', () => {
+  it('preserves the authored tag order (deduped, # stripped) — not sorted', () => {
+    // 7.4 — canonical tags follow the .md's authored order so a reconciled
+    // tile def matches the file on disk. Sorting is reserved for
+    // normalizeTagsField (the comparison/index view). Here `b` precedes `a`,
+    // the duplicate `a` is dropped, and the leading `#` on `c` is stripped.
     const m = meta('a.md', '---\ntags: [b, a, a, "#c"]\n---\n# T');
     const c = canonicalValues(m);
-    expect(c.tags).toEqual(['a', 'b', 'c']);
+    expect(c.tags).toEqual(['b', 'a', 'c']);
   });
 
   it('only includes optional fields when present in frontmatter', () => {
@@ -159,6 +163,17 @@ describe('frontmatterSync.reconcile', () => {
     expect(result.next.tags).toEqual(['a']);
     expect((result.next as any).extra).toBe('preserved');
     expect(result.changes.map((c) => c.field).sort()).toEqual(['tags', 'title']);
+  });
+
+  it('writes the authored tag order into the cache on a tags-set divergence (7.4)', () => {
+    // The .md authored order is [banana, apple]; the cache is stale. After
+    // reconcile the cache must carry the AUTHORED order (deduped), NOT the
+    // sorted form [apple, banana] — otherwise the tile def's tag chips
+    // disagree with the order in the file the user just edited.
+    const m = meta('a.md', '---\ntags: [banana, apple, banana]\n---\n# T');
+    const cache = { tags: ['old'] };
+    const result = reconcile(cache, m);
+    expect(result.next.tags).toEqual(['banana', 'apple']);
   });
 
   it('applyCanonical is a pure patch', () => {

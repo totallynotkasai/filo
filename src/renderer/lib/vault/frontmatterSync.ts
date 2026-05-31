@@ -1,7 +1,7 @@
 import type { FileMetadata } from './vaultIndex';
 import type { V7BoardFileData } from '../boards/boardSaver';
 import type { TileDefinition } from '../../schema/index';
-import { normalizeTagsField } from '../utils/normalizeTagsField';
+import { normalizeTagsField, orderPreservingTagsField } from '../utils/normalizeTagsField';
 import { normalizeVaultRelative } from '../utils/path';
 
 /**
@@ -84,7 +84,10 @@ export function canonicalValues(metadata: FileMetadata): Partial<Record<SyncedFi
   const out: Partial<Record<SyncedField, unknown>> = {};
 
   out.title = metadata.title;
-  out.tags = normalizeTags(fm.tags ?? metadata.tags);
+  // Authored order (not sorted) so a reconciled tile def's tag chips match
+  // the order in the .md. Divergence comparison still sorts via valuesEqual,
+  // so order here is purely cosmetic for the cache. (7.4)
+  out.tags = orderPreservingTagsField(fm.tags ?? metadata.tags);
 
   if ('completed' in fm) out.completed = normalizeScalar(fm.completed);
   if ('date' in fm) out.date = normalizeScalar(fm.date);
@@ -144,7 +147,7 @@ export function applyCanonical<T extends TileLikeCache>(
   const next = { ...cache } as T;
   for (const d of divergences) {
     (next as Record<string, unknown>)[d.field] =
-      d.field === 'tags' ? normalizeTags(d.canonical) : d.canonical;
+      d.field === 'tags' ? orderPreservingTagsField(d.canonical) : d.canonical;
   }
   return next;
 }

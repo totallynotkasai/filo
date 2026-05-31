@@ -28,6 +28,18 @@ import {
 export interface ParsedMarkdownDocument {
   /** Raw frontmatter object (parsed via js-yaml). */
   frontmatter: Record<string, unknown>;
+  /**
+   * Audit2 / 1.1 + 1.2 — the verbatim YAML source between the `---` fences
+   * (no fences, no leading/trailing newline), exactly as it sat on disk. The
+   * empty string when the source had no frontmatter block.
+   *
+   * Threaded so the write path can (a) write an unparseable / non-object
+   * block back untouched instead of silently dropping a fence it couldn't
+   * turn into keys [1.1], and (b) round-trip comments / key order / line
+   * endings byte-for-byte on a body-only save [1.2]. Pass it back via
+   * `assembleMarkdownFile({ rawFrontmatter, frontmatterDirty })`.
+   */
+  rawFrontmatter: string;
   /** Body markdown with frontmatter stripped. */
   body: string;
   /** True iff the source had a frontmatter block. */
@@ -55,16 +67,16 @@ export interface ParsedMarkdownDocument {
  * the caller can re-emit the mark via `assembleMarkdownFile({ bom: true })`.
  */
 export function parseMarkdownFile(raw: string): ParsedMarkdownDocument {
-  if (!raw) return { frontmatter: {}, body: '', hasFrontmatter: false, hadBom: false };
+  if (!raw) return { frontmatter: {}, rawFrontmatter: '', body: '', hasFrontmatter: false, hadBom: false };
 
   const hadBom = raw.charCodeAt(0) === 0xfeff;
   const text = hadBom ? raw.slice(1) : raw;
 
-  if (!text) return { frontmatter: {}, body: '', hasFrontmatter: false, hadBom };
+  if (!text) return { frontmatter: {}, rawFrontmatter: '', body: '', hasFrontmatter: false, hadBom };
 
   const fenced = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text);
   if (!fenced) {
-    return { frontmatter: {}, body: text, hasFrontmatter: false, hadBom };
+    return { frontmatter: {}, rawFrontmatter: '', body: text, hasFrontmatter: false, hadBom };
   }
 
   let frontmatter: Record<string, unknown> = {};
@@ -77,7 +89,9 @@ export function parseMarkdownFile(raw: string): ParsedMarkdownDocument {
     frontmatter = {};
   }
 
-  return { frontmatter, body: fenced[2] ?? '', hasFrontmatter: true, hadBom };
+  // 1.1 — keep the raw YAML source even when it didn't parse into an object,
+  // so the write path can preserve a fence it couldn't turn into keys.
+  return { frontmatter, rawFrontmatter: fenced[1], body: fenced[2] ?? '', hasFrontmatter: true, hadBom };
 }
 
 /**
@@ -260,6 +274,39 @@ export interface AssembleMarkdownOptions {
    * `false` so existing call sites continue to emit a clean UTF-8 file.
    */
   bom?: boolean;
+  /**
+   * Audit2 / 1.1 + 1.2 — the verbatim frontmatter source captured at parse
+   * time (`ParsedMarkdownDocument.rawFrontmatter`). Used two ways:
+   *
+   *  - 1.2 clean passthrough: with `frontmatterDirty === false`, the FM bytes
+   *    are emitted verbatim (comments / key order / line endings preserved)
+   *    instead of re-dumping the parsed object.
+   *  - 1.1 safety net: when the parsed object is empty but a non-empty raw
+   *    block was supplied (unparseable / non-object YAML), the raw block is
+   *    written back so a fence we couldn't parse is never silently dropped.
+   *
+   * Omitted by callers without disk-captured bytes (new-file creation), in
+   * which case the parsed object is dumped exactly as before.
+   */
+  rawFrontmatter?: string;
+  /**
+   * Audit2 / 1.2 — `false` asserts the frontmatter object has NOT changed
+   * since `rawFrontmatter` was captured, so the raw bytes are emitted
+   * verbatim. `true` (or omitted) means the object may have diverged, so it
+   * is re-serialised. Only meaningful alongside `rawFrontmatter`.
+   */
+  frontmatterDirty?: boolean;
+}
+
+/**
+ * Reattaches the `---` fences around a verbatim frontmatter block, matching
+ * the block's own line ending (so a CRLF file round-trips faithfully — 1.2)
+ * and appending a trailing newline after the body when it lacks one.
+ */
+function emitWithRawFrontmatter(bomPrefix: string, rawFrontmatter: string, body: string): string {
+  const nl = rawFrontmatter.includes('\r\n') ? '\r\n' : '\n';
+  const trailing = body.length === 0 || body.endsWith('\n') ? '' : '\n';
+  return `${bomPrefix}---${nl}${rawFrontmatter}${nl}---${nl}${body}${trailing}`;
 }
 
 /**
@@ -293,14 +340,32 @@ export function assembleMarkdownFile(
   }
 
   const bomPrefix = options.bom ? '﻿' : '';
-  const hasFrontmatter = Object.keys(fm).length > 0;
-  if (!hasFrontmatter) {
-    return `${bomPrefix}${body}`;
+  const rawFrontmatter = options.rawFrontmatter ?? '';
+  const rawHasContent = rawFrontmatter.trim().length > 0;
+  const objectHasKeys = Object.keys(fm).length > 0;
+
+  // 1.2 — clean body-only save: the frontmatter object is unchanged since it
+  // was parsed, so emit the original bytes verbatim (comments, key order, and
+  // line endings preserved) rather than re-dumping the object.
+  if (options.frontmatterDirty === false && rawHasContent) {
+    return emitWithRawFrontmatter(bomPrefix, rawFrontmatter, body);
   }
 
-  const yamlText = yaml.dump(fm, { lineWidth: -1, noRefs: true }).trimEnd();
-  const trailing = body.endsWith('\n') ? '' : '\n';
-  return `${bomPrefix}---\n${yamlText}\n---\n${body}${trailing}`;
+  if (objectHasKeys) {
+    const yamlText = yaml.dump(fm, { lineWidth: -1, noRefs: true }).trimEnd();
+    const trailing = body.endsWith('\n') ? '' : '\n';
+    return `${bomPrefix}---\n${yamlText}\n---\n${body}${trailing}`;
+  }
+
+  // 1.1 safety net — the parsed object is empty but the source HAD a
+  // frontmatter block (unparseable / non-object YAML). Never drop a fence we
+  // couldn't parse: write the raw block back untouched.
+  if (rawHasContent) {
+    return emitWithRawFrontmatter(bomPrefix, rawFrontmatter, body);
+  }
+
+  // Genuinely no frontmatter.
+  return `${bomPrefix}${body}`;
 }
 
 /**

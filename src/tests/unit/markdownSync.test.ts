@@ -10,7 +10,7 @@ import {
 describe('markdownSync — parseMarkdownFile', () => {
   it('returns empty document for empty input', () => {
     const r = parseMarkdownFile('');
-    expect(r).toEqual({ frontmatter: {}, body: '', hasFrontmatter: false, hadBom: false });
+    expect(r).toEqual({ frontmatter: {}, rawFrontmatter: '', body: '', hasFrontmatter: false, hadBom: false });
   });
 
   it('parses body without frontmatter', () => {
@@ -41,6 +41,95 @@ describe('markdownSync — parseMarkdownFile', () => {
     const r = parseMarkdownFile(src);
     expect(r.frontmatter.title).toBe('Foo');
     expect(r.body).toBe('body');
+  });
+});
+
+// ── Audit2 / 1.1 + 1.2 — frontmatter preservation ───────────────────────────
+// 1.1 (amplifier): parseMarkdownFile flags `hasFrontmatter:true` but leaves
+// `frontmatter:{}` on unparseable / non-object YAML; assembleMarkdownFile gated
+// the fence only on `Object.keys(fm).length`, so a body-only re-assembly DROPPED
+// the fence and erased the whole block. The raw source is now threaded out of
+// parse and written back verbatim so a fence we couldn't parse is never lost.
+// 1.2 (cure): a clean body-only save emits the original frontmatter bytes
+// verbatim (comments / key order / line endings preserved) instead of re-dumping
+// the parsed object. The object is re-serialised only when it actually changed.
+describe('markdownSync — frontmatter preservation (Audit2 1.1/1.2)', () => {
+  it('threads the raw frontmatter source out of parseMarkdownFile', () => {
+    const r = parseMarkdownFile('---\ntitle: Foo\ntags: [a, b]\n---\nbody');
+    expect(r.rawFrontmatter).toBe('title: Foo\ntags: [a, b]');
+  });
+
+  it('returns an empty rawFrontmatter when there is no frontmatter', () => {
+    expect(parseMarkdownFile('# just a body').rawFrontmatter).toBe('');
+    expect(parseMarkdownFile('').rawFrontmatter).toBe('');
+  });
+
+  it('1.1 — preserves an unparseable (tab-indented) frontmatter block on body re-assembly', () => {
+    const src = ['---', 'title: Keep me', '\tbad: indentation', '---', 'old body'].join('\n');
+    const parsed = parseMarkdownFile(src);
+    // The parser can't build an object from this YAML…
+    expect(parsed.hasFrontmatter).toBe(true);
+    expect(Object.keys(parsed.frontmatter)).toHaveLength(0);
+    // …but the raw block must survive a body-only save, fence and all.
+    const out = assembleMarkdownFile(parsed.frontmatter, 'new body', {
+      rawFrontmatter: parsed.rawFrontmatter,
+    });
+    expect(out.startsWith('---\n')).toBe(true);
+    expect(out).toContain('title: Keep me');
+    expect(out).toContain('\tbad: indentation');
+    expect(out).toContain('new body');
+  });
+
+  it('1.1 — preserves a non-object (top-level scalar) frontmatter block', () => {
+    const src = ['---', 'just a bare string', '---', 'body'].join('\n');
+    const parsed = parseMarkdownFile(src);
+    expect(parsed.hasFrontmatter).toBe(true);
+    expect(Object.keys(parsed.frontmatter)).toHaveLength(0);
+    const out = assembleMarkdownFile(parsed.frontmatter, 'edited', {
+      rawFrontmatter: parsed.rawFrontmatter,
+    });
+    expect(out).toContain('just a bare string');
+    expect(out.startsWith('---\n')).toBe(true);
+  });
+
+  it('1.2 — a clean body-only save emits the frontmatter bytes verbatim (comment + key order kept)', () => {
+    const src = ['---', '# pinned — keep this comment', 'zeta: 1', 'alpha: 2', '---', 'old body'].join('\n');
+    const parsed = parseMarkdownFile(src);
+    const out = assembleMarkdownFile(parsed.frontmatter, 'new body', {
+      rawFrontmatter: parsed.rawFrontmatter,
+      frontmatterDirty: false,
+    });
+    expect(out).toBe(
+      ['---', '# pinned — keep this comment', 'zeta: 1', 'alpha: 2', '---', 'new body', ''].join('\n'),
+    );
+  });
+
+  it('1.2 — preserves CRLF inside the frontmatter block on a clean save', () => {
+    const src = '---\r\ntitle: x\r\ntags: [a]\r\n---\r\nold';
+    const parsed = parseMarkdownFile(src);
+    const out = assembleMarkdownFile(parsed.frontmatter, 'new body', {
+      rawFrontmatter: parsed.rawFrontmatter,
+      frontmatterDirty: false,
+    });
+    expect(out.startsWith('---\r\n')).toBe(true);
+    expect(out).toContain('title: x\r\ntags: [a]');
+    expect(out).toContain('\r\n---\r\nnew body');
+  });
+
+  it('1.2 — re-serialises (dumps) the object when frontmatter is dirty', () => {
+    // FM actually changed, so the captured raw bytes are stale and must NOT win.
+    const out = assembleMarkdownFile({ title: 'Foo', status: 'done' }, 'body', {
+      rawFrontmatter: 'title: Foo', // stale raw, missing `status`
+      frontmatterDirty: true,
+    });
+    expect(out).toContain('title: Foo');
+    expect(out).toContain('status: done'); // the new key is present → re-dumped
+  });
+
+  it('a clean save with no raw frontmatter falls back to the object dump', () => {
+    const out = assembleMarkdownFile({ title: 'Foo' }, 'body', { frontmatterDirty: false });
+    expect(out).toContain('title: Foo');
+    expect(out.startsWith('---\n')).toBe(true);
   });
 });
 

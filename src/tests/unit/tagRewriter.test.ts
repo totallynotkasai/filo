@@ -144,3 +144,43 @@ describe('addTagToMarkdown', () => {
     expect(out).toMatch(/- baz/);
   });
 });
+
+// ── Audit 2.2 ─────────────────────────────────────────────────────────────
+// Tag identity is case-INSENSITIVE everywhere else (registry
+// `canonicaliseTagName`, `vaultIndex.filesByTag`, `frontmatterSync.valuesEqual`
+// — all fold via `toLocaleLowerCase('en-US')`), but the frontmatter rewriter
+// compared with strict `===`. So a file whose YAML spells the tag `Project`
+// (authored in Obsidian, or a first-seen capital the registry preserved) was
+// skipped when renaming/removing the registry's `project`, and adding `project`
+// to a file holding `Project` appended a duplicate. Casing of the NEW name and
+// the leading-`#` decision must still be taken from the file/registry as-is.
+describe('tag rewriter — case-insensitive identity (Audit 2.2)', () => {
+  it('rewrites a case-variant tag (block form)', () => {
+    const input = ['---', 'tags:', '  - Project', '  - keep', '---', 'body'].join('\n');
+    const out = rewriteTagInMarkdown(input, 'project', 'done');
+    expect(out).toMatch(/^\s*- done$/m);
+    expect(out).not.toMatch(/Project/);
+    expect(out).toMatch(/- keep/);
+  });
+
+  it('rewrites a case-variant tag and preserves the new name casing + leading #', () => {
+    const input = ['---', 'tags: [#Project, Other]', '---', 'body'].join('\n');
+    const out = rewriteTagInMarkdown(input, 'project', 'Done');
+    expect(out).toContain('#Done'); // # decision carried from the original token
+    expect(out).toContain('Other');
+    expect(out).not.toContain('Project');
+  });
+
+  it('removes a case-variant tag', () => {
+    const input = ['---', 'tags:', '  - Project', '  - keep', '---', 'body'].join('\n');
+    const out = removeTagFromMarkdown(input, 'project');
+    expect(out).not.toMatch(/Project/);
+    expect(out).toMatch(/- keep/);
+  });
+
+  it('is idempotent when adding a case-variant that already exists (no duplicate)', () => {
+    const input = ['---', 'tags:', '  - Project', '---', 'body'].join('\n');
+    const out = addTagToMarkdown(input, 'project');
+    expect(out).toBe(input);
+  });
+});

@@ -25,7 +25,7 @@
  * — keeps the heavy logic out of the already-large fileTagsStore module.
  */
 
-import { rewriteTagInMarkdown, removeTagFromMarkdown } from './tagRewriter';
+import { rewriteTagInMarkdown, removeTagFromMarkdown, tagsEqual } from './tagRewriter';
 import { trackComponentWrite } from '../boards/boardSaver';
 import {
   writePendingRewrite,
@@ -143,7 +143,11 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
   const failed: string[] = [];
 
   for (const md of metadata) {
-    if (!md.tags.some((t) => t === oldName)) continue;
+    // Audit 2.2 — case-insensitive match. The index preserves the file's
+    // authored casing (`Project`) while the registry canonical may be
+    // `project`; a strict `===` here skipped the file and the rename never
+    // reached its `.md`. Fold to the identity used everywhere else.
+    if (!md.tags.some((t) => tagsEqual(t, oldName))) continue;
     if (pathFilter && !pathFilter.has(md.path)) continue;
 
     let raw: string | null = null;

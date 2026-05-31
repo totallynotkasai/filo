@@ -20,6 +20,20 @@ import { parseTagsField } from '../utils/normalizeTagsField';
 
 const FRONTMATTER_FENCE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 
+/**
+ * Audit 2.2 — case-insensitive tag-identity equality. Folds via
+ * `toLocaleLowerCase('en-US')` to match the canonical identity used
+ * everywhere else: `canonicaliseTagName` (tagsStorage), `vaultIndex.filesByTag`,
+ * and `frontmatterSync.valuesEqual`. Pinned to en-US so identity is portable
+ * across hosts (a Turkish locale's dotless-i fold would otherwise split
+ * `Important` / `important`). The rewriter uses this for its PRESENCE checks
+ * only — it still writes the new name and the leading-`#` decision exactly as
+ * the caller / the matched token spelled them.
+ */
+export function tagsEqual(a: string, b: string): boolean {
+  return a.toLocaleLowerCase('en-US') === b.toLocaleLowerCase('en-US');
+}
+
 function splitFrontmatter(raw: string): {
   yamlSource: string;
   body: string;
@@ -218,7 +232,7 @@ export function rewriteTagInMarkdown(
     let changed = false;
     const next = tags.map((t) => {
       const bare = t.replace(/^#/, '');
-      if (bare === oldTag) {
+      if (tagsEqual(bare, oldTag)) {
         changed = true;
         return t.startsWith('#') ? `#${newTag}` : newTag;
       }
@@ -244,7 +258,7 @@ export function rewriteTagInMarkdown(
   let changed = false;
   const next = tagsField.tags.map((t) => {
     const bare = t.replace(/^#/, '');
-    if (bare === oldTag) {
+    if (tagsEqual(bare, oldTag)) {
       changed = true;
       return t.startsWith('#') ? `#${newTag}` : newTag;
     }
@@ -266,7 +280,7 @@ export function removeTagFromMarkdown(rawContent: string, tag: string): string {
   if (!hasFrontmatter) return rawContent;
 
   // Phase 31 C3.2 — line-level rewrite preserves all other YAML lines verbatim.
-  const matches = (t: string) => t.replace(/^#/, '') === tag;
+  const matches = (t: string) => tagsEqual(t.replace(/^#/, ''), tag);
   const lineRewrite = applyTagsLineRewrite(yamlSource, (tags) => {
     const next = tags.filter((t) => !matches(t));
     return next.length === tags.length ? null : next;
@@ -331,7 +345,7 @@ export function addTagToMarkdown(rawContent: string, tag: string): string {
 
   const tagsField = normaliseTagsField(fm.tags) ?? { tags: [], wasString: false };
 
-  if (tagsField.tags.some((t) => t.replace(/^#/, '') === bareTag)) return rawContent;
+  if (tagsField.tags.some((t) => tagsEqual(t.replace(/^#/, ''), bareTag))) return rawContent;
 
   tagsField.tags.push(bareTag);
   // Always emit the array form so external editors see a consistent YAML

@@ -238,4 +238,30 @@ describe('rewriteTagInAllMarkdown — sweep mutex (polish phase 4.3)', () => {
     // not that it produces a write.
     expect(r2).toBeDefined();
   });
+
+  // ── Audit 2.2 ─────────────────────────────────────────────────────────────
+  // The index preserves the file's authored casing (`Project`), but the
+  // registry canonical name is `project`. Pre-fix the candidate filter
+  // (`md.tags.some((t) => t === oldName)`) was case-SENSITIVE, so the file was
+  // skipped and the rename never reached its `.md` — leaving a stale `Project`
+  // that the next external-edit reconcile would re-assert. Both the filter AND
+  // the rewriter must fold case to match identity used everywhere else.
+  it('rewrites a file whose frontmatter tag case differs from the registry name', async () => {
+    fs.files.set('note.md', '---\ntags:\n  - Project\n---\nbody\n');
+    const meta = makeMetadata(['note.md'], 'Project');
+    const applied: string[] = [];
+    const res = await rewriteTagInAllMarkdown({
+      vaultRoot: '/vault',
+      metadata: meta,
+      oldName: 'project',
+      newName: 'done',
+      applyChanges: async (paths) => {
+        applied.push(...paths);
+      },
+    });
+    expect(res.succeeded).toContain('note.md');
+    expect(applied).toContain('note.md');
+    expect(fs.files.get('note.md')).toMatch(/- done/);
+    expect(fs.files.get('note.md')).not.toMatch(/Project/);
+  });
 });

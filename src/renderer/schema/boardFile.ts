@@ -114,10 +114,16 @@ export const V7BoardFileDataSchema = z.object({
   // file, so every nested record's `boardId` SHOULD match
   // `envelope.board.id`. We log mismatches but do not reject at the
   // schema layer: doing so would route every loosely-tagged test
-  // fixture through `failedBoards`, and the loader-side normalisation
-  // pass in `boardLoader.pruneOrphanRefsAndDuplicates` already fixes
-  // the mismatch for production files. Logging here preserves the
-  // signal for diagnostics without breaking the load path.
+  // fixture through `failedBoards`.
+  //
+  // Audit 2.1 — production files are repaired before this parse runs:
+  // `boardLoader.pruneOrphanRefsAndDuplicates` rewrites a divergent
+  // connection / frame / mindmap-group `boardId` to `envelope.board.id`
+  // and marks the board dirty (via the `boardIdsNormalized` flag) so the
+  // fix persists. By the time a real load reaches this superRefine the
+  // values already agree, so this `console.warn` fires only for envelopes
+  // built OUTSIDE the loader (tests, migration tooling, hand-built JSON).
+  // Logging preserves the diagnostic signal without breaking the load path.
   const seenMismatch: string[] = [];
   for (const [connId, conn] of Object.entries(envelope.connections)) {
     if (conn.boardId !== envelope.board.id) {

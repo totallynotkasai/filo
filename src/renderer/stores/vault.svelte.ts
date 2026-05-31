@@ -348,17 +348,15 @@ function commitVaultCandidate(
 
   // ── Hydrate dependent stores (each method accepts data directly) ──
   boardStore.hydrateCache(candidate.boardCache, candidate.boardPaths);
-  // M26 — `loadBoard` backfills `displayIndex` on legacy tile groups in
-  // place on the cache. Mark each touched board dirty so the freshly
-  // assigned indices land on disk on the next debounced save.
-  for (const id of candidate.backfilledBoardIds) {
-    boardCacheStore.markDirty(id);
-  }
-  // Phase 2.4 — same pattern for boards whose orphan refs / duplicate
-  // placements were pruned at load time. The source bytes are already
-  // preserved at `.filo/recovery/` via the snapshot path taken inside
-  // `loadBoard`.
-  for (const id of candidate.prunedBoardIds) {
+  // Mark every board the loader repaired on the way in dirty (markDirty is
+  // idempotent; overlap harmless): M26 displayIndex backfill, Phase 2.4
+  // orphan/dup prune (bytes snapshotted to `.filo/recovery/`), Audit 2.1 boardId.
+  const repairedBoardIds = [
+    ...candidate.backfilledBoardIds,
+    ...candidate.prunedBoardIds,
+    ...candidate.normalizedBoardIds,
+  ];
+  for (const id of repairedBoardIds) {
     boardCacheStore.markDirty(id);
   }
 

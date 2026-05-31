@@ -95,6 +95,7 @@ export interface VaultCandidate {
   boardPaths: Record<string, string>;
   backfilledBoardIds: string[];
   prunedBoardIds: string[];
+  normalizedBoardIds: string[];
   viewports: Record<string, ViewportEntry>;
   workspaceConfig: Record<string, unknown>;
   tagsFile: TagsFile;
@@ -204,6 +205,7 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     failedBoards,
     backfilledBoardIds,
     prunedBoardIds,
+    normalizedBoardIds,
   } = await loadAllBoards(newVaultPath);
 
   // Snapshot every failed board's bytes into `.filo/recovery/<ts>/` so
@@ -399,6 +401,7 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     boardPaths,
     backfilledBoardIds,
     prunedBoardIds,
+    normalizedBoardIds,
     viewports: raw.viewports as Record<string, ViewportEntry>,
     workspaceConfig: raw.workspace,
     tagsFile,

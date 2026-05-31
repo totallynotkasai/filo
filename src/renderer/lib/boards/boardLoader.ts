@@ -66,6 +66,18 @@ interface OrphanPruneReport {
   droppedKanbanDuplicates: string[];
   /** Task List duplicate placements dropped (first occurrence kept). */
   droppedTaskListDuplicates: string[];
+  /**
+   * Audit 2.1 — connection / frame / mindmap-group refs whose nested
+   * `boardId` disagreed with `envelope.board.id` and was rewritten to match.
+   * Each entry is a `kind:id` tag (e.g. `connection:c1`, `frame:f1`,
+   * `group:g1`) for diagnostics. Deliberately NOT counted by
+   * `orphanReportHasFindings`: a boardId rewrite is a benign, deterministic
+   * self-heal (the correct value *is* `board.id`), so it must not trip the
+   * orphan-prune recovery snapshot / refuse-to-load path. It is surfaced via
+   * the separate `boardIdsNormalized` result flag, which marks the board
+   * dirty so the repair reaches disk — the same way `groupsBackfilled` does.
+   */
+  normalizedBoardIdRefs: string[];
 }
 
 function emptyOrphanReport(): OrphanPruneReport {
@@ -74,10 +86,13 @@ function emptyOrphanReport(): OrphanPruneReport {
     framesWithStrippedTileIds: [],
     droppedKanbanDuplicates: [],
     droppedTaskListDuplicates: [],
+    normalizedBoardIdRefs: [],
   };
 }
 
 function orphanReportHasFindings(r: OrphanPruneReport): boolean {
+  // NB: `normalizedBoardIdRefs` is intentionally excluded — see its docstring.
+  // A boardId self-heal must not trigger the snapshot / refuse-to-load path.
   return (
     r.orphanConnections.length > 0 ||
     r.framesWithStrippedTileIds.length > 0 ||
@@ -131,10 +146,12 @@ function pruneOrphanRefsAndDuplicates(raw: unknown): OrphanPruneReport {
     connections?: Record<string, unknown>;
     frames?: unknown[];
     board?: {
+      id?: unknown;
       type?: string;
       columns?: unknown[];
       tasks?: unknown[];
       inlineTiles?: Record<string, unknown>;
+      groups?: unknown[];
     };
   };
   const tileIds = collectValidTileIds(envelope);
@@ -227,6 +244,53 @@ function pruneOrphanRefsAndDuplicates(raw: unknown): OrphanPruneReport {
     envelope.board.tasks = next;
   }
 
+  // Audit 2.1 — normalize nested boardId refs to the envelope's `board.id`.
+  // The superRefine in `schema/boardFile.ts` only warns on a mismatch and
+  // relies on THIS pass to repair it (its comment now reflects reality). A
+  // stale / foreign boardId — copied connections, a third-party tool, or a
+  // board file restored under a renamed id — would otherwise round-trip to
+  // disk unrepaired and could mask a cross-board mix-up (e.g. combined with a
+  // duplicate-id collision). Repair is deterministic (the correct value IS
+  // `board.id`), so no recovery snapshot is taken; the board is just marked
+  // dirty via the `boardIdsNormalized` flag so the corrected values persist.
+  const canonicalBoardId = envelope.board?.id;
+  if (typeof canonicalBoardId === 'string' && canonicalBoardId.length > 0) {
+    if (envelope.connections && typeof envelope.connections === 'object') {
+      for (const [id, c] of Object.entries(envelope.connections)) {
+        if (!c || typeof c !== 'object') continue;
+        const conn = c as { boardId?: unknown };
+        if (typeof conn.boardId === 'string' && conn.boardId !== canonicalBoardId) {
+          conn.boardId = canonicalBoardId;
+          report.normalizedBoardIdRefs.push(`connection:${id}`);
+        }
+      }
+    }
+    if (Array.isArray(envelope.frames)) {
+      for (const f of envelope.frames) {
+        if (!f || typeof f !== 'object') continue;
+        const frame = f as { id?: unknown; boardId?: unknown };
+        if (typeof frame.boardId === 'string' && frame.boardId !== canonicalBoardId) {
+          frame.boardId = canonicalBoardId;
+          report.normalizedBoardIdRefs.push(
+            `frame:${typeof frame.id === 'string' ? frame.id : '?'}`,
+          );
+        }
+      }
+    }
+    if (envelope.board?.type === 'mindmap' && Array.isArray(envelope.board.groups)) {
+      for (const g of envelope.board.groups) {
+        if (!g || typeof g !== 'object') continue;
+        const group = g as { id?: unknown; boardId?: unknown };
+        if (typeof group.boardId === 'string' && group.boardId !== canonicalBoardId) {
+          group.boardId = canonicalBoardId;
+          report.normalizedBoardIdRefs.push(
+            `group:${typeof group.id === 'string' ? group.id : '?'}`,
+          );
+        }
+      }
+    }
+  }
+
   return report;
 }
 
@@ -260,6 +324,14 @@ export interface LoadBoardResult {
    * `.filo/recovery/` (see snapshot path emitted in the toast).
    */
   orphansPruned: boolean;
+  /**
+   * Audit 2.1 — true when `pruneOrphanRefsAndDuplicates` rewrote at least one
+   * nested connection / frame / mindmap-group `boardId` to match
+   * `board.id`. Benign self-heal: unlike `orphansPruned` it takes no recovery
+   * snapshot and never refuses the load. The caller marks the board dirty so
+   * the corrected values land on disk (mirrors `groupsBackfilled`).
+   */
+  boardIdsNormalized: boolean;
 }
 
 export interface LoadBoardError {
@@ -512,6 +584,7 @@ export async function loadBoard(
     droppedTileTypes,
     groupsBackfilled,
     orphansPruned: orphanReportHasFindings(orphanReport),
+    boardIdsNormalized: orphanReport.normalizedBoardIdRefs.length > 0,
   };
 }
 
@@ -604,6 +677,13 @@ export async function loadAllBoards(
    * path emitted in the per-board toast).
    */
   prunedBoardIds: string[];
+  /**
+   * Audit 2.1 — board IDs whose nested connection / frame / mindmap-group
+   * `boardId` was normalized to `board.id` on load. The caller marks each
+   * dirty so the corrected values reach disk (mirrors `backfilledBoardIds`;
+   * no recovery snapshot is involved).
+   */
+  normalizedBoardIds: string[];
 }> {
   const relList = (await window.filo.invoke('board:list', vaultRoot)) as string[];
 
@@ -615,6 +695,7 @@ export async function loadAllBoards(
   const failedBoards: FailedBoardEntry[] = [];
   const backfilledBoardIds: string[] = [];
   const prunedBoardIds: string[] = [];
+  const normalizedBoardIds: string[] = [];
 
   for (const relPath of relList) {
     const result = await loadBoard(vaultRoot, relPath);
@@ -666,6 +747,7 @@ export async function loadAllBoards(
     frames.push(...data.frames);
     if (result.groupsBackfilled) backfilledBoardIds.push(data.board.id);
     if (result.orphansPruned) prunedBoardIds.push(data.board.id);
+    if (result.boardIdsNormalized) normalizedBoardIds.push(data.board.id);
   }
 
   return {
@@ -677,6 +759,7 @@ export async function loadAllBoards(
     failedBoards,
     backfilledBoardIds,
     prunedBoardIds,
+    normalizedBoardIds,
   };
 }
 

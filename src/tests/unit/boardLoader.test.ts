@@ -206,6 +206,65 @@ describe('boardLoader', () => {
       }
     });
 
+    // ── Audit 2.1 regression ────────────────────────────────────────────────
+    // A nested connection / frame / mindmap-group `boardId` that disagrees with
+    // the envelope's `board.id` must be normalized to `board.id` at load time
+    // and the board flagged so the repair reaches disk. Pre-fix, the schema
+    // superRefine only console.warn'd and `pruneOrphanRefsAndDuplicates` never
+    // touched `boardId`, so a stale / foreign `boardId` round-tripped to disk
+    // unchanged — and the superRefine's comment claimed a normalization pass
+    // that did not exist. Trivially produced by copying one board's connections
+    // into another file, or a third-party tool writing a stale `boardId`.
+    it('Audit 2.1 — normalizes a mismatched connection/frame/group boardId to board.id', async () => {
+      const file = validBoardFile('home-board');
+      file.connections = {
+        c1: {
+          id: 'c1',
+          boardId: 'stale-foreign-id',
+          fromTileId: 'tile_a',
+          toTileId: 'tile_a',
+          fromBubble: 0,
+          toBubble: 0,
+          createdAt: 0,
+          updatedAt: 0,
+        } as never,
+      };
+      file.frames = [
+        {
+          id: 'f1',
+          boardId: 'stale-foreign-id',
+          title: 'Frame',
+          position: { x: 0, y: 0 },
+          size: { width: 300, height: 200 },
+          tileIds: ['tile_a'],
+          createdAt: 0,
+          updatedAt: 0,
+        } as never,
+      ];
+      const board = file.board as unknown as Record<string, unknown>;
+      // displayIndex pre-filled so the group backfill stays quiet and this test
+      // isolates the boardId normalization signal.
+      board.groups = [
+        { id: 'g1', tileIds: ['tile_a'], boardId: 'stale-foreign-id', displayIndex: 1 },
+      ];
+
+      // No `recovery:snapshot` stub on purpose: boardId normalization is a
+      // benign, deterministic self-heal (no data loss), so it must NOT trip the
+      // orphan-prune snapshot / refuse-to-load path. If it did, the missing
+      // stub would throw "No stub for channel".
+      installFiloStub({ 'board:load': () => JSON.stringify(file) });
+
+      const result = await loadBoard('/vault', 'home.board.json');
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.connections.c1.boardId).toBe('home-board');
+        expect(result.data.frames[0].boardId).toBe('home-board');
+        const groups = (result.data.board as unknown as { groups: Array<{ boardId: string }> }).groups;
+        expect(groups[0].boardId).toBe('home-board');
+        expect(result.boardIdsNormalized).toBe(true);
+      }
+    });
+
     it('Phase 2.4 — deduplicates Kanban placements within a column without rejecting the board', async () => {
       const now = Date.now();
       const file = {

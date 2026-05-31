@@ -416,7 +416,16 @@ export function addTagToMarkdown(rawContent: string, tag: string): string {
     const insertAt =
       lines.length > 0 && lines[lines.length - 1] === '' ? lines.length - 1 : lines.length;
     lines.splice(insertAt, 0, 'tags:', `  - ${emitTagScalar(bareTag)}`);
-    return reassemble(lines.join('\n'), body, hadTrailingNewline, eol);
+    const candidate = lines.join('\n');
+    // 1.7 — the line insert assumes a block mapping. A root-level FLOW mapping
+    // (`{title: X}`) or other non-block shape would become invalid YAML with a
+    // block `tags:` appended (the 1.7 fuzzer caught exactly this). Only take the
+    // formatting-preserving insert when the result still parses; otherwise fall
+    // through to the load→dump path, which correctly merges tags into any
+    // parseable object.
+    if (loadYamlObject(candidate)) {
+      return reassemble(candidate, body, hadTrailingNewline, eol);
+    }
   }
 
   // 7.5 — skip an anchored/aliased tags field instead of expanding it via dump.

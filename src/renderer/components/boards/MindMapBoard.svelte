@@ -11,7 +11,7 @@
   import WaypointMarker from '../canvas/WaypointMarker.svelte';
   import MindMapPopups from './MindMapPopups.svelte';
   import { getContext } from 'svelte';
-  import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
+  import { BOARD_SCOPE_KEY, isActiveScope, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { connectionsStore } from '../../stores/connections.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { TILE_DEFAULTS, FRAME_DEFAULTS, defaultTileStyleSnapshot, defaultFrameStyleSnapshot } from '../../constants/defaults';
@@ -28,7 +28,7 @@
   const spatialStore = scope.spatial;
   import { viewportAction } from '../../lib/canvas/gestures';
   import { dragDropAction } from '../../lib/canvas/dragDrop';
-  import { edgePanAction, startEdgePan, stopEdgePan } from '../../lib/canvas/edgePan';
+  import { edgePanAction, syncConnectionEdgePan } from '../../lib/canvas/edgePan';
   import { createId } from '../../lib/utils/ids';
   import { historyStore } from '../../stores/history.svelte';
   import { DeleteTilesCommand, MoveTilesCommand, UpdateFrameCommand } from '../../commands/index';
@@ -116,15 +116,15 @@
   });
 
   // ── Edge-pan during connection drawing ──
-  // Pass THIS pane's canvas scope (not the global facade). Connection
-  // drawing has no pointer capture, so if another pane is activated
-  // mid-draw the facade would route edge-pan to the wrong canvas (Audit 5.4).
+  // `connectionsStore.drawing` is GLOBAL, so in split view BOTH panes' effects
+  // fire on its transition and the module-singleton edge-pan is first-caller-
+  // wins. Gate on this pane being the active one so only the pane the user is
+  // drawing in arms edge-pan (the draw's pointerdown activates its pane first
+  // via PaneView's capture handler) — otherwise the wrong pane's scope is
+  // pinned and edge-pan scrolls the wrong canvas (Audit 5.2; the earlier
+  // Audit-5.4 fix pinned a scope but not necessarily the right pane's).
   $effect(() => {
-    if (connectionsStore.drawing) {
-      startEdgePan(canvasStore);
-    } else {
-      stopEdgePan();
-    }
+    syncConnectionEdgePan(canvasStore, !!connectionsStore.drawing, isActiveScope(scope));
   });
 
   const viewModel = new VisibleTilesViewModel({

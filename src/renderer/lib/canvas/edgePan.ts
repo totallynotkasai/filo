@@ -100,6 +100,41 @@ export function updateEdgePanMouse(x: number, y: number): void {
 }
 
 /**
+ * Test/introspection accessor — the canvas scope currently driving edge-pan
+ * (pinned at start time), or null when idle.
+ */
+export function getEdgePanScope(): CanvasScope | null {
+  return state.scope;
+}
+
+/**
+ * Sync edge-pan with connection-drawing state for ONE pane's effect.
+ *
+ * Connection-drawing state (`connectionsStore.drawing`) is GLOBAL, so in a
+ * split view BOTH mounted MindMapBoards' edge-pan effects fire on its
+ * transition. Edge-pan is a module singleton armed first-caller-wins
+ * (`startEdgePan` early-returns when already active), so the first-mounted pane
+ * could pin ITS scope even when the user is drawing in the OTHER pane —
+ * edge-pan would then scroll the wrong canvas (Audit 5.2; the earlier Audit-5.4
+ * fix pinned a scope but not necessarily the right pane's).
+ *
+ * Gate on the active pane: a connection draw starts with a pointerdown in its
+ * pane, and PaneView's capture-phase handler activates that pane before drawing
+ * begins, so the drawing pane is always the active one. An inactive pane must
+ * NOT touch the singleton (neither arm nor stop) or it would pin the wrong
+ * scope / cancel the active pane's pan.
+ */
+export function syncConnectionEdgePan(
+  scope: CanvasScope,
+  isDrawing: boolean,
+  isActivePane: boolean,
+): void {
+  if (!isActivePane) return;
+  if (isDrawing) startEdgePan(scope);
+  else stopEdgePan();
+}
+
+/**
  * Svelte action for edge-panning. Tracks mouse position when active.
  */
 export function edgePanAction(node: HTMLElement) {

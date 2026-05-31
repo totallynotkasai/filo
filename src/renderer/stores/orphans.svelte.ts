@@ -1,5 +1,9 @@
 import { SvelteSet } from 'svelte/reactivity';
+import type { Tile } from '../schema/index';
 import { boardStore } from './board.svelte';
+import { documentStore } from './document.svelte';
+import { vaultIndexStore } from './vaultIndex.svelte';
+import { resolveTextTileVaultPath } from '../lib/boards/textTilePath';
 import { findOrphans, type OrphanInfo } from '../lib/canvas/orphanCatcher';
 import { onVaultSwap } from '../core/vaultLifecycle';
 
@@ -10,6 +14,35 @@ import { onVaultSwap } from '../core/vaultLifecycle';
  */
 
 const DEFAULT_CLUSTER_DISTANCE = 600;
+
+/**
+ * Audit 1.1 — resolves a text tile's real backing body for the empty-orphan
+ * check. `tile.content` is always '' (the body lives in the .md), so emptiness
+ * has to come from the live document or the on-disk index. Priority:
+ *
+ *   1. The open `DocumentState` — captures unsaved in-memory edits and
+ *      freshly-created tiles whose body hasn't been flushed to disk yet.
+ *   2. The vault index's cached `.md` body — covers tiles whose document
+ *      isn't currently open.
+ *
+ * Returns `undefined` when neither resolves; `findOrphans` treats that as NOT
+ * empty so a tile whose body can't be read is never falsely flagged.
+ */
+function resolveTextBody(tile: Tile): string | undefined {
+  if (tile.type !== 'text') return undefined;
+  // `tile` is narrowed to the text variant by the guard above.
+  const contentId = tile.contentId;
+  if (contentId) {
+    const doc = documentStore.getDocument(contentId);
+    if (doc) return doc.body;
+  }
+  const path = resolveTextTileVaultPath(tile, tile.boardId);
+  if (path) {
+    const md = vaultIndexStore.getMetadata(path);
+    if (md) return md.content;
+  }
+  return undefined;
+}
 
 let results = $state<OrphanInfo[]>([]);
 const highlighted = new SvelteSet<string>();
@@ -33,6 +66,7 @@ export const orphansStore = {
       tiles: boardStore.tiles,
       connections: boardStore.connections,
       clusterDistance,
+      resolveTextBody,
     });
     results = found;
     // Clear stale highlights for tiles that are no longer orphans

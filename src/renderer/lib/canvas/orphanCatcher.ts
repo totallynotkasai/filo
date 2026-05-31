@@ -16,6 +16,21 @@ export interface OrphanCatcherInput {
   /** Board-space pixels — a tile is "far from any cluster" if its distance
    * to its nearest other tile exceeds this. Default 600. */
   clusterDistance?: number;
+  /**
+   * Resolves a text tile's real backing body so emptiness can be judged.
+   *
+   * A text tile does NOT carry its body on the tile object — `tile.content` is
+   * hard-coded to `''` by `buildTileDefinition` (the body lives in the backing
+   * `.md` / `documentStore`). Without this resolver, `isEmptyTextTile` would
+   * read that empty field and flag EVERY text tile as empty (Audit 1.1).
+   *
+   * Returns the body string (Markdown or HTML), or `undefined` when the body
+   * cannot be resolved. Absence is treated as NOT empty: a tile is only
+   * classified `empty` when we can positively confirm its body is blank.
+   * Keeping the resolver an injected parameter (rather than importing stores
+   * here) preserves this module's purity for unit testing.
+   */
+  resolveTextBody?: (tile: Tile) => string | undefined;
 }
 
 export interface OrphanInfo {
@@ -38,10 +53,18 @@ function rectDistance(
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-function isEmptyTextTile(tile: Tile): boolean {
+function isEmptyTextTile(
+  tile: Tile,
+  resolveTextBody?: (tile: Tile) => string | undefined,
+): boolean {
   if (tile.type !== 'text') return false;
-  const content = (tile as { content?: string }).content ?? '';
-  const stripped = content
+  // The body lives in the backing .md / documentStore, never on the tile
+  // object (`tile.content` is always '' — see buildTileDefinition). Resolve
+  // the real body; if it can't be resolved, the tile is NOT empty (absence ≠
+  // empty — classifying every unresolved tile as empty was the Audit 1.1 bug).
+  const body = resolveTextBody?.(tile);
+  if (typeof body !== 'string') return false;
+  const stripped = body
     .replace(/<[^>]+>/g, '')
     .replace(/\s|&nbsp;/g, '');
   return stripped.length === 0;
@@ -61,7 +84,7 @@ export function findOrphans(input: OrphanCatcherInput): OrphanInfo[] {
   const orphans: OrphanInfo[] = [];
 
   for (const tile of tiles) {
-    if (isEmptyTextTile(tile)) {
+    if (isEmptyTextTile(tile, input.resolveTextBody)) {
       orphans.push({ tileId: tile.id, reason: 'empty' });
       continue;
     }

@@ -40,6 +40,14 @@ function asMap<T extends { id: string }>(items: T[]): Record<string, T> {
   return out;
 }
 
+// Audit 1.1 — at runtime a text tile's `content` is always '' (the body lives
+// in the .md / documentStore); the store passes findOrphans a resolver that
+// reads the real body. The fixtures stash a body on `content`, so this test
+// resolver feeds it back the same way.
+function bodyResolver(t: Tile): string | undefined {
+  return (t as { content?: string }).content;
+}
+
 describe('findOrphans', () => {
   it('returns empty array when there are no tiles', () => {
     expect(findOrphans({ tiles: {}, connections: {} })).toEqual([]);
@@ -50,7 +58,7 @@ describe('findOrphans', () => {
       textTile('a', 0, 0, { content: '' }),
       textTile('b', 120, 0),
     ]);
-    const result = findOrphans({ tiles, connections: {} });
+    const result = findOrphans({ tiles, connections: {}, resolveTextBody: bodyResolver });
     expect(result).toEqual([{ tileId: 'a', reason: 'empty' }]);
   });
 
@@ -59,7 +67,7 @@ describe('findOrphans', () => {
       textTile('blank', 0, 0, { content: '<p>&nbsp;</p>' }),
       textTile('nonblank', 120, 0, { content: '<p>hi</p>' }),
     ]);
-    const result = findOrphans({ tiles, connections: {} });
+    const result = findOrphans({ tiles, connections: {}, resolveTextBody: bodyResolver });
     expect(result.map((r) => r.tileId)).toEqual(['blank']);
   });
 
@@ -107,5 +115,35 @@ describe('findOrphans', () => {
     // Cluster distance 200 < edge gap 400 => both are isolated.
     const far = findOrphans({ tiles, connections: {}, clusterDistance: 200 });
     expect(far.map((r) => r.tileId).sort()).toEqual(['a', 'b']);
+  });
+
+  // ── Audit 1.1 regression ────────────────────────────────────────────────
+  // Emptiness must be decided from the RESOLVED backing body, never from the
+  // tile's own `content` field. At runtime `buildTileDefinition` hard-codes
+  // text-tile `content: ''` (the body lives in the .md / documentStore), so
+  // the pre-fix `isEmptyTextTile` flagged EVERY text tile as empty.
+
+  it('does NOT flag a text tile as empty when its resolved backing body has content', () => {
+    // Both tiles carry the realistic content: '' — the body comes from the
+    // resolver, not the tile object.
+    const tiles = asMap([
+      textTile('withBody', 0, 0, { content: '' }),
+      textTile('blank', 120, 0, { content: '' }),
+    ]);
+    const resolveTextBody = (t: Tile): string | undefined =>
+      t.id === 'withBody' ? '# Heading\n\nReal content' : '';
+    const result = findOrphans({ tiles, connections: {}, resolveTextBody });
+    // 'withBody' resolves to non-empty → not empty (and clustered). 'blank'
+    // resolves to '' → still flagged empty.
+    expect(result).toEqual([{ tileId: 'blank', reason: 'empty' }]);
+  });
+
+  it('treats an unresolvable text body as NOT empty (absence ≠ empty)', () => {
+    // No resolver: we cannot prove the body is empty, so we must never classify
+    // the tile as an empty orphan (that was the false-positive bug). The tile
+    // may still be flagged 'isolated', but never 'empty'.
+    const tiles = asMap([textTile('lonely', 0, 0, { content: '' })]);
+    const result = findOrphans({ tiles, connections: {} });
+    expect(result.some((r) => r.reason === 'empty')).toBe(false);
   });
 });

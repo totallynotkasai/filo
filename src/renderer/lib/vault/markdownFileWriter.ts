@@ -386,7 +386,15 @@ export async function writeMarkdownFile(args: WriteArgs): Promise<void> {
   // for this docId, the caller's args are stale — re-read disk, back-merge
   // into the cache, and use the disk FM. One extra IPC per stale-detected
   // write; the happy path stays a pure write.
-  let fm = args.frontmatter;
+  // Audit2 2.5 — frontmatter is owned by the live documentStore cache, not the
+  // caller's schedule-time snapshot in `args.frontmatter`. A body write debounces
+  // for 300 ms; if an FM mutation lands in the cache during that window — an
+  // external frontmatter-only edit reconciled in, a PropertiesPopup / TaskList
+  // edit, or a cross-board flush — emitting the frozen snapshot would silently
+  // clobber it. Read the cache live at fire time (its presence is authoritative;
+  // both editor callers source `args.frontmatter` from it anyway), falling back
+  // to the caller's args only when the cache has no entry for this doc.
+  let fm = (docId ? documentStore.getFrontmatter(docId) : undefined) ?? args.frontmatter;
   if (docId) {
     // M1 — version map is keyed by docId so this comparison stays in the
     // same version space as `getFrontmatterMutationVersion(docId)`.

@@ -21,6 +21,7 @@ import {
 } from '../lib/vault/markdownFileWriter';
 import { reportError } from '../lib/utils/errorBus';
 import { forceWriteForDocument } from '../lib/vault/markdownFileWriter';
+import { applyFrontmatterPatchRebased } from './frontmatterRebase';
 
 // ── Kanban Commands ──
 //
@@ -471,6 +472,9 @@ export class UpdateCardFieldCommand extends Command {
   private docId: string | null;
   private patch: Record<string, unknown>;
   private inversePatch: Record<string, unknown>;
+  // Audit2 4.2 — false on the user's initial Apply (apply directly), true once
+  // executed so a later redo rebases like undo instead of clobbering.
+  private hasExecuted = false;
 
   constructor(
     boardId: string,
@@ -507,6 +511,22 @@ export class UpdateCardFieldCommand extends Command {
     // overlap: the forward debounced write was still in-flight when undo
     // queued the inverse patch and the inverse landed on disk first.
     await flushAllPendingFrontmatterWrites();
+    // First execute = the user's own action: apply it directly (the inverse
+    // patch was just read from this same live cache). A redo re-applies an old
+    // patch and must rebase like undo so an external edit since isn't clobbered.
+    const isRedo = this.hasExecuted;
+    this.hasExecuted = true;
+    if (this.docId && isRedo) {
+      applyFrontmatterPatchRebased({
+        docId: this.docId,
+        relPath: this.relPath,
+        boardId: this.boardId,
+        applying: this.patch,
+        expectedCurrent: this.inversePatch,
+        label: this.relPath,
+      });
+      return;
+    }
     if (this.docId) documentStore.mergeFrontmatter(this.docId, this.patch);
     scheduleFrontmatterWrite(this.relPath, this.docId);
     boardCacheStore.markDirty(this.boardId);
@@ -514,9 +534,21 @@ export class UpdateCardFieldCommand extends Command {
 
   async undo(): Promise<void> {
     await flushAllPendingFrontmatterWrites();
-    if (this.docId) documentStore.mergeFrontmatter(this.docId, this.inversePatch);
-    scheduleFrontmatterWrite(this.relPath, this.docId);
-    boardCacheStore.markDirty(this.boardId);
+    if (this.docId) {
+      // Audit2 4.2 — rebase onto the live frontmatter so an external edit to
+      // the same field isn't silently clobbered (prompts to apply anyway).
+      applyFrontmatterPatchRebased({
+        docId: this.docId,
+        relPath: this.relPath,
+        boardId: this.boardId,
+        applying: this.inversePatch,
+        expectedCurrent: this.patch,
+        label: this.relPath,
+      });
+    } else {
+      scheduleFrontmatterWrite(this.relPath, this.docId);
+      boardCacheStore.markDirty(this.boardId);
+    }
   }
 }
 

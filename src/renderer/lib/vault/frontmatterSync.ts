@@ -226,12 +226,22 @@ export function reconcileBoardCacheWithFrontmatter(
     for (const [tileId, def] of Object.entries(defs)) {
       if (!tileBacksMarkdownPath(def, relPath)) continue;
 
-      // Build the cache subset that participates in sync. Only fields the
-      // tile actually carries get reconciled — `reconcile` skips the rest.
+      // Build the cache subset that participates in sync. Include a key for
+      // every field already on the def, PLUS — Audit 2.3 — every field the
+      // canonical frontmatter carries even when the def never had it, seeded
+      // as an explicit `undefined`. Without that seed, detectDivergence's
+      // `field in cache` guard skips a field the tile didn't previously track,
+      // so a field added to the .md in an external editor (e.g. `dueDate` /
+      // `priority` / `status` on a task) wouldn't reach the live cache until a
+      // board reload — smart-list filters/sort would silently ignore it mid-
+      // session. Fields absent from BOTH the def and the frontmatter stay out,
+      // so we never invent task fields the file doesn't actually have.
       const cacheSubset: TileLikeCache = {};
       const d = def as Record<string, unknown>;
+      const canonical = canonicalValues(metadata);
       for (const field of SYNCED_FIELDS) {
         if (field in d) cacheSubset[field] = d[field];
+        else if (field in canonical) cacheSubset[field] = undefined;
       }
 
       const { changes } = reconcile(cacheSubset, metadata);

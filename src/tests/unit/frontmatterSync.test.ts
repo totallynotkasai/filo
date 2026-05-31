@@ -302,4 +302,39 @@ describe('frontmatterSync.reconcileBoardCacheWithFrontmatter', () => {
     const fields = result.perBoard.board1[0].changes.map((c) => c.field).sort();
     expect(fields).toEqual(['completed', 'status']);
   });
+
+  // Audit 2.3 — a frontmatter field the tile def never carried (e.g. a dueDate
+  // typed into the .md in an external editor) must reconcile onto the live
+  // cache without waiting for a board reload. Pre-fix, cacheSubset was built
+  // only from fields already on the def, so detectDivergence's "field in cache"
+  // guard skipped the new field entirely and smart-list filters/sort silently
+  // ignored it mid-session.
+  it('reconciles a frontmatter field the tile def did not previously carry', () => {
+    const def = textTileDef({ id: 't1', title: 'Task' }); // no dueDate / priority
+    const cache: Record<string, V7BoardFileData> = { b1: emptyBoard('b1', { t1: def }) };
+    const m = meta('Task.md', '---\ntitle: Task\ndueDate: 2026-06-01\npriority: high\n---\n# Task');
+
+    const res = reconcileBoardCacheWithFrontmatter(cache, 'Task.md', m);
+
+    expect(res.changedBoardIds).toEqual(['b1']);
+    const patched = cache.b1.tileDefs['t1'] as Record<string, unknown>;
+    expect(patched.dueDate).toBe('2026-06-01');
+    expect(patched.priority).toBe('high');
+  });
+
+  // Guard against over-reach: a synced field absent from BOTH the def and the
+  // frontmatter must NOT be invented on the def (no spurious writes / no
+  // pollution of non-task tiles with task fields the file doesn't have).
+  it('does not invent a synced field absent from both the def and the frontmatter', () => {
+    const def = textTileDef({ id: 't1', title: 'Task' }); // no priority / dueDate
+    const cache: Record<string, V7BoardFileData> = { b1: emptyBoard('b1', { t1: def }) };
+    const m = meta('Task.md', '---\ntitle: Task\n---\n# Task'); // no priority / dueDate in fm
+
+    const res = reconcileBoardCacheWithFrontmatter(cache, 'Task.md', m);
+
+    expect(res.changedBoardIds).toEqual([]);
+    const patched = cache.b1.tileDefs['t1'] as Record<string, unknown>;
+    expect('priority' in patched).toBe(false);
+    expect('dueDate' in patched).toBe(false);
+  });
 });

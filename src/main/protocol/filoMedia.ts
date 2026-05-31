@@ -2,7 +2,7 @@ import { protocol } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import { Readable } from 'stream';
-import { assertWithinVault } from '../utils/pathSecurity';
+import { resolveServableMediaPath } from './mediaPathGuard';
 import { getMimeType } from '../utils/mime';
 import { getVaultRoot } from '../ipc/vault.ipc';
 import { parseRangeHeader } from './rangeHeader';
@@ -24,8 +24,11 @@ import { logMainError } from '../utils/mainLogger';
  *
  * Security:
  *   - Only `media` host is recognised; anything else 404s.
- *   - The decoded path is run through `assertWithinVault`, which canonicalises
- *     symlinks/junctions and refuses paths that escape the vault.
+ *   - The decoded path is run through `resolveServableMediaPath`, which applies
+ *     the structural `assertSafeRelativePath` + `.filo/` `assertNotInFiloDir`
+ *     guards and then `assertWithinVault` (canonicalises symlinks/junctions,
+ *     refuses escapes). A rejected path returns 403 — matching the other
+ *     renderer-facing read channels. (Audit 3.2)
  *   - There is no active vault → 404 (renderer should not have a media URL
  *     pointing at a closed vault).
  *
@@ -51,8 +54,16 @@ export function registerFiloProtocol(): void {
         return new Response('Empty path', { status: 400 });
       }
 
-      const absPath = path.join(vaultRoot, relPath);
-      assertWithinVault(vaultRoot, absPath);
+      let absPath: string;
+      try {
+        // Audit 3.2 — structural + `.filo/` carve-out + containment guards.
+        // A rejection is a deliberate refusal (forbidden path / malformed
+        // input), not a server fault, so map it to 403 rather than letting
+        // the outer catch report a generic 500.
+        absPath = resolveServableMediaPath(vaultRoot, relPath);
+      } catch {
+        return new Response('Forbidden', { status: 403 });
+      }
 
       const stat = await fs.promises.stat(absPath);
       if (!stat.isFile()) {

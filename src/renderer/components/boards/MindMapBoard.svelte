@@ -616,7 +616,7 @@
   aria-label="Mind map canvas"
   aria-roledescription="Infinite canvas. Drag to pan, scroll to zoom, shift-drag to box-select."
   tabindex="0"
-  use:viewportAction
+  use:viewportAction={canvasStore}
   use:dragDropAction
   use:edgePanAction
   onpointerdown={(e) => marquee.handlePointerDown(e)}

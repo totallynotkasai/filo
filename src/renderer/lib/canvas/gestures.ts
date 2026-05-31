@@ -1,10 +1,16 @@
-import { canvasStore } from '../../stores/canvas.svelte';
+import type { CanvasScope } from '../../stores/canvas.svelte';
 
 /**
  * Viewport action — attaches pan and zoom handlers to the canvas container.
  * Uses native pointer events for reliable Electron compatibility.
  *
- * Usage: <div use:viewportAction>...</div>
+ * Audit 3.1 — takes the pane's `CanvasScope` so wheel-zoom / drag-pan mutate
+ * THIS pane's canvas, not whichever pane the global `canvasStore` facade
+ * happens to delegate to. A mouse wheel produces no pointerdown to activate
+ * the pane under the cursor, so routing through the facade zoomed the active
+ * pane (and persisted the wrong board's viewport). Mirrors `startEdgePan(scope)`.
+ *
+ * Usage: <div use:viewportAction={paneCanvasScope}>...</div>
  */
 
 interface ViewportState {
@@ -13,7 +19,7 @@ interface ViewportState {
   startY: number;
 }
 
-export function viewportAction(node: HTMLElement) {
+export function viewportAction(node: HTMLElement, scope: CanvasScope) {
   const state: ViewportState = {
     isPanning: false,
     startX: 0,
@@ -49,7 +55,7 @@ export function viewportAction(node: HTMLElement) {
     state.startX = e.clientX;
     state.startY = e.clientY;
 
-    canvasStore.panBy(dx, dy);
+    scope.panBy(dx, dy);
   }
 
   function onPointerUp(e: PointerEvent) {
@@ -78,19 +84,19 @@ export function viewportAction(node: HTMLElement) {
     if (e.ctrlKey) {
       // Pinch zoom — 5% intervals
       const zoomFactor = e.deltaY > 0 ? 1 / 1.05 : 1.05;
-      canvasStore.zoomBy(zoomFactor, mouseX, mouseY);
+      scope.zoomBy(zoomFactor, mouseX, mouseY);
     } else if (e.shiftKey) {
       // Horizontal pan with shift+scroll
-      canvasStore.panBy(-e.deltaY, 0);
+      scope.panBy(-e.deltaY, 0);
     } else if (Math.abs(e.deltaX) > 0) {
       // Trackpad two-finger horizontal scroll.
       // Suppress Y when horizontal dominates to prevent diagonal drift.
       const panY = Math.abs(e.deltaX) > Math.abs(e.deltaY) * 1.5 ? 0 : -e.deltaY;
-      canvasStore.panBy(-e.deltaX, panY);
+      scope.panBy(-e.deltaX, panY);
     } else {
       // Standard scroll zoom — 5% intervals (scroll down = zoom out, scroll up = zoom in)
       const zoomFactor = e.deltaY > 0 ? 1 / 1.05 : 1.05;
-      canvasStore.zoomBy(zoomFactor, mouseX, mouseY);
+      scope.zoomBy(zoomFactor, mouseX, mouseY);
     }
   }
 

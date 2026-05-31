@@ -220,6 +220,15 @@ export interface WriteStateInfo {
   inflight: number;
   failed: number;
   /**
+   * Audit2 2.3 — count of paths queued for write (debounced-but-not-yet-fired
+   * AND in-flight), i.e. `pendingVaultPaths.size`. Lets the save indicator
+   * show "saving" during a debounce window even when `inflight` is still 0 —
+   * the markdown gateway tracks its armed-but-not-fired body writes here
+   * (sentinel-mode 'pending-path') without bumping `inflight`, so without this
+   * the indicator read a premature "idle"/"saved" while text was unwritten.
+   */
+  pending: number;
+  /**
    * Phase C / C.10 — concrete paths in the failure set so the renderer
    * popover can list them with a Retry button. Order is undefined
    * (Set iteration order); the renderer dedups via its own queue.
@@ -240,6 +249,7 @@ function notifyWriteState(): void {
     writeStateListener({
       inflight: inflightWriteCount,
       failed: failedVaultPaths.size,
+      pending: pendingVaultPaths.size,
       failedPaths: Array.from(failedVaultPaths),
     });
   } catch (err) {
@@ -269,6 +279,9 @@ export function noteAdditionalPendingPath(vaultRoot: string | undefined, path: s
   pendingVaultPaths.add(key);
   trimSetIfOverflowing(pendingVaultPaths, 'pendingVaultPaths');
   refreshSentinel(vaultRoot);
+  // Audit2 2.3 — surface the new pending path to the save indicator so a
+  // debounced-but-not-inflight write (markdown gateway) reads "saving".
+  notifyWriteState();
 }
 
 /**
@@ -281,6 +294,8 @@ export function noteAdditionalPendingPath(vaultRoot: string | undefined, path: s
 export function dropPendingPath(vaultRoot: string | undefined, path: string): void {
   if (!pendingVaultPaths.delete(vaultPath(path))) return;
   refreshSentinel(vaultRoot);
+  // Audit2 2.3 — keep the save indicator in step as the pending set drains.
+  notifyWriteState();
 }
 
 /**

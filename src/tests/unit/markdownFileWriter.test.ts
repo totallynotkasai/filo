@@ -54,7 +54,18 @@ function installFiloStub(): InvokeArgs[] {
 }
 
 function uninstallFiloStub(): void {
-  delete (window as unknown as Record<string, unknown>).filo;
+  // Audit2 2.3 — the markdown gateway now lays down the `.filo/.dirty` sentinel
+  // asynchronously on schedule/flush/cancel (sentinel-mode 'pending-path').
+  // Those fire-and-forget markDirty/markClean ops can resolve AFTER the test
+  // body, so restore a SILENT no-op stub rather than deleting `window.filo` —
+  // a deferred sentinel write must never hit `undefined.invoke` (the strict
+  // test-hygiene gate forbids the resulting TypeError). The `afterEach` drain
+  // below normally flushes them first; this is the belt-and-suspenders.
+  (window as unknown as Record<string, unknown>).filo = {
+    invoke: async () => undefined,
+    on: () => () => {},
+    send: () => {},
+  };
 }
 
 describe('markdownFileWriter — gateway contract', () => {
@@ -65,7 +76,14 @@ describe('markdownFileWriter — gateway contract', () => {
     __resetMarkdownFileWriterForTests();
     __resetDirtyTrackingForTests();
   });
-  afterEach(() => {
+  afterEach(async () => {
+    // Audit2 2.3 — drain the fire-and-forget `.filo/.dirty` sentinel writes the
+    // gateway now queues on schedule/flush/cancel (pending-path mode) so they
+    // resolve against the live stub before we tear it down — both to avoid a
+    // deferred op hitting a stale `window.filo` and to keep them from leaking
+    // into the next test's captured invokes. One macrotask drains the whole
+    // microtask-chained sentinel mutex; the 300 ms write timers never fire.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     __resetMarkdownFileWriterForTests();
     __resetDirtyTrackingForTests();
     uninstallFiloStub();

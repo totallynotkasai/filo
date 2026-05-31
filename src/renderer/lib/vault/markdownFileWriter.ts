@@ -103,15 +103,24 @@ const fileState = new Map<string, FileState>();
 
 /**
  * Phase R1 (2026-05-26) — pending + in-flight bookkeeping now lives in
- * the shared `createScheduler` primitive. `manageSentinel: false` because
- * `writeMarkdownFile` already wraps its IPC in `trackComponentWrite`,
- * which calls begin/endWrite around the disk I/O — primitive begin/end
- * would double-count.
+ * the shared `createScheduler` primitive.
  *
- * `getSentinelInfo` still returns the relPath so flushAll's tracked
- * `vaultRoot` carries through to `syncSentinelIfIdle` (used by the
- * cross-scheduler orchestrator). FailureId is the callerId for parity
- * with the legacy `FlushAllResult.failed: [{ ownerId, error }]` shape.
+ * Audit2 2.3 — `sentinelMode: 'pending-path'` (was `manageSentinel: false`).
+ * `writeMarkdownFile` already wraps its IPC in `trackComponentWrite`, which
+ * begin/endWrites the INFLIGHT counter around the disk I/O, so the primitive
+ * must NOT also bump inflight (it would double-count). But the previous
+ * `manageSentinel: false` left the 300 ms DEBOUNCE window completely
+ * untracked: a crash mid-typing lost up to ~300 ms of text with no
+ * `.filo/.dirty` sentinel, and the save indicator read a premature "idle".
+ * 'pending-path' mode tracks just the pending PATH for the armed window
+ * (noteAdditionalPendingPath at schedule, dropPendingPath + syncSentinelIfIdle
+ * at fire-handoff / cancel / reschedule / reset) — covering crash recovery and
+ * the indicator without touching inflight.
+ *
+ * `getSentinelInfo` returns the relPath so the schedule-time pending path AND
+ * flushAll's tracked `vaultRoot` (for the cross-scheduler `syncSentinelIfIdle`)
+ * both carry through. FailureId is the callerId for parity with the legacy
+ * `FlushAllResult.failed: [{ ownerId, error }]` shape.
  */
 const writerScheduler = createScheduler<WriteArgs>({
   name: 'markdownFileWriter',
@@ -119,7 +128,7 @@ const writerScheduler = createScheduler<WriteArgs>({
   performWrite: (args) => writeMarkdownFile(args),
   getSentinelInfo: (args) => ({ vaultRoot: args.vaultRoot, path: args.relPath }),
   getFailureId: (args) => args.callerId,
-  manageSentinel: false,
+  sentinelMode: 'pending-path',
 });
 
 // Phase 4 / E3 — because this scheduler opts out of sentinel management

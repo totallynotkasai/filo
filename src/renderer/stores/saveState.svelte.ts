@@ -32,12 +32,17 @@ export const saveStateStore = {
 
   /**
    * Push a raw status from boardSaver. The store derives the UX state:
-   *   inflight > 0          → 'saving'
-   *   inflight = 0, failed  → 'error' (sticky until the next successful drain)
-   *   inflight = 0, no fail → 'saved' for 2s, then 'idle'
+   *   inflight > 0 OR pending > 0       → 'saving'
+   *   idle, failed                      → 'error' (sticky until next clean drain)
+   *   idle, no fail                     → 'saved' for 2s, then 'idle'
+   *
+   * Audit2 2.3 — `pending` (debounced-but-not-yet-inflight writes, e.g. a
+   * markdown body keystroke still inside its 300 ms debounce) also counts as
+   * "saving". Without it the indicator read a premature "idle"/"saved" while
+   * text was unwritten. Defaults to 0 so legacy two-arg callers are unaffected.
    */
-  setStatus(inflight: number, failed: number): void {
-    if (inflight > 0) {
+  setStatus(inflight: number, failed: number, pending: number = 0): void {
+    if (inflight > 0 || pending > 0) {
       if (savedDecayTimer) {
         clearTimeout(savedDecayTimer);
         savedDecayTimer = null;

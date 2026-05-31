@@ -46,8 +46,8 @@
   // Phase C / C.10 — also forward the concrete failed paths so the
   // toolbar popover can list them and offer a Retry button. setStatus
   // clears the path list on a clean drain (inflight=0, failed=0).
-  setBoardWriteStateListener(({ inflight, failed, failedPaths }) => {
-    saveStateStore.setStatus(inflight, failed);
+  setBoardWriteStateListener(({ inflight, failed, pending, failedPaths }) => {
+    saveStateStore.setStatus(inflight, failed, pending);
     for (const path of failedPaths) saveStateStore.noteFailedPath(path);
   });
 

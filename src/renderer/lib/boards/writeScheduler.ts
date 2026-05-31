@@ -38,6 +38,9 @@
 import {
   beginWrite,
   endWrite,
+  noteAdditionalPendingPath,
+  dropPendingPath,
+  syncSentinelIfIdle,
 } from './writeStateTracking';
 import { reportError } from '../utils/errorBus';
 
@@ -112,8 +115,30 @@ export interface CreateSchedulerOptions<TArgs> {
    * in a `trackComponentWrite` (markdownFileWriter does this), so the
    * primitive doesn't double-increment the inflight counter. The
    * consumer remains responsible for its own sentinel coverage.
+   *
+   * @deprecated Prefer `sentinelMode`. `manageSentinel: false` maps to
+   *   `sentinelMode: 'none'`; the default maps to `'full'`.
    */
   manageSentinel?: boolean;
+  /**
+   * Audit2 2.3 — how the primitive keeps the `.filo/.dirty` sentinel and the
+   * `pendingVaultPaths` ledger in sync across the debounce → write window:
+   *  - `'full'` (default): `beginWrite` at schedule, `endWrite` at outcome —
+   *    owns BOTH the inflight counter and the pending path for the whole
+   *    window.
+   *  - `'none'`: no tracking — the consumer's `performWrite` owns everything.
+   *  - `'pending-path'`: track ONLY the pending PATH during the armed window
+   *    (`noteAdditionalPendingPath` at schedule, `dropPendingPath` +
+   *    `syncSentinelIfIdle` at fire-handoff / cancel / reschedule / reset),
+   *    WITHOUT bumping inflight. Used by the markdown gateway, whose
+   *    `performWrite` wraps its own `trackComponentWrite` (inflight) at fire
+   *    time — this closes the body-edit crash window (no sentinel during the
+   *    300 ms debounce) and lets the save indicator read "saving", without
+   *    double-counting inflight.
+   *
+   * Defaults derived from `manageSentinel` for back-compat.
+   */
+  sentinelMode?: 'full' | 'none' | 'pending-path';
   /**
    * Optional snapshot transform applied at fire-time (timer or flush)
    * BEFORE `performWrite` runs. Used by the board scheduler to deep-clone
@@ -251,7 +276,9 @@ export function createScheduler<TArgs>(
    */
   const failures = new Set<string>();
 
-  const manageSentinel = opts.manageSentinel ?? true;
+  // Back-compat: `manageSentinel: false` → 'none'; default → 'full'.
+  const sentinelMode: 'full' | 'none' | 'pending-path' =
+    opts.sentinelMode ?? (opts.manageSentinel === false ? 'none' : 'full');
 
   const failureIdFor = (args: TArgs): string => {
     if (opts.getFailureId) return opts.getFailureId(args);
@@ -259,16 +286,34 @@ export function createScheduler<TArgs>(
   };
 
   const safeBeginWrite = (info: SchedulerSentinelInfo): void => {
-    if (!manageSentinel) return;
-    beginWrite(info.vaultRoot, info.path);
+    if (sentinelMode === 'full') {
+      beginWrite(info.vaultRoot, info.path);
+    } else if (sentinelMode === 'pending-path' && info.path) {
+      // 2.3 — track the armed debounce window in the sentinel ledger WITHOUT
+      // an inflight bump; the consumer's performWrite owns inflight (via
+      // trackComponentWrite) once the write actually fires.
+      noteAdditionalPendingPath(info.vaultRoot, info.path);
+    }
   };
 
   const safeEndWrite = (
     info: SchedulerSentinelInfo,
     success: boolean,
   ): void => {
-    if (!manageSentinel) return;
-    endWrite(info.vaultRoot, info.path, success);
+    if (sentinelMode === 'full') {
+      endWrite(info.vaultRoot, info.path, success);
+    } else if (sentinelMode === 'pending-path' && info.path) {
+      // 2.3 — the armed window closed: fire-handoff to trackComponentWrite, a
+      // cancel, or a no-write early-return inside performWrite (e.g. the user
+      // chose "reload" on a pre-write drift prompt). Release the schedule-time
+      // pending path; a real write already moved it to inflight/failed inside
+      // trackComponentWrite, so dropPendingPath is a no-op there, and
+      // syncSentinelIfIdle markCleans iff nothing else is pending/inflight/
+      // failed. `success` is irrelevant here — real failures are tracked by
+      // trackComponentWrite's own endWrite(false).
+      dropPendingPath(info.vaultRoot, info.path);
+      syncSentinelIfIdle(info.vaultRoot);
+    }
   };
 
   /**
@@ -364,6 +409,15 @@ export function createScheduler<TArgs>(
         path: existing.schedulePath,
       };
       opts.onReschedule?.(prevSentinel, nextSentinel);
+      // 2.3 — pending-path mode: retarget the sentinel entry when a reschedule
+      // changes the path (e.g. rename mid-debounce). Same-path reschedules are
+      // a no-op (noteAdditionalPendingPath is idempotent on the Set), so we
+      // only act on an actual change to avoid a needless drop→re-add churn.
+      if (sentinelMode === 'pending-path' && prevSentinel.path !== nextSentinel.path) {
+        if (prevSentinel.path) dropPendingPath(prevSentinel.vaultRoot, prevSentinel.path);
+        if (nextSentinel.path) noteAdditionalPendingPath(nextSentinel.vaultRoot, nextSentinel.path);
+        syncSentinelIfIdle(prevSentinel.vaultRoot);
+      }
     } else {
       // New pending — count it against the sentinel for the entire debounce
       // window, not just the eventual disk-I/O window. Schedulers whose
@@ -594,7 +648,17 @@ export function createScheduler<TArgs>(
   }
 
   function reset(): void {
-    for (const entry of pending.values()) clearTimeout(entry.timer);
+    for (const entry of pending.values()) {
+      clearTimeout(entry.timer);
+      // 2.3 — pending-path mode owns its entries in the shared ledger; drop
+      // them so a reset() outside the vault-swap path (e.g. per-test cleanup,
+      // where `resetWriteTracking` isn't also called) can't strand a dirty
+      // sentinel path. On vault swap, `resetWriteTracking` clears the ledger
+      // wholesale anyway, so this is a harmless no-op there.
+      if (sentinelMode === 'pending-path' && entry.schedulePath) {
+        dropPendingPath(entry.scheduleVaultRoot, entry.schedulePath);
+      }
+    }
     pending.clear();
     inFlight.clear();
     failures.clear();

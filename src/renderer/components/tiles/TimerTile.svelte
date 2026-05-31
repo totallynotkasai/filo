@@ -18,6 +18,12 @@
   // changes once per second. Skip the formatTime + assignment when the
   // second hasn't changed (clock mode and idle/running countdowns alike).
   let lastDisplaySecond = -1;
+  // Audit2 4.1 — the live countdown lives in component state. Persisting the
+  // decrement on every 100 ms tick re-armed this board's 300 ms write debounce
+  // forever, so the board's writes never flushed: any real edit to the board
+  // was lost on a hard crash and the save indicator was pinned on "saving".
+  // We now write the tile only on pause / stop / reset / unmount-while-running.
+  let liveRemaining = $state(tile.remaining);
   // Custom time input state (shown when clicking the display while stopped)
   let editingCustom = $state(false);
   let customInput = $state('');
@@ -37,7 +43,12 @@
   $effect(() => {
     void tile.mode;
     void tile.duration;
-    void tile.remaining;
+    // Re-seed the local countdown whenever the persisted value changes from
+    // outside our tick — mode swap, duration set, reset, or external reload.
+    // A running countdown never writes tile.remaining, so this fires only on
+    // genuine external changes, not on our own per-second ticks (liveRemaining
+    // is written but not read here, so there is no effect loop).
+    liveRemaining = tile.remaining;
     lastDisplaySecond = -1;
   });
 
@@ -57,7 +68,13 @@
   // allow-direct-mutation: transient play/pause toggle, not history-worthy.
   function toggleRunning() {
     if (tile.mode === 'clock') return;
-    boardStore.updateTile(tile.id, { isRunning: !tile.isRunning });
+    if (tile.isRunning) {
+      // Pause — persist the live countdown so it survives reload / board swap.
+      boardStore.updateTile(tile.id, { remaining: liveRemaining, isRunning: false });
+    } else {
+      // Resume — liveRemaining already equals the persisted value while paused.
+      boardStore.updateTile(tile.id, { isRunning: true });
+    }
   }
 
   function resetTimer() {
@@ -108,15 +125,18 @@
       return;
     }
 
-    if (tileRef.isRunning && tileRef.remaining > 0) {
-      boardStore.updateTile(tileRef.id, { remaining: Math.max(0, tileRef.remaining - elapsed) });
-    } else if (tileRef.isRunning && tileRef.remaining === 0) {
-      boardStore.updateTile(tileRef.id, { isRunning: false });
+    if (tileRef.isRunning && liveRemaining > 0) {
+      // Count down in component state only — no per-tick markDirty.
+      liveRemaining = Math.max(0, liveRemaining - elapsed);
+      if (liveRemaining === 0) {
+        // allow-direct-mutation: countdown reached zero; persist the stop once.
+        boardStore.updateTile(tileRef.id, { remaining: 0, isRunning: false });
+      }
     }
-    const remainingSecond = Math.max(0, Math.floor(tileRef.remaining / 1000));
+    const remainingSecond = Math.max(0, Math.floor(liveRemaining / 1000));
     if (remainingSecond !== lastDisplaySecond) {
       lastDisplaySecond = remainingSecond;
-      displayTime = formatTime(tileRef.remaining, tileRef.mode);
+      displayTime = formatTime(liveRemaining, tileRef.mode);
     }
   }
 
@@ -167,6 +187,12 @@
 
   onDestroy(() => {
     if (intervalId !== null) clearInterval(intervalId);
+    // Save countdown progress on unmount (e.g. board switch mid-run) — we
+    // don't write per tick, so the cached remaining is otherwise stale.
+    if (tile.isRunning && liveRemaining !== tile.remaining) {
+      // allow-direct-mutation: persist countdown progress on unmount.
+      boardStore.updateTile(tile.id, { remaining: liveRemaining });
+    }
   });
 </script>
 

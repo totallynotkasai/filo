@@ -35,6 +35,7 @@ import {
   registerTestResetCallback,
 } from './writeStateTracking';
 import { invokeOk } from '../utils/invokeOk';
+import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { createScheduler } from './writeScheduler';
 import { getBaseline, noteBaseline, hasBaselineDrifted } from '../vault/fileBaselineRegistry';
 
@@ -223,9 +224,29 @@ export async function writeBoardFile(
     let preWriteStat: { mtimeMs: number; size: number } | undefined;
     try {
       preWriteStat = await invokeOk('vault:stat', vaultRoot, boardPath);
-    } catch {
-      // Stat failed — fall through; the save IPC below will surface any
-      // genuine IO problem through the failure attribution pipeline.
+    } catch (err) {
+      // Audit 4.5 — ENOENT means the .board.json was deleted on disk (an
+      // external tool / sync client removed it) while this debounced write
+      // was armed. Falling through to `board:save` would re-create it
+      // (ensureDir + atomicWriteFile), resurrecting a file the user/sync
+      // intentionally deleted and fighting the sync. Abort as a clean no-op
+      // (return, not throw) so the scheduler ends the entry successfully and
+      // the recovery sentinel isn't left dirty — the same outcome as
+      // `cancelBoardWrite`, which the in-app delete path already triggers.
+      // This closes the external-delete-racing-an-armed-write window.
+      //
+      // Gated on `baseline !== undefined` (this whole block): the file was
+      // previously known to exist on disk, so its absence now is a deletion,
+      // not a not-yet-created board. A freshly-created board (file already
+      // written eagerly by `board:create`, no baseline seeded until its first
+      // successful write) has no baseline, skips this block entirely, and is
+      // never aborted — so first writes are unaffected.
+      if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
+        return;
+      }
+      // Any other stat error (EACCES, a transient share hiccup): fall through
+      // — the save IPC below surfaces a genuine IO problem through the failure
+      // attribution pipeline.
     }
     if (preWriteStat !== undefined && hasBaselineDrifted(baseline, preWriteStat)) {
       const handler = boardExternalEditHandler;

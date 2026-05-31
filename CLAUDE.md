@@ -190,7 +190,9 @@ filo/
 │   │   │
 │   │   ├── commands/                  # Command pattern objects (undo/redo)
 │   │   │   ├── index.ts               # Re-export shim — every import path still works
-│   │   │   ├── tileCommands.ts        # tile add/delete/move/resize/style/tag/lock
+│   │   │   ├── Command.ts             # Base Command interface + abstract class (targetBoardId)
+│   │   │   ├── tileCommands.ts        # tile add/delete/move/resize/style/lock
+│   │   │   ├── tileTagCommands.ts     # tile/path tag add/remove + fade-by-tag (via fileTagsStore)
 │   │   │   ├── connectionCommands.ts  # connection add/delete/update
 │   │   │   ├── frameCommands.ts       # frame add/update/move/delete
 │   │   │   ├── sectionCommands.ts     # Task List section add/delete/rename/reorder
@@ -202,6 +204,7 @@ filo/
 │   │   │   ├── propertiesCommands.ts  # UpdatePropertiesCommand
 │   │   │   ├── attachmentSrcCommand.ts# Image/Video/Audio/File swap
 │   │   │   ├── renameTitleCommand.ts  # Tile title rename (cache + doc + .md file)
+│   │   │   ├── replaceAllCommand.ts   # Vault-wide find-and-replace (history-tracked)
 │   │   │   └── savedViewsCommand.ts   # UpdateSavedViewsCommand
 │   │   │
 │   │   ├── constants/
@@ -504,11 +507,27 @@ Anything else — including overlay positions (Kanban side toolbar etc.), open t
 
 ### The Vault API Contract
 
-- ALL file system operations go through the Vault API (`lib/vault/vaultApi.ts`).
-- The Vault API calls IPC to the main process. The renderer never touches `fs` directly.
-- On file rename: the Vault API scans and updates ALL `.board.json` file references.
-- On file delete (from vault): the Vault API removes all tile placements referencing that file from every `.board.json`.
-- Broken file references are detected on board load and flagged (not silently ignored).
+There is no single `vaultApi.ts` module. The "Vault API" is a contract split
+across a few owners, all of which call IPC to the main process — the renderer
+NEVER touches `fs` directly (Electron context isolation; see "Persistence
+Boundary").
+
+- **Reads / generic writes** go through the `window.filo` preload bridge
+  (`src/main/preload.ts` → `src/main/ipc/*`). The renderer calls `window.filo.*`,
+  never `require('fs')`.
+- **Disk-shape mutations** (rename / delete / create-folder / copy-file) go
+  through `lib/vault/vaultOperations.ts`. `withDrainedWrites(op)` first drains the
+  writer pipelines, then runs the op via the thin IPC wrappers (`renameVaultPath`,
+  `deleteVaultPath`, `createVaultFolder`, `copyFileIntoVault`). The CI gate
+  `scripts/check-no-raw-disk-shape-ipc.mjs` forbids raw renderer invokes of those
+  four channels outside this module.
+- **On file rename:** `lib/vault/fileRefIntegrity.ts` scans and updates ALL
+  `.board.json` file references. The in-app rename/delete/move entry point is
+  `stores/vaultFolderOps.ts`.
+- **On file delete (from vault):** the same cascade removes every tile placement
+  referencing that file from each `.board.json`.
+- **Broken file references** are detected on board load and tracked via
+  `stores/boardRefIntegrity.svelte.ts` — flagged, not silently ignored.
 
 ### Debouncing
 

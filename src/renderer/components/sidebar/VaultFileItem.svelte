@@ -919,7 +919,7 @@
     transition: opacity 0.1s ease;
   }
 
-  .vault-file-item:hover .file-actions,
+  .vault-file-item:hover .file-actions, .vault-file-item:focus-within .file-actions, /* 3.2: keyboard focus reveals row actions (WCAG 2.4.7), mirrors TileHeader */
   .file-actions.has-pinned-active {
     opacity: 1;
   }
@@ -945,7 +945,7 @@
    * mousedown on the right-hand area of the row falls *through* to
    * `.file-row` underneath, starting an HTML5 drag.
    */
-  .vault-file-item:hover .file-actions .action-btn,
+  .vault-file-item:hover .file-actions .action-btn, .vault-file-item:focus-within .file-actions .action-btn,
   .file-actions.has-pinned-active .action-btn {
     pointer-events: auto;
   }

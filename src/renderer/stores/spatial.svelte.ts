@@ -117,6 +117,13 @@ export class SpatialScope {
   clear() {
     this._deferredResizes.clear();
     this._index.clear();
+    // A clear() is a wholesale rebuild (board reload / external reconcile), not
+    // a per-frame drag mutation. If a drag batch is open, deferring the bump
+    // would leave reactive viewport culling stale until the drag ends — the
+    // reloaded tiles flicker out. Force-close the batch so the bump fires now;
+    // the drag's eventual endBatch() safely no-ops (depth already 0). (Audit 5.5)
+    this._batchDepth = 0;
+    this._pendingBump = false;
     this.bumpRevision();
   }
 

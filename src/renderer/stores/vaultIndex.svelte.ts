@@ -35,6 +35,10 @@ interface ReadFileResult {
   ok: boolean;
   content: string | null;
   code: string | null;
+  // Audit2 4.3 — the disk mtime the IPC captured in its pre-flight stat. The
+  // index stamps this (not Date.now()) so the partial-read stability window
+  // measures the file's real age, not the moment we happened to read it.
+  mtimeMs: number | null;
 }
 
 // Phase 37 / 37.6 — two-arg canonical shape: (vaultRoot, relativePath).
@@ -42,8 +46,10 @@ interface ReadFileResult {
 // so passing a pre-joined absolute path no longer works.
 async function readFileText(vaultRoot: string, relativePath: string): Promise<ReadFileResult> {
   const res = await window.filo.invoke('vault:read-file-text', vaultRoot, relativePath);
-  if (res.success) return { ok: true, content: res.content, code: null };
-  return { ok: false, content: null, code: res.code ?? null };
+  if (res.success) {
+    return { ok: true, content: res.content, code: null, mtimeMs: res.mtimeMs ?? null };
+  }
+  return { ok: false, content: null, code: res.code ?? null, mtimeMs: null };
 }
 
 const TRANSIENT_RETRY_MS = 2000;
@@ -55,7 +61,10 @@ async function indexOnePath(relativePath: string): Promise<void> {
   const rel = normaliseRel(relativePath);
   const res = await readFileText(root, rel);
   if (res.ok && res.content !== null) {
-    const metadata = parseMarkdown(relativePath, res.content, Date.now());
+    // Audit2 4.3 — stamp the disk mtime, not Date.now(). Date.now() made the
+    // partial-read window (now - lastModified < 1s) always true, forcing every
+    // settled external truncation through the ~5s retry path.
+    const metadata = parseMarkdown(relativePath, res.content, res.mtimeMs ?? Date.now());
     index.upsert(metadata);
     // Cancel any pending retry — the read succeeded this pass.
     const pending = pendingRetries.get(relativePath);

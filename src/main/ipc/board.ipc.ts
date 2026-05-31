@@ -118,7 +118,18 @@ export function registerBoardHandlers(): void {
       // watcher is started later (vault:watch); registering here is purely
       // about gating the IPC surface.
       vaultRegistry.setCurrentVault(vaultRoot);
-      await initVaultConfig(vaultRoot);
+      try {
+        await initVaultConfig(vaultRoot);
+      } catch (initErr) {
+        // Audit 5.8 — roll the registry back so a failed `.filo/` init (EACCES
+        // on a read-only mount, ENOSPC, a flaky network share) doesn't leave a
+        // half-initialised vault armed. A stale registry would block a clean
+        // re-open of a DIFFERENT vault via the guard above while the renderer
+        // believes the open failed. Restore the PRIOR value (not unconditional
+        // null) so a same-vault re-init failure leaves the active vault armed.
+        vaultRegistry.setCurrentVault(current);
+        throw initErr;
+      }
       return { ok: true };
     } catch (err) {
       logMainError('vault:init-config', err);

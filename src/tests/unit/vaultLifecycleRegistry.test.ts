@@ -13,8 +13,7 @@ import {
  * The registry is the single subscription point for vault-swap reset. Tests
  * cover:
  *   1. Subscribe / unsubscribe semantics, including re-registration overwrite.
- *   2. Pre-swap vs post-swap phase dispatch — handlers only fire for their
- *      registered phase.
+ *   2. Dispatch — no-op when a phase has no handlers; event-payload propagation.
  *   3. `runAfter` dependency ordering within a phase.
  *   4. Cycle handling — falls back to registration order with reportError.
  *   5. Error policy — a handler that throws does NOT abort the chain; the
@@ -41,7 +40,6 @@ describe('vaultLifecycle.onVaultSwap — subscribe + unsubscribe', () => {
   it('registers a handler under the requested name + phase', () => {
     onVaultSwap('pre-swap', 'a', () => {});
     expect(__getRegisteredHandlerNames()['pre-swap']).toEqual(['a']);
-    expect(__getRegisteredHandlerNames()['post-swap']).toEqual([]);
   });
 
   it('returns an unsubscribe function that removes the handler', () => {
@@ -57,27 +55,9 @@ describe('vaultLifecycle.onVaultSwap — subscribe + unsubscribe', () => {
     await fireVaultSwap(makeEvent());
     expect(calls).toEqual(['second']);
   });
-
-  it('allows the same name in different phases', () => {
-    onVaultSwap('pre-swap', 'shared', () => {});
-    onVaultSwap('post-swap', 'shared', () => {});
-    const names = __getRegisteredHandlerNames();
-    expect(names['pre-swap']).toEqual(['shared']);
-    expect(names['post-swap']).toEqual(['shared']);
-  });
 });
 
 describe('vaultLifecycle.fireVaultSwap — phase dispatch', () => {
-  it('fires handlers only for the requested phase', async () => {
-    const fired: string[] = [];
-    onVaultSwap('pre-swap', 'pre', () => { fired.push('pre'); });
-    onVaultSwap('post-swap', 'post', () => { fired.push('post'); });
-    await fireVaultSwap(makeEvent({ phase: 'pre-swap' }));
-    expect(fired).toEqual(['pre']);
-    await fireVaultSwap(makeEvent({ phase: 'post-swap' }));
-    expect(fired).toEqual(['pre', 'post']);
-  });
-
   it('is a no-op when no handlers are registered for a phase', async () => {
     await expect(fireVaultSwap(makeEvent())).resolves.toBeUndefined();
   });

@@ -936,12 +936,9 @@ export const vaultStore = {
     currentProject = null;
     vaultPath = '';
     fileTree = [];
-    await fireVaultSwap({
-      phase: 'post-swap',
-      previousVault: null,
-      nextVault: null,
-      saveOutgoing: false,
-    });
+    // The post-commit/teardown work is done above; there is no `post-swap`
+    // lifecycle phase (retired in Audit 5.7 — it was never registered or fired
+    // on open, and fired into an empty handler set here).
     return true;
   },
 

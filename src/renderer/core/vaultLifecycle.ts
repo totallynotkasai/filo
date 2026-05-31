@@ -6,18 +6,21 @@ import { reportError } from '../lib/utils/errorBus';
  * Phase 4 (Consolidation 2026-05-25) — replaces the scattered inline reset
  * chain previously inside `vault.svelte.ts:openVault` with a publish/subscribe
  * registry. Every store / write scheduler / sentinel that holds vault-scoped
- * state subscribes once at module load; the openVault path fires `pre-swap`
- * before hydrating the new vault and `post-swap` after.
+ * state subscribes once at module load; the openVault / closeVault paths fire
+ * `pre-swap` before hydrating (or tearing down) the vault.
  *
- * Why two phases:
- *  - `pre-swap` runs while the OUTGOING vault is still semantically active.
- *    Handlers cancel debounced timers, flush sentinels against the outgoing
- *    vaultRoot, drop history stacks. Any "save before swap" disk write has
- *    already finished by the time the event fires (the dialog flow awaits
- *    `vaultStore.save()` first); pre-swap handlers must not assume the
- *    project is still hydrated.
- *  - `post-swap` runs after the new vault is hydrated. The vaultIndex
- *    rebuild lives here so it sees the freshly-loaded file tree.
+ * Single phase — `pre-swap`:
+ *  - Runs while the OUTGOING vault is still semantically active. Handlers
+ *    cancel debounced timers, flush sentinels against the outgoing vaultRoot,
+ *    drop history stacks. Any "save before swap" disk write has already
+ *    finished by the time the event fires (the dialog flow awaits
+ *    `vaultStore.save()` first); pre-swap handlers must not assume the project
+ *    is still hydrated.
+ *  - Post-commit hydration (vaultIndex rebuild, recovery sequencer, etc.) is
+ *    NOT a lifecycle phase — it lives in `vault.svelte.ts:runPostCommitTasks`,
+ *    which runs against the freshly-committed vault. A `post-swap` phase was
+ *    retired (Audit 5.7): nothing registered or fired it, so a documented-but-
+ *    dead phase was only a trap for future contributors.
  *
  * Ordering: handlers within a phase run sequentially, in registration order
  * by default. A handler may declare `runAfter: ['handlerName']` so a
@@ -31,7 +34,7 @@ import { reportError } from '../lib/utils/errorBus';
  * app in an inconsistent state worse than the original error.
  */
 
-export type VaultSwapPhase = 'pre-swap' | 'post-swap';
+export type VaultSwapPhase = 'pre-swap';
 
 export interface VaultSwapEvent {
   phase: VaultSwapPhase;
@@ -196,6 +199,5 @@ export function __resetVaultLifecycleForTests(): void {
 export function __getRegisteredHandlerNames(): Record<VaultSwapPhase, string[]> {
   return {
     'pre-swap': handlers.filter((h) => h.phase === 'pre-swap').map((h) => h.name),
-    'post-swap': handlers.filter((h) => h.phase === 'post-swap').map((h) => h.name),
   };
 }

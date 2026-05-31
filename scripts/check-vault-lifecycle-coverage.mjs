@@ -3,8 +3,8 @@
  *
  * Every renderer module that holds module-level `$state(...)` and isn't
  * trivially scoped per-pane MUST subscribe to `vaultLifecycle.on('pre-swap',
- * ...)` (or 'post-swap'). Without it, prior-vault state leaks into the new
- * vault on swap — the exact bug class Phase 4 was built to prevent.
+ * ...)`. Without it, prior-vault state leaks into the new vault on swap — the
+ * exact bug class Phase 4 was built to prevent.
  *
  * The gate walks `src/renderer/stores/**` and `src/renderer/lib/**`, picks
  * modules that contain `$state(`, and checks each one for an
@@ -56,6 +56,10 @@ const EXEMPT_MODULES = new Map([
   ['src/renderer/lib/tasklist/filtersAndViews.svelte.ts', 'per-TaskList-board view/filter state; recreated on board mount'],
   ['src/renderer/lib/tasklist/multiSelectController.svelte.ts', 'per-TaskList-board multi-select state; recreated on board mount'],
   ['src/renderer/lib/tasklist/taskDragController.svelte.ts', 'per-TaskList-board drag controller; recreated on board mount'],
+
+  // Per-instance UI helper: a fresh announcer per board, disposed on unmount.
+  // Its $state is function-local (createAriaAnnouncer), never module-level.
+  ['src/renderer/lib/utils/ariaAnnouncer.svelte.ts', 'per-instance aria-live announcer; created per board, disposed on unmount (Audit 5.3)'],
 ]);
 
 function toPosix(p) {

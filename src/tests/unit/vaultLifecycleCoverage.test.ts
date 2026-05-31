@@ -53,6 +53,10 @@ const EXEMPT_MODULES = new Set([
   'src/renderer/lib/tasklist/filtersAndViews.svelte.ts',
   'src/renderer/lib/tasklist/multiSelectController.svelte.ts',
   'src/renderer/lib/tasklist/taskDragController.svelte.ts',
+  // Audit 5.3 — per-instance aria-live announcer created by each board and
+  // disposed on unmount; its $state is function-local (per createAriaAnnouncer
+  // call), never module-level, so nothing survives a vault swap.
+  'src/renderer/lib/utils/ariaAnnouncer.svelte.ts',
 ]);
 
 function toPosix(p: string): string {
@@ -152,7 +156,6 @@ describe('Phase 7 contract — vault-lifecycle coverage', () => {
       const registered = __getRegisteredHandlerNames();
       const allRegistered = new Set([
         ...registered['pre-swap'],
-        ...registered['post-swap'],
       ]);
       const matched = handlerNames.some((name) => allRegistered.has(name));
       expect({

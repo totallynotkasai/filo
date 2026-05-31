@@ -10,8 +10,8 @@
  *     before hydrating the new vault, with `saveOutgoing` carrying the
  *     Save / Don't-Save choice.
  *  2. Every store / scheduler / sentinel that previously appeared in the
- *     inline reset chain is now registered as a `pre-swap` (or `post-swap`)
- *     handler via `onVaultSwap(...)`.
+ *     inline reset chain is now registered as a `pre-swap` handler via
+ *     `onVaultSwap(...)`.
  *  3. The Sprint B carry-overs (themeStore, orphansStore, vaultIndexStore
  *     pending retries, saveStateStore failed paths) — previously deferred
  *     skip tests — are subscribed and active.

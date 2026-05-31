@@ -22,10 +22,18 @@
   let {
     connection,
     spatialIndex,
+    pathD: pathDProp,
     oncontextmenu,
   }: {
     connection: Connection;
     spatialIndex?: import('../../lib/spatialIndex').SpatialIndex;
+    /**
+     * 3.3 — path precomputed by ConnectionLayer (computed once and shared
+     * with this connection's label). When provided, ConnectionPath uses it
+     * instead of recomputing — halving per-frame `computePath` calls. Falls
+     * back to its own computation when rendered without it.
+     */
+    pathD?: string;
     oncontextmenu?: (e: MouseEvent, conn: Connection) => void;
   } = $props();
 
@@ -38,6 +46,9 @@
   );
 
   let pathD = $derived.by(() => {
+    // 3.3 — prefer the path ConnectionLayer already computed (shared with
+    // the label); only compute locally when rendered without the prop.
+    if (pathDProp !== undefined) return pathDProp;
     if (!fromTile || !toTile) return '';
 
     const fromRect = { x: fromTile.position.x, y: fromTile.position.y, width: fromTile.size.width, height: fromTile.size.height };

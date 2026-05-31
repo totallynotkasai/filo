@@ -349,6 +349,81 @@ describe('correlateRenames — same-size heuristic for cross-basename renames', 
   });
 });
 
+describe('correlateRenames — same-basename content gate (audit2 2.1)', () => {
+  function sizeAmong(map: Record<string, number>): (rel: string) => number | null {
+    return (p) => (p in map ? map[p] : null);
+  }
+
+  it('does NOT correlate two same-basename files of DIFFERENT size (delete + unrelated create)', async () => {
+    // Textbook PKM layout: a `Notes.md` per folder. Deleting Archive/Notes.md
+    // and creating an unrelated Inbox/Notes.md in one batch must NOT be paired
+    // as a rename — doing so silently rewires every Archive tile reference to
+    // the unrelated Inbox file (propagateRename) with no undo.
+    const events = [ev('Archive/Notes.md'), ev('Inbox/Notes.md')];
+    const exists = existsAmong('Inbox/Notes.md');
+    const sizes = sizeAmong({ 'Archive/Notes.md': 512, 'Inbox/Notes.md': 2048 });
+    const { filtered, renames } = await correlateRenames(events, exists, sizes);
+    expect(renames).toEqual([]);
+    expect(filtered).toEqual(events);
+  });
+
+  it('does NOT correlate two same-basename files of identical size but DIFFERENT content hash', async () => {
+    const events = [ev('Archive/Notes.md'), ev('Inbox/Notes.md')];
+    const exists = existsAmong('Inbox/Notes.md');
+    const sizes = sizeAmong({ 'Archive/Notes.md': 1024, 'Inbox/Notes.md': 1024 });
+    const hashes = (rel: string): string | null => {
+      if (rel === 'Archive/Notes.md') return 'hashX';
+      if (rel === 'Inbox/Notes.md') return 'hashY';
+      return null;
+    };
+    const { filtered, renames } = await correlateRenames(events, exists, sizes, hashes);
+    expect(renames).toEqual([]);
+    expect(filtered).toEqual(events);
+  });
+
+  it('DOES correlate a genuine same-basename move (identical size + matching hash)', async () => {
+    const events = [ev('Archive/Notes.md'), ev('Inbox/Notes.md')];
+    const exists = existsAmong('Inbox/Notes.md');
+    const sizes = sizeAmong({ 'Archive/Notes.md': 1024, 'Inbox/Notes.md': 1024 });
+    const hashes = (rel: string): string | null =>
+      rel === 'Archive/Notes.md' || rel === 'Inbox/Notes.md' ? 'samehash' : null;
+    const { filtered, renames } = await correlateRenames(events, exists, sizes, hashes);
+    expect(renames).toEqual([{ oldPath: 'Archive/Notes.md', newPath: 'Inbox/Notes.md' }]);
+    expect(filtered).toEqual([]);
+  });
+
+  it('still correlates a same-basename attachment move on matching size when no hash is cached', async () => {
+    // Attachments are never seeded into the SHA-1 rename-hash cache (only
+    // `.md` is), so the missing side has no hash. The "balanced" gate falls
+    // back to a size match — a pure move preserves byte length — so a moved
+    // image still propagates its tile reference instead of breaking it.
+    const events = [
+      ev('img/photo.png', 'attachment'),
+      ev('archive/photo.png', 'attachment'),
+    ];
+    const exists = existsAmong('archive/photo.png');
+    const sizes = sizeAmong({ 'img/photo.png': 4096, 'archive/photo.png': 4096 });
+    // Production always supplies the hash probe; for the missing attachment it
+    // returns null (cache miss), so the gate must not refuse on a null hash.
+    const hashes = (rel: string): string | null =>
+      rel === 'archive/photo.png' ? 'freshhash' : null;
+    const { filtered, renames } = await correlateRenames(events, exists, sizes, hashes);
+    expect(renames).toEqual([{ oldPath: 'img/photo.png', newPath: 'archive/photo.png' }]);
+    expect(filtered).toEqual([]);
+  });
+
+  it('falls back to basename-only pairing when neither probe is supplied (cold cache / legacy)', async () => {
+    // No size/hash observable for the missing side → never refuse a legitimate
+    // rename just because the cache is cold (the rejected "Strict" policy
+    // would have). Production cold-start before the first reconcile walk.
+    const events = [ev('Archive/Notes.md'), ev('Inbox/Notes.md')];
+    const exists = existsAmong('Inbox/Notes.md');
+    const { filtered, renames } = await correlateRenames(events, exists);
+    expect(renames).toEqual([{ oldPath: 'Archive/Notes.md', newPath: 'Inbox/Notes.md' }]);
+    expect(filtered).toEqual([]);
+  });
+});
+
 describe('correlateRenames — Phase 31 B2.4 case-only rename', () => {
   const isCaseInsensitive = process.platform === 'win32' || process.platform === 'darwin';
 

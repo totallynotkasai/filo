@@ -119,6 +119,18 @@ describe('asSafeThemeValue — theme CSS variable value sanitiser', () => {
     expect(asSafeThemeValue('vbscript:msgbox')).toBeNull();
   });
 
+  it('rejects a bare `;` even without url()/@import (6.2 — defends the single-declaration contract)', () => {
+    // No url()/@import/expression/image — the ONLY suspect token is the
+    // `;`. In a real renderer the `CSS.supports('--probe: …')` gate rejects
+    // a multi-declaration value, but in jsdom (and any env where
+    // `CSS.supports` is absent) the substring blocklist is the sole line of
+    // defence — so `;` must be on it. A single CSS custom-property value
+    // never legitimately contains `;`.
+    expect(asSafeThemeValue('red; color: blue')).toBeNull();
+    expect(asSafeThemeValue('#fff;')).toBeNull();
+    expect(asSafeThemeValue('1rem ;')).toBeNull();
+  });
+
   it('rejects empty / nullish input', () => {
     expect(asSafeThemeValue('')).toBeNull();
     expect(asSafeThemeValue('   ')).toBeNull();

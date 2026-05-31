@@ -99,10 +99,15 @@ export function asSafeIframeSrc(raw: string | null | undefined): SanitisedSrc | 
 /**
  * CSS-injection patterns we refuse. `url(…)` would fetch external
  * resources; `expression(` is legacy IE-CSS-script; `image(` /
- * `image-set(` smuggle URLs. Strings carrying `;` would break out of the
- * single declaration we're writing and could append a follow-up rule —
- * `setProperty` only writes one declaration, but `;`-terminated input
- * still indicates a malformed value that doesn't belong on `:root`.
+ * `image-set(` smuggle URLs. `;` is refused outright (6.2): a single CSS
+ * custom-property value never legitimately contains one, and a `;` is the
+ * delimiter that would let a tampered value append a follow-up declaration.
+ * `setProperty` only ever writes one declaration so a `;` can't actually
+ * break out there, and in the renderer the `CSS.supports` gate below
+ * rejects a multi-declaration value anyway — but blocklisting `;` keeps the
+ * sanitiser matching its contract in EVERY environment, including jsdom and
+ * any host where `CSS.supports` is absent (where the substring list is the
+ * only line of defence).
  */
 const THEME_VALUE_BLOCKED_SUBSTRINGS = [
   'url(',
@@ -112,6 +117,7 @@ const THEME_VALUE_BLOCKED_SUBSTRINGS = [
   '@import',
   'javascript:',
   'vbscript:',
+  ';',
 ];
 
 /**

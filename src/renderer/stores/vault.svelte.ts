@@ -22,6 +22,7 @@ import {
   readPendingRewrite,
   clearPendingRewrite,
   hasPartialTagRewriteState,
+  hasPartialTagRemovalState,
 } from '../lib/vault/tagRewriteSentinel';
 import { readPendingRenameCascades } from '../lib/vault/renameCascadeSentinel';
 import { repairRenameCascade } from '../lib/vault/renameCascadeRepair';
@@ -553,56 +554,53 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
     const res = await readPendingRewrite(newVaultPath);
     if (!isStillSameVault()) return;
     if (res.payload) {
-      const { oldName, newName, plan, preexistingNewNamePaths } = res.payload;
+      const { oldName, newName, plan, preexistingNewNamePaths, committedPaths } = res.payload;
       const verb = newName === null ? 'removal' : 'rename';
       const target = newName === null ? `"${oldName}"` : `"${oldName}" → "${newName}"`;
-      // IMPL_PLAN_2026-05-26 / Item 4 — Detect partial-rewrite state. If
-      // the sweep had already started writing `newName` before the crash,
-      // some .md files carry `newName` and others still carry `oldName`.
-      // A naive Discard drops the sentinel without reconciling them,
-      // leaving search for `#oldName` and `#newName` returning disjoint
-      // subsets — the user's "I renamed it" mental model is silently
-      // violated. When partial state is detected, the cancel button
-      // becomes "Finalise & discard" and converges the files forward
-      // before clearing the breadcrumb.
-      const newTagPresent = hasPartialTagRewriteState(
-        newName,
-        vaultIndexStore.allMetadata(),
-        preexistingNewNamePaths,
-      );
-      const body = newTagPresent
-        ? `Filo found an unfinished tag ${verb} (${target}) and some files have already been rewritten in the previous session. Resume to finish — Discard will finalise the rewrite so the vault doesn't split between the old and new tag.`
+      // IMPL_PLAN_2026-05-26 / Item 4 + 6.3 — Detect partial state. A sweep that
+      // committed some files before the crash leaves the vault split (rename:
+      // some .md carry `newName`, some `oldName`; removal: some stripped, some
+      // not), so a bare Discard would leave it split. Renames are classified from
+      // the index (a `newName` carrier is the witness); removals can't be (an
+      // absent tag ≠ "never had it") so they read the sentinel's `committedPaths`.
+      const partialDetected =
+        newName === null
+          ? hasPartialTagRemovalState(committedPaths)
+          : hasPartialTagRewriteState(
+              newName,
+              vaultIndexStore.allMetadata(),
+              preexistingNewNamePaths,
+            );
+      const partialBody =
+        newName === null
+          ? `Filo found an unfinished tag removal (${target}) — the tag was already stripped from some files in the previous session. Resume to finish — Discard will finalise the removal so the vault doesn't split between files that still carry the tag and files that don't.`
+          : `Filo found an unfinished tag rename (${target}) and some files have already been rewritten in the previous session. Resume to finish — Discard will finalise the rewrite so the vault doesn't split between the old and new tag.`;
+      const body = partialDetected
+        ? partialBody
         : `Filo found an unfinished tag ${verb} (${target}) that didn't complete in the previous session. Resume rewriting ${plan.length} file${plan.length === 1 ? '' : 's'}?`;
+      // Converge forward — idempotent (already-processed files no-op); we can't
+      // "undo" it (the sentinel holds the plan + progress, not a pre-edit snapshot).
+      const convergeForward = async (): Promise<void> => {
+        if (newName === null) {
+          await fileTagsStore.removeTagEverywhere(oldName);
+        } else {
+          await fileTagsStore.renameTagEverywhere(oldName, newName);
+        }
+      };
       await awaitConfirm({
-        title: 'Incomplete tag rename detected',
+        title: `Incomplete tag ${verb} detected`,
         body,
         confirmLabel: 'Resume',
-        cancelLabel: newTagPresent ? 'Finalise & discard' : 'Discard plan',
+        cancelLabel: partialDetected ? 'Finalise & discard' : 'Discard plan',
         onConfirm: () => {
-          void (async () => {
-            if (newName === null) {
-              await fileTagsStore.removeTagEverywhere(oldName);
-            } else {
-              await fileTagsStore.renameTagEverywhere(oldName, newName);
-            }
-          })();
+          void convergeForward();
         },
         onCancel: () => {
           void (async () => {
-            // IMPL_PLAN_2026-05-26 / Item 4 — Partial state: converge
-            // the rename forward so the vault doesn't end up split
-            // between old and new tag names. The rewriter is idempotent
-            // — files already carrying `newName` no-op, the rest get
-            // rewritten. We cannot honour "actually undo my rename"
-            // because the sentinel only stores the plan, not per-path
-            // commit status; converge-forward + clear the breadcrumb is
-            // the honest behaviour, documented in the dialog copy.
-            if (newTagPresent) {
-              if (newName === null) {
-                await fileTagsStore.removeTagEverywhere(oldName);
-              } else {
-                await fileTagsStore.renameTagEverywhere(oldName, newName);
-              }
+            // Partial: converge forward before clearing the breadcrumb so the
+            // vault doesn't stay split; a clean state just clears it.
+            if (partialDetected) {
+              await convergeForward();
             }
             await clearPendingRewrite(newVaultPath);
             const flat = flattenTreePaths(fileTree, newVaultPath);

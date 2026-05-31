@@ -30,6 +30,7 @@ import { trackComponentWrite } from '../boards/boardSaver';
 import {
   writePendingRewrite,
   clearPendingRewrite,
+  type TagRewriteSentinelPayload,
 } from './tagRewriteSentinel';
 import { reportError } from '../utils/errorBus';
 import { invokeOk } from '../utils/invokeOk';
@@ -187,23 +188,28 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
   // safely (files already at newName are no-ops). Sentinel-write failure
   // aborts the rewrite — we'd rather refuse to proceed than commit writes
   // without a recovery breadcrumb.
+  // 6.3 — keep the live payload so the removal path can re-write it with
+  // incremental `committedPaths` progress as each .md is stripped.
+  const sentinelPayload: TagRewriteSentinelPayload = {
+    timestamp: Date.now(),
+    oldName,
+    newName,
+    plan: plan.map((p) => p.path),
+    // Phase 7.3 — snapshot files that ALREADY carry `newName` before the
+    // sweep touches disk (a merge-rename into an existing tag, or files
+    // the user independently tagged). Partial-state detection excludes
+    // these so recovery doesn't falsely flag "some files already rewritten"
+    // on every open. Empty for removals.
+    preexistingNewNamePaths:
+      newName === null
+        ? []
+        : metadata.filter((m) => m.tags.includes(newName)).map((m) => m.path),
+    // 6.3 — filled incrementally below (removals only).
+    committedPaths: [],
+  };
   if (plan.length > 0) {
     try {
-      await writePendingRewrite(vaultRoot, {
-        timestamp: Date.now(),
-        oldName,
-        newName,
-        plan: plan.map((p) => p.path),
-        // Phase 7.3 — snapshot files that ALREADY carry `newName` before the
-        // sweep touches disk (a merge-rename into an existing tag, or files
-        // the user independently tagged). Partial-state detection excludes
-        // these so recovery doesn't falsely flag "some files already rewritten"
-        // on every open. Empty for removals.
-        preexistingNewNamePaths:
-          newName === null
-            ? []
-            : metadata.filter((m) => m.tags.includes(newName)).map((m) => m.path),
-      });
+      await writePendingRewrite(vaultRoot, sentinelPayload);
     } catch (err) {
       reportError('tagRewriteSweep', err, 'Failed to write recovery sentinel, aborting');
       // Treat every planned path as failed so the caller knows the rewrite
@@ -252,6 +258,25 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
             { notifyOnError: false },
           );
           succeeded.push(item.path);
+          // 6.3 — for REMOVALS, persist the per-path commit breadcrumb
+          // incrementally so a crash mid-sweep leaves the partial state
+          // detectable on reopen (renames detect partial state from the index
+          // and skip this extra write). The breadcrumb write is best-effort:
+          // the .md strip already landed, so a failed breadcrumb only risks a
+          // committedPaths list short by one — harmless, because recovery
+          // converges forward idempotently regardless of the exact list.
+          if (newName === null) {
+            sentinelPayload.committedPaths.push(item.path);
+            try {
+              await writePendingRewrite(vaultRoot, sentinelPayload);
+            } catch (breadcrumbErr) {
+              reportError(
+                'tagRewriteSweep',
+                breadcrumbErr,
+                `Failed to update tag-removal progress breadcrumb after ${item.path}`,
+              );
+            }
+          }
         } catch (err) {
           reportError('tagRewriteSweep', err, `Failed to rewrite tag in ${item.path}`);
           failed.push(item.path);

@@ -246,6 +246,73 @@ describe('rewriteTagInAllMarkdown — sweep mutex (polish phase 4.3)', () => {
   // skipped and the rename never reached its `.md` — leaving a stale `Project`
   // that the next external-edit reconcile would re-assert. Both the filter AND
   // the rewriter must fold case to match identity used everywhere else.
+  // ── 6.3 (AUDIT_REMEDIATION_PLAN_2026-05-31) ───────────────────────────────
+  // A crash mid tag-REMOVAL used to be undetectable: the sentinel recorded no
+  // per-path progress, and reopen-side detection short-circuited to "not
+  // partial" for removals — so a vault split between files that still carry
+  // the tag and files that don't went unwarned. The sweep must now record
+  // each committed path incrementally so reopen can detect the split.
+  it('records committedPaths incrementally for a partial removal (6.3)', async () => {
+    const withFm = (tag: string, body: string) => `---\ntags:\n  - ${tag}\n---\n${body}\n`;
+    fs.files.set('a.md', withFm('obsolete', 'note A'));
+    fs.files.set('b.md', withFm('obsolete', 'note B'));
+
+    // Fail the SECOND .md write so the removal strips a.md but not b.md —
+    // exactly the "vault split" crash window 6.3 must leave detectable.
+    let writeCount = 0;
+    (window as unknown as Record<string, unknown>).filo = {
+      invoke: async (channel: string, ...args: unknown[]) => {
+        if (channel === 'vault:write-existing-file-text') {
+          writeCount++;
+          if (writeCount === 2) return { success: false, code: 'EACCES' };
+          const [, relPath, content] = args as [unknown, string, string];
+          fs.files.set(relPath, content);
+          fs.writeLog.push({ path: relPath, content, at: 0 });
+          return { success: true };
+        }
+        if (channel === 'vault:write-file-text') {
+          // Sentinel writes — record so the test can read the final breadcrumb.
+          fs.files.set(args[1] as string, args[2] as string);
+          return { success: true };
+        }
+        if (channel === 'vault:read-file-text') {
+          const content = fs.files.get(args[1] as string);
+          if (content === undefined) return { success: false, code: 'ENOENT' };
+          return { success: true, content };
+        }
+        if (channel === 'vault:file-exists') return fs.files.has(args[1] as string);
+        if (channel === 'vault:delete') return { success: true };
+        return { success: false };
+      },
+      on: () => () => {},
+      send: () => {},
+    };
+
+    const meta = makeMetadata(['a.md', 'b.md'], 'obsolete');
+    const res = await rewriteTagInAllMarkdown({
+      vaultRoot: '/vault',
+      metadata: meta,
+      oldName: 'obsolete',
+      newName: null, // removal
+      applyChanges: async () => {},
+    });
+
+    expect(res.succeeded).toEqual(['a.md']);
+    expect(res.failed).toContain('b.md');
+
+    // The sentinel must survive (failed > 0 ⇒ not cleared) AND carry the
+    // path that was actually stripped, so reopen-side detection can see the
+    // removal got half-done.
+    const sentinelRaw = fs.files.get('.filo/tag-rewrite-pending.json');
+    expect(sentinelRaw, 'removal sentinel should survive a partial sweep').toBeDefined();
+    const sentinel = JSON.parse(sentinelRaw as string) as {
+      newName: string | null;
+      committedPaths?: string[];
+    };
+    expect(sentinel.newName).toBeNull();
+    expect(sentinel.committedPaths).toEqual(['a.md']);
+  });
+
   it('rewrites a file whose frontmatter tag case differs from the registry name', async () => {
     fs.files.set('note.md', '---\ntags:\n  - Project\n---\nbody\n');
     const meta = makeMetadata(['note.md'], 'Project');

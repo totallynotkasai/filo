@@ -73,6 +73,18 @@ export interface TagRewriteSentinelPayload {
    * existed read back as `[]` (forward-compatible).
    */
   preexistingNewNamePaths: string[];
+  /**
+   * 6.3 (AUDIT_REMEDIATION_PLAN_2026-05-31) — vault-relative paths whose `.md`
+   * rewrite was CONFIRMED committed to disk, recorded INCREMENTALLY as the
+   * sweep progresses. This is the per-path commit breadcrumb that lets reopen
+   * detect a partial REMOVAL: the absence of a tag is indistinguishable from
+   * "never had it" via the index alone, so renames detect partial state from
+   * the index (`hasPartialTagRewriteState`) but removals need recorded
+   * progress (`hasPartialTagRemovalState`). Populated for removals; left `[]`
+   * for renames (which don't need it). Sentinels written before this field
+   * existed read back as `[]` (forward-compatible).
+   */
+  committedPaths: string[];
 }
 
 export interface ReadResult {
@@ -195,6 +207,13 @@ export function readPendingRewrite(vaultRoot: string): Promise<ReadResult> {
       if (pre !== undefined && (!Array.isArray(pre) || !pre.every((p) => typeof p === 'string'))) {
         return { unreadable: true };
       }
+      // 6.3 — same forward-compatible tolerance for the per-path commit
+      // breadcrumb: absent in pre-6.3 sentinels (read back as `[]`), and a
+      // string[] when present.
+      const committed = parsed.committedPaths;
+      if (committed !== undefined && (!Array.isArray(committed) || !committed.every((p) => typeof p === 'string'))) {
+        return { unreadable: true };
+      }
       return {
         payload: {
           timestamp: parsed.timestamp,
@@ -202,6 +221,7 @@ export function readPendingRewrite(vaultRoot: string): Promise<ReadResult> {
           newName: parsed.newName,
           plan: parsed.plan,
           preexistingNewNamePaths: pre ?? [],
+          committedPaths: committed ?? [],
         },
       };
     } catch {
@@ -226,11 +246,11 @@ export function readPendingRewrite(vaultRoot: string): Promise<ReadResult> {
  * tags pre-rename is also exempt; the sentinel records no per-path commit
  * status, so erring toward fewer false alarms is the honest trade-off.)
  *
- * Always returns false for removals (`newName === null`) — the sentinel
- * format doesn't record per-path commit status, so there's no honest way
- * to detect partial removal from the metadata alone. A future revision
- * could broaden detection if removal partial-state turns out to bite
- * users in practice.
+ * Returns false for removals (`newName === null`): the absence of a tag is
+ * indistinguishable from "never had it" via the index, so this index-based
+ * heuristic can't classify a removal. Removals are classified by
+ * {@link hasPartialTagRemovalState} from the sentinel's recorded
+ * `committedPaths` instead (6.3) — the call site branches on `newName`.
  *
  * Pure function over an iterable of `{ path, tags }`. Lets the recovery
  * dialog be tested without mounting the vault index.
@@ -246,6 +266,37 @@ export function hasPartialTagRewriteState(
     if (m.tags.includes(newName) && !exempt.has(m.path)) return true;
   }
   return false;
+}
+
+/**
+ * 6.3 (AUDIT_REMEDIATION_PLAN_2026-05-31) — Detect whether a tag REMOVAL had
+ * partial progress at crash time, from the sentinel's incrementally-recorded
+ * `committedPaths` rather than the index.
+ *
+ * Returns true when ANY planned file had its tag stripped before the sweep
+ * stopped (crash, kill, per-file failure). Because the sweep only leaves the
+ * sentinel in place when it did NOT finish cleanly (a clean sweep clears it),
+ * a present removal sentinel with ≥1 committed path means the vault is in an
+ * incomplete-removal state: some files no longer carry the tag while the
+ * registry / remaining files still do. The recovery dialog then offers
+ * "Finalise & discard" (converge the removal forward — idempotent, since
+ * already-stripped files are no-ops) instead of a bare "Discard plan" that
+ * would leave the vault split.
+ *
+ * An empty `committedPaths` means the sweep crashed before stripping any file
+ * — the pre-removal state (every planned file still tagged) is internally
+ * consistent, so this is NOT partial and the bare Discard semantics stand.
+ *
+ * Mirrors the "any witness ⇒ partial" shape of {@link hasPartialTagRewriteState}
+ * (which treats even an all-rewritten sentinel as partial so Finalise clears
+ * it). Pure function over an iterable of paths for testability.
+ */
+export function hasPartialTagRemovalState(
+  committedPaths: Iterable<string>,
+): boolean {
+  // Non-empty ⇒ at least one file was stripped before the sweep stopped.
+  // Pull a single element (works for arrays and lazy generators alike).
+  return committedPaths[Symbol.iterator]().next().done !== true;
 }
 
 /** Test-only — drops the in-memory mutex chain. Production never needs this. */

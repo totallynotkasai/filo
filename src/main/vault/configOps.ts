@@ -9,7 +9,7 @@ import { PAYLOAD_LIMITS } from '../utils/payloadLimits';
  *
  * All vault-wide settings live in `.filo/` as individual JSON files:
  *   .filo/app.json           — Core app settings (toolbar, fonts, radar)
- *   .filo/appearance.json    — Active theme, font, CSS snippet toggles
+ *   .filo/appearance.json    — Active theme + font (Filo-owned: these two keys only)
  *   .filo/defaults.json      — Board-type defaults (tile, connection, frame styles)
  *   .filo/hotkeys.json       — Custom keyboard shortcut overrides
  *   .filo/workspace.json     — Layout state (open tabs, sidebar, split panes)
@@ -126,10 +126,15 @@ export async function initVaultConfig(vaultRoot: string): Promise<void> {
         columns: true,
       },
     },
+    // Audit 3.3 — appearance.json is fully Filo-owned: activeTheme + font only.
+    // Must match the writer's payload shape in
+    // `configWriteScheduler.buildConfigPayloads` exactly, so the first
+    // theme/font save (a whole-file atomic replace) doesn't drop a key the
+    // seed itself put here. Do NOT re-add `snippets` without also teaching the
+    // writer to round-trip it (audit option (a)).
     'appearance.json': {
       activeTheme: 'light',
       font: 'Inter, system-ui, sans-serif',
-      snippets: [],
     },
     'defaults.json': {
       mindmap: {},

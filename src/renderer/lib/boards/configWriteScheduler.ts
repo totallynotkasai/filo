@@ -195,13 +195,15 @@ function buildConfigPayloads(
       showFileExtensions: settings.general?.showFileExtensions ?? false,
       hoverButtons: settings.general?.hoverButtons ?? {},
     }, null, 2),
-    // D.3 — Drop the hardcoded `snippets: []` from the appearance write.
-    // The renderer doesn't carry the snippets array in memory anywhere, so
-    // emitting an empty array on every save just clobbered whatever the
-    // user had on disk (or whatever a future Filo build might add). Now
-    // the payload only declares the two fields the renderer actually owns;
-    // any legacy snippets sit on disk untouched until something else
-    // rewrites the file.
+    // Audit 3.3 — appearance.json is fully Filo-owned: activeTheme + font only.
+    // saveConfig → atomicWriteFile is a whole-file (tmp+rename) replace, NOT a
+    // read-modify-write merge, so it cannot preserve any other on-disk key. The
+    // seed in configOps.initVaultConfig matches this exact shape, so disk shape
+    // and code ownership agree. A hand-added `snippets` array is therefore NOT
+    // preserved across a theme/font save — it is explicitly unmanaged, not
+    // round-tripped. (Preserving unknown keys would require carrying the loaded
+    // appearance object in memory and spreading it the way app.json spreads the
+    // general slice — the audit's option (a), deliberately not taken here.)
     'appearance.json': JSON.stringify({
       activeTheme: theme ?? 'light',
       font: settings.general?.globalFont ?? '',

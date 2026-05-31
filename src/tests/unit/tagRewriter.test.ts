@@ -1,5 +1,24 @@
 import { describe, it, expect } from 'vitest';
+import yaml from 'js-yaml';
 import { rewriteTagInMarkdown, removeTagFromMarkdown, addTagToMarkdown } from '@renderer/lib/vault/tagRewriter';
+
+/**
+ * Extracts a result file's frontmatter block and parses it. THROWS if the
+ * rewrite produced invalid YAML (e.g. a duplicate `tags:` key), so a test can
+ * assert the output round-trips cleanly.
+ */
+function frontmatterObjectOf(md: string): Record<string, unknown> {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(md);
+  if (!m) throw new Error('no frontmatter fence found');
+  const loaded = yaml.load(m[1]);
+  if (!loaded || typeof loaded !== 'object' || Array.isArray(loaded)) {
+    throw new Error('frontmatter did not parse to an object');
+  }
+  return loaded as Record<string, unknown>;
+}
+
+/** Any `\n` NOT preceded by `\r` — i.e. a lone LF that broke CRLF fidelity. */
+const LONE_LF = /[^\r]\n/;
 
 describe('rewriteTagInMarkdown', () => {
   it('rewrites the tag in the frontmatter tags array', () => {
@@ -247,5 +266,94 @@ describe('addTagToMarkdown — never erases an unparseable frontmatter block (1.
     // erase `title` / the existing `foo` tag.
     const input = ['---', 'title: X', 'tags:', '  - foo', '\tbad: tab', '---', 'body'].join('\n');
     expect(addTagToMarkdown(input, 'bar')).toBe(input);
+  });
+});
+
+// ── 1.4 ───────────────────────────────────────────────────────────────────
+// CRLF files (the Windows / Notepad / VS Code / Obsidian default) defeated the
+// line-level rewriter: `TAGS_HEADER_RE` (+ the block-item / blank-line checks)
+// ran against `yamlSource.split('\n')`, leaving a trailing `\r` on every FM
+// line EXCEPT the last (the fence regex strips only that one). JS `.`/`$`
+// (no /m) don't cross `\r`, so a `tags:` line that wasn't last never matched.
+// Consequences: rename/remove silently fell to the lossy dump path (comment
+// loss, reorder, FM→LF) and add saw "no tags field" → spliced a SECOND `tags:`
+// block → duplicate key → unparseable → erasure (1.1). User decision: PRESERVE
+// the original line endings (don't normalise to LF).
+describe('tag rewriter — CRLF files preserve endings + never corrupt (1.4)', () => {
+  // `tags:` is a NON-last key (followed by `aliases:`), so on CRLF its line
+  // keeps a trailing `\r` and the pre-fix regex never matched it.
+  const crlf = [
+    '---',
+    '# keep me',
+    'title: My Note',
+    'tags:',
+    '  - foo',
+    '  - bar',
+    'aliases:',
+    '  - mn',
+    '---',
+    'body',
+    '',
+  ].join('\r\n');
+
+  it('renames a tag in place, preserving the comment, siblings and CRLF', () => {
+    const out = rewriteTagInMarkdown(crlf, 'foo', 'baz');
+    expect(out).toContain('# keep me'); // comment survives (dump path dropped it)
+    expect(out).not.toMatch(LONE_LF); // every newline stays CRLF
+    const fm = frontmatterObjectOf(out); // re-parses cleanly
+    expect(fm.tags).toEqual(['baz', 'bar']);
+    expect(fm.title).toBe('My Note');
+    expect(fm.aliases).toEqual(['mn']);
+  });
+
+  it('removes a tag in place, preserving the comment, siblings and CRLF', () => {
+    const out = removeTagFromMarkdown(crlf, 'foo');
+    expect(out).toContain('# keep me');
+    expect(out).not.toMatch(LONE_LF);
+    const fm = frontmatterObjectOf(out);
+    expect(fm.tags).toEqual(['bar']);
+    expect(fm.title).toBe('My Note');
+  });
+
+  it('adds a tag without creating a duplicate tags: key or erasing data, preserving CRLF', () => {
+    // The file already HAS a `tags:` field, so add takes the documented
+    // load→dump path (which upgrades string→array and, per the accepted
+    // KNOWN_LIMITATION, drops YAML comments — same on LF). 1.4's guarantee here
+    // is narrower but critical: hasTagsHeader now sees the `\r`-terminated line,
+    // so add appends to the existing block instead of splicing a SECOND `tags:`
+    // key (which made the file unparseable → erased via 1.1). Endings stay CRLF
+    // and every DATA key survives.
+    const out = addTagToMarkdown(crlf, 'new');
+    expect((out.match(/^tags\s*:/gm) ?? []).length).toBe(1); // no second block
+    expect(out).not.toMatch(LONE_LF); // CRLF preserved
+    const fm = frontmatterObjectOf(out); // throws on a duplicate-key block
+    expect(fm.tags).toEqual(['foo', 'bar', 'new']);
+    expect(fm.title).toBe('My Note'); // data survives the dump path
+    expect(fm.aliases).toEqual(['mn']);
+  });
+
+  it('add is idempotent (byte-identical) on a CRLF file when the tag exists', () => {
+    // Pre-fix this spliced a duplicate `tags:` block because hasTagsHeader was
+    // blind to the `\r`-terminated line.
+    expect(addTagToMarkdown(crlf, 'foo')).toBe(crlf);
+  });
+
+  it('rewrites a CRLF flow-form tags field in place without flipping to LF', () => {
+    const flow = ['---', 'title: X', 'tags: [foo, bar]', 'aliases:', '  - mn', '---', 'body', ''].join('\r\n');
+    const out = rewriteTagInMarkdown(flow, 'foo', 'baz');
+    expect(out).not.toMatch(LONE_LF);
+    const fm = frontmatterObjectOf(out);
+    expect(fm.tags).toEqual(['baz', 'bar']);
+    expect(fm.title).toBe('X');
+  });
+
+  it('still rewrites a CRLF note where tags: IS the last key (regression guard)', () => {
+    // This case worked before the fix (the fence strips the last line's `\r`);
+    // assert the fix didn't regress it and keeps CRLF.
+    const lastKey = ['---', 'title: X', 'tags:', '  - foo', '  - bar', '---', 'body', ''].join('\r\n');
+    const out = removeTagFromMarkdown(lastKey, 'foo');
+    expect(out).not.toMatch(LONE_LF);
+    const fm = frontmatterObjectOf(out);
+    expect(fm.tags).toEqual(['bar']);
   });
 });

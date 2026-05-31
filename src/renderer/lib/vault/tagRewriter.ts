@@ -34,22 +34,45 @@ export function tagsEqual(a: string, b: string): boolean {
   return a.toLocaleLowerCase('en-US') === b.toLocaleLowerCase('en-US');
 }
 
+/**
+ * Detects a file's line ending from its first line break. The rewriter
+ * re-applies this to the frontmatter block on assembly so a CRLF file (the
+ * Windows / Notepad / VS Code / Obsidian default) round-trips as CRLF rather
+ * than being silently flipped to LF (1.4 — user decision: PRESERVE endings).
+ */
+function detectEol(raw: string): '\r\n' | '\n' {
+  const m = /\r\n|\n/.exec(raw);
+  return m && m[0] === '\r\n' ? '\r\n' : '\n';
+}
+
 function splitFrontmatter(raw: string): {
   yamlSource: string;
   body: string;
   hasFrontmatter: boolean;
-  trailingNewline: string;
+  hadTrailingNewline: boolean;
+  eol: '\r\n' | '\n';
 } {
+  const eol = detectEol(raw);
   const fenced = FRONTMATTER_FENCE.exec(raw);
   if (!fenced) {
-    return { yamlSource: '', body: raw, hasFrontmatter: false, trailingNewline: '' };
+    return { yamlSource: '', body: raw, hasFrontmatter: false, hadTrailingNewline: false, eol };
   }
-  const yamlSource = fenced[1];
+  // 1.4 — normalise the captured YAML source to LF so the line-level matchers
+  // (`TAGS_HEADER_RE`, the block-item / blank-line checks) match uniformly.
+  // Without this a `\r`-terminated `tags:` line never matched (JS `.`/`$` don't
+  // cross `\r`), so every CRLF edit fell to the lossy dump path and `add`
+  // spliced a duplicate key. `eol` is re-applied to the frontmatter block at
+  // assembly time; the body (`fenced[2]`) is kept byte-verbatim — the rewriter
+  // never edits it.
+  // DECISION: a frontmatter block with internally-mixed endings normalises to
+  // the detected `eol`; the body's own (possibly mixed) endings are untouched.
+  const yamlSource = fenced[1].replace(/\r\n/g, '\n');
   return {
     yamlSource,
     body: fenced[2] ?? '',
     hasFrontmatter: true,
-    trailingNewline: /\n$/.test(yamlSource) ? '\n' : '',
+    hadTrailingNewline: /\n$/.test(yamlSource),
+    eol,
   };
 }
 
@@ -65,13 +88,28 @@ function loadYamlObject(yamlSource: string): Record<string, unknown> | null {
   return loaded as Record<string, unknown>;
 }
 
-function dumpYaml(fm: Record<string, unknown>, trailingNewline: string): string {
-  return yaml.dump(fm, { lineWidth: -1, noRefs: true }).replace(/\n?$/, '') + trailingNewline;
+function dumpYaml(fm: Record<string, unknown>): string {
+  return yaml.dump(fm, { lineWidth: -1, noRefs: true }).trimEnd();
 }
 
-function assemble(yamlText: string, body: string): string {
-  const bodyTrailing = body.length === 0 || body.endsWith('\n') ? '' : '\n';
-  return `---\n${yamlText}\n---\n${body}${bodyTrailing}`;
+/**
+ * Rebuilds a `.md` file from an edited (LF) frontmatter block plus the original
+ * body. The frontmatter region (fences + YAML) is emitted with `eol`; the body
+ * is written byte-verbatim. `hadTrailingNewline` reproduces the rule that a
+ * captured FM source already ending in a newline keeps that one separator
+ * rather than gaining a second. Reduces to the historical LF output exactly
+ * when `eol === '\n'`.
+ */
+function reassemble(
+  fmTextLf: string,
+  body: string,
+  hadTrailingNewline: boolean,
+  eol: '\r\n' | '\n',
+): string {
+  const sep = hadTrailingNewline ? '' : '\n';
+  const fmRegion = `---\n${fmTextLf}${sep}---\n`.replace(/\n/g, eol);
+  const bodyTrailing = body.length === 0 || body.endsWith('\n') ? '' : eol;
+  return `${fmRegion}${body}${bodyTrailing}`;
 }
 
 function normaliseTagsField(value: unknown): { tags: string[]; wasString: boolean } | null {
@@ -243,7 +281,7 @@ export function rewriteTagInMarkdown(
 ): string {
   if (!oldTag || !newTag || oldTag === newTag) return rawContent;
 
-  const { yamlSource, body, hasFrontmatter, trailingNewline } = splitFrontmatter(rawContent);
+  const { yamlSource, body, hasFrontmatter, hadTrailingNewline, eol } = splitFrontmatter(rawContent);
   if (!hasFrontmatter) return rawContent;
 
   // Phase 31 C3.2 — preferred path: rewrite only the `tags:` line range,
@@ -262,9 +300,7 @@ export function rewriteTagInMarkdown(
   });
   if (lineRewrite !== null) {
     if (lineRewrite === yamlSource) return rawContent;
-    return `---\n${lineRewrite}${trailingNewline ? '' : '\n'}---\n${body}${
-      body.length === 0 || body.endsWith('\n') ? '' : '\n'
-    }`;
+    return reassemble(lineRewrite, body, hadTrailingNewline, eol);
   }
 
   // 7.5 — an anchored/aliased tags field can't be line-edited; rather than
@@ -291,7 +327,7 @@ export function rewriteTagInMarkdown(
   if (!changed) return rawContent;
 
   fm.tags = tagsField.wasString ? next.join(', ') : next;
-  return assemble(dumpYaml(fm, trailingNewline).trimEnd(), body);
+  return reassemble(dumpYaml(fm), body, false, eol);
 }
 
 /**
@@ -300,7 +336,7 @@ export function rewriteTagInMarkdown(
 export function removeTagFromMarkdown(rawContent: string, tag: string): string {
   if (!tag) return rawContent;
 
-  const { yamlSource, body, hasFrontmatter, trailingNewline } = splitFrontmatter(rawContent);
+  const { yamlSource, body, hasFrontmatter, hadTrailingNewline, eol } = splitFrontmatter(rawContent);
   if (!hasFrontmatter) return rawContent;
 
   // Phase 31 C3.2 — line-level rewrite preserves all other YAML lines verbatim.
@@ -311,9 +347,7 @@ export function removeTagFromMarkdown(rawContent: string, tag: string): string {
   });
   if (lineRewrite !== null) {
     if (lineRewrite === yamlSource) return rawContent;
-    return `---\n${lineRewrite}${trailingNewline ? '' : '\n'}---\n${body}${
-      body.length === 0 || body.endsWith('\n') ? '' : '\n'
-    }`;
+    return reassemble(lineRewrite, body, hadTrailingNewline, eol);
   }
 
   // 7.5 — skip an anchored/aliased tags field instead of expanding it.
@@ -330,7 +364,7 @@ export function removeTagFromMarkdown(rawContent: string, tag: string): string {
   if (next.length === tagsField.tags.length) return rawContent;
 
   fm.tags = tagsField.wasString ? next.join(', ') : next;
-  return assemble(dumpYaml(fm, trailingNewline).trimEnd(), body);
+  return reassemble(dumpYaml(fm), body, false, eol);
 }
 
 /**
@@ -342,11 +376,10 @@ export function addTagToMarkdown(rawContent: string, tag: string): string {
   const bareTag = tag.replace(/^#/, '').trim();
   if (!bareTag) return rawContent;
 
-  const { yamlSource, body, hasFrontmatter, trailingNewline } = splitFrontmatter(rawContent);
+  const { yamlSource, body, hasFrontmatter, hadTrailingNewline, eol } = splitFrontmatter(rawContent);
 
   if (!hasFrontmatter) {
-    const trailing = body.length === 0 || body.endsWith('\n') ? '' : '\n';
-    return `---\ntags:\n  - ${bareTag}\n---\n${body}${trailing}`;
+    return reassemble(`tags:\n  - ${bareTag}`, body, false, eol);
   }
 
   // Phase 7.4 — frontmatter present but no `tags:` field: insert a fresh block
@@ -362,10 +395,7 @@ export function addTagToMarkdown(rawContent: string, tag: string): string {
     const insertAt =
       lines.length > 0 && lines[lines.length - 1] === '' ? lines.length - 1 : lines.length;
     lines.splice(insertAt, 0, 'tags:', `  - ${bareTag}`);
-    const newYaml = lines.join('\n');
-    return `---\n${newYaml}${trailingNewline ? '' : '\n'}---\n${body}${
-      body.length === 0 || body.endsWith('\n') ? '' : '\n'
-    }`;
+    return reassemble(lines.join('\n'), body, hadTrailingNewline, eol);
   }
 
   // 7.5 — skip an anchored/aliased tags field instead of expanding it via dump.
@@ -389,6 +419,5 @@ export function addTagToMarkdown(rawContent: string, tag: string): string {
   // comma-separated string.
   fm.tags = tagsField.tags;
 
-  const yamlText = yaml.dump(fm, { lineWidth: -1, noRefs: true }).trimEnd();
-  return assemble(yamlText, body);
+  return reassemble(dumpYaml(fm), body, false, eol);
 }

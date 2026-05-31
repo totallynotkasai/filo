@@ -96,6 +96,35 @@ const frontmatterCache = new SvelteMap<string, Record<string, unknown>>();
 let frontmatterVersionTick = $state(0);
 
 /**
+ * Audit2 / 1.2 — verbatim frontmatter source bytes per docId, captured when an
+ * authoritative disk read seeds the cache (`setFrontmatter` / `applyReloadFromDisk`
+ * with a non-empty `rawFrontmatter`). Its PRESENCE is the "clean" signal: while
+ * an entry exists, the on-disk frontmatter is byte-identical to what we parsed,
+ * so a body-only save can emit it verbatim (preserving comments, key order, and
+ * line endings) instead of re-dumping the object through js-yaml.
+ *
+ * Any frontmatter MUTATION — `mergeFrontmatter`, or a `setFrontmatter` that
+ * carries no disk bytes (a PropertiesPopup / task / kanban write) — drops the
+ * entry, forcing the next write back through the (lossy but correct) dump path.
+ * A body-only edit never touches the frontmatter, so the entry survives and the
+ * common case keeps its formatting.
+ */
+const rawFrontmatterCache = new SvelteMap<string, string>();
+
+/**
+ * Stores `rawFrontmatter` as the clean-bytes entry for `docId` when it is a
+ * non-empty disk block, otherwise drops any existing entry. Centralises the
+ * "presence == clean" rule so every seed / reload / mutation path agrees.
+ */
+function noteRawFrontmatter(docId: string, rawFrontmatter: string | undefined): void {
+  if (rawFrontmatter !== undefined && rawFrontmatter.trim().length > 0) {
+    rawFrontmatterCache.set(docId, rawFrontmatter);
+  } else {
+    rawFrontmatterCache.delete(docId);
+  }
+}
+
+/**
  * Per-docId monotonic mutation counter. Every `mergeFrontmatter` and
  * `setFrontmatter` call increments the docId's entry, so a writer that
  * captures the value at schedule time can later detect whether another
@@ -186,11 +215,28 @@ export const documentStore = {
    * Replaces the cached frontmatter for a docId. Called on initial hydrate
    * (when a TextTile / DocumentEditor / TaskListBoard parses the .md for
    * the first time) and on external-change reload.
+   *
+   * Audit2 / 1.2 — pass `rawFrontmatter` (the verbatim YAML source from a disk
+   * parse) so a subsequent body-only save can emit those bytes untouched. Omit
+   * it (or pass an empty block) for a mutation set — that drops any clean-bytes
+   * entry so the next write re-dumps the object.
    */
-  setFrontmatter(docId: string, fm: Record<string, unknown>): void {
+  setFrontmatter(docId: string, fm: Record<string, unknown>, rawFrontmatter?: string): void {
     frontmatterCache.set(docId, { ...fm });
+    noteRawFrontmatter(docId, rawFrontmatter);
     bumpMutationVersion(docId);
     frontmatterVersionTick++;
+  },
+
+  /**
+   * Audit2 / 1.2 — the verbatim frontmatter source for `docId` while it is
+   * still byte-identical to disk (a body-only save may emit it untouched), or
+   * `undefined` once a mutation has invalidated it. The write gateway reads
+   * this to decide between passthrough and a re-dump.
+   */
+  getRawFrontmatter(docId: string): string | undefined {
+    void frontmatterVersionTick;
+    return rawFrontmatterCache.get(docId);
   },
 
   /**
@@ -217,6 +263,9 @@ export const documentStore = {
       if (v === '' || v === undefined || v === null) delete merged[k];
     }
     frontmatterCache.set(docId, merged);
+    // 1.2 — the object changed, so the captured raw bytes are stale: drop them
+    // and let the next write re-dump the merged object.
+    rawFrontmatterCache.delete(docId);
     bumpMutationVersion(docId);
     frontmatterVersionTick++;
     return merged;
@@ -229,6 +278,7 @@ export const documentStore = {
   clearFrontmatter(docId: string): void {
     if (!frontmatterCache.has(docId)) return;
     frontmatterCache.delete(docId);
+    rawFrontmatterCache.delete(docId);
     mutationVersions.delete(docId);
     frontmatterVersionTick++;
   },
@@ -515,6 +565,7 @@ export const documentStore = {
     }
     openDocuments.delete(docId);
     dirtyWriters.delete(docId);
+    rawFrontmatterCache.delete(docId);
     if (frontmatterCache.has(docId)) {
       frontmatterCache.delete(docId);
       mutationVersions.delete(docId);
@@ -538,6 +589,7 @@ export const documentStore = {
     activeDocId = null;
     dirtyWriters.clear();
     frontmatterCache.clear();
+    rawFrontmatterCache.clear();
     mutationVersions.clear();
     frontmatterVersionTick++;
     if (readOnlyDocs.size > 0) {
@@ -603,12 +655,18 @@ export const documentStore = {
    * Called after the user confirms a reload or the editor was clean.
    * If newFrontmatter is provided, the live cache is updated too so the next
    * writer-assembled file picks up the external edits rather than reverting.
+   *
+   * Audit2 / 1.2 — pass `rawFrontmatter` (the disk parse's verbatim source)
+   * alongside `newFrontmatter` so a clean body-only save after the reload can
+   * still emit the frontmatter bytes untouched. Omitted reloads drop the clean
+   * bytes (the next write re-dumps) — safe, just without the formatting win.
    */
   applyReloadFromDisk(
     docId: string,
     newBody: string,
     newRichText: RichTextAnnotation[],
     newFrontmatter?: Record<string, unknown>,
+    rawFrontmatter?: string,
   ) {
     const doc = openDocuments.get(docId);
     if (!doc) return;
@@ -623,6 +681,7 @@ export const documentStore = {
     openDocuments.set(docId, updated);
     if (newFrontmatter) {
       frontmatterCache.set(docId, { ...newFrontmatter });
+      noteRawFrontmatter(docId, rawFrontmatter);
       bumpMutationVersion(docId);
       frontmatterVersionTick++;
     }

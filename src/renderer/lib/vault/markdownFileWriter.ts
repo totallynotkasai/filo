@@ -250,6 +250,12 @@ export interface HydrateReadResult {
   size: number | undefined;
   /** Parsed YAML frontmatter (empty object when none). */
   frontmatter: Record<string, unknown>;
+  /**
+   * Audit2 / 1.2 — verbatim frontmatter source bytes (empty when none). Seed
+   * it into `documentStore.setFrontmatter` so a later body-only save can emit
+   * the block untouched instead of re-dumping the parsed object.
+   */
+  rawFrontmatter: string;
   /** Markdown body with frontmatter stripped. */
   body: string;
 }
@@ -293,6 +299,7 @@ export async function readMarkdownForHydrate(
     mtimeMs: result.mtimeMs,
     size: result.size,
     frontmatter: parsed.frontmatter,
+    rawFrontmatter: parsed.rawFrontmatter,
     body: parsed.body,
   };
 }
@@ -380,7 +387,9 @@ export async function writeMarkdownFile(args: WriteArgs): Promise<void> {
       try {
         const readResult = await invokeOk('vault:read-file-text', vaultRoot, relPath);
         const parsed = parseMarkdownFile(readResult.content);
-        documentStore.setFrontmatter(docId, parsed.frontmatter);
+        // 1.2 — re-seed the verbatim bytes too so this (body-only) write can
+        // still emit the freshly-read frontmatter untouched.
+        documentStore.setFrontmatter(docId, parsed.frontmatter, parsed.rawFrontmatter);
         fm = parsed.frontmatter;
       } catch (err) {
         console.warn('[markdownFileWriter] Stale-cache re-read failed; using caller args:', err);
@@ -388,7 +397,16 @@ export async function writeMarkdownFile(args: WriteArgs): Promise<void> {
     }
   }
 
-  const fileText = assembleMarkdownFile(fm, body, { bom: state.hadBom });
+  // Audit2 / 1.2 — when this write is backed by an open document whose
+  // frontmatter is still byte-identical to disk (no mutation since hydrate),
+  // emit those bytes verbatim. `getRawFrontmatter` returns undefined once a
+  // mutation invalidated them, in which case we re-dump the object as before.
+  const rawFrontmatter = docId ? documentStore.getRawFrontmatter(docId) : undefined;
+  const fileText = assembleMarkdownFile(fm, body, {
+    bom: state.hadBom,
+    rawFrontmatter,
+    frontmatterDirty: rawFrontmatter === undefined,
+  });
   await trackComponentWrite(vaultRoot, relPath, async () => {
     await invokeOk('vault:write-existing-file-text', vaultRoot, relPath, fileText);
   });

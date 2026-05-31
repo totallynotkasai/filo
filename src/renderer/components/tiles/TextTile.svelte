@@ -295,8 +295,10 @@
         // E1 — the read gateway seeds the hydrate gate + drift baseline from
         // the same read's mtime, so a later debounced write detects an
         // external edit that lands after this hydrate.
-        const { body, frontmatter } = await readMarkdownForHydrate(vaultRoot, relPath);
-        if (tile.contentId) documentStore.setFrontmatter(tile.contentId, frontmatter);
+        const { body, frontmatter, rawFrontmatter } = await readMarkdownForHydrate(vaultRoot, relPath);
+        // 1.2 — seed the verbatim frontmatter bytes so a later body-only save
+        // emits them untouched (comments / key order / line endings preserved).
+        if (tile.contentId) documentStore.setFrontmatter(tile.contentId, frontmatter, rawFrontmatter);
         lastLoadedBody = body;
         isUpdatingFromStore = true;
         applyLoadResult(loadMarkdownIntoEditor(editor, body));

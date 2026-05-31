@@ -311,6 +311,7 @@
       try {
         let body = '';
         let frontmatter: Record<string, unknown> = {};
+        let rawFrontmatter = '';
         try {
           // E1 — read gateway seeds the hydrate gate + drift baseline from
           // the same read's mtime, so a later debounced write detects an
@@ -318,6 +319,7 @@
           const hydrateResult = await readMarkdownForHydrate(vaultRoot, docState.filename);
           body = hydrateResult.body;
           frontmatter = hydrateResult.frontmatter;
+          rawFrontmatter = hydrateResult.rawFrontmatter;
         } catch {
           // Read failed — mount cleanly with empty content. Mark the file
           // hydrated (no disk mtime → no baseline) so subsequent keystroke
@@ -333,8 +335,9 @@
         // Mirror the loaded body into the document store so other views (a sibling
         // TextTile on the canvas) reuse the same content without re-reading disk.
         // Pass the parsed body (without frontmatter) to match TextTile's load convention,
-        // and seed the live frontmatter cache so the next writer doesn't revert it.
-        documentStore.applyReloadFromDisk(docState.docId, body, [], frontmatter);
+        // and seed the live frontmatter cache (+ the 1.2 verbatim bytes) so the next
+        // writer doesn't revert it and a body-only save preserves its formatting.
+        documentStore.applyReloadFromDisk(docState.docId, body, [], frontmatter, rawFrontmatter);
       } catch (err) {
         console.warn('[DocumentEditor] Failed to read markdown file:', err);
       }

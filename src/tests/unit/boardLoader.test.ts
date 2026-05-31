@@ -338,6 +338,53 @@ describe('boardLoader', () => {
       expect(result.failedBoards[0].path).toBe('broken.board.json');
       expect(result.failedBoards[0].errorKind).toBe('parse-error');
     });
+
+    // ── Audit 1.2 regression ───────────────────────────────────────────────
+    // Two .board.json files sharing the same board.id must not silently
+    // collapse. Pre-fix, the second overwrote cache[id] + paths[id] (the first
+    // board became unreachable and its future saves targeted the survivor's
+    // file) and its connections/frames merged unconditionally into the
+    // survivor. Trivially produced by copying a .board.json in the OS file
+    // manager or restoring one from backup into the same vault.
+    it('routes a second board with a duplicate board.id into failedBoards and keeps the first reachable', async () => {
+      const first = validBoardFile('dup-id');
+      const second = validBoardFile('dup-id');
+      // Distinct connection on the second file so we can prove it does NOT
+      // leak into the surviving board's connection set.
+      second.connections = {
+        intruder: {
+          id: 'intruder',
+          boardId: 'dup-id',
+          fromTileId: 'tile_a',
+          toTileId: 'tile_a',
+          fromBubble: 0,
+          toBubble: 0,
+          createdAt: 0,
+          updatedAt: 0,
+        } as never,
+      };
+
+      installFiloStub({
+        'board:list': () => ['first.board.json', 'second.board.json'],
+        'board:load': (_root: unknown, rel: unknown) =>
+          rel === 'first.board.json' ? JSON.stringify(first) : JSON.stringify(second),
+      });
+
+      const result = await loadAllBoards('/vault');
+
+      // The first file wins and stays reachable under its own path.
+      expect(result.boards).toHaveLength(1);
+      expect(result.boards[0].id).toBe('dup-id');
+      expect(result.paths['dup-id']).toBe('first.board.json');
+
+      // The colliding second file is rejected with the new errorKind.
+      expect(result.failedBoards).toHaveLength(1);
+      expect(result.failedBoards[0].path).toBe('second.board.json');
+      expect(result.failedBoards[0].errorKind).toBe('duplicate-board-id');
+
+      // The loser's connections must NOT have polluted the survivor.
+      expect(result.connections.intruder).toBeUndefined();
+    });
   });
 
   describe('mergeBoardTiles', () => {

@@ -292,7 +292,11 @@ export interface LoadBoardError {
  */
 export interface FailedBoardEntry {
   path: string;
-  errorKind: LoadBoardError['error'];
+  // `loadBoard` never returns `'duplicate-board-id'` — it's detected at the
+  // aggregate level in `loadAllBoards` when two files declare the same
+  // `board.id` (Audit 1.2). Widening here (rather than in `LoadBoardError`)
+  // keeps `loadBoard`'s own return type honest.
+  errorKind: LoadBoardError['error'] | 'duplicate-board-id';
   message: string;
 }
 
@@ -634,6 +638,27 @@ export async function loadAllBoards(
       continue;
     }
     const { data } = result;
+    // Audit 1.2 — two .board.json files declaring the same board.id must not
+    // collapse. The first file loaded wins and stays reachable; route the
+    // collider into failedBoards (vaultCandidate snapshots it to
+    // .filo/recovery/) and skip merging its connections/frames so the
+    // survivor isn't polluted. Without this guard cache[id] / paths[id]
+    // silently overwrote — the first board became unreachable and its future
+    // saves hijacked the survivor's file — and the loser's connections/frames
+    // merged unconditionally under the survivor's id. Trivially produced by
+    // copying a .board.json in the OS file manager or restoring one from
+    // backup into the same vault.
+    if (Object.prototype.hasOwnProperty.call(cache, data.board.id)) {
+      const existingPath = paths[data.board.id];
+      const message = `Duplicate board id "${data.board.id}": ${relPath} collides with ${existingPath}`;
+      failedBoards.push({ path: relPath, errorKind: 'duplicate-board-id', message });
+      reportError(
+        'board-load',
+        message,
+        `Filo couldn't load ${relPath}: another board (${existingPath}) already uses id "${data.board.id}". The duplicate was left unloaded and snapshotted to .filo/recovery/ — give it a new id or remove the copy, then reopen the vault.`,
+      );
+      continue;
+    }
     boards.push(data.board);
     cache[data.board.id] = data;
     paths[data.board.id] = relPath;

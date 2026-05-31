@@ -27,10 +27,14 @@
 
   let tab = $derived(tabStore.tabs.find((t) => t.id === tabId));
   let boardType = $derived(tab?.boardType ?? null);
-  let ActiveBoardComponent = $derived.by(() => {
+  let boardComponentLoader = $derived.by(() => {
     if (!boardType) return null;
     return boardRegistry[boardType]?.component ?? null;
   });
+  // Audit2 4.4 — resolve the lazy import into a stable promise so unrelated
+  // reactive updates don't re-trigger the {#await}. `import()` caches the
+  // module, so any re-load after the first is effectively instant.
+  let boardModule = $derived(boardComponentLoader ? boardComponentLoader() : null);
 
   // ── Load board data when tab changes ──
   // IMPORTANT: Only track `tab` — untrack all project data reads to prevent
@@ -107,8 +111,17 @@
 {#if tab}
   {#key tab.id}
     <div class="board-transition">
-      {#if ActiveBoardComponent}
-        <ActiveBoardComponent />
+      {#if boardModule}
+        {#await boardModule}
+          <div class="board-loading"></div>
+        {:then mod}
+          {@const ActiveBoardComponent = mod.default}
+          <ActiveBoardComponent />
+        {:catch}
+          <div class="board-placeholder-type">
+            <p class="placeholder-label">Failed to load board</p>
+          </div>
+        {/await}
       {:else}
         <div class="board-placeholder-type">
           <p class="placeholder-label">Unknown Board Type</p>
@@ -144,6 +157,14 @@
     width: 100%;
     height: 100%;
     gap: 12px;
+    background: var(--canvas-bg);
+  }
+
+  /* Audit2 4.4 — brief placeholder while the lazily-imported board chunk
+     loads on first open (instant on subsequent opens — the module is cached). */
+  .board-loading {
+    width: 100%;
+    height: 100%;
     background: var(--canvas-bg);
   }
 

@@ -1,11 +1,20 @@
 import type { Component } from 'svelte';
 import type { BoardType } from '../../shared/types';
-import MindMapBoard from '../components/boards/MindMapBoard.svelte';
-import KanbanBoard from '../components/boards/KanbanBoard.svelte';
-import TaskListBoard from '../components/boards/TaskListBoard.svelte';
-import DocumentEditor from '../components/boards/DocumentEditor.svelte';
 import type { Board } from '../schema/index';
 import { boardDefaults, type BoardDefaultFactory } from './boardDefaults';
+
+/**
+ * Audit2 4.4 — a lazily-loaded board component module. The board components
+ * were statically imported here, which pulled TipTap + lowlight +
+ * markdown-tools (~4.5 MB) into the entry chunk's modulepreload graph — fetched
+ * and parsed before the no-vault Home screen was even interactive. The board
+ * subtree only mounts once a vault is open (tabStore.count > 0), so the
+ * component import is deferred to first board render, mirroring the
+ * already-lazy exportService.
+ */
+export type BoardComponentLoader = () => Promise<{
+  default: Component<Record<string, unknown>>;
+}>;
 
 /**
  * Metadata entry for a board type in the registry.
@@ -15,8 +24,8 @@ export interface BoardRegistryEntry {
   type: BoardType;
   /** Human-readable display name. */
   name: string;
-  /** The Svelte component used to render this board. */
-  component: Component<Record<string, unknown>>;
+  /** Lazily imports the Svelte component used to render this board. */
+  component: BoardComponentLoader;
   /** Whether this board uses the infinite canvas (pan/zoom). */
   usesCanvas: boolean;
   /**
@@ -29,15 +38,18 @@ export interface BoardRegistryEntry {
 }
 
 /**
- * Registry of all board types with their metadata, components, and factory
- * functions. The factories are imported from `./boardDefaults` — the single
- * source of truth for the shape of a freshly-created board.
+ * Registry of all board types with their metadata, lazy component loaders, and
+ * factory functions. The factories are imported from `./boardDefaults` — the
+ * single source of truth for the shape of a freshly-created board.
  */
 export const boardRegistry: Record<BoardType, BoardRegistryEntry> = {
   mindmap: {
     type: 'mindmap',
     name: 'Mind Map',
-    component: MindMapBoard as Component<Record<string, unknown>>,
+    component: () =>
+      import('../components/boards/MindMapBoard.svelte').then((m) => ({
+        default: m.default as Component<Record<string, unknown>>,
+      })),
     usesCanvas: true,
     createDefault: boardDefaults.mindmap,
   },
@@ -45,7 +57,10 @@ export const boardRegistry: Record<BoardType, BoardRegistryEntry> = {
   kanban: {
     type: 'kanban',
     name: 'Kanban',
-    component: KanbanBoard as Component<Record<string, unknown>>,
+    component: () =>
+      import('../components/boards/KanbanBoard.svelte').then((m) => ({
+        default: m.default as Component<Record<string, unknown>>,
+      })),
     usesCanvas: false,
     createDefault: boardDefaults.kanban,
   },
@@ -53,7 +68,10 @@ export const boardRegistry: Record<BoardType, BoardRegistryEntry> = {
   tasklist: {
     type: 'tasklist',
     name: 'Task List',
-    component: TaskListBoard as Component<Record<string, unknown>>,
+    component: () =>
+      import('../components/boards/TaskListBoard.svelte').then((m) => ({
+        default: m.default as Component<Record<string, unknown>>,
+      })),
     usesCanvas: false,
     createDefault: boardDefaults.tasklist,
   },
@@ -61,7 +79,10 @@ export const boardRegistry: Record<BoardType, BoardRegistryEntry> = {
   document: {
     type: 'document',
     name: 'Document',
-    component: DocumentEditor as Component<Record<string, unknown>>,
+    component: () =>
+      import('../components/boards/DocumentEditor.svelte').then((m) => ({
+        default: m.default as Component<Record<string, unknown>>,
+      })),
     usesCanvas: false,
     createDefault: boardDefaults.document,
   },

@@ -117,3 +117,35 @@ change event can arrive after both windows expire, so the app's own write is
 classified as an external edit — surfacing a spurious "Reload / Keep local"
 toast. This is a UX annoyance, **not** data loss. Monitor; widen the window only
 if it bites in practice.
+
+---
+
+## 6. Minimap recomputes the whole board every drag frame (large boards)
+
+**What:** The minimap (on by default) reads the entire `boardStore.tiles` map
+and renders one absolutely-positioned DOM pip per tile. `boardStore.tiles`
+re-derives through `getFullTiles`, which allocates fresh tile objects on every
+drag frame, so the minimap's `activeMediaIds` set, bounding box, per-pip
+`effectiveTileStyle` resolution, and all N pip nodes recompute each frame — not
+just the tile that moved. The viewport also feeds the bounds, so `mapScale` /
+offset (and therefore every pip's pixel position) can shift each frame too.
+
+**Where:** [src/renderer/components/canvas/Minimap.svelte](src/renderer/components/canvas/Minimap.svelte)
+(`allTiles`, `activeMediaIds`, `bounds`, the pip `#each`). Root cause: the
+referential churn of `getFullTiles` in
+[src/renderer/stores/board.svelte.ts](src/renderer/stores/board.svelte.ts) (`tiles`).
+
+**Why deferred (not a permanent trade-off):** A minimap-local memo can't fix
+this on its own — a content-keyed pip cache still can't skip the viewport-driven
+`mapScale` reposition, and skipping `effectiveTileStyle` per pip needs a stable
+per-tile identity that `getFullTiles` doesn't provide. The robust fix is the
+same stable-identity refactor deferred from Audit2 3.3 (return reference-stable
+tile objects from `getFullTiles` when a tile's placement + def are unchanged),
+which removes the connection-path **and** minimap recompute together. It was
+scoped out of Phase 4 (Audit2 item 4.5) as too broad/risky for one 🟡 item, and
+the perf claim isn't expressible as a unit test (no component-mount harness).
+
+**Impact:** Frame-rate dip while dragging on boards with many hundreds of tiles
+**when the minimap is open** — toggle it off (the SideToolbar minimap button) as
+a workaround. No data risk; rendering throughput only. Revisit alongside the
+`getFullTiles` stable-identity work.

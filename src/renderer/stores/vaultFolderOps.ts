@@ -89,8 +89,12 @@ function mapRenameCodeToMoveCode(
  * exact-match key for the renamed path and every indexed descendant whose
  * key sits under `oldRel + '/'`. No-op for non-markdown files, which the
  * index doesn't track in the first place.
+ *
+ * Exported for the Audit 1.3 regression test, which proves an uppercase-named
+ * folder rename rebinds descendants correctly (the VaultIndex keys and the
+ * derived `oldKey` are both case-PRESERVED, so the `startsWith` match holds).
  */
-function renameVaultIndexUnderPrefix(oldRel: string, newRel: string): void {
+export function renameVaultIndexUnderPrefix(oldRel: string, newRel: string): void {
   const oldKey = normalizePath(stripLeadingSlash(oldRel));
   const newKey = normalizePath(stripLeadingSlash(newRel));
   if (!oldKey || !newKey || oldKey === newKey) return;

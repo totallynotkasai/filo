@@ -173,9 +173,10 @@ export function makeTilesSlice(ctx: BoardContext) {
         return { success: true, oldTitle, newTitle, oldTitleHtml, newTitleHtml };
       }
 
-      // `vaultStore.rename` now drains every registered markdown writer
-      // before issuing the IPC rename (Phase 8.2), so the per-tile
-      // `flushMarkdownWriter` that used to live here is no longer needed.
+      // `vaultStore.rename` wraps the sequence in `withDrainedWrites`, which
+      // drains every markdown writer (editor gateway + shim flushers) before
+      // issuing the IPC rename (Phase 8.2 / R2), so the per-tile markdown
+      // flush that used to live here is no longer needed.
 
       const docId = (tile as Tile & { contentId?: string }).contentId;
       const existingDoc = documentStore.findByFilename(newRel);

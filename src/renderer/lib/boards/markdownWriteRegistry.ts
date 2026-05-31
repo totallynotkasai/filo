@@ -21,7 +21,6 @@
 import {
   flushAllMarkdownWrites,
   forceWriteForDocument as gatewayForceWriteForDocument,
-  flushMarkdownWrite as gatewayFlushMarkdownWrite,
   __resetMarkdownFileWriterForTests,
   type FlushAllResult as GatewayFlushAllResult,
   type ForceWriteResult,
@@ -123,24 +122,6 @@ export async function flushAllMarkdownWriters(): Promise<FlushAllResult> {
     });
   }
   return { ok, failed };
-}
-
-/**
- * Flushes a single owner's pending write by id. Used by the tile-title rename
- * pipeline to drain a renamed tile's debounced write before the file moves
- * on disk. Routes through the shim flusher first (if registered) then the
- * gateway's per-caller flush (in case the owner is a gateway caller).
- */
-export async function flushMarkdownWriter(ownerId: string): Promise<void> {
-  const entry = shimFlushers.get(ownerId);
-  if (entry) {
-    try {
-      await entry.flush();
-    } catch (err) {
-      console.error('[markdownWriteRegistry] shim flusher failed:', err);
-    }
-  }
-  await gatewayFlushMarkdownWrite(ownerId).catch(() => undefined);
 }
 
 /**

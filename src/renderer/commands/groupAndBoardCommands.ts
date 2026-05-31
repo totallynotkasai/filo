@@ -562,16 +562,34 @@ export class UpdateBoardSettingsCommand extends Command {
     this.description = description ?? `Update board settings (${Object.keys(patch).join(', ')})`;
   }
 
+  /**
+   * Audit2 2.4 — apply settings to THIS command's board (`targetBoardId`) via
+   * the cache, not through the global `boardStore` facade. The facade mutates
+   * whatever board the active pane shows, and on a cross-board undo the pane
+   * pivot (`boardActivator`) is `$effect`-driven (async) while `undo()` runs
+   * synchronously, so the facade could still point at the previously-active
+   * board — landing the mutation on the wrong board. `updateBoardSettings`
+   * merges by board id and bumps that board's `settingsVersionByBoard`, so the
+   * target re-renders whether or not it is the active pane (matching how the
+   * Kanban/Task commands already self-target).
+   */
+  private applyToTarget(patch: Record<string, unknown>, deleteKeys: string[]): void {
+    const cached = boardCacheStore.cache[this.targetBoardId];
+    if (!cached) return; // board not loaded (closed/evicted) — nothing to mutate
+    const current = (cached.board.settings ?? {}) as Record<string, unknown>;
+    const merged: Record<string, unknown> = { ...current, ...patch };
+    for (const k of deleteKeys) delete merged[k];
+    boardCacheStore.updateBoardSettings(this.targetBoardId, merged);
+  }
+
   execute() {
-    boardStore.updateSettings({ ...this.patch });
+    this.applyToTarget(this.patch, []);
   }
 
   undo() {
-    if (Object.keys(this.inversePatch).length > 0) {
-      boardStore.updateSettings({ ...this.inversePatch });
+    if (this.inversePatch && Object.keys(this.inversePatch).length === 0 && this.deleteOnUndo.length === 0) {
+      return;
     }
-    if (this.deleteOnUndo.length > 0) {
-      boardStore.deleteSettingsKeys(this.deleteOnUndo);
-    }
+    this.applyToTarget(this.inversePatch, this.deleteOnUndo);
   }
 }

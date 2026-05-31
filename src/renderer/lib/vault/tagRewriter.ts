@@ -371,7 +371,13 @@ export function addTagToMarkdown(rawContent: string, tag: string): string {
   // 7.5 — skip an anchored/aliased tags field instead of expanding it via dump.
   if (tagsFieldIsAnchored(yamlSource)) return rawContent;
 
-  const fm = loadYamlObject(yamlSource) ?? {};
+  // 1.3 — on unparseable / non-object YAML `loadYamlObject` returns null. The
+  // old `?? {}` proceeded on an empty object, so `yaml.dump` emitted ONLY a
+  // `tags:` block and silently erased every other frontmatter key. Refuse the
+  // write instead — the same guard `rewriteTagInMarkdown` / `removeTagFromMarkdown`
+  // already use. Never destroy a block we couldn't parse.
+  const fm = loadYamlObject(yamlSource);
+  if (!fm) return rawContent;
 
   const tagsField = normaliseTagsField(fm.tags) ?? { tags: [], wasString: false };
 

@@ -223,3 +223,29 @@ describe('tag rewriter — anchored/aliased tags field is left untouched (7.5)',
     expect(addTagToMarkdown(anchored, 'delta')).toBe(anchored);
   });
 });
+
+// ── 1.3 ───────────────────────────────────────────────────────────────────
+// `addTagToMarkdown` reaches the js-yaml load→dump fallback whenever the file
+// already has a top-level `tags:` field (so the string→array upgrade semantics
+// are preserved). On UNPARSEABLE YAML `loadYamlObject` returns null; the old
+// code did `?? {}` and proceeded, so `yaml.dump` emitted ONLY a `tags:` block —
+// every other key (title, aliases, …) was silently erased on the next save.
+// Its siblings (`rewriteTagInMarkdown`, `removeTagFromMarkdown`) already guard
+// with `if (!fm) return rawContent`; addTag must do the same — refuse the write
+// rather than destroy the block.
+describe('addTagToMarkdown — never erases an unparseable frontmatter block (1.3)', () => {
+  it('returns the input unchanged when a duplicate key makes the YAML unparseable', () => {
+    // js-yaml throws "duplicated mapping key" on `title` → the block can't be
+    // round-tripped, so the safe behaviour is to leave the file untouched.
+    const input = ['---', 'title: X', 'title: Y', 'tags:', '  - foo', '---', 'body'].join('\n');
+    expect(addTagToMarkdown(input, 'bar')).toBe(input);
+  });
+
+  it('returns the input unchanged when a tab in indentation makes the YAML unparseable', () => {
+    // A tab character in indentation is illegal YAML → js-yaml throws. The
+    // `tags:` field is present so addTag takes the load→dump path; it must not
+    // erase `title` / the existing `foo` tag.
+    const input = ['---', 'title: X', 'tags:', '  - foo', '\tbad: tab', '---', 'body'].join('\n');
+    expect(addTagToMarkdown(input, 'bar')).toBe(input);
+  });
+});

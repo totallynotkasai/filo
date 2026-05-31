@@ -171,6 +171,26 @@ function hasTagsHeader(yamlSource: string): boolean {
   return yamlSource.split('\n').some((line) => TAGS_HEADER_RE.test(line));
 }
 
+/**
+ * True when the top-level `tags:` field's value is a YAML anchor (`tags: &x
+ * [..]`) or alias (`tags: *x`). `locateTagsField` declines these — a line edit
+ * can't safely follow the reference — and the load→dump fallback would EXPAND
+ * the anchor (`dump({ noRefs: true })`) and re-emit the whole block, a larger
+ * and more surprising mutation than the documented comment loss. Callers skip
+ * the rewrite entirely in this case, leaving the file byte-for-byte untouched.
+ * Detection is precise (the value starts with `&`/`*`) so a tag whose text
+ * merely contains those characters still takes the established path. (7.5)
+ */
+function tagsFieldIsAnchored(yamlSource: string): boolean {
+  for (const line of yamlSource.split('\n')) {
+    const match = TAGS_HEADER_RE.exec(line);
+    if (!match) continue;
+    const value = match[1].trim();
+    return value.startsWith('&') || value.startsWith('*');
+  }
+  return false;
+}
+
 function renderTagsField(loc: LocatedTagsField, nextTags: string[]): string[] {
   if (nextTags.length === 0) {
     if (loc.style === 'scalar' || loc.style === 'flow') {
@@ -247,8 +267,12 @@ export function rewriteTagInMarkdown(
     }`;
   }
 
+  // 7.5 — an anchored/aliased tags field can't be line-edited; rather than
+  // expand it through the lossy dump path, skip the rewrite entirely.
+  if (tagsFieldIsAnchored(yamlSource)) return rawContent;
+
   // Fallback: load → modify → dump. Loses comments inside frontmatter, but
-  // covers shapes the line rewriter refused (anchors, nested mappings).
+  // covers shapes the line rewriter refused (e.g. nested mappings).
   const fm = loadYamlObject(yamlSource);
   if (!fm) return rawContent;
 
@@ -291,6 +315,9 @@ export function removeTagFromMarkdown(rawContent: string, tag: string): string {
       body.length === 0 || body.endsWith('\n') ? '' : '\n'
     }`;
   }
+
+  // 7.5 — skip an anchored/aliased tags field instead of expanding it.
+  if (tagsFieldIsAnchored(yamlSource)) return rawContent;
 
   // Fallback: js-yaml load/dump path.
   const fm = loadYamlObject(yamlSource);
@@ -340,6 +367,9 @@ export function addTagToMarkdown(rawContent: string, tag: string): string {
       body.length === 0 || body.endsWith('\n') ? '' : '\n'
     }`;
   }
+
+  // 7.5 — skip an anchored/aliased tags field instead of expanding it via dump.
+  if (tagsFieldIsAnchored(yamlSource)) return rawContent;
 
   const fm = loadYamlObject(yamlSource) ?? {};
 

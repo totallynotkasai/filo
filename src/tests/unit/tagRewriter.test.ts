@@ -184,3 +184,42 @@ describe('tag rewriter — case-insensitive identity (Audit 2.2)', () => {
     expect(out).toBe(input);
   });
 });
+
+// ── 7.5 ───────────────────────────────────────────────────────────────────
+// The line-level rewriter declines a `tags:` field defined via a YAML anchor
+// (`tags: &x [..]`) or alias (`tags: *x`). The historical fallback was the
+// js-yaml load→dump path, but `dump({ noRefs: true })` EXPANDS the anchor and
+// re-emits the whole block — a larger, more surprising mutation than the
+// documented comment loss. So every rewriter now SKIPS an anchored/aliased
+// tags field and returns the file byte-for-byte unchanged.
+describe('tag rewriter — anchored/aliased tags field is left untouched (7.5)', () => {
+  const aliased = [
+    '---',
+    'common: &shared',
+    '  - alpha',
+    '  - beta',
+    'tags: *shared',
+    '---',
+    'body',
+    '',
+  ].join('\n');
+
+  it('does not expand an aliased tags field on rename', () => {
+    expect(rewriteTagInMarkdown(aliased, 'alpha', 'gamma')).toBe(aliased);
+  });
+
+  it('does not expand an aliased tags field on remove', () => {
+    expect(removeTagFromMarkdown(aliased, 'alpha')).toBe(aliased);
+  });
+
+  it('does not expand an aliased tags field on add', () => {
+    expect(addTagToMarkdown(aliased, 'delta')).toBe(aliased);
+  });
+
+  it('does not expand an anchor defined directly on the tags field', () => {
+    const anchored = ['---', 'tags: &t [alpha, beta]', '---', 'body', ''].join('\n');
+    expect(removeTagFromMarkdown(anchored, 'alpha')).toBe(anchored);
+    expect(rewriteTagInMarkdown(anchored, 'alpha', 'gamma')).toBe(anchored);
+    expect(addTagToMarkdown(anchored, 'delta')).toBe(anchored);
+  });
+});

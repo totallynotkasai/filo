@@ -245,9 +245,7 @@
   // covered. The local `announcement` text fills the gap for single-row
   // ops (add task, delete task, toggle complete) where no toast fires —
   // SR users would otherwise hear nothing when the row list mutates.
-  // Auto-clearing aria-live announcer; `dispose()` in onDestroy cancels the
-  // pending clear timer so a board unmounted within the window doesn't fire a
-  // late write against torn-down state (Audit 5.3).
+  // Auto-clearing aria-live announcer; announcer.dispose() in onDestroy (Audit 5.3).
   const announcer = createAriaAnnouncer();
   function announce(message: string): void {
     announcer.announce(message);

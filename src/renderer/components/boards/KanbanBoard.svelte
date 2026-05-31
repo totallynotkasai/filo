@@ -231,9 +231,7 @@
   // add/delete/rename, card add/move/delete on the row level. The local
   // announcement state fills that gap so SR users get parity with the
   // visible UI without duplicating toast traffic.
-  // Auto-clearing aria-live announcer; `dispose()` in onDestroy cancels the
-  // pending clear timer so a board unmounted within the window doesn't fire a
-  // late write against torn-down state (Audit 5.3).
+  // Auto-clearing aria-live announcer; announcer.dispose() in onDestroy (Audit 5.3).
   const announcer = createAriaAnnouncer();
   function announce(message: string): void {
     announcer.announce(message);

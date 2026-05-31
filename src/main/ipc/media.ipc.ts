@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as dns from 'dns';
 import { promisify } from 'util';
-import { assertSafeFilename, assertSafeRelativePath, assertWithinVault, isPrivateUrl, normalizeNumericIPv4 } from '../utils/pathSecurity';
+import { assertSafeFilename, assertSafeRelativePath, assertWithinVault, isPrivateUrl } from '../utils/pathSecurity';
 import { assertActiveVault } from '../utils/activeVaultCheck';
 import { getMimeType } from '../utils/mime';
 import { logMainError } from '../utils/mainLogger';
@@ -29,7 +29,14 @@ async function isHostnamePrivate(hostname: string): Promise<boolean> {
   const bare = hostname.startsWith('[') && hostname.endsWith(']')
     ? hostname.slice(1, -1)
     : hostname;
-  const normalised = normalizeNumericIPv4(bare);
+  // 3.1 — static check first. Catches IP literals (incl. the IPv4-mapped /
+  // NAT64 IPv6 hex forms and numeric-encoded IPv4 that `isPrivateUrl` now
+  // decodes) before we even hit DNS, and covers the DNS-failure path below.
+  // Re-bracket IPv6 literals so `new URL` inside `isPrivateUrl` parses them
+  // — the old `http://${normalised}/` fallback fed a bracketless IPv6 to the
+  // URL parser, which threw and only fail-closed by accident.
+  const staticUrl = bare.includes(':') ? `http://[${bare}]/` : `http://${bare}/`;
+  if (isPrivateUrl(staticUrl)) return true;
   try {
     const addrs = await dnsLookupAll(bare, { all: true });
     if (addrs.length === 0) return false;
@@ -39,9 +46,10 @@ async function isHostnamePrivate(hostname: string): Promise<boolean> {
     }
     return false;
   } catch {
-    // DNS failure — fall back to URL-string heuristic so an unresolvable
-    // host doesn't silently bypass the check. The fetch will fail too.
-    return isPrivateUrl(`http://${normalised}/`);
+    // DNS failure — the static check above already classified any literal /
+    // numeric form; an unresolvable name can't be probed further (the fetch
+    // will fail too), so treat it as non-private.
+    return false;
   }
 }
 

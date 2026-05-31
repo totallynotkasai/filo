@@ -323,6 +323,104 @@ export function normalizeNumericIPv4(hostname: string): string {
   return hostname;
 }
 
+/**
+ * 3.1 — parse an IPv6 address string into its 8 16-bit hextets, expanding
+ * `::` compression and folding a trailing embedded dotted-quad
+ * (`::ffff:127.0.0.1`) into two hextets. Returns null if the input isn't a
+ * well-formed IPv6 literal. Pure string math — no `net`/`dns` — so it's
+ * cheap and synchronous on the SSRF hot path.
+ */
+function parseIPv6ToHextets(addr: string): number[] | null {
+  let s = addr.trim();
+  if (s.length === 0) return null;
+  // Drop any zone id (`fe80::1%eth0`).
+  const pct = s.indexOf('%');
+  if (pct >= 0) s = s.slice(0, pct);
+  if (!s.includes(':')) return null;
+
+  // Fold a trailing dotted-quad (`...:1.2.3.4`) into two hextets so the
+  // group parser below only has to deal with hex.
+  const lastColon = s.lastIndexOf(':');
+  const tail = s.slice(lastColon + 1);
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(tail)) {
+    const octets = tail.split('.').map((o) => Number(o));
+    if (octets.some((o) => o > 255)) return null;
+    const high = ((octets[0] << 8) | octets[1]).toString(16);
+    const low = ((octets[2] << 8) | octets[3]).toString(16);
+    s = `${s.slice(0, lastColon + 1)}${high}:${low}`;
+  }
+
+  const compressed = s.includes('::');
+  // Only one `::` run is legal.
+  if (compressed && s.indexOf('::') !== s.lastIndexOf('::')) return null;
+
+  const [head, rest] = compressed ? s.split('::') : [s, ''];
+  const headGroups = head.length > 0 ? head.split(':') : [];
+  const tailGroups = rest.length > 0 ? rest.split(':') : [];
+
+  const parseGroup = (g: string): number | null => {
+    if (g.length === 0 || g.length > 4 || !/^[0-9a-f]+$/i.test(g)) return null;
+    return parseInt(g, 16);
+  };
+
+  const headVals: number[] = [];
+  for (const g of headGroups) {
+    const v = parseGroup(g);
+    if (v === null) return null;
+    headVals.push(v);
+  }
+  const tailVals: number[] = [];
+  for (const g of tailGroups) {
+    const v = parseGroup(g);
+    if (v === null) return null;
+    tailVals.push(v);
+  }
+
+  let hextets: number[];
+  if (compressed) {
+    const zeros = 8 - headVals.length - tailVals.length;
+    if (zeros < 0) return null;
+    hextets = [...headVals, ...new Array<number>(zeros).fill(0), ...tailVals];
+  } else {
+    if (headVals.length !== 8) return null;
+    hextets = headVals;
+  }
+  return hextets.length === 8 ? hextets : null;
+}
+
+/**
+ * 3.1 — if `ip6` is an IPv6 form that embeds an IPv4 address — IPv4-mapped
+ * (`::ffff:a.b.c.d`), IPv4-compatible (`::a.b.c.d`, deprecated but still
+ * routed by some stacks), or NAT64 well-known-prefix (`64:ff9b::a.b.c.d`)
+ * — return the embedded address as a dotted-quad string. Otherwise null.
+ *
+ * Accepts both the dotted spelling and the compressed-hex spelling
+ * (`::ffff:7f00:1`) that Node's URL parser canonicalises mapped forms into
+ * — the spelling an attacker supplies directly to dodge a dotted-quad-only
+ * regex. The caller classifies the returned v4 through the normal
+ * private-range checks, so a hex-encoded PUBLIC address decodes to a public
+ * v4 and is NOT over-blocked (`::ffff:808:808` → `8.8.8.8`). Exported for
+ * direct testing.
+ */
+export function extractEmbeddedIPv4(ip6: string): string | null {
+  const h = parseIPv6ToHextets(ip6);
+  if (!h) return null;
+  const toDottedQuad = (a: number, b: number): string =>
+    `${(a >> 8) & 0xff}.${a & 0xff}.${(b >> 8) & 0xff}.${b & 0xff}`;
+  const highZero = h[0] === 0 && h[1] === 0 && h[2] === 0 && h[3] === 0 && h[4] === 0;
+  // IPv4-mapped: ::ffff:a.b.c.d
+  if (highZero && h[5] === 0xffff) return toDottedQuad(h[6], h[7]);
+  // IPv4-compatible: ::a.b.c.d. Skip the all-zero unspecified address
+  // (`::`), which the caller classifies directly via the `ip6 === '::'`
+  // test; `::1` decodes to `0.0.0.1`, still private via the `0.` check.
+  if (highZero && h[5] === 0 && (h[6] !== 0 || h[7] !== 0)) return toDottedQuad(h[6], h[7]);
+  // NAT64 well-known prefix: 64:ff9b::/96
+  if (h[0] === 0x0064 && h[1] === 0xff9b && h[2] === 0 && h[3] === 0 && h[4] === 0 && h[5] === 0) {
+    return toDottedQuad(h[6], h[7]);
+  }
+  return null;
+}
+
 export function isPrivateUrl(urlString: string): boolean {
   try {
     // D.1 — IPv4-mapped (`::ffff:1.2.3.4`) and IPv4-compatible
@@ -345,6 +443,18 @@ export function isPrivateUrl(urlString: string): boolean {
     const ip6 = hostname.startsWith('[') && hostname.endsWith(']')
       ? hostname.slice(1, -1)
       : hostname;
+    // 3.1 — decode IPv4-mapped (`::ffff:`), IPv4-compatible (`::`), and
+    // NAT64 (`64:ff9b::/96`) IPv6 forms — including the compressed-HEX
+    // encodings Node's URL parser produces (`::ffff:a00:1`) and that an
+    // attacker can supply directly — to their embedded dotted-quad and
+    // classify by THAT. The `rawMapped` branch above only catches the
+    // literal dotted-quad spelling; this catches the hex/NAT64 forms it
+    // missed. Classifying by the embedded v4 keeps a hex-encoded PUBLIC
+    // address allowed (`::ffff:808:808` → `8.8.8.8`).
+    const embeddedV4 = extractEmbeddedIPv4(ip6);
+    if (embeddedV4) {
+      return isPrivateUrl(`http://${embeddedV4}`);
+    }
     // Phase 31 A5.3 — normalise numeric encodings before regex tests.
     const normalised = normalizeNumericIPv4(hostname);
     return (

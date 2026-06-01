@@ -22,14 +22,43 @@ import { parseDocument, isMap } from 'yaml';
  * couldn't understand (mirrors the existing `loadYamlObject(...) → null` guard).
  */
 
-/** Structural equality for frontmatter values (scalars, arrays, plain objects). */
+/**
+ * Structural equality for frontmatter values (scalars, arrays, plain objects).
+ *
+ * 6.4.M3 — the previous `JSON.stringify(a) === JSON.stringify(b)` form was
+ * key-order-sensitive for plain objects: a YAML map `{author, date}` on disk
+ * compared unequal to an in-memory `{date, author}` even though they're the
+ * same data. The unequal verdict tripped a `doc.set(key, value)` rewrite of
+ * the entire node, which discards the original CST tokens — losing any
+ * comments attached to the unchanged keys inside that map. Recursing
+ * structurally fixes the comparison without rebuilding the JSON twice.
+ */
 function valuesEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
-  try {
-    return JSON.stringify(a) === JSON.stringify(b);
-  } catch {
-    return false;
+  if (a === null || b === null) return false;
+  if (typeof a !== typeof b) return false;
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b)) return false;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!valuesEqual(a[i], b[i])) return false;
+    }
+    return true;
   }
+  if (typeof a === 'object') {
+    if (typeof b !== 'object' || Array.isArray(b)) return false;
+    const aObj = a as Record<string, unknown>;
+    const bObj = b as Record<string, unknown>;
+    const aKeys = Object.keys(aObj);
+    const bKeys = Object.keys(bObj);
+    if (aKeys.length !== bKeys.length) return false;
+    for (const key of aKeys) {
+      if (!Object.prototype.hasOwnProperty.call(bObj, key)) return false;
+      if (!valuesEqual(aObj[key], bObj[key])) return false;
+    }
+    return true;
+  }
+  return false;
 }
 
 /**

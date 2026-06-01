@@ -67,6 +67,44 @@ describe('patchFrontmatterSource', () => {
     expect(patchFrontmatterSource('a:\n\tb: 1', { a: 1 })).toBeNull();
   });
 
+  // 6.4.M3 — `valuesEqual` historically used `JSON.stringify` for value
+  // equality. That's key-order-sensitive for plain objects: two YAML maps
+  // with identical content but different key order serialised differently,
+  // tripping a node-rewrite and dropping the YAML comment on the node.
+  it('keeps a nested-map value comment when only the key ORDER differs (M3)', () => {
+    const src = [
+      'meta:',
+      '  # author note — preserve me',
+      '  author: ada',
+      '  date: 2026-06-01',
+      'title: T',
+    ].join('\n');
+    // Same content, opposite key order — the engine MUST treat this as
+    // equal and skip the node rewrite (otherwise the comment is lost).
+    const out = patchFrontmatterSource(src, {
+      meta: { date: '2026-06-01', author: 'ada' },
+      title: 'T',
+    });
+    expect(out).not.toBeNull();
+    expect(out).toContain('# author note — preserve me');
+  });
+
+  it('keeps an array value comment when array elements differ only in JSON key order (M3)', () => {
+    const src = [
+      'people:',
+      '  # roster — keep this comment',
+      '  - { name: ada, role: lead }',
+      'title: T',
+    ].join('\n');
+    // Same array content, opposite key order inside the element.
+    const out = patchFrontmatterSource(src, {
+      people: [{ role: 'lead', name: 'ada' }],
+      title: 'T',
+    });
+    expect(out).not.toBeNull();
+    expect(out).toContain('# roster — keep this comment');
+  });
+
   it('round-trips a block-style tags list when an unrelated key changes', () => {
     const src = ['tags:', '  - alpha', '  - beta', 'status: open'].join('\n');
     const out = patchFrontmatterSource(src, { tags: ['alpha', 'beta'], status: 'closed' });

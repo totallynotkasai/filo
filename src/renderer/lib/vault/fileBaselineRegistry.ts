@@ -171,6 +171,40 @@ export function clearBaseline(path: string): void {
 }
 
 /**
+ * Post-write baseline refresh: either stamps a fresh baseline when the stat
+ * supplies usable mtime + size, OR clears the prior entry when the stat
+ * yielded nothing usable (the IPC threw, returned no fields, or returned
+ * NaN). Without the clear-on-failure branch, a transient AV / SMB / VFS
+ * stat hiccup leaves the PRE-write baseline pinned to the path; the next
+ * reconcile then diffs post-write disk bytes against the pre-write
+ * baseline and surfaces a spurious "modified externally" toast.
+ *
+ * Used by every successful self-write site (`markdownFileWriter`,
+ * `boardWriteScheduler`, `configWriteScheduler`) instead of the legacy
+ * `try { noteBaseline(...) } catch {}` form, which silently masked both
+ * the throw case AND the missing-fields case.
+ *
+ * 6.4.M2 (2026-06-01).
+ */
+export function refreshOrClearBaseline(
+  path: string,
+  mtimeMs: number | undefined | null,
+  size: number | undefined | null,
+): void {
+  if (!path) return;
+  if (
+    typeof mtimeMs === 'number' &&
+    Number.isFinite(mtimeMs) &&
+    typeof size === 'number' &&
+    Number.isFinite(size)
+  ) {
+    noteBaseline(path, mtimeMs, size);
+    return;
+  }
+  clearBaseline(path);
+}
+
+/**
  * Wipes every baseline entry. Routed through the vault-swap reset hook
  * so a baseline captured against the outgoing vault can't suppress a
  * legitimate drift check against a same-named file in the new vault.

@@ -45,7 +45,7 @@ import { documentStore } from '../../stores/document.svelte';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import { parseMarkdown } from './vaultIndex';
 import { onVaultSwap, vaultSwapResettable } from '../../core/vaultLifecycle';
-import { getBaseline, noteBaseline, resetAllBaselines, hasBaselineDrifted } from './fileBaselineRegistry';
+import { getBaseline, noteBaseline, resetAllBaselines, hasBaselineDrifted, refreshOrClearBaseline } from './fileBaselineRegistry';
 import { registerPathRenamable } from './renamePathKeys';
 
 /**
@@ -502,11 +502,17 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
   // value, which would surface a spurious drift toast on the NEXT
   // write — and the user's "Keep-local" answer still lets them
   // proceed.
+  // 6.4.M2 — clear the prior baseline on stat failure / unusable stat
+  // (AV scanner, SMB latency, VFS quirks). Leaving the PRE-write baseline
+  // pinned to the path would surface a spurious "modified externally"
+  // toast the next time the reconcile loop runs against the post-write
+  // disk bytes. The "no baseline" path is benign: writers proceed without
+  // a drift check until the next hydrate / successful write seeds again.
   try {
     const postStat = await invokeOk('vault:stat', vaultRoot, relPath);
-    noteBaseline(relPath, postStat.mtimeMs, postStat.size);
+    refreshOrClearBaseline(relPath, postStat.mtimeMs, postStat.size);
   } catch {
-    // Non-fatal — the next hydrate / write will rebase.
+    refreshOrClearBaseline(relPath, undefined, undefined);
   }
   // Sprint C / C-A5-2 — refresh the vault index from the just-written bytes
   // so a late watcher echo past the renderer-side suppression TTL

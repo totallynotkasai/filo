@@ -34,7 +34,7 @@ import {
 import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { createScheduler } from './writeScheduler';
-import { getBaseline, noteBaseline, hasBaselineDrifted } from '../vault/fileBaselineRegistry';
+import { getBaseline, noteBaseline, hasBaselineDrifted, refreshOrClearBaseline } from '../vault/fileBaselineRegistry';
 
 export interface ConfigWriteArgs {
   vaultRoot: string;
@@ -327,11 +327,13 @@ export async function writeConfigs(
       lastWrittenConfigs.set(target, payload);
       // Phase R6 — refresh baseline so the next write compares against
       // the state we just wrote, not the pre-write one.
+      // 6.4.M2 — clear on stat failure / unusable stat to avoid a
+      // spurious drift toast on next reconcile (AV / SMB / VFS quirks).
       try {
         const postStat = await invokeOk('vault:stat', vaultRoot, sentinelPath);
-        noteBaseline(sentinelPath, postStat.mtimeMs, postStat.size);
+        refreshOrClearBaseline(sentinelPath, postStat.mtimeMs, postStat.size);
       } catch {
-        // Non-fatal — next load/write rebases.
+        refreshOrClearBaseline(sentinelPath, undefined, undefined);
       }
     } catch (err) {
       console.error(`[V7] Failed to save config file (${target}):`, err);

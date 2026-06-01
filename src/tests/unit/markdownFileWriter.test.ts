@@ -33,6 +33,11 @@ import {
 import { fireVaultSwap } from '../../renderer/core/vaultLifecycle';
 import { __resetDirtyTrackingForTests } from '../../renderer/lib/boards/boardSaver';
 import { vaultIndexStore } from '../../renderer/stores/vaultIndex.svelte';
+import {
+  noteBaseline,
+  getBaseline,
+  __resetBaselinesForTests,
+} from '../../renderer/lib/vault/fileBaselineRegistry';
 
 interface InvokeArgs {
   channel: string;
@@ -424,6 +429,110 @@ describe('markdownFileWriter — gateway contract', () => {
     expect(metadata!.content.trim()).toBe('Post-write body.');
     expect(metadata!.tags).toContain('after-write');
     expect(metadata!.frontmatter.status).toBe('done');
+  });
+});
+
+// 6.4.M2 — when the post-write `vault:stat` fails or returns a stat without
+// finite mtime/size (AV scanner / SMB latency / VFS quirks), the prior
+// implementation swallowed the error and left the PRE-write baseline in
+// place. Next reconcile compared post-write disk bytes against the
+// pre-write baseline and surfaced a spurious "modified externally" toast.
+//
+// The fix: clear the baseline on stat failure / unusable stat — the
+// "no baseline" path is benign (writers proceed without drift check
+// until the next successful hydrate or write seeds a fresh baseline).
+describe('markdownFileWriter — post-write baseline failures (M2)', () => {
+  beforeEach(() => {
+    __resetMarkdownFileWriterForTests();
+    __resetDirtyTrackingForTests();
+    __resetBaselinesForTests();
+  });
+  afterEach(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    __resetMarkdownFileWriterForTests();
+    __resetDirtyTrackingForTests();
+    __resetBaselinesForTests();
+    (window as unknown as Record<string, unknown>).filo = {
+      invoke: async () => undefined,
+      on: () => () => {},
+      send: () => {},
+    };
+  });
+
+  it('clears stale baseline when post-write vault:stat throws', async () => {
+    const relPath = 'Notes/baselineThrow.md';
+
+    // Pre-stamp the baseline at the PRE-write state.
+    noteBaseline(relPath, 100, 10);
+    expect(getBaseline(relPath)).toEqual({ mtimeMs: 100, size: 10 });
+
+    markHydrated(relPath, false);
+
+    (window as unknown as Record<string, unknown>).filo = {
+      invoke: async (channel: string) => {
+        if (channel === 'vault:write-existing-file-text') {
+          return { success: true };
+        }
+        if (channel === 'vault:stat') {
+          // AV / SMB transient — stat throws after a successful write.
+          return { success: false, error: 'ENOENT (transient)' };
+        }
+        return { success: true, ok: true };
+      },
+      on: () => () => {},
+      send: () => {},
+    };
+
+    await writeMarkdownFile({
+      vaultRoot: '/vault',
+      relPath,
+      frontmatter: {},
+      body: 'New body',
+      callerId: 'baseline-throw',
+      docId: null,
+    });
+
+    // Bug: baseline still 100/10 — next reconcile flags this file as
+    // "modified externally". Fix: baseline is cleared (undefined) so the
+    // next hydrate or successful write seeds a fresh value.
+    expect(getBaseline(relPath)).toBeUndefined();
+  });
+
+  it('clears stale baseline when post-write vault:stat returns unusable mtime/size', async () => {
+    const relPath = 'Notes/baselineMissing.md';
+
+    noteBaseline(relPath, 200, 20);
+    expect(getBaseline(relPath)).toEqual({ mtimeMs: 200, size: 20 });
+
+    markHydrated(relPath, false);
+
+    (window as unknown as Record<string, unknown>).filo = {
+      invoke: async (channel: string) => {
+        if (channel === 'vault:write-existing-file-text') {
+          return { success: true };
+        }
+        if (channel === 'vault:stat') {
+          // Some VFS layers return success without mtime/size (or NaN).
+          // noteBaseline early-outs on undefined — the prior code then
+          // left the stale baseline. Fix: clear instead.
+          return { success: true, mtimeMs: undefined, size: undefined };
+        }
+        return { success: true, ok: true };
+      },
+      on: () => () => {},
+      send: () => {},
+    };
+
+    await writeMarkdownFile({
+      vaultRoot: '/vault',
+      relPath,
+      frontmatter: {},
+      body: 'Body 2',
+      callerId: 'baseline-missing',
+      docId: null,
+    });
+
+    expect(getBaseline(relPath)).toBeUndefined();
   });
 });
 

@@ -1232,10 +1232,26 @@ export const vaultStore = {
    * watcher listeners route both `vault:tree-updated` and
    * `vault:file-renamed` through this queue so they execute in arrival
    * order. Tests use it to interleave the two operations deterministically.
+   *
+   * 6.4.M6 — when `errorContext` is supplied, the queue calls `reportError`
+   * with the given label + message on rejection so listener-driven tasks
+   * (which can't await the returned promise) still surface their failures
+   * to the user. The returned promise rejects either way; tests + sync
+   * callers can choose to `.catch` directly. Subsequent enqueued work is
+   * unaffected by a prior task's rejection — each task is self-contained
+   * and re-reads authoritative state at start, so the chain stays alive.
    */
-  enqueueRenameQueueWork<T>(task: () => Promise<T>): Promise<T> {
+  enqueueRenameQueueWork<T>(
+    task: () => Promise<T>,
+    errorContext?: { label: string; message: string },
+  ): Promise<T> {
     const next = renameQueue.then(task, task);
     renameQueue = next.catch(() => undefined);
+    if (errorContext) {
+      next.catch((err) => {
+        reportError(errorContext.label, err, errorContext.message);
+      });
+    }
     return next;
   },
 
@@ -1248,11 +1264,18 @@ export const vaultStore = {
       // board path — the reconciler then sees the renamed board's
       // path as "missing" and calls `cleanupMissingBoard`, evicting
       // it from the project.
-      renameQueue = renameQueue
-        .then(() => this.refreshTreeAndCleanup())
-        .catch((err) => {
-          reportError('vault.treeUpdated', err, 'Failed to reconcile vault tree after external change');
-        });
+      // 6.4.M6 — route through `enqueueRenameQueueWork` with an error
+      // context so the queue-side catch fires reportError. The listener
+      // can't await the returned promise; the .catch on the result
+      // silences the "uncaught rejection" warning since enqueue already
+      // logged via reportError.
+      void this.enqueueRenameQueueWork(
+        () => this.refreshTreeAndCleanup(),
+        {
+          label: 'vault.treeUpdated',
+          message: 'Failed to reconcile vault tree after external change',
+        },
+      ).catch(() => undefined);
     });
 
     const unsubFiles = window.filo.on('vault:files-changed', (...args: unknown[]) => {
@@ -1283,15 +1306,13 @@ export const vaultStore = {
         filename: c.filename,
         eventType: c.eventType,
       }));
-      renameQueue = renameQueue
-        .then(() => dispatchExternalChangeBatch(events))
-        .catch((err) => {
-          reportError(
-            'vault.externalChange',
-            err,
-            'Failed to reconcile external file changes',
-          );
-        });
+      void this.enqueueRenameQueueWork(
+        () => dispatchExternalChangeBatch(events),
+        {
+          label: 'vault.externalChange',
+          message: 'Failed to reconcile external file changes',
+        },
+      ).catch(() => undefined);
     });
 
     // External cross-folder moves (OS file explorer, sync clients, git
@@ -1321,11 +1342,13 @@ export const vaultStore = {
       // handler rebinds `boardPaths` (Phase 2 / 2.4). Errors are
       // surfaced but don't break the chain (next event still fires) —
       // a single bad rename shouldn't poison every subsequent one.
-      renameQueue = renameQueue
-        .then(() => this.handleExternalRename(oldRel, newRel))
-        .catch((err) => {
-          reportError('vault.handleRename', err, `Failed to propagate external rename "${oldRel}" → "${newRel}"`);
-        });
+      void this.enqueueRenameQueueWork(
+        () => this.handleExternalRename(oldRel, newRel),
+        {
+          label: 'vault.handleRename',
+          message: `Failed to propagate external rename "${oldRel}" → "${newRel}"`,
+        },
+      ).catch(() => undefined);
     });
 
     // fs.watch failed on this platform / filesystem (e.g., unsupported network

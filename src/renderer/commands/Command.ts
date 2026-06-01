@@ -15,6 +15,19 @@
  * interface adds members to the class's instance type, and class
  * instances are structurally assignable to plain `Command` references
  * elsewhere in the codebase.
+ *
+ * Phase 6.1.R3 note. The class deliberately does NOT add a
+ * `markBoardDirty()` helper. The natural implementation would import
+ * `boardCacheStore` here, which closes a cycle (Command →
+ * boardCache.svelte → vaultExternalChanges → fileTags → commands/index
+ * → tileCommands → extends Command) that breaks class evaluation at
+ * tileCommands `extends Command`. Instead, every command file imports
+ * `boardCacheStore` directly (their existing pattern) and calls
+ * `boardCacheStore.markDirty(this.targetBoardId)`. The new CI gate
+ * `check-command-targets-self.mjs` forbids `boardStore.current` and
+ * non-`this.targetBoardId` arguments in `boardCacheStore.markDirty(...)`
+ * calls inside command files, giving us the same invariant the helper
+ * would have without the cycle.
  */
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export interface Command {

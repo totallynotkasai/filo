@@ -357,6 +357,7 @@ export class CascadeDeleteCommand extends Command {
       return;
     }
 
+    // allow-board-store-current: active-vs-cache pivot — the command operates across boards, so we route same-board mutations through the runtime facade and other-board mutations through the cache-only persist path
     const activeId = boardStore.current?.id ?? null;
     for (const [boardId, tiles] of Object.entries(this.byBoard)) {
       for (const tile of tiles) {
@@ -479,6 +480,7 @@ export class CascadeDeleteCommand extends Command {
     // the no-snapshot tiles would silently materialise a blank file in the
     // user's vault. With the flag the placement comes back pointing at a
     // missing file and the existing broken-ref UX kicks in.
+    // allow-board-store-current: active-vs-cache pivot, mirror of execute()
     const activeId = boardStore.current?.id ?? null;
     for (const [boardId, tiles] of Object.entries(this.byBoard)) {
       for (const tile of tiles) {

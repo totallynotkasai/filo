@@ -387,7 +387,7 @@ export class UpdateTaskFieldCommand extends Command {
       applyFrontmatterPatchRebased({
         docId: this.docId,
         relPath: this.relPath,
-        boardId: this.boardId,
+        targetBoardId: this.targetBoardId,
         applying: this.patch,
         expectedCurrent: this.inversePatch,
         label: this.relPath,
@@ -396,7 +396,7 @@ export class UpdateTaskFieldCommand extends Command {
     }
     if (this.docId) documentStore.mergeFrontmatter(this.docId, this.patch);
     scheduleFrontmatterWrite(this.relPath, this.docId);
-    boardCacheStore.markDirty(this.boardId);
+    boardCacheStore.markDirty(this.targetBoardId);
   }
 
   async undo(): Promise<void> {
@@ -407,14 +407,14 @@ export class UpdateTaskFieldCommand extends Command {
       applyFrontmatterPatchRebased({
         docId: this.docId,
         relPath: this.relPath,
-        boardId: this.boardId,
+        targetBoardId: this.targetBoardId,
         applying: this.inversePatch,
         expectedCurrent: this.patch,
         label: this.relPath,
       });
     } else {
       scheduleFrontmatterWrite(this.relPath, this.docId);
-      boardCacheStore.markDirty(this.boardId);
+      boardCacheStore.markDirty(this.targetBoardId);
     }
   }
 }

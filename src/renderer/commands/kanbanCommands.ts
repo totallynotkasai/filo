@@ -51,7 +51,10 @@ function restoreKanbanColumns(boardId: string, snapshot: KanbanBoard['columns'])
   // a subsequent redo→undo cycle (the live board must not share references
   // with it).
   (kb as Record<string, unknown>).columns = cloneForSnapshot(snapshot);
-  boardCacheStore.markDirty(boardId);
+  // Phase 6.1.R3 — the caller (always a Command's undo) is responsible
+  // for `boardCacheStore.markDirty(this.targetBoardId)` so the gate's
+  // "only this.targetBoardId" rule isn't laundered through a helper that
+  // takes a parameter `boardId`.
 }
 
 export class AddCardCommand extends Command {
@@ -366,7 +369,10 @@ export class DeleteColumnCommand extends Command {
   }
 
   undo() {
-    if (this.columnsBefore) restoreKanbanColumns(this.boardId, this.columnsBefore);
+    if (this.columnsBefore) {
+      restoreKanbanColumns(this.boardId, this.columnsBefore);
+      boardCacheStore.markDirty(this.targetBoardId);
+    }
   }
 }
 
@@ -520,7 +526,7 @@ export class UpdateCardFieldCommand extends Command {
       applyFrontmatterPatchRebased({
         docId: this.docId,
         relPath: this.relPath,
-        boardId: this.boardId,
+        targetBoardId: this.targetBoardId,
         applying: this.patch,
         expectedCurrent: this.inversePatch,
         label: this.relPath,
@@ -529,7 +535,7 @@ export class UpdateCardFieldCommand extends Command {
     }
     if (this.docId) documentStore.mergeFrontmatter(this.docId, this.patch);
     scheduleFrontmatterWrite(this.relPath, this.docId);
-    boardCacheStore.markDirty(this.boardId);
+    boardCacheStore.markDirty(this.targetBoardId);
   }
 
   async undo(): Promise<void> {
@@ -540,14 +546,14 @@ export class UpdateCardFieldCommand extends Command {
       applyFrontmatterPatchRebased({
         docId: this.docId,
         relPath: this.relPath,
-        boardId: this.boardId,
+        targetBoardId: this.targetBoardId,
         applying: this.inversePatch,
         expectedCurrent: this.patch,
         label: this.relPath,
       });
     } else {
       scheduleFrontmatterWrite(this.relPath, this.docId);
-      boardCacheStore.markDirty(this.boardId);
+      boardCacheStore.markDirty(this.targetBoardId);
     }
   }
 }
@@ -593,12 +599,12 @@ export class UpdateOrphanFrontmatterCommand extends Command {
 
   async execute(): Promise<void> {
     await applyOrphanPatch(this.relPath, this.patch);
-    boardCacheStore.markDirty(this.boardId);
+    boardCacheStore.markDirty(this.targetBoardId);
   }
 
   async undo(): Promise<void> {
     await applyOrphanPatch(this.relPath, this.inversePatch);
-    boardCacheStore.markDirty(this.boardId);
+    boardCacheStore.markDirty(this.targetBoardId);
   }
 }
 

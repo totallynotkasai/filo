@@ -45,16 +45,17 @@ export class UpdatePropertiesCommand extends Command {
   /**
    * Phase 3 / 3.1 (polish plan 2026-05-25) — capture the originating board
    * so the history dispatcher refuses to redo this against a different
-   * board. `applySnapshot` ends with `boardCacheStore.markDirty(boardStore.current?.id)`
-   * — a redo with the wrong active board would silently mark that other
-   * board dirty (and an Update*Tile call could find an unrelated tile by
-   * ID). The targetBoardId guard in `historyStore.undo/redo` surfaces a
-   * "switch back to originate" toast instead.
+   * board. The execute/undo's `boardCacheStore.markDirty(this.targetBoardId)`
+   * call (post Phase 6.1.R3) always uses the captured id — a redo against
+   * a different active board would otherwise mark the wrong board dirty
+   * AND the targetBoardId guard in `historyStore.undo/redo` surfaces a
+   * "switch back to originate" toast.
    */
   readonly targetBoardId: string;
   private before: PropertiesSnapshot;
   private after: PropertiesSnapshot;
 
+  // allow-board-store-current: constructor fallback for callers that didn't capture an explicit boardId
   constructor(before: PropertiesSnapshot, after: PropertiesSnapshot, boardId?: string) {
     super();
     this.targetBoardId = boardId ?? boardStore.current?.id ?? '';
@@ -83,10 +84,17 @@ export class UpdatePropertiesCommand extends Command {
 
   async execute(): Promise<void> {
     await applySnapshot(this.after);
+    // Phase 6.1.R3 — dirty the ORIGINATING board, not whichever board is
+    // active at execute/redo time. The metadata-kind branch of
+    // `applySnapshot` previously skipped this entirely (silently),
+    // leaving the cache flush dependent on a sibling write — this call
+    // closes that gap too.
+    boardCacheStore.markDirty(this.targetBoardId);
   }
 
   async undo(): Promise<void> {
     await applySnapshot(this.before);
+    boardCacheStore.markDirty(this.targetBoardId);
   }
 }
 
@@ -145,5 +153,8 @@ async function applySnapshot(snap: PropertiesSnapshot): Promise<void> {
     reportError('updateProperties', err, `Failed to apply properties to ${snap.relPath}`);
   }
 
-  boardCacheStore.markDirty(boardStore.current?.id ?? '');
+  // Phase 6.1.R3 — the markDirty call moved up into the command's
+  // execute/undo so it (a) always uses `this.targetBoardId` and (b)
+  // also fires on the metadata-kind branch (which previously returned
+  // early without dirtying).
 }

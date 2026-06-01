@@ -256,6 +256,7 @@ export class DeleteTilesCommand extends Command {
     // board edges through the active facade, other-board edges through the
     // cache-only persist path. Both are safe no-ops when `removeTile`
     // already swept the edge.
+    // allow-board-store-current: active-vs-cache pivot for cross-board connections
     const activeId = boardStore.current?.id ?? null;
     for (const conn of this.connections) {
       if (conn.boardId === activeId) {
@@ -411,6 +412,7 @@ export class DeleteTilesCommand extends Command {
       // connections on other boards need the cache-only persist path so they
       // don't accidentally land on the currently focused board's runtime
       // state.
+      // allow-board-store-current: active-vs-cache pivot for restored connections
       const activeId = boardStore.current?.id ?? null;
       if (conn.boardId === activeId) {
         boardStore.addConnection(conn);

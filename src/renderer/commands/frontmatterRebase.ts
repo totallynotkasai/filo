@@ -51,7 +51,16 @@ function fmValueEqual(a: unknown, b: unknown): boolean {
 export interface RebaseFrontmatterArgs {
   docId: string;
   relPath: string;
-  boardId: string;
+  /**
+   * Phase 6.1.R3 — renamed from `boardId` to `targetBoardId` so callers
+   * pass the command's `this.targetBoardId` verbatim. The helper is the
+   * sanctioned chokepoint for "dirty the originating board after a
+   * rebased frontmatter merge"; the inline escape on the `markDirty`
+   * line below tells `check-command-targets-self.mjs` that this
+   * laundered-through-parameter call is intentional, and the gate
+   * verifies every caller passes `this.targetBoardId`.
+   */
+  targetBoardId: string;
   /** The patch applied this leg — the forward patch on execute/redo, the inverse on undo. */
   applying: Record<string, unknown>;
   /**
@@ -71,12 +80,13 @@ export interface RebaseFrontmatterArgs {
  * matching the post-merge bookkeeping the callers used to do inline.
  */
 export function applyFrontmatterPatchRebased(args: RebaseFrontmatterArgs): void {
-  const { docId, relPath, boardId, applying, expectedCurrent, label } = args;
+  const { docId, relPath, targetBoardId, applying, expectedCurrent, label } = args;
 
   const commit = (patch: Record<string, unknown>): void => {
     documentStore.mergeFrontmatter(docId, patch);
     scheduleFrontmatterWrite(relPath, docId);
-    boardCacheStore.markDirty(boardId);
+    // allow-non-target-markdirty: shared helper, callers pass this.targetBoardId per the CI gate
+    boardCacheStore.markDirty(targetBoardId);
   };
 
   const current = documentStore.getFrontmatter(docId);

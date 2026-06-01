@@ -175,6 +175,25 @@ interface ForceWriter {
 }
 const forceWriters = new Map<string, ForceWriter>();
 
+/**
+ * 6.2.H10 — in-flight write tracker keyed by `callerId`. Populated for the
+ * lifetime of each `writeMarkdownFile` call so concurrent paths can
+ * `await` any pending IPC for the same caller before re-arming a write.
+ *
+ * Pre-fix race: `scheduleMarkdownWrite` armed a timer; the timer fired
+ * and `writeMarkdownFile` entered the IPC await; before that resolved a
+ * `forceWriteForDocument` ran, called `cancelMarkdownWrite` (no-op — the
+ * timer had already fired), and started a second `writeMarkdownFile`.
+ * Two writes raced; the OS serialised them in arbitrary order, the loser
+ * silently clobbered the winner's bytes.
+ *
+ * The wrapper inside `writeMarkdownFile` sets/clears the map entry; the
+ * `awaitInFlightWriteForCaller` helper exposes it to the force/cancel
+ * paths.
+ */
+// allow-module-state: drained synchronously by cancelAllMarkdownWrites at vault swap
+const inFlightWrites = new Map<string, Promise<void>>();
+
 // ── Hydrate gate ──
 
 /**
@@ -362,6 +381,24 @@ export async function readMarkdownForHydrate(
  *    mark its component as backing-file-missing, surface its own toast, etc.
  */
 export async function writeMarkdownFile(args: WriteArgs): Promise<void> {
+  // 6.2.H10 — track this fire's promise so a concurrent
+  // `forceWriteForDocument` or `cancelMarkdownWritesForDocument`
+  // can await it before re-arming a new write or returning. Without
+  // this, the timer's late fire (already past the cancel point) raced
+  // a force-write at the IPC layer — two writes ordered by the OS,
+  // last one wins, the loser's bytes silently lost.
+  const promise = writeMarkdownFileImpl(args);
+  inFlightWrites.set(args.callerId, promise);
+  try {
+    await promise;
+  } finally {
+    if (inFlightWrites.get(args.callerId) === promise) {
+      inFlightWrites.delete(args.callerId);
+    }
+  }
+}
+
+async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
   const { vaultRoot, relPath, body, callerId, docId } = args;
   if (!vaultRoot || !relPath) {
     throw new Error('markdownFileWriter: vaultRoot and relPath are required');
@@ -720,6 +757,12 @@ export function cancelAllMarkdownWrites(): void {
   lastSeenArgs.clear();
   fileState.clear();
   forceWriters.clear();
+  // 6.2.H10 — drop in-flight promise refs. The promises themselves
+  // will still settle (we can't unsettle a pending IPC), but with no
+  // map entry any cancel/force await becomes a no-op for the new
+  // vault — late settlement of an outgoing-vault write does not block
+  // incoming-vault setup.
+  inFlightWrites.clear();
 }
 
 // ── Keep-local force-write API ──
@@ -765,6 +808,38 @@ export function cancelMarkdownWritesForDocument(docId: string): void {
 }
 
 /**
+ * 6.2.H10 — async sibling of `cancelMarkdownWritesForDocument`. Cancels the
+ * armed timers (the synchronous part) AND awaits any in-flight write IPC
+ * for matching callers. Use when the caller needs the guarantee that no
+ * writer is still pumping bytes against `docId` before it proceeds
+ * (vault swap, tab close, recovery sentinels). Returns once every in-
+ * flight write for the matched callers has settled.
+ *
+ * The sync version remains for callers that just want to disarm timers
+ * (the most common case — `applyReloadFromDisk` synchronously replaces
+ * state on the next line, and the in-flight write's clobber is bounded
+ * by the next debounce's correction).
+ */
+export async function cancelAndAwaitMarkdownWritesForDocument(
+  docId: string,
+): Promise<void> {
+  if (!docId) return;
+  const targets: string[] = [];
+  for (const [callerId, entry] of forceWriters.entries()) {
+    if (entry.docId === docId) {
+      cancelMarkdownWrite(callerId);
+      targets.push(callerId);
+    }
+  }
+  await Promise.all(
+    targets.map((id) => {
+      const p = inFlightWrites.get(id);
+      return p ? p.catch(() => undefined) : Promise.resolve();
+    }),
+  );
+}
+
+/**
  * Forces every writer matching `docId` to commit its current in-memory body
  * to disk. Returns the same shape as the old `markdownWriteRegistry.forceWriteForDocument`
  * so existing consumers (the Keep-local handler in `vaultExternalChanges`)
@@ -806,6 +881,15 @@ export async function forceWriteForDocument(docId: string): Promise<ForceWriteRe
         // Cancel any armed schedule for this caller so the immediate write
         // isn't duplicated by the timer's deferred write a few hundred ms later.
         cancelMarkdownWrite(args.callerId);
+        // 6.2.H10 — if a timer's late fire is still in the IPC await chain
+        // for this caller, wait for it to settle before starting the new
+        // write. Without this guard the two writes raced and the OS
+        // arbitrated the order, leaving the loser's bytes on disk under
+        // the winner. `.catch` swallows the prior write's failure because
+        // we're about to issue a fresh one — the prior failure has its
+        // own attribution via trackComponentWrite.
+        const prior = inFlightWrites.get(args.callerId);
+        if (prior) await prior.catch(() => undefined);
         await writeMarkdownFile(args);
       }),
     ),

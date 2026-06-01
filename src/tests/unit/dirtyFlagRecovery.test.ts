@@ -307,6 +307,20 @@ describe('dirtyFlagRecovery', () => {
     expect(errors).toHaveLength(1);
   });
 
+  // 6.4.M5 — a zero-byte `.filo/.dirty` is evidence of a crash mid-flush
+  // (markDirty created the file but the JSON payload write didn't land).
+  // The legacy code treated zero-byte as "cleanly absent", silently hiding
+  // the crash from the user. Treat it as dirty with the sentinel-unreadable
+  // reason flag so the recovery UI surfaces the same "investigate manually"
+  // copy it shows for an EACCES read.
+  it('checkRecovery treats zero-byte .filo/.dirty as dirty (M5)', async () => {
+    const stub = installIpcStub();
+    stub.responses.set('vault:read-file-text', { success: true, content: '' });
+    const status = await checkRecovery('/vault');
+    expect(status.needsRecovery).toBe(true);
+    expect(status.reason).toBe('sentinel-unreadable');
+  });
+
   it('checkRecovery does NOT fire recovery:snapshot on ENOENT (clean steady state)', async () => {
     __resetErrorBusForTests();
     vi.spyOn(console, 'error').mockImplementation(() => undefined);

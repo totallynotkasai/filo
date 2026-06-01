@@ -194,9 +194,14 @@ export async function checkRecovery(vaultRoot: string): Promise<RecoveryStatus> 
     return { needsRecovery: true, reason: 'sentinel-unreadable' };
   }
   if (!content) {
-    // Empty sentinel — treat as cleanly absent. A zero-byte sentinel can
-    // happen mid-write; the next sentinel write will repopulate it.
-    return { needsRecovery: false };
+    // 6.4.M5 — a zero-byte `.filo/.dirty` is evidence of a crash that
+    // interrupted `markDirty` between the create-empty-file step and the
+    // JSON-payload write. The legacy code treated it as "cleanly absent",
+    // silently hiding the crash. Treat as dirty with the same reason flag
+    // as a sentinel-unreadable EACCES so the recovery UI surfaces the
+    // "investigate manually" copy. No `dirtyAt` available — that's the
+    // signal the recovery handler uses to detect the truncated case.
+    return { needsRecovery: true, reason: 'sentinel-unreadable' };
   }
   try {
     const parsed = JSON.parse(content) as SentinelPayload;

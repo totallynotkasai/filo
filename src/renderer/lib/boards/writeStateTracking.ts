@@ -49,6 +49,7 @@ const RECENT_SELF_WRITE_TTL_BULK_MS = 5000;
  */
 
 /** Vault-relative path -> expiry timestamp (ms since epoch). */
+// allow-module-state: reset via resetWriteTracking called from boardSaver's pre-swap handler
 const recentSelfWrites = new Map<VaultPath, number>();
 
 /**
@@ -145,6 +146,7 @@ let inflightWriteCount = 0;
  * collection (or sort the entries before trim) — the FIFO drop policy is
  * the whole point of using insertion-order iteration.
  */
+// allow-module-state: reset via resetWriteTracking called from boardSaver's pre-swap handler
 const pendingVaultPaths = new Set<VaultPath>();
 
 /**
@@ -155,6 +157,7 @@ const pendingVaultPaths = new Set<VaultPath>();
  * Same insertion-order invariant as `pendingVaultPaths` — overflow trim
  * removes the oldest failures first.
  */
+// allow-module-state: reset via resetWriteTracking called from boardSaver's pre-swap handler
 const failedVaultPaths = new Set<VaultPath>();
 
 /**

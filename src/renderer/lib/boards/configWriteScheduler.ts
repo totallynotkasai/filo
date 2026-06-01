@@ -75,6 +75,7 @@ type ConfigTarget =
  * time — isolated changes (theme only, workspace only) no longer rewrite
  * the other three files. Cleared on vault swap.
  */
+// allow-module-state: reset via resetConfigWriteScheduler called from boardSaver's pre-swap handler
 const lastWrittenConfigs = new Map<ConfigTarget, string>();
 
 /**
@@ -86,6 +87,7 @@ const lastWrittenConfigs = new Map<ConfigTarget, string>();
  * clears specific entries via `clearCorruptConfigTarget` once the user
  * resolves the issue (e.g. picks "Use defaults" in the modal).
  */
+// allow-module-state: reset via resetConfigWriteScheduler called from boardSaver's pre-swap handler
 const corruptConfigTargets = new Set<ConfigTarget>();
 
 export function markCorruptConfigTarget(target: ConfigTarget): void {

@@ -30,6 +30,7 @@ const VIEWPORTS_DEBOUNCE_MS = 1500;
 const VIEWPORTS_KEY = 'viewports';
 const VIEWPORTS_PATH = '.filo/viewports.json';
 
+// allow-module-state: cleared via registerResetCallback below (fires on vault swap and per-test)
 const viewportsCache = new Map<string, ViewportEntry>();
 let viewportsVaultRoot: string | null = null;
 

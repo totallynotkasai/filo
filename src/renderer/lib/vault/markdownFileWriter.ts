@@ -44,7 +44,7 @@ import { invokeOk } from '../utils/invokeOk';
 import { documentStore } from '../../stores/document.svelte';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import { parseMarkdown } from './vaultIndex';
-import { onVaultSwap } from '../../core/vaultLifecycle';
+import { onVaultSwap, vaultSwapResettable } from '../../core/vaultLifecycle';
 import { getBaseline, noteBaseline, resetAllBaselines, hasBaselineDrifted } from './fileBaselineRegistry';
 
 /**
@@ -547,6 +547,16 @@ interface TestFlusherEntry {
   getDocId?: () => string | null | undefined;
 }
 const testFlushers = new Map<string, TestFlusherEntry>();
+// Phase 6.1.R2 — register the test-flusher registry for vault-swap reset.
+// Production never populates the map (no production code calls
+// `__testRegisterFlusher`), but a test that fires `fireVaultSwap` would
+// otherwise carry the prior test's flushers into the new vault's first
+// drain. The `__resetMarkdownFileWriterForTests` reset still clears the
+// map for the per-test cleanup path; this registration covers the
+// swap-without-test-reset edge.
+vaultSwapResettable('markdownFileWriter.testFlushers', () => {
+  testFlushers.clear();
+});
 
 export interface __TestFlusherOptions {
   forceWrite?: TestFlusher;

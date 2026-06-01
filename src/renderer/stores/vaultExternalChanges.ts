@@ -39,7 +39,7 @@ import {
 import { syncOpenEditorsAfterDiskMutation } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
 import type { DocumentState } from './document.svelte';
 import type { VaultContext } from './vaultStoreTypes';
-import { onVaultSwap } from '../core/vaultLifecycle';
+import { onVaultSwap, vaultSwapResettable } from '../core/vaultLifecycle';
 import {
   PARTIAL_READ_MAX_RETRIES,
   isPartialReadRetryInflight,
@@ -1254,8 +1254,12 @@ function promptDeletedFile(
  * duplicate toast onto the stack. Cleared when the promise settles (either
  * branch), so a *subsequent* external edit + write race opens a fresh
  * prompt. Test-only access via `__inFlightDriftPromptsForTests` below.
+ *
+ * Phase 6.1.R2 — reset on vault swap so a stale unresolved entry can't
+ * block a fresh prompt for the same path in the new vault.
  */
 const inFlightDriftPrompts = new Map<string, Promise<'reload' | 'keep-local'>>();
+vaultSwapResettable('vaultExternalChanges.inFlightDriftPrompts', () => inFlightDriftPrompts.clear());
 
 /**
  * Phase A.3 — surfaces a Reload / Keep-local prompt when `syncTileMarkdown`

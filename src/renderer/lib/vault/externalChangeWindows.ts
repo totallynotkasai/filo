@@ -48,6 +48,7 @@ import { vaultPath, type VaultPath } from '../../../shared/vaultPath';
  */
 export const PARTIAL_READ_RETRY_BACKOFF_MS = [500, 1500, 3000] as const;
 export const PARTIAL_READ_MAX_RETRIES = PARTIAL_READ_RETRY_BACKOFF_MS.length;
+// allow-module-state: reset via resetPartialReadRetryInflight called from vaultExternalChanges's pre-swap handler
 const partialReadRetryInflight = new Set<VaultPath>();
 /**
  * Per-path retry counter. Incremented on each scheduled retry; cleared on
@@ -55,6 +56,7 @@ const partialReadRetryInflight = new Set<VaultPath>();
  * reload-silently / ignore) or after the user dismisses the exhaustion
  * toast.
  */
+// allow-module-state: reset via resetPartialReadRetryInflight called from vaultExternalChanges's pre-swap handler
 const partialReadRetryCount = new Map<VaultPath, number>();
 
 /**
@@ -68,6 +70,7 @@ const partialReadRetryCount = new Map<VaultPath, number>();
  * vault's metadata using the old vault's baseline — a silent
  * misclassification that could overwrite content.
  */
+// allow-module-state: reset via resetPartialReadRetryInflight called from vaultExternalChanges's pre-swap handler
 const partialReadRetryTimers = new Map<VaultPath, ReturnType<typeof setTimeout>>();
 
 /** True while a partial-read retry is already scheduled for `key`. */
@@ -163,6 +166,7 @@ export function resetPartialReadRetryInflight(): void {
  * seconds ago by the time they're looking at the toast".
  */
 export const ATTACHMENT_DELETE_GRACE_MS = 500;
+// allow-module-state: reset via clearRecentRenames called from vaultExternalChanges's pre-swap handler
 const recentRenamedOldPaths = new Map<VaultPath, number>();
 
 export function noteRecentRename(oldRel: string): void {

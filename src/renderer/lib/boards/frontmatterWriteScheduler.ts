@@ -87,6 +87,7 @@ interface FrontmatterWriteArgs {
  * suppression, but the reset also bounds the map's growth and drops any
  * docIds that could be reused across vaults.
  */
+// allow-module-state: reset via resetFrontmatterScheduler called from boardSaver's pre-swap handler
 const lastFlushedVersion = new Map<string, number>();
 
 const frontmatterScheduler = createScheduler<FrontmatterWriteArgs>({

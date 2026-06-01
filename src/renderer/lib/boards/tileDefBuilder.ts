@@ -37,6 +37,7 @@ export interface V7BoardFileData {
 
 // ── Inline tile type detection ──
 
+// allow-module-state: immutable lookup table for inline tile type detection
 const INLINE_TILE_TYPES = new Set<string>(['link', 'iframe', 'timer']);
 
 export function isInlineTileType(type: string): boolean {

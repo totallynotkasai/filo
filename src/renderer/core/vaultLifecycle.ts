@@ -113,6 +113,57 @@ export function onVaultSwap(
 }
 
 /**
+ * Phase 6.1.R2 — register a vault-swap RESET handler. Sugar over
+ * `onVaultSwap('pre-swap', name, fn)` that mirrors the registration in a
+ * queryable set so a CI gate (or a unit test) can confirm a specific
+ * module-state owner registered through THIS entry point — not just any
+ * swap handler. TypeScript's signature already requires `fn` to be a
+ * function; we don't try to detect "stub" arrow shapes at runtime
+ * (TS compiler dead-code elimination makes any literal-based detection
+ * brittle), so reviewer eyes are the only check that the body actually
+ * resets something. The CI gate's "file contains
+ * `vaultSwapResettable(`" detection is satisfied either way, on the
+ * understanding that an empty handler is dead-on-arrival in code review.
+ *
+ * For shared infrastructure that subscribes for reasons OTHER than
+ * resetting module-scoped state (sentinel flushes, rebuilds, registry
+ * mirrors), use the original `onVaultSwap` directly. Mixing both is
+ * fine — the `vaultSwapResettable` set is purely a marker, not an
+ * exclusivity claim.
+ *
+ * Per the Phase 6.1 user choice ("new helper for the new leakers
+ * only"): existing `onVaultSwap` subscribers are NOT migrated. New
+ * module-scoped state should subscribe via this helper.
+ *
+ * Returns an unsubscribe function (same shape as `onVaultSwap`). Calling
+ * it removes both the swap handler AND the resettable-name marker.
+ */
+const resettableNames = new Set<string>();
+
+export function vaultSwapResettable(
+  name: string,
+  fn: (event: VaultSwapEvent) => void | Promise<void>,
+  opts?: VaultSwapHandlerOptions,
+): () => void {
+  const unsub = onVaultSwap('pre-swap', name, fn, opts);
+  resettableNames.add(name);
+  return () => {
+    resettableNames.delete(name);
+    unsub();
+  };
+}
+
+/**
+ * Test-only: returns the set of names that subscribed through
+ * `vaultSwapResettable`. Used by the unit test for R2 and (potentially)
+ * future CI introspection to confirm a given module's owner registered
+ * via this entry point.
+ */
+export function __getResettableHandlerNames(): Set<string> {
+  return new Set(resettableNames);
+}
+
+/**
  * Topologically sort a list of handlers using `runAfter`. Falls back to
  * registration order on cycles (reports the cycle so it surfaces).
  */
@@ -189,6 +240,7 @@ export async function fireVaultSwap(event: VaultSwapEvent): Promise<void> {
  */
 export function __resetVaultLifecycleForTests(): void {
   handlers.length = 0;
+  resettableNames.clear();
 }
 
 /**

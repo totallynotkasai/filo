@@ -414,6 +414,21 @@ export const uiStore = {
 onVaultSwap('pre-swap', 'ui', () => {
   for (const timer of toastTimers.values()) clearTimeout(timer);
   toastTimers.clear();
+  // Phase 6.1.R2 — fire each toast's `onDismiss` before nulling the array.
+  // Audit-3 flagged the same shape as the Audit 3.1 confirm-dialog fix
+  // below: a Reload / Keep-local toast surfaced by `promptExternalEditOnSync`
+  // is awaited via a Promise that resolves only through onAction OR
+  // onDismiss; nulling the array directly stranded that Promise across the
+  // swap, leaving `inFlightDriftPrompts[path]` (and any caller awaiting it)
+  // unresolved. The dispatch is best-effort — a thrown onDismiss must not
+  // block the rest of the swap.
+  for (const toast of toasts) {
+    if (toast.onDismiss) {
+      try { toast.onDismiss(); } catch (err) {
+        console.error('[Toast] onDismiss failed during vault swap:', err);
+      }
+    }
+  }
   toasts = [];
   contextMenu = { visible: false, x: 0, y: 0, items: [] };
   activeModal = null;

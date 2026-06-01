@@ -65,6 +65,7 @@ export interface FileBaseline {
 }
 
 /** Vault-relative path -> last-observed (mtime, size) baseline. */
+// allow-module-state: reset via resetAllBaselines called from markdownFileWriter's pre-swap handler (cancelAllMarkdownWrites)
 const baselines = new Map<string, FileBaseline>();
 
 /**

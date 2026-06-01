@@ -83,7 +83,7 @@ import { flushAllPendingFrontmatterWrites } from '../lib/boards/frontmatterWrite
 import { invokeOk } from '../lib/utils/invokeOk';
 import { reportError } from '../lib/utils/errorBus';
 import { uiStore } from './ui.svelte';
-import { onVaultSwap } from '../core/vaultLifecycle';
+import { onVaultSwap, vaultSwapResettable } from '../core/vaultLifecycle';
 
 let file = $state<TagsFile>(emptyTagsFile());
 let isHydrated = $state(false);
@@ -236,8 +236,12 @@ async function writeTagChangeToTileMarkdown(
  * until the read-only flag is cleared (via the editor banner's "Take
  * ownership"). The dedupe Set is keyed by docId so the toast can re-fire
  * for the same path if the user reopens it under a fresh docId.
+ *
+ * Phase 6.1.R2 — reset on vault swap so a stale docId entry can't
+ * suppress a legitimate toast in the new vault.
  */
 const readOnlyTagToastShown = new SvelteSet<string>();
+vaultSwapResettable('fileTags.readOnlyTagToastShown', () => readOnlyTagToastShown.clear());
 
 function surfaceReadOnlyTagToastIfNeeded(relPath: string): void {
   const editorDoc = documentStore.findByFilename(relPath);

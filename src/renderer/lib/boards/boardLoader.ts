@@ -18,6 +18,7 @@ import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { noteBaseline } from '../vault/fileBaselineRegistry';
 import { loadVersionedFile } from '../vault/loadVersionedFile';
 
+// allow-module-state: immutable lookup table derived from a build-time constant
 const TILE_TYPE_SET: ReadonlySet<string> = new Set(TILE_TYPES);
 
 /**

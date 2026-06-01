@@ -147,11 +147,24 @@ const ALLOWLIST = {
   // which the bare `markClean(...)` it replaced did NOT — closing the
   // pre-recovery debounced-write race. +1 import line + 6 LOC of
   // comment + call site = +7 LOC. New snapshot: 1526 LOC.
-  'src/renderer/stores/vaultExternalChanges.ts': 1526,
+  // PHASE6_PLAN_2026-06-01 Phase 6.1.R2 — `inFlightDriftPrompts` is now
+  // reset on vault swap via `vaultSwapResettable` so a stale unresolved
+  // entry can't block a fresh Reload / Keep-local prompt in the new
+  // vault. +1 import addition (`vaultSwapResettable`) + 4 LOC for the
+  // doc-line + subscription call. New snapshot: 1530 LOC.
+  'src/renderer/stores/vaultExternalChanges.ts': 1530,
   // tileCommands.ts dropped off the allowlist (AUDIT_REMEDIATION_PLAN_2026-05-29
   // Phase 5 / C-3): the tag-driven commands (AddTileTag / RemoveTileTag /
   // AddPathTag / RemovePathTag / ToggleTagFade) moved to the new sibling
   // `commands/tileTagCommands.ts`, bringing the file back under the 1000-LOC cap.
+  // PHASE6_PLAN_2026-06-01 Phase 6.1.R2 — `readOnlyTagToastShown` is now
+  // reset on vault swap via `vaultSwapResettable` so a stale docId entry
+  // can't suppress a legitimate read-only-tag toast in the new vault.
+  // Import + doc comment + subscription call pushed the file just over
+  // the default 1000-LOC limit. New snapshot: 1003 LOC. Splitting (e.g.
+  // factoring the cascade orchestrators into a sibling) is queued for
+  // a later pass — for now the growth is the smallest fix for the leak.
+  'src/renderer/stores/fileTags.svelte.ts': 1003,
 };
 
 function toPosix(p) {

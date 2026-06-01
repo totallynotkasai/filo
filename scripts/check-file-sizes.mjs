@@ -121,7 +121,12 @@ const ALLOWLIST = {
   // 'config')` so the dev tripwire warns if a future regression drops
   // the eager `.filo/` config baseline seed step. +6 LOC of comment +
   // call. New snapshot: 1441 LOC.
-  'src/renderer/stores/vault.svelte.ts': 1441,
+  // 6.4.M6 — `enqueueRenameQueueWork` learned an `errorContext` overload
+  // so the three rename-queue listener sites stop duplicating their
+  // `.then().catch(reportError)` pattern; the catch lives inside the
+  // helper. +23 LOC of comment + signature + the three listener-site
+  // refactors. New snapshot: 1464 LOC.
+  'src/renderer/stores/vault.svelte.ts': 1464,
   // External-changes orchestrator: classifies fs-watcher events into
   // editor-dirty toast / silent reload / sync-frontmatter / deleted-file
   // prompt / properties-popup-dirty prompt. 500 ms attachment-delete grace
@@ -194,7 +199,11 @@ const ALLOWLIST = {
   // `vault:write-file-text` invoke (user-opt-in file recreation after
   // external delete) so the extended markdown-gateway gate doesn't
   // flag it. +3 LOC of comment. New snapshot: 1554 LOC.
-  'src/renderer/stores/vaultExternalChanges.ts': 1554,
+  // 6.4.M4 — `promptExternalEditOnSync` + `promptBoardExternalEdit`
+  // grew a `'defer'` return arm so auto-dismiss no longer silently
+  // overwrites the external edit. +11 LOC of jsdoc, toast copy, and
+  // the `onDismiss: () => resolve('defer')` arm. New snapshot: 1565 LOC.
+  'src/renderer/stores/vaultExternalChanges.ts': 1565,
   // tileCommands.ts dropped off the allowlist (AUDIT_REMEDIATION_PLAN_2026-05-29
   // Phase 5 / C-3): the tag-driven commands (AddTileTag / RemoveTileTag /
   // AddPathTag / RemovePathTag / ToggleTagFade) moved to the new sibling

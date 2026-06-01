@@ -157,7 +157,13 @@ const ALLOWLIST = {
   // routed `runExternalRenameCascade` through `renameAllPathKeys`.
   // +~17 LOC (registration block + import + cascade-level helper call).
   // New snapshot: 1547 LOC.
-  'src/renderer/stores/vaultExternalChanges.ts': 1547,
+  // PHASE6_PLAN_2026-06-01 Phase 6.2.H1 — sync-frontmatter dispatch
+  // threads the post-sync `rawFrontmatter` through `setFrontmatter` so
+  // the source-preserving FM engine's diff baseline refreshes too;
+  // otherwise a body-only save after sync drops inline YAML comments on
+  // externally-changed keys. +4 LOC of doc-comment + the threaded arg.
+  // New snapshot: 1551 LOC.
+  'src/renderer/stores/vaultExternalChanges.ts': 1551,
   // tileCommands.ts dropped off the allowlist (AUDIT_REMEDIATION_PLAN_2026-05-29
   // Phase 5 / C-3): the tag-driven commands (AddTileTag / RemoveTileTag /
   // AddPathTag / RemovePathTag / ToggleTagFade) moved to the new sibling

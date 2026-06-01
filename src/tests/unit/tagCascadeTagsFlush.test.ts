@@ -104,6 +104,7 @@ describe('tag cascade — synchronous tags.json flush (Phase 4.3)', () => {
       links: [],
       content: '---\ntags: [old]\n---\nbody\n',
       lastModified: 0,
+      rawFrontmatter: 'tags: [old]',
     };
     vi.spyOn(vaultIndexStore, 'allMetadata').mockReturnValue([metadata]);
     vi.spyOn(vaultIndexStore, 'applyChanges').mockResolvedValue(undefined);

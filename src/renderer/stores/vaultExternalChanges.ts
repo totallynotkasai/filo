@@ -162,7 +162,11 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
             fileTagsStore.setFileTags(rel, normalizeTags(next.frontmatter.tags));
             // Refresh the live cache so the next writer assembles from the
             // disk-canonical frontmatter, not the stale in-memory snapshot.
-            if (editorDoc) documentStore.setFrontmatter(editorDoc.docId, next.frontmatter);
+            // 6.2.H1 — thread the post-sync `rawFrontmatter` so the source-
+            // preserving FM engine's baseline refreshes too; otherwise the
+            // next body-only save's diff would re-emit the externally-
+            // changed key and lose any inline YAML comment on that key.
+            if (editorDoc) documentStore.setFrontmatter(editorDoc.docId, next.frontmatter, next.rawFrontmatter);
             // Phase A.2b — only true external edits invalidate undo. The
             // classifier returns sync-frontmatter for two reasons:
             //   - 'frontmatter-only' — a real external metadata edit; its

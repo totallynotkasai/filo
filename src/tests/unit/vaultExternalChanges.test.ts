@@ -410,3 +410,104 @@ describe('vaultExternalChanges — first-sight does NOT invalidate undo', () => 
     expect(staleToast).toBeDefined();
   });
 });
+
+/**
+ * 6.2.H1 — when `sync-frontmatter` lands, `originalFrontmatterCache` must
+ * refresh to the post-sync raw bytes. The pre-fix bug: `setFrontmatter` was
+ * called WITHOUT a `rawFrontmatter` argument, so the clean-bytes signal was
+ * dropped but the baseline used by `patchFrontmatterSource` stayed at the
+ * pre-sync bytes. A subsequent body-only save's diff would then see the
+ * external editor's value as "different" and re-emit the node, losing any
+ * YAML comment on the changed line.
+ */
+describe('vaultExternalChanges — 6.2.H1: sync-frontmatter refreshes originalFrontmatterSource', () => {
+  let ctx: VaultContext;
+  let slice: ReturnType<typeof makeExternalChangesSlice>;
+
+  beforeEach(() => {
+    documentStore.clear();
+    vaultIndexStore.clear();
+    clearToasts();
+    vaultStore.setPath('/vault');
+    ctx = {
+      getVaultPath: () => '/vault',
+      setVaultPath: () => {},
+      getFileTree: () => [],
+      setFileTree: () => {},
+      getSearchQuery: () => '',
+      setSearchQuery: () => {},
+      getIsLoading: () => false,
+      setIsLoading: () => {},
+      getExpandedFolders: () => new Set(),
+      setExpandedFolders: () => {},
+      getSelectedPaths: () => new Set(),
+      setSelectedPaths: () => {},
+      getProject: () => null,
+      setProject: () => {},
+      getRecoveryPendingPaths: () => [],
+      setRecoveryPendingPaths: () => {},
+      markMetaDirty: () => {},
+      refreshTree: async () => {},
+      clearSelection: () => {},
+      clearActiveRootFolderIfMatches: () => {},
+    };
+    slice = makeExternalChangesSlice(ctx);
+  });
+
+  afterEach(() => {
+    restoreFiloDefault();
+    vaultStore.setPath('');
+    documentStore.clear();
+    vaultIndexStore.clear();
+    clearToasts();
+  });
+
+  it('refreshes originalFrontmatterSource to the post-sync raw bytes (preserving the new comment)', async () => {
+    // Seed the index from disk so the next handleExternalMarkdownChanges sees
+    // a real previous entry and the classifier returns frontmatter-only.
+    const initial = '---\ntitle: Hello\npriority: low   # inline note\n---\nbody';
+    installFiloMock((channel: string) => {
+      if (channel === 'vault:read-file-text') return { success: true, content: initial };
+      return { success: true };
+    });
+    await vaultIndexStore.applyChanges(['Note.md']);
+
+    // Seed the editor's frontmatter cache as a clean disk read would (the
+    // hydrate path does this via setFrontmatter with rawFrontmatter).
+    documentStore.loadDocument({
+      docId: 'doc_H1',
+      filename: 'Note.md',
+      title: 'Note',
+      body: 'body',
+      htmlContent: '<p>body</p>',
+      richText: [],
+    });
+    documentStore.setFrontmatter(
+      'doc_H1',
+      { title: 'Hello', priority: 'low' },
+      'title: Hello\npriority: low   # inline note',
+    );
+
+    expect(documentStore.getOriginalFrontmatterSource('doc_H1')).toBe(
+      'title: Hello\npriority: low   # inline note',
+    );
+
+    // External editor flips priority and keeps the inline comment.
+    const updated = '---\ntitle: Hello\npriority: high   # inline note\n---\nbody';
+    installFiloMock((channel: string) => {
+      if (channel === 'vault:read-file-text') return { success: true, content: updated };
+      return { success: true };
+    });
+
+    await slice.handleExternalMarkdownChanges(['Note.md']);
+
+    // Post-fix: the baseline reflects the post-sync raw bytes (still carrying
+    // the inline comment). Pre-fix: it stayed at the pre-sync bytes, so a
+    // body-only save's diff would re-emit `priority: high` and lose the
+    // comment because the source the engine diffs against still said `low`.
+    const baseline = documentStore.getOriginalFrontmatterSource('doc_H1');
+    expect(baseline).toBeDefined();
+    expect(baseline).toContain('priority: high');
+    expect(baseline).toContain('# inline note');
+  });
+});

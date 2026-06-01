@@ -23,6 +23,16 @@ export interface FileMetadata {
   links: string[];
   content: string;
   lastModified: number;
+  /**
+   * 6.2.H1 — verbatim YAML source between the `---` fences, captured at parse
+   * time so the external-change pipeline can refresh `originalFrontmatterCache`
+   * after a sync-frontmatter reload. Without this, the cache baseline that
+   * `patchFrontmatterSource` diffs against stays at the pre-sync bytes, and a
+   * subsequent body-only save's diff re-emits the externally-changed key and
+   * drops any inline comment on that key. Empty string when the file has no
+   * frontmatter fence.
+   */
+  rawFrontmatter: string;
 }
 
 export interface VaultIndexSearchResult extends SearchResult {
@@ -299,6 +309,19 @@ export function parseMarkdown(
 
   const { frontmatter, body, headings, links } = parsed;
 
+  // 6.2.H1 — capture the verbatim YAML source between fences. Mirrors the
+  // regex `parseMarkdownFile` (lib/editor/markdownSync.ts) uses so the
+  // index's view of "what's between the fences" matches the write gateway's.
+  // `rawContent` here is the raw bytes from `vault:read-file-text` (via
+  // `indexOnePath`) — a Notepad-saved file's BOM IS present, so we strip a
+  // leading U+FEFF before matching the fence regex. This is one of the
+  // legitimate "raw disk bytes via a different gateway" sites the no-bom-
+  // sniff gate's inline escape was designed for.
+  // allow-bom-sniff: parseMarkdown receives raw disk bytes from indexOnePath's vault:read-file-text response
+  const stripped = rawContent.charCodeAt(0) === 0xfeff ? rawContent.slice(1) : rawContent;
+  const fenced = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(stripped);
+  const rawFrontmatter = fenced ? fenced[1] : '';
+
   // Routed through `normalizeTags` so the equality contract used by
   // frontmatterSync (deduped + sorted, leading `#` stripped) stays in lockstep
   // with the index. Body `#tag` runs are decorative and ignored here — see
@@ -320,6 +343,7 @@ export function parseMarkdown(
     links,
     content: body,
     lastModified,
+    rawFrontmatter,
   };
 }
 

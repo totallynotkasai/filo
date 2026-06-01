@@ -298,6 +298,7 @@ describe('fileTagsStore — rename / delete cascade', () => {
         links: [],
         content: body,
         lastModified: 0,
+        rawFrontmatter: `tags: [${tag}]`,
       };
       vi.spyOn(vaultIndexStore, 'allMetadata').mockReturnValue([metadata]);
       vi.spyOn(vaultIndexStore, 'applyChanges').mockResolvedValue(undefined);

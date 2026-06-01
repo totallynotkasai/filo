@@ -88,7 +88,9 @@ async function reconcileBoardJsonChange(event: ExternalChangeEvent): Promise<voi
 
   // No pending write — apply disk silently. Mirrors the `reload-silently`
   // branch of the markdown classifier (clean editor + external edit).
-  await reloadBoardFromDisk(vaultRoot, rel, boardId);
+  // `guardPending: true` re-checks for a write that lands DURING the read
+  // (6.4.M18) so the silent reload can't clobber an edit made in that window.
+  await reloadBoardFromDisk(vaultRoot, rel, boardId, true);
 }
 
 function findBoardIdForPath(rel: string): string | null {
@@ -103,6 +105,10 @@ async function reloadBoardFromDisk(
   vaultRoot: string,
   rel: string,
   boardId: string,
+  // 6.4.M18 — when true (the silent reconciler path), re-check for a pending
+  // write AFTER the async read. The explicit "Reload" handler passes false:
+  // the user there chose to discard local edits, so no re-check.
+  guardPending = false,
 ): Promise<void> {
   const result = await loadBoard(vaultRoot, rel);
   if (!result.ok) {
@@ -111,6 +117,14 @@ async function reloadBoardFromDisk(
       new Error(`${result.error}: ${result.message}`),
       `External change to "${rel}" couldn't be applied (load failed). Filo's in-memory copy is unchanged.`,
     );
+    return;
+  }
+  // 6.4.M18 — a user edit landing DURING loadBoard's IPC flips isPathPending
+  // true, but reconcileBoardJsonChange's pre-read check is stale by now. A
+  // silent replaceCache would clobber that just-made edit, so defer to the
+  // dirty-editor prompt instead of overwriting it.
+  if (guardPending && isPathPending(rel)) {
+    promptBoardChangedExternally(rel, boardId);
     return;
   }
   // Use the boardCache replace path: write the freshly-loaded data

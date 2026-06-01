@@ -22,6 +22,8 @@ import {
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { documentStore } from '@renderer/stores/document.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
+import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
+import { parseMarkdown } from '@renderer/lib/vault/vaultIndex';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 describe('frontmatterWriteScheduler — docId-keyed version guard (M1)', () => {
@@ -92,5 +94,54 @@ describe('frontmatterWriteScheduler — docId-keyed version guard (M1)', () => {
     // this would stay at 1.
     expect(writeCount).toBe(2);
     expect(getLastFlushedFrontmatterVersion('doc-B')).toBeGreaterThan(0);
+  });
+
+  // 6.4.L2 — a docId-null (orphan) write for a relPath that ALSO has an open
+  // editor must use the editor's LIVE frontmatter, not the body-stripped,
+  // possibly-stale vaultIndex copy. The scheduler coalesces by relPath, so a
+  // null schedule can fire over a docId-backed one; with the version guard
+  // inert for null docIds, the stale index FM used to clobber the editor's.
+  it('a docId-null write adopts an open editor and writes its live frontmatter', async () => {
+    let writtenContent = '';
+    installFiloMock({
+      'vault:file-exists': () => true,
+      'vault:read-file-text': () => ({
+        success: true,
+        content: '---\nstatus: stale\n---\nbody',
+        mtimeMs: 1,
+        size: 10,
+      }),
+      'vault:stat': () => ({ success: true, mtimeMs: 1, size: 10 }),
+      'vault:write-existing-file-text': (_root: unknown, _path: unknown, content: unknown) => {
+        writtenContent = String(content);
+        return { success: true };
+      },
+    });
+
+    // Open editor for Notes.md with live frontmatter.
+    documentStore.loadDocument({
+      docId: 'doc-A',
+      filename: 'Notes.md',
+      title: 'Notes',
+      body: 'live body',
+      htmlContent: '',
+      richText: [],
+    });
+    documentStore.setFrontmatter('doc-A', { status: 'live' });
+
+    // A stale copy of the same file in the search index — the pre-fix FM source
+    // for a docId-null write.
+    vaultIndexStore.restoreMetadata(
+      'Notes.md',
+      parseMarkdown('Notes.md', '---\nstatus: stale\n---\nbody'),
+    );
+
+    // Orphan (docId-null) frontmatter write scheduled for the SAME relPath.
+    scheduleFrontmatterWrite('Notes.md', null);
+    await flushAllPendingFrontmatterWrites();
+
+    // L2 — the write carries the editor's live FM, not the stale index FM.
+    expect(writtenContent).toContain('status: live');
+    expect(writtenContent).not.toContain('status: stale');
   });
 });

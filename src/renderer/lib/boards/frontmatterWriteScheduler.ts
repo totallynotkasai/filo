@@ -136,8 +136,24 @@ export async function flushAllPendingFrontmatterWrites(): Promise<{ failed: stri
 }
 
 async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
-  const { relPath, docId, scheduledVersion, vaultRoot } = args;
+  const { relPath, vaultRoot } = args;
+  let { docId, scheduledVersion } = args;
   if (!vaultRoot) return;
+
+  // 6.4.L2 — a docId-null (orphan) write can be scheduled for a relPath that
+  // ALSO has an open editor: the scheduler coalesces by relPath, so a null
+  // schedule overwrites a docId-backed one. With docId null the version guard
+  // below is inert (scheduledVersion 0) and the FM source falls back to the
+  // body-stripped, possibly-stale vaultIndex copy — clobbering the editor's
+  // live frontmatter. Adopt the open editor's docId so the FM source, version
+  // guard, and body all read from the live document cache instead.
+  if (!docId) {
+    const openDocId = documentStore.findByFilename(relPath)?.docId ?? null;
+    if (openDocId) {
+      docId = openDocId;
+      scheduledVersion = documentStore.getFrontmatterMutationVersion(openDocId);
+    }
+  }
 
   // Phase 27 / A4 — refuse to write read-only docs. The lossy round-trip
   // detection at load time set the flag because tiptap-markdown couldn't

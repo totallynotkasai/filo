@@ -37,6 +37,7 @@ import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { onVaultSwap } from '../../core/vaultLifecycle';
 import { PendingWritesFailedError, withDrainedWrites } from './vaultOperations';
+import { syncOpenEditorsAfterDiskMutation } from './syncOpenEditorsAfterDiskMutation';
 import type { FileMetadata } from './vaultIndex';
 
 /**
@@ -298,6 +299,23 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
   }
 
   if (succeeded.length > 0) await applyChanges(succeeded);
+
+  // Phase 6.1.R1 — sync any open editor on a just-rewritten file so its
+  // in-memory body matches the new bytes. Without this an open editor would
+  // keep its pre-rewrite body and the next debounced write — its `args.body`
+  // is closure-captured pre-rewrite — would silently revert the rewrite
+  // ~300 ms later. `applyReloadFromDisk` self-cancels the armed body
+  // writer for the docId (6.0.C2), so the helper does not need a manual
+  // cancel adjacent to it. Build the (path, content) list from the SAME
+  // plan entries we just wrote so the sync mirrors disk byte-for-byte.
+  if (succeeded.length > 0) {
+    const succeededSet = new Set(succeeded);
+    syncOpenEditorsAfterDiskMutation(
+      plan
+        .filter((p) => succeededSet.has(p.path))
+        .map((p) => ({ path: p.path, content: p.nextContent })),
+    );
+  }
 
   // Sprint B / B16 — only clear the sentinel when EVERY planned path
   // succeeded. On partial failure (EACCES on a subset, mid-sweep

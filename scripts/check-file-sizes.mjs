@@ -140,7 +140,14 @@ const ALLOWLIST = {
   // + one decision. Also exposed `__inFlightDriftPromptsForTests` so the
   // dedup contract is unit-testable. +45 LOC (map + dedup logic + finally
   // hook + test getter + docstrings). New snapshot: 1519 LOC.
-  'src/renderer/stores/vaultExternalChanges.ts': 1519,
+  // PHASE6_PLAN_2026-06-01 Phase 6.1.R1 — `recreateDeletedFile` now
+  // routes its post-write open-editor sync through the shared
+  // `syncOpenEditorsAfterDiskMutation` helper. The helper's
+  // `applyReloadFromDisk` self-cancels the armed body writer (6.0.C2),
+  // which the bare `markClean(...)` it replaced did NOT — closing the
+  // pre-recovery debounced-write race. +1 import line + 6 LOC of
+  // comment + call site = +7 LOC. New snapshot: 1526 LOC.
+  'src/renderer/stores/vaultExternalChanges.ts': 1526,
   // tileCommands.ts dropped off the allowlist (AUDIT_REMEDIATION_PLAN_2026-05-29
   // Phase 5 / C-3): the tag-driven commands (AddTileTag / RemoveTileTag /
   // AddPathTag / RemovePathTag / ToggleTagFade) moved to the new sibling

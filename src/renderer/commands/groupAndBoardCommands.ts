@@ -9,6 +9,7 @@ import { cloneTile } from '../lib/utils/cloneTile';
 import { reportError } from '../lib/utils/errorBus';
 import { trackComponentWrite } from '../lib/boards/boardSaver';
 import { invokeOk } from '../lib/utils/invokeOk';
+import { syncOpenEditorsAfterDiskMutation } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
 
 /**
  * D.5 — opens the inconsistent-state modal when one or more rollback
@@ -451,6 +452,17 @@ export class CascadeDeleteCommand extends Command {
       );
     }
     await Promise.all(restorePromises);
+
+    // Phase 6.1.R1 — sync any open editor on a just-resurrected file so its
+    // in-memory body matches the bytes we wrote and a still-armed debounce
+    // can't clobber the restoration ~300 ms later. `applyReloadFromDisk`
+    // self-cancels armed body writers (6.0.C2). Only .md restorations are
+    // editor-backed; media restorations have no document state to sync.
+    if (Object.keys(this.fileSnapshots).length > 0) {
+      syncOpenEditorsAfterDiskMutation(
+        Object.entries(this.fileSnapshots).map(([path, content]) => ({ path, content })),
+      );
+    }
 
     // Sprint 35.2 — restore the style fields BEFORE the placements so a
     // restored kanban card sees its coverImage back at the same time as

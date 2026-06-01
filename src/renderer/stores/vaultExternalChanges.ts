@@ -36,6 +36,7 @@ import {
   PendingWritesFailedError,
   withDrainedWrites,
 } from '../lib/vault/vaultOperations';
+import { syncOpenEditorsAfterDiskMutation } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
 import type { DocumentState } from './document.svelte';
 import type { VaultContext } from './vaultStoreTypes';
 import { onVaultSwap } from '../core/vaultLifecycle';
@@ -1434,7 +1435,13 @@ async function recreateDeletedFile(
     // throwing. BOM is set to false — the assembled fileText didn't include
     // one and the recreated file matches the assembly.
     markHydrated(rel, false);
-    documentStore.markClean(editorDoc.docId);
+    // Phase 6.1.R1 — route through the shared helper instead of the bare
+    // `documentStore.markClean(...)` this replaced. The point is the cancel,
+    // not the reload: a debounced body write armed BEFORE the Keep-local
+    // click closure-captures the pre-recovery body and would otherwise fire
+    // ~300 ms later, silently reverting the recreation. `applyReloadFromDisk`
+    // self-cancels (6.0.C2); markClean only flipped the dirty flag.
+    syncOpenEditorsAfterDiskMutation([{ path: rel, content: fileText }]);
   } catch (err) {
     reportError(
       'vaultExternalChanges',

@@ -1,20 +1,20 @@
 /**
- * ReplaceAllCommand — vault-wide find-and-replace, history-tracked.
+ * ReplaceAllCommand ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â vault-wide find-and-replace, history-tracked.
  *
  * Sprint E.5. Mirrors the two-phase atomic pattern from
  * `lib/vault/tagRewriteSweep.ts`:
  *
- *   Phase 1 — Read every candidate `.md` file, compute its rewritten
+ *   Phase 1 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Read every candidate `.md` file, compute its rewritten
  *   content, capture the original content snapshot for undo. If ANY read
  *   fails, abort before writing anything.
  *
- *   Phase 2 — Write each file in turn. Per-write failures are reported
+ *   Phase 2 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Write each file in turn. Per-write failures are reported
  *   via the error bus but already-committed writes stay on disk (we
  *   cannot atomically roll back the filesystem). The error toast names
  *   the failed paths so the user can retry.
  *
  * Scope: replaces body matches only. Title matches (matchKind: 'title')
- * are surfaced via the find/find-all UI but skipped by Replace — the
+ * are surfaced via the find/find-all UI but skipped by Replace ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â the
  * semantics of renaming a tile title also need to consider whether the
  * backing file should rename, and that's a different code path
  * (`renameTitleCommand`). Future iterations can extend ReplaceAll to
@@ -23,7 +23,7 @@
  * Undo: restores every file's pre-replace snapshot via
  * `vault:write-existing-file-text`. Snapshots live on the command
  * instance, so dropping the command off the history stack drops the
- * recovery breadcrumb — `hasFileSnapshots()` is exposed so the history
+ * recovery breadcrumb ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â `hasFileSnapshots()` is exposed so the history
  * truncation toast escalates appropriately (Phase 31 B4.8).
  */
 
@@ -37,9 +37,7 @@ import { runVaultSearch, type SearchMatch } from '../lib/search/runSearch';
 import { invokeOk } from '../lib/utils/invokeOk';
 import { reportError } from '../lib/utils/errorBus';
 import { trackComponentWrite } from '../lib/boards/writeStateTracking';
-import { documentStore } from '../stores/document.svelte';
-import { parseMarkdownFile } from '../lib/editor/markdownSync';
-import { cancelMarkdownWritesForDocument } from '../lib/vault/markdownFileWriter';
+import { syncOpenEditorsAfterDiskMutation } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
 
 interface FilePlan {
   /** Vault-relative path of the .md file. */
@@ -56,11 +54,11 @@ interface FilePlan {
  * Builds the per-file rewrite plan from a list of matches and the user's
  * replacement string. Reads each file from disk so we never rewrite a stale
  * vault-index copy (the index is the canonical metadata view, but its
- * `content` field is the parsed BODY, not the raw file text — frontmatter
+ * `content` field is the parsed BODY, not the raw file text ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â frontmatter
  * lives outside it).
  *
  * Returns either `{ ok: true, plans }` or `{ ok: false, failedPaths }`.
- * A failed read aborts the plan so no writes happen — atomicity of the
+ * A failed read aborts the plan so no writes happen ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â atomicity of the
  * pre-flight phase.
  */
 async function buildPlans(
@@ -111,7 +109,7 @@ async function buildPlans(
       // Guard: confirm the slice we're about to replace still equals the
       // match text (the on-disk file could have changed since the vault
       // index last refreshed). When it doesn't match, skip this single
-      // match rather than the whole file — best-effort.
+      // match rather than the whole file ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â best-effort.
       if (next.slice(rawStart, rawEnd) !== m.matchText) continue;
       next = next.slice(0, rawStart) + replaceText + next.slice(rawEnd);
       replacementCount++;
@@ -133,7 +131,7 @@ async function buildPlans(
  * match offsets (from `FileMetadata.content`) into raw-file offsets for the
  * splice-based replacement.
  *
- * Conservative: only recognises the canonical `---\n…---\n` envelope at the
+ * Conservative: only recognises the canonical `---\nÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦---\n` envelope at the
  * head of the file. Files with leading whitespace or BOM still parse but
  * with `fmEnd` correctly reflecting the BOM/whitespace prefix.
  */
@@ -153,7 +151,7 @@ function findFrontmatterEnd(raw: string): number {
 export class ReplaceAllCommand extends Command {
   description: string;
   /**
-   * Phase 2 (IMPLEMENTATION_PLAN_2026-05-27) — vault-wide write, not a
+   * Phase 2 (IMPLEMENTATION_PLAN_2026-05-27) ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â vault-wide write, not a
    * board-scoped mutation. The field is set to '' in the constructor so
    * the history dispatcher's truthy guard skips the board-match check
    * (matching the prior optional-field semantics for this specific
@@ -165,12 +163,12 @@ export class ReplaceAllCommand extends Command {
 
   constructor(vaultRoot: string, plans: FilePlan[]) {
     super();
-    // Phase 2 — vault-wide command; empty string skips the history-store
+    // Phase 2 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â vault-wide command; empty string skips the history-store
     // guard (see readonly targetBoardId doc above).
     this.targetBoardId = '';
     this.vaultRoot = vaultRoot;
     // allow-shallow: FilePlan members (path, content strings, replacement
-    // count number) are all primitive — the per-entry shallow spread plus
+    // count number) are all primitive ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â the per-entry shallow spread plus
     // outer slice is enough.
     this.plans = plans.map((p) => ({ ...p }));
     const totalCount = plans.reduce((n, p) => n + p.replacementCount, 0);
@@ -189,36 +187,18 @@ export class ReplaceAllCommand extends Command {
     // the old offsets until the file watcher fires (which may have already
     // been suppressed by `trackComponentWrite`).
     await vaultIndexStore.applyChanges(this.plans.map((p) => p.path));
-    this.syncOpenEditors(items);
+    // Phase 6.1.R1 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â the inline `syncOpenEditors` + manual
+    // `cancelMarkdownWritesForDocument` was hoisted into the shared helper.
+    // `applyReloadFromDisk` now self-cancels armed body writers (6.0.C2),
+    // so the helper no longer needs an adjacent cancel call.
+    syncOpenEditorsAfterDiskMutation(items);
   }
 
   async undo(): Promise<void> {
     const items = this.plans.map((p) => ({ path: p.path, content: p.originalContent }));
     await this.writeAll(items);
     await vaultIndexStore.applyChanges(this.plans.map((p) => p.path));
-    this.syncOpenEditors(items);
-  }
-
-  /**
-   * Audit 2.1 — after the disk writes settle, bring every OPEN editor on an
-   * affected file back in step with what we just wrote. `writeAll` goes
-   * through `trackComponentWrite`, which suppresses the file-watcher event, so
-   * the normal external-change reconciliation never fires: an open TextTile /
-   * DocumentEditor keeps its stale in-memory body and its next debounced write
-   * would silently revert the replace (or, on undo, the restore). For each
-   * written path with a live document session we (1) cancel any armed editor
-   * write — it carries the pre-rewrite body — then (2) overwrite the in-memory
-   * document with the content just written so the editor's reload `$effect`
-   * re-renders from the disk-canonical content.
-   */
-  private syncOpenEditors(items: Array<{ path: string; content: string }>): void {
-    for (const item of items) {
-      const doc = documentStore.findByFilename(item.path);
-      if (!doc) continue;
-      cancelMarkdownWritesForDocument(doc.docId);
-      const parsed = parseMarkdownFile(item.content);
-      documentStore.applyReloadFromDisk(doc.docId, parsed.body, doc.richText, parsed.frontmatter);
-    }
+    syncOpenEditorsAfterDiskMutation(items);
   }
 
   private async writeAll(items: Array<{ path: string; content: string }>): Promise<void> {
@@ -271,7 +251,7 @@ export async function runReplaceAllCommand(): Promise<void> {
   if (!result.ok) {
     const sample = result.failedPaths.slice(0, 3).join(', ');
     uiStore.toast(
-      `Replace All aborted — could not read ${result.failedPaths.length} file(s) (${sample}). No changes made.`,
+      `Replace All aborted ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â could not read ${result.failedPaths.length} file(s) (${sample}). No changes made.`,
       'error',
       6000,
     );
@@ -315,7 +295,7 @@ export async function replaceCurrentMatch(): Promise<boolean> {
   if (!match) return false;
   if (match.matchKind !== 'body') {
     uiStore.toast(
-      'Title matches are not replaceable from this panel — open the tile to rename.',
+      'Title matches are not replaceable from this panel ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â open the tile to rename.',
       'info',
       3500,
     );
@@ -331,7 +311,7 @@ export async function replaceCurrentMatch(): Promise<boolean> {
   const current = fresh.matches[searchStore.currentIndex];
   if (!current || current.filePath !== match.filePath || current.matchStart !== match.matchStart) {
     uiStore.toast(
-      'Match moved or was edited externally — re-run Find before replacing.',
+      'Match moved or was edited externally ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â re-run Find before replacing.',
       'warning',
       3500,
     );

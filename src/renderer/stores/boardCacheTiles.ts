@@ -70,19 +70,28 @@ export function makeTilesSlice(ctx: CacheContext) {
       return opsFor(cached.board).getFullTiles(cached, boardId);
     },
 
-    async persistAddTile(tile: Tile, options?: { skipEmptySeed?: boolean }): Promise<void> {
-      // Resolve boardId once at the top. Trust the explicit field as a fast
-      // path, but fall back to findBoardIdForTile for re-adds. Brand-new
-      // tiles created when boardStore.current is null must be stamped at
-      // the caller (boardStore.addTile) — the cache-scan can't conjure an
-      // id for a tile that doesn't exist in any board yet.
-      const explicit = tile.boardId;
-      const resolvedBoardId = explicit || ctx.findBoardIdForTile(tile.id) || '';
+    async persistAddTile(
+      tile: Tile,
+      options?: { skipEmptySeed?: boolean },
+      // 6.4.M20 — explicit target board. During cascade-delete rollback the
+      // tile is being RE-ADDED, so it isn't in any board's cache yet and the
+      // findBoardIdForTile memo scan can't resolve it (it invalidates the now-
+      // stale entry and finds nothing), silently dropping the re-add. The
+      // caller (CascadeDeleteCommand.undo) already knows the owning board, so
+      // it passes it here; tile.boardId and the scan stay the fallbacks.
+      boardId?: string,
+    ): Promise<void> {
+      // Resolve boardId once at the top. Prefer the explicit arg, then the
+      // tile's own field, then a cache scan for re-adds. Brand-new tiles
+      // created when boardStore.current is null must be stamped at the caller
+      // (boardStore.addTile) — the scan can't conjure an id for a tile that
+      // doesn't exist in any board yet.
+      const resolvedBoardId = boardId || tile.boardId || ctx.findBoardIdForTile(tile.id) || '';
       if (!resolvedBoardId) {
         ctx.warnUnresolved('persistAddTile', `tile ${tile.id}`);
         return;
       }
-      const enrichedTile: Tile = explicit
+      const enrichedTile: Tile = tile.boardId === resolvedBoardId
         ? tile
         : ({ ...tile, boardId: resolvedBoardId } as Tile);
 

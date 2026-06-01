@@ -509,7 +509,9 @@ export class CascadeDeleteCommand extends Command {
         if (boardId === activeId) {
           void boardStore.addTile(tile, { skipEmptySeed: true });
         } else {
-          void boardCacheStore.persistAddTile(tile, { skipEmptySeed: true });
+          // 6.4.M20 — pass the known boardId so the re-add doesn't depend on
+          // findBoardIdForTile resolving a tile that isn't in the cache yet.
+          void boardCacheStore.persistAddTile(tile, { skipEmptySeed: true }, boardId);
         }
       }
     }

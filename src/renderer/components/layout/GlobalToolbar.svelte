@@ -1,8 +1,11 @@
 <script lang="ts">
+  import { tick } from 'svelte';
+  import { createFocusTrap, type FocusTrap } from 'focus-trap';
   import { historyStore } from '../../stores/history.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { saveStateStore } from '../../stores/saveState.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
+  import { safeDeactivateTrap } from '../../lib/utils/focusTrapSafe';
   import IconButton from '../shared/IconButton.svelte';
   import ProjectDropdown from './ProjectDropdown.svelte';
   import TextFormattingToolbar from './TextFormattingToolbar.svelte';
@@ -41,6 +44,12 @@
   let errorPopoverOpen = $state(false);
   let saveIndicatorEl = $state<HTMLElement | null>(null);
   let retrying = $state(false);
+  // Audit2 5.8 — focus + trap state for the role=dialog popover so keyboard
+  // users land on Retry instead of nowhere, and Tab cycles inside the
+  // popover instead of leaking into the toolbar behind it.
+  let popoverEl = $state<HTMLDivElement | null>(null);
+  let retryBtn = $state<HTMLButtonElement | null>(null);
+  let popoverTrap: FocusTrap | null = null;
 
   function toggleErrorPopover() {
     if (saveStateStore.state !== 'error') return;
@@ -89,6 +98,45 @@
     if (errorPopoverOpen && saveStateStore.failedPaths.length === 0 && saveStateStore.state !== 'error') {
       errorPopoverOpen = false;
     }
+  });
+
+  // Audit2 5.8 — when the popover opens, move focus to Retry (the primary
+  // action) and trap Tab inside the popover until it closes. On close,
+  // deactivate the trap and return focus to the indicator so the keyboard
+  // user lands somewhere meaningful. Mirrors ConfirmDialog's pattern.
+  $effect(() => {
+    if (!errorPopoverOpen) return;
+    void tick().then(() => {
+      if (!errorPopoverOpen || !popoverEl) return;
+      // Focus Retry by default; fall back to the popover root if Retry is
+      // disabled (e.g. mid-retry) so focus still lands inside the trap.
+      if (retryBtn && !retryBtn.disabled) {
+        retryBtn.focus();
+      } else {
+        popoverEl.focus();
+      }
+      try {
+        popoverTrap = createFocusTrap(popoverEl, {
+          escapeDeactivates: false,
+          clickOutsideDeactivates: false,
+          allowOutsideClick: true,
+          returnFocusOnDeactivate: true,
+          // Tolerate the brief window where retry-disabled toggles strip
+          // the last tabbable from the popover — the popover root is
+          // fallback-focusable via `tabindex=-1`.
+          fallbackFocus: () => popoverEl ?? document.body,
+          preventScroll: true,
+        });
+        popoverTrap.activate();
+      } catch (err) {
+        console.warn('[GlobalToolbar] save-error popover focus-trap activate failed:', err);
+        popoverTrap = null;
+      }
+    });
+    return () => {
+      safeDeactivateTrap(popoverTrap, { host: popoverEl, name: 'GlobalToolbar/save-error-popover' });
+      popoverTrap = null;
+    };
   });
 
   function handleIndicatorKeydown(e: KeyboardEvent) {
@@ -153,8 +201,18 @@
     </div>
 
     {#if inError && errorPopoverOpen}
-      <div class="save-error-popover" role="dialog" aria-label="Save failures">
-        <div class="popover-title">Save failed</div>
+      <!-- Audit2 5.8 — role=dialog needs an accessible name (aria-labelledby
+           on the title) + focus trap. `tabindex=-1` lets `popoverEl.focus()`
+           land here as a fallback when Retry is disabled. -->
+      <div
+        bind:this={popoverEl}
+        class="save-error-popover"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="save-error-popover-title"
+        tabindex="-1"
+      >
+        <div class="popover-title" id="save-error-popover-title">Save failed</div>
         {#if saveStateStore.failedPaths.length === 0}
           <p class="popover-empty">The error has cleared. You can close this.</p>
         {:else}
@@ -169,7 +227,12 @@
         {/if}
         <div class="popover-actions">
           <button class="popover-btn" onclick={() => { errorPopoverOpen = false; }}>Close</button>
-          <button class="popover-btn primary" disabled={retrying} onclick={() => { void retrySave(); }}>
+          <button
+            bind:this={retryBtn}
+            class="popover-btn primary"
+            disabled={retrying}
+            onclick={() => { void retrySave(); }}
+          >
             {retrying ? 'Retrying…' : 'Retry save'}
           </button>
         </div>

@@ -24,10 +24,10 @@ Package:        npm run package
 `npm run ci:verify` runs every gate locally and mirrors the GitHub Actions `verify` job. **The authoritative, ordered gate list is the `ci:verify` script in [package.json](package.json)** (regenerate from there, not from this doc, if it drifts). It chains:
 
 ```
-lint → check (svelte-check) → test:unit:strict → build → 22 × ci:* guard scripts
+lint → check (svelte-check) → test:unit:strict → build → 23 × ci:* guard scripts
 ```
 
-The guards are small `scripts/check-*.mjs` ratchets (22 of them, not enumerated here — see `package.json`). The load-bearing ones:
+The guards are small `scripts/check-*.mjs` ratchets (23 of them, not enumerated here — see `package.json`). The load-bearing ones:
 
 - **`ci:file-sizes`** ([scripts/check-file-sizes.mjs](scripts/check-file-sizes.mjs)) — fails if any file in `src/main` or `src/renderer` exceeds 1000 LOC, with an explicit allowlist for the seven currently grandfathered files. Allowlisted files may shrink but not grow past their snapshot (the ceilings sit at each file's current LOC).
 - **`ci:type-casts`** ([scripts/check-type-casts.mjs](scripts/check-type-casts.mjs)) — forbids `as any` and `as unknown as` in non-test source. Escape hatch: append `// allow-cast: <reason>` on the same line.
@@ -232,7 +232,7 @@ filo/
 │   │   │   │   ├── tagRewriteSweep.ts # Two-phase tag rename across .md
 │   │   │   │   ├── tagRewriter.ts     # Frontmatter tag rename/remove/add (line-level fast path; dump fallback now routes through frontmatterEngine)
 │   │   │   │   ├── frontmatterEngine.ts # Source-preserving FM serializer — `yaml` Document/CST API (Audit2 4.8)
-│   │   │   │   ├── markdownFileWriter.ts # CANONICAL markdown write gateway: per-caller debounce, BOM-preserving hydrate, unified drain (use THIS, not markdownWriteRegistry)
+│   │   │   │   ├── markdownFileWriter.ts # CANONICAL markdown write gateway: per-caller debounce, BOM-preserving hydrate, unified drain (the dead-in-prod markdownWriteRegistry shim was deleted in Audit2 5.9)
 │   │   │   │   ├── tagRewriteSentinel.ts # `.filo/tag-rewrite-pending.json` crash-recovery
 │   │   │   │   ├── renameCascadeSentinel.ts # Rename-cascade crash-recovery sentinel
 │   │   │   │   ├── fileBaselineRegistry.ts # Pre-write drift baselines (mtime/size)
@@ -248,7 +248,6 @@ filo/
 │   │   │   │   ├── configWriteScheduler.ts
 │   │   │   │   ├── miscWriteScheduler.ts
 │   │   │   │   ├── frontmatterWriteScheduler.ts
-│   │   │   │   ├── markdownWriteRegistry.ts # DEPRECATED shim → re-exports lib/vault/markdownFileWriter; new code imports the gateway directly
 │   │   │   │   ├── seedTextFileForNewTile.ts # Creates the backing .md for a new text tile
 │   │   │   │   ├── tileDefBuilder.ts
 │   │   │   │   ├── textTilePath.ts

@@ -34,7 +34,10 @@ const ALLOWLIST = {
   // the Sprint 39 memory entry. Bump history in git log.
   // AUDIT_REMEDIATION_PLAN_2026-05-30 Phase 7.1 — tightened to current LOC
   // (was 2245) to restore the ratchet's bite after Phase 5/6 trimming.
-  'src/renderer/components/boards/TaskListBoard.svelte': 2191,
+  // AUDIT2_REMEDIATION_PLAN_2026-05-31 Phase 5.6 — onDestroy calls
+  // filters.dispose() so the lastView debounce can't fire after teardown;
+  // +1 LOC of comment + call. New snapshot: 2192 LOC.
+  'src/renderer/components/boards/TaskListBoard.svelte': 2192,
   // Phase 7.1 — tightened to current LOC (was 1506).
   'src/renderer/components/boards/KanbanSideToolbar.svelte': 1490,
   // TaskItem row: title strip + notes panel + style cascade (headerColor /
@@ -81,7 +84,13 @@ const ALLOWLIST = {
   // +call +comment) and E5 added the rename-cascade recovery's tag-sink
   // re-assert + flush before clearing the sentinel; +~32 LOC.
   // Phase 7.1 — tightened to current LOC (was 1425).
-  'src/renderer/stores/vault.svelte.ts': 1389,
+  // AUDIT2_REMEDIATION_PLAN_2026-05-31 Phase 5.3 — `runPostCommitTasks`
+  // walks `vaultIndexStore.allMetadata()` after rebuild and calls
+  // `boardCacheStore.applyFrontmatterToBackedTiles` for each so cached
+  // tile metadata reconciles against canonical frontmatter on every
+  // vault open (closes between-session drift). +10 LOC (loop + comment).
+  // New snapshot: 1399 LOC.
+  'src/renderer/stores/vault.svelte.ts': 1399,
   // External-changes orchestrator: classifies fs-watcher events into
   // editor-dirty toast / silent reload / sync-frontmatter / deleted-file
   // prompt / properties-popup-dirty prompt. 500 ms attachment-delete grace
@@ -120,7 +129,13 @@ const ALLOWLIST = {
   // tag entry. Three one-liners + comments scattered across those handlers;
   // nothing cleanly extractable for +14 LOC. The deferred 7.9 split (extract
   // the deletion-prompt cluster) will reclaim this. New snapshot: 1474 LOC.
-  'src/renderer/stores/vaultExternalChanges.ts': 1474,
+  // AUDIT2_REMEDIATION_PLAN_2026-05-31 Phase 5.2 — added a per-path
+  // in-flight `Map<path, Promise<choice>>` so concurrent
+  // `promptExternalEditOnSync` callers for the same file share one toast
+  // + one decision. Also exposed `__inFlightDriftPromptsForTests` so the
+  // dedup contract is unit-testable. +45 LOC (map + dedup logic + finally
+  // hook + test getter + docstrings). New snapshot: 1519 LOC.
+  'src/renderer/stores/vaultExternalChanges.ts': 1519,
   // tileCommands.ts dropped off the allowlist (AUDIT_REMEDIATION_PLAN_2026-05-29
   // Phase 5 / C-3): the tag-driven commands (AddTileTag / RemoveTileTag /
   // AddPathTag / RemovePathTag / ToggleTagFade) moved to the new sibling

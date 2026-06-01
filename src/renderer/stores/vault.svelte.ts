@@ -60,7 +60,7 @@ import {
 // registration itself is wrapped in `queueMicrotask` to defer past
 // the circular dependency between this module and vaultExternalReconcilers.
 import './vaultExternalReconcilers';
-import { flushAllMarkdownWriters } from '../lib/boards/markdownWriteRegistry';
+import { flushAllMarkdownWriters } from '../lib/vault/markdownFileWriter';
 import { flushAllPendingFrontmatterWrites } from '../lib/boards/frontmatterWriteScheduler';
 import { reportError } from '../lib/utils/errorBus';
 import { invokeOk } from '../lib/utils/invokeOk';
@@ -452,6 +452,23 @@ function runPostCommitTasks(
 
   // ── 2. Vault-index rebuild + tags self-seed / orphan prune ───────
   void vaultIndexStore.rebuild(fileTree).then(() => {
+    // Audit2 5.3 — reconcile every board's cached tile metadata against
+    // the canonical frontmatter we just rebuilt the index from. The
+    // live event path (vaultExternalChanges) already runs this for each
+    // mid-session edit, but the on-load drift between `.board.json`
+    // (cached completed / priority / date) and the backing `.md`
+    // frontmatter was only ever reconciled when something touched the
+    // file afterwards. Renders read frontmatter directly so the bug
+    // never surfaces visually (the cache is invisible), but the on-disk
+    // cache stays stale until a board write rewrites it — which means
+    // any consumer that DOES read the cache (a downstream agent / a
+    // future migration / a third-party tool) sees out-of-date values.
+    // Walking the index once at open closes the drift in O(P × M × T)
+    // where each inner check short-circuits on `tileBacksMarkdownPath`,
+    // so the practical cost is tile count × backed-tile lookups.
+    for (const md of vaultIndexStore.allMetadata()) {
+      boardCacheStore.applyFrontmatterToBackedTiles(md.path, md);
+    }
     if (!fileTagsStore.isEmpty()) {
       // Phase 23 M13 — prune `.filo/tags.json:fileTags` entries whose
       // path is no longer present in the live tree.

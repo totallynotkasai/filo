@@ -528,6 +528,62 @@ export function cancelMarkdownWrite(callerId: string): void {
 // ── Global hooks ──
 
 /**
+ * Audit2 5.9 — test-only flusher registry. Production code MUST NOT use this
+ * API; the CI gate `scripts/check-no-prod-markdown-test-flushers.mjs` enforces
+ * it. Tests use this to inject arbitrary flush callbacks that get drained
+ * alongside the gateway's real pending writes — replacing the deleted
+ * `markdownWriteRegistry` shim's `registerMarkdownFlusher` fixture surface
+ * without leaving dead-in-production code on the save/flush hot path.
+ *
+ * Tests import these directly as `__testRegisterFlusher` /
+ * `__testUnregisterFlusher`; the alias pattern
+ * `import { __testRegisterFlusher as registerMarkdownFlusher }` preserves the
+ * inline assertion vocabulary the legacy fixtures used.
+ */
+type TestFlusher = () => Promise<void>;
+interface TestFlusherEntry {
+  flush: TestFlusher;
+  forceWrite?: TestFlusher;
+  getDocId?: () => string | null | undefined;
+}
+const testFlushers = new Map<string, TestFlusherEntry>();
+
+export interface __TestFlusherOptions {
+  forceWrite?: TestFlusher;
+  getDocId?: () => string | null | undefined;
+}
+
+export function __testRegisterFlusher(
+  ownerId: string,
+  flush: TestFlusher,
+  options: __TestFlusherOptions = {},
+): void {
+  testFlushers.set(ownerId, {
+    flush,
+    forceWrite: options.forceWrite,
+    getDocId: options.getDocId,
+  });
+}
+
+export function __testUnregisterFlusher(ownerId: string): void {
+  testFlushers.delete(ownerId);
+}
+
+async function drainTestFlushers(): Promise<Array<{ ownerId: string; error: unknown }>> {
+  if (testFlushers.size === 0) return [];
+  const snapshot = Array.from(testFlushers.entries());
+  const settled = await Promise.allSettled(snapshot.map(([, entry]) => entry.flush()));
+  const failed: Array<{ ownerId: string; error: unknown }> = [];
+  for (let i = 0; i < settled.length; i++) {
+    const result = settled[i];
+    if (result.status === 'rejected') {
+      failed.push({ ownerId: snapshot[i][0], error: result.reason });
+    }
+  }
+  return failed;
+}
+
+/**
  * Drains every pending markdown write across all callers.
  *
  * Returns `{ ok, failed }` where `failed` lists the callerIds whose write
@@ -538,13 +594,21 @@ export function cancelMarkdownWrite(callerId: string): void {
  * Note: this drains gateway-owned pending writes only. The frontmatter
  * scheduler at `lib/boards/frontmatterWriteScheduler.ts` has its own
  * sibling debounce map keyed by relPath; callers that need both drained
- * call `flushAllPendingFrontmatterWrites` alongside this function. The
- * shim `markdownWriteRegistry.flushAllMarkdownWriters` is wired to call
- * both for back-compat with the old single-drain API.
+ * call `flushAllPendingFrontmatterWrites` alongside this function.
+ *
+ * Audit2 5.9 — also drains any test-only flushers registered via
+ * `__testRegisterFlusher`. In production the test-flusher map is empty
+ * (the CI gate forbids prod registrations), so this is a zero-cost
+ * pass-through; in tests the registered flushers participate in the
+ * same `failed[]` aggregation as real writes.
  */
 export async function flushAllMarkdownWrites(): Promise<{ ok: boolean; failed: string[] }> {
-  const result = await writerScheduler.flushAll();
-  return { ok: result.failed.length === 0, failed: result.failed };
+  const [schedulerResult, testFailures] = await Promise.all([
+    writerScheduler.flushAll(),
+    drainTestFlushers(),
+  ]);
+  const failed = [...schedulerResult.failed, ...testFailures.map((f) => f.ownerId)];
+  return { ok: failed.length === 0, failed };
 }
 
 /**
@@ -565,17 +629,30 @@ export interface FlushAllResult {
 }
 
 export async function flushAllMarkdownWriters(): Promise<FlushAllResult> {
-  const result = await flushAllMarkdownWrites();
-  return {
-    // The old `ok` field was a count of successful per-owner drains. The
-    // gateway tracks only the failure list, so we approximate `ok` as "non-
-    // failed count". Callers in production check `failed.length` exclusively;
-    // the count here exists for shape parity with the deleted registry.
-    ok: result.ok ? 1 : 0,
-    failed: result.failed.map((ownerId) => ({
+  // Mirror flushAllMarkdownWrites internally so the test-flusher errors carry
+  // their *original* rejection (not a generic wrapper), which the
+  // markdownWriteRegistryFlush test contract relies on for `result.failed[i].error`
+  // identity. Production callers only inspect `failed.length`, so the richer
+  // error preservation is a free upgrade for them.
+  const [schedulerResult, testFailures] = await Promise.all([
+    writerScheduler.flushAll(),
+    drainTestFlushers(),
+  ]);
+  const failed: FlushAllResult['failed'] = [
+    ...schedulerResult.failed.map((ownerId) => ({
       ownerId,
       error: new Error(`Flush rejected for ${ownerId}`),
     })),
+    ...testFailures,
+  ];
+  const ok = (testFlushers.size - testFailures.length);
+  return {
+    // The old `ok` field was a count of successful per-owner drains. The
+    // gateway tracks only the failure list for its own writes, so we report
+    // the successful test-flusher count as `ok`. Production callers in any
+    // case check `failed.length` exclusively.
+    ok: ok < 0 ? 0 : ok,
+    failed,
   };
 }
 
@@ -663,28 +740,48 @@ export interface ForceWriteResult {
 
 export async function forceWriteForDocument(docId: string): Promise<ForceWriteResult> {
   if (!docId) return { ok: 0, failed: [] };
+  // Audit2 5.9 — drain test-registered flushers (no-op in production) so the
+  // shim's force-write contract — "match by getDocId, call forceWrite if
+  // present else flush" — survives the migration.
+  const testMatches: Array<[string, TestFlusher]> = [];
+  for (const [ownerId, entry] of testFlushers.entries()) {
+    if (entry.getDocId?.() === docId) {
+      testMatches.push([ownerId, entry.forceWrite ?? entry.flush]);
+    }
+  }
   const targets: Array<[string, () => WriteArgs | null]> = [];
   for (const [callerId, entry] of forceWriters.entries()) {
     if (entry.docId === docId) targets.push([callerId, entry.build]);
   }
-  if (targets.length === 0) return { ok: 0, failed: [] };
+  if (targets.length === 0 && testMatches.length === 0) {
+    return { ok: 0, failed: [] };
+  }
 
-  const settled = await Promise.allSettled(
-    targets.map(async ([, build]) => {
-      const args = build();
-      if (!args) return;
-      // Cancel any armed schedule for this caller so the immediate write
-      // isn't duplicated by the timer's deferred write a few hundred ms later.
-      cancelMarkdownWrite(args.callerId);
-      await writeMarkdownFile(args);
-    }),
-  );
+  const [productionSettled, testSettled] = await Promise.all([
+    Promise.allSettled(
+      targets.map(async ([, build]) => {
+        const args = build();
+        if (!args) return;
+        // Cancel any armed schedule for this caller so the immediate write
+        // isn't duplicated by the timer's deferred write a few hundred ms later.
+        cancelMarkdownWrite(args.callerId);
+        await writeMarkdownFile(args);
+      }),
+    ),
+    Promise.allSettled(testMatches.map(([, fn]) => fn())),
+  ]);
 
   const failed: ForceWriteResult['failed'] = [];
   let ok = 0;
-  for (let i = 0; i < settled.length; i++) {
-    const result = settled[i];
+  for (let i = 0; i < productionSettled.length; i++) {
+    const result = productionSettled[i];
     const [ownerId] = targets[i];
+    if (result.status === 'fulfilled') ok++;
+    else failed.push({ ownerId, error: result.reason });
+  }
+  for (let i = 0; i < testSettled.length; i++) {
+    const result = testSettled[i];
+    const [ownerId] = testMatches[i];
     if (result.status === 'fulfilled') ok++;
     else failed.push({ ownerId, error: result.reason });
   }
@@ -713,7 +810,13 @@ onVaultSwap('pre-swap', 'markdownFileWriter', () => {
  * Test-only — full reset of every map in the gateway. Use between unit
  * tests so a registration from a prior test doesn't leak into the next
  * test's dispatch.
+ *
+ * Audit2 5.9 — also clears the test-only flusher registry. Prior to the
+ * shim migration the per-test cleanup wiped both maps via
+ * `__resetMarkdownFlushersForTests`; merging the reset here keeps the
+ * one-call cleanup contract intact for callers of either name.
  */
 export function __resetMarkdownFileWriterForTests(): void {
   cancelAllMarkdownWrites();
+  testFlushers.clear();
 }

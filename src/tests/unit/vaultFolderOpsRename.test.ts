@@ -3,9 +3,9 @@ import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import {
-  registerMarkdownFlusher,
-  __resetMarkdownFlushersForTests,
-} from '@renderer/lib/boards/markdownWriteRegistry';
+  __testRegisterFlusher as registerMarkdownFlusher,
+  __resetMarkdownFileWriterForTests as __resetMarkdownFlushersForTests,
+} from '@renderer/lib/vault/markdownFileWriter';
 import {
   cancelAllPendingWrites,
   __resetDirtyTrackingForTests,

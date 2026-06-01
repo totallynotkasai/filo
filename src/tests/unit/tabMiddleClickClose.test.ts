@@ -20,8 +20,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { tabStore } from '@renderer/stores/tabs.svelte';
 import {
-  __resetMarkdownFlushersForTests,
-} from '@renderer/lib/boards/markdownWriteRegistry';
+  __resetMarkdownFileWriterForTests as __resetMarkdownFlushersForTests,
+} from '@renderer/lib/vault/markdownFileWriter';
 import {
   cancelAllPendingWrites,
   __resetDirtyTrackingForTests,

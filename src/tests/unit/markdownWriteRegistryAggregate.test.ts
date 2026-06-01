@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
-  registerMarkdownFlusher,
+  __testRegisterFlusher as registerMarkdownFlusher,
   flushAllMarkdownWriters,
-  __resetMarkdownFlushersForTests,
-} from '../../renderer/lib/boards/markdownWriteRegistry';
+  __resetMarkdownFileWriterForTests as __resetMarkdownFlushersForTests,
+} from '../../renderer/lib/vault/markdownFileWriter';
 
 /**
  * Phase 8 (P1-6) regression guard: `flushAllMarkdownWriters` must surface

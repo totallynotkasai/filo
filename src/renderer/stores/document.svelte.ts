@@ -2,7 +2,7 @@ import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import type { RichTextAnnotation } from '../schema/document';
 import { uiStore } from './ui.svelte';
 import { samePath, normalizePath, stripLeadingSlash, toPosix } from '../lib/utils/path';
-import { forceWriteForDocument } from '../lib/boards/markdownWriteRegistry';
+import { forceWriteForDocument } from '../lib/vault/markdownFileWriter';
 import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
 import { onVaultSwap } from '../core/vaultLifecycle';
 

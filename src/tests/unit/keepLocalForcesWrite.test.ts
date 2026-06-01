@@ -15,10 +15,10 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
-  registerMarkdownFlusher,
+  __testRegisterFlusher as registerMarkdownFlusher,
   forceWriteForDocument,
-  __resetMarkdownFlushersForTests,
-} from '../../renderer/lib/boards/markdownWriteRegistry';
+  __resetMarkdownFileWriterForTests as __resetMarkdownFlushersForTests,
+} from '../../renderer/lib/vault/markdownFileWriter';
 
 describe('forceWriteForDocument (Sprint 35.1)', () => {
   beforeEach(() => {

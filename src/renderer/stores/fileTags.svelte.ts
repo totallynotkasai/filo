@@ -78,7 +78,7 @@ import {
   RemovePathTagCommand,
 } from '../commands/index';
 import { scheduleMiscWrite, flushAllMisc, flushMiscWrite, trackComponentWrite, markPathFailed } from '../lib/boards/boardSaver';
-import { flushAllMarkdownWriters } from '../lib/boards/markdownWriteRegistry';
+import { flushAllMarkdownWriters } from '../lib/vault/markdownFileWriter';
 import { flushAllPendingFrontmatterWrites } from '../lib/boards/frontmatterWriteScheduler';
 import { invokeOk } from '../lib/utils/invokeOk';
 import { reportError } from '../lib/utils/errorBus';

@@ -5,9 +5,9 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import { documentStore } from '@renderer/stores/document.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import {
-  registerMarkdownFlusher,
-  __resetMarkdownFlushersForTests,
-} from '@renderer/lib/boards/markdownWriteRegistry';
+  __testRegisterFlusher as registerMarkdownFlusher,
+  __resetMarkdownFileWriterForTests as __resetMarkdownFlushersForTests,
+} from '@renderer/lib/vault/markdownFileWriter';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, TextTile, Tile } from '@renderer/schema/index';
 

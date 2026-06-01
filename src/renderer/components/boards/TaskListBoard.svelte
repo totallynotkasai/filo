@@ -1393,6 +1393,10 @@
     // Drain any queued frontmatter writes so a board close during the
     // 300ms debounce window doesn't lose the user's last field edit.
     void flushAllPendingFrontmatterWrites();
+    // Audit2 5.6 — cancel the lastView persistence debounce so a board
+    // close mid-window doesn't fire `updateSettings` + push a history
+    // entry against the now-defunct board context ~300ms after teardown.
+    filters.dispose();
     unregisterFocusQuickAdd?.();
     unregisterFocusQuickAdd = null;
     unregisterSelectAll?.();

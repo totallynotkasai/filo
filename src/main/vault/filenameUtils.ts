@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs';
 import { randomBytes } from 'crypto';
 import { dirname, join } from 'path';
+import { RESERVED_WINDOWS_NAMES } from '../utils/pathSecurity';
 
 /**
  * Characters that are illegal in Windows filenames.
@@ -14,21 +15,41 @@ const MAX_NAME_LENGTH = 200;
 
 /**
  * Sanitizes a string for use as a filename.
- * Strips illegal characters, collapses whitespace, and truncates to max length.
+ * Strips illegal characters, collapses whitespace, truncates to max length,
+ * strips trailing dots / spaces (Audit2 5.5 — Win32 silently strips them at
+ * file-create time, which collides with a same-stem neighbour), and prefixes
+ * an underscore in front of any name whose stem matches a Windows DOS device
+ * name (CON / NUL / COM1 / LPT1 / …) so the sanitised result can pass
+ * `assertSafeFilename` instead of throwing downstream.
  */
 export function sanitizeFilename(name: string): string {
   let sanitized = name
     .replace(ILLEGAL_CHARS, '')
     .replace(/\s+/g, ' ')
-    .trim();
+    .trim()
+    // Audit2 5.5 — strip any trailing dots (or dot+space runs) BEFORE the
+    // length truncation. `note.` on Win32 saves as `note`, masking a name
+    // collision with a sibling `note`.
+    .replace(/[. ]+$/, '');
 
   if (sanitized.length > MAX_NAME_LENGTH) {
-    sanitized = sanitized.slice(0, MAX_NAME_LENGTH).trim();
+    sanitized = sanitized
+      .slice(0, MAX_NAME_LENGTH)
+      .trim()
+      .replace(/[. ]+$/, '');
   }
 
   // Fallback for empty names
   if (!sanitized) {
     sanitized = 'Untitled';
+  }
+
+  // Audit2 5.5 — same stem-based match as `assertSafeFilename`: `CON.md` /
+  // `aux.tar.gz` / `nul` all collide. Prefix with `_` so the sanitised
+  // result clears the assert instead of throwing.
+  const stem = sanitized.split('.')[0].toUpperCase();
+  if (RESERVED_WINDOWS_NAMES.has(stem)) {
+    sanitized = `_${sanitized}`;
   }
 
   return sanitized;

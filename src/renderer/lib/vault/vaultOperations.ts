@@ -37,7 +37,7 @@
  * (which delete recovery breadcrumbs, not user files).
  */
 
-import { flushAllMarkdownWriters } from '../boards/markdownWriteRegistry';
+import { flushAllMarkdownWriters } from './markdownFileWriter';
 import { flushAllPendingFrontmatterWrites } from '../boards/frontmatterWriteScheduler';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { uiStore } from '../../stores/ui.svelte';

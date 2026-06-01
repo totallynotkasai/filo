@@ -71,6 +71,25 @@ describe('assertSafeFilename', () => {
     expect(() => assertSafeFilename('foo ')).toThrow(/trailing/);
   });
 
+  // Audit2 5.4 — `:` is the load-bearing entry: NTFS Alternate Data Streams.
+  // A filename like `note.md:hidden` writes to a hidden stream inside the
+  // vault that most tools never enumerate.
+  it('rejects NTFS Alternate Data Stream filenames (colon)', () => {
+    expect(() => assertSafeFilename('note.md:hidden')).toThrow(/Windows-illegal/);
+    expect(() => assertSafeFilename('Notes:secret.txt')).toThrow(/Windows-illegal/);
+    expect(() => assertSafeFilename(':leading')).toThrow(/Windows-illegal/);
+    expect(() => assertSafeFilename('trailing:')).toThrow(/Windows-illegal/);
+  });
+
+  it('rejects other Windows-illegal characters (<>"|?*)', () => {
+    expect(() => assertSafeFilename('foo<bar.md')).toThrow(/Windows-illegal/);
+    expect(() => assertSafeFilename('foo>bar.md')).toThrow(/Windows-illegal/);
+    expect(() => assertSafeFilename('foo"bar.md')).toThrow(/Windows-illegal/);
+    expect(() => assertSafeFilename('foo|bar.md')).toThrow(/Windows-illegal/);
+    expect(() => assertSafeFilename('foo?bar.md')).toThrow(/Windows-illegal/);
+    expect(() => assertSafeFilename('foo*bar.md')).toThrow(/Windows-illegal/);
+  });
+
   it('rejects embedded control characters', () => {
     expect(() => assertSafeFilename('foo\x00bar')).toThrow(/control/);
     expect(() => assertSafeFilename('foo\x01bar')).toThrow(/control/);

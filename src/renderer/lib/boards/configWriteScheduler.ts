@@ -32,6 +32,7 @@ import {
   markRecentSelfWrite,
 } from './writeStateTracking';
 import { invokeOk } from '../utils/invokeOk';
+import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { createScheduler } from './writeScheduler';
 import { getBaseline, noteBaseline, hasBaselineDrifted } from '../vault/fileBaselineRegistry';
 
@@ -276,9 +277,27 @@ export async function writeConfigs(
       let preWriteStat: { mtimeMs: number; size: number } | undefined;
       try {
         preWriteStat = await invokeOk('vault:stat', vaultRoot, sentinelPath);
-      } catch {
-        // Stat failed — fall through; the save IPC will surface the
-        // failure if it matters (e.g. ENOENT after a manual delete).
+      } catch (err) {
+        // Audit2 5.1 — ENOENT means the `.filo/` config was deleted on disk
+        // (user / external tool / sync client) while this debounced write
+        // was armed. Falling through to `config:save` would re-create it,
+        // resurrecting a file the user intentionally removed. Skip the
+        // target as a clean no-op (continue, not throw) so the scheduler
+        // ends the entry successfully and the recovery sentinel isn't
+        // left dirty. Mirrors the equivalent guard in
+        // `writeBoardFile` (boardWriteScheduler.ts) — same rationale.
+        //
+        // Gated on `baseline !== undefined` (this whole block): the file
+        // was previously known to exist on disk, so its absence now is a
+        // deletion, not a fresh seed. Initial `configOps.initVaultConfig`
+        // writes happen before any baseline is noted, so they're
+        // unaffected.
+        if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
+          continue;
+        }
+        // Any other stat error (EACCES, transient share hiccup): fall
+        // through — the save IPC below surfaces a genuine IO problem
+        // through the failure attribution pipeline.
       }
       if (preWriteStat !== undefined && hasBaselineDrifted(baseline, preWriteStat)) {
         const externalEditError = Object.assign(

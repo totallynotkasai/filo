@@ -105,6 +105,19 @@ export class TaskListFiltersAndViews {
   lastViewPersistTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
+   * Audit2 5.6 — clears the pending lastView debounce so a host unmount
+   * mid-window doesn't fire `updateSettings` + push a history entry against
+   * a board that's already torn down. Called from `TaskListBoard.svelte`'s
+   * `onDestroy`. Idempotent — safe to call when no timer is armed.
+   */
+  dispose(): void {
+    if (this.lastViewPersistTimer) {
+      clearTimeout(this.lastViewPersistTimer);
+      this.lastViewPersistTimer = null;
+    }
+  }
+
+  /**
    * Parsed view of `board.settings.savedViews`. Defensively filters out
    * malformed entries so a hand-edited .board.json with a junk view doesn't
    * crash the toolbar.

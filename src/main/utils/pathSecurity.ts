@@ -113,17 +113,30 @@ export function assertWithinVault(vaultRoot: string, targetPath: string): void {
  * (CON.txt → console) or hangs the IPC handler waiting for hardware. We
  * reject them up-front for cross-platform parity.
  */
-const RESERVED_WINDOWS_NAMES = new Set([
+export const RESERVED_WINDOWS_NAMES = new Set([
   'CON', 'PRN', 'AUX', 'NUL',
   'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
   'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
 ]);
 
 /**
+ * Audit2 5.4 — Windows-illegal characters that aren't path separators
+ * (caught by the basename check above) or control codes (caught by the
+ * loop below). `:` is the load-bearing entry: on NTFS it opens a hidden
+ * Alternate Data Stream, so a filename like `note.md:hidden` writes to a
+ * stream that's invisible to most tools yet stored inside the vault. The
+ * project's own `ILLEGAL_CHARS` regex in `filenameUtils.ts` already bans
+ * the same set; this gate aligns `assertSafeFilename` with it so a
+ * crafted filename can't slip through the `:`-tolerant `path.basename`.
+ */
+const WIN_ILLEGAL_CHARS_RE = /[<>:"|?*]/;
+
+/**
  * Throws if fileName is unsafe to use as a bare filename inside the vault.
  * Rejects:
  *   - empty / non-string input
  *   - path separators or `..` segments (use a path joiner for those)
+ *   - Windows-illegal characters `<>:"|?*` (NTFS ADS via `:`, etc.)
  *   - length > 255 (Windows MAX_PATH segment + POSIX NAME_MAX)
  *   - trailing dot or trailing space (silently stripped by Win32 → name collision)
  *   - control characters (\x00..\x1F, \x7F) including embedded NUL
@@ -136,6 +149,9 @@ export function assertSafeFilename(fileName: string): void {
   }
   if (path.basename(fileName) !== fileName || fileName.includes('..')) {
     throw new Error('Unsafe filename rejected — contains path separators');
+  }
+  if (WIN_ILLEGAL_CHARS_RE.test(fileName)) {
+    throw new Error('Unsafe filename rejected — contains Windows-illegal character (<>:"|?*)');
   }
   if (fileName.length > 255) {
     throw new Error('Unsafe filename rejected — exceeds 255 chars');

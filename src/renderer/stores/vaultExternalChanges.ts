@@ -1247,6 +1247,16 @@ function promptDeletedFile(
 }
 
 /**
+ * Audit2 5.2 — in-flight prompt registry. While a Reload / Keep-local toast
+ * is open for `path`, every concurrent caller awaits the SAME Promise so a
+ * second / third keystroke that also armed a body write doesn't pile a
+ * duplicate toast onto the stack. Cleared when the promise settles (either
+ * branch), so a *subsequent* external edit + write race opens a fresh
+ * prompt. Test-only access via `__inFlightDriftPromptsForTests` below.
+ */
+const inFlightDriftPrompts = new Map<string, Promise<'reload' | 'keep-local'>>();
+
+/**
  * Phase A.3 — surfaces a Reload / Keep-local prompt when `syncTileMarkdown`
  * detects an external edit landed in the read/write gap (file mtime
  * changed between the pre-read stat and the pre-write stat).
@@ -1263,12 +1273,19 @@ function promptDeletedFile(
  * sync caller needs to branch on the outcome before deciding whether to
  * write. Persistent toast (duration: 0) — user MUST choose; the sync
  * stays in-flight until they do.
+ *
+ * Audit2 5.2 — per-path dedupe: every concurrent caller for the same
+ * `path` awaits the same Promise so a typing storm against an externally-
+ * edited file produces ONE toast and ONE decision, not N.
  */
 export function promptExternalEditOnSync(args: {
   path: string;
 }): Promise<'reload' | 'keep-local'> {
   const { path } = args;
-  return new Promise((resolve) => {
+  const existing = inFlightDriftPrompts.get(path);
+  if (existing) return existing;
+
+  const promise = new Promise<'reload' | 'keep-local'>((resolve) => {
     const editorDoc = documentStore.findByFilename(path);
     uiStore.pushToast({
       text: `"${editorDoc?.title || path}" was modified externally between Filo's read and write. Reload from disk, or keep your local edits?`,
@@ -1321,6 +1338,34 @@ export function promptExternalEditOnSync(args: {
       ],
     });
   });
+
+  inFlightDriftPrompts.set(path, promise);
+  // Drop the entry when the prompt settles (success OR rejection) so a
+  // future external-edit race opens a fresh prompt. `.finally` runs after
+  // the await chain in callers, so the next caller in the same microtask
+  // window still observes the in-flight promise.
+  void promise.finally(() => {
+    // Guard against an unrelated re-register having replaced our entry in
+    // the gap — only clear if the slot still points at our promise.
+    if (inFlightDriftPrompts.get(path) === promise) {
+      inFlightDriftPrompts.delete(path);
+    }
+  });
+  return promise;
+}
+
+/**
+ * Test-only — exposes the in-flight prompt map size + entries for assertion.
+ * Production code should never need this.
+ */
+export function __inFlightDriftPromptsForTests(): {
+  size: number;
+  has: (path: string) => boolean;
+} {
+  return {
+    size: inFlightDriftPrompts.size,
+    has: (path: string) => inFlightDriftPrompts.has(path),
+  };
 }
 
 async function recreateDeletedFile(
@@ -1454,8 +1499,8 @@ export function promptBoardExternalEdit(args: {
 // directly without circular dependencies, so the wiring goes the other
 // direction via setters. The registration is wrapped in `queueMicrotask`
 // because the import graph contains pre-existing partial-evaluation
-// cycles (markdownFileWriter ↔ documentStore via markdownWriteRegistry,
-// and vaultIndexStore → vaultStore → vaultExternalChanges): dispatching
+// cycles (markdownFileWriter ↔ documentStore, and vaultIndexStore →
+// vaultStore → vaultExternalChanges): dispatching
 // on the microtask queue ensures every module in the cycle has finished
 // its synchronous top-level evaluation — and therefore published every
 // exported symbol — before we look up the setter.

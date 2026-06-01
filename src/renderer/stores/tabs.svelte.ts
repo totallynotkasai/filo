@@ -5,7 +5,7 @@ import type { Board, WorkspaceState } from '../schema/index';
 import { boardCacheStore } from './boardCache.svelte';
 import { historyStore } from './history.svelte';
 import { uiStore } from './ui.svelte';
-import { flushAllMarkdownWriters } from '../lib/boards/markdownWriteRegistry';
+import { flushAllMarkdownWriters } from '../lib/vault/markdownFileWriter';
 import { flushAllPendingFrontmatterWrites } from '../lib/boards/frontmatterWriteScheduler';
 import { onVaultSwap } from '../core/vaultLifecycle';
 

@@ -30,7 +30,7 @@
     flushMarkdownWrite,
     registerForceWriter,
     unregisterForceWriter,
-    writeMarkdownFile,
+    flushFinalWriteOnDestroy,
     cancelMarkdownWrite,
     type WriteArgs,
   } from '../../lib/vault/markdownFileWriter';
@@ -430,7 +430,11 @@
     void relPath;
 
     if (finalArgs) {
-      void writeMarkdownFile(finalArgs).catch((err) => {
+      // 6.4.M17 — flushFinalWriteOnDestroy no-ops if the gateway was already
+      // reset by a vault swap (cancelAllMarkdownWrites cleared the hydrate
+      // state), so this teardown write respects the swap reset instead of
+      // firing a stray write / throwing "not hydrated".
+      void flushFinalWriteOnDestroy(finalArgs).catch((err) => {
         if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
           // Backing file vanished during the close gesture — surface the
           // same toast the live flush path would have produced.

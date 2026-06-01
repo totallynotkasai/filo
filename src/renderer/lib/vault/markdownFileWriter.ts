@@ -398,6 +398,23 @@ export async function writeMarkdownFile(args: WriteArgs): Promise<void> {
   }
 }
 
+/**
+ * 6.4.M17 — swap-safe final write for component teardown (TextTile.onDestroy).
+ *
+ * A destroyed tile flushes its live editor's last edit, but a vault swap may
+ * have already reset the gateway (`cancelAllMarkdownWrites` clears the per-file
+ * hydrate state). Calling `writeMarkdownFile` directly in that window throws
+ * "not hydrated" — a stray write attempt + error report during teardown that
+ * BYPASSES the swap reset the cancel was meant to enforce. This entry point
+ * respects the reset: when the file is no longer hydrated the gateway has been
+ * torn down (and the swap's own flush already persisted the scheduled bytes),
+ * so the final write is skipped instead of throwing.
+ */
+export async function flushFinalWriteOnDestroy(args: WriteArgs): Promise<void> {
+  if (!isHydrated(args.relPath)) return;
+  await writeMarkdownFile(args);
+}
+
 async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
   const { vaultRoot, relPath, body, callerId, docId } = args;
   if (!vaultRoot || !relPath) {

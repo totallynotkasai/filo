@@ -28,6 +28,7 @@ import {
   registerForceWriter,
   forceWriteForDocument,
   setExternalEditPromptHandler,
+  flushFinalWriteOnDestroy,
   __resetMarkdownFileWriterForTests,
   type WriteArgs,
 } from '../../renderer/lib/vault/markdownFileWriter';
@@ -649,6 +650,70 @@ describe('markdownFileWriter — re-validate drift across the async prompt (M13)
 
     expect(prompts).toBe(1);
     expect(counters.writes).toBe(1);
+  });
+});
+
+// 6.4.M17 — TextTile.onDestroy flushed its final edit by calling
+// writeMarkdownFile directly. On a vault swap the gateway is reset first
+// (cancelAllMarkdownWrites clears the per-file hydrate state), so that direct
+// call threw "not hydrated" — a stray write attempt + error during teardown
+// that bypassed the swap reset. flushFinalWriteOnDestroy respects the reset:
+// it writes only while the file is still hydrated, otherwise no-ops.
+describe('markdownFileWriter — flushFinalWriteOnDestroy respects the swap reset (M17)', () => {
+  beforeEach(() => {
+    __resetMarkdownFileWriterForTests();
+    __resetDirtyTrackingForTests();
+    __resetBaselinesForTests();
+  });
+  afterEach(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    __resetMarkdownFileWriterForTests();
+    __resetDirtyTrackingForTests();
+    __resetBaselinesForTests();
+    (window as unknown as Record<string, unknown>).filo = {
+      invoke: async () => undefined,
+      on: () => () => {},
+      send: () => {},
+    };
+  });
+
+  function installWriteCounter(): { writes: number } {
+    const counters = { writes: 0 };
+    (window as unknown as Record<string, unknown>).filo = {
+      invoke: async (channel: string) => {
+        if (channel === 'vault:write-existing-file-text') counters.writes++;
+        return { success: true, ok: true };
+      },
+      on: () => () => {},
+      send: () => {},
+    };
+    return counters;
+  }
+
+  it('writes when the file is still hydrated (normal tile close)', async () => {
+    const relPath = 'Notes/m17-live.md';
+    markHydrated(relPath, false);
+    const counters = installWriteCounter();
+    await flushFinalWriteOnDestroy({
+      vaultRoot: '/vault', relPath, frontmatter: {}, body: 'final', callerId: 'm17a', docId: null,
+    });
+    expect(counters.writes).toBe(1);
+  });
+
+  it('skips the write (no throw) after a vault-swap reset cleared hydration', async () => {
+    const relPath = 'Notes/m17-swap.md';
+    markHydrated(relPath, false);
+    // The swap-hook full reset (run before components unmount) clears fileState.
+    cancelAllMarkdownWrites();
+    expect(isHydrated(relPath)).toBe(false);
+
+    const counters = installWriteCounter();
+    await expect(
+      flushFinalWriteOnDestroy({
+        vaultRoot: '/vault', relPath, frontmatter: {}, body: 'final', callerId: 'm17b', docId: null,
+      }),
+    ).resolves.toBeUndefined();
+    expect(counters.writes).toBe(0);
   });
 });
 

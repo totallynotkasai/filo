@@ -163,25 +163,44 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
     : vaultIndexStore.getMetadata(relPath)?.frontmatter;
   if (!fm) return;
 
-  const docState = docId ? documentStore.getDocument(docId) : null;
-  const body = docState?.body ?? vaultIndexStore.getMetadata(relPath)?.content ?? '';
-
-  // Route the write through the markdown gateway. The gateway threads BOM
-  // round-trip + trackComponentWrite + lastFlushedVersion bookkeeping
-  // through a single canonical write path so this scheduler doesn't have
-  // to reconstruct any of it. If the file hasn't been hydrated by an open
-  // editor yet, hydrate it via the read gateway — costs one IPC per
-  // never-hydrated file; subsequent writes hit the fast path.
-  if (!isHydrated(relPath)) {
+  // 6.2.H5 — body resolution must not silently clobber disk truth.
+  //
+  // Pre-fix: `body = docState?.body ?? vaultIndex.content ?? ''`. If
+  // docState is undefined at fire time, the chain fell through to the
+  // index's possibly-hours-stale `content` — or `''` when the index
+  // had no entry — and the write committed those bytes back to disk.
+  //
+  // (a) docId set + docState undefined → editor unmounted between
+  //     schedule and fire. The user has no live edits we'd be
+  //     preserving by writing; aborting keeps the (possibly externally
+  //     edited) on-disk bytes intact.
+  // (b) docId null → orphan FM write (Kanban card edit with no open
+  //     editor). Hydrate fresh from disk and use that body; never
+  //     trust `vaultIndex.content`, which is body-stripped AND can be
+  //     hours stale relative to disk.
+  let body: string;
+  if (docId) {
+    const docState = documentStore.getDocument(docId);
+    if (!docState) return;
+    body = docState.body;
+    // Hydrate-if-needed so the gateway has the BOM + drift baseline.
+    if (!isHydrated(relPath)) {
+      try {
+        await readMarkdownForHydrate(vaultRoot, relPath);
+      } catch {
+        markHydrated(relPath, false);
+      }
+    }
+  } else {
+    // Fresh disk read serves three roles in one IPC: hydrate (BOM +
+    // drift baseline), pull the canonical body, and ENOENT-fail if
+    // the file is gone. A throw here aborts the write so we don't
+    // resurrect a deleted file from the index's stale snapshot.
     try {
-      // E1 — the read gateway detects the BOM AND seeds the drift baseline
-      // from the same read's mtime, so the pre-write check below can catch
-      // an external edit landing between this read and the write.
-      await readMarkdownForHydrate(vaultRoot, relPath);
+      const hydrate = await readMarkdownForHydrate(vaultRoot, relPath);
+      body = hydrate.body;
     } catch {
-      // File missing / unreadable — mark hydrated with no BOM so the write
-      // below proceeds and ENOENT-fails through the standard error pipeline.
-      markHydrated(relPath, false);
+      return;
     }
   }
 

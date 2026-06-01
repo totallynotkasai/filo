@@ -178,10 +178,26 @@ interface InFlightEntry {
  * gateway/registry `FlushAllResult` (`{ ok: number; failed: {ownerId,error}[] }`):
  * here `failed` is a flat list of failure identifiers and `vaultRoot` carries
  * the last-seen root for post-drain sentinel sync. Do not unify the two.
+ *
+ * 6.3.P4 — `ok` tracks the count of writes drained successfully so the
+ * gateway-side `flushAllMarkdownWriters` (which composes scheduler + test
+ * flushers) reports a meaningful production count. Pre-fix the gateway's
+ * `ok` was a `testFlushers.size - testFailures.length` synthesis, which
+ * is always 0 in production (no test flushers registered) — masking the
+ * shim-migration leftover where `lastSeenArgs` was still populated by
+ * every write but read by no production consumer.
  */
 export interface FlushAllResult {
   /** Identifiers (paths or failure ids) whose write failed. */
   failed: string[];
+  /**
+   * Count of writes drained (pending-timer-fired + already-in-flight)
+   * whose `performWrite` resolved without surfacing a failure id. Always
+   * equals `drainedTotal - failed.length` for any single `flushAll` call.
+   * Mirror of the gateway's `ok` field; production callers usually check
+   * `failed.length === 0` and ignore this count.
+   */
+  ok: number;
   /**
    * Last vault root observed during the flush. Callers driving
    * `syncSentinelIfIdle` after a multi-scheduler drain consult this so a
@@ -594,6 +610,11 @@ export function createScheduler<TArgs>(
 
     let trackedVault: string | undefined;
     const failed: string[] = [];
+    // 6.3.P4 — track drained entries (drained-pending + drained-inflight) so
+    // we can return `ok = drained - failed`. Counted from the synchronous
+    // capture loops above so a late-arriving write doesn't shift the
+    // denominator under us.
+    const drainedTotal = drained.length + inflightSnapshot.length;
 
     for (const entry of drained) {
       if (!entry.args) {
@@ -644,7 +665,8 @@ export function createScheduler<TArgs>(
       }
     }
 
-    return { vaultRoot: trackedVault, failed };
+    const ok = Math.max(0, drainedTotal - failed.length);
+    return { vaultRoot: trackedVault, failed, ok };
   }
 
   function reset(): void {

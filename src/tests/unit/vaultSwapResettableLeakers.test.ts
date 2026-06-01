@@ -96,4 +96,46 @@ describe('Phase 6.1.R2 — leakers registered for vault-swap reset', () => {
     ).resolves.toBeUndefined();
     expect(uiStore.toasts.length).toBe(0);
   });
+
+  /**
+   * 6.3.P4 — behaviour check (not just registration): a test flusher
+   * registered before vault swap must be DROPPED so the new vault's
+   * `flushAllMarkdownWriters` doesn't replay it. Pins the contract the
+   * `vaultSwapResettable('markdownFileWriter.testFlushers')` registration
+   * promises.
+   */
+  it('testFlushers map is drained on vault swap (not just registered)', async () => {
+    const { __testRegisterFlusher, flushAllMarkdownWriters, __resetMarkdownFileWriterForTests } =
+      await import('@renderer/lib/vault/markdownFileWriter');
+
+    // Hard reset to start from a known-empty state.
+    __resetMarkdownFileWriterForTests();
+
+    let calls = 0;
+    __testRegisterFlusher('leaker', async () => {
+      calls += 1;
+    });
+
+    // First drain proves the flusher is registered and reachable.
+    const before = await flushAllMarkdownWriters();
+    expect(calls).toBe(1);
+    expect(before.ok).toBe(1);
+
+    // Vault swap drains testFlushers via vaultSwapResettable.
+    await fireVaultSwap({
+      phase: 'pre-swap',
+      previousVault: '/a',
+      nextVault: '/b',
+      saveOutgoing: false,
+    });
+
+    // After swap, the prior test's flusher must NOT replay against the
+    // new vault. Reset for cleanup since the test owns the registry.
+    const after = await flushAllMarkdownWriters();
+    expect(calls).toBe(1); // unchanged — flusher was dropped before this drain
+    expect(after.ok).toBe(0);
+    expect(after.failed).toEqual([]);
+
+    __resetMarkdownFileWriterForTests();
+  });
 });

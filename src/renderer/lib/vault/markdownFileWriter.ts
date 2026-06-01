@@ -145,20 +145,6 @@ registerPendingProbe((path) => {
 });
 
 /**
- * callerId → most recently flushed args. Kept around after the timer fires
- * so `forceWriteForDocument` can re-write the same caller's last-known
- * content when no scheduled write is armed but Keep-local needs to push
- * the editor's body to disk anyway.
- *
- * Distinct from `pending` — that map only holds writes that are armed but
- * not yet fired. The lifecycle is: schedule populates `pending`, flush
- * moves the entry from `pending` to `lastSeenArgs` (after the IPC resolves),
- * forceWriteForDocument consults `lastSeenArgs` and the registered
- * `forceWriters` callback to get the freshest editor body.
- */
-const lastSeenArgs = new Map<string, WriteArgs>();
-
-/**
  * callerId → fresh-args callback. Carry-over from the old
  * `markdownWriteRegistry.forceWriteForDocument` API: editor-backed writers
  * (TextTile, DocumentEditor) register a callback that returns the LATEST
@@ -168,6 +154,13 @@ const lastSeenArgs = new Map<string, WriteArgs>();
  * Non-editor callers (PropertiesPopup, orphan-fm sites) don't need to
  * register here — they always call `writeMarkdownFile` / `scheduleMarkdownWrite`
  * with fresh args inline.
+ *
+ * 6.3.P4 — the sibling `lastSeenArgs` Map (a shim-migration leftover that
+ * was populated by every successful write but read by no production
+ * consumer) is deleted. `forceWriteForDocument` always reads the live
+ * editor body via `entry.build()` and never falls back to the cached
+ * snapshot, so caching it here was dead storage that grew unboundedly
+ * over a session.
  */
 interface ForceWriter {
   docId: string | null;
@@ -535,10 +528,6 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
   } catch (err) {
     console.warn('[markdownFileWriter] post-write index refresh failed (best-effort):', err);
   }
-  // Cache for forceWriteForDocument's fallback path. Latest args win; only
-  // stored on successful writes so we don't accidentally re-emit a failed
-  // snapshot.
-  lastSeenArgs.set(callerId, { ...args, frontmatter: fm });
   if (docId) {
     const version = documentStore.getFrontmatterMutationVersion(docId);
     noteFrontmatterFlushedVersion(docId, version);
@@ -723,13 +712,15 @@ export async function flushAllMarkdownWriters(): Promise<FlushAllResult> {
     })),
     ...testFailures,
   ];
-  const ok = (testFlushers.size - testFailures.length);
+  // 6.3.P4 — `ok` now sums production writes drained successfully
+  // (schedulerResult.ok, returned by the writeScheduler primitive) AND
+  // successful test flushers. Pre-fix this was only the test-flusher
+  // count, which is 0 in production — masking actual production write
+  // counts. Production callers still check `failed.length === 0`;
+  // tests rely on `ok` matching the count of registered+drained flushers.
+  const testOk = testFlushers.size - testFailures.length;
   return {
-    // The old `ok` field was a count of successful per-owner drains. The
-    // gateway tracks only the failure list for its own writes, so we report
-    // the successful test-flusher count as `ok`. Production callers in any
-    // case check `failed.length` exclusively.
-    ok: ok < 0 ? 0 : ok,
+    ok: Math.max(0, schedulerResult.ok + testOk),
     failed,
   };
 }
@@ -754,7 +745,6 @@ export async function flushAllMarkdownWriters(): Promise<FlushAllResult> {
  */
 export function cancelAllMarkdownWrites(): void {
   writerScheduler.reset();
-  lastSeenArgs.clear();
   fileState.clear();
   forceWriters.clear();
   // 6.2.H10 — drop in-flight promise refs. The promises themselves

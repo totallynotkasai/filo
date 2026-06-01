@@ -171,6 +171,13 @@ function awaitRecoveryDismiss(): Promise<void> {
  * Phase 3 / 3.3 — promisifies `uiStore.openConfirm`. Resolves true on the
  * Confirm button, false on Cancel. The original `onConfirm`/`onCancel`
  * callbacks still fire, so existing per-action side effects stay intact.
+ *
+ * 6.2.H2 — `onConfirm` / `onCancel` may now return a Promise; the wrapper
+ * `await`s them before resolving the outer promise. Without this, a
+ * `void convergeForward()` inside the handler fired-and-forgot, and the
+ * sequencer's next `await awaitConfirm(...)` step could start mid-flight
+ * — two recoveries mutating `boardCacheStore.cache` / `flushAllDirty`
+ * concurrently against the same vault.
  */
 function awaitConfirm(config: {
   title: string;
@@ -178,8 +185,8 @@ function awaitConfirm(config: {
   confirmLabel?: string;
   cancelLabel?: string;
   danger?: boolean;
-  onConfirm?: () => void;
-  onCancel?: () => void;
+  onConfirm?: () => void | Promise<void>;
+  onCancel?: () => void | Promise<void>;
 }): Promise<boolean> {
   return new Promise((resolve) => {
     uiStore.openConfirm({
@@ -188,13 +195,19 @@ function awaitConfirm(config: {
       confirmLabel: config.confirmLabel,
       cancelLabel: config.cancelLabel,
       danger: config.danger,
-      onConfirm: () => {
-        config.onConfirm?.();
-        resolve(true);
+      onConfirm: async () => {
+        try {
+          await config.onConfirm?.();
+        } finally {
+          resolve(true);
+        }
       },
-      onCancel: () => {
-        config.onCancel?.();
-        resolve(false);
+      onCancel: async () => {
+        try {
+          await config.onCancel?.();
+        } finally {
+          resolve(false);
+        }
       },
     });
   });
@@ -609,20 +622,19 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
         body,
         confirmLabel: 'Resume',
         cancelLabel: partialDetected ? 'Finalise & discard' : 'Discard plan',
-        onConfirm: () => {
-          void convergeForward();
-        },
-        onCancel: () => {
-          void (async () => {
-            // Partial: converge forward before clearing the breadcrumb so the
-            // vault doesn't stay split; a clean state just clears it.
-            if (partialDetected) {
-              await convergeForward();
-            }
-            await clearPendingRewrite(newVaultPath);
-            const flat = flattenTreePaths(fileTree, newVaultPath);
-            fileTagsStore.pruneOrphanFileTags(flat);
-          })();
+        // 6.2.H2 — `awaitConfirm` now awaits these handlers, so we return
+        // the promise instead of fire-and-forgetting. Without this, the
+        // sequencer's next step could race the still-pumping converge.
+        onConfirm: () => convergeForward(),
+        onCancel: async () => {
+          // Partial: converge forward before clearing the breadcrumb so the
+          // vault doesn't stay split; a clean state just clears it.
+          if (partialDetected) {
+            await convergeForward();
+          }
+          await clearPendingRewrite(newVaultPath);
+          const flat = flattenTreePaths(fileTree, newVaultPath);
+          fileTagsStore.pruneOrphanFileTags(flat);
         },
       });
     } else if (res.unreadable) {
@@ -658,27 +670,27 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
         body,
         confirmLabel: 'Retry',
         cancelLabel: 'Discard',
-        onConfirm: () => {
-          void repairRenameCascade(entries, newVaultPath, 'Retry');
+        // 6.2.H2 — return the promise so `awaitConfirm` awaits the repair
+        // before the sequencer's next step starts.
+        onConfirm: async () => {
+          await repairRenameCascade(entries, newVaultPath, 'Retry');
         },
-        onCancel: () => {
-          // Phase 4.5 (2026-05-30) — "Discard" repairs too. The renamed file
-          // is already on disk; clearing the breadcrumb without repairing
-          // would strand any board whose flush failed pointing at the old
-          // path with no in-app fix. Run the SAME repair as Retry, then
-          // confirm what changed so the user knows Discard wasn't a no-op.
-          void (async () => {
-            const repaired = await repairRenameCascade(entries, newVaultPath, 'Discard');
-            if (repaired === null) return; // a flush failed; repair surfaced its own toast
-            uiStore.pushToast({
-              text:
-                repaired > 0
-                  ? `Repaired ${repaired} board reference${repaired === 1 ? '' : 's'} from the unfinished rename.`
-                  : 'Unfinished rename resolved — no board references needed repair.',
-              type: 'info',
-              duration: 4000,
-            });
-          })();
+        // Phase 4.5 (2026-05-30) — "Discard" repairs too. The renamed file
+        // is already on disk; clearing the breadcrumb without repairing
+        // would strand any board whose flush failed pointing at the old
+        // path with no in-app fix. Run the SAME repair as Retry, then
+        // confirm what changed so the user knows Discard wasn't a no-op.
+        onCancel: async () => {
+          const repaired = await repairRenameCascade(entries, newVaultPath, 'Discard');
+          if (repaired === null) return; // a flush failed; repair surfaced its own toast
+          uiStore.pushToast({
+            text:
+              repaired > 0
+                ? `Repaired ${repaired} board reference${repaired === 1 ? '' : 's'} from the unfinished rename.`
+                : 'Unfinished rename resolved — no board references needed repair.',
+            type: 'info',
+            duration: 4000,
+          });
         },
       });
     } else if (res.unreadable) {

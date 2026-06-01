@@ -95,7 +95,13 @@ const ALLOWLIST = {
   // (`board.ipc.ts:108`, refuses to re-anchor while a different vault is
   // active) doesn't reject every user-driven vault swap. +7 LOC
   // (try/catch + one-line comment). New snapshot: 1406 LOC.
-  'src/renderer/stores/vault.svelte.ts': 1406,
+  // PHASE6_PLAN_2026-06-01 Phase 6.2.H2 — `awaitConfirm` now `await`s a
+  // Promise-returning `onConfirm`/`onCancel` handler before resolving so
+  // the recovery sequencer's next `await` doesn't race a still-pumping
+  // convergeForward / repairRenameCascade. +~12 LOC (signature widening
+  // + try/finally wrappers + two call-site comments). New snapshot: 1418
+  // LOC.
+  'src/renderer/stores/vault.svelte.ts': 1418,
   // External-changes orchestrator: classifies fs-watcher events into
   // editor-dirty toast / silent reload / sync-frontmatter / deleted-file
   // prompt / properties-popup-dirty prompt. 500 ms attachment-delete grace

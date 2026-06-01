@@ -112,7 +112,12 @@ const ALLOWLIST = {
   // setCache identity flip + microtask yields + mtime gate) instead of
   // a per-md `applyFrontmatterToBackedTiles` call. +~6 LOC of comment.
   // New snapshot: 1435 LOC.
-  'src/renderer/stores/vault.svelte.ts': 1435,
+  // PHASE6_PLAN_2026-06-01 Phase 6.3.P3 — the commit phase now also
+  // calls `assertBaselinesSeeded(candidate.seededConfigBaselinePaths,
+  // 'config')` so the dev tripwire warns if a future regression drops
+  // the eager `.filo/` config baseline seed step. +6 LOC of comment +
+  // call. New snapshot: 1441 LOC.
+  'src/renderer/stores/vault.svelte.ts': 1441,
   // External-changes orchestrator: classifies fs-watcher events into
   // editor-dirty toast / silent reload / sync-frontmatter / deleted-file
   // prompt / properties-popup-dirty prompt. 500 ms attachment-delete grace

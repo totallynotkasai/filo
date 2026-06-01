@@ -213,19 +213,10 @@ export function registerVaultHandlers(): void {
     try {
       assertActiveVault(vaultRoot);
       assertWithinVault(vaultRoot, folderPath);
-      // Polish phase 1.3 — per-segment safety guard. The previous handler
-      // accepted any folderPath that landed under the vault root, so
-      // `vault/foo/CON/bar` (Windows reserved name) or `vault/foo/aux.md/bar`
-      // would create directories that subsequent file writes couldn't open.
-      // Mirrors the `assertSafeFilename(basename(newPath))` guard in
-      // `vault:rename`, only here we walk every interior segment so a
-      // reserved name anywhere along the new path is rejected up front.
-      // `assertSafeRelativePath` already calls `assertSafeFilename` per
-      // segment, so a single call gives us depth + per-segment validation
-      // for free.
-      //
-      // 6.3.P1/P2 — `forCreation: true` enforces Windows-only rules
-      // (illegal chars `<>:"|?*`, reserved DOS names) regardless of host
+      // Polish phase 1.3 + 6.3.P1/P2 — per-segment safety guard with
+      // `forCreation: true`: rejects depth overrun, separators, `..`,
+      // and Windows-illegal chars / reserved DOS names anywhere in the
+      // new path. `forCreation` enforces the Win-only rules on every
       // platform so a Mac user can't seed a folder that breaks Windows.
       const relPath = relativePosix(vaultRoot, folderPath);
       assertSafeRelativePath(relPath, { forCreation: true });
@@ -285,18 +276,12 @@ export function registerVaultHandlers(): void {
       // exfiltrate config; a rename into `.filo/` would let it overwrite.
       assertNotInFiloDir(relativePosix(vaultRoot, oldPath));
       assertNotInFiloDir(relativePosix(vaultRoot, newPath));
-      // Phase 31 A3.6 — defence-in-depth: refuse Windows reserved names,
-      // path-separator chars, and `..` anywhere in the NEW basename. The
-      // renderer ConfirmDialog typically blocks these at the UI layer
-      // (Phase 27 P0 #3), but the IPC must reject them too so a script
-      // or future caller that talks to the channel directly can't smuggle
-      // a CON.md / NUL.txt through.
-      //
-      // 6.3.P1/P2 — the OLD basename is allowed to carry POSIX-legal
-      // names like `2025:01:15.md` (caught by `assertWithinVault` only,
-      // not validated). The NEW basename uses `forCreation: true` so
-      // Windows-illegal chars + reserved names always reject — keeping
-      // the rename target portable across platforms.
+      // Phase 31 A3.6 + 6.3.P1/P2 — defence-in-depth for the NEW
+      // basename: rejects separators, `..`, Win-illegal chars, and
+      // reserved DOS names. `forCreation: true` enforces the Win-only
+      // rules on every platform so the rename target stays portable.
+      // (The OLD basename intentionally isn't re-validated — a POSIX
+      // file legitimately named `2025:01:15.md` must still rename.)
       assertSafeFilename(basename(newPath), { forCreation: true });
       // Sprint C / C-A5-1 — bracket renameItem with watcher suppression so
       // the in-app rename does NOT echo back as a `vault:file-renamed`
@@ -727,15 +712,10 @@ export function registerVaultHandlers(): void {
     async (_event, vaultRoot: string, relativePath: string, content: string) => {
       try {
         assertActiveVault(vaultRoot);
-        // Structural sanity (depth + per-segment) before path joining. A
-        // malformed payload (mixed separators, traversal sequences, absurd
-        // depth) is rejected here so it can't reach `path.join` or the
-        // file system.
-        //
-        // 6.3.P1/P2 — this channel CREATES new files (mkdir -p + atomic
-        // write). `forCreation: true` enforces Windows-only rules
-        // (illegal chars, reserved DOS names) regardless of host platform
-        // so a Mac user can't create a file that breaks Windows.
+        // Structural sanity (depth + per-segment) before path joining.
+        // 6.3.P1/P2 — `forCreation: true` because this channel mkdir-p's
+        // + atomic-writes a NEW file; enforce Win-only rules on every
+        // platform so cross-platform vaults stay portable.
         assertSafeRelativePath(relativePath, { forCreation: true });
         // Phase 1 / 1.2 — refuse generic writes into `.filo/` except for
         // the allowlisted crash-recovery sentinels. Dedicated channels
@@ -833,9 +813,7 @@ export function registerVaultHandlers(): void {
     async (_event, vaultRoot: string, relativePath: string, base64: string) => {
       try {
         assertActiveVault(vaultRoot);
-        // 6.3.P1/P2 — binary writes create new files; enforce
-        // Windows-only rules on every platform so a cross-platform
-        // vault stays portable.
+        // 6.3.P1/P2 — `forCreation: true`; binary writes create new files.
         assertSafeRelativePath(relativePath, { forCreation: true });
         assertNotInFiloDir(relativePath);
         const buffer = Buffer.from(base64, 'base64');
@@ -980,16 +958,10 @@ export function registerVaultHandlers(): void {
           typeof destFolder === 'string' && destFolder.trim().length > 0
             ? toPosix(destFolder).replace(/^\/+/, '').replace(/\/+$/, '')
             : undefined;
-        // Phase 37 / 37.5 — segment-level validation on the subfolder.
-        // `assertWithinVault` only checks the joined-path prefix, so a
-        // per-segment Windows reserved name (e.g. `attachments/AUX/foo.png`)
-        // could pass the containment check while still opening a device
-        // handle on Windows. Re-validate each segment via
-        // `assertSafeRelativePath` after normalisation.
-        //
-        // 6.3.P1/P2 — `forCreation: true` because this channel creates
-        // new subfolders + new file paths. Enforces Windows rules on
-        // every platform so a Mac-side drop stays portable.
+        // Phase 37 / 37.5 + 6.3.P1/P2 — segment-level validation on the
+        // subfolder (a per-segment reserved name would pass `assertWithinVault`
+        // but still open a device handle on Windows). `forCreation: true`
+        // because this channel creates new subfolders + file paths.
         if (subfolder) assertSafeRelativePath(subfolder, { forCreation: true });
 
         // Phase 1 / 1.2 — refuse `.filo/` on both ends:

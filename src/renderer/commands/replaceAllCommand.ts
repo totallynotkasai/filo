@@ -138,6 +138,7 @@ async function buildPlans(
 function findFrontmatterEnd(raw: string): number {
   // Strip BOM if present so the regex anchors cleanly.
   let prefix = 0;
+  // allow-bom-sniff: `raw` is the unmodified byte payload from `vault:read-file-text` (no BOM-stripping intermediate), so this is the legitimate gateway-side sniff
   if (raw.charCodeAt(0) === 0xfeff) prefix = 1;
   // Body parsing in `gray-matter` strips frontmatter regardless of whitespace
   // before the leading fence, so accept whitespace before the first `---`.

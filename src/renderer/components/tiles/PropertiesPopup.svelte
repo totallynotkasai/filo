@@ -21,6 +21,7 @@
   import {
     markHydrated,
     isHydrated,
+    readMarkdownForHydrate,
     scheduleMarkdownWrite as gatewayScheduleMarkdownWrite,
     flushMarkdownWrite,
     cancelMarkdownWrite,
@@ -206,15 +207,17 @@
     // truncate the last few keystrokes.
     const docState = docId ? documentStore.getDocument(docId) : null;
     const body = docState?.body ?? vaultIndexStore.getMetadata(relPath)?.content ?? '';
-    // If the file hasn't been hydrated yet (no sibling TextTile / DocumentEditor
-    // open AND the popup's own loadFromBacking hadn't seen the file before),
-    // markHydrated against the index content's BOM state — best effort,
-    // matches the watcher's view of disk.
-    if (!isHydrated(relPath)) {
-      const indexed = vaultIndexStore.getMetadata(relPath);
-      const hadBom = indexed?.content?.charCodeAt(0) === 0xfeff;
-      markHydrated(relPath, hadBom);
-    }
+    // Phase 6.1.R5 — hydration is now seeded by the `hydrateBackingFile`
+    // disk read fired from onMount. The previous code sniffed `hadBom`
+    // from `vaultIndexStore.content`, which is the body-only field
+    // already BOM-stripped by gray-matter, so the sniff was permanently
+    // `false` and Notepad-saved files lost their BOM on the popup's
+    // first save. The onMount disk read seeds the correct hadBom into
+    // `fileState` AND seeds the drift baseline. If onMount's read
+    // failed (ENOENT / race), fall back to a no-BOM hydrate so the
+    // write below ENOENT-fails with the same surfaced toast path the
+    // legacy "no fileState entry" branch produced.
+    if (!isHydrated(relPath)) markHydrated(relPath, false);
     return {
       vaultRoot,
       relPath,
@@ -399,6 +402,26 @@
   onMount(() => {
     flusherId = `properties-popup:${tile.id}:${createId(6)}`;
     loadFromBacking();
+    // Phase 6.1.R5 — async disk-read hydrate so the popup's first write
+    // assembles against the correct BOM byte AND a drift baseline seeded
+    // from the same read. Skip when a sibling editor already hydrated
+    // the file (its fileState entry is correct) or when there is no
+    // backing file (non-text tile / unresolved relPath). The promise is
+    // fire-and-forget — a failed read leaves `fileState` empty, and
+    // `buildFrontmatterWriteArgs` falls back to `markHydrated(false)`
+    // so the first write surfaces the ENOENT through the gateway's
+    // error path instead of crashing.
+    if (tile.type === 'text') {
+      const vaultRoot = vaultStore.path;
+      const relPath = vaultRelativePath(tile);
+      if (vaultRoot && relPath && !isHydrated(relPath)) {
+        void readMarkdownForHydrate(vaultRoot, relPath).catch(() => {
+          // Read failed (ENOENT, EACCES, …). buildFrontmatterWriteArgs's
+          // `if (!isHydrated) markHydrated(false)` fallback handles the
+          // write path; nothing to do here.
+        });
+      }
+    }
   });
 
   onDestroy(() => {

@@ -24,6 +24,7 @@
   } from '../../lib/styles/resolvedTileStyleContext';
   import {
     markHydrated,
+    isHydrated,
     readMarkdownForHydrate,
     scheduleMarkdownWrite as gatewayScheduleMarkdownWrite,
     flushMarkdownWrite,
@@ -264,7 +265,13 @@
           isUpdatingFromStore = true;
           applyLoadResult(loadMarkdownIntoEditor(editor, parsed.body), existing.docId);
           isUpdatingFromStore = false;
-          markHydrated(relPath, parsed.hadBom);
+          // Phase 6.1.R5 — inherit the sibling's hadBom from the existing
+          // `fileState` entry; do NOT re-sniff from `parsed.hadBom`, which
+          // is computed from the body-only `existing.body` (always false
+          // because the body is stripped). When isHydrated is false the
+          // sibling hadn't done its own disk read yet, so fall back to
+          // false; the next gateway write will hydrate from disk.
+          if (!isHydrated(relPath)) markHydrated(relPath, false);
           // Re-register the force-writer with the adopted docId so Keep-local
           // matches against the new identity.
           registerForceWriter(callerId, existing.docId, buildWriteArgs);
@@ -286,7 +293,12 @@
         isUpdatingFromStore = true;
         applyLoadResult(loadMarkdownIntoEditor(editor, parsed.body));
         isUpdatingFromStore = false;
-        if (relPath) markHydrated(relPath, parsed.hadBom);
+        // Phase 6.1.R5 — `docState.body` is the body-only field, so
+        // `parsed.hadBom` is always false (BOM was stripped before the
+        // store cached the body). Inherit the existing `fileState`
+        // entry's hadBom when it exists; only mark with false as a
+        // fresh fallback for a doc that has no prior hydrate.
+        if (relPath && !isHydrated(relPath)) markHydrated(relPath, false);
         return;
       }
 

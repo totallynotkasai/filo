@@ -203,7 +203,12 @@ const ALLOWLIST = {
   // grew a `'defer'` return arm so auto-dismiss no longer silently
   // overwrites the external edit. +11 LOC of jsdoc, toast copy, and
   // the `onDismiss: () => resolve('defer')` arm. New snapshot: 1565 LOC.
-  'src/renderer/stores/vaultExternalChanges.ts': 1565,
+  // 6.4.M19 — `runExternalRenameCascade` wraps `fileTagsStore.flushPendingSave()`
+  // in a try/catch so a tags-flush rejection no longer aborts the board
+  // cascade (sentinel write + flushAllDirty); the sentinel's tagsAffected
+  // flag re-asserts the tag rename on recovery. +16 LOC of comment + guard.
+  // New snapshot: 1581 LOC.
+  'src/renderer/stores/vaultExternalChanges.ts': 1581,
   // tileCommands.ts dropped off the allowlist (AUDIT_REMEDIATION_PLAN_2026-05-29
   // Phase 5 / C-3): the tag-driven commands (AddTileTag / RemoveTileTag /
   // AddPathTag / RemovePathTag / ToggleTagFade) moved to the new sibling
@@ -216,6 +221,17 @@ const ALLOWLIST = {
   // factoring the cascade orchestrators into a sibling) is queued for
   // a later pass — for now the growth is the smallest fix for the leak.
   'src/renderer/stores/fileTags.svelte.ts': 1003,
+  // Markdown write gateway: per-caller debounce, BOM-preserving hydrate,
+  // pre-write drift prompt, in-flight tracking, force-write + cancel APIs.
+  // PHASE6_PLAN_2026-06-01 Phase 6.4.M13 — the pre-write Reload/Keep-local
+  // prompt now re-validates drift in a bounded loop (the file can drift again
+  // while the modal is open), and 6.4.M17 added `flushFinalWriteOnDestroy`
+  // (a swap-safe teardown write that no-ops once the gateway is reset). These
+  // pushed the file just over the default 1000-LOC limit. New snapshot: 1009
+  // LOC. Splitting (e.g. factoring the drift-prompt loop + hydrate gateway
+  // into siblings) is queued for a later structural pass; for now the growth
+  // is the smallest fix for two data-safety races.
+  'src/renderer/lib/vault/markdownFileWriter.ts': 1009,
 };
 
 function toPosix(p) {

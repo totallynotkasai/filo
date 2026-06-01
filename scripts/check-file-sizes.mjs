@@ -43,7 +43,11 @@ const ALLOWLIST = {
   // escape note above the `.filo/kanban-toolbar-pos.json` write so the
   // extended markdown-gateway gate doesn't flag the per-machine UI
   // geometry write. +2 LOC of comment. New snapshot: 1492 LOC.
-  'src/renderer/components/boards/KanbanSideToolbar.svelte': 1492,
+  // PHASE6_PLAN_2026-06-01 Phase 6.1.R2 (follow-up) — added an `onDestroy`
+  // that clears the live-filter `propDebounce` so it can't fire
+  // `onFilterPropChange` after the toolbar unmounts on vault swap. +8 LOC.
+  // New snapshot: 1500 LOC.
+  'src/renderer/components/boards/KanbanSideToolbar.svelte': 1500,
   // TaskItem row: title strip + notes panel + style cascade (headerColor /
   // bodyColor split across `.task-item` and `.task-notes-panel-inner`),
   // multi-select chrome, hover-reveal buttons, sticky note panel toggle.
@@ -66,13 +70,28 @@ const ALLOWLIST = {
   // guard + `enabled:` gating on the add-tile / add-column shortcut
   // registrations so a split view routes the shared bare `n` to the focused
   // pane; +7 LOC.
-  'src/renderer/components/boards/KanbanBoard.svelte': 1410,
+  // PHASE6_PLAN_2026-06-01 Phase 6.1.R2 (follow-up) — the lastView-persist
+  // `$effect` now returns a cleanup that clears its debounce timer, so a board
+  // close / vault swap inside the 300 ms window can't fire
+  // `boardStore.updateSettings` against the swapped-in board. +9 LOC. New
+  // snapshot: 1419 LOC.
+  'src/renderer/components/boards/KanbanBoard.svelte': 1419,
   // KanbanColumn: column header (3-dot menu + WIP popover), card dndzone
   // shadow-placeholder rendering, outer `.kanban-column` drag handlers (so
   // OS file drops over the header don't paint the no-entry cursor), per-
   // column accent override, multi-card drag dimming. Bump history in git log.
   // Phase 7.1 — tightened to current LOC (was 1200).
   'src/renderer/components/boards/KanbanColumn.svelte': 1198,
+  // VaultFileItem: sidebar tree row — inline rename, drag/drop move-into-folder
+  // (svelte-dnd-action), OS file-drop import, tag badges, context menu, and
+  // hover-auto-expand-during-drag. Was sitting exactly at the 1000-LOC limit.
+  // PHASE6_PLAN_2026-06-01 Phase 6.1.R2 (follow-up) — added an `onDestroy`
+  // that clears the hover `autoExpandTimer` so it can't fire
+  // `vaultStore.toggleFolder(node.path)` after the row unmounts on vault swap.
+  // +9 LOC (import + cleanup + comment) tipped it just over the default limit.
+  // New snapshot: 1009 LOC. Splitting the drag/drop handlers into a sibling is
+  // the eventual fix.
+  'src/renderer/components/sidebar/VaultFileItem.svelte': 1009,
   // Vault store: lifecycle (open / close / swap / save), tree refresh + rename
   // queue (serialises external renames), recovery sentinels (.dirty +
   // tag-rewrite + rename-cascade, sequenced via awaitRecoveryDismiss),
@@ -126,7 +145,12 @@ const ALLOWLIST = {
   // `.then().catch(reportError)` pattern; the catch lives inside the
   // helper. +23 LOC of comment + signature + the three listener-site
   // refactors. New snapshot: 1464 LOC.
-  'src/renderer/stores/vault.svelte.ts': 1464,
+  // PHASE6_PLAN_2026-06-01 Phase 6.2.H4 (follow-up) — `runRecoverySequencer`
+  // gained a `.filo/quit-failure.json` step: `consumeQuitFailureBreadcrumb`
+  // reads + clears the main-written breadcrumb on vault open and surfaces the
+  // preserved-partial locations in a persistent toast. +1 import + ~26 LOC
+  // (recovery block + comments). New snapshot: 1491 LOC.
+  'src/renderer/stores/vault.svelte.ts': 1491,
   // External-changes orchestrator: classifies fs-watcher events into
   // editor-dirty toast / silent reload / sync-frontmatter / deleted-file
   // prompt / properties-popup-dirty prompt. 500 ms attachment-delete grace

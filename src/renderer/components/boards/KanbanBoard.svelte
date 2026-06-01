@@ -868,6 +868,15 @@
         },
       });
     }, 300);
+
+    // 6.1.R2 (follow-up) — tear the debounce down with the effect. Without
+    // this, a board close / vault swap inside the 300 ms window fires
+    // `boardStore.updateSettings` against the swapped-in board ~300 ms later.
+    // The cleanup also runs before each re-arm, which is harmless (the body
+    // re-clears at the top before scheduling the next write).
+    return () => {
+      if (lastViewPersistTimer) clearTimeout(lastViewPersistTimer);
+    };
   });
 
   function openTagsBrowser() {

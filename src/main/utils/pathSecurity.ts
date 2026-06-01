@@ -312,6 +312,10 @@ const RENDERER_PERMITTED_FILO_PATHS = new Set<string>([
   '.filo/.dirty',
   '.filo/rename-cascade-pending.json',
   '.filo/tag-rewrite-pending.json',
+  // 6.2.H4 (follow-up) — quit-failure breadcrumb. Written by the main-side
+  // quit drain; read + deleted by the renderer's `consumeQuitFailureBreadcrumb`
+  // on the next vault open (same read/delete pattern as `.filo/.dirty`).
+  '.filo/quit-failure.json',
 ]);
 
 /**

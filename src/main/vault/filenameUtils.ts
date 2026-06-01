@@ -2,6 +2,7 @@ import { promises as fs } from 'fs';
 import { randomBytes } from 'crypto';
 import { dirname, join } from 'path';
 import { RESERVED_WINDOWS_NAMES } from '../utils/pathSecurity';
+import { recordPreservedEmergencyFile } from '../services/emergencyFileRegistry';
 
 /**
  * Characters that are illegal in Windows filenames.
@@ -255,6 +256,11 @@ export async function atomicWriteFile(filePath: string, content: string | Buffer
         if (typeof original === 'string') {
           (lastErr as { message: string }).message = `${original} (data preserved at ${tmpPath})`;
         }
+        // 6.2.H4 (follow-up) — record the preserved partial so the quit
+        // drain can persist its location into `.filo/quit-failure.json`
+        // for next-launch recovery (the transient toast can be missed,
+        // especially when the failure lands during a quit-time flush).
+        recordPreservedEmergencyFile({ preservedPath: tmpPath, targetPath: filePath, code });
       }
     } else {
       await fs.unlink(tmpPath).catch(() => undefined);

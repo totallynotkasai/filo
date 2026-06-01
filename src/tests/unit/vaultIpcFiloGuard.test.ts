@@ -97,6 +97,10 @@ describe('vault IPC `.filo/` guard — assertNotInFiloDir', () => {
     it('permits .filo/tag-rewrite-pending.json (tag-rewrite sentinel)', () => {
       expect(() => assertNotInFiloDir('.filo/tag-rewrite-pending.json')).not.toThrow();
     });
+
+    it('permits .filo/quit-failure.json (6.2.H4 quit-failure breadcrumb)', () => {
+      expect(() => assertNotInFiloDir('.filo/quit-failure.json')).not.toThrow();
+    });
   });
 
   // ── Normalisation: separators + case ────────────────────────────────

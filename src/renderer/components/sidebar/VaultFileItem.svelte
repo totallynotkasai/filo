@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { dragHandle, dragHandleZone, type DndEvent } from 'svelte-dnd-action';
   import type { BoardType, FileTreeNode } from '../../../shared/types';
   import { vaultStore } from '../../stores/vault.svelte';
@@ -42,6 +43,14 @@
   let renameValue = $state('');
   let isDropTarget = $state(false);
   let autoExpandTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // 6.1.R2 (follow-up) — clear the hover auto-expand timer on unmount. Without
+  // this, a vault swap (or any unmount) while the timer is armed mid-drag-hover
+  // fires `vaultStore.toggleFolder(node.path)` ~600 ms later against the
+  // swapped-in vault. drag-leave / drop already clear it; this covers unmount.
+  onDestroy(() => {
+    if (autoExpandTimer != null) clearTimeout(autoExpandTimer);
+  });
 
   // Phase C / C.7 — auto-enter rename mode when this node was just created
   // via the sidebar's "New Folder" button. The toolbar sets

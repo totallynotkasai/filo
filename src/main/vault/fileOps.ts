@@ -2,6 +2,7 @@ import { promises as fs } from 'fs';
 import type { FileHandle } from 'fs/promises';
 import { join, extname, basename } from 'path';
 import { assertSafeFilename } from '../utils/pathSecurity';
+import { recordPreservedEmergencyFile } from '../services/emergencyFileRegistry';
 import type { FileTreeNode } from '../../shared/types';
 
 // `extname()` only returns the final segment, so `foo.board.json` → `.json`.
@@ -467,6 +468,9 @@ export async function copyFileToVault(
       await fs.unlink(destPath).catch(() => undefined);
     } else if (writeErr && typeof writeErr === 'object') {
       (writeErr as { preservedTmpPath?: string }).preservedTmpPath = destPath;
+      // 6.2.H4 (follow-up) — record the preserved partial copy so the quit
+      // drain can surface its location via `.filo/quit-failure.json`.
+      recordPreservedEmergencyFile({ preservedPath: destPath, targetPath: destPath, code });
     }
     throw writeErr;
   }

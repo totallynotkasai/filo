@@ -22,6 +22,7 @@
   } from '../../lib/editor/markdownSync';
   import {
     markHydrated,
+    isHydrated,
     readMarkdownForHydrate,
     scheduleMarkdownWrite as gatewayScheduleMarkdownWrite,
     flushMarkdownWrite,
@@ -306,7 +307,16 @@
         const result = loadMarkdownIntoEditor(editor, parsed.body);
         documentStore.setReadOnly(docState.docId, result.lossy);
         isUpdatingFromStore = false;
-        if (docState.filename) markHydrated(docState.filename, parsed.hadBom);
+        // Phase 6.1.R5 (follow-up) — `docState.body` is body-only by contract,
+        // so `parsed.hadBom` is ALWAYS false (the BOM was stripped before the
+        // store cached the body). Marking unconditionally would clobber the
+        // hadBom a sibling view (e.g. the backing TextTile) already read from
+        // disk → the file's BOM is dropped on the next save. Inherit the
+        // existing fileState entry when hydrated; only mark false as a fresh
+        // fallback for a doc with no prior hydrate. Mirrors TextTile's adopt path.
+        if (docState.filename && !isHydrated(docState.filename)) {
+          markHydrated(docState.filename, false);
+        }
         return;
       }
 

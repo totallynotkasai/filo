@@ -20,7 +20,7 @@
   import { invokeOk } from '../../lib/utils/invokeOk';
   import { createFocusTrap, type FocusTrap } from 'focus-trap';
   import { safeDeactivateTrap } from '../../lib/utils/focusTrapSafe';
-  import { tick } from 'svelte';
+  import { tick, onDestroy } from 'svelte';
 
   type SortBy = 'manual' | 'title' | 'created' | 'dueDate' | 'priority';
 
@@ -332,6 +332,14 @@
   // that never came. 200ms is short enough to feel responsive and long
   // enough to coalesce fast typing.
   let propDebounce: ReturnType<typeof setTimeout> | null = null;
+
+  // 6.1.R2 (follow-up) — clear the live-filter debounce on unmount so a vault
+  // swap (or toolbar teardown) mid-typing can't fire `onFilterPropChange`
+  // ~200 ms later against a board that is no longer mounted.
+  onDestroy(() => {
+    if (propDebounce) clearTimeout(propDebounce);
+  });
+
   function scheduleApplyPropFilter() {
     if (propDebounce) clearTimeout(propDebounce);
     propDebounce = setTimeout(() => {

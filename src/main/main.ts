@@ -14,6 +14,8 @@ import {
 import { flushSidebarStateNow } from './services/sidebarState';
 import { logMainError } from './utils/mainLogger';
 import { stopActiveWatcher } from './ipc/vault.ipc';
+import { vaultRegistry } from './services/vaultRegistry';
+import { writeQuitFailureBreadcrumb } from './services/quitFailureBreadcrumb';
 
 // Must run before `app.whenReady`. Registers the `filo://` URL scheme as a
 // privileged standard scheme so the renderer can load vault-local media
@@ -196,6 +198,10 @@ async function createWindow(): Promise<void> {
         flushWindowStateNow(),
         flushSidebarStateNow(),
         stopActiveWatcher(),
+        // 6.2.H4 (follow-up) — persist any preserved-partial locations to
+        // `.filo/quit-failure.json` before the window destroys (no-op unless
+        // a write preserved a partial this session).
+        writeQuitFailureBreadcrumb(vaultRegistry.currentVaultPath),
       ]).finally(() => {
         mainWindow?.destroy();
       });
@@ -395,6 +401,8 @@ app.on('before-quit', (event) => {
       flushWindowStateNow(),
       flushSidebarStateNow(),
       stopActiveWatcher(),
+      // 6.2.H4 (follow-up) — see the close-event path above.
+      writeQuitFailureBreadcrumb(vaultRegistry.currentVaultPath),
     ]).finally(() => {
       app.exit(0);
     });

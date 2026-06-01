@@ -18,6 +18,7 @@ import { normalizePath, toPosix } from '../lib/utils/path';
 // which shadows the constructor name otherwise.
 import { vaultPath as brandVaultPath, type VaultPath } from '../../shared/vaultPath';
 import { checkRecovery, markClean } from '../lib/vault/dirtyFlagRecovery';
+import { consumeQuitFailureBreadcrumb } from '../lib/vault/quitFailureRecovery';
 import {
   readPendingRewrite,
   clearPendingRewrite,
@@ -588,6 +589,32 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
       'vault.recovery-check',
       err,
       'Failed to check the crash-recovery sentinel — unflushed files may not be surfaced',
+    );
+  }
+
+  // ── 1b. `.filo/quit-failure.json` — preserved-partial locations ─
+  // 6.2.H4 (follow-up) — the main-side quit drain writes this when a write
+  // preserved an emergency partial (ENOSPC / EIO / …) this session. Surface
+  // the locations once so the user can recover (or delete) the bytes;
+  // `consumeQuitFailureBreadcrumb` deletes the breadcrumb after reading.
+  try {
+    const quitFailure = await consumeQuitFailureBreadcrumb(newVaultPath);
+    if (!isStillSameVault()) return;
+    if (quitFailure && quitFailure.files.length > 0) {
+      const locations = quitFailure.files.map((f) => f.preservedPath).join('\n');
+      uiStore.pushToast({
+        text:
+          `Filo couldn't fully save ${quitFailure.files.length} file(s) before the last quit. ` +
+          `The unsaved bytes were preserved on disk — recover or delete them:\n${locations}`,
+        type: 'error',
+        duration: 0,
+      });
+    }
+  } catch (err) {
+    reportError(
+      'vault.quit-failure-check',
+      err,
+      'Failed to surface the quit-failure breadcrumb',
     );
   }
 

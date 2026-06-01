@@ -101,7 +101,13 @@ const ALLOWLIST = {
   // convergeForward / repairRenameCascade. +~12 LOC (signature widening
   // + try/finally wrappers + two call-site comments). New snapshot: 1418
   // LOC.
-  'src/renderer/stores/vault.svelte.ts': 1418,
+  // PHASE6_PLAN_2026-06-01 Phase 6.2.H3 — the tag-rewrite recovery step
+  // now `await vaultIndexStore.whenBuildComplete()` before sampling
+  // metadata for partial-state detection so the rename branch can't see
+  // a mid-rebuild empty index and offer the wrong "Discard" verb. +~11
+  // LOC (guard + vault-identity recheck + docstring). New snapshot:
+  // 1429 LOC.
+  'src/renderer/stores/vault.svelte.ts': 1429,
   // External-changes orchestrator: classifies fs-watcher events into
   // editor-dirty toast / silent reload / sync-frontmatter / deleted-file
   // prompt / properties-popup-dirty prompt. 500 ms attachment-delete grace

@@ -256,3 +256,91 @@ describe('recovery sequencer — 6.2.H2: awaitConfirm awaits onConfirm', () => {
     expect(fileTagsStore.renameTagEverywhere).toHaveBeenCalledWith('oldTag', 'newTag');
   });
 });
+
+/**
+ * 6.2.H3 — the tag-rewrite step's partial-state detection reads
+ * `vaultIndexStore.allMetadata()` — which would return a mid-chunk empty/
+ * partial sample if `vaultIndexStore.rebuild()` is still running. Without
+ * the `whenBuildComplete()` await, the sequencer could see "no newName
+ * carrier" mid-rebuild, decide "not partial", and show the Discard label —
+ * users then discarding what was actually a half-committed rename.
+ */
+describe('recovery sequencer — 6.2.H3: awaits vaultIndex rebuild before metadata sample', () => {
+  const TAG_SENTINEL = '.filo/tag-rewrite-pending.json';
+
+  beforeEach(() => {
+    resetAll();
+    vaultStore.setPath('/vault');
+    installFiloMock((channel: string, ...args: unknown[]) => {
+      if (channel === 'vault:read-file-text') {
+        const p = String(args[1]);
+        if (p === TAG_SENTINEL) {
+          return {
+            success: true,
+            content: JSON.stringify({
+              timestamp: 1,
+              oldName: 'oldTag',
+              newName: 'newTag',
+              plan: ['Notes/A.md'],
+              preexistingNewNamePaths: [],
+              committedPaths: [],
+            }),
+          };
+        }
+        return { success: false, code: 'ENOENT' };
+      }
+      if (channel === 'tags:load') return null;
+      if (channel === 'vault:read-tree') return { ok: true, tree: [] };
+      return { success: true };
+    });
+  });
+
+  afterEach(() => {
+    restoreFiloDefault();
+    resetAll();
+    vaultStore.setPath('');
+    vi.restoreAllMocks();
+  });
+
+  it('does not sample allMetadata until whenBuildComplete resolves', async () => {
+    // Track whether `allMetadata` was called and when.
+    const callOrder: string[] = [];
+    const realAllMetadata = vaultIndexStore.allMetadata.bind(vaultIndexStore);
+    vi.spyOn(vaultIndexStore, 'allMetadata').mockImplementation(() => {
+      callOrder.push('allMetadata');
+      return realAllMetadata();
+    });
+
+    // Stub `whenBuildComplete` to return a deferred so we can observe ordering.
+    let resolveBuild!: () => void;
+    const buildDone = new Promise<void>((r) => {
+      resolveBuild = r;
+    });
+    vi.spyOn(vaultIndexStore, 'whenBuildComplete').mockImplementation(() => {
+      callOrder.push('whenBuildComplete-await');
+      return buildDone.then(() => {
+        callOrder.push('whenBuildComplete-resolved');
+      });
+    });
+
+    const seq = __runRecoverySequencerForTests('/vault');
+
+    // Give the sequencer time to reach the build-complete await.
+    await new Promise((r) => setTimeout(r, 30));
+
+    // Pre-fix: `allMetadata` would have run already (before the build).
+    // Post-fix: only the await is logged, no metadata sample yet.
+    expect(callOrder).toEqual(['whenBuildComplete-await']);
+
+    // Resolve the build; the sequencer proceeds to sample metadata, then
+    // surfaces the confirm dialog.
+    resolveBuild();
+    await fireDialog('cancel'); // close the dialog so the sequencer can finish
+    await seq;
+
+    expect(callOrder.indexOf('whenBuildComplete-resolved')).toBeGreaterThanOrEqual(0);
+    expect(callOrder.indexOf('allMetadata')).toBeGreaterThan(
+      callOrder.indexOf('whenBuildComplete-resolved'),
+    );
+  });
+});

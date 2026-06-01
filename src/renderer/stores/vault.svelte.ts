@@ -587,6 +587,17 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
       const { oldName, newName, plan, preexistingNewNamePaths, committedPaths } = res.payload;
       const verb = newName === null ? 'removal' : 'rename';
       const target = newName === null ? `"${oldName}"` : `"${oldName}" → "${newName}"`;
+      // 6.2.H3 — wait for the post-commit `vaultIndexStore.rebuild()` to
+      // finish before sampling metadata for partial-rewrite detection.
+      // `runPostCommitTasks` fires the rebuild + this sequencer as parallel
+      // tasks; without this await, the rename branch could sample a
+      // mid-chunk index, miss the `newName` carrier that proves a partial
+      // commit, and offer "Discard plan" against a vault that's actually
+      // mid-rename. The check is a no-op when no rebuild is in flight.
+      if (newName !== null) {
+        await vaultIndexStore.whenBuildComplete();
+        if (!isStillSameVault()) return;
+      }
       // IMPL_PLAN_2026-05-26 / Item 4 + 6.3 — Detect partial state. A sweep that
       // committed some files before the crash leaves the vault split (rename:
       // some .md carry `newName`, some `oldName`; removal: some stripped, some

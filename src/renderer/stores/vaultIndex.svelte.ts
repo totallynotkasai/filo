@@ -23,6 +23,18 @@ const index = new VaultIndex();
 let version = $state(0);
 let isBuilding = $state(false);
 
+/**
+ * 6.2.H3 — resolvers waiting for the current `rebuild()` to finish. Drained
+ * in `rebuild()`'s `finally` block once `isBuilding` flips back to false.
+ * Callers that need to read post-rebuild metadata (the recovery sequencer's
+ * tag-rewrite partial-state detection) `await vaultIndexStore.whenBuildComplete()`
+ * before sampling `allMetadata()` — without it, the metadata sample could
+ * fire mid-chunked-rebuild and miss the very `newName` carrier that proves
+ * a partial commit, so the sequencer would offer "Discard plan" against a
+ * vault that's actually mid-rename.
+ */
+const buildCompleteResolvers: Array<() => void> = [];
+
 function bump(): void {
   version += 1;
 }
@@ -165,7 +177,28 @@ export const vaultIndexStore = {
     } finally {
       isBuilding = false;
       bump();
+      // 6.2.H3 — drain the build-complete resolvers so any awaiter (the
+      // recovery sequencer) sees the post-rebuild metadata. Cleared in one
+      // batch so a resolver that re-enqueues itself doesn't loop on a
+      // half-drained list.
+      const resolvers = buildCompleteResolvers.splice(0);
+      for (const r of resolvers) r();
     }
+  },
+
+  /**
+   * 6.2.H3 — resolves once the current `rebuild()` finishes, or immediately
+   * when no rebuild is in flight. The recovery sequencer awaits this before
+   * sampling `allMetadata()` for partial-tag-rewrite detection: pre-fix the
+   * sequencer raced the rebuild, sampled a mid-chunk empty/partial index,
+   * decided "no carrier therefore not partial", and offered a Discard that
+   * actually discarded a partially-committed rename.
+   */
+  whenBuildComplete(): Promise<void> {
+    if (!isBuilding) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      buildCompleteResolvers.push(resolve);
+    });
   },
 
   /**

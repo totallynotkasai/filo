@@ -276,6 +276,7 @@ export function makeKanbanSlice(ctx: CacheContext) {
       def: TileDefinition,
       position: number,
       style?: PartialKanbanCardStyle,
+      coverImage?: string,
     ): void {
       // Zod-validate the def before it enters the cache. Mirrors the
       // updateTile P0-6 fix: a corrupt def would otherwise persist to disk
@@ -310,6 +311,15 @@ export function makeKanbanSlice(ctx: CacheContext) {
         const placements = [...(c.tilePlacements ?? [])];
         const placement: KanbanTilePlacement = { tileId: validDef.id, position };
         if (style) placement.style = style;
+        // 6.4.M11 — restore a snapshotted coverImage atomically as part of the
+        // placement add (used by DeleteCardCommand.undo). Set directly: the value
+        // is a trusted snapshot of already-persisted state, and undo is not an
+        // input boundary, so it intentionally does NOT re-run the
+        // setKanbanPlacementCoverImage sanitizer (which would silently drop a
+        // pre-existing value it deems unsafe, making undo unfaithful).
+        if (typeof coverImage === 'string' && coverImage.length > 0) {
+          placement.coverImage = coverImage;
+        }
         placements.splice(Math.min(position, placements.length), 0, placement);
         return {
           ...c,

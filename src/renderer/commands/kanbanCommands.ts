@@ -149,20 +149,19 @@ export class DeleteCardCommand extends Command {
 
   undo() {
     if (!this.snapshotDef || !this.snapshotPlacement || !this.snapshotColumnId) return;
+    // 6.4.M11 — restore the placement (style + coverImage) atomically. The old
+    // separate setKanbanPlacementCoverImage write re-sanitized the path and
+    // silently dropped a snapshotted value it deemed unsafe (e.g. an absolute
+    // path that reached the cache via a hand-edited / older .board.json), so
+    // undo wasn't faithful. The snapshot is trusted pre-delete state.
     boardCacheStore.persistAddKanbanPlacement(
       this.boardId,
       this.snapshotColumnId,
       this.snapshotDef,
       this.snapshotPosition,
       this.snapshotPlacement.style,
+      this.snapshotPlacement.coverImage,
     );
-    if (this.snapshotPlacement.coverImage) {
-      boardCacheStore.setKanbanPlacementCoverImage(
-        this.boardId,
-        this.tileId,
-        this.snapshotPlacement.coverImage,
-      );
-    }
   }
 }
 

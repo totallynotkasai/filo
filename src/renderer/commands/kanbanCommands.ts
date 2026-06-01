@@ -21,7 +21,7 @@ import {
 } from '../lib/vault/markdownFileWriter';
 import { reportError } from '../lib/utils/errorBus';
 import { forceWriteForDocument } from '../lib/vault/markdownFileWriter';
-import { applyFrontmatterPatchRebased } from './frontmatterRebase';
+import { applyFrontmatterPatchRebased, fmValueEqual } from './frontmatterRebase';
 
 // ── Kanban Commands ──
 //
@@ -598,13 +598,27 @@ export class UpdateOrphanFrontmatterCommand extends Command {
   }
 
   async execute(): Promise<void> {
-    await applyOrphanPatch(this.relPath, this.patch);
-    boardCacheStore.markDirty(this.targetBoardId);
+    // 6.2.H8 — route through the rebased variant so an external edit to
+    // the same field isn't silently clobbered. The inverse patch IS the
+    // expected current state (what we wrote on the prior execute, or the
+    // initial state before any execute).
+    await applyOrphanPatchRebased({
+      relPath: this.relPath,
+      targetBoardId: this.targetBoardId,
+      applying: this.patch,
+      expectedCurrent: this.inversePatch,
+      label: this.relPath,
+    });
   }
 
   async undo(): Promise<void> {
-    await applyOrphanPatch(this.relPath, this.inversePatch);
-    boardCacheStore.markDirty(this.targetBoardId);
+    await applyOrphanPatchRebased({
+      relPath: this.relPath,
+      targetBoardId: this.targetBoardId,
+      applying: this.inversePatch,
+      expectedCurrent: this.patch,
+      label: this.relPath,
+    });
   }
 }
 
@@ -720,26 +734,47 @@ export class SetAllKanbanColumnsCollapsedCommand extends Command {
   }
 }
 
-async function applyOrphanPatch(
-  relPath: string,
-  patch: Record<string, unknown>,
-): Promise<void> {
+/**
+ * 6.2.H8 — docId-less rebased frontmatter patch for orphan cards (no
+ * open editor). Mirrors `applyFrontmatterPatchRebased` (Audit2 4.2) for
+ * the docId case: read disk fresh, compare each applying key against
+ * `expectedCurrent`, commit only the non-conflicting keys, and surface a
+ * "Kept the external value" toast (with an Apply-anyway action) when a
+ * field's external value diverged from what we expected.
+ *
+ * Pre-fix `applyOrphanPatch` blindly spread the patch over the disk
+ * frontmatter — so an external editor changing the same field between
+ * execute and undo was silently clobbered.
+ */
+async function applyOrphanPatchRebased(args: {
+  relPath: string;
+  targetBoardId: string;
+  applying: Record<string, unknown>;
+  expectedCurrent: Record<string, unknown>;
+  label: string;
+}): Promise<void> {
+  const { relPath, targetBoardId, applying, expectedCurrent, label } = args;
   const vaultRoot = vaultStore.path;
   if (!vaultRoot) return;
 
-  // Audit 2.2 — this command was created for an ORPHAN card (no editor open),
-  // but a Document editor may have been opened on this file between execute
-  // and undo. A blind disk write here would then be re-clobbered by the open
-  // editor's next debounced write (it assembles from its own frontmatter
-  // cache, which a raw disk write never touches). Route the patch through the
-  // live cache + the editor's own writer instead — mirroring the open-doc
-  // path KanbanCard takes up front. Fall through to the orphan disk write only
-  // when no live writer flushed (editor mid-mount / not yet registered).
+  // Audit 2.2 — if a Document editor opened on this file between execute
+  // and undo, route through the docId-aware rebased helper (same conflict
+  // semantics as orphan path, but uses the live cache). Force-flush so
+  // the rebase's write lands immediately instead of riding the debounce.
   const openDoc = documentStore.findByFilename(relPath);
   if (openDoc) {
-    documentStore.mergeFrontmatter(openDoc.docId, patch);
+    applyFrontmatterPatchRebased({
+      docId: openDoc.docId,
+      relPath,
+      targetBoardId,
+      applying,
+      expectedCurrent,
+      label,
+    });
     const result = await forceWriteForDocument(openDoc.docId);
     if (result.ok > 0) return;
+    // No writer registered yet (editor mid-mount); fall through to the
+    // direct orphan write path below.
   }
 
   // Drain pending debounced writes so the prior in-memory state lands
@@ -750,47 +785,81 @@ async function applyOrphanPatch(
   // `vaultIndexStore.getMetadata(...)?.content`. The index can be stale
   // for an orphan (no editor open, watcher reconciliation pending), so
   // assembling from the stale `content` would clobber an external edit
-  // that landed since the last index rebuild. The fresh read costs one
-  // IPC but the previous behaviour silently lost edits for anyone who
-  // changed the same `.md` externally between cache rebuilds.
+  // that landed since the last index rebuild.
   let body = '';
   let baseFm: Record<string, unknown> = {};
   try {
-    // E1 — the read gateway returns the fresh body + frontmatter AND seeds
-    // the hydrate gate + drift baseline from the same read's mtime, so the
-    // gateway write below detects an external edit that landed in between.
-    // (markHydrated overwrites any sibling editor's prior hydrate; both
-    // observed states should agree on BOM, and re-stamping the baseline to
-    // the fresh disk mtime is correct — we just read it.)
     const hydrateResult = await readMarkdownForHydrate(vaultRoot, relPath);
     body = hydrateResult.body;
     baseFm = hydrateResult.frontmatter;
   } catch {
-    // File missing on disk (ENOENT or other) — fall back to the index
-    // baseline. Mark hydrated with no BOM (no disk mtime → no baseline) so
-    // the gateway write below proceeds and ENOENT-skips if appropriate.
     const meta = vaultIndexStore.getMetadata(relPath);
     baseFm = (meta?.frontmatter ?? {}) as Record<string, unknown>;
     body = meta?.content ?? '';
     if (!isHydrated(relPath)) markHydrated(relPath, false);
   }
 
-  const merged: Record<string, unknown> = { ...baseFm, ...patch };
-  for (const k of Object.keys(merged)) {
-    const v = merged[k];
-    if (v === '' || v === undefined || v === null) delete merged[k];
+  const commit = async (patch: Record<string, unknown>): Promise<void> => {
+    const merged: Record<string, unknown> = { ...baseFm, ...patch };
+    for (const k of Object.keys(merged)) {
+      const v = merged[k];
+      if (v === '' || v === undefined || v === null) delete merged[k];
+    }
+    try {
+      await writeMarkdownFile({
+        vaultRoot,
+        relPath,
+        frontmatter: merged,
+        body,
+        callerId: `kanban-orphan-patch:${relPath}`,
+        docId: null,
+      });
+    } catch (err) {
+      reportError('updateOrphanFrontmatter', err, `Failed to update ${relPath}`);
+    }
+    // allow-non-target-markdirty: shared helper, callers pass this.targetBoardId per the CI gate
+    boardCacheStore.markDirty(targetBoardId);
+  };
+
+  const conflicts = Object.keys(applying).filter(
+    (key) => !fmValueEqual(baseFm[key], expectedCurrent[key]),
+  );
+
+  if (conflicts.length === 0) {
+    await commit(applying);
+    return;
   }
 
-  try {
-    await writeMarkdownFile({
-      vaultRoot,
-      relPath,
-      frontmatter: merged,
-      body,
-      callerId: `kanban-orphan-patch:${relPath}`,
-      docId: null,
-    });
-  } catch (err) {
-    reportError('updateOrphanFrontmatter', err, `Failed to update ${relPath}`);
+  // Keep the external value(s); apply only the fields nothing external
+  // touched. The board still needs to be dirtied (markDirty fires inside
+  // commit), so call commit even with the smaller patch if any safe
+  // fields remain. When ALL fields conflict, skip the write entirely.
+  const safe: Record<string, unknown> = {};
+  for (const key of Object.keys(applying)) {
+    if (!conflicts.includes(key)) safe[key] = applying[key];
   }
+  if (Object.keys(safe).length > 0) {
+    await commit(safe);
+  } else {
+    // No safe fields, but the command still ran on this board's stack so
+    // the cache should reflect the user's local-history intent.
+    // allow-non-target-markdirty: shared helper, callers pass this.targetBoardId per the CI gate
+    boardCacheStore.markDirty(targetBoardId);
+  }
+
+  uiStore.pushToast({
+    text: `External edit changed ${conflicts.join(', ')} in ${label}. Kept the external value — that field's undo/redo was skipped.`,
+    type: 'warning',
+    duration: 0,
+    actions: [
+      {
+        label: 'Apply anyway',
+        handler: () => {
+          const forced: Record<string, unknown> = {};
+          for (const key of conflicts) forced[key] = applying[key];
+          void commit(forced);
+        },
+      },
+    ],
+  });
 }

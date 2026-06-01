@@ -1,0 +1,129 @@
+/**
+ * 6.2.H8 — UpdateOrphanFrontmatterCommand bypasses the rebase guard.
+ *
+ * Pre-fix `applyOrphanPatch` read disk fresh (D.8) and unconditionally
+ * spread the patch over the fresh frontmatter, then wrote through the
+ * gateway. No per-field conflict detection. If an external editor
+ * changed the same field between execute and undo, the inverse patch
+ * blindly restored the pre-edit value — silently clobbering the
+ * external change. `UpdateTaskFieldCommand` / `UpdateCardFieldCommand`
+ * already route through `applyFrontmatterPatchRebased` (Audit2 4.2)
+ * which has the right shape; this finding is the "make it docId-less"
+ * variant.
+ */
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
+import { boardStore } from '@renderer/stores/board.svelte';
+import { vaultStore } from '@renderer/stores/vault.svelte';
+import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
+import { uiStore } from '@renderer/stores/ui.svelte';
+import { UpdateOrphanFrontmatterCommand } from '@renderer/commands/index';
+import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+
+describe('UpdateOrphanFrontmatterCommand — 6.2.H8 rebase on undo', () => {
+  let calls: Array<{ channel: string; args: unknown[] }>;
+  let diskContent: string;
+
+  beforeEach(() => {
+    calls = [];
+    diskContent = '---\npriority: low\n---\nbody content\n';
+    installFiloMock((channel: unknown, ...args: unknown[]) => {
+      calls.push({ channel: channel as string, args });
+      if (channel === 'vault:read-file-text') {
+        return { success: true, content: diskContent, mtimeMs: 1 };
+      }
+      if (channel === 'vault:stat') return { success: true, mtimeMs: 1, size: diskContent.length };
+      if (channel === 'vault:write-existing-file-text') return { success: true };
+      return undefined;
+    });
+    vaultStore.setPath('/vault');
+    boardCacheStore.clear();
+    boardStore.clearBoard();
+    vaultIndexStore.clear();
+    for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id);
+  });
+  afterEach(() => {
+    restoreFiloDefault();
+    vaultStore.setPath('');
+    boardCacheStore.clear();
+    boardStore.clearBoard();
+    vaultIndexStore.clear();
+    for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id);
+  });
+
+  it('undo preserves an external edit to the same field (skips the conflicting key)', async () => {
+    const cmd = new UpdateOrphanFrontmatterCommand(
+      'kb',
+      'Card.md',
+      { priority: 'high' },
+      { priority: 'low' },
+    );
+    await cmd.execute();
+
+    // Snapshot the writes-so-far. Any write that lands AFTER this point
+    // belongs to the undo leg. Pre-fix, the undo's blind disk write would
+    // emit `priority: low` here — clobbering the external editor's `critical`.
+    // Post-fix, the all-conflict case suppresses the write entirely.
+    const writesBeforeUndo = calls.filter(
+      (c) =>
+        (c.channel === 'vault:write-existing-file-text' ||
+          c.channel === 'vault:write-file-text') &&
+        c.args[1] === 'Card.md',
+    ).length;
+
+    // External editor changes `priority` to a third value between execute
+    // and undo. The fresh disk read inside applyOrphanPatchRebased will see
+    // `critical`, not the `high` we wrote on execute.
+    diskContent = '---\npriority: critical\n---\nbody content\n';
+
+    await cmd.undo();
+
+    const writesAfterUndo = calls.filter(
+      (c) =>
+        (c.channel === 'vault:write-existing-file-text' ||
+          c.channel === 'vault:write-file-text') &&
+        c.args[1] === 'Card.md',
+    );
+    const undoWrites = writesAfterUndo.slice(writesBeforeUndo);
+    // Post-fix: the undo's only key (priority) conflicts with disk, so
+    // applyOrphanPatchRebased suppresses the write entirely and surfaces
+    // a conflict toast instead. Pre-fix, a single `priority: low` write
+    // would fire here, clobbering the external editor.
+    for (const w of undoWrites) {
+      const content = w.args[2] as string;
+      expect(content).not.toContain('priority: low');
+    }
+
+    // A persistent warning toast names the conflicting field so the user
+    // can choose to Apply anyway. Wording mirrors applyFrontmatterPatchRebased.
+    const conflictToast = uiStore.toasts.find((t) =>
+      /External edit changed/i.test(t.text),
+    );
+    expect(conflictToast).toBeDefined();
+    expect(conflictToast?.text).toContain('priority');
+  });
+
+  it('undo without a conflict still applies the inverse cleanly', async () => {
+    const cmd = new UpdateOrphanFrontmatterCommand(
+      'kb',
+      'Card.md',
+      { priority: 'high' },
+      { priority: 'low' },
+    );
+    await cmd.execute();
+    // No external change — diskContent still reflects post-execute state
+    // (`priority: high`).
+    diskContent = '---\npriority: high\n---\nbody content\n';
+
+    await cmd.undo();
+    const writes = calls.filter(
+      (c) =>
+        (c.channel === 'vault:write-existing-file-text' ||
+          c.channel === 'vault:write-file-text') &&
+        c.args[1] === 'Card.md',
+    );
+    const lastWrite = writes[writes.length - 1].args[2] as string;
+    // Clean rebase: inverse applied, disk now carries `low`.
+    expect(lastWrite).toContain('priority: low');
+  });
+});

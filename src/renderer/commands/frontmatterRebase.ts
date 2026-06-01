@@ -33,8 +33,13 @@ function isEmptyish(v: unknown): boolean {
  * cleaning rule (absent === '' === null === undefined) and comparing
  * arrays/objects structurally so a re-emitted `tags: [...]` doesn't read as a
  * spurious conflict.
+ *
+ * 6.2.H8 — exported so the docId-less orphan-FM rebase variant
+ * (`kanbanCommands.applyOrphanPatchRebased`) shares this exact equality
+ * predicate. Without that, the open-editor and orphan paths could disagree
+ * about whether two values represent the same frontmatter state.
  */
-function fmValueEqual(a: unknown, b: unknown): boolean {
+export function fmValueEqual(a: unknown, b: unknown): boolean {
   if (isEmptyish(a) && isEmptyish(b)) return true;
   if (isEmptyish(a) || isEmptyish(b)) return false;
   if (a === b) return true;

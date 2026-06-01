@@ -217,7 +217,19 @@ export function reconcileBoardCacheWithFrontmatter(
   boardCache: Record<string, V7BoardFileData>,
   relPath: string,
   metadata: FileMetadata,
+  options?: {
+    /**
+     * 6.2.H9 — when false, suppresses the `patched.updatedAt = Date.now()`
+     * stamp on reconciled tiles. The on-open batch reconcile is not a
+     * user edit (the disk frontmatter was the canonical source we synced
+     * to), so the in-app "last touched" timestamp shouldn't bump. The
+     * live event path still stamps (it IS a user-initiated external
+     * edit), so the default stays `true`.
+     */
+    stampUpdatedAt?: boolean;
+  },
 ): BoardCacheReconcileResult {
+  const stampUpdatedAt = options?.stampUpdatedAt ?? true;
   const changedBoardIds: string[] = [];
   const perBoard: Record<string, Array<{ tileId: string; changes: FrontmatterDivergence[] }>> = {};
 
@@ -254,7 +266,7 @@ export function reconcileBoardCacheWithFrontmatter(
       // applyCanonical normalises canonical values (notably tag arrays) before we copy them in.
       const patchedSync = applyCanonical(cacheSubset, changes);
       for (const c of changes) patched[c.field] = patchedSync[c.field];
-      patched.updatedAt = Date.now();
+      if (stampUpdatedAt) patched.updatedAt = Date.now();
 
       updates[tileId] = patched as TileDefinition;
       perBoard[boardId] = perBoard[boardId] ?? [];

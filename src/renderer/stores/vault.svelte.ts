@@ -464,7 +464,7 @@ function runPostCommitTasks(
   })();
 
   // ── 2. Vault-index rebuild + tags self-seed / orphan prune ───────
-  void vaultIndexStore.rebuild(fileTree).then(() => {
+  void vaultIndexStore.rebuild(fileTree).then(async () => {
     // Audit2 5.3 — reconcile every board's cached tile metadata against
     // the canonical frontmatter we just rebuilt the index from. The
     // live event path (vaultExternalChanges) already runs this for each
@@ -479,9 +479,15 @@ function runPostCommitTasks(
     // Walking the index once at open closes the drift in O(P × M × T)
     // where each inner check short-circuits on `tileBacksMarkdownPath`,
     // so the practical cost is tile count × backed-tile lookups.
-    for (const md of vaultIndexStore.allMetadata()) {
-      boardCacheStore.applyFrontmatterToBackedTiles(md.path, md);
-    }
+    //
+    // 6.2.H9 — route through the BATCHED variant: one setCache identity
+    // flip at the end (not one per md), no `updatedAt` stamp on
+    // reconcile-driven patches (it's not a user edit), microtask yields
+    // every 50 mds, and a mtime gate that skips mds we already
+    // reconciled against this exact disk state.
+    await boardCacheStore.applyFrontmatterToBackedTilesBatch(
+      vaultIndexStore.allMetadata(),
+    );
     if (!fileTagsStore.isEmpty()) {
       // Phase 23 M13 — prune `.filo/tags.json:fileTags` entries whose
       // path is no longer present in the live tree.

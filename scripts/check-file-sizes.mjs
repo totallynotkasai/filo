@@ -107,7 +107,12 @@ const ALLOWLIST = {
   // a mid-rebuild empty index and offer the wrong "Discard" verb. +~11
   // LOC (guard + vault-identity recheck + docstring). New snapshot:
   // 1429 LOC.
-  'src/renderer/stores/vault.svelte.ts': 1429,
+  // PHASE6_PLAN_2026-06-01 Phase 6.2.H9 — the on-open reconcile loop
+  // now routes through `applyFrontmatterToBackedTilesBatch` (one
+  // setCache identity flip + microtask yields + mtime gate) instead of
+  // a per-md `applyFrontmatterToBackedTiles` call. +~6 LOC of comment.
+  // New snapshot: 1435 LOC.
+  'src/renderer/stores/vault.svelte.ts': 1435,
   // External-changes orchestrator: classifies fs-watcher events into
   // editor-dirty toast / silent reload / sync-frontmatter / deleted-file
   // prompt / properties-popup-dirty prompt. 500 ms attachment-delete grace

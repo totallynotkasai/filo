@@ -82,25 +82,57 @@ const CROSS_BASENAME_HASH_REQUIRED_BELOW = 10 * 1024 * 1024;
  *
  * Returns true when the pair is safe to treat as a move.
  */
+/** SHA-1 of the empty buffer — the universal hash of every zero-byte file. */
+const EMPTY_BUFFER_SHA1 = 'da39a3ee5e6b4b0d3255bfef95601890afd80709';
+
+function parentFolder(filename: string): string {
+  const i = filename.lastIndexOf('/');
+  return i >= 0 ? filename.slice(0, i) : '';
+}
+
 async function sameBasenameBytesPreserved(
   missing: FileChangeEvent,
   present: FileChangeEvent,
   relPathSize?: (relPath: string) => number | null,
   relPathHash?: (relPath: string) => string | null | Promise<string | null>,
 ): Promise<boolean> {
+  let mSize: number | null = null;
+  let pSize: number | null = null;
   if (relPathSize) {
-    const mSize = relPathSize(missing.filename);
-    const pSize = relPathSize(present.filename);
+    mSize = relPathSize(missing.filename);
+    pSize = relPathSize(present.filename);
     // Both sizes known and unequal ⇒ not a pure move ⇒ refuse.
     if (mSize !== null && pSize !== null && mSize !== pSize) return false;
   }
+  let mHash: string | null = null;
+  let pHash: string | null = null;
   if (relPathHash) {
-    const mHash = await relPathHash(missing.filename);
-    const pHash = await relPathHash(present.filename);
+    mHash = await relPathHash(missing.filename);
+    pHash = await relPathHash(present.filename);
     // Both hashes known and unequal ⇒ different content ⇒ refuse. A null
     // (uncached / unhashable) hash is not a mismatch — see the doc comment's
     // "balanced, not strict" rationale.
     if (mHash && pHash && mHash !== pHash) return false;
+  }
+  // 6.2.H6 — empty / identical-empty guard.
+  //
+  // Two files in DIFFERENT folders sharing a basename and both being
+  // zero-byte (or both content-hashing to the empty buffer SHA1) is
+  // overwhelmingly an unrelated delete + create pair, not a move — every
+  // user's vault accumulates empty placeholder `Notes.md` / `README.md`
+  // across folders. The pre-fix gate refused only on POSITIVE mismatches,
+  // so two empties (same size 0, same SHA1) passed and we silently
+  // rewrote every tile reference. The cross-basename pass had a 256-byte
+  // floor that already covered this — the same-basename pass was missing
+  // the parallel guard.
+  //
+  // Same-folder empty renames (`drafts/Old.md` → `drafts/New.md`) hit
+  // the cross-basename pass with its own 256-byte floor, so an empty file
+  // there also won't pair — the user-facing broken-ref relink covers
+  // that rare case. We only refuse here when the parent folders DIFFER.
+  const isEmpty = (mSize === 0 && pSize === 0) || (mHash === EMPTY_BUFFER_SHA1 && pHash === EMPTY_BUFFER_SHA1);
+  if (isEmpty && parentFolder(missing.filename) !== parentFolder(present.filename)) {
+    return false;
   }
   return true;
 }

@@ -189,8 +189,17 @@
 
   onDestroy(() => {
     if (intervalId !== null) clearInterval(intervalId);
-    // Save countdown progress on unmount (e.g. board switch mid-run) — we
-    // don't write per tick, so the cached remaining is otherwise stale.
+    // Save countdown progress on unmount (e.g. board switch mid-run) — while
+    // RUNNING we don't write tile.remaining per tick, so the cached value is
+    // otherwise stale.
+    //
+    // 6.4.L3 (refuted — the isRunning gate is correct, not paused-timer drift):
+    // togglePlayPause's PAUSE writes `remaining: liveRemaining` synchronously,
+    // and the re-seed $effect above keeps `liveRemaining === tile.remaining`
+    // while paused. So a paused timer carries no unpersisted drift, and the
+    // gate rightly skips the write. Dropping it would be a regression: it would
+    // let unmount overwrite the canonical paused `remaining` with the local
+    // `liveRemaining`, which is only authoritative while the countdown runs.
     if (tile.isRunning && liveRemaining !== tile.remaining) {
       // allow-direct-mutation: persist countdown progress on unmount.
       boardStore.updateTile(tile.id, { remaining: liveRemaining });

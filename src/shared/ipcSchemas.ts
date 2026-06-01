@@ -164,6 +164,8 @@ export const IPC_PAYLOAD_SCHEMAS = {
 
   // ── App lifecycle (renderer → main) ───────────────────────────────────
   'app:ready-to-quit': z.tuple([]),
+  // 6.2.H4 — same shape as `app:ready-to-quit`; semantics differ in main.
+  'app:cancel-quit': z.tuple([]),
 
   // ── Sidebar geometry ──────────────────────────────────────────────────
   'sidebar:get-state': z.tuple([]),

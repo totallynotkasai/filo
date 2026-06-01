@@ -10,6 +10,7 @@
   } from './lib/boards/boardSaver';
   import { onError, reportError } from './lib/utils/errorBus';
   import { createErrorToastAggregator } from './lib/utils/errorToastAggregator';
+  import { handleFlushAndQuit } from './lib/vault/handleFlushAndQuit';
   import { historyStore } from './stores/history.svelte';
   import { tabStore } from './stores/tabs.svelte';
   import { workspaceStore } from './stores/workspace.svelte';
@@ -70,23 +71,17 @@
   // Drain pending writes when the main process is about to quit.
   // Main blocks shutdown until we send `app:ready-to-quit` (or its 5s
   // timeout fires), so a graceful quit always gets a flush attempt.
-  // On a failed flush, defer the reply ~200ms so the error toast and
-  // `failedVaultPaths` sentinel have time to settle before teardown.
+  // 6.2.H4 — on a save failure, the handler surfaces a Confirm dialog
+  // ("Quit anyway" / "Stay open and retry") instead of sleeping 200 ms
+  // and unconditionally exiting. "Stay open and retry" sends the new
+  // `app:cancel-quit` signal so main rewinds `isFlushingForQuit`.
   window.filo.on('app:flush-and-quit', () => {
-    void (async () => {
-      let failed = false;
-      try {
-        const ok = await vaultStore.save();
-        if (!ok) failed = true;
-      } catch (err) {
-        reportError('App', err, 'flush-and-quit failed');
-        failed = true;
-      }
-      if (failed || saveStateStore.state === 'error') {
-        await new Promise<void>((resolve) => setTimeout(resolve, 200));
-      }
-      window.filo.send('app:ready-to-quit');
-    })();
+    void handleFlushAndQuit({
+      saveStateState: () => saveStateStore.state,
+      save: () => vaultStore.save(),
+      send: (channel) => window.filo.send(channel),
+      reportError,
+    });
   });
 
   // Audit 5.3 — let the history store auto-switch to a command's originating

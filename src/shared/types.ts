@@ -89,6 +89,11 @@ export type IpcChannel =
   | 'app:flush-and-quit'
   // App lifecycle (renderer -> main)
   | 'app:ready-to-quit'
+  // 6.2.H4 — renderer-initiated quit cancellation. On a save-failure
+  // confirm, the Stay-open-and-retry choice sends this so main clears
+  // isFlushingForQuit and the flush-timeout timer, keeping the window
+  // alive for retry instead of destroying it.
+  | 'app:cancel-quit'
   // Sidebar — per-machine state (width, in-app floating mode, bounds)
   | 'sidebar:get-state'
   | 'sidebar:set-state';
@@ -106,7 +111,7 @@ export type IpcChannel =
  * run the same `validateIpcPayload` gate `invoke` uses, closing the hole
  * where `send` forwarded unvalidated args straight to the main process.
  */
-export type SendChannel = 'app:ready-to-quit';
+export type SendChannel = 'app:ready-to-quit' | 'app:cancel-quit';
 
 /**
  * File tree node representing a file or folder in the vault.

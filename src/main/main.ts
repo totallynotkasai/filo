@@ -180,8 +180,13 @@ async function createWindow(): Promise<void> {
       mainWindow?.destroy();
     }, FLUSH_TIMEOUT_MS);
 
-    ipcMain.once('app:ready-to-quit', () => {
+    // 6.2.H4 — two terminal signals from the renderer: ready (proceed to
+    // destroy) and cancel (user picked "Stay open and retry" on the save-
+    // failure confirm; rewind isFlushingForQuit so they can keep editing).
+    // Whichever fires first wins and removes the other listener.
+    const onReady = (): void => {
       clearTimeout(timer);
+      ipcMain.removeListener('app:cancel-quit', onCancel);
       // Phase 4 / 4.4 — drain windowState + sidebarState before destroying
       // the window. The renderer's flush completed first; now wait on the
       // main-side debounces so the next launch sees the latest geometry.
@@ -194,12 +199,21 @@ async function createWindow(): Promise<void> {
       ]).finally(() => {
         mainWindow?.destroy();
       });
-    });
+    };
+    const onCancel = (): void => {
+      clearTimeout(timer);
+      ipcMain.removeListener('app:ready-to-quit', onReady);
+      isFlushingForQuit = false;
+    };
+    ipcMain.once('app:ready-to-quit', onReady);
+    ipcMain.once('app:cancel-quit', onCancel);
 
     try {
       mainWindow.webContents.send('app:flush-and-quit');
     } catch (err) {
       clearTimeout(timer);
+      ipcMain.removeListener('app:ready-to-quit', onReady);
+      ipcMain.removeListener('app:cancel-quit', onCancel);
       logMainError('main:flush-and-quit-on-close', err);
       mainWindow?.destroy();
     }
@@ -374,6 +388,9 @@ app.on('before-quit', (event) => {
   // event loop has torn down.
   const finish = (): void => {
     ipcMain.removeAllListeners('app:ready-to-quit');
+    // 6.2.H4 — also drain the cancel-quit listener so a late renderer
+    // signal can't bring the (already torn down) flush state out of sync.
+    ipcMain.removeAllListeners('app:cancel-quit');
     void Promise.allSettled([
       flushWindowStateNow(),
       flushSidebarStateNow(),
@@ -388,15 +405,27 @@ app.on('before-quit', (event) => {
     finish();
   }, FLUSH_TIMEOUT_MS);
 
-  ipcMain.once('app:ready-to-quit', () => {
+  // 6.2.H4 — same two-signal handshake as the close-event path. On Cancel
+  // we don't exit, we rewind `isFlushingForQuit` and remove the listeners.
+  const onReady = (): void => {
     clearTimeout(timer);
+    ipcMain.removeListener('app:cancel-quit', onCancel);
     finish();
-  });
+  };
+  const onCancel = (): void => {
+    clearTimeout(timer);
+    ipcMain.removeListener('app:ready-to-quit', onReady);
+    isFlushingForQuit = false;
+  };
+  ipcMain.once('app:ready-to-quit', onReady);
+  ipcMain.once('app:cancel-quit', onCancel);
 
   try {
     win.webContents.send('app:flush-and-quit');
   } catch (err) {
     clearTimeout(timer);
+    ipcMain.removeListener('app:ready-to-quit', onReady);
+    ipcMain.removeListener('app:cancel-quit', onCancel);
     logMainError('main:flush-and-quit', err);
     finish();
   }

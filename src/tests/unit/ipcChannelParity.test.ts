@@ -99,6 +99,9 @@ describe('IPC channel parity', () => {
       'vault:tree-too-large',
       'app:flush-and-quit',
       'app:ready-to-quit',
+      // 6.2.H4 — renderer → main one-way cancel signal; main listens
+      // via ipcMain.once inside the close/before-quit handlers.
+      'app:cancel-quit',
     ]);
     const orphans = [...unionMembers].filter(
       (channel) => !registered.has(channel) && !broadcastOnly.has(channel),

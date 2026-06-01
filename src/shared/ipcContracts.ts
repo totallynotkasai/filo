@@ -373,6 +373,12 @@ export interface IpcChannelMap {
     args: [];
     result: void;
   };
+  // 6.2.H4 — renderer cancels the in-flight quit (user picked "Stay
+  // open and retry" on the save-failure confirm).
+  'app:cancel-quit': {
+    args: [];
+    result: void;
+  };
 
   // ── Sidebar geometry ─────────────────────────────────────────────
   'sidebar:get-state': {

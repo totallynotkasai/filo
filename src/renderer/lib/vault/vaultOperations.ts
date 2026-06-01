@@ -39,6 +39,8 @@
 
 import { flushAllMarkdownWriters } from './markdownFileWriter';
 import { flushAllPendingFrontmatterWrites } from '../boards/frontmatterWriteScheduler';
+import { flushAllMisc } from '../boards/miscWriteScheduler';
+import { flushScheduledConfig } from '../boards/configWriteScheduler';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import type {
@@ -59,10 +61,20 @@ interface BoardFlushResult {
   failed: string[];
 }
 
+interface MiscFlushResult {
+  failed: string[];
+}
+
+interface ConfigFlushResult {
+  failed: string[];
+}
+
 export interface PendingWritesFailedDetail {
   md: MarkdownFlushResult;
   fm: FrontmatterFlushResult;
   board: BoardFlushResult;
+  misc: MiscFlushResult;
+  config: ConfigFlushResult;
 }
 
 export class PendingWritesFailedError extends Error {
@@ -70,7 +82,11 @@ export class PendingWritesFailedError extends Error {
 
   constructor(results: PendingWritesFailedDetail) {
     const totalFailed =
-      results.md.failed.length + results.fm.failed.length + results.board.failed.length;
+      results.md.failed.length +
+      results.fm.failed.length +
+      results.board.failed.length +
+      results.misc.failed.length +
+      results.config.failed.length;
     super(
       `Pending writes failed (${totalFailed} file(s)): refusing to proceed with disk-shape change.`,
     );
@@ -92,6 +108,8 @@ function summariseFailedPaths(results: PendingWritesFailedDetail): string[] {
   for (const entry of results.md.failed) out.push(entry.ownerId);
   for (const path of results.fm.failed) out.push(path);
   for (const path of results.board.failed) out.push(path);
+  for (const path of results.misc.failed) out.push(path);
+  for (const path of results.config.failed) out.push(path);
   return out;
 }
 
@@ -117,20 +135,38 @@ export async function withDrainedWrites<T>(op: () => Promise<T>): Promise<T> {
   }
   drainInProgress = true;
   try {
-    const [mdResult, fmResult, boardResult] = await Promise.all([
-      flushAllMarkdownWriters(),
-      flushAllPendingFrontmatterWrites(),
-      boardCacheStore.flushAllDirty(),
-    ]);
+    // 6.4.M1 — misc + config schedulers must drain alongside md/fm/board.
+    // Without them, a debounced sidebar-order / viewports / tags.json /
+    // workspace.json write fires AFTER the disk-shape op lands, racing the
+    // rename or resurrecting a path the IPC just removed.
+    //
+    // `flushScheduledConfig`'s param is a vestigial getter — the underlying
+    // scheduler captures args at schedule time. We pass `() => null` so the
+    // signature stays satisfied without coupling this module to the project
+    // store's `getConfigWriteArgs`.
+    const [mdResult, fmResult, boardResult, miscResult, configResult] =
+      await Promise.all([
+        flushAllMarkdownWriters(),
+        flushAllPendingFrontmatterWrites(),
+        boardCacheStore.flushAllDirty(),
+        flushAllMisc(),
+        flushScheduledConfig(() => null),
+      ]);
 
     const detail: PendingWritesFailedDetail = {
       md: mdResult,
       fm: fmResult,
       board: boardResult,
+      misc: miscResult,
+      config: { failed: configResult?.failed ?? [] },
     };
 
     const totalFailed =
-      mdResult.failed.length + fmResult.failed.length + boardResult.failed.length;
+      mdResult.failed.length +
+      fmResult.failed.length +
+      boardResult.failed.length +
+      miscResult.failed.length +
+      (configResult?.failed.length ?? 0);
 
     if (totalFailed > 0) {
       const failedPaths = summariseFailedPaths(detail);

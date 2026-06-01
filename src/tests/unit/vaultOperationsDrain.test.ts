@@ -36,6 +36,8 @@ import {
 import {
   __resetDirtyTrackingForTests,
 } from '@renderer/lib/boards/writeStateTracking';
+import { scheduleMiscWrite } from '@renderer/lib/boards/miscWriteScheduler';
+import { scheduleConfigWrite } from '@renderer/lib/boards/configWriteScheduler';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import { uiStore } from '@renderer/stores/ui.svelte';
 
@@ -128,6 +130,73 @@ describe('withDrainedWrites — drain ordering', () => {
     const errorToast = toasts.find((t) => t.type === 'error');
     expect(errorToast).toBeDefined();
     expect(errorToast!.text).toMatch(/pending write/);
+  });
+
+  // Phase 6.4.M1 — withDrainedWrites must also drain misc + config writers.
+  // Otherwise a debounced sidebar-order / viewport / tags / workspace.json
+  // write fires AFTER the disk-shape change lands, racing the rename or
+  // resurrecting a path the IPC just removed.
+  it('flushes pending misc writes BEFORE running op (M1 — misc)', async () => {
+    const events: string[] = [];
+
+    installFiloMock({
+      'vault:write-file-text': async () => ({ success: true }),
+      'config:save': async () => ({ success: true }),
+    });
+
+    // Arm a pending misc timer — DO NOT pre-fire it. The contract is that
+    // `withDrainedWrites` itself forces the flush, not "happens to drain
+    // because the timer already fired and an unrelated await drained the
+    // microtask queue."
+    scheduleMiscWrite('test-misc-key', () => ({
+      vaultRoot: '/vault',
+      path: '.filo/tags.json',
+      write: async () => {
+        events.push('misc-write');
+      },
+    }));
+
+    await withDrainedWrites(async () => {
+      events.push('op');
+    });
+
+    expect(events).toEqual(['misc-write', 'op']);
+  });
+
+  it('flushes pending config writes BEFORE running op (M1 — config)', async () => {
+    const events: string[] = [];
+
+    installFiloMock({
+      'config:save': async () => {
+        events.push('config-save');
+        return { success: true };
+      },
+      'config:save-workspace': async () => {
+        events.push('config-save-workspace');
+        return { success: true };
+      },
+    });
+
+    scheduleConfigWrite(() => ({
+      vaultRoot: '/vault',
+      settings: { general: {}, board: {}, document: {} } as never,
+      theme: 'light',
+      workspace: { openTabs: [], activeTabId: null } as never,
+      layout: { paneTree: null, activePaneId: null } as never,
+    }));
+
+    await withDrainedWrites(async () => {
+      events.push('op');
+    });
+
+    // The config bundle writes one or more `config:save*` IPCs. Every one
+    // must land BEFORE the op runs.
+    expect(events[events.length - 1]).toBe('op');
+    const opIndex = events.indexOf('op');
+    expect(opIndex).toBeGreaterThan(0);
+    for (let i = 0; i < opIndex; i++) {
+      expect(events[i]).toMatch(/^config-save/);
+    }
   });
 
   it('collapses nested calls via the re-entrancy guard (acceptance #3)', async () => {
@@ -247,11 +316,15 @@ describe('PendingWritesFailedError', () => {
       md: { ok: 0, failed: [{ ownerId: 'a', error: new Error('x') }] },
       fm: { failed: ['b.md', 'c.md'] },
       board: { failed: ['d.board.json'] },
+      misc: { failed: ['.filo/tags.json'] },
+      config: { failed: ['defaults.json'] },
     });
-    expect(err.message).toMatch(/4 file/);
+    expect(err.message).toMatch(/6 file/);
     expect(err.name).toBe('PendingWritesFailedError');
     expect(err.results.md.failed).toHaveLength(1);
     expect(err.results.fm.failed).toHaveLength(2);
     expect(err.results.board.failed).toHaveLength(1);
+    expect(err.results.misc.failed).toHaveLength(1);
+    expect(err.results.config.failed).toHaveLength(1);
   });
 });

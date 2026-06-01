@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   assertSafeFilename,
   assertSafeRelativePath,
@@ -11,6 +11,15 @@ import {
  * that Phase 3 newly enforces at the IPC layer. `assertSafeFilename` and
  * `isPrivateUrl` were already exported but only sporadically called — the
  * tests below pin the traversal / SSRF payloads we now reject.
+ *
+ * 6.3.P1 / 6.3.P2 — the Windows-only rules (illegal chars `<>:"|?*`, reserved
+ * DOS names) are platform-gated by default; callers pass
+ * `{ forCreation: true }` at creation channels to enforce on every platform.
+ * The "creation rule" tests below pass `{ forCreation: true }` so they pin
+ * the cross-platform-portability invariant regardless of which OS CI runs
+ * on. Separate tests below mock `process.platform = 'darwin'` to pin the
+ * POSIX-read invariant (legitimately-named files like `2025:01:15.md` must
+ * be accessible).
  */
 describe('assertSafeFilename', () => {
   it('accepts a bare filename', () => {
@@ -37,7 +46,9 @@ describe('assertSafeFilename', () => {
     expect(() => assertSafeFilename('/etc/passwd')).toThrow();
   });
 
-  it('rejects a leading drive letter', () => {
+  it('rejects a leading drive letter (on Windows the drive-letter colon trips the Win-illegal-char gate; cross-platform creation always rejects)', () => {
+    // The `\\` separators trip the path-separator gate, so this rejects on
+    // every platform without depending on the Windows-illegal `:` rule.
     expect(() => assertSafeFilename('C:\\Windows\\System32\\cmd.exe')).toThrow();
   });
 
@@ -45,18 +56,20 @@ describe('assertSafeFilename', () => {
     expect(() => assertSafeFilename('')).toThrow(/empty/);
   });
 
-  it('rejects Windows reserved names regardless of case or extension', () => {
-    expect(() => assertSafeFilename('CON')).toThrow(/CON/);
-    expect(() => assertSafeFilename('con')).toThrow(/CON/);
-    expect(() => assertSafeFilename('CON.md')).toThrow(/CON/);
-    expect(() => assertSafeFilename('con.txt')).toThrow(/CON/);
-    expect(() => assertSafeFilename('PRN.json')).toThrow(/PRN/);
-    expect(() => assertSafeFilename('AUX')).toThrow(/AUX/);
-    expect(() => assertSafeFilename('NUL.md')).toThrow(/NUL/);
-    expect(() => assertSafeFilename('COM1')).toThrow(/COM1/);
-    expect(() => assertSafeFilename('COM9.txt')).toThrow(/COM9/);
-    expect(() => assertSafeFilename('LPT1.tar.gz')).toThrow(/LPT1/);
-    expect(() => assertSafeFilename('LPT9')).toThrow(/LPT9/);
+  it('rejects Windows reserved names at creation regardless of case or extension', () => {
+    // 6.3.P2 — pass forCreation:true so these reject on every CI platform.
+    const c = { forCreation: true } as const;
+    expect(() => assertSafeFilename('CON', c)).toThrow(/CON/);
+    expect(() => assertSafeFilename('con', c)).toThrow(/CON/);
+    expect(() => assertSafeFilename('CON.md', c)).toThrow(/CON/);
+    expect(() => assertSafeFilename('con.txt', c)).toThrow(/CON/);
+    expect(() => assertSafeFilename('PRN.json', c)).toThrow(/PRN/);
+    expect(() => assertSafeFilename('AUX', c)).toThrow(/AUX/);
+    expect(() => assertSafeFilename('NUL.md', c)).toThrow(/NUL/);
+    expect(() => assertSafeFilename('COM1', c)).toThrow(/COM1/);
+    expect(() => assertSafeFilename('COM9.txt', c)).toThrow(/COM9/);
+    expect(() => assertSafeFilename('LPT1.tar.gz', c)).toThrow(/LPT1/);
+    expect(() => assertSafeFilename('LPT9', c)).toThrow(/LPT9/);
   });
 
   it('accepts names that merely contain reserved substrings', () => {
@@ -71,23 +84,27 @@ describe('assertSafeFilename', () => {
     expect(() => assertSafeFilename('foo ')).toThrow(/trailing/);
   });
 
-  // Audit2 5.4 — `:` is the load-bearing entry: NTFS Alternate Data Streams.
-  // A filename like `note.md:hidden` writes to a hidden stream inside the
-  // vault that most tools never enumerate.
-  it('rejects NTFS Alternate Data Stream filenames (colon)', () => {
-    expect(() => assertSafeFilename('note.md:hidden')).toThrow(/Windows-illegal/);
-    expect(() => assertSafeFilename('Notes:secret.txt')).toThrow(/Windows-illegal/);
-    expect(() => assertSafeFilename(':leading')).toThrow(/Windows-illegal/);
-    expect(() => assertSafeFilename('trailing:')).toThrow(/Windows-illegal/);
+  // Audit2 5.4 / 6.3.P1 — `:` is the load-bearing entry: NTFS Alternate
+  // Data Streams. A filename like `note.md:hidden` writes to a hidden
+  // stream inside the vault on Windows. Creation channels (forCreation:
+  // true) reject these on every platform so a cross-platform vault stays
+  // portable.
+  it('rejects NTFS Alternate Data Stream filenames (colon) at creation', () => {
+    const c = { forCreation: true } as const;
+    expect(() => assertSafeFilename('note.md:hidden', c)).toThrow(/Windows-illegal/);
+    expect(() => assertSafeFilename('Notes:secret.txt', c)).toThrow(/Windows-illegal/);
+    expect(() => assertSafeFilename(':leading', c)).toThrow(/Windows-illegal/);
+    expect(() => assertSafeFilename('trailing:', c)).toThrow(/Windows-illegal/);
   });
 
-  it('rejects other Windows-illegal characters (<>"|?*)', () => {
-    expect(() => assertSafeFilename('foo<bar.md')).toThrow(/Windows-illegal/);
-    expect(() => assertSafeFilename('foo>bar.md')).toThrow(/Windows-illegal/);
-    expect(() => assertSafeFilename('foo"bar.md')).toThrow(/Windows-illegal/);
-    expect(() => assertSafeFilename('foo|bar.md')).toThrow(/Windows-illegal/);
-    expect(() => assertSafeFilename('foo?bar.md')).toThrow(/Windows-illegal/);
-    expect(() => assertSafeFilename('foo*bar.md')).toThrow(/Windows-illegal/);
+  it('rejects other Windows-illegal characters (<>"|?*) at creation', () => {
+    const c = { forCreation: true } as const;
+    expect(() => assertSafeFilename('foo<bar.md', c)).toThrow(/Windows-illegal/);
+    expect(() => assertSafeFilename('foo>bar.md', c)).toThrow(/Windows-illegal/);
+    expect(() => assertSafeFilename('foo"bar.md', c)).toThrow(/Windows-illegal/);
+    expect(() => assertSafeFilename('foo|bar.md', c)).toThrow(/Windows-illegal/);
+    expect(() => assertSafeFilename('foo?bar.md', c)).toThrow(/Windows-illegal/);
+    expect(() => assertSafeFilename('foo*bar.md', c)).toThrow(/Windows-illegal/);
   });
 
   it('rejects embedded control characters', () => {
@@ -103,6 +120,92 @@ describe('assertSafeFilename', () => {
     expect(() => assertSafeFilename(long)).toThrow(/255/);
     // Boundary: 255 is OK (POSIX NAME_MAX + Win MAX_PATH segment).
     expect(() => assertSafeFilename('a'.repeat(255))).not.toThrow();
+  });
+});
+
+/**
+ * 6.3.P1 / 6.3.P2 — the bug fix. Audit2 5.4 / 5.5 enforced Windows-only
+ * rules platform-blind, which made any POSIX vault containing a file named
+ * `2025:01:15 meeting.md` (Obsidian daily-notes default) unreadable through
+ * Filo — every read/delete/rename IPC threw before reaching `fs.readFile`.
+ * The default behaviour now gates those checks to win32; creation channels
+ * still get `forCreation: true` to keep the cross-platform-portability
+ * invariant.
+ */
+describe('assertSafeFilename — platform gating (6.3.P1 / 6.3.P2)', () => {
+  let platformSpy: ReturnType<typeof vi.spyOn> | null = null;
+  const setPlatform = (p: NodeJS.Platform): void => {
+    platformSpy?.mockRestore();
+    platformSpy = vi.spyOn(process, 'platform', 'get').mockReturnValue(p);
+  };
+
+  beforeEach(() => {
+    platformSpy = null;
+  });
+
+  afterEach(() => {
+    platformSpy?.mockRestore();
+    platformSpy = null;
+  });
+
+  it('on POSIX, accepts files with `:` in the name (Obsidian daily notes)', () => {
+    setPlatform('darwin');
+    expect(() => assertSafeFilename('2025:01:15 meeting.md')).not.toThrow();
+    expect(() => assertSafeFilename('note.md:hidden')).not.toThrow();
+    setPlatform('linux');
+    expect(() => assertSafeFilename('2025:01:15 meeting.md')).not.toThrow();
+  });
+
+  it('on POSIX, accepts files named with Windows DOS-device stems', () => {
+    setPlatform('darwin');
+    expect(() => assertSafeFilename('CON.md')).not.toThrow();
+    expect(() => assertSafeFilename('NUL.txt')).not.toThrow();
+    expect(() => assertSafeFilename('COM1.md')).not.toThrow();
+  });
+
+  it('on POSIX, accepts files with other Windows-illegal chars (<>"|?*)', () => {
+    setPlatform('darwin');
+    expect(() => assertSafeFilename('foo<bar.md')).not.toThrow();
+    expect(() => assertSafeFilename('foo|bar.md')).not.toThrow();
+    expect(() => assertSafeFilename('foo*bar.md')).not.toThrow();
+  });
+
+  it('on Windows, still rejects the same names (default platform gate)', () => {
+    setPlatform('win32');
+    expect(() => assertSafeFilename('2025:01:15 meeting.md')).toThrow(/Windows-illegal/);
+    expect(() => assertSafeFilename('CON.md')).toThrow(/CON/);
+    expect(() => assertSafeFilename('foo<bar.md')).toThrow(/Windows-illegal/);
+  });
+
+  it('on POSIX, `forCreation: true` still rejects (cross-platform portability)', () => {
+    setPlatform('darwin');
+    const c = { forCreation: true } as const;
+    expect(() => assertSafeFilename('2025:01:15 meeting.md', c)).toThrow(/Windows-illegal/);
+    expect(() => assertSafeFilename('CON.md', c)).toThrow(/CON/);
+    expect(() => assertSafeFilename('foo<bar.md', c)).toThrow(/Windows-illegal/);
+  });
+
+  it('platform-independent rules (control chars, length, separators) still apply on POSIX without forCreation', () => {
+    setPlatform('darwin');
+    expect(() => assertSafeFilename('foo\x00bar')).toThrow(/control/);
+    expect(() => assertSafeFilename('a'.repeat(256))).toThrow(/255/);
+    expect(() => assertSafeFilename('foo/bar.md')).toThrow();
+    expect(() => assertSafeFilename('..')).toThrow();
+    expect(() => assertSafeFilename('foo.')).toThrow(/trailing/);
+  });
+
+  it('assertSafeRelativePath threads the forCreation flag through every segment', () => {
+    setPlatform('darwin');
+    // POSIX, no forCreation: `2025:01:15.md` is a legitimate filename inside
+    // a nested path — must not throw.
+    expect(() => assertSafeRelativePath('notes/2025:01:15.md')).not.toThrow();
+    // POSIX, forCreation: same path must reject so a Mac user can't seed
+    // a vault that breaks Windows.
+    expect(() => assertSafeRelativePath('notes/2025:01:15.md', { forCreation: true }))
+      .toThrow(/Windows-illegal/);
+    // POSIX, forCreation: a reserved-name segment anywhere rejects.
+    expect(() => assertSafeRelativePath('notes/CON/page.md', { forCreation: true }))
+      .toThrow(/CON/);
   });
 });
 

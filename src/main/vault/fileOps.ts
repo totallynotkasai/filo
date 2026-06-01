@@ -407,7 +407,13 @@ export async function copyFileToVault(
   await fs.mkdir(targetDir, { recursive: true });
 
   const fileName = basename(sourcePath);
-  assertSafeFilename(fileName);
+  // 6.3.P1/P2 — `copyFileToVault` copies an external file into the
+  // vault as a NEW file; creation rules apply on every platform so the
+  // resulting filename stays portable. Without `forCreation: true`, a
+  // POSIX user dropping `weird:name.png` from outside the vault would
+  // succeed locally but produce a file that breaks the same vault on
+  // Windows.
+  assertSafeFilename(fileName, { forCreation: true });
   const ext = extname(fileName);
   const nameWithoutExt = fileName.slice(0, fileName.length - ext.length);
 
@@ -416,7 +422,7 @@ export async function copyFileToVault(
   for (let attempt = 0; attempt < MAX_CANDIDATE_ATTEMPTS; attempt++) {
     const candidate =
       attempt === 0 ? fileName : `${nameWithoutExt} (${attempt})${ext}`;
-    if (attempt > 0) assertSafeFilename(candidate);
+    if (attempt > 0) assertSafeFilename(candidate, { forCreation: true });
     const candidatePath = join(targetDir, candidate);
     try {
       dest = await fs.open(candidatePath, 'wx');

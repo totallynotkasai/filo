@@ -132,25 +132,64 @@ export const RESERVED_WINDOWS_NAMES = new Set([
 const WIN_ILLEGAL_CHARS_RE = /[<>:"|?*]/;
 
 /**
+ * 6.3.P1 / 6.3.P2 — Windows-only filename restrictions (illegal chars
+ * `<>:"|?*` and reserved DOS names CON/NUL/COM1/etc.) are platform-gated by
+ * default. The Audit2 5.4 / 5.5 gates were enforced regardless of platform,
+ * which made any POSIX vault containing a legitimately-named file like
+ * `2025:01:15 meeting.md` (Obsidian's daily-notes default on macOS/Linux)
+ * unreadable through Filo — every read/delete/rename IPC threw before reaching
+ * `fs.readFile`. Gating to win32 fixes that.
+ *
+ * For CREATION channels (new file write, new folder, rename target, font
+ * import, theme save, board create, media save) callers pass
+ * `{ forCreation: true }` so the Windows rules apply on every platform,
+ * keeping cross-platform vaults portable: a Mac user can't accidentally
+ * commit a `bad:name.md` that would break a Windows collaborator on the
+ * same vault.
+ */
+export interface AssertSafeFilenameOptions {
+  /**
+   * When true, enforce the Windows-only rules (illegal chars, reserved DOS
+   * names) on every platform. Pass at creation channels so a NEW filename
+   * stays portable across OSes. Defaults to false (Win-only enforcement
+   * gated to `process.platform === 'win32'`) so existing files with names
+   * legal on the host OS but illegal on Windows remain accessible.
+   */
+  forCreation?: boolean;
+}
+
+const isWin32 = (): boolean => process.platform === 'win32';
+
+/**
  * Throws if fileName is unsafe to use as a bare filename inside the vault.
  * Rejects:
  *   - empty / non-string input
  *   - path separators or `..` segments (use a path joiner for those)
- *   - Windows-illegal characters `<>:"|?*` (NTFS ADS via `:`, etc.)
  *   - length > 255 (Windows MAX_PATH segment + POSIX NAME_MAX)
  *   - trailing dot or trailing space (silently stripped by Win32 → name collision)
  *   - control characters (\x00..\x1F, \x7F) including embedded NUL
+ *
+ * Platform-gated to win32 by default; pass `{ forCreation: true }` to enforce
+ * on every platform (for new files written via Filo):
+ *   - Windows-illegal characters `<>:"|?*` (NTFS ADS via `:`, etc.)
  *   - Windows DOS device names (CON, PRN, AUX, NUL, COM1..9, LPT1..9) regardless
  *     of extension — see `RESERVED_WINDOWS_NAMES`
  */
-export function assertSafeFilename(fileName: string): void {
+export function assertSafeFilename(
+  fileName: string,
+  options: AssertSafeFilenameOptions = {},
+): void {
   if (typeof fileName !== 'string' || fileName.length === 0) {
     throw new Error('Unsafe filename rejected — empty');
   }
   if (path.basename(fileName) !== fileName || fileName.includes('..')) {
     throw new Error('Unsafe filename rejected — contains path separators');
   }
-  if (WIN_ILLEGAL_CHARS_RE.test(fileName)) {
+  // 6.3.P1 — Win-illegal chars are platform-gated. Always enforce at
+  // creation; on POSIX read/delete/rename-OLD pass through so a file
+  // named `2025:01:15.md` remains accessible.
+  const enforceWinRules = options.forCreation === true || isWin32();
+  if (enforceWinRules && WIN_ILLEGAL_CHARS_RE.test(fileName)) {
     throw new Error('Unsafe filename rejected — contains Windows-illegal character (<>:"|?*)');
   }
   if (fileName.length > 255) {
@@ -165,11 +204,15 @@ export function assertSafeFilename(fileName: string): void {
       throw new Error('Unsafe filename rejected — control character');
     }
   }
-  // DOS device names are matched on the stem (everything before the first dot)
-  // so `CON.md`, `con.txt`, even `aux.tar.gz` all reject.
-  const stem = fileName.split('.')[0].toUpperCase();
-  if (RESERVED_WINDOWS_NAMES.has(stem)) {
-    throw new Error(`Unsafe filename rejected — Windows reserved name: ${stem}`);
+  // 6.3.P2 — DOS device names are platform-gated alongside the illegal-char
+  // check. POSIX vaults legitimately contain `CON.md` / `NUL.txt`; creation
+  // channels still reject them on every platform so the resulting file stays
+  // portable to a Windows collaborator.
+  if (enforceWinRules) {
+    const stem = fileName.split('.')[0].toUpperCase();
+    if (RESERVED_WINDOWS_NAMES.has(stem)) {
+      throw new Error(`Unsafe filename rejected — Windows reserved name: ${stem}`);
+    }
   }
 }
 
@@ -196,8 +239,17 @@ export const MAX_VAULT_PATH_DEPTH = 10;
  * Throws on any violation. `assertWithinVault` is still the primary
  * containment check; this helper is the structural sanity gate that runs
  * before path joining so a malformed input can't even reach `path.join`.
+ *
+ * 6.3.P1 / 6.3.P2 — `options.forCreation` forwards to per-segment
+ * `assertSafeFilename`. Pass `{ forCreation: true }` from creation channels
+ * (write-file-text, create-folder, rename target, etc.) so cross-platform
+ * portability rules apply on every platform; omit to platform-gate the
+ * Windows-only checks to win32.
  */
-export function assertSafeRelativePath(relativePath: string): void {
+export function assertSafeRelativePath(
+  relativePath: string,
+  options: AssertSafeFilenameOptions = {},
+): void {
   if (typeof relativePath !== 'string' || relativePath.length === 0) {
     throw new Error('Relative path must be a non-empty string');
   }
@@ -225,7 +277,7 @@ export function assertSafeRelativePath(relativePath: string): void {
     );
   }
   for (const segment of segments) {
-    assertSafeFilename(segment);
+    assertSafeFilename(segment, options);
   }
 }
 

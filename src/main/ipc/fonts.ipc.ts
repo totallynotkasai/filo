@@ -137,7 +137,10 @@ export function registerFontHandlers(): void {
         await fd?.close().catch(() => undefined);
       }
 
-      assertSafeFilename(fileName);
+      // 6.3.P1/P2 — font import copies a NEW file into `.filo/fonts/`;
+      // creation rules apply on every platform so the imported font
+      // file remains portable.
+      assertSafeFilename(fileName, { forCreation: true });
 
       // Phase 4 / 4.3 — collision-suffix loop so re-importing a font
       // with the same filename doesn't silently overwrite the prior

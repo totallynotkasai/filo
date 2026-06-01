@@ -470,7 +470,10 @@ export async function saveTheme(
   themeName: string,
   data: unknown,
 ): Promise<void> {
-  assertSafeFilename(themeName);
+  // 6.3.P1/P2 — `saveTheme` writes a NEW theme file (atomic write into
+  // `.filo/themes/`); creation rules apply on every platform so the
+  // saved theme stays portable across OSes.
+  assertSafeFilename(themeName, { forCreation: true });
   await ensureDir(themesDirPath(vaultRoot));
   const filePath = join(themesDirPath(vaultRoot), `${themeName}.json`);
   const json = JSON.stringify(data, null, 2);

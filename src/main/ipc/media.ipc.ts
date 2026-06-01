@@ -98,7 +98,10 @@ export function registerMediaHandlers(): void {
       // direct the write into a stale or wrong vault root after a vault
       // swap. Mirrors `vault:write-file-text` / `media:read-file`.
       assertActiveVault(vaultPath);
-      assertSafeFilename(fileName);
+      // 6.3.P1/P2 — `media:save-audio` writes a NEW recording into the
+      // vault; creation rules apply on every platform so the saved
+      // filename + destination subfolder stay portable.
+      assertSafeFilename(fileName, { forCreation: true });
       // Phase 21 / M5 — cap base64 input by its decoded byte length. The
       // base64 alphabet expands 3 bytes to 4 chars, so a 100 MB cap on the
       // decoded buffer corresponds to ~133 MB of base64 string; checking
@@ -115,7 +118,11 @@ export function registerMediaHandlers(): void {
       // past it because the resolved path is still inside the vault.
       // Run `assertSafeRelativePath` on the folder so each segment also
       // has to clear `assertSafeFilename`.
-      if (normalisedFolder) assertSafeRelativePath(normalisedFolder);
+      //
+      // 6.3.P1/P2 — `forCreation: true` because mkdir-p creates the
+      // destination subfolder if it doesn't exist; keep the new folder
+      // path portable across platforms.
+      if (normalisedFolder) assertSafeRelativePath(normalisedFolder, { forCreation: true });
 
       const mediaDir = normalisedFolder
         ? path.join(vaultPath, normalisedFolder)

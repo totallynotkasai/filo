@@ -99,7 +99,10 @@ export function registerTemplateHandlers(): void {
     async (_event, vaultRoot: string, filename: string, content: unknown) => {
       try {
         assertActiveVault(vaultRoot);
-        assertSafeFilename(filename);
+        // 6.3.P1/P2 — `templates:layout:write` creates / overwrites a
+        // template file in `.filo/templates/`; creation rules apply on
+        // every platform so saved templates stay portable.
+        assertSafeFilename(filename, { forCreation: true });
         if (!filename.endsWith('.template.json')) {
           throw new Error('Filename must end with .template.json');
         }
@@ -143,8 +146,13 @@ export function registerTemplateHandlers(): void {
     async (_event, vaultRoot: string, oldFilename: string, newFilename: string) => {
       try {
         assertActiveVault(vaultRoot);
+        // 6.3.P1/P2 — OLD filename stays platform-gated (must validate
+        // existing names that may already live in `.filo/templates/`
+        // legitimately on POSIX). NEW filename is a creation target;
+        // enforce Windows rules on every platform so the renamed file
+        // remains portable.
         assertSafeFilename(oldFilename);
-        assertSafeFilename(newFilename);
+        assertSafeFilename(newFilename, { forCreation: true });
         if (!oldFilename.endsWith('.template.json') || !newFilename.endsWith('.template.json')) {
           throw new Error('Filenames must end with .template.json');
         }

@@ -231,13 +231,19 @@ export function registerBoardHandlers(): void {
       // Mirrors the pattern added to `vault:copy-file` in Phase 37 / 37.5.
       // `assertWithinVault` below would also catch a traversal, but only
       // after the file has been written outside the vault.
-      if (subfolder) assertSafeRelativePath(subfolder);
+      //
+      // 6.3.P1/P2 — `board:create` is a creation channel; pass
+      // `forCreation: true` so the Windows-only rules (illegal chars,
+      // reserved DOS names) apply on every platform. A POSIX user
+      // creating `CON.board.json` would otherwise produce a file that
+      // breaks the same vault on Windows.
+      if (subfolder) assertSafeRelativePath(subfolder, { forCreation: true });
       // Phase B / B.1 — reject DOS device names (CON, NUL, LPT1, ...) on the
       // board name before `createBoardFile` calls `atomicWriteFile`. Without
       // this gate `CON.board.json` opens a console device handle on Windows
       // and the write either silently no-ops or hangs the IPC. The basename
       // form matches the rename gate at `vault:rename` (Phase 31 A3.6).
-      assertSafeFilename(`${name}.board.json`);
+      assertSafeFilename(`${name}.board.json`, { forCreation: true });
       assertPayloadByteSize(jsonPayloadByteSize(data), PAYLOAD_LIMITS.BOARD, 'board:create');
       const fullPath = await createBoardFile(vaultRoot, name, data, subfolder);
       assertWithinVault(vaultRoot, fullPath);
@@ -385,7 +391,10 @@ export function registerBoardHandlers(): void {
   ipcMain.handle('theme:save', async (_event, vaultRoot: string, name: string, data: unknown) => {
     try {
       assertActiveVault(vaultRoot);
-      assertSafeFilename(name);
+      // 6.3.P1/P2 — `theme:save` creates `<vault>/.filo/themes/<name>.json`;
+      // creation rules apply on every platform so a saved theme stays
+      // portable.
+      assertSafeFilename(name, { forCreation: true });
       assertPayloadByteSize(jsonPayloadByteSize(data), PAYLOAD_LIMITS.THEME, `theme:save ${name}`);
       await saveTheme(vaultRoot, name, data);
       return { ok: true };

@@ -115,8 +115,15 @@ export function writePendingRewrite(
     // already abort on throw, surfacing the failure to the user).
     // Phase 1 (CONSOLIDATION_PLAN) — switched to `invokeOk` so the
     // envelope check is part of the call shape.
+    //
+    // 6.4.L1 (refuted — by design): this deliberately bypasses the markdown
+    // gateway's hydrate/drift discipline. That discipline guards user-owned
+    // `.md` files an external editor can race; this is a Filo-owned, one-shot,
+    // single-writer (the `withMutex` above) crash-recovery sentinel that no
+    // editor hydrates from. A drift prompt or hydrate gate here would be
+    // meaningless. Identical rationale to renameCascadeSentinel.
     // allow-direct-write: `.filo/tag-rewrite-pending.json` is a one-shot
-    // crash-recovery sentinel — not a `.md` file.
+    // crash-recovery sentinel — not a `.md` file, no editor hydrates from it.
     await invokeOk(
       'vault:write-file-text',
       vaultRoot,

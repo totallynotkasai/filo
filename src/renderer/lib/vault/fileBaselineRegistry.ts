@@ -192,12 +192,12 @@ export function resetAllBaselines(): void {
  * legacy unguarded write, never a crash, so production skips the check
  * entirely.
  *
- * Scope: this checks the EAGERLY-seeded sink (boards). `.md` baselines are
- * seeded lazily on hydrate via the `readMarkdownForHydrate` gateway (enforced
- * statically by the E1 CI gate), so none are expected at commit time. Config
- * files (`.filo/*.json`) detect drift via the corruption sentinel /
- * external-change reconcilers rather than an mtime baseline, so they're out
- * of scope here.
+ * Scope: this checks the EAGERLY-seeded sinks — boards and (since 6.3.P3)
+ * the four `.filo/` configs the writer scheduler protects with a pre-write
+ * drift check (`defaults.json`, `app.json`, `appearance.json`,
+ * `workspace.json`). `.md` baselines are seeded lazily on hydrate via the
+ * `readMarkdownForHydrate` gateway (enforced statically by the E1 CI gate),
+ * so none are expected at commit time.
  *
  * The empty-registry short-circuit keeps unit tests that install boards
  * without going through the real stat-backed load path from tripping the

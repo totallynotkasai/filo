@@ -1,5 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { loadVaultCandidate } from '@renderer/lib/vault/vaultCandidate';
+import {
+  getBaseline,
+  __resetBaselinesForTests,
+} from '@renderer/lib/vault/fileBaselineRegistry';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
@@ -35,6 +39,12 @@ function happyPathRoutes(overrides: InvokeRoutes = {}): InvokeRoutes {
     'theme:list': async () => [],
     'theme:load': async () => null,
     'tags:load': async () => VALID_TAGS_JSON,
+    // 6.3.P3 — vault open now stats each of the four `.filo/` configs to
+    // seed drift baselines. Fresh-vault default returns ENOENT for all
+    // four so the loader's catch branch fires and no baselines are
+    // seeded — matches the existing tests' "empty vault" assumption.
+    // Individual tests can override to assert seeding behaviour.
+    'vault:stat': async () => ({ success: false, code: 'ENOENT', error: 'not found' }),
     ...overrides,
   };
 }
@@ -42,9 +52,11 @@ function happyPathRoutes(overrides: InvokeRoutes = {}): InvokeRoutes {
 describe('loadVaultCandidate', () => {
   beforeEach(() => {
     restoreFiloDefault();
+    __resetBaselinesForTests();
   });
   afterEach(() => {
     restoreFiloDefault();
+    __resetBaselinesForTests();
   });
 
   it('returns a fully-populated candidate on the happy path', async () => {
@@ -259,5 +271,129 @@ describe('loadVaultCandidate', () => {
     expect(candidate.manualOrder['']).toEqual(['a', 'b']);
     expect(candidate.manualOrder['bad-folder']).toBeUndefined();
     expect(candidate.manualOrder['also-bad']).toBeUndefined();
+  });
+
+  describe('config baseline seeding (6.3.P3)', () => {
+    /**
+     * The 5.1 ENOENT-skip guard inside `writeConfigs` is gated on
+     * `baseline !== undefined`. Without an eager seed at vault open, the
+     * first save after open lands in the "no baseline → drift check
+     * skipped" branch — the same bug 5.1 claimed to fix, re-introduced on
+     * the fresh-open path. These tests pin the eager-seed contract.
+     */
+    it('seeds drift baselines for each .filo/ config that exists on disk', async () => {
+      const FAKE_MTIME = 1_700_000_000_000;
+      installFiloMock(
+        happyPathRoutes({
+          'vault:stat': async (_root, relPath) => {
+            // Mock all four configs as present with distinct stats.
+            switch (relPath) {
+              case '.filo/defaults.json':
+                return { success: true, mtimeMs: FAKE_MTIME + 1, size: 100 };
+              case '.filo/app.json':
+                return { success: true, mtimeMs: FAKE_MTIME + 2, size: 200 };
+              case '.filo/appearance.json':
+                return { success: true, mtimeMs: FAKE_MTIME + 3, size: 300 };
+              case '.filo/workspace.json':
+                return { success: true, mtimeMs: FAKE_MTIME + 4, size: 400 };
+              default:
+                return { success: false, code: 'ENOENT', error: 'not found' };
+            }
+          },
+        }),
+      );
+
+      const candidate = await loadVaultCandidate('/vault');
+
+      expect(candidate.seededConfigBaselinePaths.sort()).toEqual([
+        '.filo/app.json',
+        '.filo/appearance.json',
+        '.filo/defaults.json',
+        '.filo/workspace.json',
+      ]);
+      // Each baseline is callable via getBaseline with the exact mtime
+      // and size returned by the mock.
+      expect(getBaseline('.filo/defaults.json')).toEqual({
+        mtimeMs: FAKE_MTIME + 1,
+        size: 100,
+      });
+      expect(getBaseline('.filo/app.json')).toEqual({
+        mtimeMs: FAKE_MTIME + 2,
+        size: 200,
+      });
+      expect(getBaseline('.filo/appearance.json')).toEqual({
+        mtimeMs: FAKE_MTIME + 3,
+        size: 300,
+      });
+      expect(getBaseline('.filo/workspace.json')).toEqual({
+        mtimeMs: FAKE_MTIME + 4,
+        size: 400,
+      });
+    });
+
+    it('skips ENOENT configs silently (fresh vault before any save)', async () => {
+      // Default happyPathRoutes already returns ENOENT for vault:stat.
+      installFiloMock(happyPathRoutes());
+
+      const candidate = await loadVaultCandidate('/vault');
+      expect(candidate.seededConfigBaselinePaths).toEqual([]);
+      expect(getBaseline('.filo/defaults.json')).toBeUndefined();
+      expect(getBaseline('.filo/app.json')).toBeUndefined();
+      expect(getBaseline('.filo/appearance.json')).toBeUndefined();
+      expect(getBaseline('.filo/workspace.json')).toBeUndefined();
+    });
+
+    it('seeds a partial set when only some configs exist on disk', async () => {
+      installFiloMock(
+        happyPathRoutes({
+          'vault:stat': async (_root, relPath) => {
+            if (relPath === '.filo/defaults.json') {
+              return { success: true, mtimeMs: 1000, size: 50 };
+            }
+            if (relPath === '.filo/workspace.json') {
+              return { success: true, mtimeMs: 2000, size: 75 };
+            }
+            return { success: false, code: 'ENOENT', error: 'not found' };
+          },
+        }),
+      );
+
+      const candidate = await loadVaultCandidate('/vault');
+      expect(candidate.seededConfigBaselinePaths.sort()).toEqual([
+        '.filo/defaults.json',
+        '.filo/workspace.json',
+      ]);
+      expect(getBaseline('.filo/app.json')).toBeUndefined();
+      expect(getBaseline('.filo/appearance.json')).toBeUndefined();
+    });
+
+    it('survives non-ENOENT stat failures (EACCES) — load still succeeds, no baseline', async () => {
+      // Suppress the `reportError` console.error breadcrumb — it's the
+      // asserted behaviour (the candidate surfaces the failure via the
+      // bus), but we don't want it polluting test output.
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        installFiloMock(
+          happyPathRoutes({
+            'vault:stat': async () => ({
+              success: false,
+              code: 'EACCES',
+              error: 'permission denied',
+            }),
+          }),
+        );
+
+        // Should NOT throw — non-fatal failure is reported via the bus but
+        // the load returns. Without a baseline, the writer's drift check
+        // no-ops on the next save (pre-5.1 behaviour).
+        const candidate = await loadVaultCandidate('/vault');
+        expect(candidate.seededConfigBaselinePaths).toEqual([]);
+        // Sanity: reportError did fire (once per failed config) so the
+        // failure surface stays observable in dev.
+        expect(errSpy).toHaveBeenCalled();
+      } finally {
+        errSpy.mockRestore();
+      }
+    });
   });
 });

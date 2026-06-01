@@ -427,6 +427,12 @@ function commitVaultCandidate(
   // if any is missing so an F1-style regression in eager baseline seeding
   // surfaces during development. No-op in production builds.
   assertBaselinesSeeded(Object.values(candidate.boardPaths), 'board');
+  // 6.3.P3 — same tripwire applied to the `.filo/` configs that exist on
+  // disk. The candidate phase calls `noteBaseline` for each existing
+  // config (ENOENT → skipped); if a future regression drops the seed
+  // step, this surfaces it during development so the configWriteScheduler's
+  // ENOENT-skip guard doesn't go inert again on a fresh-open path.
+  assertBaselinesSeeded(candidate.seededConfigBaselinePaths, 'config');
 }
 
 /**

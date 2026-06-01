@@ -49,6 +49,7 @@ import {
 import { ProjectSchema } from '../../schema/project';
 import { loadAllBoards } from '../boards/boardLoader';
 import { invokeOk } from '../utils/invokeOk';
+import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { reportError } from '../utils/errorBus';
 import type {
   V7BoardFileData,
@@ -58,6 +59,7 @@ import type { ThemeFile } from '../themes/themeManager';
 import type { TagsFile } from '../../schema/tagsFile';
 import { loadTagsFile } from './tagsStorage';
 import { normalizePath, toPosix } from '../utils/path';
+import { noteBaseline } from './fileBaselineRegistry';
 
 /**
  * Toast specs buffered during load and drained during commit. Keeping
@@ -123,7 +125,36 @@ export interface VaultCandidate {
   workspaceState: WorkspaceState;
   warnings: VaultCandidateWarning[];
   corruptionTargets: CorruptionTarget[];
+  /**
+   * 6.3.P3 — vault-relative paths of `.filo/` config files whose drift
+   * baseline was seeded during load (i.e. the file existed on disk and a
+   * successful `vault:stat` returned its mtime + size). Used by the
+   * commit-side `assertBaselinesSeeded` tripwire to catch a regression
+   * where a config baseline isn't seeded eagerly anymore — symmetrical
+   * to the existing `boardPaths` tripwire.
+   *
+   * Empty when none of the configs exist on disk (fresh vault before any
+   * `config:save` lands). Configs that ENOENT are skipped on purpose:
+   * the writer's drift check no-ops without a baseline, which matches the
+   * legacy "no comparison anchor on first write" behaviour.
+   */
+  seededConfigBaselinePaths: string[];
 }
+
+/**
+ * 6.3.P3 — sentinel paths for the four bundled config files the writer
+ * scheduler (`configWriteScheduler`) protects with a pre-write drift check.
+ * Their baselines were never seeded on vault open, so the 5.1 ENOENT
+ * resurrection guard was inert on a fresh open until the next successful
+ * self-write seeded the baseline. Listed here once so the load-side
+ * seed and the dev tripwire stay in lockstep.
+ */
+const CONFIG_SENTINEL_PATHS = [
+  '.filo/defaults.json',
+  '.filo/app.json',
+  '.filo/appearance.json',
+  '.filo/workspace.json',
+] as const;
 
 interface RawConfigs {
   app: Record<string, unknown>;
@@ -393,6 +424,42 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     );
   }
 
+  // ── 10. Seed drift baselines for `.filo/` configs ────────────────
+  //
+  // 6.3.P3 — the 5.1 ENOENT-skip guard inside `writeConfigs` is gated on
+  // `baseline !== undefined`. Without an eager seed at vault open, the
+  // first save after open lands in the "no baseline → skip the drift
+  // check entirely" branch — which the original 5.1 fix calls "the same
+  // bug, re-introduced for the most common open path." Stamp each
+  // existing config's mtime + size here so the guard takes the
+  // intended branch on the very first write after open.
+  //
+  // ENOENT is the common case for a fresh vault (none of the configs
+  // exist yet); skip silently. Other stat failures (EACCES, NO_ACTIVE_VAULT
+  // after a fast swap) are non-fatal — the legacy "no comparison anchor"
+  // behaviour still protects user edits.
+  const seededConfigBaselinePaths: string[] = [];
+  for (const sentinelPath of CONFIG_SENTINEL_PATHS) {
+    try {
+      const stat = await invokeOk('vault:stat', newVaultPath, sentinelPath);
+      noteBaseline(sentinelPath, stat.mtimeMs, stat.size);
+      seededConfigBaselinePaths.push(sentinelPath);
+    } catch (err) {
+      if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
+        continue;
+      }
+      // Non-ENOENT failure: surface via the bus so a permissions / share
+      // hiccup is visible during development. Doesn't block the load —
+      // a missing baseline degrades to the legacy unguarded write path,
+      // which is the same shape as the pre-5.1 behaviour.
+      reportError(
+        'vault.config-baseline-seed',
+        err,
+        `Couldn't seed drift baseline for ${sentinelPath} — config-write drift detection is inert for it until the next successful self-write.`,
+      );
+    }
+  }
+
   return {
     path: newVaultPath,
     project,
@@ -416,6 +483,7 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     workspaceState,
     warnings,
     corruptionTargets,
+    seededConfigBaselinePaths,
   };
 }
 

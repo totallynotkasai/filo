@@ -107,6 +107,27 @@ describe('promptExternalEditOnSync — per-path dedup (5.2)', () => {
     await b;
   });
 
+  // 6.4.M4 — the toast's `onDismiss` historically resolved to 'keep-local',
+  // so an unattended auto-dismiss silently overwrote the external edit on
+  // disk. The fix: dismiss resolves to 'defer' (abort the write, leave
+  // both sides intact); the next write attempt re-prompts so the user
+  // must explicitly choose Reload or Keep-local.
+  it('toast auto-dismiss resolves to defer, not keep-local (M4)', async () => {
+    const path = 'autoDismiss.md';
+    const p = promptExternalEditOnSync({ path });
+
+    const toast = findOpenDriftToast(path);
+    expect(toast).toBeDefined();
+
+    // Simulate auto-dismiss (no action invoked). The toast component
+    // calls dismissToast on lifetime expiry, which fires onDismiss.
+    uiStore.dismissToast(toast!.id);
+    await Promise.resolve();
+
+    await expect(p).resolves.toBe('defer');
+    expect(__inFlightDriftPromptsForTests().size).toBe(0);
+  });
+
   it('a fresh call AFTER the prior prompt resolved opens a new toast', async () => {
     const path = 'sequential.md';
 

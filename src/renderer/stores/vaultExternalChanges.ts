@@ -1268,7 +1268,7 @@ function promptDeletedFile(
  * Phase 6.1.R2 — reset on vault swap so a stale unresolved entry can't
  * block a fresh prompt for the same path in the new vault.
  */
-const inFlightDriftPrompts = new Map<string, Promise<'reload' | 'keep-local'>>();
+const inFlightDriftPrompts = new Map<string, Promise<'reload' | 'keep-local' | 'defer'>>();
 vaultSwapResettable('vaultExternalChanges.inFlightDriftPrompts', () => inFlightDriftPrompts.clear());
 // Phase 6.1.R4 — transfer any in-flight prompt promise from oldRel to
 // newRel so a Reload/Keep-local toast still in flight when the user
@@ -1294,6 +1294,10 @@ registerPathRenamable('vaultExternalChanges.inFlightDriftPrompts', (oldRel, newR
  *   - 'keep-local' — caller proceeds with the write. A confirmation
  *                    toast is surfaced so the user sees their choice
  *                    landed.
+ *   - 'defer' (6.4.M4) — user dismissed the prompt without choosing.
+ *                Caller MUST abort the write so the external edit on
+ *                disk survives; the in-memory dirty state is left intact
+ *                so the next debounced write re-prompts.
  *
  * Modelled on `promptModifiedFile` above but Promise-based because the
  * sync caller needs to branch on the outcome before deciding whether to
@@ -1306,22 +1310,23 @@ registerPathRenamable('vaultExternalChanges.inFlightDriftPrompts', (oldRel, newR
  */
 export function promptExternalEditOnSync(args: {
   path: string;
-}): Promise<'reload' | 'keep-local'> {
+}): Promise<'reload' | 'keep-local' | 'defer'> {
   const { path } = args;
   const existing = inFlightDriftPrompts.get(path);
   if (existing) return existing;
 
-  const promise = new Promise<'reload' | 'keep-local'>((resolve) => {
+  const promise = new Promise<'reload' | 'keep-local' | 'defer'>((resolve) => {
     const editorDoc = documentStore.findByFilename(path);
     uiStore.pushToast({
-      text: `"${editorDoc?.title || path}" was modified externally between Filo's read and write. Reload from disk, or keep your local edits?`,
+      text: `"${editorDoc?.title || path}" was modified externally between Filo's read and write. Reload from disk, or keep your local edits? (Dismiss to defer — no changes saved.)`,
       type: 'warning',
       duration: 0,
-      // The toast now auto-dismisses (15s cap) and can be closed manually.
-      // Either path must resolve the awaiting write — default to keep-local
-      // (proceed with the write) so a timed-out / dismissed prompt preserves
-      // the user's in-memory edits rather than hanging the write forever.
-      onDismiss: () => resolve('keep-local'),
+      // 6.4.M4 — the toast auto-dismisses (15s cap) and can be closed
+      // manually. On dismiss, resolve to 'defer' so the writer aborts
+      // without touching disk OR editor — both sides preserved. The
+      // dirty editor state survives, so the next debounced write
+      // re-prompts and the user must explicitly choose to overwrite.
+      onDismiss: () => resolve('defer'),
       actions: [
         {
           label: 'Reload',
@@ -1488,22 +1493,28 @@ async function recreateDeletedFile(
  *                bookkeeping; the toast just resolves and returns.
  *   - 'keep-local' — user wants their in-memory edits to overwrite the
  *                    external change. The caller proceeds with the write.
+ *   - 'defer' (6.4.M4) — user dismissed the prompt without choosing.
+ *                Caller MUST abort the write so the external edit on
+ *                disk survives; the dirty board cache is left intact so
+ *                the next debounced write re-prompts.
  *
  * Persistent toast (duration: 0) — user MUST choose; the write stays
  * paused until they do.
  */
 export function promptBoardExternalEdit(args: {
   path: string;
-}): Promise<'reload' | 'keep-local'> {
+}): Promise<'reload' | 'keep-local' | 'defer'> {
   const { path } = args;
   return new Promise((resolve) => {
     uiStore.pushToast({
-      text: `"${path}" was modified externally between Filo's load and the next save. Reload from disk (discard in-memory changes), or keep your local edits?`,
+      text: `"${path}" was modified externally between Filo's load and the next save. Reload from disk (discard in-memory changes), or keep your local edits? (Dismiss to defer — no changes saved.)`,
       type: 'warning',
       duration: 0,
-      // Auto-dismiss / manual close resolves to keep-local so the paused
-      // write proceeds with the user's in-memory edits instead of hanging.
-      onDismiss: () => resolve('keep-local'),
+      // 6.4.M4 — dismiss resolves to 'defer' so the writer aborts
+      // without touching disk OR cache. The dirty board cache survives,
+      // so the next debounced write re-prompts and the user must
+      // explicitly choose to overwrite.
+      onDismiss: () => resolve('defer'),
       actions: [
         {
           label: 'Reload',

@@ -67,7 +67,14 @@ export const MARKDOWN_WRITE_DEBOUNCE_MS = 300;
  * is treated as "Keep local"; the write proceeds. This matches the legacy
  * behaviour where the writer had no drift detection at all.
  */
-type ExternalEditPromptHandler = (path: string) => Promise<'reload' | 'keep-local'>;
+/**
+ * 6.4.M4 — `'defer'` was added so the toast's auto-dismiss / manual-close
+ * path no longer silently overwrites the external edit. The writer treats
+ * `'defer'` like `'reload'` for the abort effect (no write fires), but the
+ * handler must NOT have touched disk or editor — the in-memory dirty state
+ * persists so the next debounced write re-prompts.
+ */
+type ExternalEditPromptHandler = (path: string) => Promise<'reload' | 'keep-local' | 'defer'>;
 let externalEditPromptHandler: ExternalEditPromptHandler | null = null;
 
 export function setExternalEditPromptHandler(handler: ExternalEditPromptHandler | null): void {
@@ -431,6 +438,15 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
         // baseline was already refreshed by the Reload path
         // (applyReloadFromDisk → markHydrated mtime threading), so no
         // further bookkeeping needed here.
+        return;
+      }
+      if (choice === 'defer') {
+        // 6.4.M4 — user dismissed the prompt without choosing (auto-
+        // dismiss or manual close). Neither side was touched; abort
+        // the write so the external edit on disk survives, and let
+        // the dirty in-memory state persist so the next debounced
+        // write re-prompts. No baseline refresh — leave it at the
+        // pre-write value so the next attempt also detects drift.
         return;
       }
       // 'keep-local' — proceed with the write below. The user has

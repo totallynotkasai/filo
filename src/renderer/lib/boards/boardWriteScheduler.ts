@@ -52,7 +52,14 @@ import { getBaseline, noteBaseline, hasBaselineDrifted, refreshOrClearBaseline }
  * from the handler tells the writer to abort; returning `true` lets the
  * write proceed (the user explicitly chose Keep-local).
  */
-export type BoardExternalEditHandler = (path: string) => Promise<'reload' | 'keep-local'>;
+/**
+ * 6.4.M4 — `'defer'` was added so the toast's auto-dismiss / manual-close
+ * path no longer silently overwrites the external edit. The writer treats
+ * `'defer'` like `'reload'` for the abort effect (no write fires), but the
+ * handler must NOT have refreshed the in-memory cache — the dirty state
+ * persists so the next debounced write re-prompts.
+ */
+export type BoardExternalEditHandler = (path: string) => Promise<'reload' | 'keep-local' | 'defer'>;
 let boardExternalEditHandler: BoardExternalEditHandler | null = null;
 
 export function setBoardExternalEditHandler(handler: BoardExternalEditHandler | null): void {
@@ -251,12 +258,14 @@ export async function writeBoardFile(
     if (preWriteStat !== undefined && hasBaselineDrifted(baseline, preWriteStat)) {
       const handler = boardExternalEditHandler;
       const choice = handler ? await handler(boardPath) : 'keep-local';
-      if (choice === 'reload') {
-        // Abort the write. The handler is responsible for refreshing
-        // the renderer's in-memory cache against the new disk contents.
-        // Treat as failure for scheduler-level attribution so the
-        // Ctrl+S aggregate honestly reflects "didn't save"; the toast
-        // already told the user why.
+      if (choice === 'reload' || choice === 'defer') {
+        // Abort the write. On 'reload', the handler refreshed the
+        // renderer's in-memory cache against disk; on 'defer' (6.4.M4)
+        // the user dismissed the prompt and neither side was touched.
+        // Both cases skip the write and surface failure so the Ctrl+S
+        // aggregate honestly reflects "didn't save". The dirty board
+        // cache survives on 'defer' so the next debounced write
+        // re-detects drift and re-prompts.
         const externalEditError = Object.assign(
           new Error(`Board "${boardPath}" was modified externally; write aborted.`),
           { code: 'EXTERNAL_EDIT' },

@@ -152,7 +152,12 @@ const ALLOWLIST = {
   // entry can't block a fresh Reload / Keep-local prompt in the new
   // vault. +1 import addition (`vaultSwapResettable`) + 4 LOC for the
   // doc-line + subscription call. New snapshot: 1530 LOC.
-  'src/renderer/stores/vaultExternalChanges.ts': 1530,
+  // PHASE6_PLAN_2026-06-01 Phase 6.1.R4 — added the `inFlightDrift-
+  // Prompts` rename-transfer sweep via `registerPathRenamable` and
+  // routed `runExternalRenameCascade` through `renameAllPathKeys`.
+  // +~17 LOC (registration block + import + cascade-level helper call).
+  // New snapshot: 1547 LOC.
+  'src/renderer/stores/vaultExternalChanges.ts': 1547,
   // tileCommands.ts dropped off the allowlist (AUDIT_REMEDIATION_PLAN_2026-05-29
   // Phase 5 / C-3): the tag-driven commands (AddTileTag / RemoveTileTag /
   // AddPathTag / RemovePathTag / ToggleTagFade) moved to the new sibling

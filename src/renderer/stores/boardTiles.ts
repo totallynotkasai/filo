@@ -7,6 +7,7 @@ import { uiStore } from './ui.svelte';
 import { isGeometryOnlyUpdate } from '../lib/utils/tileUpdateFastPath';
 import { normalizePath } from '../lib/utils/path';
 import { resolveTextTileVaultPath, replaceTitleInVaultPath } from '../lib/boards/textTilePath';
+import { renameAllPathKeys } from '../lib/vault/renamePathKeys';
 import type { BoardContext } from './boardStoreTypes';
 
 /**
@@ -208,6 +209,16 @@ export function makeTilesSlice(ctx: BoardContext) {
         uiStore.toast(msg, renameResult.code === 'ENOENT' ? 'warning' : 'error', 3500);
         return { success: false };
       }
+
+      // Phase 6.1.R4 — `vaultStore.rename` runs `renameAllPathKeys`
+      // inside `runRename`, but only when the rename is a sidebar /
+      // folder-ops cascade. The text-tile path goes through
+      // `vaultStore.rename` (which calls the disk-shape IPC) but DOES
+      // include the runRename cascade because the wrapper goes through
+      // `vaultFolderOps`. This extra call is defense-in-depth: covers
+      // the case where a future code path renames the text-tile
+      // backing file without going through the full cascade.
+      renameAllPathKeys(oldRel, newRel);
 
       ctx.updateTile(tileId, { title: newTitle, titleHtml: newTitleHtml });
       return {

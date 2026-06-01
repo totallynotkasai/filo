@@ -46,6 +46,7 @@ import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import { parseMarkdown } from './vaultIndex';
 import { onVaultSwap, vaultSwapResettable } from '../../core/vaultLifecycle';
 import { getBaseline, noteBaseline, resetAllBaselines, hasBaselineDrifted } from './fileBaselineRegistry';
+import { registerPathRenamable } from './renamePathKeys';
 
 /**
  * Default 300ms idle debounce. Mirrors `FM_DEBOUNCE_MS` and the historical
@@ -231,6 +232,36 @@ export function clearHydrated(relPath: string): void {
 export function isHydrated(relPath: string): boolean {
   return fileState.has(relPath);
 }
+
+/**
+ * Phase 6.1.R4 — transfer the hydrate state from `oldRel` to `newRel`
+ * so a post-rename body write doesn't trip "refusing to write — not
+ * hydrated" against the new path. Also covers descendants for folder
+ * renames. Registered with `renameAllPathKeys` below — the audit's
+ * canonical missed example: every prior rename cascade forgot this map,
+ * and every keystroke after rename would throw on the gateway's hydrate
+ * gate until the user happened to re-mount the editor.
+ */
+export function renameFileStatePath(oldRel: string, newRel: string): void {
+  if (!oldRel || !newRel || oldRel === newRel) return;
+  const exact = fileState.get(oldRel);
+  if (exact !== undefined) {
+    fileState.delete(oldRel);
+    fileState.set(newRel, exact);
+  }
+  const oldChildPrefix = oldRel + '/';
+  const newChildPrefix = newRel + '/';
+  const transfers: Array<[string, FileState]> = [];
+  for (const [key, value] of fileState) {
+    if (key.startsWith(oldChildPrefix)) {
+      transfers.push([newChildPrefix + key.slice(oldChildPrefix.length), value]);
+      fileState.delete(key);
+    }
+  }
+  for (const [k, v] of transfers) fileState.set(k, v);
+}
+
+registerPathRenamable('markdownFileWriter.fileState', renameFileStatePath);
 
 /**
  * Test-only — drops every hydration entry. Production code uses

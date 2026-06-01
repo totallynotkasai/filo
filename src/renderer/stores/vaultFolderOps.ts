@@ -15,6 +15,7 @@ import {
   clearPendingRenameCascade,
   markRenameCascadeFlushFailed,
 } from '../lib/vault/renameCascadeSentinel';
+import { renameAllPathKeys } from '../lib/vault/renamePathKeys';
 import {
   PendingWritesFailedError,
   createVaultFolder,
@@ -535,6 +536,18 @@ async function runRename(
       }
 
       if (oldRel && newRel) {
+        // Phase 6.1.R4 — fire every registered relPath-keyed sweep
+        // (markdownFileWriter.fileState, fileBaselineRegistry,
+        // inFlightDriftPrompts, plus any future store that subscribes).
+        // Run BEFORE the existing peer rename calls below so a sweep
+        // that throws can't be masked by a later flush — and so the
+        // hydrate gate / drift baseline transfer happens in the same
+        // critical section as the peer state. The existing peer calls
+        // (renameFile, renameKey, propagateRename, etc.) stay in place
+        // — they predate the registry and aren't yet migrated through
+        // it; the gate's EXEMPT_OWNERS list documents which path-keyed
+        // stores cover their rename via a peer call instead.
+        renameAllPathKeys(oldRel, newRel);
         // Mirror the rename into `.filo/tags.json`. The exact-match call
         // covers the file-rename case (`Notes.md` → `Bar.md`) and the
         // folder-prefix call covers the folder-rename case (`Sub` → `New`,

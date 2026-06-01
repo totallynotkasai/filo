@@ -36,6 +36,7 @@
  */
 
 import { stripLeadingSlash, toPosix } from '../utils/path';
+import { registerPathRenamable } from './renamePathKeys';
 
 function detectCaseInsensitiveFs(): boolean {
   const proc = (globalThis as { process?: { platform?: unknown } }).process;
@@ -67,6 +68,37 @@ export interface FileBaseline {
 /** Vault-relative path -> last-observed (mtime, size) baseline. */
 // allow-module-state: reset via resetAllBaselines called from markdownFileWriter's pre-swap handler (cancelAllMarkdownWrites)
 const baselines = new Map<string, FileBaseline>();
+
+/**
+ * Phase 6.1.R4 — transfer the baseline from `oldRel` to `newRel` so a
+ * post-rename body write doesn't drift-fail against a phantom baseline
+ * still keyed under the OLD path. Also covers descendants when a folder
+ * was renamed: every baseline keyed under `oldRel + '/'` re-keys to
+ * `newRel + '/'`. Registered with `renameAllPathKeys` below so rename
+ * cascades pick it up automatically.
+ */
+export function renameBaselinePath(oldRel: string, newRel: string): void {
+  if (!oldRel || !newRel || oldRel === newRel) return;
+  const oldKey = normaliseKey(oldRel);
+  const newKey = normaliseKey(newRel);
+  if (oldKey === newKey) return;
+  const exact = baselines.get(oldKey);
+  if (exact !== undefined) {
+    baselines.delete(oldKey);
+    baselines.set(newKey, exact);
+  }
+  // Folder-prefix sweep — re-key every descendant.
+  const oldChildPrefix = oldKey + '/';
+  const newChildPrefix = newKey + '/';
+  const transfers: Array<[string, FileBaseline]> = [];
+  for (const [key, value] of baselines) {
+    if (key.startsWith(oldChildPrefix)) {
+      transfers.push([newChildPrefix + key.slice(oldChildPrefix.length), value]);
+      baselines.delete(key);
+    }
+  }
+  for (const [k, v] of transfers) baselines.set(k, v);
+}
 
 /**
  * True when a fresh stat diverges from the recorded baseline — i.e. an
@@ -184,6 +216,12 @@ export function assertBaselinesSeeded(paths: Iterable<string>, label: string): v
       `pre-write external-edit detection is inert for them (F1 regression?): ${missing.join(', ')}`,
   );
 }
+
+// Phase 6.1.R4 — every rename cascade calls renameAllPathKeys(oldRel,
+// newRel) once, which fires this sweep. Without it, a post-rename body
+// write drift-fails against a phantom baseline still keyed under the
+// OLD path.
+registerPathRenamable('fileBaselineRegistry', renameBaselinePath);
 
 /**
  * Test-only — exposes the internal Map size so unit tests can assert

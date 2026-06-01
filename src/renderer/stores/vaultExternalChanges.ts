@@ -37,6 +37,7 @@ import {
   withDrainedWrites,
 } from '../lib/vault/vaultOperations';
 import { syncOpenEditorsAfterDiskMutation } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
+import { registerPathRenamable, renameAllPathKeys } from '../lib/vault/renamePathKeys';
 import type { DocumentState } from './document.svelte';
 import type { VaultContext } from './vaultStoreTypes';
 import { onVaultSwap, vaultSwapResettable } from '../core/vaultLifecycle';
@@ -517,6 +518,11 @@ async function runExternalRenameCascade(
   newRel: string,
 ): Promise<void> {
   await boardCacheStore.ensureAllLoaded();
+  // Phase 6.1.R4 — fire every registered path-keyed sweep BEFORE the
+  // peer rename calls below so the hydrate gate and drift baseline
+  // transfer in lock-step with the cache mutation. Mirrors the
+  // in-app rename cascade in `vaultFolderOps.runRename`.
+  renameAllPathKeys(oldRel, newRel);
   const renamedBoardIds = boardCacheStore.renameBoardPath(oldRel, newRel);
   const changedBoardIds = boardStore.propagateRename(oldRel, newRel);
   fileTagsStore.renameFile(oldRel, newRel);
@@ -1260,6 +1266,17 @@ function promptDeletedFile(
  */
 const inFlightDriftPrompts = new Map<string, Promise<'reload' | 'keep-local'>>();
 vaultSwapResettable('vaultExternalChanges.inFlightDriftPrompts', () => inFlightDriftPrompts.clear());
+// Phase 6.1.R4 — transfer any in-flight prompt promise from oldRel to
+// newRel so a Reload/Keep-local toast still in flight when the user
+// renames the file doesn't get stranded under the old key (where no
+// caller looks anymore) AND so a post-rename keystroke for the new
+// path doesn't open a duplicate prompt.
+registerPathRenamable('vaultExternalChanges.inFlightDriftPrompts', (oldRel, newRel) => {
+  const inflight = inFlightDriftPrompts.get(oldRel);
+  if (inflight === undefined) return;
+  inFlightDriftPrompts.delete(oldRel);
+  inFlightDriftPrompts.set(newRel, inflight);
+});
 
 /**
  * Phase A.3 — surfaces a Reload / Keep-local prompt when `syncTileMarkdown`

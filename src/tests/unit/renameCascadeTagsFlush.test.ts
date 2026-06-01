@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { makeExternalChangesSlice } from '@renderer/stores/vaultExternalChanges';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
+import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { documentStore } from '@renderer/stores/document.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
@@ -125,5 +126,51 @@ describe('rename cascade — synchronous tags.json flush (F3)', () => {
     const latest = JSON.parse(tagsSaves[tagsSaves.length - 1]);
     expect(latest.fileTags['new.md']).toEqual(['mytag']);
     expect(latest.fileTags['old.md']).toBeUndefined();
+  });
+
+  // 6.4.M19 — a flushPendingSave rejection must NOT abort the rest of the
+  // cascade. (The realistic write-failure path resolves { ok:false } via the
+  // scheduler's internal catch, so it never reaches here; this exercises the
+  // narrow rejection path — getArgs throw / future regression — via a spy.)
+  it('a flushPendingSave rejection does not abort the board cascade', async () => {
+    const makeBoard = (): V7BoardFileData =>
+      ({
+        board: {
+          id: 'b1',
+          name: 'B1',
+          emoji: '',
+          type: 'mindmap',
+          settings: {},
+          placements: {},
+          inlineTiles: {},
+          createdAt: 0,
+          updatedAt: 0,
+        },
+        tileDefs: {},
+        connections: {},
+        frames: [],
+      }) as unknown as V7BoardFileData;
+    // Board b1 lives at b1.board.json; renaming it makes renamedBoardIds
+    // non-empty → hasCascadeWork true → the sentinel + flushAllDirty must run.
+    boardCacheStore.hydrate({ b1: makeBoard() }, { b1: 'b1.board.json' });
+
+    const flushSpy = vi.spyOn(boardCacheStore, 'flushAllDirty');
+    const tagsFlushSpy = vi
+      .spyOn(fileTagsStore, 'flushPendingSave')
+      .mockRejectedValue(new Error('tags flush boom'));
+
+    const slice = makeExternalChangesSlice(ctxFor());
+    // Pre-fix: the rejection propagates out of runExternalRenameCascade and
+    // handleExternalRename rethrows it (skipping the sentinel + board flush).
+    await expect(
+      slice.handleExternalRename('b1.board.json', 'b2.board.json'),
+    ).resolves.toBeUndefined();
+
+    expect(tagsFlushSpy).toHaveBeenCalled();
+    // M19 — the board cascade still flushed despite the tags-flush rejection.
+    expect(flushSpy).toHaveBeenCalled();
+
+    flushSpy.mockRestore();
+    tagsFlushSpy.mockRestore();
   });
 });

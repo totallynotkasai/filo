@@ -538,7 +538,23 @@ async function runExternalRenameCascade(
   // pointed at the new one. Flushing here (before the `hasCascadeWork`
   // early-return, so a tags-only rename is covered too) closes the window;
   // a failed flush surfaces through the misc-write error pipeline.
-  await fileTagsStore.flushPendingSave();
+  //
+  // 6.4.M19 — but a *rejection* here must not abort the rest of the cascade
+  // (board flush + recovery sentinel), or the propagated board edits are left
+  // un-flushed AND unprotected. The realistic write-failure path already
+  // resolves `{ ok: false }` via the scheduler's internal catch (so it doesn't
+  // reach here); this guards the narrow synchronous getArgs-throw path and any
+  // future regression. The sentinel's `tagsAffected` flag makes recovery
+  // re-assert the tag rename on next vault open regardless.
+  try {
+    await fileTagsStore.flushPendingSave();
+  } catch (err) {
+    reportError(
+      'vault.handleRename.tagsFlush',
+      err,
+      "Couldn't persist the tag-membership rename during the external rename; the recovery sentinel will re-assert it on next vault open.",
+    );
+  }
   // Sprint B / B9 — rebind vault search to the new path immediately.
   // Exact-match handles the file-rename case; the loop handles the
   // folder-rename case where indexed descendants live under the moved

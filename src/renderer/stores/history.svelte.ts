@@ -2,6 +2,7 @@ import { boardStore } from './board.svelte';
 import { uiStore } from './ui.svelte';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { Command } from '../commands/Command';
+import { reportError } from '../lib/utils/errorBus';
 
 // Phase R3 — `Command` is now defined alongside its abstract base class in
 // `commands/Command.ts`. Re-export the type from here so legacy callers
@@ -397,6 +398,11 @@ export const historyStore = {
     const { preRedoStack } = commitExecute(command);
     return runChained(() => command.execute()).catch((err) => {
       rollbackExecute(command, preRedoStack);
+      // 6.4.M15 — almost every caller fires execute() fire-and-forget, so the
+      // rethrow below surfaces only as a silent unhandled rejection. Report it
+      // first so a command body that throws is never invisible (the rollback
+      // already restored the stack; the user just sees nothing otherwise).
+      reportError('historyStore', err, `"${command.description}" failed and was rolled back.`);
       throw err;
     });
   },
@@ -443,6 +449,8 @@ export const historyStore = {
     if (dirtyId) boardStore.markDirty(dirtyId);
     return runChained(() => command.undo()).catch((err) => {
       rollbackUndo(command, preUndoStack);
+      // 6.4.M15 — see execute(): report before the (mostly unobserved) rethrow.
+      reportError('historyStore', err, `Undo of "${command.description}" failed and was rolled back.`);
       throw err;
     });
   },
@@ -480,6 +488,8 @@ export const historyStore = {
     if (dirtyId) boardStore.markDirty(dirtyId);
     return runChained(() => command.execute()).catch((err) => {
       rollbackRedo(command, preRedoStack);
+      // 6.4.M15 — see execute(): report before the (mostly unobserved) rethrow.
+      reportError('historyStore', err, `Redo of "${command.description}" failed and was rolled back.`);
       throw err;
     });
   },

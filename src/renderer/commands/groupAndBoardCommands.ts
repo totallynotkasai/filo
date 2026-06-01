@@ -103,6 +103,17 @@ export class BatchCommand extends Command {
         await Promise.resolve(cmd.execute());
         executed.push(cmd);
       } catch (err) {
+        // 6.4.M14 — log the ORIGINAL child failure that triggered the
+        // rollback. Previously only rollback failures were reported; when the
+        // rollback itself succeeded the root-cause error was swallowed past the
+        // rollback (rethrown to a fire-and-forget historyStore caller as an
+        // unhandled rejection, with no breadcrumb pinpointing which child or
+        // why). The user-facing toast comes from historyStore's catch (6.4.M15);
+        // this is the diagnostic detail that toast can't carry.
+        console.error(
+          `[BatchCommand] Child "${cmd.description}" failed in batch "${this.description}"; rolling back ${executed.length} applied child/children.`,
+          err,
+        );
         // D.5 — track rollback failures so the user gets a danger modal
         // instead of (or in addition to) per-child toasts. A toast for a
         // half-applied batch is too easy to dismiss; the modal forces
@@ -151,6 +162,13 @@ export class BatchCommand extends Command {
         await Promise.resolve(cmd.undo());
         undone.push(cmd);
       } catch (err) {
+        // 6.4.M14 — log the original child-undo failure that triggered the
+        // re-apply (see execute() for the rationale); the toast comes from
+        // historyStore (6.4.M15), this is the per-child diagnostic.
+        console.error(
+          `[BatchCommand] Child "${cmd.description}" undo failed in batch "${this.description}"; re-applying ${undone.length} undone child/children.`,
+          err,
+        );
         // D.5 — same logic as execute(): if the rollback path itself
         // throws on one or more re-executes, the state is now genuinely
         // inconsistent. Surface a modal so the user can decide to close

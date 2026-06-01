@@ -172,9 +172,11 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
   });
 
   it('drift detected → Keep-local proceeds with write, baseline refreshes', async () => {
-    // Pre-write stat returns 2000 (drift). Post-write stat returns 2100
-    // (our overwrite landed).
-    const invokes = installFiloStub({ statMtimes: [2000, 2100] });
+    // Pre-write stat 2000 (drift). 6.4.M13 — after Keep-local the writer
+    // re-stats to confirm no SECOND drift landed while the modal was open;
+    // that recheck returns 2000 (stable) so the write proceeds. Post-write
+    // stat returns 2100 (our overwrite landed).
+    const invokes = installFiloStub({ statMtimes: [2000, 2000, 2100] });
     const relPath = 'Notes/keeplocal.md';
     markHydrated(relPath, false, 1000, 100);
 
@@ -203,7 +205,9 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
     // changes the byte length. Baseline {1000, 100}; pre-write stat
     // {1000, 250} → same mtime, different size → drift, prompt fires.
     // A pure mtime check (the old behaviour) would have silently clobbered.
-    const invokes = installFiloStub({ statMtimes: [1000, 1000], statSizes: [250, 260] });
+    // 6.4.M13 — the middle size (250) is the Keep-local recheck stat (stable,
+    // matches the pre-write size); 260 is the post-write stat.
+    const invokes = installFiloStub({ statMtimes: [1000], statSizes: [250, 250, 260] });
     const relPath = 'Notes/same-second.md';
     markHydrated(relPath, false, 1000, 100);
 
@@ -309,7 +313,9 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
     // External-edit handler NOT installed (matches the bootstrap window
     // before vaultExternalChanges has registered, or test environments
     // that don't load the store layer).
-    const invokes = installFiloStub({ statMtimes: [2000, 2100] });
+    // 6.4.M13 — middle 2000 is the Keep-local recheck stat (stable); 2100 is
+    // the post-write stat. With no handler, drift falls through as Keep-local.
+    const invokes = installFiloStub({ statMtimes: [2000, 2000, 2100] });
     const relPath = 'Notes/no-handler.md';
     markHydrated(relPath, false, 1000, 100);
     // Explicitly clear any handler the test harness might have set.

@@ -429,28 +429,61 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
       // the IPC below will surface the same shape via trackComponentWrite.
     }
     if (preWriteStat !== undefined && hasBaselineDrifted(baseline, preWriteStat)) {
+      // 6.4.M13 — the Reload / Keep-local prompt is async, so the file can
+      // drift AGAIN while the modal is open. After each 'keep-local',
+      // re-stat: if the bytes the user agreed to overwrite changed since they
+      // were shown the prompt, re-prompt so an external edit the user never
+      // saw is never silently clobbered. Bounded to avoid a livelock against a
+      // rapid external writer; on exhaustion, abort (the next debounced write
+      // re-detects the drift and prompts again with the latest state).
       const handler = externalEditPromptHandler;
-      const choice = handler ? await handler(relPath) : 'keep-local';
-      if (choice === 'reload') {
-        // The Reload handler refreshed vault index + editor content
-        // from disk. Drop this scheduled write — the user has
-        // explicitly chosen to discard their pending bytes. The
-        // baseline was already refreshed by the Reload path
-        // (applyReloadFromDisk → markHydrated mtime threading), so no
-        // further bookkeeping needed here.
+      const MAX_DRIFT_REPROMPTS = 3;
+      let approved = false;
+      let shownStat = preWriteStat;
+      for (let attempt = 0; attempt < MAX_DRIFT_REPROMPTS; attempt++) {
+        const choice = handler ? await handler(relPath) : 'keep-local';
+        if (choice === 'reload') {
+          // The Reload handler refreshed vault index + editor content from
+          // disk and re-stamped the baseline (applyReloadFromDisk →
+          // markHydrated mtime threading). Drop this scheduled write — the
+          // user explicitly chose to discard their pending bytes.
+          return;
+        }
+        if (choice === 'defer') {
+          // 6.4.M4 — dismissed without choosing (auto-dismiss or manual
+          // close). Neither side was touched; abort so the external edit on
+          // disk survives, and let the dirty in-memory state persist so the
+          // next debounced write re-prompts. No baseline refresh.
+          return;
+        }
+        // 'keep-local' — the user chose to overwrite. Confirm nothing drifted
+        // while the modal was open before committing the clobber.
+        let recheckStat: { mtimeMs: number; size: number } | undefined;
+        try {
+          recheckStat = await invokeOk('vault:stat', vaultRoot, relPath);
+        } catch {
+          // Re-stat failed — can't confirm a second drift. Proceed with the
+          // overwrite as the pre-M13 code did; the write IPC below surfaces
+          // any genuine IO error through the failure-attribution pipeline.
+          recheckStat = undefined;
+        }
+        if (
+          recheckStat === undefined ||
+          (recheckStat.mtimeMs === shownStat.mtimeMs && recheckStat.size === shownStat.size)
+        ) {
+          approved = true;
+          break;
+        }
+        // The file drifted again during the prompt — loop to re-prompt against
+        // the freshly-observed state rather than overwrite bytes never shown.
+        shownStat = recheckStat;
+      }
+      if (!approved) {
+        // Re-prompt budget exhausted against a churning external writer. Abort
+        // rather than clobber an unseen edit; the next debounced write
+        // re-detects the drift and prompts again.
         return;
       }
-      if (choice === 'defer') {
-        // 6.4.M4 — user dismissed the prompt without choosing (auto-
-        // dismiss or manual close). Neither side was touched; abort
-        // the write so the external edit on disk survives, and let
-        // the dirty in-memory state persist so the next debounced
-        // write re-prompts. No baseline refresh — leave it at the
-        // pre-write value so the next attempt also detects drift.
-        return;
-      }
-      // 'keep-local' — proceed with the write below. The user has
-      // explicitly chosen to overwrite the external edit.
     }
   }
 

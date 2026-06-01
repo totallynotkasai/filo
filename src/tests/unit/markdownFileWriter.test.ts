@@ -27,6 +27,7 @@ import {
   cancelAllMarkdownWrites,
   registerForceWriter,
   forceWriteForDocument,
+  setExternalEditPromptHandler,
   __resetMarkdownFileWriterForTests,
   type WriteArgs,
 } from '../../renderer/lib/vault/markdownFileWriter';
@@ -533,6 +534,121 @@ describe('markdownFileWriter — post-write baseline failures (M2)', () => {
     });
 
     expect(getBaseline(relPath)).toBeUndefined();
+  });
+});
+
+// 6.4.M13 — the pre-write Reload / Keep-local prompt is async, so the file can
+// drift AGAIN while the modal is open. After 'keep-local' the writer must
+// re-validate; otherwise it silently clobbers an external edit the user never
+// saw. The writer now re-prompts on a second drift and, against a churning
+// external writer, aborts rather than overwrite unseen bytes.
+describe('markdownFileWriter — re-validate drift across the async prompt (M13)', () => {
+  beforeEach(() => {
+    __resetMarkdownFileWriterForTests();
+    __resetDirtyTrackingForTests();
+    __resetBaselinesForTests();
+  });
+  afterEach(async () => {
+    setExternalEditPromptHandler(null);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    __resetMarkdownFileWriterForTests();
+    __resetDirtyTrackingForTests();
+    __resetBaselinesForTests();
+    (window as unknown as Record<string, unknown>).filo = {
+      invoke: async () => undefined,
+      on: () => () => {},
+      send: () => {},
+    };
+  });
+
+  // Drives vault:stat through a fixed mtime sequence (size held constant) and
+  // counts write-IPC hits. Stat reads past the end clamp to the last value.
+  function installStatSequence(relPath: string, mtimes: number[]): { writes: number } {
+    const counters = { writes: 0, stats: 0 };
+    (window as unknown as Record<string, unknown>).filo = {
+      invoke: async (channel: string, ...args: unknown[]) => {
+        if (channel === 'vault:stat' && args[1] === relPath) {
+          const i = Math.min(counters.stats, mtimes.length - 1);
+          counters.stats++;
+          return { success: true, ok: true, mtimeMs: mtimes[i], size: 10 };
+        }
+        if (channel === 'vault:write-existing-file-text' && args[1] === relPath) {
+          counters.writes++;
+          return { success: true, ok: true };
+        }
+        return { success: true, ok: true };
+      },
+      on: () => () => {},
+      send: () => {},
+    };
+    return counters;
+  }
+
+  it('re-prompts when the file drifts again during the keep-local prompt', async () => {
+    const relPath = 'Notes/m13-redrift.md';
+    noteBaseline(relPath, 100, 10);
+    markHydrated(relPath, false);
+
+    let prompts = 0;
+    setExternalEditPromptHandler(async () => {
+      prompts++;
+      return 'keep-local';
+    });
+
+    // pre-write 200 (drift) → recheck 300 (drifted again) → recheck 300
+    // (stable) → write → post-write 400.
+    const counters = installStatSequence(relPath, [200, 300, 300, 400]);
+
+    await writeMarkdownFile({
+      vaultRoot: '/vault', relPath, frontmatter: {}, body: 'mine', callerId: 'm13a', docId: null,
+    });
+
+    expect(prompts).toBe(2); // re-prompted on the second drift
+    expect(counters.writes).toBe(1); // committed once the file settled
+  });
+
+  it('aborts without writing when the external writer keeps churning', async () => {
+    const relPath = 'Notes/m13-churn.md';
+    noteBaseline(relPath, 100, 10);
+    markHydrated(relPath, false);
+
+    let prompts = 0;
+    setExternalEditPromptHandler(async () => {
+      prompts++;
+      return 'keep-local';
+    });
+
+    // Every stat returns a fresh mtime → the file never settles.
+    const counters = installStatSequence(relPath, [200, 300, 400, 500, 600]);
+
+    await writeMarkdownFile({
+      vaultRoot: '/vault', relPath, frontmatter: {}, body: 'mine', callerId: 'm13b', docId: null,
+    });
+
+    expect(prompts).toBe(3); // bounded re-prompts
+    expect(counters.writes).toBe(0); // never clobbered the churning file
+  });
+
+  it('writes once when the file is stable through the prompt (no regression)', async () => {
+    const relPath = 'Notes/m13-stable.md';
+    noteBaseline(relPath, 100, 10);
+    markHydrated(relPath, false);
+
+    let prompts = 0;
+    setExternalEditPromptHandler(async () => {
+      prompts++;
+      return 'keep-local';
+    });
+
+    // pre-write 200 (drift) → recheck 200 (stable) → write → post-write 250.
+    const counters = installStatSequence(relPath, [200, 200, 250]);
+
+    await writeMarkdownFile({
+      vaultRoot: '/vault', relPath, frontmatter: {}, body: 'mine', callerId: 'm13c', docId: null,
+    });
+
+    expect(prompts).toBe(1);
+    expect(counters.writes).toBe(1);
   });
 });
 

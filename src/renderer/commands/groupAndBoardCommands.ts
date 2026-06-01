@@ -423,6 +423,10 @@ export class CascadeDeleteCommand extends Command {
           vaultRoot,
           relPath,
           async () => {
+            // allow-direct-write: one-shot cascade-delete undo restore
+            // — the file no longer exists on disk (cascade deleted it),
+            // mkdir -p semantics are required, and the placement re-binds
+            // immediately after.
             await invokeOk('vault:write-file-text', vaultRoot, relPath, content);
           },
         ).catch((err) => {

@@ -107,6 +107,8 @@
     const vaultPath = vaultStore.path;
     if (!vaultPath) return;
     try {
+      // allow-direct-write: `.filo/kanban-toolbar-pos.json` is per-machine
+      // UI geometry, not a `.md` file — no editor hydrates from it.
       await trackComponentWrite(vaultPath, TOOLBAR_POS_FILE, () =>
         invokeOk(
           'vault:write-file-text',

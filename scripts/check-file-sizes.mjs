@@ -39,7 +39,11 @@ const ALLOWLIST = {
   // +1 LOC of comment + call. New snapshot: 2192 LOC.
   'src/renderer/components/boards/TaskListBoard.svelte': 2192,
   // Phase 7.1 — tightened to current LOC (was 1506).
-  'src/renderer/components/boards/KanbanSideToolbar.svelte': 1490,
+  // PHASE6_PLAN_2026-06-01 Phase 6.3.P5 — added the `// allow-direct-write`
+  // escape note above the `.filo/kanban-toolbar-pos.json` write so the
+  // extended markdown-gateway gate doesn't flag the per-machine UI
+  // geometry write. +2 LOC of comment. New snapshot: 1492 LOC.
+  'src/renderer/components/boards/KanbanSideToolbar.svelte': 1492,
   // TaskItem row: title strip + notes panel + style cascade (headerColor /
   // bodyColor split across `.task-item` and `.task-notes-panel-inner`),
   // multi-select chrome, hover-reveal buttons, sticky note panel toggle.
@@ -185,7 +189,12 @@ const ALLOWLIST = {
   // otherwise a body-only save after sync drops inline YAML comments on
   // externally-changed keys. +4 LOC of doc-comment + the threaded arg.
   // New snapshot: 1551 LOC.
-  'src/renderer/stores/vaultExternalChanges.ts': 1551,
+  // PHASE6_PLAN_2026-06-01 Phase 6.3.P5 — added the `// allow-direct-write`
+  // escape note above `recreateDeletedFile`'s direct
+  // `vault:write-file-text` invoke (user-opt-in file recreation after
+  // external delete) so the extended markdown-gateway gate doesn't
+  // flag it. +3 LOC of comment. New snapshot: 1554 LOC.
+  'src/renderer/stores/vaultExternalChanges.ts': 1554,
   // tileCommands.ts dropped off the allowlist (AUDIT_REMEDIATION_PLAN_2026-05-29
   // Phase 5 / C-3): the tag-driven commands (AddTileTag / RemoveTileTag /
   // AddPathTag / RemovePathTag / ToggleTagFade) moved to the new sibling

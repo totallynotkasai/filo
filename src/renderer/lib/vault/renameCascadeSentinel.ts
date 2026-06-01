@@ -194,6 +194,8 @@ async function writeSentinelInternal(vaultRoot: string, entries: RenameCascadeEn
     return;
   }
   const payload: SentinelFile = { entries };
+  // allow-direct-write: `.filo/rename-cascade-pending.json` is a one-shot
+  // crash-recovery sentinel — not a `.md` file, no editor hydrates from it.
   await invokeOk(
     'vault:write-file-text',
     vaultRoot,

@@ -371,6 +371,10 @@ export class DeleteTilesCommand extends Command {
       const rel = snap.rel;
       const content = snap.content;
       const writeP = trackComponentWrite(vaultRoot, rel, async () => {
+        // allow-direct-write: one-shot snapshot-restore on tile-delete
+        // undo — the file no longer exists on disk, mkdir -p semantics
+        // are required, and the tile will mount + hydrate the gateway
+        // immediately after.
         return invokeOk('vault:write-file-text', vaultRoot, rel, content);
       }).catch((err) => {
         uiStore.toast(

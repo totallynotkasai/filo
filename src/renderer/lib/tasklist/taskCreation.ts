@@ -157,6 +157,9 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     try {
       const seedBody = fm ? assembleMarkdownFile(fm, '') : '---\ncompleted: false\n---\n';
       await trackComponentWrite(vaultRoot, relPath, async () => {
+        // allow-direct-write: seeds a NEW task .md file; mkdir -p required
+        // and `markHydrated(relPath, false)` below makes subsequent gateway
+        // writes route normally.
         await invokeOk('vault:write-file-text', vaultRoot, relPath, seedBody);
       });
       // Orphan-fm semantics: file just created on disk. Mark hydrated so the

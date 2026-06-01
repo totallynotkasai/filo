@@ -115,6 +115,8 @@ export function writePendingRewrite(
     // already abort on throw, surfacing the failure to the user).
     // Phase 1 (CONSOLIDATION_PLAN) — switched to `invokeOk` so the
     // envelope check is part of the call shape.
+    // allow-direct-write: `.filo/tag-rewrite-pending.json` is a one-shot
+    // crash-recovery sentinel — not a `.md` file.
     await invokeOk(
       'vault:write-file-text',
       vaultRoot,

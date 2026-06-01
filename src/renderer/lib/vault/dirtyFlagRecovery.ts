@@ -89,6 +89,8 @@ export function markDirty(
       // the user exposed: the next crash before save lands would have no
       // recovery breadcrumb. `invokeOk` surfaces the failure as a thrown
       // IpcEnvelopeError so the catch below reports it via errorBus.
+      // allow-direct-write: `.filo/.dirty` is a one-shot crash-recovery
+      // sentinel, not a `.md` file — no editor hydrates from it.
       await invokeOk(
         'vault:write-file-text',
         vaultRoot,

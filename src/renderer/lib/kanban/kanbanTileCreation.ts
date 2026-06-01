@@ -149,6 +149,9 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
       if (vaultRoot) {
         try {
           await trackComponentWrite(vaultRoot, relPath, async () => {
+            // allow-direct-write: seeds an empty .md for a new kanban
+            // card. `markHydrated(relPath, false)` below registers the
+            // file with the gateway so subsequent writes route normally.
             await invokeOk('vault:write-file-text', vaultRoot, relPath, '');
           });
           // Orphan-fm semantics: the file was just created with an empty body
@@ -249,6 +252,9 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
 
     try {
       await trackComponentWrite(vaultRoot, relPath, async () => {
+        // allow-direct-write: seeds a template-derived .md for a new
+        // kanban card; `markHydrated(relPath, false)` below makes
+        // subsequent gateway writes route normally.
         await invokeOk('vault:write-file-text', vaultRoot, relPath, fileText);
       });
       // Orphan-fm semantics: file just created on disk via the file-creating

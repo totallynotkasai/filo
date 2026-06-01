@@ -79,6 +79,9 @@ export async function seedTextFileForNewTile(
       if (!options?.skipEmptySeed) {
         const fileText = assembleMarkdownFile({}, initialBody);
         await trackComponentWrite(vaultRoot, filename, async () => {
+          // allow-direct-write: seeds a NEW .md file for a brand-new text
+          // tile; the TextTile mounts + hydrates the gateway on its first
+          // render so subsequent debounced writes route normally.
           await invokeOk('vault:write-file-text', vaultRoot, filename, fileText);
         });
         // Refresh the file tree so the newly-written path joins

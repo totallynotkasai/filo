@@ -152,6 +152,9 @@ export function makeFileDropHandler(deps: FileDropDeps): FileDropHandler {
 
     try {
       await trackComponentWrite(vaultRoot, relPath, async () => {
+        // allow-direct-write: one-shot OS-file-drop import — the file is
+        // brand-new in the vault, mkdir -p required, and the task placement
+        // re-hydrates the gateway on its next edit.
         await invokeOk('vault:write-file-text', vaultRoot, relPath, rawContent);
       });
     } catch (err) {

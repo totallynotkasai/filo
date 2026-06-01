@@ -244,6 +244,9 @@ export class DeleteTaskCommand extends Command {
       const { rel, content } = this.fileSnapshot;
       const vaultRoot = this.vaultRoot;
       this.lastUndoCompletion = trackComponentWrite(vaultRoot, rel, async () =>
+        // allow-direct-write: one-shot snapshot-restore on task-delete
+        // undo — file no longer exists on disk, mkdir -p required, the
+        // task placement re-binds to it on persistAddTaskPlacement.
         invokeOk('vault:write-file-text', vaultRoot, rel, content),
       ).catch((err) => {
         uiStore.toast(

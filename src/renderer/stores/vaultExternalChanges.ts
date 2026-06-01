@@ -1452,6 +1452,9 @@ async function recreateDeletedFile(
     // to re-create the file the watcher reported missing, so mkdir -p
     // semantics are the desired behaviour.
     await trackComponentWrite(vaultRoot, rel, async () => {
+      // allow-direct-write: explicit user-opt-in file recreation after an
+      // external delete. `markHydrated(rel, false)` below re-registers
+      // the file with the gateway for the next debounced editor write.
       await invokeOk('vault:write-file-text', vaultRoot, rel, fileText);
     });
     // Orphan-fm semantics: file just created on disk via the file-creating

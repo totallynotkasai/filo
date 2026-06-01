@@ -2,7 +2,11 @@ import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import type { RichTextAnnotation } from '../schema/document';
 import { uiStore } from './ui.svelte';
 import { samePath, normalizePath, stripLeadingSlash, toPosix } from '../lib/utils/path';
-import { forceWriteForDocument } from '../lib/vault/markdownFileWriter';
+import {
+  cancelMarkdownWritesForDocument,
+  forceWriteForDocument,
+} from '../lib/vault/markdownFileWriter';
+import { flushAllPendingFrontmatterWrites } from '../lib/boards/frontmatterWriteScheduler';
 import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
 import { onVaultSwap } from '../core/vaultLifecycle';
 
@@ -735,6 +739,14 @@ export const documentStore = {
   ) {
     const doc = openDocuments.get(docId);
     if (!doc) return;
+    // Phase 6.0.C2 — cancel any armed body writer for this doc FIRST. The
+    // gateway captured `args.body` by closure at schedule time, so a timer
+    // surviving the reload fires ~250 ms later with the pre-reload body and
+    // silently inverts the reload. Cancel is synchronous so the cancel-then-
+    // state-replacement contract holds for all (currently non-awaiting)
+    // callers. Phase 6.1.R1 will hoist this into a shared helper enforced
+    // by a CI gate.
+    cancelMarkdownWritesForDocument(docId);
     // Audit 2.3 — disk is now authoritative, so every writer is clean.
     dirtyWriters.delete(docId);
     const updated: DocumentState = {
@@ -750,6 +762,13 @@ export const documentStore = {
       bumpMutationVersion(docId);
       frontmatterVersionTick++;
     }
+    // Phase 6.0.C2 (defense-in-depth) — drain any frontmatter scheduler
+    // entry armed for this doc AFTER the state swap. The scheduler reads
+    // FM live at fire time, so post-swap it would emit disk-truth (a
+    // no-op self-write); draining now keeps the scheduler from leaving a
+    // phantom timer behind. Fire-and-forget — its completion has no
+    // observable consequence after the state replacement above.
+    void flushAllPendingFrontmatterWrites();
   },
 };
 

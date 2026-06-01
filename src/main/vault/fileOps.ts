@@ -489,3 +489,83 @@ export async function copyFileToVault(
 export async function readFileContents(filePath: string): Promise<string> {
   return fs.readFile(filePath, 'utf-8');
 }
+
+/**
+ * Outcome of {@link readFileWithCoherentStat}. `content` is always present
+ * on success; `mtimeMs` and `size` are present only when the pre-read stat
+ * and post-read stat agree (i.e. no external write landed in the gap).
+ *
+ * Callers seed their drift baseline from `mtimeMs`/`size`; when they're
+ * `undefined`, the baseline is deliberately NOT seeded — a fresh hydrate
+ * or successful self-write will reseed once a coherent (content, stat)
+ * pair can be observed.
+ */
+export interface CoherentReadResult {
+  content: string;
+  mtimeMs?: number;
+  size?: number;
+}
+
+/**
+ * 6.4.M7 — read a file's content with a coherent (mtime, size) baseline.
+ *
+ * The legacy `vault:read-file-text` handler did `stat → read`, so a write
+ * landing in the gap meant the renderer recorded a baseline OLDER than
+ * the bytes it actually received. The renderer's next drift check then
+ * fired a spurious "modified externally" prompt for content that already
+ * matched disk — the comment in the handler called this "the safe failure
+ * direction", but the inverse race (write-then-read-then-stat) silently
+ * pinned an OLDER baseline against the rendered NEWER bytes, masking real
+ * future drift.
+ *
+ * This helper takes a stat snapshot BEFORE the read, reads the bytes,
+ * then takes another stat snapshot AFTER. If the two stats agree on
+ * `mtimeMs` and `size`, the read is coherent and we return all three; if
+ * they disagree, the content we read may be from either side of the gap
+ * — we return `content` (so the caller still gets bytes) but withhold
+ * `mtimeMs`/`size` so the renderer skips seeding a possibly-wrong
+ * baseline. A subsequent successful read on a quiescent file will
+ * succeed coherently and reseed.
+ *
+ * The size cap is enforced from the pre-read stat (cheapest place to
+ * refuse a 25 GB file before reading any bytes).
+ *
+ * Optional `_deps` lets tests inject `stat`/`readFile` mocks without
+ * monkey-patching the global `fs.promises` namespace. Production callers
+ * omit it and the real `fs.promises` is used.
+ */
+export async function readFileWithCoherentStat(
+  filePath: string,
+  maxBytes: number,
+  _deps?: {
+    stat?: (p: string) => Promise<{ mtimeMs: number; size: number }>;
+    readFile?: (p: string) => Promise<string>;
+  },
+): Promise<CoherentReadResult | { tooLarge: true; size: number }> {
+  const stat = _deps?.stat ?? (async (p) => fs.stat(p));
+  const readFile = _deps?.readFile ?? readFileContents;
+
+  const preStat = await stat(filePath);
+  if (preStat.size > maxBytes) {
+    return { tooLarge: true, size: preStat.size };
+  }
+
+  const content = await readFile(filePath);
+
+  let postStat: { mtimeMs: number; size: number } | undefined;
+  try {
+    postStat = await stat(filePath);
+  } catch {
+    // Post-stat failed — return content with no baseline. ENOENT here
+    // typically means a delete landed during the read; the renderer's
+    // hydrate path will surface the missing file separately.
+    return { content };
+  }
+
+  if (preStat.mtimeMs === postStat.mtimeMs && preStat.size === postStat.size) {
+    return { content, mtimeMs: postStat.mtimeMs, size: postStat.size };
+  }
+  // Pre and post disagree — a write landed in the gap. Return bytes
+  // without an unsafe baseline; the next quiescent read seeds coherently.
+  return { content };
+}

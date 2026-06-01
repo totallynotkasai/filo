@@ -9,6 +9,7 @@ import {
   deleteItem,
   copyFileToVault,
   readFileContents,
+  readFileWithCoherentStat,
   VaultTooLargeError,
   VaultTreeTooLargeError,
   RenameTargetExistsError,
@@ -587,45 +588,35 @@ export function registerVaultHandlers(): void {
       assertSafeRelativePath(relativePath);
       const abs = join(vaultRoot, relativePath);
       assertWithinVault(vaultRoot, abs);
-      // Sprint A / A9 — pre-flight stat caps the read at PAYLOAD_LIMITS.MARKDOWN
-      // (25 MB). A multi-GB `.md` would otherwise OOM main on `readFile` /
-      // OOM renderer on the toString shipped across IPC. Renderer surfaces the
+      // Sprint A / A9 — pre-read stat caps the read at PAYLOAD_LIMITS.MARKDOWN
+      // (25 MB). A multi-GB `.md` would otherwise OOM main on `readFile` / OOM
+      // renderer on the toString shipped across IPC. Renderer surfaces the
       // dedicated FILE_TOO_LARGE code so the toast can say "file too large"
-      // instead of "I/O error". ENOENT skips the cap check — `readFileContents`
-      // surfaces the missing-file code through the normal catch path.
+      // instead of "I/O error". ENOENT skips the cap check —
+      // `readFileWithCoherentStat` surfaces the missing-file code through
+      // the normal catch path.
       //
-      // F1 (2026-05-28) — the same pre-flight stat also yields the mtime
-      // returned alongside the content so the renderer's hydrate path can
-      // seed its drift baseline (fileBaselineRegistry) without issuing a
-      // second `vault:stat`. A separate read-then-stat round-trip leaves a
-      // TOCTOU gap in which an external write could skew the baseline against
-      // the bytes we returned; capturing the mtime here keeps content + stamp
-      // from one IPC call. stat-then-read ordering means a write landing in
-      // the (tiny, same-process) gap skews the baseline OLDER than the bytes,
-      // which surfaces a spurious Reload prompt rather than masking a real
-      // external edit — the safe failure direction.
-      let mtimeMs: number | undefined;
-      let size: number | undefined;
-      try {
-        const stat = await fsPromises.stat(abs);
-        if (stat.size > PAYLOAD_LIMITS.MARKDOWN) {
-          return {
-            success: false,
-            code: 'FILE_TOO_LARGE' as const,
-            error: `File is ${stat.size} bytes; vault:read-file-text cap is ${PAYLOAD_LIMITS.MARKDOWN} bytes`,
-          };
-        }
-        mtimeMs = stat.mtimeMs;
-        // Return size too for the hydrate path's (mtime, size) drift baseline.
-        size = stat.size;
-      } catch (statErr) {
-        const sCode = (statErr as NodeJS.ErrnoException)?.code;
-        if (sCode !== 'ENOENT') throw statErr;
-        // ENOENT — `readFileContents` below throws the same code, so the
-        // success branch (with mtimeMs / size) is unreachable for a missing file.
+      // 6.4.M7 — the helper does pre-stat (size cap + initial mtime/size),
+      // reads bytes, then post-stats. If the two stats agree, mtimeMs/size
+      // are returned so the renderer can seed its drift baseline. If they
+      // DISAGREE (a write landed in the gap), the helper withholds
+      // mtimeMs/size and the renderer skips the baseline seed — preserving
+      // the data-integrity guarantee at the cost of one extra round-trip
+      // on contended files.
+      const result = await readFileWithCoherentStat(abs, PAYLOAD_LIMITS.MARKDOWN);
+      if ('tooLarge' in result) {
+        return {
+          success: false,
+          code: 'FILE_TOO_LARGE' as const,
+          error: `File is ${result.size} bytes; vault:read-file-text cap is ${PAYLOAD_LIMITS.MARKDOWN} bytes`,
+        };
       }
-      const content = await readFileContents(abs);
-      return { success: true, content, mtimeMs, size };
+      return {
+        success: true,
+        content: result.content,
+        mtimeMs: result.mtimeMs,
+        size: result.size,
+      };
     } catch (err) {
       const code = ipcErrorCode(err);
       // ENOENT is an expected, recoverable case for callers like the

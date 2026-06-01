@@ -100,6 +100,42 @@ describe('FileWatcher.reconcileNow', () => {
     expect(filesChanged.some((c) => c.filename === 'Edited.md')).toBe(true);
   });
 
+  // 6.4.M8 — `.board.json` and similar JSON files Filo round-trips through
+  // `atomicWriteFile` must also be hashed during the snapshot walk so a
+  // FAT/SMB filesystem (second-resolution mtime, or mtime-preserved
+  // rewrite via temp-rename) doesn't make external `.board.json` edits
+  // invisible to the reconciler. The legacy walker hashed only `.md`,
+  // leaving everything else dependent on mtime+size.
+  it('detects .board.json change when mtime+size are identical (M8)', async () => {
+    const target = join(dir, 'My.board.json');
+    // Use a fixed timestamp so utimes' precision rounding doesn't make
+    // mtime-equality flake on Windows (sub-ms fractional bits). Stamping
+    // BOTH writes with the same Date guarantees the reconciler sees
+    // identical mtimeMs across snapshots.
+    const fixedTime = new Date('2026-01-01T00:00:00Z');
+
+    // Same length, different content.
+    await fs.writeFile(target, '{"id":"a","name":"old"}', 'utf-8');
+    await fs.utimes(target, fixedTime, fixedTime);
+    const preStat = await fs.stat(target);
+    await watcher.reconcileNow({ seedOnly: true });
+
+    // Rewrite with different content but the SAME length.
+    await fs.writeFile(target, '{"id":"a","name":"new"}', 'utf-8');
+    await fs.utimes(target, fixedTime, fixedTime);
+    const postStat = await fs.stat(target);
+    expect(postStat.mtimeMs).toBe(preStat.mtimeMs);
+    expect(postStat.size).toBe(preStat.size);
+
+    await watcher.reconcileNow();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    const filesChanged = sentEvents
+      .filter((e) => e.channel === 'vault:files-changed')
+      .flatMap((e) => e.payload[0] as Array<{ filename: string; type: string }>);
+    expect(filesChanged.some((c) => c.filename === 'My.board.json')).toBe(true);
+  });
+
   it('drops reconciled events whose path is currently suppressed', async () => {
     await fs.writeFile(join(dir, 'SelfWrite.md'), 'first', 'utf-8');
     await watcher.reconcileNow({ seedOnly: true });

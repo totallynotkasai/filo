@@ -718,7 +718,16 @@ export class FileWatcher {
           // the file. Without the seed, the first such event for any
           // file always failed to pair (hashAsync had no cached value
           // for the now-missing source).
-          if (rel.toLowerCase().endsWith('.md')) {
+          //
+          // 6.4.M8 — extend to `.board.json` as well. Filo round-trips
+          // those through `atomicWriteFile` (temp + rename), which can
+          // present identical mtime+size to the reconciler on FAT/SMB
+          // filesystems where mtime resolution is coarse. Without the
+          // hash, an external `.board.json` edit with mtime collision
+          // is invisible to the watcher — a rare but real data-loss
+          // path for users syncing vaults over SMB shares.
+          const lower = rel.toLowerCase();
+          if (lower.endsWith('.md') || lower.endsWith('.board.json')) {
             try {
               const fd = await fsPromises.open(full, 'r');
               try {

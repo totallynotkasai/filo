@@ -131,4 +131,51 @@ describe('Phase 6.0.C2 — applyReloadFromDisk cancels armed body writes', () =>
     expect(written ?? '').not.toContain('pre-reload typed body');
     expect(written).toBeUndefined();
   });
+
+  // Phase 6.0.C3 — same primitive as C2; the audit surfaced it as a
+  // separate item to make clear the bug is NOT gated by frontmatter sync.
+  // A body-only edit followed by an external Reload (no newFrontmatter
+  // argument) still hits the closure-captured pre-Reload body. The fix
+  // landed in 6.0.C2 (applyReloadFromDisk self-cancels); this test pins
+  // the body-only path so a future regression that breaks it without
+  // also breaking the FM-changed path still trips here.
+  it('cancels a body write armed before a body-only Reload (no newFrontmatter — covers 6.0.C3)', async () => {
+    const docId = 'doc-c3';
+    const relPath = 'Notes/C3.md';
+    const callerId = `text-tile:${docId}`;
+
+    documentStore.loadDocument({
+      docId,
+      filename: relPath,
+      title: 'C3',
+      body: 'pre-reload body',
+      htmlContent: '',
+      richText: [],
+    });
+    documentStore.setFrontmatter(
+      docId,
+      { title: 'C3' },
+      '---\ntitle: C3\n---',
+    );
+    markHydrated(relPath, false);
+
+    registerForceWriter(callerId, docId, () => null);
+
+    scheduleMarkdownWrite(
+      makeArgs(docId, relPath, { title: 'C3' }, 'pre-reload typed body c3'),
+    );
+
+    // Body-only Reload: applyReloadFromDisk receives no newFrontmatter.
+    // The cancel must still fire — the bug is independent of whether the
+    // reload also carries a frontmatter update.
+    documentStore.applyReloadFromDisk(docId, 'POST-RELOAD-DISK-BODY-C3', []);
+
+    await flushMarkdownWrite(callerId);
+
+    unregisterForceWriter(callerId);
+
+    const written = lastWriteContent(captured);
+    expect(written ?? '').not.toContain('pre-reload typed body c3');
+    expect(written).toBeUndefined();
+  });
 });

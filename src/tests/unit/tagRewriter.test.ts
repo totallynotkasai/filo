@@ -20,6 +20,34 @@ function frontmatterObjectOf(md: string): Record<string, unknown> {
 /** Any `\n` NOT preceded by `\r` — i.e. a lone LF that broke CRLF fidelity. */
 const LONE_LF = /[^\r]\n/;
 
+// 6.4.M9 — the shared FRONTMATTER_FENCE regex required `---` immediately
+// followed by a newline. A fence with trailing whitespace (`--- `) therefore
+// parsed as "no frontmatter", so addTagToMarkdown fell through to the
+// no-frontmatter branch and PREPENDED a second `---` block, duplicating
+// frontmatter and orphaning the original keys in the body. The fence now
+// tolerates trailing horizontal whitespace.
+describe('tagRewriter — fence with trailing whitespace (6.4.M9)', () => {
+  it('addTagToMarkdown edits the existing block, not a prepended duplicate', () => {
+    const src = '--- \ntitle: Foo\n--- \nbody';
+    const out = addTagToMarkdown(src, 'newtag');
+    // Exactly one frontmatter block (two `---` fence lines), not four.
+    const fenceLines = out.match(/^---/gm) ?? [];
+    expect(fenceLines).toHaveLength(2);
+    // frontmatterObjectOf throws on a duplicate/invalid block.
+    const fm = frontmatterObjectOf(out);
+    expect(fm.title).toBe('Foo');
+    expect(fm.tags).toContain('newtag');
+    expect(out).toContain('body');
+  });
+
+  it('rewriteTagInMarkdown sees the existing tags through a trailing-ws fence', () => {
+    const src = '--- \ntags:\n  - foo\n--- \nbody';
+    const out = rewriteTagInMarkdown(src, 'foo', 'bar');
+    expect(out).toMatch(/- bar/);
+    expect(out).not.toMatch(/^\s*- foo$/m);
+  });
+});
+
 describe('rewriteTagInMarkdown', () => {
   it('rewrites the tag in the frontmatter tags array', () => {
     const input = ['---', 'tags:', '  - foo', '  - other', '---', '', 'body'].join('\n');

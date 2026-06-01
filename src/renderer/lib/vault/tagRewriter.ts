@@ -19,7 +19,10 @@ import { patchFrontmatterSource } from './frontmatterEngine';
  * occasionally taking the older path.
  */
 
-const FRONTMATTER_FENCE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
+// 6.4.M9 — `[ \t]*` tolerates trailing horizontal whitespace on either fence
+// line (`--- `). Without it, a trailing-space fence parsed as "no frontmatter"
+// and `addTagToMarkdown` PREPENDED a second `---` block, duplicating frontmatter.
+const FRONTMATTER_FENCE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?([\s\S]*)$/;
 
 /**
  * Audit 2.2 — case-insensitive tag-identity equality. Folds via

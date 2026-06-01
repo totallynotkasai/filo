@@ -44,6 +44,59 @@ describe('markdownSync — parseMarkdownFile', () => {
   });
 });
 
+// ── 6.4.M9 — fence trailing whitespace ───────────────────────────────────────
+// Editors and linters routinely leave trailing horizontal whitespace on a fence
+// line (`--- `). The fence regex required `---` IMMEDIATELY followed by a
+// newline, so such a file parsed as "no frontmatter" — its YAML leaked into the
+// body and (via tagRewriter) a duplicate `---` block was prepended on the next
+// tag edit. Trailing spaces/tabs on either fence are now tolerated.
+//
+// 6.4.M10 was REFUTED (see parseMarkdownFile's comment): a `---` embedded in a
+// multi-line scalar cannot mis-segment, because a column-0 `---` is a YAML
+// document boundary that both YAML parsers reject, and a valid in-scalar `---`
+// is indented and never matches the column-0 fence regex.
+describe('markdownSync — parseMarkdownFile fence robustness (6.4.M9)', () => {
+  it('M9 — tolerates trailing whitespace on the opening fence', () => {
+    const r = parseMarkdownFile('--- \ntitle: Foo\n---\nbody');
+    expect(r.hasFrontmatter).toBe(true);
+    expect(r.frontmatter.title).toBe('Foo');
+    expect(r.body).toBe('body');
+  });
+
+  it('M9 — tolerates trailing whitespace on the closing fence', () => {
+    const r = parseMarkdownFile('---\ntitle: Foo\n--- \nbody');
+    expect(r.hasFrontmatter).toBe(true);
+    expect(r.frontmatter.title).toBe('Foo');
+    expect(r.body).toBe('body');
+  });
+
+  it('M9 — tolerates a tab after the fence on a CRLF file', () => {
+    const r = parseMarkdownFile('---\t\r\ntitle: Foo\r\n---\t\r\nbody');
+    expect(r.hasFrontmatter).toBe(true);
+    expect(r.frontmatter.title).toBe('Foo');
+    expect(r.body).toBe('body');
+  });
+
+  it('M9 — does NOT treat `----` or `--- text` as a fence', () => {
+    // Four dashes is a thematic break; trailing non-space text isn't a fence.
+    expect(parseMarkdownFile('----\nnot fm\n----\nbody').hasFrontmatter).toBe(false);
+    expect(parseMarkdownFile('--- text\nx\n---\nbody').hasFrontmatter).toBe(false);
+  });
+
+  it('preserves an indented `---` inside a block scalar (6.4.M10 refutation)', () => {
+    // A column-0 `---` is a YAML document boundary (both parsers reject it), so a
+    // VALID multi-line scalar containing `---` keeps it indented — which the
+    // column-0 fence regex never matches. Confirms the first-fence split doesn't
+    // truncate real block-scalar content (the scenario M10 feared).
+    const src = '---\ntitle: Foo\nnote: |\n  before\n  ---\n  after\nstatus: ok\n---\nbody';
+    const r = parseMarkdownFile(src);
+    expect(r.hasFrontmatter).toBe(true);
+    expect(r.frontmatter.status).toBe('ok');
+    expect(r.frontmatter.note).toBe('before\n---\nafter\n');
+    expect(r.body).toBe('body');
+  });
+});
+
 // ── Audit2 / 1.1 + 1.2 — frontmatter preservation ───────────────────────────
 // 1.1 (amplifier): parseMarkdownFile flags `hasFrontmatter:true` but leaves
 // `frontmatter:{}` on unparseable / non-object YAML; assembleMarkdownFile gated

@@ -75,7 +75,19 @@ export function parseMarkdownFile(raw: string): ParsedMarkdownDocument {
 
   if (!text) return { frontmatter: {}, rawFrontmatter: '', body: '', hasFrontmatter: false, hadBom };
 
-  const fenced = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text);
+  // 6.4.M9 — `[ \t]*` tolerates trailing horizontal whitespace on either fence
+  // line (`--- `), which editors / linters routinely leave. Without it such a
+  // file parsed as "no frontmatter", leaking the YAML into the body.
+  //
+  // 6.4.M10 (refuted — kept as a note): the non-greedy `([\s\S]*?)` stops at the
+  // FIRST `---` line, which the audit feared could mis-segment a `---` embedded
+  // in a multi-line scalar. It cannot: a `---` at column 0 is a YAML
+  // document-boundary marker — BOTH js-yaml and the `yaml` package THROW rather
+  // than parse across it — so it can never be valid mapping content; and a `---`
+  // that IS valid scalar content is indented, so `\r?\n---` (column 0) never
+  // matches it. The first-fence split is therefore consistent with YAML's own
+  // document model. No failing test could be constructed.
+  const fenced = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?([\s\S]*)$/.exec(text);
   if (!fenced) {
     return { frontmatter: {}, rawFrontmatter: '', body: text, hasFrontmatter: false, hadBom };
   }

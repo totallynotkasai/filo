@@ -442,16 +442,24 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
   for (const sentinelPath of CONFIG_SENTINEL_PATHS) {
     try {
       const stat = await invokeOk('vault:stat', newVaultPath, sentinelPath);
+      // Defensive: a bare-result IPC mock (test fixture that doesn't
+      // route `vault:stat`) returns `undefined`; `invokeOk`'s envelope
+      // check passes that through. Without baseline data, the load
+      // continues — no baseline = same pre-5.1 behaviour for the
+      // next write, which is the documented fallback shape.
+      if (!stat || typeof stat.mtimeMs !== 'number' || typeof stat.size !== 'number') {
+        continue;
+      }
       noteBaseline(sentinelPath, stat.mtimeMs, stat.size);
       seededConfigBaselinePaths.push(sentinelPath);
     } catch (err) {
       if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
         continue;
       }
-      // Non-ENOENT failure: surface via the bus so a permissions / share
-      // hiccup is visible during development. Doesn't block the load —
-      // a missing baseline degrades to the legacy unguarded write path,
-      // which is the same shape as the pre-5.1 behaviour.
+      // Non-ENOENT envelope failure: surface via the bus so a permissions
+      // / share hiccup is visible during development. Doesn't block the
+      // load — a missing baseline degrades to the legacy unguarded write
+      // path, which is the same shape as the pre-5.1 behaviour.
       reportError(
         'vault.config-baseline-seed',
         err,

@@ -89,8 +89,13 @@ const ALLOWLIST = {
   // `boardCacheStore.applyFrontmatterToBackedTiles` for each so cached
   // tile metadata reconciles against canonical frontmatter on every
   // vault open (closes between-session drift). +10 LOC (loop + comment).
-  // New snapshot: 1399 LOC.
-  'src/renderer/stores/vault.svelte.ts': 1399,
+  // PHASE6_PLAN_2026-06-01 Phase 6.0.C1 — `openVault` now invokes
+  // `vault:close` on the main side between the pre-swap dispatch and
+  // `loadVaultCandidate` so the main-side `vault:init-config` guard
+  // (`board.ipc.ts:108`, refuses to re-anchor while a different vault is
+  // active) doesn't reject every user-driven vault swap. +7 LOC
+  // (try/catch + one-line comment). New snapshot: 1406 LOC.
+  'src/renderer/stores/vault.svelte.ts': 1406,
   // External-changes orchestrator: classifies fs-watcher events into
   // editor-dirty toast / silent reload / sync-frontmatter / deleted-file
   // prompt / properties-popup-dirty prompt. 500 ms attachment-delete grace

@@ -880,6 +880,13 @@ export const vaultStore = {
       // fresh `Promise.resolve()` ensures the new vault's first
       // watcher event runs immediately on an empty chain.
       renameQueue = Promise.resolve();
+      // Phase 6.0.C1 — release the main-side registry before init-config;
+      // board.ipc.ts refuses to re-anchor while a different vault is active.
+      try {
+        await window.filo.invoke('vault:close');
+      } catch (err) {
+        reportError('vault.close', err, 'Failed to release the previous vault');
+      }
     }
 
     // ── Phase R4 — load the candidate against the new vault ───────

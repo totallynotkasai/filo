@@ -295,6 +295,13 @@ export async function writeConfigs(
         // writes happen before any baseline is noted, so they're
         // unaffected.
         if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
+          // 6.4.M12 — the file is gone, so the dedup cache must stop asserting
+          // this payload is on disk. Leaving the stale entry meant a later
+          // write whose payload reverted to the cached value was silently
+          // dedup-suppressed (line 258), so the config could never be
+          // re-established in-session. Clear it; the baseline is kept so the
+          // ENOENT-skip keeps respecting the deletion until the file returns.
+          lastWrittenConfigs.delete(target);
           continue;
         }
         // Any other stat error (EACCES, transient share hiccup): fall

@@ -4,6 +4,7 @@ import {
   noteBaseline,
   __resetBaselinesForTests,
 } from '@renderer/lib/vault/fileBaselineRegistry';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import type { ProjectSettings, WorkspaceState } from '@renderer/schema/index';
 
@@ -150,5 +151,68 @@ describe('configWriteScheduler — ENOENT skip-on-resurrection (5.1)', () => {
 
     expect(result.failed).toEqual([]);
     expect(calls.some((c) => c.channel === 'config:save')).toBe(true);
+  });
+});
+
+// 6.4.M12 — the ENOENT-skip respects an external delete, but it never updated
+// `lastWrittenConfigs`. That dedup cache kept asserting the deleted payload was
+// on disk, so once the in-memory payload returned to that value a legitimate
+// re-write was silently dedup-suppressed — the file could never be
+// re-established in-session. The skip now clears the target's dedup entry.
+describe('configWriteScheduler — ENOENT skip clears dedup cache (6.4.M12)', () => {
+  beforeEach(() => {
+    restoreFiloDefault();
+    __resetBaselinesForTests();
+    __resetDirtyTrackingForTests(); // isolate lastWrittenConfigs from other tests
+  });
+  afterEach(() => {
+    restoreFiloDefault();
+    __resetBaselinesForTests();
+    __resetDirtyTrackingForTests();
+  });
+
+  // defaults.json's payload is driven by mindmap/kanban/etc — NOT globalFont —
+  // so it can be held stable across calls to exercise the dedup path.
+  const settingsWith = (mindmap: Record<string, unknown>): ProjectSettings =>
+    ({ general: { globalFont: 'fixed' }, mindmap, kanban: {}, tasklist: {}, document: {} } as ProjectSettings);
+
+  it('re-writes a reverted payload after an ENOENT-skip (no permanent dedupe)', async () => {
+    noteBaseline('.filo/defaults.json', 1000, 50);
+
+    let statMode: 'ok' | 'enoent' = 'ok';
+    const calls: Array<{ channel: string; args: unknown[] }> = [];
+    installFiloMock((channel: string, ...args: unknown[]) => {
+      calls.push({ channel, args });
+      if (channel === 'vault:stat') {
+        const [, relPath] = args as [string, string];
+        if (relPath === '.filo/defaults.json' && statMode === 'enoent') {
+          return Promise.resolve({ ok: false, code: 'ENOENT', error: 'gone' });
+        }
+        return Promise.resolve({ ok: true, mtimeMs: 1000, size: 50 });
+      }
+      if (channel === 'config:save' || channel === 'config:save-workspace') {
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    // 1. Prime: a successful write records payload P (mindmap {x:1}) as on disk.
+    statMode = 'ok';
+    await writeConfigs(VAULT_ROOT, settingsWith({ x: 1 }), 'light', makeWorkspace());
+
+    // 2. External delete; a CHANGED payload arms a write → dedup miss → ENOENT-skip.
+    statMode = 'enoent';
+    await writeConfigs(VAULT_ROOT, settingsWith({ x: 2 }), 'light', makeWorkspace());
+
+    // 3. File reappears (baseline matches → no drift); payload reverts to P.
+    statMode = 'ok';
+    calls.length = 0; // inspect only this call
+    await writeConfigs(VAULT_ROOT, settingsWith({ x: 1 }), 'light', makeWorkspace());
+
+    // Pre-fix the stale dedup entry (still == P) suppressed this write entirely.
+    const defaultsSaves = calls.filter(
+      (c) => c.channel === 'config:save' && c.args[1] === 'defaults.json',
+    );
+    expect(defaultsSaves).toHaveLength(1);
   });
 });

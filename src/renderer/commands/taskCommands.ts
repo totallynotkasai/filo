@@ -335,7 +335,7 @@ export class UpdateTaskFieldCommand extends Command {
   readonly targetBoardId: string;
   private boardId: string;
   private relPath: string;
-  private docId: string | null;
+  private docId: string;
   private patch: Record<string, unknown>;
   private inversePatch: Record<string, unknown>;
   // Audit2 4.2 — false on the user's initial Apply (apply directly), true once
@@ -351,6 +351,22 @@ export class UpdateTaskFieldCommand extends Command {
     description?: string,
   ) {
     super();
+    // 6.2.H7 — refuse construction with a null docId. The pre-fix command
+    // silently no-op'd both legs: execute / undo gated the documentStore
+    // merge on `if (this.docId)`, so with null the patch was never applied
+    // and the scheduled frontmatter write emitted the unchanged FM back to
+    // disk. The board stayed dirty (marked) but the .md file's frontmatter
+    // didn't change — making Apply and Undo both silent.
+    //
+    // Callers that construct via `frontmatterWriter.buildTaskFieldCommand`
+    // already short-circuit on null docId and route through a fallback;
+    // this throw is the chokepoint that prevents a new caller from
+    // re-introducing the silent-no-op bug.
+    if (!docId) {
+      throw new Error(
+        'UpdateTaskFieldCommand requires a non-null docId; route null-docId task edits through the orphan-write fallback instead',
+      );
+    }
     this.targetBoardId = boardId;
     this.boardId = boardId;
     this.relPath = relPath;
@@ -383,7 +399,7 @@ export class UpdateTaskFieldCommand extends Command {
     // patch and must rebase like undo so an external edit since isn't clobbered.
     const isRedo = this.hasExecuted;
     this.hasExecuted = true;
-    if (this.docId && isRedo) {
+    if (isRedo) {
       applyFrontmatterPatchRebased({
         docId: this.docId,
         relPath: this.relPath,
@@ -394,28 +410,25 @@ export class UpdateTaskFieldCommand extends Command {
       });
       return;
     }
-    if (this.docId) documentStore.mergeFrontmatter(this.docId, this.patch);
+    documentStore.mergeFrontmatter(this.docId, this.patch);
     scheduleFrontmatterWrite(this.relPath, this.docId);
     boardCacheStore.markDirty(this.targetBoardId);
   }
 
   async undo(): Promise<void> {
     await flushAllPendingFrontmatterWrites();
-    if (this.docId) {
-      // Audit2 4.2 — rebase onto the live frontmatter so an external edit to
-      // the same field isn't silently clobbered (prompts to apply anyway).
-      applyFrontmatterPatchRebased({
-        docId: this.docId,
-        relPath: this.relPath,
-        targetBoardId: this.targetBoardId,
-        applying: this.inversePatch,
-        expectedCurrent: this.patch,
-        label: this.relPath,
-      });
-    } else {
-      scheduleFrontmatterWrite(this.relPath, this.docId);
-      boardCacheStore.markDirty(this.targetBoardId);
-    }
+    // Audit2 4.2 — rebase onto the live frontmatter so an external edit to
+    // the same field isn't silently clobbered (prompts to apply anyway).
+    // 6.2.H7 — docId is guaranteed non-null by the constructor's throw, so
+    // the legacy null-docId else-branch (a silent no-op in practice) is gone.
+    applyFrontmatterPatchRebased({
+      docId: this.docId,
+      relPath: this.relPath,
+      targetBoardId: this.targetBoardId,
+      applying: this.inversePatch,
+      expectedCurrent: this.patch,
+      label: this.relPath,
+    });
   }
 }
 

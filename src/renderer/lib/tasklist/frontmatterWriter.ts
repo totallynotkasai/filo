@@ -101,6 +101,10 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
     if (!board) return null;
     const path = vaultPathForTile(row.tile);
     const docId = ensureSeededFm(row.tile);
+    // 6.2.H7 — UpdateTaskFieldCommand now throws on null docId (it was a
+    // silent no-op pre-fix). Short-circuit here so the caller's fallback
+    // branch (extremely rare, pre-live-cache tiles) takes over.
+    if (!docId) return null;
     const before = readFrontmatter(row.tile);
     const inverse: Record<string, unknown> = {};
     for (const key of Object.keys(patch)) {

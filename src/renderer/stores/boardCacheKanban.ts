@@ -402,6 +402,12 @@ export function makeKanbanSlice(ctx: CacheContext) {
       tileId: string,
       targetColumnId: string,
       targetPosition: number,
+      // 6.4.M16 — optional neighbour anchor. When the moved card should sit
+      // immediately before a specific sibling, pass that sibling's tileId and
+      // the insert resolves against its LIVE index instead of the stale
+      // absolute `targetPosition`. `undefined`/`null` or an anchor no longer in
+      // the column falls back to the clamped `targetPosition` (prior behaviour).
+      beforeTileId?: string | null,
     ): void {
       const kb = ctx.kanbanBoardOrWarn(boardId, 'moveKanbanPlacement');
       if (!kb) return;
@@ -424,7 +430,13 @@ export function makeKanbanSlice(ctx: CacheContext) {
           };
         }
         const placements = [...(c.tilePlacements ?? [])];
-        const insertAt = Math.min(Math.max(targetPosition, 0), placements.length);
+        // 6.4.M16 — prefer the neighbour anchor when it's still present, so an
+        // undo/redo after an intervening column mutation lands the card next to
+        // its original sibling rather than at a stale absolute index.
+        const anchorIdx =
+          beforeTileId != null ? placements.findIndex((p) => p.tileId === beforeTileId) : -1;
+        const insertAt =
+          anchorIdx >= 0 ? anchorIdx : Math.min(Math.max(targetPosition, 0), placements.length);
         placements.splice(insertAt, 0, placement!);
         return {
           ...c,

@@ -174,6 +174,9 @@ export class MoveCardCommand extends Command {
   private fromPosition: number;
   private toColumnId: string;
   private toPosition: number;
+  // 6.4.M16 — neighbour anchors captured from the pre-move cache (see ctor).
+  private fromBeforeTileId: string | null;
+  private toBeforeTileId: string | null;
 
   constructor(
     boardId: string,
@@ -192,6 +195,21 @@ export class MoveCardCommand extends Command {
     this.toColumnId = toColumnId;
     this.toPosition = toPosition;
     this.description = fromColumnId === toColumnId ? 'Reorder card' : 'Move card';
+
+    // 6.4.M16 — capture neighbour anchors from the PRE-move cache (this command
+    // is constructed before execute() applies the move). Absolute positions go
+    // stale if the column is mutated between execute and a later undo/redo, so
+    // we also record the sibling each insert should sit immediately BEFORE,
+    // computed against the column with the moved card removed (mirroring
+    // moveKanbanPlacement's remove-then-insert). Reused for both legs.
+    const placementsWithoutMoved = (columnId: string): KanbanTilePlacement[] => {
+      const cached = boardCacheStore.cache[boardId];
+      const kb = cached && cached.board.type === 'kanban' ? (cached.board as KanbanBoard) : null;
+      const col = kb?.columns?.find((c) => c.id === columnId);
+      return (col?.tilePlacements ?? []).filter((p) => p.tileId !== tileId);
+    };
+    this.fromBeforeTileId = placementsWithoutMoved(fromColumnId)[fromPosition]?.tileId ?? null;
+    this.toBeforeTileId = placementsWithoutMoved(toColumnId)[toPosition]?.tileId ?? null;
   }
 
   execute() {
@@ -216,6 +234,7 @@ export class MoveCardCommand extends Command {
       this.tileId,
       this.toColumnId,
       this.toPosition,
+      this.toBeforeTileId, // 6.4.M16 — anchor over stale absolute index
     );
   }
 
@@ -242,6 +261,7 @@ export class MoveCardCommand extends Command {
       this.tileId,
       this.fromColumnId,
       this.fromPosition,
+      this.fromBeforeTileId, // 6.4.M16 — anchor over stale absolute index
     );
   }
 }

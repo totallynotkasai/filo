@@ -94,7 +94,16 @@ export function parseMarkdownFile(raw: string): ParsedMarkdownDocument {
 
   let frontmatter: Record<string, unknown> = {};
   try {
-    const loaded = yaml.load(fenced[1]);
+    // Audit-4 DI-01 — load with CORE_SCHEMA (YAML 1.2 core) so reads match the
+    // `yaml`-package serializer that re-emits the disk baseline in
+    // `frontmatterEngine.patchFrontmatterSource`. DEFAULT_SCHEMA (YAML 1.1)
+    // resolved `2026-06-01` → a JS `Date` and `<<: *a` → a merged map; the
+    // serializer keeps them a `string` / a literal `<<`, so the source-
+    // preserving diff saw unchanged keys as "changed" and rewrote unquoted
+    // dates to ISO timestamps (DI-01) / inlined merge keys (DI-05). CORE keeps
+    // both as plain strings/literals so the two sides agree. The try/catch
+    // still degrades to `{}` (fails safe — never corrupts) on a parse error.
+    const loaded = yaml.load(fenced[1], { schema: yaml.CORE_SCHEMA });
     if (loaded && typeof loaded === 'object' && !Array.isArray(loaded)) {
       frontmatter = loaded as Record<string, unknown>;
     }

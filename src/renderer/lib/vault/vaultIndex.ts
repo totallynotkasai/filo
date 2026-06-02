@@ -130,7 +130,14 @@ function stringifyNode(node: RootContent | Heading | Link | Text): string {
 function parseFrontmatterBlock(yamlSource: string): Record<string, unknown> {
   if (!yamlSource.trim()) return {};
   try {
-    const loaded = yaml.load(yamlSource);
+    // Audit-4 DI-01 — CORE_SCHEMA keeps unquoted dates as strings (and `<<` as a
+    // literal merge key), matching how the write paths re-serialise frontmatter.
+    // Keeping the index parser aligned with parseMarkdownFile / tagRewriter
+    // avoids a divergence-detection mismatch between the index metadata and the
+    // documentStore frontmatter. The gray-matter fallback below only fires when
+    // this throws; its rare output is normalised downstream by
+    // `frontmatterSync.normalizeScalar` (Date → string), so it stays safe.
+    const loaded = yaml.load(yamlSource, { schema: yaml.CORE_SCHEMA });
     if (loaded && typeof loaded === 'object' && !Array.isArray(loaded)) {
       return loaded as Record<string, unknown>;
     }

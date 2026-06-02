@@ -28,12 +28,18 @@
  *   - The literal `﻿` character (anywhere)
  *   - `﻿` / `\u{FEFF}` (escape forms)
  *
- * Allowed files:
+ * Allowed files (each legitimately sees RAW on-disk bytes, BOM intact):
  *   - `lib/vault/markdownFileWriter.ts` — owns the disk read + hydrate
- *     gate and is the only caller that legitimately sees raw bytes.
+ *     gate.
  *   - `lib/editor/markdownSync.ts` — `parseMarkdownFile` reads raw
  *     bytes and emits the parsed `hadBom`. The gateway and
  *     PropertiesPopup forward this; no other reader sniffs.
+ *   - `lib/vault/tagRewriter.ts` — Audit-4 DI-02. Its tag ops receive the
+ *     FULL raw file content straight from `vault:read-file-text`
+ *     (`fileTags.svelte.ts`, `tagRewriteSweep.ts`), so `splitFrontmatter`
+ *     must strip + `reassemble` must re-emit the BOM itself. Without this a
+ *     BOM file failed the `^---` fence anchor and a tag-add prepended a
+ *     SECOND frontmatter block, demoting the real keys into the body.
  *
  * Per-line inline escape: `// allow-bom-sniff: <reason>` on the same or
  * preceding line opts a specific occurrence out. Used for callers that
@@ -52,6 +58,9 @@ const EXTENSIONS = ['.ts', '.svelte', '.mjs'];
 const ALLOWED_FILES = new Set([
   'src/renderer/lib/vault/markdownFileWriter.ts',
   'src/renderer/lib/editor/markdownSync.ts',
+  // Audit-4 DI-02 — tagRewriter splits/reassembles raw disk bytes (full file
+  // content from `vault:read-file-text`); it must sniff + re-emit the BOM.
+  'src/renderer/lib/vault/tagRewriter.ts',
 ]);
 
 function toPosix(p) {

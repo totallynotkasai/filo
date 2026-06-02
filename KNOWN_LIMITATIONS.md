@@ -29,6 +29,19 @@ document store (no baseline was captured), and for a block the Document engine
 can't parse as a mapping. In each case there is either nothing to preserve or
 nothing safely parseable to preserve.
 
+**Residual: folded block scalars reflow (Audit-4 DI-06, accepted).** When some
+*other* key changes, the engine re-serialises the whole block with
+`doc.toString({ lineWidth: 0 })` (folding disabled), so an **untouched** folded
+scalar (`summary: >`) loses its original soft-wrap line breaks — its content is
+re-joined onto fewer lines. This is **cosmetic only**: a folded `>` scalar joins
+its wrapped lines with spaces, so the *parsed value is byte-identical* (the CI
+corpus asserts exactly this); literal `|` scalars (which preserve newlines) are
+unaffected. Preserving the exact wrap would mean emitting each unchanged node's
+original CST range verbatim (option (b) in the plan) — deferred unless a user
+reports it, since no data is at risk. Unquoted dates and `<<` merge keys, by
+contrast, *are* now preserved exactly (Audit-4 DI-01/DI-05): reads use
+`CORE_SCHEMA` so the parsed object matches the `yaml`-package serializer.
+
 **Where:** [src/renderer/lib/vault/frontmatterEngine.ts](src/renderer/lib/vault/frontmatterEngine.ts)
 (the engine); the disk-baseline source is retained per-doc in
 [src/renderer/stores/document.svelte.ts](src/renderer/stores/document.svelte.ts)

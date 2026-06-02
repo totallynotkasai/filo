@@ -33,10 +33,18 @@ import { parseDocument, isMap } from 'yaml';
  * comments attached to the unchanged keys inside that map. Recursing
  * structurally fixes the comparison without rebuilding the JSON twice.
  */
-function valuesEqual(a: unknown, b: unknown): boolean {
+export function valuesEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (a === null || b === null) return false;
   if (typeof a !== typeof b) return false;
+  // DI-01b — a Date is `typeof 'object'` with NO own keys, so the generic
+  // object branch below would compare two DIFFERENT Dates as equal (`Object.keys`
+  // is `[]` for both) and silently drop a date edit. Compare Dates by instant.
+  // Masked today by DI-01 (reads are strings, never Dates), but this forecloses
+  // the collision a naive future change could reintroduce.
+  if (a instanceof Date || b instanceof Date) {
+    return a instanceof Date && b instanceof Date && +a === +b;
+  }
   if (Array.isArray(a)) {
     if (!Array.isArray(b)) return false;
     if (a.length !== b.length) return false;
@@ -104,7 +112,14 @@ export function patchFrontmatterSource(
   for (const [key, value] of Object.entries(nextObj)) {
     if (value === undefined) continue;
     if (!valuesEqual(currentObj[key], value)) {
-      doc.set(key, value);
+      // DI-01b — never let a residual `Date` re-emit as the `yaml` package's
+      // `2025-01-15T00:00:00.000Z`. Coerce to the plain `YYYY-MM-DD` form (the
+      // same normalisation `frontmatterSync.normalizeScalar` applies) before set.
+      const emit =
+        value instanceof Date && !Number.isNaN(value.getTime())
+          ? value.toISOString().slice(0, 10)
+          : value;
+      doc.set(key, emit);
     }
   }
 

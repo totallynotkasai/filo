@@ -247,6 +247,11 @@ export function isSafeNewTagName(name: string): boolean {
   if (/^[@`*&!%|>:?]/.test(stripped)) return false;
   let loaded: unknown;
   try {
+    // This validates a single bare tag-name token, NOT a frontmatter block.
+    // DEFAULT_SCHEMA's YAML-1.1 coercion is the intent here: we WANT `2024` /
+    // `true` / `null` to read as non-strings so the guard rejects them as
+    // confusing new tag names. (Contrast the frontmatter readers — Audit-4 DI-01.)
+    // allow-default-schema: tag-name minting guard, not a frontmatter read
     loaded = yaml.load(stripped);
   } catch {
     return false;

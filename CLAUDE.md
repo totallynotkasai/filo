@@ -24,10 +24,10 @@ Package:        npm run package
 `npm run ci:verify` runs every gate locally and mirrors the GitHub Actions `verify` job. **The authoritative, ordered gate list is the `ci:verify` script in [package.json](package.json)** (regenerate from there, not from this doc, if it drifts). It chains:
 
 ```
-lint → check (svelte-check) → test:unit:strict → build → 23 × ci:* guard scripts
+lint → check (svelte-check) → test:unit:strict → build → 29 × ci:* guard scripts
 ```
 
-The guards are small `scripts/check-*.mjs` ratchets (23 of them, not enumerated here — see `package.json`). The load-bearing ones:
+The guards are small `scripts/check-*.mjs` ratchets (29 of them, not enumerated here — see `package.json`). The load-bearing ones:
 
 - **`ci:file-sizes`** ([scripts/check-file-sizes.mjs](scripts/check-file-sizes.mjs)) — fails if any file in `src/main` or `src/renderer` exceeds 1000 LOC, with an explicit allowlist for the seven currently grandfathered files. Allowlisted files may shrink but not grow past their snapshot (the ceilings sit at each file's current LOC).
 - **`ci:type-casts`** ([scripts/check-type-casts.mjs](scripts/check-type-casts.mjs)) — forbids `as any` and `as unknown as` in non-test source. Escape hatch: append `// allow-cast: <reason>` on the same line.
@@ -596,7 +596,7 @@ Themes overwrite Global Defaults. They are not a separate layer.
 - **Store file extension** — Must be `.svelte.ts` for runes to work. Plain `.ts` files cannot use `$state`.
 - **Electron context isolation** — `contextBridge` exposes a limited API object on `window`. The renderer calls `window.api.vault.read(path)`, NOT `require('fs')`.
 - **Board JSON `file` field** — Vault-relative paths, not absolute. e.g., `"Notes.md"` or `"subfolder/Notes.md"`.
-- **Frontmatter writes are source-preserving (Audit2 4.8)** — When Filo rewrites a `.md` file's frontmatter, `assembleMarkdownFile` (`lib/editor/markdownSync.ts`) diffs the live object against the on-disk frontmatter *source* and patches only the changed keys through the `yaml` Document/CST engine (`lib/vault/frontmatterEngine.ts`), so comments, key order, and quoting on untouched keys survive. The lossy `js-yaml.dump` now only fires as a fallback for a new file (no baseline to preserve) or a block the engine can't parse as a mapping. `lib/vault/tagRewriter.ts` keeps a faster line-level path for tag-only edits; its fallback shares the same engine, so there is no longer a "good path silently falls back to a lossy one" seam. See KNOWN_LIMITATIONS #1.
+- **Frontmatter writes are source-preserving (Audit2 4.8)** — When Filo rewrites a `.md` file's frontmatter, `assembleMarkdownFile` (`lib/editor/markdownSync.ts`) diffs the live object against the on-disk frontmatter *source* and patches only the changed keys through the `yaml` Document/CST engine (`lib/vault/frontmatterEngine.ts`), so comments, key order, and quoting on untouched keys survive. The lossy `js-yaml.dump` now only fires as a fallback for a new file (no baseline to preserve) or a block the engine can't parse as a mapping. `lib/vault/tagRewriter.ts` keeps a faster line-level path for tag-only edits; its fallback shares the same engine, so there is no longer a "good path silently falls back to a lossy one" seam. See KNOWN_LIMITATIONS #1. **Audit-4 DI-01:** every js-yaml frontmatter read MUST pass `{ schema: yaml.CORE_SCHEMA }` so the parsed object matches that `yaml`-package serializer — under the old `DEFAULT_SCHEMA` an unquoted date loaded as a `Date` and `<<` as a merged map, which the diff then "noticed" and rewrote (date → ISO timestamp, merge key destroyed). The `ci:frontmatter-core-schema` gate enforces this; opt a genuinely non-frontmatter load out with `// allow-default-schema: <reason>`.
 
 ---
 

@@ -30,8 +30,27 @@ interface FmRegion {
 }
 
 function fmRegion(md: string): FmRegion {
-  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(md);
-  return m ? { raw: m[1], body: m[2] ?? '', has: true } : { raw: '', body: md, has: false };
+  // Audit-4 DI-02 — a leading UTF-8 BOM precedes the opening `---` fence, so
+  // strip it before matching (and from the no-frontmatter body). Without this a
+  // BOM file reads as "no frontmatter" here and the duplicate-frontmatter-block
+  // bug (a tag-add prepending a second block) slips through the invariant.
+  const s = md.replace(/^﻿/, '');
+  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(s);
+  return m ? { raw: m[1], body: m[2] ?? '', has: true } : { raw: '', body: s, has: false };
+}
+
+/**
+ * Parses a frontmatter block with CORE_SCHEMA — the schema the write path's
+ * `yaml`-package serializer agrees with (Audit-4 DI-01). Used to assert no
+ * non-tags VALUE was reformatted (unquoted date → ISO, `<<` merge key inlined).
+ */
+function parseFmCore(raw: string): Record<string, unknown> | null {
+  try {
+    const o = yaml.load(raw, { schema: yaml.CORE_SCHEMA });
+    return o && typeof o === 'object' && !Array.isArray(o) ? (o as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
 }
 
 function tryParseKeys(raw: string): { ok: boolean; keys: Set<string> } {
@@ -78,6 +97,19 @@ function assertSafeTagOp(input: string, out: string, label: string): void {
       if (k === 'tags') continue; // tags is the field under edit
       expect(outParse.keys.has(k), `${label}: silently dropped key "${k}"`).toBe(true);
     }
+    // Audit-4 DI-01 / DI-05 — beyond "key still present", a tag op must not
+    // REFORMAT a non-tags value: an unquoted date must not become an ISO
+    // timestamp, a `<<` merge key must not be inlined. Compare CORE-parsed
+    // values (the serializer's schema). A folded `>` scalar may be cosmetically
+    // reflowed (DI-06, accepted) but its PARSED value is identical, so it holds.
+    const inObj = parseFmCore(inR.raw);
+    const outObj = parseFmCore(outR.raw);
+    if (inObj && outObj) {
+      for (const k of Object.keys(inObj)) {
+        if (k === 'tags') continue;
+        expect(outObj[k], `${label}: reformatted the value of non-tags key "${k}"`).toEqual(inObj[k]);
+      }
+    }
     return;
   }
 
@@ -120,6 +152,22 @@ const HOSTILE_CORPUS: ReadonlyArray<{ label: string; md: string }> = [
   { label: 'anchored tags', md: '---\ntags: &t [foo, bar]\n---\nbody\n' },
   { label: 'duplicate key (unparseable)', md: '---\ntitle: X\ntitle: Y\ntags:\n  - foo\n---\nbody\n' },
   { label: 'tab indent (unparseable)', md: '---\ntitle: X\n\tbad: tab\ntags:\n  - foo\n---\nbody\n' },
+  // Audit-4 DI-01 / DI-02 / DI-05 / DI-06 — the inputs that previously slipped
+  // through this invariant (the corruption was a reformatted VALUE / a BOM
+  // duplicate block, neither of which the pre-Audit-4 assertions detected).
+  { label: 'unquoted date-only', md: '---\ncreated: 2025-01-15\ntags:\n  - foo\n---\nbody\n' },
+  { label: 'unquoted date-time', md: '---\ncreated: 2025-01-15T10:30:00\ntags:\n  - foo\n---\nbody\n' },
+  { label: 'leading BOM', md: '﻿---\ntitle: X\ntags:\n  - foo\n---\nbody\n' },
+  {
+    label: 'leading BOM + CRLF',
+    md: '﻿---\r\ntitle: X\r\ntags:\r\n  - foo\r\n---\r\nbody\r\n',
+  },
+  {
+    label: 'merge key (<<)',
+    md: '---\ndefaults: &d\n  color: red\nwidget:\n  <<: *d\n  size: big\ntags:\n  - foo\n---\nbody\n',
+  },
+  { label: 'folded > scalar', md: '---\nsummary: >\n  line one\n  line two\ntags:\n  - foo\n---\nbody\n' },
+  { label: 'special-char tags on BOM', md: '﻿---\ntags:\n  - "@home"\n  - foo\n---\nbody\n' },
   { label: 'no frontmatter', md: 'just a body, no frontmatter\n' },
   { label: 'empty', md: '' },
 ];

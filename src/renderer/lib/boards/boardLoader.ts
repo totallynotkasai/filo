@@ -566,7 +566,16 @@ export async function loadBoard(
   // overwrite an intentional collapse).
   warnUndersizedFrames(data.frames, data.board.name || relPath);
 
+  // Audit-4 DI-11 — spread the parsed envelope FIRST so unknown top-level keys
+  // that `V7BoardFileDataSchema.passthrough()` preserved at parse time survive
+  // the load → cache → save round-trip: the cache stores this object by
+  // reference (`cache[id] = data`) and the board write scheduler mutates +
+  // `JSON.stringify`s it in place, so a key present here is a key written back.
+  // Without the spread this reconstruction silently dropped any forward-compat
+  // envelope key a future Filo wrote, contradicting the schema's passthrough
+  // contract. The explicit fields below still pin the validated shape.
   const normalised: V7BoardFileData = {
+    ...data,
     board: data.board,
     tileDefs: data.tileDefs,
     connections: data.connections,

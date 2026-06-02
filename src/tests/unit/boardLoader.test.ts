@@ -94,6 +94,30 @@ describe('boardLoader', () => {
       }
     });
 
+    it('preserves unknown top-level envelope keys on load (DI-11 passthrough)', async () => {
+      // A forward-compat top-level key a future Filo (e.g. a V8 migration)
+      // wrote. `V7BoardFileDataSchema.passthrough()` keeps it through the parse;
+      // DI-11's `...data` spread keeps it through the loader's normalised
+      // reconstruction so it survives load → cache → save.
+      const file = validBoardFile();
+      const withExtra = {
+        ...file,
+        futureFeature: { enabled: true, note: 'keep me' },
+      };
+      installFiloStub({ 'board:load': () => JSON.stringify(withExtra) });
+
+      const result = await loadBoard('/vault', 'alpha.board.json');
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect((result.data as Record<string, unknown>).futureFeature).toEqual({
+          enabled: true,
+          note: 'keep me',
+        });
+        // The known fields still resolve normally.
+        expect(result.data.board.id).toBe('mindmap-1');
+      }
+    });
+
     it('returns not-found when the IPC returns null', async () => {
       installFiloStub({ 'board:load': () => null });
       const result = await loadBoard('/vault', 'missing.board.json');

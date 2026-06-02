@@ -166,6 +166,8 @@ export const IPC_PAYLOAD_SCHEMAS = {
   'app:ready-to-quit': z.tuple([]),
   // 6.2.H4 — same shape as `app:ready-to-quit`; semantics differ in main.
   'app:cancel-quit': z.tuple([]),
+  // Audit-4 DI-04 — quit heartbeat (no args); main clears its flush timer.
+  'app:quit-awaiting-user': z.tuple([]),
 
   // ── Sidebar geometry ──────────────────────────────────────────────────
   'sidebar:get-state': z.tuple([]),

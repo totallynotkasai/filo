@@ -102,6 +102,9 @@ describe('IPC channel parity', () => {
       // 6.2.H4 — renderer → main one-way cancel signal; main listens
       // via ipcMain.once inside the close/before-quit handlers.
       'app:cancel-quit',
+      // Audit-4 DI-04 — renderer → main quit heartbeat; same ipcMain.once
+      // registration in main.ts (not an ipcMain.handle in src/main/ipc).
+      'app:quit-awaiting-user',
     ]);
     const orphans = [...unionMembers].filter(
       (channel) => !registered.has(channel) && !broadcastOnly.has(channel),

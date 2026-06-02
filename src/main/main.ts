@@ -182,6 +182,17 @@ async function createWindow(): Promise<void> {
       mainWindow?.destroy();
     }, FLUSH_TIMEOUT_MS);
 
+    // Audit-4 DI-04 — heartbeat. The renderer sends this right before it opens
+    // an open-ended "Save failed" confirm. Clear the auto-destroy timer so the
+    // FLUSH_TIMEOUT_MS ceiling bounds only the automated flush, not the human's
+    // decision time at the dialog — otherwise the window destroys out from
+    // under the dialog and the user's choice (and edits) are discarded. The
+    // ready/cancel reply still drives the real quit; a renderer that never
+    // replies just leaves the window open, the safe direction (no data loss).
+    const onAwaitingUser = (): void => {
+      clearTimeout(timer);
+    };
+
     // 6.2.H4 — two terminal signals from the renderer: ready (proceed to
     // destroy) and cancel (user picked "Stay open and retry" on the save-
     // failure confirm; rewind isFlushingForQuit so they can keep editing).
@@ -189,6 +200,7 @@ async function createWindow(): Promise<void> {
     const onReady = (): void => {
       clearTimeout(timer);
       ipcMain.removeListener('app:cancel-quit', onCancel);
+      ipcMain.removeListener('app:quit-awaiting-user', onAwaitingUser);
       // Phase 4 / 4.4 — drain windowState + sidebarState before destroying
       // the window. The renderer's flush completed first; now wait on the
       // main-side debounces so the next launch sees the latest geometry.
@@ -209,10 +221,12 @@ async function createWindow(): Promise<void> {
     const onCancel = (): void => {
       clearTimeout(timer);
       ipcMain.removeListener('app:ready-to-quit', onReady);
+      ipcMain.removeListener('app:quit-awaiting-user', onAwaitingUser);
       isFlushingForQuit = false;
     };
     ipcMain.once('app:ready-to-quit', onReady);
     ipcMain.once('app:cancel-quit', onCancel);
+    ipcMain.once('app:quit-awaiting-user', onAwaitingUser);
 
     try {
       mainWindow.webContents.send('app:flush-and-quit');
@@ -220,6 +234,7 @@ async function createWindow(): Promise<void> {
       clearTimeout(timer);
       ipcMain.removeListener('app:ready-to-quit', onReady);
       ipcMain.removeListener('app:cancel-quit', onCancel);
+      ipcMain.removeListener('app:quit-awaiting-user', onAwaitingUser);
       logMainError('main:flush-and-quit-on-close', err);
       mainWindow?.destroy();
     }
@@ -397,6 +412,8 @@ app.on('before-quit', (event) => {
     // 6.2.H4 — also drain the cancel-quit listener so a late renderer
     // signal can't bring the (already torn down) flush state out of sync.
     ipcMain.removeAllListeners('app:cancel-quit');
+    // Audit-4 DI-04 — drain the heartbeat listener too.
+    ipcMain.removeAllListeners('app:quit-awaiting-user');
     void Promise.allSettled([
       flushWindowStateNow(),
       flushSidebarStateNow(),
@@ -413,20 +430,31 @@ app.on('before-quit', (event) => {
     finish();
   }, FLUSH_TIMEOUT_MS);
 
+  // Audit-4 DI-04 — heartbeat (see the close-event path for the full
+  // rationale). Clear the auto-exit timer when the renderer signals a human
+  // is reading the open-ended save-failure confirm, so the 5 s ceiling bounds
+  // only the automated flush. The ready/cancel reply still drives the exit.
+  const onAwaitingUser = (): void => {
+    clearTimeout(timer);
+  };
+
   // 6.2.H4 — same two-signal handshake as the close-event path. On Cancel
   // we don't exit, we rewind `isFlushingForQuit` and remove the listeners.
   const onReady = (): void => {
     clearTimeout(timer);
     ipcMain.removeListener('app:cancel-quit', onCancel);
+    ipcMain.removeListener('app:quit-awaiting-user', onAwaitingUser);
     finish();
   };
   const onCancel = (): void => {
     clearTimeout(timer);
     ipcMain.removeListener('app:ready-to-quit', onReady);
+    ipcMain.removeListener('app:quit-awaiting-user', onAwaitingUser);
     isFlushingForQuit = false;
   };
   ipcMain.once('app:ready-to-quit', onReady);
   ipcMain.once('app:cancel-quit', onCancel);
+  ipcMain.once('app:quit-awaiting-user', onAwaitingUser);
 
   try {
     win.webContents.send('app:flush-and-quit');
@@ -434,6 +462,7 @@ app.on('before-quit', (event) => {
     clearTimeout(timer);
     ipcMain.removeListener('app:ready-to-quit', onReady);
     ipcMain.removeListener('app:cancel-quit', onCancel);
+    ipcMain.removeListener('app:quit-awaiting-user', onAwaitingUser);
     logMainError('main:flush-and-quit', err);
     finish();
   }

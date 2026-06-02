@@ -21,7 +21,9 @@ import { uiStore } from '../../stores/ui.svelte';
 export interface QuitFlushDeps {
   saveStateState: () => 'idle' | 'saving' | 'saved' | 'error';
   save: () => Promise<boolean>;
-  send: (channel: 'app:ready-to-quit' | 'app:cancel-quit') => void;
+  send: (
+    channel: 'app:ready-to-quit' | 'app:cancel-quit' | 'app:quit-awaiting-user',
+  ) => void;
   reportError: (context: string, err: unknown, msg: string) => void;
 }
 
@@ -42,6 +44,15 @@ export async function handleFlushAndQuit(deps: QuitFlushDeps): Promise<void> {
   // error from an earlier debounced write). Block the quit until the
   // user explicitly chooses: Quit anyway (accept data loss; the user
   // can recover .tmp files from disk) or Stay open and retry.
+  //
+  // Audit-4 DI-04 — heartbeat BEFORE the confirm. The dialog below is
+  // open-ended (no timeout), but main destroys the window after a 5 s flush
+  // ceiling. A human reading a "Save failed" dialog routinely takes longer
+  // than 5 s, so the timer would fire first, vanish the dialog, and discard
+  // the choice (and the edits). Tell main a human is now in the loop so it
+  // clears that auto-destroy timer; the ready/cancel reply below then drives
+  // the real quit on the user's schedule.
+  deps.send('app:quit-awaiting-user');
   const quitAnyway = await new Promise<boolean>((resolve) => {
     uiStore.openConfirm({
       title: 'Save failed',

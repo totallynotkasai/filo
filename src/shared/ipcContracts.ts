@@ -379,6 +379,12 @@ export interface IpcChannelMap {
     args: [];
     result: void;
   };
+  // Audit-4 DI-04 — renderer heartbeat before the open-ended save-failure
+  // confirm; main clears the auto-destroy flush timer on receipt.
+  'app:quit-awaiting-user': {
+    args: [];
+    result: void;
+  };
 
   // ── Sidebar geometry ─────────────────────────────────────────────
   'sidebar:get-state': {

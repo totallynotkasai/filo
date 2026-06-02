@@ -94,6 +94,11 @@ export type IpcChannel =
   // isFlushingForQuit and the flush-timeout timer, keeping the window
   // alive for retry instead of destroying it.
   | 'app:cancel-quit'
+  // Audit-4 DI-04 — renderer heartbeat. Sent right before the open-ended
+  // save-failure confirm so main clears its FLUSH_TIMEOUT_MS auto-destroy
+  // timer and waits on the user reply (Quit-anyway / Stay-open) instead of
+  // destroying the window out from under the dialog (and dropping the edits).
+  | 'app:quit-awaiting-user'
   // Sidebar — per-machine state (width, in-app floating mode, bounds)
   | 'sidebar:get-state'
   | 'sidebar:set-state';
@@ -111,7 +116,7 @@ export type IpcChannel =
  * run the same `validateIpcPayload` gate `invoke` uses, closing the hole
  * where `send` forwarded unvalidated args straight to the main process.
  */
-export type SendChannel = 'app:ready-to-quit' | 'app:cancel-quit';
+export type SendChannel = 'app:ready-to-quit' | 'app:cancel-quit' | 'app:quit-awaiting-user';
 
 /**
  * File tree node representing a file or folder in the vault.

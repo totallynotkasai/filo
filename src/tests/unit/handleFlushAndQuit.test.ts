@@ -37,12 +37,12 @@ describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
   });
 
   it('save fails (returns false): opens Confirm with Quit anyway / Stay open labels', async () => {
-    let sentChannel: string | null = null;
+    const sent: string[] = [];
     const promise = handleFlushAndQuit({
       saveStateState: () => 'idle',
       save: async () => false,
       send: (c) => {
-        sentChannel = c;
+        sent.push(c);
       },
       reportError: () => {},
     });
@@ -55,14 +55,45 @@ describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
     expect(uiStore.confirmDialog?.confirmLabel).toBe('Quit anyway');
     expect(uiStore.confirmDialog?.cancelLabel).toBe('Stay open and retry');
 
-    // Sentinel: no quit signal until the user clicks something.
-    expect(sentChannel).toBeNull();
+    // Audit-4 DI-04 — the heartbeat has fired (so main cleared its
+    // auto-destroy timer), but no TERMINAL quit signal yet — the window must
+    // stay alive until the user clicks something.
+    expect(sent).toEqual(['app:quit-awaiting-user']);
 
     // User picks "Quit anyway".
     uiStore.confirmDialog!.onConfirm(false);
     uiStore.closeConfirm();
     await promise;
-    expect(sentChannel).toBe('app:ready-to-quit');
+    expect(sent).toEqual(['app:quit-awaiting-user', 'app:ready-to-quit']);
+  });
+
+  it('DI-04: emits app:quit-awaiting-user BEFORE opening the confirm on a save failure', async () => {
+    // The heartbeat must reach main before the (open-ended) confirm appears so
+    // main can clear its FLUSH_TIMEOUT_MS auto-destroy timer first — otherwise
+    // the timer fires, destroys the window under the dialog, and discards the
+    // user's choice + edits.
+    const order: string[] = [];
+    const promise = handleFlushAndQuit({
+      saveStateState: () => 'idle',
+      save: async () => false,
+      send: (c) => {
+        if (c === 'app:quit-awaiting-user') {
+          // At heartbeat time the confirm must not be open yet.
+          expect(uiStore.confirmDialog).toBeNull();
+        }
+        order.push(c);
+      },
+      reportError: () => {},
+    });
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(uiStore.confirmDialog).not.toBeNull();
+    expect(order).toEqual(['app:quit-awaiting-user']);
+
+    uiStore.confirmDialog!.onCancel?.();
+    uiStore.closeConfirm();
+    await promise;
+    expect(order).toEqual(['app:quit-awaiting-user', 'app:cancel-quit']);
   });
 
   it('save fails + Stay open: sends app:cancel-quit (no ready-to-quit)', async () => {

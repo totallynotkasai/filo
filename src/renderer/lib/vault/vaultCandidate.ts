@@ -211,7 +211,12 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     const detail = typeof v.error === 'string' ? v.error : 'parse error';
     if (target) corruptionTargets.push(target);
     warnings.push({
-      text: `Filo couldn't parse .filo/${key}.json (${detail}). Edits to that file are paused — fix the JSON and reopen the vault, or close this toast to overwrite with defaults.`,
+      // Audit-4 DI-12 — dropped the dead "or close this toast to overwrite with
+      // defaults" clause. Nothing wired closing the toast to
+      // `clearCorruptConfigTarget`, so the corrupt file is preserved (the safe
+      // direction) and that promise was misleading. State what actually
+      // happens: edits stay paused until the user fixes the JSON and reopens.
+      text: `Filo couldn't parse .filo/${key}.json (${detail}). Edits to that file are paused to protect it — fix the JSON and reopen the vault to resume.`,
       type: 'error',
       duration: 0,
     });

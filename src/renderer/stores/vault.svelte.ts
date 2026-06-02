@@ -495,10 +495,18 @@ function runPostCommitTasks(
     await boardCacheStore.applyFrontmatterToBackedTilesBatch(
       vaultIndexStore.allMetadata(),
     );
+    // Audit-4 DI-03 — vault-identity guard. The await above yields, so a
+    // sub-300 ms A→B swap can leave the module `fileTree` pointing at B while
+    // the captured `newVaultPath` is still A. Pruning B's tags against A's
+    // prefix drops every entry, and the scheduled save lands in *B's* tags.json
+    // (target root is legitimately B, so `assertActiveVault` is no help).
+    // Mirror `runRecoverySequencer`'s post-await re-check and bail.
+    if (vaultPath !== newVaultPath) return;
     if (!fileTagsStore.isEmpty()) {
-      // Phase 23 M13 — prune `.filo/tags.json:fileTags` entries whose
-      // path is no longer present in the live tree.
-      const flat = flattenTreePaths(fileTree, newVaultPath);
+      // Phase 23 M13 — prune `.filo/tags.json:fileTags` entries whose path is
+      // no longer in the tree. DI-03 — flatten the candidate's *captured* tree
+      // (always paired with `newVaultPath`), not the live module `fileTree`.
+      const flat = flattenTreePaths(candidate.tree, newVaultPath);
       const dropped = fileTagsStore.pruneOrphanFileTags(flat);
       if (dropped.length > 0) {
         uiStore.toast(

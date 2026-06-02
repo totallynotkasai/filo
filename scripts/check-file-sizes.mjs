@@ -150,7 +150,11 @@ const ALLOWLIST = {
   // reads + clears the main-written breadcrumb on vault open and surfaces the
   // preserved-partial locations in a persistent toast. +1 import + ~26 LOC
   // (recovery block + comments). New snapshot: 1491 LOC.
-  'src/renderer/stores/vault.svelte.ts': 1491,
+  // AUDIT4_REMEDIATION_PLAN_2026-06-02 Phase 2 DI-03 — `runPostCommitTasks`
+  // gained a post-await vault-identity guard (so a fast A→B swap can't write
+  // the outgoing vault's pruned tags into the incoming one) + the concise
+  // race-explainer comment. +8 LOC. New snapshot: 1499 LOC.
+  'src/renderer/stores/vault.svelte.ts': 1499,
   // External-changes orchestrator: classifies fs-watcher events into
   // editor-dirty toast / silent reload / sync-frontmatter / deleted-file
   // prompt / properties-popup-dirty prompt. 500 ms attachment-delete grace

@@ -324,9 +324,16 @@ export function parseMarkdown(
   // leading U+FEFF before matching the fence regex. This is one of the
   // legitimate "raw disk bytes via a different gateway" sites the no-bom-
   // sniff gate's inline escape was designed for.
+  //
+  // Audit-4 DI-17 (M9 parity) — `[ \t]*` after each `---` fence tolerates
+  // trailing horizontal whitespace (`--- `), exactly as `parseMarkdownFile`
+  // does (its 6.4.M9 fix). Without it, a fence line an editor/linter left a
+  // trailing space on parsed here as "no frontmatter" → empty `rawFrontmatter`
+  // → the index's clean-bytes view diverged from the write gateway's for that
+  // file, defeating the "mirrors parseMarkdownFile" promise above.
   // allow-bom-sniff: parseMarkdown receives raw disk bytes from indexOnePath's vault:read-file-text response
   const stripped = rawContent.charCodeAt(0) === 0xfeff ? rawContent.slice(1) : rawContent;
-  const fenced = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(stripped);
+  const fenced = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?/.exec(stripped);
   const rawFrontmatter = fenced ? fenced[1] : '';
 
   // Routed through `normalizeTags` so the equality contract used by

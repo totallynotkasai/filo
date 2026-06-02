@@ -59,6 +59,18 @@ inline #should-not-appear in body.
     expect(meta.title).toBe('Hello');
     expect(meta.tags).toEqual([]);
   });
+
+  it('captures rawFrontmatter when the fence lines carry trailing whitespace (DI-17 M9 parity)', () => {
+    // Editors / linters routinely leave a trailing space on a `---` fence. The
+    // index fence regex must tolerate it (matching parseMarkdownFile's 6.4.M9
+    // `[ \t]*`) so the index's verbatim-bytes view doesn't diverge from the
+    // write gateway's. The pre-fix regex (`^---\r?\n`) didn't match `--- \n`,
+    // so rawFrontmatter came back empty for such a file.
+    const md = '--- \ntitle: Spaced\nstatus: active\n--- \n\n# Body\n';
+    const meta = parseMarkdown('spaced.md', md);
+    expect(meta.rawFrontmatter).toContain('title: Spaced');
+    expect(meta.rawFrontmatter).toContain('status: active');
+  });
 });
 
 describe('VaultIndex', () => {

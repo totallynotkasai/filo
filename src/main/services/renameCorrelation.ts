@@ -134,6 +134,22 @@ async function sameBasenameBytesPreserved(
   if (isEmpty && parentFolder(missing.filename) !== parentFolder(present.filename)) {
     return false;
   }
+  // Audit-4 DI-17 (cold-cache) — when BOTH probes were supplied (production
+  // always supplies both) yet NEITHER could perform a comparison, we have zero
+  // evidence the two same-basename files share bytes: the missing (old) side
+  // was never observed, so its size AND hash are both unknown. A cold cache
+  // (vault just opened, no reconcile walk yet, the old path never seen) is
+  // exactly when identity is unknowable — pairing on basename alone here would
+  // rewire tile `file`/`src`/`coverImage` refs (and `.filo/tags.json`) to a
+  // possibly-unrelated file with no undo. Refuse: the pair falls through to
+  // delete+create, recoverable via the broken-ref relink once the cache warms.
+  // Probe-absent callers (legacy tests) keep the pre-2.1 basename-only pairing,
+  // so this only tightens the production both-probes path.
+  if (relPathSize && relPathHash) {
+    const sizeComparable = mSize !== null && pSize !== null;
+    const hashComparable = mHash !== null && pHash !== null;
+    if (!sizeComparable && !hashComparable) return false;
+  }
   return true;
 }
 

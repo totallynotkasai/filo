@@ -1,8 +1,13 @@
 import { watch, type FSWatcher, statSync, promises as fsPromises } from 'fs';
 import { BrowserWindow } from 'electron';
 import { extname, join } from 'path';
-import { createHash } from 'crypto';
 import { correlateRenames } from './renameCorrelation';
+import {
+  WATCHER_HASH_MAX_BYTES,
+  fnv1a32,
+  sha1Hex,
+  hashFileForRename,
+} from './fileWatcherHash';
 import { logMainError } from '../utils/mainLogger';
 import { toPosix, relativePosix } from '../utils/pathHelpers';
 import { vaultPath, type VaultPath } from '../../shared/vaultPath';
@@ -95,32 +100,17 @@ interface ReconcileEntry {
   mtimeMs: number;
   size: number;
   /**
-   * Phase 31 A6.5 — short FNV-1a 32-bit hash of the first 4 KB of the
-   * file (or the full content for smaller files). Catches the FAT/SMB
-   * case where mtime granularity is 2 seconds and two writes within the
-   * same second leave both stat fields unchanged. `undefined` for
-   * non-.md files (we don't hash media for cost reasons) and for files
-   * we couldn't open during the walk.
+   * Audit-4 DI-15 — FNV-1a 32-bit hash of the file content (the whole file
+   * under {@link WATCHER_HASH_MAX_BYTES}, a 4 KB prefix above it). Catches
+   * the FAT/SMB case where mtime granularity is 2 seconds and two writes
+   * within the same second leave both stat fields unchanged — including a
+   * deep `.board.json` edit past offset 4096 that the pre-fix 4 KB-only hash
+   * missed. `undefined` for non-`.md`/`.board.json` files (we don't hash
+   * media for cost reasons) and for files we couldn't open during the walk.
+   * The implementation lives in `fileWatcherHash.ts` so the walk seed and the
+   * on-demand rename probe share one comparable hashing window.
    */
   hash?: number;
-}
-
-/**
- * Phase 31 A6.5 — FNV-1a 32-bit hash over a Buffer slice. Used during
- * reconciliation to detect "same mtime + same size but different bytes"
- * mid-second rewrites that fs.stat alone misses. 4 KB is enough to vary
- * for almost every realistic .md edit and keeps the per-file cost in
- * the microseconds.
- */
-function fnv1a32(buf: Buffer): number {
-  let hash = 0x811c9dc5;
-  const max = Math.min(buf.length, 4096);
-  for (let i = 0; i < max; i++) {
-    hash ^= buf[i];
-    // FNV prime 16777619, kept inside int32 via Math.imul.
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return hash >>> 0;
 }
 
 /**
@@ -213,7 +203,7 @@ export class FileWatcher {
   /**
    * Phase 31 A4.3 — per-path content-hash cache. Populated lazily when a
    * file appears in a watcher event AND is small enough to hash cheaply
-   * (see `HASH_CACHE_MAX_BYTES`). Used by `correlateRenames`'s
+   * (see `WATCHER_HASH_MAX_BYTES`). Used by `correlateRenames`'s
    * cross-basename pass to refuse pairing two files that share a size
    * but not their content.
    */
@@ -705,42 +695,35 @@ export class FileWatcher {
           const stat = await fsPromises.stat(full);
           const rel = relativePosix(this.vaultPath, full);
           let hash: number | undefined;
-          // Phase 31 A6.5 — hash `.md` files so reconcile can detect
-          // mid-second rewrites on filesystems with second-resolution
-          // mtime (FAT, SMB, some NFS configs). Capped at 4 KB inside
-          // fnv1a32 so multi-MB notes don't slow the walker.
+          // Hash `.md` + `.board.json` so reconcile can detect mid-second
+          // rewrites on filesystems with second-resolution mtime (FAT, SMB,
+          // some NFS configs), AND seed the SHA-1 the cross-basename
+          // correlator consumes for the now-missing source of a rename. One
+          // read feeds both digests so the walk stays at one open per file.
           //
-          // Sprint B / B10 — also seed the SHA-1 prefix hash that the
-          // cross-basename correlator consumes. Reading the head once
-          // and feeding both hashes off the same buffer keeps the walk
-          // cost at one fs.open per .md while ensuring the cache is
-          // populated before the first cross-basename rename event for
-          // the file. Without the seed, the first such event for any
-          // file always failed to pair (hashAsync had no cached value
-          // for the now-missing source).
-          //
-          // 6.4.M8 — extend to `.board.json` as well. Filo round-trips
-          // those through `atomicWriteFile` (temp + rename), which can
-          // present identical mtime+size to the reconciler on FAT/SMB
-          // filesystems where mtime resolution is coarse. Without the
-          // hash, an external `.board.json` edit with mtime collision
-          // is invisible to the watcher — a rare but real data-loss
-          // path for users syncing vaults over SMB shares.
+          // Audit-4 DI-07/DI-15 — under WATCHER_HASH_MAX_BYTES read the WHOLE
+          // file: the reconcile FNV then covers a deep `.board.json` edit past
+          // offset 4096 (DI-15), and the SHA-1 seed matches the on-demand
+          // gate's whole-file digest (DI-07). Above the ceiling fall back to a
+          // 4 KB-prefix FNV only — a >10 MB growth changes the size (already
+          // flagged) and the rename gate refuses >10 MB pairs, so no SHA-1
+          // seed is written (`hashFileForRename` returns null there too).
           const lower = rel.toLowerCase();
           if (lower.endsWith('.md') || lower.endsWith('.board.json')) {
             try {
-              const fd = await fsPromises.open(full, 'r');
-              try {
-                const head = Buffer.alloc(4096);
-                const { bytesRead } = await fd.read(head, 0, 4096, 0);
-                const slice = head.slice(0, bytesRead);
-                hash = fnv1a32(slice);
-                this.lastKnownHashes.set(
-                  vaultPath(rel),
-                  createHash('sha1').update(slice).digest('hex'),
-                );
-              } finally {
-                await fd.close();
+              if (stat.size <= WATCHER_HASH_MAX_BYTES) {
+                const buf = await fsPromises.readFile(full);
+                hash = fnv1a32(buf);
+                this.lastKnownHashes.set(vaultPath(rel), sha1Hex(buf));
+              } else {
+                const fd = await fsPromises.open(full, 'r');
+                try {
+                  const head = Buffer.alloc(4096);
+                  const { bytesRead } = await fd.read(head, 0, 4096, 0);
+                  hash = fnv1a32(head.subarray(0, bytesRead));
+                } finally {
+                  await fd.close();
+                }
               }
             } catch {
               // Hash failure isn't fatal; leave undefined and the diff
@@ -873,27 +856,24 @@ export class FileWatcher {
         return cached ?? null;
       }
     };
-    // Phase 31 A4.3 — content-hash probe for the cross-basename rename
-    // pass. For present files smaller than HASH_CACHE_MAX_BYTES (10 MB),
-    // hash the bytes and cache; for missing files, return whatever we
-    // cached when the file was last seen. Anything else returns null so
-    // the correlator's hash-required branch refuses to pair (defensive
-    // — better to emit delete+create than a false-positive rename).
-    const HASH_CACHE_MAX_BYTES = 10 * 1024 * 1024;
-    // Sprint B / B10 — bytes hashed for the cross-basename probe and the
-    // reconcile-walk seed. Must be identical at both call sites so the
-    // cached digest from the walk matches the on-demand digest from the
-    // correlator on first cross-basename event.
-    const HASH_PROBE_BYTES = 4096;
-    // Polish phase 1.4 — async hash read with a 5-concurrent semaphore.
-    // The pre-fix `readFileSync` blocked the event loop for the duration
-    // of every cross-basename hash probe, which on a 500-file vault with
-    // multi-MB notes could pin the main thread for hundreds of ms and
-    // back up every other IPC call. `fs.promises.readFile` runs the I/O
-    // on the libuv thread pool; the semaphore caps concurrent reads at
-    // 5 so a synthetic burst (e.g. a recursive directory rename arriving
-    // as N missing + N present events in one tick) doesn't saturate the
-    // pool and starve unrelated handlers.
+    // Content-hash probe for the cross-basename rename pass. For a present
+    // file under the ceiling, hash it and cache the digest; for a missing
+    // file (the now-gone old path) return whatever we cached when it was last
+    // seen. Anything else returns null so the correlator's hash-required
+    // branch refuses to pair (defensive — better to emit delete+create than a
+    // false-positive rename).
+    //
+    // Audit-4 DI-07 — `hashFileForRename` hashes the WHOLE file (capped at
+    // WATCHER_HASH_MAX_BYTES), identical to the reconcile-walk seed, so two
+    // files that share a 4 KB head but diverge later no longer collide and a
+    // seeded digest still matches an on-demand one.
+    //
+    // Polish phase 1.4 — async read with a 5-concurrent semaphore. The pre-fix
+    // `readFileSync` blocked the event loop for every probe, which on a
+    // 500-file vault with multi-MB notes could pin the main thread for
+    // hundreds of ms. The semaphore caps concurrent reads so a synthetic burst
+    // (a recursive rename arriving as N missing + N present in one tick) can't
+    // saturate the libuv pool and starve unrelated handlers.
     const HASH_CONCURRENCY = 5;
     let inflightHashes = 0;
     const hashQueue: Array<() => void> = [];
@@ -916,28 +896,13 @@ export class FileWatcher {
     const hashAsync = async (relPath: string): Promise<string | null> => {
       const key = vaultPath(relPath);
       try {
-        const sz = statSync(join(this.vaultPath, relPath)).size;
-        if (sz > HASH_CACHE_MAX_BYTES) return null;
+        const abs = join(this.vaultPath, relPath);
+        const sz = statSync(abs).size;
+        if (sz > WATCHER_HASH_MAX_BYTES) return null;
         await acquireHashSlot();
         try {
-          // Sprint B / B10 — hash only the first HASH_PROBE_BYTES of the
-          // file so the reconcile-walk seed (which uses the same prefix
-          // hash) and the on-demand correlator hash use a single,
-          // comparable digest format. Limits the probe cost to ~4 KB
-          // per file on disk; SHA-1 over 4 KB still gives 160 bits of
-          // identity, well above the cross-basename pair-uniqueness
-          // requirements (single missing + single present per size+ext
-          // bucket).
-          const fd = await fsPromises.open(join(this.vaultPath, relPath), 'r');
-          let hash: string;
-          try {
-            const head = Buffer.alloc(HASH_PROBE_BYTES);
-            const { bytesRead } = await fd.read(head, 0, HASH_PROBE_BYTES, 0);
-            hash = createHash('sha1').update(head.subarray(0, bytesRead)).digest('hex');
-          } finally {
-            await fd.close();
-          }
-          this.lastKnownHashes.set(key, hash);
+          const hash = await hashFileForRename(abs, sz);
+          if (hash) this.lastKnownHashes.set(key, hash);
           return hash;
         } finally {
           releaseHashSlot();

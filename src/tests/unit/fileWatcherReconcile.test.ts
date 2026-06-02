@@ -136,6 +136,42 @@ describe('FileWatcher.reconcileNow', () => {
     expect(filesChanged.some((c) => c.filename === 'My.board.json')).toBe(true);
   });
 
+  // Audit-4 DI-15 — the reconcile walk hashed only the first 4 KB of a
+  // `.board.json`, so an external edit landing PAST offset 4096 with an
+  // unchanged total size + coarse mtime hashed "equal" and the change was
+  // dropped (then overwritten by the local cache flush). The whole-file hash
+  // closes that window. This is the deep-edit sibling of the M8 case above.
+  it('detects a .board.json change past offset 4096 with identical mtime+size (DI-15)', async () => {
+    const target = join(dir, 'Deep.board.json');
+    const fixedTime = new Date('2026-01-01T00:00:00Z');
+    // 4 KB identical head + an equal-length tail that differs between writes,
+    // so total size + first-4 KB hash are unchanged across the two versions.
+    const head = 'A'.repeat(4096);
+    const oldContent = head + 'OLD-tail-bytes';
+    const newContent = head + 'NEW-tail-bytes';
+    expect(oldContent.length).toBe(newContent.length);
+
+    await fs.writeFile(target, oldContent, 'utf-8');
+    await fs.utimes(target, fixedTime, fixedTime);
+    const preStat = await fs.stat(target);
+    await watcher.reconcileNow({ seedOnly: true });
+
+    // Rewrite with content that diverges ONLY past offset 4096; same length.
+    await fs.writeFile(target, newContent, 'utf-8');
+    await fs.utimes(target, fixedTime, fixedTime);
+    const postStat = await fs.stat(target);
+    expect(postStat.mtimeMs).toBe(preStat.mtimeMs);
+    expect(postStat.size).toBe(preStat.size);
+
+    await watcher.reconcileNow();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    const filesChanged = sentEvents
+      .filter((e) => e.channel === 'vault:files-changed')
+      .flatMap((e) => e.payload[0] as Array<{ filename: string; type: string }>);
+    expect(filesChanged.some((c) => c.filename === 'Deep.board.json')).toBe(true);
+  });
+
   it('drops reconciled events whose path is currently suppressed', async () => {
     await fs.writeFile(join(dir, 'SelfWrite.md'), 'first', 'utf-8');
     await watcher.reconcileNow({ seedOnly: true });

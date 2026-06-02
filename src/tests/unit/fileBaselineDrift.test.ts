@@ -309,6 +309,92 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
     expect(promptCalled).toBe(0);
   });
 
+  it('DI-14 — post-write stat failure KEEPS the prior baseline (no silent-overwrite window)', async () => {
+    // Baseline {1000,100}. Pre-write drift stat (1st) matches → write proceeds.
+    // Post-write refresh stat (2nd) FAILS. Pre-DI-14 (6.4.M2) this CLEARED the
+    // baseline → the next write would skip its drift check (silent-overwrite
+    // window). DI-14 keeps the prior baseline so the drift check stays armed.
+    let statCalls = 0;
+    const invokes = installFiloStub({
+      intercept: (channel) => {
+        if (channel === 'vault:stat') {
+          statCalls++;
+          if (statCalls === 1) return { success: true, mtimeMs: 1000, size: 100 };
+          // Post-write stat fails (AV / SMB / VFS hiccup).
+          return { success: false, code: 'EIO' };
+        }
+        return undefined;
+      },
+    });
+    const relPath = 'Notes/stat-fail.md';
+    markHydrated(relPath, false, 1000, 100);
+
+    await writeMarkdownFile({
+      vaultRoot: '/vault',
+      relPath,
+      frontmatter: {},
+      body: 'write whose post-write stat fails',
+      callerId: 'di14',
+      docId: null,
+    });
+
+    // The write landed (post-write stat fires only after a successful write).
+    expect(invokes.some((i) => i.channel === 'vault:write-existing-file-text')).toBe(true);
+    // DI-14: baseline KEPT, not cleared.
+    expect(getBaseline(relPath)).toEqual({ mtimeMs: 1000, size: 100 });
+  });
+
+  it('DI-09 — concurrent writes to the same path serialize across callerIds', async () => {
+    // A TextTile (`text-tile:1`) and a DocumentEditor (`document-editor:1`)
+    // write the SAME .md concurrently. Without per-path chaining their write
+    // IPCs interleave and the loser's bytes are clobbered; with it, the second
+    // write's IPC starts only after the first fully settles.
+    const events: string[] = [];
+    let releaseA: (() => void) | null = null;
+    installFiloStub({
+      intercept: (channel, args) => {
+        if (channel === 'vault:write-existing-file-text') {
+          const content = String(args[2]);
+          if (content.includes('AAA')) {
+            events.push('A:start');
+            return new Promise((resolve) => {
+              releaseA = () => {
+                events.push('A:done');
+                resolve({ success: true });
+              };
+            });
+          }
+          if (content.includes('BBB')) {
+            events.push('B:start');
+            return { success: true };
+          }
+        }
+        return undefined;
+      },
+    });
+    const relPath = 'Notes/shared.md';
+    markHydrated(relPath, false); // no baseline → skip the pre-write drift stat
+
+    const pA = writeMarkdownFile({
+      vaultRoot: '/vault', relPath, frontmatter: {}, body: 'AAA',
+      callerId: 'text-tile:1', docId: null,
+    });
+    const pB = writeMarkdownFile({
+      vaultRoot: '/vault', relPath, frontmatter: {}, body: 'BBB',
+      callerId: 'document-editor:1', docId: null,
+    });
+
+    // Let A reach (and hang at) its write IPC. B must be queued behind A's
+    // chain and not have started its own write IPC yet.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(events).toEqual(['A:start']);
+
+    releaseA!();
+    await Promise.all([pA, pB]);
+    // B's write IPC fired only after A fully completed.
+    expect(events).toEqual(['A:start', 'A:done', 'B:start']);
+  });
+
   it('handler unregistered → drift falls through as Keep-local (proceeds with write)', async () => {
     // External-edit handler NOT installed (matches the bootstrap window
     // before vaultExternalChanges has registered, or test environments

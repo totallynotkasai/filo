@@ -241,7 +241,13 @@ const ALLOWLIST = {
   // cascade (sentinel write + flushAllDirty); the sentinel's tagsAffected
   // flag re-asserts the tag rename on recovery. +16 LOC of comment + guard.
   // New snapshot: 1581 LOC.
-  'src/renderer/stores/vaultExternalChanges.ts': 1581,
+  // AUDIT4_REMEDIATION_PLAN_2026-06-02 Phase 4 DI-17 — the tags-only-rename
+  // early-return now captures the synchronous tags flush's `{ ok }` result and,
+  // when it FAILED, lays down a minimal recovery sentinel (no affected boards,
+  // tagsAffected) so a failed tags-only rename is recoverable on reopen instead
+  // of silently lost. +32 LOC of comment + flush-result capture + sentinel
+  // write. New snapshot: 1613 LOC.
+  'src/renderer/stores/vaultExternalChanges.ts': 1613,
   // tileCommands.ts dropped off the allowlist (AUDIT_REMEDIATION_PLAN_2026-05-29
   // Phase 5 / C-3): the tag-driven commands (AddTileTag / RemoveTileTag /
   // AddPathTag / RemovePathTag / ToggleTagFade) moved to the new sibling
@@ -264,7 +270,14 @@ const ALLOWLIST = {
   // LOC. Splitting (e.g. factoring the drift-prompt loop + hydrate gateway
   // into siblings) is queued for a later structural pass; for now the growth
   // is the smallest fix for two data-safety races.
-  'src/renderer/lib/vault/markdownFileWriter.ts': 1009,
+  // AUDIT4_REMEDIATION_PLAN_2026-06-02 Phase 4 DI-09 + DI-17 — added a per-
+  // resolved-path write chain (`writeChainByPath`) so two editors on one `.md`
+  // (TextTile + DocumentEditor) serialise at the IPC layer instead of racing
+  // and last-writer-clobbering the body (DI-09), plus the DI-17 documentation
+  // of the H13 stale-cache re-read branch (retained as defense-in-depth,
+  // believed unreachable under M1 docId-keyed monotonic versioning). +36 LOC
+  // of map + chaining logic + comments. New snapshot: 1045 LOC.
+  'src/renderer/lib/vault/markdownFileWriter.ts': 1045,
 };
 
 function toPosix(p) {

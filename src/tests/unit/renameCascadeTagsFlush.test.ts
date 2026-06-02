@@ -173,4 +173,77 @@ describe('rename cascade — synchronous tags.json flush (F3)', () => {
     flushSpy.mockRestore();
     tagsFlushSpy.mockRestore();
   });
+
+  // Audit-4 DI-17 — a tags-only rename (no board cascade) whose synchronous
+  // tags flush FAILS must still leave a recovery breadcrumb. Without it the
+  // hasCascadeWork early-return skips the sentinel and the failed tag rename is
+  // silently unrecoverable, contradicting the F3 catch's promise.
+  it('DI-17 — a failed tags-only flush writes a recovery sentinel (no silent loss)', async () => {
+    const sentinelWrites: string[] = [];
+    installFiloMock((channel: string, ...args: unknown[]) => {
+      if (channel === 'tags:load') return null;
+      if (channel === 'tags:save') {
+        tagsSaves.push(String(args[1]));
+        return undefined;
+      }
+      if (channel === 'vault:read-file-text') return { success: false, code: 'ENOENT' };
+      if (
+        channel === 'vault:write-file-text' &&
+        String(args[1]).includes('rename-cascade-pending.json')
+      ) {
+        sentinelWrites.push(String(args[2]));
+        return { success: true };
+      }
+      return { success: true };
+    });
+
+    // The realistic failure: flushPendingSave RESOLVES { ok: false } (the misc
+    // scheduler caught the IPC error internally).
+    const tagsFlushSpy = vi
+      .spyOn(fileTagsStore, 'flushPendingSave')
+      .mockResolvedValue({ ok: false });
+
+    const slice = makeExternalChangesSlice(ctxFor());
+    // 'Old.md' is a note, not a board, and no tile references it → no board
+    // cascade → hits the hasCascadeWork early-return.
+    await slice.handleExternalRename('Old.md', 'New.md');
+
+    expect(tagsFlushSpy).toHaveBeenCalled();
+    expect(sentinelWrites.length).toBeGreaterThanOrEqual(1);
+    const payload = JSON.parse(sentinelWrites[sentinelWrites.length - 1]);
+    const entry = payload.entries[payload.entries.length - 1];
+    expect(entry.tagsAffected).toBe(true);
+    expect(entry.affectedBoardIds).toEqual([]);
+    expect(entry.oldPath).toBe('Old.md');
+    expect(entry.newPath).toBe('New.md');
+
+    tagsFlushSpy.mockRestore();
+  });
+
+  // Contrast: a SUCCESSFUL tags-only flush keeps the C-A5-4 skip — no sentinel
+  // noise when there's nothing to recover.
+  it('DI-17 — a successful tags-only flush writes NO sentinel', async () => {
+    const sentinelWrites: string[] = [];
+    installFiloMock((channel: string, ...args: unknown[]) => {
+      if (channel === 'tags:load') return null;
+      if (channel === 'tags:save') {
+        tagsSaves.push(String(args[1]));
+        return undefined;
+      }
+      if (channel === 'vault:read-file-text') return { success: false, code: 'ENOENT' };
+      if (
+        channel === 'vault:write-file-text' &&
+        String(args[1]).includes('rename-cascade-pending.json')
+      ) {
+        sentinelWrites.push(String(args[2]));
+        return { success: true };
+      }
+      return { success: true };
+    });
+
+    const slice = makeExternalChangesSlice(ctxFor());
+    await slice.handleExternalRename('Old.md', 'New.md');
+
+    expect(sentinelWrites).toHaveLength(0);
+  });
 });

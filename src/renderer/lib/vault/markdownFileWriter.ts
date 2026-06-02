@@ -35,7 +35,7 @@ import { assembleMarkdownFile, parseMarkdownFile } from '../editor/markdownSync'
 import { trackComponentWrite } from '../boards/boardSaver';
 import { createScheduler } from '../boards/writeScheduler';
 import { registerPendingProbe } from '../boards/writeStateTracking';
-import { vaultPath } from '@shared/vaultPath';
+import { vaultPath, type VaultPath } from '@shared/vaultPath';
 import {
   getLastFlushedFrontmatterVersion,
   noteFrontmatterFlushedVersion,
@@ -45,7 +45,7 @@ import { documentStore } from '../../stores/document.svelte';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import { parseMarkdown } from './vaultIndex';
 import { onVaultSwap, vaultSwapResettable } from '../../core/vaultLifecycle';
-import { getBaseline, noteBaseline, resetAllBaselines, hasBaselineDrifted, refreshOrClearBaseline } from './fileBaselineRegistry';
+import { getBaseline, noteBaseline, resetAllBaselines, hasBaselineDrifted, refreshBaselineAfterWrite } from './fileBaselineRegistry';
 import { registerPathRenamable } from './renamePathKeys';
 
 /**
@@ -193,6 +193,16 @@ const forceWriters = new Map<string, ForceWriter>();
  */
 // allow-module-state: drained synchronously by cancelAllMarkdownWrites at vault swap
 const inFlightWrites = new Map<string, Promise<void>>();
+
+/**
+ * Audit-4 DI-09 — per-resolved-path write chain. `inFlightWrites` is keyed by
+ * `callerId`, so two editors on one `.md` (TextTile + DocumentEditor) had
+ * independent entries and could hit `vault:write-existing-file-text`
+ * concurrently (OS-arbitrated order → loser's bytes silently clobbered). This
+ * map serialises writes to a given normalized path; see `writeMarkdownFile`.
+ */
+// allow-module-state: drained synchronously by cancelAllMarkdownWrites at vault swap
+const writeChainByPath = new Map<VaultPath, Promise<void>>();
 
 // ── Hydrate gate ──
 
@@ -387,13 +397,29 @@ export async function writeMarkdownFile(args: WriteArgs): Promise<void> {
   // this, the timer's late fire (already past the cancel point) raced
   // a force-write at the IPC layer — two writes ordered by the OS,
   // last one wins, the loser's bytes silently lost.
-  const promise = writeMarkdownFileImpl(args);
+  //
+  // Audit-4 DI-09 — chain this write behind any in-flight write to the SAME
+  // resolved path (even from a different callerId) so two views of one `.md`
+  // file (TextTile + DocumentEditor) serialise at the IPC layer instead of
+  // racing. `prior` is awaited for ORDERING only; its rejection is swallowed
+  // (it carries its own attribution via trackComponentWrite), and the chained
+  // impl reads the live documentStore state at its own fire time.
+  const pathKey = vaultPath(args.relPath);
+  const prior = writeChainByPath.get(pathKey);
+  const promise = (async () => {
+    if (prior) await prior.catch(() => undefined);
+    await writeMarkdownFileImpl(args);
+  })();
   inFlightWrites.set(args.callerId, promise);
+  writeChainByPath.set(pathKey, promise);
   try {
     await promise;
   } finally {
     if (inFlightWrites.get(args.callerId) === promise) {
       inFlightWrites.delete(args.callerId);
+    }
+    if (writeChainByPath.get(pathKey) === promise) {
+      writeChainByPath.delete(pathKey);
     }
   }
 }
@@ -525,6 +551,17 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
   if (docId) {
     // M1 — version map is keyed by docId so this comparison stays in the
     // same version space as `getFrontmatterMutationVersion(docId)`.
+    //
+    // Audit-4 DI-17 — this `lastFlushed > cacheVersion` re-read is believed
+    // UNREACHABLE under M1's docId keying: `lastFlushed` is only ever bumped
+    // (here and in `frontmatterWriteScheduler`) to a PAST value of the
+    // monotonically-increasing per-docId mutation counter, so it can never
+    // exceed the current `cacheVersion`. It is retained, NOT deleted, as cheap
+    // defense-in-depth — a unit test can't construct the inputs to exercise it,
+    // and a stale-cache re-read guard isn't worth pulling out of a data-
+    // integrity write path for marginal cleanup. If a future change ever lets
+    // `lastFlushed` outrun `cacheVersion` (e.g. docId reuse with a reset
+    // counter), this re-read is the safety net that re-syncs from disk.
     const lastFlushed = getLastFlushedFrontmatterVersion(docId);
     const cacheVersion = documentStore.getFrontmatterMutationVersion(docId);
     if (lastFlushed > 0 && lastFlushed > cacheVersion) {
@@ -563,22 +600,17 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
   });
   // Phase R6 — refresh the baseline to the post-write mtime so a
   // late watcher echo (or the next debounced write) compares against
-  // the state we just wrote, not the pre-write state. Best-effort:
-  // a stat failure here just leaves the baseline at the pre-write
-  // value, which would surface a spurious drift toast on the NEXT
-  // write — and the user's "Keep-local" answer still lets them
-  // proceed.
-  // 6.4.M2 — clear the prior baseline on stat failure / unusable stat
-  // (AV scanner, SMB latency, VFS quirks). Leaving the PRE-write baseline
-  // pinned to the path would surface a spurious "modified externally"
-  // toast the next time the reconcile loop runs against the post-write
-  // disk bytes. The "no baseline" path is benign: writers proceed without
-  // a drift check until the next hydrate / successful write seeds again.
+  // the state we just wrote, not the pre-write state.
+  // Audit-4 DI-14 — on an unusable post-write stat KEEP the prior baseline
+  // (reverting 6.4.M2's clear). A stat failure then surfaces at worst a
+  // spurious drift prompt on the NEXT write — which the user dismisses with
+  // Keep-local — instead of disabling the drift check and opening a silent-
+  // overwrite window. See `refreshBaselineAfterWrite` for the full trade-off.
   try {
     const postStat = await invokeOk('vault:stat', vaultRoot, relPath);
-    refreshOrClearBaseline(relPath, postStat.mtimeMs, postStat.size);
+    refreshBaselineAfterWrite(relPath, postStat.mtimeMs, postStat.size);
   } catch {
-    refreshOrClearBaseline(relPath, undefined, undefined);
+    refreshBaselineAfterWrite(relPath, undefined, undefined);
   }
   // Sprint C / C-A5-2 — refresh the vault index from the just-written bytes
   // so a late watcher echo past the renderer-side suppression TTL
@@ -825,6 +857,10 @@ export function cancelAllMarkdownWrites(): void {
   // vault — late settlement of an outgoing-vault write does not block
   // incoming-vault setup.
   inFlightWrites.clear();
+  // Audit-4 DI-09 — drop the per-path write chains too so the new vault's
+  // first write to a same-named path doesn't chain behind an outgoing-vault
+  // write that's still settling.
+  writeChainByPath.clear();
 }
 
 // ── Keep-local force-write API ──

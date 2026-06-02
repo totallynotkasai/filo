@@ -98,6 +98,13 @@ directory entry, not file contents.
 lose a just-renamed file's directory entry on NTFS. Extremely narrow; the
 `.filo/.dirty` sentinel + recovery flow covers the broader crash case.
 
+**Audit-4 DI-10 (confirmed, accepted).** Re-verified: the file-handle `fsync`
+(data durability) always runs before the rename; only the containing-directory
+`fsync` (rename-metadata durability) is best-effort on Windows. The failure
+mode is therefore "lose the last rename's directory entry," never file-content
+corruption. A native `FlushFileBuffers` on the directory handle would be the
+only way to harden it on Windows — deferred unless a user actually hits it.
+
 ---
 
 ## 4. Quit flush is best-effort under a 5s ceiling

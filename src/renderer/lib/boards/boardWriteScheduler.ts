@@ -37,7 +37,7 @@ import {
 import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { createScheduler } from './writeScheduler';
-import { getBaseline, noteBaseline, hasBaselineDrifted, refreshOrClearBaseline } from '../vault/fileBaselineRegistry';
+import { getBaseline, noteBaseline, hasBaselineDrifted, refreshBaselineAfterWrite } from '../vault/fileBaselineRegistry';
 
 /**
  * Phase R6 — listener slot for the "board file changed externally"
@@ -293,14 +293,14 @@ export async function writeBoardFile(
     markRecentSelfWrite(boardPath);
     // Phase R6 — refresh baseline so subsequent writes compare against
     // the state we just wrote (not the pre-write baseline). Best-effort.
-    // 6.4.M2 — on stat failure / unusable stat, CLEAR the prior baseline
-    // instead of leaving the pre-write value pinned (which would surface
-    // a spurious drift toast on the next reconcile).
+    // Audit-4 DI-14 — KEEP the prior baseline on an unusable stat (reverting
+    // 6.4.M2's clear): clearing would disable the next write's drift check and
+    // open a silent-overwrite window. See `refreshBaselineAfterWrite`.
     try {
       const postStat = await invokeOk('vault:stat', vaultRoot, boardPath);
-      refreshOrClearBaseline(boardPath, postStat.mtimeMs, postStat.size);
+      refreshBaselineAfterWrite(boardPath, postStat.mtimeMs, postStat.size);
     } catch {
-      refreshOrClearBaseline(boardPath, undefined, undefined);
+      refreshBaselineAfterWrite(boardPath, undefined, undefined);
     }
   } catch (err) {
     console.error('Failed to save board:', err);

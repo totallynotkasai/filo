@@ -546,9 +546,16 @@ async function runExternalRenameCascade(
   // reach here); this guards the narrow synchronous getArgs-throw path and any
   // future regression. The sentinel's `tagsAffected` flag makes recovery
   // re-assert the tag rename on next vault open regardless.
+  // Audit-4 DI-17 — capture the flush outcome. `flushPendingSave` resolves
+  // `{ ok: false }` on the realistic write-failure path (the misc scheduler
+  // catches the IPC error internally) and only throws on the narrow
+  // synchronous-getArgs path, so both must mark the flush failed.
+  let tagsFlushOk = true;
   try {
-    await fileTagsStore.flushPendingSave();
+    const tagsFlush = await fileTagsStore.flushPendingSave();
+    tagsFlushOk = tagsFlush.ok;
   } catch (err) {
+    tagsFlushOk = false;
     reportError(
       'vault.handleRename.tagsFlush',
       err,
@@ -613,7 +620,32 @@ async function runExternalRenameCascade(
     renamedBoardIds.length > 0 ||
     defaultFolderBoardIds.length > 0;
   if (!hasCascadeWork) {
-    // Nothing to flush and no sentinel to clear. Bail before the
+    // Audit-4 DI-17 — F3 above flushed the tag-membership rename synchronously,
+    // so on a SUCCESSFUL flush there's nothing to recover and we keep the
+    // C-A5-4 skip (a sentinel here would be pure noise). But if that flush
+    // FAILED, a tags-only rename has no board cascade to carry a recovery
+    // sentinel, so the failed tag rename would be silently unrecoverable —
+    // contradicting the F3 catch's "the recovery sentinel will re-assert it"
+    // promise. Lay down a minimal tags-only sentinel (no affected boards) so
+    // reopen re-asserts the tag rename idempotently (`renameCascadeRepair`
+    // handles `tagsAffected` independently of `affectedBoardIds`).
+    if (!tagsFlushOk && vaultRoot && oldRel && newRel) {
+      try {
+        await writePendingRenameCascade(vaultRoot, {
+          oldPath: oldRel,
+          newPath: newRel,
+          affectedBoardIds: [],
+          tagsAffected: true,
+        });
+      } catch (err) {
+        reportError(
+          'vault.handleRename.tagsOnlySentinel',
+          err,
+          "Couldn't record a tags-only rename-recovery sentinel; if the tag-membership rename didn't persist you may need to re-apply it.",
+        );
+      }
+    }
+    // Nothing else to flush and no board sentinel to clear. Bail before the
     // sentinel write + flushAllDirty pair.
     return;
   }

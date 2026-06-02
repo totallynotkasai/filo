@@ -171,22 +171,29 @@ export function clearBaseline(path: string): void {
 }
 
 /**
- * Post-write baseline refresh: either stamps a fresh baseline when the stat
- * supplies usable mtime + size, OR clears the prior entry when the stat
- * yielded nothing usable (the IPC threw, returned no fields, or returned
- * NaN). Without the clear-on-failure branch, a transient AV / SMB / VFS
- * stat hiccup leaves the PRE-write baseline pinned to the path; the next
- * reconcile then diffs post-write disk bytes against the pre-write
- * baseline and surfaces a spurious "modified externally" toast.
+ * Post-write baseline refresh: stamps a fresh baseline when the post-write
+ * stat supplies a usable mtime + size, and otherwise KEEPS the prior baseline
+ * untouched.
  *
  * Used by every successful self-write site (`markdownFileWriter`,
- * `boardWriteScheduler`, `configWriteScheduler`) instead of the legacy
- * `try { noteBaseline(...) } catch {}` form, which silently masked both
- * the throw case AND the missing-fields case.
+ * `boardWriteScheduler`, `configWriteScheduler`) so the next write's pre-write
+ * drift check compares against the bytes we just wrote, not the pre-write
+ * state.
  *
- * 6.4.M2 (2026-06-01).
+ * Audit-4 DI-14 (2026-06-02) — on an unusable stat (the IPC threw, returned no
+ * fields, or returned NaN) this KEEPS the prior baseline. The interim 6.4.M2
+ * behaviour CLEARED it to suppress a spurious "modified externally" prompt on
+ * the next write — but clearing the baseline also DISABLES that next write's
+ * pre-write drift check entirely, opening a (narrow) window where a concurrent
+ * external edit is silently overwritten. Keeping the baseline is the data-safe
+ * direction: the worst case is a spurious Reload / Keep-local prompt (the user
+ * picks Keep-local and proceeds), never a silent clobber. The fs.watch
+ * reconcile pipeline never reads this baseline, so it stays an independent
+ * backstop; a post-write stat failure is rare (AV scanner, SMB latency, VFS
+ * quirk), so the false-positive cost is bounded. This restores the keep-on-
+ * failure behaviour the Phase R6 call-site comment originally described.
  */
-export function refreshOrClearBaseline(
+export function refreshBaselineAfterWrite(
   path: string,
   mtimeMs: number | undefined | null,
   size: number | undefined | null,
@@ -199,9 +206,8 @@ export function refreshOrClearBaseline(
     Number.isFinite(size)
   ) {
     noteBaseline(path, mtimeMs, size);
-    return;
   }
-  clearBaseline(path);
+  // DI-14 — else: keep the prior baseline. Deliberately NO clearBaseline call.
 }
 
 /**

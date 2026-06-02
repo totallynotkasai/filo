@@ -434,16 +434,14 @@ describe('markdownFileWriter — gateway contract', () => {
   });
 });
 
-// 6.4.M2 — when the post-write `vault:stat` fails or returns a stat without
-// finite mtime/size (AV scanner / SMB latency / VFS quirks), the prior
-// implementation swallowed the error and left the PRE-write baseline in
-// place. Next reconcile compared post-write disk bytes against the
-// pre-write baseline and surfaced a spurious "modified externally" toast.
-//
-// The fix: clear the baseline on stat failure / unusable stat — the
-// "no baseline" path is benign (writers proceed without drift check
-// until the next successful hydrate or write seeds a fresh baseline).
-describe('markdownFileWriter — post-write baseline failures (M2)', () => {
+// Audit-4 DI-14 (reverses 6.4.M2) — when the post-write `vault:stat` fails or
+// returns a stat without finite mtime/size (AV scanner / SMB latency / VFS
+// quirks), the baseline is now KEPT, not cleared. 6.4.M2 cleared it to suppress
+// a spurious "modified externally" prompt on the next write, but clearing also
+// disabled that next write's pre-write drift check — opening a silent-overwrite
+// window. DI-14 keeps the prior baseline: the worst case is a spurious
+// Reload/Keep-local prompt (the user picks Keep-local), never a silent clobber.
+describe('markdownFileWriter — post-write baseline failures (DI-14, reverses M2)', () => {
   beforeEach(() => {
     __resetMarkdownFileWriterForTests();
     __resetDirtyTrackingForTests();
@@ -461,7 +459,7 @@ describe('markdownFileWriter — post-write baseline failures (M2)', () => {
     };
   });
 
-  it('clears stale baseline when post-write vault:stat throws', async () => {
+  it('keeps prior baseline when post-write vault:stat throws (DI-14)', async () => {
     const relPath = 'Notes/baselineThrow.md';
 
     // Pre-stamp the baseline at the PRE-write state.
@@ -494,13 +492,14 @@ describe('markdownFileWriter — post-write baseline failures (M2)', () => {
       docId: null,
     });
 
-    // Bug: baseline still 100/10 — next reconcile flags this file as
-    // "modified externally". Fix: baseline is cleared (undefined) so the
-    // next hydrate or successful write seeds a fresh value.
-    expect(getBaseline(relPath)).toBeUndefined();
+    // DI-14: the post-write stat failed, so the baseline is KEPT at the
+    // pre-write value rather than cleared. The next write's drift check stays
+    // armed (no silent-overwrite window); the cost is at most a spurious
+    // "modified externally" prompt the user dismisses with Keep-local.
+    expect(getBaseline(relPath)).toEqual({ mtimeMs: 100, size: 10 });
   });
 
-  it('clears stale baseline when post-write vault:stat returns unusable mtime/size', async () => {
+  it('keeps prior baseline when post-write vault:stat returns unusable mtime/size (DI-14)', async () => {
     const relPath = 'Notes/baselineMissing.md';
 
     noteBaseline(relPath, 200, 20);
@@ -534,7 +533,8 @@ describe('markdownFileWriter — post-write baseline failures (M2)', () => {
       docId: null,
     });
 
-    expect(getBaseline(relPath)).toBeUndefined();
+    // DI-14: unusable post-write stat → baseline KEPT at the pre-write value.
+    expect(getBaseline(relPath)).toEqual({ mtimeMs: 200, size: 20 });
   });
 });
 

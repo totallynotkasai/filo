@@ -1155,15 +1155,24 @@
       const nextLastView = filters.buildLastView();
       const prevSettings = settings as Record<string, unknown>;
       const prevLastView = prevSettings.lastView;
-      // Avoid emitting an entry on the first hydrate when nothing actually
+      // Avoid emitting a write on the first hydrate when nothing actually
       // changed (deep-equal check via JSON; lastView is a plain-data object).
       if (JSON.stringify(prevLastView) === JSON.stringify(nextLastView)) return;
-      boardStore.updateBoardSettingsWithHistory(
-        { lastView: nextLastView },
-        prevSettings,
-        'Change task view',
-      );
+      // Audit-4 DI-08 — pane-scoped, NON-undoable persist (mirrors
+      // KanbanBoard): `boardStore` is this pane's `scope.board`, so the write
+      // targets its own `currentBoard.id` and stays off the undo stack. The
+      // old `updateBoardSettingsWithHistory` captured the GLOBAL active board
+      // and filed onto its stack, so in split view a surviving timer wrote one
+      // pane's lastView into the active board and polluted that board's stack.
+      // allow-direct-mutation: transient lastView view state, not undoable (mirrors KanbanBoard).
+      boardStore.updateSettings({ lastView: nextLastView });
     }, 300);
+
+    // Audit-4 DI-08 — clear the debounce with the effect (mirrors KanbanBoard
+    // 6.1.R2) so a teardown inside the 300 ms window can't fire the stale write.
+    return () => {
+      if (filters.lastViewPersistTimer) clearTimeout(filters.lastViewPersistTimer);
+    };
   });
 
   // ── Keyboard shortcuts ──
@@ -1393,9 +1402,9 @@
     // Drain any queued frontmatter writes so a board close during the
     // 300ms debounce window doesn't lose the user's last field edit.
     void flushAllPendingFrontmatterWrites();
-    // Audit2 5.6 — cancel the lastView persistence debounce so a board
-    // close mid-window doesn't fire `updateSettings` + push a history
-    // entry against the now-defunct board context ~300ms after teardown.
+    // Audit2 5.6 / Audit-4 DI-08 — cancel the lastView debounce so a board
+    // close mid-window doesn't fire `updateSettings` against the now-defunct
+    // board ~300 ms after teardown (the persist $effect adds a matching cleanup).
     filters.dispose();
     unregisterFocusQuickAdd?.();
     unregisterFocusQuickAdd = null;

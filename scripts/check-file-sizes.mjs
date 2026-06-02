@@ -37,7 +37,12 @@ const ALLOWLIST = {
   // AUDIT2_REMEDIATION_PLAN_2026-05-31 Phase 5.6 — onDestroy calls
   // filters.dispose() so the lastView debounce can't fire after teardown;
   // +1 LOC of comment + call. New snapshot: 2192 LOC.
-  'src/renderer/components/boards/TaskListBoard.svelte': 2192,
+  // AUDIT4_REMEDIATION_PLAN_2026-06-02 Phase 3 DI-08 — the lastView persist
+  // now routes through the pane-scoped, non-undoable `updateSettings` (so a
+  // split-view timer can't write one pane's view into the active board or
+  // pollute its undo stack) + an inline `$effect` cleanup mirroring Kanban.
+  // +9 LOC of comment + cleanup. New snapshot: 2201 LOC.
+  'src/renderer/components/boards/TaskListBoard.svelte': 2201,
   // Phase 7.1 — tightened to current LOC (was 1506).
   // PHASE6_PLAN_2026-06-01 Phase 6.3.P5 — added the `// allow-direct-write`
   // escape note above the `.filo/kanban-toolbar-pos.json` write so the

@@ -196,7 +196,13 @@ export function readPendingRewrite(vaultRoot: string): Promise<ReadResult> {
       );
       return { unreadable: true };
     }
-    if (!content) return {};
+    // Audit-4 DI-16 — reaching here means the read SUCCEEDED (ENOENT, the
+    // healthy "no sentinel" steady state, already returned `{}` above), so a
+    // present-but-empty file is a partial write: a crash created the sentinel
+    // but never filled it, stranding a mid-flight tag rewrite. Surface it as
+    // `unreadable` (recovery UI prompts) rather than silently treating it as
+    // clean — symmetric with the 6.4.M5 `.dirty` zero-byte-is-dirty rule.
+    if (!content) return { unreadable: true };
     try {
       const parsed = JSON.parse(content) as Partial<TagRewriteSentinelPayload>;
       if (

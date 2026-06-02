@@ -138,6 +138,16 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
     expect(result.unreadable).toBe(true);
   });
 
+  it('read on a present-but-empty (zero-byte) sentinel returns unreadable (DI-16)', async () => {
+    // The read SUCCEEDS (the key exists) but content is empty — a crash that
+    // created the sentinel without filling it. Must surface as unreadable, not
+    // the clean "no sentinel" steady state (which is ENOENT → key absent).
+    fs.files.set('/vault::.filo/tag-rewrite-pending.json', '');
+    const result = await readPendingRewrite('/vault');
+    expect(result.payload).toBeUndefined();
+    expect(result.unreadable).toBe(true);
+  });
+
   it('read on a sentinel missing required fields returns unreadable', async () => {
     fs.files.set(
       '/vault::.filo/tag-rewrite-pending.json',

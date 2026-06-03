@@ -565,7 +565,27 @@ async function runRename(
         // `.filo/tags.json` keeps the OLD key while every `.board.json`
         // already points at the new one. A failed flush surfaces through the
         // misc-write error pipeline.
-        await fileTagsStore.flushPendingSave();
+        //
+        // #15 — capture the flush outcome. `flushPendingSave` resolves
+        // `{ ok:false }` on the realistic write-failure path (the misc
+        // scheduler catches the IPC error internally) and only throws on the
+        // narrow synchronous-getArgs path, so guard both. On failure we KEEP
+        // the rename-cascade sentinel below (it already carries
+        // `tagsAffected:true`) so the next vault open re-asserts the tag rename
+        // — without this, the full-success branch would clear the sentinel and
+        // a failed tag rename would be silently unrecoverable.
+        let tagsFlushOk = true;
+        try {
+          const tagsFlush = await fileTagsStore.flushPendingSave();
+          tagsFlushOk = tagsFlush.ok;
+        } catch (err) {
+          tagsFlushOk = false;
+          reportError(
+            'vault.rename.tagsFlush',
+            err,
+            "Couldn't persist the tag-membership rename; the recovery sentinel will re-assert it on next vault open.",
+          );
+        }
         // Sprint B / B9 — rebind the vault-search index so global search
         // returns the new name immediately. Exact-match handles the
         // file-rename case; the folder-rename case rebinds every indexed
@@ -643,9 +663,14 @@ async function runRename(
               reportError('vault.rename.sentinel', err, "Couldn't update rename-cascade sentinel with failed paths");
             });
           }
-        } else if (sentinelId) {
+        } else if (sentinelId && tagsFlushOk) {
           // Sprint 35.3 — full success path: drop the sentinel so the
-          // recovery prompt doesn't surface on next open.
+          // recovery prompt doesn't surface on next open. #15 — gated on
+          // `tagsFlushOk`: if the board cascade flushed cleanly but the
+          // tag-membership flush above FAILED, we deliberately leave the
+          // sentinel (it carries `tagsAffected:true`) so the next vault open
+          // re-asserts the tag rename. Recovery handles `tagsAffected`
+          // idempotently and independently of the (already-flushed) board IDs.
           await clearPendingRenameCascade(vaultPath, sentinelId).catch((err) => {
             reportError('vault.rename.sentinel', err, "Couldn't clear completed rename-cascade sentinel");
           });
@@ -832,7 +857,21 @@ async function performDelete(ctx: VaultContext, itemPath: string): Promise<boole
           // membership lingers until the next vault-open `pruneOrphanFileTags`).
           // The rename cascade flushes here for exactly this reason (F3) — this
           // closes the same gap on the delete path.
-          await fileTagsStore.flushPendingSave();
+          //
+          // #15 — capture the flush outcome. Unlike the rename path, a failed
+          // tag-drop flush needs no recovery sentinel: the orphan it leaves
+          // (a `fileTags` entry for a now-deleted path) is harmless and the
+          // next vault open's `pruneOrphanFileTags` removes it. The write
+          // failure also surfaces through the misc-write error pipeline. We
+          // still surface a toast below so the user isn't left thinking the
+          // delete fully persisted when the tags sink lagged.
+          let tagsDropFlushOk = true;
+          try {
+            const tagsDropFlush = await fileTagsStore.flushPendingSave();
+            tagsDropFlushOk = tagsDropFlush.ok;
+          } catch {
+            tagsDropFlushOk = false;
+          }
           // B4 — clean up Document Boards whose `contentId` points at a
           // .md under the deleted path, even when the Document Board's
           // own `.board.json` lives outside the deleted tree. The
@@ -896,6 +935,16 @@ async function performDelete(ctx: VaultContext, itemPath: string): Promise<boole
             uiStore.pushToast({
               text: `Delete succeeded but failed to update ${deleteCascadeFlush.failed.length} board file${deleteCascadeFlush.failed.length === 1 ? '' : 's'}: ${deleteCascadeFlush.failed.join(', ')}. Re-save the affected boards.`,
               type: 'error',
+              duration: 0,
+            });
+          }
+          // #15 — the deleted path's tag-membership update didn't persist.
+          // Harmless (auto-cleaned on next open) but surfaced so the partial
+          // state isn't silent.
+          if (!tagsDropFlushOk) {
+            uiStore.pushToast({
+              text: `"${rel}" was deleted, but its tag-membership update didn't persist. It'll be cleaned up automatically on the next vault open.`,
+              type: 'warning',
               duration: 0,
             });
           }

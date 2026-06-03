@@ -81,6 +81,35 @@ describe('loadVaultCandidate', () => {
     expect(candidate.project.theme).toBe('light');
   });
 
+  it('L18: a top-level config:load-all failure pauses ALL config writes and warns once', async () => {
+    // The handler tags a transient whole-`.filo/` read failure (locked dir /
+    // EACCES on fs.stat) with `__loadAllFailed`. The candidate must mark every
+    // config target corrupt (so a later save can't seed defaults over the
+    // intact-but-unreadable files) and surface ONE low-key warning — not seven
+    // per-file "couldn't parse" toasts.
+    installFiloMock(
+      happyPathRoutes({
+        'config:load-all': async () => ({
+          app: {}, appearance: {}, defaults: {}, hotkeys: {}, workspace: {}, viewports: {}, sidebarOrder: {},
+          __loadAllFailed: 'EACCES: permission denied, stat .filo',
+        }),
+      }),
+    );
+
+    const candidate = await loadVaultCandidate('/vault');
+    expect([...candidate.corruptionTargets].sort()).toEqual([
+      'app.json',
+      'appearance.json',
+      'config:save-workspace',
+      'defaults.json',
+      'hotkeys.json',
+      'sidebar-order.json',
+      'viewports.json',
+    ]);
+    expect(candidate.warnings).toHaveLength(1);
+    expect(candidate.warnings[0].text).toMatch(/couldn't read your \.filo\/ settings/i);
+  });
+
   it('throws when tags:load IPC throws — no graceful fallback', async () => {
     installFiloMock(
       happyPathRoutes({

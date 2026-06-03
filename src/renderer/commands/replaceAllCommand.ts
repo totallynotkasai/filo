@@ -36,8 +36,7 @@ import { uiStore } from '../stores/ui.svelte';
 import { runVaultSearch, type SearchMatch } from '../lib/search/runSearch';
 import { invokeOk } from '../lib/utils/invokeOk';
 import { reportError } from '../lib/utils/errorBus';
-import { trackComponentWrite } from '../lib/boards/writeStateTracking';
-import { syncOpenEditorsAfterDiskMutation } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
+import { writeMarkdownAndReconcile } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
 
 interface FilePlan {
   /** Vault-relative path of the .md file. */
@@ -182,36 +181,44 @@ export class ReplaceAllCommand extends Command {
 
   async execute(): Promise<void> {
     const items = this.plans.map((p) => ({ path: p.path, content: p.nextContent }));
+    // Phase 6.6 — `writeAll` now writes AND reconciles each open editor per
+    // path via the coupled helper, so there is no separate batch reconcile
+    // here that could drift from the write list.
     await this.writeAll(items);
     // Refresh the vault index so the search panel's matches re-derive against
     // the new content. Without this, the next "Find" cycle would still see
     // the old offsets until the file watcher fires (which may have already
     // been suppressed by `trackComponentWrite`).
     await vaultIndexStore.applyChanges(this.plans.map((p) => p.path));
-    // Phase 6.1.R1 — the inline `syncOpenEditors` + manual
-    // `cancelMarkdownWritesForDocument` was hoisted into the shared helper.
-    // `applyReloadFromDisk` now self-cancels armed body writers (6.0.C2),
-    // so the helper no longer needs an adjacent cancel call.
-    syncOpenEditorsAfterDiskMutation(items);
   }
 
   async undo(): Promise<void> {
     const items = this.plans.map((p) => ({ path: p.path, content: p.originalContent }));
     await this.writeAll(items);
     await vaultIndexStore.applyChanges(this.plans.map((p) => p.path));
-    syncOpenEditorsAfterDiskMutation(items);
   }
 
   private async writeAll(items: Array<{ path: string; content: string }>): Promise<void> {
     const failed: string[] = [];
     for (const item of items) {
       try {
-        await trackComponentWrite(
-          this.vaultRoot,
-          item.path,
-          () => invokeOk('vault:write-existing-file-text', this.vaultRoot, item.path, item.content), // allow-direct-write: vault-wide Replace All operates on raw markdown text and is atomic with the pre-flight read; routing through the debounced markdown gateway would race the in-flight searches.
-          { notifyOnError: false },
-        );
+        // Phase 6.6 — coupled write+reconcile. `mode: 'full'` reloads any open
+        // editor on this path with the rewritten bytes (its prior in-memory
+        // body would otherwise re-clobber the replace on the next debounce;
+        // `applyReloadFromDisk` self-cancels the armed writer). The reconcile
+        // is keyed to the SAME path we write, so it can't drift from the write
+        // list. `notifyOnError: false` keeps the bulk loop from spamming a
+        // toast per file — the aggregate toast below names the failures.
+        // Replace All is atomic with the pre-flight read, so routing through
+        // the debounced markdown gateway (which would race the in-flight
+        // searches) is deliberately bypassed.
+        await writeMarkdownAndReconcile({
+          vaultRoot: this.vaultRoot,
+          path: item.path,
+          content: item.content,
+          mode: 'full',
+          track: { notifyOnError: false },
+        });
       } catch (err) {
         reportError('replaceAll.write', err, `Failed to write ${item.path}`);
         failed.push(item.path);

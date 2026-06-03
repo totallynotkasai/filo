@@ -41,8 +41,17 @@ import {
   noteAdditionalPendingPath,
   dropPendingPath,
   syncSentinelIfIdle,
+  markPathFailed,
 } from './writeStateTracking';
 import { reportError } from '../utils/errorBus';
+
+/**
+ * Audit5 R3 — sentinel a `performWrite` race resolves to when it outruns the
+ * optional `writeTimeoutMs` bound. A module-level unique symbol so the
+ * `Promise.race` outcome type discriminates cleanly from a `string[]` failure
+ * list (whose entries are paths / callerIds, never this token).
+ */
+const WRITE_TIMEOUT: unique symbol = Symbol('write-timeout');
 
 /**
  * Per-write sentinel info — what `beginWrite`/`endWrite` need to keep the
@@ -148,6 +157,21 @@ export interface CreateSchedulerOptions<TArgs> {
    * "capture path + snapshot upfront" semantics.
    */
   snapshotArgs?: (args: TArgs) => TArgs;
+  /**
+   * Audit5 R3 — optional upper bound (ms) on a single `performWrite`. When set,
+   * `fireWrite` races the write against this timeout; if it elapses first the
+   * scheduler STOPS awaiting that write, marks its path failed (keeping the
+   * `.filo/.dirty` sentinel + the save indicator's failed list live), and
+   * attributes the failure so `flush`/`flushAll` (and the `save()` boolean that
+   * folds them) report it instead of hanging forever. The underlying
+   * `performWrite` keeps running — a late success self-heals via its own
+   * `trackComponentWrite` `endWrite`. Omit to await indefinitely (the prior
+   * behaviour, correct for schedulers whose writes can't wedge on user input).
+   * Set ONLY high enough to exceed any legitimate in-write await (e.g. the
+   * markdown gateway's interactive drift prompt); it is a wedged-write backstop,
+   * not a latency budget.
+   */
+  writeTimeoutMs?: number;
 }
 
 interface PendingEntry<TArgs> {
@@ -352,11 +376,40 @@ export function createScheduler<TArgs>(
     // Wrap performWrite so a synchronous throw is treated as failure
     // attribution rather than blowing up the timer callback.
     const innerPromise: Promise<string[]> = (async () => {
+      const writePromise: Promise<string[]> = (async () => {
+        try {
+          const result = await opts.performWrite(args);
+          return result?.failed ?? [];
+        } catch {
+          return [failureId];
+        }
+      })();
+
+      // Audit5 R3 — when no bound is configured, await the write indefinitely
+      // (legacy behaviour). When `writeTimeoutMs` is set, race it: a write that
+      // wedges (e.g. a never-resolving drift prompt — #1 — or a stuck IPC) must
+      // not hang an awaiting `flushAll`/`save()` forever.
+      const timeoutMs = opts.writeTimeoutMs;
+      if (timeoutMs === undefined) return writePromise;
+
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<typeof WRITE_TIMEOUT>((resolve) => {
+        timer = setTimeout(() => resolve(WRITE_TIMEOUT), timeoutMs);
+      });
       try {
-        const result = await opts.performWrite(args);
-        return result?.failed ?? [];
-      } catch {
-        return [failureId];
+        const outcome = await Promise.race([writePromise, timeout]);
+        if (outcome === WRITE_TIMEOUT) {
+          // Stopped waiting. Move the path to the failed set DIRECTLY so the
+          // sentinel stays dirty even in 'pending-path' mode (where the
+          // `safeEndWrite(false)` below would otherwise just drop the pending
+          // path and let `syncSentinelIfIdle` mark clean — losing the recovery
+          // flag for a write that never landed). Then attribute the failure.
+          if (sentinel.path) markPathFailed(sentinel.vaultRoot, sentinel.path);
+          return [failureId];
+        }
+        return outcome;
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
       }
     })();
 

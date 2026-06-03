@@ -216,3 +216,80 @@ describe('configWriteScheduler — ENOENT skip clears dedup cache (6.4.M12)', ()
     expect(defaultsSaves).toHaveLength(1);
   });
 });
+
+// L24 (Audit-6) — a OneDrive/AV/sync client can momentarily unlink-then-recreate
+// a `.filo/` config. The pre-write ENOENT now re-stats ONCE: if the file is back,
+// the armed write proceeds (no silent data loss); if it's still gone, the
+// deletion is respected (5.1 behaviour preserved).
+describe('configWriteScheduler — L24 re-stat disambiguates a transient unlink', () => {
+  beforeEach(() => {
+    restoreFiloDefault();
+    __resetBaselinesForTests();
+    __resetDirtyTrackingForTests();
+  });
+  afterEach(() => {
+    restoreFiloDefault();
+    __resetBaselinesForTests();
+    __resetDirtyTrackingForTests();
+  });
+
+  it('writes the target when the re-stat finds the file back (blip resolved)', async () => {
+    noteBaseline('.filo/defaults.json', 1000, 50);
+    let defaultsStatCount = 0;
+    const calls: Array<{ channel: string; args: unknown[] }> = [];
+    installFiloMock((channel: string, ...args: unknown[]) => {
+      calls.push({ channel, args });
+      if (channel === 'vault:stat') {
+        const [, relPath] = args as [string, string];
+        if (relPath === '.filo/defaults.json') {
+          defaultsStatCount++;
+          // First stat: transient ENOENT. Re-stat (and post-write stat): back.
+          if (defaultsStatCount === 1) {
+            return Promise.resolve({ ok: false, code: 'ENOENT', error: 'transient' });
+          }
+          return Promise.resolve({ ok: true, mtimeMs: 1000, size: 50 });
+        }
+        return Promise.resolve({ ok: true, mtimeMs: 1000, size: 50 });
+      }
+      if (channel === 'config:save' || channel === 'config:save-workspace') {
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    const result = await writeConfigs(VAULT_ROOT, makeSettings(), 'light', makeWorkspace());
+
+    const defaultsSaves = calls.filter(
+      (c) => c.channel === 'config:save' && c.args[1] === 'defaults.json',
+    );
+    expect(defaultsSaves).toHaveLength(1); // the blip resolved → write proceeds
+    expect(result.failed).not.toContain('defaults.json');
+  });
+
+  it('still skips when the re-stat ALSO reports ENOENT (a real delete)', async () => {
+    noteBaseline('.filo/defaults.json', 1000, 50);
+    const calls: Array<{ channel: string; args: unknown[] }> = [];
+    installFiloMock((channel: string, ...args: unknown[]) => {
+      calls.push({ channel, args });
+      if (channel === 'vault:stat') {
+        const [, relPath] = args as [string, string];
+        if (relPath === '.filo/defaults.json') {
+          return Promise.resolve({ ok: false, code: 'ENOENT', error: 'gone' });
+        }
+        return Promise.resolve({ ok: true, mtimeMs: 1000, size: 50 });
+      }
+      if (channel === 'config:save' || channel === 'config:save-workspace') {
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    const result = await writeConfigs(VAULT_ROOT, makeSettings(), 'light', makeWorkspace());
+
+    const defaultsSaves = calls.filter(
+      (c) => c.channel === 'config:save' && c.args[1] === 'defaults.json',
+    );
+    expect(defaultsSaves).toHaveLength(0); // still gone → deletion respected
+    expect(result.failed).not.toContain('defaults.json');
+  });
+});

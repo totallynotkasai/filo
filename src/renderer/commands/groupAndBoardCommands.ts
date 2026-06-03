@@ -9,7 +9,7 @@ import { cloneTile } from '../lib/utils/cloneTile';
 import { reportError } from '../lib/utils/errorBus';
 import { trackComponentWrite } from '../lib/boards/boardSaver';
 import { invokeOk } from '../lib/utils/invokeOk';
-import { syncOpenEditorsAfterDiskMutation } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
+import { writeMarkdownAndReconcile } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
 
 /**
  * D.5 — opens the inconsistent-state modal when one or more rollback
@@ -437,20 +437,24 @@ export class CascadeDeleteCommand extends Command {
       if (!this.vaultRoot) break;
       const vaultRoot = this.vaultRoot;
       restorePromises.push(
-        trackComponentWrite(
+        // Phase 6.6 — coupled write+reconcile. `create: true` restores the file
+        // the cascade deleted (mkdir -p, the placement re-binds immediately
+        // after), and `mode: 'full'` reloads any editor still mounted on it with
+        // the restored bytes for the SAME path so a still-armed debounce can't
+        // clobber the restoration ~300 ms later (applyReloadFromDisk
+        // self-cancels, 6.0.C2). Keying the reconcile to the just-written path
+        // replaces the post-Promise.all batch sync that used to follow.
+        writeMarkdownAndReconcile({
           vaultRoot,
-          relPath,
-          async () => {
-            // allow-direct-write: one-shot cascade-delete undo restore
-            // — the file no longer exists on disk (cascade deleted it),
-            // mkdir -p semantics are required, and the placement re-binds
-            // immediately after.
-            await invokeOk('vault:write-file-text', vaultRoot, relPath, content);
-          },
-        ).catch((err) => {
-          // trackComponentWrite already reports via notifyWriteError +
-          // marks the path failed. We still log a topical message so the
-          // restored-undo path surfaces in errorBus alongside the toast.
+          path: relPath,
+          content,
+          mode: 'full',
+          create: true,
+        }).catch((err) => {
+          // trackComponentWrite (inside the helper) already reports via
+          // notifyWriteError + marks the path failed. We still log a topical
+          // message so the restored-undo path surfaces in errorBus alongside
+          // the toast.
           reportError('CascadeDeleteCommand', err, `Failed to restore ${relPath}`);
         }),
       );
@@ -476,16 +480,10 @@ export class CascadeDeleteCommand extends Command {
     }
     await Promise.all(restorePromises);
 
-    // Phase 6.1.R1 — sync any open editor on a just-resurrected file so its
-    // in-memory body matches the bytes we wrote and a still-armed debounce
-    // can't clobber the restoration ~300 ms later. `applyReloadFromDisk`
-    // self-cancels armed body writers (6.0.C2). Only .md restorations are
-    // editor-backed; media restorations have no document state to sync.
-    if (Object.keys(this.fileSnapshots).length > 0) {
-      syncOpenEditorsAfterDiskMutation(
-        Object.entries(this.fileSnapshots).map(([path, content]) => ({ path, content })),
-      );
-    }
+    // Phase 6.6 — the open-editor reconcile now happens inside each
+    // writeMarkdownAndReconcile above (write-path == reconcile-path by
+    // construction), so the post-Promise.all batch syncOpenEditorsAfterDiskMutation
+    // is gone. Media restorations have no document state to sync, as before.
 
     // Sprint 35.2 — restore the style fields BEFORE the placements so a
     // restored kanban card sees its coverImage back at the same time as

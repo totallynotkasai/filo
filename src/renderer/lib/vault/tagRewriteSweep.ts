@@ -26,7 +26,6 @@
  */
 
 import { rewriteTagInMarkdown, removeTagFromMarkdown, tagsEqual } from './tagRewriter';
-import { trackComponentWrite } from '../boards/boardSaver';
 import {
   writePendingRewrite,
   clearPendingRewrite,
@@ -37,7 +36,7 @@ import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { onVaultSwap } from '../../core/vaultLifecycle';
 import { PendingWritesFailedError, withDrainedWrites } from './vaultOperations';
-import { syncOpenEditorsAfterDiskMutation } from './syncOpenEditorsAfterDiskMutation';
+import { writeMarkdownAndReconcile } from './syncOpenEditorsAfterDiskMutation';
 import type { FileMetadata } from './vaultIndex';
 
 /**
@@ -252,12 +251,22 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
           // the `{ success: false, error }` envelope on write failure, so
           // `trackComponentWrite` saw a successful resolve and the failure
           // never reached the recovery sentinel / failed-paths surface.
-          await trackComponentWrite(
+          // Phase 6.6 — coupled write+reconcile. `mode: 'full'` reloads any
+          // open editor on this rewritten file with the new bytes (its
+          // pre-rewrite body would otherwise re-clobber the rewrite on the next
+          // debounce; applyReloadFromDisk self-cancels, 6.0.C2). The reconcile
+          // is keyed to the SAME path we write, replacing the post-drain batch
+          // sync. `notifyOnError: false` keeps the bulk loop from spamming one
+          // toast per file — the caller surfaces an aggregate retry toast. The
+          // sweep operates on raw markdown text and is atomic with the
+          // pre-flight scan, so it bypasses the debounced gateway deliberately.
+          await writeMarkdownAndReconcile({
             vaultRoot,
-            item.path,
-            () => invokeOk('vault:write-existing-file-text', vaultRoot, item.path, item.nextContent), // allow-direct-write: bulk tag-rename sweep operates on raw markdown text, not a frontmatter+body assembly
-            { notifyOnError: false },
-          );
+            path: item.path,
+            content: item.nextContent,
+            mode: 'full',
+            track: { notifyOnError: false },
+          });
           succeeded.push(item.path);
           // 6.3 — for REMOVALS, persist the per-path commit breadcrumb
           // incrementally so a crash mid-sweep leaves the partial state
@@ -300,22 +309,10 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
 
   if (succeeded.length > 0) await applyChanges(succeeded);
 
-  // Phase 6.1.R1 — sync any open editor on a just-rewritten file so its
-  // in-memory body matches the new bytes. Without this an open editor would
-  // keep its pre-rewrite body and the next debounced write — its `args.body`
-  // is closure-captured pre-rewrite — would silently revert the rewrite
-  // ~300 ms later. `applyReloadFromDisk` self-cancels the armed body
-  // writer for the docId (6.0.C2), so the helper does not need a manual
-  // cancel adjacent to it. Build the (path, content) list from the SAME
-  // plan entries we just wrote so the sync mirrors disk byte-for-byte.
-  if (succeeded.length > 0) {
-    const succeededSet = new Set(succeeded);
-    syncOpenEditorsAfterDiskMutation(
-      plan
-        .filter((p) => succeededSet.has(p.path))
-        .map((p) => ({ path: p.path, content: p.nextContent })),
-    );
-  }
+  // Phase 6.6 — the open-editor reconcile now happens inside each
+  // writeMarkdownAndReconcile in the write loop above (write-path ==
+  // reconcile-path by construction), so the post-drain batch sync that used to
+  // re-derive the (path, content) list from the plan is gone.
 
   // Sprint B / B16 — only clear the sentinel when EVERY planned path
   // succeeded. On partial failure (EACCES on a subset, mid-sweep

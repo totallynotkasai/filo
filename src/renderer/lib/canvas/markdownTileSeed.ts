@@ -11,8 +11,8 @@ import type { TileDefinition } from '../../schema/index';
  * tag names) from a raw `.md` file string. Used by the canvas drag-drop
  * handler when creating a text tile from a dropped Markdown file.
  *
- * - YAML frontmatter is parsed via `parseMarkdownFile` (js-yaml under the
- *   hood, handles CRLF).
+ * - YAML frontmatter is parsed via `parseMarkdownFile` (the `yaml` package
+ *   under the hood, handles CRLF).
  * - If the file uses the legacy `<!-- Filo document metadata -->` JSON
  *   comment header, the `id` field is preserved for back-compat (legacy
  *   files predate `tags:` support, so `tagNames` is `[]` in that branch).

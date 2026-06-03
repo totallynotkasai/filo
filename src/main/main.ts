@@ -177,10 +177,22 @@ async function createWindow(): Promise<void> {
     event.preventDefault();
     isFlushingForQuit = true;
 
-    const timer = setTimeout(() => {
+    const destroyOnTimeout = (): void => {
       console.warn('[main] flush-and-quit timed out on window close, destroying anyway');
       mainWindow?.destroy();
-    }, FLUSH_TIMEOUT_MS);
+    };
+    let timer = setTimeout(destroyOnTimeout, FLUSH_TIMEOUT_MS);
+
+    // Audit5 2.1 — drain heartbeat. The renderer beats this immediately and
+    // then every ~2 s while its flush drains. Re-arm the auto-destroy timer on
+    // each beat so an honest drain that runs longer than FLUSH_TIMEOUT_MS (a
+    // large vault on a contended volume — the user's vault lives under OneDrive)
+    // isn't destroyed mid-write. The ceiling now bounds inter-beat SILENCE (a
+    // wedged renderer), not total honest drain time.
+    const onHeartbeat = (): void => {
+      clearTimeout(timer);
+      timer = setTimeout(destroyOnTimeout, FLUSH_TIMEOUT_MS);
+    };
 
     // Audit-4 DI-04 — heartbeat. The renderer sends this right before it opens
     // an open-ended "Save failed" confirm. Clear the auto-destroy timer so the
@@ -189,8 +201,11 @@ async function createWindow(): Promise<void> {
     // under the dialog and the user's choice (and edits) are discarded. The
     // ready/cancel reply still drives the real quit; a renderer that never
     // replies just leaves the window open, the safe direction (no data loss).
+    // Drop the heartbeat listener too so a late beat can't re-arm the timer
+    // while the user reads the dialog.
     const onAwaitingUser = (): void => {
       clearTimeout(timer);
+      ipcMain.removeListener('app:drain-heartbeat', onHeartbeat);
     };
 
     // 6.2.H4 — two terminal signals from the renderer: ready (proceed to
@@ -201,6 +216,7 @@ async function createWindow(): Promise<void> {
       clearTimeout(timer);
       ipcMain.removeListener('app:cancel-quit', onCancel);
       ipcMain.removeListener('app:quit-awaiting-user', onAwaitingUser);
+      ipcMain.removeListener('app:drain-heartbeat', onHeartbeat);
       // Phase 4 / 4.4 — drain windowState + sidebarState before destroying
       // the window. The renderer's flush completed first; now wait on the
       // main-side debounces so the next launch sees the latest geometry.
@@ -222,11 +238,15 @@ async function createWindow(): Promise<void> {
       clearTimeout(timer);
       ipcMain.removeListener('app:ready-to-quit', onReady);
       ipcMain.removeListener('app:quit-awaiting-user', onAwaitingUser);
+      ipcMain.removeListener('app:drain-heartbeat', onHeartbeat);
       isFlushingForQuit = false;
     };
     ipcMain.once('app:ready-to-quit', onReady);
     ipcMain.once('app:cancel-quit', onCancel);
     ipcMain.once('app:quit-awaiting-user', onAwaitingUser);
+    // Audit5 2.1 — persistent (`on`, not `once`) so every periodic beat lands;
+    // removed in onReady/onCancel/onAwaitingUser and the catch below.
+    ipcMain.on('app:drain-heartbeat', onHeartbeat);
 
     try {
       mainWindow.webContents.send('app:flush-and-quit');
@@ -235,6 +255,7 @@ async function createWindow(): Promise<void> {
       ipcMain.removeListener('app:ready-to-quit', onReady);
       ipcMain.removeListener('app:cancel-quit', onCancel);
       ipcMain.removeListener('app:quit-awaiting-user', onAwaitingUser);
+      ipcMain.removeListener('app:drain-heartbeat', onHeartbeat);
       logMainError('main:flush-and-quit-on-close', err);
       mainWindow?.destroy();
     }
@@ -412,8 +433,10 @@ app.on('before-quit', (event) => {
     // 6.2.H4 — also drain the cancel-quit listener so a late renderer
     // signal can't bring the (already torn down) flush state out of sync.
     ipcMain.removeAllListeners('app:cancel-quit');
-    // Audit-4 DI-04 — drain the heartbeat listener too.
+    // Audit-4 DI-04 — drain the awaiting-user listener too.
     ipcMain.removeAllListeners('app:quit-awaiting-user');
+    // Audit5 2.1 — and the periodic drain heartbeat listener.
+    ipcMain.removeAllListeners('app:drain-heartbeat');
     void Promise.allSettled([
       flushWindowStateNow(),
       flushSidebarStateNow(),
@@ -425,10 +448,20 @@ app.on('before-quit', (event) => {
     });
   };
 
-  const timer = setTimeout(() => {
+  const exitOnTimeout = (): void => {
     console.warn('[main] flush-and-quit timed out, exiting anyway');
     finish();
-  }, FLUSH_TIMEOUT_MS);
+  };
+  let timer = setTimeout(exitOnTimeout, FLUSH_TIMEOUT_MS);
+
+  // Audit5 2.1 — drain heartbeat (see the close-event path for the full
+  // rationale). Each beat re-arms the auto-exit timer so an honest drain that
+  // outlasts FLUSH_TIMEOUT_MS isn't cut short; the ceiling bounds inter-beat
+  // silence, not total drain time.
+  const onHeartbeat = (): void => {
+    clearTimeout(timer);
+    timer = setTimeout(exitOnTimeout, FLUSH_TIMEOUT_MS);
+  };
 
   // Audit-4 DI-04 — heartbeat (see the close-event path for the full
   // rationale). Clear the auto-exit timer when the renderer signals a human
@@ -436,6 +469,7 @@ app.on('before-quit', (event) => {
   // only the automated flush. The ready/cancel reply still drives the exit.
   const onAwaitingUser = (): void => {
     clearTimeout(timer);
+    ipcMain.removeListener('app:drain-heartbeat', onHeartbeat);
   };
 
   // 6.2.H4 — same two-signal handshake as the close-event path. On Cancel
@@ -450,11 +484,15 @@ app.on('before-quit', (event) => {
     clearTimeout(timer);
     ipcMain.removeListener('app:ready-to-quit', onReady);
     ipcMain.removeListener('app:quit-awaiting-user', onAwaitingUser);
+    ipcMain.removeListener('app:drain-heartbeat', onHeartbeat);
     isFlushingForQuit = false;
   };
   ipcMain.once('app:ready-to-quit', onReady);
   ipcMain.once('app:cancel-quit', onCancel);
   ipcMain.once('app:quit-awaiting-user', onAwaitingUser);
+  // Audit5 2.1 — persistent (`on`) drain heartbeat; drained by finish() /
+  // onCancel / onAwaitingUser / the catch below.
+  ipcMain.on('app:drain-heartbeat', onHeartbeat);
 
   try {
     win.webContents.send('app:flush-and-quit');
@@ -463,6 +501,7 @@ app.on('before-quit', (event) => {
     ipcMain.removeListener('app:ready-to-quit', onReady);
     ipcMain.removeListener('app:cancel-quit', onCancel);
     ipcMain.removeListener('app:quit-awaiting-user', onAwaitingUser);
+    ipcMain.removeListener('app:drain-heartbeat', onHeartbeat);
     logMainError('main:flush-and-quit', err);
     finish();
   }

@@ -12,6 +12,7 @@ import {
   UpdateOrphanFrontmatterCommand,
 } from '../../commands/index';
 import { copyFileIntoVault } from '../vault/vaultOperations';
+import { seedDocumentFrontmatterFromDisk } from '../boards/seedFrontmatterFromDisk';
 
 export type KanbanPriority = 'none' | 'low' | 'medium' | 'high' | 'urgent';
 
@@ -42,9 +43,9 @@ export interface KanbanFrontmatterWriter {
   vaultPathForTile(tile: Tile): string | null;
   vaultPathForTileSafe(tile: Tile): string;
   ensureSeededFm(tile: Tile): string | null;
-  updateTileFrontmatter(tileId: string, patch: Record<string, unknown>): void;
-  setTileDueDate(tileId: string, dueDate: string): void;
-  setTilePriority(tileId: string, priority: KanbanPriority): void;
+  updateTileFrontmatter(tileId: string, patch: Record<string, unknown>): Promise<void>;
+  setTileDueDate(tileId: string, dueDate: string): Promise<void>;
+  setTilePriority(tileId: string, priority: KanbanPriority): Promise<void>;
   openTileAsDocument(tileId: string): void;
   pickCoverImageForTile(tileId: string): Promise<void>;
   clearCoverImageForTile(tileId: string): void;
@@ -82,12 +83,23 @@ export function makeKanbanFrontmatterWriter(
     return docId;
   }
 
-  function updateTileFrontmatter(tileId: string, patch: Record<string, unknown>): void {
+  async function updateTileFrontmatter(tileId: string, patch: Record<string, unknown>): Promise<void> {
     const board = getBoard();
     if (!board) return;
     const tile = getAllTilesById()[tileId];
     if (!tile) return;
     const path = vaultPathForTileSafe(tile);
+    // Audit-6 M4 — seed the FM cache from a FRESH disk read before the (sync)
+    // index-seed below, so a key an external editor added since the last vault
+    // index rebuild (e.g. `priority: high`) isn't dropped by the subsequent
+    // source-preserving write. No-op when an open editor / prior edit already
+    // seeded the cache, or when the disk read fails (ensureSeededFm's index
+    // fallback then runs as before).
+    await seedDocumentFrontmatterFromDisk(
+      (tile as Tile & { contentId?: string }).contentId ?? null,
+      vaultStore.path,
+      path,
+    );
     const docId = ensureSeededFm(tile);
     // Prefer the live documentStore cache when seeded so a rapid second mutation
     // captures the previous in-memory state, not the still-debounced disk snapshot.
@@ -114,12 +126,12 @@ export function makeKanbanFrontmatterWriter(
     bumpCacheVersion();
   }
 
-  function setTileDueDate(tileId: string, dueDate: string): void {
-    updateTileFrontmatter(tileId, { dueDate });
+  function setTileDueDate(tileId: string, dueDate: string): Promise<void> {
+    return updateTileFrontmatter(tileId, { dueDate });
   }
 
-  function setTilePriority(tileId: string, priority: KanbanPriority): void {
-    updateTileFrontmatter(tileId, { priority: priority === 'none' ? '' : priority });
+  function setTilePriority(tileId: string, priority: KanbanPriority): Promise<void> {
+    return updateTileFrontmatter(tileId, { priority: priority === 'none' ? '' : priority });
   }
 
   function openTileAsDocument(tileId: string): void {

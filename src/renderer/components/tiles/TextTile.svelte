@@ -15,6 +15,7 @@
 
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
   const boardStore = scope.board;
+  import { boardRefIntegrityStore } from '../../stores/boardRefIntegrity.svelte';
   import { documentStore } from '../../stores/document.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import type { ResolvedTileStyle } from '../../lib/styles/effectiveStyle';
@@ -338,7 +339,29 @@
         }
         return;
       } catch (err) {
-        console.warn('[TextTile] Failed to read markdown file, using legacy content:', err);
+        // A genuinely-missing backing file (ENOENT) is an expected, already-
+        // surfaced state: `boardRefIntegrity` flags the placement with a
+        // "backing file missing" badge on load, and the embedded-content
+        // fallback below is the designed behaviour. Genuine, unexpected read
+        // failures (permissions, decode errors, a directory in the path) warn.
+        if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
+          // #16 — the on-load / tree-refresh recomputes normally set the
+          // "backing file missing" badge, but a file deleted AFTER load (before
+          // the tree caught up) can reach this re-hydrate with no badge yet. If
+          // this tile isn't already flagged, recompute against the live tree so
+          // the badge is immediate. The `isBrokenTile` guard keeps a board-open
+          // pass over many already-flagged broken tiles from triggering a
+          // recompute storm (the on-load recompute flagged them first).
+          if (!boardRefIntegrityStore.isBrokenTile(tile.id)) {
+            vaultStore.recomputeBrokenRefsNow();
+          }
+          // Debug breadcrumb rather than a full suppress — a silently-swallowed
+          // ENOENT is invisible when diagnosing a vanished backing file. The
+          // main process already skips its own stack trace for ENOENT reads.
+          console.debug('[TextTile] backing markdown missing (ENOENT); using embedded fallback:', relPath);
+        } else {
+          console.warn('[TextTile] Failed to read markdown file, using legacy content:', err);
+        }
       }
 
       // No backing file (legacy tile or fresh tile) — fall back to embedded content.

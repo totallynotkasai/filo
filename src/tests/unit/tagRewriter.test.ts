@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import yaml from 'js-yaml';
-import { rewriteTagInMarkdown, removeTagFromMarkdown, addTagToMarkdown } from '@renderer/lib/vault/tagRewriter';
+import { parseDocument } from 'yaml';
+import {
+  rewriteTagInMarkdown,
+  removeTagFromMarkdown,
+  addTagToMarkdown,
+  emitTagScalar,
+} from '@renderer/lib/vault/tagRewriter';
 
 /**
  * Extracts a result file's frontmatter block and parses it. THROWS if the
@@ -432,5 +438,147 @@ describe('tag rewriter — emitted scalars are quoted so YAML never corrupts (1.
     const input = ['---', 'tags: foo, bar', '---', 'body'].join('\n');
     const out = rewriteTagInMarkdown(input, 'foo', 'baz');
     expect(out).toContain('tags: baz, bar'); // not needlessly upgraded to flow
+  });
+});
+
+// ── Phase 6.4 ───────────────────────────────────────────────────────────────
+// The per-tag quoting oracle `emitTagScalar` was re-implemented on the `yaml`
+// package (was js-yaml), removing the last js-yaml use from the tag write path.
+// js-yaml's default `dump` was deliberately YAML-1.1-conservative — it quoted
+// every name a 1.1 reader would otherwise coerce (`yes`/`no`, `1_000`,
+// `2024-01-01`, `1:30`) so the tag stayed a STRING everywhere, including the
+// vault-index CORE read under which an unquoted `1_000` resolves to the NUMBER
+// 1000. The replacement reproduces that conservatism with `version: '1.1'` and
+// matches the single-quote preference with `singleQuote: true`. This is the
+// quoting-oracle PARITY test the refactor plan calls for: it runs both oracles
+// over a YAML-hostile name table and asserts the new output (a) always
+// round-trips to the exact string in flow AND block context under js-yaml
+// DEFAULT, js-yaml CORE, and the `yaml` package, and (b) is byte-identical to
+// the old oracle except a small allowlist of cosmetic, round-trip-safe diffs.
+describe('emitTagScalar — quoting-oracle parity with the pre-6.4 js-yaml oracle (Phase 6.4)', () => {
+  // The EXACT pre-6.4 implementation (js-yaml DEFAULT schema = YAML 1.1).
+  function oldEmitTagScalar(tag: string): string {
+    return yaml.dump([tag], { flowLevel: 0, lineWidth: -1 }).replace(/\n$/, '').slice(1, -1).trim();
+  }
+
+  // Recover the first list element from `[X]` (flow) or `tags:\n  - X` (block).
+  function firstItem(parsed: unknown): unknown {
+    if (Array.isArray(parsed)) return parsed[0];
+    if (parsed && typeof parsed === 'object' && 'tags' in parsed) {
+      const t = (parsed as { tags: unknown }).tags;
+      return Array.isArray(t) ? t[0] : undefined;
+    }
+    return undefined;
+  }
+
+  // An emitted scalar must read back as the EXACT original string in both flow
+  // and block context, under all three parsers that touch a tag on disk: js-yaml
+  // DEFAULT (the strictest YAML-1.1 resolver + the tagRewriter test parser),
+  // js-yaml CORE (the vault index, pre-6.5), and the `yaml` package (the read
+  // path + the write engine's compare).
+  function roundTripsEverywhere(scalar: string, tag: string): boolean {
+    const readers: Array<(doc: string) => unknown> = [
+      (d) => yaml.load(d),
+      (d) => yaml.load(d, { schema: yaml.CORE_SCHEMA }),
+      (d) => parseDocument(d).toJS(),
+    ];
+    const docs = [`[${scalar}]`, `tags:\n  - ${scalar}\n`];
+    for (const read of readers) {
+      for (const doc of docs) {
+        let got: unknown;
+        try {
+          got = firstItem(read(doc));
+        } catch {
+          return false;
+        }
+        if (got !== tag) return false;
+      }
+    }
+    return true;
+  }
+
+  const HOSTILE_TAGS = [
+    'foo', 'project/sub', 'foo/bar/baz', '@home', '123', '0', '-7', '3.14', 'true', 'false',
+    'null', 'yes', 'no', 'on', 'off', 'a, b', 'a,b', 'a: b', 'a:b', '? q', '#hash', '[bracket',
+    ']bracket', '{brace', '}brace', '&anchor', '*alias', '!bang', '|pipe', '>fold', '%percent',
+    '@at', '`tick', '"quote', "'apos", 'tab\tinside', ' leading', 'trailing ', 'multi word',
+    'CamelCase', 'UPPER', '日本語', 'emoji😀', '1_000', '0xFF', '.inf', '.nan', '=', '~', 'a#b',
+    'http://x.com', '2024-01-01', 'v1.2.3', 'a"b', "a'b", 'a\\b', '', ' ', 'a  b', 'null ',
+    ' true', 'NaN', '.NaN', '+5', '007', '1:30',
+  ];
+
+  // Names whose `yaml`-package emission BYTE-differs from the old js-yaml oracle.
+  // Each re-parses to the identical string under every reader/context (asserted
+  // below), so the difference is cosmetic — never a round-trip regression:
+  //  - "'apos":      double-quoted vs the old doubled-single-quote form
+  //  - "=":          bare (a valid plain scalar) vs the old defensive single-quote
+  //  - "tab\tinside": bare (a valid plain scalar) vs the old double-quoted escape
+  const ALLOWED_DIVERGENCES = new Set(["'apos", '=', 'tab\tinside']);
+
+  it('every hostile tag round-trips, and byte-matches the old oracle except a known-safe allowlist', () => {
+    const unexpected: string[] = [];
+    for (const tag of HOSTILE_TAGS) {
+      const next = emitTagScalar(tag);
+      const old = oldEmitTagScalar(tag);
+      expect(
+        roundTripsEverywhere(next, tag),
+        `new emit of ${JSON.stringify(tag)} (${JSON.stringify(next)}) must round-trip everywhere`,
+      ).toBe(true);
+      if (next !== old) {
+        // A byte difference is acceptable ONLY if it still round-trips (so the
+        // old form was equally just a style choice) AND it is allowlisted.
+        expect(
+          roundTripsEverywhere(old, tag),
+          `old emit of ${JSON.stringify(tag)} should also round-trip`,
+        ).toBe(true);
+        if (!ALLOWED_DIVERGENCES.has(tag)) {
+          unexpected.push(`${JSON.stringify(tag)}: old=${JSON.stringify(old)} new=${JSON.stringify(next)}`);
+        }
+      }
+    }
+    expect(unexpected, `unexpected byte divergences from the old oracle:\n${unexpected.join('\n')}`).toEqual([]);
+  });
+
+  it('quotes YAML-special and YAML-1.1-ambiguous names so they stay strings', () => {
+    // The 1.1-ambiguous group (yes/no, 1_000, dates, sexagesimal) is the reason
+    // `version: '1.1'` is load-bearing: a 1.2-core emit would leave these bare.
+    for (const special of ['@home', '123', 'true', 'false', 'null', 'yes', 'no', '1_000', '2024-01-01', '1:30']) {
+      const next = emitTagScalar(special);
+      expect(next, `${JSON.stringify(special)} must be quoted, not emitted bare`).not.toBe(special);
+      expect(roundTripsEverywhere(next, special), `${JSON.stringify(special)} must round-trip`).toBe(true);
+    }
+  });
+
+  it('leaves a plain safe name bare (no needless quoting)', () => {
+    for (const safe of ['foo', 'project/sub', 'CamelCase', 'a:b', 'a#b', 'v1.2.3']) {
+      expect(emitTagScalar(safe)).toBe(safe);
+    }
+  });
+});
+
+// ── Phase 6.4 / M2 ──────────────────────────────────────────────────────────
+// `loadYamlObject` now parses with the `yaml` package — the SAME parser the
+// source-preserving engine (`patchFrontmatterSourceCst`) derives its
+// value-compare object from. Under the old js-yaml CORE load, `1_000` / `0b1010`
+// became the NUMBERS 1000 / 10, while the engine's `doc.toJS()` compare kept the
+// STRINGS "1_000" / "0b1010". A tag op routed through the load → patch FALLBACK
+// therefore saw an UNTOUCHED cross-parser-divergent sibling as "changed" and
+// canonicalised it on disk. These inputs reach the fallback (a `*` inside the
+// flow value makes `locateTagsField` decline the fast line rewrite) and assert
+// the divergent sibling survives byte-for-byte.
+describe('tag rewriter — fallback path preserves cross-parser scalars (Phase 6.4 / M2)', () => {
+  it('keeps an untouched 1_000 sibling verbatim through the load→patch fallback', () => {
+    const input = ['---', 'thousands: 1_000', 'tags: [foo, a*b]', '---', 'body'].join('\n');
+    const out = rewriteTagInMarkdown(input, 'foo', 'x');
+    expect(out, 'the fallback rewrite should have engaged').not.toBe(input);
+    expect(out).toContain('thousands: 1_000'); // NOT canonicalised to 1000
+    expect(out).not.toContain('thousands: 1000');
+  });
+
+  it('keeps an untouched 0b1010 sibling verbatim through the load→patch fallback', () => {
+    const input = ['---', 'flags: 0b1010', 'tags: [foo, a*b]', '---', 'body'].join('\n');
+    const out = removeTagFromMarkdown(input, 'foo');
+    expect(out, 'the fallback rewrite should have engaged').not.toBe(input);
+    expect(out).toContain('flags: 0b1010'); // NOT canonicalised to 10
   });
 });

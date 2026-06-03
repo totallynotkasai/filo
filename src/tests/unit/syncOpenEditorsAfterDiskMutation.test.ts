@@ -9,7 +9,10 @@ import {
   cancelAllMarkdownWrites,
   type WriteArgs,
 } from '@renderer/lib/vault/markdownFileWriter';
-import { syncOpenEditorsAfterDiskMutation } from '@renderer/lib/vault/syncOpenEditorsAfterDiskMutation';
+import {
+  syncOpenEditorsAfterDiskMutation,
+  writeMarkdownAndReconcile,
+} from '@renderer/lib/vault/syncOpenEditorsAfterDiskMutation';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
@@ -193,5 +196,183 @@ describe('Phase 6.1.R1 — syncOpenEditorsAfterDiskMutation', () => {
 
     expect(documentStore.getDocument(docA)?.body).toBe('rewritten-a');
     expect(documentStore.getDocument(docB)?.body).toBe('body-b');
+  });
+});
+
+/**
+ * Phase 6.6 — `writeMarkdownAndReconcile`: the coupled write+reconcile helper.
+ *
+ * The whole point is that the disk write and the open-editor reconcile read ONE
+ * `path` argument, so the written path and the reconciled path cannot diverge —
+ * the data-flow guarantee `ci:md-writers-reconcile-editors` could not prove
+ * statically. These tests pin: the write targets the SAME path it reconciles;
+ * `mode` selects full-reload vs frontmatter-only; `create` selects the channel;
+ * and a FAILED write reconciles nothing (no editor convergence on bytes that
+ * never landed).
+ */
+describe('Phase 6.6 — writeMarkdownAndReconcile', () => {
+  let captured: Captured[];
+
+  beforeEach(() => {
+    __resetDirtyTrackingForTests();
+    cancelAllMarkdownWrites();
+    documentStore.clear();
+    captured = [];
+    installFiloMock((channel: string, ...args: unknown[]) => {
+      captured.push({ channel, args });
+      if (channel === 'vault:stat') return { ok: true, mtimeMs: 1, size: 1 };
+      return { ok: true, success: true };
+    });
+  });
+
+  afterEach(() => {
+    cancelAllMarkdownWrites();
+    __resetDirtyTrackingForTests();
+    documentStore.clear();
+    restoreFiloDefault();
+  });
+
+  it("writes via write-existing and reconciles the SAME path (mode: 'full')", async () => {
+    const docId = 'doc-couple-full';
+    const relPath = 'Notes/Couple.md';
+    documentStore.loadDocument({
+      docId,
+      filename: relPath,
+      title: 'Couple',
+      body: 'old body',
+      htmlContent: '',
+      richText: [],
+    });
+    documentStore.setFrontmatter(docId, { title: 'Couple' }, '---\ntitle: Couple\n---');
+    markHydrated(relPath, false);
+
+    const after = '---\ntitle: Couple\nstatus: done\n---\nnew body\n';
+    await writeMarkdownAndReconcile({ vaultRoot: '/vault', path: relPath, content: after, mode: 'full' });
+
+    // The bytes hit the write-existing channel at the exact path.
+    const write = captured.find((c) => c.channel === 'vault:write-existing-file-text');
+    expect(write?.args[1]).toBe(relPath);
+    expect(write?.args[2]).toBe(after);
+    // The reconcile took the SAME path's bytes: body + frontmatter both refreshed.
+    expect(documentStore.getDocument(docId)?.body).toBe('new body\n');
+    expect(documentStore.getFrontmatter(docId)).toEqual({ title: 'Couple', status: 'done' });
+  });
+
+  it('uses the create channel (vault:write-file-text) when create:true', async () => {
+    const docId = 'doc-couple-create';
+    const relPath = 'Notes/Created.md';
+    documentStore.loadDocument({
+      docId,
+      filename: relPath,
+      title: 'Created',
+      body: 'x',
+      htmlContent: '',
+      richText: [],
+    });
+    documentStore.setFrontmatter(docId, {}, '');
+    markHydrated(relPath, false);
+
+    await writeMarkdownAndReconcile({
+      vaultRoot: '/vault',
+      path: relPath,
+      content: '---\n---\nbody\n',
+      mode: 'full',
+      create: true,
+    });
+
+    expect(
+      captured.some((c) => c.channel === 'vault:write-file-text' && c.args[1] === relPath),
+    ).toBe(true);
+    expect(captured.some((c) => c.channel === 'vault:write-existing-file-text')).toBe(false);
+  });
+
+  it("frontmatter mode refreshes the FM cache only and preserves the editor body", async () => {
+    const docId = 'doc-couple-fm';
+    const relPath = 'Notes/FmOnly.md';
+    documentStore.loadDocument({
+      docId,
+      filename: relPath,
+      title: 'FmOnly',
+      body: 'unsaved edits',
+      htmlContent: '',
+      richText: [],
+    });
+    documentStore.setFrontmatter(docId, { title: 'FmOnly' }, 'title: FmOnly');
+    // Dirty in-memory edit — a full reload would clobber it; FM-only must not.
+    documentStore.updateContent(docId, '<p>x</p>', 'unsaved edits', 'w1');
+    markHydrated(relPath, false);
+
+    await writeMarkdownAndReconcile({
+      vaultRoot: '/vault',
+      path: relPath,
+      content: '---\ntitle: FmOnly\ntags:\n  - foo\n---\nstale disk body\n',
+      mode: 'frontmatter',
+    });
+
+    // Body preserved (the unsaved edits), frontmatter cache took the new tag.
+    expect(documentStore.getDocument(docId)?.body).toBe('unsaved edits');
+    expect(documentStore.getFrontmatter(docId)).toEqual({ title: 'FmOnly', tags: ['foo'] });
+  });
+
+  it('reconciles only the editor on the written path, never a sibling', async () => {
+    documentStore.loadDocument({
+      docId: 'A',
+      filename: 'A.md',
+      title: 'A',
+      body: 'body-A',
+      htmlContent: '',
+      richText: [],
+    });
+    documentStore.setFrontmatter('A', {}, '');
+    documentStore.loadDocument({
+      docId: 'B',
+      filename: 'B.md',
+      title: 'B',
+      body: 'body-B',
+      htmlContent: '',
+      richText: [],
+    });
+    documentStore.setFrontmatter('B', {}, '');
+    markHydrated('A.md', false);
+    markHydrated('B.md', false);
+
+    await writeMarkdownAndReconcile({ vaultRoot: '/vault', path: 'A.md', content: 'rewritten-A', mode: 'full' });
+
+    // The reconcile is keyed to the SAME path the write targeted — B untouched.
+    expect(documentStore.getDocument('A')?.body).toBe('rewritten-A');
+    expect(documentStore.getDocument('B')?.body).toBe('body-B');
+  });
+
+  it('does NOT reconcile when the write fails (no convergence on bytes that never landed)', async () => {
+    const docId = 'doc-couple-fail';
+    const relPath = 'Notes/Fail.md';
+    documentStore.loadDocument({
+      docId,
+      filename: relPath,
+      title: 'Fail',
+      body: 'pre-fail body',
+      htmlContent: '',
+      richText: [],
+    });
+    documentStore.setFrontmatter(docId, { title: 'Fail' }, '---\ntitle: Fail\n---');
+    markHydrated(relPath, false);
+
+    // The write channel rejects → trackComponentWrite re-throws → the helper
+    // rejects BEFORE the reconcile runs.
+    installFiloMock((channel: string, ...args: unknown[]) => {
+      captured.push({ channel, args });
+      if (channel === 'vault:write-existing-file-text') {
+        return { success: false, error: 'EACCES', code: 'EACCES' };
+      }
+      if (channel === 'vault:stat') return { ok: true, mtimeMs: 1, size: 1 };
+      return { ok: true, success: true };
+    });
+
+    await expect(
+      writeMarkdownAndReconcile({ vaultRoot: '/vault', path: relPath, content: 'never lands', mode: 'full' }),
+    ).rejects.toThrow();
+
+    // Editor untouched — it was never reconciled to bytes that didn't land.
+    expect(documentStore.getDocument(docId)?.body).toBe('pre-fail body');
   });
 });

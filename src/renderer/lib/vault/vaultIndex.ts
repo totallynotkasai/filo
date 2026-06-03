@@ -3,7 +3,7 @@ import matter from 'gray-matter';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkFrontmatter from 'remark-frontmatter';
-import yaml from 'js-yaml';
+import { parseDocument } from 'yaml';
 import type { Root, RootContent, Heading, Link, Text, Yaml } from 'mdast';
 import type { FileTreeNode } from '../../../shared/types';
 import { normalizeTags } from './frontmatterSync';
@@ -27,12 +27,22 @@ export interface FileMetadata {
    * 6.2.H1 — verbatim YAML source between the `---` fences, captured at parse
    * time so the external-change pipeline can refresh `originalFrontmatterCache`
    * after a sync-frontmatter reload. Without this, the cache baseline that
-   * `patchFrontmatterSource` diffs against stays at the pre-sync bytes, and a
+   * `patchFrontmatterSourceCst` diffs against stays at the pre-sync bytes, and a
    * subsequent body-only save's diff re-emits the externally-changed key and
    * drops any inline comment on that key. Empty string when the file has no
    * frontmatter fence.
    */
   rawFrontmatter: string;
+  /**
+   * L12 (Audit-6) — UTF-8 byte length of the file's RAW content (frontmatter +
+   * body, before parsing), captured at parse time. The partial-read shrink
+   * heuristic (`conflictResolver.isLikelyPartialRead`) measures THIS rather than
+   * the parsed body length, so a mid-write truncation that lands mostly inside a
+   * large frontmatter block is still caught (the surviving body alone can look
+   * unchanged). Optional: synthetic `FileMetadata` built in tests or non-parse
+   * paths may omit it, and the heuristic falls back to the parsed-body length.
+   */
+  rawByteSize?: number;
 }
 
 export interface VaultIndexSearchResult extends SearchResult {
@@ -123,33 +133,47 @@ function stringifyNode(node: RootContent | Heading | Link | Text): string {
 }
 
 /**
- * Parses a YAML frontmatter block into a plain object. Uses js-yaml first
- * (same dependency gray-matter uses internally), then falls back to
- * gray-matter on any parse error. Invalid YAML yields `{}`.
+ * Parses a YAML frontmatter block into a plain object. Parses with the `yaml`
+ * package first (the single frontmatter parser as of Phase 6.5 — the same one
+ * the read/write path uses), then falls back to gray-matter on a parse error.
+ * Invalid YAML yields `{}`.
  */
 function parseFrontmatterBlock(yamlSource: string): Record<string, unknown> {
   if (!yamlSource.trim()) return {};
   try {
-    // Audit-4 DI-01 — CORE_SCHEMA keeps unquoted dates as strings (and `<<` as a
-    // literal merge key), matching how the write paths re-serialise frontmatter.
-    // Keeping the index parser aligned with parseMarkdownFile / tagRewriter
-    // avoids a divergence-detection mismatch between the index metadata and the
-    // documentStore frontmatter. The gray-matter fallback below only fires when
-    // this throws; its rare output is normalised downstream by
-    // `frontmatterSync.normalizeScalar` (Date → string), so it stays safe.
-    const loaded = yaml.load(yamlSource, { schema: yaml.CORE_SCHEMA });
-    if (loaded && typeof loaded === 'object' && !Array.isArray(loaded)) {
-      return loaded as Record<string, unknown>;
-    }
-    return {};
-  } catch {
-    try {
-      const fenced = `---\n${yamlSource}\n---\n`;
-      const parsed = matter(fenced);
-      return (parsed.data ?? {}) as Record<string, unknown>;
-    } catch {
+    // Phase 6.5 — parse with the `yaml` package (was js-yaml CORE_SCHEMA) so the
+    // index builds its view of a file's frontmatter with the SAME parser as the
+    // read/write path (`markdownSync.parseMarkdownFile` → `frontmatterCstModel`).
+    // js-yaml CORE read `1_000` / `0b1010` as the NUMBERS 1000 / 10 while the
+    // `yaml` package keeps them STRINGS; with the index on a different parser an
+    // exotic-numeric value diverged between the index metadata and the
+    // documentStore frontmatter, which the external-edit classifier could read as
+    // a phantom change (the M2 class). One parser everywhere closes that seam.
+    // Like the prior CORE_SCHEMA read this preserves DI-01 / DI-05: the `yaml`
+    // core schema resolves no timestamp or merge tag, so an unquoted date stays a
+    // `string` and `<<: *a` a literal `<<`. `doc.errors` (duplicate key, bad
+    // indentation) routes to the gray-matter safety net below — the same shape
+    // js-yaml's throw used to take; that fallback's rare output is normalised
+    // downstream by `frontmatterSync.normalizeScalar` (Date → string), so it
+    // stays safe. A clean parse to a non-object (scalar / array root) yields `{}`
+    // directly, never gray-matter — parity with the prior code.
+    const doc = parseDocument(yamlSource);
+    if (doc.errors.length === 0) {
+      const loaded = doc.toJS();
+      if (loaded && typeof loaded === 'object' && !Array.isArray(loaded)) {
+        return loaded as Record<string, unknown>;
+      }
       return {};
     }
+  } catch {
+    /* fall through to the gray-matter safety net */
+  }
+  try {
+    const fenced = `---\n${yamlSource}\n---\n`;
+    const parsed = matter(fenced);
+    return (parsed.data ?? {}) as Record<string, unknown>;
+  } catch {
+    return {};
   }
 }
 
@@ -358,7 +382,27 @@ export function parseMarkdown(
     content: body,
     lastModified,
     rawFrontmatter,
+    // L12 (Audit-6) — raw UTF-8 byte size of the whole file (FM + body) for the
+    // partial-read shrink heuristic. Measured on `rawContent` (the bytes the
+    // watcher actually read), not the parsed body.
+    rawByteSize: rawUtf8ByteLength(rawContent),
   };
+}
+
+/**
+ * UTF-8 byte length of `text`, used to populate `FileMetadata.rawByteSize`.
+ * `TextEncoder` is the accurate path (multi-byte aware); the `.length`
+ * fallback only fires in an environment without it (older jsdom shims).
+ */
+function rawUtf8ByteLength(text: string): number {
+  if (typeof TextEncoder !== 'undefined') {
+    try {
+      return new TextEncoder().encode(text).length;
+    } catch {
+      /* fall through */
+    }
+  }
+  return text.length;
 }
 
 /**

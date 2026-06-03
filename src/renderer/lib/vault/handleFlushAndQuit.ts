@@ -22,12 +22,44 @@ export interface QuitFlushDeps {
   saveStateState: () => 'idle' | 'saving' | 'saved' | 'error';
   save: () => Promise<boolean>;
   send: (
-    channel: 'app:ready-to-quit' | 'app:cancel-quit' | 'app:quit-awaiting-user',
+    channel:
+      | 'app:ready-to-quit'
+      | 'app:cancel-quit'
+      | 'app:quit-awaiting-user'
+      | 'app:drain-heartbeat',
   ) => void;
   reportError: (context: string, err: unknown, msg: string) => void;
+  /**
+   * Audit-6 M5 — awaits the dirty-flag sentinel mutex tail (the fire-and-forget
+   * `markClean` `save()` enqueued while draining) so it lands on disk BEFORE we
+   * tell main to destroy the renderer. Without it, `.filo/.dirty` outlives a
+   * clean quit and the next launch shows a phantom recovery prompt. Optional so
+   * existing unit deps don't have to supply it; production wires
+   * `flushDirtyFlagSentinel`.
+   */
+  flushSentinel?: () => Promise<void>;
 }
 
+/**
+ * Audit5 2.1 — heartbeat cadence while `save()` drains. Must stay comfortably
+ * below main's `FLUSH_TIMEOUT_MS` (5 s) so the destroy timer main re-arms on
+ * each beat never lapses in the gap between two beats on a slow drain.
+ */
+const DRAIN_HEARTBEAT_MS = 2000;
+
 export async function handleFlushAndQuit(deps: QuitFlushDeps): Promise<void> {
+  // Audit5 2.1 (#2) — beat a drain-in-progress signal BEFORE and DURING the
+  // flush. Main arms a 5 s auto-destroy timer the instant it asks us to flush;
+  // a drain that legitimately runs longer than that (a large vault on a
+  // contended volume — the user's vault lives under OneDrive) would otherwise
+  // have the window destroyed mid-write, losing the very edits we're saving.
+  // Each beat re-arms main's timer, so the ceiling bounds inter-beat SILENCE
+  // (a wedged renderer) rather than total honest drain time. The interval is
+  // cleared the moment `save()` settles — the failure branch's open-ended
+  // confirm is then bounded by `app:quit-awaiting-user`, not the heartbeat.
+  deps.send('app:drain-heartbeat');
+  const heartbeat = setInterval(() => deps.send('app:drain-heartbeat'), DRAIN_HEARTBEAT_MS);
+
   let failed = false;
   try {
     const ok = await deps.save();
@@ -35,8 +67,13 @@ export async function handleFlushAndQuit(deps: QuitFlushDeps): Promise<void> {
   } catch (err) {
     deps.reportError('App', err, 'flush-and-quit failed');
     failed = true;
+  } finally {
+    clearInterval(heartbeat);
   }
   if (!failed && deps.saveStateState() !== 'error') {
+    // Audit-6 M5 — let the queued markClean reach disk before main destroys us,
+    // or `.filo/.dirty` survives a clean quit → phantom recovery next launch.
+    await deps.flushSentinel?.();
     deps.send('app:ready-to-quit');
     return;
   }
@@ -68,5 +105,13 @@ export async function handleFlushAndQuit(deps: QuitFlushDeps): Promise<void> {
       onCancel: () => resolve(false),
     });
   });
-  deps.send(quitAnyway ? 'app:ready-to-quit' : 'app:cancel-quit');
+  if (quitAnyway) {
+    // Audit-6 M5 — on "Quit anyway" the sentinel is (correctly) DIRTY: failed
+    // writes enqueued a markDirty. Flush it so the next launch's recovery prompt
+    // accurately names the lost paths instead of racing the renderer's destroy.
+    await deps.flushSentinel?.();
+    deps.send('app:ready-to-quit');
+  } else {
+    deps.send('app:cancel-quit');
+  }
 }

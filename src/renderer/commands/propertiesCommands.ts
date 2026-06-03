@@ -35,6 +35,8 @@ import {
 } from '../lib/vault/markdownFileWriter';
 import { flushAllPendingFrontmatterWrites } from '../lib/boards/frontmatterWriteScheduler';
 import { reportError } from '../lib/utils/errorBus';
+import { uiStore } from '../stores/ui.svelte';
+import { fmValueEqual } from './frontmatterRebase';
 
 export type PropertiesSnapshot =
   | { kind: 'frontmatter'; relPath: string; docId: string | null; fm: Record<string, unknown> }
@@ -83,7 +85,11 @@ export class UpdatePropertiesCommand extends Command {
   }
 
   async execute(): Promise<void> {
-    await applySnapshot(this.after);
+    // Audit-6 H2 — pass BOTH legs so the frontmatter apply can rebase: it
+    // diffs after-vs-before to learn which keys this command OWNS, then merges
+    // only those onto the LIVE frontmatter. Any key it doesn't own (incl. one
+    // added externally between the popup edit and Ctrl+Z) is preserved.
+    await applySnapshot(this.after, this.before, this.targetBoardId);
     // Phase 6.1.R3 — dirty the ORIGINATING board, not whichever board is
     // active at execute/redo time. The metadata-kind branch of
     // `applySnapshot` previously skipped this entirely (silently),
@@ -93,14 +99,52 @@ export class UpdatePropertiesCommand extends Command {
   }
 
   async undo(): Promise<void> {
-    await applySnapshot(this.before);
+    await applySnapshot(this.before, this.after, this.targetBoardId);
     boardCacheStore.markDirty(this.targetBoardId);
   }
 }
 
-async function applySnapshot(snap: PropertiesSnapshot): Promise<void> {
-  if (snap.kind === 'metadata') {
-    boardStore.updateTile(snap.tileId, { metadata: { ...snap.metadata } } as Partial<Tile>);
+/**
+ * Removes empty / null / undefined values, matching `mergeFrontmatter`'s
+ * cleaning rule (the user "clearing" a property deletes the key).
+ */
+function cleanFrontmatter(fm: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(fm)) {
+    if (v === '' || v === null || v === undefined) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * Applies one leg of an `UpdatePropertiesCommand`.
+ *
+ * `target` is the snapshot this leg wants on disk; `other` is the opposite
+ * leg's snapshot. For the metadata kind (non-text tiles → board JSON) the
+ * snapshot is applied wholesale as before. For the frontmatter kind (text
+ * tiles → `.md` YAML) it is REBASED:
+ *
+ *   - The keys this command OWNS = those that differ between the two legs.
+ *   - It merges only those keys onto the LIVE base frontmatter (the open
+ *     editor's cache, else a fresh disk read), so an untouched key — including
+ *     one another tool added between the popup edit and Ctrl+Z — survives.
+ *   - Audit2 4.2 conflict handling: if an external edit moved an owned field
+ *     away from what the opposite leg left it at, KEEP the external value and
+ *     surface an "Apply anyway" toast (no silent clobber).
+ *
+ * Pre-fix this `setFrontmatter`-replaced the whole snapshot and wrote it
+ * wholesale, so undo erased any externally-added key (H2). The card/task field
+ * commands already rebased via `applyFrontmatterPatchRebased`; Properties was
+ * the Audit2-4.2 gap.
+ */
+async function applySnapshot(
+  target: PropertiesSnapshot,
+  other: PropertiesSnapshot,
+  targetBoardId: string,
+): Promise<void> {
+  if (target.kind === 'metadata') {
+    boardStore.updateTile(target.tileId, { metadata: { ...target.metadata } } as Partial<Tile>);
     return;
   }
 
@@ -114,47 +158,129 @@ async function applySnapshot(snap: PropertiesSnapshot): Promise<void> {
   const vaultRoot = vaultStore.path;
   if (!vaultRoot) return;
 
-  // Sync the live FM cache so any open editor/popup sees the snapshot's
-  // values. Without this, an already-open PropertiesPopup would re-write
-  // its stale snapshot 300ms later and clobber what we just applied.
-  if (snap.docId) documentStore.setFrontmatter(snap.docId, { ...snap.fm });
+  const { relPath, docId } = target;
+  const targetFm = target.fm;
+  const otherFm = other.kind === 'frontmatter' ? other.fm : {};
 
-  // Prefer the live in-memory body — an open TextTile/DocumentEditor keeps
-  // it current with un-debounced keystrokes. Fall back to the watcher
-  // snapshot so a popup-only edit (no editor mounted) still round-trips.
-  const docState = snap.docId ? documentStore.getDocument(snap.docId) : null;
-  const body = docState?.body ?? vaultIndexStore.getMetadata(snap.relPath)?.content ?? '';
+  // Keys this command owns = those that differ between the two legs. Untouched
+  // keys are never in this set, so the merge below preserves them verbatim.
+  const ownedKeys: string[] = [];
+  for (const k of new Set([...Object.keys(targetFm), ...Object.keys(otherFm)])) {
+    if (!fmValueEqual(otherFm[k], targetFm[k])) ownedKeys.push(k);
+  }
 
-  // If no sibling editor has hydrated the file yet, hydrate it via the read
-  // gateway — it detects the BOM AND seeds the drift baseline from the same
-  // read's mtime. Costs one IPC per never-hydrated file; once hydrated,
-  // subsequent writes hit the fast path.
-  if (!isHydrated(snap.relPath)) {
+  // Obtain the LIVE base frontmatter + body in as few reads as possible.
+  // Prefer the documentStore cache (an open editor keeps it current — external
+  // edits get reconciled in there); else read disk fresh; else fall back.
+  let base: Record<string, unknown> | null = docId
+    ? documentStore.getFrontmatter(docId) ?? null
+    : null;
+  const docState = docId ? documentStore.getDocument(docId) : null;
+  let diskBody: string | undefined;
+  if (!isHydrated(relPath)) {
     try {
-      await readMarkdownForHydrate(vaultRoot, snap.relPath);
+      const hydrate = await readMarkdownForHydrate(vaultRoot, relPath);
+      diskBody = hydrate.body;
+      if (base === null) {
+        base = hydrate.frontmatter;
+        // Seed the cache from disk so a sibling editor sees the disk truth +
+        // this leg's edit, and the gateway can source-preserve untouched bytes.
+        if (docId) {
+          documentStore.setFrontmatter(docId, hydrate.frontmatter, hydrate.rawFrontmatter);
+        }
+      }
     } catch {
       // File missing or unreadable — mark hydrated with no BOM so the write
       // below ENOENT-fails on missing files, surfacing the same toast path
       // the old direct write produced.
-      markHydrated(snap.relPath, false);
+      markHydrated(relPath, false);
     }
   }
+  if (base === null) {
+    const indexed = vaultIndexStore.getMetadata(relPath)?.frontmatter;
+    if (indexed) base = indexed as Record<string, unknown>;
+  }
+
+  // Prefer the live in-memory body — an open TextTile/DocumentEditor keeps it
+  // current with un-debounced keystrokes — then the disk-read body, then the
+  // watcher snapshot so a popup-only edit (no editor mounted) still round-trips.
+  const body =
+    docState?.body ?? diskBody ?? vaultIndexStore.getMetadata(relPath)?.content ?? '';
+
+  let merged: Record<string, unknown>;
+  const conflicts: string[] = [];
+  if (base === null) {
+    // No baseline obtainable (file unreadable AND nothing cached/indexed) — we
+    // can't see any external keys to preserve, so blind-apply the target
+    // snapshot. This is the legacy behaviour for that corner; with nothing
+    // visible there's no external key to lose.
+    merged = cleanFrontmatter({ ...targetFm });
+  } else {
+    merged = { ...base };
+    for (const k of ownedKeys) {
+      // Conflict: an external edit moved this field away from what this
+      // command's opposite leg left it at. Keep the external value, skip.
+      if (!fmValueEqual(base[k], otherFm[k])) {
+        conflicts.push(k);
+        continue;
+      }
+      if (k in targetFm) merged[k] = targetFm[k];
+      else delete merged[k];
+    }
+    merged = cleanFrontmatter(merged);
+  }
+
+  // Sync the live FM cache so an open editor/popup sees the applied result.
+  // Without this, an already-open PropertiesPopup would re-write its stale
+  // snapshot 300ms later and clobber what we just applied.
+  if (docId) documentStore.setFrontmatter(docId, merged);
 
   try {
     await writeMarkdownFile({
       vaultRoot,
-      relPath: snap.relPath,
-      frontmatter: snap.fm,
+      relPath,
+      frontmatter: merged,
       body,
-      callerId: `update-properties-command:${snap.relPath}`,
-      docId: snap.docId,
+      callerId: `update-properties-command:${relPath}`,
+      docId,
     });
   } catch (err) {
-    reportError('updateProperties', err, `Failed to apply properties to ${snap.relPath}`);
+    reportError('updateProperties', err, `Failed to apply properties to ${relPath}`);
   }
 
-  // Phase 6.1.R3 — the markDirty call moved up into the command's
-  // execute/undo so it (a) always uses `this.targetBoardId` and (b)
-  // also fires on the metadata-kind branch (which previously returned
-  // early without dirtying).
+  if (conflicts.length > 0) {
+    uiStore.pushToast({
+      text: `External edit changed ${conflicts.join(', ')} in ${relPath}. Kept the external value — that field's undo/redo was skipped.`,
+      type: 'warning',
+      duration: 0,
+      actions: [
+        {
+          label: 'Apply anyway',
+          handler: () => {
+            // The user insists — force the owned snapshot value onto the
+            // conflicting fields too, still preserving untouched (external) keys.
+            const forced: Record<string, unknown> = { ...merged };
+            for (const k of conflicts) {
+              if (k in targetFm) forced[k] = targetFm[k];
+              else delete forced[k];
+            }
+            const cleaned = cleanFrontmatter(forced);
+            if (docId) documentStore.setFrontmatter(docId, cleaned);
+            void writeMarkdownFile({
+              vaultRoot,
+              relPath,
+              frontmatter: cleaned,
+              body,
+              callerId: `update-properties-command:${relPath}`,
+              docId,
+            }).catch((err) =>
+              reportError('updateProperties', err, `Failed to apply properties to ${relPath}`),
+            );
+            // allow-non-target-markdirty: module helper, callers pass this.targetBoardId per the CI gate
+            boardCacheStore.markDirty(targetBoardId);
+          },
+        },
+      ],
+    });
+  }
 }

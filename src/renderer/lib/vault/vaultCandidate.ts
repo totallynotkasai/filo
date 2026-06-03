@@ -204,6 +204,22 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     viewports: 'viewports.json',
     sidebarOrder: 'sidebar-order.json',
   };
+  // L18 (Audit-6) — a TOP-LEVEL `config:load-all` failure (the whole `.filo/`
+  // read rejected — locked dir / transient IO, not a per-file parse error) tags
+  // the bag with `__loadAllFailed`. Pause EVERY config write so we don't seed
+  // bootstrap defaults over the intact-but-unreadable files, and warn ONCE
+  // (rather than the seven per-file toasts a blanket `__corrupt` would emit).
+  // Reopening the vault re-attempts the read.
+  if (typeof (configs as { __loadAllFailed?: unknown }).__loadAllFailed === 'string') {
+    for (const target of Object.values(corruptionMap)) {
+      if (target) corruptionTargets.push(target);
+    }
+    warnings.push({
+      text: "Filo couldn't read your .filo/ settings (the folder may be locked or mid-sync). Settings changes are paused to protect the files on disk — reopen the vault to retry.",
+      type: 'warning',
+      duration: 0,
+    });
+  }
   for (const key of Object.keys(corruptionMap) as ConfigKey[]) {
     const v = configs[key] as { __corrupt?: unknown; error?: unknown } | undefined;
     if (!v || typeof v !== 'object' || v.__corrupt !== true) continue;

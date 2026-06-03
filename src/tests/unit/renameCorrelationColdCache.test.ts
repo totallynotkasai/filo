@@ -90,3 +90,47 @@ describe('correlateRenames — DI-17 cold-cache same-basename refusal', () => {
     expect(renames).toEqual([{ oldPath: 'A/Notes.md', newPath: 'B/Notes.md' }]);
   });
 });
+
+describe('correlateRenames — L15 small-file floor on the same-basename pass', () => {
+  it('refuses a <256-byte same-basename pair with no hash corroboration (size coincidence)', async () => {
+    const events = [ev('A/Notes.md'), ev('B/Notes.md')];
+    const exists = existsAmong('B/Notes.md');
+    // Coincidental equal size on two tiny unrelated files; no hash to corroborate.
+    const relPathSize = () => 100;
+    const relPathHash = async () => null;
+
+    const { renames, filtered } = await correlateRenames(
+      events,
+      exists,
+      relPathSize,
+      relPathHash,
+      false,
+    );
+
+    expect(renames).toEqual([]);
+    expect(filtered).toHaveLength(2); // delete + create (broken-ref relink path)
+  });
+
+  it('still pairs a <256-byte same-basename move when the hashes positively match', async () => {
+    const events = [ev('A/Notes.md'), ev('B/Notes.md')];
+    const exists = existsAmong('B/Notes.md');
+    const relPathSize = () => 100;
+    // Confirmed identical content — a real move regardless of size.
+    const relPathHash = async () => 'samecontenthash';
+
+    const { renames } = await correlateRenames(events, exists, relPathSize, relPathHash, false);
+
+    expect(renames).toEqual([{ oldPath: 'A/Notes.md', newPath: 'B/Notes.md' }]);
+  });
+
+  it('still pairs a >=256-byte same-basename move on size alone (documented attachment balance)', async () => {
+    const events = [ev('A/photo.png', 'attachment'), ev('B/photo.png', 'attachment')];
+    const exists = existsAmong('B/photo.png');
+    const relPathSize = () => 4096; // above the floor
+    const relPathHash = async () => null; // attachments are never hash-seeded
+
+    const { renames } = await correlateRenames(events, exists, relPathSize, relPathHash, false);
+
+    expect(renames).toEqual([{ oldPath: 'A/photo.png', newPath: 'B/photo.png' }]);
+  });
+});

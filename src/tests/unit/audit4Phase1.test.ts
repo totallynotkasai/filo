@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { parseMarkdownFile, assembleMarkdownFile } from '@renderer/lib/editor/markdownSync';
 import { addTagToMarkdown, removeTagFromMarkdown, rewriteTagInMarkdown } from '@renderer/lib/vault/tagRewriter';
-import { patchFrontmatterSource, valuesEqual } from '@renderer/lib/vault/frontmatterEngine';
+import { valuesEqual } from '@renderer/lib/vault/frontmatterEngine';
+import { patchFrontmatterSourceCst } from '@renderer/lib/vault/frontmatterCstModel';
 
 /**
  * Audit-4 Phase 1 — frontmatter write-integrity (the js-yaml ↔ `yaml`-package
@@ -53,7 +54,7 @@ describe('DI-01 — unquoted YAML dates round-trip byte-identical', () => {
 
   it('addTagToMarkdown preserves an unquoted date when adding to an existing tags list', () => {
     // A file with BOTH an unquoted date AND an existing `tags:` field routes
-    // addTag through patchFrontmatterSource (the seam where the date was
+    // addTag through patchFrontmatterSourceCst (the seam where the date was
     // corrupted to ISO under the old DEFAULT_SCHEMA read).
     const md = '---\ncreated: 2025-01-15\ntags:\n  - foo\n---\nbody\n';
     const out = addTagToMarkdown(md, 'bar');
@@ -85,10 +86,10 @@ describe('DI-01b — valuesEqual / doc.set hardened against Date', () => {
     expect(valuesEqual(new Date('2025-01-01'), { x: 1 })).toBe(false);
   });
 
-  it('patchFrontmatterSource coerces a residual Date value to a plain date string', () => {
+  it('patchFrontmatterSourceCst coerces a residual Date value to a plain date string', () => {
     // Belt-and-suspenders: if a Date ever reaches doc.set, it must emit a plain
     // YYYY-MM-DD date, never the `yaml` package's `2025-01-15T00:00:00.000Z`.
-    const out = patchFrontmatterSource('title: T', { title: 'T', when: new Date('2025-01-15T00:00:00Z') });
+    const out = patchFrontmatterSourceCst('title: T', { title: 'T', when: new Date('2025-01-15T00:00:00Z') });
     expect(out).not.toBeNull();
     expect(out).toContain('when: 2025-01-15');
     expect(out).not.toContain('T00:00:00');

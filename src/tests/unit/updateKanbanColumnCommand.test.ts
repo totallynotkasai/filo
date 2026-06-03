@@ -116,6 +116,29 @@ describe('UpdateKanbanColumnCommand', () => {
     expect(getColumn('c1')?.wipLimit).toBe(3);
   });
 
+  it('L29: only re-applies fields that actually changed (preserves a concurrent edit to an untouched field)', () => {
+    // This command toggles ONLY `collapsed` — wipLimit + width are identical in
+    // before/after, so they're not "changed" fields.
+    const cmd = new UpdateKanbanColumnCommand(
+      'kb',
+      'c1',
+      { collapsed: false, wipLimit: null, width: null },
+      { collapsed: true, wipLimit: null, width: null },
+    );
+    cmd.execute();
+    expect(getColumn('c1')?.collapsed).toBe(true);
+    // A concurrent action sets a WIP limit on the SAME column between execute
+    // and undo (e.g. the user dragged the WIP slider).
+    boardCacheStore.setKanbanColumnWipLimit('kb', 'c1', 7);
+    expect(getColumn('c1')?.wipLimit).toBe(7);
+    // Undo the collapse toggle. The pre-L29 command re-stamped ALL three fields
+    // every leg, so undo would clobber wipLimit back to the captured `null`.
+    // With per-field application, only `collapsed` is touched — the 7 survives.
+    cmd.undo();
+    expect(getColumn('c1')?.collapsed).toBe(false);
+    expect(getColumn('c1')?.wipLimit).toBe(7);
+  });
+
   it('exposes targetBoardId for the history dispatcher guard', () => {
     const cmd = new UpdateKanbanColumnCommand(
       'kb',

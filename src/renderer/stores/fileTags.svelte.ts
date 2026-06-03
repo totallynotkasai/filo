@@ -77,8 +77,10 @@ import {
   AddPathTagCommand,
   RemovePathTagCommand,
 } from '../commands/index';
-import { scheduleMiscWrite, flushAllMisc, flushMiscWrite, trackComponentWrite, markPathFailed } from '../lib/boards/boardSaver';
-import { flushAllMarkdownWriters } from '../lib/vault/markdownFileWriter';
+import { scheduleMiscWrite, flushAllMisc, flushMiscWrite, markPathFailed } from '../lib/boards/boardSaver';
+import { flushAllMarkdownWriters, runSerializedMarkdownWrite } from '../lib/vault/markdownFileWriter';
+import { refreshBaselineAfterWrite } from '../lib/vault/fileBaselineRegistry';
+import { writeMarkdownAndReconcile } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
 import { flushAllPendingFrontmatterWrites } from '../lib/boards/frontmatterWriteScheduler';
 import { invokeOk } from '../lib/utils/invokeOk';
 import { reportError } from '../lib/utils/errorBus';
@@ -172,43 +174,68 @@ async function writeTagChangeToTileMarkdown(
   if (!vaultRoot || !relPath) return;
 
   try {
-    // Phase 37 / 37.6 — canonical two-arg shape.
-    let raw: string | null = null;
-    try {
-      const readResult = await invokeOk('vault:read-file-text', vaultRoot, relPath);
-      raw = readResult.content;
-    } catch {
-      // Read failed (likely envelope-failure or transient I/O). Falls
-      // through to the file-exists check below.
-    }
-    if (raw === null) {
-      // Distinguish "file is gone" (a deletion the user expects) from "file
-      // exists but we still couldn't read it" (a real I/O failure the user
-      // needs to see). Only the second case keeps the sentinel dirty +
-      // surfaces a toast — the first is a benign no-op so a delete + queued
-      // tag write doesn't resurrect a deleted file's sentinel state.
-      const exists = await window.filo.invoke('vault:file-exists', vaultRoot, relPath);
-      if (exists) {
-        markPathFailed(vaultRoot, relPath);
-        reportError(
-          'fileTags.writeTileFrontmatter',
-          null,
-          `Could not read ${relPath} to update frontmatter — your tag change is not on disk.`,
-        );
+    let wrote = false;
+    // Audit5 R2 (#8 / DI-09 parity) — run the whole read-modify-write serialised
+    // behind any in-flight gateway write to this path. The read happens INSIDE
+    // the chain so it observes a prior body write's bytes (no read-modify-write
+    // race), and the IPC write can't interleave with a concurrent editor write.
+    await runSerializedMarkdownWrite(relPath, async () => {
+      // Phase 37 / 37.6 — canonical two-arg shape.
+      let raw: string | null = null;
+      try {
+        const readResult = await invokeOk('vault:read-file-text', vaultRoot, relPath);
+        raw = readResult.content;
+      } catch {
+        // Read failed (likely envelope-failure or transient I/O). Falls
+        // through to the file-exists check below.
       }
-      return;
-    }
-    const next = operation === 'add'
-      ? addTagToMarkdown(raw, tagName)
-      : removeTagFromMarkdown(raw, tagName);
-    if (next === raw) return;
-    await trackComponentWrite(vaultRoot, relPath, async () => {
-      // Phase 31 A4.5 — single-tag add/remove is an edit to an existing
-      // .md file (raw was just read above). Use write-existing so a
-      // race with an external delete surfaces as ENOENT rather than
-      // resurrecting the deleted file.
-      await invokeOk('vault:write-existing-file-text', vaultRoot, relPath, next); // allow-direct-write: inline-tag text rewrite (operates on raw markdown body, not a frontmatter+body assembly)
+      if (raw === null) {
+        // Distinguish "file is gone" (a deletion the user expects) from "file
+        // exists but we still couldn't read it" (a real I/O failure the user
+        // needs to see). Only the second case keeps the sentinel dirty +
+        // surfaces a toast — the first is a benign no-op so a delete + queued
+        // tag write doesn't resurrect a deleted file's sentinel state.
+        const exists = await window.filo.invoke('vault:file-exists', vaultRoot, relPath);
+        if (exists) {
+          markPathFailed(vaultRoot, relPath);
+          reportError(
+            'fileTags.writeTileFrontmatter',
+            null,
+            `Could not read ${relPath} to update frontmatter — your tag change is not on disk.`,
+          );
+        }
+        return;
+      }
+      const next = operation === 'add'
+        ? addTagToMarkdown(raw, tagName)
+        : removeTagFromMarkdown(raw, tagName);
+      if (next === raw) return;
+      // Phase 6.6 — coupled write+reconcile (frontmatter-only). Writes the
+      // existing .md (write-existing so a delete race surfaces as ENOENT, not a
+      // resurrection — Phase 31 A4.5) AND refreshes any open editor's FM cache
+      // for the SAME path so its next body save keeps the tag (#4). Body-preserving.
+      await writeMarkdownAndReconcile({
+        vaultRoot,
+        path: relPath,
+        content: next,
+        mode: 'frontmatter',
+      });
+      // Audit-6 M3 — refresh the gateway's pre-write drift baseline to the bytes
+      // we just wrote. The single-tag fast path writes the .md DIRECTLY (not via
+      // the markdown gateway), which is the only other site that stamps this
+      // baseline; without this the next gateway/editor write sees the mtime+size
+      // change as an external edit and surfaces a false "modified externally"
+      // prompt. Requires a post-write stat the coupled helper does not perform,
+      // so it stays here at the call site.
+      try {
+        const postStat = await invokeOk('vault:stat', vaultRoot, relPath);
+        refreshBaselineAfterWrite(relPath, postStat.mtimeMs, postStat.size);
+      } catch {
+        refreshBaselineAfterWrite(relPath, undefined, undefined);
+      }
+      wrote = true;
     });
+    if (!wrote) return;
     await vaultIndexStore.applyChanges([relPath]);
     // Phase 3 / 3.5 — read-only doc UX. The tag write went through
     // (frontmatter round-trips cleanly even when the body doesn't), but
@@ -321,42 +348,63 @@ async function writeTagChangeToMarkdownPath(
   const vaultRoot = vaultStore.path;
   if (!vaultRoot || !relPath) return;
   try {
-    // Phase 37 / 37.6 — canonical two-arg shape.
-    let raw: string | null = null;
-    try {
-      const readResult = await invokeOk('vault:read-file-text', vaultRoot, relPath);
-      raw = readResult.content;
-    } catch {
-      // Read failed (likely envelope-failure or transient I/O). Falls
-      // through to the file-exists check below.
-    }
-    if (raw === null) {
-      // See writeTagChangeToTileMarkdown above: distinguish a real I/O
-      // failure from a benign no-op when the file is gone. Keep the
-      // sentinel dirty + surface a toast only when the file is still on
-      // disk and the read failed for some other reason (permissions, etc.).
-      const exists = await window.filo.invoke('vault:file-exists', vaultRoot, relPath);
-      if (exists) {
-        markPathFailed(vaultRoot, relPath);
-        reportError(
-          'fileTags.writePathFrontmatter',
-          null,
-          `Could not read ${relPath} to update frontmatter — your tag change is not on disk.`,
-        );
+    let wrote = false;
+    // Audit5 R2 — see writeTagChangeToTileMarkdown: serialise the read-modify-
+    // write on the per-path chain (#8) and reconcile the open editor's
+    // frontmatter cache afterward (#4).
+    await runSerializedMarkdownWrite(relPath, async () => {
+      // Phase 37 / 37.6 — canonical two-arg shape.
+      let raw: string | null = null;
+      try {
+        const readResult = await invokeOk('vault:read-file-text', vaultRoot, relPath);
+        raw = readResult.content;
+      } catch {
+        // Read failed (likely envelope-failure or transient I/O). Falls
+        // through to the file-exists check below.
       }
-      return;
-    }
-    const next = operation === 'add'
-      ? addTagToMarkdown(raw, tagName)
-      : removeTagFromMarkdown(raw, tagName);
-    if (next === raw) return;
-    await trackComponentWrite(vaultRoot, relPath, async () => {
-      // Phase 31 A4.5 — single-tag add/remove is an edit to an existing
-      // .md file (raw was just read above). Use write-existing so a
-      // race with an external delete surfaces as ENOENT rather than
-      // resurrecting the deleted file.
-      await invokeOk('vault:write-existing-file-text', vaultRoot, relPath, next); // allow-direct-write: inline-tag text rewrite (operates on raw markdown body, not a frontmatter+body assembly)
+      if (raw === null) {
+        // See writeTagChangeToTileMarkdown above: distinguish a real I/O
+        // failure from a benign no-op when the file is gone. Keep the
+        // sentinel dirty + surface a toast only when the file is still on
+        // disk and the read failed for some other reason (permissions, etc.).
+        const exists = await window.filo.invoke('vault:file-exists', vaultRoot, relPath);
+        if (exists) {
+          markPathFailed(vaultRoot, relPath);
+          reportError(
+            'fileTags.writePathFrontmatter',
+            null,
+            `Could not read ${relPath} to update frontmatter — your tag change is not on disk.`,
+          );
+        }
+        return;
+      }
+      const next = operation === 'add'
+        ? addTagToMarkdown(raw, tagName)
+        : removeTagFromMarkdown(raw, tagName);
+      if (next === raw) return;
+      // Phase 6.6 — coupled write+reconcile (frontmatter-only); see
+      // writeTagChangeToTileMarkdown. Writes the existing .md AND keeps any open
+      // editor's FM cache in step for the SAME path so its next body save keeps the tag (#4).
+      await writeMarkdownAndReconcile({
+        vaultRoot,
+        path: relPath,
+        content: next,
+        mode: 'frontmatter',
+      });
+      // Audit-6 M3 — refresh the gateway's pre-write drift baseline to the bytes
+      // we just wrote (see writeTagChangeToTileMarkdown): the direct tag write
+      // bypasses the gateway, so without this the next gateway/editor write
+      // false-positives a "modified externally" drift prompt. Requires a
+      // post-write stat the coupled helper does not perform, so it stays here.
+      try {
+        const postStat = await invokeOk('vault:stat', vaultRoot, relPath);
+        refreshBaselineAfterWrite(relPath, postStat.mtimeMs, postStat.size);
+      } catch {
+        refreshBaselineAfterWrite(relPath, undefined, undefined);
+      }
+      wrote = true;
     });
+    if (!wrote) return;
     await vaultIndexStore.applyChanges([relPath]);
     // Phase 3 / 3.5 — same read-only doc UX as writeTagChangeToTileMarkdown.
     // The path-driven flow runs from the Document board tag strip and the

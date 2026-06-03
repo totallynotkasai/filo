@@ -119,7 +119,7 @@ const rawFrontmatterCache = new SvelteMap<string, string>();
  * Audit2 4.8 — the last frontmatter SOURCE bytes read from disk for a docId,
  * retained ACROSS in-app mutations (unlike `rawFrontmatterCache`, whose
  * clean-signal drops the entry the moment the object changes). On a dirty write
- * the source-preserving engine (`patchFrontmatterSource`) diffs the live object
+ * the source-preserving engine (`patchFrontmatterSourceCst`) diffs the live object
  * against THIS baseline and re-emits only the changed keys, so comments / key
  * order / quoting on every untouched key survive a metadata edit (the fix for
  * the lossy-round-trip KNOWN_LIMITATION #1). Refreshed on every authoritative

@@ -1,25 +1,22 @@
-import { parseDocument, isMap } from 'yaml';
+import { Document } from 'yaml';
 
 /**
- * Audit2 4.8 — the single source-preserving frontmatter serializer.
+ * Shared frontmatter value helpers — structural equality + scalar / pair YAML
+ * serialization — used by the source-preserving CST-operations patch engine
+ * ({@link import('./frontmatterCstModel').patchFrontmatterSourceCst}) and the
+ * external-edit conflict resolver.
  *
- * Filo's frontmatter write paths historically had two seams:
- *  - `markdownSync.assembleMarkdownFile` re-`js-yaml.dump`ed the whole object on
- *    every metadata change, discarding comments / key order / quoting (the
- *    documented "lossy YAML round-trip" KNOWN_LIMITATION #1), and
- *  - `tagRewriter` hand-rolled a line-level editor for tags, but fell back to
- *    that same lossy `dump` for shapes its matchers declined.
- *
- * This module replaces the lossy `dump` in BOTH with the `yaml` package's
- * Document/CST API: it parses the ORIGINAL frontmatter source, applies only the
- * keys that actually changed, and re-serialises — so comments, key order,
- * quoting, and indentation on every UNTOUCHED key survive. The hand-rolled tag
- * line-editor stays as `tagRewriter`'s fast path; this is the (now lossless)
- * fallback both paths share, so there is no longer a lossy seam to fall into.
- *
- * Fails closed: returns `null` when the original source can't be parsed into a
- * mapping, so callers refuse the write rather than risk corrupting a block they
- * couldn't understand (mirrors the existing `loadYamlObject(...) → null` guard).
+ * History (Phase 6): this module once also held `patchFrontmatterSource`, a
+ * byte-splice frontmatter engine that diffed a plain object against a re-parsed
+ * source and hand-spliced the changed keys — with TWO YAML parsers in the loop
+ * (`js-yaml` for the compare, the `yaml` package for the CST ranges + scalar
+ * emit). That dual-parser splice was the root cause of a recurring corruption
+ * class (DI-01 unquoted-date→ISO, DI-05 destroyed `<<` merge keys, R1
+ * canonicalised untouched scalars, M2 cross-parser `1_000`/`0b1010` drift, C1
+ * bare-key collapse). Phase 6 replaced it with the single-parser CST engine in
+ * `frontmatterCstModel.ts`, which emits every untouched node from its own source
+ * tokens — byte-for-byte, no heuristic — so the class cannot recur. Phase 6.7
+ * deleted the legacy engine; only these value helpers it shared remain here.
  */
 
 /**
@@ -28,10 +25,10 @@ import { parseDocument, isMap } from 'yaml';
  * 6.4.M3 — the previous `JSON.stringify(a) === JSON.stringify(b)` form was
  * key-order-sensitive for plain objects: a YAML map `{author, date}` on disk
  * compared unequal to an in-memory `{date, author}` even though they're the
- * same data. The unequal verdict tripped a `doc.set(key, value)` rewrite of
- * the entire node, which discards the original CST tokens — losing any
- * comments attached to the unchanged keys inside that map. Recursing
- * structurally fixes the comparison without rebuilding the JSON twice.
+ * same data. The unequal verdict tripped a node rewrite that discards the
+ * original CST tokens — losing any comments attached to the unchanged keys
+ * inside that map. Recursing structurally fixes the comparison without
+ * rebuilding the JSON twice.
  */
 export function valuesEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
@@ -70,60 +67,41 @@ export function valuesEqual(a: unknown, b: unknown): boolean {
 }
 
 /**
- * Re-serialises `originalSource`'s frontmatter with `nextObj`'s values, touching
- * only the keys whose value actually changed (and deleting keys absent from
- * `nextObj`). Every untouched key keeps its original bytes — comments, ordering,
- * quote style, indentation. Output is LF with no trailing newline (the caller
- * re-wraps fences and re-applies the file's own line ending).
- *
- * Returns `null` when `originalSource` is not a parseable YAML mapping — the
- * caller must then refuse the write (never silently drop an unparseable block).
+ * DI-01b — coerce a residual `Date` to the plain `YYYY-MM-DD` form so a changed
+ * date value never re-emits as a `yaml`-package ISO timestamp. Reads produce
+ * strings under the `yaml` core schema (DI-01), so this is defence for a future
+ * change that lets a `Date` reach the serializer.
  */
-export function patchFrontmatterSource(
-  originalSource: string,
-  nextObj: Record<string, unknown>,
-): string | null {
-  let doc;
-  try {
-    doc = parseDocument(originalSource, { uniqueKeys: true });
-  } catch {
-    return null;
-  }
-  // Fatal parse errors (e.g. duplicate keys, bad indentation) → refuse.
-  if (doc.errors.length > 0) return null;
+function coerceForEmit(value: unknown): unknown {
+  return value instanceof Date && !Number.isNaN(value.getTime())
+    ? value.toISOString().slice(0, 10)
+    : value;
+}
 
-  const root = doc.contents;
-  // A blank source parses to a null root — we can grow a mapping onto it.
-  // A top-level scalar or sequence is NOT a frontmatter mapping → refuse.
-  if (root !== null && !isMap(root)) return null;
+/**
+ * Serialises a single primitive value to its YAML scalar text (no key, no
+ * trailing newline), quoting exactly when YAML requires it. Uses the `yaml`
+ * package — the SAME serializer the read path parses with — so a value-only
+ * splice produces a scalar that re-parses to the intended value and matches the
+ * quoting of the untouched keys around it (e.g. an unquoted `2025-01-15`, not a
+ * defensively-quoted `'2025-01-15'`). `lineWidth: 0` disables folding so a long
+ * value never wraps to multi-line.
+ *
+ * The CST engine emits a changed scalar's bytes via this helper rather than
+ * `CST.setScalarValue`: that API keeps the existing plain style, so the STRING
+ * `"123"` would re-emit unquoted `123` and re-parse as the NUMBER 123 (a type
+ * corruption); this serializer quotes it correctly.
+ */
+export function serializeScalar(value: unknown): string {
+  return new Document(coerceForEmit(value)).toString({ lineWidth: 0 }).replace(/\n$/, '');
+}
 
-  const current = (root === null ? {} : doc.toJS()) as unknown;
-  if (current === null || typeof current !== 'object' || Array.isArray(current)) {
-    return null;
-  }
-  const currentObj = current as Record<string, unknown>;
-
-  // Delete keys the caller dropped.
-  for (const key of Object.keys(currentObj)) {
-    if (!(key in nextObj)) doc.delete(key);
-  }
-  // Set changed / added keys; leave unchanged keys' nodes (and their comments)
-  // exactly as parsed.
-  for (const [key, value] of Object.entries(nextObj)) {
-    if (value === undefined) continue;
-    if (!valuesEqual(currentObj[key], value)) {
-      // DI-01b — never let a residual `Date` re-emit as the `yaml` package's
-      // `2025-01-15T00:00:00.000Z`. Coerce to the plain `YYYY-MM-DD` form (the
-      // same normalisation `frontmatterSync.normalizeScalar` applies) before set.
-      const emit =
-        value instanceof Date && !Number.isNaN(value.getTime())
-          ? value.toISOString().slice(0, 10)
-          : value;
-      doc.set(key, emit);
-    }
-  }
-
-  // lineWidth: 0 disables line folding (mirrors js-yaml `lineWidth: -1`) so a
-  // long value is never wrapped into a multi-line scalar.
-  return doc.toString({ lineWidth: 0 }).replace(/\r?\n$/, '');
+/**
+ * Serialises one `key: value` pair to a YAML block (with its trailing newline)
+ * for a changed collection / type-change or a freshly-added key, via the same
+ * `yaml`-package serializer as {@link serializeScalar}. The CST engine rebuilds
+ * a changed-collection / added key from this exact text.
+ */
+export function serializeKeyValue(key: string, value: unknown): string {
+  return new Document({ [key]: coerceForEmit(value) }).toString({ lineWidth: 0 });
 }

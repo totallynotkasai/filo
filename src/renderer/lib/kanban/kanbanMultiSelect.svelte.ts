@@ -4,7 +4,9 @@ import { documentStore } from '../../stores/document.svelte';
 import type { SelectionScope } from '../../stores/selection.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
+import { vaultStore } from '../../stores/vault.svelte';
 import { scheduleFrontmatterWrite as scheduleSharedFrontmatterWrite } from '../boards/frontmatterWriteScheduler';
+import { seedDocumentFrontmatterFromDisk } from '../boards/seedFrontmatterFromDisk';
 import { historyStore } from '../../stores/history.svelte';
 import { BatchCommand, DeleteCardCommand, MoveCardsCommand } from '../../commands/index';
 
@@ -153,7 +155,7 @@ export class KanbanMultiSelect {
     });
   }
 
-  tagSelectedTiles(): void {
+  async tagSelectedTiles(): Promise<void> {
     const selected = Array.from(this.deps.selection.selectedIds);
     if (selected.length === 0) return;
     const tagName = window.prompt('Add tag to selected cards (without leading #):');
@@ -167,6 +169,15 @@ export class KanbanMultiSelect {
       if (!tile) continue;
       const path = this.deps.vaultPathForTile(tile);
       if (!path) continue;
+      // Audit-6 M4 — seed FM from a fresh disk read before the index-seed so a
+      // bulk tag add doesn't drop a key an external editor added since the last
+      // index rebuild (same hazard as the field-edit writers). No-op for an
+      // already-seeded / open-editor card or on a disk read failure.
+      await seedDocumentFrontmatterFromDisk(
+        (tile as Tile & { contentId?: string }).contentId ?? null,
+        vaultStore.path,
+        path,
+      );
       const docId = this.deps.ensureSeededFm(tile);
       const fm = (docId ? documentStore.getFrontmatter(docId) : null)
         ?? (vaultIndexStore.getMetadata(path)?.frontmatter ?? {});

@@ -104,6 +104,7 @@ export const IPC_PAYLOAD_SCHEMAS = {
 
   // ── Recovery snapshot ─────────────────────────────────────────────────
   'recovery:snapshot': z.tuple([nonEmptyString, nonEmptyString]),
+  'recovery:list': z.tuple([nonEmptyString]),
 
   // ── Config (.filo/) ───────────────────────────────────────────────────
   'config:load': z.tuple([nonEmptyString, nonEmptyString]),
@@ -168,6 +169,8 @@ export const IPC_PAYLOAD_SCHEMAS = {
   'app:cancel-quit': z.tuple([]),
   // Audit-4 DI-04 — quit heartbeat (no args); main clears its flush timer.
   'app:quit-awaiting-user': z.tuple([]),
+  // Audit5 2.1 — periodic drain heartbeat (no args); main re-arms its timer.
+  'app:drain-heartbeat': z.tuple([]),
 
   // ── Sidebar geometry ──────────────────────────────────────────────────
   'sidebar:get-state': z.tuple([]),

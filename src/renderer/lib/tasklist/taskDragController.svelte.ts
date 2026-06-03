@@ -131,6 +131,14 @@ export class TaskDragController {
    * committing the reorder. Cleared on `endDrag()`. */
   private escCancelled = false;
   private escKeyHandler: ((e: KeyboardEvent) => void) | null = null;
+  /**
+   * L16 (Audit-6) — the still-armed `armRow` pointerup, tracked so
+   * `cancelDrag()` / `endDrag()` can detach it if the host unmounts while the
+   * pointer is held. The `{ once: true }` closure would otherwise never fire,
+   * pinning the controller and re-disabling drag gates on a disposed instance.
+   * The listener nulls this itself on a normal release.
+   */
+  private pendingResetPointerUp: (() => void) | null = null;
   /** Debounced consider-announce so screen readers don't flood as the user
    * drags across many positions. Cleared by `endDrag()` and rate-limited to
    * one announcement per 300ms. */
@@ -211,6 +219,7 @@ export class TaskDragController {
     }
 
     const resetOnce = () => {
+      this.pendingResetPointerUp = null;
       const reset: Record<string, boolean> = { ...this.rowDragDisabledBySection };
       for (const sid of previouslyDisabled) reset[sid] = true;
       // The source's section may not have been in `previouslyDisabled` if it
@@ -220,7 +229,19 @@ export class TaskDragController {
       this.rowDragDisabledBySection = reset;
       this.pendingDragTileId = null;
     };
+    // L16 — detach any prior still-armed reset (a second pointerdown with no
+    // intervening pointerup) before arming this one, then track it so
+    // cancelDrag()/endDrag() can detach on an unmount-while-pressed.
+    this.detachPendingResetPointerUp();
+    this.pendingResetPointerUp = resetOnce;
     window.addEventListener('pointerup', resetOnce, { once: true });
+  }
+
+  /** L16 — remove the still-armed `armRow` pointerup, if any. */
+  private detachPendingResetPointerUp(): void {
+    if (!this.pendingResetPointerUp) return;
+    window.removeEventListener('pointerup', this.pendingResetPointerUp);
+    this.pendingResetPointerUp = null;
   }
 
   /**
@@ -544,6 +565,10 @@ export class TaskDragController {
 
   /** Force-end the drag transaction (e.g. component unmount, panic path). */
   cancelDrag(): void {
+    // L16 — always detach the armRow pointerup, even when no drag actually
+    // started (pointerdown armed it but the gesture never began), so an unmount
+    // while the pointer is held doesn't leak the listener / pin the controller.
+    this.detachPendingResetPointerUp();
     if (this.dragTileId === null) return;
     this.endDrag();
   }
@@ -572,6 +597,11 @@ export class TaskDragController {
     this.dragBlockIds = [];
     this.dragSourceSectionId = null;
     this.pendingDragTileId = null;
+    // L16 — belt-and-suspenders: a normal release fires resetOnce (nulling this)
+    // before finalize → endDrag runs, so this is usually a no-op. It covers the
+    // cancelDrag → endDrag and any drop-outside-zone path where the gate-reset
+    // pointerup never ran.
+    this.detachPendingResetPointerUp();
     this.indentTracker.uninstall();
     this.uninstallEscCancel();
     this.escCancelled = false;

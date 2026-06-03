@@ -14,6 +14,13 @@ let highlightedTileId = $state<string | null>(null);
 let highlightTimer: ReturnType<typeof setTimeout> | null = null;
 const HIGHLIGHT_DURATION_MS = 2000;
 
+// #13 — module handle for the tile-lookup retry chain (the board switch may
+// need a tick to load tiles). Hoisted out of the closure so a new navigate or
+// a vault swap can cancel a stale retry — otherwise a late retry could center
+// the viewport / select a tile in the WRONG board (or the new vault) after the
+// user navigated elsewhere.
+let navigateRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
 export const navigationState = {
   get highlightedTileId() { return highlightedTileId; },
 };
@@ -32,6 +39,16 @@ export function navigateToTile(boardId: string, tileId: string): void {
   const project = vaultStore.project;
   if (!project) return;
 
+  // #13 — a fresh navigate supersedes any in-flight retry chain from a prior
+  // call, so cancel it before starting a new one.
+  if (navigateRetryTimer) {
+    clearTimeout(navigateRetryTimer);
+    navigateRetryTimer = null;
+  }
+  // Capture the vault we navigated from; a swap mid-retry must abort the chain
+  // so we don't center/select against the new vault's boards.
+  const startVaultPath = vaultStore.path;
+
   // If on a different board, switch first
   const currentBoardId = boardStore.current?.id;
   if (currentBoardId !== boardId) {
@@ -46,6 +63,10 @@ export function navigateToTile(boardId: string, tileId: string): void {
   const maxAttempts = 20;
 
   const tryNavigate = () => {
+    navigateRetryTimer = null;
+    // Bail if the vault swapped under the retry — the captured boardId/tileId
+    // belong to the old vault.
+    if (vaultStore.path !== startVaultPath) return;
     const tile = boardStore.getTile(tileId);
     if (tile) {
       // Center viewport on tile. `renderedWidth`/`renderedHeight` are
@@ -62,7 +83,7 @@ export function navigateToTile(boardId: string, tileId: string): void {
       setHighlight(tileId);
     } else if (attempts < maxAttempts) {
       attempts++;
-      setTimeout(tryNavigate, 100);
+      navigateRetryTimer = setTimeout(tryNavigate, 100);
     }
   };
 
@@ -90,6 +111,12 @@ onVaultSwap('pre-swap', 'navigation', () => {
   if (highlightTimer) {
     clearTimeout(highlightTimer);
     highlightTimer = null;
+  }
+  // #13 — also cancel any in-flight tile-lookup retry so it can't fire against
+  // the new vault's boards after the swap.
+  if (navigateRetryTimer) {
+    clearTimeout(navigateRetryTimer);
+    navigateRetryTimer = null;
   }
   highlightedTileId = null;
 });

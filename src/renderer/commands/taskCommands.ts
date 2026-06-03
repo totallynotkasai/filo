@@ -106,7 +106,10 @@ export class AddTaskCommand extends Command {
     // after construction and corrupt the undo snapshot.
     this.def = this.snapshot(def);
     this.position = position;
-    this.style = style;
+    // L30 (Audit-6) — deep-clone the optional style so a caller-side mutation
+    // of the same object after construction can't corrupt the value this
+    // command re-applies on redo (mirrors the `def` snapshot above).
+    this.style = style ? this.snapshot(style) : style;
     this.targetSectionId = targetSectionId;
     this.description = `Add task "${def.title ?? ''}"`;
     const snap = snapshotTaskListSlice(boardId);

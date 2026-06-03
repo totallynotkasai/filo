@@ -278,10 +278,27 @@ export function makeTaskListSlice(ctx: CacheContext) {
         (tl as Record<string, unknown>).tasks = tasks.map((p, i) => ({ ...p, position: i }));
       }
       const taskCount = ((tl.tasks ?? []) as TaskPlacement[]).length;
+      // L22 (Audit-6) — after clamping each position into [0, taskCount], force
+      // the sorted sequence to be STRICTLY INCREASING so two sections can never
+      // share an index. Section positions partition the flat `tasks` array into
+      // contiguous [position, nextPosition) slices; the bare `Math.min(_, taskCount)`
+      // clamp collapses several trailing/empty sections onto `taskCount`, and a
+      // tie makes that partition order-ambiguous (a keep-tasks DeleteSection undo
+      // could then re-insert its marker mis-ordered). Bumping a tie past taskCount
+      // is safe: a trailing section's slice is empty either way (`slice()` beyond
+      // the array length is `[]`), and a strict order makes the partition
+      // deterministic. No-op for already strictly-increasing in-range positions
+      // (the overwhelmingly common case).
+      let prevPos = -1;
       const normalised = sections
         .slice()
         .sort((a, b) => a.position - b.position)
-        .map((s) => ({ ...s, position: Math.max(0, Math.min(s.position, taskCount)) }));
+        .map((s) => {
+          const clamped = Math.max(0, Math.min(s.position, taskCount));
+          const position = clamped > prevPos ? clamped : prevPos + 1;
+          prevPos = position;
+          return { ...s, position };
+        });
       (tl as Record<string, unknown>).sections = normalised;
       ctx.markDirty(boardId);
     },

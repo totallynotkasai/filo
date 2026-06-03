@@ -906,6 +906,14 @@ async function syncTileMarkdown(
   // and the gateway will reject the write). Mark hydrated with the BOM the
   // disk-read observed so the gateway's BOM preservation kicks in.
   if (!isHydrated(filename)) markHydrated(filename, diskParsed.hadBom);
+  // #17 — reconcile the open editor's cached frontmatter + raw baseline with
+  // the fresh disk read we're about to write FROM. Without this, the document
+  // store keeps whatever frontmatter it cached at hydrate time; a later
+  // body-only save through the gateway would emit THAT stale object and could
+  // revert external YAML keys this sync just read off disk. (Largely mooted by
+  // R1's byte-preserving writes, but keeps the cache + clean-bytes baseline
+  // coherent with disk regardless of the write path.)
+  documentStore.setFrontmatter(docId, diskParsed.frontmatter, diskParsed.rawFrontmatter);
   try {
     await writeMarkdownFile({
       vaultRoot,

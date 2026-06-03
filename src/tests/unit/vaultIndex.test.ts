@@ -73,6 +73,38 @@ inline #should-not-appear in body.
   });
 });
 
+/**
+ * Phase 6.5 — the vault index frontmatter read is on the `yaml` package (was
+ * js-yaml CORE_SCHEMA), so the index builds its frontmatter object with the SAME
+ * parser as `markdownSync.parseMarkdownFile` and the source-preserving write
+ * engine. The only two scalar forms where js-yaml CORE and the `yaml` package
+ * ever disagreed — `1_000` / `0b1010` (NUMBERS under js-yaml CORE, STRINGS under
+ * the `yaml` package) — now surface as strings in the index too, so an
+ * exotic-numeric value can't diverge between the index metadata and the
+ * documentStore frontmatter and read as a phantom external change (the M2 class).
+ */
+describe('parseMarkdown — frontmatter on the `yaml` package (Phase 6.5)', () => {
+  it('reads 1_000 / 0b1010 as strings, matching parseMarkdownFile (M2 consistency)', () => {
+    const md = '---\nthousands: 1_000\nflags: 0b1010\n---\n# Body\n';
+    const meta = parseMarkdown('numerics.md', md);
+    expect(meta.frontmatter.thousands).toBe('1_000');
+    expect(meta.frontmatter.flags).toBe('0b1010');
+  });
+
+  it('keeps an unquoted date a string, not a Date (DI-01 preserved)', () => {
+    const md = '---\ndue: 2026-06-01\n---\n# Body\n';
+    const meta = parseMarkdown('dates.md', md);
+    expect(typeof meta.frontmatter.due).toBe('string');
+    expect(meta.frontmatter.due).toBe('2026-06-01');
+  });
+
+  it('still extracts tags alongside an exotic-numeric sibling (tag indexing unaffected)', () => {
+    const md = '---\ntags: [alpha, beta]\nthousands: 1_000\n---\n# Body\n';
+    const meta = parseMarkdown('tags.md', md);
+    expect(meta.tags.sort()).toEqual(['alpha', 'beta']);
+  });
+});
+
 describe('VaultIndex', () => {
   function makeIndex(): VaultIndex {
     const idx = new VaultIndex();

@@ -24,6 +24,19 @@ let version = $state(0);
 let isBuilding = $state(false);
 
 /**
+ * 2.2 (#5) — monotonic rebuild generation. A fast A→B vault swap can start a
+ * second `rebuild()` while the first is still awaiting its chunked reads; both
+ * share this module's `index` / `isBuilding` / `buildCompleteResolvers`.
+ * Without a token the OUTGOING rebuild's `finally` flips `isBuilding=false` and
+ * drains the INCOMING rebuild's resolvers against a half-built index
+ * (re-opening 6.2.H3), and its chunk loop keeps upserting stale-vault entries.
+ * Every `rebuild()` captures the counter at entry; a superseded rebuild aborts
+ * its chunk loop and skips the `finally` drain so only the live generation owns
+ * the shared building state.
+ */
+let buildGeneration = 0;
+
+/**
  * 6.2.H3 — resolvers waiting for the current `rebuild()` to finish. Drained
  * in `rebuild()`'s `finally` block once `isBuilding` flips back to false.
  * Callers that need to read post-rebuild metadata (the recovery sequencer's
@@ -72,6 +85,11 @@ async function indexOnePath(relativePath: string): Promise<void> {
   if (!root) return;
   const rel = normaliseRel(relativePath);
   const res = await readFileText(root, rel);
+  // 2.2 (#5) — re-check vault identity AFTER the awaited read. A vault swap (or
+  // close) during the read leaves `root` pointing at the PRIOR vault; upserting,
+  // removing, or scheduling a retry against the live index now would graft the
+  // old vault's file (or a phantom retry timer) onto the new vault's metadata.
+  if (vaultStore.path !== root) return;
   if (res.ok && res.content !== null) {
     // Audit2 4.3 — stamp the disk mtime, not Date.now(). Date.now() made the
     // partial-read window (now - lastModified < 1s) always true, forcing every
@@ -116,8 +134,17 @@ async function indexOnePath(relativePath: string): Promise<void> {
  * Electron's IPC scheduler; raise cautiously.
  */
 const REBUILD_CHUNK_SIZE = 16;
-async function indexPathsChunked(paths: string[]): Promise<void> {
+async function indexPathsChunked(
+  paths: string[],
+  // 2.2 (#5) — optional staleness probe. `rebuild()` passes its generation
+  // check so the loop bails between chunks the instant a newer rebuild (or
+  // vault swap) supersedes it, rather than reading every remaining file of a
+  // vault that's no longer open. `applyChanges` omits it (incremental updates
+  // are not generation-scoped).
+  isCurrent?: () => boolean,
+): Promise<void> {
   for (let i = 0; i < paths.length; i += REBUILD_CHUNK_SIZE) {
+    if (isCurrent && !isCurrent()) return;
     const chunk = paths.slice(i, i + REBUILD_CHUNK_SIZE);
     await Promise.all(chunk.map((rel) => indexOnePath(rel)));
   }
@@ -166,23 +193,35 @@ export const vaultIndexStore = {
       bump();
       return;
     }
+    // 2.2 (#5) — claim a generation up-front. `isCurrent()` is false the moment
+    // a newer rebuild() (typically the post-vault-swap one) bumps the counter.
+    const myGeneration = ++buildGeneration;
+    const isCurrent = (): boolean => myGeneration === buildGeneration;
+    const capturedRoot = vaultStore.path;
     isBuilding = true;
     try {
       index.clear();
       const source = tree ?? vaultStore.rawTree;
-      const paths = collectMarkdownPaths(source, vaultStore.path);
-      await indexPathsChunked(paths);
+      const paths = collectMarkdownPaths(source, capturedRoot);
+      await indexPathsChunked(paths, isCurrent);
     } catch (err) {
       reportError('vaultIndex.rebuild', err, 'Failed to rebuild file index — search and tag lookups may be stale');
     } finally {
-      isBuilding = false;
-      bump();
-      // 6.2.H3 — drain the build-complete resolvers so any awaiter (the
-      // recovery sequencer) sees the post-rebuild metadata. Cleared in one
-      // batch so a resolver that re-enqueues itself doesn't loop on a
-      // half-drained list.
-      const resolvers = buildCompleteResolvers.splice(0);
-      for (const r of resolvers) r();
+      // 2.2 — only the CURRENT generation owns the shared building flag and the
+      // resolver drain. A superseded rebuild returns quietly; the newer
+      // rebuild's own `finally` flips the flag and drains once IT completes, so
+      // `whenBuildComplete()` awaiters see a fully-built index for the LIVE
+      // vault rather than this outgoing rebuild's half-built one.
+      if (isCurrent()) {
+        isBuilding = false;
+        bump();
+        // 6.2.H3 — drain the build-complete resolvers so any awaiter (the
+        // recovery sequencer) sees the post-rebuild metadata. Cleared in one
+        // batch so a resolver that re-enqueues itself doesn't loop on a
+        // half-drained list.
+        const resolvers = buildCompleteResolvers.splice(0);
+        for (const r of resolvers) r();
+      }
     }
   },
 

@@ -159,7 +159,17 @@ const ALLOWLIST = {
   // gained a post-await vault-identity guard (so a fast A→B swap can't write
   // the outgoing vault's pruned tags into the incoming one) + the concise
   // race-explainer comment. +8 LOC. New snapshot: 1499 LOC.
-  'src/renderer/stores/vault.svelte.ts': 1499,
+  // AUDIT5_REMEDIATION_PLAN_2026-06-02 Phase 3 G1 + #11 — `beginVaultGeneration`
+  // wired into commitVaultCandidate / closeVault / setPath, the
+  // `enqueueRenameQueueWork` identity guard (no-op a task whose vault swapped
+  // before it ran), and the `runRecoverySequencer` step 4 that surfaces
+  // preserved `.filo/recovery/` snapshots (basename + ts + reveal) on open.
+  // +76 LOC of guard wiring + recovery toast + comments. New snapshot: 1575 LOC.
+  // AUDIT6_REMEDIATION_PLAN_2026-06-02 Phase 4 — L31 (`historyStore.whenChainSettled()`
+  // import + the save() chain-drain comment) and L25 (`runRecoverySequencer`
+  // captureVaultIdentity generation-guard comment). +20 LOC of explanatory
+  // comments + one import. New snapshot: 1595 LOC.
+  'src/renderer/stores/vault.svelte.ts': 1595,
   // External-changes orchestrator: classifies fs-watcher events into
   // editor-dirty toast / silent reload / sync-frontmatter / deleted-file
   // prompt / properties-popup-dirty prompt. 500 ms attachment-delete grace
@@ -247,7 +257,14 @@ const ALLOWLIST = {
   // tagsAffected) so a failed tags-only rename is recoverable on reopen instead
   // of silently lost. +32 LOC of comment + flush-result capture + sentinel
   // write. New snapshot: 1613 LOC.
-  'src/renderer/stores/vaultExternalChanges.ts': 1613,
+  // AUDIT5_REMEDIATION_PLAN_2026-06-02 Phase 3 G1 + #14 — `handleExternalRename`
+  // captures the vault identity pre-drain and threads it through
+  // `runExternalRenameCascade`, which now bails after its awaits if the vault
+  // swapped (so the cascade can't run against the new vault's cache); and
+  // `promptBoardExternalEdit` now shares the `inFlightDriftPrompts` dedup map
+  // so it inherits the swap-reset + rename-transfer wiring. +43 LOC of guard
+  // wiring + dedup + comments. New snapshot: 1656 LOC.
+  'src/renderer/stores/vaultExternalChanges.ts': 1656,
   // tileCommands.ts dropped off the allowlist (AUDIT_REMEDIATION_PLAN_2026-05-29
   // Phase 5 / C-3): the tag-driven commands (AddTileTag / RemoveTileTag /
   // AddPathTag / RemovePathTag / ToggleTagFade) moved to the new sibling
@@ -259,7 +276,18 @@ const ALLOWLIST = {
   // the default 1000-LOC limit. New snapshot: 1003 LOC. Splitting (e.g.
   // factoring the cascade orchestrators into a sibling) is queued for
   // a later pass — for now the growth is the smallest fix for the leak.
-  'src/renderer/stores/fileTags.svelte.ts': 1003,
+  // AUDIT5_REMEDIATION_PLAN_2026-06-02 R2 — the two single-tag writers
+  // (writeTagChangeToTileMarkdown / writeTagChangeToMarkdownPath) now run their
+  // whole read-modify-write inside `runSerializedMarkdownWrite` (per-path chain,
+  // #8) and call `reconcileOpenEditorFrontmatter` so an open editor's next body
+  // save keeps the tag (#4). +26 LOC of wrapping + reconcile + comments. New
+  // snapshot: 1029 LOC. The queued cascade-orchestrator split will reclaim it.
+  // AUDIT6_REMEDIATION_PLAN_2026-06-02 M3 — both single-tag writers now refresh
+  // the gateway drift baseline (stat + refreshBaselineAfterWrite) after the
+  // direct .md write so the next gateway/editor write doesn't false-positive a
+  // "modified externally" prompt. +23 LOC of import + two stat/refresh blocks +
+  // comments. New snapshot: 1052 LOC.
+  'src/renderer/stores/fileTags.svelte.ts': 1052,
   // Markdown write gateway: per-caller debounce, BOM-preserving hydrate,
   // pre-write drift prompt, in-flight tracking, force-write + cancel APIs.
   // PHASE6_PLAN_2026-06-01 Phase 6.4.M13 — the pre-write Reload/Keep-local
@@ -277,7 +305,17 @@ const ALLOWLIST = {
   // of the H13 stale-cache re-read branch (retained as defense-in-depth,
   // believed unreachable under M1 docId-keyed monotonic versioning). +36 LOC
   // of map + chaining logic + comments. New snapshot: 1045 LOC.
-  'src/renderer/lib/vault/markdownFileWriter.ts': 1045,
+  // AUDIT5_REMEDIATION_PLAN_2026-06-02 R2 + R3 — extracted the DI-09 per-path
+  // chain into the exported `runSerializedMarkdownWrite` so the single-tag fast
+  // path can enrol on the same chain (R2), and added the `MARKDOWN_WRITE_TIMEOUT_MS`
+  // backstop wired into the scheduler's `writeTimeoutMs` so a wedged write can't
+  // hang flushAll/save() forever (R3, #1). +43 LOC of helper + constant + doc.
+  // New snapshot: 1088 LOC. The queued drift-prompt/hydrate split will reclaim it.
+  // Audit-6 M1 (+22 LOC): the 'defer' / budget-exhausted drift aborts now
+  // `markPathFailed` + throw (instead of a bare `return` that reported SUCCESS
+  // and let `.filo/.dirty` be markClean'd while the edit never landed). New
+  // snapshot: 1110 LOC.
+  'src/renderer/lib/vault/markdownFileWriter.ts': 1110,
 };
 
 function toPosix(p) {

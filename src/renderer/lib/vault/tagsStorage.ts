@@ -10,6 +10,7 @@
  * `fileTags` to keep references consistent.
  */
 
+// allow-jsyaml: D1 tag-name minting guard (isSafeNewTagName) — intentional YAML-1.1 coercion, NOT a frontmatter read
 import yaml from 'js-yaml';
 import type { TagsFile, TagDefinition } from '../../schema/tagsFile';
 import {
@@ -250,8 +251,9 @@ export function isSafeNewTagName(name: string): boolean {
     // This validates a single bare tag-name token, NOT a frontmatter block.
     // DEFAULT_SCHEMA's YAML-1.1 coercion is the intent here: we WANT `2024` /
     // `true` / `null` to read as non-strings so the guard rejects them as
-    // confusing new tag names. (Contrast the frontmatter readers — Audit-4 DI-01.)
-    // allow-default-schema: tag-name minting guard, not a frontmatter read
+    // confusing new tag names. (Contrast the frontmatter readers, which are on
+    // the `yaml` package and resolve no such 1.1 tags — see the import's
+    // `// allow-jsyaml:` note and the `ci:no-jsyaml-in-frontmatter` gate.)
     loaded = yaml.load(stripped);
   } catch {
     return false;

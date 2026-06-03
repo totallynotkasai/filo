@@ -20,6 +20,22 @@ import { logMainError } from '../utils/mainLogger';
 const RECOVERY_DIR = join('.filo', 'recovery');
 
 /**
+ * L13 (Audit-6) — basenames of Filo's own crash-recovery sentinels. A vault
+ * file that happens to share one of these names (or a sentinel's bytes copied
+ * in for forensics) is NOT a user-recoverable document, so `listRecoverySnapshots`
+ * filters them out — surfacing a `.dirty` / `*-pending.json` in the "preserved
+ * snapshots" prompt only confuses the user (there's nothing to recover from a
+ * sentinel). Kept in sync with the sentinel paths in `dirtyFlagRecovery.ts`,
+ * `tagRewriteSentinel.ts`, `renameCascadeSentinel.ts`, `quitFailureRecovery.ts`.
+ */
+const SENTINEL_BASENAMES = new Set<string>([
+  '.dirty',
+  'tag-rewrite-pending.json',
+  'rename-cascade-pending.json',
+  'quit-failure.json',
+]);
+
+/**
  * Per-basename retention cap. Each failed-load preserves one copy in a
  * timestamped subdirectory; once a given basename has more than this many
  * copies across all `.filo/recovery/*` subdirs, the oldest are removed
@@ -288,4 +304,70 @@ async function pruneOldSnapshotsGlobal(vaultRoot: string): Promise<void> {
       // Same swallow-on-error contract as the per-basename pruner.
     }
   }
+}
+
+/** One preserved snapshot, surfaced to the renderer on vault open (#11). */
+export interface RecoverySnapshotInfo {
+  /** Vault-relative path to the snapshot copy (forward-slashed). */
+  relPath: string;
+  /** The snapshotted file's basename, e.g. `Notes.board.json`. */
+  basename: string;
+  /** The timestamp subdirectory name, ISO-ish: `2026-06-02T14-30-15.123`. */
+  timestamp: string;
+}
+
+/**
+ * #11 — lists the preserved snapshots under `.filo/recovery/` WITHOUT pruning
+ * anything. The renderer calls this on vault open and surfaces the result so a
+ * user whose bytes were preserved during a bad-write window actually learns
+ * the backup exists (previously the snapshots sat silently until the bounded
+ * snapshot-time pruner eventually reclaimed them). Read-only by design: the
+ * snapshots are the user's safety net, so they're only removed when the user
+ * acts on them (reveal → recover / delete) or the write-time cap trims the
+ * oldest — never as an unacknowledged side effect of opening the vault.
+ *
+ * Returns newest-first; the timestamp dir names sort lexically === chrono.
+ * `ENOENT` (no recovery dir) resolves to an empty list — the steady state.
+ */
+export async function listRecoverySnapshots(vaultRoot: string): Promise<RecoverySnapshotInfo[]> {
+  const recoveryRoot = join(vaultRoot, RECOVERY_DIR);
+  let entries: Array<{ name: string; isDirectory: boolean }>;
+  try {
+    const dirEntries = await fs.readdir(recoveryRoot, { withFileTypes: true });
+    entries = dirEntries.map((d) => ({ name: d.name, isDirectory: d.isDirectory() }));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw err;
+  }
+
+  const out: RecoverySnapshotInfo[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory) continue;
+    const subdirPath = join(recoveryRoot, entry.name);
+    let subEntries: string[];
+    try {
+      subEntries = await fs.readdir(subdirPath);
+    } catch {
+      continue;
+    }
+    for (const name of subEntries) {
+      // L13 — never list Filo's own sentinels as recoverable user files.
+      if (SENTINEL_BASENAMES.has(name)) continue;
+      try {
+        const stat = await fs.stat(join(subdirPath, name));
+        if (!stat.isFile()) continue;
+      } catch {
+        continue;
+      }
+      // Forward-slash the vault-relative path (the convention for paths that
+      // cross the IPC boundary); `RECOVERY_DIR` uses the OS separator.
+      out.push({
+        relPath: [RECOVERY_DIR.split(/[\\/]/).join('/'), entry.name, name].join('/'),
+        basename: name,
+        timestamp: entry.name,
+      });
+    }
+  }
+  out.sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0));
+  return out;
 }

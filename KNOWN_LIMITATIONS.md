@@ -11,49 +11,72 @@ note rather than a quick fix — each entry lists why it is the way it is.
 
 ---
 
-## 1. Lossy YAML frontmatter round-trip — now only for files Filo hasn't read
+## 1. Frontmatter full re-dump — only for files Filo hasn't read (and a few narrow cases)
 
-**What (mostly fixed — Audit2 4.8):** Filo's frontmatter writes now go through a
-source-preserving engine built on the `yaml` package's Document/CST API: it
-diffs the live object against the on-disk frontmatter *source* and rewrites only
-the keys that actually changed, so YAML comments, key ordering, and quote/indent
-style on every untouched key survive a metadata edit. This is the path taken by
-every open document's metadata save (Text Tile / Document Board) and by the tag
-rewriter's fallback — so the old "good path silently falls back to a lossy dump"
-seam is gone.
+**What (Phase 6 — root cause deleted, not patched):** Filo's frontmatter writes
+go through a single-parser, source-preserving **CST-operations engine**
+(`frontmatterCstModel.ts`, built entirely on the `yaml` package). It tokenises
+the on-disk frontmatter source, rewrites ONLY the keys whose value actually
+changed, and emits every UNTOUCHED key from its own source tokens —
+byte-for-byte. Comments, key order, quote/indent style, exotic scalars (`02134`,
+`0xFF00FF`, `1_000`), AND untouched folded `>` block scalars all survive a
+metadata edit verbatim. This is the path taken by every open document's metadata
+save (Text Tile / Document Board) and by the tag rewriter's fallback.
 
-**Residual dump (lossless by nature):** The `js-yaml.dump` fallback still fires
-for a brand-new file (no on-disk baseline exists, so there are no comments to
-lose), for a frontmatter write whose backing file Filo never read into the
-document store (no baseline was captured), and for a block the Document engine
-can't parse as a mapping. In each case there is either nothing to preserve or
-nothing safely parseable to preserve.
+Six audits fought a recurring corruption class here (DI-01 unquoted date→ISO,
+DI-05 destroyed `<<` merge keys, R1/M2 canonicalised untouched scalars, C1
+bare-key collapse, DI-06 folded-scalar reflow). The shared root cause was a
+**dual-parser object-vs-source diff plus a hand-rolled byte-splice** (js-yaml for
+the compare, the `yaml` package for the emit) — two libraries that disagreed on a
+handful of scalar forms. Phase 6 replaced that machine with the single-parser CST
+engine, so the class is **structurally gone, not guarded**. The
+`ci:no-jsyaml-in-frontmatter` gate keeps js-yaml out of every frontmatter path
+(its one remaining, annotated use is the tag-name minting guard, which is not a
+frontmatter read).
 
-**Residual: folded block scalars reflow (Audit-4 DI-06, accepted).** When some
-*other* key changes, the engine re-serialises the whole block with
-`doc.toString({ lineWidth: 0 })` (folding disabled), so an **untouched** folded
-scalar (`summary: >`) loses its original soft-wrap line breaks — its content is
-re-joined onto fewer lines. This is **cosmetic only**: a folded `>` scalar joins
-its wrapped lines with spaces, so the *parsed value is byte-identical* (the CI
-corpus asserts exactly this); literal `|` scalars (which preserve newlines) are
-unaffected. Preserving the exact wrap would mean emitting each unchanged node's
-original CST range verbatim (option (b) in the plan) — deferred unless a user
-reports it, since no data is at risk. Unquoted dates and `<<` merge keys, by
-contrast, *are* now preserved exactly (Audit-4 DI-01/DI-05): reads use
-`CORE_SCHEMA` so the parsed object matches the `yaml`-package serializer.
+**Residual full re-dump (lossless by nature):** When the engine has no on-disk
+source to preserve, or can't safely patch the source, it emits a full dump
+(`new Document(fm).toString()` — the `yaml` package, no js-yaml). This fires for:
+a brand-new file (no baseline exists, so there are no comments to lose); a write
+whose backing file Filo never read into the document store (no baseline
+captured); a block the engine can't parse as a block mapping; or a CHANGED /
+DELETED key carrying a YAML anchor/alias (the engine refuses the splice rather
+than dangle an alias — L27, and the dump expands the anchor to a concrete value).
+In each case there is either nothing to preserve, or the structure is expanded
+while the DATA stays exact.
 
-**Where:** [src/renderer/lib/vault/frontmatterEngine.ts](src/renderer/lib/vault/frontmatterEngine.ts)
-(the engine); the disk-baseline source is retained per-doc in
+**Remaining narrow formatting losses (documented, regression-pinned, never data
+loss):**
+
+- **L23 — nested-collection inner comments.** Verbatim preservation is
+  TOP-LEVEL. An untouched top-level key keeps every byte (including comments
+  inside a nested block it owns), but when a nested collection's VALUE changes,
+  that whole pair is re-serialised — dropping comments that lived INSIDE the
+  changed nested block.
+- **L28 — type-change trailing comment.** A scalar→collection (or
+  collection→scalar) type change re-serialises the pair, so a same-line trailing
+  comment on the old value is dropped (a scalar→scalar value change keeps it, via
+  the value-only splice).
+- **Touched anchored key.** Changing or deleting a key carrying `&a`/`*a`
+  full-dumps (structure expanded, data exact); an anchor/alias confined to
+  UNTOUCHED keys is spliced verbatim and survives (DI-05's `<<: *base`).
+- **New-file / no-baseline.** Emitted in the `yaml` package's default style
+  (nothing prior to preserve).
+
+**Where:** [src/renderer/lib/vault/frontmatterCstModel.ts](src/renderer/lib/vault/frontmatterCstModel.ts)
+(the engine) + [src/renderer/lib/vault/frontmatterEngine.ts](src/renderer/lib/vault/frontmatterEngine.ts)
+(shared value helpers); the disk-baseline source is retained per-doc in
 [src/renderer/stores/document.svelte.ts](src/renderer/stores/document.svelte.ts)
 (`originalFrontmatterCache`) and threaded through
 [src/renderer/lib/vault/markdownFileWriter.ts](src/renderer/lib/vault/markdownFileWriter.ts)
 → `assembleMarkdownFile` in
 [src/renderer/lib/editor/markdownSync.ts](src/renderer/lib/editor/markdownSync.ts).
 
-**Impact:** Negligible — hand-authored YAML comments/formatting now survive a
-metadata edit on any file Filo has open. Only a never-before-read file's first
-rewrite (which had no prior formatting to keep) is emitted in the package's
-default style. File *content* is never lost.
+**Impact:** Negligible — hand-authored YAML comments/formatting (including
+untouched folded scalars) now survive a metadata edit on any file Filo has open.
+Only a never-before-read file's first rewrite, a changed nested block's inner
+comment, or a touched anchored key is emitted in the package's default style.
+File *content* is never lost.
 
 ---
 

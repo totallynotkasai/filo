@@ -289,6 +289,42 @@ describe('markdownSync — assembleMarkdownFile', () => {
 });
 
 /**
+ * Phase 6.3 — the M2 cross-parser canonicalisation class proven DEAD.
+ *
+ * The read path (`parseMarkdownFile`) and the source-preserving write engine are
+ * now BOTH on the `yaml` package, so the only two scalar forms where js-yaml CORE
+ * and the `yaml` package ever disagreed — `1_000` / `0b1010` (NUMBERS under
+ * js-yaml CORE, STRINGS under the `yaml` package) — can no longer look "changed"
+ * to the engine when they're untouched. Under the old split (js-yaml read → a
+ * number, `yaml`-package engine compare → a string) an unrelated edit
+ * value-only-spliced them to their canonical number on the next dirty save
+ * (`1_000` → `1000`). These pin both halves of the cure: (1) the read surfaces
+ * them as strings, and (2) a dirty write on a DIFFERENT key leaves their exact
+ * source bytes intact — which can only hold if read and engine agree.
+ */
+describe('markdownSync — M2 cross-parser canonicalisation is dead (Phase 6.3)', () => {
+  it('parseMarkdownFile reads 1_000 / 0b1010 as strings (single parser)', () => {
+    const r = parseMarkdownFile('---\nthousands: 1_000\nflags: 0b1010\n---\nbody');
+    expect(r.frontmatter.thousands).toBe('1_000');
+    expect(r.frontmatter.flags).toBe('0b1010');
+  });
+
+  it('a dirty write on another key leaves an untouched 1_000 / 0b1010 byte-identical', () => {
+    const md = '---\ntitle: Old\nthousands: 1_000\nflags: 0b1010\n---\nbody text\n';
+    const parsed = parseMarkdownFile(md);
+    // Change ONLY title; thousands/flags are untouched. If the engine saw them as
+    // "changed" (the M2 split) it would canonicalise `1_000` → `1000`.
+    const out = assembleMarkdownFile({ ...parsed.frontmatter, title: 'New' }, parsed.body, {
+      originalFrontmatter: parsed.rawFrontmatter,
+    });
+    const lines = parseMarkdownFile(out).rawFrontmatter.split('\n');
+    expect(lines, 'untouched 1_000 canonicalised — M2 regression').toContain('thousands: 1_000');
+    expect(lines, 'untouched 0b1010 canonicalised — M2 regression').toContain('flags: 0b1010');
+    expect(lines).toContain('title: New');
+  });
+});
+
+/**
  * Phase 20 / S6 — caret preservation. Without this, an external edit hitting
  * `setContent` underneath an open editor resets the cursor to position 0 and
  * the user loses their place mid-keystroke. The stub editor below covers the

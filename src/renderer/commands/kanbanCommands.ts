@@ -30,31 +30,16 @@ import { applyFrontmatterPatchRebased, fmValueEqual } from './frontmatterRebase'
 // UpdateCardField captures before/after patches and schedules the FM
 // write through the shared scheduler.
 
-// M3 (2026-05-28) — deep-clone via the shared `cloneForSnapshot` helper.
-// The previous two-level spread left each placement's nested `style` /
-// `coverImage` aliased to the live `$state` proxy, so an in-place mutation of
-// one of those nested objects between snapshot and undo would corrupt the
-// retained snapshot. Routing through the same JSON-clone every other command
-// uses fully detaches the snapshot.
-function snapshotKanbanColumns(boardId: string): KanbanBoard['columns'] | null {
+// Reads the LIVE columns array for a Kanban board (no clone) so a command can
+// locate a column + its index at construction time. `DeleteColumnCommand`
+// snapshots ONLY the removed column via `this.snapshot(...)`; the whole-slice
+// snapshot/restore helpers this replaced (Audit5 Phase 4) were the Kanban
+// analogue of the pre-2.5 TaskList slice-replace bug — a wholesale `columns`
+// restore reverted every sibling-column edit made between execute and undo.
+function currentKanbanColumns(boardId: string): KanbanBoard['columns'] | null {
   const cached = boardCacheStore.cache[boardId];
   if (!cached || cached.board.type !== 'kanban') return null;
-  const kb = cached.board as KanbanBoard;
-  return cloneForSnapshot(kb.columns ?? []);
-}
-
-function restoreKanbanColumns(boardId: string, snapshot: KanbanBoard['columns']): void {
-  const cached = boardCacheStore.cache[boardId];
-  if (!cached || cached.board.type !== 'kanban') return;
-  const kb = cached.board as KanbanBoard;
-  // Clone on the way back in too, so the retained snapshot stays pristine for
-  // a subsequent redo→undo cycle (the live board must not share references
-  // with it).
-  (kb as Record<string, unknown>).columns = cloneForSnapshot(snapshot);
-  // Phase 6.1.R3 — the caller (always a Command's undo) is responsible
-  // for `boardCacheStore.markDirty(this.targetBoardId)` so the gate's
-  // "only this.targetBoardId" rule isn't laundered through a helper that
-  // takes a parameter `boardId`.
+  return (cached.board as KanbanBoard).columns ?? [];
 }
 
 export class AddCardCommand extends Command {
@@ -82,7 +67,10 @@ export class AddCardCommand extends Command {
     // change, completion toggle, frontmatter back-merge).
     this.def = this.snapshot(def);
     this.position = position;
-    this.style = style;
+    // L30 (Audit-6) — deep-clone the optional style so a caller-side mutation
+    // of the same object after construction can't corrupt the value this
+    // command re-applies on redo (mirrors the `def` snapshot above).
+    this.style = style ? this.snapshot(style) : style;
     this.description = `Add card "${def.title ?? ''}"`;
   }
 
@@ -372,14 +360,29 @@ export class DeleteColumnCommand extends Command {
   readonly targetBoardId: string;
   private boardId: string;
   private columnId: string;
-  private columnsBefore: KanbanBoard['columns'] | null;
+  /**
+   * Audit5 Phase 4 (#9) — captured DELTA: the single removed column
+   * (deep-cloned, with its card placements) + its original array index. `undo`
+   * re-inserts ONLY this column against the LIVE columns via
+   * `insertKanbanColumnAt`, so an edit to a SURVIVING column (rename, card
+   * move/add, WIP limit, collapse, width, style, cover image) made between
+   * execute and undo survives. The prior whole-`columns`-slice replay reverted
+   * every sibling column's interval edit — the Kanban analogue of the
+   * `DeleteSectionCommand` slice-replace bug fixed in 2.5. `removedColumn` is
+   * null when the column wasn't found at construction (execute/undo no-op).
+   */
+  private removedColumn: KanbanBoard['columns'][number] | null;
+  private removedIndex: number;
 
   constructor(boardId: string, columnId: string, title: string) {
     super();
     this.targetBoardId = boardId;
     this.boardId = boardId;
     this.columnId = columnId;
-    this.columnsBefore = snapshotKanbanColumns(boardId);
+    const cols = currentKanbanColumns(boardId);
+    const idx = cols ? cols.findIndex((c) => c.id === columnId) : -1;
+    this.removedIndex = idx;
+    this.removedColumn = idx >= 0 && cols ? this.snapshot(cols[idx]) : null;
     this.description = `Delete column "${title}"`;
   }
 
@@ -388,10 +391,14 @@ export class DeleteColumnCommand extends Command {
   }
 
   undo() {
-    if (this.columnsBefore) {
-      restoreKanbanColumns(this.boardId, this.columnsBefore);
-      boardCacheStore.markDirty(this.targetBoardId);
-    }
+    if (!this.removedColumn) return;
+    // Clone on the way in so a redo→undo cycle keeps the retained snapshot
+    // pristine (the live board must not share references with it).
+    boardCacheStore.insertKanbanColumnAt(
+      this.boardId,
+      cloneForSnapshot(this.removedColumn),
+      this.removedIndex,
+    );
   }
 }
 
@@ -666,6 +673,14 @@ export class UpdateKanbanColumnCommand extends Command {
   private afterWipLimit: number | null;
   private beforeWidth: number | null;
   private afterWidth: number | null;
+  // L29 (Audit-6) — which of the three fields this command actually changed,
+  // computed once at construction. `apply` only writes the changed ones, so an
+  // undo/redo of a collapse toggle no longer also re-stamps the column's
+  // wipLimit/width — which would clobber an out-of-band edit to those fields
+  // made between this command's execute and its undo.
+  private changedCollapsed: boolean;
+  private changedWipLimit: boolean;
+  private changedWidth: boolean;
 
   constructor(
     boardId: string,
@@ -684,13 +699,22 @@ export class UpdateKanbanColumnCommand extends Command {
     this.afterWipLimit = after.wipLimit;
     this.beforeWidth = before.width;
     this.afterWidth = after.width;
+    this.changedCollapsed = before.collapsed !== after.collapsed;
+    this.changedWipLimit = before.wipLimit !== after.wipLimit;
+    this.changedWidth = before.width !== after.width;
     this.description = description ?? 'Update column';
   }
 
   private apply(state: { collapsed: boolean; wipLimit: number | null; width: number | null }): void {
-    boardCacheStore.setKanbanColumnCollapsed(this.boardId, this.columnId, state.collapsed);
-    boardCacheStore.setKanbanColumnWipLimit(this.boardId, this.columnId, state.wipLimit);
-    boardCacheStore.setKanbanColumnWidth(this.boardId, this.columnId, state.width);
+    if (this.changedCollapsed) {
+      boardCacheStore.setKanbanColumnCollapsed(this.boardId, this.columnId, state.collapsed);
+    }
+    if (this.changedWipLimit) {
+      boardCacheStore.setKanbanColumnWipLimit(this.boardId, this.columnId, state.wipLimit);
+    }
+    if (this.changedWidth) {
+      boardCacheStore.setKanbanColumnWidth(this.boardId, this.columnId, state.width);
+    }
   }
 
   execute() {

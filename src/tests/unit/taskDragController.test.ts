@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   TaskDragController,
   type SectionItemsSnapshot,
@@ -652,5 +652,40 @@ describe('TaskDragController — syncFromSnapshot', () => {
     // rowItemsBySection should still reflect the in-flight items.
     expect(controller.rowItemsBySection.S.map((x) => x.id)).toEqual(['b', 'a']);
     controller.cancelDrag();
+  });
+});
+
+describe('TaskDragController — L16 pointerup cleanup', () => {
+  it('detaches the armRow pointerup on cancelDrag() even when no drag started', () => {
+    const snap: SectionItemsSnapshot = {
+      itemsBySection: { S: [{ id: 'a' }] },
+      displaySectionIds: ['S'],
+      leadingSectionId: '__lead',
+    };
+    const { controller } = buildController({
+      rows: [row('a')],
+      placements: [p('a', 0)],
+      sections: [s('S', 0)],
+      snapshot: snap,
+    });
+    controller.syncFromSnapshot();
+
+    const addSpy = vi.spyOn(window, 'addEventListener');
+    const removeSpy = vi.spyOn(window, 'removeEventListener');
+
+    // Pointer pressed on the drag handle — arms a window pointerup — but the
+    // gesture never begins (no onConsiderRows), so dragTileId stays null.
+    controller.armRow('S', 'a', 10, 10);
+    const armed = addSpy.mock.calls.find(([type]) => type === 'pointerup');
+    expect(armed, 'armRow did not arm a pointerup').toBeTruthy();
+    const handler = armed![1];
+
+    // Unmount path: cancelDrag must detach the listener even though no drag
+    // began (the early `dragTileId === null` return previously skipped cleanup).
+    controller.cancelDrag();
+    expect(removeSpy).toHaveBeenCalledWith('pointerup', handler);
+
+    addSpy.mockRestore();
+    removeSpy.mockRestore();
   });
 });

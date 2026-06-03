@@ -237,6 +237,93 @@ describe('UpdatePropertiesCommand — frontmatter (text tile)', () => {
   });
 });
 
+describe('UpdatePropertiesCommand — H2 undo preserves externally-added keys', () => {
+  let recorder: FiloRecorder;
+
+  beforeEach(() => {
+    recorder = installRecorder();
+    vaultStore.setPath('/vault');
+    boardCacheStore.clear();
+    boardStore.clearBoard();
+  });
+  afterEach(() => {
+    restoreFiloDefault();
+    vaultStore.setPath('');
+    boardCacheStore.clear();
+    boardStore.clearBoard();
+    documentStore.clear();
+  });
+
+  it('undo keeps a key added externally (via the live cache) between edit and Ctrl+Z', async () => {
+    documentStore.loadDocument({
+      docId: 'doc-h2',
+      filename: 'H2.md',
+      title: 'H2',
+      body: 'h2 body',
+      htmlContent: '',
+      richText: [],
+    });
+    documentStore.setFrontmatter('doc-h2', { priority: 'low' });
+
+    // User changes ONE property (priority low → high) via the popup.
+    const cmd = new UpdatePropertiesCommand(
+      { kind: 'frontmatter', relPath: 'H2.md', docId: 'doc-h2', fm: { priority: 'low' } },
+      { kind: 'frontmatter', relPath: 'H2.md', docId: 'doc-h2', fm: { priority: 'high' } },
+    );
+    await cmd.execute();
+    expect(documentStore.getFrontmatter('doc-h2')).toMatchObject({ priority: 'high' });
+
+    // Another tool adds `reviewed: true` and the sync reconciler merges it into
+    // the live cache (this is the state the next undo rebases against).
+    documentStore.setFrontmatter('doc-h2', { priority: 'high', reviewed: true });
+
+    await cmd.undo();
+    // Pre-fix the whole-snapshot replace wrote `{ priority: low }` and erased
+    // `reviewed`. The rebase keeps it: only the OWNED key (priority) reverts.
+    expect(documentStore.getFrontmatter('doc-h2')).toMatchObject({
+      priority: 'low',
+      reviewed: true,
+    });
+    const undoWrite = recorder.calls
+      .filter((c) => c.channel === 'vault:write-existing-file-text')
+      .pop();
+    expect(undoWrite?.args[2]).toContain('priority: low');
+    expect(undoWrite?.args[2]).toContain('reviewed: true');
+  });
+
+  it('undo keeps a key added externally ON DISK when no editor cache is seeded', async () => {
+    // No documentStore seed → the live base comes from a fresh disk read.
+    const calls: FiloRecorder['calls'] = [];
+    installFiloMock((channel: unknown, ...args: unknown[]) => {
+      calls.push({ channel: channel as string, args });
+      if (channel === 'vault:read-file-text') {
+        return {
+          success: true,
+          content: '---\npriority: high\nreviewed: true\n---\nDisk body\n',
+          mtimeMs: 1,
+          size: 60,
+        };
+      }
+      if (channel === 'vault:stat') return { success: true, mtimeMs: 1, size: 60 };
+      if (channel === 'vault:write-existing-file-text') return { success: true };
+      return undefined;
+    });
+
+    const cmd = new UpdatePropertiesCommand(
+      { kind: 'frontmatter', relPath: 'Disk.md', docId: 'doc-disk', fm: { priority: 'low' } },
+      { kind: 'frontmatter', relPath: 'Disk.md', docId: 'doc-disk', fm: { priority: 'high' } },
+    );
+
+    // Undo reverts priority high → low while preserving the on-disk reviewed key.
+    await cmd.undo();
+    const undoWrite = calls
+      .filter((c) => c.channel === 'vault:write-existing-file-text')
+      .pop();
+    expect(undoWrite?.args[2]).toContain('priority: low');
+    expect(undoWrite?.args[2]).toContain('reviewed: true');
+  });
+});
+
 describe('UpdatePropertiesCommand — description', () => {
   beforeEach(() => {
     installRecorder();

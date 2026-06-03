@@ -291,3 +291,74 @@ describe('classifyExternalChange', () => {
     expect(result.action).toBe('reload-silently');
   });
 });
+
+/**
+ * Audit-6 L14 — `frontmatterEqual` compares values structurally
+ * (`valuesEqual`), not via key-order-sensitive `JSON.stringify`. A nested map
+ * reordered by an external rewrite (same data, different key order) must read as
+ * a no-op, not a spurious `sync-frontmatter` that reshuffles tile caches/tags.
+ */
+describe('classifyExternalChange — L14 nested-key-order is not a change', () => {
+  it('treats a reordered nested map as a no-op (was a spurious sync-frontmatter)', () => {
+    const prev = md('---\nmeta:\n  author: me\n  year: 2020\n---\n# A\nbody');
+    const next = md('---\nmeta:\n  year: 2020\n  author: me\n---\n# A\nbody');
+    const result = classifyExternalChange({
+      path: 'note.md',
+      previousMetadata: prev,
+      nextMetadata: next,
+      editor: null,
+    });
+    expect(result).toEqual({ action: 'ignore', reason: 'noop-change' });
+  });
+
+  it('still detects a genuine nested-value change as a sync-frontmatter', () => {
+    const prev = md('---\nmeta:\n  author: me\n  year: 2020\n---\n# A\nbody');
+    const next = md('---\nmeta:\n  author: you\n  year: 2020\n---\n# A\nbody');
+    const result = classifyExternalChange({
+      path: 'note.md',
+      previousMetadata: prev,
+      nextMetadata: next,
+      editor: null,
+    });
+    expect(result).toEqual({ action: 'sync-frontmatter', reason: 'frontmatter-only' });
+  });
+});
+
+/**
+ * Audit-6 L12 / VS1 — the partial-read heuristic measures RAW file bytes
+ * (`rawByteSize`), not the parsed body, and the sync-frontmatter branch is
+ * guarded too. A mid-write truncation that collapses a large frontmatter block
+ * while the body bytes survive must be held for a retry, not synced into tile
+ * caches/tags.
+ */
+describe('classifyExternalChange — L12/VS1 partial-read guards the FM-only branch', () => {
+  const bigFm = 'big: ' + 'y'.repeat(1500);
+
+  it('holds a truncated-frontmatter read (raw shrank, body intact) for retry', () => {
+    const prev = md(`---\n${bigFm}\n---\nbody`);
+    const next = md('---\nbig: y\n---\nbody'); // same body, FM collapsed → raw shrank >90%
+    // Sanity: the body alone looks unchanged, so the OLD body-based ratio would
+    // have missed this; rawByteSize is what makes the guard fire.
+    expect(prev.rawByteSize).toBeGreaterThan(1024);
+    expect(next.rawByteSize! < prev.rawByteSize! * 0.1).toBe(true);
+    const result = classifyExternalChange({
+      path: 'note.md',
+      previousMetadata: prev,
+      nextMetadata: next,
+      editor: null,
+    });
+    expect(result).toEqual({ action: 'partial-read-retry', reason: 'size-shrink' });
+  });
+
+  it('still syncs a normal frontmatter-only edit (no drastic raw shrink)', () => {
+    const prev = md('---\ntags: [a]\n---\nbody');
+    const next = md('---\ntags: [a, b]\n---\nbody');
+    const result = classifyExternalChange({
+      path: 'note.md',
+      previousMetadata: prev,
+      nextMetadata: next,
+      editor: null,
+    });
+    expect(result).toEqual({ action: 'sync-frontmatter', reason: 'frontmatter-only' });
+  });
+});

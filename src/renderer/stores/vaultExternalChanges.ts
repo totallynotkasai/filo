@@ -10,7 +10,7 @@ import { classifyExternalChange } from '../lib/vault/conflictResolver';
 import { normalizeTags } from '../lib/vault/frontmatterSync';
 import { assembleMarkdownFile } from '../lib/editor/markdownSync';
 import { reportError } from '../lib/utils/errorBus';
-import { trackComponentWrite, isPathPending } from '../lib/boards/boardSaver';
+import { isPathPending } from '../lib/boards/boardSaver';
 import { cancelFrontmatterWrite } from '../lib/boards/frontmatterWriteScheduler';
 import { invokeOk } from '../lib/utils/invokeOk';
 import {
@@ -36,8 +36,13 @@ import {
   PendingWritesFailedError,
   withDrainedWrites,
 } from '../lib/vault/vaultOperations';
-import { syncOpenEditorsAfterDiskMutation } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
+import { writeMarkdownAndReconcile } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
 import { registerPathRenamable, renameAllPathKeys } from '../lib/vault/renamePathKeys';
+import {
+  captureVaultIdentity,
+  isStillSameVault,
+  type VaultIdentity,
+} from '../lib/vault/vaultIdentity';
 import type { DocumentState } from './document.svelte';
 import type { VaultContext } from './vaultStoreTypes';
 import { onVaultSwap, vaultSwapResettable } from '../core/vaultLifecycle';
@@ -415,6 +420,13 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
       // pairs them into a single rename event) can suppress its prompt.
       noteRecentRename(oldRel);
 
+      // G1 — capture the vault identity BEFORE the drain. `withDrainedWrites`
+      // awaits the writer pipelines, which yields the event loop; a vault swap
+      // can interleave there and the cascade would then run against the NEW
+      // vault's cache with the OLD rename's paths. Capturing pre-drain lets the
+      // cascade's internal checks bail if the vault changed under the await.
+      const captured = captureVaultIdentity();
+
       // Phase R2 — drain pending writers BEFORE the cascade. The OS
       // already did the rename, but a debounced editor write armed
       // against `oldRel` is sitting in-memory; if it fires *after* the
@@ -426,7 +438,7 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
       // the rename-aware writer registrations.
       try {
         await withDrainedWrites(() =>
-          runExternalRenameCascade(ctx, oldRel, newRel),
+          runExternalRenameCascade(ctx, oldRel, newRel, captured),
         );
       } catch (err) {
         if (err instanceof PendingWritesFailedError) {
@@ -520,8 +532,15 @@ async function runExternalRenameCascade(
   ctx: VaultContext,
   oldRel: string,
   newRel: string,
+  captured?: VaultIdentity,
 ): Promise<void> {
   await boardCacheStore.ensureAllLoaded();
+  // G1 — a vault swap may have landed during the `withDrainedWrites` drain or
+  // this `ensureAllLoaded` await. The synchronous cache mutations below
+  // (renameAllPathKeys / renameBoardPath / propagateRename) target the ACTIVE
+  // boardCache; running them against the new vault's cache with the old
+  // vault's rename paths corrupts it. Bail if the vault changed.
+  if (captured && !isStillSameVault(captured)) return;
   // Phase 6.1.R4 — fire every registered path-keyed sweep BEFORE the
   // peer rename calls below so the hydrate gate and drift baseline
   // transfer in lock-step with the cache mutation. Mirrors the
@@ -562,6 +581,10 @@ async function runExternalRenameCascade(
       "Couldn't persist the tag-membership rename during the external rename; the recovery sentinel will re-assert it on next vault open.",
     );
   }
+  // G1 — re-check after the `flushPendingSave` await above: a swap there
+  // would make `ctx.getVaultPath()` below resolve to the NEW vault, and we'd
+  // write a rename-cascade sentinel for the OLD rename into it.
+  if (captured && !isStillSameVault(captured)) return;
   // Sprint B / B9 — rebind vault search to the new path immediately.
   // Exact-match handles the file-rename case; the loop handles the
   // folder-rename case where indexed descendants live under the moved
@@ -1500,29 +1523,28 @@ async function recreateDeletedFile(
 
   const fileText = assembleMarkdownFile(fm, body);
   try {
-    // Use the file-creating channel here (not the gateway's `writeMarkdownFile`,
-    // which uses `vault:write-existing-file-text`) — the user explicitly opted
-    // to re-create the file the watcher reported missing, so mkdir -p
-    // semantics are the desired behaviour.
-    await trackComponentWrite(vaultRoot, rel, async () => {
-      // allow-direct-write: explicit user-opt-in file recreation after an
-      // external delete. `markHydrated(rel, false)` below re-registers
-      // the file with the gateway for the next debounced editor write.
-      await invokeOk('vault:write-file-text', vaultRoot, rel, fileText);
+    // Phase 6.6 — coupled write+reconcile. `create: true` uses the
+    // file-creating channel (not the gateway's write-existing) because the user
+    // explicitly opted to re-create the file the watcher reported missing, so
+    // mkdir -p semantics are desired. `mode: 'full'` cancels a debounced body
+    // write armed BEFORE the Keep-local click — it closure-captured the
+    // pre-recovery body and would otherwise fire ~300 ms later, silently
+    // reverting the recreation (applyReloadFromDisk self-cancels, 6.0.C2). The
+    // reconcile is keyed to the SAME path we write.
+    await writeMarkdownAndReconcile({
+      vaultRoot,
+      path: rel,
+      content: fileText,
+      mode: 'full',
+      create: true,
     });
     // Orphan-fm semantics: file just created on disk via the file-creating
     // channel. Mark hydrated so subsequent gateway writes (e.g. the user
     // making further edits in a still-open editor) can proceed without
     // throwing. BOM is set to false — the assembled fileText didn't include
-    // one and the recreated file matches the assembly.
+    // one and the recreated file matches the assembly. (The reconcile ran inside
+    // the helper above; it and markHydrated touch independent state.)
     markHydrated(rel, false);
-    // Phase 6.1.R1 — route through the shared helper instead of the bare
-    // `documentStore.markClean(...)` this replaced. The point is the cancel,
-    // not the reload: a debounced body write armed BEFORE the Keep-local
-    // click closure-captures the pre-recovery body and would otherwise fire
-    // ~300 ms later, silently reverting the recreation. `applyReloadFromDisk`
-    // self-cancels (6.0.C2); markClean only flipped the dirty flag.
-    syncOpenEditorsAfterDiskMutation([{ path: rel, content: fileText }]);
   } catch (err) {
     reportError(
       'vaultExternalChanges',
@@ -1553,7 +1575,17 @@ export function promptBoardExternalEdit(args: {
   path: string;
 }): Promise<'reload' | 'keep-local' | 'defer'> {
   const { path } = args;
-  return new Promise((resolve) => {
+  // #14 — share the same per-path dedup map as `promptExternalEditOnSync` so a
+  // save storm against an externally-edited `.board.json` produces ONE toast +
+  // ONE decision (not N stacked toasts), and so the prompt inherits the
+  // swap-reset (`vaultSwapResettable`) + rename-transfer (`registerPathRenamable`)
+  // wiring already attached to that map. Board paths (`.board.json`) and editor
+  // paths (`.md`) never collide as keys, so the shared map is safe. (The *hang*
+  // on toast eviction is already fixed by R3; this closes the missing dedup.)
+  const existing = inFlightDriftPrompts.get(path);
+  if (existing) return existing;
+
+  const promise = new Promise<'reload' | 'keep-local' | 'defer'>((resolve) => {
     uiStore.pushToast({
       text: `"${path}" was modified externally between Filo's load and the next save. Reload from disk (discard in-memory changes), or keep your local edits? (Dismiss to defer — no changes saved.)`,
       type: 'warning',
@@ -1586,6 +1618,16 @@ export function promptBoardExternalEdit(args: {
       ],
     });
   });
+
+  inFlightDriftPrompts.set(path, promise);
+  // Drop the entry when the prompt settles so a future board-drift race opens
+  // a fresh prompt; guard against an unrelated re-register replacing our slot.
+  void promise.finally(() => {
+    if (inFlightDriftPrompts.get(path) === promise) {
+      inFlightDriftPrompts.delete(path);
+    }
+  });
+  return promise;
 }
 
 // Phase R6 — register the Reload / Keep-local prompts with the writers

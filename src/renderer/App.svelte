@@ -11,6 +11,7 @@
   import { onError, reportError } from './lib/utils/errorBus';
   import { createErrorToastAggregator } from './lib/utils/errorToastAggregator';
   import { handleFlushAndQuit } from './lib/vault/handleFlushAndQuit';
+  import { flushDirtyFlagSentinel } from './lib/vault/dirtyFlagRecovery';
   import { historyStore } from './stores/history.svelte';
   import { tabStore } from './stores/tabs.svelte';
   import { workspaceStore } from './stores/workspace.svelte';
@@ -81,6 +82,10 @@
       save: () => vaultStore.save(),
       send: (channel) => window.filo.send(channel),
       reportError,
+      // Audit-6 M5 — drain the dirty-flag sentinel mutex so the markClean
+      // queued by save() lands before main destroys the renderer (else a
+      // clean quit leaves `.filo/.dirty` → phantom recovery next launch).
+      flushSentinel: () => flushDirtyFlagSentinel(),
     });
   });
 

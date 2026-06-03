@@ -247,7 +247,16 @@ function pushBoundedAndNotify(stack: HistoryStack, command: Command): void {
  * command invalidates pending redos).
  */
 function clearRedoStackAndNotify(stack: HistoryStack): void {
-  if (stack.redoStack.length === 0) return;
+  // #18 — always hand out a FRESH array reference, even when the redo stack is
+  // already empty. `rollbackExecute` uses reference identity to detect whether
+  // a concurrent commit/undo/redo replaced the redo stack in the window before
+  // an async command body settled; a no-op early-return that left the prior
+  // (possibly shared) reference in place would blind that check and let the
+  // rollback resurrect redo entries a newer action had correctly invalidated.
+  if (stack.redoStack.length === 0) {
+    stack.redoStack = [];
+    return;
+  }
   mutateStack(stack, activeBoardId, (s) => {
     s.redoStack = [];
   });
@@ -268,17 +277,22 @@ function clearRedoStackAndNotify(stack: HistoryStack): void {
  * (see `rollbackExecute` below) so a failed body removes the command
  * from the stack and restores the prior redo stack.
  */
-function commitExecute(command: Command): { preRedoStack: Command[] } {
+function commitExecute(command: Command): { preRedoStack: Command[]; redoStackRef: Command[] } {
   const stack = getOrCreateActiveStack();
-  if (!stack) return { preRedoStack: [] };
+  if (!stack) return { preRedoStack: [], redoStackRef: [] };
   // Snapshot the redo stack BEFORE clearing so a body failure can restore
   // it. Pure array copy — entries are Command instances, snapshot is by
   // reference (the contents are immutable from this scope).
   const preRedoStack = [...stack.redoStack];
   pushBoundedAndNotify(stack, command);
   clearRedoStackAndNotify(stack);
+  // #18 — capture the post-clear redo array reference. `rollbackExecute`
+  // restores `preRedoStack` only if `stack.redoStack` is STILL this exact
+  // array — i.e. no other command's commitExecute / undo / redo replaced it
+  // while this command's (possibly async) body was in flight.
+  const redoStackRef = stack.redoStack;
   if (activeBoardId) boardStore.markDirty(activeBoardId);
-  return { preRedoStack };
+  return { preRedoStack, redoStackRef };
 }
 
 /**
@@ -288,7 +302,7 @@ function commitExecute(command: Command): { preRedoStack: Command[] } {
  * pre-execute redo stack. Idempotent on the active board: if the stack
  * is gone (vault swap mid-flight), no-op.
  */
-function rollbackExecute(command: Command, preRedoStack: Command[]): void {
+function rollbackExecute(command: Command, preRedoStack: Command[], redoStackRef: Command[]): void {
   const stack = getActiveStack();
   if (!stack) return;
   const idx = stack.undoStack.lastIndexOf(command);
@@ -298,7 +312,15 @@ function rollbackExecute(command: Command, preRedoStack: Command[]): void {
       ...stack.undoStack.slice(idx + 1),
     ];
   }
-  stack.redoStack = preRedoStack;
+  // #18 — restore the pre-execute redo stack ONLY if nothing replaced it since
+  // commitExecute. A concurrent command (its own commitExecute clearing redo,
+  // or an undo/redo) reassigns `stack.redoStack` to a new array; if that
+  // happened, the newer redo state wins — blindly assigning our snapshot would
+  // clobber it and could revive a redo entry the newer action invalidated.
+  // (Removing the failed command from the undo stack above is always safe.)
+  if (stack.redoStack === redoStackRef) {
+    stack.redoStack = preRedoStack;
+  }
   if (activeBoardId) boardStore.markDirty(activeBoardId);
 }
 
@@ -358,6 +380,22 @@ export const historyStore = {
   },
 
   /**
+   * L31 (Audit-6) — resolves when the async command chain (`runChained`) is
+   * quiescent, so `vaultStore.save()` / the flush-and-quit path can await any
+   * in-flight `execute`/`undo`/`redo` body BEFORE the final flush pass. An async
+   * command (e.g. `UpdateCardFieldCommand`, which awaits a frontmatter
+   * flush+merge+schedule) schedules its disk writes only after that body runs;
+   * flushing before the chain settles would miss those writes and report a
+   * premature "saved". Never rejects — the chain swallows per-op errors at the
+   * tail (callers see failures through their own `runChained` return). Captures
+   * the CURRENT tail: a command enqueued after this call isn't awaited (the
+   * intended "drain what's queued now" semantics, matching the sentinel flush).
+   */
+  whenChainSettled(): Promise<void> {
+    return pendingChain.then(() => undefined, () => undefined);
+  },
+
+  /**
    * Sets the active board for history tracking.
    * Called when switching boards.
    */
@@ -395,9 +433,9 @@ export const historyStore = {
    * commit alone.
    */
   execute(command: Command): Promise<void> {
-    const { preRedoStack } = commitExecute(command);
+    const { preRedoStack, redoStackRef } = commitExecute(command);
     return runChained(() => command.execute()).catch((err) => {
-      rollbackExecute(command, preRedoStack);
+      rollbackExecute(command, preRedoStack, redoStackRef);
       // 6.4.M15 — almost every caller fires execute() fire-and-forget, so the
       // rethrow below surfaces only as a silent unhandled rejection. Report it
       // first so a command body that throws is never invisible (the rollback

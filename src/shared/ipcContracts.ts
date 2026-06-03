@@ -223,6 +223,13 @@ export interface IpcChannelMap {
     args: [vaultRoot: string, relPath: string];
     result: IpcOk<{ path: string }>;
   };
+  // Bare channel (like theme:load) — returns the snapshot list directly,
+  // `[]` on scan failure. Not envelope-discriminated: surfacing the list is
+  // best-effort UX, so "scan failed" and "none" both render as nothing.
+  'recovery:list': {
+    args: [vaultRoot: string];
+    result: Array<{ relPath: string; basename: string; timestamp: string }>;
+  };
 
   // ── Config ───────────────────────────────────────────────────────
   'config:load': {
@@ -382,6 +389,12 @@ export interface IpcChannelMap {
   // Audit-4 DI-04 — renderer heartbeat before the open-ended save-failure
   // confirm; main clears the auto-destroy flush timer on receipt.
   'app:quit-awaiting-user': {
+    args: [];
+    result: void;
+  };
+  // Audit5 2.1 — periodic drain heartbeat WHILE the quit flush runs; main
+  // re-arms the auto-destroy flush timer on each beat.
+  'app:drain-heartbeat': {
     args: [];
     result: void;
   };

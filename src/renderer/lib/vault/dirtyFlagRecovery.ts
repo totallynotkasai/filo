@@ -45,6 +45,28 @@ function withSentinelLock<T>(fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
+/**
+ * Audit-6 M5 — awaits the tail of the sentinel mutex chain so a fire-and-forget
+ * `markClean` / `markDirty` enqueued by `endWrite` (via `syncSentinelIfIdle`)
+ * has actually landed on disk before the caller proceeds.
+ *
+ * The quit path drains every pending write — each terminal `endWrite` enqueues
+ * a `markClean` onto `sentinelMutex` — and then immediately sends
+ * `app:ready-to-quit`; main destroys the renderer before that still-pending
+ * `markClean` IPC flushes, so `.filo/.dirty` survives and the next vault open
+ * shows a PHANTOM recovery prompt (the session actually shut down clean).
+ * `handleFlushAndQuit` awaits this before signalling ready-to-quit.
+ *
+ * Resolves (never rejects) — the individual sentinel ops already surface their
+ * own failures via `reportError`, and a rejected tail must not wedge the quit.
+ * Captures the CURRENT tail: a markClean enqueued after this call (none should
+ * be, post-drain) is not waited on, which is the intended "flush what's queued
+ * now" semantics.
+ */
+export function flushDirtyFlagSentinel(): Promise<void> {
+  return sentinelMutex.then(() => undefined, () => undefined);
+}
+
 export interface RecoveryStatus {
   needsRecovery: boolean;
   dirtyAt?: number;
@@ -239,8 +261,25 @@ async function pathJoin(): Promise<{ join: (...parts: string[]) => string }> {
 // head holds promises tethered to the outgoing vault's `.filo/.dirty`
 // path. A straggling `markDirty` / `markClean` enqueued just before
 // swap would otherwise drag the new vault's first sentinel op behind a
-// chain that targets a vault root that's no longer active. Resetting
-// to a fresh `Promise.resolve()` at pre-swap drops the prior chain.
-onVaultSwap('pre-swap', 'dirtyFlagRecovery', () => {
-  sentinelMutex = Promise.resolve();
-});
+// chain that targets a vault root that's no longer active.
+//
+// G1 — but resetting straight to a fresh `Promise.resolve()` ORPHANS an
+// in-flight `markClean(previousVault)`: `writeStateTracking.resetWriteTracking`
+// (the `writeStateTracking` pre-swap handler, which `runAfter` orders before
+// this one) enqueues that markClean onto `sentinelMutex` on the Save branch.
+// If we drop the chain head, the NEXT vault's first `markDirty` enqueues on
+// the fresh chain and can race the still-running markClean — on a reopened
+// SAME-PATH vault the markClean would delete the new session's freshly-written
+// `.filo/.dirty`, masking a real crash. So await the current tail until the
+// chain is quiescent, THEN reset. The await costs one in-flight IPC delete
+// (~ms); correctness wins over the prior fire-and-forget latency saving.
+onVaultSwap(
+  'pre-swap',
+  'dirtyFlagRecovery',
+  async () => {
+    const tail = sentinelMutex;
+    await tail.catch(() => undefined);
+    sentinelMutex = Promise.resolve();
+  },
+  { runAfter: ['writeStateTracking'] },
+);

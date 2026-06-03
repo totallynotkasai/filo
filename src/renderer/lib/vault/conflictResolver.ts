@@ -1,4 +1,5 @@
 import type { FileMetadata } from './vaultIndex';
+import { valuesEqual } from './frontmatterEngine';
 
 /**
  * Describes what to do with an external change to a file the app may be
@@ -100,6 +101,17 @@ export function classifyExternalChange(params: {
   // and fall through to the editor-state path — that's the safe default.
   if (previousMetadata && isBodyEquivalent(previousMetadata, nextMetadata)) {
     if (!frontmatterEqual(previousMetadata, nextMetadata)) {
+      // VS1 (Audit-6) — even a frontmatter-only delta can be a mid-write
+      // truncated read: the surviving body bytes happen to match the prior
+      // version, but the RAW file shrank drastically (the FM block was caught
+      // mid-rewrite). Applying it would push a truncated frontmatter into tile
+      // caches / tags with no editor open to protect them. Hold for a delayed
+      // re-read — same raw-shrink + fresh-mtime signature the editor-clean
+      // branch already guards. (rawByteSize makes this fire even though the
+      // body — and thus the body-only ratio — looks unchanged.)
+      if (isLikelyPartialRead(previousMetadata, nextMetadata)) {
+        return { action: 'partial-read-retry', reason: 'size-shrink' };
+      }
       // Sprint C / C.1 — popup is the canonical frontmatter authority while
       // it's open + dirty. A silent sync here would clobber the popup's
       // pending row edits; force a user choice instead.
@@ -198,9 +210,13 @@ function isLikelyPartialRead(
   next: FileMetadata,
   now: number = Date.now(),
 ): boolean {
-  const prevSize = utf8ByteLength(prev.content);
+  // L12 (Audit-6) — measure the RAW file size (FM + body) when available, not
+  // the parsed body alone. A truncation that lands mostly in a large frontmatter
+  // block leaves the body looking intact, so a body-only ratio would miss it.
+  // Falls back to the body byte length for synthetic metadata without rawByteSize.
+  const prevSize = prev.rawByteSize ?? utf8ByteLength(prev.content);
   if (prevSize < MIN_PARTIAL_READ_PRIOR_BYTES) return false;
-  const nextSize = utf8ByteLength(next.content);
+  const nextSize = next.rawByteSize ?? utf8ByteLength(next.content);
   if (nextSize >= prevSize * PARTIAL_READ_SHRINK_RATIO) return false;
   // Only fire when the shrink is RECENT — an old mtime means the rewrite
   // already finished and we're looking at stable state.
@@ -229,7 +245,14 @@ function frontmatterEqual(a: FileMetadata, b: FileMetadata): boolean {
   if (ak.length !== bk.length) return false;
   for (let i = 0; i < ak.length; i++) {
     if (ak[i] !== bk[i]) return false;
-    if (JSON.stringify(a.frontmatter[ak[i]]) !== JSON.stringify(b.frontmatter[bk[i]])) {
+    // L14 (Audit-6) — compare values structurally, not via `JSON.stringify`.
+    // The stringify form was key-order-SENSITIVE for nested objects: a YAML map
+    // `{author, date}` reloaded as `{date, author}` (same data, different key
+    // order after an external rewrite) stringified unequal → a spurious
+    // `sync-frontmatter` that reshuffled tile caches/tags for no real change.
+    // `valuesEqual` recurses key-order-insensitively (and compares Dates by
+    // instant), matching the FM engine's own equality contract.
+    if (!valuesEqual(a.frontmatter[ak[i]], b.frontmatter[bk[i]])) {
       return false;
     }
   }

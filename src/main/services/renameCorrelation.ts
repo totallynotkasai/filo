@@ -148,7 +148,27 @@ async function sameBasenameBytesPreserved(
   if (relPathSize && relPathHash) {
     const sizeComparable = mSize !== null && pSize !== null;
     const hashComparable = mHash !== null && pHash !== null;
+    // A CONFIRMED content match is the strongest move signal — pair regardless
+    // of size (even a tiny file with a real hash match is a genuine move). This
+    // also exempts confirmed moves from the small-file floor below.
+    if (hashComparable && mHash === pHash) return true;
+    // DI-17 — neither size nor hash comparable ⇒ fully cold cache (missing side
+    // never observed) ⇒ refuse rather than pair on basename alone.
     if (!sizeComparable && !hashComparable) return false;
+    // L15 (Audit-6) — apply the cross-basename pass's small-file floor here too.
+    // Without a positive hash match, an equal SIZE is the only signal, and tiny
+    // files collide on size constantly (the per-folder Notes.md / README.md /
+    // index.md layout), so a <256-byte same-basename "move" is more likely an
+    // unrelated delete+create than a real move — refuse and let it surface as
+    // delete+create (recoverable via the broken-ref relink). This is the
+    // coincidence-prone band; a >=256-byte same-size pair keeps the balanced
+    // size-only pairing (a moved attachment / .board.json is never hash-seeded,
+    // and a large same-size+same-basename pair has a high move prior — see the
+    // asymmetric-hash attachment-move test). Equal-size only: an unequal size is
+    // already refused above.
+    if (mSize !== null && pSize !== null && mSize === pSize && mSize < CROSS_BASENAME_MIN_SIZE_BYTES) {
+      return false;
+    }
   }
   return true;
 }

@@ -34,7 +34,7 @@
 import { assembleMarkdownFile, parseMarkdownFile } from '../editor/markdownSync';
 import { trackComponentWrite } from '../boards/boardSaver';
 import { createScheduler } from '../boards/writeScheduler';
-import { registerPendingProbe } from '../boards/writeStateTracking';
+import { registerPendingProbe, markPathFailed } from '../boards/writeStateTracking';
 import { vaultPath, type VaultPath } from '@shared/vaultPath';
 import {
   getLastFlushedFrontmatterVersion,
@@ -54,6 +54,23 @@ import { registerPathRenamable } from './renamePathKeys';
  * is identical post-migration.
  */
 export const MARKDOWN_WRITE_DEBOUNCE_MS = 300;
+
+/**
+ * Audit5 R3 — upper bound on a single markdown write, passed to the scheduler's
+ * `writeTimeoutMs`. A wedged `writeMarkdownFile` (a never-resolving external-edit
+ * drift prompt — #1 — or a stuck `vault:write-existing-file-text` IPC) must not
+ * hang an awaiting `flushAll` / `vaultStore.save()` forever; on timeout the path
+ * is marked failed (sentinel + indicator stay live) and the failure is
+ * attributed so `save()` returns false instead of freezing.
+ *
+ * 60s is deliberately well ABOVE any legitimate in-write await: the interactive
+ * drift prompt auto-dismisses at the 15s toast cap (resolving to 'defer'), and
+ * its re-prompt loop is bounded to 3, so a genuine user decision blocks the
+ * write for at most ~45s. The bound therefore only ever fires on a TRULY wedged
+ * write, never on a slow-but-live prompt. It is a backstop, not a latency
+ * budget; quit-time responsiveness is handled separately by the drain heartbeat.
+ */
+export const MARKDOWN_WRITE_TIMEOUT_MS = 60_000;
 
 /**
  * Phase R6 — listener slot for the Reload / Keep-local prompt the writer
@@ -137,6 +154,8 @@ const writerScheduler = createScheduler<WriteArgs>({
   getSentinelInfo: (args) => ({ vaultRoot: args.vaultRoot, path: args.relPath }),
   getFailureId: (args) => args.callerId,
   sentinelMode: 'pending-path',
+  // Audit5 R3 — bound the await so a wedged write can't hang flushAll/save().
+  writeTimeoutMs: MARKDOWN_WRITE_TIMEOUT_MS,
 });
 
 // Phase 4 / E3 — because this scheduler opts out of sentinel management
@@ -398,26 +417,50 @@ export async function writeMarkdownFile(args: WriteArgs): Promise<void> {
   // a force-write at the IPC layer — two writes ordered by the OS,
   // last one wins, the loser's bytes silently lost.
   //
-  // Audit-4 DI-09 — chain this write behind any in-flight write to the SAME
-  // resolved path (even from a different callerId) so two views of one `.md`
-  // file (TextTile + DocumentEditor) serialise at the IPC layer instead of
-  // racing. `prior` is awaited for ORDERING only; its rejection is swallowed
-  // (it carries its own attribution via trackComponentWrite), and the chained
-  // impl reads the live documentStore state at its own fire time.
-  const pathKey = vaultPath(args.relPath);
-  const prior = writeChainByPath.get(pathKey);
-  const promise = (async () => {
-    if (prior) await prior.catch(() => undefined);
-    await writeMarkdownFileImpl(args);
-  })();
+  // Audit-4 DI-09 — the per-resolved-path chaining lives in
+  // `runSerializedMarkdownWrite` so the single-tag fast path can join the SAME
+  // chain (Audit5 R2). `inFlightWrites` (keyed by callerId, for cancel/force
+  // await) is layered on top here.
+  const promise = runSerializedMarkdownWrite(args.relPath, () => writeMarkdownFileImpl(args));
   inFlightWrites.set(args.callerId, promise);
-  writeChainByPath.set(pathKey, promise);
   try {
     await promise;
   } finally {
     if (inFlightWrites.get(args.callerId) === promise) {
       inFlightWrites.delete(args.callerId);
     }
+  }
+}
+
+/**
+ * Audit-4 DI-09 / Audit5 R2 — runs `op` (a `.md` write) serialised behind any
+ * in-flight write to the SAME resolved path, even one issued by a different
+ * caller. Two views of one `.md` file (TextTile + DocumentEditor), or the
+ * single-tag fast path racing an editor body write, would otherwise both hit
+ * `vault:write-existing-file-text` concurrently — the OS arbitrates the order
+ * and the loser's bytes are silently clobbered.
+ *
+ * The prior chained promise is awaited for ORDERING only; its rejection is
+ * swallowed (it carries its own failure attribution via `trackComponentWrite`).
+ * `op` should perform its OWN read inside the callback when it does a
+ * read-modify-write, so it observes the bytes the prior chained write landed.
+ * Exposed so non-gateway `.md` writers (the tag fast path) can enrol without
+ * re-implementing the chain.
+ */
+export async function runSerializedMarkdownWrite(
+  relPath: string,
+  op: () => Promise<void>,
+): Promise<void> {
+  const pathKey = vaultPath(relPath);
+  const prior = writeChainByPath.get(pathKey);
+  const promise = (async () => {
+    if (prior) await prior.catch(() => undefined);
+    await op();
+  })();
+  writeChainByPath.set(pathKey, promise);
+  try {
+    await promise;
+  } finally {
     if (writeChainByPath.get(pathKey) === promise) {
       writeChainByPath.delete(pathKey);
     }
@@ -497,7 +540,20 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
           // close). Neither side was touched; abort so the external edit on
           // disk survives, and let the dirty in-memory state persist so the
           // next debounced write re-prompts. No baseline refresh.
-          return;
+          //
+          // Audit-6 M1 — a bare `return` here resolved performWrite as SUCCESS,
+          // so the scheduler's `safeEndWrite(true)` dropped the path from
+          // pending and `syncSentinelIfIdle` markClean'd `.filo/.dirty` (the
+          // path was never in failedVaultPaths). The editor stayed dirty but
+          // disk was unchanged → quit lost the edit with a CLEAN sentinel (no
+          // recovery prompt). Mirror frontmatterWriteScheduler DI-13:
+          // markPathFailed keeps the sentinel dirty + the indicator showing
+          // error, and the throw attributes the path to flushAll().failed so
+          // save() returns false instead of flashing "Saved".
+          markPathFailed(vaultRoot, relPath);
+          throw new Error(
+            `markdownFileWriter: write to "${relPath}" deferred — external edit on disk unresolved; not overwritten`,
+          );
         }
         // 'keep-local' — the user chose to overwrite. Confirm nothing drifted
         // while the modal was open before committing the clobber.
@@ -525,7 +581,16 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
         // Re-prompt budget exhausted against a churning external writer. Abort
         // rather than clobber an unseen edit; the next debounced write
         // re-detects the drift and prompts again.
-        return;
+        //
+        // Audit-6 M1 — same silent-loss-with-clean-sentinel hazard as the
+        // 'defer' branch above: a bare `return` reported success and let the
+        // sentinel be markClean'd while the dirty edit never reached disk.
+        // markPathFailed + throw keeps `.filo/.dirty` alive and surfaces the
+        // failure to save()'s aggregate boolean.
+        markPathFailed(vaultRoot, relPath);
+        throw new Error(
+          `markdownFileWriter: write to "${relPath}" aborted — external edit kept churning across drift re-prompts; not overwritten`,
+        );
       }
     }
   }

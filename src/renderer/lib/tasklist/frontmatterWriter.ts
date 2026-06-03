@@ -6,6 +6,7 @@ import { documentStore } from '../../stores/document.svelte';
 import { historyStore } from '../../stores/history.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
+import { vaultStore } from '../../stores/vault.svelte';
 import {
   BatchCommand,
   UpdateTaskFieldCommand,
@@ -14,6 +15,7 @@ import {
   scheduleFrontmatterWrite as scheduleSharedFrontmatterWrite,
   flushAllPendingFrontmatterWrites,
 } from '../boards/frontmatterWriteScheduler';
+import { seedDocumentFrontmatterFromDisk } from '../boards/seedFrontmatterFromDisk';
 import { nextDueDate } from '../tasks/recurrence';
 import type { Priority } from '../tasks/frontmatterReaders';
 import type { TaskRow } from '../tasks/taskListModel';
@@ -59,15 +61,15 @@ export interface FrontmatterWriter {
     patch: Record<string, unknown>,
     description?: string,
   ): UpdateTaskFieldCommand | null;
-  updateRowField(row: TaskRow, patch: Record<string, unknown>): void;
-  toggleCompleted(row: TaskRow): void;
-  setRecurrence(row: TaskRow, recurrence: string): void;
-  cyclePriority(row: TaskRow): void;
-  setDueDate(row: TaskRow, dueDate: string): void;
-  setDueTime(row: TaskRow, dueTime: string): void;
-  setStartDate(row: TaskRow, startDate: string): void;
-  setNotesBody(row: TaskRow, body: string): void;
-  markAllIncomplete(rows: TaskRow[]): void;
+  updateRowField(row: TaskRow, patch: Record<string, unknown>): Promise<void>;
+  toggleCompleted(row: TaskRow): Promise<void>;
+  setRecurrence(row: TaskRow, recurrence: string): Promise<void>;
+  cyclePriority(row: TaskRow): Promise<void>;
+  setDueDate(row: TaskRow, dueDate: string): Promise<void>;
+  setDueTime(row: TaskRow, dueTime: string): Promise<void>;
+  setStartDate(row: TaskRow, startDate: string): Promise<void>;
+  setNotesBody(row: TaskRow, body: string): Promise<void>;
+  markAllIncomplete(rows: TaskRow[]): Promise<void>;
 }
 
 export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterWriter {
@@ -84,6 +86,22 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
 
   function scheduleFrontmatterWrite(relPath: string, docId: string | null): void {
     scheduleSharedFrontmatterWrite(relPath, docId);
+  }
+
+  /**
+   * Audit-6 M4 — seed the FM cache from a FRESH disk read before the (sync)
+   * `ensureSeededFm` index-seed, so a key an external editor added since the
+   * last vault index rebuild isn't dropped by the subsequent source-preserving
+   * write. No-op when an editor / prior edit already seeded the cache, or when
+   * the disk read fails (the index seed then runs as before). Awaited by the
+   * mutating entry points below.
+   */
+  function preSeedRow(row: TaskRow): Promise<void> {
+    return seedDocumentFrontmatterFromDisk(
+      (row.tile as Tile & { contentId?: string }).contentId ?? null,
+      vaultStore.path,
+      vaultPathForTile(row.tile),
+    );
   }
 
   /**
@@ -115,8 +133,11 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
     return new UpdateTaskFieldCommand(board.id, path, docId, patch, inverse, description);
   }
 
-  function updateRowField(row: TaskRow, patch: Record<string, unknown>): void {
+  async function updateRowField(row: TaskRow, patch: Record<string, unknown>): Promise<void> {
     if (!getBoard()) return;
+    // Audit-6 M4 — seed FM from disk before buildTaskFieldCommand (which calls
+    // the sync index-seed) so the write preserves externally-added keys.
+    await preSeedRow(row);
     const cmd = buildTaskFieldCommand(row, patch);
     if (cmd) {
       historyStore.execute(cmd);
@@ -131,7 +152,7 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
     bumpCacheVersion();
   }
 
-  function toggleCompleted(row: TaskRow): void {
+  async function toggleCompleted(row: TaskRow): Promise<void> {
     // Recurring tasks don't "complete" — they roll forward. Computing the
     // next instance from the live row (current due + recurrence + mode) and
     // writing it back keeps `completed: false` while advancing the due date.
@@ -143,35 +164,35 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
         new Date(),
       );
       if (next) {
-        updateRowField(row, { completed: false, dueDate: next });
+        await updateRowField(row, { completed: false, dueDate: next });
         return;
       }
     }
-    updateRowField(row, { completed: !row.completed });
+    await updateRowField(row, { completed: !row.completed });
   }
 
-  function setRecurrence(row: TaskRow, recurrence: string): void {
+  function setRecurrence(row: TaskRow, recurrence: string): Promise<void> {
     // Clearing recurrence intentionally leaves `recurrenceMode` in place so
     // a later re-add picks up the user's last-chosen mode.
-    updateRowField(row, { recurrence });
+    return updateRowField(row, { recurrence });
   }
 
-  function cyclePriority(row: TaskRow): void {
+  function cyclePriority(row: TaskRow): Promise<void> {
     const order: Priority[] = ['none', 'low', 'medium', 'high', 'urgent'];
     const next = order[(order.indexOf(row.priority) + 1) % order.length];
-    updateRowField(row, { priority: next === 'none' ? '' : next });
+    return updateRowField(row, { priority: next === 'none' ? '' : next });
   }
 
-  function setDueDate(row: TaskRow, dueDate: string): void {
-    updateRowField(row, { dueDate });
+  function setDueDate(row: TaskRow, dueDate: string): Promise<void> {
+    return updateRowField(row, { dueDate });
   }
 
-  function setDueTime(row: TaskRow, dueTime: string): void {
-    updateRowField(row, { dueTime });
+  function setDueTime(row: TaskRow, dueTime: string): Promise<void> {
+    return updateRowField(row, { dueTime });
   }
 
-  function setStartDate(row: TaskRow, startDate: string): void {
-    updateRowField(row, { startDate });
+  function setStartDate(row: TaskRow, startDate: string): Promise<void> {
+    return updateRowField(row, { startDate });
   }
 
   /**
@@ -184,11 +205,15 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
    * opened yet is loaded lazily here, seeded from the vault-index content
    * cache.
    */
-  function setNotesBody(row: TaskRow, body: string): void {
+  async function setNotesBody(row: TaskRow, body: string): Promise<void> {
     const path = vaultPathForTile(row.tile);
     const t = row.tile as Tile & { contentId?: string };
     const docId = t.contentId ?? null;
     if (docId) {
+      // Audit-6 M4 — seed FM from disk before the index-seed (ensureSeededFm
+      // below) so this body save assembles over the latest disk frontmatter
+      // and doesn't drop an externally-added key.
+      await seedDocumentFrontmatterFromDisk(docId, vaultStore.path, path);
       const existing = documentStore.getDocument(docId);
       if (!existing) {
         const meta = vaultIndexStore.getMetadata(path);
@@ -209,11 +234,14 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
     bumpCacheVersion();
   }
 
-  function markAllIncomplete(rows: TaskRow[]): void {
+  async function markAllIncomplete(rows: TaskRow[]): Promise<void> {
     if (!getBoard()) return;
     const cmds: UpdateTaskFieldCommand[] = [];
     for (const r of rows) {
       if (!r.completed) continue;
+      // Audit-6 M4 — seed each row's FM from disk before buildTaskFieldCommand
+      // so the batched writes preserve externally-added keys.
+      await preSeedRow(r);
       const cmd = buildTaskFieldCommand(r, { completed: false }, 'Mark incomplete');
       if (cmd) cmds.push(cmd);
     }

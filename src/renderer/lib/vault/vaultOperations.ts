@@ -43,6 +43,7 @@ import { flushAllMisc } from '../boards/miscWriteScheduler';
 import { flushScheduledConfig } from '../boards/configWriteScheduler';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { uiStore } from '../../stores/ui.svelte';
+import { currentVaultGeneration } from './vaultIdentity';
 import type {
   ChannelArgs,
   ChannelResult,
@@ -100,8 +101,16 @@ export class PendingWritesFailedError extends Error {
  * their own — every IPC convenience helper calls `withDrainedWrites`, so a
  * complex sequence like `vaultFolderOps.delete` can wrap itself once and
  * still call `deleteVaultPath` for the IPC without paying a second drain.
+ *
+ * G1 — keyed by the vault GENERATION rather than a bare boolean. A bare
+ * `drainInProgress = true` would make a `withDrainedWrites` issued against a
+ * NEWLY-swapped vault (while an outer drain for the OLD vault is still in
+ * flight on its `await`) short-circuit its own drain as "re-entrant" — so the
+ * new vault's disk-shape op would run WITHOUT draining the new vault's
+ * writers. Scoping to the generation means a call only counts as re-entrant
+ * when it shares the generation of the in-flight drain.
  */
-let drainInProgress = false;
+let drainingGeneration: number | null = null;
 
 function summariseFailedPaths(results: PendingWritesFailedDetail): string[] {
   const out: string[] = [];
@@ -126,14 +135,17 @@ function summariseFailedPaths(results: PendingWritesFailedDetail): string[] {
  * enough that re-arming a 300 ms debounce mid-rename is acceptable.
  */
 export async function withDrainedWrites<T>(op: () => Promise<T>): Promise<T> {
-  if (drainInProgress) {
-    // Already inside an outer drain — re-entrant call short-circuits its
-    // own drain and just runs the op. Without this guard, every complex
-    // sequence (e.g. delete-with-snapshots calling deleteVaultPath) would
-    // pay an unnecessary second drain on every IPC helper invocation.
+  const generation = currentVaultGeneration();
+  if (drainingGeneration === generation) {
+    // Already inside an outer drain for THIS vault generation — re-entrant
+    // call short-circuits its own drain and just runs the op. Without this
+    // guard, every complex sequence (e.g. delete-with-snapshots calling
+    // deleteVaultPath) would pay an unnecessary second drain on every IPC
+    // helper invocation. A different generation (vault swapped mid-drain)
+    // falls through and drains the new vault's writers properly.
     return op();
   }
-  drainInProgress = true;
+  drainingGeneration = generation;
   try {
     // 6.4.M1 — misc + config schedulers must drain alongside md/fm/board.
     // Without them, a debounced sidebar-order / viewports / tags.json /
@@ -183,7 +195,10 @@ export async function withDrainedWrites<T>(op: () => Promise<T>): Promise<T> {
 
     return await op();
   } finally {
-    drainInProgress = false;
+    // Only clear if we're still the generation that set it. A swap mid-drain
+    // bumps `currentVaultGeneration()`; if a newer-generation drain set the
+    // flag in the meantime, this stale `finally` must not clear ITS flag.
+    if (drainingGeneration === generation) drainingGeneration = null;
   }
 }
 
@@ -274,5 +289,5 @@ export async function copyFileIntoVault(
  * should never need this — the `finally` block always clears the flag.
  */
 export function __resetDrainGuardForTests(): void {
-  drainInProgress = false;
+  drainingGeneration = null;
 }

@@ -216,17 +216,20 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
     try {
       const hydrate = await readMarkdownForHydrate(vaultRoot, relPath);
       body = hydrate.body;
-    } catch {
-      // Audit-4 DI-13 — the backing `.md` is gone (ENOENT, deleted out-of-band)
-      // or unreadable, so this orphan frontmatter write (a Kanban / Task field
-      // edit with no open editor) can't land. The board cache still shows the
-      // edit, so a bare `return` would drop it invisibly. Mark the path failed
-      // so the save-error pipeline (save indicator + `.filo/.dirty` sentinel)
-      // surfaces the loss — matching the write-phase ENOENT discipline below.
-      // We still refuse to resurrect the deleted file; we just make the drop
-      // visible instead of swallowing it.
+    } catch (err) {
+      // Audit-4 DI-13 / Audit5 2.3 (#7) — the backing `.md` is gone (ENOENT,
+      // deleted out-of-band) or unreadable, so this orphan frontmatter write (a
+      // Kanban / Task field edit with no open editor) can't land. The board
+      // cache still shows the edit, so dropping it here would lose it silently.
+      // `markPathFailed` surfaces the loss in the save indicator + `.filo/.dirty`
+      // sentinel; the `throw` propagates it so the scheduler attributes `relPath`
+      // to `flushAll().failed` → `save()` returns false. Pre-2.3 a bare `return`
+      // resolved performWrite as SUCCESS, so the scheduler's settle `endWrite(true)`
+      // then wiped the failed mark AND Ctrl+S toasted a false "Saved" while the
+      // edit never reached disk. We still refuse to resurrect the deleted file —
+      // we just stop swallowing the drop.
       markPathFailed(vaultRoot, relPath);
-      return;
+      throw err;
     }
   }
 

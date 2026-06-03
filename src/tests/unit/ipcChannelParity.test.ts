@@ -105,6 +105,9 @@ describe('IPC channel parity', () => {
       // Audit-4 DI-04 — renderer → main quit heartbeat; same ipcMain.once
       // registration in main.ts (not an ipcMain.handle in src/main/ipc).
       'app:quit-awaiting-user',
+      // Audit5 2.1 — renderer → main periodic drain heartbeat; registered via
+      // ipcMain.on in main.ts (not an ipcMain.handle in src/main/ipc).
+      'app:drain-heartbeat',
     ]);
     const orphans = [...unionMembers].filter(
       (channel) => !registered.has(channel) && !broadcastOnly.has(channel),

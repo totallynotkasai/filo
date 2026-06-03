@@ -117,6 +117,41 @@ export function makeKanbanSlice(ctx: CacheContext) {
       ctx.markDirty(boardId);
     },
 
+    /**
+     * Audit5 Phase 4 (#9) — re-insert a previously-removed column as a DELTA
+     * against the LIVE columns array (used by `DeleteColumnCommand.undo`).
+     *
+     * Unlike the old whole-`columns`-slice restore, this splices ONE column
+     * back at `index` and leaves every surviving column untouched, so an edit
+     * made to a sibling column between the delete and the undo (rename, card
+     * move/add, WIP limit, collapse, width, style, cover image) survives.
+     * Idempotent: a no-op if a column with the same id is already present
+     * (out-of-band re-add / redo after partial undo).
+     *
+     * Positions are renormalised to array index afterwards — the invariant
+     * `reorderKanbanColumns` maintains — so a restored column keeps export
+     * order (`exportService` sorts columns by `position`) consistent with the
+     * on-screen array order even if a sibling column was added/reordered in the
+     * interval. Only the `position` scalar is rewritten; every content field on
+     * sibling columns is left as-is.
+     */
+    insertKanbanColumnAt(
+      boardId: string,
+      column: KanbanBoard['columns'][number],
+      index: number,
+    ): void {
+      const kb = ctx.kanbanBoardOrWarn(boardId, 'insertKanbanColumnAt');
+      if (!kb) return;
+      const cols = [...((kb.columns ?? []) as KanbanBoard['columns'])];
+      if (cols.some((c) => c.id === column.id)) return;
+      const at = Math.min(Math.max(index, 0), cols.length);
+      cols.splice(at, 0, column);
+      (kb as Record<string, unknown>).columns = cols.map((c, idx) =>
+        c.position === idx ? c : { ...c, position: idx },
+      );
+      ctx.markDirty(boardId);
+    },
+
     renameKanbanColumn(boardId: string, columnId: string, title: string): void {
       const kb = ctx.kanbanBoardOrWarn(boardId, 'renameKanbanColumn');
       if (!kb) return;

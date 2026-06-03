@@ -40,6 +40,7 @@ import {
   getBaseline,
   __resetBaselinesForTests,
 } from '../../renderer/lib/vault/fileBaselineRegistry';
+import { isPathPending } from '../../renderer/lib/boards/writeStateTracking';
 
 interface InvokeArgs {
   channel: string;
@@ -622,12 +623,19 @@ describe('markdownFileWriter — re-validate drift across the async prompt (M13)
     // Every stat returns a fresh mtime → the file never settles.
     const counters = installStatSequence(relPath, [200, 300, 400, 500, 600]);
 
-    await writeMarkdownFile({
-      vaultRoot: '/vault', relPath, frontmatter: {}, body: 'mine', callerId: 'm13b', docId: null,
-    });
+    // Audit-6 M1 — the budget-exhausted abort now THROWS (was a bare `return`
+    // that resolved as success and let the sentinel be markClean'd while the
+    // dirty edit never landed).
+    await expect(
+      writeMarkdownFile({
+        vaultRoot: '/vault', relPath, frontmatter: {}, body: 'mine', callerId: 'm13b', docId: null,
+      }),
+    ).rejects.toThrow(/churning|aborted/);
 
     expect(prompts).toBe(3); // bounded re-prompts
     expect(counters.writes).toBe(0); // never clobbered the churning file
+    // M1 — path recorded failed so `.filo/.dirty` survives and save() fails.
+    expect(isPathPending(relPath)).toBe(true);
   });
 
   it('writes once when the file is stable through the prompt (no regression)', async () => {

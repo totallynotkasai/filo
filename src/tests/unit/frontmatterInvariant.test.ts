@@ -1,12 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import yaml from 'js-yaml';
+import { parseDocument } from 'yaml';
 import {
   addTagToMarkdown,
   removeTagFromMarkdown,
   rewriteTagInMarkdown,
 } from '@renderer/lib/vault/tagRewriter';
 import { parseMarkdownFile, assembleMarkdownFile } from '@renderer/lib/editor/markdownSync';
+import { valuesEqual } from '@renderer/lib/vault/frontmatterEngine';
+import { patchFrontmatterSourceCst } from '@renderer/lib/vault/frontmatterCstModel';
 
 /**
  * 1.7 — the frontmatter data-loss invariant gate.
@@ -40,13 +43,22 @@ function fmRegion(md: string): FmRegion {
 }
 
 /**
- * Parses a frontmatter block with CORE_SCHEMA — the schema the write path's
- * `yaml`-package serializer agrees with (Audit-4 DI-01). Used to assert no
- * non-tags VALUE was reformatted (unquoted date → ISO, `<<` merge key inlined).
+ * Parses a frontmatter block with the `yaml` package (`parseDocument().toJS()`) —
+ * the SAME single parser the read path (`parseMarkdownFile`) and the CST write
+ * engine use. The object this builds therefore carries the value types the engine
+ * compares against (an untouched `1_000` is the STRING "1_000" here, not the
+ * number js-yaml CORE would give), so it serves BOTH as the `nextObj` an
+ * object-patch op starts from and as the oracle that re-parses the engine's
+ * output — the whole object-patch invariant is single-parser, faithful to
+ * production. Like a CORE read it keeps DI-01 / DI-05 (the `yaml` core schema
+ * resolves no timestamp / merge tag, so an unquoted date stays a string and `<<`
+ * a literal key). Returns null on any parse error / non-mapping root.
  */
-function parseFmCore(raw: string): Record<string, unknown> | null {
+function parseFm(raw: string): Record<string, unknown> | null {
   try {
-    const o = yaml.load(raw, { schema: yaml.CORE_SCHEMA });
+    const doc = parseDocument(raw);
+    if (doc.errors.length > 0) return null;
+    const o = doc.toJS();
     return o && typeof o === 'object' && !Array.isArray(o) ? (o as Record<string, unknown>) : null;
   } catch {
     return null;
@@ -99,11 +111,12 @@ function assertSafeTagOp(input: string, out: string, label: string): void {
     }
     // Audit-4 DI-01 / DI-05 — beyond "key still present", a tag op must not
     // REFORMAT a non-tags value: an unquoted date must not become an ISO
-    // timestamp, a `<<` merge key must not be inlined. Compare CORE-parsed
-    // values (the serializer's schema). A folded `>` scalar may be cosmetically
-    // reflowed (DI-06, accepted) but its PARSED value is identical, so it holds.
-    const inObj = parseFmCore(inR.raw);
-    const outObj = parseFmCore(outR.raw);
+    // timestamp, a `<<` merge key must not be inlined. Compare values parsed with
+    // the `yaml` package (the read path's + write engine's single parser). A
+    // folded `>` scalar may be cosmetically reflowed (DI-06, accepted) but its
+    // PARSED value is identical, so it holds.
+    const inObj = parseFm(inR.raw);
+    const outObj = parseFm(outR.raw);
     if (inObj && outObj) {
       for (const k of Object.keys(inObj)) {
         if (k === 'tags') continue;
@@ -243,5 +256,748 @@ describe('frontmatter data-loss invariant — fuzz (1.7)', () => {
       }),
       { numRuns: 300 },
     );
+  });
+});
+
+/**
+ * Audit5 R1 / #3 — the BYTE-equality ratchet for the dirty frontmatter write.
+ *
+ * The earlier invariant compared parsed values of untouched keys, which is
+ * BLIND to source canonicalisation: `02134` and `2134` parse to the same number
+ * `2134`, so `toEqual` passed while the on-disk bytes silently changed. An
+ * earlier engine re-serialised the whole `yaml` Document on every dirty write,
+ * canonicalising every untouched PLAIN scalar — leading zeros, hex case, exponent
+ * form, `+` sign, and padding all churned on a single sibling edit.
+ *
+ * These assertions compare the untouched keys' SOURCE LINES byte-for-byte after a
+ * dirty write that changes exactly one sibling key. They fail against the old
+ * whole-document re-serialise and pass only with the source-preserving splice.
+ */
+describe('frontmatter dirty-write preserves untouched scalar BYTES (R1 / #3)', () => {
+  // One row per canonicalisation-prone value class. Each is a top-level scalar
+  // whose source is NOT what a serializer would re-emit from its parsed value.
+  const SCALAR_CLASSES: ReadonlyArray<{ label: string; line: string }> = [
+    { label: 'leading-zero int', line: 'zip: 02134' },
+    { label: 'long leading-zero (isbn)', line: 'isbn: 0306406152' },
+    { label: 'uppercase hex', line: 'color: 0xFF00FF' },
+    { label: 'exponent', line: 'exp: 6.022e23' },
+    { label: 'octal-looking', line: 'count: 007' },
+    { label: 'sexagesimal-looking', line: 'ratio: 1:30' },
+    { label: 'leading plus', line: 'plus: +5' },
+    { label: 'padded value', line: 'padded:   spaced value' },
+    { label: 'double-quoted', line: 'quoted: "keep me"' },
+    { label: 'single-quoted', line: "sq: 'literal'" },
+    // M2 (Audit-6) — `1_000` / `0b1010` are the forms js-yaml CORE and the `yaml`
+    // package DISAGREE on: js-yaml reads them as the NUMBERS 1000 / 10, the `yaml`
+    // package keeps them as the STRINGS "1_000" / "0b1010". A second parser in the
+    // loop flagged an UNTOUCHED key as changed and canonicalised it. Phase 6 put
+    // the read (`parseFm` here) AND the write engine on the `yaml` package, so an
+    // untouched `1_000` is the SAME string on both sides of the diff → unchanged →
+    // spliced verbatim (the M2 class is structurally dead, single-parser).
+    // `0o17` / `0xFF` already agree across both parsers — control cases that
+    // guard the broader edge-numeric class against future drift.
+    { label: 'underscore-separated int', line: 'thousands: 1_000' },
+    { label: 'binary literal', line: 'flags: 0b1010' },
+    { label: 'octal 0o prefix', line: 'mode: 0o17' },
+    { label: 'short uppercase hex', line: 'mask: 0xFF' },
+  ];
+
+  // A single block holding every class plus a `title` sentinel to mutate.
+  const FM_LINES = ['title: Old Title', ...SCALAR_CLASSES.map((c) => c.line)];
+  const FM_SOURCE = FM_LINES.join('\n');
+  const MD = `---\n${FM_SOURCE}\n---\nbody text\n`;
+
+  it('a dirty write that changes one sibling leaves every other line byte-identical (via assembleMarkdownFile)', () => {
+    const parsed = parseMarkdownFile(MD);
+    const changedFm = { ...parsed.frontmatter, title: 'New Title' };
+    // Dirty branch: pass the disk baseline as originalFrontmatter and DON'T flag
+    // it clean, so assembleMarkdownFile routes through patchFrontmatterSourceCst.
+    const out = assembleMarkdownFile(changedFm, 'body text', {
+      originalFrontmatter: parsed.rawFrontmatter,
+    });
+    const outFm = fmRegion(out).raw;
+    const outLines = outFm.split('\n');
+    const inLines = FM_SOURCE.split('\n');
+
+    expect(outLines.length, 'line count changed').toBe(inLines.length);
+    for (let i = 0; i < inLines.length; i++) {
+      if (inLines[i].startsWith('title:')) {
+        expect(outLines[i], 'changed key not applied').toBe('title: New Title');
+        continue;
+      }
+      // The whole point: byte-for-byte, NOT parsed-value, equality.
+      expect(outLines[i], `untouched line ${i} canonicalised`).toBe(inLines[i]);
+    }
+  });
+
+  // Per-class: change a DIFFERENT sibling each time and assert THIS class's exact
+  // source line survives. Catches a regression that only churns one value class.
+  for (const cls of SCALAR_CLASSES) {
+    it(`preserves "${cls.line}" verbatim when an unrelated key changes (${cls.label})`, () => {
+      const parsed = parseMarkdownFile(MD);
+      const changedFm = { ...parsed.frontmatter, title: 'Different' };
+      const out = assembleMarkdownFile(changedFm, 'body text', {
+        originalFrontmatter: parsed.rawFrontmatter,
+      });
+      expect(fmRegion(out).raw.split('\n')).toContain(cls.line);
+    });
+  }
+
+  // Direct patchFrontmatterSourceCst byte check — the engine in isolation.
+  it('patchFrontmatterSourceCst emits untouched scalar lines verbatim', () => {
+    const parsedFm = parseFm(FM_SOURCE) as Record<string, unknown>;
+    const out = patchFrontmatterSourceCst(FM_SOURCE, { ...parsedFm, title: 'X' });
+    expect(out).not.toBeNull();
+    const lines = out!.split('\n');
+    for (const cls of SCALAR_CLASSES) {
+      expect(lines, `dropped/changed "${cls.line}"`).toContain(cls.line);
+    }
+  });
+
+  // A changed single-line scalar keeps its SAME-LINE trailing comment (the
+  // value-only splice), and the change still applies.
+  it('a changed scalar keeps its inline trailing comment', () => {
+    const src = 'title: Old   # the title\nzip: 02134';
+    const out = patchFrontmatterSourceCst(src, { title: 'New', zip: 2134 });
+    expect(out).not.toBeNull();
+    expect(out).toContain('# the title');
+    expect(out).toContain('New');
+    expect(out).toContain('zip: 02134');
+  });
+});
+
+/**
+ * Audit-6 C1 (CRITICAL) — setting a value on a BARE/empty key must re-parse.
+ *
+ * A bare key (`aliases:`, or `aliases: # note`) parses to a ZERO-WIDTH scalar
+ * value whose CST range collapses to a point (`[n, n, n]`). The pre-fix
+ * value-only splice emitted the new scalar with NO separating space:
+ * `aliases:` + `home` → `aliases:home`. js-yaml then reads that as a plain
+ * scalar, so the WHOLE mapping collapses (`parseMarkdownFile` → `{}`) on
+ * re-read, or — with a trailing comment — the value is silently mangled to the
+ * string `home# note`. Either way the entire frontmatter block round-trips to
+ * disk corrupt while the indicator says "saved".
+ *
+ * This is exactly the case the `ci:frontmatter-invariant` corpus never had: it
+ * only ever EDITED `tags`, and never SET a value on a bare empty key. These
+ * cases close that blind spot. The matrix is every bare key × position ×
+ * with/without trailing comment × with/without trailing newline. Each asserts
+ * the output (1) re-parses, (2) carries the correct new value, and (3) keeps its
+ * sibling keys — the corruption took out the whole block, not just the key.
+ */
+describe('frontmatter bare-empty-key value-set re-parses (Audit-6 C1)', () => {
+  const BARE_KEYS = ['aliases', 'tags', 'cssclasses'] as const;
+  const SIBLING_BEFORE = 'title: Note';
+  const SIBLING_AFTER = 'count: 3';
+  type Position = 'first' | 'middle' | 'last';
+
+  function buildSource(
+    bareKey: string,
+    position: Position,
+    withComment: boolean,
+    withTrailingNl: boolean,
+  ): string {
+    const bareLine = withComment ? `${bareKey}: # a note` : `${bareKey}:`;
+    const lines =
+      position === 'first'
+        ? [bareLine, SIBLING_BEFORE, SIBLING_AFTER]
+        : position === 'middle'
+          ? [SIBLING_BEFORE, bareLine, SIBLING_AFTER]
+          : [SIBLING_BEFORE, SIBLING_AFTER, bareLine];
+    return lines.join('\n') + (withTrailingNl ? '\n' : '');
+  }
+
+  for (const bareKey of BARE_KEYS) {
+    for (const position of ['first', 'middle', 'last'] as Position[]) {
+      for (const withComment of [false, true]) {
+        for (const withTrailingNl of [false, true]) {
+          const label = `${bareKey} @${position}${withComment ? ' +comment' : ''} ${withTrailingNl ? '+nl' : '-nl'}`;
+
+          it(`patchFrontmatterSourceCst: set value on bare "${label}" re-parses & is correct`, () => {
+            const src = buildSource(bareKey, position, withComment, withTrailingNl);
+            const current = yaml.load(src, { schema: yaml.CORE_SCHEMA }) as Record<string, unknown>;
+            const out = patchFrontmatterSourceCst(src, { ...current, [bareKey]: 'home' });
+
+            expect(out, `${label}: engine refused (returned null)`).not.toBeNull();
+            // (1) Output RE-PARSES — the bug made js-yaml throw / collapse to a scalar.
+            expect(tryParseKeys(out!).ok, `${label}: output does not re-parse`).toBe(true);
+
+            const reObj = yaml.load(out!, { schema: yaml.CORE_SCHEMA }) as Record<string, unknown>;
+            // (2) The bare key now holds the value we set.
+            expect(reObj[bareKey], `${label}: bare-key value wrong`).toBe('home');
+            // (3) The whole block survived — siblings keep their values.
+            expect(reObj.title, `${label}: lost sibling "title"`).toBe('Note');
+            expect(reObj.count, `${label}: lost sibling "count"`).toBe(3);
+          });
+        }
+      }
+    }
+  }
+
+  // End-to-end through the real dirty-write path (`assembleMarkdownFile` with a
+  // disk baseline) — the exact route a Properties/metadata edit takes. Proves
+  // the produced `.md` file re-parses and the block did not collapse.
+  it('assembleMarkdownFile dirty-write on a bare key produces a re-parseable file', () => {
+    const md = '---\ntitle: Note\naliases:\ncount: 3\n---\nbody text\n';
+    const parsed = parseMarkdownFile(md);
+    const out = assembleMarkdownFile({ ...parsed.frontmatter, aliases: 'home' }, 'body text', {
+      originalFrontmatter: parsed.rawFrontmatter,
+    });
+    const reg = fmRegion(out);
+    expect(reg.has, 'dropped the fence').toBe(true);
+    const reparse = parseFm(reg.raw);
+    expect(reparse, 'frontmatter block collapsed / unparseable').not.toBeNull();
+    expect(reparse!.aliases, 'bare-key value wrong').toBe('home');
+    expect(reparse!.title, 'lost sibling "title"').toBe('Note');
+    expect(reparse!.count, 'lost sibling "count"').toBe(3);
+  });
+});
+
+/**
+ * Audit-6 L27 — a document using YAML anchors (&a) / aliases (*a) refuses the
+ * source-preserving splice (returns null), so the caller falls back to a full
+ * dump. Editing the anchored value with a value-only splice would otherwise
+ * rewrite only the anchor's bytes and leave every alias pointing at the stale
+ * value (the object diff resolves aliases, so the change "looks" local). The
+ * dump expands the alias to a concrete value — structure lost, DATA correct.
+ */
+describe('frontmatter anchors/aliases — splice refuses only for TOUCHED anchored keys (Audit-6 L27)', () => {
+  const SRC = 'base: &b 5\nthreshold: *b\ntitle: Note';
+
+  it('refuses when the CHANGED key carries an anchor (re-emit would dangle its aliases)', () => {
+    const current = yaml.load(SRC, { schema: yaml.CORE_SCHEMA }) as Record<string, unknown>;
+    // Edit the anchored value itself: re-emitting `base` drops `&b`, leaving
+    // `threshold: *b` dangling. The engine must refuse so the caller dumps.
+    const out = patchFrontmatterSourceCst(SRC, { ...current, base: 10 });
+    expect(out, 'spliced an edit to the anchored key instead of refusing').toBeNull();
+  });
+
+  it('refuses when the CHANGED key is itself an alias', () => {
+    const current = yaml.load(SRC, { schema: yaml.CORE_SCHEMA }) as Record<string, unknown>;
+    const out = patchFrontmatterSourceCst(SRC, { ...current, threshold: 99 });
+    expect(out).toBeNull();
+  });
+
+  it('still SPLICES an edit to an UNRELATED key, preserving anchors verbatim (no over-refusal — DI-05)', () => {
+    const current = yaml.load(SRC, { schema: yaml.CORE_SCHEMA }) as Record<string, unknown>;
+    // `title` carries no anchor/alias and `base`/`threshold` are untouched, so
+    // the splice is safe and keeps `&b` / `*b` byte-for-byte.
+    const out = patchFrontmatterSourceCst(SRC, { ...current, title: 'Renamed' });
+    expect(out, 'over-refused a safe edit to an unrelated key').not.toBeNull();
+    expect(out).toContain('&b 5');
+    expect(out).toContain('threshold: *b');
+    expect(out).toContain('title: Renamed');
+  });
+
+  it('the dirty-write fallback (anchored key changed) preserves DATA (structure expanded)', () => {
+    const md = '---\nbase: &b 5\nthreshold: *b\ntitle: Note\n---\nbody\n';
+    const parsed = parseMarkdownFile(md);
+    expect(parsed.frontmatter.threshold).toBe(5); // CORE resolves the alias
+    // Changing the anchored key → splice refuses → assembleMarkdownFile dumps.
+    const out = assembleMarkdownFile({ ...parsed.frontmatter, base: 10 }, 'body', {
+      originalFrontmatter: parsed.rawFrontmatter,
+    });
+    const reparse = parseFm(fmRegion(out).raw);
+    expect(reparse, 'frontmatter unparseable after the anchor dump fallback').not.toBeNull();
+    expect(reparse!.base).toBe(10);
+    expect(reparse!.threshold, 'aliased value corrupted').toBe(5);
+    expect(reparse!.title).toBe('Note');
+  });
+});
+
+/**
+ * Audit-6 L23 — verbatim byte preservation is TOP-LEVEL only. An untouched
+ * top-level key keeps its bytes (incl. comments inside a nested block it owns);
+ * a CHANGED nested collection re-serialises the whole pair, dropping comments
+ * that lived inside it. Pinned so any widening of the loss is caught.
+ */
+describe('frontmatter nested-collection comment preservation is top-level only (Audit-6 L23)', () => {
+  const SRC = 'title: Note\nmeta:\n  author: me   # who wrote it\n  year: 2020\n';
+
+  it('keeps inner comments when the nested map is UNTOUCHED (verbatim splice)', () => {
+    const current = yaml.load(SRC, { schema: yaml.CORE_SCHEMA }) as Record<string, unknown>;
+    const out = patchFrontmatterSourceCst(SRC, { ...current, title: 'Renamed' });
+    expect(out).not.toBeNull();
+    expect(out, 'inner comment lost on an untouched nested map').toContain('# who wrote it');
+    expect(out).toContain('author: me');
+  });
+
+  it('drops inner comments when the nested map VALUE changes (documented limit)', () => {
+    const current = yaml.load(SRC, { schema: yaml.CORE_SCHEMA }) as Record<string, unknown>;
+    const out = patchFrontmatterSourceCst(SRC, { ...current, meta: { author: 'you', year: 2020 } });
+    expect(out).not.toBeNull();
+    // Documented loss — the re-serialised nested block has no inline comment.
+    expect(out).not.toContain('# who wrote it');
+    const re = yaml.load(out!, { schema: yaml.CORE_SCHEMA }) as Record<string, unknown>;
+    expect((re.meta as Record<string, unknown>).author).toBe('you');
+    expect(re.title, 'untouched sibling lost').toBe('Note');
+  });
+});
+
+/**
+ * Audit-6 L28 — a scalar→collection type change re-serialises the pair, so a
+ * same-line trailing comment on the old scalar is dropped (same mechanism as
+ * the bare-key C1 case). A scalar→scalar VALUE change keeps the comment via the
+ * value-only splice. Pinned so the boundary doesn't widen silently.
+ */
+describe('frontmatter scalar→collection drops the trailing comment (Audit-6 L28)', () => {
+  const SRC = 'title: Note\ntags: draft   # working copy\n';
+
+  it('scalar→list loses the trailing comment (pinned)', () => {
+    const current = yaml.load(SRC, { schema: yaml.CORE_SCHEMA }) as Record<string, unknown>;
+    const out = patchFrontmatterSourceCst(SRC, { ...current, tags: ['draft', 'final'] });
+    expect(out).not.toBeNull();
+    expect(out, 'scalar→collection unexpectedly kept the comment').not.toContain('# working copy');
+    const re = yaml.load(out!, { schema: yaml.CORE_SCHEMA }) as Record<string, unknown>;
+    expect(re.tags).toEqual(['draft', 'final']);
+    expect(re.title, 'untouched sibling lost').toBe('Note');
+  });
+
+  it('scalar→scalar value change KEEPS the trailing comment (value-only splice)', () => {
+    const current = yaml.load(SRC, { schema: yaml.CORE_SCHEMA }) as Record<string, unknown>;
+    const out = patchFrontmatterSourceCst(SRC, { ...current, tags: 'final' });
+    expect(out).not.toBeNull();
+    expect(out, 'value-only splice dropped the trailing comment').toContain('# working copy');
+    expect(out).toContain('tags: final');
+  });
+});
+
+/**
+ * Audit-6 Phase 5.1 / 5.2 — the GENERAL object-patch invariant (set / delete /
+ * add on ANY key), not just the tag ops the original 1.7 corpus exercised.
+ *
+ * C1 and M2 slipped through precisely because the invariant gate only ever
+ * EDITED `tags`: it never SET a value on a bare/empty key, and never carried a
+ * `1_000` / `0xFF` sibling through a neighbour's edit. This section closes that
+ * blind spot for the WHOLE op set. Every case asserts the three Phase 5
+ * invariants on `patchFrontmatterSourceCst` (the engine where the corruption
+ * lived): the output (1) RE-PARSES, (2) keeps every untouched single-line
+ * scalar key BYTE-identical, and (3) carries the correct value for every key in
+ * the next object (dropping exactly the deleted keys, adding no others). A
+ * refusal (`null`) is always safe — the caller falls back to a lossless dump.
+ */
+
+/**
+ * Returns the single top-level `key: value` SOURCE LINE for `key` when it is an
+ * unambiguous single-line scalar (so its bytes can be asserted preserved), or
+ * `null` for a bare/empty key, a nested block parent, a sequence parent, or an
+ * absent/duplicated key (byte preservation for those is covered by re-parse +
+ * value equality, not a line compare).
+ */
+function topLevelKeyLine(source: string, key: string): string | null {
+  const lines = source.replace(/\r\n/g, '\n').split('\n');
+  const re = new RegExp('^' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:');
+  const idxs: number[] = [];
+  lines.forEach((l, i) => {
+    if (re.test(l)) idxs.push(i);
+  });
+  if (idxs.length !== 1) return null; // absent or duplicated
+  const i = idxs[0];
+  const line = lines[i];
+  if (/:\s*(#.*)?$/.test(line)) return null; // bare key (empty value / block parent)
+  const next = lines[i + 1] ?? '';
+  if (/^\s+\S/.test(next) || /^\s*-\s/.test(next)) return null; // nested map / sequence
+  return line;
+}
+
+/**
+ * The shared Phase-5 assertion: `patchFrontmatterSourceCst(source, nextObj)` is a
+ * SAFE source-preserving patch — either a refusal (`null`, caller dumps) or a
+ * block satisfying the three invariants above. `current` is the `yaml`-package-
+ * parsed object of `source` (the read path's + engine's single parser), so
+ * "untouched" is judged with the same value semantics the engine itself uses.
+ */
+function assertSafeObjectPatch(
+  source: string,
+  current: Record<string, unknown>,
+  nextObj: Record<string, unknown>,
+  label: string,
+): void {
+  const out = patchFrontmatterSourceCst(source, nextObj);
+  if (out === null) return; // refusal — caller falls back to a lossless full dump
+
+  // (1) Output re-parses into a mapping (C1's failure mode: it didn't).
+  const reObj = parseFm(out);
+  expect(reObj, `${label}: output did not re-parse into a mapping`).not.toBeNull();
+  if (!reObj) return;
+
+  const expectedKeys = Object.keys(nextObj).filter((k) => nextObj[k] !== undefined);
+
+  // (3a) Every present key carries the correct value (touched + untouched).
+  for (const k of expectedKeys) {
+    expect(valuesEqual(reObj[k], nextObj[k]), `${label}: wrong value for key "${k}"`).toBe(true);
+  }
+  // (3b) Deleted keys are gone.
+  for (const k of Object.keys(current)) {
+    if (!expectedKeys.includes(k)) {
+      expect(k in reObj, `${label}: deleted key "${k}" survived`).toBe(false);
+    }
+  }
+  // (3c) No extra key appeared.
+  for (const k of Object.keys(reObj)) {
+    expect(expectedKeys.includes(k), `${label}: unexpected key "${k}" appeared`).toBe(true);
+  }
+
+  // (2) Untouched single-line scalar keys are BYTE-identical (M2/R1's failure
+  // mode: an unrelated edit canonicalised `1_000` → `1000`, `0xFF00FF` → lower).
+  const outLines = new Set(out.split('\n'));
+  for (const k of expectedKeys) {
+    if (!(k in current)) continue; // an added key was never "untouched"
+    if (!valuesEqual(current[k], nextObj[k])) continue; // changed key — not "untouched"
+    const line = topLevelKeyLine(source, k);
+    if (line === null) continue; // multi-line / bare — value equality already asserted
+    expect(outLines.has(line), `${label}: untouched key "${k}" line canonicalised ("${line}")`).toBe(
+      true,
+    );
+  }
+}
+
+/** A scalar guaranteed different from `v` (so a "set" op is a genuine change). */
+function changedScalar(v: unknown): unknown {
+  if (typeof v === 'number') return v + 1;
+  if (typeof v === 'boolean') return !v;
+  return v === 'CHANGED' ? 'CHANGED-2' : 'CHANGED';
+}
+
+const OBJECT_OPS: ReadonlyArray<{
+  name: string;
+  run: (cur: Record<string, unknown>) => Record<string, unknown>;
+}> = [
+  {
+    name: 'set first key',
+    run: (cur) => {
+      const k = Object.keys(cur)[0];
+      return { ...cur, [k]: changedScalar(cur[k]) };
+    },
+  },
+  {
+    name: 'set last key',
+    run: (cur) => {
+      const ks = Object.keys(cur);
+      const k = ks[ks.length - 1];
+      return { ...cur, [k]: changedScalar(cur[k]) };
+    },
+  },
+  {
+    name: 'delete first key',
+    run: (cur) => {
+      const ks = Object.keys(cur);
+      const out = { ...cur };
+      if (ks.length > 1) delete out[ks[0]];
+      return out;
+    },
+  },
+  {
+    name: 'delete last key',
+    run: (cur) => {
+      const ks = Object.keys(cur);
+      const out = { ...cur };
+      if (ks.length > 1) delete out[ks[ks.length - 1]];
+      return out;
+    },
+  },
+  { name: 'add key', run: (cur) => ({ ...cur, addedKey: 'added value' }) },
+];
+
+// Frontmatter SOURCES covering the comment-position + non-canonical-scalar gaps
+// the plan enumerates (leading / standalone / trailing / inline comments;
+// `02134` / `1_000` / `0xFF`; quoted scalars). Each is a raw FM block (no fences).
+const PATCH_CORPUS: ReadonlyArray<{ label: string; src: string }> = [
+  { label: 'leading comment', src: '# leading note\ntitle: Note\ncount: 3' },
+  { label: 'standalone comment between keys', src: 'title: Note\n# section break\ncount: 3' },
+  { label: 'trailing comment block', src: 'title: Note\ncount: 3\n# trailing note' },
+  { label: 'inline trailing comments', src: 'title: Note   # inline a\ncount: 3   # inline b' },
+  {
+    label: 'non-canonical scalar siblings',
+    src: 'title: Note\nzip: 02134\nthousands: 1_000\nmask: 0xFF',
+  },
+  { label: 'quoted scalars', src: 'title: Note\ndq: "keep me"\nsq: \'literal\'' },
+  { label: 'multi-key plain', src: 'a: 1\nb: two\nc: true\nd: 4.5' },
+  { label: 'single key', src: 'only: value' },
+];
+
+describe('frontmatter object-patch invariant — set / delete / add op matrix (Audit-6 Phase 5.1)', () => {
+  for (const { label, src } of PATCH_CORPUS) {
+    const current = parseFm(src);
+    for (const op of OBJECT_OPS) {
+      it(`${op.name} is safe on: ${label}`, () => {
+        expect(current, `${label}: corpus source must parse`).not.toBeNull();
+        if (!current) return;
+        assertSafeObjectPatch(src, current, op.run(current), `${op.name} / ${label}`);
+      });
+    }
+  }
+
+  // Comments in leading / standalone / trailing positions survive an edit to a
+  // DIFFERENT key (the engine emits the inter-key gap verbatim — comments are
+  // never silently dropped).
+  it('a LEADING comment survives a set on the first key', () => {
+    const src = '# leading note\ntitle: Note\ncount: 3';
+    const out = patchFrontmatterSourceCst(src, { title: 'Renamed', count: 3 });
+    expect(out).not.toBeNull();
+    expect(out, 'leading comment dropped').toContain('# leading note');
+  });
+  it('a STANDALONE comment between keys survives a set on a sibling', () => {
+    const src = 'title: Note\n# section break\ncount: 3';
+    const out = patchFrontmatterSourceCst(src, { title: 'Note', count: 4 });
+    expect(out).not.toBeNull();
+    expect(out, 'standalone comment dropped').toContain('# section break');
+  });
+  it('a TRAILING comment block survives a set', () => {
+    const src = 'title: Note\ncount: 3\n# trailing note';
+    const out = patchFrontmatterSourceCst(src, { title: 'Renamed', count: 3 });
+    expect(out).not.toBeNull();
+    expect(out, 'trailing comment dropped').toContain('# trailing note');
+  });
+  it('a STANDALONE comment documenting a key survives that key being DELETED (gap kept verbatim)', () => {
+    const src = 'title: Note\n# doc for count\ncount: 3';
+    // Delete `count`; the comment in the gap above it is still emitted (it
+    // conventionally documents the key below, so the gap is always preserved).
+    const out = patchFrontmatterSourceCst(src, { title: 'Note' });
+    expect(out).not.toBeNull();
+    expect(out, 'comment above a deleted key was dropped').toContain('# doc for count');
+    const re = parseFm(out!);
+    expect(re).not.toBeNull();
+    expect('count' in re!, 'count should be deleted').toBe(false);
+  });
+
+  // "Set a value on key K for EVERY key" (the op the original corpus lacked):
+  // setting any one key leaves every OTHER (non-canonical) scalar line verbatim.
+  describe('set-value on every key leaves all siblings byte-for-byte', () => {
+    const SRC = 'title: Note\nzip: 02134\nthousands: 1_000\nmask: 0xFF\nflag: true';
+    const current = parseFm(SRC) as Record<string, unknown>;
+    for (const key of Object.keys(current)) {
+      it(`set "${key}" preserves the other lines`, () => {
+        assertSafeObjectPatch(SRC, current, { ...current, [key]: changedScalar(current[key]) }, `set ${key}`);
+      });
+    }
+  });
+
+  // CRLF × BOM matrix end-to-end through the real dirty-write path. The engine
+  // normalises the FM block to LF on a dirty write (documented), so we assert
+  // RE-PARSE + value-correct + untouched-scalar byte preservation + BOM
+  // preservation — not CRLF preservation inside the rewritten block.
+  describe('dirty set-value round-trips across CRLF × BOM (via assembleMarkdownFile)', () => {
+    for (const crlf of [false, true]) {
+      for (const bom of [false, true]) {
+        it(`crlf=${crlf} bom=${bom}`, () => {
+          let md = '---\ntitle: Old\ncount: 3\nzip: 02134\n---\nbody text\n';
+          if (crlf) md = md.replace(/\n/g, '\r\n');
+          if (bom) md = '﻿' + md;
+          const parsed = parseMarkdownFile(md);
+          const out = assembleMarkdownFile({ ...parsed.frontmatter, title: 'New' }, parsed.body, {
+            originalFrontmatter: parsed.rawFrontmatter,
+            bom: parsed.hadBom,
+          });
+          expect(out.charCodeAt(0) === 0xfeff, 'BOM preservation wrong').toBe(bom);
+          const reparsed = parseMarkdownFile(out);
+          expect(reparsed.hasFrontmatter, 'lost the fence').toBe(true);
+          const re = parseFm(reparsed.rawFrontmatter);
+          expect(re, 'frontmatter unparseable after a dirty set').not.toBeNull();
+          expect(re!.title, 'changed key wrong').toBe('New');
+          expect(re!.count, 'untouched count wrong').toBe(3);
+          expect(
+            reparsed.rawFrontmatter.replace(/\r\n/g, '\n'),
+            'untouched non-canonical scalar canonicalised',
+          ).toContain('zip: 02134');
+          expect(reparsed.body.replace(/\r\n/g, '\n'), 'body changed').toBe('body text\n');
+        });
+      }
+    }
+  });
+});
+
+/**
+ * Audit-6 Phase 5.2 — the property-based extension of the object-patch
+ * invariant. Generates random frontmatter mixing EMPTY values (bare keys),
+ * canonicalisation-prone numeric forms, quoted scalars, and NESTED objects,
+ * builds the block from RAW source lines (so untouched siblings are NOT already
+ * canonical — the byte-preservation surface R1/M2 broke), then applies a random
+ * set / delete / add op and asserts the three invariants. This is the highest-
+ * leverage anti-regression net: it explores shapes the hand-written corpus
+ * can't enumerate.
+ */
+describe('frontmatter object-patch invariant — fuzz set/delete/add (Audit-6 Phase 5.2)', () => {
+  // Raw scalar SOURCE texts: a mix of canonical and canonicalisation-prone
+  // forms. Each is a valid single-line YAML scalar (parses, never throws).
+  const SCALAR_SOURCES = [
+    'X',
+    'hello world',
+    '42',
+    '-7',
+    '0',
+    '3.14',
+    'true',
+    'false',
+    '02134',
+    '0306406152',
+    '1_000',
+    '0xFF',
+    '0xFF00FF',
+    '0o17',
+    '6.022e23',
+    '007',
+    '+5',
+    '1:30',
+    '"double quoted"',
+    "'single quoted'",
+  ];
+
+  type FieldKind = 'scalar' | 'bare' | 'nested';
+
+  const fieldArb = fc.record({
+    kind: fc.constantFrom<FieldKind>('scalar', 'scalar', 'scalar', 'bare', 'nested'),
+    scalar: fc.constantFrom(...SCALAR_SOURCES),
+    innerA: fc.constantFrom(...SCALAR_SOURCES),
+    innerB: fc.constantFrom(...SCALAR_SOURCES),
+    comment: fc.boolean(),
+  });
+
+  /** Source lines for field `i` of the given kind. */
+  function fieldLines(i: number, f: { kind: FieldKind; scalar: string; innerA: string; innerB: string; comment: boolean }): string[] {
+    const key = `k${i}`;
+    const c = f.comment ? '   # c' + i : '';
+    if (f.kind === 'bare') return [`${key}:${c}`];
+    if (f.kind === 'nested') return [`${key}:`, `  ia: ${f.innerA}`, `  ib: ${f.innerB}`];
+    return [`${key}: ${f.scalar}${c}`];
+  }
+
+  const docArb = fc
+    .record({
+      fields: fc.array(fieldArb, { minLength: 1, maxLength: 5 }),
+      leadingComment: fc.boolean(),
+      crlf: fc.boolean(),
+      // 0 = set, 1 = delete, 2 = add
+      op: fc.constantFrom(0, 1, 2),
+      // index selectors (mapped into range at apply time)
+      pick: fc.nat(),
+      newVal: fc.oneof(
+        fc.constant('new string'),
+        fc.constant('multi word value'),
+        fc.integer({ min: -5, max: 999 }),
+        fc.boolean(),
+      ),
+    })
+    .map((d) => {
+      const lines: string[] = [];
+      if (d.leadingComment) lines.push('# leading note');
+      d.fields.forEach((f, i) => lines.push(...fieldLines(i, f)));
+      let source = lines.join('\n');
+      if (d.crlf) source = source.replace(/\n/g, '\r\n');
+      return { source, op: d.op, pick: d.pick, newVal: d.newVal, n: d.fields.length };
+    });
+
+  it('no set/delete/add op loses a key, corrupts the YAML, or canonicalises an untouched scalar', () => {
+    fc.assert(
+      fc.property(docArb, ({ source, op, pick, newVal, n }) => {
+        const current = parseFm(source);
+        if (!current) return; // a generated block that didn't parse — op N/A
+        const keys = Object.keys(current);
+        if (keys.length === 0) return;
+
+        let nextObj: Record<string, unknown>;
+        if (op === 2) {
+          nextObj = { ...current, ['added_' + (pick % 97)]: newVal };
+        } else if (op === 1 && keys.length > 1) {
+          nextObj = { ...current };
+          delete nextObj[keys[pick % keys.length]];
+        } else {
+          // set (also the keys.length === 1 delete fallback)
+          const k = keys[pick % keys.length];
+          nextObj = { ...current, [k]: newVal };
+        }
+        assertSafeObjectPatch(source, current, nextObj, `op=${op} n=${n}`);
+      }),
+      { numRuns: 400 },
+    );
+  });
+});
+
+/**
+ * Phase 6.0 — corpus gaps the single-parser refactor sweep surfaced. Additive
+ * cases the CST engine must satisfy (they were the safety net the Phase 6 refactor
+ * was validated against, retained as a permanent regression net). Each shape was
+ * previously unexercised by the object-patch corpus.
+ */
+describe('frontmatter object-patch invariant — Phase 6.0 corpus gaps', () => {
+  // GAP 1 — an anchored/aliased UNTOUCHED sibling alongside a changed key. The
+  // general object-patch invariant (not just the L27 describe) must hold: the
+  // splice keeps `&b` / `*b` byte-for-byte and never over-refuses a safe edit.
+  it('preserves an untouched anchor/alias sibling when an unrelated key changes', () => {
+    const src = 'base: &b 5\nthreshold: *b\ntitle: Note';
+    const current = parseFm(src);
+    expect(current).not.toBeNull();
+    assertSafeObjectPatch(src, current!, { ...current!, title: 'Renamed' }, 'anchored untouched sibling');
+    const out = patchFrontmatterSourceCst(src, { ...current!, title: 'Renamed' });
+    expect(out).not.toBeNull();
+    expect(out, 'anchor bytes not preserved').toContain('&b 5');
+    expect(out, 'alias bytes not preserved').toContain('threshold: *b');
+  });
+
+  // GAP 2 — a folded `>` UNTOUCHED sibling. Its parsed value survives a sibling
+  // edit (the DI-06 contract); post-R1 the legacy engine also keeps its multi-line
+  // bytes verbatim (an untouched key is spliced from source, never re-folded).
+  it('preserves a folded > scalar sibling on an unrelated edit', () => {
+    const src = 'summary: >\n  line one\n  line two\ntitle: Note\ncount: 3';
+    const current = parseFm(src);
+    expect(current).not.toBeNull();
+    const out = patchFrontmatterSourceCst(src, { ...current!, title: 'Renamed' });
+    expect(out).not.toBeNull();
+    const re = parseFm(out!);
+    expect(re, 'folded-sibling edit produced unparseable FM').not.toBeNull();
+    expect(re!.summary, 'folded scalar parsed value changed').toEqual(current!.summary);
+    expect(re!.title).toBe('Renamed');
+    expect(re!.count).toBe(3);
+    expect(out, 'folded scalar header reflowed').toContain('summary: >');
+    expect(out).toContain('  line one');
+    expect(out).toContain('  line two');
+  });
+
+  // GAP 3 — CRLF × BOM × NESTED matrix row end-to-end through the dirty-write
+  // path. The earlier CRLF×BOM matrix only carried flat scalars; this adds a
+  // nested map to prove a nested value survives the line-ending + BOM round-trip.
+  for (const crlf of [false, true]) {
+    for (const bom of [false, true]) {
+      it(`dirty set round-trips a NESTED value across crlf=${crlf} bom=${bom}`, () => {
+        let md = '---\ntitle: Old\nzip: 02134\nmeta:\n  author: me\n  year: 2020\n---\nbody text\n';
+        if (crlf) md = md.replace(/\n/g, '\r\n');
+        if (bom) md = '﻿' + md;
+        const parsed = parseMarkdownFile(md);
+        const out = assembleMarkdownFile({ ...parsed.frontmatter, title: 'New' }, parsed.body, {
+          originalFrontmatter: parsed.rawFrontmatter,
+          bom: parsed.hadBom,
+        });
+        expect(out.charCodeAt(0) === 0xfeff, 'BOM preservation wrong').toBe(bom);
+        const reparsed = parseMarkdownFile(out);
+        const re = parseFm(reparsed.rawFrontmatter);
+        expect(re, 'frontmatter unparseable after a nested dirty set').not.toBeNull();
+        expect(re!.title, 'changed key wrong').toBe('New');
+        const meta = re!.meta as Record<string, unknown>;
+        expect(meta.author, 'nested value lost').toBe('me');
+        expect(meta.year, 'nested value lost').toBe(2020);
+        expect(
+          reparsed.rawFrontmatter.replace(/\r\n/g, '\n'),
+          'untouched non-canonical scalar canonicalised',
+        ).toContain('zip: 02134');
+        expect(reparsed.body.replace(/\r\n/g, '\n'), 'body changed').toBe('body text\n');
+      });
+    }
+  }
+
+  // GAP 4 — adding a key when the FM source ends in a trailing blank line. The
+  // append must keep the prior key on its own line (no `count: 3tags:`) and the
+  // block must re-parse with every key intact.
+  it('appends a key after a trailing blank line without corrupting the block', () => {
+    const src = 'title: Note\ncount: 3\n\n';
+    const current = parseFm(src);
+    expect(current).not.toBeNull();
+    const out = patchFrontmatterSourceCst(src, { ...current!, tags: ['x'] });
+    expect(out).not.toBeNull();
+    expect(out, 'appended key concatenated onto the previous line').not.toMatch(/\S(tags):/);
+    const re = parseFm(out!);
+    expect(re, 'append-after-blank produced unparseable FM').not.toBeNull();
+    expect(re!.tags).toEqual(['x']);
+    expect(re!.title).toBe('Note');
+    expect(re!.count).toBe(3);
   });
 });

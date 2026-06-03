@@ -1,6 +1,6 @@
-import yaml from 'js-yaml';
+import { Document, parseDocument, isSeq } from 'yaml';
 import { parseTagsField } from '../utils/normalizeTagsField';
-import { patchFrontmatterSource } from './frontmatterEngine';
+import { patchFrontmatterSourceCst } from './frontmatterCstModel';
 
 /**
  * Frontmatter-only tag rewriter.
@@ -13,10 +13,17 @@ import { patchFrontmatterSource } from './frontmatterEngine';
  *
  * Phase 31 C3.2 — preferred path is now a line-level rewrite that touches
  * ONLY the `tags:` field, leaving every other YAML line (including comments,
- * anchors, custom fields) byte-identical. The js-yaml load/dump fallback
- * remains for shapes the line rewriter can't safely express (nested blocks,
- * unusual whitespace), since losing a user's comments is worse than
+ * anchors, custom fields) byte-identical. The load → source-preserving patch
+ * fallback remains for shapes the line rewriter can't safely express (nested
+ * blocks, unusual whitespace), since losing a user's comments is worse than
  * occasionally taking the older path.
+ *
+ * Phase 6.4 — the tag path is now js-yaml-free: the load (`loadYamlObject`),
+ * the last-resort dump (`dumpYaml`), and the per-tag quoting oracle
+ * (`emitTagScalar`) all run on the `yaml` package, the SAME parser the read
+ * path (`markdownSync.parseMarkdownFile`) and the source-preserving write
+ * engine (`frontmatterCstModel`) use. One parser end-to-end closes the
+ * cross-parser "looks changed but isn't" seam (M2) in the fallback path too.
  */
 
 // 6.4.M9 — `[ \t]*` tolerates trailing horizontal whitespace on either fence
@@ -96,12 +103,23 @@ function loadYamlObject(yamlSource: string): Record<string, unknown> | null {
   if (!yamlSource.trim()) return {};
   let loaded: unknown;
   try {
-    // Audit-4 DI-01 — CORE_SCHEMA so the parsed object matches the `yaml`-package
-    // serializer used by the source-preserving fallback (`patchFrontmatterSource`).
-    // Under DEFAULT_SCHEMA an unquoted date loaded as a `Date` (and `<<` as a
-    // resolved map), which the serializer then "noticed" as a change and rewrote
-    // to an ISO timestamp / inlined merge key. See markdownSync DI-01 note.
-    loaded = yaml.load(yamlSource, { schema: yaml.CORE_SCHEMA });
+    // Phase 6.4 — parse with the `yaml` package (was js-yaml CORE_SCHEMA). This
+    // is the SAME parser the read path and the source-preserving write engine
+    // (`patchFrontmatterSourceCst`, `frontmatterCstModel`) use, which matters
+    // beyond cleanup: the engine derives its value-compare object via `doc.toJS()`,
+    // so a fallback object built with a DIFFERENT parser could disagree on a
+    // scalar form and trip a phantom rewrite. js-yaml CORE read `1_000` as the
+    // NUMBER 1000 while `doc.toJS()` keeps the STRING "1_000"; under the old split
+    // an UNTOUCHED `1_000` sibling looked "changed" to the engine and was
+    // value-only-spliced to `1000` on a tag-fallback edit (the M2 class). One
+    // parser on both sides closes that seam. `uniqueKeys` makes a duplicate
+    // mapping key a fatal `doc.errors` entry (parity with js-yaml, which threw),
+    // so we refuse the write rather than round-trip a block we can't model.
+    // The `yaml` core schema (like the prior CORE_SCHEMA) resolves no timestamp
+    // or merge tag, so an unquoted date stays a `string` and `<<` a literal key.
+    const doc = parseDocument(yamlSource, { uniqueKeys: true });
+    if (doc.errors.length > 0) return null;
+    loaded = doc.toJS();
   } catch {
     return null;
   }
@@ -110,7 +128,13 @@ function loadYamlObject(yamlSource: string): Record<string, unknown> | null {
 }
 
 function dumpYaml(fm: Record<string, unknown>): string {
-  return yaml.dump(fm, { lineWidth: -1, noRefs: true }).trimEnd();
+  // Phase 6.4 — the last-resort dump now serialises with the `yaml` package (was
+  // js-yaml), matching `assembleMarkdownFile`'s full-dump fallback so the whole
+  // tag path is single-parser. Only reached when `patchFrontmatterSourceCst`
+  // can't source-preservingly patch the block; a full dump has no source to
+  // preserve, so it's lossless. `lineWidth: 0` disables folding (parity with the
+  // prior js-yaml `lineWidth: -1`).
+  return new Document(fm).toString({ lineWidth: 0 }).trimEnd();
 }
 
 /**
@@ -170,7 +194,7 @@ function unquote(raw: string): string {
  *  - Empty: `tags:` with no follow-up items
  *
  * Returns null on shapes the rewriter can't handle (e.g. tags pointed at by
- * a YAML anchor `tags: *xref`, nested mapping under tags). The js-yaml
+ * a YAML anchor `tags: *xref`, nested mapping under tags). The load → patch
  * fallback covers those.
  */
 function locateTagsField(yamlSource: string): LocatedTagsField | null {
@@ -255,17 +279,42 @@ function tagsFieldIsAnchored(yamlSource: string): boolean {
 }
 
 /**
- * Renders a single tag scalar with exactly the quoting YAML requires, using
- * js-yaml as the oracle (1.5 / 1.6). Dumps the tag as a one-element FLOW
- * sequence (`[scalar]`) and slices off the brackets: flow is the strictest
- * context (commas / brackets / leading indicator chars are all special there),
- * so a scalar safe in flow is also safe as a block item. Without this the
- * rewriter emitted every tag BARE — so `@home`, `123`, `null`, a comma-bearing
- * name etc. produced invalid or type-coerced YAML, and removing one tag
- * stripped the quotes off a quoted sibling (`[draft, "@home"]` → bare `@home`).
+ * Renders a single tag scalar with exactly the quoting YAML requires, as a
+ * one-element FLOW sequence (`[scalar]`) with the brackets sliced off: flow is
+ * the strictest context (commas / brackets / leading indicator chars are all
+ * special there), so a scalar safe in flow is also safe as a block item. Without
+ * this the rewriter emitted every tag BARE — so `@home`, `123`, `null`, a
+ * comma-bearing name etc. produced invalid or type-coerced YAML, and removing
+ * one tag stripped the quotes off a quoted sibling (`[draft, "@home"]` → bare
+ * `@home`).
+ *
+ * Phase 6.4 — re-implemented on the `yaml` package (was js-yaml as the oracle),
+ * removing the last js-yaml use from the tag path. `version: '1.1'` keeps the
+ * DELIBERATELY conservative quoting js-yaml's default (YAML-1.1) `dump` produced:
+ * `yes`/`no`/`on`/`off`, `1_000`, `2024-01-01`, `1:30` are all quoted so the tag
+ * stays a STRING for every reader — YAML-1.1 external tools, AND the vault-index
+ * CORE read under which an unquoted `1_000` would resolve to the NUMBER 1000.
+ * `singleQuote: true` matches js-yaml's single-quote preference (the package
+ * still upgrades to double quotes where a single quote can't represent the
+ * string, e.g. an embedded backslash). The output is byte-identical to the prior
+ * js-yaml oracle on the hostile-name table except two residual differences
+ * (`'apos` → double- vs the old doubled single-quote; `=` → bare vs quoted),
+ * both of which re-parse to the IDENTICAL string under js-yaml DEFAULT/CORE and
+ * the `yaml` package in flow AND block context — pinned by the parity test in
+ * `tagRewriter.test.ts`. The `version` MUST sit on the `Document` (it selects the
+ * schema at construction); passing it only to `toString` does not apply 1.1.
+ *
+ * Exported for that parity test; otherwise tag-internal.
  */
-function emitTagScalar(tag: string): string {
-  return yaml.dump([tag], { flowLevel: 0, lineWidth: -1 }).replace(/\n$/, '').slice(1, -1).trim();
+export function emitTagScalar(tag: string): string {
+  const doc = new Document([tag], { version: '1.1' });
+  if (isSeq(doc.contents)) doc.contents.flow = true;
+  return doc
+    .toString({ lineWidth: 0, singleQuote: true })
+    .trim()
+    .replace(/^\[/, '')
+    .replace(/\]$/, '')
+    .trim();
 }
 
 function renderTagsField(loc: LocatedTagsField, nextTags: string[]): string[] {
@@ -377,7 +426,7 @@ export function rewriteTagInMarkdown(
   // comments / key order). Patch the original YAML source source-preservingly via
   // the `yaml` Document engine, keeping the lossy dump only as a last resort if
   // the engine can't parse the block as a mapping.
-  return reassemble(patchFrontmatterSource(yamlSource, fm) ?? dumpYaml(fm), body, false, eol, hadBom);
+  return reassemble(patchFrontmatterSourceCst(yamlSource, fm) ?? dumpYaml(fm), body, false, eol, hadBom);
 }
 
 /**
@@ -403,7 +452,7 @@ export function removeTagFromMarkdown(rawContent: string, tag: string): string {
   // 7.5 — skip an anchored/aliased tags field instead of expanding it.
   if (tagsFieldIsAnchored(yamlSource)) return rawContent;
 
-  // Fallback: js-yaml load/dump path.
+  // Fallback: load → source-preserving patch (yaml package).
   const fm = loadYamlObject(yamlSource);
   if (!fm) return rawContent;
 
@@ -418,7 +467,7 @@ export function removeTagFromMarkdown(rawContent: string, tag: string): string {
   // comments / key order). Patch the original YAML source source-preservingly via
   // the `yaml` Document engine, keeping the lossy dump only as a last resort if
   // the engine can't parse the block as a mapping.
-  return reassemble(patchFrontmatterSource(yamlSource, fm) ?? dumpYaml(fm), body, false, eol, hadBom);
+  return reassemble(patchFrontmatterSourceCst(yamlSource, fm) ?? dumpYaml(fm), body, false, eol, hadBom);
 }
 
 /**
@@ -486,5 +535,5 @@ export function addTagToMarkdown(rawContent: string, tag: string): string {
   // comments / key order). Patch the original YAML source source-preservingly via
   // the `yaml` Document engine, keeping the lossy dump only as a last resort if
   // the engine can't parse the block as a mapping.
-  return reassemble(patchFrontmatterSource(yamlSource, fm) ?? dumpYaml(fm), body, false, eol, hadBom);
+  return reassemble(patchFrontmatterSourceCst(yamlSource, fm) ?? dumpYaml(fm), body, false, eol, hadBom);
 }

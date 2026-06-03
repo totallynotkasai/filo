@@ -23,6 +23,19 @@
  *    a choice (e.g. board JSON drift mid-edit).
  *  - Refresh the relevant cache directly when there's no in-memory
  *    state the user could lose (tags / themes / templates list).
+ *  - **Audit-6 H3/H4/L27 — vault-identity guard.** Every reconciler that
+ *    reads the active vault path and then `await`s a disk read MUST
+ *    `captureVaultIdentity()` before the await and `isStillSameVault(...)`
+ *    after it, bailing before any store mutation. A vault swap can interleave
+ *    on the await; without the re-check the outgoing vault's data is applied to
+ *    the new vault — the worst case being `reconcileTagsJsonChange`, whose
+ *    `applyExternalReload` unconditionally `scheduleSave`s, persisting vault A's
+ *    tag registry into vault B's `.filo/tags.json` on disk. This is the G1
+ *    discipline (`vaultIdentity.ts`) the rename/cascade paths already follow;
+ *    `scripts/check-reconciler-vault-guard.mjs` enforces it here so a future
+ *    reconciler can't forget (the structural, class-level cure for root-cause
+ *    B — a runtime wrapper can't help because it can't refuse a mutation that
+ *    has already happened mid-reconciler).
  *
  * Lives in `stores/` because the registrations need to import every store
  * involved. The pure registry surface lives in
@@ -46,6 +59,7 @@ import { reportError } from '../lib/utils/errorBus';
 import { isRecentSelfWrite, isPathPending } from '../lib/boards/boardSaver';
 import { loadBoard } from '../lib/boards/boardLoader';
 import { loadTagsFile } from '../lib/vault/tagsStorage';
+import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 
 // ── Board JSON reconciler ─────────────────────────────────────────────
 
@@ -68,8 +82,6 @@ import { loadTagsFile } from '../lib/vault/tagsStorage';
 async function reconcileBoardJsonChange(event: ExternalChangeEvent): Promise<void> {
   const rel = event.filename;
   if (isRecentSelfWrite(rel)) return;
-  const vaultRoot = vaultStore.path;
-  if (!vaultRoot) return;
 
   // Look up boardId for this path. Reconciler is a no-op when no board
   // in the active project points at this path — a side `.board.json`
@@ -90,7 +102,9 @@ async function reconcileBoardJsonChange(event: ExternalChangeEvent): Promise<voi
   // branch of the markdown classifier (clean editor + external edit).
   // `guardPending: true` re-checks for a write that lands DURING the read
   // (6.4.M18) so the silent reload can't clobber an edit made in that window.
-  await reloadBoardFromDisk(vaultRoot, rel, boardId, true);
+  // `reloadBoardFromDisk` reads the active vault path itself and re-checks
+  // vault identity after its async load (Audit-6 H4) before mutating the cache.
+  await reloadBoardFromDisk(rel, boardId, true);
 }
 
 function findBoardIdForPath(rel: string): string | null {
@@ -102,7 +116,6 @@ function findBoardIdForPath(rel: string): string | null {
 }
 
 async function reloadBoardFromDisk(
-  vaultRoot: string,
   rel: string,
   boardId: string,
   // 6.4.M18 — when true (the silent reconciler path), re-check for a pending
@@ -110,7 +123,18 @@ async function reloadBoardFromDisk(
   // the user there chose to discard local edits, so no re-check.
   guardPending = false,
 ): Promise<void> {
+  // Audit-6 H4 — capture vault identity BEFORE the async load. `loadBoard`
+  // awaits a disk read; a vault swap can interleave on that await. Without the
+  // re-check below, the freshly-loaded (outgoing-vault) board would be merged
+  // into `boardCacheStore` AFTER the swap — injecting vault A's board JSON into
+  // vault B's in-memory cache. Mirrors `runExternalRenameCascade`'s G1 guard.
+  const captured = captureVaultIdentity();
+  const vaultRoot = vaultStore.path;
+  if (!vaultRoot) return;
   const result = await loadBoard(vaultRoot, rel);
+  // Swap landed during the load — abandon: the loaded bytes belong to the
+  // outgoing vault and `boardStore.cache` is now the new vault's.
+  if (!isStillSameVault(captured)) return;
   if (!result.ok) {
     reportError(
       'externalChange.board',
@@ -136,7 +160,6 @@ async function reloadBoardFromDisk(
 }
 
 function promptBoardChangedExternally(rel: string, boardId: string): void {
-  const vaultRoot = vaultStore.path;
   uiStore.pushToast({
     text: `Board file "${rel}" was modified externally while you had unsaved changes. Reload from disk (discard your edits), or keep your edits and overwrite on next save?`,
     type: 'warning',
@@ -145,8 +168,9 @@ function promptBoardChangedExternally(rel: string, boardId: string): void {
       {
         label: 'Reload',
         handler: () => {
-          if (!vaultRoot) return;
-          void reloadBoardFromDisk(vaultRoot, rel, boardId);
+          // reloadBoardFromDisk reads the active vault path + re-checks vault
+          // identity across its async load itself (Audit-6 H4).
+          void reloadBoardFromDisk(rel, boardId);
         },
       },
       {
@@ -183,10 +207,16 @@ function promptBoardChangedExternally(rel: string, boardId: string): void {
  */
 async function reconcileTagsJsonChange(event: ExternalChangeEvent): Promise<void> {
   if (isRecentSelfWrite(event.filename)) return;
+  // Audit-6 H3 — capture identity before the async `tags:load`. A vault swap
+  // landing during the read would otherwise make the `applyExternalReload`
+  // below (which `scheduleSave`s unconditionally) persist vault A's tag
+  // registry into vault B's `.filo/tags.json` on disk. Re-check after the await.
+  const captured = captureVaultIdentity();
   const vaultRoot = vaultStore.path;
   if (!vaultRoot) return;
   try {
     const raw = (await window.filo.invoke('tags:load', vaultRoot)) as string | null;
+    if (!isStillSameVault(captured)) return;
     // F6 — route through the version migrator so an externally-written
     // from-future tags.json flips the store read-only (preventing a
     // downgrade re-save) instead of being parsed + persisted blindly.
@@ -220,10 +250,15 @@ async function reconcileTagsJsonChange(event: ExternalChangeEvent): Promise<void
  */
 async function reconcileThemeChange(event: ExternalChangeEvent): Promise<void> {
   if (isRecentSelfWrite(event.filename)) return;
+  // Audit-6 L27 (theme variant of H3/H4) — capture identity before the async
+  // theme reload; a swap during it would otherwise re-apply the outgoing
+  // vault's theme over the new vault (visual-only, same root cause).
+  const captured = captureVaultIdentity();
   const vaultRoot = vaultStore.path;
   if (!vaultRoot) return;
   try {
     await themeStore.refreshAvailable(vaultRoot);
+    if (!isStillSameVault(captured)) return;
     // Reapply the active theme if its file was the one that changed.
     // The path is `.filo/themes/<id>.json` — extract the id and compare.
     const match = event.filename.match(/^\.filo\/themes\/(.+)\.json$/);

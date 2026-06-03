@@ -1,14 +1,19 @@
 import { describe, it, expect } from 'vitest';
 import yaml from 'js-yaml';
-import { patchFrontmatterSource } from '@renderer/lib/vault/frontmatterEngine';
+import { patchFrontmatterSourceCst } from '@renderer/lib/vault/frontmatterCstModel';
 
 /**
- * Audit2 4.8 — the source-preserving frontmatter engine. The defining property:
- * changing one key leaves every OTHER key's bytes (comments, order, quoting)
- * untouched, and an unparseable / non-mapping block is refused (null) rather
- * than corrupted.
+ * The source-preserving frontmatter patch engine (`patchFrontmatterSourceCst`,
+ * the single CST-operations engine after Phase 6.7 deleted the legacy
+ * byte-splice sibling). The defining property: changing one key leaves every
+ * OTHER key's bytes (comments, order, quoting) untouched, and an unparseable /
+ * non-mapping block is refused (null) rather than corrupted.
+ *
+ * `yaml.load` here is js-yaml as an INDEPENDENT oracle to re-parse the engine's
+ * output — not a production read. These cases carry no cross-parser-divergent
+ * scalar (`1_000` / `0b1010`), so js-yaml and the `yaml`-package engine agree.
  */
-describe('patchFrontmatterSource', () => {
+describe('patchFrontmatterSourceCst', () => {
   it('preserves comments and key order on untouched keys when one value changes', () => {
     const src = [
       '# top comment',
@@ -17,7 +22,7 @@ describe('patchFrontmatterSource', () => {
       'author: ada',
     ].join('\n');
     const next = { title: 'Hello', priority: 'high', author: 'ada' };
-    const out = patchFrontmatterSource(src, next);
+    const out = patchFrontmatterSourceCst(src, next);
     expect(out).not.toBeNull();
     // The comments + order survive; only priority's value changed.
     expect(out).toContain('# top comment');
@@ -29,7 +34,7 @@ describe('patchFrontmatterSource', () => {
 
   it('appends a new key and deletes a removed key, keeping the rest verbatim', () => {
     const src = ['# keep me', 'title: T', 'draft: true'].join('\n');
-    const out = patchFrontmatterSource(src, { title: 'T', tags: ['x'] });
+    const out = patchFrontmatterSourceCst(src, { title: 'T', tags: ['x'] });
     expect(out).not.toBeNull();
     expect(out).toContain('# keep me');
     const parsed = yaml.load(out!) as Record<string, unknown>;
@@ -40,7 +45,7 @@ describe('patchFrontmatterSource', () => {
 
   it('auto-quotes a YAML-special tag value so it re-parses as the intended string', () => {
     const src = 'title: T';
-    const out = patchFrontmatterSource(src, { title: 'T', tags: ['@home', 'a: b', 'null'] });
+    const out = patchFrontmatterSourceCst(src, { title: 'T', tags: ['@home', 'a: b', 'null'] });
     expect(out).not.toBeNull();
     const parsed = yaml.load(out!) as { tags: unknown };
     expect(parsed.tags).toEqual(['@home', 'a: b', 'null']);
@@ -48,7 +53,7 @@ describe('patchFrontmatterSource', () => {
 
   it("keeps an untouched tags list's flow style + quoting when a sibling changes", () => {
     const src = ['tags: [draft, "@home"]', 'title: Old'].join('\n');
-    const out = patchFrontmatterSource(src, { tags: ['draft', '@home'], title: 'New' });
+    const out = patchFrontmatterSourceCst(src, { tags: ['draft', '@home'], title: 'New' });
     expect(out).not.toBeNull();
     // tags untouched → still flow (`[...]`), still quoting @home. (The `yaml`
     // package may normalise internal bracket spacing — that's cosmetic, not
@@ -58,13 +63,13 @@ describe('patchFrontmatterSource', () => {
   });
 
   it('refuses (null) a top-level scalar or sequence', () => {
-    expect(patchFrontmatterSource('just a string', { a: 1 })).toBeNull();
-    expect(patchFrontmatterSource('- a\n- b', { a: 1 })).toBeNull();
+    expect(patchFrontmatterSourceCst('just a string', { a: 1 })).toBeNull();
+    expect(patchFrontmatterSourceCst('- a\n- b', { a: 1 })).toBeNull();
   });
 
   it('refuses (null) an unparseable block (duplicate keys / bad indent)', () => {
-    expect(patchFrontmatterSource('title: a\ntitle: b', { title: 'c' })).toBeNull();
-    expect(patchFrontmatterSource('a:\n\tb: 1', { a: 1 })).toBeNull();
+    expect(patchFrontmatterSourceCst('title: a\ntitle: b', { title: 'c' })).toBeNull();
+    expect(patchFrontmatterSourceCst('a:\n\tb: 1', { a: 1 })).toBeNull();
   });
 
   // 6.4.M3 — `valuesEqual` historically used `JSON.stringify` for value
@@ -81,7 +86,7 @@ describe('patchFrontmatterSource', () => {
     ].join('\n');
     // Same content, opposite key order — the engine MUST treat this as
     // equal and skip the node rewrite (otherwise the comment is lost).
-    const out = patchFrontmatterSource(src, {
+    const out = patchFrontmatterSourceCst(src, {
       meta: { date: '2026-06-01', author: 'ada' },
       title: 'T',
     });
@@ -97,7 +102,7 @@ describe('patchFrontmatterSource', () => {
       'title: T',
     ].join('\n');
     // Same array content, opposite key order inside the element.
-    const out = patchFrontmatterSource(src, {
+    const out = patchFrontmatterSourceCst(src, {
       people: [{ role: 'lead', name: 'ada' }],
       title: 'T',
     });
@@ -107,7 +112,7 @@ describe('patchFrontmatterSource', () => {
 
   it('round-trips a block-style tags list when an unrelated key changes', () => {
     const src = ['tags:', '  - alpha', '  - beta', 'status: open'].join('\n');
-    const out = patchFrontmatterSource(src, { tags: ['alpha', 'beta'], status: 'closed' });
+    const out = patchFrontmatterSourceCst(src, { tags: ['alpha', 'beta'], status: 'closed' });
     expect(out).not.toBeNull();
     expect(out).toContain('- alpha');
     expect(out).toContain('- beta');

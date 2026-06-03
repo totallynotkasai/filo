@@ -295,18 +295,36 @@ export async function writeConfigs(
         // writes happen before any baseline is noted, so they're
         // unaffected.
         if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
-          // 6.4.M12 — the file is gone, so the dedup cache must stop asserting
-          // this payload is on disk. Leaving the stale entry meant a later
-          // write whose payload reverted to the cached value was silently
-          // dedup-suppressed (line 258), so the config could never be
-          // re-established in-session. Clear it; the baseline is kept so the
-          // ENOENT-skip keeps respecting the deletion until the file returns.
-          lastWrittenConfigs.delete(target);
-          continue;
+          // L24 (Audit-6) — re-stat ONCE before treating the ENOENT as an
+          // intentional delete. A OneDrive / AV / sync client can momentarily
+          // unlink-then-recreate a `.filo/` config; the original code read that
+          // transient gap as "user removed it" and silently dropped the armed
+          // in-memory change. If the file has already reappeared by the retry,
+          // proceed with the write (fall through to the drift check below)
+          // instead of losing the change.
+          try {
+            preWriteStat = await invokeOk('vault:stat', vaultRoot, sentinelPath);
+            // Reappeared — a blip that resolved. Fall through to drift + write.
+          } catch (reErr) {
+            if (reErr instanceof IpcEnvelopeError && reErr.code === 'ENOENT') {
+              // Still gone ⇒ a real (intentional) delete. 6.4.M12 — the file is
+              // gone, so the dedup cache must stop asserting this payload is on
+              // disk. Leaving the stale entry meant a later write whose payload
+              // reverted to the cached value was silently dedup-suppressed (line
+              // 258), so the config could never be re-established in-session.
+              // Clear it; the baseline is kept so the ENOENT-skip keeps
+              // respecting the deletion until the file returns.
+              lastWrittenConfigs.delete(target);
+              continue;
+            }
+            // Re-stat hit a different error (EACCES/EBUSY): fall through — the
+            // save IPC below surfaces a genuine IO problem.
+          }
+        } else {
+          // Any other stat error (EACCES, transient share hiccup): fall
+          // through — the save IPC below surfaces a genuine IO problem
+          // through the failure attribution pipeline.
         }
-        // Any other stat error (EACCES, transient share hiccup): fall
-        // through — the save IPC below surfaces a genuine IO problem
-        // through the failure attribution pipeline.
       }
       if (preWriteStat !== undefined && hasBaselineDrifted(baseline, preWriteStat)) {
         const externalEditError = Object.assign(
@@ -315,6 +333,15 @@ export async function writeConfigs(
         );
         notifyWriteError({ kind: 'config', path: target, error: externalEditError });
         failed.push(target);
+        // #19 — mirror the ENOENT branch's dedup-cache clear (6.4.M12). The
+        // write was aborted, so the on-disk file holds the EXTERNAL edit, not
+        // this `payload`. Leaving `lastWrittenConfigs[target] = payload` would
+        // dedup-suppress (line 258) a later write whose payload reverts to that
+        // cached value — the user's in-app value could then never re-establish
+        // in-session even after they rebase (reopen). Clear it so a
+        // revert-to-prior write re-evaluates the drift check instead of being
+        // silently skipped.
+        lastWrittenConfigs.delete(target);
         continue;
       }
     }

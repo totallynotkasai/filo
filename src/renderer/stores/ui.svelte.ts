@@ -246,7 +246,30 @@ export const uiStore = {
 
   // Confirm dialog
   get confirmDialog() { return confirmDialog; },
-  openConfirm(config: ConfirmDialogConfig) { confirmDialog = config; },
+  openConfirm(config: ConfirmDialogConfig) {
+    // Audit5 2.4 (#6) — a second openConfirm must NOT silently overwrite a
+    // pending one. The displaced dialog's onConfirm/onCancel is the ONLY way
+    // its awaiter resolves (tabStore.close → confirmCloseAnyway,
+    // handleFlushAndQuit's save-failure confirm, vaultExternalChanges'
+    // recreateDeletedFile); just reassigning `confirmDialog` stranded that
+    // promise forever, wedging the close/quit/recover. Fire the outgoing
+    // onCancel first — the safe, non-destructive resolution, mirroring
+    // `cancelTopLayer` and the vault-swap handler below — so the displaced
+    // decision resolves to "cancel" before the new dialog takes over.
+    //
+    // (No same-config guard: `$state` stores `config` behind a reactive proxy,
+    // so a later `=== config` reference check can't reliably re-identify it —
+    // and no call site re-opens an already-pending config, so firing the
+    // outgoing onCancel unconditionally is correct.)
+    if (confirmDialog) {
+      const displaced = confirmDialog;
+      confirmDialog = null;
+      try { displaced.onCancel?.(); } catch (err) {
+        console.error('[uiStore] displaced confirm onCancel failed:', err);
+      }
+    }
+    confirmDialog = config;
+  },
   closeConfirm() { confirmDialog = null; },
 
   // Phase C / C.7 — sidebar pending-rename signal.
@@ -323,11 +346,31 @@ export const uiStore = {
     // sweep hitting an EPERM directory) can't paint the entire viewport.
     // Prefer dropping the oldest non-error first so error breadcrumbs stay
     // visible; if everything queued is an error, drop the oldest error.
+    //
+    // Audit5 R3 (#1) — NEVER silently evict a promise-backed toast (one with an
+    // `onDismiss` callback or action buttons). The external-edit drift prompt
+    // resolves the write awaiting it ONLY through onDismiss/action; a silent
+    // eviction (the old `{ silent: true }` on any victim) stranded that promise
+    // forever, so the flush chain — and a Ctrl+S / quit drain awaiting it —
+    // hung. Prefer evicting a "disposable" toast (no callback, no actions),
+    // oldest non-error first. Only if EVERY queued toast is promise-backed,
+    // evict the oldest but fire its onDismiss (drift → 'defer': keep dirty,
+    // re-prompt on the next write) so its promise resolves instead of stranding.
     const TOAST_CAP = 8;
+    const isDisposable = (t: ToastMessage): boolean =>
+      !t.onDismiss && (!t.actions || t.actions.length === 0);
     while (toasts.length >= TOAST_CAP) {
-      const nonError = toasts.find((t) => t.type !== 'error');
-      const victim = nonError ?? toasts[0];
-      this.dismissToast(victim.id, { silent: true });
+      const disposable = toasts.filter(isDisposable);
+      const victim =
+        disposable.find((t) => t.type !== 'error') ??
+        disposable[0] ??
+        toasts.find((t) => t.type !== 'error') ??
+        toasts[0];
+      // Fire onDismiss when the victim is promise-backed (no disposable toast
+      // was available to drop instead); disposable victims have none, so the
+      // dismissal stays silent for them — preserving the existing behaviour for
+      // the common case.
+      this.dismissToast(victim.id, { silent: isDisposable(victim) });
     }
 
     const id = `toast-${++toastCounter}`;

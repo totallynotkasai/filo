@@ -10,6 +10,13 @@
  * that catch, so the path lands in the failed set (sticky 'error' in the save
  * indicator) — matching the write-phase ENOENT discipline. The deleted file is
  * still NOT resurrected; the drop is just made visible.
+ *
+ * Audit5 2.3 (#7) — DI-13's bare `return` still resolved `performWrite` as a
+ * SUCCESS, so `flushAllPendingFrontmatterWrites().failed` OMITTED the path and
+ * `vaultStore.save()` returned true → Ctrl+S toasted a false "Saved" while the
+ * indicator read error and `.dirty` was set. The catch now `throw`s so the
+ * failure propagates into the flush result. These tests assert on that return
+ * value, not just the transient indicator peak.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
@@ -69,10 +76,13 @@ describe('DI-13 — orphan frontmatter write to a deleted backing file', () => {
     });
 
     scheduleFrontmatterWrite(relPath, null);
-    await flushAllPendingFrontmatterWrites();
+    const result = await flushAllPendingFrontmatterWrites();
 
     // The deleted-file ENOENT was surfaced as a failed path, not swallowed.
     expect(maxFailed).toBeGreaterThan(0);
+    // Audit5 2.3 — and it propagates to the flush result that `save()` folds,
+    // so Ctrl+S reports the failure instead of a false "Saved".
+    expect(result.failed).toContain(relPath);
   });
 
   it('a healthy orphan write does NOT mark the path failed (no false positive)', async () => {
@@ -94,8 +104,10 @@ describe('DI-13 — orphan frontmatter write to a deleted backing file', () => {
     });
 
     scheduleFrontmatterWrite(relPath, null);
-    await flushAllPendingFrontmatterWrites();
+    const result = await flushAllPendingFrontmatterWrites();
 
     expect(maxFailed).toBe(0);
+    // No false positive — a healthy orphan write reports no failure.
+    expect(result.failed).toEqual([]);
   });
 });

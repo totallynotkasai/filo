@@ -1,4 +1,4 @@
-import yaml from 'js-yaml';
+import { parseDocument, Document } from 'yaml';
 import type { Editor } from '@tiptap/core';
 import {
   encodeEmptyParagraphs,
@@ -6,28 +6,33 @@ import {
   EMPTY_PARAGRAPH_SENTINEL,
   type BlockTokenizer,
 } from './emptyParagraphs';
-import { patchFrontmatterSource } from '../vault/frontmatterEngine';
+import { patchFrontmatterSourceCst } from '../vault/frontmatterCstModel';
 
 /**
  * Markdown round-trip helpers for TipTap editors backed by `.md` files.
  *
- * Loading: `parseMarkdownFile` splits frontmatter from body via js-yaml,
- * then `loadMarkdownIntoEditor` tells the editor to render the body. The
- * `tiptap-markdown` extension installed in `createEditor.ts` parses the
- * markdown string and produces the prose-mirror document.
+ * Loading: `parseMarkdownFile` splits frontmatter from body and parses the YAML
+ * with the `yaml` package (`parseDocument().toJS()`), then `loadMarkdownIntoEditor`
+ * tells the editor to render the body. The `tiptap-markdown` extension installed
+ * in `createEditor.ts` parses the markdown string and produces the prose-mirror
+ * document.
  *
  * Saving: `editorMarkdown` calls `editor.storage.markdown.getMarkdown()` to
  * serialise the document back to markdown. `assembleMarkdownFile` combines
  * that body with the frontmatter (merging in any inline-tag union from the
  * body) and emits the full file contents that should be written to disk.
  *
- * NOTE: js-yaml is the only YAML library used here. `gray-matter` was
- * removed because its `stringify` path references the Node `Buffer` global,
- * which is undefined in the Vite-bundled renderer.
+ * NOTE (Phase 6.3): the `yaml` package is the single YAML library for the
+ * frontmatter read AND the source-preserving write engine, so the object the
+ * read produces and the object the write diffs against come from one parser
+ * (no cross-parser "looks changed but isn't" — the M2 class). js-yaml was
+ * dropped from this module; `gray-matter` was removed earlier because its
+ * `stringify` path references the Node `Buffer` global, undefined in the
+ * Vite-bundled renderer (`yaml`'s serialiser needs no Buffer either).
  */
 
 export interface ParsedMarkdownDocument {
-  /** Raw frontmatter object (parsed via js-yaml). */
+  /** Raw frontmatter object (parsed via the `yaml` package's `parseDocument().toJS()`). */
   frontmatter: Record<string, unknown>;
   /**
    * Audit2 / 1.1 + 1.2 — the verbatim YAML source between the `---` fences
@@ -59,9 +64,9 @@ export interface ParsedMarkdownDocument {
 }
 
 /**
- * Splits a `.md` file's text into structured frontmatter + body. Falls back
- * to gray-matter on any parse error so unusual frontmatter shapes still
- * round-trip without data loss.
+ * Splits a `.md` file's text into structured frontmatter + body. Fails safe to
+ * an empty frontmatter object on any parse error (the raw block is still threaded
+ * out via `rawFrontmatter` so an unparseable fence round-trips without data loss).
  *
  * Phase 1 / 1.1 — strips a leading UTF-8 BOM (`﻿`) before the regex so
  * Notepad-saved files don't lose their frontmatter. `hadBom` is returned so
@@ -94,18 +99,23 @@ export function parseMarkdownFile(raw: string): ParsedMarkdownDocument {
 
   let frontmatter: Record<string, unknown> = {};
   try {
-    // Audit-4 DI-01 — load with CORE_SCHEMA (YAML 1.2 core) so reads match the
-    // `yaml`-package serializer that re-emits the disk baseline in
-    // `frontmatterEngine.patchFrontmatterSource`. DEFAULT_SCHEMA (YAML 1.1)
-    // resolved `2026-06-01` → a JS `Date` and `<<: *a` → a merged map; the
-    // serializer keeps them a `string` / a literal `<<`, so the source-
-    // preserving diff saw unchanged keys as "changed" and rewrote unquoted
-    // dates to ISO timestamps (DI-01) / inlined merge keys (DI-05). CORE keeps
-    // both as plain strings/literals so the two sides agree. The try/catch
-    // still degrades to `{}` (fails safe — never corrupts) on a parse error.
-    const loaded = yaml.load(fenced[1], { schema: yaml.CORE_SCHEMA });
-    if (loaded && typeof loaded === 'object' && !Array.isArray(loaded)) {
-      frontmatter = loaded as Record<string, unknown>;
+    // Phase 6.3 — parse with the `yaml` package so the read produces the SAME
+    // object the source-preserving write engine (`frontmatterCstModel`) diffs
+    // against: one parser on both sides, so an untouched key can never look
+    // "changed" through a cross-parser type mismatch (the M2 class — `1_000` /
+    // `0b1010` are STRINGS to the `yaml` package but NUMBERS to js-yaml CORE).
+    // Like the prior js-yaml CORE_SCHEMA read this keeps DI-01 / DI-05 intact:
+    // the `yaml` core schema resolves no timestamp or merge tag, so `2026-06-01`
+    // stays a `string` and `<<: *a` a literal `<<`. `doc.errors` catches
+    // duplicate keys / bad indentation; on ANY error (or a non-object / array /
+    // scalar root) we fail safe to `{}` — never corrupt — and the raw block is
+    // still threaded out below so a fence we couldn't turn into keys is kept.
+    const doc = parseDocument(fenced[1]);
+    if (doc.errors.length === 0) {
+      const loaded = doc.toJS();
+      if (loaded && typeof loaded === 'object' && !Array.isArray(loaded)) {
+        frontmatter = loaded as Record<string, unknown>;
+      }
     }
   } catch {
     frontmatter = {};
@@ -389,9 +399,14 @@ export function assembleMarkdownFile(
     // (fixes the lossy YAML round-trip). Falls back to a full dump for new files
     // (no baseline) or a block the engine can't parse as a mapping.
     const patched = options.originalFrontmatter
-      ? patchFrontmatterSource(options.originalFrontmatter, fm)
+      ? patchFrontmatterSourceCst(options.originalFrontmatter, fm)
       : null;
-    const yamlText = patched ?? yaml.dump(fm, { lineWidth: -1, noRefs: true }).trimEnd();
+    // Phase 6.3 / D3 — the full-dump fallback (new file with no baseline, or a
+    // block the engine refused) serialises with the `yaml` package too, so the
+    // whole module is single-parser. A new file has no source to preserve, so the
+    // dump is lossless; `lineWidth: 0` disables folding (matching the prior
+    // `js-yaml` `lineWidth: -1`).
+    const yamlText = patched ?? new Document(fm).toString({ lineWidth: 0 }).trimEnd();
     const trailing = body.endsWith('\n') ? '' : '\n';
     return `${bomPrefix}---\n${yamlText}\n---\n${body}${trailing}`;
   }

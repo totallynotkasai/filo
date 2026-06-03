@@ -36,7 +36,7 @@ import { assertActiveVault, isActiveVault, NoActiveVaultError } from '../utils/a
 import { logMainError } from '../utils/mainLogger';
 import { vaultRegistry } from '../services/vaultRegistry';
 import { getActiveWatcher } from './vault.ipc';
-import { snapshotForRecovery } from '../services/recoverySnapshot';
+import { snapshotForRecovery, listRecoverySnapshots } from '../services/recoverySnapshot';
 import { toPosix } from '../utils/pathHelpers';
 import {
   assertPayloadByteSize,
@@ -329,7 +329,21 @@ export function registerBoardHandlers(): void {
       return { app, appearance, defaults, hotkeys, workspace, viewports, sidebarOrder };
     } catch (err) {
       logMainError('config:load-all', err);
-      return { app: {}, appearance: {}, defaults: {}, hotkeys: {}, workspace: {}, viewports: {}, sidebarOrder: {} };
+      // L18 (Audit-6) — a TOP-LEVEL failure reaches here only for a hard error
+      // the per-file loaders re-throw (e.g. a transient EACCES/EPERM on fs.stat
+      // under a OneDrive/AV lock; ENOENT → default and parse/too-large →
+      // `__corrupt` are handled inside `loadConfig` and never reject). The old
+      // all-empty return made openVault seed BOOTSTRAP DEFAULTS in memory, and a
+      // later config save could then overwrite the intact-but-was-locked files
+      // on disk. Tag the bag with a top-level failure marker (the shape stays a
+      // plain object — no `{ ok }` envelope, so the bare-channel contract is
+      // unchanged) so `loadVaultCandidate` pauses EVERY config write (preserving
+      // the on-disk files) and shows one low-key toast instead of seeding
+      // defaults. Reopening the vault retries the read.
+      return {
+        app: {}, appearance: {}, defaults: {}, hotkeys: {}, workspace: {}, viewports: {}, sidebarOrder: {},
+        __loadAllFailed: String(err),
+      };
     }
   });
 
@@ -449,6 +463,35 @@ export function registerBoardHandlers(): void {
       logMainError(`recovery:snapshot ${relativePath}`, err);
       const code = classifyError(err);
       return { ok: false, ...(code ? { code } : {}), error: String(err) };
+    }
+  });
+
+  /**
+   * #11 — lists preserved snapshots under `.filo/recovery/` so the renderer
+   * can surface them on vault open (basename + timestamp + reveal). Read-only:
+   * it never prunes, so the user's recovery backups are only removed when they
+   * act on them or the write-time cap trims the oldest — never silently on
+   * open. BARE channel (returns the array directly, like `theme:load`): a scan
+   * failure logs on the main side and resolves to `[]` so the open proceeds
+   * without the (defensive) listing. Not an envelope channel — there is no
+   * data-integrity decision riding on distinguishing "scan failed" from "no
+   * snapshots"; both mean "show nothing".
+   */
+  ipcMain.handle('recovery:list', async (_event, vaultRoot: string) => {
+    try {
+      assertActiveVault(vaultRoot);
+      return await listRecoverySnapshots(vaultRoot);
+    } catch (err) {
+      logMainError('recovery:list', err);
+      // L20/L21 (Audit-6) — `listRecoverySnapshots` already maps ENOENT (no
+      // recovery dir → steady state) to `[]` internally, so any error reaching
+      // here is a REAL scan failure: EACCES / EBUSY on a locked share, ENOTDIR,
+      // NO_ACTIVE_VAULT after a swap. Swallowing it into `[]` is indistinguishable
+      // from "no snapshots" and hides the user's backup exactly when the disk is
+      // locked. Re-throw (the channel stays bare — no `{ ok }` envelope) so the
+      // renderer's `vault.recovery-snapshots` catch surfaces the low-key
+      // "couldn't scan recovery, check .filo/recovery manually" toast.
+      throw err;
     }
   });
 }

@@ -311,9 +311,11 @@ async function reconcileTemplateChange(event: ExternalChangeEvent): Promise<void
 const documentBatchedReconciler: BatchedReconciler = {
   kind: 'document',
   handleBatch: async (events) => {
-    const paths = events
-      .map((e) => e.filename)
-      .filter((p) => !isRecentSelfWrite(p));
+    // Audit-7 L15 — self-write filtering now lives INSIDE
+    // handleExternalMarkdownChanges (single authority, so the partial-read-
+    // retry timer that re-invokes it directly is filtered too). The bridge
+    // just forwards filenames; the handler drops recent self-writes.
+    const paths = events.map((e) => e.filename);
     if (paths.length === 0) return;
     await vaultStore.handleExternalMarkdownChanges(paths);
   },

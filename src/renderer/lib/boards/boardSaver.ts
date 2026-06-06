@@ -48,6 +48,7 @@ export {
   isRecentSelfWrite,
   hasPendingWrite,
   isPathPending,
+  hasFailedWrites,
   __resetDirtyTrackingForTests,
   __clearRecentSelfWritesForTests,
   type WriteErrorInfo,

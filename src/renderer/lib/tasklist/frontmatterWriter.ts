@@ -9,6 +9,7 @@ import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import { vaultStore } from '../../stores/vault.svelte';
 import {
   BatchCommand,
+  UpdateOrphanFrontmatterCommand,
   UpdateTaskFieldCommand,
 } from '../../commands/index';
 import {
@@ -89,22 +90,6 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
   }
 
   /**
-   * Audit-6 M4 — seed the FM cache from a FRESH disk read before the (sync)
-   * `ensureSeededFm` index-seed, so a key an external editor added since the
-   * last vault index rebuild isn't dropped by the subsequent source-preserving
-   * write. No-op when an editor / prior edit already seeded the cache, or when
-   * the disk read fails (the index seed then runs as before). Awaited by the
-   * mutating entry points below.
-   */
-  function preSeedRow(row: TaskRow): Promise<void> {
-    return seedDocumentFrontmatterFromDisk(
-      (row.tile as Tile & { contentId?: string }).contentId ?? null,
-      vaultStore.path,
-      vaultPathForTile(row.tile),
-    );
-  }
-
-  /**
    * Builds a single UpdateTaskFieldCommand for a row's frontmatter patch.
    * Captures the inverse patch (previous values for each affected key) so
    * undo restores the exact prior state. Returns `null` when the tile has
@@ -118,11 +103,17 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
     const board = getBoard();
     if (!board) return null;
     const path = vaultPathForTile(row.tile);
-    const docId = ensureSeededFm(row.tile);
+    // Resolve the docId WITHOUT seeding (Audit-7 H1): the disk pre-seed moved
+    // INTO UpdateTaskFieldCommand.execute(), and a sync index-seed here would
+    // populate the cache first, making that disk seed a no-op. The command's
+    // execute() now seeds (disk, then index fallback) on the history chain.
+    const docId = (row.tile as Tile & { contentId?: string }).contentId ?? null;
     // 6.2.H7 — UpdateTaskFieldCommand now throws on null docId (it was a
     // silent no-op pre-fix). Short-circuit here so the caller's fallback
     // branch (extremely rare, pre-live-cache tiles) takes over.
     if (!docId) return null;
+    // Best-effort inverse from the vault index; the command recomputes it from
+    // the fresh disk read on execute so undo restores the TRUE prior value.
     const before = readFrontmatter(row.tile);
     const inverse: Record<string, unknown> = {};
     for (const key of Object.keys(patch)) {
@@ -134,20 +125,44 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
   }
 
   async function updateRowField(row: TaskRow, patch: Record<string, unknown>): Promise<void> {
-    if (!getBoard()) return;
-    // Audit-6 M4 — seed FM from disk before buildTaskFieldCommand (which calls
-    // the sync index-seed) so the write preserves externally-added keys.
-    await preSeedRow(row);
+    const board = getBoard();
+    if (!board) return;
     const cmd = buildTaskFieldCommand(row, patch);
     if (cmd) {
-      historyStore.execute(cmd);
+      // Audit-7 H1 — the disk pre-seed moved INTO UpdateTaskFieldCommand.
+      // execute() so the read joins the history chain vaultStore.save()/quit
+      // await via whenChainSettled(). Await the command so this resolves only
+      // after the seed + merge + schedule have run; the chain reports its own
+      // errors, so swallow the rejection on this fire-and-forget UI path.
+      await historyStore.execute(cmd).catch(() => {});
     } else {
-      // Fallback for tiles without a docId — extremely rare (predates the
-      // shared live cache). Preserves prior best-effort behaviour.
+      // A9-L3 — docId-less tile (predates the shared live cache; extremely
+      // rare). The previous fallback armed `scheduleFrontmatterWrite(path, null)`,
+      // which the scheduler resolves as a SILENT no-op (`if (!fm) return`) when
+      // the path is absent from the vault index — dropping the edit with a false
+      // SUCCESS that lets markClean wipe `.filo/.dirty`. Route through the orphan
+      // command instead (mirrors kanbanFrontmatterWriter's no-contentId branch):
+      // it reads body + FM fresh from disk, writes directly via the gateway, is
+      // undoable, and loudly fails (A9-L2) on a write error rather than silently
+      // no-op'ing. The command recomputes the inverse from the fresh disk read,
+      // so this best-effort index inverse is only a construction-time placeholder.
       const path = vaultPathForTile(row.tile);
-      const docId = ensureSeededFm(row.tile);
-      if (docId) documentStore.mergeFrontmatter(docId, patch);
-      scheduleFrontmatterWrite(path, docId);
+      const before = readFrontmatter(row.tile);
+      const inverse: Record<string, unknown> = {};
+      for (const key of Object.keys(patch)) {
+        inverse[key] = key in before ? before[key] : '';
+      }
+      await historyStore
+        .execute(
+          new UpdateOrphanFrontmatterCommand(
+            board.id,
+            path,
+            patch,
+            inverse,
+            `Update task ${Object.keys(patch).join(', ')}`,
+          ),
+        )
+        .catch(() => {});
     }
     bumpCacheVersion();
   }
@@ -210,10 +225,16 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
     const t = row.tile as Tile & { contentId?: string };
     const docId = t.contentId ?? null;
     if (docId) {
-      // Audit-6 M4 — seed FM from disk before the index-seed (ensureSeededFm
-      // below) so this body save assembles over the latest disk frontmatter
-      // and doesn't drop an externally-added key.
-      await seedDocumentFrontmatterFromDisk(docId, vaultStore.path, path);
+      // A8-M3(a) — apply the NEW body into the live cache and ARM the write
+      // BEFORE awaiting the disk-FM seed. `seedDocumentFrontmatterFromDisk` is
+      // an IPC read; a quit landing in that await window used to resolve
+      // `whenChainSettled()` against an empty chain (no write scheduled yet) and
+      // drop the typed notes with a clean `.filo/.dirty` sentinel. `loadDocument`
+      // and `updateContent` never touch the FM cache, so doing them first is FM-
+      // safe; `scheduleFrontmatterWrite` reads the body + FM live at fire time
+      // (normally 300 ms later, long after the seed has refreshed FM), so the
+      // armed timer captures the latest body regardless of how it interleaves
+      // with the seed.
       const existing = documentStore.getDocument(docId);
       if (!existing) {
         const meta = vaultIndexStore.getMetadata(path);
@@ -228,8 +249,50 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
       }
       const after = documentStore.getDocument(docId);
       documentStore.updateContent(docId, after?.htmlContent ?? '', body);
+      // A9-M2 (Audit-9) — seed the FM cache SYNCHRONOUSLY (from the vault index)
+      // BEFORE the early arm. The early-armed write can be drained by a quit's
+      // flushAll DURING the disk read below; with an EMPTY FM cache that drain
+      // hits writeFrontmatter's `if (!fm) return` — a no-op that resolves the
+      // write as SUCCESS → endWrite(true) → markClean wipes `.filo/.dirty`, so the
+      // typed notes are silently dropped (unrecoverable: `.board.json` does not
+      // cache the body). An empty index still seeds `{}` (truthy), which is enough
+      // to clear the no-op so the drain writes the body. `setNotesBody` makes NO
+      // frontmatter mutation, so the disk refresh below safely OVERWRITES this
+      // index placeholder (restoring the source-preserving baseline + any
+      // externally-added key the index lacked).
+      let placeholderVersion: number | undefined;
+      if (!documentStore.getFrontmatter(docId)) {
+        documentStore.setFrontmatter(
+          docId,
+          (vaultIndexStore.getMetadata(path)?.frontmatter ?? {}) as Record<string, unknown>,
+        );
+        placeholderVersion = documentStore.getFrontmatterMutationVersion(docId);
+      }
+      scheduleFrontmatterWrite(path, docId);
+      // Audit-6 M4 — refresh FM from a fresh disk read so the eventual write
+      // assembles over the latest disk frontmatter (doesn't drop an externally-
+      // added key) AND restores the source-preserving baseline the index
+      // placeholder above lacks. In refresh mode the disk bytes OVERWRITE the
+      // placeholder, but ONLY if nothing mutated FM since it was seeded (A9-M2 —
+      // a racing field edit bumps the version and is preserved). Vault-identity-
+      // guarded inside the primitive (A9-M1). Awaited AFTER the schedule, so the
+      // pending path is already in the flush/sentinel set when the await suspends.
+      await seedDocumentFrontmatterFromDisk(
+        docId,
+        vaultStore.path,
+        path,
+        placeholderVersion !== undefined ? { refreshSeedVersion: placeholderVersion } : undefined,
+      );
       ensureSeededFm(row.tile);
     }
+    // Arm (or, for the docId path, re-arm) the write once FM is seeded. It
+    // coalesces with the early A8-M3(a) schedule above (resetting the 300 ms
+    // timer to the same path). The re-arm also closes the narrow first-touch
+    // window where a `flushAll` raced the gated seed and fired the early timer
+    // against a still-EMPTY FM cache: `writeFrontmatter`'s `if (!fm) return`
+    // makes that fire a no-op AND consume the timer, so without this second arm
+    // the body — already live in the cache — would never get written once FM
+    // finally seeded. (`scheduleFrontmatterWrite` reads body + FM live at fire.)
     scheduleFrontmatterWrite(path, docId);
     bumpCacheVersion();
   }
@@ -239,9 +302,9 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
     const cmds: UpdateTaskFieldCommand[] = [];
     for (const r of rows) {
       if (!r.completed) continue;
-      // Audit-6 M4 — seed each row's FM from disk before buildTaskFieldCommand
-      // so the batched writes preserve externally-added keys.
-      await preSeedRow(r);
+      // Audit-7 H1 — each row's disk pre-seed moved INTO UpdateTaskFieldCommand.
+      // execute(); BatchCommand awaits its children's execute() in order, so the
+      // seeds + writes all run on the history chain that save()/quit drain.
       const cmd = buildTaskFieldCommand(r, { completed: false }, 'Mark incomplete');
       if (cmd) cmds.push(cmd);
     }
@@ -249,7 +312,13 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
       uiStore.toast('No completed tasks to mark', 'info', 2000);
       return;
     }
-    historyStore.execute(new BatchCommand(`Mark ${cmds.length} tasks incomplete`, cmds));
+    // Await the batch (Audit-7 H1) so the per-row disk seeds + writes — now
+    // inside each child's execute() — finish before the confirmation toast,
+    // matching the old per-row `await preSeedRow` timing. The chain reports its
+    // own errors; swallow here to keep this fire-and-forget UI path quiet.
+    await historyStore
+      .execute(new BatchCommand(`Mark ${cmds.length} tasks incomplete`, cmds))
+      .catch(() => {});
     bumpCacheVersion();
     uiStore.toast(
       `${cmds.length} task${cmds.length === 1 ? '' : 's'} marked incomplete`,

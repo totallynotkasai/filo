@@ -158,13 +158,45 @@ function rebuildPair(item: CollectionItem, key: string, value: unknown): void {
 }
 
 /**
+ * L4 — split a DELETED key's leading `start` tokens into the structural gap to
+ * keep (blank lines / key indentation) versus the standalone comment lines to
+ * drop. A comment immediately above a key conventionally documents THAT key, so
+ * when the key is deleted its comment must go with it rather than relocate onto
+ * the next surviving key — where it would mis-document an unrelated field — or
+ * dangle at the document end. We group the tokens into source lines and keep a
+ * line only when it carries no `comment` token, so inter-key blank-line spacing
+ * survives the delete while the comment (and its own line terminator) does not.
+ * Applied ONLY to a deleted item's `start`; a surviving key's comments are never
+ * touched. (A leading top-level comment before the first key lives in the
+ * document's own token, not in any item's `start`, so it is unaffected here.)
+ */
+function gapWithoutCommentLines(tokens: CST.SourceToken[]): CST.SourceToken[] {
+  const kept: CST.SourceToken[] = [];
+  let line: CST.SourceToken[] = [];
+  let lineHasComment = false;
+  const flushLine = (): void => {
+    if (!lineHasComment) for (const t of line) kept.push(t);
+    line = [];
+    lineHasComment = false;
+  };
+  for (const token of tokens) {
+    line.push(token);
+    if (token.type === 'comment') lineHasComment = true;
+    if (token.type === 'newline') flushLine();
+  }
+  flushLine(); // trailing partial line (key indentation, no newline) — kept if comment-free
+  return kept;
+}
+
+/**
  * Patches `originalSource`'s frontmatter to `nextObj`'s values via CST operations
  * — the source-preserving frontmatter patch engine. Untouched
  * keys keep their exact bytes; a changed single-line scalar is rewritten
  * value-only; collections / type-changes / bare-key sets / added keys are
- * re-serialised; deleted keys are spliced out (relocating any standalone comment
- * above them so it is never silently dropped). Output is LF with no trailing
- * newline (the caller re-wraps fences and re-applies the file's own line ending).
+ * re-serialised; deleted keys are spliced out (keeping the blank-line gap above
+ * them but dropping a comment that documented the deleted key — L4 — so it never
+ * mis-documents the next survivor). Output is LF with no trailing newline (the
+ * caller re-wraps fences and re-applies the file's own line ending).
  *
  * Returns `null` (caller falls back to a full dump) when the source is not a
  * parseable single BLOCK mapping, or when a changed/deleted key carries an
@@ -232,9 +264,10 @@ export function patchFrontmatterSourceCst(
     }
 
     // Pass 2 — apply. Build the surviving-items array so a deleted item's leading
-    // comments/blank lines (`start`) relocate to the next survivor (or, when the
-    // deleted key is trailing, onto the document end) instead of vanishing —
-    // matching the legacy engine, which always emits the inter-key gap verbatim.
+    // BLANK LINES (`start`) relocate to the next survivor (or, when the deleted
+    // key is trailing, onto the document end) — preserving inter-key spacing. A
+    // comment glued to the deleted key is dropped with it (L4: relocating it
+    // would mis-document the next survivor); a surviving key's comments are kept.
     const nextItems: CST.BlockMap['items'] = [];
     let pendingStart: CST.SourceToken[] = [];
     for (const item of mapToken.items) {
@@ -247,7 +280,11 @@ export function patchFrontmatterSourceCst(
 
       const deleted = !(key in nextObj) || nextObj[key] === undefined;
       if (deleted) {
-        pendingStart = pendingStart.concat(item.start);
+        // L4 — keep the structural gap (blank lines) above the deleted key but
+        // DROP a comment glued to it, so its documenting comment is removed with
+        // the key instead of relocating onto the next survivor (mis-documenting
+        // an unrelated field).
+        pendingStart = pendingStart.concat(gapWithoutCommentLines(item.start));
         continue;
       }
 
@@ -299,4 +336,57 @@ export function patchFrontmatterSourceCst(
   }
 
   return result.replace(/\r?\n$/, '');
+}
+
+/**
+ * 1.5 (WRITE_PATH_REMEDIATION_PLAN_2026-06-04) — does `source` parse as valid
+ * YAML at all (no fatal parser errors)? Used by the assemble path to tell apart
+ * the TWO reasons {@link patchFrontmatterSourceCst} returns `null` for a PRESENT
+ * block, which need OPPOSITE handling:
+ *  - returns `false` here → the source is genuinely UNPARSEABLE (tabs, duplicate
+ *    keys, a stray `---`). A full dump of the live object would DISCARD the
+ *    broken-but-present block entirely — total frontmatter loss (Finding #4). The
+ *    caller keeps the raw bytes instead.
+ *  - returns `true` here → the source is valid YAML; the engine refused for a
+ *    reason where the dump is DATA-PRESERVING (a flow-mapping root reformats to a
+ *    block mapping; a changed/deleted key carrying an anchor/alias expands its
+ *    aliases — L27) or replaces a non-mapping root the app never treated as
+ *    metadata (a top-level sequence/scalar). The caller's full dump must proceed.
+ *
+ * Narrow by design: only a parse FAILURE — where dump = unrecoverable loss —
+ * trips the caller's refuse-and-keep-raw path. Valid-but-non-mapping YAML keeps
+ * the long-standing dump fallback (and its pinning test).
+ */
+export function frontmatterSourceParses(source: string): boolean {
+  try {
+    return parseDocument(source.replace(/\r\n/g, '\n'), { uniqueKeys: true }).errors.length === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 1.1 (WRITE_PATH_REMEDIATION_PLAN_2026-06-04) — the set of top-level keys in a
+ * frontmatter source, or an empty set when the source is absent / unparseable.
+ *
+ * The assemble path consults this before its null/undefined clean pass: a
+ * present-but-empty key on disk (`aliases:`, `cssclasses:`) parses to `null`,
+ * and stripping it from the live object would make {@link patchFrontmatterSourceCst}
+ * see it as DELETED and splice the line out — silently erasing a key the user
+ * kept, on any unrelated metadata edit. A key in this set is preserved as the
+ * empty value it already holds on disk.
+ */
+export function frontmatterSourceKeys(source: string): Set<string> {
+  try {
+    const doc = parseDocument(source.replace(/\r\n/g, '\n'), { uniqueKeys: true });
+    if (doc.errors.length === 0) {
+      const obj = doc.toJS();
+      if (obj !== null && typeof obj === 'object' && !Array.isArray(obj)) {
+        return new Set(Object.keys(obj as Record<string, unknown>));
+      }
+    }
+  } catch {
+    /* unparseable — no keys to preserve */
+  }
+  return new Set();
 }

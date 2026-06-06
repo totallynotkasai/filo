@@ -368,6 +368,24 @@ export function hasPendingWrite(path: string): boolean {
 }
 
 /**
+ * Phase 3 / 3.1 — true when ANY path's last write FAILED and hasn't since been
+ * retried successfully (i.e. `failedVaultPaths` is non-empty).
+ *
+ * A per-scheduler `flushAll()` only re-surfaces failures for writes it actually
+ * drained THIS cycle (pending timers + currently in-flight). A fire-and-forget
+ * timer write that already FAILED and SETTLED before the flush is recorded in
+ * `failedVaultPaths` but is no longer in any scheduler's pending/in-flight maps,
+ * so the next `flushAll` reports a clean `failed: []`. `vaultStore.save()`
+ * consults this after its flushes so the Ctrl+S / flush-and-quit aggregate
+ * boolean is honest. The `.filo/.dirty` sentinel is unaffected — it is driven
+ * by this same set, so it was already (correctly) staying dirty; this only
+ * closes the boolean-honesty gap.
+ */
+export function hasFailedWrites(): boolean {
+  return failedVaultPaths.size > 0;
+}
+
+/**
  * Records a path as out-of-sync with disk without going through a full
  * begin/endWrite pair. Used when a writer can't even begin (e.g. the
  * upstream read failed) but the user-visible state — "I asked Filo to

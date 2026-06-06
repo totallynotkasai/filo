@@ -24,7 +24,7 @@ import {
   type V7BoardFileData,
 } from './tileDefBuilder';
 import { CURRENT_BOARD_FILE_VERSION } from '../../schema/boardFile';
-import { BOARD_WRITE_DEBOUNCE_MS } from './boardWriteDebounce';
+import { BOARD_WRITE_DEBOUNCE_MS, WRITE_TIMEOUT_MS } from './boardWriteDebounce';
 import { getViewportFromCache, setViewport } from './viewportCache';
 import {
   notifyWriteError,
@@ -87,6 +87,18 @@ const boardScheduler = createScheduler<BoardWriteArgs>({
   // snapshot, not the live proxy. flushAll captures the snapshot
   // synchronously upfront so a mid-flush cache mutation can't leak into
   // a later board's payload (Phase 25 L12).
+  //
+  // Audit-11 B-INT-L2 — the `JSON.parse(JSON.stringify())` round-trip is the
+  // INTENDED normalisation, not an accident: `.board.json` is written via
+  // `JSON.stringify`, so the snapshot is coerced to exactly the value space
+  // that survives that write — `undefined` fields drop, a `Date` ISO-strings,
+  // a `Map`/`Set` would vanish. The board cache only ever holds JSON-safe
+  // scalars/arrays/plain-objects (schema-validated on load; task metadata
+  // lives in frontmatter, not here), so the round-trip is lossless for real
+  // data while guaranteeing the snapshot equals the eventual on-disk bytes.
+  // If a future field needs exact structural round-trip (a Date kept as a Date,
+  // a Set), switch to `structuredClone` AND teach `writeBoardFile` to serialise
+  // it — do not assume this clone preserves non-JSON types.
   snapshotArgs: (args) => ({
     ...args,
     cached: JSON.parse(JSON.stringify(args.cached)) as V7BoardFileData,
@@ -111,6 +123,11 @@ const boardScheduler = createScheduler<BoardWriteArgs>({
   },
   missingSourceMessage: (key) =>
     `Filo couldn't save the latest changes (boardId: ${key}). Re-open the board and try again.`,
+  // Audit-11 WC-1 — `writeBoardFile` awaits an interactive drift prompt
+  // (`boardExternalEditHandler`) plus pre-write `vault:stat` + `board:save` IPCs,
+  // any of which can wedge (a never-resolving prompt, or a stalled network
+  // volume). Bound it so a wedged board write can't hang `flushAll` / quit.
+  writeTimeoutMs: WRITE_TIMEOUT_MS,
 });
 
 /**

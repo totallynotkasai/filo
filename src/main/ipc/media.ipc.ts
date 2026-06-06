@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as dns from 'dns';
 import { promisify } from 'util';
-import { assertSafeFilename, assertSafeRelativePath, assertWithinVault, isPrivateUrl } from '../utils/pathSecurity';
+import { assertNotInFiloDir, assertSafeFilename, assertSafeRelativePath, assertWithinVault, isPrivateUrl } from '../utils/pathSecurity';
 import { assertActiveVault } from '../utils/activeVaultCheck';
 import { getMimeType } from '../utils/mime';
 import { logMainError } from '../utils/mainLogger';
@@ -11,6 +11,7 @@ import { toPosix, relativePosix } from '../utils/pathHelpers';
 import { getVaultRoot, getActiveWatcher } from './vault.ipc';
 import { assertPayloadByteSize, PAYLOAD_LIMITS } from '../utils/payloadLimits';
 import { atomicWriteFile } from '../vault/filenameUtils';
+import { launcherExtension } from '../../shared/untrusted';
 
 /**
  * Phase 31 A5.3 — DNS-based SSRF defence. Resolves a hostname to every A/AAAA
@@ -123,6 +124,13 @@ export function registerMediaHandlers(): void {
       // destination subfolder if it doesn't exist; keep the new folder
       // path portable across platforms.
       if (normalisedFolder) assertSafeRelativePath(normalisedFolder, { forCreation: true });
+
+      // 1.4 — refuse writes into `.filo/` like every other vault-writing channel.
+      // `media:save-audio` was the sole vault writer missing this guard; a buggy
+      // renderer passing `destFolder: '.filo'` could otherwise drop arbitrary
+      // bytes into the config dir. Guard the prospective relative destination
+      // (folder + filename) BEFORE mkdir, mirroring `vault:write-file-binary`.
+      assertNotInFiloDir(normalisedFolder ? `${normalisedFolder}/${fileName}` : fileName);
 
       const mediaDir = normalisedFolder
         ? path.join(vaultPath, normalisedFolder)
@@ -292,9 +300,17 @@ export function registerMediaHandlers(): void {
         // named `notes.exe` (or worse, `report.pdf.exe` masquerading as a
         // PDF) would otherwise run with the user's privileges. Match the
         // file's TRUE final extension case-insensitively against a
-        // blocklist of OS launcher / scripting formats. Renaming an .exe
-        // to .png doesn't bypass — `path.extname` returns the literal
-        // trailing `.ext`, so `report.pdf.exe` still extensions to `.exe`.
+        // blocklist of OS launcher / scripting formats.
+        //
+        // Audit-10 B3 — extension extraction must use `launcherExtension`,
+        // NOT `path.extname`: on Win32 a trailing dot / space (`evil.exe.`)
+        // is stripped by the path layer before launch, and an NTFS ADS
+        // suffix (`evil.exe::$DATA`) names the real `evil.exe`; both make
+        // `path.extname` read a non-blocklisted `'.'` / `'.exe::$DATA'`,
+        // so `shell.openPath` would run the executable. `assertWithinVault`
+        // realpaths past those (they resolve to the in-vault file) and this
+        // channel does NOT run `assertSafeFilename`, so the blocklist here
+        // is the only line of defence.
         //
         // Phase 5 / P1-10 — extend with HTML-renderable extensions
         // (.html / .htm / .xhtml / .svg / .shtml / .xml). The user's
@@ -311,7 +327,22 @@ export function registerMediaHandlers(): void {
           // HTML-renderable — Phase 5 / P1-10
           '.html', '.htm', '.xhtml', '.svg', '.shtml', '.xml',
         ]);
-        const ext = path.extname(target).toLowerCase();
+        // Audit-10 B3 (defence in depth) — refuse a basename Win32 would
+        // normalise into a DIFFERENT file than the one we validated: a
+        // trailing dot/space is silently stripped, and an embedded `:`
+        // opens an NTFS Alternate Data Stream (`report.pdf:evil`, whose
+        // safe-looking `.pdf` extension would otherwise pass). The basename
+        // is the segment after the last separator, so a drive-letter colon
+        // (`C:/…`) is never in scope here.
+        const lastSep = Math.max(target.lastIndexOf('/'), target.lastIndexOf('\\'));
+        const targetBasename = lastSep >= 0 ? target.slice(lastSep + 1) : target;
+        if (/[ .]$/.test(targetBasename) || targetBasename.includes(':')) {
+          return {
+            success: false,
+            error: 'Refusing to open file: unsafe filename (trailing dot/space or alternate data stream)',
+          };
+        }
+        const ext = launcherExtension(target);
         if (UNSAFE_FILE_EXTENSIONS.has(ext)) {
           return {
             success: false,

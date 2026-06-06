@@ -103,6 +103,53 @@ describe('UpdateOrphanFrontmatterCommand — 6.2.H8 rebase on undo', () => {
     expect(conflictToast?.text).toContain('priority');
   });
 
+  it('A8-M5 — recomputes the inverse from disk so a stale index inverse cannot mis-restore', async () => {
+    // The card has NO contentId; the writer built its inverse from the vault
+    // index, which is STALE — an external editor added `priority: high` after the
+    // last index rebuild, so the index (and thus the construction-time inverse)
+    // has no priority. Simulate that with an empty-string inverse.
+    diskContent = '---\npriority: high\n---\nbody content\n';
+    const cmd = new UpdateOrphanFrontmatterCommand(
+      'kb',
+      'Card.md',
+      { priority: 'low' }, // user sets low
+      { priority: '' }, // STALE inverse from the index (priority was absent there)
+    );
+
+    const writeCountBefore = calls.filter(
+      (c) => c.channel === 'vault:write-existing-file-text' && c.args[1] === 'Card.md',
+    ).length;
+    await cmd.execute();
+
+    // Without M5: expectedCurrent ('') ≠ fresh disk ('high') → FALSE conflict →
+    // the user's `low` is dropped (and a conflict toast fires). With M5: the
+    // inverse is recomputed from disk to `high`, so execute matches disk and
+    // applies `low` cleanly.
+    const executeWrites = calls
+      .filter((c) => c.channel === 'vault:write-existing-file-text' && c.args[1] === 'Card.md')
+      .slice(writeCountBefore);
+    expect(executeWrites.length).toBeGreaterThan(0);
+    expect(executeWrites[executeWrites.length - 1].args[2] as string).toContain('priority: low');
+    expect(uiStore.toasts.find((t) => /External edit changed/i.test(t.text))).toBeUndefined();
+
+    // The execute write landed; reflect it on disk for the undo's fresh read.
+    diskContent = '---\npriority: low\n---\nbody content\n';
+    const writeCountAfterExecute = calls.filter(
+      (c) => c.channel === 'vault:write-existing-file-text' && c.args[1] === 'Card.md',
+    ).length;
+
+    await cmd.undo();
+
+    // Undo restores the TRUE prior on-disk value (`high`), NOT the stale ''
+    // (which would have written a file with no priority key at all).
+    const undoWrites = calls
+      .filter((c) => c.channel === 'vault:write-existing-file-text' && c.args[1] === 'Card.md')
+      .slice(writeCountAfterExecute);
+    expect(undoWrites.length).toBeGreaterThan(0);
+    const undoContent = undoWrites[undoWrites.length - 1].args[2] as string;
+    expect(undoContent).toContain('priority: high');
+  });
+
   it('undo without a conflict still applies the inverse cleanly', async () => {
     const cmd = new UpdateOrphanFrontmatterCommand(
       'kb',

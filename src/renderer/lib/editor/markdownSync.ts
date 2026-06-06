@@ -6,7 +6,11 @@ import {
   EMPTY_PARAGRAPH_SENTINEL,
   type BlockTokenizer,
 } from './emptyParagraphs';
-import { patchFrontmatterSourceCst } from '../vault/frontmatterCstModel';
+import {
+  patchFrontmatterSourceCst,
+  frontmatterSourceParses,
+  frontmatterSourceKeys,
+} from '../vault/frontmatterCstModel';
 
 /**
  * Markdown round-trip helpers for TipTap editors backed by `.md` files.
@@ -224,9 +228,10 @@ export function loadMarkdownIntoEditor(
  * Returns true iff `tiptap-markdown` could not round-trip `original` back
  * into the same body. Normalises both sides so cosmetic differences
  * (line-ending family, trailing whitespace per line, repeated blank lines,
- * leading/trailing whitespace, list-bullet style) don't trigger false
- * positives. Anything that survives this normalisation and still differs
- * is real syntax that the parser dropped.
+ * leading/trailing whitespace, list-bullet style, hard-break encoding, and
+ * thematic-break marker style) don't trigger false positives. Anything that
+ * survives this normalisation and still differs is real syntax that the
+ * parser dropped.
  *
  * Exported for direct unit-testing in `markdownSync.test.ts`. Production
  * call site is `loadMarkdownIntoEditor` above.
@@ -241,12 +246,31 @@ function normaliseForRoundTripCompare(s: string): string {
     .replace(/\r\n?/g, '\n')
     // Strip trailing whitespace per line
     .replace(/[ \t]+\n/g, '\n')
+    // Normalise hard line breaks — Markdown encodes a hard break as either two+
+    // trailing spaces (`…  \n`) or a trailing backslash (`…\\\n`).
+    // prosemirror-markdown always serialises the backslash form, so a disk file
+    // written with the two-space form (common in verse / dialogue) would never
+    // compare equal and the document would be forced read-only (Audit-10 M5).
+    // The trailing-whitespace strip above already collapses the two-space form to
+    // a bare newline; collapse the backslash form to match, so both hard-break
+    // encodings normalise to the same thing. Same transform on both sides ⇒ it
+    // can't turn a genuine difference into a false match.
+    .replace(/\\\n/g, '\n')
     // Normalise Setext H1/H2 to ATX equivalents so `# Foo` and `Foo\n===`
     // compare as equal — `tiptap-markdown` serialises every heading as ATX
     // regardless of the input syntax, so the un-normalised compare would
     // otherwise flag every Setext-style file as lossy.
     .replace(/^([^\n]+)\n=+[ \t]*$/gm, '# $1')
     .replace(/^([^\n]+)\n-+[ \t]*$/gm, '## $1')
+    // Normalise thematic breaks (horizontal rules) — Markdown allows `---`,
+    // `***`, `___`, and spaced variants (`* * *`, `- - -`); prosemirror-markdown
+    // serialises a horizontal rule to one canonical form, so a disk file using
+    // another marker (e.g. `* * *` scene breaks in fiction) would be flagged
+    // lossy and opened read-only (Audit-10 M5). Collapse every valid
+    // thematic-break line to one form. Runs AFTER the Setext passes (so a `---`
+    // directly under a text line is still read as a Setext H2, not a rule) and
+    // BEFORE the list-bullet pass (so `* * *` isn't first mangled into `- * *`).
+    .replace(/^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/gm, '---')
     // Collapse 3+ blank lines into 2 (paragraph-separator normal form)
     .replace(/\n{3,}/g, '\n\n')
     // Normalise list bullet style — tiptap-markdown emits `*` or `-`
@@ -337,17 +361,74 @@ export interface AssembleMarkdownOptions {
    * baseline) ⇒ a full dump as before.
    */
   originalFrontmatter?: string;
+  /**
+   * A8-M1 — the file's REAL line ending, captured once from the full raw file
+   * content at hydrate time (`FileState.eol`, threaded by the gateway). The
+   * source-preserving detection (`detectFrontmatterEol`) infers eol from the
+   * frontmatter source, but a single-line FM (`title: x`) carries no internal
+   * `\r\n`, so on a CRLF file it mis-detects LF and flips the frontmatter to LF
+   * on the first metadata edit — the hole in the Audit-7 H2 fix. When supplied
+   * this wins outright; callers without it (new-file creation) fall back to
+   * detection (→ LF, unchanged).
+   */
+  eol?: '\r\n' | '\n';
+  /**
+   * Audit-11 N1 — invoked when the assembler REFUSES a frontmatter edit
+   * because the on-disk YAML is genuinely unparseable (the data-loss-avoiding
+   * keep-raw branch below). The metadata edit is intentionally dropped to
+   * protect the existing broken-but-present YAML; this hook lets the write
+   * gateway surface a user-facing toast ("couldn't update metadata — fix the
+   * YAML") instead of the edit vanishing as a silent success. Pure-assemble
+   * callers (unit tests, body-only saves) omit it — refusal then just keeps the
+   * raw bytes exactly as before.
+   */
+  onFrontmatterRefused?: () => void;
 }
 
 /**
- * Reattaches the `---` fences around a verbatim frontmatter block, matching
- * the block's own line ending (so a CRLF file round-trips faithfully — 1.2)
- * and appending a trailing newline after the body when it lacks one.
+ * Reattaches the `---` fences around a verbatim frontmatter block, applying the
+ * file's resolved line ending to the fences (so a CRLF file round-trips
+ * faithfully — 1.2) and appending a trailing newline after the body when it
+ * lacks one. `eol` is resolved by `detectFrontmatterEol` so the gateway-threaded
+ * `options.eol` and the single-line-FM fallback (A8-M1) both apply here too.
  */
-function emitWithRawFrontmatter(bomPrefix: string, rawFrontmatter: string, body: string): string {
-  const nl = rawFrontmatter.includes('\r\n') ? '\r\n' : '\n';
-  const trailing = body.length === 0 || body.endsWith('\n') ? '' : '\n';
-  return `${bomPrefix}---${nl}${rawFrontmatter}${nl}---${nl}${body}${trailing}`;
+function emitWithRawFrontmatter(
+  bomPrefix: string,
+  rawFrontmatter: string,
+  body: string,
+  eol: '\r\n' | '\n',
+): string {
+  const trailing = body.length === 0 || body.endsWith('\n') ? '' : eol;
+  return `${bomPrefix}---${eol}${rawFrontmatter}${eol}---${eol}${body}${trailing}`;
+}
+
+/**
+ * H2 (Audit-7) — the file's line ending for the dirty-frontmatter emit path.
+ * `patchFrontmatterSourceCst` normalises the FM source to LF (its docstring says
+ * the caller re-applies the file's ending), so the dirty branch must restore it
+ * or a CRLF file's metadata edit silently flips its frontmatter to LF.
+ *
+ * A8-M1 — prefer the file's REAL eol when the gateway threaded it from the
+ * hydrate read (`options.eol`). The detection fallback below is for callers that
+ * don't supply it (new-file creation → LF). The previous detection short-
+ * circuited on a truthy `originalFrontmatter || rawFrontmatter`, but a SINGLE-
+ * line frontmatter source (`title: x`) carries no internal `\r\n`, so a CRLF
+ * file with one-line FM was mis-detected as LF — fences/FM emitted LF while the
+ * body stayed CRLF (mixed), or the whole file flipped LF when an editor edit
+ * dirtied the FM. Fix: treat the file as CRLF if ANY captured source — the
+ * baseline FM, the verbatim FM, or the body — carries a `\r\n`, instead of
+ * letting a one-line FM short-circuit the CRLF-bearing body.
+ */
+function detectFrontmatterEol(options: AssembleMarkdownOptions, body: string): '\r\n' | '\n' {
+  if (options.eol) return options.eol;
+  if (
+    options.originalFrontmatter?.includes('\r\n') ||
+    options.rawFrontmatter?.includes('\r\n') ||
+    body.includes('\r\n')
+  ) {
+    return '\r\n';
+  }
+  return '\n';
 }
 
 /**
@@ -375,9 +456,23 @@ export function assembleMarkdownFile(
     fm.id = options.contentId;
   }
 
+  // 1.1 — preserve a present-but-empty key that already exists on disk. Such a
+  // key (`aliases:`, `cssclasses:`, a bare `subtitle:`) parses to `null`;
+  // dropping it here would make the CST engine below see it as DELETED and
+  // splice the line out, silently erasing a key the user kept whenever an
+  // UNRELATED field is edited (Finding #2). So only drop a null/undefined value
+  // when its key is NOT in the disk baseline — a genuinely cleared / never-
+  // persisted key we must not write back as a bare `key:`. `undefined` (never a
+  // YAML value) is always dropped; a baseline `null` is kept as-is so the engine
+  // byte-preserves the original empty-key line.
+  const baselineKeys = options.originalFrontmatter
+    ? frontmatterSourceKeys(options.originalFrontmatter)
+    : null;
   for (const key of Object.keys(fm)) {
     const v = fm[key];
-    if (v === undefined || v === null) delete fm[key];
+    if (v !== undefined && v !== null) continue;
+    if (v === null && baselineKeys?.has(key)) continue;
+    delete fm[key];
   }
 
   const bomPrefix = options.bom ? '﻿' : '';
@@ -387,9 +482,11 @@ export function assembleMarkdownFile(
 
   // 1.2 — clean body-only save: the frontmatter object is unchanged since it
   // was parsed, so emit the original bytes verbatim (comments, key order, and
-  // line endings preserved) rather than re-dumping the object.
+  // line endings preserved) rather than re-dumping the object. A8-M1 — the
+  // fences honour the file's real eol (gateway-threaded or detected incl. the
+  // body), closing the single-line-FM hole that flipped CRLF fences to LF.
   if (options.frontmatterDirty === false && rawHasContent) {
-    return emitWithRawFrontmatter(bomPrefix, rawFrontmatter, body);
+    return emitWithRawFrontmatter(bomPrefix, rawFrontmatter, body, detectFrontmatterEol(options, body));
   }
 
   if (objectHasKeys) {
@@ -401,21 +498,58 @@ export function assembleMarkdownFile(
     const patched = options.originalFrontmatter
       ? patchFrontmatterSourceCst(options.originalFrontmatter, fm)
       : null;
+    // 1.5 — the engine refused a PRESENT on-disk block (`patched === null` with a
+    // baseline in hand). When that refusal is because the block is genuinely
+    // UNPARSEABLE (malformed YAML: tabs, duplicate keys, a stray `---`), a full
+    // dump of the live object would DISCARD the broken-but-present block — total
+    // frontmatter loss (Finding #4). Refuse the metadata edit instead: keep the
+    // raw bytes verbatim (the body still saves). The dropped edit is the safe
+    // trade — the user's existing YAML is never destroyed.
+    //
+    // A refusal on VALID YAML (a flow-mapping root, an anchor/alias on a touched
+    // key — L27, or a non-mapping root) keeps the long-standing dump fallback:
+    // there the dump preserves the data (or replaces a block the app never read
+    // as metadata). `frontmatterSourceParses` is false only for a true parse
+    // failure, so the keep-raw path is scoped to exactly the data-loss case.
+    const original = options.originalFrontmatter;
+    if (
+      patched === null &&
+      original &&
+      original.trim().length > 0 &&
+      !frontmatterSourceParses(original)
+    ) {
+      console.warn(
+        '[markdownSync] Refusing to overwrite unparseable frontmatter; metadata edit not applied. Fix the YAML on disk to re-enable property writes.',
+      );
+      // Audit-11 N1 — surface the dropped edit to the user (the gateway wires a
+      // toast). Without this the metadata change vanished as a silent success.
+      options.onFrontmatterRefused?.();
+      return emitWithRawFrontmatter(bomPrefix, original, body, detectFrontmatterEol(options, body));
+    }
     // Phase 6.3 / D3 — the full-dump fallback (new file with no baseline, or a
     // block the engine refused) serialises with the `yaml` package too, so the
     // whole module is single-parser. A new file has no source to preserve, so the
     // dump is lossless; `lineWidth: 0` disables folding (matching the prior
     // `js-yaml` `lineWidth: -1`).
     const yamlText = patched ?? new Document(fm).toString({ lineWidth: 0 }).trimEnd();
-    const trailing = body.endsWith('\n') ? '' : '\n';
-    return `${bomPrefix}---\n${yamlText}\n---\n${body}${trailing}`;
+    // H2 (Audit-7) — re-apply the file's line ending to the FM block + fences.
+    // The CST engine emits LF (and so does the dump fallback); hard-coding `\n`
+    // here flipped a CRLF file's frontmatter to LF on every metadata edit —
+    // a permanently mixed file (CRLF body + LF FM via the Properties popup, which
+    // sources `body` from diskBody verbatim), or a whole-file CRLF→LF flip when
+    // an editor edit also dirtied the FM (tiptap bodies are already LF). The body
+    // keeps its own endings; we only re-apply eol to the parts THIS function emits.
+    const eol = detectFrontmatterEol(options, body);
+    const fmBlock = `---\n${yamlText}\n---\n`.replace(/\n/g, eol);
+    const trailing = body.endsWith('\n') ? '' : eol;
+    return `${bomPrefix}${fmBlock}${body}${trailing}`;
   }
 
   // 1.1 safety net — the parsed object is empty but the source HAD a
   // frontmatter block (unparseable / non-object YAML). Never drop a fence we
   // couldn't parse: write the raw block back untouched.
   if (rawHasContent) {
-    return emitWithRawFrontmatter(bomPrefix, rawFrontmatter, body);
+    return emitWithRawFrontmatter(bomPrefix, rawFrontmatter, body, detectFrontmatterEol(options, body));
   }
 
   // Genuinely no frontmatter.

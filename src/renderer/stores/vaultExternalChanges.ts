@@ -10,17 +10,17 @@ import { classifyExternalChange } from '../lib/vault/conflictResolver';
 import { normalizeTags } from '../lib/vault/frontmatterSync';
 import { assembleMarkdownFile } from '../lib/editor/markdownSync';
 import { reportError } from '../lib/utils/errorBus';
-import { isPathPending } from '../lib/boards/boardSaver';
-import { cancelFrontmatterWrite } from '../lib/boards/frontmatterWriteScheduler';
+import { isPathPending, isRecentSelfWrite } from '../lib/boards/boardSaver';
+import { cancelFrontmatterWrite, dropPendingDelta } from '../lib/boards/frontmatterWriteScheduler';
 import { invokeOk } from '../lib/utils/invokeOk';
 import {
-  flushAllMarkdownWrites,
   forceWriteForDocument,
   markHydrated,
   cancelMarkdownWrite,
   setExternalEditPromptHandler,
 } from '../lib/vault/markdownFileWriter';
 import { setBoardExternalEditHandler } from '../lib/boards/boardWriteScheduler';
+import { noteBaseline } from '../lib/vault/fileBaselineRegistry';
 import {
   isPropertiesPopupDirty,
   getDirtyInstancesForPath,
@@ -37,6 +37,7 @@ import {
   withDrainedWrites,
 } from '../lib/vault/vaultOperations';
 import { writeMarkdownAndReconcile } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
+import { dropStaleSeededFrontmatterCache } from '../lib/vault/staleSeededFrontmatter';
 import { registerPathRenamable, renameAllPathKeys } from '../lib/vault/renamePathKeys';
 import {
   captureVaultIdentity,
@@ -92,12 +93,39 @@ const PROMPT_AGGREGATION_THRESHOLD = 5;
 export function makeExternalChangesSlice(ctx: VaultContext) {
   return {
     async handleExternalMarkdownChanges(relPaths: string[]): Promise<void> {
+      // Audit-7 L15 — single self-write authority. Every entry path lands here
+      // (the batched-reconciler bridge, the partial-read-retry timer that
+      // re-invokes this handler directly), so filtering our own recent writes
+      // once at the top keeps the timer path from reclassifying a self-written
+      // file as an external edit. The bridge no longer pre-filters this list.
+      const paths = relPaths.filter((p) => !isRecentSelfWrite(p));
+      if (paths.length === 0) return;
+      // A8-H2(a) (Audit-8) — capture vault identity BEFORE the first await, so
+      // the post-`applyChanges` guard below can bail if a swap lands during
+      // `whenBuildComplete()` / `applyChanges()` (or a retry timer re-entry).
+      // Without it, this vault's classification is applied to the NEW vault's
+      // same-named file. Mirrors the G1 discipline in vaultExternalReconcilers.
+      const identity = captureVaultIdentity();
+      // Audit-7 L14 — a full index rebuild clears the index synchronously then
+      // re-reads in chunks; for that window getMetadata returns null, and a
+      // null previousByPath routes a dirty-editor change to prompt-user (a
+      // spurious "modified externally" toast). Wait for the rebuild so previous
+      // reflects rebuilt metadata, not the mid-clear hole (the recovery
+      // sequencer already gates on whenBuildComplete the same way).
+      if (vaultIndexStore.isBuilding) {
+        await vaultIndexStore.whenBuildComplete();
+      }
       const previousByPath = new Map<VaultPath, FileMetadata | null>();
-      for (const rel of relPaths) {
+      for (const rel of paths) {
         previousByPath.set(vaultPath(rel), vaultIndexStore.getMetadata(rel));
       }
 
-      await vaultIndexStore.applyChanges(relPaths);
+      await vaultIndexStore.applyChanges(paths);
+      // A8-H2(a) — bail if a swap landed during the awaits above, before any
+      // sink runs (cross-vault tags to disk, a board into the wrong cache, an
+      // editor clobbered). The per-file loop below is synchronous, so this is
+      // the only suspension boundary that needs the re-check.
+      if (!isStillSameVault(identity)) return;
 
       // Phase 31 B2.1 — collect prompt-user changes so we can decide
       // whether to push per-file toasts or one aggregate toast. A bulk
@@ -107,7 +135,7 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
       // action plus a list of affected files.
       const pendingPrompts: PendingPrompt[] = [];
 
-      for (const rel of relPaths) {
+      for (const rel of paths) {
         const relKey = vaultPath(rel);
         const next = vaultIndexStore.getMetadata(rel);
         const previous = previousByPath.get(relKey) ?? null;
@@ -172,6 +200,21 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
             // next body-only save's diff would re-emit the externally-
             // changed key and lose any inline YAML comment on that key.
             if (editorDoc) documentStore.setFrontmatter(editorDoc.docId, next.frontmatter, next.rawFrontmatter);
+            // Phase 2 / 2.1 — the line above only refreshes an OPEN editor's FM
+            // cache; a seeded-but-not-open Kanban card / Task row backed by `rel`
+            // would otherwise keep a stale cache and revert this external edit on
+            // its next field write. Drop it so the next seed re-reads fresh disk.
+            dropStaleSeededFrontmatterCache(rel);
+            // A8-M2 — re-stamp the per-file drift baseline to the post-sync
+            // (mtime, size). The sibling reload-silently branch threads the same
+            // {mtimeMs, size} into handleExternalChange (→ noteBaseline) for
+            // exactly this reason; sync-frontmatter never reloads the body, so it
+            // must re-anchor the baseline itself. Without it the stale baseline
+            // makes the NEXT in-app save's pre-write drift check fire a false
+            // "modified externally" prompt the user can mis-answer with Reload
+            // (losing a keystroke). Per-file (keyed the way the gateway's
+            // getBaseline reads it), so it applies whether or not an editor is open.
+            noteBaseline(rel, next.lastModified, next.rawByteSize);
             // Phase A.2b — only true external edits invalidate undo. The
             // classifier returns sync-frontmatter for two reasons:
             //   - 'frontmatter-only' — a real external metadata edit; its
@@ -208,6 +251,7 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
                 next.content,
                 editorDoc.richText,
                 next.frontmatter,
+                { mtimeMs: next.lastModified, size: next.rawByteSize },
               );
               promptReloadRecoveryIfSuspicious(
                 rel,
@@ -218,6 +262,11 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
                 next.content,
               );
             }
+            // Phase 2 / 2.1 — same stale-cache drop as the sync-frontmatter
+            // branch: a seeded-but-not-open card/row backed by `rel` isn't
+            // covered by the `if (editorDoc)` reload above, so clear it and let
+            // the next field edit re-seed from fresh disk.
+            dropStaleSeededFrontmatterCache(rel);
             // M25 — external body replaced our in-memory snapshot, so any
             // local undo command whose inverse depends on the prior body
             // (text-tile edits, frontmatter patches) may no longer round-trip.
@@ -550,6 +599,41 @@ async function runExternalRenameCascade(
   const changedBoardIds = boardStore.propagateRename(oldRel, newRel);
   fileTagsStore.renameFile(oldRel, newRel);
   fileTagsStore.renameFolder(oldRel, newRel);
+  // Audit-7 L17 — capture the OUTGOING vault root and lay the rename-cascade
+  // breadcrumb HERE, before the tag-flush await + the post-flush
+  // isStillSameVault bail below. propagateRename already mutated the in-memory
+  // board cache; if a vault swap lands during that flush, the bail discards the
+  // cache while the on-disk `.board.json` still holds the OLD path — so without
+  // an early breadcrumb the outgoing vault's cascade is abandoned with no retry.
+  // Only when propagateRename actually touched a board: the defaultFolder
+  // rewrite + index/doc/activeRoot edits all run AFTER the bail, so a swap can't
+  // have applied them (nothing to recover there). The no-swap path reuses this
+  // id below and never double-writes.
+  const vaultRoot = ctx.getVaultPath();
+  let sentinelId: string | null = null;
+  if (
+    (changedBoardIds.length > 0 || renamedBoardIds.length > 0) &&
+    vaultRoot &&
+    oldRel &&
+    newRel
+  ) {
+    try {
+      sentinelId = await writePendingRenameCascade(vaultRoot, {
+        oldPath: oldRel,
+        newPath: newRel,
+        // A9-L9 — include renamed boards (own .board.json moved), not just
+        // reference-changed boards, so the breadcrumb names the full set.
+        affectedBoardIds: [...new Set([...changedBoardIds, ...renamedBoardIds])],
+        tagsAffected: true,
+      });
+    } catch (err) {
+      reportError(
+        'vault.handleRename.sentinel',
+        err,
+        "Couldn't record a rename-recovery sentinel for the external rename — the cascade will proceed without crash protection",
+      );
+    }
+  }
   // F3 (2026-05-28) — persist the tag-membership rename synchronously rather
   // than leaving it on the 300ms misc debounce. A crash after the awaited
   // board flush below but before that debounce fired would leave
@@ -581,9 +665,10 @@ async function runExternalRenameCascade(
       "Couldn't persist the tag-membership rename during the external rename; the recovery sentinel will re-assert it on next vault open.",
     );
   }
-  // G1 — re-check after the `flushPendingSave` await above: a swap there
-  // would make `ctx.getVaultPath()` below resolve to the NEW vault, and we'd
-  // write a rename-cascade sentinel for the OLD rename into it.
+  // G1 — re-check after the `flushPendingSave` await above: a swap there means
+  // the index/doc/activeRoot/defaultFolder mutations below would corrupt the
+  // NEW vault with the OLD rename paths. The cascade breadcrumb is already
+  // written above against the captured outgoing `vaultRoot` (Audit-7 L17).
   if (captured && !isStillSameVault(captured)) return;
   // Sprint B / B9 — rebind vault search to the new path immediately.
   // Exact-match handles the file-rename case; the loop handles the
@@ -600,7 +685,7 @@ async function runExternalRenameCascade(
   const openDoc = documentStore.findByFilename(oldRel);
   if (openDoc) documentStore.updateFilename(openDoc.docId, newRel);
 
-  const vaultRoot = ctx.getVaultPath();
+  // Audit-7 L17 — `vaultRoot` was captured before the tag-flush bail above.
   const project = ctx.getProject();
   if (project?.settings.general) {
     const currentRoot = project.settings.general.activeRootFolder ?? '';
@@ -673,8 +758,12 @@ async function runExternalRenameCascade(
     return;
   }
 
-  let sentinelId: string | null = null;
-  if (vaultRoot && oldRel && newRel) {
+  // Audit-7 L17 — write the board-cascade sentinel here ONLY if the early
+  // breadcrumb (before the tag-flush bail) wasn't already laid down. The early
+  // write covers the propagateRename cache mutation (changed/renamed boards);
+  // this late write covers the case where ONLY the defaultFolder pin changed
+  // (computed after the bail, so it can't appear in the early breadcrumb).
+  if (sentinelId === null && vaultRoot && oldRel && newRel) {
     try {
       sentinelId = await writePendingRenameCascade(vaultRoot, {
         oldPath: oldRel,
@@ -846,11 +935,17 @@ function promptBulkExternalChanges(prompts: PendingPrompt[], ctx: VaultContext):
               // handler in `promptModifiedFile` mirrors this trio.
               boardStore.applyFrontmatterToBackedTiles(p.rel, p.next);
               fileTagsStore.setFileTags(p.rel, normalizeTags(p.next.frontmatter.tags));
+              // Audit-11 EER-1 — discard any armed field delta BEFORE the reload,
+              // else applyReloadFromDisk's flushAllPendingFrontmatterWrites would
+              // re-apply the discarded edit to fresh disk and revert this reload.
+              dropPendingDelta(p.rel);
               documentStore.applyReloadFromDisk(
                 p.editorDoc.docId,
                 p.next.content,
                 p.editorDoc.richText,
                 p.next.frontmatter,
+                undefined,
+                { mtimeMs: p.next.lastModified, size: p.next.rawByteSize },
               );
               // Sprint C / C.1 — for popup-dirty entries also cancel any
               // pending gateway writes from the dirty popup(s) so a late
@@ -878,9 +973,15 @@ function promptBulkExternalChanges(prompts: PendingPrompt[], ctx: VaultContext):
         handler: () => {
           for (const p of prompts) {
             if (p.kind === 'modified') {
-              // Mark dirty so the next writer flush pushes local content
-              // back to disk over the external edit.
+              // H3 (Audit-7) — mirror the single-file Keep-local path
+              // (promptModifiedFile). The previous `flushAllMarkdownWrites` drains
+              // only armed timers — never `forceWriters` — so a doc whose 300ms
+              // debounce already fired wrote nothing and the external bytes
+              // survived "keep mine". markDirty first (so a concurrent reactive
+              // reload can't undo the body), then `forceWriteForDocument` commits
+              // the live editor body even with no armed debounce.
               documentStore.markDirty(p.editorDoc.docId);
+              void forceWriteForDocument(p.editorDoc.docId);
             } else {
               // Phase B / B.5 — pass the snapshot captured at toast-open
               // so a parallel unload between then and now doesn't drop
@@ -888,12 +989,6 @@ function promptBulkExternalChanges(prompts: PendingPrompt[], ctx: VaultContext):
               void recreateDeletedFile(p.rel, p.editorDoc, ctx, deletedSnapshots.get(p.editorDoc.docId));
             }
           }
-          // Drain every armed markdown writer so the user's Keep-all
-          // choice lands on disk immediately — without this, the next
-          // external edit could race the still-pending debounce and
-          // re-trigger the same prompt. Matches the per-doc Keep-local
-          // handler in documentStore.handleExternalChange.
-          void flushAllMarkdownWrites();
         },
       },
       {
@@ -1014,11 +1109,15 @@ function promptPartialReadExhausted(rel: string): void {
             // markdown writer drops its outstanding scheduled write
             // (the writer self-disarms when the doc transitions to
             // clean).
+            // Audit-11 EER-1 — also drop the FM field delta (separate accumulator).
+            dropPendingDelta(rel);
             documentStore.applyReloadFromDisk(
               editorDoc.docId,
               next.content,
               editorDoc.richText,
               next.frontmatter,
+              undefined,
+              { mtimeMs: next.lastModified, size: next.rawByteSize },
             );
           }
         },
@@ -1111,15 +1210,34 @@ function promptModifiedFile(
     actions: [
       {
         label: 'Reload',
-        handler: () => {
+        // Async so a caller that awaits the action (the toast harness, tests)
+        // waits for the disk re-read + apply to land before continuing.
+        handler: async () => {
+          // Phase 3 / 3.4 — re-read the LATEST disk state at click time
+          // instead of replaying the `next` snapshot captured when the
+          // watcher event first fired. A SECOND external write landing
+          // between the toast appearing and the user's click would otherwise
+          // make "Reload from disk" apply the already-stale first-detection
+          // content. Mirrors the fresh-read Reload in
+          // `promptExternalEditOnSync`. If the file vanished in the gap, fall
+          // back to the captured `next` so the trio still has coherent bytes
+          // (the watcher's delete event handles a genuine removal separately).
+          await vaultIndexStore.applyChanges([rel]);
+          const fresh = vaultIndexStore.getMetadata(rel) ?? next;
           // Atomic trio — match the bulk Reload-all branch.
-          boardStore.applyFrontmatterToBackedTiles(rel, next);
-          fileTagsStore.setFileTags(rel, normalizeTags(next.frontmatter.tags));
+          boardStore.applyFrontmatterToBackedTiles(rel, fresh);
+          fileTagsStore.setFileTags(rel, normalizeTags(fresh.frontmatter.tags));
+          // Audit-11 EER-1 — drop the armed field delta so the reload's
+          // flushAllPendingFrontmatterWrites can't re-clobber disk with the
+          // edit the user just discarded.
+          dropPendingDelta(rel);
           documentStore.applyReloadFromDisk(
             editorDoc.docId,
-            next.content,
+            fresh.content,
             editorDoc.richText,
-            next.frontmatter,
+            fresh.frontmatter,
+            undefined,
+            { mtimeMs: fresh.lastModified, size: fresh.rawByteSize },
           );
         },
       },
@@ -1166,9 +1284,10 @@ function promptMarkdownPendingWriteConflict(
       {
         label: 'Reload',
         handler: () => {
-          // Cancel the still-armed local frontmatter write first; without
-          // this it would fire ~300 ms later and overwrite the disk version
-          // we're about to apply, defeating the user's Reload choice.
+          // Cancel the still-armed local frontmatter write AND drop its Phase-4
+          // field delta (Audit-11 EER-1) first; without this it would fire
+          // ~300 ms later (or via the reload's flush) and overwrite the disk
+          // version we're about to apply, defeating the user's Reload choice.
           cancelFrontmatterWrite(rel);
           boardStore.applyFrontmatterToBackedTiles(rel, next);
           fileTagsStore.setFileTags(rel, normalizeTags(next.frontmatter.tags));
@@ -1178,6 +1297,8 @@ function promptMarkdownPendingWriteConflict(
               next.content,
               editorDoc.richText,
               next.frontmatter,
+              undefined,
+              { mtimeMs: next.lastModified, size: next.rawByteSize },
             );
           }
         },
@@ -1414,12 +1535,16 @@ export function promptExternalEditOnSync(args: {
               }
               boardStore.applyFrontmatterToBackedTiles(path, next);
               fileTagsStore.setFileTags(path, normalizeTags(next.frontmatter.tags));
+              // Audit-11 EER-1 — drop the armed field delta on this discard-reload.
+              dropPendingDelta(path);
               if (editorDoc) {
                 documentStore.applyReloadFromDisk(
                   editorDoc.docId,
                   next.content,
                   editorDoc.richText,
                   next.frontmatter,
+                  undefined,
+                  { mtimeMs: next.lastModified, size: next.rawByteSize },
                 );
               }
               resolve('reload');

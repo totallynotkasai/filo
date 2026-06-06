@@ -190,6 +190,39 @@ describe('FileWatcher.reconcileNow', () => {
     expect(filesChanged.some((c) => c.filename === 'SelfWrite.md')).toBe(false);
   });
 
+  // Audit-10 M3 — a suppressed pass must NOT advance the snapshot past the
+  // suppressed path. If an EXTERNAL edit lands inside the suppression window,
+  // baking its bytes into the snapshot would mask it forever (next pass sees
+  // current === snapshot). Preserving the prior entry lets the change re-surface
+  // once suppression lifts.
+  it('re-surfaces an external change that landed during a suppressed window once suppression lifts (M3)', async () => {
+    const target = join(dir, 'SelfWrite.md');
+    await fs.writeFile(target, 'first', 'utf-8');
+    await watcher.reconcileNow({ seedOnly: true });
+
+    // Self-write suppresses the path; an EXTERNAL edit lands inside the window.
+    watcher.suppress('SelfWrite.md', 800);
+    await fs.writeFile(target, 'externally changed to a clearly different size', 'utf-8');
+    // Reconcile WHILE suppressed: the event is dropped this pass.
+    await watcher.reconcileNow();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    let filesChanged = sentEvents
+      .filter((e) => e.channel === 'vault:files-changed')
+      .flatMap((e) => e.payload[0] as Array<{ filename: string; type: string }>);
+    expect(filesChanged.some((c) => c.filename === 'SelfWrite.md')).toBe(false);
+
+    // Suppression lifts; the next pass re-diffs the preserved prior entry against
+    // the changed disk bytes and synthesises the missed change.
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    sentEvents.length = 0;
+    await watcher.reconcileNow();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    filesChanged = sentEvents
+      .filter((e) => e.channel === 'vault:files-changed')
+      .flatMap((e) => e.payload[0] as Array<{ filename: string; type: string }>);
+    expect(filesChanged.some((c) => c.filename === 'SelfWrite.md')).toBe(true);
+  });
+
   it('skips the entire `.filo/` subtree', async () => {
     await fs.mkdir(join(dir, '.filo'), { recursive: true });
     await fs.writeFile(join(dir, '.filo', 'app.json'), '{}', 'utf-8');

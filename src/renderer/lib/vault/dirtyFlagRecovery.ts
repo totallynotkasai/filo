@@ -67,6 +67,32 @@ export function flushDirtyFlagSentinel(): Promise<void> {
   return sentinelMutex.then(() => undefined, () => undefined);
 }
 
+/**
+ * Audit-8 L3 — a locked / read-only share (or a transient AV lock) makes the
+ * `.filo/.dirty` sentinel both unreadable AND unclearable, so `checkRecovery`
+ * would re-surface the same "sentinel-unreadable" forensic toast (+ snapshot)
+ * on EVERY vault open. Track which vault roots have already surfaced it this
+ * session and surface ONCE per vault per session. Keyed by `vaultRoot` so
+ * distinct vaults stay independent and an A→B→A swap doesn't re-nag. Module-
+ * scoped for the whole session; NOT cleared on swap (a re-opened same-path
+ * vault should stay quiet). The returned `RecoveryStatus` is unchanged — only
+ * the repeat toast/snapshot is suppressed, and the recovery modal already
+ * gates the `sentinel-unreadable` reason out, so suppression has no other
+ * downstream effect.
+ */
+const surfacedUnreadableSentinel = new Set<string>();
+
+function shouldSurfaceUnreadableSentinel(vaultRoot: string): boolean {
+  if (surfacedUnreadableSentinel.has(vaultRoot)) return false;
+  surfacedUnreadableSentinel.add(vaultRoot);
+  return true;
+}
+
+/** Test-only: clears the per-session unreadable-sentinel dedupe set. */
+export function __resetDirtyRecoveryDedupeForTests(): void {
+  surfacedUnreadableSentinel.clear();
+}
+
 export interface RecoveryStatus {
   needsRecovery: boolean;
   dirtyAt?: number;
@@ -198,21 +224,27 @@ export async function checkRecovery(vaultRoot: string): Promise<RecoveryStatus> 
     if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
       return { needsRecovery: false };
     }
-    reportError(
-      'dirtyFlag.check',
-      err,
-      "Couldn't read the crash-recovery sentinel — Filo can't verify the previous session shut down cleanly",
-    );
-    // Phase 31 A2.4 — defensive: copy the raw sentinel bytes into
-    // `.filo/recovery/<ts>/.dirty` before any session-side markDirty
-    // overwrites the file. The renderer-side read failed (likely EACCES
-    // or EBUSY) but the main-side `fs.copyFile` may still succeed if the
-    // lock was momentary, or if the user can chmod the file later.
-    // allow-envelope-bare: defensive best-effort snapshot — the user already
-    // got an explicit toast (`dirtyFlag.check` reportError above); if the
-    // snapshot ALSO fails we don't want to escalate.
-    void window.filo.invoke('recovery:snapshot', vaultRoot, DIRTY_SENTINEL_PATH)
-      .catch(() => { /* best-effort; user already saw the toast above */ });
+    // Audit-8 L3 — surface the forensic toast + snapshot only on the FIRST
+    // unreadable open for this vault this session (see
+    // `surfacedUnreadableSentinel`); a read-only share can't self-heal, so an
+    // unguarded toast nags on every open.
+    if (shouldSurfaceUnreadableSentinel(vaultRoot)) {
+      reportError(
+        'dirtyFlag.check',
+        err,
+        "Couldn't read the crash-recovery sentinel — Filo can't verify the previous session shut down cleanly",
+      );
+      // Phase 31 A2.4 — defensive: copy the raw sentinel bytes into
+      // `.filo/recovery/<ts>/.dirty` before any session-side markDirty
+      // overwrites the file. The renderer-side read failed (likely EACCES
+      // or EBUSY) but the main-side `fs.copyFile` may still succeed if the
+      // lock was momentary, or if the user can chmod the file later.
+      // allow-envelope-bare: defensive best-effort snapshot — the user already
+      // got an explicit toast (`dirtyFlag.check` reportError above); if the
+      // snapshot ALSO fails we don't want to escalate.
+      void window.filo.invoke('recovery:snapshot', vaultRoot, DIRTY_SENTINEL_PATH)
+        .catch(() => { /* best-effort; user already saw the toast above */ });
+    }
     return { needsRecovery: true, reason: 'sentinel-unreadable' };
   }
   if (!content) {
@@ -223,6 +255,25 @@ export async function checkRecovery(vaultRoot: string): Promise<RecoveryStatus> 
     // as a sentinel-unreadable EACCES so the recovery UI surfaces the
     // "investigate manually" copy. No `dirtyAt` available — that's the
     // signal the recovery handler uses to detect the truncated case.
+    //
+    // Audit-7 M4 — the `sentinel-unreadable` reason is GATED OUT of the
+    // recovery modal in `openVault` (`reason !== 'sentinel-unreadable'`), so
+    // without a toast here the strongest mid-write-crash signal (the exact
+    // case 6.4.M5 added) reached neither the modal nor any notification. Emit
+    // a `reportError` so it routes through the same errorBus toast the EACCES
+    // branch above uses — the user at least learns the previous session may
+    // not have shut down cleanly.
+    //
+    // Audit-8 L3 — on a writable volume `markClean` deletes the sentinel on the
+    // next edit/close so this surfaces once anyway, but a read-only share can't
+    // clear it; the per-session/per-vault guard keeps the repeat quiet there too.
+    if (shouldSurfaceUnreadableSentinel(vaultRoot)) {
+      reportError(
+        'dirtyFlag.check',
+        new Error('zero-byte .filo/.dirty sentinel (truncated mid-write)'),
+        "Filo found a truncated crash-recovery sentinel — it can't verify the previous session shut down cleanly. Check whether any recent edits are missing.",
+      );
+    }
     return { needsRecovery: true, reason: 'sentinel-unreadable' };
   }
   try {

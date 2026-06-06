@@ -180,6 +180,13 @@ export function makeFileDropHandler(deps: FileDropDeps): FileDropHandler {
       conventionFolderOverride: folder,
     });
 
+    // Audit-12 H1 (parity) — pin the explicit `filePath` onto the def before
+    // AddTaskCommand deep-clones it. buildTextTileDefFromMarkdownFile only stamps
+    // filePath when the drop sits OUTSIDE the board's convention folder; an
+    // at-convention drop is left to the cascade fallback, which a later
+    // default-folder/vault-root change can diverge. `relPath` is the file we just
+    // wrote, so stamp it unconditionally (a no-op when the helper already set it).
+    (def as Record<string, unknown>).filePath = relPath;
     const insertPos = computeInsertPos(realTargetId, clientY);
     historyStore.execute(new AddTaskCommand(board.id, def, insertPos));
     if (def.tags && def.tags.length > 0) {
@@ -281,6 +288,10 @@ export function makeFileDropHandler(deps: FileDropDeps): FileDropHandler {
       conventionFolderOverride: getActiveContentFolder(board),
     });
 
+    // Audit-12 H1 (parity) — see importOsMarkdownFile: pin the explicit filePath
+    // onto the def pre-clone so a cold field/tag edit on this subfolder task
+    // resolves to the real file even if the folder cascade later diverges.
+    (def as Record<string, unknown>).filePath = relPath;
     const insertPos = computeInsertPos(realTargetId, e.clientY);
 
     historyStore.execute(new AddTaskCommand(board.id, def, insertPos));

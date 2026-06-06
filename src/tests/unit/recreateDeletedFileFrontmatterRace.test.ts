@@ -29,6 +29,7 @@ import { uiStore } from '@renderer/stores/ui.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import type { VaultContext } from '@renderer/stores/vaultStoreTypes';
+import { __clearRecentSelfWritesForTests } from '@renderer/lib/boards/writeStateTracking';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 function clearToasts(): void {
@@ -46,6 +47,10 @@ describe('recreateDeletedFile — frontmatter race (Phase B.5)', () => {
     documentStore.clear();
     vaultIndexStore.clear();
     clearToasts();
+    // Audit-7 L15 — handleExternalMarkdownChanges now filters recent self-writes
+    // internally; clear the registry so a prior test's recreate write doesn't
+    // suppress the next test's external-delete reconcile.
+    __clearRecentSelfWritesForTests();
     vaultStore.setPath('/vault');
 
     ctx = {

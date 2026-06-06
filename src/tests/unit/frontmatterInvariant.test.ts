@@ -749,16 +749,19 @@ describe('frontmatter object-patch invariant — set / delete / add op matrix (A
     expect(out).not.toBeNull();
     expect(out, 'trailing comment dropped').toContain('# trailing note');
   });
-  it('a STANDALONE comment documenting a key survives that key being DELETED (gap kept verbatim)', () => {
-    const src = 'title: Note\n# doc for count\ncount: 3';
-    // Delete `count`; the comment in the gap above it is still emitted (it
-    // conventionally documents the key below, so the gap is always preserved).
-    const out = patchFrontmatterSourceCst(src, { title: 'Note' });
+  it('a comment documenting a DELETED key drops with it (L4 — not relocated onto a survivor)', () => {
+    // `# doc for foo` documents `foo`; deleting `foo` removes the comment with it
+    // rather than migrating it onto `baz` (which it never documented). A
+    // SURVIVING key's comment is untouched — covered by the sibling-edit cases
+    // above; this asserts only the deleted-key relocation that L4 closes.
+    const src = 'title: Note\n# doc for foo\nfoo: bar\nbaz: qux';
+    const out = patchFrontmatterSourceCst(src, { title: 'Note', baz: 'qux' });
     expect(out).not.toBeNull();
-    expect(out, 'comment above a deleted key was dropped').toContain('# doc for count');
+    expect(out, 'deleted key’s comment migrated to a surviving key').not.toContain('# doc for foo');
     const re = parseFm(out!);
     expect(re).not.toBeNull();
-    expect('count' in re!, 'count should be deleted').toBe(false);
+    expect('foo' in re!, 'foo should be deleted').toBe(false);
+    expect(re!.baz, 'surviving key value preserved').toBe('qux');
   });
 
   // "Set a value on key K for EVERY key" (the op the original corpus lacked):

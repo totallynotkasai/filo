@@ -156,6 +156,15 @@ const CONFIG_SENTINEL_PATHS = [
   '.filo/workspace.json',
 ] as const;
 
+/**
+ * Audit-7 L3 — backoff schedule (ms) for retrying a transient `config:load-all`
+ * whole-folder read failure. ~1.45 s worst case, and ONLY on the failure path
+ * (a successful first read adds zero latency). Kept short so vault-open latency
+ * stays acceptable while still riding out the sub-second OneDrive/AV locks that
+ * are the common cause.
+ */
+const CONFIG_LOAD_RETRY_DELAYS_MS = [150, 400, 900] as const;
+
 interface RawConfigs {
   app: Record<string, unknown>;
   appearance: Record<string, unknown>;
@@ -180,10 +189,19 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
   await invokeOk('vault:init-config', newVaultPath);
 
   // ── 1. Read & classify `.filo/*.json` configs ────────────────────
-  const rawConfigs = await window.filo.invoke('config:load-all', newVaultPath) as
-    | Record<string, unknown>
-    | null
-    | undefined;
+  // Audit-7 L3 — a transient whole-folder read failure (OneDrive/AV lock at
+  // the instant of open) resolves to a `__loadAllFailed`-tagged bag, which
+  // pauses EVERY config write for the WHOLE session (see the `__loadAllFailed`
+  // branch below). `config:load-all` is a pure read, so retry it a few times
+  // with short backoff BEFORE giving up: a momentary lock usually clears within
+  // a second, and a successful retry loads the REAL configs so writes never
+  // pause. Doing this at LOAD time (pre-commit) is the safe cure — resuming
+  // writes post-commit would stamp the bootstrap-default in-memory settings
+  // over the intact-but-was-locked files on disk. Only a persistent failure
+  // falls through to the pause-and-warn path.
+  const rawConfigs = await loadAllConfigsWithRetry(
+    () => window.filo.invoke('config:load-all', newVaultPath),
+  ) as Record<string, unknown> | null | undefined;
   // Defensive: if the IPC returned null/undefined or a non-object (e.g.
   // a partial read on a corrupted .filo/), fall back to an empty bag so
   // every subsequent `.app` / `.appearance` lookup hits the `?? {}` arm.
@@ -517,6 +535,40 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Audit-7 L3 — true when `config:load-all` tagged the bag with a top-level
+ * read failure (`board.ipc.ts` returns the all-empty bag + `__loadAllFailed`
+ * string rather than rejecting). Per-file `__corrupt` sentinels are NOT this —
+ * those are genuine parse errors handled per-file below, not a transient lock.
+ */
+export function isConfigLoadAllFailed(bag: unknown): boolean {
+  return (
+    !!bag &&
+    typeof bag === 'object' &&
+    typeof (bag as { __loadAllFailed?: unknown }).__loadAllFailed === 'string'
+  );
+}
+
+/**
+ * Audit-7 L3 — reads `config:load-all` with bounded retry on a transient
+ * whole-folder failure. Returns the first non-`__loadAllFailed` bag, or the
+ * last failed bag once the backoff schedule is exhausted (caller then takes
+ * the pause-and-warn path). `loadOnce`/`sleep` are injectable so this is unit-
+ * testable without a real IPC bridge or wall-clock delays.
+ */
+export async function loadAllConfigsWithRetry(
+  loadOnce: () => Promise<unknown>,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+  delays: readonly number[] = CONFIG_LOAD_RETRY_DELAYS_MS,
+): Promise<unknown> {
+  let bag = await loadOnce();
+  for (let i = 0; i < delays.length && isConfigLoadAllFailed(bag); i++) {
+    await sleep(delays[i]);
+    bag = await loadOnce();
+  }
+  return bag;
+}
 
 function pickObject(configs: Record<string, unknown>, key: string): Record<string, unknown> {
   const v = configs[key];

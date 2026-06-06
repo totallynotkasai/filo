@@ -12,6 +12,7 @@ import { documentStore } from '@renderer/stores/document.svelte';
 import {
   registerForceWriter,
   scheduleMarkdownWrite,
+  runSerializedMarkdownWrite,
   __resetMarkdownFileWriterForTests,
   type WriteArgs,
 } from '@renderer/lib/vault/markdownFileWriter';
@@ -175,6 +176,46 @@ describe('ReplaceAllCommand — atomicity', () => {
     await historyStore.undo();
     expect(filesystem['a.md']).toBe('# A\nhello frodo and frodo again');
     expect(filesystem['b.md']).toBe('# B\nfrodo elsewhere');
+  });
+
+  it('Audit-10 M1 — serialises behind an in-flight write to the same .md path', async () => {
+    // A debounced TextTile / DocumentEditor save can be executing at the IPC
+    // layer when Replace All fires its own direct write to the SAME file. The
+    // fix enrols the bulk write on the per-path chain so it ORDERS behind that
+    // in-flight write instead of racing it (OS-arbitrated order, loser's bytes
+    // lost). Here we hold the chain for `a.md` with a gated write and prove
+    // Replace All's write does not land until the chain is released.
+    const filesystem: FileMap = { 'a.md': '# A\nfind frodo here' };
+    const { writes } = installFiloStub(filesystem);
+    vaultIndexStore.restoreMetadata('a.md', parseMarkdown('a.md', filesystem['a.md']));
+    boardCacheStore.hydrate(
+      { mm: makeMindMap('Board', 'mm', { ta: makeTextDef('ta', 'A', 'a.md') }) },
+      { mm: 'a.board.json' },
+    );
+    searchStore.setQuery('frodo');
+    searchStore.setReplaceText('sam');
+    expect(searchStore.matches.length).toBe(1);
+
+    // Occupy the per-path write chain for a.md with a gated op.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const occupant = runSerializedMarkdownWrite('a.md', () => gate);
+
+    // Kick off Replace All; its write must queue behind the occupant.
+    const replaceP = runReplaceAllCommand();
+    // Let microtasks/timers settle — with serialization the write has NOT fired.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(writes.some((w) => w.path === 'a.md')).toBe(false);
+    expect(filesystem['a.md']).toContain('frodo');
+
+    // Release the chain; the queued Replace All write now lands.
+    release();
+    await occupant;
+    await replaceP;
+    expect(writes.some((w) => w.path === 'a.md')).toBe(true);
+    expect(filesystem['a.md']).toContain('sam');
   });
 
   it('aborts when any file is unreadable (pre-flight failure → no writes)', async () => {

@@ -12,15 +12,22 @@
  * be an explicitly documented exemption. A delta command that can degenerate
  * then cannot ship without a test that would catch the no-op.
  *
- * "Round-trip covered" = some file under `src/tests/` BOTH constructs
- * `new <Class>(` AND contains `.execute(` AND `.undo(` (direct calls or via
- * `historyStore.execute(...)` / `historyStore.undo()`, both of which contain
- * the `.execute(` / `.undo(` substrings). Detection is FILE-level, matching the
- * established `commandTargetBoardCoverage.test.ts` / other ratchet scripts; a
- * command-focused test file that constructs several commands and round-trips
- * each satisfies it. (Call-site/data-flow scoping is the same hard problem L26
- * documents for `ci:md-writers-reconcile-editors`; file-level is the pragmatic,
- * zero-false-positive choice.)
+ * "Round-trip covered" = some test under `src/tests/` constructs `new <Class>(`
+ * AND, within a bounded forward window of that construction, contains BOTH
+ * `.execute(` AND `.undo(` (direct calls or via `historyStore.execute(...)` /
+ * `historyStore.undo()`, both of which contain those substrings).
+ *
+ * Audit-8 L5 — the window (`ROUNDTRIP_WINDOW` chars after `new <Class>(`)
+ * replaces the prior FILE-level scan, which marked a command "covered" if the
+ * file contained the three substrings ANYWHERE — so a command merely
+ * CONSTRUCTED as a fixture in a file that round-trips OTHER commands passed for
+ * free. The window keeps the zero-config, no-AST simplicity while requiring the
+ * execute+undo to actually sit next to the construction: a real round-trip
+ * (construct → execute → assert → undo) spans a few hundred chars, while a
+ * far-flung fixture construction no longer counts. Forward-only because you
+ * can't execute before you construct. Precise call-site/data-flow scoping is
+ * the same hard problem L26 documents for `ci:md-writers-reconcile-editors`;
+ * the window is the pragmatic middle ground.
  *
  * EXEMPT commands are either FULL before/after SNAPSHOT commands (store
  * before+after, apply `after` on execute and `before` on undo) and INVERSE-OP
@@ -111,11 +118,32 @@ if (classes.length < 30) {
   process.exit(1);
 }
 
+/**
+ * Audit-8 L5 — chars after a `new <Class>(` within which the round-trip's
+ * `.execute(` + `.undo(` must appear. A real construct → execute → assert →
+ * undo spans a few hundred chars; 1500 leaves generous headroom (e.g. the
+ * MoveCardsCommand neighbour-anchor test interleaves an intervening mutation
+ * between execute and undo) without spanning into an unrelated later test.
+ */
+const ROUNDTRIP_WINDOW = 1500;
+const EXEC_RE = /\.execute\s*\(/;
+const UNDO_RE = /\.undo\s*\(/;
+
 function isRoundTripped(name) {
-  const ctorRe = new RegExp(`\\bnew\\s+${name}\\s*\\(`);
-  return testTexts.some(
-    (t) => ctorRe.test(t) && /\.execute\s*\(/.test(t) && /\.undo\s*\(/.test(t),
-  );
+  const ctorRe = new RegExp(`\\bnew\\s+${name}\\s*\\(`, 'g');
+  for (const text of testTexts) {
+    ctorRe.lastIndex = 0;
+    let m;
+    while ((m = ctorRe.exec(text)) !== null) {
+      // Forward window from the construction — execute/undo always follow it.
+      const windowText = text.slice(m.index, m.index + ROUNDTRIP_WINDOW);
+      if (EXEC_RE.test(windowText) && UNDO_RE.test(windowText)) return true;
+      // A zero-width match can't happen here (the pattern ends in `(`), but
+      // guard lastIndex against the construct sitting at EOF anyway.
+      if (m.index === ctorRe.lastIndex) ctorRe.lastIndex++;
+    }
+  }
+  return false;
 }
 
 const uncovered = [];

@@ -153,3 +153,104 @@ describe('Audit-4 DI-03 — fast vault swap does not corrupt the new vault\'s ta
     }
   });
 });
+
+/**
+ * Audit-8 H2(b) — the post-commit prune guard must use the GENERATION-aware
+ * `isStillSameVault`, not the pre-fix `vaultPath !== newVaultPath` string
+ * compare. The A→B test above passes under BOTH (the path string differs), but
+ * a close→reopen of the SAME path is a new vault generation with an identical
+ * path string: the old check saw `'/vault/A' !== '/vault/A'` → false → did NOT
+ * bail, so the outgoing session's parked reconcile pruned the freshly-reopened
+ * session's tags. The generation token distinguishes the two sessions.
+ *
+ * Setup: the first open of `/vault/A` sees an EMPTY tree (so its captured
+ * `candidate.tree` lacks note.md) and parks its reconcile on a deferred. The
+ * vault is then reopened at the SAME path with note.md present (its own
+ * reconcile prunes nothing). Releasing the parked first reconcile, the pre-fix
+ * path-only guard would let it run `flattenTreePaths([], '/vault/A')` = ∅ and
+ * gut the reopened session's note.md tag.
+ *
+ * 🔍 Watch it fail first: revert the guard to `if (vaultPath !== newVaultPath)`
+ * and a `tags:save('/vault/A', { fileTags: {} })` lands here.
+ */
+describe('Audit-8 H2(b) — close→reopen same path bails via the generation guard', () => {
+  beforeEach(() => restoreFiloDefault());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    restoreFiloDefault();
+  });
+
+  it('does not let the outgoing session prune the reopened same-path vault\'s tags', async () => {
+    const tagsSaves: TagsSaveCall[] = [];
+
+    vi.spyOn(vaultIndexStore, 'rebuild').mockResolvedValue(undefined);
+    vi.spyOn(vaultIndexStore, 'allMetadata').mockReturnValue([]);
+
+    // Suspend ONLY the first open's reconcile so it resumes after the reopen.
+    const deferredFirst = makeDeferred();
+    let calls = 0;
+    vi.spyOn(boardCacheStore, 'applyFrontmatterToBackedTilesBatch').mockImplementation(
+      async () => {
+        calls += 1;
+        if (calls === 1) await deferredFirst.promise;
+      },
+    );
+
+    // The SAME path is opened twice; the tree it reports flips between opens so
+    // the parked first reconcile's captured tree (∅) differs from the reopen's.
+    let aTree: FileTreeNode[] = [];
+    const noteTagJson = JSON.stringify({
+      version: 1,
+      tags: { topic: { color: '#3a86ff', createdAt: 1 } },
+      fileTags: { 'note.md': ['topic'] },
+    });
+    installFiloMock({
+      'dialog:choice': async () => 1, // "Don't Save" — skip the flush prompt.
+      'vault:close': async () => ({ success: true }),
+      'vault:init-config': async () => ({ ok: true }),
+      'config:load-all': async () => ({}),
+      'board:list': async () => [],
+      'vault:read-tree': async () => ({ ok: true, tree: aTree }),
+      'theme:list': async () => [],
+      'theme:load': async () => null,
+      'tags:load': async () => noteTagJson,
+      'vault:read-file-text': async () => ({ ok: false, code: 'ENOENT', error: 'ENOENT' }),
+      'tags:save': async (root: unknown, snapshot: unknown) => {
+        const parsed = typeof snapshot === 'string' ? JSON.parse(snapshot) : {};
+        tagsSaves.push({
+          root: typeof root === 'string' ? root : '',
+          fileTags: parsed.fileTags ?? {},
+        });
+        return undefined;
+      },
+    });
+
+    // First open: empty tree → captured candidate.tree = []. Reconcile parks.
+    aTree = [];
+    expect(await vaultStore.openVault('/vault/A')).toBe(true);
+    await tick();
+    expect(calls).toBe(1);
+
+    // Reopen the SAME path with note.md present — a NEW generation, identical
+    // path string. Its own reconcile prunes nothing (note.md is in the tree).
+    aTree = [{ name: 'note.md', path: '/vault/A/note.md', isDirectory: false }];
+    expect(await vaultStore.openVault('/vault/A')).toBe(true);
+    await tick();
+    expect(vaultStore.path).toBe('/vault/A');
+
+    // Release the parked first reconcile. Its captured newVaultPath ('/vault/A')
+    // MATCHES the live path, so only the generation check can catch the swap.
+    deferredFirst.resolve();
+    await tick();
+    await flushAllMisc();
+    await tick();
+
+    // The generation guard bails before the stale prune, so no gutting save
+    // fires. Pre-fix (path-only) a `tags:save('/vault/A', { fileTags: {} })`
+    // — missing note.md — lands here.
+    const gutting = tagsSaves.filter(
+      (s) => s.root === '/vault/A' && !s.fileTags['note.md'],
+    );
+    expect(gutting).toEqual([]);
+  });
+});

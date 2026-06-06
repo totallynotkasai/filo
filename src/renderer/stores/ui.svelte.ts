@@ -384,18 +384,32 @@ export const uiStore = {
     };
     toasts = [...toasts, toast];
 
-    // Always schedule a dismissal. A positive duration is honoured (capped at
-    // the max lifetime); `0`/unset — the old "persistent" sentinel — now maps
-    // to the 15s cap so even decision toasts time out instead of lingering.
-    const lifetime =
-      toast.duration && toast.duration > 0
-        ? Math.min(toast.duration, TOAST_MAX_LIFETIME_MS)
-        : TOAST_MAX_LIFETIME_MS;
-    const timer = setTimeout(() => {
-      toastTimers.delete(id);
-      this.dismissToast(id);
-    }, lifetime);
-    toastTimers.set(id, timer);
+    // 1.6 — a genuinely-sticky ERROR (save failed, recovery-location hint,
+    // unflushed-bytes breadcrumb) must persist until the user dismisses it: the
+    // failure it reports outlives the 15s window, and the rich recovery hint is
+    // the only place the user learns WHERE their bytes are. So an error toast
+    // with no explicit positive duration gets NO auto-dismiss timer.
+    //
+    // Audit5 R3 is preserved: NON-error toasts — including the promise-backed
+    // external-edit decision warnings that pass `duration: 0` — still always
+    // auto-dismiss within the cap, so a re-firing prompt can't blanket the
+    // screen and a promise-backed toast can't strand its write. An error toast
+    // with an explicit positive duration (e.g. a 6s delete failure) still
+    // honours that duration.
+    const isStickyError = toast.type === 'error' && !(toast.duration && toast.duration > 0);
+    if (!isStickyError) {
+      // A positive duration is honoured (capped at the max lifetime); `0`/unset
+      // — the old "persistent" sentinel — maps to the 15s cap.
+      const lifetime =
+        toast.duration && toast.duration > 0
+          ? Math.min(toast.duration, TOAST_MAX_LIFETIME_MS)
+          : TOAST_MAX_LIFETIME_MS;
+      const timer = setTimeout(() => {
+        toastTimers.delete(id);
+        this.dismissToast(id);
+      }, lifetime);
+      toastTimers.set(id, timer);
+    }
 
     return id;
   },

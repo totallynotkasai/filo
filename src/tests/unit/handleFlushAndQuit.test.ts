@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { handleFlushAndQuit } from '@renderer/lib/vault/handleFlushAndQuit';
+import {
+  handleFlushAndQuit,
+  __resetQuitDrainingForTests,
+} from '@renderer/lib/vault/handleFlushAndQuit';
 import { uiStore } from '@renderer/stores/ui.svelte';
 
 /** Audit5 2.1 — the drain heartbeat is orthogonal to the terminal quit
@@ -20,10 +23,12 @@ const handshakeOf = (sent: readonly string[]): string[] =>
  */
 describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
   beforeEach(() => {
+    __resetQuitDrainingForTests();
     uiStore.closeConfirm();
   });
 
   afterEach(() => {
+    __resetQuitDrainingForTests();
     uiStore.closeConfirm();
     vi.useRealTimers();
   });

@@ -57,6 +57,18 @@ loss):**
   collection→scalar) type change re-serialises the pair, so a same-line trailing
   comment on the old value is dropped (a scalar→scalar value change keeps it, via
   the value-only splice).
+- **A9-L6 — deleted key's documenting comment.** Deleting a frontmatter key
+  (clearing a field in the Properties popup, or an orphan-card edit that empties a
+  value) also drops a standalone comment line immediately ABOVE that key. A
+  comment conventionally documents the key it precedes, so it is removed WITH the
+  key rather than relocated onto the next surviving key — where it would
+  mis-document an unrelated field — or left dangling at the document end.
+  Inter-key blank-line spacing survives; only the comment line(s) the deleted key
+  owned are dropped (`gapWithoutCommentLines` in `frontmatterCstModel.ts`). This
+  was a deliberate trade-off introduced with the L4 delete-handling work
+  (relocating mis-documents the survivor); option (b) — relocate to a trailing
+  block instead of dropping — is tracked if dogfooding shows users rely on
+  frontmatter comments.
 - **Touched anchored key.** Changing or deleting a key carrying `&a`/`*a`
   full-dumps (structure expanded, data exact); an anchor/alias confined to
   UNTOUCHED keys is spliced verbatim and survives (DI-05's `<<: *base`).
@@ -75,8 +87,9 @@ loss):**
 **Impact:** Negligible — hand-authored YAML comments/formatting (including
 untouched folded scalars) now survive a metadata edit on any file Filo has open.
 Only a never-before-read file's first rewrite, a changed nested block's inner
-comment, or a touched anchored key is emitted in the package's default style.
-File *content* is never lost.
+comment, or a touched anchored key is emitted in the package's default style, and
+deleting a key also drops the comment line that documented it. File *content* is
+never lost.
 
 ---
 
@@ -199,3 +212,103 @@ the perf claim isn't expressible as a unit test (no component-mount harness).
 **when the minimap is open** — toggle it off (the SideToolbar minimap button) as
 a workaround. No data risk; rendering throughput only. Revisit alongside the
 `getFullTiles` stable-identity work.
+
+---
+
+## 7. External rename of a very large / very small attachment doesn't auto-relink tiles
+
+**What:** When a file is renamed *outside* Filo, the watcher emits a `delete` +
+a `create`; `renameCorrelation` pairs them back into a rename so tile references
+follow the new name. To avoid pairing two genuinely-unrelated files by
+coincidence, cross-basename correlation (the name actually changed, e.g.
+`git mv clip.mp4 final.mp4`) is **refused** at the size extremes:
+
+- **< 256 B** (`CROSS_BASENAME_MIN_SIZE_BYTES`) — too many small files share an
+  exact byte-length for size to be evidence.
+- **≥ 10 MB** (`CROSS_BASENAME_HASH_REQUIRED_BELOW`) — above this the content-hash
+  gate is skipped (hashing every large file on each watcher batch is too costly),
+  and size+extension alone isn't strong enough evidence to merge tile references
+  for two unrelated multi-MB files.
+
+In the middle band (256 B – 10 MB) a content-hash confirms the pair. Same-basename
+renames (only the folder moved) always pair, at any size. So the only case that
+dangles is a rename **with a name change** on a file at the size extremes.
+
+**Where:** [src/main/services/renameCorrelation.ts](src/main/services/renameCorrelation.ts)
+(the `CROSS_BASENAME_MIN_SIZE_BYTES` floor and the `CROSS_BASENAME_HASH_REQUIRED_BELOW`
+ceiling). The safety net is the manual broken-reference relink flow,
+[src/renderer/stores/boardRefIntegrity.svelte.ts](src/renderer/stores/boardRefIntegrity.svelte.ts).
+
+**Why accepted (Audit-8 L2):** This is deliberate false-positive avoidance —
+silently re-pointing a tile at the *wrong* file (an unrelated same-size video)
+is far worse than flagging a broken reference the user can relink in one click.
+Renaming a large attachment outside the app, then changing its name, is
+uncommon; when it happens the tile is flagged broken, not lost, and the backing
+bytes are untouched on disk.
+
+**Impact:** A tile pointing at a ≥10 MB (or <256 B) attachment that is renamed
+*and* moved entirely outside Filo shows as a broken reference until the user
+relinks it. No data loss; the file and its content are intact. A proactive
+"did you rename X? relink N tiles" prompt for a large delete+create of matching
+size+extension is a possible future enhancement, not a correctness fix.
+
+## 8. Vault-wide tag rename can drop keystrokes typed *during* the sweep
+
+**What:** A vault-wide tag rename / removal
+([src/renderer/lib/vault/tagRewriteSweep.ts](src/renderer/lib/vault/tagRewriteSweep.ts))
+drains all pending writes, then walks every `.md`, re-reads it fresh, rewrites
+the tag, and reloads any open editor on that file (`mode: 'full'`). On a large
+vault the walk takes long enough that a user could keep typing. If they type
+into an editor for a file the sweep has *not yet* reached, the sweep's fresh
+re-read sees disk *without* those just-typed (still-debouncing) keystrokes, and
+the `mode: 'full'` reload then cancels the editor's armed write and swaps in the
+rewritten body — losing those in-flight keystrokes for that one file.
+
+**Where:** the `writeMarkdownAndReconcile({ mode: 'full' })` call inside the
+`withDrainedWrites` loop in `tagRewriteSweep.ts` (the `Audit-11 T2` comment).
+
+**Why accepted (Audit-11 T2):** Closing it in code means switching that file's
+reconcile to frontmatter-only (body-preserving) when `isPathPending(path)` —
+which would couple this deliberately store-free, pure-rewrite module to live
+scheduler state, the exact dependency its module docstring avoids. The race is
+narrow (it needs simultaneous typing into an unreached file *and* a vault-wide
+tag rename), the `.md` tag rewrite itself still lands on disk correctly, and the
+lost keystrokes were never committed (Ctrl+Z in the editor restores them).
+
+**Impact:** A few unsaved keystrokes in one note can be lost if the user keeps
+editing that note while a vault-wide tag rename is mid-sweep. No committed data
+is lost; the tag rename completes correctly. Doing the rename when not actively
+typing avoids it entirely.
+
+## 9. Field/FM delta write reads body and frontmatter from two separate disk reads
+
+**What:** A field edit (Kanban card / Task row) or a Properties edit writes its
+frontmatter through the gateway's *delta* branch
+([src/renderer/lib/vault/markdownFileWriter.ts](src/renderer/lib/vault/markdownFileWriter.ts)).
+That branch applies the delta to a FRESH in-chain disk read (so untouched /
+external frontmatter keys survive by construction — the Phase-4 fix), but the
+`body` it assembles with came from a *separate, earlier* read (the scheduler's
+no-editor hydrate read, or the orphan-card read). There is therefore a micro-TOCTOU
+window between those two reads.
+
+**Where:** the `args.frontmatterDelta` branch of `writeMarkdownFileImpl` (the
+`Audit-11 N2` comment) — `nextFm` derives from `parsedFresh` (the in-chain read)
+while `body` is the value threaded in by the caller.
+
+**Why accepted (Audit-11 N2):** The delta write path only ever carries FIELD /
+frontmatter edits — none of them touch the body — so the body is identical
+between the two reads in every real case. Reading the body from `parsedFresh`
+instead would also be *wrong* for the one case that matters: when a Document
+editor is open on the file, its LIVE (possibly-unsaved) body must win, so the
+gateway can't blanket-swap in the just-read disk body without clobbering the
+editor. And if an external editor genuinely changed the body between the two
+reads, the file-watcher reclassifies it and the open editor reconciles — the
+edit self-heals rather than being lost.
+
+**Impact:** None in practice. The only way to exercise the window is an external
+process rewriting the file's BODY in the few milliseconds between the body read
+and the frontmatter read of a field/Properties edit — and even then the
+watcher-driven reconcile recovers it. Frontmatter is always correct (it comes
+from the in-chain read). Documented rather than closed because closing it
+(threading a single combined read) would entangle the gateway's body-source
+policy with the open-editor-wins rule for no real-world benefit.

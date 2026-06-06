@@ -55,6 +55,13 @@
   let isEditing = $state(false);
   let titleEditorElement = $state<HTMLDivElement | null>(null);
   let titleEditor: Editor | null = $state(null);
+  // Audit-11 R3 — handle for the inline blur→commit defer below. Stored so it
+  // can be cancelled on teardown (and re-armed cleanly on a fresh blur);
+  // otherwise a tile deleted / board switched inside the 200ms window leaves a
+  // dangling timer that fires `commitTitleEdit()` against a torn-down editor.
+  // The `ci:component-timer-cleanup` gate can't see a timer armed inside a
+  // TipTap callback, so this is cleaned up by hand in `destroyTitleEditor()`.
+  let blurCommitTimer: ReturnType<typeof setTimeout> | null = null;
 
   // The rendered title falls back to plain text when no rich-text version
   // has been authored yet. titleHtml comes from the TipTap inline editor;
@@ -86,6 +93,13 @@
   }
 
   function destroyTitleEditor() {
+    // Audit-11 R3 — cancel a pending blur→commit defer so it can't fire after
+    // the editor is gone (commit/cancel/unmount all route through here; the
+    // `$effect` teardown at the bottom calls this on unmount).
+    if (blurCommitTimer) {
+      clearTimeout(blurCommitTimer);
+      blurCommitTimer = null;
+    }
     if (titleEditor) {
       if (tiptapToolbar.activeEditor === titleEditor) {
         tiptapToolbar.clearActiveEditor();
@@ -177,7 +191,11 @@
           // don't trigger a premature commit. The Tile commit fires after
           // 200ms — long enough for a toolbar interaction to keep the
           // editor alive via `keepActiveEditor`.
-          setTimeout(() => {
+          // Audit-11 R3 — store the handle (and clear any prior one) so a
+          // teardown inside the window cancels it; null it once it fires.
+          if (blurCommitTimer) clearTimeout(blurCommitTimer);
+          blurCommitTimer = setTimeout(() => {
+            blurCommitTimer = null;
             if (titleEditor && tiptapToolbar.activeEditor !== titleEditor) {
               commitTitleEdit();
             }
@@ -197,8 +215,16 @@
     }
   });
 
-  // Guard against unmount during edit.
-  $effect(() => () => destroyTitleEditor());
+  // Guard against unmount during edit. Audit-11 R3 — the cleanup clears the
+  // pending blur→commit timer directly (so `ci:component-timer-cleanup` sees it
+  // in a recognised `$effect` teardown; `destroyTitleEditor` also clears it for
+  // the commit/cancel paths) before tearing down the editor.
+  $effect(() => {
+    return () => {
+      if (blurCommitTimer) clearTimeout(blurCommitTimer);
+      destroyTitleEditor();
+    };
+  });
 
   // Phase 6.2 (IMPLEMENTATION_PLAN_2026-05-27) — keyboard "rename" hook.
   // MindMapBoard's Enter handler dispatches a `request-rename` event

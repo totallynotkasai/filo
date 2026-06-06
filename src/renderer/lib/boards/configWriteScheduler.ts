@@ -24,7 +24,7 @@ import type {
   WorkspaceState,
 } from '../../schema/index';
 import type { WorkspaceLayout } from '../../stores/workspace.svelte';
-import { BOARD_WRITE_DEBOUNCE_MS } from './boardWriteDebounce';
+import { BOARD_WRITE_DEBOUNCE_MS, WRITE_TIMEOUT_MS } from './boardWriteDebounce';
 import {
   notifyWriteError,
   registerResetCallback,
@@ -304,7 +304,57 @@ export async function writeConfigs(
           // instead of losing the change.
           try {
             preWriteStat = await invokeOk('vault:stat', vaultRoot, sentinelPath);
-            // Reappeared — a blip that resolved. Fall through to drift + write.
+            // L11 (Audit-7) — the file vanished then reappeared. A
+            // delete+recreate is an external mutation the mtime+size drift
+            // check below can be BLIND to: a same-size, same-second recreate
+            // reads as "no drift" and the foreign content gets silently
+            // clobbered. So before trusting the reappeared stat, verify the
+            // file's CONTENT matches what Filo last wrote/seeded for this
+            // target; a foreign recreate (different bytes) is aborted instead.
+            // `lastWritten === undefined` (never written this session — e.g.
+            // before seedConfigSnapshots primed the cache) can't be verified,
+            // so fall through to the drift check (preserves L24's transient-
+            // blip behaviour, which a benign same-content reappear still hits).
+            const lastWritten = lastWrittenConfigs.get(target);
+            if (lastWritten !== undefined) {
+              const configFile = target === 'config:save-workspace' ? 'workspace.json' : target;
+              let reappearedIsForeign = false;
+              try {
+                const loaded = await window.filo.invoke('config:load', vaultRoot, configFile);
+                if (loaded && typeof loaded === 'object' && '__corrupt' in loaded) {
+                  // Unparseable on disk — by definition not bytes Filo wrote.
+                  reappearedIsForeign = true;
+                } else {
+                  // JSON round-trips, so disk == our-last-write re-serialises
+                  // to the exact canonical 2-space form `lastWritten` holds.
+                  reappearedIsForeign = JSON.stringify(loaded, null, 2) !== lastWritten;
+                }
+              } catch {
+                // Read hiccup — can't verify. Be permissive (don't block a
+                // legit write on a transient read failure); fall through to the
+                // drift check, which still guards mtime/size.
+                reappearedIsForeign = false;
+              }
+              if (reappearedIsForeign) {
+                const externalEditError = Object.assign(
+                  new Error(`Config "${sentinelPath}" was deleted and recreated externally; write aborted.`),
+                  { code: 'EXTERNAL_EDIT' },
+                );
+                notifyWriteError({ kind: 'config', path: target, error: externalEditError });
+                failed.push(target);
+                // Mirror the drift-abort dedup clear (#19 / 6.4.M12) so a later
+                // revert-to-this-payload write re-evaluates instead of being
+                // dedup-suppressed, and re-base the baseline to the reappeared
+                // file so a deliberate later change compares against IT rather
+                // than perpetually re-aborting against the stale load-time
+                // baseline.
+                lastWrittenConfigs.delete(target);
+                noteBaseline(sentinelPath, preWriteStat.mtimeMs, preWriteStat.size);
+                continue;
+              }
+            }
+            // Reappeared content matches our last write (benign blip) or is
+            // unverifiable — fall through to the drift check + write.
           } catch (reErr) {
             if (reErr instanceof IpcEnvelopeError && reErr.code === 'ENOENT') {
               // Still gone ⇒ a real (intentional) delete. 6.4.M12 — the file is
@@ -403,6 +453,11 @@ const configScheduler = createScheduler<ConfigWriteArgs>({
   getFailureId: () => CONFIG_SENTINEL_PATH,
   missingSourceMessage: () =>
     "Filo couldn't save the latest configuration changes. Re-apply them and save again.",
+  // Audit-11 WC-1 / QC-2 — `writeConfigs` awaits `vault:stat` + `config:save`
+  // IPCs with no interactive prompt, but a stalled network volume (OneDrive /
+  // SMB) can still wedge those IPCs and hang `flushAll` / quit. Bound for
+  // uniformity with the board / frontmatter schedulers.
+  writeTimeoutMs: WRITE_TIMEOUT_MS,
 });
 
 /**

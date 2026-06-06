@@ -1,10 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { tabStore } from '@renderer/stores/tabs.svelte';
 import { documentStore } from '@renderer/stores/document.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
+import {
+  beginVaultGeneration,
+  __resetVaultIdentityForTests,
+} from '@renderer/lib/vault/vaultIdentity';
 import {
   __resetMarkdownFileWriterForTests as __resetMarkdownFlushersForTests,
 } from '@renderer/lib/vault/markdownFileWriter';
@@ -139,6 +143,68 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
 
     expect(documentStore.getDocument('doc-foo')).toBeUndefined();
     expect(documentStore.getDocument('doc-bar')).toBeDefined();
+  });
+
+  it('bails before the in-memory cascade when the vault swaps during the post-delete flush (Audit-10 M2)', async () => {
+    // The existing identity bail covers the `ensureAllLoaded` await; M2 adds a
+    // second bail after the `flushAllDirty` await (the suspension point right
+    // before the in-memory cascade + doc-unload). We simulate a vault swap that
+    // lands during THAT flush: the disk delete already succeeded against the old
+    // vault, so the op must report success and skip the cross-vault cascade —
+    // leaving the documentStore entry for the deleted path untouched (it belongs
+    // to the outgoing vault, which the swap is tearing down).
+    installFiloStub({
+      'vault:delete': async () => ({ success: true }),
+      'vault:read-tree': async () => ({ ok: true, tree: [] }),
+    });
+
+    documentStore.loadDocument({
+      docId: 'doc-foo',
+      filename: 'Notes/2026/foo.md',
+      title: 'foo',
+      body: 'stale body',
+      htmlContent: '<p>stale</p>',
+      richText: [],
+    });
+
+    // Bump the vault generation during the FIRST flushAllDirty that runs AFTER
+    // ensureAllLoaded (i.e. the line-871 flush, not the drain's flush before it),
+    // so the swap lands at exactly the window the new bail guards.
+    let ensureLoadedDone = false;
+    let swapped = false;
+    const ensureSpy = vi
+      .spyOn(boardCacheStore, 'ensureAllLoaded')
+      .mockImplementation(async () => {
+        ensureLoadedDone = true;
+      });
+    const origFlush = boardCacheStore.flushAllDirty.bind(boardCacheStore);
+    const flushSpy = vi
+      .spyOn(boardCacheStore, 'flushAllDirty')
+      .mockImplementation(async () => {
+        const result = await origFlush();
+        if (ensureLoadedDone && !swapped) {
+          swapped = true;
+          beginVaultGeneration('/other-vault');
+        }
+        return result;
+      });
+
+    try {
+      const pending = vaultStore.delete('/vault/Notes/2026');
+      await autoConfirm();
+      const ok = await pending;
+
+      // Disk delete succeeded → reported as success.
+      expect(ok).toBe(true);
+      // The swap fired during the flush, so the bail skipped the in-memory
+      // cascade + doc-unload: the outgoing vault's docStore entry is untouched.
+      expect(swapped).toBe(true);
+      expect(documentStore.getDocument('doc-foo')).toBeDefined();
+    } finally {
+      ensureSpy.mockRestore();
+      flushSpy.mockRestore();
+      __resetVaultIdentityForTests();
+    }
   });
 
   it('closes Document Board tabs whose contentId points at a .md under the deleted folder, even when the .board.json lives outside the tree', async () => {

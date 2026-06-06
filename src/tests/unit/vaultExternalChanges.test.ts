@@ -7,6 +7,15 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import { historyStore, type Command } from '@renderer/stores/history.svelte';
 import type { VaultContext } from '@renderer/stores/vaultStoreTypes';
 import { onError, __resetErrorBusForTests, type ReportedError } from '@renderer/lib/utils/errorBus';
+import {
+  __testRegisterFlusher,
+  __resetMarkdownFileWriterForTests,
+} from '@renderer/lib/vault/markdownFileWriter';
+import {
+  __clearRecentSelfWritesForTests,
+  __resetDirtyTrackingForTests,
+} from '@renderer/lib/boards/writeStateTracking';
+import { beginVaultGeneration } from '@renderer/lib/vault/vaultIdentity';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
@@ -33,6 +42,11 @@ describe('vaultExternalChanges — external delete + dirty editor', () => {
     documentStore.clear();
     vaultIndexStore.clear();
     clearToasts();
+    // Audit-7 L15 — handleExternalMarkdownChanges now filters recent self-writes
+    // internally; clear the module-global registry so a prior test's recreate
+    // write (trackComponentWrite marks the path) doesn't suppress this test's
+    // external-delete reconcile.
+    __clearRecentSelfWritesForTests();
     vaultStore.setPath('/vault');
 
     ctx = {
@@ -509,5 +523,266 @@ describe('vaultExternalChanges — 6.2.H1: sync-frontmatter refreshes originalFr
     expect(baseline).toBeDefined();
     expect(baseline).toContain('priority: high');
     expect(baseline).toContain('# inline note');
+  });
+});
+
+/**
+ * Audit-7 H3 — the bulk "Keep all" handler used to `markDirty` each modified
+ * doc and then `flushAllMarkdownWrites()`. But `markDirty` arms NO gateway
+ * timer, and `flushAllMarkdownWrites` drains only pending/in-flight timers
+ * (and test flushers via their `flush`) — it never iterates the force-writer
+ * registry. So a doc whose 300ms debounce already fired during the prompt
+ * window had nothing armed and the drain was a no-op: disk kept the external
+ * content after the user chose "keep mine". The fix mirrors the single-file
+ * Keep-local path — `forceWriteForDocument(docId)` per modified doc, which
+ * reads the live editor body and commits even with no armed debounce.
+ */
+describe('vaultExternalChanges — bulk "Keep all" force-writes each modified doc (Audit-7 H3)', () => {
+  let ctx: VaultContext;
+  let slice: ReturnType<typeof makeExternalChangesSlice>;
+  const COUNT = 6; // strictly > PROMPT_AGGREGATION_THRESHOLD (5) → bulk toast
+
+  beforeEach(() => {
+    documentStore.clear();
+    vaultIndexStore.clear();
+    __resetMarkdownFileWriterForTests();
+    clearToasts();
+    vaultStore.setPath('/vault');
+    ctx = {
+      getVaultPath: () => '/vault',
+      setVaultPath: () => {},
+      getFileTree: () => [],
+      setFileTree: () => {},
+      getSearchQuery: () => '',
+      setSearchQuery: () => {},
+      getIsLoading: () => false,
+      setIsLoading: () => {},
+      getExpandedFolders: () => new Set(),
+      setExpandedFolders: () => {},
+      getSelectedPaths: () => new Set(),
+      setSelectedPaths: () => {},
+      getProject: () => null,
+      setProject: () => {},
+      getRecoveryPendingPaths: () => [],
+      setRecoveryPendingPaths: () => {},
+      markMetaDirty: () => {},
+      refreshTree: async () => {},
+      clearSelection: () => {},
+      clearActiveRootFolderIfMatches: () => {},
+    };
+    slice = makeExternalChangesSlice(ctx);
+  });
+
+  afterEach(() => {
+    restoreFiloDefault();
+    __resetMarkdownFileWriterForTests();
+    vaultStore.setPath('');
+    documentStore.clear();
+    vaultIndexStore.clear();
+    clearToasts();
+  });
+
+  it('calls forceWriteForDocument for every modified doc (not the no-op flushAll)', async () => {
+    const forceWritten: string[] = [];
+    const flushed: string[] = [];
+    const rels = Array.from({ length: COUNT }, (_, i) => `F${i}.md`);
+
+    // Prime the index from disk so each file has a previous metadata entry.
+    installFiloMock((channel: string) => {
+      if (channel === 'vault:read-file-text') {
+        return { success: true, content: '---\ntags: []\n---\noriginal body' };
+      }
+      return { success: true };
+    });
+    for (const rel of rels) await vaultIndexStore.applyChanges([rel]);
+
+    // A DIRTY editor for each file + a registered force-writer with NO armed
+    // debounce. The distinct `flush` / `forceWrite` capture lists let us assert
+    // the Keep-all path used the force-write route, not the (pre-fix) flushAll.
+    rels.forEach((rel, i) => {
+      const docId = `doc_${i}`;
+      documentStore.loadDocument({
+        docId,
+        filename: rel,
+        title: rel,
+        body: `local ${i}`,
+        htmlContent: `<p>local ${i}</p>`,
+        richText: [],
+      });
+      documentStore.updateContent(docId, `<p>local ${i}</p>`, `local ${i}`); // isDirty=true
+      __testRegisterFlusher(
+        `w_${i}`,
+        async () => {
+          flushed.push(docId);
+        },
+        {
+          forceWrite: async () => {
+            forceWritten.push(docId);
+          },
+          getDocId: () => docId,
+        },
+      );
+    });
+
+    // External edit every file — body differs from both the index and the
+    // editor, so the classifier routes each to prompt-user (modified).
+    installFiloMock((channel: string) => {
+      if (channel === 'vault:read-file-text') {
+        return { success: true, content: '---\ntags: []\n---\nexternal body' };
+      }
+      return { success: true };
+    });
+
+    await slice.handleExternalMarkdownChanges(rels);
+
+    // Over the aggregation threshold → the single Reload all / Keep all toast.
+    const toast = uiStore.toasts.find((t) => t.text.includes('changed externally'));
+    expect(toast).toBeDefined();
+    const keepAll = toast?.actions?.find((a) => a.label === 'Keep all');
+    expect(keepAll).toBeDefined();
+
+    keepAll!.handler();
+    // forceWriteForDocument is async + fire-and-forget; let microtasks settle.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Every modified doc was force-written through its registered writer —
+    // pre-fix `forceWritten` would be empty (flushAll uses `flush`, and no
+    // debounce was armed).
+    expect([...forceWritten].sort()).toEqual(rels.map((_, i) => `doc_${i}`).sort());
+  });
+});
+
+/**
+ * A8-H2(a) (Audit-8) — `handleExternalMarkdownChanges` captures the active
+ * vault identity before its awaits (`whenBuildComplete` / `applyChanges`) and
+ * bails if a vault swap lands during them. Without the guard, a swap mid-await
+ * applies the OUTGOING vault's classification to the NEW vault's same-named
+ * file — here, clobbering a clean editor's body with the other vault's content.
+ * The whole per-file loop is synchronous, so the single post-`applyChanges`
+ * check covers every sink.
+ *
+ * 🔍 Watch it fail first: remove the `if (!isStillSameVault(identity)) return;`
+ * after `applyChanges` and the guard test below reloads the editor with the
+ * external body just like the control test.
+ */
+describe('vaultExternalChanges — A8-H2(a): vault swap during applyChanges bails before clobbering', () => {
+  let ctx: VaultContext;
+  let slice: ReturnType<typeof makeExternalChangesSlice>;
+
+  function makeCtx(): VaultContext {
+    return {
+      getVaultPath: () => '/vault',
+      setVaultPath: () => {},
+      getFileTree: () => [],
+      setFileTree: () => {},
+      getSearchQuery: () => '',
+      setSearchQuery: () => {},
+      getIsLoading: () => false,
+      setIsLoading: () => {},
+      getExpandedFolders: () => new Set(),
+      setExpandedFolders: () => {},
+      getSelectedPaths: () => new Set(),
+      setSelectedPaths: () => {},
+      getProject: () => null,
+      setProject: () => {},
+      getRecoveryPendingPaths: () => [],
+      setRecoveryPendingPaths: () => {},
+      markMetaDirty: () => {},
+      refreshTree: async () => {},
+      clearSelection: () => {},
+      clearActiveRootFolderIfMatches: () => {},
+    };
+  }
+
+  beforeEach(() => {
+    documentStore.clear();
+    vaultIndexStore.clear();
+    clearToasts();
+    // Clear pending/failed write-state too — a sibling test's markPathFailed
+    // would otherwise make isPathPending(rel) true and the F4 guard would route
+    // the change to a pending-write prompt instead of reload-silently.
+    __resetDirtyTrackingForTests();
+    __clearRecentSelfWritesForTests();
+    vaultStore.setPath('/vault'); // bumps the vault-identity generation
+    ctx = makeCtx();
+    slice = makeExternalChangesSlice(ctx);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    restoreFiloDefault();
+    vaultStore.setPath('');
+    documentStore.clear();
+    vaultIndexStore.clear();
+    clearToasts();
+    vi.restoreAllMocks();
+  });
+
+  function primeAndLoadCleanEditor(): void {
+    documentStore.loadDocument({
+      docId: 'doc_A',
+      filename: 'Notes.md',
+      title: 'Notes',
+      body: 'original body',
+      htmlContent: '<p>original body</p>',
+      richText: [],
+    });
+    // loadDocument alone leaves the editor CLEAN → reload-silently is eligible.
+  }
+
+  it('does NOT reload a clean editor when the vault swaps during applyChanges', async () => {
+    // Prime the index with the original body so `previous` is non-null.
+    installFiloMock((channel: string) => {
+      if (channel === 'vault:read-file-text') {
+        return { success: true, content: '---\ntags: [a]\n---\noriginal body' };
+      }
+      return { success: true };
+    });
+    await vaultIndexStore.applyChanges(['Notes.md']);
+    primeAndLoadCleanEditor();
+
+    // The handler's own applyChanges re-reads CHANGED content; a vault swap
+    // (same path, NEW generation) lands during that read.
+    let swapped = false;
+    installFiloMock((channel: string) => {
+      if (channel === 'vault:read-file-text') {
+        if (!swapped) {
+          swapped = true;
+          beginVaultGeneration('/vault'); // close→reopen: stale captured identity
+        }
+        return { success: true, content: '---\ntags: [a]\n---\nEXTERNAL CLOBBER' };
+      }
+      return { success: true };
+    });
+
+    await slice.handleExternalMarkdownChanges(['Notes.md']);
+
+    // Guard bailed before the reload-silently sink: the clean editor still
+    // shows the original body, not the other generation's external content.
+    expect(documentStore.getDocument('doc_A')?.body).toBe('original body');
+  });
+
+  it('control: WITHOUT a swap, the same external change DOES reload the clean editor', async () => {
+    installFiloMock((channel: string) => {
+      if (channel === 'vault:read-file-text') {
+        return { success: true, content: '---\ntags: [a]\n---\noriginal body' };
+      }
+      return { success: true };
+    });
+    await vaultIndexStore.applyChanges(['Notes.md']);
+    primeAndLoadCleanEditor();
+
+    installFiloMock((channel: string) => {
+      if (channel === 'vault:read-file-text') {
+        return { success: true, content: '---\ntags: [a]\n---\nEXTERNAL CLOBBER' };
+      }
+      return { success: true };
+    });
+
+    await slice.handleExternalMarkdownChanges(['Notes.md']);
+
+    // No swap → the guard passes → reload-silently applies the external body.
+    // This proves the guard test above isn't passing vacuously.
+    expect(documentStore.getDocument('doc_A')?.body).toBe('EXTERNAL CLOBBER');
   });
 });

@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { loadVaultCandidate } from '@renderer/lib/vault/vaultCandidate';
+import {
+  loadVaultCandidate,
+  loadAllConfigsWithRetry,
+  isConfigLoadAllFailed,
+} from '@renderer/lib/vault/vaultCandidate';
 import {
   getBaseline,
   __resetBaselinesForTests,
@@ -81,33 +85,88 @@ describe('loadVaultCandidate', () => {
     expect(candidate.project.theme).toBe('light');
   });
 
-  it('L18: a top-level config:load-all failure pauses ALL config writes and warns once', async () => {
+  it('L18: a PERSISTENT top-level config:load-all failure pauses ALL config writes and warns once', async () => {
     // The handler tags a transient whole-`.filo/` read failure (locked dir /
     // EACCES on fs.stat) with `__loadAllFailed`. The candidate must mark every
     // config target corrupt (so a later save can't seed defaults over the
     // intact-but-unreadable files) and surface ONE low-key warning — not seven
     // per-file "couldn't parse" toasts.
-    installFiloMock(
-      happyPathRoutes({
-        'config:load-all': async () => ({
-          app: {}, appearance: {}, defaults: {}, hotkeys: {}, workspace: {}, viewports: {}, sidebarOrder: {},
-          __loadAllFailed: 'EACCES: permission denied, stat .filo',
+    //
+    // Audit-7 L3 — the read is now retried with backoff before giving up, so a
+    // PERSISTENT failure (mock fails every call) only reaches the pause path
+    // after the retry schedule exhausts. Fake timers ride out the ~1.45s of
+    // backoff so the test stays fast.
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      installFiloMock(
+        happyPathRoutes({
+          'config:load-all': async () => {
+            calls++;
+            return {
+              app: {}, appearance: {}, defaults: {}, hotkeys: {}, workspace: {}, viewports: {}, sidebarOrder: {},
+              __loadAllFailed: 'EACCES: permission denied, stat .filo',
+            };
+          },
         }),
-      }),
-    );
+      );
 
-    const candidate = await loadVaultCandidate('/vault');
-    expect([...candidate.corruptionTargets].sort()).toEqual([
-      'app.json',
-      'appearance.json',
-      'config:save-workspace',
-      'defaults.json',
-      'hotkeys.json',
-      'sidebar-order.json',
-      'viewports.json',
-    ]);
-    expect(candidate.warnings).toHaveLength(1);
-    expect(candidate.warnings[0].text).toMatch(/couldn't read your \.filo\/ settings/i);
+      const promise = loadVaultCandidate('/vault');
+      await vi.advanceTimersByTimeAsync(2000);
+      const candidate = await promise;
+
+      // Initial read + three backoff retries all failed.
+      expect(calls).toBe(4);
+      expect([...candidate.corruptionTargets].sort()).toEqual([
+        'app.json',
+        'appearance.json',
+        'config:save-workspace',
+        'defaults.json',
+        'hotkeys.json',
+        'sidebar-order.json',
+        'viewports.json',
+      ]);
+      expect(candidate.warnings).toHaveLength(1);
+      expect(candidate.warnings[0].text).toMatch(/couldn't read your \.filo\/ settings/i);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('L3: a transient config:load-all failure that clears on retry loads cleanly (no pause)', async () => {
+    // The OneDrive/AV lock cleared by the first retry — the REAL configs load,
+    // so NO config target is paused and the "couldn't read settings" warning is
+    // never buffered. This is the common case the L3 retry transparently fixes.
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      installFiloMock(
+        happyPathRoutes({
+          'config:load-all': async () => {
+            calls++;
+            if (calls === 1) {
+              return {
+                app: {}, appearance: {}, defaults: {}, hotkeys: {}, workspace: {}, viewports: {}, sidebarOrder: {},
+                __loadAllFailed: 'EBUSY: resource busy or locked',
+              };
+            }
+            return {}; // readable on the first retry
+          },
+        }),
+      );
+
+      const promise = loadVaultCandidate('/vault');
+      await vi.advanceTimersByTimeAsync(500); // ride out the first 150ms backoff
+      const candidate = await promise;
+
+      expect(calls).toBe(2);
+      expect(candidate.corruptionTargets).toEqual([]);
+      expect(
+        candidate.warnings.some((w) => /couldn't read your \.filo\//i.test(w.text)),
+      ).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('throws when tags:load IPC throws — no graceful fallback', async () => {
@@ -424,5 +483,65 @@ describe('loadVaultCandidate', () => {
         errSpy.mockRestore();
       }
     });
+  });
+});
+
+describe('loadAllConfigsWithRetry (L3)', () => {
+  // Inject a no-op sleep so these stay wall-clock-free.
+  const noSleep = async (): Promise<void> => undefined;
+
+  it('isConfigLoadAllFailed only matches the top-level __loadAllFailed tag', () => {
+    expect(isConfigLoadAllFailed({ __loadAllFailed: 'EACCES' })).toBe(true);
+    expect(isConfigLoadAllFailed({ app: { __corrupt: true } })).toBe(false);
+    expect(isConfigLoadAllFailed({ app: {} })).toBe(false);
+    expect(isConfigLoadAllFailed({})).toBe(false);
+    expect(isConfigLoadAllFailed(null)).toBe(false);
+    expect(isConfigLoadAllFailed(undefined)).toBe(false);
+    // Non-string __loadAllFailed (defensive) is not a real failure tag.
+    expect(isConfigLoadAllFailed({ __loadAllFailed: true })).toBe(false);
+  });
+
+  it('returns the first readable bag without retrying', async () => {
+    let calls = 0;
+    const bag = await loadAllConfigsWithRetry(async () => {
+      calls++;
+      return { app: { ok: true } };
+    }, noSleep);
+    expect(calls).toBe(1);
+    expect(bag).toEqual({ app: { ok: true } });
+  });
+
+  it('retries a __loadAllFailed bag and returns the first success', async () => {
+    let calls = 0;
+    const bag = await loadAllConfigsWithRetry(async () => {
+      calls++;
+      return calls < 3 ? { __loadAllFailed: 'locked' } : { app: { ok: true } };
+    }, noSleep);
+    expect(calls).toBe(3);
+    expect(bag).toEqual({ app: { ok: true } });
+  });
+
+  it('gives up after exhausting the backoff and returns the last failed bag', async () => {
+    let calls = 0;
+    const failed = { app: {}, __loadAllFailed: 'still locked' };
+    const bag = await loadAllConfigsWithRetry(
+      async () => { calls++; return failed; },
+      noSleep,
+      [1, 2], // two retries
+    );
+    expect(calls).toBe(3); // initial + 2 retries
+    expect(bag).toBe(failed);
+  });
+
+  it('sleeps between retries with the configured backoff delays', async () => {
+    const slept: number[] = [];
+    let calls = 0;
+    await loadAllConfigsWithRetry(
+      async () => { calls++; return { __loadAllFailed: 'locked' }; },
+      async (ms) => { slept.push(ms); },
+      [150, 400, 900],
+    );
+    expect(slept).toEqual([150, 400, 900]);
+    expect(calls).toBe(4);
   });
 });

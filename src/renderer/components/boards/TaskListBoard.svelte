@@ -40,9 +40,9 @@
   import FloatingTocPanel from './FloatingTocPanel.svelte';
   import TaskListSideToolbar from './TaskListSideToolbar.svelte';
 
-  // Per-pane scope; alias `boardStore` so the call sites below stay
-  // unchanged. See PaneView.svelte / boardScope.svelte.ts.
+  // Per-pane scope; alias `boardStore` so call sites stay unchanged. See boardScope.svelte.ts.
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
+  let { tabId }: { tabId?: string } = $props(); // R1 (Audit-11): pane-correct via scope; accepted + ignored
   const boardStore = scope.board;
   import TaskItemStylePopup from './TaskItemStylePopup.svelte';
   import TaskSectionStylePopup from './TaskSectionStylePopup.svelte';

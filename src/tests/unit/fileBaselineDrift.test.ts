@@ -65,9 +65,19 @@ interface FiloStubOptions {
 function installFiloStub(opts: FiloStubOptions = {}): InvokeArgs[] {
   const captured: InvokeArgs[] = [];
   let statCallIdx = 0;
+  // Audit-7 L5 — once a write lands, post-write stats must reflect the exact
+  // bytes we wrote: the gateway's TOCTOU guard only refreshes the baseline when
+  // the post-write stat's size matches `writtenByteLength`. Modelling a fixed
+  // size here (the pre-L5 behaviour) would make every clean write look like a
+  // foreign edit. Pre-write / recheck stats still use `statSizes` so the
+  // size-drift scenarios keep working; only post-write stats track the write.
+  let lastWrittenBytes: number | null = null;
   (window as unknown as Record<string, unknown>).filo = {
     invoke: async (channel: string, ...args: unknown[]) => {
       captured.push({ channel, args });
+      if (channel === 'vault:write-existing-file-text') {
+        lastWrittenBytes = new TextEncoder().encode(String(args[2])).length;
+      }
       if (opts.intercept) {
         const result = opts.intercept(channel, args);
         if (result !== undefined) return result;
@@ -78,6 +88,9 @@ function installFiloStub(opts: FiloStubOptions = {}): InvokeArgs[] {
         const mtime = mtimes[statCallIdx % mtimes.length];
         const size = sizes[statCallIdx % sizes.length];
         statCallIdx++;
+        if (lastWrittenBytes !== null) {
+          return { success: true, mtimeMs: mtime, size: lastWrittenBytes };
+        }
         return { success: true, mtimeMs: mtime, size };
       }
       // Default: every IPC succeeds.
@@ -87,6 +100,17 @@ function installFiloStub(opts: FiloStubOptions = {}): InvokeArgs[] {
     send: () => {},
   };
   return captured;
+}
+
+/**
+ * Byte length of the content passed to `vault:write-existing-file-text` — the
+ * size a clean post-write stat reports, which the Audit-7 L5 baseline guard
+ * requires the post-write stat to match. Tests assert the refreshed baseline's
+ * size against this instead of a hard-coded number.
+ */
+function writtenByteLength(invokes: InvokeArgs[]): number {
+  const write = invokes.find((i) => i.channel === 'vault:write-existing-file-text');
+  return new TextEncoder().encode(String(write?.args[2] ?? '')).length;
 }
 
 function uninstallFiloStub(): void {
@@ -134,8 +158,9 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
 
     expect(promptCalled).toBe(0);
     expect(invokes.some((i) => i.channel === 'vault:write-existing-file-text')).toBe(true);
-    // Baseline refreshed to the post-write stat.
-    expect(getBaseline(relPath)).toEqual({ mtimeMs: 1100, size: 100 });
+    // Baseline refreshed to the post-write stat (size = the bytes we wrote;
+    // Audit-7 L5 only stamps when the post-write stat size matches).
+    expect(getBaseline(relPath)).toEqual({ mtimeMs: 1100, size: writtenByteLength(invokes) });
   });
 
   it('drift detected → prompt handler invoked, Reload aborts write', async () => {
@@ -193,8 +218,8 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
 
     // Write IPC fired (the user chose Keep-local).
     expect(invokes.some((i) => i.channel === 'vault:write-existing-file-text')).toBe(true);
-    // Baseline refreshed to the post-write mtime.
-    expect(getBaseline(relPath)).toEqual({ mtimeMs: 2100, size: 100 });
+    // Baseline refreshed to the post-write mtime (size = the bytes we wrote).
+    expect(getBaseline(relPath)).toEqual({ mtimeMs: 2100, size: writtenByteLength(invokes) });
   });
 
   it('drift detected on SIZE change alone, same mtime (coarse-mtime collision guard)', async () => {
@@ -205,9 +230,10 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
     // changes the byte length. Baseline {1000, 100}; pre-write stat
     // {1000, 250} → same mtime, different size → drift, prompt fires.
     // A pure mtime check (the old behaviour) would have silently clobbered.
-    // 6.4.M13 — the middle size (250) is the Keep-local recheck stat (stable,
-    // matches the pre-write size); 260 is the post-write stat.
-    const invokes = installFiloStub({ statMtimes: [1000], statSizes: [250, 250, 260] });
+    // 6.4.M13 — both pre-write (250) and the Keep-local recheck (250) stats
+    // report the drifted size; the post-write stat reports the bytes we wrote
+    // (Audit-7 L5), so `statSizes` only needs the two pre-write values.
+    const invokes = installFiloStub({ statMtimes: [1000], statSizes: [250, 250] });
     const relPath = 'Notes/same-second.md';
     markHydrated(relPath, false, 1000, 100);
 
@@ -229,8 +255,9 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
 
     expect(promptCalled).toBe(1);
     expect(invokes.some((i) => i.channel === 'vault:write-existing-file-text')).toBe(true);
-    // Keep-local proceeded → baseline refreshed to the post-write stat.
-    expect(getBaseline(relPath)).toEqual({ mtimeMs: 1000, size: 260 });
+    // Keep-local proceeded → baseline refreshed to the post-write stat
+    // (size = the bytes we wrote).
+    expect(getBaseline(relPath)).toEqual({ mtimeMs: 1000, size: writtenByteLength(invokes) });
   });
 
   it('no baseline → drift check skipped (legacy unguarded behaviour)', async () => {
@@ -261,8 +288,8 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
     // Only the post-write stat fires (to seed the baseline going forward).
     expect(preWriteStats.length).toBe(1);
     expect(invokes.some((i) => i.channel === 'vault:write-existing-file-text')).toBe(true);
-    // Post-write stat seeded the baseline.
-    expect(getBaseline(relPath)).toEqual({ mtimeMs: 9999, size: 100 });
+    // Post-write stat seeded the baseline (size = the bytes we wrote).
+    expect(getBaseline(relPath)).toEqual({ mtimeMs: 9999, size: writtenByteLength(invokes) });
   });
 
   it('successful self-write refreshes baseline (no spurious drift on next write)', async () => {
@@ -513,6 +540,11 @@ describe('F1 — read-driven hydrate seeds the drift baseline', () => {
       return 'keep-local';
     });
 
+    // Audit-7 L5 — the post-write stat must report the bytes we wrote for the
+    // baseline to refresh (a fixed size would read as a foreign edit and be
+    // rejected). Track the written length; pre-write / recheck stats (before
+    // the write) keep the external mtime bump that drives the drift.
+    let writtenLen = 0;
     installFiloMock({
       'vault:read-file-text': () => ({
         success: true,
@@ -520,8 +552,14 @@ describe('F1 — read-driven hydrate seeds the drift baseline', () => {
         mtimeMs: 1000,
         size: 100,
       }),
-      'vault:stat': () => ({ success: true, mtimeMs: 2000, size: 100 }),
-      'vault:write-existing-file-text': () => ({ success: true }),
+      'vault:stat': () =>
+        writtenLen > 0
+          ? { success: true, mtimeMs: 2000, size: writtenLen }
+          : { success: true, mtimeMs: 2000, size: 100 },
+      'vault:write-existing-file-text': (...args: unknown[]) => {
+        writtenLen = new TextEncoder().encode(String(args[2])).length;
+        return { success: true };
+      },
       'vault:file-exists': () => true,
     });
 
@@ -540,7 +578,8 @@ describe('F1 — read-driven hydrate seeds the drift baseline', () => {
 
     expect(promptCalls).toBe(1);
     // Keep-local proceeded → post-write stat refreshed the baseline.
-    expect(getBaseline(relPath)).toEqual({ mtimeMs: 2000, size: 100 });
+    expect(writtenLen).toBeGreaterThan(0);
+    expect(getBaseline(relPath)).toEqual({ mtimeMs: 2000, size: writtenLen });
   });
 
   it('matching mtime does not spuriously prompt (no false positive on self-write)', async () => {
@@ -552,6 +591,9 @@ describe('F1 — read-driven hydrate seeds the drift baseline', () => {
       return 'reload';
     });
 
+    // Audit-7 L5 — post-write stat reports the bytes we wrote so the baseline
+    // refreshes cleanly (a fixed size would read as foreign and be rejected).
+    let writtenLen = 0;
     installFiloMock({
       'vault:read-file-text': () => ({
         success: true,
@@ -559,8 +601,14 @@ describe('F1 — read-driven hydrate seeds the drift baseline', () => {
         mtimeMs: 1000,
         size: 100,
       }),
-      'vault:stat': () => ({ success: true, mtimeMs: 1000, size: 100 }),
-      'vault:write-existing-file-text': () => ({ success: true }),
+      'vault:stat': () =>
+        writtenLen > 0
+          ? { success: true, mtimeMs: 1000, size: writtenLen }
+          : { success: true, mtimeMs: 1000, size: 100 },
+      'vault:write-existing-file-text': (...args: unknown[]) => {
+        writtenLen = new TextEncoder().encode(String(args[2])).length;
+        return { success: true };
+      },
       'vault:file-exists': () => true,
     });
 
@@ -578,6 +626,7 @@ describe('F1 — read-driven hydrate seeds the drift baseline', () => {
     await flushAllPendingFrontmatterWrites();
 
     expect(promptCalls).toBe(0);
-    expect(getBaseline(relPath)).toEqual({ mtimeMs: 1000, size: 100 });
+    expect(writtenLen).toBeGreaterThan(0);
+    expect(getBaseline(relPath)).toEqual({ mtimeMs: 1000, size: writtenLen });
   });
 });

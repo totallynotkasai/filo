@@ -17,6 +17,13 @@ export function parseRangeHeader(
   totalSize: number,
 ): { start: number; end: number } | 'invalid' | null {
   if (!header) return null;
+  // Audit-11 P1 — a 0-byte file has no satisfiable byte range. Without this
+  // guard a suffix range (`bytes=-N`) computes `end = totalSize - 1 = -1`,
+  // emitting a malformed 206 with `Content-Range: bytes 0--1/0`. Per RFC 7233
+  // an unsatisfiable range is a 416, so reject every range form against an
+  // empty body here (a request with no Range header still streams the empty
+  // body as a normal 200 above).
+  if (totalSize <= 0) return 'invalid';
   const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
   if (!match) return 'invalid';
 

@@ -66,6 +66,51 @@ describe('documentStore — per-writer dirty tracking (audit 2.3)', () => {
 });
 
 /**
+ * Audit-7 M1 — `dropDirtyWriter` lets an unmounting TextTile remove its
+ * writerId WITHOUT asserting the content saved. Pre-fix TextTile's onDestroy
+ * never cleared its writer (the markClean lived in dead code), so the entry
+ * lingered forever → `isDirty` pinned true → spurious external-edit prompts +
+ * a frozen sibling reload `$effect`. These pin the drop semantics.
+ */
+describe('documentStore — dropDirtyWriter (audit-7 M1)', () => {
+  beforeEach(() => documentStore.clear());
+
+  it('removes the writer and clears isDirty when it was the last one', () => {
+    open('d');
+    documentStore.updateContent('d', '<p>a</p>', 'a', 'text-tile:d');
+    expect(documentStore.isWriterDirty('d', 'text-tile:d')).toBe(true);
+    expect(documentStore.getDocument('d')?.isDirty).toBe(true);
+
+    documentStore.dropDirtyWriter('d', 'text-tile:d');
+    expect(documentStore.isWriterDirty('d', 'text-tile:d')).toBe(false);
+    expect(documentStore.getDocument('d')?.isDirty).toBe(false);
+  });
+
+  it('leaves isDirty true when a sibling writer is still dirty', () => {
+    open('d');
+    documentStore.markDirty('d', 'text-tile:d');
+    documentStore.markDirty('d', 'document-editor:d');
+
+    // The TextTile unmounts → drops its writer; the DocumentEditor is still dirty.
+    documentStore.dropDirtyWriter('d', 'text-tile:d');
+    expect(documentStore.isWriterDirty('d', 'text-tile:d')).toBe(false);
+    expect(documentStore.isWriterDirty('d', 'document-editor:d')).toBe(true);
+    expect(documentStore.getDocument('d')?.isDirty).toBe(true);
+  });
+
+  it('is a no-op for an untracked writer (does not clobber no-writerId dirtiness)', () => {
+    open('d');
+    // Title-edit style dirtiness: isDirty set with NO writer registered.
+    documentStore.markDirty('d');
+    expect(documentStore.getDocument('d')?.isDirty).toBe(true);
+
+    // An unrelated writer dropping its (nonexistent) entry must not clear the flag.
+    documentStore.dropDirtyWriter('d', 'text-tile:d');
+    expect(documentStore.getDocument('d')?.isDirty).toBe(true);
+  });
+});
+
+/**
  * Audit2 2.2 — each editor view's reload `$effect` must gate on its OWN
  * writer's dirtiness, not the shared `isDirty` flag. Keying on the shared flag
  * froze EVERY view the instant any one became dirty, so two views editing the

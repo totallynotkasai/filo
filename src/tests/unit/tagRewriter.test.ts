@@ -582,3 +582,136 @@ describe('tag rewriter — fallback path preserves cross-parser scalars (Phase 6
     expect(out).toContain('flags: 0b1010'); // NOT canonicalised to 10
   });
 });
+
+// ── Audit-10 H1 ──────────────────────────────────────────────────────────────
+// The line-level fast path's hand-rolled tokenizer doesn't FAIL on shapes it
+// can't represent — it SUCCEEDS with a WRONG value, so `renderTagsField` then
+// re-emits the corruption and a SIBLING tag is silently mangled by an unrelated
+// tag op:
+//  - a block item with an inline `# comment` (`beta # note`) was swallowed whole
+//    into the tag text;
+//  - a flow / scalar list with a quoted comma (`[draft, "b,c"]`) was cut THROUGH
+//    by the naive `split(',')`, splitting one tag into two malformed ones;
+//  - a YAML-escaped quote (`'it''s'`) couldn't be unwrapped by `QUOTED_RE`.
+// `locateTagsField` now declines these (returns null) so the edit takes the
+// load → CST fallback, which tokenises them correctly. The data guarantee tested
+// here is sibling-VALUE correctness; the inline comment on a CHANGED `tags:`
+// field is dropped by the source-preserving engine (an accepted limitation, like
+// L23/L28) — the point is the value is no longer corrupted. Cleanly single/
+// double-quoted siblings (`'@home'`) still ride the fast path (covered above).
+describe('tag rewriter — declines un-tokenizable shapes, sibling survives (Audit-10 H1)', () => {
+  it('block + inline comment: removing a sibling leaves the commented tag clean', () => {
+    const input = ['---', 'tags:', '  - alpha', '  - beta # note', '  - gamma', '---', 'body'].join('\n');
+    const out = removeTagFromMarkdown(input, 'alpha');
+    const fm = frontmatterObjectOf(out);
+    expect(fm.tags).toEqual(['beta', 'gamma']); // 'beta', NOT 'beta # note'
+    expect(out).not.toContain('beta # note');
+  });
+
+  it('block + inline comment: renaming a sibling leaves the commented tag clean', () => {
+    const input = ['---', 'tags:', '  - alpha', '  - beta # note', '  - gamma', '---', 'body'].join('\n');
+    const out = rewriteTagInMarkdown(input, 'alpha', 'delta');
+    const fm = frontmatterObjectOf(out);
+    expect(fm.tags).toEqual(['delta', 'beta', 'gamma']);
+    expect(out).not.toContain('beta # note');
+  });
+
+  it('block + inline comment: adding a tag leaves the commented sibling clean', () => {
+    // addTagToMarkdown already routes an existing tags field through the parser
+    // fallback (never locateTagsField), so the sibling was always safe here —
+    // this pins that it stays safe.
+    const input = ['---', 'tags:', '  - alpha', '  - beta # note', '---', 'body'].join('\n');
+    const out = addTagToMarkdown(input, 'zeta');
+    const fm = frontmatterObjectOf(out);
+    expect(fm.tags).toEqual(['alpha', 'beta', 'zeta']);
+    expect(out).not.toContain('beta # note');
+  });
+
+  it('flow + quoted comma: renaming a sibling keeps the comma-bearing tag whole', () => {
+    const input = ['---', 'tags: [draft, "b,c"]', '---', 'body'].join('\n');
+    const out = rewriteTagInMarkdown(input, 'draft', 'pub');
+    const fm = frontmatterObjectOf(out);
+    expect(fm.tags).toEqual(['pub', 'b,c']); // one tag 'b,c', NOT 'b' + 'c'
+  });
+
+  it('flow + quoted comma: removing a sibling keeps the comma-bearing tag whole', () => {
+    const input = ['---', 'tags: [draft, "b,c"]', '---', 'body'].join('\n');
+    const out = removeTagFromMarkdown(input, 'draft');
+    const fm = frontmatterObjectOf(out);
+    expect(fm.tags).toEqual(['b,c']);
+  });
+
+  it('block + escaped quote: removing a sibling preserves the escaped value', () => {
+    const input = ['---', 'tags:', '  - alpha', "  - 'it''s'", '---', 'body'].join('\n');
+    const out = removeTagFromMarkdown(input, 'alpha');
+    const fm = frontmatterObjectOf(out);
+    expect(fm.tags).toEqual(["it's"]); // unwrapped to it's, NOT it''s / it
+  });
+
+  it('block + escaped quote: renaming a sibling preserves the escaped value', () => {
+    const input = ['---', 'tags:', '  - alpha', "  - 'it''s'", '---', 'body'].join('\n');
+    const out = rewriteTagInMarkdown(input, 'alpha', 'delta');
+    const fm = frontmatterObjectOf(out);
+    expect(fm.tags).toEqual(['delta', "it's"]);
+  });
+
+  it('scalar + inline comment: removing a sibling keeps the value clean (comment survives)', () => {
+    const input = ['---', 'tags: foo, bar # note', '---', 'body'].join('\n');
+    const out = removeTagFromMarkdown(input, 'foo');
+    const fm = frontmatterObjectOf(out);
+    // The bug emitted a tag literally NAMED 'bar # note' (comment swallowed into
+    // the value). The fix yields the clean value 'bar'; the single-line-scalar
+    // CST rewrite even PRESERVES the inline comment as a real YAML comment.
+    expect(normaliseToArray(fm.tags)).toEqual(['bar']); // value is 'bar', not 'bar # note'
+    expect(out).toContain('# note'); // comment preserved by the value-only rewrite
+  });
+
+  it('a non-comment `#` inside a plain scalar (a#b) still rides the fast path', () => {
+    // `a#b` has no whitespace before `#`, so it is a legal plain scalar, not a
+    // comment — the guard must NOT divert it (it would still be correct via the
+    // fallback, but this pins the fast-path discrimination the comment relies on).
+    const input = ['---', 'tags:', '  - a#b', '  - keep', '---', 'body'].join('\n');
+    const out = removeTagFromMarkdown(input, 'keep');
+    const fm = frontmatterObjectOf(out);
+    expect(fm.tags).toEqual(['a#b']);
+  });
+});
+
+/** Normalises a tags field that may be a string or array into an array. */
+function normaliseToArray(tags: unknown): string[] {
+  if (Array.isArray(tags)) return tags as string[];
+  if (typeof tags === 'string') return tags.split(',').map((t) => t.trim()).filter(Boolean);
+  return [];
+}
+
+describe('Audit-11 T1 — merge-rename dedups the tag list', () => {
+  it('rename onto an existing tag yields ONE entry, not a duplicate (flow list)', () => {
+    const md = '---\ntags: [draft, review]\n---\nBody\n';
+    const out = rewriteTagInMarkdown(md, 'draft', 'review');
+    // frontmatterObjectOf THROWS on a duplicate `tags:` / invalid YAML, so the
+    // round-trip itself proves no `[review, review]` was emitted.
+    const fm = frontmatterObjectOf(out);
+    expect(normaliseToArray(fm.tags)).toEqual(['review']);
+  });
+
+  it('rename onto an existing tag yields ONE entry (block list)', () => {
+    const md = '---\ntags:\n  - draft\n  - review\n---\nBody\n';
+    const out = rewriteTagInMarkdown(md, 'draft', 'review');
+    const fm = frontmatterObjectOf(out);
+    expect(normaliseToArray(fm.tags)).toEqual(['review']);
+  });
+
+  it('case-insensitive collision dedups to one entry', () => {
+    const md = '---\ntags: [Draft, review]\n---\nBody\n';
+    const out = rewriteTagInMarkdown(md, 'draft', 'review');
+    const fm = frontmatterObjectOf(out);
+    expect(normaliseToArray(fm.tags).length).toBe(1);
+  });
+
+  it('a non-merge rename keeps every (now-distinct) tag — no spurious collapse', () => {
+    const md = '---\ntags: [draft, urgent]\n---\nBody\n';
+    const out = rewriteTagInMarkdown(md, 'draft', 'review');
+    const fm = frontmatterObjectOf(out);
+    expect(normaliseToArray(fm.tags)).toEqual(['review', 'urgent']);
+  });
+});

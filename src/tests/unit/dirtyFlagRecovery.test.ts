@@ -3,6 +3,7 @@ import {
   markDirty,
   markClean,
   checkRecovery,
+  __resetDirtyRecoveryDedupeForTests,
 } from '@renderer/lib/vault/dirtyFlagRecovery';
 import {
   onError,
@@ -36,6 +37,10 @@ function installIpcStub(): IpcStub {
 describe('dirtyFlagRecovery', () => {
   beforeEach(() => {
     installIpcStub();
+    // Audit-8 L3 — the per-session unreadable-sentinel dedupe is module state;
+    // reset it so each test starts fresh (and the per-test toast-count
+    // assertions below stay accurate).
+    __resetDirtyRecoveryDedupeForTests();
   });
   afterEach(() => {
     restoreFiloDefault();
@@ -313,12 +318,25 @@ describe('dirtyFlagRecovery', () => {
   // the crash from the user. Treat it as dirty with the sentinel-unreadable
   // reason flag so the recovery UI surfaces the same "investigate manually"
   // copy it shows for an EACCES read.
-  it('checkRecovery treats zero-byte .filo/.dirty as dirty (M5)', async () => {
+  //
+  // Audit-7 M4 — the `sentinel-unreadable` reason is gated OUT of the
+  // recovery modal, so the zero-byte case must surface a toast (via
+  // reportError) like the EACCES branch — otherwise the strongest
+  // mid-write-crash signal reaches neither the modal nor any notification.
+  it('checkRecovery treats zero-byte .filo/.dirty as dirty AND surfaces a toast (M5/M4)', async () => {
+    __resetErrorBusForTests();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const stub = installIpcStub();
     stub.responses.set('vault:read-file-text', { success: true, content: '' });
+    const errors: ReportedError[] = [];
+    onError((e) => errors.push(e));
+
     const status = await checkRecovery('/vault');
+
     expect(status.needsRecovery).toBe(true);
     expect(status.reason).toBe('sentinel-unreadable');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].context).toBe('dirtyFlag.check');
   });
 
   it('checkRecovery does NOT fire recovery:snapshot on ENOENT (clean steady state)', async () => {
@@ -330,5 +348,56 @@ describe('dirtyFlagRecovery', () => {
     await new Promise((r) => setTimeout(r, 0));
     const snap = stub.writes.find((w) => w.channel === 'recovery:snapshot');
     expect(snap).toBeUndefined();
+  });
+
+  // Audit-8 L3 — a read-only/locked share can't read OR clear the sentinel, so
+  // the unreadable-sentinel toast must surface ONCE per vault per session, not
+  // on every open. The status itself is unchanged on every call (still flags
+  // recovery); only the repeat toast + snapshot are suppressed.
+  it('checkRecovery surfaces the unreadable-sentinel toast once per vault per session', async () => {
+    __resetErrorBusForTests();
+    __resetDirtyRecoveryDedupeForTests();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const stub = installIpcStub();
+    stub.responses.set('vault:read-file-text', {
+      success: false,
+      code: 'EACCES',
+      error: 'permission denied',
+    });
+    const errors: ReportedError[] = [];
+    onError((e) => errors.push(e));
+
+    const first = await checkRecovery('/vault');
+    const second = await checkRecovery('/vault');
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Both opens still report the same unreadable status…
+    expect(first.reason).toBe('sentinel-unreadable');
+    expect(second.reason).toBe('sentinel-unreadable');
+    // …but the toast + snapshot fire only on the first open this session.
+    expect(errors).toHaveLength(1);
+    expect(
+      stub.writes.filter((w) => w.channel === 'recovery:snapshot'),
+    ).toHaveLength(1);
+  });
+
+  it('checkRecovery still surfaces independently for a different vault root', async () => {
+    __resetErrorBusForTests();
+    __resetDirtyRecoveryDedupeForTests();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const stub = installIpcStub();
+    stub.responses.set('vault:read-file-text', { success: false, code: 'EACCES' });
+    const errors: ReportedError[] = [];
+    onError((e) => errors.push(e));
+
+    await checkRecovery('/vaultA');
+    await checkRecovery('/vaultA'); // suppressed (same vault)
+    await checkRecovery('/vaultB'); // distinct vault → surfaces again
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(errors).toHaveLength(2);
+    expect(
+      stub.writes.filter((w) => w.channel === 'recovery:snapshot'),
+    ).toHaveLength(2);
   });
 });

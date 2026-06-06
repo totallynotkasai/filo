@@ -13,7 +13,16 @@ export const SYNCED_FIELDS = [
   'title',
   'tags',
   'completed',
-  'date',
+  // Audit-11 B-INT-L1 — `date` is intentionally NOT synced. No tile / card /
+  // task reads a cached `date` (only `dueDate` / `startDate` drive display +
+  // smart-list filters), yet keeping it here let `reconcileBoardCacheWith-
+  // Frontmatter` seed-and-write a `date` field onto any text tile backing a
+  // note whose `.md` carried a `date:` key (ubiquitous in Obsidian-style
+  // vaults) — leaking a frontmatter-canonical value into `.board.json`. The
+  // schema's `TASK_METADATA_FIELDS` strip-on-load would then fire a warn-loop
+  // on every reconcile. Dropping it from the synced set closes the leak at its
+  // source (the reconcile never sets it, so it's never written). Do NOT re-add
+  // without also wiring a real cached-`date` reader + the strip-list entry.
   'dueDate',
   'dueTime',
   'startDate',
@@ -90,7 +99,7 @@ export function canonicalValues(metadata: FileMetadata): Partial<Record<SyncedFi
   out.tags = orderPreservingTagsField(fm.tags ?? metadata.tags);
 
   if ('completed' in fm) out.completed = normalizeScalar(fm.completed);
-  if ('date' in fm) out.date = normalizeScalar(fm.date);
+  // Audit-11 B-INT-L1 — `date` deliberately omitted (see SYNCED_FIELDS note).
   if ('dueDate' in fm) out.dueDate = normalizeScalar(fm.dueDate);
   if ('dueTime' in fm) out.dueTime = normalizeScalar(fm.dueTime);
   if ('startDate' in fm) out.startDate = normalizeScalar(fm.startDate);

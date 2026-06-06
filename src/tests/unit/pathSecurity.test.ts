@@ -79,6 +79,34 @@ describe('assertSafeFilename', () => {
     expect(() => assertSafeFilename('Console.md')).not.toThrow();
   });
 
+  // Audit-8 L1 — the device-name set previously omitted CONIN$ / CONOUT$ /
+  // CLOCK$. Each opens a device handle on Windows like CON/NUL do.
+  it('rejects the CONIN$ / CONOUT$ / CLOCK$ device names at creation', () => {
+    const c = { forCreation: true } as const;
+    expect(() => assertSafeFilename('CONIN$', c)).toThrow(/CONIN\$/);
+    expect(() => assertSafeFilename('conin$.md', c)).toThrow(/CONIN\$/);
+    expect(() => assertSafeFilename('CONOUT$.txt', c)).toThrow(/CONOUT\$/);
+    expect(() => assertSafeFilename('CLOCK$', c)).toThrow(/CLOCK\$/);
+    expect(() => assertSafeFilename('clock$.log', c)).toThrow(/CLOCK\$/);
+  });
+
+  it('accepts a `$` filename that is not a reserved device stem', () => {
+    // `$` is a legal filename character — only the exact device stem rejects.
+    const c = { forCreation: true } as const;
+    expect(() => assertSafeFilename('money$.md', c)).not.toThrow();
+    expect(() => assertSafeFilename('CONINNER$.md', c)).not.toThrow();
+  });
+
+  // Audit-8 L1 — Windows trims leading/trailing spaces off the name component,
+  // so ` CON.md` / `CON .md` still resolve to the CON device. The stem trim
+  // before the reserved-name compare catches them.
+  it('rejects a space-padded reserved device name at creation', () => {
+    const c = { forCreation: true } as const;
+    expect(() => assertSafeFilename(' CON.md', c)).toThrow(/CON/);
+    expect(() => assertSafeFilename('CON .md', c)).toThrow(/CON/);
+    expect(() => assertSafeFilename(' NUL ', c)).toThrow(/trailing/); // trailing-space gate fires first
+  });
+
   it('rejects trailing dot or trailing space', () => {
     expect(() => assertSafeFilename('foo.')).toThrow(/trailing/);
     expect(() => assertSafeFilename('foo ')).toThrow(/trailing/);

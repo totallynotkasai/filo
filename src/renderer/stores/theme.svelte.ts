@@ -9,6 +9,7 @@ import { trackComponentWrite } from '../lib/boards/boardSaver';
 import { reportError } from '../lib/utils/errorBus';
 import { invokeOk } from '../lib/utils/invokeOk';
 import { onVaultSwap } from '../core/vaultLifecycle';
+import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 
 /**
  * Theme store — owns the active theme, the catalogue of themes loaded
@@ -65,12 +66,18 @@ export const themeStore = {
    */
   async refreshAvailable(vaultRoot: string): Promise<void> {
     if (!vaultRoot) return;
+    // Audit-11 VS-4 — snapshot identity before the list/load awaits. A swap
+    // mid-enumeration must not stamp the OUTGOING vault's theme catalogue over
+    // the pre-swap reset (which already cleared `availableThemeIds`/`themeCache`
+    // for the incoming vault). Visual-only, but a stale catalogue flashes the
+    // wrong themes in the picker. Bail before each state commit.
+    const identity = captureVaultIdentity();
     try {
       // `theme:list` is a bare-result channel (returns `unknown[]`).
       // The handler stores filenames as strings; narrow at the boundary.
       const filenames = (await window.filo.invoke('theme:list', vaultRoot)) as string[];
+      if (!isStillSameVault(identity)) return;
       const ids = filenames.map((f) => f.replace(/\.json$/i, ''));
-      availableThemeIds = ids;
       const next: Record<string, ThemeFile> = { ...themeCache };
       const parseFailures: string[] = [];
       for (const id of ids) {
@@ -85,6 +92,10 @@ export const themeStore = {
         }
         if (data) next[id] = data;
       }
+      // Commit `availableThemeIds` + `themeCache` together AFTER the loop so a
+      // swap detected mid-loop leaves neither set to the outgoing vault's data.
+      if (!isStillSameVault(identity)) return;
+      availableThemeIds = ids;
       themeCache = next;
       if (parseFailures.length > 0) {
         const list = parseFailures.map((n) => `"${n}"`).join(', ');
@@ -140,6 +151,7 @@ export const themeStore = {
       activeThemeFileId = themeId;
       return { ok: true };
     }
+    const identity = captureVaultIdentity();
     let file = themeCache[themeId];
     if (!file && vaultRoot) {
       try {
@@ -147,6 +159,14 @@ export const themeStore = {
           | ThemeFile
           | { ok: false; code: 'invalid-json'; name?: string }
           | null;
+        // Audit-11 VS-4 — a swap during the load await means `themeId` belongs
+        // to the outgoing vault; applying it to the DOM (or seeding the cache)
+        // would flash the wrong palette over the freshly-opened vault. Bail
+        // without applying — the new vault drives its own theme via
+        // `commitFromCandidate`.
+        if (!isStillSameVault(identity)) {
+          return { ok: false, error: 'vault changed during theme load' };
+        }
         // Sprint A / A16 — surface a parse-failure toast distinctly from
         // the generic "not found" path so the user knows the file exists
         // but is malformed. Falls back to built-in light below.

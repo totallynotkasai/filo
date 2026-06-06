@@ -1,6 +1,6 @@
 import { promises as fs } from 'fs';
 import type { FileHandle } from 'fs/promises';
-import { join, extname, basename } from 'path';
+import { join, extname, basename, resolve, sep } from 'path';
 import { assertSafeFilename } from '../utils/pathSecurity';
 import { recordPreservedEmergencyFile } from '../services/emergencyFileRegistry';
 import type { FileTreeNode } from '../../shared/types';
@@ -82,7 +82,30 @@ export async function readDirectoryTree(
 ): Promise<FileTreeNode[]> {
   const max = options.maxNodes ?? VAULT_TREE_MAX_NODES;
   const maxBytes = options.maxSerializedBytes ?? VAULT_TREE_MAX_SERIALIZED_BYTES;
-  return walkDirectoryTree(dirPath, { count: 0, max, bytes: 0, maxBytes });
+  // Audit-11 P2 — resolve the vault root to its real path ONCE so the
+  // per-entry reparse-point check (see `walkDirectoryTree`) compares
+  // real-vs-real: a junction inside the vault whose target escapes is then
+  // reliably detected regardless of how the caller spelled the root. A
+  // realpath failure (e.g. the root itself is gone) falls back to the raw
+  // path — the walk's own readdir will surface the real error.
+  let realRoot = dirPath;
+  try {
+    realRoot = await fs.realpath(dirPath);
+  } catch {
+    // keep dirPath
+  }
+  return walkDirectoryTree(dirPath, { count: 0, max, bytes: 0, maxBytes }, realRoot);
+}
+
+/**
+ * Audit-11 P2 — true iff `candidate` (an absolute, realpath-resolved path)
+ * is the vault root itself or lives beneath it. Used to exclude a reparse
+ * point (NTFS junction / POSIX symlink) whose target escapes the vault.
+ */
+function isWithinVaultRoot(candidate: string, vaultRoot: string): boolean {
+  const c = resolve(candidate);
+  const r = resolve(vaultRoot);
+  return c === r || c.startsWith(r.endsWith(sep) ? r : r + sep);
 }
 
 interface TreeWalkerCounter {
@@ -99,6 +122,7 @@ interface TreeWalkerCounter {
 async function walkDirectoryTree(
   dirPath: string,
   counter: TreeWalkerCounter,
+  vaultRoot: string = dirPath,
 ): Promise<FileTreeNode[]> {
   const entries = await fs.readdir(dirPath, { withFileTypes: true });
   const nodes: FileTreeNode[] = [];
@@ -112,12 +136,32 @@ async function walkDirectoryTree(
     // .tmp file appears and disappears within ~10ms.
     if (entry.name.endsWith('.tmp') || entry.name.endsWith('.bak')) continue;
 
+    const fullPath = join(dirPath, entry.name);
+
+    // Audit-11 P2 — exclude a reparse point (NTFS junction / POSIX symlink)
+    // whose target escapes the vault, BEFORE counting it (mirroring the
+    // hidden/.tmp skips above). libuv reports BOTH junctions and symlinks as a
+    // link entry on Windows, so `isSymbolicLink()` flags them; `realpath` then
+    // confirms the target stays inside the vault root. An escaping link is
+    // dropped entirely — enumerating it would leak an out-of-vault path's name
+    // into the sidebar (its contents are already guarded by the read IPC's
+    // `assertWithinVault`). A within-vault link is enumerated normally; a
+    // realpath failure (broken link / permission) is skipped. The `typeof`
+    // guard keeps mock Dirents that predate `isSymbolicLink` working.
+    if (typeof entry.isSymbolicLink === 'function' && entry.isSymbolicLink()) {
+      let realTarget: string;
+      try {
+        realTarget = await fs.realpath(fullPath);
+      } catch {
+        continue;
+      }
+      if (!isWithinVaultRoot(realTarget, vaultRoot)) continue;
+    }
+
     counter.count++;
     if (counter.count > counter.max) {
       throw new VaultTooLargeError(counter.max);
     }
-
-    const fullPath = join(dirPath, entry.name);
 
     // Sprint B / B18 — credit the cumulative serialized-size budget. Each
     // node's two string fields (`path`, `name`) dominate JSON size; the
@@ -130,7 +174,7 @@ async function walkDirectoryTree(
     }
 
     if (entry.isDirectory()) {
-      const children = await walkDirectoryTree(fullPath, counter);
+      const children = await walkDirectoryTree(fullPath, counter, vaultRoot);
       nodes.push({
         name: entry.name,
         path: fullPath,

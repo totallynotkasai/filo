@@ -10,6 +10,7 @@
   } from './lib/boards/boardSaver';
   import { onError, reportError } from './lib/utils/errorBus';
   import { createErrorToastAggregator } from './lib/utils/errorToastAggregator';
+  import { buildWriteErrorToast } from './lib/boards/writeErrorToast';
   import { handleFlushAndQuit } from './lib/vault/handleFlushAndQuit';
   import { flushDirtyFlagSentinel } from './lib/vault/dirtyFlagRecovery';
   import { historyStore } from './stores/history.svelte';
@@ -31,15 +32,28 @@
   // markdown/frontmatter writers (TextTile, DocumentEditor, PropertiesPopup,
   // TaskListBoard); 'board' covers .board.json; 'config' covers .filo/
   // config files.
+  //
+  // Audit-7 L2 — route through a DEDICATED coalescing aggregator (keyed by
+  // write kind via `buildWriteErrorToast`'s context) so a multi-target failure
+  // (e.g. many dirty .board.json on a full disk) collapses into one
+  // count-badged toast per kind instead of one persistent toast per file.
+  // Separate instance from the errorBus aggregator below so the two coalescing
+  // namespaces can't cross-talk.
+  //
+  // Audit-7 M5 — when the atomic write preserved its tmp on ENOSPC/EIO/EACCES,
+  // `buildWriteErrorToast` names that location so the user can recover the
+  // bytes (the old hardcoded "not on disk yet" copy was wrong — they ARE on
+  // disk at the preserved tmp path).
+  const writeErrorAggregator = createErrorToastAggregator({
+    pushToast: (opts) => uiStore.pushToast(opts),
+    updateToastText: (id, text) => uiStore.updateToastText(id, text),
+  });
   setBoardWriteErrorListener((info) => {
-    const where = info.path ? ` (${info.path})` : '';
-    const subject =
-      info.kind === 'board' ? 'board' : info.kind === 'config' ? 'settings' : 'file';
-    uiStore.pushToast({
-      text: `Failed to save ${subject}${where}. Your changes are not on disk yet — check disk space or file permissions.`,
-      type: 'error',
-      duration: 0,
-    });
+    const { context, message, coalesceKey } = buildWriteErrorToast(info);
+    // A9-L10 — thread the per-preserved-path coalesceKey so two same-kind
+    // failures with DIFFERENT preserved-tmp locations each keep their own
+    // toast (the display prefix stays `context`).
+    writeErrorAggregator({ context, error: info.error, message, coalesceKey });
   });
 
   // Feed boardSaver's begin/end counts into the save-state store so the

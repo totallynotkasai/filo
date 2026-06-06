@@ -9,6 +9,7 @@ import {
 import { vaultStore } from './vault.svelte';
 import { reportError } from '../lib/utils/errorBus';
 import { isMarkdownExtension } from '../lib/vault/extension';
+import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { stripLeadingSlash, toPosix } from '../lib/utils/path';
 import type { FileTreeNode } from '../../shared/types';
 import { onVaultSwap } from '../core/vaultLifecycle';
@@ -83,13 +84,16 @@ const pendingRetries = new SvelteMap<string, ReturnType<typeof setTimeout>>();
 async function indexOnePath(relativePath: string): Promise<void> {
   const root = vaultStore.path;
   if (!root) return;
+  const identity = captureVaultIdentity();
   const rel = normaliseRel(relativePath);
   const res = await readFileText(root, rel);
   // 2.2 (#5) — re-check vault identity AFTER the awaited read. A vault swap (or
   // close) during the read leaves `root` pointing at the PRIOR vault; upserting,
   // removing, or scheduling a retry against the live index now would graft the
   // old vault's file (or a phantom retry timer) onto the new vault's metadata.
-  if (vaultStore.path !== root) return;
+  // Audit-11 VS-6 — generation-aware so a close → reopen of the SAME path (same
+  // string, new instance) reads as stale too, not just a different-path swap.
+  if (!isStillSameVault(identity)) return;
   if (res.ok && res.content !== null) {
     // Audit2 4.3 — stamp the disk mtime, not Date.now(). Date.now() made the
     // partial-read window (now - lastModified < 1s) always true, forcing every

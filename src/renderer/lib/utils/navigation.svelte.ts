@@ -5,6 +5,7 @@ import { selectionStore } from '../../stores/selection.svelte';
 import { tabStore } from '../../stores/tabs.svelte';
 import type { Board } from '../../schema/index';
 import { onVaultSwap } from '../../core/vaultLifecycle';
+import { captureVaultIdentity, isStillSameVault } from '../vault/vaultIdentity';
 
 /**
  * Highlight state — stores the currently highlighted tile ID
@@ -46,8 +47,10 @@ export function navigateToTile(boardId: string, tileId: string): void {
     navigateRetryTimer = null;
   }
   // Capture the vault we navigated from; a swap mid-retry must abort the chain
-  // so we don't center/select against the new vault's boards.
-  const startVaultPath = vaultStore.path;
+  // so we don't center/select against the new vault's boards. Audit-11 VS-6 —
+  // a generation-aware identity (not a bare path string) also catches a
+  // close → reopen of the SAME path between scheduling and the retry firing.
+  const startVault = captureVaultIdentity();
 
   // If on a different board, switch first
   const currentBoardId = boardStore.current?.id;
@@ -66,7 +69,7 @@ export function navigateToTile(boardId: string, tileId: string): void {
     navigateRetryTimer = null;
     // Bail if the vault swapped under the retry — the captured boardId/tileId
     // belong to the old vault.
-    if (vaultStore.path !== startVaultPath) return;
+    if (!isStillSameVault(startVault)) return;
     const tile = boardStore.getTile(tileId);
     if (tile) {
       // Center viewport on tile. `renderedWidth`/`renderedHeight` are

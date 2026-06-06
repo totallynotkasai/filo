@@ -7,6 +7,14 @@
    */
   import { onMount } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
+  // Audit-11 R2 — this modal renders at the AppShell root (outside any pane's
+  // `BoardScope` context), so it cannot read a pane scope via `getContext`.
+  // It doesn't need to: the global `boardStore` is the facade Proxy that
+  // delegates to the FOCUSED pane's scope (`getActiveScope()`), NOT a stale
+  // global like R1's `tabStore.activeTab`. `orphansStore.rescan()` reads
+  // through the SAME facade, so the scan and this modal's `getTile` /
+  // `removeTilesWithHistory` always target the same (focused-pane) board.
+  // Pane-correct by construction — no change needed beyond this note.
   import { boardStore } from '../../stores/board.svelte';
   import { canvasStore } from '../../stores/canvas.svelte';
   import { uiStore } from '../../stores/ui.svelte';

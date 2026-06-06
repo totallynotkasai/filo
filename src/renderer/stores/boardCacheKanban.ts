@@ -163,14 +163,28 @@ export function makeKanbanSlice(ctx: CacheContext) {
     reorderKanbanColumns(boardId: string, orderedIds: string[]): void {
       const kb = ctx.kanbanBoardOrWarn(boardId, 'reorderKanbanColumns');
       if (!kb) return;
-      const byId = new Map((kb.columns ?? []).map((c) => [c.id, c]));
-      const reordered = orderedIds
-        .map((id, idx) => {
-          const col = byId.get(id);
-          return col ? { ...col, position: idx } : null;
-        })
-        .filter((c): c is NonNullable<typeof c> => c !== null);
-      (kb as Record<string, unknown>).columns = reordered;
+      const liveCols = (kb.columns ?? []) as KanbanBoard['columns'];
+      const byId = new Map(liveCols.map((c) => [c.id, c]));
+      // Phase 3 / 3.5 — append any LIVE column NOT named in `orderedIds`, in
+      // live order, so an out-of-band-added column survives a stale-order
+      // reorder/undo. `ReorderColumnCommand.undo` replays a `beforeOrder`
+      // captured BEFORE that add; the old slice-replace
+      // (`columns = orderedIds.map(...)`) silently dropped any column missing
+      // from the captured order. Mirrors `applySectionOrderLive`'s
+      // append-survivors logic for the Task List sibling.
+      const requested = new Set(orderedIds);
+      const ordered = [
+        ...orderedIds
+          .map((id) => byId.get(id))
+          .filter((c): c is NonNullable<typeof c> => c != null),
+        ...liveCols.filter((c) => !requested.has(c.id)),
+      ];
+      // Renormalise positions to array index (the `reorderKanbanColumns`
+      // invariant) but only rewrite the scalar when it actually changed, so a
+      // survivor column's object identity / content fields are left intact.
+      (kb as Record<string, unknown>).columns = ordered.map((c, idx) =>
+        c.position === idx ? c : { ...c, position: idx },
+      );
       ctx.markDirty(boardId);
     },
 
@@ -355,7 +369,12 @@ export function makeKanbanSlice(ctx: CacheContext) {
         if (typeof coverImage === 'string' && coverImage.length > 0) {
           placement.coverImage = coverImage;
         }
-        placements.splice(Math.min(position, placements.length), 0, placement);
+        // L9 — clamp BOTH ends (mirrors the TaskList sibling). The high end was
+        // already clamped; flooring at 0 keeps a stray negative position from
+        // splicing relative to the array end (defensive — the schema's
+        // nonnegative-int already blocks a persisted negative).
+        const insertAt = Math.min(Math.max(position, 0), placements.length);
+        placements.splice(insertAt, 0, placement);
         return {
           ...c,
           tilePlacements: placements.map((p, i) => ({ ...p, position: i })),

@@ -19,6 +19,10 @@ import {
   __resetTagRewriteSweepForTests,
 } from '@renderer/lib/vault/tagRewriteSweep';
 import { __resetTagRewriteSentinelForTests } from '@renderer/lib/vault/tagRewriteSentinel';
+import {
+  __testRegisterFlusher,
+  __resetMarkdownFileWriterForTests,
+} from '@renderer/lib/vault/markdownFileWriter';
 import type { FileMetadata } from '@renderer/lib/vault/vaultIndex';
 
 type InvokeRoute = (...args: unknown[]) => unknown | Promise<unknown>;
@@ -330,5 +334,67 @@ describe('rewriteTagInAllMarkdown — sweep mutex (polish phase 4.3)', () => {
     expect(applied).toContain('note.md');
     expect(fs.files.get('note.md')).toMatch(/- done/);
     expect(fs.files.get('note.md')).not.toMatch(/Project/);
+  });
+});
+
+// ── Audit-7 M2 — the sweep re-reads after the inner drain ─────────────────────
+//
+// Phase 1 read each candidate and (pre-fix) snapshotted `rewrite(rawBytes)`.
+// The Phase-2 commit loop's `withDrainedWrites` flushes any armed editor body to
+// disk; the sweep then wrote the STALE snapshot over it, and the `mode:'full'`
+// reconcile reloaded the open editor to that stale body — losing a keystroke
+// that landed after the caller's up-front drain. The fix recomputes the rewrite
+// from a POST-drain re-read so the flushed body survives (tag still rewritten).
+describe('rewriteTagInAllMarkdown — re-reads after the drain (Audit-7 M2)', () => {
+  let fs: FakeFs;
+
+  beforeEach(() => {
+    fs = { files: new Map(), writeLog: [], writeDelayMs: 0 };
+    installFiloStub(fs);
+    __resetTagRewriteSweepForTests();
+    __resetTagRewriteSentinelForTests();
+    __resetMarkdownFileWriterForTests();
+  });
+  afterEach(() => {
+    uninstallFiloStub();
+    __resetTagRewriteSweepForTests();
+    __resetTagRewriteSentinelForTests();
+    __resetMarkdownFileWriterForTests();
+  });
+
+  it('preserves a body the inner drain flushes instead of clobbering it with a pre-drain snapshot', async () => {
+    const withFm = (tag: string, body: string) => `---\ntags:\n  - ${tag}\n---\n${body}\n`;
+    const C0 = withFm('draft', 'OLD BODY'); // pre-flight disk content (Phase-1 read)
+    const C1 = withFm('draft', 'NEW BODY'); // the live keystroke the drain flushes (tag NOT renamed yet)
+    fs.files.set('note.md', C0);
+
+    // Simulate an editor body write that a keystroke re-armed after the caller's
+    // up-front drain: the sweep's own `withDrainedWrites` flushes it to disk.
+    // `flushAllMarkdownWriters` (inside withDrainedWrites) drains test flushers.
+    let flushed = false;
+    __testRegisterFlusher('editor:note.md', async () => {
+      if (flushed) return;
+      flushed = true;
+      fs.files.set('note.md', C1);
+      fs.writeLog.push({ path: 'note.md', content: C1, at: 0 });
+    });
+
+    const res = await rewriteTagInAllMarkdown({
+      vaultRoot: '/vault',
+      metadata: makeMetadata(['note.md'], 'draft'),
+      oldName: 'draft',
+      newName: 'review',
+      applyChanges: async () => {},
+    });
+
+    expect(flushed, 'the inner drain must have flushed the editor body').toBe(true);
+    expect(res.succeeded).toContain('note.md');
+    const final = fs.files.get('note.md')!;
+    // The drained body survives AND the tag is renamed — not the stale pre-drain
+    // body the Phase-1 snapshot would have re-written.
+    expect(final).toContain('NEW BODY');
+    expect(final).not.toContain('OLD BODY');
+    expect(final).toMatch(/- review/);
+    expect(final).not.toMatch(/draft/);
   });
 });

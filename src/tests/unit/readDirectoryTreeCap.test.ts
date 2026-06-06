@@ -22,14 +22,20 @@ interface MockDirent {
   name: string;
   isDirectory(): boolean;
   isFile(): boolean;
+  isSymbolicLink(): boolean;
 }
 
 function makeFileDirent(name: string): MockDirent {
-  return { name, isDirectory: () => false, isFile: () => true };
+  return { name, isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false };
 }
 
 function makeDirDirent(name: string): MockDirent {
-  return { name, isDirectory: () => true, isFile: () => false };
+  return { name, isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false };
+}
+
+// Audit-11 P2 — a reparse point (NTFS junction / POSIX symlink) entry.
+function makeSymlinkDirent(name: string): MockDirent {
+  return { name, isDirectory: () => false, isFile: () => false, isSymbolicLink: () => true };
 }
 
 describe('readDirectoryTree — in-walk cap', () => {
@@ -129,6 +135,83 @@ describe('readDirectoryTree — in-walk cap', () => {
     // the documented 100 000 cap so the IPC layer / renderer toast
     // copy line up with the actual value.
     expect(VAULT_TREE_MAX_NODES).toBe(100_000);
+  });
+});
+
+/**
+ * Audit-11 P2 — a reparse point (NTFS junction / POSIX symlink) inside the
+ * vault can resolve OUTSIDE it. The walker realpaths each link entry and drops
+ * it from the tree when the target escapes the vault root, so an out-of-vault
+ * path's name never leaks into the sidebar.
+ */
+describe('readDirectoryTree — reparse-point containment (Audit-11 P2)', () => {
+  let readdirSpy: ReturnType<typeof vi.spyOn>;
+  let statSpy: ReturnType<typeof vi.spyOn>;
+  let realpathSpy: ReturnType<typeof vi.spyOn>;
+  const normalise = (p: string) => p.replace(/\\/g, '/');
+
+  beforeEach(() => {
+    statSpy = vi.spyOn(fs, 'stat').mockResolvedValue({
+      mtimeMs: 1,
+      size: 0,
+    } as Awaited<ReturnType<typeof fs.stat>>);
+  });
+
+  afterEach(() => {
+    readdirSpy?.mockRestore();
+    statSpy?.mockRestore();
+    realpathSpy?.mockRestore();
+  });
+
+  it('excludes a junction/symlink whose target escapes the vault', async () => {
+    readdirSpy = vi.spyOn(fs, 'readdir').mockImplementation((async (dir: string) => {
+      if (normalise(dir) === '/v') {
+        return [makeFileDirent('real.md'), makeSymlinkDirent('escape')];
+      }
+      return [];
+    }) as unknown as typeof fs.readdir);
+    realpathSpy = vi.spyOn(fs, 'realpath').mockImplementation((async (p: string) => {
+      const norm = normalise(p);
+      if (norm === '/v/escape') return '/etc/secrets'; // outside the vault
+      return p; // the root '/v' (and anything else) resolves to itself
+    }) as unknown as typeof fs.realpath);
+
+    const tree = await readDirectoryTree('/v');
+    expect(tree.map((n) => n.name)).toEqual(['real.md']);
+  });
+
+  it('keeps a symlink whose target stays inside the vault', async () => {
+    readdirSpy = vi.spyOn(fs, 'readdir').mockImplementation((async (dir: string) => {
+      if (normalise(dir) === '/v') {
+        return [makeSymlinkDirent('inside')];
+      }
+      return [];
+    }) as unknown as typeof fs.readdir);
+    realpathSpy = vi.spyOn(fs, 'realpath').mockImplementation((async (p: string) => {
+      const norm = normalise(p);
+      if (norm === '/v/inside') return '/v/sub'; // still under the vault
+      return p;
+    }) as unknown as typeof fs.realpath);
+
+    const tree = await readDirectoryTree('/v');
+    expect(tree.map((n) => n.name)).toEqual(['inside']);
+  });
+
+  it('drops a symlink whose target cannot be resolved (broken link)', async () => {
+    readdirSpy = vi.spyOn(fs, 'readdir').mockImplementation((async (dir: string) => {
+      if (normalise(dir) === '/v') {
+        return [makeFileDirent('real.md'), makeSymlinkDirent('broken')];
+      }
+      return [];
+    }) as unknown as typeof fs.readdir);
+    realpathSpy = vi.spyOn(fs, 'realpath').mockImplementation((async (p: string) => {
+      const norm = normalise(p);
+      if (norm === '/v/broken') throw new Error('ENOENT');
+      return p;
+    }) as unknown as typeof fs.realpath);
+
+    const tree = await readDirectoryTree('/v');
+    expect(tree.map((n) => n.name)).toEqual(['real.md']);
   });
 });
 

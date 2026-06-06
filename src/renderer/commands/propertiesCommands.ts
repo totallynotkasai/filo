@@ -37,6 +37,8 @@ import { flushAllPendingFrontmatterWrites } from '../lib/boards/frontmatterWrite
 import { reportError } from '../lib/utils/errorBus';
 import { uiStore } from '../stores/ui.svelte';
 import { fmValueEqual } from './frontmatterRebase';
+import { type FrontmatterDelta } from '../lib/vault/frontmatterDelta';
+import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 
 export type PropertiesSnapshot =
   | { kind: 'frontmatter'; relPath: string; docId: string | null; fm: Record<string, unknown> }
@@ -148,6 +150,12 @@ async function applySnapshot(
     return;
   }
 
+  // FILO-UR-2 (Audit-11) — capture vault identity before the drain so the guards
+  // below bail on a swap. The different-path swap is main-side blocked by
+  // assertActiveVault; this closes the close→reopen-same-path window (new
+  // generation, same path string) + the stale post-write renderer bookkeeping.
+  const identity = captureVaultIdentity();
+
   // Drain pending debounced writes before this command writes its own copy
   // so the prior in-memory state lands on disk first. Same reason as
   // UpdateCardFieldCommand: a rapid Apply → Undo without the flush would
@@ -157,6 +165,7 @@ async function applySnapshot(
 
   const vaultRoot = vaultStore.path;
   if (!vaultRoot) return;
+  if (!isStillSameVault(identity)) return; // FILO-UR-2 — swap during the drain
 
   const { relPath, docId } = target;
   const targetFm = target.fm;
@@ -170,16 +179,28 @@ async function applySnapshot(
   }
 
   // Obtain the LIVE base frontmatter + body in as few reads as possible.
-  // Prefer the documentStore cache (an open editor keeps it current — external
-  // edits get reconciled in there); else read disk fresh; else fall back.
-  let base: Record<string, unknown> | null = docId
-    ? documentStore.getFrontmatter(docId) ?? null
-    : null;
+  //
+  // Phase 2 / 2.2 (WRITE_PATH_REMEDIATION_PLAN_2026-06-04) — only an OPEN
+  // editor's documentStore FM cache is a trustworthy rebase base: the
+  // sync-frontmatter reconciler keeps it fresh and it carries any unsaved popup
+  // FM edits. A NOT-open doc (a Kanban card / Task row seeded once but never
+  // opened) is NOT refreshed by that reconciler, so an externally-added key
+  // never reached its cache; rebasing this undo/redo onto the stale cache would
+  // silently revert that external key (Finding #5). For the not-open case
+  // re-read FRESH disk instead — the command already drained pending writes
+  // above and is per-path serialized, so the read is race-free. (Interim form
+  // of Phase 4's delta-onto-fresh-disk invariant; the index is the last resort.)
   const docState = docId ? documentStore.getDocument(docId) : null;
+  let base: Record<string, unknown> | null =
+    docState && docId ? documentStore.getFrontmatter(docId) ?? null : null;
   let diskBody: string | undefined;
-  if (!isHydrated(relPath)) {
+  // Read disk when we still need a base (not-open doc, or an unseeded open doc)
+  // OR when the gateway hasn't hydrated this path yet (the write below needs
+  // hydration for the BOM + drift baseline).
+  if (base === null || !isHydrated(relPath)) {
     try {
       const hydrate = await readMarkdownForHydrate(vaultRoot, relPath);
+      if (!isStillSameVault(identity)) return; // FILO-UR-2 — swap during the hydrate read
       diskBody = hydrate.body;
       if (base === null) {
         base = hydrate.frontmatter;
@@ -209,6 +230,14 @@ async function applySnapshot(
 
   let merged: Record<string, unknown>;
   const conflicts: string[] = [];
+  // Phase 4 — the safe (non-conflicting) owned keys also become an explicit
+  // delta the gateway applies to FRESH disk, so any key this command doesn't own
+  // — including one added externally between the popup edit and Ctrl+Z — survives
+  // by construction instead of being reverted off a stale `base`. `merged` is
+  // still computed for the DISPLAY cache. `undefined` for the base===null corner
+  // keeps the legacy blind-apply write (the gateway delta read would just
+  // ENOENT-fail on the same unreadable file).
+  let delta: FrontmatterDelta | undefined;
   if (base === null) {
     // No baseline obtainable (file unreadable AND nothing cached/indexed) — we
     // can't see any external keys to preserve, so blind-apply the target
@@ -217,6 +246,7 @@ async function applySnapshot(
     merged = cleanFrontmatter({ ...targetFm });
   } else {
     merged = { ...base };
+    const d: FrontmatterDelta = { set: {}, unset: [] };
     for (const k of ownedKeys) {
       // Conflict: an external edit moved this field away from what this
       // command's opposite leg left it at. Keep the external value, skip.
@@ -224,11 +254,23 @@ async function applySnapshot(
         conflicts.push(k);
         continue;
       }
-      if (k in targetFm) merged[k] = targetFm[k];
-      else delete merged[k];
+      const v = targetFm[k];
+      if (k in targetFm && v !== '' && v !== null && v !== undefined) {
+        merged[k] = v;
+        d.set[k] = v;
+      } else {
+        delete merged[k];
+        d.unset.push(k);
+      }
     }
     merged = cleanFrontmatter(merged);
+    delta = d;
   }
+
+  // FILO-UR-2 — final swap check before the cache mutation + write. The write
+  // IPC is main-side gated (a captured-vaultRoot write throws after a swap), but
+  // the documentStore.setFrontmatter cache mutation below is not.
+  if (!isStillSameVault(identity)) return;
 
   // Sync the live FM cache so an open editor/popup sees the applied result.
   // Without this, an already-open PropertiesPopup would re-write its stale
@@ -243,6 +285,7 @@ async function applySnapshot(
       body,
       callerId: `update-properties-command:${relPath}`,
       docId,
+      frontmatterDelta: delta,
     });
   } catch (err) {
     reportError('updateProperties', err, `Failed to apply properties to ${relPath}`);
@@ -259,10 +302,20 @@ async function applySnapshot(
           handler: () => {
             // The user insists — force the owned snapshot value onto the
             // conflicting fields too, still preserving untouched (external) keys.
+            // Phase 4 — the forced fields become their own delta so the gateway
+            // applies ONLY them to fresh disk (every other key, incl. external
+            // additions, stays). `cleaned` updates the display cache.
             const forced: Record<string, unknown> = { ...merged };
+            const forcedDelta: FrontmatterDelta = { set: {}, unset: [] };
             for (const k of conflicts) {
-              if (k in targetFm) forced[k] = targetFm[k];
-              else delete forced[k];
+              const v = targetFm[k];
+              if (k in targetFm && v !== '' && v !== null && v !== undefined) {
+                forced[k] = v;
+                forcedDelta.set[k] = v;
+              } else {
+                delete forced[k];
+                forcedDelta.unset.push(k);
+              }
             }
             const cleaned = cleanFrontmatter(forced);
             if (docId) documentStore.setFrontmatter(docId, cleaned);
@@ -273,6 +326,7 @@ async function applySnapshot(
               body,
               callerId: `update-properties-command:${relPath}`,
               docId,
+              frontmatterDelta: forcedDelta,
             }).catch((err) =>
               reportError('updateProperties', err, `Failed to apply properties to ${relPath}`),
             );

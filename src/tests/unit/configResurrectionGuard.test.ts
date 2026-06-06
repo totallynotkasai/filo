@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeConfigs } from '@renderer/lib/boards/configWriteScheduler';
+import { writeConfigs, seedConfigSnapshots } from '@renderer/lib/boards/configWriteScheduler';
 import {
   noteBaseline,
   __resetBaselinesForTests,
@@ -290,6 +290,102 @@ describe('configWriteScheduler — L24 re-stat disambiguates a transient unlink'
       (c) => c.channel === 'config:save' && c.args[1] === 'defaults.json',
     );
     expect(defaultsSaves).toHaveLength(0); // still gone → deletion respected
+    expect(result.failed).not.toContain('defaults.json');
+  });
+});
+
+// Audit-7 L11 — a delete+recreate is an external mutation the mtime+size drift
+// check can be blind to: a same-size, same-second recreate reads as "no drift",
+// so a FOREIGN recreate would be silently clobbered. On the reappear branch the
+// writer now reads the reappeared CONTENT and aborts if it differs from what
+// Filo last wrote/seeded — while a benign same-content blip (L24) still
+// proceeds (and an unverifiable / never-seeded target falls through unchanged).
+describe('configWriteScheduler — L11 foreign delete+recreate not clobbered', () => {
+  beforeEach(() => {
+    restoreFiloDefault();
+    __resetBaselinesForTests();
+    __resetDirtyTrackingForTests();
+  });
+  afterEach(() => {
+    restoreFiloDefault();
+    __resetBaselinesForTests();
+    __resetDirtyTrackingForTests();
+  });
+
+  // defaults.json is driven by mindmap/etc; globalFont is held fixed so
+  // app.json / appearance.json dedupe out and only defaults.json exercises
+  // the reappear path.
+  const settingsWith = (mindmap: Record<string, unknown>): ProjectSettings =>
+    ({ general: { globalFont: 'fixed' }, mindmap, kanban: {}, tasklist: {}, document: {} } as ProjectSettings);
+
+  // Builds the catchall mock: defaults.json's first stat ENOENTs then reappears
+  // with the SAME baseline mtime+size (the L11 blind spot); `config:load`
+  // returns whatever object the test supplies for the reappeared file.
+  function mockWith(reappearedDefaults: unknown, calls: Array<{ channel: string; args: unknown[] }>) {
+    let defaultsStatCount = 0;
+    return (channel: string, ...args: unknown[]) => {
+      calls.push({ channel, args });
+      if (channel === 'vault:stat') {
+        const [, relPath] = args as [string, string];
+        if (relPath === '.filo/defaults.json') {
+          defaultsStatCount++;
+          if (defaultsStatCount === 1) {
+            return Promise.resolve({ ok: false, code: 'ENOENT', error: 'transient' });
+          }
+          return Promise.resolve({ ok: true, mtimeMs: 1000, size: 50 });
+        }
+        return Promise.resolve({ ok: true, mtimeMs: 1000, size: 50 });
+      }
+      if (channel === 'config:load') {
+        return Promise.resolve(reappearedDefaults);
+      }
+      if (channel === 'config:save' || channel === 'config:save-workspace') {
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.resolve(undefined);
+    };
+  }
+
+  it('aborts the write when the reappeared file has foreign content (same mtime+size)', async () => {
+    // Prime last-written + dedupe as if Filo wrote defaults {x:1}.
+    seedConfigSnapshots(settingsWith({ x: 1 }), 'light', makeWorkspace());
+    noteBaseline('.filo/defaults.json', 1000, 50);
+
+    const calls: Array<{ channel: string; args: unknown[] }> = [];
+    // The reappeared file holds FOREIGN content, not {x:1}.
+    installFiloMock(mockWith(
+      { mindmap: { x: 999, foreign: true }, kanban: {}, tasklist: {}, document: {} },
+      calls,
+    ));
+
+    // Arm a CHANGED payload {x:2} so it isn't dedup-skipped.
+    const result = await writeConfigs(VAULT_ROOT, settingsWith({ x: 2 }), 'light', makeWorkspace());
+
+    // defaults.json must NOT have been written — the foreign recreate stands.
+    const defaultsSaves = calls.filter(
+      (c) => c.channel === 'config:save' && c.args[1] === 'defaults.json',
+    );
+    expect(defaultsSaves).toHaveLength(0);
+    expect(result.failed).toContain('defaults.json');
+  });
+
+  it('proceeds when the reappeared file matches our last write (benign blip)', async () => {
+    seedConfigSnapshots(settingsWith({ x: 1 }), 'light', makeWorkspace());
+    noteBaseline('.filo/defaults.json', 1000, 50);
+
+    const calls: Array<{ channel: string; args: unknown[] }> = [];
+    // The reappeared file is exactly what we last wrote ({x:1}).
+    installFiloMock(mockWith(
+      { mindmap: { x: 1 }, kanban: {}, tasklist: {}, document: {} },
+      calls,
+    ));
+
+    const result = await writeConfigs(VAULT_ROOT, settingsWith({ x: 2 }), 'light', makeWorkspace());
+
+    const defaultsSaves = calls.filter(
+      (c) => c.channel === 'config:save' && c.args[1] === 'defaults.json',
+    );
+    expect(defaultsSaves).toHaveLength(1);
     expect(result.failed).not.toContain('defaults.json');
   });
 });

@@ -37,6 +37,7 @@ import { runVaultSearch, type SearchMatch } from '../lib/search/runSearch';
 import { invokeOk } from '../lib/utils/invokeOk';
 import { reportError } from '../lib/utils/errorBus';
 import { writeMarkdownAndReconcile } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
+import { runSerializedMarkdownWrite } from '../lib/vault/markdownFileWriter';
 
 interface FilePlan {
   /** Vault-relative path of the .md file. */
@@ -193,9 +194,46 @@ export class ReplaceAllCommand extends Command {
   }
 
   async undo(): Promise<void> {
-    const items = this.plans.map((p) => ({ path: p.path, content: p.originalContent }));
-    await this.writeAll(items);
-    await vaultIndexStore.applyChanges(this.plans.map((p) => p.path));
+    // Phase 3 / 3.6 — per-file drift check before reverting. `execute` wrote
+    // each file's `nextContent`; if a file's CURRENT disk content no longer
+    // equals that, it was edited (externally, or via another in-app path)
+    // AFTER the replace, so a blind revert to `originalContent` would silently
+    // clobber that newer edit. Skip such files and name them in one aggregate
+    // toast. A vanished / unreadable file is also skipped — recreating it from
+    // `originalContent` could resurrect a file the user deleted in the gap.
+    // (Skip + warn rather than N interactive prompts: this is a bulk op, so one
+    // aggregate is more usable than a per-file modal. `execute` keeps its
+    // unconditional overwrite — it is the user's explicit replace action and
+    // runs immediately after the same-tick pre-flight read.)
+    const items: Array<{ path: string; content: string }> = [];
+    const skipped: string[] = [];
+    for (const p of this.plans) {
+      let diskNow: string | null = null;
+      try {
+        const read = await invokeOk('vault:read-file-text', this.vaultRoot, p.path);
+        diskNow = read.content;
+      } catch {
+        diskNow = null;
+      }
+      if (diskNow !== null && diskNow === p.nextContent) {
+        items.push({ path: p.path, content: p.originalContent });
+      } else {
+        skipped.push(p.path);
+      }
+    }
+    if (items.length > 0) {
+      await this.writeAll(items);
+      await vaultIndexStore.applyChanges(items.map((i) => i.path));
+    }
+    if (skipped.length > 0) {
+      const sample = skipped.slice(0, 3).join(', ');
+      const more = skipped.length > 3 ? `, +${skipped.length - 3} more` : '';
+      uiStore.toast(
+        `Undo skipped ${skipped.length} file(s) changed since the replace (${sample}${more}) to avoid overwriting newer edits.`,
+        'warning',
+        6000,
+      );
+    }
   }
 
   private async writeAll(items: Array<{ path: string; content: string }>): Promise<void> {
@@ -212,13 +250,24 @@ export class ReplaceAllCommand extends Command {
         // Replace All is atomic with the pre-flight read, so routing through
         // the debounced markdown gateway (which would race the in-flight
         // searches) is deliberately bypassed.
-        await writeMarkdownAndReconcile({
-          vaultRoot: this.vaultRoot,
-          path: item.path,
-          content: item.content,
-          mode: 'full',
-          track: { notifyOnError: false },
-        });
+        //
+        // Audit-10 M1 — but still enrol on the per-path write chain so this
+        // bulk write serialises behind any in-flight editor/gateway write to
+        // the SAME `.md` (a debounced TextTile / DocumentEditor save executing
+        // at the IPC layer would otherwise race it — OS-arbitrated order, the
+        // loser's bytes silently lost). The coupled reconcile below cancels the
+        // editor's ARMED writer; the chain covers the already-in-flight one the
+        // cancel can't reach. `runSerializedMarkdownWrite` is ordering-only (no
+        // debounce), so it doesn't reintroduce the gateway race noted above.
+        await runSerializedMarkdownWrite(item.path, () =>
+          writeMarkdownAndReconcile({
+            vaultRoot: this.vaultRoot,
+            path: item.path,
+            content: item.content,
+            mode: 'full',
+            track: { notifyOnError: false },
+          }),
+        );
       } catch (err) {
         reportError('replaceAll.write', err, `Failed to write ${item.path}`);
         failed.push(item.path);

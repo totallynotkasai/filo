@@ -14,3 +14,29 @@
  */
 
 export const BOARD_WRITE_DEBOUNCE_MS = 300;
+
+/**
+ * Audit5 R3 / Audit-11 WC-1 — upper bound (ms) on a SINGLE debounced write,
+ * passed to every scheduler's `createScheduler({ writeTimeoutMs })`. A wedged
+ * write — a never-resolving external-edit drift prompt (#1), or a
+ * `vault:*`/`config:*`/`board:*` IPC stuck on a dropped network volume
+ * (OneDrive / SMB, the documented target environment) — must not hang an
+ * awaiting `flushAll` / `vaultStore.save()` / quit forever. On elapse the
+ * scheduler stops awaiting that write, marks its path failed (so `.filo/.dirty`
+ * + the save indicator stay live), and attributes the failure so `save()`
+ * returns false instead of freezing. The underlying write keeps running; a
+ * late success self-heals via its own `trackComponentWrite` `endWrite`.
+ *
+ * 60s is deliberately well ABOVE any legitimate in-write await: the interactive
+ * drift prompt auto-dismisses at the 15s toast cap (→ 'defer') and re-prompts at
+ * most 3×, so a genuine user decision blocks a write for at most ~45s. The bound
+ * therefore only ever fires on a TRULY wedged write, never on a slow-but-live
+ * prompt. It is a backstop, not a latency budget.
+ *
+ * Lives here (a dependency-free leaf) rather than in `markdownFileWriter.ts` so
+ * the board / config / misc / frontmatter schedulers can import it WITHOUT the
+ * module-eval cycle (scheduler → markdownFileWriter → boardSaver → scheduler)
+ * that would leave the const in the temporal dead zone at `createScheduler`
+ * time. `markdownFileWriter` re-exports it as `MARKDOWN_WRITE_TIMEOUT_MS`.
+ */
+export const WRITE_TIMEOUT_MS = 60_000;

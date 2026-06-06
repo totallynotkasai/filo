@@ -32,8 +32,14 @@
  */
 
 import { assembleMarkdownFile, parseMarkdownFile } from '../editor/markdownSync';
+import {
+  type FrontmatterDelta,
+  applyFrontmatterDelta,
+  isEmptyFrontmatterDelta,
+} from './frontmatterDelta';
 import { trackComponentWrite } from '../boards/boardSaver';
 import { createScheduler } from '../boards/writeScheduler';
+import { WRITE_TIMEOUT_MS } from '../boards/boardWriteDebounce';
 import { registerPendingProbe, markPathFailed } from '../boards/writeStateTracking';
 import { vaultPath, type VaultPath } from '@shared/vaultPath';
 import {
@@ -41,12 +47,14 @@ import {
   noteFrontmatterFlushedVersion,
 } from '../boards/frontmatterWriteScheduler';
 import { invokeOk } from '../utils/invokeOk';
+import { reportError } from '../utils/errorBus';
 import { documentStore } from '../../stores/document.svelte';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import { parseMarkdown } from './vaultIndex';
 import { onVaultSwap, vaultSwapResettable } from '../../core/vaultLifecycle';
 import { getBaseline, noteBaseline, resetAllBaselines, hasBaselineDrifted, refreshBaselineAfterWrite } from './fileBaselineRegistry';
 import { registerPathRenamable } from './renamePathKeys';
+import { captureVaultIdentity, isStillSameVault } from './vaultIdentity';
 
 /**
  * Default 300ms idle debounce. Mirrors `FM_DEBOUNCE_MS` and the historical
@@ -56,21 +64,25 @@ import { registerPathRenamable } from './renamePathKeys';
 export const MARKDOWN_WRITE_DEBOUNCE_MS = 300;
 
 /**
- * Audit5 R3 — upper bound on a single markdown write, passed to the scheduler's
- * `writeTimeoutMs`. A wedged `writeMarkdownFile` (a never-resolving external-edit
- * drift prompt — #1 — or a stuck `vault:write-existing-file-text` IPC) must not
- * hang an awaiting `flushAll` / `vaultStore.save()` forever; on timeout the path
- * is marked failed (sentinel + indicator stay live) and the failure is
- * attributed so `save()` returns false instead of freezing.
- *
- * 60s is deliberately well ABOVE any legitimate in-write await: the interactive
- * drift prompt auto-dismisses at the 15s toast cap (resolving to 'defer'), and
- * its re-prompt loop is bounded to 3, so a genuine user decision blocks the
- * write for at most ~45s. The bound therefore only ever fires on a TRULY wedged
- * write, never on a slow-but-live prompt. It is a backstop, not a latency
- * budget; quit-time responsiveness is handled separately by the drain heartbeat.
+ * Audit5 R3 — upper bound on a single markdown write, wired into the scheduler's
+ * `writeTimeoutMs`. Re-exported from the dependency-free `boardWriteDebounce`
+ * leaf (`WRITE_TIMEOUT_MS`) so the sibling schedulers can share the same bound
+ * without the module-eval cycle through this file; see that constant's docstring
+ * for the rationale. Kept under this name for back-compat with existing
+ * references (the gate, file-size notes, tests).
  */
-export const MARKDOWN_WRITE_TIMEOUT_MS = 60_000;
+export const MARKDOWN_WRITE_TIMEOUT_MS = WRITE_TIMEOUT_MS;
+
+/**
+ * UTF-8 byte length of a string. The disk write encodes `fileText` as UTF-8,
+ * so this equals the on-disk byte size of a clean self-write — used by the
+ * Audit-7 L5 post-write baseline TOCTOU guard to tell our own bytes from a
+ * foreign edit that landed in the write→stat gap.
+ */
+const utf8Encoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
+function utf8ByteLength(text: string): number {
+  return utf8Encoder ? utf8Encoder.encode(text).length : text.length;
+}
 
 /**
  * Phase R6 — listener slot for the Reload / Keep-local prompt the writer
@@ -103,8 +115,8 @@ export interface WriteArgs {
   vaultRoot: string;
   /** Vault-relative path of the `.md` file. */
   relPath: string;
-  /** Frontmatter to serialise. */
-  frontmatter: Record<string, unknown>;
+  /** Frontmatter to serialise. Optional: a `frontmatterDelta` caller omits it — the gateway sources FM from a fresh in-chain disk read (FILO-UR-1). */
+  frontmatter?: Record<string, unknown>;
   /** Body to serialise. */
   body: string;
   /** Stable per-component identifier; scopes the debounce timer and dedupes flushes. */
@@ -115,9 +127,38 @@ export interface WriteArgs {
    * after a successful write so cross-writer race guards stay accurate.
    */
   docId?: string | null;
+  /**
+   * Audit-9 L5 — on-disk frontmatter SOURCE (raw bytes between the fences) for a
+   * docId-less caller (orphan-card patch). With a docId the gateway reads it from the
+   * document store; a docId-less write without it full-dumps (losing comments / key
+   * order / quoting), so threading it lets `patchFrontmatterSourceCst` source-preserve.
+   */
+  originalFrontmatter?: string;
+  /**
+   * WRITE_PATH_REMEDIATION_PLAN_2026-06-04 Phase 4 — the delta-based write
+   * source. When present, the gateway IGNORES `frontmatter` / the documentStore
+   * cache as the FM source: it reads CURRENT disk in-chain, applies ONLY these
+   * `set`/`unset` keys, and assembles against that same fresh read. So every key
+   * the user did not touch — including an external addition the cache never saw —
+   * is sourced from disk and preserved by construction (the root-cause fix for
+   * the recurring untouched-key-drop class). Field-edit (Kanban/Task) and
+   * Properties writes thread this; body-only editor saves do not (they keep the
+   * open-editor-reconciled cache path).
+   */
+  frontmatterDelta?: FrontmatterDelta;
 }
 
-interface FileState { hadBom: boolean; }
+interface FileState {
+  hadBom: boolean;
+  /**
+   * A8-M1 — the file's real line ending, sniffed once from the full raw file
+   * content at hydrate time. Threaded into `assembleMarkdownFile({ eol })` so a
+   * CRLF file with a single-line frontmatter keeps CRLF on a metadata edit
+   * (detection from the FM source alone can't tell — a one-line FM has no
+   * internal `\r\n`). `undefined` for in-memory hydrates with no disk read.
+   */
+  eol?: '\r\n' | '\n';
+}
 /**
  * Per-file state populated by `markHydrated()`. Without an entry here,
  * `writeMarkdownFile` throws — the caller hasn't run its hydrate routine,
@@ -260,9 +301,14 @@ export function markHydrated(
   hadBom: boolean,
   mtimeMs?: number,
   size?: number,
+  eol?: '\r\n' | '\n',
 ): void {
   if (!relPath) return;
-  fileState.set(relPath, { hadBom });
+  // A8-M1 — record the file's real eol when the caller sniffed it from the raw
+  // disk content (only `readMarkdownForHydrate` does today). In-memory hydrates
+  // pass none ⇒ the write path falls back to body/FM-source detection (LF for a
+  // genuinely new file).
+  fileState.set(relPath, { hadBom, eol });
   if (mtimeMs !== undefined) noteBaseline(relPath, mtimeMs, size);
 }
 
@@ -380,7 +426,11 @@ export async function readMarkdownForHydrate(
 ): Promise<HydrateReadResult> {
   const result = await invokeOk('vault:read-file-text', vaultRoot, relPath);
   const parsed = parseMarkdownFile(result.content);
-  markHydrated(relPath, parsed.hadBom, result.mtimeMs, result.size);
+  // A8-M1 — sniff the file's real eol from the FULL raw content (not the
+  // fence-stripped FM block, which loses the signal for a single-line FM) and
+  // thread it through so a later metadata edit re-applies CRLF to the FM block.
+  const eol: '\r\n' | '\n' = result.content.includes('\r\n') ? '\r\n' : '\n';
+  markHydrated(relPath, parsed.hadBom, result.mtimeMs, result.size, eol);
   return {
     content: result.content,
     hadBom: parsed.hadBom,
@@ -497,6 +547,12 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
     );
   }
 
+  // A9-L8 — snapshot the vault identity BEFORE the (possibly long) drift prompt
+  // and the write await below, so the post-write renderer-state bookkeeping can
+  // detect a vault swap that landed in either window and skip mutating the NEW
+  // vault's index / drift baseline / FM-version for `relPath`.
+  const writeIdentity = captureVaultIdentity();
+
   // Phase R6 — pre-write drift check. If the file's mtime on disk
   // differs from the baseline captured at hydrate-time (or after the
   // most recent self-write), an external editor wrote to the file
@@ -529,10 +585,10 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
       for (let attempt = 0; attempt < MAX_DRIFT_REPROMPTS; attempt++) {
         const choice = handler ? await handler(relPath) : 'keep-local';
         if (choice === 'reload') {
-          // The Reload handler refreshed vault index + editor content from
-          // disk and re-stamped the baseline (applyReloadFromDisk →
-          // markHydrated mtime threading). Drop this scheduled write — the
-          // user explicitly chose to discard their pending bytes.
+          // The Reload handler refreshed the vault index + editor content
+          // from disk and re-stamped the drift baseline (applyReloadFromDisk
+          // → noteBaseline, threaded from the read). Drop this scheduled
+          // write — the user explicitly chose to discard their pending bytes.
           return;
         }
         if (choice === 'defer') {
@@ -595,74 +651,186 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
     }
   }
 
-  // Phase 18 H13 — stale-cache re-read protection. The caller captured the
-  // frontmatter at schedule time, but a cross-board frontmatter writer
-  // (PropertiesPopup, TaskListBoard, etc.) could have flushed a newer FM to
-  // disk in the meantime. The frontmatter scheduler's last-flushed-version
-  // map records the highest mutation version that successfully landed on
-  // disk; if that's higher than the documentStore's current cache version
-  // for this docId, the caller's args are stale — re-read disk, back-merge
-  // into the cache, and use the disk FM. One extra IPC per stale-detected
-  // write; the happy path stays a pure write.
-  // Audit2 2.5 — frontmatter is owned by the live documentStore cache, not the
-  // caller's schedule-time snapshot in `args.frontmatter`. A body write debounces
-  // for 300 ms; if an FM mutation lands in the cache during that window — an
-  // external frontmatter-only edit reconciled in, a PropertiesPopup / TaskList
-  // edit, or a cross-board flush — emitting the frozen snapshot would silently
-  // clobber it. Read the cache live at fire time (its presence is authoritative;
-  // both editor callers source `args.frontmatter` from it anyway), falling back
-  // to the caller's args only when the cache has no entry for this doc.
-  let fm = (docId ? documentStore.getFrontmatter(docId) : undefined) ?? args.frontmatter;
-  if (docId) {
-    // M1 — version map is keyed by docId so this comparison stays in the
-    // same version space as `getFrontmatterMutationVersion(docId)`.
-    //
-    // Audit-4 DI-17 — this `lastFlushed > cacheVersion` re-read is believed
-    // UNREACHABLE under M1's docId keying: `lastFlushed` is only ever bumped
-    // (here and in `frontmatterWriteScheduler`) to a PAST value of the
-    // monotonically-increasing per-docId mutation counter, so it can never
-    // exceed the current `cacheVersion`. It is retained, NOT deleted, as cheap
-    // defense-in-depth — a unit test can't construct the inputs to exercise it,
-    // and a stale-cache re-read guard isn't worth pulling out of a data-
-    // integrity write path for marginal cleanup. If a future change ever lets
-    // `lastFlushed` outrun `cacheVersion` (e.g. docId reuse with a reset
-    // counter), this re-read is the safety net that re-syncs from disk.
-    const lastFlushed = getLastFlushedFrontmatterVersion(docId);
-    const cacheVersion = documentStore.getFrontmatterMutationVersion(docId);
-    if (lastFlushed > 0 && lastFlushed > cacheVersion) {
+  // Audit-11 N1 — toast when an assemble below REFUSES a frontmatter edit over
+  // unparseable on-disk YAML (the block is kept verbatim, the edit dropped), so
+  // it doesn't vanish as a silent success. Stable `kind` → errorBus coalesces.
+  const onFrontmatterRefused = (): void => {
+    reportError(
+      'frontmatter.unparseable',
+      null,
+      `Couldn't update metadata for "${relPath}" — its YAML frontmatter is malformed, so the change wasn't saved. Fix the frontmatter in that file to re-enable metadata edits.`,
+    );
+  };
+  let fileText: string;
+  const delta = args.frontmatterDelta;
+  if (delta) {
+    // Phase 4 (WRITE_PATH_REMEDIATION_PLAN_2026-06-04) — delta-on-fresh-disk
+    // write source. We are inside `runSerializedMarkdownWrite`, so this read
+    // observes the bytes any prior chained write to THIS path already landed.
+    // Apply ONLY the delta keys to the fresh disk frontmatter and assemble
+    // against the SAME fresh source: `nextFm` and `originalFrontmatter` derive
+    // from one read, so the CST engine rewrites only the changed keys and emits
+    // every untouched key — including an external addition the in-memory cache
+    // never saw — byte-for-byte from disk. This is the root-cause fix: the
+    // cache can no longer be the write source, so a stale / over-cleaned / empty
+    // cache can't silently drop a key.
+    let parsedFresh: ReturnType<typeof parseMarkdownFile>;
+    try {
+      const fresh = await invokeOk('vault:read-file-text', vaultRoot, relPath);
+      parsedFresh = parseMarkdownFile(fresh.content);
+    } catch (err) {
+      // The backing `.md` is gone/unreadable between the caller's hydrate read
+      // and this in-chain read (ENOENT, EACCES). Surface the loss (sentinel +
+      // indicator) and propagate so `flushAll().failed` attributes `relPath` —
+      // never resurrect a deleted file from a stale in-memory snapshot. Mirrors
+      // the frontmatter scheduler's DI-13 no-editor read-failure handling.
+      markPathFailed(vaultRoot, relPath);
+      throw err;
+    }
+    const nextFm = applyFrontmatterDelta(parsedFresh.frontmatter, delta);
+    // Audit-11 N2 (ACCEPTED micro-TOCTOU) — `body` came from a SEPARATE disk read
+    // (the scheduler's no-editor hydrate read / orphan read) while the FM is from
+    // THIS in-chain read. Benign: the delta path only carries FIELD/FM edits
+    // (none touch the body, so it's identical between the two reads), and an open
+    // editor's LIVE body must still win — so we can't blanket-swap in
+    // `parsedFresh.body`. A late external body edit self-heals via the watcher.
+    fileText = assembleMarkdownFile(nextFm, body, {
+      // Audit-11 N3 — BOM flag from THIS in-chain read (not the pre-write
+      // `state.hadBom` snapshot), so a BOM an external editor added/stripped
+      // since hydrate is honoured rather than re-imposing the stale mark.
+      bom: parsedFresh.hadBom,
+      // Both the clean-passthrough source AND the source-preserving baseline are
+      // the fresh in-chain read. An empty delta (e.g. a body-only write routed
+      // with a no-op delta) then emits the disk FM verbatim; a non-empty delta
+      // patches only the changed keys against the same fresh source.
+      rawFrontmatter: parsedFresh.rawFrontmatter,
+      frontmatterDirty: !isEmptyFrontmatterDelta(delta),
+      originalFrontmatter: parsedFresh.rawFrontmatter,
+      eol: state.eol,
+      onFrontmatterRefused,
+    });
+  } else {
+    // ── Cache-FM path (body-only editor saves + legacy callers) ──
+    // Phase 18 H13 — stale-cache re-read protection. The caller captured the
+    // frontmatter at schedule time, but a cross-board frontmatter writer
+    // (PropertiesPopup, TaskListBoard, etc.) could have flushed a newer FM to
+    // disk in the meantime. The frontmatter scheduler's last-flushed-version
+    // map records the highest mutation version that successfully landed on
+    // disk; if that's higher than the documentStore's current cache version
+    // for this docId, the caller's args are stale — re-read disk, back-merge
+    // into the cache, and use the disk FM. One extra IPC per stale-detected
+    // write; the happy path stays a pure write.
+    // Audit2 2.5 — frontmatter is owned by the live documentStore cache, not the
+    // caller's schedule-time snapshot in `args.frontmatter`. A body write debounces
+    // for 300 ms; if an FM mutation lands in the cache during that window — an
+    // external frontmatter-only edit reconciled in, a PropertiesPopup / TaskList
+    // edit, or a cross-board flush — emitting the frozen snapshot would silently
+    // clobber it. Read the cache live at fire time (its presence is authoritative;
+    // both editor callers source `args.frontmatter` from it anyway), falling back
+    // to the caller's args only when the cache has no entry for this doc.
+    let fm = (docId ? documentStore.getFrontmatter(docId) : undefined) ?? args.frontmatter ?? {};
+    // Audit-10 H2 — never assemble a body-only write against an EMPTY /
+    // never-seeded FM cache: that strips an on-disk YAML block. The TextTile
+    // "adopt sibling doc" branch deliberately flips hydrated=true WITHOUT seeding
+    // FM (re-parsing the body-only sibling body would yield {} and clobber the
+    // real cache a sibling already seeded), so a docId can reach here with no
+    // cache entry while the file on disk still carries frontmatter — and `fm`
+    // collapses to `{}`, deleting it. `hasFrontmatter` distinguishes never-seeded
+    // (re-read disk) from a deliberate `{}` seed (a genuinely-empty FM — trust
+    // it). We are inside runSerializedMarkdownWrite, so this read observes any
+    // prior chained write; seeding the cache then routes the assemble below
+    // through the verbatim `rawFrontmatter` path, preserving the block
+    // byte-for-byte (and fixing the cache for later saves + the live display).
+    const cacheHasFm = docId ? documentStore.hasFrontmatter(docId) : false;
+    const argsFmEmpty = !args.frontmatter || Object.keys(args.frontmatter).length === 0;
+    if (docId && !cacheHasFm && argsFmEmpty) {
       try {
         const readResult = await invokeOk('vault:read-file-text', vaultRoot, relPath);
         const parsed = parseMarkdownFile(readResult.content);
-        // 1.2 — re-seed the verbatim bytes too so this (body-only) write can
-        // still emit the freshly-read frontmatter untouched.
         documentStore.setFrontmatter(docId, parsed.frontmatter, parsed.rawFrontmatter);
         fm = parsed.frontmatter;
-      } catch (err) {
-        console.warn('[markdownFileWriter] Stale-cache re-read failed; using caller args:', err);
+      } catch {
+        // ENOENT / EACCES — a genuinely new (or vanished) file. Keep fm = {}; the
+        // body-only assemble then emits no FM (correct for a new file) and the
+        // `vault:write-existing-file-text` IPC below surfaces a real missing-file
+        // failure through trackComponentWrite rather than this read swallowing it.
       }
     }
-  }
+    if (docId) {
+      // M1 — version map is keyed by docId so this comparison stays in the
+      // same version space as `getFrontmatterMutationVersion(docId)`.
+      //
+      // Audit-4 DI-17 — this `lastFlushed > cacheVersion` re-read is believed
+      // UNREACHABLE under M1's docId keying: `lastFlushed` is only ever bumped
+      // (here and in `frontmatterWriteScheduler`) to a PAST value of the
+      // monotonically-increasing per-docId mutation counter, so it can never
+      // exceed the current `cacheVersion`. It is retained, NOT deleted, as cheap
+      // defense-in-depth — a unit test can't construct the inputs to exercise it,
+      // and a stale-cache re-read guard isn't worth pulling out of a data-
+      // integrity write path for marginal cleanup. If a future change ever lets
+      // `lastFlushed` outrun `cacheVersion` (e.g. docId reuse with a reset
+      // counter), this re-read is the safety net that re-syncs from disk.
+      const lastFlushed = getLastFlushedFrontmatterVersion(docId);
+      const cacheVersion = documentStore.getFrontmatterMutationVersion(docId);
+      if (lastFlushed > 0 && lastFlushed > cacheVersion) {
+        try {
+          const readResult = await invokeOk('vault:read-file-text', vaultRoot, relPath);
+          const parsed = parseMarkdownFile(readResult.content);
+          // 1.2 — re-seed the verbatim bytes too so this (body-only) write can
+          // still emit the freshly-read frontmatter untouched.
+          documentStore.setFrontmatter(docId, parsed.frontmatter, parsed.rawFrontmatter);
+          fm = parsed.frontmatter;
+        } catch (err) {
+          console.warn('[markdownFileWriter] Stale-cache re-read failed; using caller args:', err);
+        }
+      }
+    }
 
-  // Audit2 / 1.2 — when this write is backed by an open document whose
-  // frontmatter is still byte-identical to disk (no mutation since hydrate),
-  // emit those bytes verbatim. `getRawFrontmatter` returns undefined once a
-  // mutation invalidated them, in which case we re-dump the object as before.
-  const rawFrontmatter = docId ? documentStore.getRawFrontmatter(docId) : undefined;
-  // Audit2 4.8 — the disk-baseline source (survives mutations) lets a dirty
-  // write patch the original frontmatter bytes source-preservingly instead of
-  // re-dumping the whole object.
-  const originalFrontmatter = docId
-    ? documentStore.getOriginalFrontmatterSource(docId)
-    : undefined;
-  const fileText = assembleMarkdownFile(fm, body, {
-    bom: state.hadBom,
-    rawFrontmatter,
-    frontmatterDirty: rawFrontmatter === undefined,
-    originalFrontmatter,
-  });
+    // Audit2 / 1.2 — when this write is backed by an open document whose
+    // frontmatter is still byte-identical to disk (no mutation since hydrate),
+    // emit those bytes verbatim. `getRawFrontmatter` returns undefined once a
+    // mutation invalidated them, in which case we re-dump the object as before.
+    const rawFrontmatter = docId ? documentStore.getRawFrontmatter(docId) : undefined;
+    // Audit2 4.8 — the disk-baseline source (survives mutations) lets a dirty
+    // write patch the original frontmatter bytes source-preservingly instead of
+    // re-dumping the whole object. Audit-9 L5 — a docId-less orphan patch threads
+    // the disk source via `args.originalFrontmatter`; the cache source wins with a docId.
+    const originalFrontmatter = docId
+      ? documentStore.getOriginalFrontmatterSource(docId)
+      : args.originalFrontmatter;
+    fileText = assembleMarkdownFile(fm, body, {
+      bom: state.hadBom,
+      rawFrontmatter,
+      frontmatterDirty: rawFrontmatter === undefined,
+      originalFrontmatter,
+      // A8-M1 — the file's real eol, sniffed at hydrate time. Wins over FM-source
+      // detection so a single-line-FM CRLF file keeps CRLF on a metadata edit even
+      // when the body is LF (editor) and the FM source has no internal `\r\n`.
+      eol: state.eol,
+      // Audit-11 N1 — same unparseable-YAML toast for the cache-FM (Properties /
+      // dirty-FM) path.
+      onFrontmatterRefused,
+    });
+  }
+  // Audit-7 L5 — capture the exact byte length we're about to write so the
+  // post-write baseline stamp below can reject a stat that observed a FOREIGN
+  // edit instead of our bytes (see the TOCTOU guard at the post-write stat).
+  const writtenByteLength = utf8ByteLength(fileText);
   await trackComponentWrite(vaultRoot, relPath, async () => {
     await invokeOk('vault:write-existing-file-text', vaultRoot, relPath, fileText);
   });
+  // A9-L8 — the IPC above committed against whatever vault was active when it
+  // ran (main's `assertActiveVault`). If a vault swap landed during the drift
+  // prompt or the write await, the post-write renderer-state bookkeeping below
+  // (drift baseline, vault index, FM flushed-version, markClean) must NOT run
+  // against the NEW vault: stamping the outgoing vault's metadata/baseline for
+  // `relPath` could suppress a legitimate drift check or inject stale metadata
+  // for a same-named file in the new vault. Skip it on a swap — the new vault
+  // self-heals from its own hydrate/watcher, and the baseline registry was
+  // already wiped wholesale by the swap (re-stamping it here would resurrect a
+  // cross-vault entry). (markClean is already a no-op post-swap since the doc
+  // was cleared; the guard makes the whole tail coherent.)
+  if (!isStillSameVault(writeIdentity)) return;
   // Phase R6 — refresh the baseline to the post-write mtime so a
   // late watcher echo (or the next debounced write) compares against
   // the state we just wrote, not the pre-write state.
@@ -673,7 +841,18 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
   // overwrite window. See `refreshBaselineAfterWrite` for the full trade-off.
   try {
     const postStat = await invokeOk('vault:stat', vaultRoot, relPath);
-    refreshBaselineAfterWrite(relPath, postStat.mtimeMs, postStat.size);
+    // Audit-7 L5 — TOCTOU guard. An external edit can land between the write
+    // IPC resolving and THIS stat resolving, so `postStat` may reflect FOREIGN
+    // (mtime,size). Only stamp the baseline when the stat's size matches the
+    // bytes we just wrote; a mismatch means the stat observed someone else's
+    // write, so KEEP the prior baseline (DI-14) and let the next write's drift
+    // check re-detect + prompt rather than silently adopting the foreign size
+    // (which would make the next write match-and-clobber the external edit).
+    if (postStat.size === writtenByteLength) {
+      refreshBaselineAfterWrite(relPath, postStat.mtimeMs, postStat.size);
+    } else {
+      refreshBaselineAfterWrite(relPath, undefined, undefined);
+    }
   } catch {
     refreshBaselineAfterWrite(relPath, undefined, undefined);
   }
@@ -701,6 +880,28 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
     const version = documentStore.getFrontmatterMutationVersion(docId);
     noteFrontmatterFlushedVersion(docId, version);
   }
+
+  // Audit-7 M1 — a successful write clears THIS writer's dirty entry so a
+  // normally-saved editor goes clean. Without it the writerId lingered in
+  // `documentStore.dirtyWriters` forever (only reload / unload / vault-swap
+  // removed it), pinning `isDirty` true → a spurious "modified externally"
+  // prompt for a now-saved file and a frozen sibling reload `$effect`. Covers
+  // TextTile + DocumentEditor in one place. Guarded on `hasPending`: if the user
+  // typed again mid-write a newer timer is armed for this caller, so leave it
+  // dirty (that write clears it) rather than flash a transient clean window an
+  // external-edit reconciler could misread into a silent reload of the unsaved
+  // keystrokes. Cheap + side-effect-free — `scheduleMarkdownWrite` stores a
+  // stable `() => args` getter, so `hasPending` only reads the already-built args.
+  if (docId && !writerScheduler.hasPending((pendingArgs) => pendingArgs.callerId === callerId)) {
+    documentStore.markClean(docId, callerId);
+  }
+  // Audit-11 WC-2 — deliberately NOT also gated on a pending FM write for this
+  // path: the save indicator reads the write LEDGER (the FM scheduler is
+  // `sentinelMode:'full'`, so its pending writes already count there), and the
+  // sole `isDirty`-field reader (`conflictResolver`) is downstream-guarded by
+  // F4 `isPathPending` (which sees the FM write). Gating here would instead
+  // STRAND this body callerId (the FM write clears only its own callerId) —
+  // re-opening the Audit-7 M1 "pinned dirty" hole. Correct as-is.
 }
 
 // ── Debounce wrapper ──

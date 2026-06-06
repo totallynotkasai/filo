@@ -773,7 +773,12 @@ export function registerVaultHandlers(): void {
           throw statErr;
         }
         activeWatcher?.suppress(relativePath, 2000);
-        await atomicWriteFile(fullPath, content);
+        // Audit-7 L7 — `expectExisting` re-verifies the destination right
+        // before the rename so a delete landing in the stat-precheck→rename
+        // gap aborts (ENOENT) instead of resurrecting the file with stale
+        // editor bytes. The pre-stat above still short-circuits the common
+        // already-deleted case before staging a tmp.
+        await atomicWriteFile(fullPath, content, { expectExisting: true });
         activeWatcher?.suppress(relativePath, 1000);
         return { success: true, path: fullPath };
       } catch (err) {

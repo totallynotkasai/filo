@@ -177,6 +177,18 @@ describe('parseQuickAdd: dates', () => {
     expect(parseQuickAdd('Task in 1m', { now: NOW }).dueDate).toBe('2026-06-15');
   });
 
+  // Audit-8 L6 — month-end must clamp, not overflow (Jan 31 + 1m → Feb 28/29,
+  // matching the recurrence engine; raw setMonth would roll to Mar 3).
+  it('clamps "in 1m" at month-end (Jan 31 → Feb 28, non-leap)', () => {
+    const jan31 = new Date(2026, 0, 31, 10, 0);
+    expect(parseQuickAdd('Pay rent in 1m', { now: jan31 }).dueDate).toBe('2026-02-28');
+  });
+
+  it('clamps "in 1m" into a leap February (Jan 31 → Feb 29)', () => {
+    const jan31 = new Date(2028, 0, 31, 10, 0);
+    expect(parseQuickAdd('x in 1m', { now: jan31 }).dueDate).toBe('2028-02-29');
+  });
+
   it('parses ISO date YYYY-MM-DD', () => {
     expect(parseQuickAdd('Task 2026-12-31', { now: NOW }).dueDate).toBe('2026-12-31');
   });

@@ -59,8 +59,11 @@ describe('markdownFileWriter — body write emits LIVE frontmatter at fire time 
     const docId = 'doc1';
     const relPath = 'Notes/A.md';
     documentStore.loadDocument({ docId, filename: relPath, title: 'A', body: 'the body', htmlContent: '', richText: [] });
-    // Seed the live cache from disk (with verbatim raw bytes, as a hydrate does).
-    documentStore.setFrontmatter(docId, { status: 'draft' }, '---\nstatus: draft\n---');
+    // Seed the live cache from disk (with verbatim raw bytes, as a hydrate
+    // does). `rawFrontmatter` is the source BETWEEN the `---` fences — no fences,
+    // exactly what `parseMarkdownFile` produces — so the baseline is parseable
+    // (a fenced `---…---` string parses as a multi-document YAML).
+    documentStore.setFrontmatter(docId, { status: 'draft' }, 'status: draft');
     markHydrated(relPath, false);
 
     // Body keystroke arms a write — args froze the OLD frontmatter snapshot.

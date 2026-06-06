@@ -60,6 +60,54 @@ describe('classifyExternalChange', () => {
     expect(result).toEqual({ action: 'ignore', reason: 'no-editor-open' });
   });
 
+  it('syncs frontmatter when BOTH body and frontmatter changed with no editor open (Audit-10 M4)', () => {
+    // Past the body-equivalent short-circuit (body changed) AND no editor owns
+    // the path. The FM delta must still propagate to tile caches / tags / the
+    // seeded-FM cache — otherwise a closed-file Kanban card / Task row renders
+    // stale metadata and could revert the external edit on its next field write.
+    // The body needs no action: no editor holds it, and the next tile load
+    // hydrates fresh from disk.
+    const prev = md('---\ntags: [a]\n---\n# A\nold body');
+    const next = md('---\ntags: [a, b]\n---\n# A\nnew body');
+    const result = classifyExternalChange({
+      path: 'note.md',
+      previousMetadata: prev,
+      nextMetadata: next,
+      editor: null,
+    });
+    expect(result).toEqual({ action: 'sync-frontmatter', reason: 'frontmatter-only' });
+  });
+
+  it('keeps ignoring a body-only change (frontmatter unchanged) with no editor open (Audit-10 M4 negative control)', () => {
+    // The M4 promotion is gated on a REAL frontmatter delta. A pure body edit
+    // with identical frontmatter stays 'ignore'.
+    const prev = md('---\ntags: [a]\n---\n# A\nold body');
+    const next = md('---\ntags: [a]\n---\n# A\nnew body');
+    const result = classifyExternalChange({
+      path: 'note.md',
+      previousMetadata: prev,
+      nextMetadata: next,
+      editor: null,
+    });
+    expect(result).toEqual({ action: 'ignore', reason: 'no-editor-open' });
+  });
+
+  it('holds a mid-write partial read (body+frontmatter shrink, no editor) for retry, not a sync (Audit-10 M4)', () => {
+    // A truncated read shrinks the file and looks like a body+FM change. Pushing
+    // its truncated frontmatter into the tile/tag caches is the very corruption
+    // the editor branches already guard; the no-editor branch must guard it too.
+    const bigBody = 'x'.repeat(4000);
+    const prev = md(`---\ntags: [alpha]\n---\n# A\n${bigBody}`);
+    const next = md('---\ntags: []\n---\n'); // drastic shrink, recent mtime (md → Date.now())
+    const result = classifyExternalChange({
+      path: 'note.md',
+      previousMetadata: prev,
+      nextMetadata: next,
+      editor: null,
+    });
+    expect(result).toEqual({ action: 'partial-read-retry', reason: 'size-shrink' });
+  });
+
   it('prompts the user when the file has vanished and an editor is open', () => {
     const result = classifyExternalChange({
       path: 'note.md',
@@ -289,6 +337,45 @@ describe('classifyExternalChange', () => {
       editor: { path: 'note.md', isDirty: false },
     });
     expect(result.action).toBe('reload-silently');
+  });
+
+  /**
+   * A8-H1 (Audit-8) — clock skew on a synced volume. OneDrive / SMB routinely
+   * stamp a file's mtime slightly AHEAD of the local clock. The partial-read
+   * mtime window is about *recency*, not direction (it is measured with
+   * `Math.abs`), so a >90% mid-write truncation seen at a future-but-in-window
+   * mtime is still held for retry. The pre-fix `ageMs >= 0` gate read a future
+   * mtime as "not recent", fell through to `reload-silently`, and clobbered a
+   * clean editor with the truncated read (which the user could then save back).
+   */
+  it('drastic shrink at a FUTURE (clock-skewed) mtime routes to partial-read-retry, not reload-silently', () => {
+    const prev = md('# A\n' + 'x'.repeat(4096));
+    // mtime 500 ms in the FUTURE — within the 1000 ms window but ahead of
+    // `now`. 500 ms dwarfs the sub-ms gap between this `Date.now()` and the
+    // classifier's internal one, so the case is deterministic without pinning.
+    const next = md('# A\n', Date.now() + 500);
+    const result = classifyExternalChange({
+      path: 'note.md',
+      previousMetadata: prev,
+      nextMetadata: next,
+      editor: { path: 'note.md', isDirty: false },
+    });
+    expect(result.action).toBe('partial-read-retry');
+  });
+
+  it('truncated-frontmatter read at a FUTURE mtime is held for retry on the FM-only branch too', () => {
+    // Same clock-skew fix, but exercising the VS1 sync-frontmatter guard
+    // (body survives, raw bytes collapse) rather than the editor-clean path.
+    const bigFm = 'big: ' + 'y'.repeat(1500);
+    const prev = md(`---\n${bigFm}\n---\nbody`);
+    const next = md('---\nbig: y\n---\nbody', Date.now() + 500);
+    const result = classifyExternalChange({
+      path: 'note.md',
+      previousMetadata: prev,
+      nextMetadata: next,
+      editor: null,
+    });
+    expect(result).toEqual({ action: 'partial-read-retry', reason: 'size-shrink' });
   });
 });
 

@@ -131,6 +131,21 @@ export function classifyExternalChange(params: {
     if (!previousMetadata) {
       return { action: 'sync-frontmatter', reason: 'first-sight' };
     }
+    // Audit-10 M4 — we are past the body-equivalent short-circuit, so the BODY
+    // changed; and no editor owns this path. If the FRONTMATTER also changed we
+    // must still sync it: otherwise a closed-file Kanban card / Task row keeps
+    // stale metadata in its tile cache / tag store / seeded-FM cache and renders
+    // (and computes its field-edit inverse) against the pre-external-edit values.
+    // The body itself needs no action — no editor holds it and the next tile
+    // load hydrates fresh from disk. Guard the same mid-write partial-read
+    // signature the editor branches do so a truncated read isn't pushed into the
+    // caches as if it were settled metadata.
+    if (!frontmatterEqual(previousMetadata, nextMetadata)) {
+      if (isLikelyPartialRead(previousMetadata, nextMetadata)) {
+        return { action: 'partial-read-retry', reason: 'size-shrink' };
+      }
+      return { action: 'sync-frontmatter', reason: 'frontmatter-only' };
+    }
     return { action: 'ignore', reason: 'no-editor-open' };
   }
 
@@ -204,6 +219,14 @@ function utf8ByteLength(text: string): number {
  * looking at stale content waiting for a retry that won't change anything.
  * `now` is a parameter so tests can pin a deterministic baseline; production
  * callers default to `Date.now()`.
+ *
+ * A8-H1 (Audit-8) — the window is about *recency*, not direction, so it is
+ * measured with `Math.abs`. OneDrive / SMB / other synced volumes routinely
+ * stamp a file's mtime slightly AHEAD of the local clock; a strict `ageMs >= 0`
+ * gate then read a future mtime as "not recent", let the >90% mid-write
+ * truncation fall through to `reload-silently`, and clobbered a clean editor
+ * with the partial read. A future mtime within the window is exactly as
+ * suspicious as a past one — both mean "the rewrite is probably still in flight".
  */
 function isLikelyPartialRead(
   prev: FileMetadata,
@@ -219,9 +242,11 @@ function isLikelyPartialRead(
   const nextSize = next.rawByteSize ?? utf8ByteLength(next.content);
   if (nextSize >= prevSize * PARTIAL_READ_SHRINK_RATIO) return false;
   // Only fire when the shrink is RECENT — an old mtime means the rewrite
-  // already finished and we're looking at stable state.
-  const ageMs = now - next.lastModified;
-  return ageMs >= 0 && ageMs < PARTIAL_READ_MTIME_WINDOW_MS;
+  // already finished and we're looking at stable state. `Math.abs` so a
+  // clock-skewed FUTURE mtime (OneDrive/SMB) is held for retry too, not
+  // mistaken for a settled edit (A8-H1).
+  const ageMs = Math.abs(now - next.lastModified);
+  return ageMs < PARTIAL_READ_MTIME_WINDOW_MS;
 }
 
 /**

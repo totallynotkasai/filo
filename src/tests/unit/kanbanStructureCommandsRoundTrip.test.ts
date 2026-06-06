@@ -17,6 +17,7 @@ import {
   RenameColumnCommand,
   ReorderColumnCommand,
   AddCardCommand,
+  MoveCardsCommand,
 } from '@renderer/commands/index';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard, TileDefinition } from '@renderer/schema/index';
@@ -128,5 +129,114 @@ describe('Audit-6 Phase 5.5 — Kanban structure command round-trips', () => {
     expect(cardIds('c1')).not.toContain('card1');
     cmd.execute(); // redo
     expect(cardIds('c1')).toContain('card1');
+  });
+});
+
+// ── Audit-7 M3 — MoveCardsCommand neighbour-anchored multi-card undo ──────────
+//
+// MoveCardsCommand.undo restored each card to its absolute fromPosition, which
+// goes stale if a source column is mutated between the move and the undo. The
+// command now also captures the surviving sibling each card should sit before
+// (from the PRE-move cache, mirroring single-card MoveCardCommand 6.4.M16) so an
+// ascending-order replay reconstructs the original interleaving. These tests
+// drive an intervening mutation — the exact case the roundtrip-coverage gate's
+// plain construct→execute→undo never exercises.
+
+function makeKanbanWithCards(): V7BoardFileData {
+  const cards = ['A', 'B', 'C', 'D', 'E'];
+  return {
+    board: {
+      id: 'kb',
+      type: 'kanban',
+      name: 'K',
+      emoji: '',
+      createdAt: 0,
+      updatedAt: 0,
+      settings: {},
+      columns: [
+        {
+          id: 'src',
+          title: 'Src',
+          position: 0,
+          collapsed: false,
+          tilePlacements: cards.map((tileId, position) => ({ tileId, position })),
+        },
+        { id: 'dst', title: 'Dst', position: 1, collapsed: false, tilePlacements: [] as unknown[] },
+      ],
+    } as unknown as KanbanBoard,
+    tileDefs: Object.fromEntries(
+      cards.map((id) => [id, cardDef(id, id)]),
+    ) as unknown as V7BoardFileData['tileDefs'],
+    connections: {},
+    frames: [],
+  };
+}
+
+describe('Audit-7 M3 — MoveCardsCommand neighbour-anchored undo', () => {
+  beforeEach(() => {
+    installFiloMock(() => null);
+    vaultStore.setPath('/vault');
+    boardCacheStore.clear();
+    boardCacheStore.hydrate({ kb: makeKanbanWithCards() }, { kb: 'k.board.json' });
+  });
+  afterEach(() => {
+    restoreFiloDefault();
+    vaultStore.setPath('');
+    boardCacheStore.clear();
+  });
+
+  it('undo lands multi-moved cards next to their original siblings after an intervening insert', () => {
+    // src = [A,B,C,D,E]; move B,D out to dst. Construction (pre-move) captures
+    // anchors B→C, D→E.
+    const cmd = new MoveCardsCommand('kb', ['B', 'D'], 'dst', 0, [
+      { tileId: 'B', fromColumnId: 'src', fromPosition: 1 },
+      { tileId: 'D', fromColumnId: 'src', fromPosition: 3 },
+    ]);
+    cmd.execute();
+    expect(cardIds('src')).toEqual(['A', 'C', 'E']);
+    expect(cardIds('dst')).toEqual(['B', 'D']);
+
+    // Intervening mutation: insert Z at the FRONT of the source column, so the
+    // saved absolute positions (1, 3) now point at the wrong slots.
+    boardCacheStore.persistAddKanbanPlacement('kb', 'src', cardDef('Z', 'Z'), 0);
+    expect(cardIds('src')).toEqual(['Z', 'A', 'C', 'E']);
+
+    cmd.undo();
+
+    // M3 — anchors restore B before C and D before E despite the shift.
+    // Absolute-only undo would scramble this to [Z,B,A,D,C,E].
+    expect(cardIds('src')).toEqual(['Z', 'A', 'B', 'C', 'D', 'E']);
+    expect(cardIds('dst')).toEqual([]);
+  });
+
+  it('falls back to the absolute position when an anchor sibling is gone', () => {
+    const cmd = new MoveCardsCommand('kb', ['B', 'D'], 'dst', 0, [
+      { tileId: 'B', fromColumnId: 'src', fromPosition: 1 },
+      { tileId: 'D', fromColumnId: 'src', fromPosition: 3 },
+    ]);
+    cmd.execute();
+    expect(cardIds('src')).toEqual(['A', 'C', 'E']);
+
+    // Delete B's anchor sibling C → src=[A,E]. B's 'C' anchor is unresolvable.
+    boardCacheStore.removeKanbanPlacement('kb', 'C');
+    expect(cardIds('src')).toEqual(['A', 'E']);
+
+    cmd.undo();
+    // B: anchor gone → clamp absolute fromPosition 1 (after A). D: anchor E still
+    // present → before E. Ascending replay: B first → [A,B,E]; then D → [A,B,D,E].
+    expect(cardIds('src')).toEqual(['A', 'B', 'D', 'E']);
+  });
+
+  it('plain construct → execute → undo round-trips with no intervening mutation', () => {
+    const cmd = new MoveCardsCommand('kb', ['B', 'D'], 'dst', 0, [
+      { tileId: 'B', fromColumnId: 'src', fromPosition: 1 },
+      { tileId: 'D', fromColumnId: 'src', fromPosition: 3 },
+    ]);
+    cmd.execute();
+    expect(cardIds('src')).toEqual(['A', 'C', 'E']);
+    expect(cardIds('dst')).toEqual(['B', 'D']);
+    cmd.undo();
+    expect(cardIds('src')).toEqual(['A', 'B', 'C', 'D', 'E']);
+    expect(cardIds('dst')).toEqual([]);
   });
 });

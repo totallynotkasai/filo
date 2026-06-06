@@ -25,6 +25,8 @@
  * Jan 31 + 1m = Feb 28 (or Feb 29 in a leap year).
  */
 
+import { addMonthsClamped } from './dateMath';
+
 export type RecurrenceMode = 'schedule' | 'completion';
 
 type RecurrenceUnit =
@@ -108,13 +110,8 @@ function addInterval(from: Date, unit: RecurrenceUnit): Date {
     const lastDay = new Date(targetYear, targetMonth + 1, 0).getDate();
     return new Date(targetYear, targetMonth, Math.min(desiredDay, lastDay));
   }
-  // Months: preserve day-of-month and clamp.
-  const desiredDay = from.getDate();
-  const targetMonthIdx = from.getMonth() + unit.count;
-  // Use a constructor that handles wraparound, then clamp the day.
-  const wrap = new Date(from.getFullYear(), targetMonthIdx, 1);
-  const lastDay = new Date(wrap.getFullYear(), wrap.getMonth() + 1, 0).getDate();
-  return new Date(wrap.getFullYear(), wrap.getMonth(), Math.min(desiredDay, lastDay));
+  // Months: preserve day-of-month and clamp (shared with quick-add — Audit-8 L6).
+  return addMonthsClamped(from, unit.count);
 }
 
 /**

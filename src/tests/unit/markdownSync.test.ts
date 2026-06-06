@@ -473,6 +473,45 @@ describe('markdownSync — isLossyMarkdownRoundTrip', () => {
     expect(isLossyMarkdownRoundTrip('_em_ and snake_case', '*em* and snake_case')).toBe(false);
   });
 
+  // Audit-10 M5 — a hard line break written with two+ trailing spaces (common in
+  // verse / dialogue) is serialised by prosemirror-markdown as the backslash
+  // form. Without normalising the two encodings to one, the round-trip never
+  // compares equal and the document is forced read-only (saving disabled).
+  it('returns false when only hard-break encoding differs (two-space vs backslash)', () => {
+    expect(isLossyMarkdownRoundTrip('Roses are red  \nViolets are blue', 'Roses are red\\\nViolets are blue')).toBe(
+      false,
+    );
+    // Multi-line verse with hard breaks on every line.
+    const verse = 'Line one  \nLine two  \nLine three';
+    const serialised = 'Line one\\\nLine two\\\nLine three';
+    expect(isLossyMarkdownRoundTrip(verse, serialised)).toBe(false);
+    // A disk file already using the backslash form still round-trips.
+    expect(isLossyMarkdownRoundTrip('a\\\nb', 'a\\\nb')).toBe(false);
+  });
+
+  // Audit-10 M5 — thematic breaks (scene breaks in fiction) can be written with
+  // any of `---` / `***` / `___` / spaced variants; prosemirror-markdown emits a
+  // single canonical form. Treat every valid thematic-break line as equivalent
+  // so a `* * *` scene break doesn't force the document read-only.
+  it('returns false when only thematic-break marker style differs', () => {
+    expect(isLossyMarkdownRoundTrip('before\n\n***\n\nafter', 'before\n\n---\n\nafter')).toBe(false);
+    expect(isLossyMarkdownRoundTrip('before\n\n* * *\n\nafter', 'before\n\n---\n\nafter')).toBe(false);
+    expect(isLossyMarkdownRoundTrip('before\n\n___\n\nafter', 'before\n\n---\n\nafter')).toBe(false);
+    expect(isLossyMarkdownRoundTrip('before\n\n- - -\n\nafter', 'before\n\n---\n\nafter')).toBe(false);
+  });
+
+  // A `---` directly under a text line is a Setext H2, NOT a thematic break — the
+  // thematic-break normalisation must not steal it from the Setext pass.
+  it('still treats a dashed line directly under text as a Setext H2, not a rule', () => {
+    expect(isLossyMarkdownRoundTrip('Heading Two\n---\n\nbody', '## Heading Two\n\nbody')).toBe(false);
+  });
+
+  // Negative control — the thematic-break normalisation must not mask a genuine
+  // loss: a `* * *` the parser dropped entirely is still lossy.
+  it('returns true when a thematic break is dropped entirely', () => {
+    expect(isLossyMarkdownRoundTrip('before\n\n* * *\n\nafter', 'before\n\nafter')).toBe(true);
+  });
+
   it('returns true when an Obsidian callout is dropped', () => {
     const input = '> [!note]\n> body of callout';
     const tiptapOutput = '> body of callout'; // callout marker stripped

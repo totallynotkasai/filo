@@ -27,12 +27,28 @@ interface FiloRecorder {
   calls: Array<{ channel: string; args: unknown[] }>;
 }
 
-function installRecorder(): FiloRecorder {
+/**
+ * Phase 4 (WRITE_PATH_REMEDIATION_PLAN_2026-06-04) — the Properties write now
+ * applies its field delta to a FRESH disk read. Tests that exercise a text-tile
+ * FM write pass `diskContent` (the on-disk `.md` the gateway re-reads in-chain).
+ * Omitting it leaves `vault:read-file-text` unhandled (returns undefined), which
+ * the disk-read path treats as "unreadable" → the `base === null` blind-apply
+ * legacy write — the corner the docId-less / no-vault tests rely on.
+ */
+function installRecorder(diskContent?: string): FiloRecorder {
   const calls: FiloRecorder['calls'] = [];
   installFiloMock((channel: unknown, ...args: unknown[]) => {
     calls.push({ channel: channel as string, args });
     if (channel === 'vault:write-existing-file-text') {
       return { success: true };
+    }
+    if (diskContent !== undefined) {
+      if (channel === 'vault:read-file-text') {
+        return { success: true, content: diskContent, mtimeMs: 1, size: diskContent.length };
+      }
+      if (channel === 'vault:stat') {
+        return { success: true, mtimeMs: 1, size: diskContent.length };
+      }
     }
     return undefined;
   });
@@ -152,6 +168,8 @@ describe('UpdatePropertiesCommand — frontmatter (text tile)', () => {
   });
 
   it('execute writes the after snapshot via vault:write-existing-file-text', async () => {
+    // Phase 4 — disk holds the seeded "before" state; the delta is applied to it.
+    recorder = installRecorder('---\ntags:\n  - old\n---\nhello body\n');
     documentStore.loadDocument({
       docId: 'doc-1',
       filename: 'Notes.md',
@@ -180,6 +198,7 @@ describe('UpdatePropertiesCommand — frontmatter (text tile)', () => {
   });
 
   it('undo restores prior frontmatter via vault:write-existing-file-text', async () => {
+    recorder = installRecorder('---\npriority: low\n---\nbody\n');
     documentStore.loadDocument({
       docId: 'doc-2',
       filename: 'A.md',
@@ -254,7 +273,11 @@ describe('UpdatePropertiesCommand — H2 undo preserves externally-added keys', 
     documentStore.clear();
   });
 
-  it('undo keeps a key added externally (via the live cache) between edit and Ctrl+Z', async () => {
+  it('undo keeps a key added externally between edit and Ctrl+Z', async () => {
+    // Phase 4 — the external editor wrote `reviewed: true` to DISK; the gateway's
+    // delta write re-reads disk, so the untouched key survives by construction
+    // (the reconciler also merges it into the live cache, mirrored below).
+    recorder = installRecorder('---\npriority: high\nreviewed: true\n---\nh2 body\n');
     documentStore.loadDocument({
       docId: 'doc-h2',
       filename: 'H2.md',
@@ -273,8 +296,8 @@ describe('UpdatePropertiesCommand — H2 undo preserves externally-added keys', 
     await cmd.execute();
     expect(documentStore.getFrontmatter('doc-h2')).toMatchObject({ priority: 'high' });
 
-    // Another tool adds `reviewed: true` and the sync reconciler merges it into
-    // the live cache (this is the state the next undo rebases against).
+    // Another tool added `reviewed: true` (on disk above); the sync reconciler
+    // merges it into the live cache — the state the next undo rebases against.
     documentStore.setFrontmatter('doc-h2', { priority: 'high', reviewed: true });
 
     await cmd.undo();

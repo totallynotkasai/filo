@@ -288,6 +288,14 @@ export interface Scheduler<TArgs> {
    * live in the shared ledger via `beginWrite`/`trackComponentWrite`.
    */
   hasPending(predicate: (args: TArgs) => boolean): boolean;
+  /**
+   * Test-only — count of attributed-but-undrained failure identifiers retained
+   * in the internal `failures` Set. Pins the Audit-7 L12 fix: a fire-and-forget
+   * failure followed by a successful write to the SAME key must prune the stale
+   * id (returns 0), rather than retaining it until `reset()`. Production code
+   * never needs this; the Set is otherwise an opaque internal.
+   */
+  __failuresSizeForTests(): number;
 }
 
 export function createScheduler<TArgs>(
@@ -455,7 +463,19 @@ export function createScheduler<TArgs>(
       }
       const success = failureList.length === 0;
       safeEndWrite(sentinel, success);
-      if (!success) for (const f of failureList) failures.add(f);
+      if (success) {
+        // Audit-7 L12 — a fire-and-forget write that FAILS adds its failureId
+        // to `failures`; if it settles before any flush snapshots the bucket,
+        // no flush ever drains that id and it leaked until `reset()` (vault
+        // swap). A LATER successful write to the same id means that id is no
+        // longer in a failed state, so prune it here — bounding `failures`
+        // growth within a session, not just at swap. Crash recovery is
+        // unaffected: the `.filo/.dirty` sentinel + `failedVaultPaths` are
+        // owned by `endWrite`/`markPathFailed`, not this attribution Set.
+        failures.delete(failureId);
+      } else {
+        for (const f of failureList) failures.add(f);
+      }
       return failureList;
     });
   }
@@ -563,9 +583,46 @@ export function createScheduler<TArgs>(
 
     let success = true;
 
+    // Consumes an in-flight entry's settled outcome into `success` + the shared
+    // failures Set. Shared by the WC-3 pre-drain and the post-fire drain below.
+    const consumeInflight = async (entry: InFlightEntry): Promise<void> => {
+      await entry.promise;
+      // Captured failures live on the entry — `flush(key)` consumes them from
+      // the shared Set so a subsequent `flushAll` doesn't double-report. Falls
+      // back to the primary failureId for the legacy throw-only path where
+      // `capturedFailures` stayed null (vault swap mid-IPC), matching the legacy
+      // board scheduler's attribution.
+      const captured = entry.capturedFailures;
+      if (captured && captured.length > 0) {
+        success = false;
+        for (const f of captured) failures.delete(f);
+      } else if (captured === null && failures.delete(entry.failureId)) {
+        success = false;
+      }
+    };
+
     if (pendingEntry) {
+      // Audit-11 WC-3 — disarm the pending timer UP-FRONT (before any await), so
+      // it can't self-fire during the in-flight drain below and double-write.
       clearTimeout(pendingEntry.timer);
       pending.delete(key);
+
+      // WC-3 — when a write is ALREADY in-flight for this key, drain it BEFORE
+      // firing the pending one so the pending write (newest args) lands LAST.
+      // Previously the pending fire ran concurrently with the older in-flight
+      // write; markdown/frontmatter writes serialize per path so they were
+      // safe, but a non-serialized scheduler (board/config/misc) could let the
+      // OLDER write win the atomic-rename race and clobber the newer payload.
+      // Snapshot the prior set now — the pending fire adds its own entry, which
+      // is drained by the post-fire loop below.
+      const priorBucket = inFlight.get(key);
+      if (priorBucket && priorBucket.size > 0) {
+        for (const priorEntry of Array.from(priorBucket)) await consumeInflight(priorEntry);
+      }
+
+      // Fire the pending write. Args are read NOW (after the drain) so a
+      // live-cache getter captures the freshest state; the just-disarmed timer
+      // guarantees this is the only fire of this pending entry.
       const argsGetter = overrideGetArgs ?? pendingEntry.getArgs;
       const args = argsGetter();
       if (!args) {
@@ -592,27 +649,16 @@ export function createScheduler<TArgs>(
       }
     }
 
-    // Await every in-flight write for this key. Overlapping fires each own a
-    // bucket entry (Phase F2), so there may be more than one; the freshly
-    // fired pending write above already settled and removed itself. Snapshot
-    // the survivors now — fireWrite's settle callback removes them from the
-    // bucket as they land.
+    // Await every remaining in-flight write for this key. Overlapping fires each
+    // own a bucket entry (Phase F2); the freshly fired pending write above and
+    // any WC-3 pre-drained entries already settled and removed themselves, so
+    // this catches the only-in-flight (no pending) case and any fire that
+    // appeared concurrently. Snapshot the survivors now — fireWrite's settle
+    // callback removes them from the bucket as they land.
     const bucket = inFlight.get(key);
     const inflightEntries = bucket ? Array.from(bucket) : [];
     for (const inflightEntry of inflightEntries) {
-      await inflightEntry.promise;
-      // Captured failures live on the entry — `flush(key)` consumes them
-      // from the shared Set so a subsequent `flushAll` doesn't double-
-      // report. Falls back to the primary failureId for the legacy
-      // throw-only path where `capturedFailures` stayed null (vault swap
-      // mid-IPC), matching the legacy board scheduler's attribution.
-      const captured = inflightEntry.capturedFailures;
-      if (captured && captured.length > 0) {
-        success = false;
-        for (const f of captured) failures.delete(f);
-      } else if (captured === null && failures.delete(inflightEntry.failureId)) {
-        success = false;
-      }
+      await consumeInflight(inflightEntry);
     }
 
     return { ok: success };
@@ -687,6 +733,18 @@ export function createScheduler<TArgs>(
         if (!failed.includes(id)) failed.push(id);
         continue;
       }
+      // Audit-12 H4 — mirror flush()'s WC-3 pre-drain. For a non-serialized
+      // scheduler (board/config/misc) an OLDER write can already be in flight for
+      // this key (it's in `inflightSnapshot` above). Drain it BEFORE firing the
+      // pending (newest) write so the newest lands LAST; otherwise the OS can land
+      // the stale write last on a slow OneDrive/SMB volume and clobber the newer
+      // .board.json/config payload. These prior entries stay in `inflightSnapshot`,
+      // so their failure attribution still runs in the post-loop below — here we
+      // only enforce write ORDERING (await, don't consume).
+      const prior = inFlight.get(entry.key);
+      if (prior && prior.size > 0) {
+        for (const p of Array.from(prior)) await p.promise;
+      }
       const sentinel = opts.getSentinelInfo(entry.args);
       if (sentinel.vaultRoot) trackedVault = sentinel.vaultRoot;
       const failureList = await fireWrite(entry.key, entry.args);
@@ -747,5 +805,9 @@ export function createScheduler<TArgs>(
     return false;
   }
 
-  return { schedule, cancel, cancelAll, flush, flushAll, reset, hasPending };
+  function __failuresSizeForTests(): number {
+    return failures.size;
+  }
+
+  return { schedule, cancel, cancelAll, flush, flushAll, reset, hasPending, __failuresSizeForTests };
 }

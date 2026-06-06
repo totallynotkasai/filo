@@ -366,6 +366,14 @@ export class CascadeDeleteCommand extends Command {
     // legacy default-empty argument was used. The mismatch check itself
     // is unchanged so the existing in-memory-only test scenarios (where
     // both paths are empty) continue to exercise the un-guarded path.
+    //
+    // Audit-11 VS-6 — deliberately a path-STRING compare, NOT the
+    // generation-aware `isStillSameVault`. The only divergence between the two
+    // (same path, new generation — a close→reopen of the same path, or an
+    // A→B→A round-trip) requires a vault OPEN, which fires the `pre-swap` hook
+    // that runs `historyStore.clear()` (history.svelte.ts), so this command is
+    // off every undo/redo stack before it could observe a same-path-new-gen
+    // vault. The blind spot is therefore unreachable here.
     if (this.vaultRoot && vaultStore.path && vaultStore.path !== this.vaultRoot) {
       uiStore.toast(
         'Cannot redo cascade-delete: the vault has changed since the delete ran.',
@@ -409,6 +417,10 @@ export class CascadeDeleteCommand extends Command {
     // restoring bodies into the WRONG vault — is closed at construction
     // time; the guard form here is intentionally identical to
     // `execute()`'s.
+    //
+    // Audit-11 VS-6 — see `execute()`: the path-STRING compare is sufficient
+    // because the generation-only divergence (same path, new instance) is
+    // unreachable for a history-stack command (vault open clears the stack).
     if (this.vaultRoot && vaultStore.path && vaultStore.path !== this.vaultRoot) {
       uiStore.toast(
         'Cannot undo cascade-delete: the vault has changed since the delete ran.',
@@ -611,7 +623,14 @@ export class UpdateBoardSettingsCommand extends Command {
    */
   private applyToTarget(patch: Record<string, unknown>, deleteKeys: string[]): void {
     const cached = boardCacheStore.cache[this.targetBoardId];
-    if (!cached) return; // board not loaded (closed/evicted) — nothing to mutate
+    if (!cached) {
+      // L10 (Audit-7) — the target board was closed/evicted. Undo stacks file by
+      // the GLOBAL active board, so this command can sit on a still-live board's
+      // stack while its OWN target board is gone; a bare return would silently
+      // drop the user's undo/redo. Surface it like the cascade/Move* commands.
+      uiStore.toast('Cannot apply board settings — the target board was deleted.', 'warning', 5000);
+      return;
+    }
     const current = (cached.board.settings ?? {}) as Record<string, unknown>;
     const merged: Record<string, unknown> = { ...current, ...patch };
     for (const k of deleteKeys) delete merged[k];

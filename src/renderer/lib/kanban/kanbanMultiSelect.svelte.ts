@@ -4,11 +4,15 @@ import { documentStore } from '../../stores/document.svelte';
 import type { SelectionScope } from '../../stores/selection.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
-import { vaultStore } from '../../stores/vault.svelte';
-import { scheduleFrontmatterWrite as scheduleSharedFrontmatterWrite } from '../boards/frontmatterWriteScheduler';
-import { seedDocumentFrontmatterFromDisk } from '../boards/seedFrontmatterFromDisk';
 import { historyStore } from '../../stores/history.svelte';
-import { BatchCommand, DeleteCardCommand, MoveCardsCommand } from '../../commands/index';
+import type { Command } from '../../commands/Command';
+import {
+  BatchCommand,
+  DeleteCardCommand,
+  MoveCardsCommand,
+  UpdateCardFieldCommand,
+  UpdateOrphanFrontmatterCommand,
+} from '../../commands/index';
 
 export interface KanbanMultiSelectDeps {
   /** The pane's selection scope. Bulk actions and the click-toggle both
@@ -162,40 +166,58 @@ export class KanbanMultiSelect {
     if (!tagName) return;
     const norm = tagName.trim().replace(/^#/, '');
     if (!norm) return;
+    const boardId = this.deps.getBoardId();
+    if (!boardId) return;
     const allTilesById = this.deps.getAllTilesById();
-    let updated = 0;
+
+    // A9-L1 (Audit-9) — build one field command per card and run them as a
+    // single BatchCommand instead of the old per-card `await seed →
+    // mergeFrontmatter → scheduleSharedFrontmatterWrite` loop. That loop was
+    // (a) NOT undoable and (b) lost the tag on every still-unprocessed card if a
+    // quit landed while it was suspended at a card's seed `await`: cards N..end
+    // were never merged or scheduled, so their tag was in no cache/scheduler/
+    // sentinel. Each UpdateCardFieldCommand seeds the FM from disk INSIDE its own
+    // execute() (on the history chain), so vaultStore.save()/quit cover every
+    // card via whenChainSettled(), and the whole bulk add is one undo step.
+    //
+    // The `tags` patch is computed up front from the best-available source — the
+    // live cache when an open editor / prior edit seeded it, else the vault-index
+    // snapshot. A card whose disk frontmatter carries a tag the stale index never
+    // learned would have that one external tag dropped by the additive patch —
+    // the same narrow index-staleness edge every field-edit command's patch
+    // carries; acceptable for a bulk convenience op (LOW).
+    const commands: Command[] = [];
     for (const tileId of selected) {
       const tile = allTilesById[tileId];
       if (!tile) continue;
       const path = this.deps.vaultPathForTile(tile);
       if (!path) continue;
-      // Audit-6 M4 — seed FM from a fresh disk read before the index-seed so a
-      // bulk tag add doesn't drop a key an external editor added since the last
-      // index rebuild (same hazard as the field-edit writers). No-op for an
-      // already-seeded / open-editor card or on a disk read failure.
-      await seedDocumentFrontmatterFromDisk(
-        (tile as Tile & { contentId?: string }).contentId ?? null,
-        vaultStore.path,
-        path,
-      );
-      const docId = this.deps.ensureSeededFm(tile);
-      const fm = (docId ? documentStore.getFrontmatter(docId) : null)
+      const docId = (tile as Tile & { contentId?: string }).contentId ?? null;
+      const fm = (docId ? documentStore.getFrontmatter(docId) : undefined)
         ?? (vaultIndexStore.getMetadata(path)?.frontmatter ?? {});
       const existing = Array.isArray((fm as Record<string, unknown>).tags)
         ? ((fm as Record<string, unknown>).tags as unknown[]).map((t) => String(t).replace(/^#/, ''))
         : [];
       if (existing.includes(norm)) continue;
       const nextTags = [...existing, norm];
-      if (docId) documentStore.mergeFrontmatter(docId, { tags: nextTags });
-      scheduleSharedFrontmatterWrite(path, docId);
-      updated++;
+      const desc = `Add #${norm}`;
+      commands.push(
+        docId
+          ? new UpdateCardFieldCommand(boardId, path, docId, { tags: nextTags }, { tags: existing }, desc)
+          : new UpdateOrphanFrontmatterCommand(boardId, path, { tags: nextTags }, { tags: existing }, desc),
+      );
     }
-    this.deps.bumpCacheVersion();
-    if (updated > 0) {
-      uiStore.toast(`Added #${norm} to ${updated} card(s)`, 'success', 2000);
-    } else {
+    if (commands.length === 0) {
       uiStore.toast(`All selected cards already have #${norm}`, 'info', 2000);
+      return;
     }
+    // Crash-safe (whenChainSettled covers the batch on quit) + undoable in one step.
+    // The chain reports its own errors; swallow on this fire-and-forget UI path.
+    await historyStore
+      .execute(new BatchCommand(`Add #${norm} to ${commands.length} card(s)`, commands, boardId))
+      .catch(() => {});
+    this.deps.bumpCacheVersion();
+    uiStore.toast(`Added #${norm} to ${commands.length} card(s)`, 'success', 2000);
   }
 
   openBulkContextMenu(e: MouseEvent, _tileId: string): void {

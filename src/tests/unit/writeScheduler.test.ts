@@ -589,3 +589,150 @@ describe('createScheduler — overlapping fires for one key (F2 counter leak)', 
     expect(writes.filter((w) => w.channel === 'vault:delete')).toHaveLength(1);
   });
 });
+
+describe('A8-M4 (REFUTED) — a later same-key success supersedes an earlier failure', () => {
+  // VERIFY-FIRST outcome (Audit-8 M4): the audit flagged that the L12 success-
+  // prune (`failures.delete(failureId)`) on a later fire could erase an earlier
+  // fire's failure token before `flushAll` reads it, causing Ctrl+S to flash
+  // "Saved" while a config file failed. Verified against the live primitive +
+  // configWriteScheduler: NOT a bug.
+  //
+  // Why it's correct, not a loss:
+  //  - The config scheduler coalesces every config write under ONE key
+  //    (CONFIG_KEY) with ONE constant failureId (CONFIG_SENTINEL_PATH), and
+  //    each fire's args getter reads the LIVE config state at fire time. So a
+  //    LATER fire writes a state >= the earlier fire's state.
+  //  - `writeConfigs` only advances `lastWrittenConfigs[target]` on SUCCESS, so
+  //    any file the earlier fire failed is re-attempted by the later fire.
+  //  - Therefore a later fire's full SUCCESS means the latest desired config —
+  //    including every file the earlier fire failed — is on disk. The earlier
+  //    failure is genuinely SUPERSEDED, so dropping it from `flushAll().failed`
+  //    is correct: reporting it would be a FALSE "save failed" for data that
+  //    actually landed. (The plan's suggested per-fire failureId fix would
+  //    introduce exactly that false positive.)
+  //  - A genuinely-unresolved failure is NOT dropped: if the later fire is still
+  //    in-flight at `flushAll`, it is awaited and its failure attributed (see the
+  //    "in-flight failure attribution" + "partial-failure passthrough" suites);
+  //    and `writeConfigs` independently fires `notifyWriteError` per failed file.
+  //  - configWriteScheduler's `performWrite` never throws (it returns
+  //    `{ failed }`), so the per-file ids it reports (`app.json`, …) are NEVER
+  //    the constant `failureId` the L12 prune deletes — the prune can't touch
+  //    them regardless.
+  beforeEach(() => {
+    __resetDirtyTrackingForTests();
+    restoreFiloDefault();
+  });
+  afterEach(() => {
+    __resetDirtyTrackingForTests();
+    restoreFiloDefault();
+    vi.useRealTimers();
+  });
+
+  it('overlapping fire-1-reject + fire-2-resolve (settled first): flushAll reports no failure', async () => {
+    let rejectA!: (e: unknown) => void;
+    let resolveB!: () => void;
+    const ipcs = [
+      new Promise<void>((_, rej) => { rejectA = rej; }),
+      new Promise<void>((res) => { resolveB = res; }),
+    ];
+    let fireIndex = 0;
+
+    const scheduler = createScheduler<TArgs>({
+      name: 'config-like',
+      debounceMs: 100,
+      performWrite: () => ipcs[fireIndex++] ?? Promise.resolve(),
+      getSentinelInfo: () => ({ vaultRoot: '/vault', path: '.filo/' }),
+      getFailureId: () => '.filo/', // constant id, like CONFIG_SENTINEL_PATH
+    });
+
+    vi.useFakeTimers();
+    scheduler.schedule('config-bundle', () => makeArgs('.filo/'));
+    vi.advanceTimersByTime(200); // fire-1 in flight
+    scheduler.schedule('config-bundle', () => makeArgs('.filo/'));
+    vi.advanceTimersByTime(200); // fire-2 in flight
+    vi.useRealTimers();
+
+    // fire-1 rejects, then fire-2 (the superseding write) succeeds — both settle
+    // before flushAll, so neither is in the in-flight bucket.
+    rejectA(new Error('fire-1 failed (stale state, superseded by fire-2)'));
+    await new Promise((r) => setTimeout(r, 0));
+    resolveB();
+    await new Promise((r) => setTimeout(r, 0));
+
+    const result = await scheduler.flushAll();
+    // CORRECT: the latest config landed via fire-2; the stale fire-1 failure is
+    // superseded and must NOT be reported (that would be a false "save failed").
+    expect(result.failed).toEqual([]);
+  });
+
+  it('but a still-in-flight later failure IS reported (attribution is not globally broken)', async () => {
+    // Sanity sibling: the supersession drop is SCOPED to a later SUCCESS. When
+    // the latest fire genuinely fails and is still in-flight at flushAll, its
+    // failure is attributed — Ctrl+S does not flash "Saved" over a real loss.
+    let rejectLatest!: (e: unknown) => void;
+    const ipc = new Promise<void>((_, rej) => { rejectLatest = rej; });
+
+    const scheduler = createScheduler<TArgs>({
+      name: 'config-like',
+      debounceMs: 100,
+      performWrite: () => ipc,
+      getSentinelInfo: () => ({ vaultRoot: '/vault', path: '.filo/' }),
+      getFailureId: () => '.filo/',
+    });
+
+    vi.useFakeTimers();
+    scheduler.schedule('config-bundle', () => makeArgs('.filo/'));
+    vi.advanceTimersByTime(200); // fire in flight
+    vi.useRealTimers();
+
+    const flushPromise = scheduler.flushAll();
+    rejectLatest(new Error('latest config write failed'));
+    const result = await flushPromise;
+    expect(result.failed).toContain('.filo/');
+  });
+});
+
+describe('createScheduler — failures Set pruned on later success (Audit-7 L12)', () => {
+  beforeEach(() => {
+    __resetDirtyTrackingForTests();
+    restoreFiloDefault();
+  });
+  afterEach(() => {
+    __resetDirtyTrackingForTests();
+    restoreFiloDefault();
+    vi.useRealTimers();
+  });
+
+  it('a fire-and-forget failure is retained, then pruned by a later success to the same key', async () => {
+    let call = 0;
+    const scheduler = createScheduler<TArgs>({
+      name: 'test',
+      debounceMs: 100,
+      performWrite: async () => {
+        call++;
+        // First fire fails; the second (same key) succeeds.
+        if (call === 1) throw new Error('first write fails');
+      },
+      getSentinelInfo: (a) => ({ vaultRoot: a.vaultRoot, path: a.path }),
+    });
+
+    // Fire #1 as pure fire-and-forget — its settle runs BEFORE any flush, so
+    // no flush ever drains the attributed failure id (the L12 leak window).
+    vi.useFakeTimers();
+    scheduler.schedule('k1', () => makeArgs('leak.md'));
+    vi.advanceTimersByTime(200);
+    vi.useRealTimers();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(scheduler.__failuresSizeForTests()).toBe(1);
+
+    // Fire #2 to the SAME key succeeds → prunes the stranded failure id.
+    vi.useFakeTimers();
+    scheduler.schedule('k1', () => makeArgs('leak.md'));
+    vi.advanceTimersByTime(200);
+    vi.useRealTimers();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(scheduler.__failuresSizeForTests()).toBe(0);
+  });
+});

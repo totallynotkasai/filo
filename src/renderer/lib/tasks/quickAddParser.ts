@@ -27,6 +27,8 @@
  * the same input.
  */
 
+import { addMonthsClamped } from './dateMath';
+
 export type QuickAddPriority = 'low' | 'medium' | 'high' | 'urgent';
 
 export interface QuickAddParsed {
@@ -185,7 +187,9 @@ export function parseQuickAdd(
         const t = new Date(today);
         if (u === 'd') t.setDate(t.getDate() + count);
         else if (u === 'w') t.setDate(t.getDate() + count * 7);
-        else if (u === 'm') t.setMonth(t.getMonth() + count);
+        // Audit-8 L6 — clamp month-end (Jan 31 + 1m → Feb 28) via the shared
+        // helper instead of raw setMonth, which overflows to Mar 3.
+        else if (u === 'm') return fmtDate(addMonthsClamped(today, count));
         return fmtDate(t);
       },
     },

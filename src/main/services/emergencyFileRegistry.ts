@@ -12,7 +12,7 @@
  * This leaf registry records every such preserved file for the lifetime of
  * the process so `writeQuitFailureBreadcrumb` (run in the quit drain) can
  * persist the locations into `.filo/quit-failure.json`, and the next vault
- * open can surface them (`consumeQuitFailureBreadcrumb` on the renderer).
+ * open can surface them (`readQuitFailureBreadcrumb` on the renderer).
  *
  * LEAF MODULE BY DESIGN — it imports nothing from `../vault/*`, so the write
  * primitives (`filenameUtils.atomicWriteFile`, `fileOps.copyFileToVault`) can

@@ -200,6 +200,41 @@ const UNSAFE_LOCAL_FILE_EXTENSIONS = new Set([
 ]);
 
 /**
+ * Audit-10 B3 — extract a file's launcher-relevant extension robustly,
+ * defeating the Win32 / NTFS filename-normalisation tricks that
+ * `path.extname` (and a naive `lastIndexOf('.')`) miss because the OS
+ * shell launches a DIFFERENT byte-name than the one we inspected:
+ *
+ *   - `evil.exe.`         → Win32 strips the trailing dot, launching
+ *                           `evil.exe`; `path.extname` sees `'.'`.
+ *   - `evil.exe ` (space) → Win32 strips the trailing space → `evil.exe`.
+ *   - `evil.exe::$DATA`   → NTFS Alternate-Data-Stream suffix; the real
+ *                           file is `evil.exe`; `path.extname` sees
+ *                           `'.exe::$DATA'`.
+ *
+ * None of those mangled values land in the blocklist, so the executable
+ * slips through to `shell.openPath`. We mirror what the shell actually
+ * opens: take the basename, strip trailing dots/spaces, drop any
+ * `:`-introduced ADS suffix, THEN read the final `.ext`. Pure string math
+ * (identical on every platform), so it is the single source of truth for
+ * both the renderer slice (`asSafeOpenExternal`) and the main-side
+ * `media:open-external` handler.
+ *
+ * Returns the lowercased extension WITH its leading dot (`.exe`), or `''`
+ * when the normalised basename has no extension — including a leading-dot
+ * dotfile like `.gitignore` (no separator after the dot).
+ */
+export function launcherExtension(rawPath: string): string {
+  const lastSlash = Math.max(rawPath.lastIndexOf('/'), rawPath.lastIndexOf('\\'));
+  let base = lastSlash >= 0 ? rawPath.slice(lastSlash + 1) : rawPath;
+  base = base.replace(/[ .]+$/, ''); // Win32 strips trailing dots/spaces
+  const ads = base.indexOf(':'); // NTFS ADS suffix → real ext precedes it
+  if (ads >= 0) base = base.slice(0, ads);
+  const dot = base.lastIndexOf('.');
+  return dot > 0 ? base.slice(dot).toLowerCase() : '';
+}
+
+/**
  * Wraps a vault-shipped URL or vault-relative path for use with
  * `media:open-external`. Returns `null` for input that fails the prefix
  * allowlist OR carries an unsafe local-file extension.
@@ -231,12 +266,13 @@ export function asSafeOpenExternal(raw: string | null | undefined): SanitisedUrl
     return trimmed as SanitisedUrl;
   }
 
-  // Local path branch — must not carry an unsafe extension. Extract the
-  // final extension after the last `.` in the basename; case-insensitive.
-  const lastSlash = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
-  const basename = lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed;
-  const dotIdx = basename.lastIndexOf('.');
-  const ext = dotIdx > 0 ? basename.slice(dotIdx).toLowerCase() : '';
+  // Local path branch — must not carry an unsafe extension. Use the
+  // robust launcher-extension extractor (Audit-10 B3) so a Win32 trailing
+  // dot / space (`evil.exe.`) or an NTFS Alternate-Data-Stream suffix
+  // (`evil.exe::$DATA`) can't smuggle an executable past the blocklist:
+  // the OS shell normalises those away and launches `evil.exe`, but a
+  // naive `lastIndexOf('.')` reads the extension as `.` / `.exe::$DATA`.
+  const ext = launcherExtension(trimmed);
   if (UNSAFE_LOCAL_FILE_EXTENSIONS.has(ext)) return null;
 
   return trimmed as SanitisedUrl;

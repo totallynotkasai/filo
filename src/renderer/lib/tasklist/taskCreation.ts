@@ -81,7 +81,6 @@ interface SeedFileArgs {
   relPath: string;
   finalTitle: string;
   fm: Record<string, unknown> | null;
-  def: TileDefinition;
 }
 
 export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
@@ -153,20 +152,31 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
   async function seedMdFile(args: SeedFileArgs, kindForError: string): Promise<void> {
     const vaultRoot = vaultStore.path;
     if (!vaultRoot) return;
-    const { contentId, relPath, finalTitle, fm, def } = args;
+    const { contentId, relPath, finalTitle, fm } = args;
+    const seedBody = fm ? assembleMarkdownFile(fm, '') : '---\ncompleted: false\n---\n';
+    // A9-M3 (Audit-9) — the backing `.md` write is CRITICAL: let a failure
+    // PROPAGATE so the chained `AddTaskCommand.execute()` rolls its placement
+    // back (no orphan board row referencing a missing file). `trackComponentWrite`
+    // still routes the failure through the save-error pipeline (toast +
+    // `.filo/.dirty` sentinel + recent-self-write release) before rethrowing.
+    await trackComponentWrite(vaultRoot, relPath, async () => {
+      // allow-direct-write: seeds a NEW task .md file; mkdir -p required
+      // and `markHydrated(relPath, false)` below makes subsequent gateway
+      // writes route normally.
+      await invokeOk('vault:write-file-text', vaultRoot, relPath, seedBody);
+    });
+    // Post-write hydration is best-effort — the file IS on disk now, so the row
+    // is valid; a lagging index / doc-load just hydrates lazily on the next edit.
+    // A failure here must NOT roll the placement back (hence its own try/catch).
     try {
-      const seedBody = fm ? assembleMarkdownFile(fm, '') : '---\ncompleted: false\n---\n';
-      await trackComponentWrite(vaultRoot, relPath, async () => {
-        // allow-direct-write: seeds a NEW task .md file; mkdir -p required
-        // and `markHydrated(relPath, false)` below makes subsequent gateway
-        // writes route normally.
-        await invokeOk('vault:write-file-text', vaultRoot, relPath, seedBody);
-      });
       // Orphan-fm semantics: file just created on disk. Mark hydrated so the
       // gateway accepts subsequent writes (from TextTile, PropertiesPopup,
       // etc.) without throwing — the file existed before the next edit.
       markHydrated(relPath, false);
-      (def as Record<string, unknown>).filePath = relPath;
+      // Audit-12 H1 — the `def.filePath = relPath` stamp moved to buildTaskDef
+      // (pre-clone). Stamping it here was a no-op for persistence: AddTaskCommand
+      // had already deep-cloned the def before this runs, so it mutated an object
+      // the cache never sees. seedMdFile no longer needs `def` at all.
       documentStore.loadDocument({
         docId: contentId,
         filename: relPath,
@@ -183,7 +193,7 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
       reportError(
         'tasklist.seed-md',
         err,
-        `Failed to create backing file for "${finalTitle}" (${kindForError}) — the task may not persist correctly`,
+        `Backing file for "${finalTitle}" (${kindForError}) was created, but post-write setup lagged — it should recover on the next edit`,
       );
     }
   }
@@ -213,6 +223,15 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     } as TileDefinition;
     (def as Record<string, unknown>).contentId = contentId;
     (def as Record<string, unknown>).content = '';
+    // Audit-12 H1 — bake `filePath` into the def HERE, before AddTaskCommand's
+    // ctor deep-clones it (`this.def = this.snapshot(def)`). seedMdFile used to
+    // stamp it (on the ORIGINAL def) only AFTER the clone had already entered the
+    // cache, so the persisted `.board.json` row carried NO `filePath`. On a cold
+    // load (boards don't preload docs → documentStore empty) a subfolder task's
+    // field/tag write then fell through the per-board folder cascade / vault root
+    // and hit the wrong file. Kanban + Mind Map already bake filePath in pre-clone;
+    // this brings Task List to parity.
+    (def as Record<string, unknown>).filePath = relPath;
     return { def, contentId, relPath, finalTitle };
   }
 
@@ -232,11 +251,25 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
       folder,
       extraFm: null,
     });
-    await seedMdFile({ contentId, relPath, finalTitle, fm: null, def }, 'new task');
+    // A9-M3 (Audit-9) — the `.md` seed is folded INTO AddTaskCommand.execute()
+    // (its last argument), which persists the placement synchronously FIRST and
+    // then awaits the seed — all on the history chain. vaultStore.save()/quit
+    // therefore cover the seed via whenChainSettled(): a quit inside the seed
+    // window no longer persists the placement while losing the `.md`
+    // (priority/due/tags). The prior off-chain `await seedMdFile(...)` AFTER
+    // execute() did exactly that → an orphan row + lost metadata. On a seed-write
+    // failure the command rolls its placement back. Placement-first also keeps
+    // the insertPos TOCTOU tight (no concurrent creation shifts the slot across
+    // the await). The chain reports its own errors; swallow here on this
+    // fire-and-forget UI path.
     const insertPos = endOfSectionIndex(targetSectionId);
-    historyStore.execute(
-      new AddTaskCommand(board.id, def, insertPos, undefined, targetSectionId ?? undefined),
-    );
+    await historyStore
+      .execute(
+        new AddTaskCommand(board.id, def, insertPos, undefined, targetSectionId ?? undefined, () =>
+          seedMdFile({ contentId, relPath, finalTitle, fm: null }, 'new task'),
+        ),
+      )
+      .catch(() => {});
     tickAndPersist();
     announce(`Task added: ${finalTitle}`);
   }
@@ -304,22 +337,31 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
         : targetSectionId;
     }
 
-    await seedMdFile({ contentId, relPath, finalTitle, fm, def }, 'quick-add task');
-
-    const placementsAfter = getPlacements();
-    let insertPos = placementsAfter.length;
+    // A9-M3 (Audit-9) — compute the insert slot here, then fold the `.md` seed
+    // INTO AddTaskCommand.execute() so the placement (synchronous) AND the seed
+    // (awaited) both run on the history chain that quit drains via
+    // whenChainSettled(). The prior off-chain `await seedMdFile(...)` after
+    // execute() let a quit-during-seed persist the placement but lose the typed
+    // metadata (priority/due/tags) → orphan row. Reading the live placements
+    // here (pre-dispatch) keeps the insertPos TOCTOU tight. See createTaskInSection.
+    const placementsNow = getPlacements();
+    let insertPos = placementsNow.length;
     if (resolvedTargetId) {
-      const sectionsAfter = getSections();
-      const sortedLive = [...sectionsAfter].sort((a, b) => a.position - b.position);
+      const sectionsNow = getSections();
+      const sortedLive = [...sectionsNow].sort((a, b) => a.position - b.position);
       const idx = sortedLive.findIndex((s) => s.id === resolvedTargetId);
       if (idx >= 0) {
-        insertPos = sortedLive[idx + 1]?.position ?? placementsAfter.length;
+        insertPos = sortedLive[idx + 1]?.position ?? placementsNow.length;
       }
     }
 
-    historyStore.execute(
-      new AddTaskCommand(board.id, def, insertPos, undefined, resolvedTargetId ?? undefined),
-    );
+    await historyStore
+      .execute(
+        new AddTaskCommand(board.id, def, insertPos, undefined, resolvedTargetId ?? undefined, () =>
+          seedMdFile({ contentId, relPath, finalTitle, fm },'quick-add task'),
+        ),
+      )
+      .catch(() => {});
     tickAndPersist();
     if (resolvedTargetId) setLastTargetedSectionId(resolvedTargetId);
     announce(`Task added from quick add: ${finalTitle}`);
@@ -343,20 +385,27 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     });
 
     const fm: Record<string, unknown> = { completed: false, parent: parentTileId };
-    await seedMdFile({ contentId, relPath, finalTitle, fm, def }, 'subtask');
 
-    // Recompute the parent index against the *current* placements — they
-    // may have shifted while we were awaiting the seed (sibling subtask
-    // creations, watcher reload, drag-drop). Falling back to end-of-list
-    // also covers the rare case where the parent was deleted mid-flight.
-    const placementsAfter = getPlacements();
-    const sectionsAfter = getSections();
-    const parentIdx = placementsAfter.findIndex((p) => p.tileId === parentTileId);
-    const insertAt = parentIdx >= 0 ? parentIdx + 1 : placementsAfter.length;
-    const parentSection = parentIdx >= 0 ? sectionIdForPlacementIndex(sectionsAfter, parentIdx) : null;
-    historyStore.execute(
-      new AddTaskCommand(board.id, def, insertAt, undefined, parentSection ?? undefined),
-    );
+    // A9-M3 (Audit-9) — compute the parent index here, then fold the `.md` seed
+    // INTO AddTaskCommand.execute() so the placement (synchronous) AND the seed
+    // (awaited) both ride the history chain that quit drains via
+    // whenChainSettled(). The prior off-chain `await seedMdFile(...)` after
+    // execute() let a quit-during-seed persist the placement but lose the typed
+    // metadata → orphan `.md`. Reading the live placements here pins our slot
+    // before any sibling creation/reload can run (insertPos TOCTOU). Falling back
+    // to end-of-list still covers a parent deleted mid-flight.
+    const placementsNow = getPlacements();
+    const sectionsNow = getSections();
+    const parentIdx = placementsNow.findIndex((p) => p.tileId === parentTileId);
+    const insertAt = parentIdx >= 0 ? parentIdx + 1 : placementsNow.length;
+    const parentSection = parentIdx >= 0 ? sectionIdForPlacementIndex(sectionsNow, parentIdx) : null;
+    await historyStore
+      .execute(
+        new AddTaskCommand(board.id, def, insertAt, undefined, parentSection ?? undefined, () =>
+          seedMdFile({ contentId, relPath, finalTitle, fm },'subtask'),
+        ),
+      )
+      .catch(() => {});
 
     if (collapsedSubtasks.has(parentTileId)) {
       const next = new Set(collapsedSubtasks);

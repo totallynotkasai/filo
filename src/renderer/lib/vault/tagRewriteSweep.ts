@@ -140,7 +140,12 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
   const { vaultRoot, metadata, oldName, newName, applyChanges, pathFilter } = args;
   if (!vaultRoot) return { attempted: 0, succeeded: [], failed: [] };
 
-  const plan: Array<{ path: string; nextContent: string }> = [];
+  // Audit-7 M2 — the plan holds only PATHS; the rewritten bytes are recomputed
+  // from a fresh re-read inside the post-drain commit loop (not snapshotted
+  // here), so a `nextContent` captured now can't go stale against an editor
+  // body the drain later flushes. Phase 1 still computes `next` locally for the
+  // `next === raw` dedup that decides whether a file needs rewriting at all.
+  const plan: Array<{ path: string }> = [];
   const failed: string[] = [];
 
   for (const md of metadata) {
@@ -178,7 +183,7 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
       ? removeTagFromMarkdown(raw, oldName)
       : rewriteTagInMarkdown(raw, oldName, newName);
     if (next === raw) continue;
-    plan.push({ path: md.path, nextContent: next });
+    plan.push({ path: md.path });
   }
 
   // Sprint B / B3 — lay down the recovery sentinel BEFORE Phase 2 begins so
@@ -239,31 +244,73 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
     await withDrainedWrites(async () => {
       for (const item of plan) {
         try {
-          // Phase 31 A4.5 — tag rewrites are edits to EXISTING files; the
-          // .md was found by the prior metadata scan. Switched from
-          // `vault:write-file-text` (mkdir -p, creates if missing) to
-          // `vault:write-existing-file-text` so a file that was deleted
-          // out-of-band between scan and write is recorded as a failure
-          // instead of being resurrected silently.
-          //
-          // CONSOLIDATION_PLAN Phase 1 (bug #3) — switched bare `invoke +
-          // cast as Promise<void>` to `invokeOk`. The cast was swallowing
-          // the `{ success: false, error }` envelope on write failure, so
-          // `trackComponentWrite` saw a successful resolve and the failure
-          // never reached the recovery sentinel / failed-paths surface.
-          // Phase 6.6 — coupled write+reconcile. `mode: 'full'` reloads any
-          // open editor on this rewritten file with the new bytes (its
-          // pre-rewrite body would otherwise re-clobber the rewrite on the next
-          // debounce; applyReloadFromDisk self-cancels, 6.0.C2). The reconcile
-          // is keyed to the SAME path we write, replacing the post-drain batch
-          // sync. `notifyOnError: false` keeps the bulk loop from spamming one
+          // Audit-7 M2 — recompute the rewrite from a POST-DRAIN read instead of
+          // a Phase-1 snapshot. `withDrainedWrites` (above) just flushed any
+          // editor body a keystroke re-armed after the caller's up-front drain;
+          // the Phase-1 read ran seconds ago (longer on a large vault), so a
+          // snapshotted `nextContent` would predate that body and writing it
+          // would silently roll the keystroke back — and the `mode: 'full'`
+          // reconcile would reload the open editor to the stale body too. Reading
+          // here, after the drain, keeps the live body and only swaps the tag.
+          let freshRaw: string | null = null;
+          try {
+            const reread = await invokeOk('vault:read-file-text', vaultRoot, item.path);
+            freshRaw = reread.content;
+          } catch (err) {
+            // A non-envelope throw (programmer error, OOM) is unexpected — let
+            // the outer catch attribute the failure. An envelope failure means
+            // the file vanished or is unreadable; resolve it like Phase 1 did.
+            if (!(err instanceof IpcEnvelopeError)) throw err;
+          }
+          if (freshRaw === null) {
+            // Mirror the Phase-1 policy: a genuinely-missing file is dropped (the
+            // rewrite intent is moot), a present-but-unreadable file is a failure
+            // the caller retries.
+            const exists = await window.filo.invoke('vault:file-exists', vaultRoot, item.path);
+            if (exists) failed.push(item.path);
+            continue;
+          }
+          const freshNext = newName === null
+            ? removeTagFromMarkdown(freshRaw, oldName)
+            : rewriteTagInMarkdown(freshRaw, oldName, newName);
+          if (freshNext === freshRaw) {
+            // The post-drain bytes already lack the old tag (e.g. the flushed
+            // editor body had dropped it). The file is already in the desired
+            // state — skip the write; it's neither a failure nor a rewrite.
+            continue;
+          }
+          // Phase 31 A4.5 — tag rewrites edit EXISTING files (found by the prior
+          // metadata scan), so `writeMarkdownAndReconcile` uses the
+          // `vault:write-existing-file-text` channel (create:false): a file
+          // deleted out-of-band between scan and write surfaces as ENOENT
+          // (→ failed) instead of being resurrected. `invokeOk` (inside the
+          // helper) unwraps the `{ success: false, error }` envelope so a write
+          // failure reaches `trackComponentWrite` / the failed-paths surface.
+          // Phase 6.6 — coupled write+reconcile keyed to the SAME path we write.
+          // `mode: 'full'` reloads any open editor on this rewritten file with
+          // the new bytes (its pre-rewrite body would otherwise re-clobber the
+          // rewrite on the next debounce; applyReloadFromDisk self-cancels,
+          // 6.0.C2). `notifyOnError: false` keeps the bulk loop from spamming one
           // toast per file — the caller surfaces an aggregate retry toast. The
-          // sweep operates on raw markdown text and is atomic with the
-          // pre-flight scan, so it bypasses the debounced gateway deliberately.
+          // sweep operates on raw markdown text and is atomic with the pre-flight
+          // scan, so it bypasses the debounced gateway deliberately.
+          //
+          // Audit-11 T2 (ACCEPTED — see KNOWN_LIMITATIONS.md #8) — there is a
+          // narrow window: this loop runs inside `withDrainedWrites` (drained at
+          // entry), so a keystroke typed into an ALREADY-PROCESSED file's editor
+          // *during* a large sweep arms a fresh write after that drain. The
+          // post-drain re-read above sees disk WITHOUT those keystrokes, and the
+          // `mode: 'full'` reload here cancels the editor's armed write and swaps
+          // in the rewritten (keystroke-free) body — losing the in-flight
+          // keystrokes for that one file. Not closed in code because the fix
+          // (frontmatter-only reconcile when `isPathPending(path)`) would couple
+          // this deliberately store-free pure-rewrite module to scheduler state;
+          // the race needs simultaneous typing + a vault-wide tag rename, the
+          // .md tag rewrite still lands on disk, and undo restores the keystrokes.
           await writeMarkdownAndReconcile({
             vaultRoot,
             path: item.path,
-            content: item.nextContent,
+            content: freshNext,
             mode: 'full',
             track: { notifyOnError: false },
           });

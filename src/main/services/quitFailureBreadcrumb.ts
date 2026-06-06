@@ -7,8 +7,8 @@
  * This adds the durable breadcrumb the plan also called for: if any write
  * preserved a partial file this session (see {@link recordPreservedEmergencyFile}),
  * persist the locations into the vault so the NEXT launch can point the user
- * at the recoverable bytes (`consumeQuitFailureBreadcrumb` on the renderer
- * surfaces + clears it on vault open).
+ * at the recoverable bytes (`readQuitFailureBreadcrumb` surfaces it on vault
+ * open; `clearQuitFailureBreadcrumb` clears it once the user acknowledges).
  *
  * Best-effort by contract: the preserved partials are already on disk, so a
  * failed breadcrumb write (e.g. the disk is STILL full — the very condition

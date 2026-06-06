@@ -160,8 +160,22 @@ export async function pathExists(filePath: string): Promise<boolean> {
  * race on a shared `<path>.tmp`. With per-call nonces each write owns
  * its own tmp file, so the cleanup `unlink` on failure can't accidentally
  * delete the other call's buffer mid-rename. Phase 25 L1.
+ *
+ * Audit-7 L7 — `opts.expectExisting` narrows a file-resurrection race. The
+ * `vault:write-existing-file-text` channel exists to stop a dirty editor's
+ * debounce from recreating a file the user just deleted; the handler enforces
+ * that with a stat pre-check, but `fs.rename(tmp, dest)` creates `dest`
+ * unconditionally, so a delete landing in the (ms-long) tmp-write→rename gap
+ * still resurrects the file. With `expectExisting`, the destination's
+ * existence is re-verified immediately before each rename attempt and the
+ * write aborts with ENOENT if it's gone — shrinking the window to the
+ * check→rename gap (microseconds; the irreducible OS-level residual).
  */
-export async function atomicWriteFile(filePath: string, content: string | Buffer): Promise<void> {
+export async function atomicWriteFile(
+  filePath: string,
+  content: string | Buffer,
+  opts?: { expectExisting?: boolean },
+): Promise<void> {
   const nonce = randomBytes(6).toString('hex');
   const tmpPath = `${filePath}.${nonce}.tmp`;
 
@@ -218,14 +232,28 @@ export async function atomicWriteFile(filePath: string, content: string | Buffer
   let renamed = false;
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     try {
+      // Audit-7 L7 — when the caller asserts the destination must already
+      // exist, re-verify right before the rename. `fs.rename` creates `dest`
+      // unconditionally, so a delete that landed since the handler's stat
+      // pre-check would otherwise resurrect the file with stale editor bytes.
+      // Re-checked each attempt so a delete during the retry backoff is caught
+      // too. The check→rename gap itself is the irreducible OS-level residual.
+      if (opts?.expectExisting && !(await pathExists(filePath))) {
+        const gone: NodeJS.ErrnoException = new Error(
+          `atomicWriteFile: "${filePath}" no longer exists; refusing to recreate it`,
+        );
+        gone.code = 'ENOENT';
+        throw gone;
+      }
       await fs.rename(tmpPath, filePath);
       renamed = true;
       break;
     } catch (err) {
       lastErr = err;
       const code = (err as NodeJS.ErrnoException)?.code;
-      // Only retry transient Windows locking errors. ENOENT (missing src)
-      // and other codes mean the rename will never succeed, so fail fast.
+      // Only retry transient Windows locking errors. ENOENT (missing src, or
+      // the expectExisting abort above) and other codes mean the rename will
+      // never succeed, so fail fast.
       if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES') break;
       if (attempt === RETRY_DELAYS_MS.length) break;
       await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));

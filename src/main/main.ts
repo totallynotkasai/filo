@@ -16,6 +16,7 @@ import { logMainError } from './utils/mainLogger';
 import { stopActiveWatcher } from './ipc/vault.ipc';
 import { vaultRegistry } from './services/vaultRegistry';
 import { writeQuitFailureBreadcrumb } from './services/quitFailureBreadcrumb';
+import { decideWindowClose } from './utils/windowCloseDecision';
 
 // Must run before `app.whenReady`. Registers the `filo://` URL scheme as a
 // privileged standard scheme so the renderer can load vault-local media
@@ -171,10 +172,17 @@ async function createWindow(): Promise<void> {
     // the flush sequence.
     captureAndSaveWindowState();
 
-    if (isFlushingForQuit) return;
-    if (!mainWindow || mainWindow.webContents.isDestroyed()) return;
+    // 1.3 — a second X-click while a drain is already in flight MUST keep
+    // blocking the close (preventDefault), not fall through to Electron's
+    // destroy and abort the in-flight write drain. `decideWindowClose` is the
+    // pure guard; see windowCloseDecision.ts.
+    const decision = decideWindowClose({
+      isFlushing: isFlushingForQuit,
+      windowAlive: !!mainWindow && !mainWindow.webContents.isDestroyed(),
+    });
+    if (decision.preventDefault) event.preventDefault();
+    if (!decision.startDrain) return;
 
-    event.preventDefault();
     isFlushingForQuit = true;
 
     const destroyOnTimeout = (): void => {

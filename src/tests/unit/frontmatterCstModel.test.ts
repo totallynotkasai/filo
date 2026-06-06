@@ -13,7 +13,8 @@ import { patchFrontmatterSourceCst } from '@renderer/lib/vault/frontmatterCstMod
  *    the previous line — `count: 3addedKey`);
  *  - the nested-collection / type-change swap;
  *  - comment survival (leading / standalone / trailing / inline) on an unrelated
- *    edit, and relocation of a deleted key's leading comment;
+ *    edit, and that a DELETED key's documenting comment drops with it (L4) rather
+ *    than relocating onto a survivor;
  *  - the bare-empty-key set (C1) re-parsing correctly;
  *  - the anchor/alias refusal boundary (L27).
  */
@@ -144,16 +145,35 @@ describe('patchFrontmatterSourceCst — comment survival', () => {
     expect(out, 'untouched scalar bytes canonicalised').toContain('zip: 02134');
   });
 
-  it('relocates a deleted key’s standalone comment to the next key (never silently drops it)', () => {
+  it('drops a deleted key’s documenting comment instead of relocating it onto the next key (L4)', () => {
+    // `# doc for count` documents `count`; deleting `count` must remove the
+    // comment with it, not migrate it onto `status` (an unrelated surviving
+    // field). Structural keys are untouched and re-parse.
     const out = patchFrontmatterSourceCst('title: Note\n# doc for count\ncount: 3\nstatus: open', {
       title: 'Note',
       status: 'open',
     });
     expect(out).not.toBeNull();
-    expect(out, 'comment above a deleted key was dropped').toContain('# doc for count');
+    expect(out, 'deleted key’s comment migrated to a surviving key').not.toContain('# doc for count');
     const re = core(out!);
     expect('count' in re!).toBe(false);
     expect(re!.status).toBe('open');
+  });
+
+  it('keeps the blank-line gap above a deleted commented key while dropping the comment (L4)', () => {
+    // The blank line separating `title` from foo's documented section is
+    // structural spacing — it survives — but the comment glued to the deleted
+    // `foo` does not relocate onto `baz`.
+    const out = patchFrontmatterSourceCst('title: Note\n\n# doc for foo\nfoo: bar\nbaz: qux', {
+      title: 'Note',
+      baz: 'qux',
+    });
+    expect(out).not.toBeNull();
+    expect(out, 'comment migrated to a survivor').not.toContain('# doc for foo');
+    expect(out, 'blank-line gap collapsed').toContain('title: Note\n\nbaz: qux');
+    const re = core(out!);
+    expect('foo' in re!).toBe(false);
+    expect(re!.baz).toBe('qux');
   });
 });
 

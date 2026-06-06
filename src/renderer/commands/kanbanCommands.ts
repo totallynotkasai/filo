@@ -21,7 +21,14 @@ import {
 } from '../lib/vault/markdownFileWriter';
 import { reportError } from '../lib/utils/errorBus';
 import { forceWriteForDocument } from '../lib/vault/markdownFileWriter';
-import { applyFrontmatterPatchRebased, fmValueEqual } from './frontmatterRebase';
+import { seedDocumentFrontmatterFromDisk } from '../lib/boards/seedFrontmatterFromDisk';
+import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
+import {
+  applyFrontmatterPatchRebased,
+  captureInverseFromCache,
+  fmValueEqual,
+} from './frontmatterRebase';
+import { patchToFrontmatterDelta } from '../lib/vault/frontmatterDelta';
 
 // ── Kanban Commands ──
 //
@@ -263,6 +270,16 @@ export class MoveCardCommand extends Command {
  * iterating the pre-move snapshot in source-position-ascending order so each
  * `moveKanbanPlacement` call lands at the right index (lower positions fill
  * first, shifting higher positions into place).
+ *
+ * Audit-7 M3 — restoring to the absolute `fromPosition` alone goes stale if a
+ * source column is mutated (a card added/removed) between the move and a later
+ * undo: the saved index then points at the wrong slot and the cards return
+ * scrambled. Each snapshot now also carries the surviving sibling the card
+ * should sit immediately BEFORE in its source column, captured from the PRE-move
+ * cache and resolved against the LIVE column at undo time (mirrors the
+ * single-card `MoveCardCommand` 6.4.M16 anchor). Ascending replay + a
+ * next-survivor anchor reconstructs the original interleaving; the absolute
+ * position is the fallback when that sibling is gone.
  */
 export class MoveCardsCommand extends Command {
   description: string;
@@ -271,7 +288,15 @@ export class MoveCardsCommand extends Command {
   private tileIds: string[];
   private toColumnId: string;
   private toPosition: number;
-  private snapshots: Array<{ tileId: string; fromColumnId: string; fromPosition: number }>;
+  private snapshots: Array<{
+    tileId: string;
+    fromColumnId: string;
+    fromPosition: number;
+    // Audit-7 M3 — tileId of the next surviving (non-moved) card in the source
+    // column at construction time; null when the card was last (or only moved
+    // cards follow), in which case undo falls back to the absolute position.
+    anchorTileId: string | null;
+  }>;
 
   constructor(
     boardId: string,
@@ -287,8 +312,33 @@ export class MoveCardsCommand extends Command {
     this.tileIds = [...tileIds];
     this.toColumnId = toColumnId;
     this.toPosition = toPosition;
-    // allow-shallow: snapshot entries are flat primitives.
-    this.snapshots = snapshots.map((s) => ({ ...s }));
+    // Audit-7 M3 — capture each card's neighbour anchor from the PRE-move cache
+    // (this command is constructed before execute() applies the move, so the
+    // moved cards are still in their source columns). The anchor is the first
+    // SURVIVING card after this one in its source column — computed with the
+    // whole moved set skipped (mirrors moveKanbanPlacement's remove-then-insert)
+    // — so an ascending-order undo lands each card immediately before its
+    // original sibling even if the column was mutated meanwhile. Null (card was
+    // last, or only moved cards follow) falls back to the absolute position.
+    const movedSet = new Set(tileIds);
+    const anchorFor = (fromColumnId: string, tileId: string): string | null => {
+      const cached = boardCacheStore.cache[boardId];
+      if (!cached || cached.board.type !== 'kanban') return null;
+      const placements =
+        (cached.board as KanbanBoard).columns?.find((c) => c.id === fromColumnId)
+          ?.tilePlacements ?? [];
+      const idx = placements.findIndex((p) => p.tileId === tileId);
+      if (idx < 0) return null;
+      for (let i = idx + 1; i < placements.length; i++) {
+        if (!movedSet.has(placements[i].tileId)) return placements[i].tileId;
+      }
+      return null;
+    };
+    // allow-shallow: snapshot entries are flat primitives (anchorTileId is a string|null).
+    this.snapshots = snapshots.map((s) => ({
+      ...s,
+      anchorTileId: anchorFor(s.fromColumnId, s.tileId),
+    }));
     const allSameSource = snapshots.every((s) => s.fromColumnId === toColumnId);
     this.description = allSameSource
       ? `Reorder ${tileIds.length} cards`
@@ -310,7 +360,13 @@ export class MoveCardsCommand extends Command {
       return a.fromPosition - b.fromPosition;
     });
     for (const s of ordered) {
-      boardCacheStore.moveKanbanPlacement(this.boardId, s.tileId, s.fromColumnId, s.fromPosition);
+      boardCacheStore.moveKanbanPlacement(
+        this.boardId,
+        s.tileId,
+        s.fromColumnId,
+        s.fromPosition,
+        s.anchorTileId, // Audit-7 M3 — anchor over the stale absolute index
+      );
     }
   }
 }
@@ -559,8 +615,51 @@ export class UpdateCardFieldCommand extends Command {
       });
       return;
     }
-    if (this.docId) documentStore.mergeFrontmatter(this.docId, this.patch);
-    scheduleFrontmatterWrite(this.relPath, this.docId);
+    if (this.docId) {
+      // A9-H1 — capture vault identity before the seed's disk read; an Open Vault
+      // → "Don't Save" swap can commit mid-read. Bailing after (below) means we
+      // never re-inject (A9-M1) the old vault's FM or arm a write onto the new
+      // vault's same-named file.
+      const identity = captureVaultIdentity();
+      // Audit-7 H1 — seed the FM cache from a FRESH disk read HERE, inside the
+      // chained command body, so vaultStore.save()/quit (which await
+      // historyStore.whenChainSettled() before flushing) cover this read. The
+      // seed used to run in the writer BEFORE historyStore.execute(); a Ctrl+S /
+      // quit landing in that pre-chain await window saw an empty chain, reported
+      // a premature "Saved", and tore down the renderer before the field write
+      // was scheduled — a silent loss with no .filo/.dirty sentinel (the vault
+      // was clean at edit time). No-op when an open editor / prior edit already
+      // seeded the cache, or when the disk read fails.
+      await seedDocumentFrontmatterFromDisk(this.docId, vaultStore.path, this.relPath);
+      // A9-H1 — swap landed mid-seed: abandon before any index/merge/schedule/markDirty sink.
+      if (!isStillSameVault(identity)) return;
+      if (!documentStore.getFrontmatter(this.docId)) {
+        // Disk read failed (ENOENT / transient) — fall back to the vault-index
+        // snapshot, exactly as the writer's old ensureSeededFm did, so the merge
+        // has a full FM object and the source-preserving write can't drop keys.
+        documentStore.setFrontmatter(
+          this.docId,
+          (vaultIndexStore.getMetadata(this.relPath)?.frontmatter ?? {}) as Record<string, unknown>,
+        );
+      }
+      // Recapture the inverse from the just-seeded cache so undo restores the
+      // TRUE prior value of each patched key — the writer computed it before
+      // this seed ran, off a possibly-stale index / empty cache.
+      this.inversePatch = this.snapshot(captureInverseFromCache(this.docId, this.patch));
+      // Phase 4 — mergeFrontmatter feeds the DISPLAY cache; the delta is the
+      // write SOURCE (applied to fresh disk in the gateway), so an untouched
+      // external key is preserved by construction instead of dropped from a
+      // stale cache. Decoupled — the cache is never the write source.
+      documentStore.mergeFrontmatter(this.docId, this.patch);
+    }
+    // The delta routes through the gateway's fresh-disk apply (docId path). The
+    // null-docId card is dead in production (the writer routes it through
+    // UpdateOrphanFrontmatterCommand), so it keeps the legacy no-delta path.
+    scheduleFrontmatterWrite(
+      this.relPath,
+      this.docId,
+      this.docId ? patchToFrontmatterDelta(this.patch) : undefined,
+    );
     boardCacheStore.markDirty(this.targetBoardId);
   }
 
@@ -606,6 +705,7 @@ export class UpdateOrphanFrontmatterCommand extends Command {
   private relPath: string;
   private patch: Record<string, unknown>;
   private inversePatch: Record<string, unknown>;
+  private hasExecuted = false;
 
   constructor(
     boardId: string,
@@ -624,6 +724,43 @@ export class UpdateOrphanFrontmatterCommand extends Command {
   }
 
   async execute(): Promise<void> {
+    // A8-M5 — on the FIRST execute, recompute the inverse from the CURRENT
+    // on-disk frontmatter, mirroring the docId path's captureInverseFromCache.
+    // The writer computed `inversePatch` from the (possibly-hours-stale) vault
+    // index at construction; if an external editor added/changed a patched key
+    // since the last index rebuild, that stale inverse is wrong two ways:
+    //   1. execute would FALSELY conflict — `applyOrphanPatchRebased` compares
+    //      the fresh disk value against this `expectedCurrent`, so a stale
+    //      mismatch makes it KEEP the external value and DROP the user's edit.
+    //   2. undo would restore the stale value (''/absent) instead of the TRUE
+    //      prior on-disk value.
+    // Recomputing from a fresh disk read fixes both. Only on the first execute
+    // (not redo): a redo must replay against the value THIS command wrote, which
+    // the inverse already holds. A read failure keeps the construction-time
+    // inverse (best-effort, matching the docId path's index fallback).
+    if (!this.hasExecuted) {
+      this.hasExecuted = true;
+      // A9-H1 — guard the inverse recompute against a swap during the flush/read
+      // (don't read the new vault's same-named file); the write below bails too.
+      const identity = captureVaultIdentity();
+      await flushAllPendingFrontmatterWrites();
+      const vaultRoot = vaultStore.path;
+      if (vaultRoot) {
+        try {
+          const hydrate = await readMarkdownForHydrate(vaultRoot, this.relPath);
+          if (isStillSameVault(identity)) {
+            const before = (hydrate.frontmatter ?? {}) as Record<string, unknown>;
+            const inverse: Record<string, unknown> = {};
+            for (const key of Object.keys(this.patch)) {
+              inverse[key] = key in before ? before[key] : '';
+            }
+            this.inversePatch = this.snapshot(inverse);
+          }
+        } catch {
+          // ENOENT / transient — keep the construction-time inverse.
+        }
+      }
+    }
     // 6.2.H8 — route through the rebased variant so an external edit to
     // the same field isn't silently clobbered. The inverse patch IS the
     // expected current state (what we wrote on the prior execute, or the
@@ -797,6 +934,9 @@ async function applyOrphanPatchRebased(args: {
   label: string;
 }): Promise<void> {
   const { relPath, targetBoardId, applying, expectedCurrent, label } = args;
+  // A9-H1 — capture identity before reading the live vault path; a swap during
+  // the flush/read must not apply this command's patch to the new vault's file.
+  const identity = captureVaultIdentity();
   const vaultRoot = vaultStore.path;
   if (!vaultRoot) return;
 
@@ -831,10 +971,15 @@ async function applyOrphanPatchRebased(args: {
   // that landed since the last index rebuild.
   let body = '';
   let baseFm: Record<string, unknown> = {};
+  // A9-L5 — disk FM SOURCE, threaded into the docId-less write below so it
+  // source-preserves instead of full-dumping. Only the disk-read branch sets it
+  // (the index fallback has no source, so that degraded path keeps the full-dump).
+  let baseRawFm: string | undefined;
   try {
     const hydrateResult = await readMarkdownForHydrate(vaultRoot, relPath);
     body = hydrateResult.body;
     baseFm = hydrateResult.frontmatter;
+    baseRawFm = hydrateResult.rawFrontmatter;
   } catch {
     const meta = vaultIndexStore.getMetadata(relPath);
     baseFm = (meta?.frontmatter ?? {}) as Record<string, unknown>;
@@ -842,24 +987,31 @@ async function applyOrphanPatchRebased(args: {
     if (!isHydrated(relPath)) markHydrated(relPath, false);
   }
 
+  // A9-H1 — swap during the drain/read: don't write this patch onto the new vault.
+  if (!isStillSameVault(identity)) return;
+
   const commit = async (patch: Record<string, unknown>): Promise<void> => {
-    const merged: Record<string, unknown> = { ...baseFm, ...patch };
-    for (const k of Object.keys(merged)) {
-      const v = merged[k];
-      if (v === '' || v === undefined || v === null) delete merged[k];
-    }
-    try {
-      await writeMarkdownFile({
-        vaultRoot,
-        relPath,
-        frontmatter: merged,
-        body,
-        callerId: `kanban-orphan-patch:${relPath}`,
-        docId: null,
-      });
-    } catch (err) {
-      reportError('updateOrphanFrontmatter', err, `Failed to update ${relPath}`);
-    }
+    // FILO-UR-1 — thread an explicit DELTA, not a cleaned whole object. The old
+    // merge + drop-empty-keys loop deleted present-but-empty disk keys (aliases:,
+    // cssclasses:) and the CST engine spliced them out — loss on execute AND undo.
+    const delta = patchToFrontmatterDelta(patch);
+    // A9-L2 — do NOT swallow a failed orphan write (pre-fix this catch only
+    // reportError'd, so the command resolved SUCCESS and markDirty'd while disk
+    // stayed stale). Letting the rejection propagate makes execute()/undo()
+    // reject so the history wrapper rolls the command back, matching the docId
+    // path; the gateway's trackComponentWrite already kept `.filo/.dirty` dirty +
+    // toasted. markDirty below runs ONLY past a successful write (a throw skips it).
+    await writeMarkdownFile({
+      vaultRoot,
+      relPath,
+      frontmatterDelta: delta,
+      body,
+      callerId: `kanban-orphan-patch:${relPath}`,
+      docId: null,
+      // A9-L5 / FILO-UR-1 — delta branch derives its baseline from its own fresh
+      // in-chain read; baseRawFm stays threaded for the no-delta fallback.
+      originalFrontmatter: baseRawFm,
+    });
     // allow-non-target-markdirty: shared helper, callers pass this.targetBoardId per the CI gate
     boardCacheStore.markDirty(targetBoardId);
   };
@@ -900,7 +1052,11 @@ async function applyOrphanPatchRebased(args: {
         handler: () => {
           const forced: Record<string, unknown> = {};
           for (const key of conflicts) forced[key] = applying[key];
-          void commit(forced);
+          // A9-L2 — commit now rejects on write failure; this fire-and-forget
+          // toast path isn't wrapped by the history runner, so surface + swallow.
+          void commit(forced).catch((err) =>
+            reportError('updateOrphanFrontmatter', err, `Failed to update ${relPath}`),
+          );
         },
       },
     ],

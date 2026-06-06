@@ -46,8 +46,14 @@
   import type { DocumentBoard } from '../../schema/index';
   import type { Editor } from '@tiptap/core';
 
-  let activeTab = $derived(tabStore.activeTab);
-  let docId = $derived(activeTab?.boardId ?? '');
+  // R1 (Audit-11) — pane-scoped, NOT global. BoardRouter renders this with the
+  // pane's own `tabId` (and remounts via `{#key tab.id}` on a pane tab change), so
+  // two panes showing different Document boards each bind to their OWN doc. Reading
+  // `tabStore.activeTab` here would make both panes mirror the globally-active tab —
+  // swapping content underneath and staling the captured callerId/force-writer.
+  let { tabId }: { tabId: string } = $props();
+  let tab = $derived(tabStore.tabs.find((t) => t.id === tabId));
+  let docId = $derived(tab?.boardId ?? '');
   let docState = $derived(docId ? documentStore.getDocument(docId) : undefined);
 
   // BoardRouter intentionally skips boardStore loading for document tabs

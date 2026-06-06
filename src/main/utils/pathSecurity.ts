@@ -112,9 +112,14 @@ export function assertWithinVault(vaultRoot: string, targetPath: string): void {
  * device handle instead of a real file — the write either silently no-ops
  * (CON.txt → console) or hangs the IPC handler waiting for hardware. We
  * reject them up-front for cross-platform parity.
+ *
+ * Audit-8 L1 — `CONIN$` / `CONOUT$` (console input/output) and `CLOCK$`
+ * (system clock) are the device names the original set omitted. They carry
+ * a literal `$`, which is a legal filename character generally, so only the
+ * exact reserved stem is rejected (`money$.md` stays fine).
  */
 export const RESERVED_WINDOWS_NAMES = new Set([
-  'CON', 'PRN', 'AUX', 'NUL',
+  'CON', 'PRN', 'AUX', 'NUL', 'CONIN$', 'CONOUT$', 'CLOCK$',
   'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
   'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
 ]);
@@ -209,7 +214,11 @@ export function assertSafeFilename(
   // channels still reject them on every platform so the resulting file stays
   // portable to a Windows collaborator.
   if (enforceWinRules) {
-    const stem = fileName.split('.')[0].toUpperCase();
+    // Audit-8 L1 — Windows strips leading/trailing spaces from the name
+    // component, so ` CON.md` / `CON .md` still open the CON device. Trim the
+    // stem before the reserved-name compare so a space-padded device name
+    // can't slip through.
+    const stem = fileName.split('.')[0].trim().toUpperCase();
     if (RESERVED_WINDOWS_NAMES.has(stem)) {
       throw new Error(`Unsafe filename rejected — Windows reserved name: ${stem}`);
     }
@@ -313,8 +322,9 @@ const RENDERER_PERMITTED_FILO_PATHS = new Set<string>([
   '.filo/rename-cascade-pending.json',
   '.filo/tag-rewrite-pending.json',
   // 6.2.H4 (follow-up) — quit-failure breadcrumb. Written by the main-side
-  // quit drain; read + deleted by the renderer's `consumeQuitFailureBreadcrumb`
-  // on the next vault open (same read/delete pattern as `.filo/.dirty`).
+  // quit drain; read by the renderer's `readQuitFailureBreadcrumb` and deleted
+  // by `clearQuitFailureBreadcrumb` once the user acknowledges (Audit-8 L4 split
+  // the consume-on-read into read + clear), same channels as `.filo/.dirty`.
   '.filo/quit-failure.json',
 ]);
 

@@ -22,6 +22,10 @@
   // call sites throughout this component while routing reads to this pane's
   // scope — so two panes can show different boards independently.
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
+  // R1 (Audit-11) — BoardRouter passes every board the pane's `tabId`. This board
+  // is pane-correct via BoardScope, so it declares + ignores it (silences Svelte's
+  // dev-mode "unknown prop" warning).
+  let { tabId }: { tabId?: string } = $props();
   const boardStore = scope.board;
   const canvasStore = scope.canvas;
   const selectionStore = scope.selection;

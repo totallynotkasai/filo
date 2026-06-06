@@ -18,6 +18,7 @@
   const boardStore = scope.board;
   import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
   import { documentStore } from '../../stores/document.svelte';
+  import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
   import {
     markHydrated,
     isHydrated,
@@ -32,6 +33,8 @@
     clearPropertiesPopupDirty,
   } from '../../lib/vault/propertiesPopupTracker';
   import { reportError } from '../../lib/utils/errorBus';
+  import { type PropType, detectType, valueForRow } from '../../lib/utils/propertyRowTypes';
+  import { diffToFrontmatterDelta } from '../../lib/vault/frontmatterDelta';
   import { IpcEnvelopeError } from '@shared/ipcEnvelope';
   import { createId } from '../../lib/utils/ids';
   import { historyStore } from '../../stores/history.svelte';
@@ -39,8 +42,6 @@
     UpdatePropertiesCommand,
     type PropertiesSnapshot,
   } from '../../commands/index';
-
-  type PropType = 'text' | 'number' | 'boolean' | 'date' | 'list' | 'tag' | 'status';
 
   const DEFAULT_STATUSES: readonly string[] = ['todo', 'in-progress', 'done'];
 
@@ -80,44 +81,6 @@
   /** Per-row flag forcing the status row into custom-text-input mode. Keyed by row.rid. */
   let statusCustomMode = $state<Record<string, boolean>>({});
 
-  function detectType(key: string, value: unknown): PropType {
-    const k = key.trim().toLowerCase();
-    if (k === 'tags' && Array.isArray(value)) return 'tag';
-    // `status` key auto-detects as the status type for any string value, so
-    // custom values written to frontmatter round-trip correctly through the
-    // popup UI without forcing the user to re-pick the type each open.
-    if (k === 'status' && typeof value === 'string') return 'status';
-    if (typeof value === 'boolean') return 'boolean';
-    if (typeof value === 'number') return 'number';
-    if (Array.isArray(value)) return 'list';
-    if (typeof value === 'string') {
-      // ISO date detection — YYYY-MM-DD or full ISO 8601.
-      if (/^\d{4}-\d{2}-\d{2}(T|$)/.test(value)) return 'date';
-    }
-    return 'text';
-  }
-
-  function valueForRow(value: unknown, type: PropType): unknown {
-    switch (type) {
-      case 'boolean':
-        return Boolean(value);
-      case 'number':
-        return typeof value === 'number' ? value : Number(value) || 0;
-      case 'tag':
-      case 'list':
-        if (Array.isArray(value)) return value.map((v) => String(v));
-        if (typeof value === 'string') return value.split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
-        return [];
-      case 'date':
-        if (typeof value === 'string') return value.slice(0, 10);
-        return '';
-      case 'status':
-        return typeof value === 'string' && value.length > 0 ? value : 'todo';
-      default:
-        return typeof value === 'string' ? value : String(value ?? '');
-    }
-  }
-
   function rowsFromObject(obj: Record<string, unknown>): PropertyRow[] {
     return Object.entries(obj).map(([key, value]) => {
       const type = detectType(key, value);
@@ -135,11 +98,13 @@
     return out;
   }
 
+  // Audit-10 B2 — delegate to the canonical resolver so a subfolder tile's
+  // explicit `filePath` wins over the `${title}.md` root fallback. The old body
+  // ignored `filePath`, so editing properties on a subfolder card (Kanban) or a
+  // subfolder Mind-Map text tile read from / wrote to the wrong root path —
+  // losing the edit (ENOENT) or corrupting an unrelated same-named root file.
   function vaultRelativePath(t: Tile): string | null {
-    const docState = (t as TextTile).contentId
-      ? documentStore.getDocument((t as TextTile).contentId)
-      : null;
-    return docState?.filename || `${t.title || 'Untitled'}.md`;
+    return resolveTextTileVaultPath(t);
   }
 
   function loadFromBacking(): void {
@@ -218,6 +183,17 @@
     // write below ENOENT-fails with the same surfaced toast path the
     // legacy "no fileState entry" branch produced.
     if (!isHydrated(relPath)) markHydrated(relPath, false);
+    // Phase 4 (WRITE_PATH_REMEDIATION_PLAN_2026-06-04) — the popup edits in
+    // whole-object terms, so the write SOURCE is the delta of everything that
+    // changed since the popup opened (`beforeSnapshot.fm` → current rows). A key
+    // the popup never touched — including one an external editor added to disk
+    // since the popup opened, which is in NEITHER snapshot — is absent from the
+    // delta, so the gateway sources it from fresh disk and never reverts it (the
+    // live variant of Finding #5). `frontmatter: obj` stays as the legacy
+    // fallback the gateway ignores while a delta is present.
+    const openFm =
+      beforeSnapshot?.kind === 'frontmatter' ? beforeSnapshot.fm : {};
+    const delta = diffToFrontmatterDelta(openFm, obj);
     return {
       vaultRoot,
       relPath,
@@ -225,6 +201,7 @@
       body,
       callerId: flusherId,
       docId: docId ?? null,
+      frontmatterDelta: delta,
     };
   }
 
@@ -319,6 +296,20 @@
 
   function textToList(text: string): string[] {
     return text.split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
+  }
+
+  /**
+   * Audit-10 B1 — a compact, read-only preview for a `raw` row: a structured
+   * value (nested object/array, or an array with non-string items) the typed
+   * editors can't represent without loss. JSON is unambiguous; the value itself
+   * is preserved verbatim by `valueForRow('raw')`, so this is display-only.
+   */
+  function rawPreview(value: unknown): string {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
   }
 
   function getTagArray(value: unknown): string[] {
@@ -528,8 +519,14 @@
             class="type-select"
             value={row.type}
             onchange={(e) => changeType(index, (e.target as HTMLSelectElement).value as PropType)}
+            disabled={row.type === 'raw'}
             aria-label="Property type for {propLabel}"
           >
+            {#if row.type === 'raw'}
+              <!-- Audit-10 B1 — a structured value can't be re-typed without
+                   loss, so the select is disabled; this option just labels it. -->
+              <option value="raw">Raw</option>
+            {/if}
             <option value="text">Text</option>
             <option value="number">Number</option>
             <option value="boolean">Boolean</option>
@@ -540,7 +537,15 @@
           </select>
 
           <div class="value-cell" class:value-cell-stack={row.type === 'tag'}>
-            {#if row.type === 'boolean'}
+            {#if row.type === 'raw'}
+              <!-- Audit-10 B1 — read-only verbatim preview. A nested object /
+                   numeric array round-trips untouched; editing it here would
+                   coerce it lossily, so it's display-only with a hint. -->
+              <code
+                class="raw-value"
+                title="Structured value — edit in your text editor to preserve it"
+              >{rawPreview(row.value)}</code>
+            {:else if row.type === 'boolean'}
               <input
                 type="checkbox"
                 checked={Boolean(row.value)}
@@ -790,6 +795,26 @@
 
   .value-input {
     width: 100%;
+  }
+
+  /* Audit-10 B1 — read-only structured-value preview. */
+  .raw-value {
+    display: block;
+    width: 100%;
+    height: 26px;
+    line-height: 22px;
+    padding: 2px 8px;
+    border: 1px solid var(--ui-border);
+    border-radius: 4px;
+    background: var(--ui-surface-hover);
+    color: var(--text-secondary);
+    font-family: var(--font-mono, monospace);
+    font-size: 11px;
+    box-sizing: border-box;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    cursor: default;
   }
 
   .tag-chips {

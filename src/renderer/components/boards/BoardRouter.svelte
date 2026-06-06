@@ -116,7 +116,7 @@
           <div class="board-loading"></div>
         {:then mod}
           {@const ActiveBoardComponent = mod.default}
-          <ActiveBoardComponent />
+          <ActiveBoardComponent {tabId} />
         {:catch}
           <div class="board-placeholder-type">
             <p class="placeholder-label">Failed to load board</p>

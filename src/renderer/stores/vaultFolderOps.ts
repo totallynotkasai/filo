@@ -16,6 +16,7 @@ import {
   markRenameCascadeFlushFailed,
 } from '../lib/vault/renameCascadeSentinel';
 import { renameAllPathKeys } from '../lib/vault/renamePathKeys';
+import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import {
   PendingWritesFailedError,
   createVaultFolder,
@@ -399,6 +400,14 @@ async function runRename(
       // tile view. The pre-R7 `runtimeTilesSnapshot` / `replaceActiveTiles`
       // shim is no longer needed; the spatial index is still rebuilt
       // explicitly via `rehydrateSpatial` (the index isn't reactive).
+      //
+      // Phase 3 / 3.2 — snapshot vault identity before the first await. The
+      // revert below re-injects `cacheSnapshot` (the OUTGOING vault's boards);
+      // if the vault swapped mid-rename (the swap that makes assertActiveVault
+      // reject the IPC), re-applying it would corrupt the NEW vault's cache.
+      // `isStillSameVault(renameIdentity)` gates both revert sites. (The disk
+      // side is already main-side mitigated; this closes the in-memory gap.)
+      const renameIdentity = captureVaultIdentity();
       let cascadeApplied = false;
       let cacheSnapshot: Record<string, V7BoardFileData> | null = null;
       let changedBoardIds: string[] = [];
@@ -432,13 +441,15 @@ async function runRename(
           // we never reach the IPC rename and there's nothing to recover.
           // Cascade threw mid-mutation — restore the cache snapshot if we
           // managed to capture one before the throw.
-          if (cacheSnapshot) {
+          if (cacheSnapshot && isStillSameVault(renameIdentity)) {
             for (const id of changedBoardIds) {
               cancelBoardWrite(id, boardCacheStore.paths[id]);
             }
             boardCacheStore.replaceCache(cacheSnapshot);
             // Phase 31 A3.1 — also unwind the boardPaths rebind so the cache
-            // and paths agree on the OLD path after revert.
+            // and paths agree on the OLD path after revert. Phase 3 / 3.2 —
+            // gated on `isStillSameVault`: a swap during the cascade's awaits
+            // means this snapshot belongs to the outgoing vault.
             if (boardPathsSnapshot) boardCacheStore.replacePaths(boardPathsSnapshot);
             // Phase R7 — derived tiles already snap back to the restored
             // cache; just rehydrate the spatial index so hit-testing matches.
@@ -468,7 +479,10 @@ async function runRename(
           sentinelId = await writePendingRenameCascade(vaultPath, {
             oldPath: oldRel,
             newPath: newRel,
-            affectedBoardIds: [...changedBoardIds],
+            // A9-L9 — record renamed boards (whose own .board.json moved)
+            // alongside reference-changed boards so the breadcrumb names the
+            // full affected set, regardless of how boards are rediscovered.
+            affectedBoardIds: [...new Set([...changedBoardIds, ...renamedBoardIds])],
             // E5 — a file/folder rename always touches the tags.json sink
             // (idempotently re-asserted on recovery). Recorded so a crash in
             // the disk-rename → tag-flush window is fully recoverable, not
@@ -504,13 +518,19 @@ async function runRename(
       if (!result.success) {
         // IPC failed — revert the in-memory cascade so the cache, the
         // sidebar tree, and the disk all agree on the OLD path again.
-        if (cascadeApplied && cacheSnapshot) {
+        if (cascadeApplied && cacheSnapshot && isStillSameVault(renameIdentity)) {
           // Cancel any debounced writes scheduled by the forward cascade
           // before restoring state. Each carries a Phase 22 M6 schedule-time
           // snapshot of the renamed cache; if they fire after the restore,
           // they'd write renamed-state content to the OLD on-disk path
           // (because the IPC rename didn't happen) and re-corrupt the cache
           // on the next read.
+          //
+          // Phase 3 / 3.2 — `isStillSameVault(renameIdentity)`: a vault swap
+          // during the IPC await is what made assertActiveVault reject the
+          // rename, and the pre-swap hook already replaced the cache — so
+          // re-applying the OUTGOING vault's `cacheSnapshot` would corrupt the
+          // new vault. Skip the revert; the disk rename never landed.
           for (const id of changedBoardIds) {
             cancelBoardWrite(id, boardCacheStore.paths[id]);
           }
@@ -721,6 +741,13 @@ async function performDelete(ctx: VaultContext, itemPath: string): Promise<boole
   });
   if (!confirmed) return false;
 
+  // Phase 3 / 3.2 — snapshot vault identity before the drain + IPC + cascade.
+  // The post-IPC cascade mutates the cache / tags / documents keyed by the
+  // OUTGOING vault's deleted path; a swap during the IPC or hydrate await would
+  // run it against the NEW vault. The disk delete is main-side gated; the
+  // in-memory cascade is not (mirrors the rename revert guard above).
+  const deleteIdentity = captureVaultIdentity();
+
   // Phase R2 — wrap the snapshot + IPC + cascade in `withDrainedWrites`.
   // The drain runs BEFORE `captureCascadeFileSnapshots` so the captured
   // .md bodies reflect the post-flush disk state, not the stale pre-flush
@@ -809,6 +836,10 @@ async function performDelete(ctx: VaultContext, itemPath: string): Promise<boole
           // after the user reopens it). Mirrors the in-app rename path
           // which has called `ensureAllLoaded` since Phase 22 M10.
           await boardCacheStore.ensureAllLoaded();
+          // Phase 3 / 3.2 — vault swapped during the IPC/hydrate awaits: the
+          // disk delete already succeeded against the correct (old) vault, so
+          // report success and bail before the cross-vault in-memory cascade.
+          if (!isStillSameVault(deleteIdentity)) return true;
           // If the deleted entry is itself a `.board.json` file (or a
           // folder containing one), drop its in-memory cache, project
           // entry, viewport, open tabs, and undo history before the
@@ -838,6 +869,9 @@ async function performDelete(ctx: VaultContext, itemPath: string): Promise<boole
           // ghost resurrection on disk. Mirrors the same flush already
           // used by the tag-cascade path (P0 Phase 4).
           await boardCacheStore.flushAllDirty();
+          // Audit-10 M2 — re-check after the flushAllDirty await (the bail above
+          // only covered ensureAllLoaded); a swap here would run the in-memory cascade on the NEW vault.
+          if (!isStillSameVault(deleteIdentity)) return true;
           // Phase 31 A3.5 + Phase 2 / 2.5 — pass the captured text and
           // media snapshots into the cascade command so undo restores
           // both the .md bodies (text) and any image/video/audio bodies

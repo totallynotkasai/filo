@@ -572,6 +572,29 @@ export class FileWatcher {
         if (current === null) return;
         if (this.aborted) return;
         const previous = this.reconcileSnapshot;
+        // Audit-10 M3 — don't let the snapshot advance past a path whose events
+        // are currently suppressed (a recent self-write, or an in-flight folder
+        // delete). The diff loop below SKIPS suppressed paths, so baking
+        // `current`'s post-suppression mtime/size into the snapshot would mask an
+        // EXTERNAL change that landed inside the same window: once suppression
+        // lifts, `current === snapshot` and the change never re-surfaces. Carry
+        // the prior entry forward (or drop a path that only just appeared) so the
+        // next un-suppressed pass re-diffs it. A pure self-write re-surfaces
+        // harmlessly — the renderer's index already reflects it, so its re-read
+        // finds disk === index and ignores it. Skipped entirely when nothing is
+        // suppressed (the common case), so a quiet vault pays nothing.
+        if (
+          previous !== null
+          && !options.seedOnly
+          && (this.suppressedPaths.size > 0 || this.suppressedPrefixes.size > 0)
+        ) {
+          for (const path of [...current.keys()]) {
+            if (!this.isSuppressed(path)) continue;
+            const priorEntry = previous.get(path);
+            if (priorEntry !== undefined) current.set(path, priorEntry);
+            else current.delete(path);
+          }
+        }
         this.reconcileSnapshot = current;
         if (options.seedOnly || previous === null) return;
 

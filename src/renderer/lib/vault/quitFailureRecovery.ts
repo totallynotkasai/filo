@@ -1,11 +1,17 @@
 /**
- * 6.2.H4 (follow-up) — reads + clears `.filo/quit-failure.json` on vault open.
+ * 6.2.H4 (follow-up) — reads / clears `.filo/quit-failure.json` on vault open.
  *
  * The main-side quit drain writes this breadcrumb when the session preserved
  * emergency partial files after a failed write (see
  * `main/services/quitFailureBreadcrumb`). On the next vault open we surface
- * the preserved locations so the user can recover the bytes, then delete the
- * breadcrumb so the notice shows once.
+ * the preserved locations so the user can recover the bytes.
+ *
+ * Audit-8 L4 — the READ and the CLEAR are deliberately SEPARATE. The recovery
+ * sequencer reads the breadcrumb, surfaces the preserved locations, and clears
+ * it ONLY when the user dismisses that toast (acknowledges). So a second crash
+ * before the user acts re-surfaces the location next open instead of losing it
+ * — the breadcrumb is no longer consumed-on-read. (The preserved `.tmp`
+ * partials remain on disk regardless of either operation.)
  *
  * Same read/delete shape as the `.filo/.dirty` sentinel: a relative-path read
  * through `vault:read-file-text` (the handler resolves it against the active
@@ -34,12 +40,16 @@ export interface QuitFailureBreadcrumb {
 }
 
 /**
- * Reads the breadcrumb (if any), deletes it, and returns the parsed payload —
- * or `null` when there's nothing to surface. Never throws: recovery is
- * best-effort and must not block vault open. The preserved partial files
- * remain on disk regardless of whether this read/clear succeeds.
+ * Reads + parses the breadcrumb (if any). Returns the parsed payload, or `null`
+ * when there's nothing well-formed to surface (ENOENT / empty / malformed /
+ * no usable file entries). Never throws — recovery is best-effort and must not
+ * block vault open.
+ *
+ * Does NOT delete: the caller surfaces the locations and then calls
+ * `clearQuitFailureBreadcrumb` once the user acknowledges, so the notice
+ * survives a second crash before acknowledgement.
  */
-export async function consumeQuitFailureBreadcrumb(
+export async function readQuitFailureBreadcrumb(
   vaultRoot: string,
 ): Promise<QuitFailureBreadcrumb | null> {
   if (!vaultRoot) return null;
@@ -62,8 +72,29 @@ export async function consumeQuitFailureBreadcrumb(
     return null;
   }
 
-  // Best-effort clear so the notice surfaces once. Build the absolute path the
-  // same way `dirtyFlagRecovery.markClean` does.
+  if (!content) return null;
+  try {
+    const parsed = JSON.parse(content) as QuitFailureBreadcrumb;
+    if (!parsed || !Array.isArray(parsed.files) || parsed.files.length === 0) return null;
+    // Defensively keep only well-formed entries.
+    const files = parsed.files.filter(
+      (f): f is QuitFailureFile => !!f && typeof f.preservedPath === 'string',
+    );
+    if (files.length === 0) return null;
+    return { version: parsed.version, savedAt: parsed.savedAt, files };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Best-effort delete of the breadcrumb so the recovery notice surfaces once.
+ * Called after the user dismisses/acknowledges the surfacing toast (NOT on
+ * read). Never throws; ENOENT is the desired terminal state.
+ */
+export async function clearQuitFailureBreadcrumb(vaultRoot: string): Promise<void> {
+  if (!vaultRoot) return;
+  // Build the absolute path the same way `dirtyFlagRecovery.markClean` does.
   const fullPath = `${vaultRoot}/${QUIT_FAILURE_PATH}`
     .replace(/\\/g, '/') // allow-inline-normalize: absolute breadcrumb path for vault:delete
     .replace(/\/+/g, '/');
@@ -79,19 +110,5 @@ export async function consumeQuitFailureBreadcrumb(
         'Could not clear the quit-failure breadcrumb — the recovery notice may reappear next open',
       );
     }
-  }
-
-  if (!content) return null;
-  try {
-    const parsed = JSON.parse(content) as QuitFailureBreadcrumb;
-    if (!parsed || !Array.isArray(parsed.files) || parsed.files.length === 0) return null;
-    // Defensively keep only well-formed entries.
-    const files = parsed.files.filter(
-      (f): f is QuitFailureFile => !!f && typeof f.preservedPath === 'string',
-    );
-    if (files.length === 0) return null;
-    return { version: parsed.version, savedAt: parsed.savedAt, files };
-  } catch {
-    return null;
   }
 }

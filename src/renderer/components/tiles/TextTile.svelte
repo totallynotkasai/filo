@@ -28,7 +28,6 @@
     isHydrated,
     readMarkdownForHydrate,
     scheduleMarkdownWrite as gatewayScheduleMarkdownWrite,
-    flushMarkdownWrite,
     registerForceWriter,
     unregisterForceWriter,
     flushFinalWriteOnDestroy,
@@ -65,11 +64,6 @@
   // skip the IPC so we don't resurrect the file. Phase 2 owns the prompt-
   // user flow that lets the user reload or re-create.
   let backingFileMissing = false;
-  // Phase 25 L13 — cancellation token consulted by the post-write markClean.
-  // `onDestroy` flips this before the fire-and-forget flush; the markClean
-  // that fires after the await then short-circuits instead of landing on a
-  // possibly-rebound contentId belonging to a tile that has already gone.
-  let destroyed = false;
   // Phase 31 B1.4 — hydration gate enforced inside the gateway. The local
   // flag (mirrored here for the legacy "skip write before hydrate" check)
   // flips true once `hydrateFromDisk` resolves and `markHydrated` runs.
@@ -135,26 +129,13 @@
     gatewayScheduleMarkdownWrite(args);
   }
 
-  async function flushPendingMarkdownWrite(): Promise<void> {
-    try {
-      await flushMarkdownWrite(callerId);
-      if (!destroyed && tile.contentId && !backingFileMissing) {
-        documentStore.markClean(tile.contentId, callerId);
-      }
-    } catch (err) {
-      if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
-        backingFileMissing = true;
-        reportError(
-          'TextTile',
-          null,
-          `${vaultRelativePath() ?? 'File'} no longer exists on disk. Further edits won't be saved until the file is restored.`,
-        );
-        return;
-      }
-      reportError('TextTile', err, 'Failed to write markdown');
-      if (tile.contentId) documentStore.markDirty(tile.contentId, callerId);
-    }
-  }
+  // Audit-7 M1 — the former `flushPendingMarkdownWrite` (a dead, never-called
+  // copy of DocumentEditor's) was deleted. The successful-write markClean now
+  // lives in the gateway (`writeMarkdownFileImpl`), which covers BOTH editor
+  // views in one place; `onDestroy` drops this tile's writer via
+  // `documentStore.dropDirtyWriter`. There is no remaining per-keystroke flush
+  // here — `onUpdate` arms the debounced gateway write and the gateway owns the
+  // clean transition.
 
   onMount(() => {
     const ed: Editor = createTiptapEditor({
@@ -417,11 +398,11 @@
   });
 
   onDestroy(() => {
-    // Phase 25 L13 — flip the cancellation token first so the trailing
-    // markClean inside flushPendingMarkdownWrite's then-chain short-circuits
-    // rather than landing on a possibly-rebound contentId after the
-    // component has unmounted.
-    destroyed = true;
+    // Audit-7 M1 — capture contentId synchronously up front. `tile.contentId`
+    // is reactive and could rebind during teardown; the dirty-writer drop and
+    // the final-write args below must both target the id this tile actually
+    // held, not a value that changed after an await.
+    const contentId = tile.contentId;
     const relPath = vaultRelativePath();
 
     // Sprint B / B20 — capture the latest write args SYNCHRONOUSLY from the
@@ -451,6 +432,17 @@
     // hydrate state is per-file, not per-tile; vault swap drops it via
     // cancelAllMarkdownWrites.
     void relPath;
+
+    // Audit-7 M1 — drop THIS tile's dirty-writer entry even though the final
+    // write below is fire-and-forget. Keyed by the captured contentId (safe
+    // against a rebind) and unconditional: once the tile unmounts there is no
+    // editor left to hold unsaved content, so a lingering writerId would pin
+    // `DocumentState.isDirty` true with no live view able to clear it — routing
+    // a later external edit on this file to a spurious Reload prompt and
+    // freezing a sibling's reload `$effect`. DocumentEditor.onDestroy markCleans
+    // symmetrically; TextTile used to leave the writer stranded (its
+    // markClean lived in dead code).
+    if (contentId) documentStore.dropDirtyWriter(contentId, callerId);
 
     if (finalArgs) {
       // 6.4.M17 — flushFinalWriteOnDestroy no-ops if the gateway was already

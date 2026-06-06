@@ -46,6 +46,25 @@ export function tagsEqual(a: string, b: string): boolean {
 }
 
 /**
+ * Audit-11 T1 — collapses tag-equal entries (case-insensitive, ignoring a
+ * leading `#`), keeping the FIRST occurrence's exact form. Applied after a
+ * rename so a merge-rename — `draft`→`review` on a file that already carries
+ * `review` — yields `[review]`, not `[review, review]`. A non-merge rename
+ * has no duplicates, so this is a no-op for the common case.
+ */
+function dedupeTags(tags: string[]): string[] {
+  const seenBare: string[] = [];
+  const out: string[] = [];
+  for (const t of tags) {
+    const bare = t.replace(/^#/, '');
+    if (seenBare.some((s) => tagsEqual(s, bare))) continue;
+    seenBare.push(bare);
+    out.push(t);
+  }
+  return out;
+}
+
+/**
  * Detects a file's line ending from its first line break. The rewriter
  * re-applies this to the frontmatter block on assembly so a CRLF file (the
  * Windows / Notepad / VS Code / Obsidian default) round-trips as CRLF rather
@@ -185,6 +204,30 @@ function unquote(raw: string): string {
 }
 
 /**
+ * Audit-10 H1 — true when a raw block/scalar item the hand-rolled tokenizer
+ * would accept actually carries a shape it CAN'T represent losslessly, so
+ * `locateTagsField` must decline (return null) and route the edit through the
+ * load → CST fallback instead — the same "can't line-edit → fall back" signal
+ * already used for anchors. The fast path's failure mode is insidious: it
+ * SUCCEEDS with a WRONG value rather than refusing, so a corrupted item is
+ * re-emitted by `renderTagsField` and a SIBLING tag is silently mangled on the
+ * next tag op. The three shapes:
+ *  - an inline `# comment` after the value (`beta # note`) — swallowed into the
+ *    tag text by the naive matcher;
+ *  - an embedded / YAML-escaped quote (`'it''s'`) — `QUOTED_RE` can't unwrap it;
+ *  - (handled at the flow/scalar call sites) a quote that hides a comma.
+ * A cleanly single/double-quoted item (`'@home'`) is safe — `unquote` handles
+ * it — so it stays on the fast path.
+ */
+function itemUnsafeForLinePath(rawItem: string): boolean {
+  const t = rawItem.trim();
+  if (QUOTED_RE.test(t)) return false; // cleanly '...'/"..." — unquote round-trips it
+  if (/['"]/.test(t)) return true; // embedded / escaped quote (e.g. 'it''s')
+  if (/(^|\s)#/.test(t)) return true; // inline comment after the value
+  return false;
+}
+
+/**
  * Locates the top-level `tags:` field in a raw YAML source and reports the
  * line range plus current tag values. Only recognises shapes we can rewrite
  * losslessly:
@@ -213,7 +256,14 @@ function locateTagsField(yamlSource: string): LocatedTagsField | null {
         const next = lines[end];
         const itemMatch = BLOCK_ITEM_RE.exec(next);
         if (itemMatch) {
-          blockItems.push(unquote(itemMatch[2]));
+          const item = itemMatch[2];
+          // H1 — a block item carrying an inline comment or an escaped quote
+          // can't be line-edited losslessly; decline so the CST fallback (which
+          // tokenises it correctly) handles the whole field. Returning null here
+          // leaves the SIBLING tags byte-correct instead of re-emitting a value
+          // the naive matcher mangled.
+          if (itemUnsafeForLinePath(item)) return null;
+          blockItems.push(unquote(item));
           end++;
           continue;
         }
@@ -231,12 +281,23 @@ function locateTagsField(yamlSource: string): LocatedTagsField | null {
     }
     if (rest.startsWith('[') && rest.endsWith(']')) {
       const inside = rest.slice(1, -1).trim();
+      // H1 — any quoting inside a flow list can hide a comma (`[a, "b,c"]`) that
+      // the naive comma-split would cut THROUGH, splitting one tag into two
+      // malformed ones. Defer to the CST fallback, which parses flow correctly.
+      // Filo emits bare / simple-quoted flow items, so this only diverts the
+      // hostile (externally-authored) shapes.
+      if (/['"]/.test(inside)) return null;
       const items = inside === ''
         ? []
         : inside.split(',').map((t) => unquote(t)).filter((t) => t.length > 0);
       return { startLine: i, endLine: i + 1, style: 'flow', tags: items };
     }
     // Single-line scalar — comma string or single value
+    // H1 — a quote can hide a comma and a ` #` (whitespace-preceded) opens an
+    // inline comment; either makes the comma-split mis-tokenise the field, so
+    // defer to the CST fallback. `a#b` (no leading space) is a legal plain
+    // scalar and stays on the fast path.
+    if (/['"]/.test(rest) || /(^|\s)#/.test(rest)) return null;
     const items = rest
       .split(',')
       .map((t) => unquote(t))
@@ -383,7 +444,7 @@ export function rewriteTagInMarkdown(
   // preserving every other YAML byte (comments, ordering, indentation).
   const lineRewrite = applyTagsLineRewrite(yamlSource, (tags) => {
     let changed = false;
-    const next = tags.map((t) => {
+    const renamed = tags.map((t) => {
       const bare = t.replace(/^#/, '');
       if (tagsEqual(bare, oldTag)) {
         changed = true;
@@ -391,7 +452,9 @@ export function rewriteTagInMarkdown(
       }
       return t;
     });
-    return changed ? next : null;
+    // Audit-11 T1 — dedup after the rename so a merge into an existing tag
+    // doesn't leave `[review, review]`.
+    return changed ? dedupeTags(renamed) : null;
   });
   if (lineRewrite !== null) {
     if (lineRewrite === yamlSource) return rawContent;
@@ -411,7 +474,7 @@ export function rewriteTagInMarkdown(
   if (!tagsField) return rawContent;
 
   let changed = false;
-  const next = tagsField.tags.map((t) => {
+  const renamed = tagsField.tags.map((t) => {
     const bare = t.replace(/^#/, '');
     if (tagsEqual(bare, oldTag)) {
       changed = true;
@@ -421,6 +484,8 @@ export function rewriteTagInMarkdown(
   });
   if (!changed) return rawContent;
 
+  // Audit-11 T1 — dedup the merged result here too (fallback dump path).
+  const next = dedupeTags(renamed);
   fm.tags = tagsField.wasString ? next.join(', ') : next;
   // Audit2 4.8 — the fallback no longer re-dumps the whole object (which dropped
   // comments / key order). Patch the original YAML source source-preservingly via

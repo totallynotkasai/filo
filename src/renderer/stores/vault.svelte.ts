@@ -19,7 +19,7 @@ import { normalizePath, toPosix } from '../lib/utils/path';
 // which shadows the constructor name otherwise.
 import { vaultPath as brandVaultPath, type VaultPath } from '../../shared/vaultPath';
 import { checkRecovery, markClean } from '../lib/vault/dirtyFlagRecovery';
-import { consumeQuitFailureBreadcrumb } from '../lib/vault/quitFailureRecovery';
+import { readQuitFailureBreadcrumb, clearQuitFailureBreadcrumb } from '../lib/vault/quitFailureRecovery';
 import {
   readPendingRewrite,
   clearPendingRewrite,
@@ -54,6 +54,7 @@ import {
   seedConfigSnapshots,
   seedViewportsCache,
   markCorruptConfigTarget,
+  hasFailedWrites,
   type V7BoardFileData,
 } from '../lib/boards/boardSaver';
 import {
@@ -467,6 +468,11 @@ function runPostCommitTasks(
 ): void {
   void store;
   const newVaultPath = candidate.path;
+  // A8-H2(b) (Audit-8) — capture the generation-aware identity alongside the
+  // committed path, so the post-await re-check below distinguishes a
+  // close→reopen of the SAME path (a new generation) from a no-swap. The bare
+  // `vaultPath !== newVaultPath` string compare it replaces passed that case.
+  const identity = captureVaultIdentity();
 
   // ── 1. File watcher — must run against the committed vaultPath ───
   void (async () => {
@@ -506,13 +512,15 @@ function runPostCommitTasks(
     await boardCacheStore.applyFrontmatterToBackedTilesBatch(
       vaultIndexStore.allMetadata(),
     );
-    // Audit-4 DI-03 — vault-identity guard. The await above yields, so a
-    // sub-300 ms A→B swap can leave the module `fileTree` pointing at B while
-    // the captured `newVaultPath` is still A. Pruning B's tags against A's
+    // Audit-4 DI-03 / A8-H2(b) — vault-identity guard. The await above yields,
+    // so a sub-300 ms A→B swap can leave the module `fileTree` pointing at B
+    // while the captured `newVaultPath` is still A. Pruning B's tags against A's
     // prefix drops every entry, and the scheduled save lands in *B's* tags.json
     // (target root is legitimately B, so `assertActiveVault` is no help).
-    // Mirror `runRecoverySequencer`'s post-await re-check and bail.
-    if (vaultPath !== newVaultPath) return;
+    // Mirror `runRecoverySequencer`'s post-L25 re-check (the generation-aware
+    // `isStillSameVault`, not the pre-L25 path-only compare this used to be — a
+    // close→reopen of the SAME path is a new generation but passed `!==`).
+    if (!isStillSameVault(identity)) return;
     if (!fileTagsStore.isEmpty()) {
       // Phase 23 M13 — prune `.filo/tags.json:fileTags` entries whose path is
       // no longer in the tree. DI-03 — flatten the candidate's *captured* tree
@@ -585,6 +593,38 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
   // freshly-opened one. The captured `{ path, generation }` distinguishes them.
   const captured = captureVaultIdentity();
 
+  // ── 0. `.filo/quit-failure.json` — preserved-partial locations ──
+  // Audit-8 L4 — surfaced FIRST and as a standalone toast so the preserved-
+  // bytes notice isn't gated behind the `.dirty` modal's `await dismissed`
+  // below. The breadcrumb is READ here but cleared only when the user dismisses
+  // the toast (`clearQuitFailureBreadcrumb` in `onDismiss`) — so a second crash
+  // before the user acknowledges re-surfaces the location instead of consuming
+  // it on read. The onDismiss clear is guarded by `isStillSameVault` so a clear
+  // can't fire against a vault that swapped under the open toast.
+  try {
+    const quitFailure = await readQuitFailureBreadcrumb(newVaultPath);
+    if (!isStillSameVault(captured)) return;
+    if (quitFailure && quitFailure.files.length > 0) {
+      const locations = quitFailure.files.map((f) => f.preservedPath).join('\n');
+      uiStore.pushToast({
+        text:
+          `Filo couldn't fully save ${quitFailure.files.length} file(s) before the last quit. ` +
+          `The unsaved bytes were preserved on disk — recover or delete them:\n${locations}`,
+        type: 'error',
+        duration: 0,
+        onDismiss: () => {
+          if (isStillSameVault(captured)) void clearQuitFailureBreadcrumb(newVaultPath);
+        },
+      });
+    }
+  } catch (err) {
+    reportError(
+      'vault.quit-failure-check',
+      err,
+      'Failed to surface the quit-failure breadcrumb',
+    );
+  }
+
   // ── 1. `.filo/.dirty` — unflushed-files modal ───────────────────
   try {
     const status = await checkRecovery(newVaultPath);
@@ -615,32 +655,6 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
       'vault.recovery-check',
       err,
       'Failed to check the crash-recovery sentinel — unflushed files may not be surfaced',
-    );
-  }
-
-  // ── 1b. `.filo/quit-failure.json` — preserved-partial locations ─
-  // 6.2.H4 (follow-up) — the main-side quit drain writes this when a write
-  // preserved an emergency partial (ENOSPC / EIO / …) this session. Surface
-  // the locations once so the user can recover (or delete) the bytes;
-  // `consumeQuitFailureBreadcrumb` deletes the breadcrumb after reading.
-  try {
-    const quitFailure = await consumeQuitFailureBreadcrumb(newVaultPath);
-    if (!isStillSameVault(captured)) return;
-    if (quitFailure && quitFailure.files.length > 0) {
-      const locations = quitFailure.files.map((f) => f.preservedPath).join('\n');
-      uiStore.pushToast({
-        text:
-          `Filo couldn't fully save ${quitFailure.files.length} file(s) before the last quit. ` +
-          `The unsaved bytes were preserved on disk — recover or delete them:\n${locations}`,
-        type: 'error',
-        duration: 0,
-      });
-    }
-  } catch (err) {
-    reportError(
-      'vault.quit-failure-check',
-      err,
-      'Failed to surface the quit-failure breadcrumb',
     );
   }
 
@@ -749,7 +763,10 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
         // 6.2.H2 — return the promise so `awaitConfirm` awaits the repair
         // before the sequencer's next step starts.
         onConfirm: async () => {
-          await repairRenameCascade(entries, newVaultPath, 'Retry');
+          // VS-1 — thread the sequencer's generation-aware identity so a swap
+          // before the click (or mid-repair) bails instead of contaminating
+          // the new vault's cache with this vault's rename entries.
+          await repairRenameCascade(entries, newVaultPath, 'Retry', captured);
         },
         // Phase 4.5 (2026-05-30) — "Discard" repairs too. The renamed file
         // is already on disk; clearing the breadcrumb without repairing
@@ -757,8 +774,9 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
         // path with no in-app fix. Run the SAME repair as Retry, then
         // confirm what changed so the user knows Discard wasn't a no-op.
         onCancel: async () => {
-          const repaired = await repairRenameCascade(entries, newVaultPath, 'Discard');
-          if (repaired === null) return; // a flush failed; repair surfaced its own toast
+          // VS-1 — same threaded identity as onConfirm (see above).
+          const repaired = await repairRenameCascade(entries, newVaultPath, 'Discard', captured);
+          if (repaired === null) return; // a flush failed or the vault swapped; toast suppressed
           uiStore.pushToast({
             text:
               repaired > 0
@@ -1188,7 +1206,15 @@ export const vaultStore = {
       fmResult.failed.length === 0 &&
       flushResult.boardFailed.length === 0 &&
       flushResult.configFailed.length === 0 &&
-      miscResult.failed.length === 0
+      miscResult.failed.length === 0 &&
+      // Phase 3 / 3.1 — a write that FAILED on an earlier fire-and-forget timer
+      // and SETTLED before these flushes is no longer in any scheduler's
+      // pending/in-flight maps, so none of the `flushAll*` above re-surface it
+      // (they only attribute failures for writes drained THIS cycle). Consult
+      // the persistent failed-path set so the aggregate boolean stays honest:
+      // without this `save()` returns true while `.filo/.dirty` (correctly)
+      // stays dirty and the toolbar badge reads "error".
+      !hasFailedWrites()
     );
   },
 

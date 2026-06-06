@@ -161,4 +161,37 @@ describe('atomicWriteFile', () => {
     expect((captured as Error).message).toContain('forced write failure');
     expect((captured as Error).message).not.toContain('forced close failure');
   });
+
+  // Audit-7 L7 — `vault:write-existing-file-text` passes `expectExisting: true`
+  // so a dirty editor's debounce can't resurrect a file the user just deleted.
+  // `fs.rename(tmp, dest)` creates `dest` unconditionally, so the guard
+  // re-verifies existence immediately before the rename and aborts (ENOENT) if
+  // it's gone — shrinking the stat-precheck→rename resurrection window.
+  it('expectExisting: refuses to recreate a missing destination (ENOENT, no resurrection)', async () => {
+    const target = join(dir, 'deleted.md');
+    let captured: NodeJS.ErrnoException | undefined;
+    try {
+      await atomicWriteFile(target, 'stale editor bytes', { expectExisting: true });
+    } catch (err) {
+      captured = err as NodeJS.ErrnoException;
+    }
+    expect(captured?.code).toBe('ENOENT');
+    // The file was NOT resurrected, and the staged .tmp was cleaned up.
+    const entries = await fs.readdir(dir);
+    expect(entries).toEqual([]);
+  });
+
+  it('expectExisting: writes normally when the destination still exists', async () => {
+    const target = join(dir, 'note.md');
+    await fs.writeFile(target, 'old', 'utf-8');
+    await atomicWriteFile(target, 'new content', { expectExisting: true });
+    await expect(fs.readFile(target, 'utf-8')).resolves.toBe('new content');
+    expect(await fs.readdir(dir)).toEqual(['note.md']);
+  });
+
+  it('without expectExisting, a missing destination is still created (default unchanged)', async () => {
+    const target = join(dir, 'fresh.md');
+    await atomicWriteFile(target, 'created');
+    await expect(fs.readFile(target, 'utf-8')).resolves.toBe('created');
+  });
 });

@@ -42,6 +42,7 @@ import { makeTilesSlice } from './boardCacheTiles';
 import { makeFrontmatterSlice } from './boardCacheFrontmatter';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { boardDefaults } from '../core/boardDefaults';
+import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 
 /**
  * Board cache store — owns the per-board on-disk snapshot used to schedule
@@ -480,6 +481,12 @@ export const boardCacheStore = {
     const vaultRoot = vaultStore.path;
     const project = vaultStore.project;
     if (!vaultRoot || !project) return;
+    // Audit-11 VS-3 — snapshot the active vault identity before the awaited
+    // per-board loads. A swap (or close → reopen) landing mid-loop must NOT
+    // inject the OUTGOING vault's `.board.json` into the NEW vault's cache —
+    // the disk read is anchored to the captured `vaultRoot`, but the cache it
+    // writes into is the live one. Re-check after each await before injecting.
+    const identity = captureVaultIdentity();
 
     const missing = project.boards.filter((b) => !boardCache[b.id]);
     if (missing.length === 0) return;
@@ -493,6 +500,7 @@ export const boardCacheStore = {
         continue;
       }
       const result = await loadBoard(vaultRoot, relPath);
+      if (!isStillSameVault(identity)) return;
       if (!result.ok) {
         console.warn(
           `[boardCache.ensureAllLoaded] Failed to load ${relPath}: ${result.error} — ${result.message}`,
@@ -830,14 +838,26 @@ async function syncTileMarkdown(
   const filename = doc.filename;
   const liveBody = doc.body ?? '';
 
-  // Phase A.3 — capture the file's mtime before reading so we can detect
-  // an external edit that lands in the read/write gap. The stat IPC
-  // throws (via invokeOk) for missing files (new tile path); in that
-  // case we skip the guard and proceed (no baseline to compare).
+  // Phase A.3 — capture the file's mtime AND size before reading so we can
+  // detect an external edit that lands in the read/write gap. The stat IPC
+  // throws (via invokeOk) for missing files (new tile path); read the fields
+  // INSIDE the try so a missing / null / malformed stat is caught here and
+  // treated as "no baseline" rather than deref'd later (a new tile has no
+  // backing file yet, so this is the common case, not an error).
+  //
+  // Phase 3 / 3.3 — compare SIZE as well as mtime. A coarse-resolution
+  // filesystem (FAT's 2 s stamp, some network / OneDrive mounts) can give a
+  // same-second external write an IDENTICAL `mtimeMs`, so the prior
+  // mtime-only guard silently clobbered it — Filo's worst data-loss class.
+  // `mtime || size` catches every external edit that changed the file's
+  // length even when the clock didn't move. (A same-size, same-mtime edit is
+  // the narrow residual; catching it needs a content hash, out of scope here.)
   let beforeMtime: number | undefined;
+  let beforeSize: number | undefined;
   try {
     const beforeStat = await invokeOk('vault:stat', vaultRoot, filename);
     beforeMtime = beforeStat.mtimeMs;
+    beforeSize = beforeStat.size;
   } catch {
     // File doesn't exist (or stat failed) — no baseline; proceed without guard.
   }
@@ -879,13 +899,18 @@ async function syncTileMarkdown(
   // class of data loss.
   if (beforeMtime !== undefined) {
     let writeMtime: number | undefined;
+    let writeSize: number | undefined;
     try {
       const writeStat = await invokeOk('vault:stat', vaultRoot, filename);
       writeMtime = writeStat.mtimeMs;
+      writeSize = writeStat.size;
     } catch {
       writeMtime = undefined;
     }
-    if (writeMtime !== undefined && writeMtime !== beforeMtime) {
+    if (
+      writeMtime !== undefined &&
+      (writeMtime !== beforeMtime || writeSize !== beforeSize)
+    ) {
       const choice = await promptExternalEditOnSync({ path: filename });
       if (choice === 'reload') {
         // The prompt's Reload handler refreshed the vault index and

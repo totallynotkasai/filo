@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
+import { uiStore } from '@renderer/stores/ui.svelte';
 import { UpdateBoardSettingsCommand } from '@renderer/commands/index';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
@@ -71,6 +72,7 @@ describe('UpdateBoardSettingsCommand — board-targeted execute/undo (audit2 2.4
   afterEach(() => {
     boardCacheStore.clear();
     boardStore.clearBoard();
+    for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id);
   });
 
   it('execute() mutates the target board, not the active board', () => {
@@ -97,5 +99,22 @@ describe('UpdateBoardSettingsCommand — board-targeted execute/undo (audit2 2.4
     cmd.undo();
     expect(settingsOf('boardB')).not.toHaveProperty('accent');
     expect(settingsOf('boardA')).toMatchObject({ bg: 'A0' });
+  });
+
+  it('surfaces a warning toast (not a silent no-op) when the target board was deleted (L10)', () => {
+    const cmd = new UpdateBoardSettingsCommand({ bg: 'B1' }, { bg: 'B0' }, [], undefined, 'boardB');
+    cmd.execute();
+    expect(settingsOf('boardB')).toMatchObject({ bg: 'B1' });
+
+    // Board B is closed/evicted while its command still sits on a live stack
+    // (undo stacks file by the GLOBAL active board, so the command outlives its
+    // own board). Clear the slate so we assert only the undo's toast.
+    boardCacheStore.removeBoardFromCache('boardB');
+    for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id);
+
+    cmd.undo();
+    const toast = uiStore.toasts.find((t) => /target board was deleted/i.test(t.text));
+    expect(toast, 'undo on a deleted target board must surface a toast, not no-op').toBeDefined();
+    expect(toast?.type).toBe('warning');
   });
 });

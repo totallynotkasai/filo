@@ -169,7 +169,30 @@ const ALLOWLIST = {
   // import + the save() chain-drain comment) and L25 (`runRecoverySequencer`
   // captureVaultIdentity generation-guard comment). +20 LOC of explanatory
   // comments + one import. New snapshot: 1595 LOC.
-  'src/renderer/stores/vault.svelte.ts': 1595,
+  // AUDIT8_REMEDIATION_PLAN_2026-06-04 Phase 2 H2(b) — `runPostCommitTasks` now
+  // captures `captureVaultIdentity()` alongside `newVaultPath` and the
+  // post-await prune guard uses the generation-aware `isStillSameVault(identity)`
+  // instead of the bare `vaultPath !== newVaultPath` string compare (which a
+  // close→reopen of the SAME path passed). +7 LOC of capture + comment. New
+  // snapshot: 1602 LOC.
+  // AUDIT8_REMEDIATION_PLAN_2026-06-04 Phase 4 L4 — `runRecoverySequencer` now
+  // surfaces `.filo/quit-failure.json` as step 0 (BEFORE the `.dirty` modal's
+  // `await dismissed`, so the preserved-bytes notice isn't gated behind it) via
+  // the split `readQuitFailureBreadcrumb` (read, no delete) +
+  // `clearQuitFailureBreadcrumb` in the toast's `onDismiss` (clear only on
+  // acknowledge, guarded by `isStillSameVault`). Net +6 LOC over the old
+  // consume-on-read step 1b. New snapshot: 1608 LOC.
+  // WRITE_PATH_REMEDIATION_PLAN_2026-06-04 Phase 3 / 3.1 — `save()` now ANDs
+  // `!hasFailedWrites()` (import + one boolean term + explanatory comment) so the
+  // Ctrl+S / flush-and-quit aggregate stays honest about a write that FAILED on an
+  // earlier fire-and-forget timer and settled before the flush (no scheduler
+  // re-surfaces it). +9 LOC. New snapshot: 1617 LOC.
+  // AUDIT11_REMEDIATION_PLAN_2026-06-06 Phase 3 VS-1 — the rename-cascade
+  // recovery's onConfirm/onCancel now thread the sequencer's generation-aware
+  // `captured` identity into `repairRenameCascade` (so a swap before the click /
+  // mid-repair bails instead of contaminating the new vault's cache). +4 LOC of
+  // comments + threaded arg. New snapshot: 1621 LOC.
+  'src/renderer/stores/vault.svelte.ts': 1621,
   // External-changes orchestrator: classifies fs-watcher events into
   // editor-dirty toast / silent reload / sync-frontmatter / deleted-file
   // prompt / properties-popup-dirty prompt. 500 ms attachment-delete grace
@@ -264,7 +287,48 @@ const ALLOWLIST = {
   // `promptBoardExternalEdit` now shares the `inFlightDriftPrompts` dedup map
   // so it inherits the swap-reset + rename-transfer wiring. +43 LOC of guard
   // wiring + dedup + comments. New snapshot: 1656 LOC.
-  'src/renderer/stores/vaultExternalChanges.ts': 1656,
+  // AUDIT7_REMEDIATION_PLAN_2026-06-03 Phase 4 — external-edit reconciliation
+  // cluster: L13/L16 threads the read's (mtime,size) through every reload call
+  // site so applyReloadFromDisk re-stamps the drift baseline (6 sites + handler
+  // diskIdentity arg); L14 gates the handler on vaultIndex.isBuilding; L15 moves
+  // the self-write filter inside the handler (single authority); L17 lays the
+  // rename-cascade breadcrumb BEFORE the tag-flush bail so a swap-interrupted
+  // cascade still leaves a retry trail. +63 LOC of comments + threaded args +
+  // the early-sentinel block. New snapshot: 1719 LOC.
+  // AUDIT8_REMEDIATION_PLAN_2026-06-04 Phase 2 H2(a) — `handleExternalMarkdownChanges`
+  // captures `captureVaultIdentity()` before its awaits and bails
+  // (`isStillSameVault`) after `applyChanges`, so a vault swap during the
+  // awaits can't apply the outgoing vault's classification to the new vault's
+  // same-named file (editor clobber / cross-vault tags / wrong-cache board).
+  // +11 LOC of capture + guard + comments. New snapshot: 1730 LOC.
+  // AUDIT8_REMEDIATION_PLAN_2026-06-04 Phase 3 M2 — the sync-frontmatter branch
+  // now `noteBaseline(rel, next.lastModified, next.rawByteSize)` re-stamps the
+  // per-file drift baseline (the body-only reload site already did; this FM-only
+  // site didn't), so a subsequent in-app save doesn't fire a false "modified
+  // externally" prompt. +1 import + ~10 LOC of comment + call. New snapshot: 1741 LOC.
+  // AUDIT9_REMEDIATION_PLAN_2026-06-04 Phase 4 A9-L9 — the early rename-cascade
+  // breadcrumb now records `[...new Set([...changedBoardIds, ...renamedBoardIds])]`
+  // so a moved board (own `.board.json` relocated) lands in the recovered affected
+  // set, not just reference-changed boards. +2 LOC of comment. New snapshot: 1743 LOC.
+  // WRITE_PATH_REMEDIATION_PLAN_2026-06-04 Phase 2 / 2.1 — the sync-frontmatter
+  // and reload-silently branches now call `dropStaleSeededFrontmatterCache(rel)`
+  // (sibling lib) so a seeded-but-not-open Kanban card / Task row's FM cache is
+  // dropped on an external edit and the next field write re-reads fresh disk
+  // instead of reverting the external key. +1 import + ~10 LOC of comment + the
+  // two call sites. New snapshot: 1754 LOC.
+  // WRITE_PATH_REMEDIATION_PLAN_2026-06-04 Phase 3 / 3.4 — `promptModifiedFile`'s
+  // Reload handler now re-reads CURRENT disk (`vaultIndexStore.applyChanges` +
+  // `getMetadata`, inside an async IIFE) instead of replaying the `next` snapshot
+  // captured at watcher-event time, so a second external write landing before the
+  // user clicks Reload isn't lost. Mirrors `promptExternalEditOnSync`. +13 LOC.
+  // New snapshot: 1767 LOC.
+  // AUDIT11_REMEDIATION_PLAN_2026-06-06 Phase 3 EER-1 — every Reload-DISCARD site
+  // now `dropPendingDelta(rel)` before `applyReloadFromDisk` (bulk Reload-all,
+  // promptModifiedFile, promptPartialReadExhausted, promptExternalEditOnSync; the
+  // F4 promptMarkdownPendingWriteConflict drops it via cancelFrontmatterWrite), so
+  // a discarded Phase-4 field delta can't re-clobber disk via the reload's flush.
+  // +13 LOC of import + four call sites + comments. New snapshot: 1780 LOC.
+  'src/renderer/stores/vaultExternalChanges.ts': 1780,
   // tileCommands.ts dropped off the allowlist (AUDIT_REMEDIATION_PLAN_2026-05-29
   // Phase 5 / C-3): the tag-driven commands (AddTileTag / RemoveTileTag /
   // AddPathTag / RemovePathTag / ToggleTagFade) moved to the new sibling
@@ -287,7 +351,35 @@ const ALLOWLIST = {
   // direct .md write so the next gateway/editor write doesn't false-positive a
   // "modified externally" prompt. +23 LOC of import + two stat/refresh blocks +
   // comments. New snapshot: 1052 LOC.
-  'src/renderer/stores/fileTags.svelte.ts': 1052,
+  // AUDIT8_REMEDIATION_PLAN_2026-06-04 Phase 3 M6 — `applyExternalReload` now
+  // 3-way merges the external `.filo/tags.json` against a `lastSavedFile` base
+  // instead of overwriting `file` wholesale, so a tag add/remove still inside the
+  // ~300 ms save debounce (attachment tags have no other home) isn't discarded.
+  // Adds the `lastSavedFile` base + `mergeTagsThreeWay`/`reapplyTagDelta`/
+  // `cloneTagsFile`/`sameJson` helpers + base-update lines at hydrate /
+  // commitFromCandidate / successful-save / reset. +76 LOC. New snapshot: 1128 LOC.
+  // AUDIT9_REMEDIATION_PLAN_2026-06-04 Phase 4 A9-L7 — every `lastSavedFile`
+  // re-set from outside the debounced save closure routes through `setMergeBase`
+  // (bumps a `mergeBaseGeneration` token); the closure captures the token at fire
+  // time and skips its trailing base assignment when a reload/reset advanced it
+  // during the `tags:save` await, so a stale in-flight write can't clobber the
+  // reload's fresh 3-way merge base back to a pre-reload snapshot. +36 LOC of
+  // token + helper + guard + comments. New snapshot: 1164 LOC.
+  // AUDIT11_REMEDIATION_PLAN_2026-06-06 Phase 3 VS-2 — both single-tag writers
+  // (writeTagChangeToTileMarkdown / writeTagChangeToMarkdownPath) now
+  // `captureVaultIdentity()` before the live-path read and `isStillSameVault`-bail
+  // after each await before markPathFailed / refreshBaselineAfterWrite /
+  // applyChanges, so a vault swap mid-write can't apply this vault's tag
+  // bookkeeping to the new one (the baseline is keyed by relPath alone). +24 LOC
+  // of import + capture + guards + comments. New snapshot: 1188 LOC.
+  // AUDIT12_REMEDIATION_PLAN_2026-06-06 Phase 1 H2 + H3 — H2 deleted the local
+  // `resolveTextTileFilePath` (vault-root fallback) and routed all four tile→path
+  // resolvers through the canonical `resolveTextTileVaultPath`; H3 captures vault
+  // identity in renameTagEverywhere / removeTagEverywhere, threads the captured
+  // root into the sweep, and `isStillSameVault`-guards both in-memory commits.
+  // Net +12 LOC (guards + comments; the deleted helper offset the H2 additions).
+  // New snapshot: 1200 LOC.
+  'src/renderer/stores/fileTags.svelte.ts': 1200,
   // Markdown write gateway: per-caller debounce, BOM-preserving hydrate,
   // pre-write drift prompt, in-flight tracking, force-write + cancel APIs.
   // PHASE6_PLAN_2026-06-01 Phase 6.4.M13 — the pre-write Reload/Keep-local
@@ -315,7 +407,84 @@ const ALLOWLIST = {
   // `markPathFailed` + throw (instead of a bare `return` that reported SUCCESS
   // and let `.filo/.dirty` be markClean'd while the edit never landed). New
   // snapshot: 1110 LOC.
-  'src/renderer/lib/vault/markdownFileWriter.ts': 1110,
+  // Audit-7 M1 (+15 LOC): the write success path now `documentStore.markClean`s
+  // the writer (guarded on `hasPending`) so a normally-saved editor goes clean —
+  // the root-cause fix for the stuck-dirty writerId that pinned `isDirty` true
+  // and triggered spurious external-edit prompts + frozen sibling reloads. New
+  // snapshot: 1125 LOC.
+  // Audit-7 L5 (+26 LOC): post-write baseline TOCTOU guard — capture the written
+  // UTF-8 byte length and only stamp the baseline when the post-write stat's
+  // size matches, so an external edit landing in the write→stat gap can't poison
+  // the baseline into a silent next-write clobber. New snapshot: 1151 LOC.
+  // AUDIT8_REMEDIATION_PLAN_2026-06-04 Phase 3 M1 — `FileState` carries the file's
+  // real `eol`, sniffed once from the raw content in `readMarkdownForHydrate` and
+  // threaded through `markHydrated` → `assembleMarkdownFile({ eol })`, so a CRLF
+  // file with a single-line frontmatter keeps CRLF on a metadata edit (FM-source
+  // detection alone can't tell — a one-line FM has no internal `\r\n`). +23 LOC of
+  // field + param + sniff + thread + comments. New snapshot: 1174 LOC.
+  // AUDIT9_REMEDIATION_PLAN_2026-06-04 Phase 3 A9-L5 — `WriteArgs` gained an optional
+  // `originalFrontmatter` so a docId-less caller (orphan-card FM patch) can thread the
+  // disk FM source; the assemble computation falls back to `args.originalFrontmatter`
+  // when there's no docId, so the orphan write source-preserves instead of full-dumping.
+  // +8 LOC of field + doc + fallback + comment. New snapshot: 1182 LOC.
+  // AUDIT9_REMEDIATION_PLAN_2026-06-04 Phase 4 A9-L8 — `writeMarkdownFileImpl`
+  // captures `captureVaultIdentity()` at entry and `return`s on `!isStillSameVault`
+  // after the write await, BEFORE the post-write renderer-state bookkeeping (drift
+  // baseline / vaultIndex restore / FM flushed-version / markClean), so a write
+  // whose IPC committed against the outgoing vault can't upsert that vault's
+  // metadata/baseline for `relPath` into the swapped-in vault's index/registry.
+  // +19 LOC of import + capture + guard + comments. New snapshot: 1201 LOC.
+  // WRITE_PATH_REMEDIATION_PLAN_2026-06-04 Phase 4 — `writeMarkdownFileImpl` gained
+  // the delta write branch: when `args.frontmatterDelta` is present it reads CURRENT
+  // disk in-chain, applies ONLY the delta keys (`applyFrontmatterDelta`), and
+  // assembles against that same fresh source — so `nextFm` + `originalFrontmatter`
+  // derive from one read and untouched (incl. external) keys are preserved by
+  // construction. The legacy cache-FM path moved under an `else`. +58 LOC of the
+  // delta branch + WriteArgs field + imports + comments. New snapshot: 1259 LOC.
+  // AUDIT10_REMEDIATION_PLAN_2026-06-04 Phase 2 H2 — the cache-FM branch gained a
+  // disk re-read guard: when the FM cache is never-seeded (`!hasFrontmatter`) and
+  // the caller passes no FM (`argsFmEmpty`), it reads disk in-chain and seeds the
+  // cache so a body-only save can't assemble against `{}` and strip the on-disk
+  // YAML block (the TextTile sibling-adoption wipe). +27 LOC of guard + comments.
+  // New snapshot: 1286 LOC.
+  // AUDIT11_REMEDIATION_PLAN_2026-06-06 Phase 4 — N1 adds an `onFrontmatterRefused`
+  // toast helper threaded into both assemble calls (surfaces a dropped metadata
+  // edit over unparseable YAML instead of a silent success); N2/N3 + WC-2 add
+  // explanatory comments (delta-branch BOM from the in-chain read; markClean
+  // not gated on FM-pending). +25 LOC. New snapshot: 1311 LOC.
+  // The gateway remains a candidate for a structural split in a later pass.
+  'src/renderer/lib/vault/markdownFileWriter.ts': 1311,
+  // AUDIT8_REMEDIATION_PLAN_2026-06-04 Phase 3 M5 — `UpdateOrphanFrontmatterCommand.
+  // execute()` recomputes its inverse from a FRESH on-disk read on the first
+  // execute (a `hasExecuted` guard) — mirroring the docId path's
+  // captureInverseFromCache — so a stale vault-index inverse can't (1) falsely
+  // conflict and DROP the user's edit on execute, or (2) mis-restore on undo when
+  // an external editor changed the patched key. +~29 LOC of guard + recompute +
+  // comments tipped the file just over the default 1000-LOC limit. New snapshot:
+  // 1020 LOC. The command file is a candidate for a structural split in a later pass.
+  // AUDIT9_REMEDIATION_PLAN_2026-06-04 Phase 1 — A9-H1 vault-identity bails across
+  // the seed await in `UpdateCardFieldCommand.execute` + the orphan-FM paths
+  // (`UpdateOrphanFrontmatterCommand.execute` + `applyOrphanPatchRebased`), so a
+  // vault swap mid-seed can't write the outgoing vault's frontmatter onto the new
+  // vault's same-named file. +19 LOC of `captureVaultIdentity()`/`isStillSameVault`
+  // guards + concise comments (trimmed). New snapshot: 1039 LOC. The structural
+  // split remains the eventual fix.
+  // AUDIT9_REMEDIATION_PLAN_2026-06-04 Phase 2 — A9-L2: the orphan `commit()` now
+  // lets a failed `writeMarkdownFile` propagate (was a swallowing catch) so
+  // execute()/undo() reject + the history wrapper rolls back; the "Apply anyway"
+  // toast handler grew its own `.catch(reportError)`. +6 LOC (guard logic +
+  // trimmed rationale). New snapshot: 1045 LOC. The structural split still pends.
+  // AUDIT9_REMEDIATION_PLAN_2026-06-04 Phase 3 A9-L5 — `applyOrphanPatchRebased`
+  // captures the hydrate's `rawFrontmatter` and threads it into the docId-less
+  // `writeMarkdownFile` as `originalFrontmatter`, so an orphan-card FM edit
+  // source-preserves (comments / key order / quoting) instead of full-dumping.
+  // +7 LOC of capture + thread + trimmed comments. New snapshot: 1052 LOC.
+  // WRITE_PATH_REMEDIATION_PLAN_2026-06-04 Phase 4 — `UpdateCardFieldCommand.execute`
+  // threads `patchToFrontmatterDelta(this.patch)` into `scheduleFrontmatterWrite`
+  // (the import + the delta arg + the mergeFrontmatter-is-display-only rationale),
+  // so the field write applies a delta to fresh disk instead of serialising the
+  // cached object. +12 LOC. New snapshot: 1064 LOC. The structural split still pends.
+  'src/renderer/commands/kanbanCommands.ts': 1064,
 };
 
 function toPosix(p) {

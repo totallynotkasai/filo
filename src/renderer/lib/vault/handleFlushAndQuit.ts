@@ -47,7 +47,96 @@ export interface QuitFlushDeps {
  */
 const DRAIN_HEARTBEAT_MS = 2000;
 
+/**
+ * Audit-11 WC-1 / QC-3 — absolute ceiling on the automated drain (`save()` plus
+ * the terminal sentinel flush). The heartbeat above re-arms main's destroy timer
+ * every ~2 s, so WITHOUT this an `save()` that never resolves (a wedged write the
+ * per-scheduler `writeTimeoutMs` somehow didn't catch, an unbounded await, or a
+ * future regression) would keep quit blocked FOREVER on the OneDrive/SMB target
+ * environment. On elapse we stop beating and hand the decision to the user via
+ * the existing "Save failed → Quit anyway / Stay" confirm — converting a silent
+ * freeze into a choice. Sits at the per-write bound (60 s): a healthy or
+ * slow-but-live drain finishes well under it, so it only ever fires on a genuine
+ * stall, and "Stay open and retry" is the escape if it fires on a pathologically
+ * slow (but eventually-succeeding) drain.
+ */
+const QUIT_DRAIN_DEADLINE_MS = 60_000;
+
+/**
+ * Audit-11 QC-3 — bound on the terminal `.filo/.dirty` sentinel flush. By the
+ * time it runs the heartbeat is already cleared, so main's 5 s destroy timer is
+ * the implicit backstop; bounding it explicitly keeps the renderer-initiated
+ * clean shutdown deterministic instead of racing that timer.
+ */
+const SENTINEL_FLUSH_DEADLINE_MS = 5_000;
+
+/**
+ * Audit-11 QC-4 — re-entrancy guard. A second `app:flush-and-quit` dispatch
+ * (main can't double-send today, but defense-in-depth against a future change)
+ * must not start a second `save()` or stack a second confirm: the first
+ * invocation owns the drain until it resolves to a terminal signal. Reset in
+ * `finally` so a "Stay open and retry" leaves the next genuine quit free to drain.
+ */
+let isDrainingForQuit = false;
+
+/** Test-only — clears the re-entrancy guard between cases. */
+export function __resetQuitDrainingForTests(): void {
+  isDrainingForQuit = false;
+}
+
+/**
+ * Sentinel the drain race resolves to when the absolute deadline elapses before
+ * the awaited op settles. A module-level unique symbol so it can't be confused
+ * with any boolean the op itself resolves.
+ */
+const DRAIN_TIMED_OUT: unique symbol = Symbol('quit-drain-timed-out');
+
+/**
+ * Races `op` against an absolute `ms` deadline. Resolves to the op's value if it
+ * settles first, or `DRAIN_TIMED_OUT` if the deadline wins. Rejections of `op`
+ * propagate (the caller's try/catch owns them); the timer is always cleared so a
+ * fast op leaves no dangling handle.
+ */
+async function raceDrainDeadline<T>(
+  op: Promise<T>,
+  ms: number,
+): Promise<T | typeof DRAIN_TIMED_OUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<typeof DRAIN_TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(DRAIN_TIMED_OUT), ms);
+  });
+  try {
+    return await Promise.race([op, deadline]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * Audit-6 M5 / Audit-11 QC-3 — flushes the dirty-flag sentinel mutex tail,
+ * bounded so a wedged sentinel IPC on a stalled volume can't hang the terminal
+ * quit path. A timeout here is non-fatal: we proceed to `app:ready-to-quit`
+ * anyway (worst case `.filo/.dirty` survives → one phantom recovery prompt,
+ * which is also what main's forced destroy would produce).
+ */
+async function flushSentinelBounded(deps: QuitFlushDeps): Promise<void> {
+  if (!deps.flushSentinel) return;
+  await raceDrainDeadline(deps.flushSentinel(), SENTINEL_FLUSH_DEADLINE_MS);
+}
+
 export async function handleFlushAndQuit(deps: QuitFlushDeps): Promise<void> {
+  // QC-4 — re-entrancy guard (see `isDrainingForQuit`). A concurrent dispatch
+  // no-ops; the first invocation drives the quit to a terminal signal.
+  if (isDrainingForQuit) return;
+  isDrainingForQuit = true;
+  try {
+    await drainAndQuit(deps);
+  } finally {
+    isDrainingForQuit = false;
+  }
+}
+
+async function drainAndQuit(deps: QuitFlushDeps): Promise<void> {
   // Audit5 2.1 (#2) — beat a drain-in-progress signal BEFORE and DURING the
   // flush. Main arms a 5 s auto-destroy timer the instant it asks us to flush;
   // a drain that legitimately runs longer than that (a large vault on a
@@ -55,15 +144,20 @@ export async function handleFlushAndQuit(deps: QuitFlushDeps): Promise<void> {
   // have the window destroyed mid-write, losing the very edits we're saving.
   // Each beat re-arms main's timer, so the ceiling bounds inter-beat SILENCE
   // (a wedged renderer) rather than total honest drain time. The interval is
-  // cleared the moment `save()` settles — the failure branch's open-ended
-  // confirm is then bounded by `app:quit-awaiting-user`, not the heartbeat.
+  // cleared the moment `save()` settles OR the absolute deadline elapses — the
+  // failure branch's open-ended confirm is then bounded by
+  // `app:quit-awaiting-user`, not the heartbeat.
   deps.send('app:drain-heartbeat');
   const heartbeat = setInterval(() => deps.send('app:drain-heartbeat'), DRAIN_HEARTBEAT_MS);
 
   let failed = false;
   try {
-    const ok = await deps.save();
-    if (!ok) failed = true;
+    // Audit-11 WC-1 (half 2) — bound the drain. A wedged write the per-scheduler
+    // `writeTimeoutMs` didn't catch (or any unbounded await) must not keep the
+    // heartbeat re-arming main's destroy timer forever; on the deadline treat it
+    // as a failure and fall through to the user confirm below.
+    const outcome = await raceDrainDeadline(deps.save(), QUIT_DRAIN_DEADLINE_MS);
+    if (outcome === DRAIN_TIMED_OUT || outcome === false) failed = true;
   } catch (err) {
     deps.reportError('App', err, 'flush-and-quit failed');
     failed = true;
@@ -71,9 +165,10 @@ export async function handleFlushAndQuit(deps: QuitFlushDeps): Promise<void> {
     clearInterval(heartbeat);
   }
   if (!failed && deps.saveStateState() !== 'error') {
-    // Audit-6 M5 — let the queued markClean reach disk before main destroys us,
-    // or `.filo/.dirty` survives a clean quit → phantom recovery next launch.
-    await deps.flushSentinel?.();
+    // Audit-6 M5 — let the queued markClean reach disk (bounded — QC-3) before
+    // main destroys us, or `.filo/.dirty` survives a clean quit → phantom
+    // recovery next launch.
+    await flushSentinelBounded(deps);
     deps.send('app:ready-to-quit');
     return;
   }
@@ -107,9 +202,10 @@ export async function handleFlushAndQuit(deps: QuitFlushDeps): Promise<void> {
   });
   if (quitAnyway) {
     // Audit-6 M5 — on "Quit anyway" the sentinel is (correctly) DIRTY: failed
-    // writes enqueued a markDirty. Flush it so the next launch's recovery prompt
-    // accurately names the lost paths instead of racing the renderer's destroy.
-    await deps.flushSentinel?.();
+    // writes enqueued a markDirty. Flush it (bounded — QC-3) so the next launch's
+    // recovery prompt accurately names the lost paths instead of racing the
+    // renderer's destroy.
+    await flushSentinelBounded(deps);
     deps.send('app:ready-to-quit');
   } else {
     deps.send('app:cancel-quit');

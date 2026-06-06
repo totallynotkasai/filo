@@ -14,9 +14,9 @@
   import { uiStore } from '../../stores/ui.svelte';
   import { reportError } from '../../lib/utils/errorBus';
 
-  // Per-pane scope; aliases preserve the existing call sites. See
-  // PaneView.svelte / boardScope.svelte.ts for the scope ownership model.
+  // Per-pane scope; aliases preserve existing call sites. See boardScope.svelte.ts.
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
+  let { tabId }: { tabId?: string } = $props(); // R1 (Audit-11): pane-correct via scope; accepted + ignored
   const boardStore = scope.board;
   const selectionStore = scope.selection;
   import { createId } from '../../lib/utils/ids';

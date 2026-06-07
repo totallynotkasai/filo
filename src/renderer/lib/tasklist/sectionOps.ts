@@ -156,6 +156,7 @@ export function makeSectionOps(deps: SectionOpsDeps): SectionOps {
     const idx = sorted.findIndex((s) => s.id === id);
     if (idx < 0) return;
     const target = sorted[idx];
+    if (!target) return; // idx >= 0 from findIndex; narrow for the type-checker
     const end = sorted[idx + 1]?.position ?? placements.length;
     const beforeSnap = {
       sections: sections.map((s) => ({ ...s })),
@@ -206,6 +207,7 @@ export function makeSectionOps(deps: SectionOpsDeps): SectionOps {
 
     const a = sorted[idx];
     const b = sorted[swapIdx];
+    if (!a || !b) return; // idx/swapIdx bounds-checked above; narrow for the type-checker
     const aStart = a.position;
     const aEnd = sorted[idx + 1]?.position ?? placements.length;
     const bStart = b.position;

@@ -120,6 +120,8 @@ export class BatchCommand extends Command {
         // acknowledgement of the inconsistency.
         const rollbackFailures: { description: string; phase: 'undo' }[] = [];
         for (let i = executed.length - 1; i >= 0; i--) {
+          const ex = executed[i];
+          if (!ex) continue;
           try {
             // Polish phase 2.2 — `Promise.resolve(...)` wraps the child's
             // return value so a sync `void` still works (Promise.resolve()
@@ -129,14 +131,14 @@ export class BatchCommand extends Command {
             // race their .md restores against subsequent rollback steps
             // and against the outer rethrow — exactly the silent-failure
             // window we're closing.
-            await Promise.resolve(executed[i].undo());
+            await Promise.resolve(ex.undo());
           } catch (rollbackErr) {
             reportError(
               'BatchCommand',
               rollbackErr,
-              `Rollback failure for "${executed[i].description}" while undoing partial batch "${this.description}".`,
+              `Rollback failure for "${ex.description}" while undoing partial batch "${this.description}".`,
             );
-            rollbackFailures.push({ description: executed[i].description, phase: 'undo' });
+            rollbackFailures.push({ description: ex.description, phase: 'undo' });
           }
         }
         if (rollbackFailures.length > 0) {
@@ -158,6 +160,7 @@ export class BatchCommand extends Command {
     const undone: Command[] = [];
     for (let i = this.commands.length - 1; i >= 0; i--) {
       const cmd = this.commands[i];
+      if (!cmd) continue;
       try {
         await Promise.resolve(cmd.undo());
         undone.push(cmd);
@@ -175,15 +178,17 @@ export class BatchCommand extends Command {
         // without saving.
         const rollbackFailures: { description: string; phase: 'execute' }[] = [];
         for (let j = undone.length - 1; j >= 0; j--) {
+          const u = undone[j];
+          if (!u) continue;
           try {
-            await Promise.resolve(undone[j].execute());
+            await Promise.resolve(u.execute());
           } catch (rollbackErr) {
             reportError(
               'BatchCommand',
               rollbackErr,
-              `Rollback failure for "${undone[j].description}" while redoing partial batch undo "${this.description}".`,
+              `Rollback failure for "${u.description}" while redoing partial batch undo "${this.description}".`,
             );
-            rollbackFailures.push({ description: undone[j].description, phase: 'execute' });
+            rollbackFailures.push({ description: u.description, phase: 'execute' });
           }
         }
         if (rollbackFailures.length > 0) {

@@ -21,9 +21,10 @@ export function parseHex(hex: string): RGB | null {
   const clean = hex.replace('#', '').trim();
   let r: number, g: number, b: number;
   if (clean.length === 3) {
-    r = parseInt(clean[0] + clean[0], 16);
-    g = parseInt(clean[1] + clean[1], 16);
-    b = parseInt(clean[2] + clean[2], 16);
+    const c0 = clean[0] ?? '', c1 = clean[1] ?? '', c2 = clean[2] ?? ''; // length === 3
+    r = parseInt(c0 + c0, 16);
+    g = parseInt(c1 + c1, 16);
+    b = parseInt(c2 + c2, 16);
   } else if (clean.length === 6) {
     r = parseInt(clean.slice(0, 2), 16);
     g = parseInt(clean.slice(2, 4), 16);

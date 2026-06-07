@@ -281,6 +281,7 @@ export class TaskListViewModel {
 
     for (let i = 0; i < sorted.length; i++) {
       const s = sorted[i];
+      if (!s) continue; // i < sorted.length; narrow for the type-checker
       const start = s.position;
       const end = sorted[i + 1]?.position ?? placements.length;
       const rows = topLevelRows.filter((r) => {

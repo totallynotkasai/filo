@@ -26,6 +26,13 @@ import { uniqueBy, uniqueStrings, idString } from './schemaUtils';
  * unknown keys would only accumulate as dead weight on disk. Forward-
  * compat lives on the outer board envelopes instead — see the DECISION
  * comment on `BoardSchema`.
+ *
+ * L3 (Audit-13) — RE-CONFIRMED (2026-06-07) against the envelope's "don't
+ * destroy data we don't understand" docstring: kept non-passthrough by
+ * decision. A forward-compat style key written by a newer Filo is meaningless
+ * to an older one's cascade resolver, and the only loss is a newer→older→save
+ * downgrade round-trip the user controls via their version. Do NOT add
+ * `.passthrough()` here without re-opening that decision.
  */
 const PartialTileStyleSchema = z.object({
   headerColor: z.string().optional(),

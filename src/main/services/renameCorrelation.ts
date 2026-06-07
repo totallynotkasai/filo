@@ -261,10 +261,16 @@ export async function correlateRenames(
       // here leaves both events to flow on: the cross-basename pass below
       // (also content-gated) handles the same-size case, otherwise they
       // surface as delete + create (recoverable via the broken-ref relink).
-      if (await sameBasenameBytesPreserved(missing[0], present[0], relPathSize, relPathHash)) {
-        renames.push({ oldPath: missing[0].filename, newPath: present[0].filename });
-        suppressedKeys.add(`${missing[0].type}:${missing[0].filename}`);
-        suppressedKeys.add(`${present[0].type}:${present[0].filename}`);
+      const miss = missing[0];
+      const pres = present[0];
+      // The length checks above guarantee both index-0 reads are defined;
+      // narrow for the type-checker (the guard can't fail at runtime).
+      if (miss !== undefined && pres !== undefined) {
+        if (await sameBasenameBytesPreserved(miss, pres, relPathSize, relPathHash)) {
+          renames.push({ oldPath: miss.filename, newPath: pres.filename });
+          suppressedKeys.add(`${miss.type}:${miss.filename}`);
+          suppressedKeys.add(`${pres.type}:${pres.filename}`);
+        }
       }
       continue;
     }
@@ -278,16 +284,19 @@ export async function correlateRenames(
     // them by emission order — the earlier-seen casing is the old path,
     // the later-seen is the new path. Skipping when more than two
     // casings appear avoids ambiguity from multi-step renames.
+    const oldEvent = bucket[0];
+    const newEvent = bucket[1];
     if (
       caseInsensitiveFs &&
       missing.length === 0 &&
       present.length === 2 &&
       bucket.length === 2 &&
-      bucket[0].type === bucket[1].type &&
-      bucket[0].filename !== bucket[1].filename &&
-      bucket[0].filename.toLowerCase() === bucket[1].filename.toLowerCase()
+      oldEvent !== undefined &&
+      newEvent !== undefined &&
+      oldEvent.type === newEvent.type &&
+      oldEvent.filename !== newEvent.filename &&
+      oldEvent.filename.toLowerCase() === newEvent.filename.toLowerCase()
     ) {
-      const [oldEvent, newEvent] = bucket;
       renames.push({ oldPath: oldEvent.filename, newPath: newEvent.filename });
       suppressedKeys.add(`${oldEvent.type}:${oldEvent.filename}`);
       suppressedKeys.add(`${newEvent.type}:${newEvent.filename}`);
@@ -325,6 +334,8 @@ export async function correlateRenames(
       if (missingBucket.length !== 1 || presentBucket.length !== 1) continue;
       const m = missingBucket[0];
       const p = presentBucket[0];
+      // length checks above guarantee both are defined; narrow for the type-checker.
+      if (m === undefined || p === undefined) continue;
       if (m.type !== p.type) continue;
       // Sprint B / B8 — exact same-extension OR both sides in the
       // text-like set (`.md`, `.txt`, `.markdown`). A user retyping a

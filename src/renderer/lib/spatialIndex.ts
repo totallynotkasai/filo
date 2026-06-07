@@ -95,6 +95,18 @@ export class SpatialIndex {
   }
 
   /**
+   * Returns the full items whose AABB intersects the given region rect.
+   * Unlike {@link queryViewport} (which returns ids), this returns the
+   * `SpatialItem`s so callers that need each item's extents (e.g. smart
+   * connection routing building a Hanan grid from obstacle edges) get them
+   * directly. H4 (perf): replaces an `all().filter(...)` linear scan over
+   * every tile with an R-tree range query bounded to the region.
+   */
+  searchRegion(minX: number, minY: number, maxX: number, maxY: number): SpatialItem[] {
+    return this.tree.search({ minX, minY, maxX, maxY });
+  }
+
+  /**
    * Clears all items from the index.
    */
   clear(): void {

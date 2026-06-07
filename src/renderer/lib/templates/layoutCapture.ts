@@ -212,7 +212,7 @@ function parseTileNumber(title: string): number | null {
   if (title === BASE_TITLE) return 1;
   const m = title.match(/^New Tile (\d+)$/);
   if (!m) return null;
-  const n = parseInt(m[1], 10);
+  const n = parseInt(m[1] ?? '', 10);
   return Number.isFinite(n) ? n : null;
 }
 

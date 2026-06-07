@@ -29,6 +29,25 @@
  * survive-a-swap retry toast applied the OUTGOING vault's tag op to the swapped-in
  * vault. The fix threads a captured root + `isStillSameVault` guards.
  *
+ * Audit-12 M6 widens it to the on-open FM→cache reconcile batch
+ * (`boardCacheFrontmatter.ts` `applyFrontmatterToBackedTilesBatch`) via a
+ * `getCache` trigger: the batch captures `ctx.getCache()`, yields across
+ * microtasks, then does a terminal `ctx.setCache({ ...cache })` — a swap mid-yield
+ * would flip the outgoing vault's cache onto the new one. The fix threads the
+ * caller's captured identity and bails after each yield + before the setCache.
+ *
+ * Audit-13 L17 adds an `applyChanges` trigger on `vaultExternalChanges.ts`: the
+ * async "Reload" / "Reload all" toast action handlers `await
+ * vaultIndexStore.applyChanges([rel])` then synchronously mutate stores (board
+ * cache, tags, editor body) keyed by relPath — a swap during that re-read applies
+ * the OUTGOING vault's disk content to the NEW vault's same-named file. The
+ * handlers are anonymous arrows the unit scan doesn't see, but they live inside
+ * the named `prompt*` functions it DOES discover, so the trigger on the containing
+ * function's body enforces the guard (it caught two siblings the plan never named:
+ * `promptPartialReadExhausted` + `promptExternalEditOnSync`). Audit-13 L16 also
+ * converts `handleExternalAttachmentChanges` from a GUARD_EXEMPT path-string
+ * compare to a real `isStillSameVault` guard, so its exemption is removed.
+ *
  * Prior audits fixed instances of this class per-site; it kept recurring because
  * nothing ENFORCED the re-check. This gate makes the discipline an invariant.
  *
@@ -104,15 +123,19 @@ const GUARD_TARGETS = [
   },
   {
     file: 'src/renderer/stores/vaultExternalChanges.ts',
-    triggers: { vaultStorePath: true, vaultRootParam: false, getVaultPath: true },
+    // Audit-13 L17 — `applyChanges` is a fourth trigger here: an async toast
+    // action handler that re-reads disk via `vaultIndexStore.applyChanges()` then
+    // mutates stores keyed by relPath is the same swap hazard as a live-path read
+    // (a vault swap during the re-read applies the OUTGOING vault's disk content
+    // to the NEW vault's same-named file). The handlers are anonymous arrows that
+    // `findUnits` doesn't see as units, but they live inside the named `prompt*`
+    // functions Pass 1 discovers, so the trigger on the CONTAINING function's body
+    // catches them (and the already-guarded `handleExternalMarkdownChanges`).
+    triggers: { vaultStorePath: true, vaultRootParam: false, getVaultPath: true, applyChanges: true },
     exempt: new Map([
-      [
-        'handleExternalAttachmentChanges',
-        'prompt-only (cascade delete is an undoable command); guarded by the ' +
-          'captured-root path compare + main-side assertActiveVault. A8-H2 left it ' +
-          'main-side-mitigated — a renderer-side isStillSameVault would require the ' +
-          'swap-during-grace test to route through beginVaultGeneration.',
-      ],
+      // `handleExternalAttachmentChanges` was here (A8 main-side-mitigated); Audit-13
+      // L16 converted it to a real `isStillSameVault` guard, so the exemption is gone
+      // and reverting that guard now re-flags it (the bite test relies on this).
       [
         'recreateDeletedFile',
         'user-initiated Keep-local recreate; the write uses the captured vaultRoot ' +
@@ -193,6 +216,21 @@ const GUARD_TARGETS = [
   {
     file: 'src/renderer/stores/fileTagsCascade.svelte.ts',
     triggers: { vaultStorePath: true, vaultRootParam: false, getVaultPath: false, allMetadata: true },
+    exempt: new Map(),
+  },
+  // Audit-12 M6 — the on-open FM→cache reconcile batch
+  // (`applyFrontmatterToBackedTilesBatch`) captures the cache reference
+  // (`ctx.getCache()`) ONCE, yields across microtasks (every N md files), then
+  // does a terminal `ctx.setCache({ ...cache })`. A vault swap interleaving on
+  // one of those yields would flip the OUTGOING vault's reconciled cache onto
+  // the NEW vault. It reads `ctx.getCache()`, not `vaultStore.path`, so a
+  // dedicated `getCache` trigger catches it; the `await` filter scopes the scan
+  // to this one async method (the file's other cache mutators are synchronous,
+  // so they have no swap window and are skipped). No exemptions — the batch
+  // carries an `isStillSameVault` bail after every yield + before the setCache.
+  {
+    file: 'src/renderer/stores/boardCacheFrontmatter.ts',
+    triggers: { vaultStorePath: false, vaultRootParam: false, getVaultPath: false, getCache: true },
     exempt: new Map(),
   },
 ];
@@ -338,7 +376,18 @@ for (const target of GUARD_TARGETS) {
       // Audit-12 H3 — a live read of the metadata index is the same swap hazard as
       // a live vaultStore.path read for the tag-rewrite sweep (the writes it drives
       // must be anchored to a CAPTURED root, not the post-swap active vault).
-      (triggers.allMetadata && /\bvaultIndexStore\.allMetadata\s*\(/.test(unit.body));
+      (triggers.allMetadata && /\bvaultIndexStore\.allMetadata\s*\(/.test(unit.body)) ||
+      // Audit-12 M6 — a captured-cache read (`ctx.getCache()`) that then yields
+      // and terminally `setCache`s is the same swap hazard (the captured cache
+      // belongs to the outgoing vault). Scoped to the async batch by the await
+      // filter below.
+      (triggers.getCache && /\bgetCache\s*\(/.test(unit.body)) ||
+      // Audit-13 L17 — a function (typically a `prompt*` toast builder) whose body
+      // re-reads disk via `vaultIndexStore.applyChanges()` and then mutates stores
+      // must re-check vault identity across that await. The TRIGGER is the
+      // intrinsic disk re-read, so a new Reload-style handler that forgets the
+      // guard is flagged by construction.
+      (triggers.applyChanges && /\bvaultIndexStore\.applyChanges\s*\(/.test(unit.body));
     if (!triggered) continue;
     if (!/\bawait\b/.test(unit.body)) continue; // nothing suspends → no swap window
     if (/\bisStillSameVault\b/.test(unit.body)) continue; // guarded — good

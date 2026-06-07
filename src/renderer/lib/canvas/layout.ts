@@ -2,6 +2,14 @@ import type { Tile, Connection } from '../../schema/index';
 import { LAYOUT_GAP_BUFFER } from '../../constants/defaults';
 
 /**
+ * Narrowing predicate for `.filter()`. `filter(Boolean)` does NOT narrow the
+ * element type (it stays `Tile | undefined`), so missing-id lookups would leave
+ * the whole pipeline typed as possibly-undefined. This drops the gaps AND
+ * narrows the result to `Tile[]`.
+ */
+const isTile = (t: Tile | undefined): t is Tile => t !== undefined;
+
+/**
  * Layout algorithms — pure functions that compute new tile positions.
  * These do NOT mutate state; they return a Map of id → new position.
  * Callers wrap the results in Commands for undo/redo integration.
@@ -36,7 +44,7 @@ export function alignTiles(
   const result: PositionMap = new Map();
   if (selectedIds.length < 2) return result;
 
-  const selected = selectedIds.map(id => tiles[id]).filter(Boolean);
+  const selected = selectedIds.map(id => tiles[id]).filter(isTile);
   if (selected.length < 2) return result;
 
   let target: number;
@@ -126,6 +134,8 @@ export function alignTiles(
       const sorted = [...selected].sort((a, b) => a.position.x - b.position.x);
       const leftmost = sorted[0];
       const rightmost = sorted[sorted.length - 1];
+      // length >= 3 guaranteed above; narrow the endpoint reads for the type-checker.
+      if (!leftmost || !rightmost) break;
       const span = (rightmost.position.x + rightmost.size.width) - leftmost.position.x;
       const totalWidth = sorted.reduce((sum, t) => sum + t.size.width, 0);
       let gap = (span - totalWidth) / (sorted.length - 1);
@@ -151,6 +161,8 @@ export function alignTiles(
       const sorted = [...selected].sort((a, b) => a.position.y - b.position.y);
       const topmost = sorted[0];
       const bottommost = sorted[sorted.length - 1];
+      // length >= 3 guaranteed above; narrow the endpoint reads for the type-checker.
+      if (!topmost || !bottommost) break;
       const span = (bottommost.position.y + bottommost.size.height) - topmost.position.y;
       const totalHeight = sorted.reduce((sum, t) => sum + t.size.height, 0);
       let gap = (span - totalHeight) / (sorted.length - 1);
@@ -207,7 +219,7 @@ export function layoutTree(
   if (selectedIds.length === 0) return result;
 
   const selectedSet = new Set(selectedIds);
-  const selectedTiles = selectedIds.map(id => tiles[id]).filter(Boolean);
+  const selectedTiles = selectedIds.map(id => tiles[id]).filter(isTile);
   if (selectedTiles.length === 0) return result;
 
   // Size-aware spacing: each step along the main axis must clear the widest
@@ -258,7 +270,10 @@ export function layoutTree(
       const p = parents[id] ?? [];
       return !p.some(pid => selectedSet.has(pid));
     });
-    if (roots.length === 0) roots.push(selectedIds[0]);
+    if (roots.length === 0) {
+      const firstId = selectedIds[0];
+      if (firstId !== undefined) roots.push(firstId); // length > 0 checked above
+    }
 
     /**
      * Subtree width (in `GAP_CROSS` units): the cross-axis span the subtree
@@ -362,7 +377,7 @@ export function layoutTree(
     out: Record<string, { depth: number; cross: number }>,
     crossOrigin: number,
   ): void {
-    const present = ids.map(id => tilesMap[id]).filter(Boolean);
+    const present = ids.map(id => tilesMap[id]).filter(isTile);
     if (present.length === 0) return;
 
     // Apex: topmost (vertical) or leftmost (horizontal). Ties broken by the
@@ -376,6 +391,7 @@ export function layoutTree(
       return a.position.y - b.position.y;
     });
     const apex = sortedForApex[0];
+    if (!apex) return; // present.length >= 1 checked above; narrow for the type-checker.
     const rest = sortedForApex.slice(1);
 
     // Distribute `rest` into rows of width 2, 3, 4, …. apex occupies row 0.
@@ -393,7 +409,7 @@ export function layoutTree(
     // Within each row, sort by cross-axis position so the user's left/right
     // ordering is preserved when possible.
     for (let r = 1; r < rows.length; r++) {
-      rows[r].sort((a, b) => {
+      rows[r]?.sort((a, b) => {
         if (dir === 'vertical') return a.position.x - b.position.x;
         return a.position.y - b.position.y;
       });
@@ -403,11 +419,13 @@ export function layoutTree(
     // are centred symmetrically around it.
     for (let r = 0; r < rows.length; r++) {
       const row = rows[r];
+      if (!row) continue;
       const m = row.length;
       // Cross-axis cells used by this row, centred on crossOrigin.
       const offsetStart = -(m - 1) / 2;
       for (let i = 0; i < m; i++) {
         const tile = row[i];
+        if (!tile) continue;
         out[tile.id] = {
           depth: r,
           cross: (crossOrigin + offsetStart + i) * GAP_CROSS,
@@ -431,7 +449,7 @@ export function layoutRadial(
   const result: PositionMap = new Map();
   if (selectedIds.length === 0) return result;
 
-  const selected = selectedIds.map(id => tiles[id]).filter(Boolean);
+  const selected = selectedIds.map(id => tiles[id]).filter(isTile);
   if (selected.length === 0) return result;
 
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -453,6 +471,7 @@ export function layoutRadial(
 
   for (let i = 0; i < selected.length; i++) {
     const t = selected[i];
+    if (!t) continue;
     const angle = i * step - Math.PI / 2; // Start from top.
     const newX = cx + radius * Math.cos(angle) - t.size.width / 2;
     const newY = cy + radius * Math.sin(angle) - t.size.height / 2;

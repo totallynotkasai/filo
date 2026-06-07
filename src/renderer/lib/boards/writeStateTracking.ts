@@ -406,6 +406,35 @@ export function markPathFailed(vaultRoot: string | undefined, path: string): voi
 }
 
 /**
+ * Audit-12 M2 — clears `path` from the failed set after a LATE success: a write
+ * that exceeded the scheduler's `writeTimeoutMs` (so `fireWrite` stopped
+ * awaiting it and `markPathFailed`-ed the path) but then actually LANDED on disk.
+ *
+ * The markdown gateway + frontmatter scheduler self-heal this for free — their
+ * `performWrite` wraps the IPC in `trackComponentWrite`, whose late
+ * `endWrite(true)` already drops the path from `failedVaultPaths`. Board / config
+ * / misc call their IPC directly, so without this their phantom "failed" mark
+ * sticks for the whole session — `vaultStore.save()` keeps returning false,
+ * `.filo/.dirty` stays set, and the next launch shows a recovery prompt while the
+ * bytes are actually on disk.
+ *
+ * Does NOT touch `inflightWriteCount` — the timeout's `endWrite`/`safeEndWrite`
+ * already balanced the begin/end pair. Syncs the sentinel (markClean iff the
+ * vault is now idle + clean). Idempotent: a no-op when `path` wasn't failed
+ * (e.g. a scheduler that already self-healed).
+ */
+export function clearFailedPathAfterLateSuccess(
+  vaultRoot: string | undefined,
+  path: string,
+): void {
+  if (!path) return;
+  const key = vaultPath(path);
+  if (!failedVaultPaths.delete(key)) return; // wasn't failed → nothing to heal
+  syncSentinelIfIdle(vaultRoot);
+  notifyWriteState();
+}
+
+/**
  * Defensive end-of-flush sentinel sync. Called by `flushAll` after every
  * scheduled write has been drained — if our counter says idle and the
  * tracking sets are empty, mark clean; otherwise mark dirty with the

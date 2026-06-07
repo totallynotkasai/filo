@@ -233,7 +233,22 @@ export function patchFrontmatterSourceCst(
   if (root === null) {
     currentObj = {};
   } else {
-    const current = doc.toJS();
+    // H2 (Audit-13) — `parseDocument` reports `errors.length === 0` for an
+    // unresolved/forward alias (`*x` with no prior `&x`), a missing-anchor `<<`
+    // merge, or an alias-in-sequence, but RESOLVING the dangling reference in
+    // `toJS()` then THROWS a ReferenceError. That throw is OUTSIDE the refusal
+    // gate above, so without this catch it propagates out of the engine →
+    // `assembleMarkdownFile` → the write, bypassing the keep-raw safety net
+    // built for malformed YAML (the read path already returned `{}` for the same
+    // block, so a fall-through full dump would ERASE it — total FM loss). Fail
+    // closed to `null` (the documented refusal contract) so the caller keeps the
+    // raw bytes verbatim and only the metadata edit is dropped.
+    let current: unknown;
+    try {
+      current = doc.toJS();
+    } catch {
+      return null;
+    }
     if (current === null || typeof current !== 'object' || Array.isArray(current)) return null;
     currentObj = current as Record<string, unknown>;
   }
@@ -356,10 +371,22 @@ export function patchFrontmatterSourceCst(
  * Narrow by design: only a parse FAILURE — where dump = unrecoverable loss —
  * trips the caller's refuse-and-keep-raw path. Valid-but-non-mapping YAML keeps
  * the long-standing dump fallback (and its pinning test).
+ *
+ * H2 (Audit-13) — `errors.length === 0` is necessary but NOT sufficient: an
+ * unresolved/forward alias or a missing-anchor `<<` merge parses with zero
+ * errors yet THROWS in `toJS()` while resolving the dangling reference. Such a
+ * block is "unparseable" for our purposes too — the read path returned `{}` for
+ * it, so a full dump would discard it (= the loss case). We force the resolution
+ * here (the `toJS()` call) so it reports `false`, routing the caller to keep-raw.
  */
 export function frontmatterSourceParses(source: string): boolean {
   try {
-    return parseDocument(source.replace(/\r\n/g, '\n'), { uniqueKeys: true }).errors.length === 0;
+    const doc = parseDocument(source.replace(/\r\n/g, '\n'), { uniqueKeys: true });
+    if (doc.errors.length > 0) return false;
+    // Resolve aliases/merges — throws on a dangling reference (H2); the catch
+    // below maps that to `false` so the assemble path keeps the raw bytes.
+    doc.toJS();
+    return true;
   } catch {
     return false;
   }

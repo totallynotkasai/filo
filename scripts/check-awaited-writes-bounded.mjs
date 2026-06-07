@@ -26,11 +26,25 @@
  *      for uniformity, but this gate doesn't require it — they never transitively
  *      await `writeMarkdownFile`.)
  *
- *   4. Audit-12 H4 — `flushAll` PRE-DRAINS any older in-flight write for a key
- *      before firing that key's pending (newest) write, so a non-serialized
- *      scheduler (board/config/misc) can't let the stale write land last and
- *      clobber the newer .board.json/config payload (the WC-3 pre-drain that
- *      `flush(key)` already had, now mirrored in `flushAll`).
+ *   4. Audit-12 H4 + Audit-13 H1 — EVERY fire path pre-drains any older in-flight
+ *      write for a key before firing that key's pending (newest) write, so a
+ *      non-serialized scheduler (board/config/misc) can't let the stale write
+ *      land last and clobber the newer .board.json/config payload. The WC-3
+ *      pre-drain `flush(key)` had was mirrored into `flushAll` (H4) and then into
+ *      the DEBOUNCE-TIMER fire path (H1) — the common active-editing path, which
+ *      previously just fired `void fireWrite(...)` with no drain. All three now
+ *      route through the shared `drainPriorInFlight(key)` helper; the gate pins
+ *      its call on both the timer-fire path and the flushAll loop.
+ *
+ *   5. Audit-12 M2 — the `writeTimeoutMs` branch SELF-HEALS the failed mark on a
+ *      LATE success. On timeout the path is `markPathFailed`-ed but the
+ *      underlying write keeps running; board/config/misc call their IPC directly
+ *      (no `trackComponentWrite` to fire a late `endWrite(true)`), so without a
+ *      continuation a write that exceeds the bound then SUCCEEDS leaves a
+ *      permanent phantom "failed" — `save()` returns false all session, sticky
+ *      `.filo/.dirty`, a phantom recovery prompt next launch — while the bytes
+ *      are on disk. The gate REQUIRES `clearFailedPathAfterLateSuccess` in the
+ *      timeout branch.
  *
  * Background: pre-R3 the gateway awaited `performWrite` with NO timeout anywhere
  * in the flush chain. A stranded drift-prompt promise (the toast-eviction bug)
@@ -43,6 +57,14 @@
  * tokens asserted appear ONLY in the timeout mechanism / the gateway option, so
  * a comment that merely mentions them can't satisfy the gate (comments are
  * stripped first) and an unrelated edit can't accidentally satisfy it.
+ *
+ * Audit-13 M13 — the bare-presence checks were tightened so they can't be
+ * satisfied by a no-longer-load-bearing token: the race must include the timeout
+ * promise IN the `Promise.race([…])` array (not just call `Promise.race`); each
+ * `writeTimeoutMs` must reference a finite SCREAMING_SNAKE constant (the old
+ * `:\s*\w` also matched `Infinity`); and the root `WRITE_TIMEOUT_MS` constant must
+ * be a finite numeric literal. Bite-test: set any `writeTimeoutMs: Infinity`, drop
+ * the timeout from the race array, or set `WRITE_TIMEOUT_MS = Infinity` → red.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -56,47 +78,107 @@ function stripComments(src) {
     .replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1');
 }
 
+// Audit-13 M13 — a `writeTimeoutMs` set to a FINITE SCREAMING_SNAKE constant
+// reference. The all-caps shape inherently excludes `Infinity` (mixed case),
+// `undefined` / `null` / `NaN` (lower/mixed case), and bare numeric literals —
+// forcing a NAMED finite constant. (`WRITE_TIMEOUT_MS` / `MARKDOWN_WRITE_TIMEOUT_MS`
+// today.) The bare `writeTimeoutMs\s*:\s*\w` it replaces also matched
+// `writeTimeoutMs: Infinity`, which re-opens the wedge-forever hang. The companion
+// forbidden token gives a clearer message for the specific unbounded values.
+const TIMEOUT_FINITE_CONST = { token: /writeTimeoutMs\s*:\s*[A-Z_][A-Z0-9_]*\b/, why: 'writeTimeoutMs set to a finite SCREAMING_SNAKE constant (not Infinity / a literal)' };
+const TIMEOUT_UNBOUNDED = { token: /writeTimeoutMs\s*:\s*(?:Infinity|Number\s*\.\s*POSITIVE_INFINITY|undefined|null|NaN)\b/, why: 'an unbounded/absent writeTimeoutMs (Infinity / undefined / null / NaN) re-opens the wedge-forever hang' };
+
 const checks = [
   {
     file: 'src/renderer/lib/boards/writeScheduler.ts',
     label: 'the shared scheduler primitive races a write timeout + flushAll pre-drains per key',
     required: [
       { token: /writeTimeoutMs/, why: 'the configurable bound option' },
-      { token: /Promise\.race\s*\(/, why: 'the write-vs-timeout race' },
-      { token: /WRITE_TIMEOUT/, why: 'the timeout-outcome sentinel' },
+      {
+        // Audit-13 M13 — pin that the race ARRAY actually includes the timeout
+        // promise, not merely that `Promise.race(` appears. A refactor to
+        // `Promise.race([writePromise])` that drops the timeout leg would
+        // otherwise pass a bare-presence check and silently un-bound the write.
+        token: /Promise\.race\s*\(\s*\[[^\]]*\btimeout\b/,
+        why: 'the write-vs-timeout race ARRAY includes the timeout promise (Audit-13 M13)',
+      },
+      {
+        // Audit-13 M13 — the timer must RESOLVE to the sentinel (so the timeout
+        // leg actually carries it) and the outcome must be COMPARED to it. A bare
+        // `WRITE_TIMEOUT` token surviving only in e.g. a type annotation no longer
+        // satisfies the gate.
+        token: /resolve\(\s*WRITE_TIMEOUT\s*\)/,
+        why: 'the timeout timer resolves to the WRITE_TIMEOUT sentinel (Audit-13 M13)',
+      },
+      { token: /===\s*WRITE_TIMEOUT/, why: 'the race outcome is compared to the WRITE_TIMEOUT sentinel (Audit-13 M13)' },
       { token: /setTimeout\s*\(/, why: 'the timeout timer' },
       {
-        // Audit-12 H4 — flushAll must drain any OLDER in-flight write for a key
-        // BEFORE firing that key's pending (newest) write, so a non-serialized
-        // scheduler (board/config/misc) can't let the stale write land last and
-        // clobber the newer payload. The token is the per-key prior-in-flight
-        // drain inside flushAll's drained loop (mirrors flush()'s WC-3 pre-drain).
-        token: /inFlight\.get\(entry\.key\)/,
+        // Audit-13 H1 — the DEBOUNCE-TIMER fire path must also drain any OLDER
+        // in-flight write for a key before firing the newest, not just flush() /
+        // flushAll(). During normal active editing the timer just fires; on a
+        // slow/synced volume a prior write still in flight overlapped the new IPC
+        // and the OS could land the OLDER one last. The token is the timer-fire
+        // pre-drain call inside schedule()'s setTimeout (`drainPriorInFlight(key)`).
+        token: /drainPriorInFlight\(key\)/,
+        why: 'timer-fire per-key prior-in-flight pre-drain (Audit-13 H1) so the newest write lands last on the debounce path, not only flush/flushAll',
+      },
+      {
+        // Audit-12 H4 / Audit-13 H1 — flushAll must drain any OLDER in-flight
+        // write for a key BEFORE firing that key's pending (newest) write, so a
+        // non-serialized scheduler (board/config/misc) can't let the stale write
+        // land last and clobber the newer payload. Now routed through the shared
+        // `drainPriorInFlight` helper that the timer-fire path also uses; the
+        // token is its call inside flushAll's drained loop (mirrors flush()'s
+        // WC-3 pre-drain).
+        token: /drainPriorInFlight\(entry\.key\)/,
         why: 'flushAll per-key prior-in-flight pre-drain (Audit-12 H4) so the newest write lands last',
+      },
+      {
+        // Audit-12 M2 — on a timeout the path is markPathFailed-ed but the
+        // underlying write keeps running. A non-self-healing scheduler
+        // (board/config/misc IPCs directly, no trackComponentWrite) needs the
+        // timeout branch to self-heal the failed mark on a LATE success, else a
+        // phantom "Save failed" + sticky .filo/.dirty persist for the whole
+        // session. The token is the continuation that clears the failed path.
+        token: /clearFailedPathAfterLateSuccess\s*\(/,
+        why: 'the timeout branch self-heals the failed mark on a late success (Audit-12 M2) so a slow-but-successful write does not leave a permanent phantom failure',
       },
     ],
   },
   {
     file: 'src/renderer/lib/vault/markdownFileWriter.ts',
     label: 'the markdown gateway configures the write timeout',
-    required: [
-      { token: /writeTimeoutMs\s*:\s*\w/, why: 'createScheduler({ writeTimeoutMs: … }) on the gateway' },
-    ],
+    required: [TIMEOUT_FINITE_CONST],
+    forbidden: [TIMEOUT_UNBOUNDED],
   },
   {
     // Audit-11 WC-1 / QC-1 — writeFrontmatter awaits the SAME writeMarkdownFile.
     file: 'src/renderer/lib/boards/frontmatterWriteScheduler.ts',
     label: 'the frontmatter scheduler bounds its (writeMarkdownFile-awaiting) write',
-    required: [
-      { token: /writeTimeoutMs\s*:\s*\w/, why: 'createScheduler({ writeTimeoutMs: … }) — writeFrontmatter awaits the gateway-grade writeMarkdownFile' },
-    ],
+    required: [TIMEOUT_FINITE_CONST],
+    forbidden: [TIMEOUT_UNBOUNDED],
   },
   {
     // Audit-11 WC-1 / QC-2 — writeBoardFile awaits an interactive drift prompt + IPC.
     file: 'src/renderer/lib/boards/boardWriteScheduler.ts',
     label: 'the board scheduler bounds its (drift-prompt + stat/save IPC) write',
+    required: [TIMEOUT_FINITE_CONST],
+    forbidden: [TIMEOUT_UNBOUNDED],
+  },
+  {
+    // Audit-13 M13 — the bound's finiteness is structural at the ROOT constant,
+    // not just the call sites: WRITE_TIMEOUT_MS (re-exported as
+    // MARKDOWN_WRITE_TIMEOUT_MS) must be a finite numeric literal. A
+    // `WRITE_TIMEOUT_MS = Infinity` would un-bound every scheduler that
+    // references the (still-SCREAMING_SNAKE) constant, slipping past the
+    // call-site checks above.
+    file: 'src/renderer/lib/boards/boardWriteDebounce.ts',
+    label: 'the shared write-timeout constant is a finite literal',
     required: [
-      { token: /writeTimeoutMs\s*:\s*\w/, why: 'createScheduler({ writeTimeoutMs: … }) — writeBoardFile awaits an interactive board drift prompt + vault:stat + board:save' },
+      { token: /WRITE_TIMEOUT_MS\s*=\s*[0-9][0-9_]*\b/, why: 'WRITE_TIMEOUT_MS is a finite numeric literal' },
+    ],
+    forbidden: [
+      { token: /WRITE_TIMEOUT_MS\s*=\s*(?:Infinity|Number\s*\.\s*POSITIVE_INFINITY)\b/, why: 'an Infinity bound un-bounds every scheduler referencing the constant' },
     ],
   },
 ];
@@ -113,6 +195,11 @@ for (const check of checks) {
   for (const { token, why } of check.required) {
     if (!token.test(code)) {
       failures.push(`${check.file} — missing /${token.source}/ (${why}) — ${check.label}`);
+    }
+  }
+  for (const { token, why } of check.forbidden ?? []) {
+    if (token.test(code)) {
+      failures.push(`${check.file} — found forbidden /${token.source}/ (${why}) — ${check.label}`);
     }
   }
 }

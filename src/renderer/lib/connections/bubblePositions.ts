@@ -47,7 +47,7 @@ export function getBubblePositions(rect: TileRect): BubblePosition[] {
  */
 export function getBubblePosition(rect: TileRect, bubbleIndex: number): { x: number; y: number } {
   const positions = getBubblePositions(rect);
-  return positions[bubbleIndex] ?? positions[1];
+  return positions[bubbleIndex] ?? positions[1] ?? { x: 0, y: 0 };
 }
 
 /**
@@ -64,7 +64,7 @@ export function getBubbleNormal(bubbleIndex: number): { nx: number; ny: number }
     { nx: -1, ny: 1 },  // 6: bottom-left
     { nx: -1, ny: 0 },  // 7: middle-left
   ];
-  return normals[bubbleIndex] ?? normals[1];
+  return normals[bubbleIndex] ?? normals[1] ?? { nx: 0, ny: -1 };
 }
 
 /**

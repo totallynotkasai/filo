@@ -72,6 +72,14 @@ export const IPC_PAYLOAD_SCHEMAS = {
     z.tuple([nonEmptyString, nonEmptyString]),
     z.tuple([nonEmptyString, nonEmptyString, optionalString]),
   ]),
+  // Audit-12 S1 — `vault:register-source-path` is preload-INTERNAL: the only
+  // legitimate sender is the preload's `getPathForFile` via a direct
+  // `ipcRenderer.send` (which bypasses this gate entirely). `z.never()` matches
+  // NO argument shape, so any attempt to reach it through the contextBridge
+  // `api.send`/`api.invoke` (i.e. `window.filo.send('vault:register-source-path',
+  // …)` from hostile renderer JS) fails validation and is dropped before it can
+  // self-approve an arbitrary copy source. Do NOT relax this to a real tuple.
+  'vault:register-source-path': z.never(),
   // Phase 37 / 37.6 — canonical (vaultRoot, relativePath). The legacy
   // single-arg absolute-path branch is gone; every renderer caller has been
   // migrated.

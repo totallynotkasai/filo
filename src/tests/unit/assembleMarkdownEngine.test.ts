@@ -163,6 +163,125 @@ describe('assembleMarkdownFile — unparseable frontmatter is preserved, not dum
 });
 
 /**
+ * H2 (Audit-13) — frontmatter carrying an UNRESOLVED alias parses with
+ * `errors.length === 0` (so the CST engine's refusal gate passes) but THROWS a
+ * ReferenceError in `doc.toJS()` while resolving the dangling reference. Before
+ * the fix that throw escaped `patchFrontmatterSourceCst` → `assembleMarkdownFile`
+ * → the write, so the keep-raw safety net never engaged and the metadata write
+ * crashed (or, with only a half-fix, a full dump erased the poison block the
+ * read returned `{}` for). The fix makes BOTH the engine (`toJS()` wrapped →
+ * `null`) and `frontmatterSourceParses` (`toJS()` forced → `false`) fail closed,
+ * so a metadata edit over alias-poison FM keeps the user's exact bytes verbatim,
+ * drops only the edit, and surfaces it loudly via `onFrontmatterRefused` — never
+ * throws, never corrupts.
+ */
+describe('assembleMarkdownFile — unresolved-alias frontmatter keeps raw bytes (H2)', () => {
+  const POISON: ReadonlyArray<{ label: string; original: string }> = [
+    { label: 'forward-ref alias', original: 'title: X\ntags: *missing' },
+    { label: 'missing-anchor << merge', original: 'widget:\n  <<: *gone\ntitle: X' },
+    { label: 'alias-in-sequence', original: 'list:\n  - *nope\ntitle: X' },
+  ];
+
+  for (const { label, original } of POISON) {
+    it(`keeps the raw block and drops the edit on: ${label}`, () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const onFrontmatterRefused = vi.fn();
+      // The edit (priority: high) is what the user changed; it must be dropped,
+      // and the poison block preserved byte-for-byte. The call must NOT throw.
+      const out = assembleMarkdownFile(
+        { title: 'X', priority: 'high' },
+        'Body text.\n',
+        { originalFrontmatter: original, frontmatterDirty: true, onFrontmatterRefused },
+      );
+      // Raw bytes survive verbatim, the metadata edit is refused, body intact.
+      expect(fmOf(out)).toBe(original);
+      expect(fmOf(out)).not.toMatch(/priority: high/);
+      expect(out.endsWith('Body text.\n')).toBe(true);
+      // Loud failure: the gateway wires this hook to a "fix the YAML" toast.
+      expect(onFrontmatterRefused).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalled();
+      warnSpy.mockRestore();
+    });
+  }
+
+  it('a RESOLVABLE alias baseline is NOT refused (no over-refusal — control)', () => {
+    // `*x` resolves (anchor defined first), so toJS() does not throw and
+    // `frontmatterSourceParses` stays true — a normal edit (adding `title`)
+    // applies through the engine rather than tripping the keep-raw refusal.
+    const onFrontmatterRefused = vi.fn();
+    const out = assembleMarkdownFile(
+      { common: ['a'], tags: ['a'], title: 'New' },
+      'Body\n',
+      { originalFrontmatter: 'common: &x\n  - a\ntags: *x', frontmatterDirty: true, onFrontmatterRefused },
+    );
+    expect(onFrontmatterRefused).not.toHaveBeenCalled();
+    expect(yaml.load(fmOf(out))).toMatchObject({ title: 'New' });
+  });
+});
+
+/**
+ * L1 (Audit-12) — when the live frontmatter object is empty (the user cleared
+ * every key) but the source HAD a block, the old 1.1 safety net re-emitted the
+ * original bytes verbatim — silently reverting the deletion. It couldn't tell
+ * "couldn't parse" (keep raw — data-loss avoidance) from "user emptied it"
+ * (honour the clear). The fix splits the two on `frontmatterSourceParses`: an
+ * unparseable block is still kept; a parseable-but-emptied one routes through
+ * the CST engine (drops the keys, keeps any standalone comment).
+ */
+describe('assembleMarkdownFile — empty-FM split: clear vs unparseable (L1)', () => {
+  it('honours a cleared single-key block (emits no FM block, not the original)', () => {
+    const out = assembleMarkdownFile({}, 'Body\n', {
+      rawFrontmatter: 'title: Foo',
+      frontmatterDirty: true,
+    });
+    // The key is gone — NOT reverted to the original block.
+    expect(out).not.toContain('title: Foo');
+    expect(out).toBe('Body\n');
+  });
+
+  it('honours a cleared multi-key block', () => {
+    const out = assembleMarkdownFile({}, 'Body\n', {
+      rawFrontmatter: 'title: Foo\npriority: low',
+      frontmatterDirty: true,
+    });
+    expect(out).toBe('Body\n');
+  });
+
+  it('keeps a standalone comment when the keys are cleared (comment-only block)', () => {
+    const out = assembleMarkdownFile({}, 'Body\n', {
+      rawFrontmatter: '# kept note\ntitle: Foo',
+      frontmatterDirty: true,
+    });
+    // The documenting comment survives; the key does not.
+    expect(out).toBe('---\n# kept note\n---\nBody\n');
+    expect(out).not.toContain('title: Foo');
+  });
+
+  it('still preserves a genuinely UNPARSEABLE block verbatim when fm is empty', () => {
+    // The data-loss-avoidance path: a fence we can't turn into keys is kept,
+    // never dropped — even though the live object is empty.
+    const original = '\tbad: yaml\n  dup: 1\n  dup: 2';
+    const out = assembleMarkdownFile({}, 'Body\n', {
+      rawFrontmatter: original,
+      frontmatterDirty: true,
+    });
+    expect(out).toContain('\tbad: yaml');
+    expect(out).toContain('dup: 1');
+    expect(out).toContain('dup: 2');
+    expect(out.endsWith('Body\n')).toBe(true);
+  });
+
+  it('re-applies CRLF when a cleared block keeps a comment', () => {
+    const out = assembleMarkdownFile({}, 'Body.\r\n', {
+      rawFrontmatter: '# note\r\ntitle: Foo',
+      frontmatterDirty: true,
+      eol: '\r\n',
+    });
+    expect(out).toBe('---\r\n# note\r\n---\r\nBody.\r\n');
+  });
+});
+
+/**
  * H2 (Audit-7) — `patchFrontmatterSourceCst` normalises the FM source to LF and
  * its docstring says the caller re-applies the file's line ending; the dirty
  * `objectHasKeys` branch used to hard-code `\n` for the FM block + fences, so a

@@ -211,4 +211,48 @@ describe('boardCacheStore — 6.2.H9 batch reconcile', () => {
     // Every board got reconciled.
     expect(changed.length).toBe(120);
   });
+
+  it('Audit-13 M6 — a concurrent same-vault mutation during a yield survives the terminal flip', async () => {
+    // 60 reconciled boards (forces a microtask yield at i=50) PLUS a "victim"
+    // board V that the batch never touches (its tile backs a path absent from
+    // the md list). The pre-fix terminal `setCache({ ...capturedMap })` flipped
+    // a map captured before the yield, reverting a concurrent updateEntry that
+    // landed while the batch was suspended. The fix re-reads the live cache for
+    // the flip, so the victim's marker survives.
+    const tiles = Array.from({ length: 60 }, (_, i) => taskTile(`t${i}`, `f${i}.md`, { completed: false }));
+    const boards: Record<string, V7BoardFileData> = {};
+    for (let i = 0; i < tiles.length; i++) boards[`b${i}`] = boardWith(`b${i}`, [tiles[i]]);
+    boards.V = boardWith('V', [taskTile('vt', 'victim.md', { completed: false })]);
+    boardCacheStore.hydrate(
+      boards,
+      Object.fromEntries(Object.keys(boards).map((id) => [id, `${id}.board.json`])),
+    );
+
+    const mds = tiles.map((t, i) => parseMarkdown(t.file as string, '---\ncompleted: true\n---\n', i + 1));
+
+    // Kick the batch off WITHOUT awaiting: an async fn runs synchronously up to
+    // its first `await` (the i=50 yield), so it is now suspended there.
+    const batchP = boardCacheStore.applyFrontmatterToBackedTilesBatch(mds);
+
+    // Land a concurrent same-vault mutation on the untouched victim board while
+    // the batch is parked at the yield — exactly the on-open race M6 describes.
+    boardCacheStore.updateEntry('V', {
+      tileDefs: {
+        ...boardCacheStore.cache.V.tileDefs,
+        MARKER: taskTile('MARKER', 'marker.md'),
+      },
+    });
+
+    await batchP;
+
+    // The victim's concurrently-added tile is NOT reverted by the terminal flip.
+    expect(boardCacheStore.cache.V.tileDefs.MARKER).toBeDefined();
+    // And the reconcile still landed for the batch's own boards.
+    expect(
+      (boardCacheStore.cache.b0.tileDefs.t0 as TileDefinition & { completed?: unknown }).completed,
+    ).toBe(true);
+    expect(
+      (boardCacheStore.cache.b59.tileDefs.t59 as TileDefinition & { completed?: unknown }).completed,
+    ).toBe(true);
+  });
 });

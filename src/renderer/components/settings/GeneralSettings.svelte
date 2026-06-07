@@ -142,7 +142,7 @@
   // settings.systemFonts only, so a fresh project with no saved fonts
   // showed an empty list even though OS fonts were loaded.
   let availableFonts = $derived.by(() => {
-    const selected = (settings.globalFont ?? '').split(',')[0].trim();
+    const selected = ((settings.globalFont ?? '').split(',')[0] ?? '').trim();
     const merged = new SvelteSet<string>();
     for (const f of systemFonts) if (f) merged.add(f);
     for (const f of settings.systemFonts ?? []) if (f) merged.add(f);
@@ -354,7 +354,7 @@
     <select
       id="global-font"
       class="setting-select"
-      value={settings.globalFont.split(',')[0].trim()}
+      value={(settings.globalFont.split(',')[0] ?? '').trim()}
       onchange={(e) => {
         const font = (e.target as HTMLSelectElement).value;
         updateSetting('globalFont', `${font}, system-ui, sans-serif`);

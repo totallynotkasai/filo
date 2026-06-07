@@ -95,7 +95,7 @@ export async function exportToPdf(element: HTMLElement): Promise<string> {
   });
 
   pdf.addImage(dataUrl, 'PNG', 0, 0, width, height);
-  const pdfBase64 = pdf.output('datauristring').split(',')[1];
+  const pdfBase64 = pdf.output('datauristring').split(',')[1] ?? '';
   return pdfBase64;
 }
 
@@ -640,12 +640,12 @@ export async function doExport(
 
       if (format === 'png') {
         const dataUrl = await exportToPng(element);
-        data = dataUrl.split(',')[1]; // Strip data:image/png;base64, prefix
+        data = dataUrl.split(',')[1] ?? ''; // Strip data:image/png;base64, prefix
       } else if (format === 'svg') {
         data = await exportToSvg(element);
         // SVG comes as a data URL, extract the SVG
         if (data.startsWith('data:')) {
-          data = decodeURIComponent(data.split(',')[1]);
+          data = decodeURIComponent(data.split(',')[1] ?? '');
         }
       } else {
         data = await exportToPdf(element);

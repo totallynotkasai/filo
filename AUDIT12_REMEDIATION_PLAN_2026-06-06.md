@@ -317,7 +317,7 @@ board, edit again quickly, Ctrl+S → confirm the latest layout persists.
 
 ## M1 — DocumentEditor writes empty content over a real file after a failed hydrate read
 
-- **Status:** `[ ]`
+- **Status:** `[x]` (fix: `hydrateReadFailed` flag + read-only editor + retry banner; `buildWriteArgs` bails on `hydrateReadFailed && !lastLoadedBody`; `ci:no-silent-write-abort` DOC_EDITOR arm + `documentEditorHydrateFailure.test.ts`; gate bite-verified)
 - **Severity:** Medium · **Confidence:** Confirmed · **Files:** `src/renderer/components/boards/DocumentEditor.svelte` (`hydrateFromDisk` ~332-371)
 
 ### Root cause
@@ -358,7 +358,7 @@ error/read-only rather than a blank, writable editor.
 
 ## M2 — Late-but-successful board/config/misc write leaves a permanent phantom "failed" mark
 
-- **Status:** `[ ]`
+- **Status:** `[x]` (Option B: timeout branch attaches a `writePromise.then` continuation → new `clearFailedPathAfterLateSuccess` in `writeStateTracking.ts`; `ci:awaited-writes-bounded` pins the `clearFailedPathAfterLateSuccess(` token + `writeTimeoutLateSuccess.test.ts`; gate + test bite-verified)
 - **Severity:** Medium · **Confidence:** Confirmed · **Files:** `src/renderer/lib/boards/writeScheduler.ts` (timeout branch ~408-417); `boardWriteScheduler.ts`, `configWriteScheduler.ts`, `miscWriteScheduler.ts`; `boardWriteDebounce.ts` (the "self-heals" docstring ~26-28)
 
 ### Root cause
@@ -396,7 +396,7 @@ confirm Ctrl+S/quit no longer reports "Save failed".
 
 ## M3 — PropertiesPopup pushes its undo command onto the wrong board's stack
 
-- **Status:** `[ ]`
+- **Status:** `[x]` (fix: capture `mountBoardId = boardStore.current?.id` (pane-scoped `scope.board`) at onMount, pass as 3rd arg to `UpdatePropertiesCommand`; `ci:command-targets-self` PropertiesPopup REQUIRED arm + `propertiesPopupBoardScope.test.ts`; gate bite-verified)
 - **Severity:** Medium (High for non-text tiles) · **Confidence:** Confirmed · **Files:** `src/renderer/components/tiles/PropertiesPopup.svelte` (`pushHistoryEntry` ~445-453); `src/renderer/commands/propertiesCommands.ts` (`UpdatePropertiesCommand` reads `boardStore.current` ~65)
 
 ### Root cause
@@ -434,7 +434,7 @@ close popup, Ctrl+Z → confirm the edit undoes on pane B's tile.
 
 ## M4 — `.board.json` external-edit / rename matching is case-sensitive on Windows
 
-- **Status:** `[ ]`
+- **Status:** `[x]` (fix: `findBoardIdForPath` → `samePath`; `renameBoardPath` folds via `normalizeVaultRelative` (suffix keeps on-disk casing); new `ci:board-path-casefold` gate (wired into ci:verify, 42 gates) + `boardPathCaseFold.test.ts`; gate + test bite-verified)
 - **Severity:** Medium · **Confidence:** Confirmed · **Files:** `src/renderer/stores/vaultExternalReconcilers.ts` (`findBoardIdForPath` ~110-116); `src/renderer/stores/boardCache.svelte.ts` (`renameBoardPath` ~382-402); `src/renderer/lib/utils/path.ts` (`normalizePath` does NOT case-fold)
 
 ### Root cause
@@ -468,7 +468,7 @@ the board still loads/reconciles.
 
 ## M5 — OS file-drop lands on the wrong pane in split view
 
-- **Status:** `[ ]`
+- **Status:** `[x]` (fix: `dragDropAction(node, scope)` + `createTextTileFromFile(boardScope, …)` use `scope.board`/`scope.canvas`; drop pivots `setActiveScope` so frames/history target the dropped pane; `MindMapBoard` passes `scope`; `ci:document-editor-pane-scoped` widened to forbid global board/canvas reads in `dragDrop.ts` + `dragDropPaneScope.test.ts`; gate + test bite-verified)
 - **Severity:** Medium · **Confidence:** Confirmed · **Files:** `src/renderer/lib/canvas/dragDrop.ts` (global `boardStore`/`canvasStore` imports); `src/renderer/components/boards/MindMapBoard.svelte` (`use:dragDropAction` ~624)
 
 ### Root cause
@@ -502,7 +502,7 @@ Manual: split-pane, drop an image onto the non-active pane → confirm it lands 
 
 ## M6 — On-open FM→cache reconcile batch can overwrite the new vault's boards
 
-- **Status:** `[ ]`
+- **Status:** `[x]` (fix: `applyFrontmatterToBackedTilesBatch(metadataList, identity?)` re-checks `isStillSameVault` after each yield + before the terminal `setCache`; `runPostCommitTasks` threads the captured `identity`; `ci:reconciler-vault-guard` Part 1 scans `boardCacheFrontmatter.ts` via a new `getCache` trigger + `onOpenReconcileSwapGuard.test.ts` (faithful swap-during-yield repro); gate + test bite-verified; `vault.svelte.ts` ceiling 1621→1626)
 - **Severity:** Medium · **Confidence:** Confirmed · **Files:** `src/renderer/stores/vault.svelte.ts` (`runPostCommitTasks` ~512-523); `src/renderer/stores/boardCacheFrontmatter.ts` (`applyFrontmatterToBackedTilesBatch` ~122-153)
 
 ### Root cause
@@ -537,7 +537,7 @@ confirm B shows B's boards.
 
 ## L1 — `assembleMarkdownFile` empty-FM revert (latent)
 
-- **Status:** `[ ]`
+- **Status:** `[x]` (safety net now discriminates on `patchFrontmatterSourceCst(raw, {}) === null` — null = unparseable OR non-mapping root → keep raw verbatim; a string = an emptied block mapping → honour the clear, keeping any comment-only remainder. `assembleMarkdownEngine.test.ts` +5 + `frontmatterInvariant.test.ts` +3 empty-FM rows; the bare-scalar / tab-indented preservation tests still pass. Note: used `=== null` not the plan's `frontmatterSourceParses` — the latter is true for parseable non-mappings (a bare scalar), which must be PRESERVED not cleared.)
 - **Severity:** Low (latent; masked by auto-`id`) · **Confidence:** Confirmed (logic) · **Files:** `src/renderer/lib/editor/markdownSync.ts` (~492 `objectHasKeys` guard → ~551 raw safety-net)
 
 ### Root cause
@@ -570,7 +570,7 @@ never had an `id`, would expose it).
 
 ## L2 — TextTile mutates in-memory `project.boards` (vestigial)
 
-- **Status:** `[ ]`
+- **Status:** `[x]` (deleted the `onUpdate` `project.boards[*].content/updatedAt` write + the now-unused `DocumentBoard` import; `documentStore.updateContent` remains the canonical sync. `textTileNoProjectMutation.test.ts` source-scan pin — comment-blanked so the explanatory comment can't trip it.)
 - **Severity:** Low (cleanup; no data loss) · **Files:** `src/renderer/components/tiles/TextTile.svelte` (~158-166)
 
 ### Root cause
@@ -592,7 +592,7 @@ the editor markdown). Vestigial.
 
 ## L3 — Bulk "Reload all" replays the stale detection-time snapshot
 
-- **Status:** `[ ]`
+- **Status:** `[x]` (bulk Reload-all handler is now `async` and re-reads CURRENT disk per file — `await vaultIndexStore.applyChanges([p.rel])` + `getMetadata(p.rel) ?? p.next` — before `applyReloadFromDisk`, mirroring the single-file `promptModifiedFile`. `bulkReloadAllFreshDisk.test.ts` (6 dirty files → bulk toast, v2→v3 after click); bite-verified (stale snapshot → `body2` red). `vaultExternalChanges.ts` ceiling 1780→1790.)
 - **Severity:** Low · **Files:** `src/renderer/stores/vaultExternalChanges.ts` (`promptBulkExternalChanges` "Reload all" ~929-949)
 
 ### Fix
@@ -605,7 +605,7 @@ the editor markdown). Vestigial.
 
 ## L4 — `performDelete` tail + `.dirty` clean-toast dismiss not identity-guarded
 
-- **Status:** `[ ]`
+- **Status:** `[x]` (two more `isStillSameVault(deleteIdentity)` bails in `performDelete` — after the `fileTagsStore.flushPendingSave()` await (before the B4 contentId-clear loop) and after `Promise.allSettled(cleanupPromises)` (before the doc-unload loop); `.dirty` clean-toast `onDismiss` now `if (isStillSameVault(captured))`-guarded (net-neutral, mirrors the quit-failure dismiss); the dead `ctx.setVaultPath` setter routed through `beginVaultGeneration(next)`. `vaultFolderOpsDelete.test.ts` +1 (swap during tags-drop flush → cascade skipped, board untouched); bite-verified (guard-1 removed → board evicted). `vaultFolderOps.ts` added to file-size allowlist at 1008.)
 - **Severity:** Low (main-side gated; consistency) · **Files:** `src/renderer/stores/vaultFolderOps.ts` (`performDelete` post-await mutations ~904/949/955); `src/renderer/stores/vault.svelte.ts` (`.dirty` clean-toast `onDismiss` ~647)
 
 ### Fix
@@ -620,7 +620,7 @@ the editor markdown). Vestigial.
 
 ## L5 — Single-line-CRLF flip on adopt; attachment-delete grace blocks rename queue
 
-- **Status:** `[ ]`
+- **Status:** `[x]` (adopt-sibling: both `!isHydrated` branches in `TextTile.hydrateFromDisk` now sniff CRLF from the body-only body and thread it as `markHydrated`'s `eol` — pins only CRLF, leaves LF/unknown to write-time detection so a one-line-CRLF FM doesn't flip to LF fences. attachment-delete grace: `attachmentBatchedReconciler.handleBatch` is now fire-and-forget (`void …handleExternalAttachmentChanges(paths).catch(reportError)`), so the 500 ms grace runs OUTSIDE the shared rename queue the batch dispatch is awaited inside — the handler's own re-existence + swap guards make queue ordering unnecessary. `audit12L5.test.ts` source-scan pins both halves; existing attachment-grace + characterization tests green.)
 - **Severity:** Low (cosmetic / responsiveness) · **Files:** `markdownFileWriter.ts` (adopt-sibling `markHydrated` with no `eol` ~256/283); `vaultExternalChanges.ts` (`handleExternalAttachmentChanges` 500 ms sleep inside the rename queue ~536-566)
 
 ### Fix
@@ -640,7 +640,7 @@ the editor markdown). Vestigial.
 
 ## S1 — `vault:copy-file` source path is unvalidated
 
-- **Status:** `[ ]`
+- **Status:** `[x]` (source constrained to an approved set — in-vault OR user dialog/drop — via new `approvedSources.ts` `isApprovedCopySource`; drop paths registered preload-side through a DIRECT `ipcRenderer.send` on the preload-internal `vault:register-source-path` channel, deliberately NOT a `SendChannel` with a `z.never()` schema so renderer sends are rejected; dialog picks registered main-side in `dialog.ipc.ts`; `copyFileToVault` adds an fstat re-check on the open fd + a streamed-byte cap (`maxBytes`); new `ci:copy-file-source-guard` gate + `copyFileSourceGuard.test.ts`; gate + TOCTOU bite-verified; `vault.ipc.ts` kept at 999 LOC; ci:verify green)
 - **Severity:** Medium (hostile-vault model) · **Files:** `src/main/ipc/vault.ipc.ts` (`vault:copy-file` ~916-987)
 
 ### Root cause
@@ -666,7 +666,7 @@ A compromised renderer could read any host file into the vault (arbitrary read).
 
 ## S2 — Minor hardening: `http://`, reserved names, case-fold
 
-- **Status:** `[ ]`
+- **Status:** `[x]` (`http://` dropped from `ALLOWED_URL_PREFIXES` — `https://`/`mailto:`/`tel:` remain, a legacy `http://` link logs a warning + refuses with a distinct message; `assertSafeFilename(basename)` added to the `media:open-external` local-path branch so Windows reserved DOS names can't reach `shell.openPath`; `isWithinVaultRoot` case-folds both sides on Windows (mirrors `assertWithinVault`); +5 cases in `mediaOpenExternalLauncherExt.test.ts`; ci:verify green)
 - **Severity:** Low · **Files:** `src/main/ipc/media.ipc.ts` (`ALLOWED_URL_PREFIXES` ~263; local-path branch ~293-352); `src/main/vault/fileOps.ts` (`isWithinVaultRoot` ~105-109)
 
 ### Fix
@@ -697,6 +697,31 @@ caught. New/extended gates introduced by this plan:
 
 **Every gate change must be bite-verified** (temporarily introduce an offender →
 gate fails) before it's considered done.
+
+### Phase 5 status — `[x]` DONE (2026-06-06)
+
+All eight consolidated gates are wired into `ci:verify` (**43 `ci:*` gates** total
+— verified all 43 are chained, none defined-but-orphaned) and each was
+**bite-verified** (introduce an offender → the gate fails with a site-specific
+message → revert → the gate passes). The H1–H4 gate arms were bite-verified at
+commit `a7528a2` (Audit-12 Phase 1); the seven working-tree gate changes were
+(re-)bite-verified this session, each offender caught with a precise message:
+
+| Gate (arm) | Item | Offender introduced → caught |
+|---|:---:|---|
+| `ci:no-silent-write-abort` (DOC_EDITOR arm) | M1 | neuter the `hydrateReadFailed && !lastLoadedBody` write guard |
+| `ci:awaited-writes-bounded` (M2 token) | M2 | rename `clearFailedPathAfterLateSuccess` in the timeout branch |
+| `ci:command-targets-self` (PropertiesPopup arm) | M3 | drop the mount-time `boardStore.current?.id` capture |
+| `ci:board-path-casefold` (new) | M4 | `findBoardIdForPath`: `samePath` → raw `boardPath === rel` |
+| `ci:document-editor-pane-scoped` (dragDrop arm) | M5 | global `boardStore` read inside `dragDrop.ts` |
+| `ci:reconciler-vault-guard` (`getCache` trigger) | M6 | drop `isStillSameVault` from the on-open reconcile batch |
+| `ci:copy-file-source-guard` (new) | S1 | rename `isApprovedCopySource` in the `vault:copy-file` handler |
+
+After each revert the seven target files matched their pre-bite byte counts
+exactly (no `BITE` residue; the two control gates `ci:creation-persists-filepath`
++ `ci:writer-path-honors-filepath` stayed green throughout). Full
+`npm run ci:verify` green end-to-end (exit 0): lint → svelte-check →
+test:unit:strict → build → 43 gates.
 
 ---
 

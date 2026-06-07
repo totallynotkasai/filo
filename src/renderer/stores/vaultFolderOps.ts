@@ -906,6 +906,12 @@ async function performDelete(ctx: VaultContext, itemPath: string): Promise<boole
           } catch {
             tagsDropFlushOk = false;
           }
+          // L4 (Audit-12) — vault swapped during the awaited tags-drop flush?
+          // Bail before the in-memory cache / documentStore cascade below (it
+          // mutates the ACTIVE boardCache/documentStore, NOT main-side gated);
+          // the disk delete already landed against the old vault, so report
+          // success. Mirrors the post-IPC/hydrate bails 30–60 lines up.
+          if (!isStillSameVault(deleteIdentity)) return true;
           // B4 — clean up Document Boards whose `contentId` points at a
           // .md under the deleted path, even when the Document Board's
           // own `.board.json` lives outside the deleted tree. The
@@ -947,6 +953,9 @@ async function performDelete(ctx: VaultContext, itemPath: string): Promise<boole
           // the post-delete `await refreshTree()`, leaving the UI showing
           // a phantom tab whose backing board is already gone.
           await Promise.allSettled(cleanupPromises);
+          // L4 (Audit-12) — re-check after the allSettled await, before the
+          // documentStore unload loop, for the same cross-vault reason.
+          if (!isStillSameVault(deleteIdentity)) return true;
           // Drop documentStore entries for every .md under the deleted
           // path. The cascade above removed tile placements, but the in-
           // memory DocumentState still holds a stale body — a future

@@ -11,6 +11,7 @@ import {
 import type { FileMetadata } from '../lib/vault/vaultIndex';
 import type { CacheContext } from './boardCacheTypes';
 import { vaultSwapResettable } from '../core/vaultLifecycle';
+import { isStillSameVault, type VaultIdentity } from '../lib/vault/vaultIdentity';
 
 /**
  * 6.2.H9 — per-md mtime check so the on-open batch reconcile can skip
@@ -118,14 +119,37 @@ export function makeFrontmatterSlice(ctx: CacheContext) {
      *       reconcile (the lastReconciledMtime gate).
      *
      * Returns the union of changed board ids so the caller can log.
+     *
+     * M6 (Audit-12) — `identity` is the caller's `captureVaultIdentity()` from
+     * BEFORE this batch ran. The captured `cache` reference belongs to the
+     * vault that was open when the batch started; the loop yields across
+     * microtasks, so a vault swap can interleave. Without re-checking, the
+     * terminal `setCache({ ...cache })` would overwrite the NEW vault's cache
+     * with the OLD vault's reconciled boards. We bail (no mutation) if the vault
+     * changed — after every yield AND immediately before the terminal setCache.
+     *
+     * M6 (Audit-13) — the SAME-vault analogue: holding the captured `cache` map
+     * across yields also reverts a concurrent same-vault mutation. A vault-open
+     * `updateEntry`/`touchBoard`/placement write that lands during a yield
+     * replaces the cache-map identity (and a board object); the cross-vault
+     * guard passes, but the old terminal `setCache({ ...cache })` flipped the
+     * STALE captured map back, dropping that write. So we re-read `ctx.getCache()`
+     * after each yield (reconciles after the yield run on the live map) AND for
+     * the terminal flip (no await sits between the re-read and the synchronous
+     * commit, so nothing can interleave there). The mtime-gate stamps are also
+     * deferred to the clean-finish commit — a swap/abort that returns early must
+     * not leave files marked "already reconciled" whose changes never landed.
      */
     async applyFrontmatterToBackedTilesBatch(
       metadataList: FileMetadata[],
+      identity?: VaultIdentity,
     ): Promise<string[]> {
-      const cache = ctx.getCache();
+      let cache = ctx.getCache();
       const changedBoardIds = new Set<string>();
+      const pendingStamps: Array<[string, number]> = [];
       for (let i = 0; i < metadataList.length; i++) {
         const md = metadataList[i];
+        if (!md) continue; // i < metadataList.length; narrow for the type-checker
         // (d) skip when we already reconciled this exact disk state.
         const lastMtime = lastReconciledMtime.get(md.path);
         if (lastMtime !== undefined && md.lastModified <= lastMtime) {
@@ -139,17 +163,35 @@ export function makeFrontmatterSlice(ctx: CacheContext) {
           { stampUpdatedAt: false },
         );
         for (const id of result.changedBoardIds) changedBoardIds.add(id);
-        lastReconciledMtime.set(md.path, md.lastModified);
+        // M6 (Audit-13) — stamp the gate only on a clean finish (see below).
+        pendingStamps.push([md.path, md.lastModified]);
         // (c) microtask yield every N iterations.
         if (i > 0 && i % RECONCILE_BATCH_YIELD_EVERY === 0) {
           await new Promise<void>((r) => queueMicrotask(() => r()));
+          // M6 — a vault swap may have landed on this yield. Bail before any
+          // further work / the terminal setCache so the outgoing vault's `cache`
+          // can't be flipped onto the new vault. No pending stamps applied.
+          if (identity && !isStillSameVault(identity)) return [];
+          // M6 (Audit-13) — re-read the LIVE map so reconciles after the yield
+          // run against it (and the terminal flip below can't revert a
+          // same-vault write that landed during the yield).
+          cache = ctx.getCache();
         }
       }
-      // (b) one setCache identity flip + one markDirty per changed board.
+      // M6 — final guard: covers a swap on the LAST chunk (after the loop's last
+      // yield, or a list too small to ever yield).
+      if (identity && !isStillSameVault(identity)) return [];
+      // (b) one setCache identity flip + one markDirty per changed board. Re-read
+      // the live cache for the flip (no await between here and the loop's last
+      // re-read, so this is the freshest map) so a same-vault mutation that
+      // interleaved on a yield survives the terminal identity change.
       if (changedBoardIds.size > 0) {
-        ctx.setCache({ ...cache });
+        ctx.setCache({ ...ctx.getCache() });
         for (const id of changedBoardIds) ctx.markDirty(id);
       }
+      // M6 (Audit-13) — commit the mtime-gate stamps now that the batch finished
+      // without aborting (no-change files included, so they aren't re-walked).
+      for (const [path, mtime] of pendingStamps) lastReconciledMtime.set(path, mtime);
       return Array.from(changedBoardIds);
     },
 

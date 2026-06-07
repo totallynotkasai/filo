@@ -35,4 +35,17 @@ export interface VaultContext {
   refreshTree(): Promise<void>;
   clearSelection(): void;
   clearActiveRootFolderIfMatches(deletedPath: string): void;
+  /**
+   * L15 (Audit-13) — exposes the orchestrator's serialised rename queue to
+   * slices. The queue runs work in arrival order and carries the
+   * enqueue-time vault-identity guard, so re-entrant external-change work
+   * (the partial-read retry timer) inherits both ordering and swap safety
+   * instead of racing a concurrent rename's path rebind.
+   *
+   * Optional so the many test-only `VaultContext` literals don't all have to
+   * stub it; the production `vaultCtx` always provides it, and the lone
+   * consumer (the partial-read retry re-entry) falls back to a direct call
+   * when it's absent.
+   */
+  enqueueRenameQueueWork?<T>(task: () => Promise<T>): Promise<T | undefined>;
 }

@@ -60,6 +60,7 @@ import { isRecentSelfWrite, isPathPending } from '../lib/boards/boardSaver';
 import { loadBoard } from '../lib/boards/boardLoader';
 import { loadTagsFile } from '../lib/vault/tagsStorage';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
+import { samePath } from '../lib/utils/path';
 
 // ── Board JSON reconciler ─────────────────────────────────────────────
 
@@ -110,7 +111,13 @@ async function reconcileBoardJsonChange(event: ExternalChangeEvent): Promise<voi
 function findBoardIdForPath(rel: string): string | null {
   const paths = boardStore.paths;
   for (const [boardId, boardPath] of Object.entries(paths)) {
-    if (boardPath === rel) return boardId;
+    // M4 (Audit-12) — case-INSENSITIVE, separator-agnostic compare. Windows /
+    // macOS aren't case-sensitive, so an externally-edited/renamed `.board.json`
+    // whose OS-reported casing diverges from the stored casing must still match.
+    // The raw `===` it replaces silently ignored such an event (no reload), and
+    // the board could later be treated as missing and evicted. Mirrors the
+    // document pipeline, which case-folds everywhere via `samePath`.
+    if (samePath(boardPath, rel)) return boardId;
   }
   return null;
 }
@@ -151,6 +158,15 @@ async function reloadBoardFromDisk(
     promptBoardChangedExternally(rel, boardId);
     return;
   }
+  // L14 (Audit-13) — rebind the stored path to the OS-reported casing. A
+  // case-only external rename/edit (`samePath` matched it in
+  // `findBoardIdForPath`, so the fold is equal but the raw casing may differ)
+  // would otherwise leave `boardPaths[boardId]` at the stale casing — and a
+  // later tree reconcile could then treat the board as "missing on disk" and
+  // evict it. `renameBoardPath` no-ops when the path is byte-identical and
+  // rebinds the single matching entry otherwise (L2 made it case-only aware).
+  const storedPath = boardStore.paths[boardId];
+  if (storedPath) boardCacheStore.renameBoardPath(storedPath, rel);
   // Use the boardCache replace path: write the freshly-loaded data
   // straight into the cache slot for this boardId. `replaceCache`
   // accepts a full snapshot, so build one with just this entry merged
@@ -323,12 +339,26 @@ const documentBatchedReconciler: BatchedReconciler = {
 
 const attachmentBatchedReconciler: BatchedReconciler = {
   kind: 'attachment',
-  handleBatch: async (events) => {
+  // L5 (Audit-12) — fire-and-forget so the handler's 500 ms attachment-delete
+  // grace deferral runs OUTSIDE the shared rename queue this batch dispatch is
+  // awaited inside (vault.svelte.ts `enqueueRenameQueueWork`). The handler has
+  // its own re-existence + vault-swap guards, so it needs no queue ordering;
+  // awaiting it here stalled every unrelated .md / .board.json reconcile in the
+  // batch — and the next queued rename/tree event — behind the grace window.
+  // The detached promise reports its own failures (the handler's per-probe
+  // guards plus this top-level catch).
+  handleBatch: (events) => {
     const paths = events
       .map((e) => e.filename)
       .filter((p) => !isRecentSelfWrite(p));
     if (paths.length === 0) return;
-    await vaultStore.handleExternalAttachmentChanges(paths);
+    void vaultStore.handleExternalAttachmentChanges(paths).catch((err) => {
+      reportError(
+        'externalChange.attachment',
+        err,
+        'Failed to reconcile external attachment changes',
+      );
+    });
   },
 };
 

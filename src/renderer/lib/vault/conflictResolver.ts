@@ -227,6 +227,17 @@ function utf8ByteLength(text: string): number {
  * truncation fall through to `reload-silently`, and clobbered a clean editor
  * with the partial read. A future mtime within the window is exactly as
  * suspicious as a past one — both mean "the rewrite is probably still in flight".
+ *
+ * DECISION (Audit-13 L19, deferred): L19 proposed treating a future mtime
+ * "beyond a small tolerance" as settled rather than in-flight, to avoid a ~5s
+ * retry delay on a genuine drastic truncation that happens to carry a future
+ * mtime. We deliberately do NOT do this — it directly tensions the A8-H1 fix
+ * above (pinned by `conflictResolver.test.ts`'s `Date.now() + 500` case): a
+ * mid-write truncation and a settled truncation are INDISTINGUISHABLE from a
+ * single stat on a clock-skewed volume, so any tolerance tight enough to help
+ * L19 would re-open A8-H1's clean-editor clobber. The retry-then-exhaustion
+ * prompt IS the correct disambiguator for that fundamental ambiguity; the brief
+ * delay is the price of never silently destroying a clean editor's view.
  */
 function isLikelyPartialRead(
   prev: FileMetadata,
@@ -258,8 +269,11 @@ function isBodyEquivalent(a: FileMetadata, b: FileMetadata): boolean {
   if (a.content !== b.content) return false;
   if (a.headings.length !== b.headings.length) return false;
   for (let i = 0; i < a.headings.length; i++) {
-    if (a.headings[i].text !== b.headings[i].text) return false;
-    if (a.headings[i].level !== b.headings[i].level) return false;
+    const ah = a.headings[i];
+    const bh = b.headings[i];
+    if (!ah || !bh) return false; // equal lengths + in-range; not-equivalent is the safe direction
+    if (ah.text !== bh.text) return false;
+    if (ah.level !== bh.level) return false;
   }
   return true;
 }
@@ -269,7 +283,10 @@ function frontmatterEqual(a: FileMetadata, b: FileMetadata): boolean {
   const bk = Object.keys(b.frontmatter).sort();
   if (ak.length !== bk.length) return false;
   for (let i = 0; i < ak.length; i++) {
-    if (ak[i] !== bk[i]) return false;
+    const akey = ak[i];
+    const bkey = bk[i];
+    if (akey === undefined || bkey === undefined) return false; // i < ak.length; both in range
+    if (akey !== bkey) return false;
     // L14 (Audit-6) — compare values structurally, not via `JSON.stringify`.
     // The stringify form was key-order-SENSITIVE for nested objects: a YAML map
     // `{author, date}` reloaded as `{date, author}` (same data, different key
@@ -277,7 +294,7 @@ function frontmatterEqual(a: FileMetadata, b: FileMetadata): boolean {
     // `sync-frontmatter` that reshuffled tile caches/tags for no real change.
     // `valuesEqual` recurses key-order-insensitively (and compares Dates by
     // instant), matching the FM engine's own equality contract.
-    if (!valuesEqual(a.frontmatter[ak[i]], b.frontmatter[bk[i]])) {
+    if (!valuesEqual(a.frontmatter[akey], b.frontmatter[bkey])) {
       return false;
     }
   }

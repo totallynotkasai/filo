@@ -42,7 +42,9 @@ const ALLOWLIST = {
   // split-view timer can't write one pane's view into the active board or
   // pollute its undo stack) + an inline `$effect` cleanup mirroring Kanban.
   // +9 LOC of comment + cleanup. New snapshot: 2201 LOC.
-  'src/renderer/components/boards/TaskListBoard.svelte': 2201,
+  // AUDIT13_REMEDIATION_PLAN_2026-06-06 Phase 9 L12 — noUncheckedIndexedAccess
+  // section-slice loop guard. +1 LOC. New snapshot: 2202 LOC.
+  'src/renderer/components/boards/TaskListBoard.svelte': 2202,
   // Phase 7.1 — tightened to current LOC (was 1506).
   // PHASE6_PLAN_2026-06-01 Phase 6.3.P5 — added the `// allow-direct-write`
   // escape note above the `.filo/kanban-toolbar-pos.json` write so the
@@ -52,7 +54,10 @@ const ALLOWLIST = {
   // that clears the live-filter `propDebounce` so it can't fire
   // `onFilterPropChange` after the toolbar unmounts on vault swap. +8 LOC.
   // New snapshot: 1500 LOC.
-  'src/renderer/components/boards/KanbanSideToolbar.svelte': 1500,
+  // AUDIT13_REMEDIATION_PLAN_2026-06-06 Phase 9 L12 — noUncheckedIndexedAccess
+  // narrowing guard in the reorder swap (capture endpoints + undefined bail).
+  // +4 LOC. New snapshot: 1504 LOC.
+  'src/renderer/components/boards/KanbanSideToolbar.svelte': 1504,
   // TaskItem row: title strip + notes panel + style cascade (headerColor /
   // bodyColor split across `.task-item` and `.task-notes-panel-inner`),
   // multi-select chrome, hover-reveal buttons, sticky note panel toggle.
@@ -80,7 +85,11 @@ const ALLOWLIST = {
   // close / vault swap inside the 300 ms window can't fire
   // `boardStore.updateSettings` against the swapped-in board. +9 LOC. New
   // snapshot: 1419 LOC.
-  'src/renderer/components/boards/KanbanBoard.svelte': 1419,
+  // AUDIT13_REMEDIATION_PLAN_2026-06-06 Phase 9 L12 — noUncheckedIndexedAccess
+  // narrowing guards in the board keydown / arrow-nav helpers (column-swap
+  // endpoints, focused-card reads, neighbour lookups). +10 LOC of guards +
+  // one-line reasons. New snapshot: 1429 LOC.
+  'src/renderer/components/boards/KanbanBoard.svelte': 1429,
   // KanbanColumn: column header (3-dot menu + WIP popover), card dndzone
   // shadow-placeholder rendering, outer `.kanban-column` drag handlers (so
   // OS file drops over the header don't paint the no-entry cursor), per-
@@ -192,7 +201,39 @@ const ALLOWLIST = {
   // `captured` identity into `repairRenameCascade` (so a swap before the click /
   // mid-repair bails instead of contaminating the new vault's cache). +4 LOC of
   // comments + threaded arg. New snapshot: 1621 LOC.
-  'src/renderer/stores/vault.svelte.ts': 1621,
+  // AUDIT12_REMEDIATION_PLAN_2026-06-06 Phase 2 M6 — `runPostCommitTasks` threads
+  // the captured `identity` into `applyFrontmatterToBackedTilesBatch` (so the
+  // on-open FM→cache reconcile batch bails before its terminal setCache if a swap
+  // lands mid-reconcile, instead of flipping the outgoing vault's cache onto the
+  // new one). +5 LOC of comment + threaded arg. New snapshot: 1626 LOC.
+  // AUDIT13_REMEDIATION_PLAN_2026-06-06 Phase 3 H3 — `revertToOutgoingVault`
+  // helper + the openVault capture/catch: a failed candidate load now reopens the
+  // outgoing vault instead of stranding the user on an empty half-open vault.
+  // New snapshot: 1704 LOC.
+  // AUDIT13_REMEDIATION_PLAN_2026-06-06 Phase 4 L15 — `vaultCtx` exposes
+  // `enqueueRenameQueueWork` to slices so the partial-read retry re-enters through
+  // the serialised rename queue (ordering + vault-identity guard). +2 LOC. New
+  // snapshot: 1706 LOC.
+  // AUDIT13_REMEDIATION_PLAN_2026-06-06 Phase 7 M9 — the `vault:tree-updated`
+  // listener now coalesces bursts through a trailing debounce
+  // (`createTrailingDebounce`) so a sync-storm / multi-file git op collapses to
+  // one tree reconcile instead of a full-vault walk per event. +3 LOC (import +
+  // debounce const + cancel-on-teardown) net of comment trimming. New snapshot:
+  // 1709 LOC.
+  'src/renderer/stores/vault.svelte.ts': 1709,
+  // In-app rename/delete/move orchestrator: drained disk-shape IPC + the
+  // in-memory cascade (board cache, documentStore, tags, tabs, viewport,
+  // undo) with per-await vault-identity bails so a swap mid-op can't apply the
+  // outgoing vault's cascade to the new vault.
+  // AUDIT12_REMEDIATION_PLAN_2026-06-06 Phase 3 L4 — `performDelete` gained two
+  // more `isStillSameVault(deleteIdentity)` bails: one after the awaited
+  // `fileTagsStore.flushPendingSave()` (before the B4 contentId-clear loop) and
+  // one after the `Promise.allSettled(cleanupPromises)` (before the doc-unload
+  // loop), matching the existing post-IPC/hydrate/flushAllDirty bails. +9 LOC of
+  // guards + comments tipped it just over the default 1000-LOC limit. New
+  // snapshot: 1008 LOC. Splitting the cascade out of the entry point is the
+  // eventual fix.
+  'src/renderer/stores/vaultFolderOps.ts': 1008,
   // External-changes orchestrator: classifies fs-watcher events into
   // editor-dirty toast / silent reload / sync-frontmatter / deleted-file
   // prompt / properties-popup-dirty prompt. 500 ms attachment-delete grace
@@ -328,7 +369,26 @@ const ALLOWLIST = {
   // F4 promptMarkdownPendingWriteConflict drops it via cancelFrontmatterWrite), so
   // a discarded Phase-4 field delta can't re-clobber disk via the reload's flush.
   // +13 LOC of import + four call sites + comments. New snapshot: 1780 LOC.
-  'src/renderer/stores/vaultExternalChanges.ts': 1780,
+  // AUDIT12_REMEDIATION_PLAN_2026-06-06 Phase 3 L3 — the bulk "Reload all" handler
+  // is now async and re-reads CURRENT disk per file (`vaultIndexStore.applyChanges`
+  // + `getMetadata(p.rel) ?? p.next`) before `applyReloadFromDisk`, so a second
+  // external write landing between detection and the click isn't lost (mirrors the
+  // single-file promptModifiedFile Reload). +10 LOC of re-read + comment. New
+  // snapshot: 1790 LOC.
+  // AUDIT13_REMEDIATION_PLAN_2026-06-06 Phase 3 L16/L17 — generation-aware
+  // `isStillSameVault` guards: L16 in `handleExternalAttachmentChanges` (replaces
+  // a path-string compare) and L17 across the four async Reload toast handlers
+  // that re-read disk via `applyChanges` then mutate stores. +32 LOC of
+  // capture/bail + comments. New snapshot: 1822 LOC.
+  // AUDIT13_REMEDIATION_PLAN_2026-06-06 Phase 4 — M4 (self-write suppression now
+  // consults the drift baseline via the new `selfWriteDivergedFromBaseline`
+  // helper + the per-path stat loop, so a real external edit in the window isn't
+  // dropped), L5 (the no-editor body-only `ignore` branch re-stamps `noteBaseline`),
+  // L1 (the five disk-reload `applyReloadFromDisk` sites + the reload-silently
+  // `handleExternalChange` now thread `rawFrontmatter` so an external key keeps its
+  // comment), L15 (the partial-read retry re-enters via `ctx.enqueueRenameQueueWork`).
+  // +64 LOC. New snapshot: 1886 LOC.
+  'src/renderer/stores/vaultExternalChanges.ts': 1886,
   // tileCommands.ts dropped off the allowlist (AUDIT_REMEDIATION_PLAN_2026-05-29
   // Phase 5 / C-3): the tag-driven commands (AddTileTag / RemoveTileTag /
   // AddPathTag / RemovePathTag / ToggleTagFade) moved to the new sibling
@@ -452,8 +512,17 @@ const ALLOWLIST = {
   // edit over unparseable YAML instead of a silent success); N2/N3 + WC-2 add
   // explanatory comments (delta-branch BOM from the in-chain read; markClean
   // not gated on FM-pending). +25 LOC. New snapshot: 1311 LOC.
+  // AUDIT13_REMEDIATION_PLAN_2026-06-06 Phase 7 L13 — DECISION comment on the
+  // `fileState` registry: per-session growth is accepted (tiny entries cleared on
+  // vault swap) rather than refcount-evicting open editors, which would risk
+  // dropping live hydrate state in this gateway. Comment-only, no behavior change.
+  // +7 LOC. New snapshot: 1318 LOC.
+  // AUDIT13_REMEDIATION_PLAN_2026-06-06 Phase 9 L12 — noUncheckedIndexedAccess
+  // guards in the two Promise.allSettled drain loops (capture the settled
+  // result + the snapshot/target tuple, narrow before reading `.reason`). +5
+  // LOC. New snapshot: 1323 LOC.
   // The gateway remains a candidate for a structural split in a later pass.
-  'src/renderer/lib/vault/markdownFileWriter.ts': 1311,
+  'src/renderer/lib/vault/markdownFileWriter.ts': 1323,
   // AUDIT8_REMEDIATION_PLAN_2026-06-04 Phase 3 M5 — `UpdateOrphanFrontmatterCommand.
   // execute()` recomputes its inverse from a FRESH on-disk read on the first
   // execute (a `hasExecuted` guard) — mirroring the docId path's
@@ -484,7 +553,17 @@ const ALLOWLIST = {
   // (the import + the delta arg + the mergeFrontmatter-is-display-only rationale),
   // so the field write applies a delta to fresh disk instead of serialising the
   // cached object. +12 LOC. New snapshot: 1064 LOC. The structural split still pends.
-  'src/renderer/commands/kanbanCommands.ts': 1064,
+  // AUDIT13_REMEDIATION_PLAN_2026-06-06 Phase 6 M5 + L7 — `MoveCardsCommand` gained a
+  // forward-leg `toBeforeTileId` anchor (field + pre-move computation + execute arg)
+  // so a cross-edit redo lands the block next to its original sibling instead of a
+  // stale absolute index; L7 replaced the all-conflict-branch `markDirty` with a
+  // no-op explainer (a no-write must not dirty the board). Net +14 LOC. New
+  // snapshot: 1078 LOC. The structural split still pends.
+  // AUDIT13_REMEDIATION_PLAN_2026-06-06 Phase 9 L12 — noUncheckedIndexedAccess
+  // guards in DeleteCardCommand's placement snapshot, the next-survivor scan,
+  // and DeleteColumnCommand's removed-column capture. +3 LOC. New snapshot:
+  // 1081 LOC. The structural split still pends.
+  'src/renderer/commands/kanbanCommands.ts': 1081,
 };
 
 function toPosix(p) {

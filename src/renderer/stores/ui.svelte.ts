@@ -366,6 +366,7 @@ export const uiStore = {
         disposable[0] ??
         toasts.find((t) => t.type !== 'error') ??
         toasts[0];
+      if (!victim) break; // loop guard (length >= TOAST_CAP) ensures toasts[0] exists
       // Fire onDismiss when the victim is promise-backed (no disposable toast
       // was available to drop instead); disposable victims have none, so the
       // dismissal stays silent for them — preserving the existing behaviour for

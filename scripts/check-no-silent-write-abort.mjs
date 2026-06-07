@@ -55,11 +55,21 @@
  *     src/renderer/lib/{boards,kanban,tasklist}/**   (basename =~ /riter|scheduler/i)
  * and on a comment-stripped copy of each:
  *  - FORBIDS `!docState) return` / `!docState) { return` (the B1 shape).
- *  - FORBIDS a bare `!fm) return` UNLESS that file also wires the loud-failure
- *    surface (`markPathFailed`), proving the no-FM path attributes the loss
- *    instead of resolving ok. (`frontmatterWriteScheduler.ts` keeps its one
- *    `!fm) return` precisely because it ALSO markPathFailed+throws on the real
- *    no-editor disk-read-failure branch.)
+ *  - FORBIDS a bare `!fm) return` UNLESS the SAME ENCLOSING FUNCTION also wires
+ *    the loud-failure surface (`markPathFailed`), proving the no-FM path
+ *    attributes the loss instead of resolving ok. (`frontmatterWriteScheduler.ts`
+ *    keeps its one `!fm) return` precisely because `writeFrontmatter` ALSO
+ *    markPathFailed+throws on the real no-editor disk-read-failure branch.)
+ *
+ *    ── Audit-13 M13 — same-function scoping (was file-level) ──
+ *    The `markPathFailed` co-presence used to be tested across the WHOLE file, so
+ *    an UNRELATED `markPathFailed('other')` in any sibling function re-opened the
+ *    silent drop (bite-tested by the auditor). It is now scoped to the top-level
+ *    function/construct that CONTAINS the `!fm) return`: the match's enclosing
+ *    depth-0→1 brace block (found on a string/comment-blanked copy so braces in
+ *    strings/comments don't skew the count) must itself contain a `markPathFailed`
+ *    call. A `markPathFailed` in a different top-level function no longer satisfies
+ *    it.
  * Plus, on `frontmatterWriteScheduler.ts` specifically — the one file that
  * resolves a write body from disk:
  *  - REQUIRES both `markPathFailed` and `readMarkdownForHydrate` survive, proving
@@ -89,6 +99,15 @@ const SCHEDULER_FILE = 'src/renderer/lib/boards/frontmatterWriteScheduler.ts';
 // on-disk YAML block. Asserted positively (the guard's distinctive tokens must
 // survive), mirroring the SCHEDULER_FILE REQUIRED block below.
 const GATEWAY_FILE = 'src/renderer/lib/vault/markdownFileWriter.ts';
+// Audit-12 M1 — the DocumentEditor twin of the silent-loss class. A failed
+// on-mount hydrate read used to leave the editor blank + writable: a keystroke
+// then truncated the real (unread) file on the next debounced write. The fix
+// flags the failed read (`hydrateReadFailed = true`) and the write-arg builder
+// REFUSES to write while it's set with no loaded body
+// (`hydrateReadFailed && !lastLoadedBody`). Both distinctive tokens must
+// survive so a refactor can't silently flip the editor back to "blank but
+// writable on a failed read".
+const DOC_EDITOR_FILE = 'src/renderer/components/boards/DocumentEditor.svelte';
 
 // Writers (`*riter*` — "writer" contains "riter") + schedulers (`*scheduler*`):
 // the files that own a frontmatter write path. Case-insensitive substring on the
@@ -121,6 +140,95 @@ function stripComments(src) {
     .replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1');
 }
 
+/**
+ * Offset-preserving blank of string/template/comment bodies (each char replaced
+ * by a space, newlines kept) so brace-counting and match-position arithmetic see
+ * only real code — braces inside a string/comment can't skew the depth count, and
+ * a `!fm) return` mentioned in a comment can't trip the scan. Mirrors the proven
+ * blanker in check-board-path-casefold.mjs.
+ */
+function blankStringsAndComments(src) {
+  let out = '';
+  let state = 'code'; // code | line | block | sq | dq | tpl
+  for (let i = 0; i < src.length; ) {
+    const c = src[i];
+    const c2 = src[i + 1];
+    if (state === 'code') {
+      if (c === '/' && c2 === '/') { state = 'line'; out += '  '; i += 2; continue; }
+      if (c === '/' && c2 === '*') { state = 'block'; out += '  '; i += 2; continue; }
+      if (c === "'") { state = 'sq'; out += ' '; i += 1; continue; }
+      if (c === '"') { state = 'dq'; out += ' '; i += 1; continue; }
+      if (c === '`') { state = 'tpl'; out += ' '; i += 1; continue; }
+      out += c; i += 1; continue;
+    }
+    if (state === 'line') {
+      if (c === '\n') { state = 'code'; out += '\n'; i += 1; continue; }
+      out += ' '; i += 1; continue;
+    }
+    if (state === 'block') {
+      if (c === '*' && c2 === '/') { state = 'code'; out += '  '; i += 2; continue; }
+      out += c === '\n' ? '\n' : ' '; i += 1; continue;
+    }
+    if (state === 'sq' || state === 'dq') {
+      const q = state === 'sq' ? "'" : '"';
+      if (c === '\\') { out += '  '; i += 2; continue; }
+      if (c === q) { state = 'code'; out += ' '; i += 1; continue; }
+      out += c === '\n' ? '\n' : ' '; i += 1; continue;
+    }
+    // template literal
+    if (c === '\\') { out += '  '; i += 2; continue; }
+    if (c === '`') { state = 'code'; out += ' '; i += 1; continue; }
+    out += c === '\n' ? '\n' : ' '; i += 1; continue;
+  }
+  return out;
+}
+
+/**
+ * Returns `[start, end)` of the top-level (depth-0→1) brace block that contains
+ * `idx`, or `null` if the position is not inside one. In a module the top-level
+ * functions ARE the depth-0→1 blocks, so this is the enclosing function/construct
+ * of a statement — the scope the `markPathFailed` co-presence must live in.
+ */
+function topLevelBlockContaining(code, idx) {
+  let depth = 0;
+  let blockStart = -1;
+  for (let i = 0; i < code.length; i++) {
+    const c = code[i];
+    if (c === '{') {
+      if (depth === 0) blockStart = i;
+      depth++;
+    } else if (c === '}') {
+      if (depth > 0) {
+        depth--;
+        if (depth === 0 && blockStart !== -1) {
+          if (idx >= blockStart && idx < i) return [blockStart, i + 1];
+          blockStart = -1;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * True when the blanked source contains a `!fm) return` whose enclosing top-level
+ * function does NOT also call `markPathFailed` (the Audit-13 M13 same-function
+ * scoping). A `!fm) return` outside any function (no enclosing block) falls back
+ * to a whole-file `markPathFailed` check — a bare `return` at module scope is a
+ * syntax error, so this fallback is never reached by real code; it just avoids a
+ * spurious failure on a malformed file.
+ */
+function hasUnscopedSilentFm(blanked) {
+  const re = new RegExp(SILENT_FM.source, 'g');
+  let m;
+  while ((m = re.exec(blanked))) {
+    const block = topLevelBlockContaining(blanked, m.index);
+    const scope = block ? blanked.slice(block[0], block[1]) : blanked;
+    if (!MARK_PATH_FAILED.test(scope)) return true;
+  }
+  return false;
+}
+
 // FORBIDDEN — the bare silent-success aborts.
 const SILENT_DOCSTATE = /!\s*docState\s*\)\s*\{?\s*return\b/;
 const SILENT_FM = /!\s*\bfm\b\s*\)\s*\{?\s*return\b/;
@@ -146,22 +254,27 @@ for (const abs of files) {
   scanned++;
   // The escape hatch is matched against the RAW source (before comment strip).
   const hasEscape = ESCAPE.test(raw);
-  const code = stripComments(raw);
-  const hasMarkPathFailed = MARK_PATH_FAILED.test(code);
+  // Brace-counting + match-position scoping run on a string/comment-blanked copy
+  // (offset-preserving) so a comment mention of either shape can't trip the scan
+  // and a brace inside a string can't skew the enclosing-function depth count.
+  const blanked = blankStringsAndComments(raw);
 
-  if (!hasEscape && SILENT_DOCSTATE.test(code)) {
+  if (!hasEscape && SILENT_DOCSTATE.test(blanked)) {
     failures.push(
       `${rel} — found a bare \`if (!docState) return\` (the B1 silent-success-on-abort shape). ` +
         'A docId with no live docState must FALL THROUGH to a fresh disk read (or ' +
         '`markPathFailed` + `throw`), never resolve performWrite as a silent success.',
     );
   }
-  if (!hasEscape && SILENT_FM.test(code) && !hasMarkPathFailed) {
+  // Audit-13 M13 — the `!fm) return` is allowed ONLY when the SAME enclosing
+  // function also calls `markPathFailed` (was: anywhere in the file, which an
+  // unrelated sibling-function `markPathFailed` re-opened).
+  if (!hasEscape && hasUnscopedSilentFm(blanked)) {
     failures.push(
-      `${rel} — found a bare \`if (!fm) return\` with no \`markPathFailed\` in the file ` +
+      `${rel} — found a bare \`if (!fm) return\` whose enclosing function has no \`markPathFailed\` ` +
         '(the A9-L3 silent-drop shape). A write armed for a path with no FM source must ' +
-        'attribute the loss (`markPathFailed`) or route through a direct, loud-failing ' +
-        'write (e.g. UpdateOrphanFrontmatterCommand) — never resolve the write as a silent success.',
+        'attribute the loss (`markPathFailed`) in the SAME function or route through a direct, ' +
+        'loud-failing write (e.g. UpdateOrphanFrontmatterCommand) — never resolve the write as a silent success.',
     );
   }
 }
@@ -213,6 +326,33 @@ for (const { token, why } of GATEWAY_REQUIRED) {
   }
 }
 
+// REQUIRED — Audit-12 M1: the DocumentEditor's failed-read branch flags the
+// failure and the write-arg builder consults it. Token check on the
+// comment-stripped source (a doc-comment describing the old blank-writable
+// behaviour can't satisfy it).
+let docEditorRaw = '';
+try {
+  docEditorRaw = readFileSync(join(ROOT, DOC_EDITOR_FILE), 'utf8');
+} catch (err) {
+  failures.push(`${DOC_EDITOR_FILE} — cannot read (REQUIRED file): ${err.message}`);
+}
+const docEditorCode = stripComments(docEditorRaw);
+const DOC_EDITOR_REQUIRED = [
+  {
+    token: /hydrateReadFailed\s*=\s*true/,
+    why: 'the failed hydrate-read branch flags the failure (hydrateReadFailed = true) instead of mounting a blank, writable editor',
+  },
+  {
+    token: /hydrateReadFailed\s*&&\s*!\s*lastLoadedBody/,
+    why: 'buildWriteArgs REFUSES to write while the read failed and no real body is loaded (hydrateReadFailed && !lastLoadedBody), so a keystroke into the blank editor cannot truncate the unread file',
+  },
+];
+for (const { token, why } of DOC_EDITOR_REQUIRED) {
+  if (!token.test(docEditorCode)) {
+    failures.push(`${DOC_EDITOR_FILE} — missing /${token.source}/ — ${why}`);
+  }
+}
+
 if (failures.length > 0) {
   console.error('[check-no-silent-write-abort] FAILED — silent-write-abort invariant regressed:');
   for (const f of failures) console.error(`  ${f}`);
@@ -230,13 +370,18 @@ if (failures.length > 0) {
       'For a GATEWAY_FILE miss (markdownFileWriter.ts): the cache-FM branch must\n' +
       're-read disk when the FM cache is empty (Audit-10 H2) so a body-only save\n' +
       "can't assemble against `{}` and strip the on-disk YAML block. See\n" +
-      'AUDIT10_REMEDIATION_PLAN_2026-06-04.md H2 + src/tests/unit/audit10Phase2.test.ts.',
+      'AUDIT10_REMEDIATION_PLAN_2026-06-04.md H2 + src/tests/unit/audit10Phase2.test.ts.\n\n' +
+      'For a DOC_EDITOR_FILE miss (DocumentEditor.svelte): a failed on-mount hydrate\n' +
+      'read must flag `hydrateReadFailed = true` and buildWriteArgs must bail on\n' +
+      '`hydrateReadFailed && !lastLoadedBody` so a keystroke into the blank editor\n' +
+      "can't truncate the file Filo couldn't read (Audit-12 M1). See\n" +
+      'AUDIT12_REMEDIATION_PLAN_2026-06-06.md M1 + src/tests/unit/documentEditorHydrateFailure.test.ts.',
   );
   process.exit(1);
 }
 
 console.log(
   `[check-no-silent-write-abort] OK — ${scanned} writer/scheduler file(s) scanned; no silent-success abort. ` +
-    'Gateway H2 disk-re-read guard present.',
+    'Gateway H2 disk-re-read + DocumentEditor M1 failed-read guards present.',
 );
 process.exit(0);

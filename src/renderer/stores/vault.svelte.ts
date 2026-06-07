@@ -72,6 +72,7 @@ import { flushAllMarkdownWriters } from '../lib/vault/markdownFileWriter';
 import { flushAllPendingFrontmatterWrites } from '../lib/boards/frontmatterWriteScheduler';
 import { reportError } from '../lib/utils/errorBus';
 import { invokeOk } from '../lib/utils/invokeOk';
+import { createTrailingDebounce } from '../lib/utils/trailingDebounce';
 import { fileTagsStore } from './fileTags.svelte';
 import { emptyTagsFile } from '../lib/vault/tagsStorage';
 import { fireVaultSwap, onVaultSwap } from '../core/vaultLifecycle';
@@ -295,7 +296,7 @@ function markMetaDirty(): void {
 
 const vaultCtx: VaultContext = {
   getVaultPath: () => vaultPath,
-  setVaultPath: (next) => { vaultPath = next; },
+  setVaultPath: (next) => { vaultPath = next; beginVaultGeneration(next); }, // L4: keep the generation invariant in lock-step (no bare path set)
   getFileTree: () => fileTree,
   setFileTree: (next) => { fileTree = next; },
   getSearchQuery: () => searchQuery,
@@ -326,6 +327,8 @@ const vaultCtx: VaultContext = {
   clearSelection: () => vaultStore.clearSelection(),
   clearActiveRootFolderIfMatches: (deletedPath) =>
     vaultStore.clearActiveRootFolderIfMatches(deletedPath),
+  // L15 (Audit-13) — delegate to the orchestrator's rename queue.
+  enqueueRenameQueueWork: (task) => vaultStore.enqueueRenameQueueWork(task),
 };
 
 const treeSlice = makeTreeSlice(vaultCtx);
@@ -509,8 +512,13 @@ function runPostCommitTasks(
     // reconcile-driven patches (it's not a user edit), microtask yields
     // every 50 mds, and a mtime gate that skips mds we already
     // reconciled against this exact disk state.
+    // M6 (Audit-12) — thread the captured identity INTO the batch so it bails
+    // before its own terminal setCache if a swap lands mid-reconcile. The
+    // line-523 guard below is one statement too late: the batch's setCache fires
+    // INSIDE the await above, before control returns here.
     await boardCacheStore.applyFrontmatterToBackedTilesBatch(
       vaultIndexStore.allMetadata(),
+      identity,
     );
     // Audit-4 DI-03 / A8-H2(b) — vault-identity guard. The await above yields,
     // so a sub-300 ms A→B swap can leave the module `fileTree` pointing at B
@@ -567,6 +575,74 @@ function runPostCommitTasks(
 
   // ── 3. Recovery sentinel sequencer ───────────────────────────────
   void runRecoverySequencer(newVaultPath);
+}
+
+/**
+ * H3 (Audit-13) — revert to the outgoing vault after a failed candidate load.
+ *
+ * `openVault` MUST tear the outgoing vault down BEFORE the fallible candidate
+ * load: `loadVaultCandidate`'s first IPC is `vault:init-config`, the single
+ * registry-arming authority, and main refuses to re-anchor a new vault while a
+ * different one is still active — so `vault:close` has to precede the load
+ * (pinned by `vaultOpenClosesPriorVault.test.ts`), and `pre-swap` likewise runs
+ * first so its handlers can flush the outgoing vault's sentinels (e.g. the
+ * `.filo/.dirty` clear) while that vault is still the active registry. That
+ * ordering means a candidate load that throws (corrupt theme `base`, unreadable
+ * `tags.json`, a flaky share, the vault deleted between picker and open) leaves
+ * the outgoing vault's stores reset and the main registry released.
+ *
+ * Rather than strand the user on an empty-looking "still vault A" (stale
+ * `currentProject`, every store empty, and a follow-up save able to clobber A's
+ * `.filo/` layout if `vault:close` itself had thrown), reopen the outgoing vault
+ * from disk via the same transaction. `vault:close` first drops any registry the
+ * half-opened new vault left armed (init-config may have succeeded before a
+ * later read threw) so init-config for the outgoing vault can re-anchor it.
+ * Save-flushed edits are read back; "Don't Save" edits stay discarded (matching
+ * the user's choice); a preserved `.filo/.dirty` resurfaces the Recovery modal.
+ * If the outgoing vault is ALSO unreadable now, fall to a clean no-vault home
+ * state so no stale `currentProject` survives.
+ */
+async function revertToOutgoingVault(
+  outgoingPath: string,
+  store: { wireTabChangeListener: () => void; handleExternalMarkdownChanges?: unknown },
+): Promise<void> {
+  try {
+    // Release whatever registry the failed new-vault load left armed (it may
+    // have init-config'd the new vault before a later read threw). Best-effort:
+    // loadVaultCandidate below re-anchors the outgoing vault either way
+    // (init-config is idempotent for the same path).
+    try {
+      await window.filo.invoke('vault:close');
+    } catch {
+      // Ignore — re-anchor proceeds regardless.
+    }
+    renameQueue = Promise.resolve();
+    const restored = await loadVaultCandidate(outgoingPath);
+    commitVaultCandidate(restored, store);
+    runPostCommitTasks(restored, store);
+  } catch (revertErr) {
+    reportError(
+      'vault.revert',
+      revertErr,
+      'Could not reopen the previous vault after a failed swap — returning to the home screen.',
+    );
+    // Release the registry too: `loadVaultCandidate` may have re-anchored the
+    // outgoing vault (init-config) before its later read threw, which would
+    // otherwise block opening ANY vault next (main refuses to re-anchor while one
+    // is active). Best-effort.
+    try {
+      await window.filo.invoke('vault:close');
+    } catch {
+      // Ignore — nothing more we can do; the home screen is the safe fallback.
+    }
+    // Mirror closeVault's teardown so no stale currentProject / vaultPath points
+    // at a vault whose stores are empty and whose .filo/ a follow-up save could
+    // overwrite.
+    currentProject = null;
+    vaultPath = '';
+    beginVaultGeneration('');
+    fileTree = [];
+  }
 }
 
 /**
@@ -645,7 +721,7 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
           type: 'error',
           duration: 0,
           onDismiss: () => {
-            void markClean(newVaultPath);
+            if (isStillSameVault(captured)) void markClean(newVaultPath);
           },
         });
       }
@@ -749,7 +825,7 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
     if (res.entries && res.entries.length > 0) {
       const entries = res.entries;
       const summary = entries.length === 1
-        ? `"${entries[0].oldPath}" → "${entries[0].newPath}"`
+        ? `"${entries[0]?.oldPath ?? ''}" → "${entries[0]?.newPath ?? ''}"`
         : `${entries.length} renames`;
       const failedSummary = entries.flatMap((e) => e.failedBoardIds ?? []);
       const body = failedSummary.length > 0
@@ -819,7 +895,7 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
         snapshots.length > shown.length
           ? `\n…and ${snapshots.length - shown.length} more.`
           : '';
-      const firstAbs = `${newVaultPath.replace(/[\\/]$/, '')}/${snapshots[0].relPath}`;
+      const firstAbs = `${newVaultPath.replace(/[\\/]$/, '')}/${snapshots[0]?.relPath ?? ''}`;
       uiStore.pushToast({
         text:
           `Filo preserved ${snapshots.length} file snapshot${snapshots.length === 1 ? '' : 's'} in ` +
@@ -963,6 +1039,10 @@ export const vaultStore = {
    * `base`).
    */
   async openVault(newVaultPath: string): Promise<boolean> {
+    // H3 (Audit-13) — capture the outgoing vault path up front so a failed
+    // candidate load (below) can revert to it instead of stranding the user on
+    // an empty-looking, half-torn-down vault. See `revertToOutgoingVault`.
+    const outgoingVaultPath: string | null = currentProject ? vaultPath || null : null;
     // Save any existing work.
     //
     // Phase 31 A2.1 — three-way Save / Don't Save / Cancel dialog. The
@@ -1057,6 +1137,12 @@ export const vaultStore = {
       candidate = await loadVaultCandidate(newVaultPath);
     } catch (err) {
       reportError('vault', err, 'Failed to open vault');
+      // H3 (Audit-13) — DECISION: the outgoing vault was already torn down above
+      // (close-before-load is mandatory — see `revertToOutgoingVault`). Revert to
+      // it rather than strand the user on a stale, empty half-open vault.
+      if (outgoingVaultPath) {
+        await revertToOutgoingVault(outgoingVaultPath, this);
+      }
       return false;
     }
 
@@ -1413,19 +1499,14 @@ export const vaultStore = {
   },
 
   listenForChanges(): () => void {
-    const unsubTree = window.filo.on('vault:tree-updated', () => {
-      // Funnel through the shared rename queue so concurrent
-      // `vault:tree-updated` + `vault:file-renamed` events execute in
-      // arrival order. Without this, a `git mv` burst can land the
-      // reconcile loop before `handleExternalRename` has rebound the
-      // board path — the reconciler then sees the renamed board's
-      // path as "missing" and calls `cleanupMissingBoard`, evicting
-      // it from the project.
-      // 6.4.M6 — route through `enqueueRenameQueueWork` with an error
-      // context so the queue-side catch fires reportError. The listener
-      // can't await the returned promise; the .catch on the result
-      // silences the "uncaught rejection" warning since enqueue already
-      // logged via reportError.
+    // M9 — coalesce `vault:tree-updated` bursts (sync storm / multi-file
+    // `git mv`) into ONE reconcile via a short trailing debounce instead of a
+    // full-vault walk per event. `vault:file-renamed` still enqueues
+    // immediately, so the debounced reconcile lands AFTER any rename rebind —
+    // preserving the Phase 2.4 ordering invariant by construction.
+    const reconcileTreeDebounced = createTrailingDebounce(() => {
+      // Shared rename queue = arrival-order vs `vault:file-renamed`; 6.4.M6
+      // routes the queue-side catch through reportError (listener can't await).
       void this.enqueueRenameQueueWork(
         () => this.refreshTreeAndCleanup(),
         {
@@ -1433,7 +1514,8 @@ export const vaultStore = {
           message: 'Failed to reconcile vault tree after external change',
         },
       ).catch(() => undefined);
-    });
+    }, TREE_UPDATED_DEBOUNCE_MS);
+    const unsubTree = window.filo.on('vault:tree-updated', () => reconcileTreeDebounced.trigger());
 
     const unsubFiles = window.filo.on('vault:files-changed', (...args: unknown[]) => {
       const changes = args[0] as Array<{ type: string; filename: string; eventType: string }>;
@@ -1592,6 +1674,7 @@ export const vaultStore = {
     window.addEventListener('focus', onFocus);
 
     return () => {
+      reconcileTreeDebounced.cancel();
       unsubTree();
       unsubFiles();
       unsubRenamed();
@@ -1610,6 +1693,11 @@ export const vaultStore = {
 // gate's import-time registration check).
 const RECONCILE_FOCUS_THROTTLE_MS = 5000;
 let lastReconcileTriggerAt = 0;
+
+// M9 — trailing-debounce window for coalescing `vault:tree-updated` bursts into
+// one reconcile. In-app rename/delete/create call `refreshTree()` directly, so
+// this only throttles the external-watcher path.
+const TREE_UPDATED_DEBOUNCE_MS = 250;
 
 // Sprint C / C25 — reset the focus-throttle clock on every vault
 // swap. Without this, the previous vault's "I just reconciled"

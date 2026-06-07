@@ -100,6 +100,12 @@
   // the invariant on the write side via markHydrated.
   let hydrated = false;
   let callerId = '';
+  // M1 (Audit-12) — set when the on-mount disk hydrate read FAILS (Windows
+  // file lock / OneDrive / antivirus). While true the editor is held read-only
+  // and `buildWriteArgs` refuses to write, so a keystroke into the
+  // unexpectedly-blank editor can't truncate the real (unread) file. A banner
+  // offers a retry; a later successful read clears the flag and resumes editing.
+  let hydrateReadFailed = $state(false);
 
   // ── Vault-file drop ──
   //
@@ -212,6 +218,11 @@
    */
   function buildWriteArgs(): WriteArgs | null {
     if (!editor || !docState || backingFileMissing || !hydrated) return null;
+    // M1 (Audit-12) — the on-mount disk read failed and we have no real body
+    // loaded, so the editor is blank for reasons unrelated to the file's
+    // content. Never write that emptiness over the file we couldn't read; a
+    // successful retry (clears `hydrateReadFailed`) resumes writes.
+    if (hydrateReadFailed && !lastLoadedBody) return null;
     if (documentStore.isReadOnly(docState.docId)) return null;
     const vaultRoot = vaultStore.path;
     if (!vaultRoot) return null;
@@ -320,8 +331,14 @@
         // disk → the file's BOM is dropped on the next save. Inherit the
         // existing fileState entry when hydrated; only mark false as a fresh
         // fallback for a doc with no prior hydrate. Mirrors TextTile's adopt path.
+        // M8 (Audit-13) — but unlike the BOM, the body keeps its line endings,
+        // so sniff CRLF from it: without an `eol` a single-line-FM CRLF file
+        // would emit LF fences on the first gateway write (the A8-M1 hole on the
+        // adopt path — TextTile's twin already does this). Pin only CRLF; leave
+        // LF/unknown to write-time detection so we never force a wrong LF.
         if (docState.filename && !isHydrated(docState.filename)) {
-          markHydrated(docState.filename, false);
+          const adoptEol = docState.body.includes('\r\n') ? '\r\n' : undefined;
+          markHydrated(docState.filename, false, undefined, undefined, adoptEol);
         }
         return;
       }
@@ -333,6 +350,7 @@
         let body = '';
         let frontmatter: Record<string, unknown> = {};
         let rawFrontmatter = '';
+        let readOk = false;
         try {
           // E1 — read gateway seeds the hydrate gate + drift baseline from
           // the same read's mtime, so a later debounced write detects an
@@ -341,13 +359,33 @@
           body = hydrateResult.body;
           frontmatter = hydrateResult.frontmatter;
           rawFrontmatter = hydrateResult.rawFrontmatter;
+          readOk = true;
         } catch {
-          // Read failed — mount cleanly with empty content. Mark the file
-          // hydrated (no disk mtime → no baseline) so subsequent keystroke
-          // writes can proceed against the embedded fallback.
+          // M1 (Audit-12) — the read FAILED (Windows lock / OneDrive / AV). Do
+          // NOT mount a blank, writable editor over a file we couldn't read: a
+          // keystroke would truncate the real content on the next debounced
+          // write. Flag the failure (buildWriteArgs refuses to write), hold the
+          // editor read-only, and surface a retry banner. Still mark hydrated
+          // (no disk mtime → no baseline) so the write-side invariant holds once
+          // a retry succeeds.
           markHydrated(docState.filename, false);
+          hydrateReadFailed = true;
         }
         if (!editor || editor.isDestroyed) return;
+        if (!readOk) {
+          // Keep the editor empty + non-editable; the banner's Retry re-runs
+          // hydrateFromDisk. We deliberately skip the loadMarkdownIntoEditor +
+          // applyReloadFromDisk below so the unread file's content isn't
+          // replaced in-memory by an empty body. `finally` still sets `hydrated`.
+          editor.setEditable(false);
+          return;
+        }
+        // Read succeeded — clear any prior failed state and re-enable editing
+        // (the retry path lands here once the file becomes readable again).
+        if (hydrateReadFailed) {
+          hydrateReadFailed = false;
+          editor.setEditable(true);
+        }
         lastLoadedBody = body;
         isUpdatingFromStore = true;
         const loadResult = loadMarkdownIntoEditor(editor, body);
@@ -417,6 +455,13 @@
   // Phase 27 / A4 — read-only state for the banner.
   let readOnly = $derived(docState ? documentStore.isReadOnly(docState.docId) : false);
 
+  // M1 (Audit-12) — re-run the disk hydrate after a transient read failure
+  // (file lock released, OneDrive synced, AV finished). On success
+  // `hydrateFromDisk` clears `hydrateReadFailed` and re-enables editing.
+  function retryHydrate(): void {
+    void hydrateFromDisk();
+  }
+
   function takeOwnership(): void {
     if (!docState) return;
     const cid = docState.docId;
@@ -445,6 +490,14 @@
   />
   <div class="document-container">
     <div class="document-paper" style={paperInlineStyle}>
+      {#if hydrateReadFailed}
+        <!-- M1 (Audit-12) — read failed; editing is paused so a keystroke can't
+             truncate the real (unread) file. Retry re-reads disk. -->
+        <div class="readonly-banner" role="alert">
+          <span class="readonly-text">Filo couldn't read this file{docState?.filename ? ` ("${docState.filename}")` : ''}. Editing is paused so your changes can't overwrite it — retry once the file is readable.</span>
+          <button class="readonly-action" onclick={retryHydrate}>Retry</button>
+        </div>
+      {/if}
       {#if readOnly}
         <div class="readonly-banner" role="status">
           <span class="readonly-text">Filo couldn't preserve some syntax in this file. Saving is disabled.</span>

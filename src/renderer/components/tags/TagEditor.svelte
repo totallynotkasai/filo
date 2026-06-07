@@ -126,7 +126,8 @@
     // Prefer the highlighted suggestion when the dropdown is open and has
     // entries; otherwise commit the literal text (supports comma-separated).
     if (showSuggestions && suggestions.length > 0) {
-      commitTag(suggestions[highlightedIndex] ?? suggestions[0]);
+      const tag = suggestions[highlightedIndex] ?? suggestions[0];
+      if (tag) commitTag(tag);
       inputValue = '';
       showSuggestions = false;
       return;
@@ -183,7 +184,7 @@
     }
     if (e.key === 'Tab' && showSuggestions && suggestions.length > 0) {
       e.preventDefault();
-      inputValue = suggestions[highlightedIndex] ?? suggestions[0];
+      inputValue = suggestions[highlightedIndex] ?? suggestions[0] ?? '';
       showSuggestions = false;
     }
   }

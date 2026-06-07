@@ -105,6 +105,38 @@ describe('parseMarkdown — frontmatter on the `yaml` package (Phase 6.5)', () =
   });
 });
 
+/**
+ * M2 (Audit-13) — `gray-matter` (its bundled `js-yaml@3` / YAML 1.1) was a
+ * reachable SECOND frontmatter parser on the index's fallback paths: on
+ * malformed-but-recoverable YAML it coerced an unquoted `date:` → Date and
+ * `0b1010` → 10, diverging from the `yaml` package the read/write gateway uses
+ * (the "looks changed but isn't" drift class). Both fallbacks now route through
+ * the `yaml` package (`lib/vault/frontmatterRead.ts`), so a malformed-recoverable
+ * block parses with the SAME string-typed scalars, never a js-yaml coercion.
+ */
+describe('parseMarkdown — single yaml parser, no gray-matter coercion (Audit-13 M2)', () => {
+  it('a tab-indented FM keeps an unquoted date a STRING, not a Date', () => {
+    // Tabs are illegal YAML indentation: the `yaml` package reports
+    // TAB_AS_INDENT (the old code fell through to gray-matter here), but
+    // `.toJS()` still recovers the scalars — as strings. gray-matter / js-yaml v3
+    // would have parsed `date:` to a `Date` object.
+    const md = '---\ndate: 2024-01-15\nmeta:\n\tnested: 0b1010\n---\n# Body\n';
+    const meta = parseMarkdown('tabbed.md', md);
+    expect(typeof meta.frontmatter.date).toBe('string');
+    expect(meta.frontmatter.date).toBe('2024-01-15');
+    // The tab-nested numeric also stays a string (js-yaml v3 → 10).
+    expect(meta.frontmatter.nested).toBe('0b1010');
+  });
+
+  it('a malformed block still yields no spurious tags (recovers to {} cleanly)', () => {
+    // A bare-scalar / non-object recovery must not throw or invent tags.
+    const md = '---\n: : :\n---\n# Heading\n';
+    const meta = parseMarkdown('weird.md', md);
+    expect(meta.tags).toEqual([]);
+    expect(meta.headings[0]?.text).toBe('Heading');
+  });
+});
+
 describe('VaultIndex', () => {
   function makeIndex(): VaultIndex {
     const idx = new VaultIndex();
@@ -178,6 +210,65 @@ describe('VaultIndex', () => {
     const idx = makeIndex();
     expect(idx.query('')).toEqual([]);
     expect(idx.query('   ')).toEqual([]);
+  });
+});
+
+/**
+ * M1 (Audit-13) — VaultIndex keys its metadata Map + MiniSearch id by the
+ * case-FOLDED vault-relative path, so a case-divergent external edit (case-only
+ * rename, multi-device OneDrive, git) hits the SAME entry instead of missing it
+ * (which bypassed the partial-read guard and upserted a duplicate). The stored
+ * `metadata.path` keeps OS casing for display.
+ */
+describe('VaultIndex — case-folded keys (Audit-13 M1)', () => {
+  it('get/has resolve a case-divergent lookup to the same entry', () => {
+    const idx = new VaultIndex();
+    idx.upsert(parseMarkdown('Notes/Meeting.md', '---\ntags: [x]\n---\n# Meeting'));
+    // Looked up with divergent casing — must still resolve.
+    expect(idx.get('notes/meeting.md')?.title).toBe('Meeting');
+    expect(idx.get('NOTES/MEETING.MD')?.title).toBe('Meeting');
+    expect(idx.has('notes/meeting.md')).toBe(true);
+    // The stored value keeps the OS display casing.
+    expect(idx.get('notes/meeting.md')?.path).toBe('Notes/Meeting.md');
+  });
+
+  it('a case-divergent re-upsert replaces (no duplicate entry)', () => {
+    const idx = new VaultIndex();
+    idx.upsert(parseMarkdown('Notes.md', '---\ntags: [old]\n---\n# Old'));
+    expect(idx.size()).toBe(1);
+    // External tool reports the same file with different casing — must update
+    // in place, not create a second entry.
+    idx.upsert(parseMarkdown('notes.md', '---\ntags: [new]\n---\n# New'));
+    expect(idx.size()).toBe(1);
+    expect(idx.get('Notes.md')?.title).toBe('New');
+    expect(idx.filesByTag('old')).toEqual([]);
+    expect(idx.filesByTag('new')).toEqual(['notes.md']);
+  });
+
+  it('remove() with divergent casing deletes the entry', () => {
+    const idx = new VaultIndex();
+    idx.upsert(parseMarkdown('Sub/File.md', '# F'));
+    expect(idx.size()).toBe(1);
+    idx.remove('sub/file.md');
+    expect(idx.size()).toBe(0);
+    expect(idx.get('Sub/File.md')).toBeNull();
+  });
+
+  it('renameKey case-only rename refreshes the stored display casing in place', () => {
+    const idx = new VaultIndex();
+    idx.upsert(parseMarkdown('Notes.md', '# N'));
+    idx.renameKey('Notes.md', 'notes.md');
+    // Same folded identity (still one entry), but display casing tracks disk.
+    expect(idx.size()).toBe(1);
+    expect(idx.get('notes.md')?.path).toBe('notes.md');
+  });
+
+  it('allPaths() and query() return OS display casing, not folded keys', () => {
+    const idx = new VaultIndex();
+    idx.upsert(parseMarkdown('Notes/Meeting.md', '---\ntags: [x]\n---\n# Meeting topic'));
+    expect(idx.allPaths()).toEqual(['Notes/Meeting.md']);
+    const hits = idx.query('Meeting');
+    expect(hits[0]?.path).toBe('Notes/Meeting.md');
   });
 });
 

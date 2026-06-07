@@ -129,7 +129,8 @@ export class DeleteCardCommand extends Command {
           // and undo() doesn't mutate shared inner refs (style, coverImage,
           // tags, …) on the snapshot we plan to restore from. Mirrors
           // AddCardCommand's Phase 31 B4.4 deep-clone pattern.
-          this.snapshotPlacement = this.snapshot(col.tilePlacements[idx]);
+          const placement = (col.tilePlacements ?? [])[idx];
+          if (placement) this.snapshotPlacement = this.snapshot(placement);
           break;
         }
       }
@@ -297,6 +298,11 @@ export class MoveCardsCommand extends Command {
     // cards follow), in which case undo falls back to the absolute position.
     anchorTileId: string | null;
   }>;
+  // M5 (Audit-13) — forward-leg anchor for execute()/redo (undo already anchors
+  // per-card). Without it a multi-card move → undo → edit-target-column → redo
+  // replayed the stale absolute `toPosition`. tileId of the surviving (non-moved)
+  // card the block should sit immediately before; captured pre-move, null = append.
+  private toBeforeTileId: string | null;
 
   constructor(
     boardId: string,
@@ -330,7 +336,8 @@ export class MoveCardsCommand extends Command {
       const idx = placements.findIndex((p) => p.tileId === tileId);
       if (idx < 0) return null;
       for (let i = idx + 1; i < placements.length; i++) {
-        if (!movedSet.has(placements[i].tileId)) return placements[i].tileId;
+        const p = placements[i];
+        if (p && !movedSet.has(p.tileId)) return p.tileId;
       }
       return null;
     };
@@ -339,6 +346,15 @@ export class MoveCardsCommand extends Command {
       ...s,
       anchorTileId: anchorFor(s.fromColumnId, s.tileId),
     }));
+    // M5 (Audit-13) — forward-leg anchor: the surviving card at `toPosition` in
+    // the target column once the whole moved set is removed (the same frame
+    // moveKanbanPlacements inserts against). Captured here, pre-move.
+    const targetPlacements =
+      (boardCacheStore.cache[boardId]?.board as KanbanBoard | undefined)?.columns?.find(
+        (c) => c.id === toColumnId,
+      )?.tilePlacements ?? [];
+    const targetSurvivors = targetPlacements.filter((p) => !movedSet.has(p.tileId));
+    this.toBeforeTileId = targetSurvivors[toPosition]?.tileId ?? null;
     const allSameSource = snapshots.every((s) => s.fromColumnId === toColumnId);
     this.description = allSameSource
       ? `Reorder ${tileIds.length} cards`
@@ -351,6 +367,7 @@ export class MoveCardsCommand extends Command {
       this.tileIds,
       this.toColumnId,
       this.toPosition,
+      this.toBeforeTileId, // M5 (Audit-13) — anchor over the stale absolute index
     );
   }
 
@@ -438,7 +455,8 @@ export class DeleteColumnCommand extends Command {
     const cols = currentKanbanColumns(boardId);
     const idx = cols ? cols.findIndex((c) => c.id === columnId) : -1;
     this.removedIndex = idx;
-    this.removedColumn = idx >= 0 && cols ? this.snapshot(cols[idx]) : null;
+    const removedCol = idx >= 0 && cols ? cols[idx] : undefined;
+    this.removedColumn = removedCol ? this.snapshot(removedCol) : null;
     this.description = `Delete column "${title}"`;
   }
 
@@ -1035,12 +1053,11 @@ async function applyOrphanPatchRebased(args: {
   }
   if (Object.keys(safe).length > 0) {
     await commit(safe);
-  } else {
-    // No safe fields, but the command still ran on this board's stack so
-    // the cache should reflect the user's local-history intent.
-    // allow-non-target-markdirty: shared helper, callers pass this.targetBoardId per the CI gate
-    boardCacheStore.markDirty(targetBoardId);
   }
+  // L7 (Audit-13) — when ALL fields conflict, NOTHING is written to disk and the
+  // cache isn't mutated here, so the prior `markDirty(targetBoardId)` in this
+  // branch only scheduled a redundant `.board.json` rewrite (and could fire a
+  // phantom drift prompt). Skip it: a no-write must not dirty the board.
 
   uiStore.pushToast({
     text: `External edit changed ${conflicts.join(', ')} in ${label}. Kept the external value — that field's undo/redo was skipped.`,

@@ -208,6 +208,16 @@ describe('asSafeOpenExternal — shell.openExternal allowlist + unsafe-extension
       }
     });
 
+    it('rejects OS launcher / shell-shortcut extensions added by Audit-13 M12', () => {
+      // `.url` / `.scf` / `.website` can point at a UNC share and leak NetNTLM
+      // creds; `.reg` / `.inf` import/run on activation; `.pif` executes;
+      // `.desktop` runs its `Exec=` line on Linux.
+      const exts = ['.url', '.scf', '.website', '.pif', '.reg', '.inf', '.desktop'];
+      for (const ext of exts) {
+        expect(asSafeOpenExternal(`/vault/notes/file${ext}`)).toBeNull();
+      }
+    });
+
     it('case-insensitive extension matching', () => {
       expect(asSafeOpenExternal('/vault/notes/EVIL.EXE')).toBeNull();
       expect(asSafeOpenExternal('/vault/notes/REPORT.Html')).toBeNull();
@@ -313,6 +323,13 @@ describe('UNSAFE_LOCAL_FILE_EXTENSIONS_FOR_TESTS — parity with main-side block
       '.msi', '.jar', '.lnk', '.sh', '.msc',
     ];
     for (const ext of legacy) {
+      expect(UNSAFE_LOCAL_FILE_EXTENSIONS_FOR_TESTS.has(ext)).toBe(true);
+    }
+  });
+
+  it('contains every OS launcher / shell-shortcut extension added by Audit-13 M12', () => {
+    const launchers = ['.url', '.scf', '.website', '.pif', '.reg', '.inf', '.desktop'];
+    for (const ext of launchers) {
       expect(UNSAFE_LOCAL_FILE_EXTENSIONS_FOR_TESTS.has(ext)).toBe(true);
     }
   });

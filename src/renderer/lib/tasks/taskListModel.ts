@@ -83,7 +83,7 @@ export const GROUP_ORDER: Record<GroupBy, string[]> = {
  */
 function parseLocalDate(iso: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-  return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
+  return m ? new Date(+(m[1] ?? ''), +(m[2] ?? '') - 1, +(m[3] ?? '')) : null;
 }
 
 /**

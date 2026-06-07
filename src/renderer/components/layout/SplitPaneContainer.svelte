@@ -42,6 +42,7 @@
     // Resize between child[index] and child[index+1]
     const before = sizes[dragGutterIndex];
     const after = sizes[dragGutterIndex + 1];
+    if (before === undefined || after === undefined) return; // gutter index in range
     const combined = before + after;
     const newBefore = Math.max(0.1, Math.min(combined - 0.1, before + fractionDelta));
     sizes[dragGutterIndex] = newBefore;

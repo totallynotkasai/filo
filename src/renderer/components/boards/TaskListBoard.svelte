@@ -458,6 +458,7 @@
     const sliceById = new SvelteMap<string, TaskPlacement[]>();
     for (let i = 0; i < sortedReal.length; i++) {
       const s = sortedReal[i];
+      if (!s) continue; // i < sortedReal.length; narrow for the type-checker
       const start = s.position;
       const end = sortedReal[i + 1]?.position ?? placements.length;
       sliceById.set(s.id, placements.slice(start, end));
@@ -1064,7 +1065,7 @@
     // Snapshot for undo before computing the move.
     const sortedLive = [...sections].sort((a, b) => a.position - b.position);
     const targetIdx = sortedLive.findIndex((s) => s.id === realTargetId);
-    const sectionStart = targetIdx >= 0 ? sortedLive[targetIdx].position : 0;
+    const sectionStart = targetIdx >= 0 ? (sortedLive[targetIdx]?.position ?? 0) : 0;
     const sectionEnd = targetIdx >= 0
       ? (sortedLive[targetIdx + 1]?.position ?? placements.length)
       : placements.length;

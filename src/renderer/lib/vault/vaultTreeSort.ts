@@ -116,6 +116,7 @@ export function sortTree(nodes: FileTreeNode[], cfg: SortConfig, parentAbs: stri
   const next: FileTreeNode[] = new Array(sorted.length);
   for (let i = 0; i < sorted.length; i++) {
     const node = sorted[i];
+    if (!node) continue; // i < sorted.length; narrow for the type-checker
     if (node.isDirectory && node.children) {
       const sortedChildren = sortTree(node.children, cfg, node.path);
       if (sortedChildren === node.children) {
@@ -163,6 +164,7 @@ export function treesEqual(a: FileTreeNode[], b: FileTreeNode[]): boolean {
   for (let i = 0; i < a.length; i++) {
     const x = a[i];
     const y = b[i];
+    if (!x || !y) return false; // equal lengths + in-range; unequal is the safe direction
     if (x.path !== y.path) return false;
     if (x.isDirectory !== y.isDirectory) return false;
     if (x.name !== y.name) return false;

@@ -62,7 +62,7 @@ export function handleListKeyNav(
     else if (idx === 0) nextIdx = wrap ? items.length - 1 : 0;
     else nextIdx = idx - 1;
   }
-  items[nextIdx].focus();
+  items[nextIdx]?.focus();
   return true;
 }
 
@@ -72,5 +72,5 @@ export function handleListKeyNav(
  */
 export function focusFirstItem(container: HTMLElement, selector: string): void {
   const items = visibleFocusable(container, selector);
-  if (items.length > 0) items[0].focus();
+  if (items.length > 0) items[0]?.focus();
 }

@@ -13,6 +13,16 @@ export type IpcChannel =
   | 'vault:watch'
   | 'vault:close'
   | 'vault:copy-file'
+  // Audit-12 S1 — preload-internal one-way registration of an approved
+  // vault:copy-file source (a real OS-dropped file path). Registered main-side
+  // via ipcMain.on and fired ONLY by the preload getPathForFile through a
+  // direct ipcRenderer.send. Deliberately absent from SendChannel so the
+  // contextBridge-exposed api.send cannot reach it. The z.never() payload
+  // schema is the runtime backstop. See services/approvedSources.ts.
+  // (This comment avoids apostrophe and quote characters on purpose: the
+  // ipc-parity scan harvests quoted literals from this union block, so a stray
+  // one would be misread as a channel name.)
+  | 'vault:register-source-path'
   | 'vault:read-file-text'
   | 'vault:write-file-text'
   | 'vault:write-existing-file-text'

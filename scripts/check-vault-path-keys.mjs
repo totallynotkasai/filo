@@ -116,9 +116,78 @@ for (const root of SCAN_ROOTS) {
   }
 }
 
+// ── M1 (Audit-13): VaultIndex must case-FOLD its Map + MiniSearch keys ────
+//
+// The generic scan above keys on path-suggesting IDENTIFIERS; `VaultIndex`'s
+// map is named `metadata`, which doesn't match, so it slipped through as the
+// lone path-keyed store that never folded (M1). This dedicated check asserts
+// the fold is structural and can't silently regress:
+//   1. the `metadata` map is typed `Map<VaultPath, …>` (so a raw-string `.set`
+//      is a compile error — the strongest guard);
+//   2. a `keyOf(...)` helper exists and routes through `vaultPath()` /
+//      `normalizeVaultRelative()`;
+//   3. every `const id|oldId|newId = …` (the Map key + MiniSearch id sources)
+//      is derived via `this.keyOf(`.
+// Comment/strings are NOT special-cased away wholesale, but we strip comments
+// first so a doc-comment that merely NAMES the pattern can't satisfy it. The
+// file must exist and match — a missing file fails loud so coverage can't be
+// dropped by deleting the target.
+const foldViolations = [];
+{
+  const VAULT_INDEX_REL = 'src/renderer/lib/vault/vaultIndex.ts';
+  const vaultIndexPath = join(ROOT, VAULT_INDEX_REL);
+  let raw;
+  try {
+    raw = readFileSync(vaultIndexPath, 'utf8');
+  } catch {
+    foldViolations.push(`${VAULT_INDEX_REL}: file not found — VaultIndex fold check cannot run`);
+    raw = null;
+  }
+  if (raw !== null) {
+    // Strip block + line comments so a comment can't satisfy a positive assert.
+    const stripped = raw
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+
+    if (!/\bmetadata\s*=\s*new\s+Map<\s*VaultPath\s*,/.test(stripped)) {
+      foldViolations.push(
+        `${VAULT_INDEX_REL}: the \`metadata\` map must be typed \`Map<VaultPath, …>\` (branded fold key)`,
+      );
+    }
+
+    const keyOfBody = /\bkeyOf\s*\([^)]*\)\s*:\s*VaultPath\s*\{([\s\S]*?)\}/.exec(stripped);
+    if (!keyOfBody) {
+      foldViolations.push(
+        `${VAULT_INDEX_REL}: missing a \`keyOf(path): VaultPath\` helper to fold Map / MiniSearch keys`,
+      );
+    } else if (!/\b(?:vaultPath|normalizeVaultRelative)\s*\(/.test(keyOfBody[1])) {
+      foldViolations.push(
+        `${VAULT_INDEX_REL}: \`keyOf\` must fold through \`vaultPath(\` / \`normalizeVaultRelative(\``,
+      );
+    }
+
+    const idDecl = /\bconst\s+(id|oldId|newId)\s*=\s*([^;\n]+)/g;
+    let m;
+    let sawIdDecl = false;
+    while ((m = idDecl.exec(stripped)) !== null) {
+      sawIdDecl = true;
+      if (!/\bthis\.keyOf\s*\(/.test(m[2])) {
+        foldViolations.push(
+          `${VAULT_INDEX_REL}: \`const ${m[1]} = ${m[2].trim()}\` must derive the key via \`this.keyOf(\``,
+        );
+      }
+    }
+    if (!sawIdDecl) {
+      foldViolations.push(
+        `${VAULT_INDEX_REL}: expected at least one \`const id|oldId|newId = this.keyOf(…)\` key derivation`,
+      );
+    }
+  }
+}
+
 // ── Report ─────────────────────────────────────────────────────────────
 
-if (violations.length === 0) {
+if (violations.length === 0 && foldViolations.length === 0) {
   process.stdout.write(
     `[check-vault-path-keys] OK — scanned ${scannedFiles} file(s), 0 path-keyed string maps detected.\n`,
   );
@@ -127,25 +196,40 @@ if (violations.length === 0) {
 
 const stream = WARN_ONLY ? process.stdout : process.stderr;
 const label = WARN_ONLY ? 'WARN' : 'FAIL';
-stream.write(
-  `[check-vault-path-keys] ${label} — ${violations.length} path-keyed string map(s) detected (Phase 4 sweep target):\n`,
-);
-for (const v of violations) {
-  stream.write(`  ${v.file}:${v.line} ${v.identifier}\n`);
-  stream.write(`    ${v.snippet}\n`);
+if (violations.length > 0) {
+  stream.write(
+    `[check-vault-path-keys] ${label} — ${violations.length} path-keyed string map(s) detected (Phase 4 sweep target):\n`,
+  );
+  for (const v of violations) {
+    stream.write(`  ${v.file}:${v.line} ${v.identifier}\n`);
+    stream.write(`    ${v.snippet}\n`);
+  }
+  stream.write(
+    '\nVault-relative paths must be normalised through `normalizeVaultRelative` before\n' +
+      'being used as Map / Record / Set keys, otherwise Windows / macOS case-folding\n' +
+      'orphans the entry on rename (see P0 #8 in IMPLEMENTATION_PLAN_2026-05-27.md).\n' +
+      'Phase 4 introduces a `VaultPath` newtype + `vaultPath(raw)` constructor in\n' +
+      '`src/shared/vaultPath.ts`. Each entry here should be migrated to\n' +
+      '`Map<VaultPath, _>` / `Record<VaultPath, _>` / `Set<VaultPath>` and every\n' +
+      'callsite wrapped in `vaultPath(...)`.\n' +
+      'Escape hatch: append `// allow-string-path-key: <reason>` if the key is genuinely\n' +
+      'NOT a vault-relative path (e.g. boardId / tileId), and rename the identifier so it\n' +
+      'no longer matches the path-key pattern.\n',
+  );
 }
-stream.write(
-  '\nVault-relative paths must be normalised through `normalizeVaultRelative` before\n' +
-    'being used as Map / Record / Set keys, otherwise Windows / macOS case-folding\n' +
-    'orphans the entry on rename (see P0 #8 in IMPLEMENTATION_PLAN_2026-05-27.md).\n' +
-    'Phase 4 introduces a `VaultPath` newtype + `vaultPath(raw)` constructor in\n' +
-    '`src/shared/vaultPath.ts`. Each entry here should be migrated to\n' +
-    '`Map<VaultPath, _>` / `Record<VaultPath, _>` / `Set<VaultPath>` and every\n' +
-    'callsite wrapped in `vaultPath(...)`.\n' +
-    'Escape hatch: append `// allow-string-path-key: <reason>` if the key is genuinely\n' +
-    'NOT a vault-relative path (e.g. boardId / tileId), and rename the identifier so it\n' +
-    'no longer matches the path-key pattern.\n',
-);
+if (foldViolations.length > 0) {
+  stream.write(
+    `[check-vault-path-keys] ${label} — VaultIndex (M1, Audit-13) must case-fold its keys:\n`,
+  );
+  for (const v of foldViolations) stream.write(`  ${v}\n`);
+  stream.write(
+    '\nVaultIndex was the lone path-keyed store that kept raw OS casing, so a\n' +
+      'case-divergent external edit (case-only rename / multi-device OneDrive / git)\n' +
+      'missed the entry — bypassing the partial-read guard and upserting a duplicate.\n' +
+      'Route the metadata Map + MiniSearch id through `keyOf(path): VaultPath`\n' +
+      '(`vaultPath(...)`), keeping `metadata.path` in OS casing for display.\n',
+  );
+}
 
 if (WARN_ONLY) {
   process.stdout.write(

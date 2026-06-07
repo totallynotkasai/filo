@@ -39,8 +39,9 @@
         const visible = entries
           .filter((e) => e.isIntersecting)
           .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
-        if (visible.length > 0) {
-          const id = (visible[0].target as HTMLElement).dataset.sectionId;
+        const first = visible[0];
+        if (first) {
+          const id = (first.target as HTMLElement).dataset.sectionId;
           if (id) activeId = id;
         }
       },

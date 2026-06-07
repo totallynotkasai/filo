@@ -114,7 +114,7 @@ export function parseMarkdownFile(raw: string): ParsedMarkdownDocument {
     // duplicate keys / bad indentation; on ANY error (or a non-object / array /
     // scalar root) we fail safe to `{}` — never corrupt — and the raw block is
     // still threaded out below so a fence we couldn't turn into keys is kept.
-    const doc = parseDocument(fenced[1]);
+    const doc = parseDocument(fenced[1] ?? '');
     if (doc.errors.length === 0) {
       const loaded = doc.toJS();
       if (loaded && typeof loaded === 'object' && !Array.isArray(loaded)) {
@@ -127,7 +127,7 @@ export function parseMarkdownFile(raw: string): ParsedMarkdownDocument {
 
   // 1.1 — keep the raw YAML source even when it didn't parse into an object,
   // so the write path can preserve a fence it couldn't turn into keys.
-  return { frontmatter, rawFrontmatter: fenced[1], body: fenced[2] ?? '', hasFrontmatter: true, hadBom };
+  return { frontmatter, rawFrontmatter: fenced[1] ?? '', body: fenced[2] ?? '', hasFrontmatter: true, hadBom };
 }
 
 /**
@@ -545,11 +545,34 @@ export function assembleMarkdownFile(
     return `${bomPrefix}${fmBlock}${body}${trailing}`;
   }
 
-  // 1.1 safety net — the parsed object is empty but the source HAD a
-  // frontmatter block (unparseable / non-object YAML). Never drop a fence we
-  // couldn't parse: write the raw block back untouched.
+  // 1.1 / L1 (Audit-12) — the parsed object is empty but the source HAD a
+  // frontmatter block. The raw bytes alone can't tell apart two cases that need
+  // OPPOSITE handling, so we discriminate on whether the CST engine can model
+  // the source as a BLOCK MAPPING to clear (`patchFrontmatterSourceCst(_, {})`):
+  //   - Engine returns `null` — the source is UNPARSEABLE (malformed YAML) OR a
+  //     NON-MAPPING root (a bare scalar / sequence / flow mapping / anchored
+  //     key): there are no keys the app ever read to "empty", so never drop a
+  //     fence we couldn't turn into a block mapping — re-emit it untouched.
+  //   - Engine returns a string — the source IS a block mapping the user
+  //     cleared every key from. Honour the deletion (the engine drops the keys
+  //     and keeps any standalone comment-only remainder) instead of reverting
+  //     to the raw bytes. The old safety net re-emitted the original block
+  //     unconditionally, silently undoing the clear; masked in prod by the
+  //     auto-`id` injection keeping tile/doc `fm` non-empty.
   if (rawHasContent) {
-    return emitWithRawFrontmatter(bomPrefix, rawFrontmatter, body, detectFrontmatterEol(options, body));
+    const eol = detectFrontmatterEol(options, body);
+    const emptied = patchFrontmatterSourceCst(rawFrontmatter, {});
+    if (emptied === null) {
+      return emitWithRawFrontmatter(bomPrefix, rawFrontmatter, body, eol);
+    }
+    const trailing = body.length === 0 || body.endsWith('\n') ? '' : eol;
+    // A comment-only remainder is still meaningful (the user kept a note) →
+    // re-wrap it in fences; an empty remainder → emit no FM block at all.
+    if (emptied.trim().length > 0) {
+      const fmBlock = `---\n${emptied}\n---\n`.replace(/\n/g, eol);
+      return `${bomPrefix}${fmBlock}${body}${trailing}`;
+    }
+    return `${bomPrefix}${body}${trailing}`;
   }
 
   // Genuinely no frontmatter.

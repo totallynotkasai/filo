@@ -257,6 +257,10 @@ async function createWindow(): Promise<void> {
     ipcMain.on('app:drain-heartbeat', onHeartbeat);
 
     try {
+      // startDrain is only true when the window was alive (see decideWindowClose
+      // above); the guard narrows the nullable ref and routes the impossible
+      // null case through the existing catch → destroy path.
+      if (!mainWindow) throw new Error('mainWindow released before flush-and-quit');
       mainWindow.webContents.send('app:flush-and-quit');
     } catch (err) {
       clearTimeout(timer);

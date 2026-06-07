@@ -4,6 +4,7 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { searchStore } from '@renderer/stores/search.svelte';
 import { historyStore } from '@renderer/stores/history.svelte';
+import { uiStore } from '@renderer/stores/ui.svelte';
 import { parseMarkdown } from '@renderer/lib/vault/vaultIndex';
 import { ReplaceAllCommand, runReplaceAllCommand } from '@renderer/commands/replaceAllCommand';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
@@ -275,6 +276,48 @@ describe('ReplaceAllCommand — atomicity', () => {
     await runReplaceAllCommand();
 
     expect(writes).toHaveLength(0);
+  });
+});
+
+describe('ReplaceAllCommand — L4 execute-time drift skip', () => {
+  it('skips a file whose disk content diverged from the planned snapshot (no clobber)', async () => {
+    // Disk no longer equals the plan's `originalContent` (an edit landed since
+    // the plan was built / before this redo). execute() must re-read, detect
+    // the divergence, and skip the write rather than clobber the newer bytes.
+    const filesystem: FileMap = { 'a.md': 'EXTERNALLY CHANGED SINCE PLAN' };
+    const { writes } = installFiloStub(filesystem);
+    const cmd = new ReplaceAllCommand('/test/vault', [
+      {
+        path: 'a.md',
+        originalContent: 'original planned content',
+        nextContent: 'replaced content',
+        replacementCount: 1,
+      },
+    ]);
+
+    await cmd.execute();
+
+    expect(writes.some((w) => w.path === 'a.md')).toBe(false);
+    expect(filesystem['a.md']).toBe('EXTERNALLY CHANGED SINCE PLAN');
+    expect(uiStore.toasts.some((t) => t.text.includes('Replace skipped'))).toBe(true);
+  });
+
+  it('writes when disk still equals the planned originalContent', async () => {
+    const filesystem: FileMap = { 'a.md': 'original planned content' };
+    const { writes } = installFiloStub(filesystem);
+    const cmd = new ReplaceAllCommand('/test/vault', [
+      {
+        path: 'a.md',
+        originalContent: 'original planned content',
+        nextContent: 'replaced content',
+        replacementCount: 1,
+      },
+    ]);
+
+    await cmd.execute();
+
+    expect(writes.some((w) => w.path === 'a.md')).toBe(true);
+    expect(filesystem['a.md']).toBe('replaced content');
   });
 });
 

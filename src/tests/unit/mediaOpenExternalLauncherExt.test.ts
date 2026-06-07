@@ -185,4 +185,95 @@ describe('media:open-external — launcher-extension blocklist (Audit-10 B3)', (
     expect(openExternalCalls).toEqual(['https://example.com/page']);
     expect(openPathCalls).toEqual([]);
   });
+
+  // ── Audit-12 S2 — http:// dropped + reserved-name basename guard ──────────
+
+  it('refuses a legacy http:// URL (no openExternal, no openPath)', async () => {
+    const result = await callOpen('http://example.com/page');
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/http/i);
+    expect(openExternalCalls).toEqual([]);
+    expect(openPathCalls).toEqual([]);
+  });
+
+  it('refuses http:// even for localhost (the dev allowance was https-only)', async () => {
+    const result = await callOpen('http://localhost:5173/');
+    expect(result.success).toBe(false);
+    expect(openExternalCalls).toEqual([]);
+    expect(openPathCalls).toEqual([]);
+  });
+
+  it('still routes a mailto: URL through shell.openExternal', async () => {
+    const result = await callOpen('mailto:hi@example.com');
+    expect(result.success).toBe(true);
+    expect(openExternalCalls).toEqual(['mailto:hi@example.com']);
+    expect(openPathCalls).toEqual([]);
+  });
+
+  it('still routes a tel: URL through shell.openExternal', async () => {
+    const result = await callOpen('tel:+15551234567');
+    expect(result.success).toBe(true);
+    expect(openExternalCalls).toEqual(['tel:+15551234567']);
+    expect(openPathCalls).toEqual([]);
+  });
+
+  // ── Audit-13 M12 — OS launcher / shell-acted-on shortcut extensions ───────
+
+  it('refuses every OS launcher / shell-shortcut extension (no openPath)', async () => {
+    const launcherExts = ['.url', '.scf', '.website', '.pif', '.reg', '.inf', '.desktop'];
+    for (const ext of launcherExts) {
+      openPathCalls.length = 0;
+      const result = await callOpen(vaultPath(`shortcut${ext}`));
+      expect(result.success, `${ext} should be refused`).toBe(false);
+      expect(result.error).toMatch(/extension not allowed/i);
+      expect(openPathCalls, `${ext} reached shell.openPath`).toEqual([]);
+    }
+  });
+
+  it('refuses a .url even with a case-varied / trailing-dot basename (launcher-ext robustness)', async () => {
+    // The robust extractor strips Win32 trailing dots and lowercases, so
+    // `Phish.URL.` still resolves to `.url` and is blocked.
+    expect((await callOpen(vaultPath('Phish.URL.'))).success).toBe(false);
+    expect(openPathCalls).toEqual([]);
+  });
+
+  // ── L11 — case-insensitive URL-scheme allowlist (Audit-13) ────────────────
+
+  it('routes a case-varied HTTPS:// URL through shell.openExternal (was wrongly refused)', async () => {
+    const target = 'HTTPS://Example.com/Page';
+    const result = await callOpen(target);
+    expect(result.success).toBe(true);
+    // The ORIGINAL casing is preserved when handed to the OS (only the
+    // allowlist COMPARISON is lowercased).
+    expect(openExternalCalls).toEqual([target]);
+    expect(openPathCalls).toEqual([]);
+  });
+
+  it('routes a case-varied MAILTO: URL through shell.openExternal', async () => {
+    const result = await callOpen('MailTo:hi@example.com');
+    expect(result.success).toBe(true);
+    expect(openExternalCalls).toEqual(['MailTo:hi@example.com']);
+    expect(openPathCalls).toEqual([]);
+  });
+
+  it('still refuses a case-varied HTTP:// URL (the http drop is case-insensitive)', async () => {
+    const result = await callOpen('HTTP://example.com/page');
+    expect(result.success).toBe(false);
+    expect(openExternalCalls).toEqual([]);
+    expect(openPathCalls).toEqual([]);
+  });
+
+  it('blocks a Windows reserved DOS name basename on win32 (CON.md); opens it on POSIX', async () => {
+    // assertSafeFilename platform-gates the reserved-name rule to win32, so the
+    // expected outcome differs by OS — `CON.md` is a legal POSIX filename.
+    const target = vaultPath('CON.md');
+    const result = await callOpen(target);
+    if (process.platform === 'win32') {
+      expect(result.success).toBe(false);
+      expect(openPathCalls).toEqual([]);
+    } else {
+      expect(result.success).toBe(true);
+      expect(openPathCalls).toEqual([target]);
+    }
+  });
 });

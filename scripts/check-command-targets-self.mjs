@@ -157,19 +157,67 @@ for (const abs of listTsFiles(COMMANDS_DIR)) {
   }
 }
 
-if (offenders.length === 0) {
+// ── Audit-12 M3 — PropertiesPopup mount-time board capture ───────────────────
+// The deferred `UpdatePropertiesCommand` is constructed in the popup's
+// onDestroy. Its constructor falls back to `boardStore.current?.id` — the
+// GLOBALLY-active board at destroy time — when no explicit boardId is passed.
+// In split-pane, opening Properties on pane B then clicking pane A before
+// closing pushed a non-text tile's edit onto pane A's stack (or no-op'd the
+// metadata applySnapshot). The fix captures the PANE-SCOPED board id at popup
+// MOUNT and threads it to the command. Pin both halves so the wiring can't be
+// silently dropped (every sibling style popup already captures a mount-time id).
+const PROPERTIES_POPUP_FILE = 'src/renderer/components/tiles/PropertiesPopup.svelte';
+const POPUP_REQUIRED = [
+  {
+    token: /mountBoardId\s*=\s*boardStore\.current\?\.id/,
+    why: 'captures the originating board at popup mount (the pane-scoped `scope.board` alias), not the global facade at close time',
+  },
+  {
+    token: /new UpdatePropertiesCommand\([^;]*\bmountBoardId\b/,
+    why: 'passes the mount-time board id to UpdatePropertiesCommand so it targets the popup\'s pane',
+  },
+];
+const popupFailures = [];
+{
+  let popupRaw = '';
+  try {
+    popupRaw = readFileSync(join(ROOT, PROPERTIES_POPUP_FILE), 'utf8');
+  } catch (err) {
+    popupFailures.push(`${PROPERTIES_POPUP_FILE} — cannot read (REQUIRED file): ${err.message}`);
+  }
+  const popupCode = stripComments(popupRaw);
+  for (const { token, why } of POPUP_REQUIRED) {
+    if (!token.test(popupCode)) {
+      popupFailures.push(`${PROPERTIES_POPUP_FILE} — missing /${token.source}/ — ${why}`);
+    }
+  }
+}
+
+if (offenders.length === 0 && popupFailures.length === 0) {
   console.log(
-    `[check-command-targets-self] OK — scanned ${listTsFiles(COMMANDS_DIR).length} command file(s), 0 offenders.`,
+    `[check-command-targets-self] OK — scanned ${listTsFiles(COMMANDS_DIR).length} command file(s), 0 offenders; PropertiesPopup captures a mount-time board id.`,
   );
   process.exit(0);
 }
 
 console.error(
-  `[check-command-targets-self] FAILED — ${offenders.length} violation(s):`,
+  `[check-command-targets-self] FAILED — ${offenders.length + popupFailures.length} violation(s):`,
 );
 for (const o of offenders) {
   console.error(`  ${o.rel}:${o.line} [${o.rule}]`);
   console.error(`    ${o.snippet}`);
+}
+for (const f of popupFailures) {
+  console.error(`  ${f}`);
+}
+if (popupFailures.length > 0) {
+  console.error(
+    '\nPropertiesPopup must capture the board id at MOUNT (from the pane-scoped\n' +
+      '`scope.board`) and pass it to `new UpdatePropertiesCommand(before, after, mountBoardId)`,\n' +
+      'so a non-text tile\'s property edit targets the popup\'s pane — not whichever\n' +
+      'board is active when the popup closes (Audit-12 M3). See\n' +
+      'AUDIT12_REMEDIATION_PLAN_2026-06-06.md M3 + src/tests/unit/propertiesPopupBoardScope.test.ts.',
+  );
 }
 console.error(
   '\nA command\'s execute / undo must dirty its ORIGINATING board, never\n' +

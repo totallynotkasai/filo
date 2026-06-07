@@ -168,3 +168,92 @@ describe('Audit 5.3 — history auto-switch to the originating board', () => {
     expect(switchBackToasts(toastSpy).length).toBe(0);
   });
 });
+
+describe('Audit-13 M7 — facade body waits for the pane pivot to re-point the scope', () => {
+  beforeEach(() => {
+    historyStore.clear();
+    historyStore.setMaxHistory(500);
+  });
+  afterEach(() => {
+    historyStore.clear();
+    historyStore.setActiveBoard(null);
+    historyStore.setBoardActivator(null);
+  });
+
+  // A facade-style command records which board the history store considered
+  // active AT THE MOMENT ITS BODY RAN — the proxy for "which scope a Mind-Map
+  // facade command would have mutated."
+  class ScopeProbeCommand extends Command {
+    description = 'scope-probe';
+    readonly targetBoardId: string;
+    activeAtUndo: string | null = '<unset>' as unknown as string | null;
+    activeAtRedo: string | null = '<unset>' as unknown as string | null;
+    constructor(boardId: string) {
+      super();
+      this.targetBoardId = boardId;
+    }
+    execute(): void {
+      this.activeAtRedo = historyStore.activeBoardId;
+    }
+    undo(): void {
+      this.activeAtUndo = historyStore.activeBoardId;
+    }
+  }
+
+  // The real PaneView $effect re-points the scope + calls setActiveBoard several
+  // microtask hops after the activator switches panes (the Svelte scheduler
+  // flushes the pane effect on a later tick). Model that as a MULTI-hop delay so
+  // the settle LOOP is genuinely required — a single `await` before the body
+  // would still observe the stale board.
+  function repointAfterHops(id: string, hops: number): void {
+    let remaining = hops;
+    const step = (): void => {
+      if (remaining-- <= 0) historyStore.setActiveBoard(id);
+      else queueMicrotask(step);
+    };
+    queueMicrotask(step);
+  }
+
+  it('undo defers the body until activeBoardId reflects the target board', async () => {
+    historyStore.setActiveBoard('board-B');
+    historyStore.setBoardActivator((id) => {
+      repointAfterHops(id, 4);
+      return true;
+    });
+
+    const cmd = new ScopeProbeCommand('board-A');
+    historyStore.pushWithoutExecute(cmd);
+    await historyStore.undo();
+
+    // The body ran AFTER the multi-hop scope re-point — pre-fix (or with a
+    // single pre-body await) it observed the stale 'board-B'.
+    expect(cmd.activeAtUndo).toBe('board-A');
+  });
+
+  it('does not stall the common same-board undo (no auto-switch, runs immediately)', async () => {
+    historyStore.setActiveBoard('board-A');
+    const cmd = new ScopeProbeCommand('board-A');
+    historyStore.pushWithoutExecute(cmd);
+    await historyStore.undo();
+    expect(cmd.activeAtUndo).toBe('board-A');
+  });
+
+  it('redo defers the body until activeBoardId reflects the target board', async () => {
+    historyStore.setActiveBoard('board-A');
+    let switched = false;
+    historyStore.setBoardActivator((id) => {
+      repointAfterHops(id, 4);
+      switched = true;
+      return true;
+    });
+    // Seed a redo entry while same-board (no guard trip), then re-point.
+    const cmd = new ScopeProbeCommand('board-A');
+    await historyStore.execute(cmd);
+    await historyStore.undo();
+    expect(switched).toBe(false); // same-board legs didn't consult the hook
+
+    historyStore.setActiveBoard('board-C');
+    await historyStore.redo();
+    expect(cmd.activeAtRedo).toBe('board-A');
+  });
+});

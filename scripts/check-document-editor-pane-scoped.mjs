@@ -1,5 +1,10 @@
 /**
- * Audit-11 R1 — `ci:document-editor-pane-scoped`.
+ * Audit-11 R1 / Audit-12 M5 — `ci:document-editor-pane-scoped`.
+ *
+ * A pane-scope gate: forbids GLOBAL board/canvas/tab facade reads inside
+ * components/actions that a split pane renders twice. Audit-12 M5 widened it
+ * from DocumentEditor.svelte alone to also cover `lib/canvas/dragDrop.ts` (the
+ * OS file-drop action), which must create tiles against the threaded pane scope.
  *
  * R1: `DocumentEditor.svelte` resolved its doc from the GLOBALLY-active tab
  * (`tabStore.activeTab`) instead of its own pane. In a split pane both Document
@@ -29,9 +34,49 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT = process.cwd();
-const TARGET = 'src/renderer/components/boards/DocumentEditor.svelte';
-const FORBIDDEN = /\btabStore\s*\.\s*activeTab(?:Id)?\b/g;
-const ALLOW_RE = /\/\/\s*allow-global-tab:\s*\S+/;
+
+/**
+ * Pane-scope targets. Each forbids a GLOBAL facade read that would break in a
+ * split pane:
+ *   - DocumentEditor.svelte (Audit-11 R1) — `tabStore.activeTab(Id)` makes both
+ *     panes mirror the globally-active tab's doc.
+ *   - dragDrop.ts (Audit-12 M5) — a global `boardStore`/`canvasStore` read makes
+ *     an OS file-drop land on the ACTIVE pane's board with its viewport, not the
+ *     pane the file was dropped on (a `drop` has no pointerdown to activate the
+ *     target pane). The action now takes the pane's BoardScope as a parameter.
+ *
+ * `kind: 'svelte'` blanks <script> internals + HTML comments but leaves markup
+ * raw (a mustache read is still caught). `kind: 'ts'` blanks strings/comments on
+ * the whole file. Both transforms are offset-preserving for accurate line nums.
+ */
+const TARGETS = [
+  {
+    file: 'src/renderer/components/boards/DocumentEditor.svelte',
+    kind: 'svelte',
+    forbidden: /\btabStore\s*\.\s*activeTab(?:Id)?\b/g,
+    allow: /\/\/\s*allow-global-tab:\s*\S+/,
+    label: 'reads the GLOBAL active tab (Audit-11 R1 regression)',
+    hint:
+      'DocumentEditor must be PANE-SCOPED: derive its doc from the `tabId` prop\n' +
+      '(`tab = tabStore.tabs.find((t) => t.id === tabId)`), never from\n' +
+      '`tabStore.activeTab` / `tabStore.activeTabId`. If a read is genuinely\n' +
+      'intentional, annotate it with `// allow-global-tab: <reason>`.',
+  },
+  {
+    file: 'src/renderer/lib/canvas/dragDrop.ts',
+    kind: 'ts',
+    forbidden: /\b(?:boardStore|canvasStore)\b/g,
+    allow: /\/\/\s*allow-global-(?:board|canvas)-facade:\s*\S+/,
+    label: 'reads a GLOBAL board/canvas facade (Audit-12 M5 regression)',
+    hint:
+      'dragDropAction must create tiles against the PANE-SCOPED `scope.board` /\n' +
+      '`scope.canvas` it is handed (mirroring viewportAction/edgePanAction), never\n' +
+      'the global `boardStore` / `canvasStore` — a drop has no pointerdown to\n' +
+      'activate the target pane, so a global read lands the tile on the wrong pane.\n' +
+      'See AUDIT12_REMEDIATION_PLAN_2026-06-06.md M5. If genuinely intentional,\n' +
+      'annotate with `// allow-global-board-facade: <reason>`.',
+  },
+];
 
 /**
  * Replace string-literal + JS-comment bodies with spaces (offset preserved), so
@@ -88,48 +133,48 @@ function lineAt(src, offset) {
   return line;
 }
 
-let raw;
-try {
-  raw = readFileSync(join(ROOT, TARGET), 'utf8');
-} catch (err) {
-  console.error(`[check-document-editor-pane-scoped] FAILED — cannot read ${TARGET}: ${err.message}`);
-  console.error('The R1 gate target moved or was deleted — re-point TARGET or restore the file.');
-  process.exit(1);
-}
+let failed = false;
 
-const rawLines = raw.split(/\r?\n/);
-// Markup outside <script> is left RAW so a mustache `{tabStore.activeTab}` is
-// still caught; only <script> internals + HTML comments are blanked.
-const scanned = blankScriptInternals(blankHtmlComments(raw));
-
-const offenders = [];
-let m;
-FORBIDDEN.lastIndex = 0;
-while ((m = FORBIDDEN.exec(scanned)) !== null) {
-  const line = lineAt(raw, m.index); // 1-based
-  const windowText = `${rawLines[line - 2] ?? ''}\n${rawLines[line - 1] ?? ''}`;
-  if (ALLOW_RE.test(windowText)) continue;
-  offenders.push({ line, text: (rawLines[line - 1] ?? '').trim() });
-}
-
-if (offenders.length > 0) {
-  console.error(
-    '[check-document-editor-pane-scoped] FAILED — DocumentEditor.svelte reads the ' +
-      'GLOBAL active tab (R1 regression):',
-  );
-  for (const { line, text } of offenders) {
-    console.error(`  ${TARGET}:${line} — \`${text}\``);
+for (const target of TARGETS) {
+  let raw;
+  try {
+    raw = readFileSync(join(ROOT, target.file), 'utf8');
+  } catch (err) {
+    console.error(`[check-document-editor-pane-scoped] FAILED — cannot read ${target.file}: ${err.message}`);
+    console.error('A pane-scope gate target moved or was deleted — re-point TARGETS or restore the file.');
+    process.exit(1);
   }
-  console.error(
-    '\nDocumentEditor must be PANE-SCOPED: derive its doc from the `tabId` prop\n' +
-      '(`tab = tabStore.tabs.find((t) => t.id === tabId)`), never from\n' +
-      '`tabStore.activeTab` / `tabStore.activeTabId`. Reading the global active tab\n' +
-      'makes every split pane mirror the same doc and stales the captured\n' +
-      'callerId / force-writer (Audit-11 R1). If a read is genuinely intentional,\n' +
-      'annotate it with `// allow-global-tab: <reason>`.',
-  );
-  process.exit(1);
+
+  const rawLines = raw.split(/\r?\n/);
+  // Markup outside <script> is left RAW so a mustache read is still caught; for
+  // a .ts file we blank strings/comments across the whole source.
+  const scanned =
+    target.kind === 'svelte'
+      ? blankScriptInternals(blankHtmlComments(raw))
+      : blankStringsAndComments(raw);
+
+  const offenders = [];
+  const re = target.forbidden;
+  re.lastIndex = 0;
+  let m;
+  while ((m = re.exec(scanned)) !== null) {
+    const line = lineAt(raw, m.index); // 1-based
+    const windowText = `${rawLines[line - 2] ?? ''}\n${rawLines[line - 1] ?? ''}`;
+    if (target.allow.test(windowText)) continue;
+    offenders.push({ line, text: (rawLines[line - 1] ?? '').trim() });
+  }
+
+  if (offenders.length > 0) {
+    failed = true;
+    console.error(`[check-document-editor-pane-scoped] FAILED — ${target.file} ${target.label}:`);
+    for (const { line, text } of offenders) {
+      console.error(`  ${target.file}:${line} — \`${text}\``);
+    }
+    console.error(`\n${target.hint}\n`);
+  }
 }
 
-console.log('[check-document-editor-pane-scoped] OK — DocumentEditor stays pane-scoped (no global-tab read).');
+if (failed) process.exit(1);
+
+console.log('[check-document-editor-pane-scoped] OK — DocumentEditor + dragDrop stay pane-scoped (no global facade reads).');
 process.exit(0);

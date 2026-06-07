@@ -93,16 +93,19 @@ export class TaskListKeyboardNav {
     if (ids.length === 0) return;
     const focused = this.focusedTaskRow();
     if (!focused) {
-      this.focusRowById(delta > 0 ? ids[0] : ids[ids.length - 1]);
+      const targetId = delta > 0 ? ids[0] : ids[ids.length - 1];
+      if (targetId) this.focusRowById(targetId); // ids non-empty (checked above)
       return;
     }
     const idx = ids.indexOf(focused.tile.id);
     if (idx < 0) {
-      this.focusRowById(ids[0]);
+      const first = ids[0];
+      if (first) this.focusRowById(first);
       return;
     }
     const nextIdx = Math.max(0, Math.min(ids.length - 1, idx + delta));
-    this.focusRowById(ids[nextIdx]);
+    const next = ids[nextIdx];
+    if (next) this.focusRowById(next);
   }
 
   indentFocused(row: TaskRow, outdent: boolean): void {
@@ -115,6 +118,7 @@ export class TaskListKeyboardNav {
     const idx = ids.indexOf(row.tile.id);
     if (idx <= 0) return;
     const newParentId = ids[idx - 1];
+    if (!newParentId) return; // idx > 0 and < ids.length; narrow for the type-checker
     // Cycle guard: target cannot be a descendant of focused.
     if (collectDescendantIds(this.deps.getRows(), row.tile.id).includes(newParentId)) return;
     if (row.parent === newParentId) return;
@@ -145,7 +149,7 @@ export class TaskListKeyboardNav {
     if (sectionId !== null) {
       const sIdx = sortedLive.findIndex((s) => s.id === sectionId);
       if (sIdx >= 0) {
-        sectionStart = sortedLive[sIdx].position;
+        sectionStart = sortedLive[sIdx]?.position ?? 0;
         sectionEnd = sortedLive[sIdx + 1]?.position ?? placements.length;
       }
     } else {

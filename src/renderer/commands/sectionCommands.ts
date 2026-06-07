@@ -34,12 +34,13 @@ export class AddSectionCommand extends Command {
     if (!newSection) {
       // Fallback to the last after-section (legacy callers always append).
       const last = after.sections[after.sections.length - 1];
-      // allow-shallow: TaskListSection has primitive fields only (id,
-      // title, position, collapsed).
-      this.newSection = last ? { ...last } : { id: '', title, position: 0, collapsed: false };
+      // L8 (Audit-13) — deep-clone, mirroring DeleteSectionCommand. The prior
+      // `allow-shallow` comment was wrong: TaskListSection carries an optional
+      // nested `style` object, so a shallow spread aliased it — a style edit on
+      // the live section between execute and undo would leak into this snapshot.
+      this.newSection = last ? this.snapshot(last) : { id: '', title, position: 0, collapsed: false };
     } else {
-      // allow-shallow: TaskListSection is primitive-only.
-      this.newSection = { ...newSection };
+      this.newSection = this.snapshot(newSection);
     }
     this.description = `Add section "${title}"`;
   }
@@ -53,7 +54,10 @@ export class AddSectionCommand extends Command {
     if (board.sections.some((s) => s.id === this.newSection.id)) return;
     boardCacheStore.persistTaskListStructure(this.boardId, [
       ...board.sections,
-      { ...this.newSection },
+      // L8 (Audit-13) — deep-clone again (defense-in-depth) so the command stays
+      // self-sufficient: the persisted copy can't alias this command's retained
+      // `newSection.style` even if a future persist path stops re-wrapping it.
+      this.snapshot(this.newSection),
     ]);
   }
 
@@ -258,13 +262,14 @@ function applySectionOrderLive(boardId: string, targetOrder: string[]): void {
 
   // Tasks before the first section's start index belong to no section (a
   // leading "Unsectioned" bucket); keep them anchored at the front.
-  const headSlice = liveTasks.slice(0, Math.max(0, liveSorted[0].position));
+  const headSlice = liveTasks.slice(0, Math.max(0, liveSorted[0]?.position ?? 0));
 
   // Each live section owns the contiguous slice [position, nextPosition).
   const sliceById = new Map<string, TaskPlacement[]>();
   const sectionById = new Map<string, TaskListSection>();
   for (let i = 0; i < liveSorted.length; i++) {
     const s = liveSorted[i];
+    if (!s) continue; // i < liveSorted.length; narrow for the type-checker
     const start = s.position;
     const end = liveSorted[i + 1]?.position ?? liveTasks.length;
     sliceById.set(s.id, liveTasks.slice(start, end));

@@ -1,6 +1,7 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron';
 import { z } from 'zod';
 import { logMainError } from '../utils/mainLogger';
+import { registerApprovedSource } from '../services/approvedSources';
 
 /**
  * Phase 8 / 8.4 — narrow validation for the `dialog:*` options bag.
@@ -146,7 +147,34 @@ export function registerDialogHandlers(): void {
       });
 
       if (result.canceled) return null;
+      // Audit-12 S1 — the user explicitly chose these files, so record them as
+      // approved `vault:copy-file` sources. This is a trusted minting point:
+      // main owns the dialog and the USER (not the calling renderer) selects
+      // the path, so a hostile renderer can't seed an arbitrary source here.
+      for (const picked of result.filePaths) {
+        registerApprovedSource(picked);
+      }
       return result.filePaths;
     },
   );
+
+  /**
+   * Audit-12 S1 — preload-internal registration of an approved `vault:copy-file`
+   * source (a real OS-dropped file path). Co-located with the dialog-pick
+   * registration above so all approved-source minting lives in one module.
+   *
+   * Fired ONLY by the preload's `getPathForFile` through a DIRECT
+   * `ipcRenderer.send` (not the contextBridge-exposed `api.send`) the moment a
+   * real OS-dropped `File` resolves to a disk path — the trusted minting point.
+   * A hostile renderer cannot reach this channel (intentionally NOT a
+   * `SendChannel`, and the `z.never()` payload schema rejects any
+   * `window.filo.send/invoke('vault:register-source-path', …)`) and cannot
+   * fabricate a `File` for a path it does not already possess. Fire-and-forget;
+   * defensively re-validates the arg is a non-empty string.
+   */
+  ipcMain.on('vault:register-source-path', (_event, sourcePath: unknown) => {
+    if (typeof sourcePath === 'string' && sourcePath.length > 0) {
+      registerApprovedSource(sourcePath);
+    }
+  });
 }

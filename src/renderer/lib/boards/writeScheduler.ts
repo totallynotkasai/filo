@@ -42,8 +42,10 @@ import {
   dropPendingPath,
   syncSentinelIfIdle,
   markPathFailed,
+  clearFailedPathAfterLateSuccess,
 } from './writeStateTracking';
 import { reportError } from '../utils/errorBus';
+import { vaultPath, type VaultPath } from '../../../shared/vaultPath';
 
 /**
  * Audit5 R3 — sentinel a `performWrite` race resolves to when it outruns the
@@ -323,6 +325,19 @@ export function createScheduler<TArgs>(
    * earlier fire-and-forget timer fires).
    */
   const failures = new Set<string>();
+  /**
+   * Audit-13 M3 — monotonic per-path write generation. Bumped each time a
+   * write FIRES for a path (in `fireWrite`) and captured at fire time. A
+   * timed-out write's late-success self-heal (the `writeTimeoutMs` branch's
+   * `clearFailedPathAfterLateSuccess` continuation) consults this so it only
+   * clears the failed mark when THIS write is still the newest for its path —
+   * otherwise an OLDER, superseded write finally landing would erase a NEWER
+   * write's legitimate failure recorded in the interim, falsely reporting the
+   * path clean. Keyed by the case-folded `VaultPath` so two fires for the same
+   * file (differing only in OS casing) share one generation counter. Cleared on
+   * vault swap via `reset()`.
+   */
+  const writeGenByPath = new Map<VaultPath, number>();
 
   // Back-compat: `manageSentinel: false` → 'none'; default → 'full'.
   const sentinelMode: 'full' | 'none' | 'pending-path' =
@@ -381,6 +396,17 @@ export function createScheduler<TArgs>(
       return Promise.resolve([]);
     }
 
+    // Audit-13 M3 — bump this path's write generation and capture it for the
+    // `writeTimeoutMs` branch's late-success self-heal below. A skipped write
+    // (above) never reaches here, so the generation tracks only real writes.
+    let writeGen = 0;
+    let writePathKey: VaultPath | undefined;
+    if (sentinel.path) {
+      writePathKey = vaultPath(sentinel.path);
+      writeGen = (writeGenByPath.get(writePathKey) ?? 0) + 1;
+      writeGenByPath.set(writePathKey, writeGen);
+    }
+
     // Wrap performWrite so a synchronous throw is treated as failure
     // attribution rather than blowing up the timer callback.
     const innerPromise: Promise<string[]> = (async () => {
@@ -412,7 +438,41 @@ export function createScheduler<TArgs>(
           // `safeEndWrite(false)` below would otherwise just drop the pending
           // path and let `syncSentinelIfIdle` mark clean — losing the recovery
           // flag for a write that never landed). Then attribute the failure.
-          if (sentinel.path) markPathFailed(sentinel.vaultRoot, sentinel.path);
+          if (sentinel.path) {
+            markPathFailed(sentinel.vaultRoot, sentinel.path);
+            // Audit-12 M2 — the underlying write keeps running; we only STOPPED
+            // awaiting it. Board/config/misc call their IPC directly (no
+            // trackComponentWrite), so a LATE success would otherwise never clear
+            // the failed mark → a permanent phantom "Save failed" + sticky
+            // `.filo/.dirty` for the rest of the session while the bytes are
+            // actually on disk. Self-heal on a late success. (The markdown +
+            // frontmatter schedulers already self-heal via trackComponentWrite's
+            // endWrite(true); the clear is idempotent there.)
+            const healVaultRoot = sentinel.vaultRoot;
+            const healPath = sentinel.path;
+            const healGen = writeGen;
+            const healKey = writePathKey;
+            void writePromise.then(
+              (lateFailures) => {
+                if (lateFailures.length === 0) {
+                  // Audit-13 M3 — only self-heal if THIS write is still the
+                  // newest for its path. A newer write that FAILED in the interim
+                  // bumped the generation and recorded a fresh, legitimate failed
+                  // mark; clearing it here (just because an OLDER, superseded
+                  // write finally landed) would falsely report the path clean and
+                  // mask the newer failure. When the generations still match,
+                  // no newer write fired, so the heal is safe (the M2 case).
+                  if (healKey !== undefined && writeGenByPath.get(healKey) !== healGen) {
+                    return;
+                  }
+                  clearFailedPathAfterLateSuccess(healVaultRoot, healPath);
+                }
+              },
+              () => {
+                /* late rejection — already marked failed, nothing to heal */
+              },
+            );
+          }
           return [failureId];
         }
         return outcome;
@@ -480,6 +540,28 @@ export function createScheduler<TArgs>(
     });
   }
 
+  /**
+   * Audit-13 H1 / Audit-12 H4 — awaits every in-flight write currently
+   * registered for `key`, for ORDERING only (failure attribution stays on each
+   * entry + the shared `failures` Set — we neither consume nor remove here). A
+   * fire path calls this BEFORE firing a new write for the same key so the
+   * newest write lands LAST: without it, a prior write still in flight on a
+   * slow/synced volume (OneDrive/SMB) overlaps the new IPC and the OS can land
+   * the OLDER one last, clobbering the newer payload — and the post-write stat
+   * then stamps the drift baseline to the stale bytes (no future drift warning).
+   *
+   * Each awaited entry is the timeout-bounded `tracker`, so a wedged prior can't
+   * block past its own `writeTimeoutMs`. Snapshot the bucket first — entries
+   * remove themselves from it as they settle inside `fireWrite`, so iterating
+   * the live Set would skip survivors. `flush(key)` uses `consumeInflight`
+   * instead (it ALSO folds the prior's outcome into its own `ok`).
+   */
+  async function drainPriorInFlight(key: string): Promise<void> {
+    const bucket = inFlight.get(key);
+    if (!bucket || bucket.size === 0) return;
+    for (const priorEntry of Array.from(bucket)) await priorEntry.promise;
+  }
+
   function schedule(
     key: string,
     getArgs: () => TArgs | null,
@@ -517,8 +599,10 @@ export function createScheduler<TArgs>(
     }
 
     const debounce = delayOverride ?? opts.debounceMs;
-    const timer = setTimeout(() => {
-      pending.delete(key);
+    // Reads the freshest args and fires (or surfaces missing-source). Shared by
+    // the synchronous fast path and the H1 drained path below — both re-read
+    // `getArgs()` at the moment of firing so the write captures the latest state.
+    const fireFromTimer = (): void => {
       const args = getArgs();
       if (!args) {
         // Source removed between schedule and fire (component unmount,
@@ -542,6 +626,32 @@ export function createScheduler<TArgs>(
       // Fire-and-forget. Failure attribution lives on `failures` Set;
       // `flushAll` consumes from there when it awaits in-flight writes.
       void fireWrite(key, snapshotted);
+    };
+    const timer = setTimeout(() => {
+      pending.delete(key);
+      // Audit-13 H1 — serialize the timer fire behind any write still in flight
+      // for this key so the newest write lands LAST (mirrors flush()'s WC-3 and
+      // flushAll()'s H4 pre-drain). Without this, the debounced fire overlapped a
+      // prior in-flight write on a slow/synced volume and the OS could land the
+      // OLDER one last, clobbering the newer .board.json/config payload (the
+      // post-write stat then stamps the drift baseline to the stale bytes).
+      const priorBucket = inFlight.get(key);
+      if (priorBucket && priorBucket.size > 0) {
+        // A prior write is in flight — drain it first, THEN fire (re-reading args
+        // for the freshest state). A reschedule landing during the drain arms its
+        // own timer; both fires serialize via this same drain and last-wins, so
+        // the extra write is benign. The drain awaits the timeout-bounded
+        // tracker, so a wedged prior can't block past its `writeTimeoutMs`.
+        void (async () => {
+          await drainPriorInFlight(key);
+          fireFromTimer();
+        })();
+      } else {
+        // Common case — nothing in flight for this key. Fire synchronously so
+        // the in-flight entry registers before the next microtask, preserving
+        // the sync-fire timing flush()/flushAll() and the test suite rely on.
+        fireFromTimer();
+      }
     }, debounce);
 
     pending.set(key, {
@@ -733,18 +843,23 @@ export function createScheduler<TArgs>(
         if (!failed.includes(id)) failed.push(id);
         continue;
       }
-      // Audit-12 H4 — mirror flush()'s WC-3 pre-drain. For a non-serialized
-      // scheduler (board/config/misc) an OLDER write can already be in flight for
-      // this key (it's in `inflightSnapshot` above). Drain it BEFORE firing the
-      // pending (newest) write so the newest lands LAST; otherwise the OS can land
-      // the stale write last on a slow OneDrive/SMB volume and clobber the newer
+      // Audit-12 H4 / Audit-13 H1 — mirror flush()'s WC-3 pre-drain via the
+      // shared `drainPriorInFlight` helper. For a non-serialized scheduler
+      // (board/config/misc) an OLDER write can already be in flight for this key
+      // (it's in `inflightSnapshot` above). Drain it BEFORE firing the pending
+      // (newest) write so the newest lands LAST; otherwise the OS can land the
+      // stale write last on a slow OneDrive/SMB volume and clobber the newer
       // .board.json/config payload. These prior entries stay in `inflightSnapshot`,
       // so their failure attribution still runs in the post-loop below — here we
       // only enforce write ORDERING (await, don't consume).
+      //
+      // Guard the await on a NON-EMPTY bucket: `await drainPriorInFlight(...)`
+      // yields a microtask even when nothing is in flight, which would defer
+      // `fireWrite` (and its synchronous IPC dispatch) one tick — breaking
+      // callers that fire-and-don't-await `flushAll()` and then synchronously
+      // observe the write has begun (A9-L7's mid-save assertion).
       const prior = inFlight.get(entry.key);
-      if (prior && prior.size > 0) {
-        for (const p of Array.from(prior)) await p.promise;
-      }
+      if (prior && prior.size > 0) await drainPriorInFlight(entry.key);
       const sentinel = opts.getSentinelInfo(entry.args);
       if (sentinel.vaultRoot) trackedVault = sentinel.vaultRoot;
       const failureList = await fireWrite(entry.key, entry.args);
@@ -795,6 +910,10 @@ export function createScheduler<TArgs>(
     pending.clear();
     inFlight.clear();
     failures.clear();
+    // Audit-13 M3 — drop the per-path generations so the new vault's first write
+    // to a same-named path starts at generation 1 (a stale late-success
+    // continuation from the outgoing vault no longer matches and can't heal).
+    writeGenByPath.clear();
   }
 
   function hasPending(predicate: (args: TArgs) => boolean): boolean {

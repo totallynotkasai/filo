@@ -82,7 +82,7 @@ export const searchStore = {
   get currentIndex() { return clampedIndex; },
   get currentMatch(): SearchMatch | null {
     const list = searchResult.matches;
-    return list.length > 0 ? list[clampedIndex] : null;
+    return list.length > 0 ? (list[clampedIndex] ?? null) : null;
   },
   /**
    * The most recent "jump to this match" request. Components watching this

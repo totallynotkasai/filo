@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { TextTile, DocumentBoard } from '../../schema/index';
+  import type { TextTile } from '../../schema/index';
   import { onMount, onDestroy } from 'svelte';
   import type { Editor } from '@tiptap/core';
   import { createTiptapEditor } from '../../lib/editor/createEditor';
@@ -155,15 +155,13 @@
           documentStore.updateContent(tile.contentId, html, md, callerId);
         }
 
-        const project = vaultStore.getData();
-        if (project && tile.contentId) {
-          for (const b of project.boards) {
-            if (b.type === 'document' && (b as DocumentBoard).contentId === tile.contentId) {
-              (b as DocumentBoard).content = html;
-              b.updatedAt = Date.now();
-            }
-          }
-        }
+        // L2 (Audit-12) — the former write into the in-memory virtual
+        // `project.boards[*].content` was deleted. `documentStore.updateContent`
+        // above is the canonical body sync (the DocumentEditor's reactive
+        // `$effect` on `docState.body` picks it up); the virtual project is
+        // in-memory only and nothing reads `.content` as a write source (the
+        // `.md` write sources from the editor markdown), so the mutation was
+        // vestigial — it bypassed reactivity and synced nothing.
 
         scheduleMarkdownWrite();
       },
@@ -251,9 +249,16 @@
           // `fileState` entry; do NOT re-sniff from `parsed.hadBom`, which
           // is computed from the body-only `existing.body` (always false
           // because the body is stripped). When isHydrated is false the
-          // sibling hadn't done its own disk read yet, so fall back to
-          // false; the next gateway write will hydrate from disk.
-          if (!isHydrated(relPath)) markHydrated(relPath, false);
+          // sibling hadn't done its own disk read yet, so fall back to false.
+          // L5 (Audit-12) — but the body retains its line endings (unlike the
+          // BOM), so sniff CRLF from it: without an eol a single-line-CRLF FM
+          // file would emit LF fences on the first gateway write (the A8-M1
+          // hole on the adopt path). Pin only CRLF; leave LF/unknown to
+          // write-time detection so we never force a wrong LF.
+          if (!isHydrated(relPath)) {
+            const adoptEol = parsed.body.includes('\r\n') ? '\r\n' : undefined;
+            markHydrated(relPath, false, undefined, undefined, adoptEol);
+          }
           // Re-register the force-writer with the adopted docId so Keep-local
           // matches against the new identity.
           registerForceWriter(callerId, existing.docId, buildWriteArgs);
@@ -280,7 +285,12 @@
         // store cached the body). Inherit the existing `fileState`
         // entry's hadBom when it exists; only mark with false as a
         // fresh fallback for a doc that has no prior hydrate.
-        if (relPath && !isHydrated(relPath)) markHydrated(relPath, false);
+        // L5 (Audit-12) — sniff CRLF from the body-only body so an adopt of a
+        // single-line-CRLF FM file doesn't emit LF fences on the first write.
+        if (relPath && !isHydrated(relPath)) {
+          const adoptEol = parsed.body.includes('\r\n') ? '\r\n' : undefined;
+          markHydrated(relPath, false, undefined, undefined, adoptEol);
+        }
         return;
       }
 

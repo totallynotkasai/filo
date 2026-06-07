@@ -94,8 +94,8 @@ export function decodeFiloLink(uri: string): DecodedFiloLink | null {
       // Don't coerce NaN to 0 here — the safeParse below routes a NaN /
       // ±Infinity input to a clean null return so the caller can ignore
       // a hostile link rather than panning to an arbitrary origin.
-      const x = parseFloat(parts[2]);
-      const y = parseFloat(parts[3]);
+      const x = parseFloat(parts[2] ?? '');
+      const y = parseFloat(parts[3] ?? '');
       candidate = {
         type: 'position-nav',
         targetBoardId: parts[1],

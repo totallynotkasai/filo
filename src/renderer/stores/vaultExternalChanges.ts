@@ -20,7 +20,7 @@ import {
   setExternalEditPromptHandler,
 } from '../lib/vault/markdownFileWriter';
 import { setBoardExternalEditHandler } from '../lib/boards/boardWriteScheduler';
-import { noteBaseline } from '../lib/vault/fileBaselineRegistry';
+import { noteBaseline, getBaseline, hasBaselineDrifted } from '../lib/vault/fileBaselineRegistry';
 import {
   isPropertiesPopupDirty,
   getDirtyInstancesForPath,
@@ -90,22 +90,62 @@ export {
  */
 const PROMPT_AGGREGATION_THRESHOLD = 5;
 
+/**
+ * M4 (Audit-13) — tiebreak for a path inside the self-write suppression window.
+ * Returns true when a fresh disk stat diverges from the baseline Filo last
+ * wrote (mtime OR size) — i.e. a real external editor touched the file after our
+ * write, so it must NOT be dropped as our own echo. Returns false (drop it, the
+ * pre-M4 behaviour) when there's no baseline anchor, the stat is unavailable, or
+ * the stat matches — the data-safe direction: the worst case is the prior
+ * "wait for the 30s reconcile", never resurrecting a self-write as a spurious
+ * external-edit prompt.
+ */
+async function selfWriteDivergedFromBaseline(root: string, rel: string): Promise<boolean> {
+  const baseline = getBaseline(rel);
+  if (!baseline) return false;
+  try {
+    const stat = await window.filo.invoke('vault:stat', root, rel);
+    if (!stat || stat.success !== true) return false;
+    return hasBaselineDrifted(baseline, { mtimeMs: stat.mtimeMs, size: stat.size });
+  } catch {
+    return false;
+  }
+}
+
 export function makeExternalChangesSlice(ctx: VaultContext) {
   return {
     async handleExternalMarkdownChanges(relPaths: string[]): Promise<void> {
-      // Audit-7 L15 — single self-write authority. Every entry path lands here
-      // (the batched-reconciler bridge, the partial-read-retry timer that
-      // re-invokes this handler directly), so filtering our own recent writes
-      // once at the top keeps the timer path from reclassifying a self-written
-      // file as an external edit. The bridge no longer pre-filters this list.
-      const paths = relPaths.filter((p) => !isRecentSelfWrite(p));
-      if (paths.length === 0) return;
       // A8-H2(a) (Audit-8) — capture vault identity BEFORE the first await, so
-      // the post-`applyChanges` guard below can bail if a swap lands during
-      // `whenBuildComplete()` / `applyChanges()` (or a retry timer re-entry).
-      // Without it, this vault's classification is applied to the NEW vault's
-      // same-named file. Mirrors the G1 discipline in vaultExternalReconcilers.
+      // the post-`applyChanges` guard below can bail if a swap lands during the
+      // M4 stat loop / `whenBuildComplete()` / `applyChanges()` (or a retry timer
+      // re-entry). Without it, this vault's classification is applied to the NEW
+      // vault's same-named file. Mirrors the G1 discipline in vaultExternalReconcilers.
       const identity = captureVaultIdentity();
+      // Audit-7 L15 — single self-write authority: every entry path lands here
+      // (bridge + partial-read-retry re-entry), so dropping our own recent writes
+      // once at the top keeps the timer path from reclassifying a self-written
+      // file as external. M4 (Audit-13) — but a genuine external edit inside the
+      // ~2-3s suppression window must NOT be dropped, so a recent-self-write is
+      // dropped ONLY when its fresh disk stat still matches the baseline we wrote;
+      // a diverged (mtime/size) stat means a second writer touched it (parity with
+      // the write-side drift guard). See `selfWriteDivergedFromBaseline`.
+      const root = ctx.getVaultPath();
+      const paths: string[] = [];
+      for (const rel of relPaths) {
+        if (!isRecentSelfWrite(rel)) {
+          paths.push(rel);
+          continue;
+        }
+        if (root && (await selfWriteDivergedFromBaseline(root, rel))) {
+          paths.push(rel);
+        }
+      }
+      if (paths.length === 0) return;
+      // M4 — a swap during the stat loop above invalidates the keep/drop
+      // decisions (they read the outgoing vault's disk + baselines); bail before
+      // any further work. The post-`applyChanges` re-check below covers the
+      // remaining awaits.
+      if (!isStillSameVault(identity)) return;
       // Audit-7 L14 — a full index rebuild clears the index synchronously then
       // re-reads in chunks; for that window getMetadata returns null, and a
       // null previousByPath routes a dirty-editor change to prompt-user (a
@@ -251,6 +291,10 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
                 next.content,
                 editorDoc.richText,
                 next.frontmatter,
+                // L1 (Audit-13) — thread the disk FM source so the reload
+                // refreshes originalFrontmatterCache too (an externally-added
+                // key keeps its inline comment on the next body-only save).
+                next.rawFrontmatter,
                 { mtimeMs: next.lastModified, size: next.rawByteSize },
               );
               promptReloadRecoveryIfSuspicious(
@@ -372,7 +416,19 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
             // The callback clears its own entries on dispatch so the maps
             // stay bounded.
             schedulePartialReadRetry(relKey, attempt, () => {
-              void handler([rel]);
+              // L15 (Audit-13) — re-enter through the shared rename queue, not a
+              // bare `void handler([rel])`. The timer fires off the event loop
+              // with no ordering or identity guard; a concurrent rename rebinding
+              // this path could interleave with the retry's re-index. The queue
+              // serialises by arrival order AND skips the task if the vault
+              // swapped between enqueue and execution (the same guard every other
+              // watcher-driven task already inherits). Falls back to a direct call
+              // only in test contexts whose VaultContext stub omits the queue.
+              if (ctx.enqueueRenameQueueWork) {
+                void ctx.enqueueRenameQueueWork(() => handler([rel]));
+              } else {
+                void handler([rel]);
+              }
             });
             break;
           }
@@ -392,6 +448,14 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
                 // Phase 1 / 1.3 — capture root at toast-creation time.
                 promptClosedBoardFileMissing(rel, targets.tileIds.length, ctx.getVaultPath());
               }
+            } else if (decision.reason === 'no-editor-open' && next) {
+              // L5 (Audit-13) — a closed-file body-only edit the index already
+              // absorbed (no editor, FM unchanged) must re-stamp the per-file
+              // drift baseline; else the stale (pre-edit) baseline makes the NEXT
+              // in-app field edit on a card/row backed by this file false-flag
+              // "modified externally". The sync-frontmatter / reload-silently
+              // siblings already re-anchor; this closes the no-editor body hole.
+              noteBaseline(rel, next.lastModified, next.rawByteSize);
             }
             break;
         }
@@ -525,6 +589,11 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
     async handleExternalAttachmentChanges(relPaths: string[]): Promise<void> {
       const vaultRoot = ctx.getVaultPath();
       if (!vaultRoot) return;
+      // L16 (Audit-13) — capture the generation-aware identity BEFORE the grace
+      // window below, so a close→reopen of the SAME path (a new generation that a
+      // bare `getVaultPath() !== vaultRoot` string compare silently passes) is
+      // detected and the deferred prompt is dropped.
+      const identity = captureVaultIdentity();
       // D.4 — defer the prompt by the grace window so a cross-folder
       // external move that the watcher hasn't yet correlated into a
       // synthetic rename event doesn't surface a spurious "deleted
@@ -544,9 +613,10 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
         const targets = boardCacheStore.findCascadeDeleteTargets(rel);
         if (targets.tileIds.length === 0) return;
         await new Promise((resolve) => setTimeout(resolve, ATTACHMENT_DELETE_GRACE_MS));
-        // Vault swap during the grace window? Drop the prompt — the
-        // captured `vaultRoot` no longer matches the active vault.
-        if (ctx.getVaultPath() !== vaultRoot) return;
+        // Vault swap during the grace window? Drop the prompt. L16 (Audit-13) —
+        // generation-aware (catches close→reopen of the same path), replacing the
+        // prior `ctx.getVaultPath() !== vaultRoot` string compare.
+        if (!isStillSameVault(identity)) return;
         if (wasRecentlyRenamed(rel)) return;
         try {
           const stillExists = await window.filo.invoke('vault:file-exists', vaultRoot, rel);
@@ -926,26 +996,43 @@ function promptBulkExternalChanges(prompts: PendingPrompt[], ctx: VaultContext):
     actions: [
       {
         label: 'Reload all',
-        handler: () => {
+        // Async so the toast harness / tests wait for the per-file disk
+        // re-reads to land before continuing (mirrors promptModifiedFile).
+        handler: async () => {
+          // L17 (Audit-13) — capture identity before the per-file disk re-reads;
+          // a vault swap during any `applyChanges` await would otherwise apply the
+          // outgoing vault's disk content to the new vault's same-named stores.
+          const identity = captureVaultIdentity();
           for (const p of prompts) {
             if (p.kind === 'modified') {
-              // Phase 3 / 3.3 — apply the deferred frontmatter + tag
-              // updates atomically with the body reload so reload-all
-              // lands in a consistent state. The single-file Reload
-              // handler in `promptModifiedFile` mirrors this trio.
-              boardStore.applyFrontmatterToBackedTiles(p.rel, p.next);
-              fileTagsStore.setFileTags(p.rel, normalizeTags(p.next.frontmatter.tags));
+              // L3 (Audit-12) — re-read the LATEST disk state per file at click
+              // time instead of replaying the `p.next` snapshot captured when
+              // the watcher event first fired. A SECOND external write landing
+              // between detection and the user's click would otherwise make
+              // "Reload all" apply the stale first-detection content. Mirrors
+              // the now-hardened single-file `promptModifiedFile` Reload; fall
+              // back to `p.next` if the file vanished in the gap.
+              await vaultIndexStore.applyChanges([p.rel]);
+              // L17 (Audit-13) — bail if a swap landed during the re-read, before
+              // mutating any store with the outgoing vault's disk content.
+              if (!isStillSameVault(identity)) return;
+              const fresh = vaultIndexStore.getMetadata(p.rel) ?? p.next;
+              // Phase 3 / 3.3 — apply the deferred frontmatter + tag updates
+              // atomically with the body reload so reload-all lands in a
+              // consistent state.
+              boardStore.applyFrontmatterToBackedTiles(p.rel, fresh);
+              fileTagsStore.setFileTags(p.rel, normalizeTags(fresh.frontmatter.tags));
               // Audit-11 EER-1 — discard any armed field delta BEFORE the reload,
               // else applyReloadFromDisk's flushAllPendingFrontmatterWrites would
               // re-apply the discarded edit to fresh disk and revert this reload.
               dropPendingDelta(p.rel);
               documentStore.applyReloadFromDisk(
                 p.editorDoc.docId,
-                p.next.content,
+                fresh.content,
                 p.editorDoc.richText,
-                p.next.frontmatter,
-                undefined,
-                { mtimeMs: p.next.lastModified, size: p.next.rawByteSize },
+                fresh.frontmatter,
+                fresh.rawFrontmatter, // L1 (Audit-13) — refresh originalFrontmatterCache too
+                { mtimeMs: fresh.lastModified, size: fresh.rawByteSize },
               );
               // Sprint C / C.1 — for popup-dirty entries also cancel any
               // pending gateway writes from the dirty popup(s) so a late
@@ -1092,12 +1179,18 @@ function promptPartialReadExhausted(rel: string): void {
       {
         label: 'Reload from disk',
         handler: async () => {
+          // L17 (Audit-13) — capture identity before the disk re-read so a vault
+          // swap during it can't apply the outgoing vault's content to the new
+          // vault's stores. (Sibling of the bulk Reload-all / promptModifiedFile
+          // Reload handlers.)
+          const identity = captureVaultIdentity();
           const editorDoc = documentStore.findByFilename(rel);
           // No editor open — nothing to reload into. The classifier would
           // route a future change through `ignore`/`sync-frontmatter`
           // anyway. The index refresh below still happens so a freshly-
           // opened tile sees the current disk state.
           await vaultIndexStore.applyChanges([rel]);
+          if (!isStillSameVault(identity)) return;
           const next = vaultIndexStore.getMetadata(rel);
           if (!next) return;
           boardStore.applyFrontmatterToBackedTiles(rel, next);
@@ -1116,7 +1209,7 @@ function promptPartialReadExhausted(rel: string): void {
               next.content,
               editorDoc.richText,
               next.frontmatter,
-              undefined,
+              next.rawFrontmatter, // L1 (Audit-13) — refresh originalFrontmatterCache too
               { mtimeMs: next.lastModified, size: next.rawByteSize },
             );
           }
@@ -1213,6 +1306,10 @@ function promptModifiedFile(
         // Async so a caller that awaits the action (the toast harness, tests)
         // waits for the disk re-read + apply to land before continuing.
         handler: async () => {
+          // L17 (Audit-13) — capture identity before the disk re-read; bail after
+          // it if a vault swap landed, so the trio below can't write the outgoing
+          // vault's content into the new vault.
+          const identity = captureVaultIdentity();
           // Phase 3 / 3.4 — re-read the LATEST disk state at click time
           // instead of replaying the `next` snapshot captured when the
           // watcher event first fired. A SECOND external write landing
@@ -1223,6 +1320,7 @@ function promptModifiedFile(
           // back to the captured `next` so the trio still has coherent bytes
           // (the watcher's delete event handles a genuine removal separately).
           await vaultIndexStore.applyChanges([rel]);
+          if (!isStillSameVault(identity)) return;
           const fresh = vaultIndexStore.getMetadata(rel) ?? next;
           // Atomic trio — match the bulk Reload-all branch.
           boardStore.applyFrontmatterToBackedTiles(rel, fresh);
@@ -1236,7 +1334,7 @@ function promptModifiedFile(
             fresh.content,
             editorDoc.richText,
             fresh.frontmatter,
-            undefined,
+            fresh.rawFrontmatter, // L1 (Audit-13) — refresh originalFrontmatterCache too
             { mtimeMs: fresh.lastModified, size: fresh.rawByteSize },
           );
         },
@@ -1297,7 +1395,7 @@ function promptMarkdownPendingWriteConflict(
               next.content,
               editorDoc.richText,
               next.frontmatter,
-              undefined,
+              next.rawFrontmatter, // L1 (Audit-13) — refresh originalFrontmatterCache too
               { mtimeMs: next.lastModified, size: next.rawByteSize },
             );
           }
@@ -1527,7 +1625,15 @@ export function promptExternalEditOnSync(args: {
             // pull the resulting FileMetadata. If the file vanished, fall
             // back to keep-local (the upstream write will ENOENT-skip).
             void (async () => {
+              // L17 (Audit-13) — capture identity before the disk re-read; on a
+              // swap during it, defer so the awaiting writer aborts without
+              // applying the outgoing vault's content to the new vault.
+              const identity = captureVaultIdentity();
               await vaultIndexStore.applyChanges([path]);
+              if (!isStillSameVault(identity)) {
+                resolve('defer');
+                return;
+              }
               const next = vaultIndexStore.getMetadata(path);
               if (!next) {
                 resolve('keep-local');
@@ -1543,7 +1649,7 @@ export function promptExternalEditOnSync(args: {
                   next.content,
                   editorDoc.richText,
                   next.frontmatter,
-                  undefined,
+                  next.rawFrontmatter, // L1 (Audit-13) — refresh originalFrontmatterCache too
                   { mtimeMs: next.lastModified, size: next.rawByteSize },
                 );
               }

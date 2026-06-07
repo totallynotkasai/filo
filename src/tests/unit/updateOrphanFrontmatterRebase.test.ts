@@ -11,7 +11,7 @@
  * which has the right shape; this finding is the "make it docId-less"
  * variant.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
@@ -148,6 +148,36 @@ describe('UpdateOrphanFrontmatterCommand — 6.2.H8 rebase on undo', () => {
     expect(undoWrites.length).toBeGreaterThan(0);
     const undoContent = undoWrites[undoWrites.length - 1].args[2] as string;
     expect(undoContent).toContain('priority: high');
+  });
+
+  it('L7 (Audit-13) — all-fields-conflict undo writes nothing and does NOT markDirty', async () => {
+    const cmd = new UpdateOrphanFrontmatterCommand(
+      'kb',
+      'Card.md',
+      { priority: 'high' },
+      { priority: 'low' },
+    );
+    await cmd.execute(); // applies 'high' cleanly (disk was 'low')
+
+    // Only watch the undo leg. The board cache holds no 'kb' board here, so a
+    // markDirty would be a no-op write-schedule anyway — but it must not even be
+    // CALLED when zero fields are applied (it was, pre-fix).
+    const markDirtySpy = vi.spyOn(boardCacheStore, 'markDirty');
+
+    // External editor changes the only key between execute and undo → the undo's
+    // single key fully conflicts, so the write is suppressed entirely.
+    diskContent = '---\npriority: critical\n---\nbody content\n';
+    await cmd.undo();
+
+    const undoWrites = calls.filter(
+      (c) => c.channel === 'vault:write-existing-file-text' && c.args[1] === 'Card.md',
+    );
+    // (the execute write may be present; assert the undo added no priority:low write)
+    for (const w of undoWrites) {
+      expect(w.args[2] as string).not.toContain('priority: low');
+    }
+    expect(markDirtySpy).not.toHaveBeenCalled();
+    markDirtySpy.mockRestore();
   });
 
   it('undo without a conflict still applies the inverse cleanly', async () => {

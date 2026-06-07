@@ -1,7 +1,5 @@
-import { canvasStore } from '../../stores/canvas.svelte';
 import { screenToCanvas } from './coordinates';
 import { getTileTypeFromMime, getTileTypeFromExtension, createTile } from '../../stores/tiles.svelte';
-import { boardStore } from '../../stores/board.svelte';
 import { vaultStore } from '../../stores/vault.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { framesStore } from '../../stores/frames.svelte';
@@ -14,6 +12,12 @@ import type { TextTile, Tile } from '../../schema/index';
 import { getActiveContentFolder, getActiveContentFolderAbs } from '../vault/conventionPaths';
 import { historyStore } from '../../stores/history.svelte';
 import { AddTilesCommand } from '../../commands/index';
+// M5 (Audit-12) — pane-scoped, NOT the global board/canvas facades. A `drop`
+// carries no preceding pointerdown to activate the target pane, so reading the
+// global `boardStore`/`canvasStore` created the tile on the ACTIVE pane's board
+// with the active pane's viewport — wrong pane in a split view. The action now
+// takes the pane's BoardScope and creates against `scope.board`/`scope.canvas`.
+import { setActiveScope, type BoardScope, type BoardScopeBoard } from '../boards/boardScope.svelte';
 
 /**
  * Electron 32+ removed the legacy `path` property from `File`, but the
@@ -40,9 +44,15 @@ function resolveDroppedFilePath(file: File): string | undefined {
  * Media files are copied to the vault's attachments folder.
  * Markdown files become text tile wrappers (document is the source of truth).
  *
- * Usage: <div use:dragDropAction>...</div>
+ * M5 (Audit-12) — takes the pane's `BoardScope` (mirrors
+ * `viewportAction`/`edgePanAction`) so the tile lands on THIS pane's board with
+ * THIS pane's viewport, not whichever pane the global facade points at. On drop
+ * it also pivots the active scope to this pane so the still-global
+ * `framesStore` / `historyStore` resolve to the dropped-on pane too.
+ *
+ * Usage: <div use:dragDropAction={scope}>...</div>
  */
-export function dragDropAction(node: HTMLElement) {
+export function dragDropAction(node: HTMLElement, scope: BoardScope) {
   function onDragOver(e: DragEvent) {
     e.preventDefault();
     if (e.dataTransfer) {
@@ -64,6 +74,15 @@ export function dragDropAction(node: HTMLElement) {
     e.preventDefault();
     node.classList.remove('drag-over');
 
+    // M5 (Audit-12) — a drop has no preceding pointerdown to activate the target
+    // pane (PaneView activates on pointerdowncapture), so the GLOBAL facades
+    // (framesStore.syncTileMembership, historyStore push) would still resolve to
+    // the previously-active pane. Pivot the active scope to THIS pane up front so
+    // those globals target the dropped-on board. Tile placement + viewport use
+    // the threaded `scope` directly below, so they're pane-correct regardless.
+    setActiveScope(scope);
+    historyStore.setActiveBoard(scope.board.current?.id ?? null);
+
     // Multi-select drag from the vault sidebar uses the plural MIME type
     // `application/x-vault-files`. We refuse it here so the user can't
     // accidentally smear a folder reorganisation onto the canvas — a single
@@ -76,7 +95,7 @@ export function dragDropAction(node: HTMLElement) {
     const rect = node.getBoundingClientRect();
     const screenX = e.clientX - rect.left;
     const screenY = e.clientY - rect.top;
-    const canvasPos = screenToCanvas(screenX, screenY, canvasStore.transform);
+    const canvasPos = screenToCanvas(screenX, screenY, scope.canvas.transform);
 
     // Collected tiles for this drop. Pushed as a single AddTilesCommand at
     // the end so a 30-file drop is one Ctrl+Z, not 30. Phase 16 / H3.
@@ -85,9 +104,9 @@ export function dragDropAction(node: HTMLElement) {
     // Handle vault file drops (from VaultSidebar)
     const vaultFileData = e.dataTransfer?.getData('application/x-vault-file');
     if (vaultFileData) {
-      // Without an active board, `boardStore.addTile` silently no-ops and
+      // Without an active board, `scope.board.addTile` silently no-ops and
       // the drop appears to "snap back". Surface a toast instead.
-      if (!boardStore.current?.id) {
+      if (!scope.board.current?.id) {
         uiStore.toast('Open a board to drop files', 'info', 2000);
         return;
       }
@@ -97,7 +116,7 @@ export function dragDropAction(node: HTMLElement) {
 
         if (type === 'text') {
           // .md files become text tile wrappers — read content and link to the file
-          const created = await createTextTileFromFile(filePath, canvasPos);
+          const created = await createTextTileFromFile(scope.board, filePath, canvasPos);
           if (created) dropTiles.push(created);
         } else {
           // Compute relative path from vault root for portability. Uses the
@@ -117,8 +136,8 @@ export function dragDropAction(node: HTMLElement) {
             overrides.fileExtension = extension;
           }
 
-          const tile = createTile(type, canvasPos, boardStore.current?.id || '', overrides);
-          boardStore.addTile(tile);
+          const tile = createTile(type, canvasPos, scope.board.current?.id || '', overrides);
+          scope.board.addTile(tile);
           framesStore.syncTileMembership(tile.id);
           dropTiles.push(tile);
         }
@@ -138,7 +157,7 @@ export function dragDropAction(node: HTMLElement) {
     // Destination for newly-copied files. Cascade: vault-wide pin →
     // active board's per-board pin → vault root. The resolver returns ''
     // when there is no open vault, so vaultDir wins via the OR fallback.
-    const targetDir = getActiveContentFolderAbs(boardStore.current) || vaultDir;
+    const targetDir = getActiveContentFolderAbs(scope.board.current) || vaultDir;
 
     if (!vaultDir) {
       uiStore.toast('Save the project first to enable file drops', 'info', 2000);
@@ -172,7 +191,7 @@ export function dragDropAction(node: HTMLElement) {
         if (sourcePath && isInsideVault(sourcePath, vaultDir)) {
           const dropPos = { x: canvasPos.x + offsetX, y: canvasPos.y };
           if (type === 'text') {
-            const created = await createTextTileFromFile(sourcePath, dropPos);
+            const created = await createTextTileFromFile(scope.board, sourcePath, dropPos);
             if (created) dropTiles.push(created);
           } else {
             const relPath = vaultRelativeFromAbsolute(sourcePath, vaultDir);
@@ -184,8 +203,8 @@ export function dragDropAction(node: HTMLElement) {
               overrides.fileName = file.name;
               overrides.fileExtension = fileExt;
             }
-            const tile = createTile(type, dropPos, boardStore.current?.id || '', overrides);
-            boardStore.addTile(tile);
+            const tile = createTile(type, dropPos, scope.board.current?.id || '', overrides);
+            scope.board.addTile(tile);
             framesStore.syncTileMembership(tile.id);
             dropTiles.push(tile);
           }
@@ -208,7 +227,7 @@ export function dragDropAction(node: HTMLElement) {
             // the new tile — otherwise the tile gets flagged on first render.
             await vaultStore.refreshTree();
             const dropPos = { x: canvasPos.x + offsetX, y: canvasPos.y };
-            const created = await createTextTileFromFile(res.path, dropPos);
+            const created = await createTextTileFromFile(scope.board, res.path, dropPos);
             if (created) dropTiles.push(created);
             offsetX += 260;
           } else {
@@ -241,8 +260,8 @@ export function dragDropAction(node: HTMLElement) {
             }
 
             const dropPos = { x: canvasPos.x + offsetX, y: canvasPos.y };
-            const tile = createTile(type, dropPos, boardStore.current?.id || '', overrides);
-            boardStore.addTile(tile);
+            const tile = createTile(type, dropPos, scope.board.current?.id || '', overrides);
+            scope.board.addTile(tile);
             framesStore.syncTileMembership(tile.id);
             dropTiles.push(tile);
             offsetX += 260;
@@ -301,11 +320,12 @@ export function dragDropAction(node: HTMLElement) {
  * folder (vault root for mindmap) and recreate the file there.
  */
 async function createTextTileFromFile(
+  boardScope: BoardScopeBoard,
   filePath: string,
   position: { x: number; y: number },
 ): Promise<Tile | null> {
   const vaultDir = vaultStore.path;
-  const board = boardStore.current;
+  const board = boardScope.current;
   const boardId = board?.id || '';
 
   if (!vaultDir) {
@@ -330,7 +350,7 @@ async function createTextTileFromFile(
     boardType: board?.type ?? null,
     boardName: (board as { name?: string } | null)?.name,
     kanbanFolder: (board as { kanbanFolder?: string } | null)?.kanbanFolder,
-    existingTiles: Object.values(boardStore.tiles) as Array<TextTile>,
+    existingTiles: Object.values(boardScope.tiles) as Array<TextTile>,
     conventionFolderOverride: getActiveContentFolder(board),
   });
 
@@ -348,7 +368,7 @@ async function createTextTileFromFile(
   }
 
   const tile = createTile('text', position, boardId, overrides);
-  boardStore.addTile(tile);
+  boardScope.addTile(tile);
   framesStore.syncTileMembership(tile.id);
 
   // Register the file's frontmatter tags in `.filo/tags.json` so the Tag

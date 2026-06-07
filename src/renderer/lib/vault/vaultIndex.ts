@@ -1,14 +1,14 @@
 import MiniSearch, { type SearchResult } from 'minisearch';
-import matter from 'gray-matter';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkFrontmatter from 'remark-frontmatter';
-import { parseDocument } from 'yaml';
 import type { Root, RootContent, Heading, Link, Text, Yaml } from 'mdast';
 import type { FileTreeNode } from '../../../shared/types';
 import { normalizeTags } from './frontmatterSync';
+import { splitFrontmatterSource, parseFrontmatterObject } from './frontmatterRead';
 import { isMarkdownExtension } from './extension';
 import { normalizePath, stripLeadingSlash, toPosix } from '../utils/path';
+import { vaultPath, type VaultPath } from '../../../shared/vaultPath';
 
 /**
  * Metadata extracted from a single .md file in the vault.
@@ -133,51 +133,6 @@ function stringifyNode(node: RootContent | Heading | Link | Text): string {
 }
 
 /**
- * Parses a YAML frontmatter block into a plain object. Parses with the `yaml`
- * package first (the single frontmatter parser as of Phase 6.5 — the same one
- * the read/write path uses), then falls back to gray-matter on a parse error.
- * Invalid YAML yields `{}`.
- */
-function parseFrontmatterBlock(yamlSource: string): Record<string, unknown> {
-  if (!yamlSource.trim()) return {};
-  try {
-    // Phase 6.5 — parse with the `yaml` package (was js-yaml CORE_SCHEMA) so the
-    // index builds its view of a file's frontmatter with the SAME parser as the
-    // read/write path (`markdownSync.parseMarkdownFile` → `frontmatterCstModel`).
-    // js-yaml CORE read `1_000` / `0b1010` as the NUMBERS 1000 / 10 while the
-    // `yaml` package keeps them STRINGS; with the index on a different parser an
-    // exotic-numeric value diverged between the index metadata and the
-    // documentStore frontmatter, which the external-edit classifier could read as
-    // a phantom change (the M2 class). One parser everywhere closes that seam.
-    // Like the prior CORE_SCHEMA read this preserves DI-01 / DI-05: the `yaml`
-    // core schema resolves no timestamp or merge tag, so an unquoted date stays a
-    // `string` and `<<: *a` a literal `<<`. `doc.errors` (duplicate key, bad
-    // indentation) routes to the gray-matter safety net below — the same shape
-    // js-yaml's throw used to take; that fallback's rare output is normalised
-    // downstream by `frontmatterSync.normalizeScalar` (Date → string), so it
-    // stays safe. A clean parse to a non-object (scalar / array root) yields `{}`
-    // directly, never gray-matter — parity with the prior code.
-    const doc = parseDocument(yamlSource);
-    if (doc.errors.length === 0) {
-      const loaded = doc.toJS();
-      if (loaded && typeof loaded === 'object' && !Array.isArray(loaded)) {
-        return loaded as Record<string, unknown>;
-      }
-      return {};
-    }
-  } catch {
-    /* fall through to the gray-matter safety net */
-  }
-  try {
-    const fenced = `---\n${yamlSource}\n---\n`;
-    const parsed = matter(fenced);
-    return (parsed.data ?? {}) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
-}
-
-/**
  * AST-based parse: builds an mdast tree with `remark-parse + remark-frontmatter`,
  * then walks it to extract headings, links, and the frontmatter object. Tags
  * are sourced exclusively from the frontmatter `tags:` field — inline `#foo`
@@ -199,7 +154,7 @@ function parseWithRemark(rawContent: string): {
     WIKI_LINK_REGEX.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = WIKI_LINK_REGEX.exec(value)) !== null) {
-      const target = m[1].split('|')[0].trim();
+      const target = ((m[1] ?? '').split('|')[0] ?? '').trim();
       if (target) links.push(target);
     }
   }
@@ -207,7 +162,7 @@ function parseWithRemark(rawContent: string): {
   function visit(node: RootContent): void {
     switch (node.type) {
       case 'yaml': {
-        frontmatter = parseFrontmatterBlock((node as Yaml).value);
+        frontmatter = parseFrontmatterObject((node as Yaml).value);
         return;
       }
       case 'heading': {
@@ -255,12 +210,11 @@ function parseWithRemark(rawContent: string): {
 
   for (const child of tree.children) visit(child);
 
-  let body: string;
-  try {
-    body = matter(rawContent).content ?? '';
-  } catch {
-    body = rawContent;
-  }
+  // M2 (Audit-13) — body split via the shared fence helper (was
+  // `matter(rawContent).content`). The FM object still comes from the remark
+  // `yaml` node above; this only strips the fenced block off the front so the
+  // search-index `content` is body-only.
+  const { body } = splitFrontmatterSource(rawContent);
 
   return { frontmatter, body, headings, links };
 }
@@ -269,16 +223,20 @@ function parseWithRemark(rawContent: string): {
  * Fallback parser — used when the remark pipeline throws. Tags come only
  * from frontmatter (the caller adds them after this returns), so this
  * function focuses on headings and link extraction.
+ *
+ * M2 (Audit-13) — split + parse via the `yaml` package (was gray-matter, whose
+ * bundled js-yaml v3 coerced an unquoted `date:` → Date / `0b1010` → 10 — the
+ * second-parser drift class). The FM object now matches the remark path's
+ * parser exactly.
  */
-function parseWithGrayMatter(rawContent: string): {
+function parseWithoutRemark(rawContent: string): {
   frontmatter: Record<string, unknown>;
   body: string;
   headings: FileMetadata['headings'];
   links: string[];
 } {
-  const parsed = matter(rawContent);
-  const frontmatter = (parsed.data ?? {}) as Record<string, unknown>;
-  const body = parsed.content ?? '';
+  const { rawFrontmatter, body } = splitFrontmatterSource(rawContent);
+  const frontmatter = parseFrontmatterObject(rawFrontmatter);
 
   const headings: FileMetadata['headings'] = [];
   const links: string[] = [];
@@ -290,6 +248,7 @@ function parseWithGrayMatter(rawContent: string): {
   let inCodeFence = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    if (line === undefined) continue; // i < lines.length; narrow for the type-checker
     if (/^\s*```/.test(line)) {
       inCodeFence = !inCodeFence;
       continue;
@@ -297,18 +256,18 @@ function parseWithGrayMatter(rawContent: string): {
     if (inCodeFence) continue;
 
     const h = HEADING_REGEX.exec(line);
-    if (h) headings.push({ level: h[1].length, text: h[2].trim(), line: i + 1 });
+    if (h) headings.push({ level: (h[1] ?? '').length, text: (h[2] ?? '').trim(), line: i + 1 });
 
     WIKI_LINK_REGEX.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = WIKI_LINK_REGEX.exec(line)) !== null) {
-      const target = m[1].split('|')[0].trim();
+      const target = ((m[1] ?? '').split('|')[0] ?? '').trim();
       if (target) links.push(target);
     }
 
     MD_LINK_REGEX.lastIndex = 0;
     while ((m = MD_LINK_REGEX.exec(line)) !== null) {
-      const href = m[2].trim();
+      const href = (m[2] ?? '').trim();
       if (href && !/^https?:\/\//i.test(href) && !href.startsWith('#')) links.push(href);
     }
   }
@@ -323,7 +282,8 @@ function parseWithGrayMatter(rawContent: string): {
  * Uses the `unified + remark-parse + remark-frontmatter` pipeline — the AST
  * gives us clean separation of prose from code blocks so inline tag and link
  * extraction can't be fooled by `#not-a-tag` appearing inside a fenced block.
- * `gray-matter` remains as a fallback on parse errors.
+ * A regex-based parser (`parseWithoutRemark`) remains as a fallback on parse
+ * errors — both source frontmatter through the same `yaml` package (M2).
  */
 export function parseMarkdown(
   relativePath: string,
@@ -334,31 +294,19 @@ export function parseMarkdown(
   try {
     parsed = parseWithRemark(rawContent);
   } catch (err) {
-    console.warn('[vaultIndex] remark parse failed, falling back to gray-matter:', err);
-    parsed = parseWithGrayMatter(rawContent);
+    console.warn('[vaultIndex] remark parse failed, falling back to regex parser:', err);
+    parsed = parseWithoutRemark(rawContent);
   }
 
   const { frontmatter, body, headings, links } = parsed;
 
-  // 6.2.H1 — capture the verbatim YAML source between fences. Mirrors the
-  // regex `parseMarkdownFile` (lib/editor/markdownSync.ts) uses so the
-  // index's view of "what's between the fences" matches the write gateway's.
-  // `rawContent` here is the raw bytes from `vault:read-file-text` (via
-  // `indexOnePath`) — a Notepad-saved file's BOM IS present, so we strip a
-  // leading U+FEFF before matching the fence regex. This is one of the
-  // legitimate "raw disk bytes via a different gateway" sites the no-bom-
-  // sniff gate's inline escape was designed for.
-  //
-  // Audit-4 DI-17 (M9 parity) — `[ \t]*` after each `---` fence tolerates
-  // trailing horizontal whitespace (`--- `), exactly as `parseMarkdownFile`
-  // does (its 6.4.M9 fix). Without it, a fence line an editor/linter left a
-  // trailing space on parsed here as "no frontmatter" → empty `rawFrontmatter`
-  // → the index's clean-bytes view diverged from the write gateway's for that
-  // file, defeating the "mirrors parseMarkdownFile" promise above.
-  // allow-bom-sniff: parseMarkdown receives raw disk bytes from indexOnePath's vault:read-file-text response
-  const stripped = rawContent.charCodeAt(0) === 0xfeff ? rawContent.slice(1) : rawContent;
-  const fenced = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?/.exec(stripped);
-  const rawFrontmatter = fenced ? fenced[1] : '';
+  // 6.2.H1 — capture the verbatim YAML source between fences so the index's view
+  // of "what's between the fences" matches the write gateway's (the external-
+  // change pipeline refreshes `originalFrontmatterCache` from it). `rawContent`
+  // is the raw bytes from `vault:read-file-text` (BOM intact); the shared
+  // `splitFrontmatterSource` strips the BOM and tolerates a trailing space on
+  // the fence (Audit-4 DI-17 / M9 parity), exactly as `parseMarkdownFile` does.
+  const { rawFrontmatter } = splitFrontmatterSource(rawContent);
 
   // Routed through `normalizeTags` so the equality contract used by
   // frontmatterSync (deduped + sorted, leading `#` stripped) stays in lockstep
@@ -445,7 +393,18 @@ export function countTagsInInlineTiles(
  * that single file, not the whole vault.
  */
 export class VaultIndex {
-  private readonly metadata = new Map<string, FileMetadata>();
+  // M1 (Audit-13) — keyed by the case-FOLDED vault-relative path (the branded
+  // `VaultPath` form), not raw OS casing. Every other path-keyed store
+  // (`fileBaselineRegistry`, `documentStore.findByFilename`, the board
+  // reconciler) already folds; the index was the lone exception. On a
+  // case-insensitive FS an external edit reported with divergent casing
+  // (case-only rename, multi-device OneDrive, git) would otherwise miss the
+  // entry — bypassing the partial-read guard (gated on `previousMetadata`),
+  // misclassifying the change, and upserting a duplicate under the new casing.
+  // The branded key type makes a raw-string `.set` a compile error, so the
+  // fold can't be silently dropped; the stored value keeps `path` in OS casing
+  // for display. Pinned by `check-vault-path-keys.mjs`.
+  private readonly metadata = new Map<VaultPath, FileMetadata>();
   private readonly search: MiniSearch<IndexableDoc>;
 
   constructor() {
@@ -460,8 +419,19 @@ export class VaultIndex {
     });
   }
 
+  /**
+   * M1 (Audit-13) — the single case-folding key derivation for the metadata
+   * Map AND the MiniSearch document id. Returns the branded `VaultPath` form
+   * (`vaultPath()` lower-cases + strips the leading slash) so two casings of
+   * the same on-disk file collapse to one entry. The branded return type means
+   * a caller can't accidentally key the Map by a raw OS path.
+   */
+  private keyOf(path: string): VaultPath {
+    return vaultPath(path);
+  }
+
   upsert(metadata: FileMetadata): void {
-    const id = metadata.path;
+    const id = this.keyOf(metadata.path);
     if (this.search.has(id)) this.search.discard(id);
     this.metadata.set(id, metadata);
     this.search.add({
@@ -474,7 +444,7 @@ export class VaultIndex {
   }
 
   remove(path: string): void {
-    const id = toPosix(path);
+    const id = this.keyOf(path);
     if (this.search.has(id)) this.search.discard(id);
     this.metadata.delete(id);
   }
@@ -482,20 +452,30 @@ export class VaultIndex {
   /**
    * Sprint B / B9 — rebinds an index entry from `oldPath` to `newPath`.
    * Updates the metadata map key, the cached `metadata.path`, and the
-   * MiniSearch document id atomically. No-ops if the entry doesn't exist
-   * or the paths are the same (case-insensitive on Windows/macOS would
-   * still trigger a rebind on case-only renames; we keep it case-sensitive
-   * for the helper, since the watcher already normalises before calling).
+   * MiniSearch document id atomically. No-ops if the entry doesn't exist.
+   *
+   * M1 (Audit-13) — both keys fold through `keyOf`. A case-ONLY rename folds
+   * to the SAME key, so instead of dropping it (the entry would keep the stale
+   * OS casing in its `path`), we refresh the stored display casing in place —
+   * mirroring `boardCache.renameBoardPath`'s case-only rebind.
    */
   renameKey(oldPath: string, newPath: string): void {
-    const oldId = toPosix(oldPath);
-    const newId = toPosix(newPath);
-    if (oldId === newId) return;
+    const oldId = this.keyOf(oldPath);
+    const newId = this.keyOf(newPath);
     const existing = this.metadata.get(oldId);
     if (!existing) return;
+    const newDisplay = toPosix(newPath);
+    if (oldId === newId) {
+      // Case-only rename — same index identity. Track the new OS casing in the
+      // value so consumers (search results, broken-ref checks) see disk truth.
+      if (existing.path !== newDisplay) {
+        this.metadata.set(oldId, { ...existing, path: newDisplay });
+      }
+      return;
+    }
     if (this.search.has(oldId)) this.search.discard(oldId);
     this.metadata.delete(oldId);
-    const next: FileMetadata = { ...existing, path: newId };
+    const next: FileMetadata = { ...existing, path: newDisplay };
     this.metadata.set(newId, next);
     this.search.add({
       id: newId,
@@ -512,15 +492,17 @@ export class VaultIndex {
   }
 
   has(path: string): boolean {
-    return this.metadata.has(toPosix(path));
+    return this.metadata.has(this.keyOf(path));
   }
 
   get(path: string): FileMetadata | null {
-    return this.metadata.get(toPosix(path)) ?? null;
+    return this.metadata.get(this.keyOf(path)) ?? null;
   }
 
   allPaths(): string[] {
-    return Array.from(this.metadata.keys());
+    // M1 (Audit-13) — return the stored OS-casing `path` from each value, not
+    // the folded Map keys, so callers keep display casing.
+    return Array.from(this.metadata.values()).map((m) => m.path);
   }
 
   allMetadata(): FileMetadata[] {
@@ -556,10 +538,15 @@ export class VaultIndex {
   query(queryText: string, limit = 50): VaultIndexSearchResult[] {
     if (!queryText.trim()) return [];
     const raw = this.search.search(queryText, { prefix: true, fuzzy: 0.2 });
-    return raw.slice(0, limit).map((r) => ({
-      ...r,
-      path: String(r.id),
-      title: (r.title as string) ?? String(r.id),
-    }));
+    // M1 (Audit-13) — the MiniSearch id is the folded key; resolve it back to
+    // the stored OS-casing `path` so search results carry display casing.
+    return raw.slice(0, limit).map((r) => {
+      const display = this.metadata.get(this.keyOf(String(r.id)))?.path ?? String(r.id);
+      return {
+        ...r,
+        path: display,
+        title: (r.title as string) ?? display,
+      };
+    });
   }
 }

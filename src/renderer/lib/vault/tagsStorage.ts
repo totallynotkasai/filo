@@ -464,6 +464,7 @@ export function renameFile(file: TagsFile, oldPath: string, newPath: string): Ta
   const newKey = normalisePath(newPath);
   if (oldKey === newKey || !(oldKey in file.fileTags)) return file;
   const tags = file.fileTags[oldKey];
+  if (tags === undefined) return file; // oldKey is present (checked above)
   const next = { ...file.fileTags };
   delete next[oldKey];
   next[newKey] = tags;

@@ -40,7 +40,7 @@ export function deriveTileSeedFromMarkdown(raw: string): {
   const jsonFmMatch = raw.match(/^<!--\s*Filo document metadata\s*-->\s*\n(\{[\s\S]*?\})\s*\n/);
   if (jsonFmMatch) {
     try {
-      const meta = JSON.parse(jsonFmMatch[1]);
+      const meta = JSON.parse(jsonFmMatch[1] ?? '');
       const idValue = (meta as { id?: unknown })?.id;
       const contentId = typeof idValue === 'string' && idValue.trim().length > 0
         ? idValue.trim()

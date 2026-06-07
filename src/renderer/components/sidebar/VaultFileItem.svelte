@@ -339,7 +339,7 @@
       const paths = boardCacheStore.paths;
       const target = toPosix(relPath).toLowerCase();
       const boardId = Object.keys(paths).find(
-        (id) => toPosix(paths[id]).toLowerCase() === target,
+        (id) => toPosix(paths[id] ?? '').toLowerCase() === target,
       );
       const board = boardId
         ? vaultStore.project?.boards?.find((b) => b.id === boardId)

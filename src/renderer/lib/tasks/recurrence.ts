@@ -44,9 +44,9 @@ export function parseRecurrence(rec: string): RecurrenceUnit | null {
 
   const m = /^every\s+(\d+)\s*(d|days?|w|weeks?|m|months?|y|years?)$/i.exec(r);
   if (m) {
-    const count = parseInt(m[1], 10);
+    const count = parseInt(m[1] ?? '', 10);
     if (count < 1) return null;
-    const u = m[2].toLowerCase()[0] as 'd' | 'w' | 'm' | 'y';
+    const u = (m[2] ?? '').toLowerCase()[0] as 'd' | 'w' | 'm' | 'y';
     return { kind: 'fixed', count, unit: u };
   }
   return null;
@@ -68,9 +68,9 @@ function startOfDay(d: Date): Date {
 function parseIsoDate(iso: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
   if (!m) return null;
-  const y = parseInt(m[1], 10);
-  const mo = parseInt(m[2], 10);
-  const d = parseInt(m[3], 10);
+  const y = parseInt(m[1] ?? '', 10);
+  const mo = parseInt(m[2] ?? '', 10);
+  const d = parseInt(m[3] ?? '', 10);
   if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
   const out = new Date(y, mo - 1, d);
   out.setHours(0, 0, 0, 0);

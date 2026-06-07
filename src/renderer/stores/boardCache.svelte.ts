@@ -31,7 +31,7 @@ import { fileNameSafe } from '../lib/vault/conventionPaths';
 import { reportError } from '../lib/utils/errorBus';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { invokeOk } from '../lib/utils/invokeOk';
-import { normalizePath, toPosix } from '../lib/utils/path';
+import { normalizePath, toPosix, normalizeVaultRelative } from '../lib/utils/path';
 import { createId } from '../lib/utils/ids';
 import { uiStore } from './ui.svelte';
 import type { CacheContext } from './boardCacheTypes';
@@ -127,8 +127,8 @@ function getBoardWriteArgs(
 
 /**
  * Phase 7.5 — reverse-index memos (id → owning boardId) for the keyless
- * persist paths. A tile / connection / frame / kanban column is created on
- * exactly one board and never re-parented (V7 invariant), so a successful
+ * persist paths. A tile / connection / frame / kanban column / task is created
+ * on exactly one board and never re-parented (V7 invariant), so a successful
  * scan result stays valid for the entity's life. `resolveOwnerCached` caches
  * scan hits and verifies-on-hit (O(1)) before trusting the memo — on a miss
  * OR a stale hit it falls back to a full scan — so the memo can NEVER return
@@ -144,6 +144,7 @@ const tileBoardMemo = new Map<string, string>();
 const connectionBoardMemo = new Map<string, string>();
 const frameBoardMemo = new Map<string, string>();
 const kanbanColumnBoardMemo = new Map<string, string>();
+const taskBoardMemo = new Map<string, string>();
 /* eslint-enable svelte/prefer-svelte-reactivity */
 
 function resetBoardOwnerMemos(): void {
@@ -151,6 +152,7 @@ function resetBoardOwnerMemos(): void {
   connectionBoardMemo.clear();
   frameBoardMemo.clear();
   kanbanColumnBoardMemo.clear();
+  taskBoardMemo.clear();
 }
 
 function resolveOwnerCached(
@@ -268,12 +270,10 @@ function tasklistBoard(boardId: string): TaskListBoard | null {
  * mid-tab-switch) self-heal rather than silently no-op.
  */
 function findBoardIdForTask(tileId: string): string | null {
-  for (const [id, data] of Object.entries(boardCache)) {
-    if (data.board.type !== 'tasklist') continue;
-    const tl = data.board as TaskListBoard;
-    if ((tl.tasks ?? []).some((p) => p.tileId === tileId)) return id;
-  }
-  return null;
+  return resolveOwnerCached(taskBoardMemo, tileId, (data) => {
+    if (data.board.type !== 'tasklist') return false;
+    return ((data.board as TaskListBoard).tasks ?? []).some((p) => p.tileId === tileId);
+  });
 }
 
 /**
@@ -380,18 +380,38 @@ export const boardCacheStore = {
    * relocated `.board.json` rewrites under its new name).
    */
   renameBoardPath(oldPath: string, newPath: string): string[] {
-    if (!oldPath || !newPath || oldPath === newPath) return [];
+    if (!oldPath || !newPath) return [];
     const normalisedOld = normalizePath(oldPath);
     const normalisedNew = normalizePath(newPath);
+    // L2 (Audit-13) — only a TRUE no-op (identical bytes after separator/trailing
+    // normalisation) returns early. A case-ONLY rename folds equal but the raw
+    // casing differs, and the stored path must still track disk: the prior
+    // `normalizeVaultRelative(old) === normalizeVaultRelative(new)` guard returned
+    // [] for it, leaving `boardPaths` keyed at the stale casing (phantom-file
+    // write + "missing on disk" eviction on a case-sensitive / synced FS). Fall
+    // through so the rebind loop below rewrites the entry to the new casing.
+    if (normalisedOld === normalisedNew) return [];
+    // M4 (Audit-12) — compare case-INSENSITIVELY (Windows/macOS aren't
+    // case-sensitive) so an OS-reported rename whose casing diverges from the
+    // stored casing still rebinds. The raw `===`/`startsWith` on the
+    // case-PRESERVING `normalizePath` form it replaces silently failed to
+    // rebind a case-only rename, leaving the cache keyed at the stale path
+    // (phantom-file write + "missing on disk" eviction). The descendant SLICE
+    // still uses the case-preserving `oldPrefix` length so the suffix keeps its
+    // on-disk casing — board paths carry no leading slash, so the folded and
+    // unfolded prefixes share the same length.
     const oldPrefix = `${normalisedOld}/`;
+    const foldedOld = normalizeVaultRelative(normalisedOld);
+    const foldedPrefix = `${foldedOld}/`;
     const updates: Record<string, string> = {};
     const changedIds: string[] = [];
     for (const [boardId, relPath] of Object.entries(boardPaths)) {
       const norm = toPosix(relPath);
-      if (norm === normalisedOld) {
+      const folded = normalizeVaultRelative(norm);
+      if (folded === foldedOld) {
         updates[boardId] = normalisedNew;
         changedIds.push(boardId);
-      } else if (norm.startsWith(oldPrefix)) {
+      } else if (folded.startsWith(foldedPrefix)) {
         updates[boardId] = normalisedNew + '/' + norm.slice(oldPrefix.length);
         changedIds.push(boardId);
       }
@@ -907,10 +927,24 @@ async function syncTileMarkdown(
     } catch {
       writeMtime = undefined;
     }
-    if (
+    let drift =
       writeMtime !== undefined &&
-      (writeMtime !== beforeMtime || writeSize !== beforeSize)
-    ) {
+      (writeMtime !== beforeMtime || writeSize !== beforeSize);
+    // L9 (Audit-13) — a coarse-clock volume (FAT, some network/OneDrive mounts)
+    // can report IDENTICAL mtime AND size for a same-length external overwrite —
+    // the mtime||size guard's residual. Re-read the bytes and compare to what we
+    // read moments ago so that residual still routes through the prompt instead
+    // of being silently clobbered (the gateway's own drift path can't reach a
+    // recovery sync, which deliberately bypasses readMarkdownForHydrate above).
+    if (!drift && writeMtime !== undefined) {
+      try {
+        const recheck = await invokeOk('vault:read-file-text', vaultRoot, filename); // allow-hydrate-read: own mtime guard
+        if (recheck.content !== diskRaw) drift = true;
+      } catch {
+        // Re-read failed — leave `drift` as-is; the write below surfaces real errors.
+      }
+    }
+    if (drift) {
       const choice = await promptExternalEditOnSync({ path: filename });
       if (choice === 'reload') {
         // The prompt's Reload handler refreshed the vault index and

@@ -171,7 +171,8 @@ export class AddTilesCommand extends Command {
 
   undo() {
     for (let i = this.tiles.length - 1; i >= 0; i--) {
-      boardStore.removeTile(this.tiles[i].id);
+      const t = this.tiles[i];
+      if (t) boardStore.removeTile(t.id);
     }
   }
 }

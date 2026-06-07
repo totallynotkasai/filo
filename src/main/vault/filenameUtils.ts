@@ -48,7 +48,7 @@ export function sanitizeFilename(name: string): string {
   // Audit2 5.5 — same stem-based match as `assertSafeFilename`: `CON.md` /
   // `aux.tar.gz` / `nul` all collide. Prefix with `_` so the sanitised
   // result clears the assert instead of throwing.
-  const stem = sanitized.split('.')[0].toUpperCase();
+  const stem = (sanitized.split('.')[0] ?? '').toUpperCase();
   if (RESERVED_WINDOWS_NAMES.has(stem)) {
     sanitized = `_${sanitized}`;
   }

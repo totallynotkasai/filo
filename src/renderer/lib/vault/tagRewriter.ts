@@ -107,7 +107,7 @@ function splitFrontmatter(raw: string): {
   // never edits it.
   // DECISION: a frontmatter block with internally-mixed endings normalises to
   // the detected `eol`; the body's own (possibly mixed) endings are untouched.
-  const yamlSource = fenced[1].replace(/\r\n/g, '\n');
+  const yamlSource = (fenced[1] ?? '').replace(/\r\n/g, '\n');
   return {
     yamlSource,
     body: fenced[2] ?? '',
@@ -200,7 +200,7 @@ const QUOTED_RE = /^['"]([^'"]*)['"]$/;
 function unquote(raw: string): string {
   const trimmed = raw.trim();
   const match = QUOTED_RE.exec(trimmed);
-  return match ? match[1] : trimmed;
+  return match?.[1] ?? trimmed;
 }
 
 /**
@@ -244,19 +244,22 @@ function locateTagsField(yamlSource: string): LocatedTagsField | null {
   const lines = yamlSource.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    if (line === undefined) continue; // i < lines.length; narrow for the type-checker
     const match = TAGS_HEADER_RE.exec(line);
     if (!match) continue;
+    const headerRest = match[1] ?? '';
     // Reject anchored / aliased fields — too risky to rewrite via line edit.
-    if (/[&*]/.test(match[1])) return null;
-    const rest = match[1].trim();
+    if (/[&*]/.test(headerRest)) return null;
+    const rest = headerRest.trim();
     if (rest === '') {
       const blockItems: string[] = [];
       let end = i + 1;
       while (end < lines.length) {
         const next = lines[end];
+        if (next === undefined) break; // end < lines.length; narrow for the type-checker
         const itemMatch = BLOCK_ITEM_RE.exec(next);
         if (itemMatch) {
-          const item = itemMatch[2];
+          const item = itemMatch[2] ?? '';
           // H1 — a block item carrying an inline comment or an escaped quote
           // can't be line-edited losslessly; decline so the CST fallback (which
           // tokenises it correctly) handles the whole field. Returning null here
@@ -268,7 +271,7 @@ function locateTagsField(yamlSource: string): LocatedTagsField | null {
           continue;
         }
         // Allow blank lines INSIDE the list (rare but legal YAML)
-        if (/^\s*$/.test(next) && end + 1 < lines.length && BLOCK_ITEM_RE.test(lines[end + 1])) {
+        if (/^\s*$/.test(next) && end + 1 < lines.length && BLOCK_ITEM_RE.test(lines[end + 1] ?? '')) {
           end++;
           continue;
         }
@@ -333,7 +336,7 @@ function tagsFieldIsAnchored(yamlSource: string): boolean {
   for (const line of yamlSource.split('\n')) {
     const match = TAGS_HEADER_RE.exec(line);
     if (!match) continue;
-    const value = match[1].trim();
+    const value = (match[1] ?? '').trim();
     return value.startsWith('&') || value.startsWith('*');
   }
   return false;

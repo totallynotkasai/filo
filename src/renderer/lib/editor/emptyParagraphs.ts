@@ -76,11 +76,12 @@ export function encodeEmptyParagraphs(body: string, tokenizer: BlockTokenizer): 
   const lines = body.split('\n');
   const segments: string[] = [];
   for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i]!; // i < blocks.length
     if (i > 0) {
-      const gap = blocks[i][0] - blocks[i - 1][1];
+      const gap = block[0] - blocks[i - 1]![1]; // i > 0 ⇒ i-1 in range
       for (let extra = 1; extra < gap; extra++) segments.push(EMPTY_PARAGRAPH_SENTINEL);
     }
-    segments.push(lines.slice(blocks[i][0], blocks[i][1]).join('\n'));
+    segments.push(lines.slice(block[0], block[1]).join('\n'));
   }
   return segments.join('\n\n');
 }

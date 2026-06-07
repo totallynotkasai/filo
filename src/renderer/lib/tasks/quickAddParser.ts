@@ -68,7 +68,7 @@ function nextWeekday(today: Date, dayIdx: number): Date {
 function parseClockTime(s: string): string | null {
   const m = /^(\d{1,2})(?::(\d{2}))?(am|pm)?$/i.exec(s);
   if (!m) return null;
-  let h = parseInt(m[1], 10);
+  let h = parseInt(m[1] ?? '', 10);
   const min = m[2] ? parseInt(m[2], 10) : 0;
   const ampm = m[3]?.toLowerCase();
   if (ampm === 'pm' && h < 12) h += 12;
@@ -150,8 +150,8 @@ export function parseQuickAdd(
     {
       re: /\s\^?(\d{1,2})\/(\d{1,2})(?=\s)/,
       handler: (m) => {
-        const month = parseInt(m[1], 10);
-        const day = parseInt(m[2], 10);
+        const month = parseInt(m[1] ?? '', 10);
+        const day = parseInt(m[2] ?? '', 10);
         if (month < 1 || month > 12 || day < 1 || day > 31) return undefined;
         const candidate = new Date(today.getFullYear(), month - 1, day);
         candidate.setHours(0, 0, 0, 0);
@@ -174,7 +174,7 @@ export function parseQuickAdd(
     {
       re: /\s\^?next\s+(sun|mon|tue|wed|thu|fri|sat)[a-z]*(?=\s)/i,
       handler: (m) => {
-        const idx = WEEKDAYS.indexOf(m[1].toLowerCase());
+        const idx = WEEKDAYS.indexOf((m[1] ?? '').toLowerCase());
         if (idx < 0) return undefined;
         return fmtDate(nextWeekday(today, idx));
       },
@@ -182,8 +182,8 @@ export function parseQuickAdd(
     {
       re: /\s\^?in\s+(\d+)\s*(d|days?|w|weeks?|m|months?)(?=\s)/i,
       handler: (m) => {
-        const count = parseInt(m[1], 10);
-        const u = m[2].toLowerCase()[0];
+        const count = parseInt(m[1] ?? '', 10);
+        const u = (m[2] ?? '').toLowerCase()[0];
         const t = new Date(today);
         if (u === 'd') t.setDate(t.getDate() + count);
         else if (u === 'w') t.setDate(t.getDate() + count * 7);

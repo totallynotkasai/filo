@@ -389,9 +389,19 @@
   }
 
   let flusherId = '';
+  // M3 (Audit-12) — capture the originating board at popup MOUNT, from the
+  // PANE-SCOPED `scope.board` (the `boardStore` alias above), not the global
+  // facade at destroy time. The deferred UpdatePropertiesCommand is constructed
+  // in `pushHistoryEntry` during onDestroy; resolving its board from the
+  // globally-active board THEN would push a non-text tile's property edit onto
+  // the wrong pane's undo stack (or no-op the metadata applySnapshot) when the
+  // user clicked a different pane before closing. Every sibling style popup
+  // already captures a mount-time id this way.
+  let mountBoardId = '';
 
   onMount(() => {
     flusherId = `properties-popup:${tile.id}:${createId(6)}`;
+    mountBoardId = boardStore.current?.id ?? '';
     loadFromBacking();
     // Phase 6.1.R5 — async disk-read hydrate so the popup's first write
     // assembles against the correct BOM byte AND a drift baseline seeded
@@ -447,8 +457,10 @@
     const afterSnapshot = buildAfterSnapshot();
     if (!afterSnapshot) return;
     if (snapshotsEqual(beforeSnapshot, afterSnapshot)) return;
+    // M3 (Audit-12) — pass the mount-time board id so the command targets the
+    // pane this popup belongs to, not whichever board is active at close time.
     historyStore.pushWithoutExecute(
-      new UpdatePropertiesCommand(beforeSnapshot, afterSnapshot),
+      new UpdatePropertiesCommand(beforeSnapshot, afterSnapshot, mountBoardId),
     );
   }
 
@@ -607,7 +619,8 @@
                     commitTagInput(index);
                   } else if (e.key === 'Backspace' && !search && selectedTags.length > 0) {
                     e.preventDefault();
-                    removeTagFromRow(index, selectedTags[selectedTags.length - 1]);
+                    const lastTag = selectedTags[selectedTags.length - 1];
+                    if (lastTag) removeTagFromRow(index, lastTag);
                   }
                 }}
                 role="combobox"

@@ -141,15 +141,18 @@ export function asSafeThemeValue(raw: string | null | undefined): SanitisedColor
   for (const bad of THEME_VALUE_BLOCKED_SUBSTRINGS) {
     if (lower.includes(bad)) return null;
   }
-  // CSS.supports is available in the renderer but not in jsdom; gate
-  // the call so unit tests keep working. When unavailable, the
-  // substring blocklist + length cap are the load-bearing defence.
-  if (typeof CSS !== 'undefined' && typeof CSS.supports === 'function') {
+  // CSS.supports is available in the renderer (DOM) but not in the main
+  // process or jsdom. Reach for it through `globalThis` (typed, not the bare
+  // identifier) so this shared module type-checks under BOTH the DOM lib
+  // (renderer) and the no-DOM lib (main). When unavailable, the substring
+  // blocklist + length cap are the load-bearing defence.
+  const cssApi = (globalThis as { CSS?: { supports?: (cond: string) => boolean } }).CSS;
+  if (cssApi && typeof cssApi.supports === 'function') {
     // `--probe` is a synthetic property name; CSS.supports returns true
     // for any value the engine considers parsable for a custom property.
     // Failing the check rejects values containing control chars,
     // unterminated tokens, etc.
-    if (!CSS.supports(`--probe: ${trimmed}`)) return null;
+    if (!cssApi.supports(`--probe: ${trimmed}`)) return null;
   }
   return trimmed as SanitisedColor;
 }
@@ -162,6 +165,16 @@ export function asSafeThemeValue(raw: string | null | undefined): SanitisedColor
  * javascript:, data:, custom schemes) is rejected — the main-side
  * handler in `media.ipc.ts` re-checks this allowlist, so a renderer
  * bypass would still fail closed.
+ *
+ * L11 (Audit-13) — INTENTIONAL asymmetry with main: `media.ipc.ts` DROPPED
+ * `http://` from its allowlist in Audit-12 S2 (cleartext downgrade / SSRF
+ * surface) and is the authority. This renderer-side list deliberately KEEPS
+ * `http://` so a legacy `http://` link passes the brand wrapper and reaches
+ * main, which returns a clean "use https" error — instead of being mangled by
+ * the local-path branch (where `http://example.com` would read `.com` as an
+ * executable extension). Harmless: main fails it closed either way. The prefix
+ * test below is already case-insensitive (`.toLowerCase()`), matching main's
+ * L11 fix. Keep this asymmetry documented, not "reconciled".
  */
 const OPEN_EXTERNAL_ALLOWED_PREFIXES = ['https://', 'http://', 'mailto:', 'tel:'];
 
@@ -197,6 +210,12 @@ const UNSAFE_LOCAL_FILE_EXTENSIONS = new Set([
   '.msi', '.jar', '.lnk', '.appref-ms', '.app', '.bin', '.sh', '.msc',
   // HTML-renderable — Phase 5 / P1-10 addition
   '.html', '.htm', '.xhtml', '.svg', '.shtml', '.xml',
+  // Audit-13 M12 — OS launcher / shell-acted-on shortcuts (kept in sync with
+  // media.ipc.ts UNSAFE_FILE_EXTENSIONS). The shell acts on these even though
+  // they're not executables: `.url`/`.scf`/`.website` can point at a UNC share
+  // and leak NetNTLM creds; `.reg`/`.inf` import/run on activation; `.pif`
+  // executes; `.desktop` runs its `Exec=` line on Linux.
+  '.url', '.scf', '.website', '.pif', '.reg', '.inf', '.desktop',
 ]);
 
 /**

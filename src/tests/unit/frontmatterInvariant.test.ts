@@ -163,6 +163,13 @@ const HOSTILE_CORPUS: ReadonlyArray<{ label: string; md: string }> = [
   { label: 'numeric/bool sibling keys', md: '---\ncount: 3\nflag: true\ntags:\n  - foo\n---\nbody\n' },
   { label: 'aliased tags', md: '---\ncommon: &x\n  - a\ntags: *x\n---\nbody\n' },
   { label: 'anchored tags', md: '---\ntags: &t [foo, bar]\n---\nbody\n' },
+  // H2 (Audit-13) — UNRESOLVABLE alias shapes: each parses with `errors.length
+  // === 0` but THROWS in `toJS()` resolving the dangling reference (verified
+  // against yaml@2.9). The read returns `{}` + the raw bytes, so every op must
+  // keep-raw or refuse — never dump over the poison block.
+  { label: 'unresolved forward alias (toJS throws)', md: '---\ntitle: X\ntags: *missing\n---\nbody\n' },
+  { label: 'missing-anchor merge (toJS throws)', md: '---\nwidget:\n  <<: *gone\ntitle: X\n---\nbody\n' },
+  { label: 'alias-in-seq missing anchor (toJS throws)', md: '---\nlist:\n  - *nope\ntitle: X\n---\nbody\n' },
   { label: 'duplicate key (unparseable)', md: '---\ntitle: X\ntitle: Y\ntags:\n  - foo\n---\nbody\n' },
   { label: 'tab indent (unparseable)', md: '---\ntitle: X\n\tbad: tab\ntags:\n  - foo\n---\nbody\n' },
   // Audit-4 DI-01 / DI-02 / DI-05 / DI-06 — the inputs that previously slipped
@@ -209,6 +216,44 @@ describe('frontmatter data-loss invariant — hostile corpus (1.7)', () => {
       expect(reg.raw, `${label}: body-only save mutated frontmatter`).toBe(parsed.rawFrontmatter);
     });
   }
+});
+
+/**
+ * L1 (Audit-12) — the empty-FM safety-net split, pinned in the invariant
+ * corpus. When the live object is `{}` but the source HAD a block, the two
+ * reasons need OPPOSITE handling: a PARSEABLE block must honour the clear
+ * (drop the keys) while an UNPARSEABLE one is kept verbatim (data-loss
+ * avoidance). The old safety net reverted BOTH to the raw bytes — silently
+ * undoing a deliberate clear. These rows pin the split so it can't regress
+ * back to the unconditional revert.
+ */
+describe('frontmatter empty-FM safety-net split (Audit-12 L1)', () => {
+  it('a cleared PARSEABLE block drops to no frontmatter (no silent revert)', () => {
+    const out = assembleMarkdownFile({}, 'body\n', {
+      rawFrontmatter: 'title: X\ncount: 3',
+      frontmatterDirty: true,
+    });
+    expect(fmRegion(out).has, 'cleared FM should not be reverted').toBe(false);
+    expect(out).toBe('body\n');
+  });
+
+  it('a cleared block KEEPS a standalone comment (comment-only block)', () => {
+    const out = assembleMarkdownFile({}, 'body\n', {
+      rawFrontmatter: '# keep me\ntitle: X',
+      frontmatterDirty: true,
+    });
+    expect(out).toBe('---\n# keep me\n---\nbody\n');
+  });
+
+  it('an UNPARSEABLE block with an empty object is preserved verbatim', () => {
+    const raw = 'title: X\n\tbad: tab';
+    const out = assembleMarkdownFile({}, 'body\n', {
+      rawFrontmatter: raw,
+      frontmatterDirty: true,
+    });
+    expect(fmRegion(out).has, 'unparseable fence must survive').toBe(true);
+    expect(fmRegion(out).raw, 'unparseable block must be byte-preserved').toBe(raw);
+  });
 });
 
 describe('frontmatter data-loss invariant — fuzz (1.7)', () => {

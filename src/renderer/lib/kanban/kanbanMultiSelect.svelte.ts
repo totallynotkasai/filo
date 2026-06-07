@@ -134,7 +134,7 @@ export class KanbanMultiSelect {
       // Phase 16 / H5 — single-card path uses DeleteCardCommand (it
       // snapshots the placement + def for undo). Mirrors the multi-card
       // path below so context-menu single delete is just as recoverable.
-      historyStore.execute(new DeleteCardCommand(boardId, selected[0]));
+      historyStore.execute(new DeleteCardCommand(boardId, selected[0]!)); // length === 1 checked above
       this.deps.selection.clear();
       this.lastSelectedTileId = null;
       this.deps.tickAndPersist();

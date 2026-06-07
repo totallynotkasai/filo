@@ -28,7 +28,7 @@ export const WATCHER_HASH_MAX_BYTES = 10 * 1024 * 1024;
 export function fnv1a32(buf: Buffer): number {
   let hash = 0x811c9dc5;
   for (let i = 0; i < buf.length; i++) {
-    hash ^= buf[i];
+    hash ^= buf[i] ?? 0; // i < buf.length guarantees defined; `?? 0` is a no-op XOR
     // FNV prime 16777619, kept inside int32 via Math.imul.
     hash = Math.imul(hash, 0x01000193);
   }

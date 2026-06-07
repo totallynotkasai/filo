@@ -564,7 +564,7 @@ export async function loadAllConfigsWithRetry(
 ): Promise<unknown> {
   let bag = await loadOnce();
   for (let i = 0; i < delays.length && isConfigLoadAllFailed(bag); i++) {
-    await sleep(delays[i]);
+    await sleep(delays[i] ?? 0);
     bag = await loadOnce();
   }
   return bag;

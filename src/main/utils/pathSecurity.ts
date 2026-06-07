@@ -218,7 +218,7 @@ export function assertSafeFilename(
     // component, so ` CON.md` / `CON .md` still open the CON device. Trim the
     // stem before the reserved-name compare so a space-padded device name
     // can't slip through.
-    const stem = fileName.split('.')[0].trim().toUpperCase();
+    const stem = (fileName.split('.')[0] ?? '').trim().toUpperCase();
     if (RESERVED_WINDOWS_NAMES.has(stem)) {
       throw new Error(`Unsafe filename rejected — Windows reserved name: ${stem}`);
     }
@@ -348,7 +348,7 @@ export function assertNotInFiloDir(relativePath: string): void {
   if (typeof relativePath !== 'string' || relativePath.length === 0) return;
   const segments = toPosix(relativePath).split('/').filter(Boolean);
   if (segments.length === 0) return;
-  if (segments[0].toLowerCase() !== '.filo') return;
+  if (segments[0]?.toLowerCase() !== '.filo') return;
   const normalised = segments.join('/');
   if (RENDERER_PERMITTED_FILO_PATHS.has(normalised)) return;
   throw new FiloDirForbiddenError(
@@ -427,8 +427,11 @@ function parseIPv6ToHextets(addr: string): number[] | null {
   if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(tail)) {
     const octets = tail.split('.').map((o) => Number(o));
     if (octets.some((o) => o > 255)) return null;
-    const high = ((octets[0] << 8) | octets[1]).toString(16);
-    const low = ((octets[2] << 8) | octets[3]).toString(16);
+    const [o0, o1, o2, o3] = octets;
+    // the dotted-quad regex above guarantees exactly four octets
+    if (o0 === undefined || o1 === undefined || o2 === undefined || o3 === undefined) return null;
+    const high = ((o0 << 8) | o1).toString(16);
+    const low = ((o2 << 8) | o3).toString(16);
     s = `${s.slice(0, lastColon + 1)}${high}:${low}`;
   }
 
@@ -436,7 +439,7 @@ function parseIPv6ToHextets(addr: string): number[] | null {
   // Only one `::` run is legal.
   if (compressed && s.indexOf('::') !== s.lastIndexOf('::')) return null;
 
-  const [head, rest] = compressed ? s.split('::') : [s, ''];
+  const [head = '', rest = ''] = compressed ? s.split('::') : [s, ''];
   const headGroups = head.length > 0 ? head.split(':') : [];
   const tailGroups = rest.length > 0 ? rest.split(':') : [];
 
@@ -487,18 +490,33 @@ function parseIPv6ToHextets(addr: string): number[] | null {
 export function extractEmbeddedIPv4(ip6: string): string | null {
   const h = parseIPv6ToHextets(ip6);
   if (!h) return null;
+  // parseIPv6ToHextets only returns non-null when length === 8; destructure once
+  // so the eight hextet reads narrow to `number` (the guard can't fire here).
+  const [h0, h1, h2, h3, h4, h5, h6, h7] = h;
+  if (
+    h0 === undefined ||
+    h1 === undefined ||
+    h2 === undefined ||
+    h3 === undefined ||
+    h4 === undefined ||
+    h5 === undefined ||
+    h6 === undefined ||
+    h7 === undefined
+  ) {
+    return null;
+  }
   const toDottedQuad = (a: number, b: number): string =>
     `${(a >> 8) & 0xff}.${a & 0xff}.${(b >> 8) & 0xff}.${b & 0xff}`;
-  const highZero = h[0] === 0 && h[1] === 0 && h[2] === 0 && h[3] === 0 && h[4] === 0;
+  const highZero = h0 === 0 && h1 === 0 && h2 === 0 && h3 === 0 && h4 === 0;
   // IPv4-mapped: ::ffff:a.b.c.d
-  if (highZero && h[5] === 0xffff) return toDottedQuad(h[6], h[7]);
+  if (highZero && h5 === 0xffff) return toDottedQuad(h6, h7);
   // IPv4-compatible: ::a.b.c.d. Skip the all-zero unspecified address
   // (`::`), which the caller classifies directly via the `ip6 === '::'`
   // test; `::1` decodes to `0.0.0.1`, still private via the `0.` check.
-  if (highZero && h[5] === 0 && (h[6] !== 0 || h[7] !== 0)) return toDottedQuad(h[6], h[7]);
+  if (highZero && h5 === 0 && (h6 !== 0 || h7 !== 0)) return toDottedQuad(h6, h7);
   // NAT64 well-known prefix: 64:ff9b::/96
-  if (h[0] === 0x0064 && h[1] === 0xff9b && h[2] === 0 && h[3] === 0 && h[4] === 0 && h[5] === 0) {
-    return toDottedQuad(h[6], h[7]);
+  if (h0 === 0x0064 && h1 === 0xff9b && h2 === 0 && h3 === 0 && h4 === 0 && h5 === 0) {
+    return toDottedQuad(h6, h7);
   }
   return null;
 }

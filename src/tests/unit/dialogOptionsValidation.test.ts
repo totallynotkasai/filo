@@ -26,6 +26,11 @@ vi.mock('electron', () => ({
     handle: (channel: string, handler: (...args: unknown[]) => unknown | Promise<unknown>) => {
       handlers.set(channel, handler);
     },
+    // Audit-12 S1 — registerDialogHandlers now also registers the preload-internal
+    // `vault:register-source-path` listener via ipcMain.on; stub it so the mock
+    // doesn't throw `ipcMain.on is not a function` during registration.
+    on: () => {},
+    once: () => {},
   },
   BrowserWindow: {
     getFocusedWindow: () => ({}),

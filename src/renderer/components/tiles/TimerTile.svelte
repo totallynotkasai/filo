@@ -63,7 +63,7 @@
     const modes: TimerMode[] = ['hms', 'ms', 's', 'clock'];
     const nextIdx = (modes.indexOf(tile.mode) + 1) % modes.length;
     const before = { mode: tile.mode, duration: tile.duration, remaining: tile.remaining, isRunning: tile.isRunning };
-    const after = { ...before, mode: modes[nextIdx], isRunning: false };
+    const after = { ...before, mode: modes[nextIdx] ?? tile.mode, isRunning: false };
     historyStore.execute(new UpdateTimerConfigCommand(tile.id, before, after, 'Change timer mode'));
   }
 
@@ -164,11 +164,11 @@
     const parts = customInput.trim().split(':');
     let totalMs = 0;
     if (parts.length === 2) {
-      const m = parseInt(parts[0], 10) || 0;
-      const s = parseInt(parts[1], 10) || 0;
+      const m = parseInt(parts[0] ?? '', 10) || 0;
+      const s = parseInt(parts[1] ?? '', 10) || 0;
       totalMs = (m * 60 + s) * 1000;
     } else if (parts.length === 1) {
-      totalMs = (parseInt(parts[0], 10) || 0) * 60 * 1000;
+      totalMs = (parseInt(parts[0] ?? '', 10) || 0) * 60 * 1000;
     }
     if (totalMs > 0) {
       const before = { mode: tile.mode, duration: tile.duration, remaining: tile.remaining, isRunning: tile.isRunning };

@@ -181,16 +181,51 @@ export class ReplaceAllCommand extends Command {
   }
 
   async execute(): Promise<void> {
-    const items = this.plans.map((p) => ({ path: p.path, content: p.nextContent }));
+    // L4 (Audit-13) — re-read each file at execute time rather than trusting the
+    // build-time snapshot. `buildPlans` captured `originalContent` (the undo
+    // snapshot) and `nextContent` when the plan was built; on a REDO (or any gap
+    // before execute) the disk may have moved. Confirm disk STILL equals the
+    // planned `originalContent`; if it diverged, skip that file — a blind write
+    // would (a) clobber the intervening edit and (b) leave the undo snapshot
+    // pointing at bytes we never overwrote — and name it in the aggregate toast.
+    // (The first execute runs same-tick after buildPlans, so nothing drifts
+    // there in practice; this only bites a stale redo.)
+    const items: Array<{ path: string; content: string }> = [];
+    const skipped: string[] = [];
+    for (const p of this.plans) {
+      let diskNow: string | null = null;
+      try {
+        const read = await invokeOk('vault:read-file-text', this.vaultRoot, p.path);
+        diskNow = read.content;
+      } catch {
+        diskNow = null;
+      }
+      if (diskNow !== null && diskNow === p.originalContent) {
+        items.push({ path: p.path, content: p.nextContent });
+      } else {
+        skipped.push(p.path);
+      }
+    }
     // Phase 6.6 — `writeAll` now writes AND reconciles each open editor per
     // path via the coupled helper, so there is no separate batch reconcile
     // here that could drift from the write list.
-    await this.writeAll(items);
-    // Refresh the vault index so the search panel's matches re-derive against
-    // the new content. Without this, the next "Find" cycle would still see
-    // the old offsets until the file watcher fires (which may have already
-    // been suppressed by `trackComponentWrite`).
-    await vaultIndexStore.applyChanges(this.plans.map((p) => p.path));
+    if (items.length > 0) {
+      await this.writeAll(items);
+      // Refresh the vault index so the search panel's matches re-derive against
+      // the new content. Without this, the next "Find" cycle would still see
+      // the old offsets until the file watcher fires (which may have already
+      // been suppressed by `trackComponentWrite`).
+      await vaultIndexStore.applyChanges(items.map((i) => i.path));
+    }
+    if (skipped.length > 0) {
+      const sample = skipped.slice(0, 3).join(', ');
+      const more = skipped.length > 3 ? `, +${skipped.length - 3} more` : '';
+      uiStore.toast(
+        `Replace skipped ${skipped.length} file(s) changed since the search (${sample}${more}) to avoid overwriting newer edits.`,
+        'warning',
+        6000,
+      );
+    }
   }
 
   async undo(): Promise<void> {
@@ -202,9 +237,10 @@ export class ReplaceAllCommand extends Command {
     // toast. A vanished / unreadable file is also skipped — recreating it from
     // `originalContent` could resurrect a file the user deleted in the gap.
     // (Skip + warn rather than N interactive prompts: this is a bulk op, so one
-    // aggregate is more usable than a per-file modal. `execute` keeps its
-    // unconditional overwrite — it is the user's explicit replace action and
-    // runs immediately after the same-tick pre-flight read.)
+    // aggregate is more usable than a per-file modal. L4 (Audit-13) — `execute`
+    // now drift-skips symmetrically: it re-reads each file and writes only when
+    // disk still equals the planned `originalContent`, so on a stale redo it
+    // won't clobber an intervening edit either.)
     const items: Array<{ path: string; content: string }> = [];
     const skipped: string[] = [];
     for (const p of this.plans) {

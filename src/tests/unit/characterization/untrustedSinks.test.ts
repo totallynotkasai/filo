@@ -140,11 +140,19 @@ describe('Phase 5 contract — media:open-external blocklist extended with HTML-
     }
   });
 
+  it('main-side blocklist contains every OS launcher / shell-shortcut extension (Audit-13 M12)', () => {
+    const LAUNCHER_EXTS = ['.url', '.scf', '.website', '.pif', '.reg', '.inf', '.desktop'];
+    for (const ext of LAUNCHER_EXTS) {
+      expect(MEDIA_IPC_TEXT).toContain(`'${ext}'`);
+    }
+  });
+
   it('renderer-side validator set matches main-side blocklist', () => {
     // Parity check — the two blocklists must agree so a renderer-side
     // pre-filter and the main-side defence-in-depth check don't drift.
     const HTML_RENDERABLE_EXTS = ['.html', '.htm', '.xhtml', '.svg', '.shtml', '.xml'];
-    for (const ext of HTML_RENDERABLE_EXTS) {
+    const LAUNCHER_EXTS = ['.url', '.scf', '.website', '.pif', '.reg', '.inf', '.desktop'];
+    for (const ext of [...HTML_RENDERABLE_EXTS, ...LAUNCHER_EXTS]) {
       expect(UNSAFE_LOCAL_FILE_EXTENSIONS_FOR_TESTS.has(ext)).toBe(true);
     }
   });

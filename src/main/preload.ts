@@ -68,7 +68,27 @@ const api = {
   },
   getPathForFile: (file: File): string => {
     try {
-      return webUtils.getPathForFile(file);
+      const resolved = webUtils.getPathForFile(file);
+      // Audit-12 S1 — register the resolved drop path as an approved
+      // `vault:copy-file` source. `webUtils.getPathForFile` only returns a real
+      // path for a `File` backed by an actual on-disk file the user dropped, so
+      // this is a TRUSTED minting point a hostile renderer can't abuse: it
+      // can't synthesise a `File` for `/etc/passwd`. Fired via the DIRECT
+      // `ipcRenderer.send` (module-scoped, NOT the contextBridge-exposed
+      // `api.send`), so the registration channel is unreachable from renderer
+      // JS — `window.filo.send('vault:register-source-path', …)` hits the
+      // `z.never()` payload schema and is rejected. Fire-and-forget; delivered
+      // before the renderer's subsequent `vault:copy-file` invoke (FIFO on the
+      // same renderer→main pipe). Registration failure must never break path
+      // resolution, so it's swallowed.
+      if (resolved) {
+        try {
+          ipcRenderer.send('vault:register-source-path', resolved);
+        } catch {
+          /* best-effort registration */
+        }
+      }
+      return resolved;
     } catch {
       return '';
     }

@@ -185,7 +185,9 @@ export function makeKanbanFrontmatterWriter(
     // Phase R2 — drain pending writers before the copy so a debounced
     // card-cover update doesn't fire against a stale src before the new
     // image lands on disk.
-    const res = await copyFileIntoVault(paths[0], vaultRoot);
+    const src = paths[0];
+    if (!src) return; // paths non-empty (checked above)
+    const res = await copyFileIntoVault(src, vaultRoot);
     if (!res.success) {
       uiStore.toast(`Failed to import image: ${res.error ?? 'unknown error'}`, 'error', 3000);
       return;

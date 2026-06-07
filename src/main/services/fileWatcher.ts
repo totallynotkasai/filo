@@ -56,7 +56,7 @@ function shouldIgnorePath(normalized: string): boolean {
   const segments = normalized.split('/');
   const lastIdx = segments.length - 1;
   for (let i = 0; i < segments.length; i++) {
-    const segment = segments[i];
+    const segment = segments[i] ?? ''; // i < length; '' is a no-op for has()/endsWith()
     if (i === lastIdx) {
       if (IGNORE_RULES.exactNames.has(segment)) return true;
       for (const suffix of IGNORE_RULES.suffixes) {
@@ -166,6 +166,11 @@ export class FileWatcher {
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingChanges: FileChangeEvent[] = [];
   private readonly debounceMs = 300;
+  // L20 (Audit-13) — max-wait cap: a continuous sub-300ms write stream re-arms
+  // the trailing debounce forever; the OLDEST unfired event's time lets
+  // `scheduleNotify` cap the delay so a flush still lands within ~1s.
+  private debounceFirstQueuedAt: number | null = null;
+  private readonly maxDebounceWaitMs = 1000;
 
   /** Vault-relative path -> expiry timestamp (ms since epoch). */
   private suppressedPaths = new Map<VaultPath, number>();
@@ -506,6 +511,7 @@ export class FileWatcher {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
     }
+    this.debounceFirstQueuedAt = null; // L20 (Audit-13) — drop the max-wait marker
     if (this.reconcileTimer) {
       clearInterval(this.reconcileTimer);
       this.reconcileTimer = null;
@@ -817,10 +823,21 @@ export class FileWatcher {
     // calling this, but the live watcher callback may have queued events
     // in the same tick stop() fired; this is the second guard.
     if (this.aborted) return;
+    // L20 (Audit-13) — cap the delay at the remaining max-wait so a sustained
+    // sub-debounce stream still flushes (a lone event still gets full debounce).
+    const now = Date.now();
+    if (this.debounceFirstQueuedAt === null) {
+      this.debounceFirstQueuedAt = now;
+    }
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
     }
+    const remainingMaxWait = Math.max(0, this.maxDebounceWaitMs - (now - this.debounceFirstQueuedAt));
+    const delay = Math.min(this.debounceMs, remainingMaxWait);
     this.debounceTimer = setTimeout(() => {
+      // Firing — clear the marker so the NEXT event starts a fresh window.
+      this.debounceFirstQueuedAt = null;
+      this.debounceTimer = null;
       // Polish phase 1.4 — `notifyRenderers` is now async because the
       // cross-basename rename hash probe reads file bytes off the main
       // thread. The setTimeout callback is fire-and-forget; we attach
@@ -829,7 +846,7 @@ export class FileWatcher {
       this.notifyRenderers().catch((err) => {
         logMainError('fileWatcher.notifyRenderers', err);
       });
-    }, this.debounceMs);
+    }, delay);
   }
 
   private async notifyRenderers(): Promise<void> {

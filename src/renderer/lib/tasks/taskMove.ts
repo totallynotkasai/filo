@@ -62,6 +62,7 @@ export function moveTaskBlock(input: TaskMoveInput): TaskMoveResult {
   const blockOriginalIndices: number[] = [];
   for (let i = 0; i < placements.length; i++) {
     const p = placements[i];
+    if (!p) continue; // i < placements.length; narrow for the type-checker
     if (blockIdSet.has(p.tileId)) {
       block.push(p);
       blockOriginalIndices.push(i);
@@ -101,7 +102,8 @@ export function moveTaskBlock(input: TaskMoveInput): TaskMoveResult {
       // Unknown target section — treat as append.
       insertionIndex = remaining.length;
     } else {
-      const t = sectionsAfterRemoval[targetIdx];
+      // targetIdx came from findIndex and is >= 0 in this branch, so it is in range
+      const t = sectionsAfterRemoval[targetIdx]!;
       const tEnd = sectionsAfterRemoval[targetIdx + 1]?.position ?? remaining.length;
       const sectionSize = tEnd - t.position;
       const clamped = Math.max(0, Math.min(sectionSize, insertOffset));

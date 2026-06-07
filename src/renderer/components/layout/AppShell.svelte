@@ -338,7 +338,7 @@
         execute: () => {
           const ids = [...selectionStore.selectedIds];
           if (ids.length < 2) return;
-          const group = boardStore.getGroupForTile(ids[0]);
+          const group = boardStore.getGroupForTile(ids[0] ?? '');
           const allInSameGroup = group && ids.every(id => boardStore.getGroupForTile(id)?.id === group.id);
           const groupsBefore = [...boardStore.groups];
           if (allInSameGroup) {
@@ -469,7 +469,8 @@
           if (!cur) return;
           const idx = ids.indexOf(cur);
           if (idx < 0) return;
-          tabStore.setActive(ids[(idx + 1) % ids.length]);
+          const nextId = ids[(idx + 1) % ids.length];
+          if (nextId) tabStore.setActive(nextId);
         },
       }),
       registerCommandWithShortcut({
@@ -484,7 +485,8 @@
           if (!cur) return;
           const idx = ids.indexOf(cur);
           if (idx < 0) return;
-          tabStore.setActive(ids[(idx - 1 + ids.length) % ids.length]);
+          const prevId = ids[(idx - 1 + ids.length) % ids.length];
+          if (prevId) tabStore.setActive(prevId);
         },
       }),
     ];

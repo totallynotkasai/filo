@@ -392,7 +392,11 @@
     const target = idx + dir;
     if (target < 0 || target >= reorderIds.length) return;
     const next = [...reorderIds];
-    [next[idx], next[target]] = [next[target], next[idx]];
+    const a = next[idx];
+    const b = next[target];
+    if (a === undefined || b === undefined) return; // target bounds-checked above
+    next[idx] = b;
+    next[target] = a;
     reorderIds = next;
   }
   function commitReorder() {

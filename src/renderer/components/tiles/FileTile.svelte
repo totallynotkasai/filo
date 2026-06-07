@@ -66,6 +66,7 @@
       if (!paths || paths.length === 0) return;
 
       const sourcePath = paths[0];
+      if (!sourcePath) return; // paths non-empty (checked above)
       // Phase R2 — drain pending writers before the copy so a debounced
       // tile-definition write doesn't fire against a stale `filePath`
       // before the new file lands on disk.

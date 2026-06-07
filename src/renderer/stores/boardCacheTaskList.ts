@@ -198,6 +198,7 @@ export function makeTaskListSlice(ctx: CacheContext) {
       const fromIdx = placements.findIndex((p) => p.tileId === tileId);
       if (fromIdx < 0) return;
       const [moved] = placements.splice(fromIdx, 1);
+      if (!moved) return; // fromIdx >= 0; splice yields one element
       const insertAt = Math.min(Math.max(targetPosition, 0), placements.length);
       placements.splice(insertAt, 0, moved);
       (tl as Record<string, unknown>).tasks = placements.map((p, i) => ({ ...p, position: i }));
@@ -210,7 +211,9 @@ export function makeTaskListSlice(ctx: CacheContext) {
       const placements = [...((tl.tasks ?? []) as TaskPlacement[])];
       const idx = placements.findIndex((p) => p.tileId === tileId);
       if (idx < 0) return;
-      const next: TaskPlacement = { ...placements[idx] };
+      const current = placements[idx];
+      if (!current) return; // idx >= 0 from findIndex; narrow for the type-checker
+      const next: TaskPlacement = { ...current };
       if (locked) next.locked = true;
       else delete next.locked;
       placements[idx] = next;
@@ -228,11 +231,13 @@ export function makeTaskListSlice(ctx: CacheContext) {
       const placements = [...((tl.tasks ?? []) as TaskPlacement[])];
       const idx = placements.findIndex((p) => p.tileId === tileId);
       if (idx < 0) return;
-      const next: TaskPlacement = { ...placements[idx] };
+      const current = placements[idx];
+      if (!current) return; // idx >= 0 from findIndex; narrow for the type-checker
+      const next: TaskPlacement = { ...current };
       if (!style || Object.keys(style).length === 0) {
         delete next.style;
       } else {
-        next.style = { ...(placements[idx].style ?? {}), ...style };
+        next.style = { ...(current.style ?? {}), ...style };
       }
       placements[idx] = next;
       (tl as Record<string, unknown>).tasks = placements;

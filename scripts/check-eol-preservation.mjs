@@ -41,6 +41,15 @@
  * matrix is the substance, and neither can be silently deleted without CI
  * firing.
  *
+ * Audit-13 M8 — a THIRD target: the DocumentEditor adopt-path hydrate. TextTile's
+ * adopt path sniffs CRLF from the adopted body and threads it into `markHydrated`
+ * so the gateway honours it on the first write; DocumentEditor's twin left
+ * `eol` undefined, so a single-line-FM CRLF file flipped whole-file to LF on the
+ * first body save (single-pane sessions only, which is why prior audits missed
+ * it). The fix mirrors TextTile; this gate pins both tokens (the body-sniff +
+ * the threaded `adoptEol` arg) so the adopt path can't silently drop the eol
+ * again. Behavioral proof: `documentEditorAdoptEol.test.ts`.
+ *
  * Heuristic token-presence check (comments stripped first so a doc-comment that
  * merely describes the fix can't satisfy it) — same pragmatic style as
  * `check-awaited-writes-bounded.mjs`, not an AST walk.
@@ -90,6 +99,20 @@ const checks = [
       },
     ],
   },
+  {
+    file: 'src/renderer/components/boards/DocumentEditor.svelte',
+    label: 'the DocumentEditor adopt path threads the sniffed file eol into markHydrated (A13-M8)',
+    required: [
+      {
+        token: /const\s+adoptEol\s*=\s*docState\.body\.includes/,
+        why: 'the adopt path sniffs CRLF from the adopted body (mirrors TextTile)',
+      },
+      {
+        token: /markHydrated\([^)]*adoptEol/,
+        why: 'the sniffed eol is threaded into markHydrated — else a single-line-FM CRLF file flips to LF on the first body save',
+      },
+    ],
+  },
 ];
 
 const failures = [];
@@ -132,6 +155,7 @@ if (failures.length > 0) {
 
 console.log(
   '[check-eol-preservation] OK — dirty-FM emit path re-applies the file line ending, ' +
-    'and the A8-M1 single-line-CRLF behavioral matrix is present.',
+    'the A8-M1 single-line-CRLF behavioral matrix is present, ' +
+    'and the DocumentEditor adopt path threads the sniffed eol (A13-M8).',
 );
 process.exit(0);

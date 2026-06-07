@@ -214,3 +214,73 @@ describe('boardCacheStore.syncTile — mtime guard (Phase A.3)', () => {
     expect(confirmToast).toBeDefined();
   });
 });
+
+describe('boardCacheStore.syncTile — L9 same-mtime/size content residual (Audit-13)', () => {
+  beforeEach(() => {
+    vaultStore.setPath('/vault');
+    boardCacheStore.clear();
+    restoreFiloDefault();
+  });
+  afterEach(() => {
+    vaultStore.setPath('');
+    boardCacheStore.clear();
+    restoreFiloDefault();
+  });
+
+  it('IDENTICAL mtime+size but DIFFERENT bytes → prompt fires; Reload skips write', async () => {
+    const writeCalls: Array<{ args: unknown[] }> = [];
+    let readCount = 0;
+    installFiloMock({
+      // Both stats report the SAME mtime AND size — a coarse-clock volume's
+      // same-length external overwrite that the mtime||size guard misses.
+      'vault:stat': () => ({ success: true, mtimeMs: 1000, size: 100 }),
+      'vault:read-file-text': () => {
+        readCount++;
+        // 1st read = the diskRaw baseline; 2nd read = the L9 write-time recheck
+        // returning DIFFERENT bytes (the external overwrite).
+        return readCount === 1
+          ? { success: true, content: '---\ntitle: Note\n---\nAAAA' }
+          : { success: true, content: '---\ntitle: Note\n---\nBBBB' };
+      },
+      'vault:write-existing-file-text': (...args) => {
+        writeCalls.push({ args });
+        return { success: true };
+      },
+      'vault:file-exists': () => true,
+      'board:save': () => ({ success: true }),
+    });
+
+    seedBoardAndDoc('Local body to write');
+    const syncPromise = boardCacheStore.syncTile('t1');
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+
+    const promptToast = uiStore.toasts.find((t) => t.text.includes('modified externally between Filo'));
+    expect(promptToast).toBeDefined();
+    uiStore.invokeToastAction(promptToast!.id, 0); // Reload
+
+    const result = await syncPromise;
+    expect(result.wrote).toBe(false);
+    expect(result.skippedReason).toBe('external-edit-reload');
+    expect(writeCalls.length).toBe(0);
+  });
+
+  it('IDENTICAL mtime+size AND identical bytes → no prompt, write proceeds', async () => {
+    const writeCalls: Array<{ args: unknown[] }> = [];
+    installFiloMock({
+      'vault:stat': () => ({ success: true, mtimeMs: 1000, size: 100 }),
+      'vault:read-file-text': () => ({ success: true, content: '---\ntitle: Note\n---\nSAME' }),
+      'vault:write-existing-file-text': (...args) => {
+        writeCalls.push({ args });
+        return { success: true };
+      },
+      'vault:file-exists': () => true,
+      'board:save': () => ({ success: true }),
+    });
+
+    seedBoardAndDoc('Local body to write');
+    const result = await boardCacheStore.syncTile('t1');
+    expect(result.wrote).toBe(true);
+    expect(writeCalls.length).toBe(1);
+    expect(uiStore.toasts.find((t) => t.text.includes('modified externally between Filo'))).toBeUndefined();
+  });
+});

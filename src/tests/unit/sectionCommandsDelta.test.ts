@@ -15,7 +15,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
-import { DeleteSectionCommand, ReorderSectionCommand } from '@renderer/commands/index';
+import { AddSectionCommand, DeleteSectionCommand, ReorderSectionCommand } from '@renderer/commands/index';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TaskListBoard, TaskListSection, TileDefinition } from '@renderer/schema/index';
 import type { TaskPlacement } from '@renderer/schema/placement';
@@ -377,5 +377,41 @@ describe('Audit-6 L22 — persistTaskListStructure forces strictly-increasing se
       { id: 'y', title: 'Y', position: 2, collapsed: false },
     ]);
     expect(sections().map((s) => s.position)).toEqual([0, 2]);
+  });
+});
+
+describe('Audit-13 L8 — AddSectionCommand deep-clones the section (nested style)', () => {
+  beforeEach(() => {
+    installFiloMock(() => null);
+    vaultStore.setPath('/vault');
+    boardCacheStore.clear();
+    boardCacheStore.hydrate({ tl: makeBoard() }, { tl: 'tl.board.json' });
+  });
+  afterEach(() => {
+    restoreFiloDefault();
+    vaultStore.setPath('');
+    boardCacheStore.clear();
+  });
+
+  it('a post-construction mutation of the SOURCE section style does not leak into the snapshot', () => {
+    const before = { sections: sections().map((s) => ({ ...s })), tasks: board().tasks ?? [] };
+    const newSec: TaskListSection = {
+      id: 'sec-C',
+      title: 'C',
+      position: 4,
+      collapsed: false,
+      style: { headerColor: '#abc' },
+    };
+    const after = { sections: [...before.sections, newSec], tasks: before.tasks };
+    const cmd = new AddSectionCommand('tl', before, after, 'C');
+
+    // The section is captured BEFORE execute. A shallow copy would alias
+    // newSec.style, so this between-construction-and-execute mutation would
+    // leak into the persisted section; the deep clone isolates it.
+    newSec.style!.headerColor = '#MUTATED';
+
+    cmd.execute();
+    const persisted = (board().sections ?? []).find((s) => s.id === 'sec-C');
+    expect(persisted?.style?.headerColor).toBe('#abc');
   });
 });

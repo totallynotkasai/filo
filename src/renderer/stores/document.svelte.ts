@@ -723,13 +723,19 @@ export const documentStore = {
     newBody: string,
     newRichText: RichTextAnnotation[],
     newFrontmatter?: Record<string, unknown>,
+    // L1 (Audit-13) — the disk read's verbatim FM source bytes. Threaded so the
+    // clean-editor reload refreshes `originalFrontmatterCache` in lockstep with
+    // `frontmatterCache`; without it the byte-preservation baseline predates an
+    // externally-added key and that key loses its inline comment/quoting on the
+    // next body-only save.
+    rawFrontmatter?: string,
     diskIdentity?: { mtimeMs?: number; size?: number },
   ) {
     const doc = openDocuments.get(docId);
     if (!doc) return;
 
     if (!doc.isDirty) {
-      this.applyReloadFromDisk(docId, newBody, newRichText, newFrontmatter, undefined, diskIdentity);
+      this.applyReloadFromDisk(docId, newBody, newRichText, newFrontmatter, rawFrontmatter, diskIdentity);
       return;
     }
 
@@ -741,7 +747,7 @@ export const documentStore = {
         {
           label: 'Reload',
           handler: () =>
-            this.applyReloadFromDisk(docId, newBody, newRichText, newFrontmatter, undefined, diskIdentity),
+            this.applyReloadFromDisk(docId, newBody, newRichText, newFrontmatter, rawFrontmatter, diskIdentity),
         },
         {
           label: 'Keep local',

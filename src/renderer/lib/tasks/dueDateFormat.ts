@@ -16,7 +16,7 @@ export function formatDueDateAbsolute(iso: string): string {
   if (!iso) return '';
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
   const d = m
-    ? new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10))
+    ? new Date(parseInt(m[1] ?? '', 10), parseInt(m[2] ?? '', 10) - 1, parseInt(m[3] ?? '', 10))
     : new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -31,7 +31,7 @@ export function formatDueDateRelative(iso: string, now: Date = new Date()): stri
   if (!iso) return '';
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
   const due = m
-    ? new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10))
+    ? new Date(parseInt(m[1] ?? '', 10), parseInt(m[2] ?? '', 10) - 1, parseInt(m[3] ?? '', 10))
     : new Date(iso);
   if (Number.isNaN(due.getTime())) return iso;
   const today = new Date(now);
@@ -53,7 +53,7 @@ export function formatDueDateRelative(iso: string, now: Date = new Date()): stri
 export function formatTimeChip(time: string): string {
   const m = /^(\d{1,2}):(\d{2})$/.exec(time);
   if (!m) return time;
-  const h = parseInt(m[1], 10);
+  const h = parseInt(m[1] ?? '', 10);
   const min = m[2];
   if (Number.isNaN(h)) return time;
   const ampm = h >= 12 ? 'pm' : 'am';
@@ -71,7 +71,7 @@ export function isOverdue(dueDate: string, completed: boolean, now: Date = new D
   if (!dueDate || completed) return false;
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dueDate);
   const due = m
-    ? new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10))
+    ? new Date(parseInt(m[1] ?? '', 10), parseInt(m[2] ?? '', 10) - 1, parseInt(m[3] ?? '', 10))
     : new Date(dueDate);
   if (Number.isNaN(due.getTime())) return false;
   const today = new Date(now);

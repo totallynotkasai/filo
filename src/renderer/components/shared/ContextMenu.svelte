@@ -35,21 +35,21 @@
     let idx = start;
     for (let i = 0; i < actionItems.length; i++) {
       idx = (idx + dir + actionItems.length) % actionItems.length;
-      if (!actionItems[idx].disabled) return idx;
+      if (!actionItems[idx]?.disabled) return idx;
     }
     return start;
   }
 
   function firstEnabledIndex(): number {
     for (let i = 0; i < actionItems.length; i++) {
-      if (!actionItems[i].disabled) return i;
+      if (!actionItems[i]?.disabled) return i;
     }
     return -1;
   }
 
   function lastEnabledIndex(): number {
     for (let i = actionItems.length - 1; i >= 0; i--) {
-      if (!actionItems[i].disabled) return i;
+      if (!actionItems[i]?.disabled) return i;
     }
     return -1;
   }
@@ -78,7 +78,8 @@
       case ' ':
         e.preventDefault();
         if (focusedIndex >= 0 && focusedIndex < actionItems.length) {
-          handleItemClick(actionItems[focusedIndex]);
+          const item = actionItems[focusedIndex];
+          if (item) handleItemClick(item);
         }
         break;
       case 'Escape':
@@ -196,7 +197,7 @@
   </div>
   <div class="sr-announcer" aria-live="polite" role="status">
     {#if focusedIndex >= 0 && focusedIndex < actionItems.length}
-      {actionItems[focusedIndex].label}
+      {actionItems[focusedIndex]?.label}
     {/if}
   </div>
 {/if}

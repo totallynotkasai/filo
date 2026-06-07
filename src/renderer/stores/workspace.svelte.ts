@@ -98,7 +98,7 @@ function transformLeaf(
     }
   });
   if (newChildren.length === 0) return null;
-  if (newChildren.length === 1) return newChildren[0];
+  if (newChildren.length === 1) return newChildren[0] ?? null;
   const totalSize = newSizes.reduce((s, v) => s + v, 0) || 1;
   return { ...node, children: newChildren, sizes: newSizes.map((s) => s / totalSize) };
 }
@@ -126,7 +126,7 @@ function findParentOfLeaf(node: PaneNode | null, leafId: string): { parent: Pane
   if (!node || node.type === 'leaf') return null;
   for (let i = 0; i < node.children.length; i++) {
     const child = node.children[i];
-    if (child.type === 'leaf' && child.id === leafId) return { parent: node, index: i };
+    if (child && child.type === 'leaf' && child.id === leafId) return { parent: node, index: i };
   }
   for (const child of node.children) {
     const found = findParentOfLeaf(child, leafId);
@@ -150,9 +150,9 @@ export const workspaceStore = {
     const leaves = collectLeaves(layout.paneTree);
     if (leaves.length === 0) return null;
     if (layout.activePaneId) {
-      return leaves.find((l) => l.id === layout.activePaneId) ?? leaves[0];
+      return leaves.find((l) => l.id === layout.activePaneId) ?? leaves[0] ?? null;
     }
-    return leaves[0];
+    return leaves[0] ?? null;
   },
 
   setChangeListener(fn: (() => void) | null) {
@@ -294,7 +294,7 @@ export const workspaceStore = {
         }
       });
       if (kept.length === 0) return null;
-      if (kept.length === 1) return kept[0];
+      if (kept.length === 1) return kept[0] ?? null;
       const total = keptSizes.reduce((s, v) => s + v, 0) || 1;
       return { ...node, children: kept, sizes: keptSizes.map((s) => s / total) };
     };

@@ -289,7 +289,7 @@ export const tabStore = {
         activeTabId = '';
       } else {
         const newIdx = Math.min(idx, tabs.length - 1);
-        activeTabId = tabs[newIdx].id;
+        activeTabId = tabs[newIdx]?.id ?? '';
       }
     }
     notifyChange();
@@ -387,6 +387,7 @@ export const tabStore = {
     if (fromIndex === toIndex) return;
     const updated = [...tabs];
     const [moved] = updated.splice(fromIndex, 1);
+    if (!moved) return; // fromIndex out of range — nothing to move
     updated.splice(toIndex, 0, moved);
     tabs = updated;
     notifyChange();
@@ -448,7 +449,7 @@ export const tabStore = {
     if (workspace.activeTabId && restored.some((t) => t.id === workspace.activeTabId)) {
       activeTabId = workspace.activeTabId;
     } else if (restored.length > 0) {
-      activeTabId = restored[0].id;
+      activeTabId = restored[0]?.id ?? '';
     }
   },
 };

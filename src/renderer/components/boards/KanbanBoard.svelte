@@ -374,7 +374,11 @@
     const target = idx + direction;
     if (target < 0 || target >= ids.length) return;
     const next = [...ids];
-    [next[idx], next[target]] = [next[target], next[idx]];
+    const a = next[idx];
+    const b = next[target];
+    if (a === undefined || b === undefined) return; // idx/target bounds-checked above
+    next[idx] = b;
+    next[target] = a;
     reorderColumns(next);
   }
 
@@ -517,7 +521,7 @@
     if (cmds.length > 0) {
       historyStore.execute(
         cmds.length === 1
-          ? cmds[0]
+          ? cmds[0]! // length === 1 guarantees index 0 is defined
           : new BatchCommand(`Import ${cmds.length} cards`, cmds),
       );
       tickAndPersist();
@@ -603,11 +607,13 @@
       if (flat.length === 0) return;
       if (ids.length === 0) {
         e.preventDefault();
-        selectionStore.select(flat[0]);
+        const first = flat[0];
+        if (first) selectionStore.select(first); // flat non-empty (checked above)
         announce('Card focused');
         return;
       }
       const focusedId = ids[ids.length - 1];
+      if (focusedId === undefined) return; // ids non-empty here
       const focusInfo = findColumnAndIndex(focusedId);
       if (!focusInfo) return;
       const target = neighbourTileId(focusInfo, e.key);
@@ -630,10 +636,12 @@
       && selectionStore.count === 1
     ) {
       const ids = [...selectionStore.selectedIds];
-      const tile = allTilesById[ids[0]];
+      const firstId = ids[0];
+      if (firstId === undefined) return; // count === 1 checked above
+      const tile = allTilesById[firstId];
       if (!tile || tile.type !== 'text') return;
       e.preventDefault();
-      openTileAsDocument(ids[0]);
+      openTileAsDocument(firstId);
       return;
     }
   }
@@ -649,7 +657,7 @@
     for (const col of columns) {
       const placements = filtersAndSort.visiblePlacementsForColumn(col.id);
       for (let i = 0; i < placements.length; i++) {
-        if (placements[i].tileId === tileId) {
+        if (placements[i]?.tileId === tileId) {
           return { columnId: col.id, rowIdx: i };
         }
       }
@@ -672,16 +680,18 @@
       const placements = filtersAndSort.visiblePlacementsForColumn(from.columnId);
       const nextIdx = key === 'ArrowUp' ? from.rowIdx - 1 : from.rowIdx + 1;
       if (nextIdx < 0 || nextIdx >= placements.length) return null;
-      return placements[nextIdx].tileId;
+      return placements[nextIdx]?.tileId ?? null;
     }
     // Horizontal — walk left/right past empty columns until a visible card
     // is found. Clamp the row index against each column's visible length.
     let probe = colIdx + (key === 'ArrowRight' ? 1 : -1);
     while (probe >= 0 && probe < columns.length) {
-      const placements = filtersAndSort.visiblePlacementsForColumn(columns[probe].id);
+      const col = columns[probe];
+      if (!col) break; // probe bounds-checked by the while condition
+      const placements = filtersAndSort.visiblePlacementsForColumn(col.id);
       if (placements.length > 0) {
         const targetIdx = Math.min(from.rowIdx, placements.length - 1);
-        return placements[targetIdx].tileId;
+        return placements[targetIdx]?.tileId ?? null;
       }
       probe += key === 'ArrowRight' ? 1 : -1;
     }

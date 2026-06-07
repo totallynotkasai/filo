@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs';
 import type { FileHandle } from 'fs/promises';
-import { join, extname, basename, resolve, sep } from 'path';
+import { randomBytes } from 'crypto';
+import { join, extname, basename, dirname, resolve, sep } from 'path';
 import { assertSafeFilename } from '../utils/pathSecurity';
 import { recordPreservedEmergencyFile } from '../services/emergencyFileRegistry';
 import type { FileTreeNode } from '../../shared/types';
@@ -101,10 +102,21 @@ export async function readDirectoryTree(
  * Audit-11 P2 — true iff `candidate` (an absolute, realpath-resolved path)
  * is the vault root itself or lives beneath it. Used to exclude a reparse
  * point (NTFS junction / POSIX symlink) whose target escapes the vault.
+ *
+ * Audit-12 S2 — case-fold both sides on Windows (mirrors `assertWithinVault`).
+ * NTFS is case-preserving but not case-sensitive, so a junction target whose
+ * OS-reported casing diverged from the vault root casing (e.g. `C:\VAULT\sub`
+ * vs `C:\vault`) was wrongly classified as escaping the vault and the legit
+ * in-vault reparse point was dropped from the tree. Case-folding keeps the
+ * containment check correct without weakening it — a target that escapes to
+ * `C:\Windows` still fails the folded prefix test.
  */
 function isWithinVaultRoot(candidate: string, vaultRoot: string): boolean {
-  const c = resolve(candidate);
-  const r = resolve(vaultRoot);
+  const isWin = process.platform === 'win32';
+  const c0 = resolve(candidate);
+  const r0 = resolve(vaultRoot);
+  const c = isWin ? c0.toLowerCase() : c0;
+  const r = isWin ? r0.toLowerCase() : r0;
   return c === r || c.startsWith(r.endsWith(sep) ? r : r + sep);
 }
 
@@ -358,7 +370,32 @@ export async function renameItem(oldPath: string, newPath: string): Promise<void
     if ((err as NodeJS.ErrnoException | null)?.code === 'EXDEV') {
       const stat = await fs.stat(oldPath);
       if (stat.isDirectory()) throw err;
-      await fs.copyFile(oldPath, newPath);
+      // L10 (Audit-13) — cross-device move (rename across filesystems). The prior
+      // `copyFile(old → new)` streamed straight to the final name, non-fsync'd, so
+      // a crash mid-copy left a torn file at `newPath` while the source was about
+      // to be unlinked. Stage into a temp, fsync, atomically rename, best-effort
+      // dir-fsync, THEN unlink the source — the project's uniform atomic-write
+      // contract for the one move path that can't use a same-volume rename.
+      const nonce = randomBytes(6).toString('hex');
+      const tmpPath = `${newPath}.${nonce}.tmp`;
+      try {
+        await fs.copyFile(oldPath, tmpPath);
+        const fh = await fs.open(tmpPath, 'r+');
+        try {
+          await fh.sync();
+        } finally {
+          await fh.close().catch(() => undefined);
+        }
+        await fs.rename(tmpPath, newPath);
+      } catch (copyErr) {
+        await fs.unlink(tmpPath).catch(() => undefined);
+        throw copyErr;
+      }
+      try {
+        const dirHandle = await fs.open(dirname(newPath), 'r');
+        try { await dirHandle.sync(); } catch { /* dir fsync unsupported */ }
+        await dirHandle.close().catch(() => undefined);
+      } catch { /* dir handle open failed — non-fatal */ }
       await fs.unlink(oldPath);
       return;
     }
@@ -411,6 +448,10 @@ export class TargetNameExhaustedError extends Error {
 
 const MAX_CANDIDATE_ATTEMPTS = 1000;
 const COPY_CHUNK_BYTES = 64 * 1024;
+// L10 (Audit-13) — backoff for the staging-temp → final-name rename on transient
+// Windows lock codes (antivirus / the recursive watch handle / a sync client
+// briefly gripping the destination), mirroring atomicWriteFile's retry schedule.
+const COPY_RENAME_RETRY_DELAYS = [10, 20, 40, 80, 160];
 
 /**
  * Copies a file into the vault. Returns the destination path.
@@ -432,21 +473,32 @@ const COPY_CHUNK_BYTES = 64 * 1024;
  * whichever caller wins the open keeps that name; the loser bumps the
  * counter and retries, capped at {@link MAX_CANDIDATE_ATTEMPTS}.
  *
- * The bytes are streamed through the held fd in 64 KB chunks
- * (memory-bounded for large media), then `fsync`'d and the parent dir
- * is `fsync`'d so the new entry is durable. On non-fatal failure
- * (EACCES / EPERM / etc.) the partial file is unlinked; on
- * ENOSPC/EIO/ENOMEM the partial file is preserved at its final
- * destination and the path is attached to the rejected error via
- * `preservedTmpPath` so the IPC layer can name it in a toast (the
- * field name is retained for parity with the previous tmp+rename
- * contract — the path now points at the actual partial file, no `.tmp`
- * suffix).
+ * L10 (Audit-13) — atomic new-file create. The reserved placeholder above is
+ * only a NAME claim; the bytes are streamed in 64 KB chunks (memory-bounded for
+ * large media) into a sibling `<dest>.<nonce>.tmp`, `fsync`'d, then atomically
+ * `rename`d OVER the placeholder (with a transient-Windows-lock retry), and the
+ * parent dir is `fsync`'d. So a reader or a crash mid-stream never observes a
+ * torn/partial file at the final name — the prior code streamed straight into the
+ * destination, leaving a truncated import on a power loss. On non-fatal failure
+ * (EACCES / EPERM / etc.) the temp AND the placeholder are unlinked; on
+ * ENOSPC/EIO/ENOMEM (or a rename that exhausts its retries) the temp is preserved
+ * (its partial/complete bytes may be the user's only copy), the placeholder is
+ * dropped, and the temp path is attached to the rejected error via
+ * `preservedTmpPath` so the IPC layer can name it in a toast.
+ *
+ * Audit-12 S1 — TOCTOU hardening: the source is re-stat'd through the open
+ * fd (catching a device/FIFO/dir swapped in after the caller's pre-flight
+ * lstat) and the bytes STREAMED are capped at `maxBytes` (defeating a
+ * `/dev/zero`-style device that under-reports `size` then never EOFs).
+ * `maxBytes` defaults to Infinity for non-IPC callers; `vault:copy-file`
+ * passes its `VAULT_COPY_MAX_SIZE_BYTES` cap. WHICH paths may be named as a
+ * source is enforced upstream in the handler via `isApprovedCopySource`.
  */
 export async function copyFileToVault(
   sourcePath: string,
   vaultPath: string,
   subfolder?: string,
+  maxBytes: number = Number.POSITIVE_INFINITY,
 ): Promise<string> {
   const targetDir = subfolder ? join(vaultPath, subfolder) : vaultPath;
   await fs.mkdir(targetDir, { recursive: true });
@@ -480,43 +532,106 @@ export async function copyFileToVault(
     }
   }
   if (!dest) throw new TargetNameExhaustedError(fileName, MAX_CANDIDATE_ATTEMPTS);
+  // The O_EXCL open RESERVED the destination NAME as a 0-byte placeholder
+  // (collision-free vs a concurrent same-basename copy). It is only a name claim;
+  // close it now — L10 streams the bytes into a sibling temp and renames it OVER
+  // the placeholder so the final name never holds a torn partial.
+  await dest.close().catch(() => undefined);
 
+  const nonce = randomBytes(6).toString('hex');
+  const tmpPath = `${destPath}.${nonce}.tmp`;
   let writeErr: unknown = null;
+  let tmp: FileHandle | null = null;
   try {
+    tmp = await fs.open(tmpPath, 'wx');
     const source = await fs.open(sourcePath, 'r');
     try {
+      // Audit-12 S1 (TOCTOU) — re-stat through the OPEN fd, which is immune to
+      // a path swap between the handler's pre-flight `lstat` and this `open`.
+      // `fstat` reports the type of what we ACTUALLY opened, so a source
+      // swapped to a character device / FIFO / directory after the lstat is
+      // caught here instead of streamed (`open` follows symlinks, so this is
+      // the only point a post-lstat device-swap surfaces).
+      const openedStat = await source.stat();
+      if (!openedStat.isFile()) {
+        throw new Error('Source is not a regular file (changed after pre-flight check)');
+      }
       const buf = Buffer.alloc(COPY_CHUNK_BYTES);
       let written = 0;
       // Sequential source read (position: null) + monotonically-increasing
-      // dest offset. Chunked so a multi-GB media file doesn't sit in
+      // temp offset. Chunked so a multi-GB media file doesn't sit in
       // memory in one allocation.
       while (true) {
         const { bytesRead } = await source.read(buf, 0, COPY_CHUNK_BYTES, null);
         if (bytesRead === 0) break;
-        await dest.write(buf, 0, bytesRead, written);
+        await tmp.write(buf, 0, bytesRead, written);
         written += bytesRead;
+        // Audit-12 S1 — cap the BYTES STREAMED, not just the pre-read `size`.
+        // A device that reports `size === 0` but never EOFs (`/dev/zero`) or a
+        // file that grows mid-copy would otherwise fill the disk; the running
+        // tally aborts the moment it crosses the cap. Defaults to Infinity so
+        // non-IPC callers are unaffected; `vault:copy-file` passes its cap.
+        if (written > maxBytes) {
+          throw new Error(`Source exceeded the ${maxBytes}-byte copy cap mid-stream`);
+        }
       }
     } finally {
       await source.close().catch(() => undefined);
     }
-    await dest.sync();
+    await tmp.sync();
   } catch (err) {
     writeErr = err;
   } finally {
-    await dest.close().catch(() => undefined);
+    if (tmp) await tmp.close().catch(() => undefined);
   }
 
   if (writeErr) {
+    // The bytes never reached the final name (it is still the 0-byte
+    // placeholder), so drop the placeholder unconditionally — only the temp can
+    // hold recoverable data. On a non-fatal failure clean up the temp too; on
+    // ENOSPC/EIO/ENOMEM preserve it (its partial bytes may be the user's only
+    // copy) and attach the temp path for the toast.
     const code = (writeErr as NodeJS.ErrnoException | null)?.code;
+    await fs.unlink(destPath).catch(() => undefined);
     if (code !== 'ENOSPC' && code !== 'EIO' && code !== 'ENOMEM') {
-      await fs.unlink(destPath).catch(() => undefined);
+      await fs.unlink(tmpPath).catch(() => undefined);
     } else if (writeErr && typeof writeErr === 'object') {
-      (writeErr as { preservedTmpPath?: string }).preservedTmpPath = destPath;
+      (writeErr as { preservedTmpPath?: string }).preservedTmpPath = tmpPath;
       // 6.2.H4 (follow-up) — record the preserved partial copy so the quit
       // drain can surface its location via `.filo/quit-failure.json`.
-      recordPreservedEmergencyFile({ preservedPath: destPath, targetPath: destPath, code });
+      recordPreservedEmergencyFile({ preservedPath: tmpPath, targetPath: destPath, code });
     }
     throw writeErr;
+  }
+
+  // L10 — atomically swap the fully-written, fsync'd temp OVER the reserved
+  // placeholder. Retry on transient Windows lock codes (EPERM/EBUSY/EACCES from
+  // antivirus / the recursive watch handle) before giving up; if the rename
+  // still can't land, the intact temp is preserved for recovery.
+  let renamed = false;
+  let renameErr: unknown = null;
+  for (let attempt = 0; attempt <= COPY_RENAME_RETRY_DELAYS.length; attempt++) {
+    try {
+      await fs.rename(tmpPath, destPath);
+      renamed = true;
+      break;
+    } catch (err) {
+      renameErr = err;
+      const code = (err as NodeJS.ErrnoException | null)?.code;
+      if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES') break;
+      if (attempt < COPY_RENAME_RETRY_DELAYS.length) {
+        await new Promise((r) => setTimeout(r, COPY_RENAME_RETRY_DELAYS[attempt]));
+      }
+    }
+  }
+  if (!renamed) {
+    await fs.unlink(destPath).catch(() => undefined);
+    const code = (renameErr as NodeJS.ErrnoException | null)?.code;
+    if (renameErr && typeof renameErr === 'object') {
+      (renameErr as { preservedTmpPath?: string }).preservedTmpPath = tmpPath;
+      recordPreservedEmergencyFile({ preservedPath: tmpPath, targetPath: destPath, code });
+    }
+    throw renameErr;
   }
 
   // Best-effort directory fsync so the new entry is durably visible

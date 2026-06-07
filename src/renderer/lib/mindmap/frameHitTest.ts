@@ -14,6 +14,7 @@ export function hitTestFrame(
 ): Frame | null {
   for (let i = frames.length - 1; i >= 0; i--) {
     const f = frames[i];
+    if (!f) continue; // i in range; narrow for the type-checker
     const bottom = f.position.y + (f.collapsed ? FRAME_HEADER_HEIGHT : f.size.height);
     if (
       canvasX >= f.position.x &&

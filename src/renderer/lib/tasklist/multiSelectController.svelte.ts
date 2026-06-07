@@ -303,6 +303,7 @@ export class MultiSelectController {
     const insertOffset = sectionEnd - sectionStart;
 
     const anchorId = blockIds[0];
+    if (!anchorId) return; // blockIds non-empty (checked above)
     const descendantIds = blockIds.slice(1);
 
     const before = {

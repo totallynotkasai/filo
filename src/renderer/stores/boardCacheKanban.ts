@@ -516,6 +516,14 @@ export function makeKanbanSlice(ctx: CacheContext) {
       tileIds: string[],
       targetColumnId: string,
       targetPosition: number,
+      // M5 (Audit-13) — optional forward-leg neighbour anchor, mirroring the
+      // single-card `moveKanbanPlacement`. The bulk block is inserted
+      // immediately before this sibling when it's still present in the target
+      // column (resolved against the LIVE post-removal index), so a redo after
+      // an intervening column edit lands at the right slot instead of the stale
+      // absolute `targetPosition`. `undefined`/`null` or a missing anchor falls
+      // back to the clamped `targetPosition` (prior behaviour).
+      beforeTileId?: string | null,
     ): void {
       const kb = ctx.kanbanBoardOrWarn(boardId, 'moveKanbanPlacements');
       if (!kb) return;
@@ -552,7 +560,15 @@ export function makeKanbanSlice(ctx: CacheContext) {
           };
         }
         const placements = [...(c.tilePlacements ?? [])];
-        const insertAt = Math.min(Math.max(targetPosition, 0), placements.length);
+        // M5 (Audit-13) — prefer the live index of the forward-leg anchor when
+        // it's still present, so a redo after an intervening edit lands the
+        // block next to its original sibling rather than at a stale absolute
+        // index. The anchor is captured pre-move with the whole moved set
+        // removed, so `placements` (also post-removal here) shares its frame.
+        const anchorIdx =
+          beforeTileId != null ? placements.findIndex((p) => p.tileId === beforeTileId) : -1;
+        const insertAt =
+          anchorIdx >= 0 ? anchorIdx : Math.min(Math.max(targetPosition, 0), placements.length);
         placements.splice(insertAt, 0, ...orderedPlacements);
         return {
           ...c,

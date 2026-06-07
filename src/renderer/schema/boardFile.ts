@@ -100,7 +100,7 @@ export const V7BoardFileDataSchema = z.object({
   for (const frame of envelope.frames) {
     for (let i = 0; i < frame.tileIds.length; i += 1) {
       const tileId = frame.tileIds[i];
-      if (!validIds.has(tileId)) {
+      if (tileId !== undefined && !validIds.has(tileId)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: `Frame ${frame.id} references missing tile ${tileId}`,

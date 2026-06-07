@@ -218,6 +218,7 @@
 
     if (hitIds.length > 0) {
       const tileId = hitIds[hitIds.length - 1];
+      if (tileId === undefined) return; // hitIds non-empty (checked above)
       if (!selectionStore.isSelected(tileId)) {
         selectionStore.select(tileId);
       }
@@ -447,13 +448,14 @@
       if (tilesArr.length === 0) return;
 
       if (ids.length === 0) {
-        selectionStore.select(tilesArr[0].id);
+        const first = tilesArr[0];
+        if (first) selectionStore.select(first.id);
         return;
       }
 
       // Anchor on the most-recently-selected tile so consecutive presses
       // walk the selection through neighbors (matching IDE Shift+Arrow).
-      const anchor = boardStore.getTile(ids[ids.length - 1]);
+      const anchor = boardStore.getTile(ids[ids.length - 1] ?? '');
       if (!anchor) return;
 
       const best = findNeighborTile({
@@ -502,10 +504,11 @@
       e.preventDefault();
       const ids = [...selectionStore.selectedIds];
       if (ids.length === 0) {
-        selectionStore.select(tilesArr[0].id);
+        const first = tilesArr[0];
+        if (first) selectionStore.select(first.id);
         return;
       }
-      const anchor = boardStore.getTile(ids[ids.length - 1]);
+      const anchor = boardStore.getTile(ids[ids.length - 1] ?? '');
       if (!anchor) return;
       const best = findNeighborTile({
         key: e.key,
@@ -546,7 +549,7 @@
         createTileAtViewportCenter();
         return;
       }
-      const anchor = boardStore.getTile(ids[ids.length - 1]);
+      const anchor = boardStore.getTile(ids[ids.length - 1] ?? '');
       if (!anchor) {
         createTileAtViewportCenter();
         return;
@@ -594,7 +597,7 @@
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const ids = [...selectionStore.selectedIds];
       if (ids.length !== 1) return;
-      const tile = boardStore.getTile(ids[0]);
+      const tile = boardStore.getTile(ids[0] ?? '');
       if (!tile) return;
       e.preventDefault();
       // Enter connection mode so the user's next click on another tile
@@ -621,7 +624,7 @@
   aria-roledescription="Infinite canvas. Drag to pan, scroll to zoom, shift-drag to box-select."
   tabindex="0"
   use:viewportAction={canvasStore}
-  use:dragDropAction
+  use:dragDropAction={scope}
   use:edgePanAction
   onpointerdown={(e) => marquee.handlePointerDown(e)}
   onpointermove={(e) => marquee.handlePointerMove(e)}

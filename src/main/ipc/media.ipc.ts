@@ -71,7 +71,7 @@ const LINK_METADATA_MAX_BYTES = 512 * 1024;
 export function detectCharsetFromContentType(contentType: string): string {
   const match = /charset\s*=\s*["']?([^;"']+)/i.exec(contentType);
   if (!match) return 'utf-8';
-  const label = match[1].trim().toLowerCase();
+  const label = (match[1] ?? '').trim().toLowerCase();
   if (!label) return 'utf-8';
   try {
     new TextDecoder(label);
@@ -247,7 +247,10 @@ export function registerMediaHandlers(): void {
       // OS shell handles (Phone app on macOS, FaceTime, default SIP client
       // on Windows). Same SSRF-skip rationale as mailto: no hostname-bearing
       // URL component.
-      const ALLOWED_URL_PREFIXES = ['https://', 'http://', 'mailto:', 'tel:'];
+      // Audit-12 S2 — `http://` dropped from the allowlist. Cleartext http is a
+      // downgrade / SSRF surface and every modern target serves https; legacy
+      // link tiles that stored an http:// URL are handled explicitly below.
+      const ALLOWED_URL_PREFIXES = ['https://', 'mailto:', 'tel:'];
       const DISALLOWED_URL_PATTERNS = [
         /^file:/i,
         /^javascript:/i,
@@ -260,13 +263,31 @@ export function registerMediaHandlers(): void {
           return { success: false, error: 'URL scheme not allowed' };
         }
       }
-      const isAllowedUrl = ALLOWED_URL_PREFIXES.some((prefix) => target.startsWith(prefix));
+      // Audit-12 S2 — explicit, distinct handling for legacy `http://` URLs: log
+      // a warning and refuse rather than silently opening cleartext (or falling
+      // through to the local-path branch with a confusing "outside vault" error).
+      if (/^http:\/\//i.test(target)) {
+        logMainError(
+          'media:open-external',
+          new Error(`Refusing to open insecure http:// URL: ${target}`),
+        );
+        return { success: false, error: 'Insecure http:// links are no longer opened — use https://' };
+      }
+      // L11 (Audit-13) — compare the scheme case-insensitively. A legitimate
+      // `HTTPS://…` / `Mailto:` link otherwise failed this prefix test (the
+      // prefixes are lowercase) and fell through to the local-path branch, which
+      // refused it — a fail-closed but confusing UX regression. The ORIGINAL
+      // `target` is still what we hand to the OS; only the allowlist + SSRF
+      // discrimination COMPARISONS use the lowercased copy (the URL constructor
+      // in `isPrivateUrl` already lowercases the scheme, so it needs no change).
+      const lowerTarget = target.toLowerCase();
+      const isAllowedUrl = ALLOWED_URL_PREFIXES.some((prefix) => lowerTarget.startsWith(prefix));
       if (isAllowedUrl) {
         // mailto:/tel: don't have a hostname-bearing URL component for the
         // private-IP check; skip the SSRF gate for them. Match the http(s)
         // schemes explicitly rather than a loose `startsWith('http')` so a
         // future allowlisted scheme like `httpx:` can't slip past the gate.
-        if (target.startsWith('http://') || target.startsWith('https://')) {
+        if (lowerTarget.startsWith('http://') || lowerTarget.startsWith('https://')) {
           if (isPrivateUrl(target)) {
             // Phase 37 / 37.7 — gate the dev-localhost allowance on
             // `app.isPackaged`. Electron packaged builds don't set
@@ -326,6 +347,12 @@ export function registerMediaHandlers(): void {
           '.msi', '.jar', '.lnk', '.appref-ms', '.app', '.bin', '.sh', '.msc',
           // HTML-renderable — Phase 5 / P1-10
           '.html', '.htm', '.xhtml', '.svg', '.shtml', '.xml',
+          // Audit-13 M12 — OS launcher / shell-acted-on shortcuts. These aren't
+          // executables, but the shell ACTS on them: a `.url`/`.scf`/`.website`
+          // can point at `\\attacker\share` and leak NetNTLM creds on open;
+          // `.reg`/`.inf` import/run on activation; `.pif` executes; `.desktop`
+          // runs its `Exec=` on Linux. Kept in sync with untrusted.ts.
+          '.url', '.scf', '.website', '.pif', '.reg', '.inf', '.desktop',
         ]);
         // Audit-10 B3 (defence in depth) — refuse a basename Win32 would
         // normalise into a DIFFERENT file than the one we validated: a
@@ -340,6 +367,21 @@ export function registerMediaHandlers(): void {
           return {
             success: false,
             error: 'Refusing to open file: unsafe filename (trailing dot/space or alternate data stream)',
+          };
+        }
+        // Audit-12 S2 — also run the shared filename guard on the basename so a
+        // Windows reserved DOS name (CON / NUL / LPT1 / CONIN$ …) can't be handed
+        // to shell.openPath as a device handle. assertSafeFilename platform-gates
+        // the reserved-name + illegal-char rules to win32 by default, so a
+        // legitimately-named POSIX vault file (e.g. `CON.md` on Linux) stays
+        // openable. The manual trailing-dot/ADS check above is kept because it
+        // applies on every platform; this adds the reserved-name coverage.
+        try {
+          assertSafeFilename(targetBasename);
+        } catch {
+          return {
+            success: false,
+            error: 'Refusing to open file: unsafe filename (Windows reserved name or illegal character)',
           };
         }
         const ext = launcherExtension(target);
@@ -524,15 +566,15 @@ export function registerMediaHandlers(): void {
         // Try property first (og:), then name
         const propMatch = headSection.match(new RegExp(`<meta[^>]+property=["']${nameOrProp}["'][^>]+content=["']([^"']*)["']`, 'i'))
           || headSection.match(new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+property=["']${nameOrProp}["']`, 'i'));
-        if (propMatch) return propMatch[1];
+        if (propMatch) return propMatch[1] ?? '';
 
         const nameMatch = headSection.match(new RegExp(`<meta[^>]+name=["']${nameOrProp}["'][^>]+content=["']([^"']*)["']`, 'i'))
           || headSection.match(new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+name=["']${nameOrProp}["']`, 'i'));
-        return nameMatch ? nameMatch[1] : '';
+        return nameMatch?.[1] ?? '';
       };
 
       const titleMatch = headSection.match(/<title[^>]*>([^<]*)<\/title>/i);
-      const title = getMetaContent('og:title') || (titleMatch ? titleMatch[1].trim() : '');
+      const title = getMetaContent('og:title') || (titleMatch?.[1] ?? '').trim();
       const description = getMetaContent('og:description') || getMetaContent('description');
       const image = getMetaContent('og:image');
 
@@ -544,7 +586,8 @@ export function registerMediaHandlers(): void {
       const faviconMatch = headSection.match(/<link[^>]+rel=["'](?:shortcut )?icon["'][^>]+href=["']([^"']*)["']/i)
         || headSection.match(/<link[^>]+href=["']([^"']*)["'][^>]+rel=["'](?:shortcut )?icon["']/i);
       if (faviconMatch) {
-        favicon = faviconMatch[1].startsWith('http') ? faviconMatch[1] : `${parsedUrl.origin}${faviconMatch[1].startsWith('/') ? '' : '/'}${faviconMatch[1]}`;
+        const href = faviconMatch[1] ?? '';
+        favicon = href.startsWith('http') ? href : `${parsedUrl.origin}${href.startsWith('/') ? '' : '/'}${href}`;
       } else {
         favicon = `${parsedUrl.origin}/favicon.ico`;
       }

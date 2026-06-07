@@ -164,6 +164,13 @@ interface FileState {
  * `writeMarkdownFile` throws — the caller hasn't run its hydrate routine,
  * which would mean any write here stamps an empty frontmatter on top of
  * whatever YAML the file currently has on disk.
+ *
+ * AUDIT13 Phase 7 L13 — DECISION: per-session growth is accepted (not
+ * refcount-evicted on editor unmount). Entries are tiny ({hadBom, eol?}) and
+ * cleared wholesale on every vault swap (cancelAllMarkdownWrites). Evicting on
+ * last unmount was rejected: a wrong refcount in this gateway would drop live
+ * hydrate state → a "not hydrated" throw or a BOM/eol regression on the next
+ * write, for a few-KB upside. clearHydrated() already covers rename/delete.
  */
 const fileState = new Map<string, FileState>();
 
@@ -1013,8 +1020,9 @@ async function drainTestFlushers(): Promise<Array<{ ownerId: string; error: unkn
   const failed: Array<{ ownerId: string; error: unknown }> = [];
   for (let i = 0; i < settled.length; i++) {
     const result = settled[i];
-    if (result.status === 'rejected') {
-      failed.push({ ownerId: snapshot[i][0], error: result.reason });
+    const entry = snapshot[i];
+    if (result && entry && result.status === 'rejected') {
+      failed.push({ ownerId: entry[0], error: result.reason });
     }
   }
   return failed;
@@ -1264,13 +1272,17 @@ export async function forceWriteForDocument(docId: string): Promise<ForceWriteRe
   let ok = 0;
   for (let i = 0; i < productionSettled.length; i++) {
     const result = productionSettled[i];
-    const [ownerId] = targets[i];
+    const target = targets[i];
+    if (!result || !target) continue;
+    const [ownerId] = target;
     if (result.status === 'fulfilled') ok++;
     else failed.push({ ownerId, error: result.reason });
   }
   for (let i = 0; i < testSettled.length; i++) {
     const result = testSettled[i];
-    const [ownerId] = testMatches[i];
+    const match = testMatches[i];
+    if (!result || !match) continue;
+    const [ownerId] = match;
     if (result.status === 'fulfilled') ok++;
     else failed.push({ ownerId, error: result.reason });
   }

@@ -25,6 +25,7 @@ import {
   FiloDirForbiddenError,
 } from '../utils/pathSecurity';
 import { assertActiveVault, NoActiveVaultError } from '../utils/activeVaultCheck';
+import { isApprovedCopySource, clearApprovedSources } from '../services/approvedSources';
 import { logMainError } from '../utils/mainLogger';
 import {
   assertPayloadByteSize,
@@ -444,13 +445,9 @@ export function registerVaultHandlers(): void {
    * The post-handshake `fs.stat` directory check is kept as defence: the
    * vault could have been deleted on disk between init-config and watch.
    */
-  // Phase 3 / 3.5 — `lastReconcileAt` is declared up here (shared with the
-  // `vault:reconcile` handler below) so `vault:watch` can reset it on a
-  // vault swap. Without the reset, a focus-driven reconcile fired
-  // immediately after the swap could be silently dropped by the 5 s
-  // throttle if the OUTGOING vault's last reconcile fell inside the
-  // window. Both handlers close over this single variable so the
-  // throttle remains per-process while the swap-reset is well-defined.
+  // Phase 3 / 3.5 — `lastReconcileAt` is shared with the `vault:reconcile`
+  // handler below (one per-process throttle) and reset to 0 on a vault swap so
+  // the post-swap focus reconcile isn't dropped by the OUTGOING vault's window.
   const RECONCILE_THROTTLE_MS = 5000;
   let lastReconcileAt = 0;
   ipcMain.handle('vault:watch', async (_event, vaultPath: string) => {
@@ -490,6 +487,10 @@ export function registerVaultHandlers(): void {
         // the input path; the watcher start will surface the real error.
       }
       currentVaultRoot = canonical;
+      // Audit-13 M11 — vault is changing: drop copy-sources approved (dialog /
+      // OS drop) under the PRIOR vault. Registration runs post-open, so this
+      // vault's own picks survive. Pairs with the vault:close clear below.
+      clearApprovedSources();
       // Mirror to the cross-window vault registry so the popout sidebar
       // window can synchronously read the active vault path on startup.
       vaultRegistry.setCurrentVault(canonical);
@@ -548,6 +549,7 @@ export function registerVaultHandlers(): void {
       currentVaultRoot = null;
       vaultRegistry.setCurrentVault(null);
       lastReconcileAt = 0;
+      clearApprovedSources(); // Audit-13 M11 — release this vault's approved copy sources too.
       return { success: true };
     } catch (err) {
       logMainError('vault:close', err);
@@ -925,6 +927,16 @@ export function registerVaultHandlers(): void {
         if (typeof sourcePath !== 'string' || sourcePath.length === 0) {
           throw new Error('sourcePath must be a non-empty string');
         }
+        // Audit-12 S1 — only in-vault files or user-picked (dialog) / dropped
+        // (approved-source registry) paths may be a source; else this channel is
+        // an arbitrary host-file READ. Runs BEFORE any lstat/open (untouched path).
+        if (!isApprovedCopySource(vaultPath, sourcePath)) {
+          return {
+            success: false,
+            code: 'FORBIDDEN',
+            error: 'Source path is not an approved import location — use the file picker or drag-and-drop',
+          };
+        }
         // Stat the source before the copy so we can reject oversized imports
         // up front. Without this an accidental drop of a multi-GB file would
         // run a full copy, possibly fill the disk, before any caller learned
@@ -975,7 +987,7 @@ export function registerVaultHandlers(): void {
           assertNotInFiloDir(sourceRel);
         }
 
-        const destPath = await copyFileToVault(sourcePath, vaultPath, subfolder);
+        const destPath = await copyFileToVault(sourcePath, vaultPath, subfolder, VAULT_COPY_MAX_SIZE_BYTES);
         assertWithinVault(vaultPath, destPath);
         const relativePath = relativePosix(vaultPath, destPath);
         return { success: true, path: destPath, relativePath };

@@ -106,7 +106,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.10.0",
-    "@playwright/test": "^1.49.0",
+    "@playwright/test": "^1.60.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "@types/dompurify": "^3.0.5",
     "@types/rbush": "^4.0.0",
@@ -127,10 +127,10 @@
     "prettier-plugin-svelte": "^3.5.2",
     "sharp": "^0.34.5",
     "svelte": "^5.0.0",
-    "svelte-check": "^4.0.0",
+    "svelte-check": "^4.6.0",
     "svelte-eslint-parser": "^1.6.1",
     "typescript": "^5.7.0",
-    "typescript-eslint": "^8.59.3",
+    "typescript-eslint": "^8.60.1",
     "vite": "^6.0.0",
     "vitest": "^2.1.0"
   },

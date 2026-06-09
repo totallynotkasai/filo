@@ -52,6 +52,7 @@ import {
   type FrontmatterDelta,
   mergeFrontmatterDelta,
 } from '../vault/frontmatterDelta';
+import { reportError } from '../utils/errorBus';
 import { registerPathRenamable } from '../vault/renamePathKeys';
 
 /**
@@ -239,14 +240,6 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
     }
   }
 
-  // Phase 27 / A4 — refuse to write read-only docs. The lossy round-trip
-  // detection at load time set the flag because tiptap-markdown couldn't
-  // preserve the body's syntax — a debounced write here would strip what
-  // it couldn't parse and silently corrupt the user's file. The accumulated
-  // delta (if any) is deliberately LEFT in place so a later takeOwnership +
-  // re-schedule still applies the user's field change.
-  if (docId && documentStore.isReadOnly(docId)) return;
-
   // Phase 4 — peek the accumulated field delta for this path (dropped only after
   // a successful write below). Its presence routes the write through the
   // gateway's delta path (apply ONLY these keys to FRESH disk), so the three
@@ -266,8 +259,43 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
   // M1 — keyed by docId. A null docId (e.g. a frontmatter-only sync with no
   // open editor) carries `scheduledVersion === 0`, so the guard below is
   // inert and the write always proceeds — there is no docId to track.
+  //
+  // Audit-16 1.1 — the token now also covers BODY mutations
+  // (`documentStore.updateContent` bumps the same counter), so a delta-less
+  // notes write scheduled after a flushed version is no longer mistaken for
+  // stale: before 1.1 every second-and-later Task-notes edit (or the first
+  // after a field toggle had flushed at that version) compared
+  // `scheduledVersion <= last`, bare-returned as SUCCESS → endWrite(true) →
+  // markClean wiped `.filo/.dirty`, and the note died on quit.
   const last = docId ? (lastFlushedVersion.get(docId) ?? 0) : 0;
   if (!delta && scheduledVersion > 0 && scheduledVersion <= last) return;
+
+  // Phase 27 / A4 + Audit-16 1.2 — read-only docs (lossy tiptap round-trip
+  // detected at editor load). The flag protects the BODY — the FM block
+  // round-trips cleanly even when the body doesn't (the tag writer and the
+  // Properties popup already write FM on read-only docs) — so:
+  //  - A DELTA write proceeds: the gateway applies only the changed FM keys
+  //    to a fresh disk read, and the body is sourced from DISK below (never
+  //    `docState.body`, which holds the lossy round-tripped text). Before
+  //    1.2 a bare return here resolved the write as SUCCESS → the sentinel
+  //    was cleaned while the Kanban/Task field edit was silently dropped
+  //    (nothing ever re-fired the orphaned delta).
+  //  - A delta-less (legacy/body) write still refuses — writing the lossy
+  //    body would corrupt the file — but LOUDLY: toast + markPathFailed (the
+  //    sentinel + indicator surface the unsaved edit) + throw (attributes
+  //    relPath to flushAll().failed so save() returns false).
+  const readOnlyDoc = docId ? documentStore.isReadOnly(docId) : false;
+  if (readOnlyDoc && !delta) {
+    reportError(
+      'frontmatter.readOnly',
+      null,
+      `Couldn't save "${relPath}" — it's open read-only because its Markdown can't round-trip safely. Use "Take ownership" in the editor to enable saves.`,
+    );
+    markPathFailed(vaultRoot, relPath);
+    throw new Error(
+      `frontmatterWriteScheduler: refusing body write to read-only doc "${relPath}" — take ownership to enable saves`,
+    );
+  }
 
   const fm = docId
     ? documentStore.getFrontmatter(docId)
@@ -305,7 +333,11 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
   //     stale. A throw (ENOENT/EACCES) surfaces the loss via markPathFailed
   //     instead of resurrecting a deleted file or swallowing the edit.
   let body: string;
-  const docState = docId ? documentStore.getDocument(docId) : undefined;
+  // Audit-16 1.2 — a read-only doc's live `docState.body` is the LOSSY tiptap
+  // round-trip (the very reason the flag exists), so a delta write must never
+  // re-emit it; forcing the no-docState branch sources the body from a fresh
+  // disk read instead, preserving the on-disk bytes the editor can't.
+  const docState = docId && !readOnlyDoc ? documentStore.getDocument(docId) : undefined;
   if (docState) {
     body = docState.body;
     // Hydrate-if-needed so the gateway has the BOM + drift baseline.
@@ -353,6 +385,10 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
       callerId: `frontmatter-scheduler:${relPath}`,
       docId,
       frontmatterDelta: delta,
+      // Audit-16 4.3 — the version this write's content corresponds to (fire
+      // time, when the body/FM were read), so the gateway's flushed-version
+      // bump can't mark a mid-IPC mutation as flushed.
+      mutationVersionAtCapture: docId ? scheduledVersion : undefined,
     });
     // Phase 4 — the delta landed on disk; drop it from the accumulator, UNLESS a
     // newer edit folded in since we peeked (ref-identity: a fresh schedule
@@ -363,13 +399,21 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
     // idempotent — but clearing the consumed one bounds the map's growth.
     if (delta && pendingDeltas.get(relPath) === delta) pendingDeltas.delete(relPath);
     // Record the highest version this writer flushed so concurrent stale
-    // flushes know not to clobber. The gateway also bumps its own
-    // copy of this map on success; both bump to the same value so this is
-    // belt-and-braces, not redundant. Only docId-backed writes have a
-    // meaningful version to track (M1 — the map is keyed by docId).
+    // flushes know not to clobber. The gateway also bumps this map on
+    // success (via the threaded `mutationVersionAtCapture`); both bump to
+    // the same value so this is belt-and-braces, not redundant. Only
+    // docId-backed writes have a meaningful version to track (M1 — the map
+    // is keyed by docId).
+    //
+    // Audit-16 4.3 — record the FIRE-time `scheduledVersion` (the version
+    // the body/FM this write assembled were read at), NOT the post-IPC
+    // current version: a mergeFrontmatter/updateContent landing during the
+    // multi-hundred-ms write await would otherwise have its version N+1
+    // marked flushed while version N's bytes landed, and its follow-up
+    // scheduled write would skip on `scheduledVersion <= last` — the
+    // mutation never reaching disk.
     if (docId) {
-      const currentVersion = documentStore.getFrontmatterMutationVersion(docId);
-      lastFlushedVersion.set(docId, Math.max(last, currentVersion));
+      lastFlushedVersion.set(docId, Math.max(last, scheduledVersion));
     }
   } catch (err) {
     console.error('[frontmatterWriteScheduler] Failed to write frontmatter:', err);

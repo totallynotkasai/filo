@@ -55,6 +55,7 @@ import { onVaultSwap, vaultSwapResettable } from '../../core/vaultLifecycle';
 import { getBaseline, noteBaseline, resetAllBaselines, hasBaselineDrifted, refreshBaselineAfterWrite } from './fileBaselineRegistry';
 import { registerPathRenamable } from './renamePathKeys';
 import { captureVaultIdentity, isStillSameVault } from './vaultIdentity';
+import { getExternalEditPromptHandler } from './externalEditPrompt';
 
 /**
  * Default 300ms idle debounce. Mirrors `FM_DEBOUNCE_MS` and the historical
@@ -84,31 +85,9 @@ function utf8ByteLength(text: string): number {
   return utf8Encoder ? utf8Encoder.encode(text).length : text.length;
 }
 
-/**
- * Phase R6 — listener slot for the Reload / Keep-local prompt the writer
- * surfaces when a pre-write stat detects an external edit landed inside
- * the debounce window. The implementation lives in `stores/vaultExternalChanges`
- * (it depends on uiStore + documentStore + boardStore which `lib/` doesn't
- * import directly), and is registered at module-load on the store side via
- * `setExternalEditPromptHandler`.
- *
- * Returning `null` from the handler — or having no handler registered —
- * is treated as "Keep local"; the write proceeds. This matches the legacy
- * behaviour where the writer had no drift detection at all.
- */
-/**
- * 6.4.M4 — `'defer'` was added so the toast's auto-dismiss / manual-close
- * path no longer silently overwrites the external edit. The writer treats
- * `'defer'` like `'reload'` for the abort effect (no write fires), but the
- * handler must NOT have touched disk or editor — the in-memory dirty state
- * persists so the next debounced write re-prompts.
- */
-type ExternalEditPromptHandler = (path: string) => Promise<'reload' | 'keep-local' | 'defer'>;
-let externalEditPromptHandler: ExternalEditPromptHandler | null = null;
-
-export function setExternalEditPromptHandler(handler: ExternalEditPromptHandler | null): void {
-  externalEditPromptHandler = handler;
-}
+// Phase R6 — the Reload / Keep-local prompt-handler slot lives in the leaf
+// `externalEditPrompt.ts` (Audit-16 split); re-exported for existing imports.
+export { setExternalEditPromptHandler } from './externalEditPrompt';
 
 export interface WriteArgs {
   /** Vault root the write targets. Validated against `vaultStore.path` indirectly via the IPC handler. */
@@ -123,10 +102,21 @@ export interface WriteArgs {
   callerId: string;
   /**
    * Optional document id. When provided, the gateway bumps the frontmatter
-   * scheduler's `lastFlushedVersion` to `documentStore.getFrontmatterMutationVersion(docId)`
-   * after a successful write so cross-writer race guards stay accurate.
+   * scheduler's `lastFlushedVersion` after a successful write (to
+   * `mutationVersionAtCapture` below, NOT the live post-IPC version).
    */
   docId?: string | null;
+  /**
+   * Audit-16 4.3 — the docId's mutation version captured by the CALLER when it
+   * read the body/FM this write carries. The gateway records THIS value as
+   * flushed on success, never the live post-IPC version — a mutation landing
+   * mid-IPC would otherwise be marked flushed while the pre-mutation bytes
+   * landed, and its follow-up scheduled write would skip as "stale" (never
+   * reaching disk). Omitted → captured at `writeMarkdownFile` entry, exact for
+   * callers that build args synchronously at fire time; the FM scheduler
+   * threads its own capture (it awaits a hydrate before the gateway).
+   */
+  mutationVersionAtCapture?: number;
   /**
    * Audit-9 L5 — on-disk frontmatter SOURCE (raw bytes between the fences) for a
    * docId-less caller (orphan-card patch). With a docId the gateway reads it from the
@@ -457,9 +447,9 @@ export async function readMarkdownForHydrate(
  *     round-trips faithfully.
  *  2. Track the write through `trackComponentWrite` so the sentinel,
  *     in-flight counter, and write-error toasts all participate.
- *  3. Bump `frontmatterWriteScheduler.lastFlushedVersion` to the docId's
- *     current mutation version so concurrent body writers know not to
- *     overwrite with a stale frontmatter snapshot.
+ *  3. Bump `frontmatterWriteScheduler.lastFlushedVersion` to the version
+ *     captured when the write's content was read (Audit-16 4.3 — never the
+ *     post-IPC live version) so concurrent writers don't overwrite stale.
  *
  * Throws on:
  *  - Unhydrated relPath (no `markHydrated` call yet for this file).
@@ -478,7 +468,16 @@ export async function writeMarkdownFile(args: WriteArgs): Promise<void> {
   // `runSerializedMarkdownWrite` so the single-tag fast path can join the SAME
   // chain (Audit5 R2). `inFlightWrites` (keyed by callerId, for cancel/force
   // await) is layered on top here.
-  const promise = runSerializedMarkdownWrite(args.relPath, () => writeMarkdownFileImpl(args));
+  //
+  // Audit-16 4.3 — capture the mutation version BEFORE the chain wait (unless
+  // the caller threaded an earlier capture): a mutation landing after this
+  // point is newer than `args`, so the flushed-version bump must not cover it.
+  const mutationVersionAtCapture =
+    args.mutationVersionAtCapture ??
+    (args.docId ? documentStore.getFrontmatterMutationVersion(args.docId) : 0);
+  const promise = runSerializedMarkdownWrite(args.relPath, () =>
+    writeMarkdownFileImpl({ ...args, mutationVersionAtCapture }),
+  );
   inFlightWrites.set(args.callerId, promise);
   try {
     await promise;
@@ -585,7 +584,7 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
       // saw is never silently clobbered. Bounded to avoid a livelock against a
       // rapid external writer; on exhaustion, abort (the next debounced write
       // re-detects the drift and prompts again with the latest state).
-      const handler = externalEditPromptHandler;
+      const handler = getExternalEditPromptHandler();
       const MAX_DRIFT_REPROMPTS = 3;
       let approved = false;
       let shownStat = preWriteStat;
@@ -929,8 +928,10 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
     console.warn('[markdownFileWriter] post-write index refresh failed (best-effort):', err);
   }
   if (docId) {
-    const version = documentStore.getFrontmatterMutationVersion(docId);
-    noteFrontmatterFlushedVersion(docId, version);
+    // Audit-16 4.3 — record the CAPTURED version (what the assembled body/FM
+    // correspond to), never the live post-IPC counter, which would mark a
+    // mid-IPC mutation as flushed and let its follow-up write skip as stale.
+    noteFrontmatterFlushedVersion(docId, args.mutationVersionAtCapture ?? 0);
   }
 
   // Audit-7 M1 — a successful write clears THIS writer's dirty entry so a

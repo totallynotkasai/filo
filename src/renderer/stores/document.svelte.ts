@@ -150,18 +150,47 @@ function noteRawFrontmatter(docId: string, rawFrontmatter: string | undefined): 
 }
 
 /**
- * Per-docId monotonic mutation counter. Every `mergeFrontmatter` and
- * `setFrontmatter` call increments the docId's entry, so a writer that
- * captures the value at schedule time can later detect whether another
- * writer (TaskListBoard ↔ DocumentEditor, etc.) has since flushed a
- * newer version to disk. Used by `frontmatterWriteScheduler` to skip
- * stale debounced writes that would otherwise clobber a fresher one.
+ * Per-docId monotonic mutation counter — the write-staleness TOKEN. Every
+ * `mergeFrontmatter` / `setFrontmatter` call increments the docId's entry,
+ * and (Audit-16 1.1) so does every body change via `updateContent`: a body
+ * mutation makes a previously-flushed snapshot stale in exactly the way an
+ * FM mutation does, so a writer that captures the value at schedule time can
+ * later detect whether another writer (TaskListBoard ↔ DocumentEditor, etc.)
+ * has since flushed a newer version to disk. Used by
+ * `frontmatterWriteScheduler` to skip stale debounced writes that would
+ * otherwise clobber a fresher one. Before 1.1 the counter covered ONLY FM
+ * mutations, so a delta-less body write (Task notes) fired with
+ * `scheduledVersion <= lastFlushedVersion`, bare-returned as SUCCESS, and the
+ * second-and-later notes edits silently died on quit.
+ *
+ * NOT deleted on `clearFrontmatter` / `unloadDocument` (cleared only on the
+ * whole-store `clear()`, i.e. vault swap — matching the scheduler's
+ * `lastFlushedVersion` lifecycle). docIds are stable tile contentIds, so an
+ * unload+reopen reuses the docId; resetting the counter while the scheduler's
+ * last-flushed entry survives would make every early write after a reopen
+ * compare `scheduledVersion <= last` against the PRE-unload high-water mark
+ * and skip — the same silent-drop class 1.1 closes.
  *
  * Kept outside `frontmatterCache` so external-edit reloads can bump it
  * without rebuilding the cache Map (which Svelte tracks as a single
  * reactive reference).
  */
 const mutationVersions = new SvelteMap<string, number>();
+
+/**
+ * Audit-16 1.1 — per-docId count of BODY bumps folded into `mutationVersions`
+ * (bumped only by `updateContent`, always in lockstep with the shared map).
+ * Lets `getFrontmatterOnlyMutationVersion` recover the FM-only count
+ * (shared − body) for consumers that must ignore body churn — the disk-FM
+ * refresh seed (`seedDocumentFrontmatterFromDisk`) compares FM-only versions
+ * so a racing notes keystroke doesn't block the refresh (which would strand
+ * the cache on the source-baseline-less index placeholder and force a lossy
+ * FM re-dump). Same lifecycle as `mutationVersions` by construction
+ * (SvelteMap to match the store's lint conventions, not for reactivity —
+ * nothing reads it from a template).
+ */
+// allow-module-state: cleared in clear() alongside mutationVersions (vault swap)
+const bodyMutationVersions = new SvelteMap<string, number>();
 
 function bumpMutationVersion(docId: string): number {
   const next = (mutationVersions.get(docId) ?? 0) + 1;
@@ -309,12 +338,25 @@ export const documentStore = {
 
   /**
    * Returns the docId's monotonic mutation counter — incremented on every
-   * `mergeFrontmatter` / `setFrontmatter`. Writers capture this at schedule
-   * time and compare against the post-write value to decide whether their
-   * flush is still the freshest.
+   * `mergeFrontmatter` / `setFrontmatter` AND (Audit-16 1.1) every body
+   * change via `updateContent`. Writers capture this at schedule time and
+   * compare against the last-flushed value to decide whether their flush is
+   * still the freshest.
    */
   getFrontmatterMutationVersion(docId: string): number {
     return mutationVersions.get(docId) ?? 0;
+  },
+
+  /**
+   * Audit-16 1.1 — the FM-ONLY mutation count (the shared counter minus the
+   * body bumps `updateContent` folded in). For consumers that must ignore
+   * body churn: the disk-FM refresh seed gates its placeholder overwrite on
+   * "nothing mutated the FRONTMATTER since the placeholder was seeded" — a
+   * racing notes keystroke is irrelevant to (and must not block) that
+   * decision, since the refresh only replaces the FM cache, never the body.
+   */
+  getFrontmatterOnlyMutationVersion(docId: string): number {
+    return (mutationVersions.get(docId) ?? 0) - (bodyMutationVersions.get(docId) ?? 0);
   },
 
   /**
@@ -356,7 +398,11 @@ export const documentStore = {
     // 4.8 — drop the disk baseline on doc unload so a future reopen re-reads
     // fresh bytes rather than patching against a stale source.
     originalFrontmatterCache.delete(docId);
-    mutationVersions.delete(docId);
+    // Audit-16 1.1 — `mutationVersions` is deliberately KEPT (see its
+    // docstring): docIds are stable contentIds, and resetting the counter
+    // while the scheduler's `lastFlushedVersion` survives would let the
+    // post-reopen versions restart below the old high-water mark and skip
+    // legitimate writes. Cleared only on the whole-store `clear()`.
     frontmatterVersionTick++;
   },
 
@@ -467,6 +513,17 @@ export const documentStore = {
     // Audit 2.3 — register the editing writer so a sibling editor's flush
     // can't clear `isDirty` while this writer still holds unsaved content.
     if (writerId) addDirtyWriter(docId, writerId);
+
+    // Audit-16 1.1 — a body change makes any previously-flushed snapshot
+    // stale, so it must bump the shared write-staleness token or a
+    // delta-less write scheduled for it (Task notes) fires with
+    // `scheduledVersion <= lastFlushedVersion`, no-ops as SUCCESS, and the
+    // edit silently dies on quit. The body bump is mirrored into
+    // `bodyMutationVersions` so FM-only consumers can subtract it back out.
+    if (markdownBody !== undefined && markdownBody !== doc.body) {
+      bumpMutationVersion(docId);
+      bodyMutationVersions.set(docId, (bodyMutationVersions.get(docId) ?? 0) + 1);
+    }
 
     const updated: DocumentState = {
       ...doc,
@@ -673,9 +730,11 @@ export const documentStore = {
     // without this the `originalFrontmatterCache` entry leaked for any doc
     // unloaded (tile removed / tab closed / external delete) without a reopen.
     originalFrontmatterCache.delete(docId);
+    // Audit-16 1.1 — `mutationVersions` deliberately survives unload (see its
+    // docstring): a counter reset under a reused docId re-opens the
+    // stale-version skip against the scheduler's surviving lastFlushedVersion.
     if (frontmatterCache.has(docId)) {
       frontmatterCache.delete(docId);
-      mutationVersions.delete(docId);
       frontmatterVersionTick++;
     }
     if (readOnlyDocs.has(docId)) {
@@ -703,6 +762,9 @@ export const documentStore = {
     // was missed, leaking the outgoing vault's FM source bytes unboundedly.
     originalFrontmatterCache.clear();
     mutationVersions.clear();
+    // Audit-16 1.1 — lockstep clear with the shared counter (vault swap is
+    // the one place both reset, matching the scheduler's lastFlushedVersion).
+    bodyMutationVersions.clear();
     frontmatterVersionTick++;
     if (readOnlyDocs.size > 0) {
       readOnlyDocs.clear();

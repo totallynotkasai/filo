@@ -61,6 +61,15 @@ export interface SeedFrontmatterOptions {
    * that ITS placeholder seed is safe to replace, not a later mutation. Without
    * this option the seed skips entirely on a present cache entry (the default,
    * mutation-preserving behaviour).
+   *
+   * Audit-16 1.1 — capture AND compare via
+   * `documentStore.getFrontmatterOnlyMutationVersion` (NOT the shared
+   * `getFrontmatterMutationVersion`, which now also bumps on body edits): a
+   * racing notes keystroke between the placeholder seed and this read is
+   * irrelevant to "did anything mutate the FRONTMATTER" — the refresh only
+   * replaces the FM cache, never the body — and blocking on it would strand
+   * the cache on the baseline-less index placeholder, forcing the eventual
+   * write into a lossy FM re-dump.
    */
   refreshSeedVersion?: number;
 }
@@ -88,7 +97,9 @@ export async function seedDocumentFrontmatterFromDisk(
     if (refreshVersion !== undefined) {
       // Overwrite the placeholder ONLY if nothing mutated FM since it was seeded
       // (a concurrent field edit bumps the version and must be preserved).
-      if (documentStore.getFrontmatterMutationVersion(docId) === refreshVersion) {
+      // Audit-16 1.1 — FM-only version, so a racing notes BODY keystroke
+      // (which bumps the shared token) doesn't block the refresh.
+      if (documentStore.getFrontmatterOnlyMutationVersion(docId) === refreshVersion) {
         documentStore.setFrontmatter(docId, hydrate.frontmatter, hydrate.rawFrontmatter);
       }
       return;

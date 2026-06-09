@@ -712,7 +712,36 @@ phase summary so a future audit doesn't re-raise them.
 
 ## Status
 
-- [ ] Phase 1 — 1.1, 1.2 (+4.3 folded in)
+- [x] Phase 1 — 1.1, 1.2 (+4.3 folded in) — **DONE 2026-06-09.** No findings refuted.
+  Implementation notes for the record:
+  - **1.1** took the preferred single-counter fix: `documentStore.updateContent` bumps the SAME
+    `mutationVersions` map (body change ⇒ stale flush, exactly like an FM change). Consumer audit
+    found one FM-only consumer the plan didn't name: the A9-M2 refresh-seed guard
+    (`seedFrontmatterFromDisk` + the `placeholderVersion` capture in `tasklist/frontmatterWriter`)
+    compares "did anything mutate FM since the placeholder" — a body bump there would SKIP the
+    disk-FM refresh and strand the cache on the baseline-less index placeholder (lossy FM re-dump
+    on rapid typing). Fix: a lockstep `bodyMutationVersions` map + `documentStore.
+    getFrontmatterOnlyMutationVersion` (shared − body); both seed sites compare FM-only.
+  - **1.1 adjacent (same loss class):** `mutationVersions` is no longer deleted on
+    `clearFrontmatter` / `unloadDocument` (only on the whole-store `clear()`, matching the
+    scheduler's `lastFlushedVersion` lifecycle). docIds are stable contentIds, so a counter reset
+    under a reused docId restarted versions BELOW the surviving last-flushed high-water mark —
+    the same `scheduledVersion <= last` silent skip on the first edits after a tile close+reopen.
+  - **4.3** — scheduler success path records the FIRE-time `scheduledVersion`; the gateway
+    threads `WriteArgs.mutationVersionAtCapture` (caller-captured, falling back to capture at
+    `writeMarkdownFile` entry before the per-path chain wait) and `noteFrontmatterFlushedVersion`
+    uses it instead of the post-IPC live counter.
+  - **1.2** — delta writes on a read-only doc proceed with the body forced to a fresh disk read
+    (never the lossy `docState.body`); delta-less writes refuse loudly (`reportError(
+    'frontmatter.readOnly')` + `markPathFailed` + throw). The version guard now runs BEFORE the
+    read-only check so a genuinely-stale no-delta flush stays a benign no-op. The "disable field
+    UI" defense-in-depth was deliberately NOT done: post-fix, field edits on read-only docs land
+    correctly (FM round-trips cleanly — same policy as the tag writer), so disabling the controls
+    would be wrong; only delta-less body writes refuse, and they now surface a toast.
+  - Tests: `audit16Phase1.test.ts` (8) — two-sequential-`setNotesBody`, toggle-then-first-note,
+    edit-during-in-flight, 4.3 mid-IPC merge, 1.2 delta-on-read-only (disk body byte-preserved) +
+    loud delta-less refusal, refresh-seed body-tolerance + A9-M2 field-edit blocking. All 8
+    bite-verified (red against the pre-fix tree via stash, green after).
 - [ ] Phase 2 — 2.1, 2.2, 2.3, 2.4, 2.5
 - [ ] Phase 3 — 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7
 - [ ] Phase 4 — 4.1, 4.2, 4.4, 4.5, 4.6, 4.7, 4.8

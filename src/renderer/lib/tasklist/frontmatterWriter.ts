@@ -361,7 +361,10 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
           docId,
           (vaultIndexStore.getMetadata(path)?.frontmatter ?? {}) as Record<string, unknown>,
         );
-        placeholderVersion = documentStore.getFrontmatterMutationVersion(docId);
+        // Audit-16 1.1 — FM-ONLY version (body keystrokes bump the shared
+        // token; a second rapid notes edit during the seed read below must
+        // not block the refresh — see SeedFrontmatterOptions).
+        placeholderVersion = documentStore.getFrontmatterOnlyMutationVersion(docId);
       }
       scheduleFrontmatterWrite(path, docId);
       // Audit-6 M4 — refresh FM from a fresh disk read so the eventual write

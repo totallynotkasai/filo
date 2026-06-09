@@ -38,6 +38,7 @@ import type { TaskRow } from '../tasks/taskListModel';
 import { moveTaskBlock } from '../tasks/taskMove';
 import { sectionIdForPlacementIndex } from './sectionMath';
 import { resolveDragBlockIds } from './blockMove';
+import { completionPatchForRow } from './frontmatterWriter';
 
 export interface MultiSelectControllerDeps {
   getBoard: () => TaskListBoardType | null;
@@ -95,6 +96,17 @@ export class MultiSelectController {
         this.selectedTaskIds = next;
         return;
       }
+      // SEL-3 — the anchor was filtered away or deleted (anchorIdx < 0), so there
+      // is no range to extend. Don't collapse the whole selection to the single
+      // clicked row (the old fall-through did): ADD the clicked row to the current
+      // selection and re-anchor here for the next Shift-click.
+      if (targetIdx >= 0) {
+        const next = new SvelteSet(this.selectedTaskIds);
+        next.add(tileId);
+        this.selectedTaskIds = next;
+        this.lastSelectedTaskId = tileId;
+        return;
+      }
     }
     if (mods.ctrl) {
       const next = new SvelteSet(this.selectedTaskIds);
@@ -120,6 +132,34 @@ export class MultiSelectController {
     this.lastSelectedTaskId = null;
   }
 
+  /**
+   * SEL-2 — drop ids that no longer correspond to a live row (just-deleted
+   * tasks) so the action bar's "N selected" count stays honest and the anchor
+   * never points at a removed row. `selectedRows()` already re-intersects live
+   * rows for OPERATIONS, so this fixes the displayed count + the stale anchor,
+   * not a wrong-tile mutation. Called from the single-row / cascade / delete-&-
+   * file paths (which delete outside this controller).
+   */
+  pruneSelection(removedIds: string[]): void {
+    if (removedIds.length === 0 || this.selectedTaskIds.size === 0) return;
+    // `removedIds.includes` (not a `new Set`) — the lists are tiny and the
+    // `svelte/prefer-svelte-reactivity` rule forbids a plain Set in `.svelte.ts`.
+    let changed = false;
+    const next = new SvelteSet<string>();
+    for (const id of this.selectedTaskIds) {
+      if (removedIds.includes(id)) {
+        changed = true;
+        continue;
+      }
+      next.add(id);
+    }
+    if (!changed) return;
+    this.selectedTaskIds = next;
+    if (this.lastSelectedTaskId && removedIds.includes(this.lastSelectedTaskId)) {
+      this.lastSelectedTaskId = null;
+    }
+  }
+
   /** Resolves the rows currently selected, in the canonical `rows` order. */
   selectedRows(): TaskRow[] {
     if (this.selectedTaskIds.size === 0) return [];
@@ -140,9 +180,27 @@ export class MultiSelectController {
     const board = this.deps.getBoard();
     if (!board || sel.length === 0) return 0;
     const cmds: UpdateTaskFieldCommand[] = [];
+    // Plain object, not a Set: this is a non-reactive local dedup ledger, and the
+    // `svelte/prefer-svelte-reactivity` lint rule forbids `new Set()` in
+    // `.svelte.ts` (mirrors the same choice in history.svelte.ts).
+    const seenDocIds: Record<string, true> = {};
     for (const r of sel) {
       const patch = perRowPatch(r);
       if (!patch) continue;
+      // SHARE-1 — two selected rows can resolve to the SAME backing `.md` (the
+      // same vault file dropped twice; a file whose frontmatter `id:` is reused
+      // as the contentId). They share ONE frontmatter cache keyed by docId, so a
+      // command per row would make the second capture its inverse from the cache
+      // the first already mutated (undo wouldn't restore the true original) AND
+      // fold two deltas onto one path. Build ONE command per docId. Rows with no
+      // contentId are orphan/distinct and aren't deduped. (After the SHARE-1
+      // import-mint, a shared contentId always implies the same file, so
+      // collapsing same-doc rows is correct, not lossy.)
+      const docId = (r.tile as { contentId?: string }).contentId;
+      if (docId) {
+        if (seenDocIds[docId]) continue;
+        seenDocIds[docId] = true;
+      }
       const cmd = this.deps.buildTaskFieldCommand(r, patch, description);
       if (cmd) cmds.push(cmd);
     }
@@ -162,6 +220,7 @@ export class MultiSelectController {
     if (touched > 0) {
       uiStore.toast(`Priority set on ${touched} task${touched === 1 ? '' : 's'}`, 'success', 1800);
       this.deps.announce(`Priority set on ${touched} task${touched === 1 ? '' : 's'}`);
+      this.clearSelection();
     }
   }
 
@@ -180,6 +239,7 @@ export class MultiSelectController {
         'success',
         1800,
       );
+      this.clearSelection();
     }
   }
 
@@ -187,13 +247,24 @@ export class MultiSelectController {
     const sel = this.selectedRows();
     const touched = this.bulkApplyFieldPatch(
       sel,
-      (r) => (r.completed ? null : { completed: true }),
+      // BULK-1 — route completion through the shared helper so recurring tasks
+      // roll forward ({completed:false, dueDate:next}) instead of being stamped
+      // permanently done. Already-completed rows are skipped (null).
+      (r) => (r.completed ? null : completionPatchForRow(r)),
       `Mark ${sel.length} tasks complete`,
     );
     if (touched > 0) {
       const msg = `Marked ${touched} task${touched === 1 ? '' : 's'} complete`;
       uiStore.toast(msg, 'success', 1800);
       this.deps.announce(msg);
+      // SEL-1 — clear the selection after a visibility-changing bulk op. With a
+      // "hide completed" filter active, the just-completed rows vanish but would
+      // otherwise stay selected, so the bar shows "N selected" for invisible rows
+      // and a follow-up bulk op silently acts on them. We CLEAR rather than prune
+      // to the still-visible rows because the underlying field writes settle
+      // ASYNCHRONOUSLY (UpdateTaskFieldCommand.execute awaits a flush before
+      // merging), so a synchronous prune-to-filtered would read stale visibility.
+      this.clearSelection();
     }
   }
 
@@ -208,6 +279,7 @@ export class MultiSelectController {
       const msg = `Marked ${touched} task${touched === 1 ? '' : 's'} incomplete`;
       uiStore.toast(msg, 'success', 1800);
       this.deps.announce(msg);
+      this.clearSelection(); // SEL-1 (see bulkMarkComplete)
     }
   }
 
@@ -280,7 +352,10 @@ export class MultiSelectController {
     // Resolve the full block from the multi-selection — selected tiles plus
     // every descendant of each, ordered by placement to keep the block
     // contiguous after the move. Same helper the drag controller uses.
-    const seeds = Array.from(this.selectedTaskIds);
+    // SEL-4 — seed from the LIVE selected rows (matching every field bulk op),
+    // not raw `selectedTaskIds`, so a stale/filtered-away id can't skew the
+    // moved count reported in the toast.
+    const seeds = this.selectedRows().map((r) => r.tile.id);
     const blockIds = resolveDragBlockIds(rows, placements, seeds);
     if (blockIds.length === 0) return;
 
@@ -333,5 +408,6 @@ export class MultiSelectController {
     const msg = `Moved ${blockIds.length} task${blockIds.length === 1 ? '' : 's'} to "${targetTitle}"`;
     uiStore.toast(msg, 'success', 2000);
     this.deps.announce(msg);
+    this.clearSelection(); // SEL-1 (see bulkMarkComplete) — a section filter can hide moved rows
   }
 }

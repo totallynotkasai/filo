@@ -205,6 +205,20 @@ export async function flushAllPendingFrontmatterWrites(): Promise<{ failed: stri
   return { failed: result.failed };
 }
 
+/**
+ * SEL-5 — drains ONLY `relPath`'s pending/in-flight frontmatter write, not the
+ * whole vault. The field-command pre-flush (`UpdateTaskFieldCommand` execute /
+ * undo) only needs its OWN path drained before merging/applying its patch — the
+ * toggle→undo race it guards is same-docId. Flushing globally made a 50-row bulk
+ * field op do ~O(N²) serial write+flush round-trips (each child re-drained every
+ * prior child's just-scheduled write), magnifying the wedge surface on a slow
+ * OneDrive/SMB volume. Awaits the same pending + parked + in-flight drain as
+ * `flushAll`, scoped to one key.
+ */
+export async function flushFrontmatterWriteForPath(relPath: string): Promise<void> {
+  await frontmatterScheduler.flush(relPath);
+}
+
 async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
   const { relPath, vaultRoot } = args;
   let { docId, scheduledVersion } = args;

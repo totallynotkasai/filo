@@ -49,7 +49,7 @@ import {
 import { ProjectSchema } from '../../schema/project';
 import { loadAllBoards } from '../boards/boardLoader';
 import { invokeOk } from '../utils/invokeOk';
-import { IpcEnvelopeError } from '@shared/ipcEnvelope';
+import { IpcEnvelopeError, assertIpcOk } from '@shared/ipcEnvelope';
 import { reportError } from '../utils/errorBus';
 import type {
   V7BoardFileData,
@@ -451,7 +451,12 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
   let tagsFile: TagsFile;
   let tagsReadOnly = false;
   try {
-    const tagsRaw = (await window.filo.invoke('tags:load', newVaultPath)) as string | null;
+    // Audit-14 4.4 — assertIpcOk re-throws a `{ ok: false }` error envelope so
+    // the catch below wraps it with context (bare string|null passes through).
+    const tagsRaw = assertIpcOk(
+      await window.filo.invoke('tags:load', newVaultPath),
+      'tags:load',
+    ) as string | null;
     // F6 — route through the version migrator so a from-future tags file is
     // detected (and surfaced) here rather than silently re-saved later.
     const loaded = loadTagsFile(tagsRaw);

@@ -26,7 +26,14 @@
  *   updates (the row data depends on frontmatter on disk).
  */
 
-import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
+// P5.2 (Audit-15) — the row/group/section derivations below build their date,
+// map, and set scratch collections INSIDE a `$derived` body (or a `$derived`
+// field), use them only to produce that derivation's return value, and rebuild
+// them from scratch on every recompute. Reactivity already flows through the
+// enclosing `$derived`, so the Svelte-reactive variants (`SvelteDate`/`SvelteMap`/
+// `SvelteSet`) add proxy overhead with no observable benefit (mirrors the
+// `spatial.svelte.ts` non-reactive caches). Plain built-ins are used, each marked
+// with the lint escape the project reserves for exactly this case.
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import {
   GROUP_ORDER,
@@ -140,7 +147,8 @@ export class TaskListViewModel {
   smartListCounts = $derived.by<Record<SmartListId, number>>(() => {
     void this.deps.getCacheVersion();
     void vaultIndexStore.version;
-    const today = new SvelteDate();
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch Date; reactivity is the enclosing $derived (P5.2)
+    const today = new Date();
     today.setHours(0, 0, 0, 0);
     const counts: Record<SmartListId, number> = {
       all: 0,
@@ -162,7 +170,8 @@ export class TaskListViewModel {
   });
 
   filteredRows = $derived.by<TaskRow[]>(() => {
-    const today = new SvelteDate();
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch Date; reactivity is the enclosing $derived (P5.2)
+    const today = new Date();
     today.setHours(0, 0, 0, 0);
     return filterTaskRows(this.rows, today, {
       smartList: this.deps.getActiveSmartList(),
@@ -191,10 +200,12 @@ export class TaskListViewModel {
   // position within the parent reflects the same `sortBy`. Grouping is
   // purely a top-level concern — children always sit under their parent
   // regardless of the parent's group.
-  visibleRowIds = $derived(new SvelteSet(this.sortedRows.map((r) => r.tile.id)));
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- the $derived itself is the reactive value; the Set is rebuilt each run (P5.2)
+  visibleRowIds = $derived(new Set(this.sortedRows.map((r) => r.tile.id)));
 
   nestedView = $derived.by<{ children: Map<string, TaskRow[]>; top: TaskRow[] }>(() => {
-    const children = new SvelteMap<string, TaskRow[]>();
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- nestedView is the reactive $derived; this Map is its rebuilt-each-run output (P5.2)
+    const children = new Map<string, TaskRow[]>();
     const top: TaskRow[] = [];
     for (const r of this.sortedRows) {
       if (r.parent && this.visibleRowIds.has(r.parent)) {
@@ -219,9 +230,11 @@ export class TaskListViewModel {
     // Local midnight — mirrors `filteredRows` / `smartListCounts` so due-date
     // grouping agrees with the smart lists, and is passed explicitly to keep
     // `groupKey` deterministic rather than reading `new Date()` itself (audit 1.3).
-    const today = new SvelteDate();
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch Date; reactivity is the enclosing $derived (P5.2)
+    const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const buckets = new SvelteMap<string, TaskGroup>();
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local grouping scratch; reactivity is the enclosing $derived (P5.2)
+    const buckets = new Map<string, TaskGroup>();
     for (const row of this.topLevelRows) {
       const { key, label } = groupKey(row, groupBy, today);
       let g = buckets.get(key);
@@ -253,10 +266,18 @@ export class TaskListViewModel {
   // fall into an unlabelled "leading" bucket so an old (pre-section) board
   // doesn't silently drop tasks once the first section is added.
   //
-  // Sort modes other than 'manual' do NOT honour `position`, so we still
-  // surface the leading bucket and the section's slice using the sorted
-  // top-level rows but in their *placement* order — anything else would
-  // make moving a task between sections meaningless.
+  // DRAG-3 — two distinct orderings are at play, don't conflate them:
+  //   • MEMBERSHIP (which section owns a row) is decided by the row's
+  //     PLACEMENT index against the section ranges (`ownerByIndex`), NOT by the
+  //     active sort — so moving a task between sections is meaningful under any
+  //     sort mode.
+  //   • The ORDER of rows WITHIN a section follows `topLevelRows`, i.e. the
+  //     active sort — so a non-'manual' sort still sorts inside each section.
+  // A drag reorder under a non-'manual' sort therefore can't reliably set a
+  // task's position WITHIN a section without flipping to Manual: same-section
+  // drags do exactly that, while a cross-section move keeps the sort because
+  // only the membership change is persisted (see `commitReorder` in
+  // TaskListBoard.svelte).
   sectionedView = $derived.by<SectionView[]>(() => {
     const placements = this.deps.getPlacements();
     const displaySections = this.deps.getDisplaySections();
@@ -265,30 +286,52 @@ export class TaskListViewModel {
     // Map placement index → top-level row (children render under their
     // parent via childrenByParent, so iterating top-level rows here keeps
     // the top-level/child split intact).
-    const indexByTileId = new SvelteMap<string, number>();
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch map; reactivity is the enclosing $derived (P5.2)
+    const indexByTileId = new Map<string, number>();
     placements.forEach((p, i) => indexByTileId.set(p.tileId, i));
     const sorted = [...displaySections].sort((a, b) => a.position - b.position);
-    const result: SectionView[] = [];
 
-    const leadingEnd = sorted[0]?.position ?? placements.length;
-    const leading = topLevelRows.filter((r) => {
-      const idx = indexByTileId.get(r.tile.id);
-      return idx !== undefined && idx < leadingEnd;
-    });
-    if (leading.length > 0) {
-      result.push({ id: null, title: 'Unsectioned', collapsed: false, rows: leading });
+    // P5.3 (Audit-15) — assign each top-level row to its owning section in ONE
+    // pass instead of a `.filter` per section (was O(sections × rows)). Sections
+    // partition the placement range into contiguous `[position, nextPosition)`
+    // slices, so precompute, for every placement index, the section that owns it
+    // (`ownerByIndex`; −1 ⇒ the leading "Unsectioned" bucket). The slices don't
+    // overlap, so filling them is O(placements) total; the row scan is then
+    // O(rows). Behaviour is identical to the old per-section filter: row order
+    // within a bucket follows `topLevelRows`, every real section is emitted even
+    // when empty, the leading bucket is emitted only when non-empty, and a row
+    // whose tile has no placement index is dropped from every bucket.
+    const ownerByIndex = new Array<number>(placements.length).fill(-1);
+    for (let k = 0; k < sorted.length; k++) {
+      const s = sorted[k];
+      if (!s) continue; // k < sorted.length; narrow for the type-checker
+      const start = Math.max(0, s.position);
+      const end = Math.min(placements.length, sorted[k + 1]?.position ?? placements.length);
+      for (let i = start; i < end; i++) ownerByIndex[i] = k;
     }
 
-    for (let i = 0; i < sorted.length; i++) {
-      const s = sorted[i];
-      if (!s) continue; // i < sorted.length; narrow for the type-checker
-      const start = s.position;
-      const end = sorted[i + 1]?.position ?? placements.length;
-      const rows = topLevelRows.filter((r) => {
-        const idx = indexByTileId.get(r.tile.id);
-        return idx !== undefined && idx >= start && idx < end;
-      });
-      result.push({ id: s.id, title: s.title, collapsed: s.collapsed, rows });
+    const leadingRows: TaskRow[] = [];
+    const sectionRows: TaskRow[][] = sorted.map(() => []);
+    for (const r of topLevelRows) {
+      const idx = indexByTileId.get(r.tile.id);
+      if (idx === undefined) continue; // tile not in this board's placements — drop, as before
+      const owner = ownerByIndex[idx];
+      if (owner === undefined || owner < 0) {
+        leadingRows.push(r);
+      } else {
+        const bucket = sectionRows[owner];
+        if (bucket) bucket.push(r);
+      }
+    }
+
+    const result: SectionView[] = [];
+    if (leadingRows.length > 0) {
+      result.push({ id: null, title: 'Unsectioned', collapsed: false, rows: leadingRows });
+    }
+    for (let k = 0; k < sorted.length; k++) {
+      const s = sorted[k];
+      if (!s) continue; // k < sorted.length; narrow for the type-checker
+      result.push({ id: s.id, title: s.title, collapsed: s.collapsed, rows: sectionRows[k] ?? [] });
     }
     return result;
   });

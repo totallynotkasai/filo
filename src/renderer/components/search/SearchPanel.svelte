@@ -437,16 +437,16 @@
     padding: 0 8px;
     border: 1px solid var(--ui-border);
     border-radius: 4px;
-    background: var(--ui-surface-deep, var(--ui-surface));
+    background: var(--ui-surface);
     color: var(--text-primary);
     font-size: 13px;
     font-family: var(--font-system);
   }
 
   .search-input:focus {
-    outline: 2px solid var(--ui-accent);
+    outline: 2px solid var(--accent-primary);
     outline-offset: -1px;
-    border-color: var(--ui-accent);
+    border-color: var(--accent-primary);
   }
 
   .button-group {
@@ -477,9 +477,9 @@
   }
 
   .text-btn.toggle[aria-pressed="true"] {
-    background: var(--ui-accent);
-    color: var(--ui-accent-text, white);
-    border-color: var(--ui-accent);
+    background: var(--accent-primary);
+    color: var(--text-inverse);
+    border-color: var(--accent-primary);
   }
 
   .text-btn.danger:hover:not(:disabled) {

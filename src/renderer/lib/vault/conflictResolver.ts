@@ -279,24 +279,19 @@ function isBodyEquivalent(a: FileMetadata, b: FileMetadata): boolean {
 }
 
 function frontmatterEqual(a: FileMetadata, b: FileMetadata): boolean {
-  const ak = Object.keys(a.frontmatter).sort();
-  const bk = Object.keys(b.frontmatter).sort();
-  if (ak.length !== bk.length) return false;
-  for (let i = 0; i < ak.length; i++) {
-    const akey = ak[i];
-    const bkey = bk[i];
-    if (akey === undefined || bkey === undefined) return false; // i < ak.length; both in range
-    if (akey !== bkey) return false;
-    // L14 (Audit-6) — compare values structurally, not via `JSON.stringify`.
-    // The stringify form was key-order-SENSITIVE for nested objects: a YAML map
-    // `{author, date}` reloaded as `{date, author}` (same data, different key
-    // order after an external rewrite) stringified unequal → a spurious
-    // `sync-frontmatter` that reshuffled tile caches/tags for no real change.
-    // `valuesEqual` recurses key-order-insensitively (and compares Dates by
-    // instant), matching the FM engine's own equality contract.
-    if (!valuesEqual(a.frontmatter[akey], b.frontmatter[bkey])) {
-      return false;
-    }
-  }
-  return true;
+  // P5.4 (Audit-15) — the hand-rolled key-set + per-key compare loop this
+  // replaced WAS `valuesEqual`'s own plain-object branch (same-key-set check +
+  // recursive value compare), so route through the shared helper instead of
+  // keeping a second copy of "is this a real frontmatter change".
+  //
+  // Deliberately `valuesEqual` (frontmatterEngine), NOT `fmValueEqual` /
+  // `fmDeepEqual` (frontmatterRebase): those compare arrays as an order-
+  // INSENSITIVE multiset and treat a Date as a keyless object. This resolver
+  // decides whether DISK diverged from the in-memory copy, so array order must
+  // stay significant (an externally REORDERED `tags: [...]` is a real byte
+  // change the cache must adopt) and a residual Date must compare by instant.
+  // L14 (Audit-6) — `valuesEqual` still recurses key-order-insensitively for a
+  // nested map, so a `{author, date}` → `{date, author}` external rewrite reads
+  // as a no-op rather than a spurious `sync-frontmatter`.
+  return valuesEqual(a.frontmatter, b.frontmatter);
 }

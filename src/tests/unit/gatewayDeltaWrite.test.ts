@@ -133,7 +133,7 @@ describe('markdownFileWriter — Phase 4 delta write path', () => {
     expect(written).toContain('external: keep');
   });
 
-  it('an empty delta emits the disk frontmatter verbatim with the new body', async () => {
+  it('an empty delta with no live editor emits the disk frontmatter AND body verbatim', async () => {
     const relPath = 'Notes.md';
     // A comment + odd key order: an empty-delta write must byte-preserve it.
     const captured = installFilo('---\n# kept comment\nzeta: 1\nalpha: 2\n---\nold body\n');
@@ -143,7 +143,13 @@ describe('markdownFileWriter — Phase 4 delta write path', () => {
       vaultRoot: '/vault',
       relPath,
       frontmatter: {},
-      body: 'new body\n',
+      // Audit-15 P1.4 — with NO live editor for this (docId-less) write, the body
+      // is sourced from FRESH disk (`parsedFresh.body`), not the caller arg, so a
+      // never-opened orphan/card whose snapshot went stale can't clobber disk. The
+      // caller body here is deliberately different to prove disk wins. A live
+      // editor instead keeps the caller's un-debounced body — see the N2-invariant
+      // case in audit15Phase1.test.ts.
+      body: 'caller body that must be ignored\n',
       callerId: 'delta-empty',
       docId: null,
       frontmatterDelta: { set: {}, unset: [] },
@@ -154,8 +160,8 @@ describe('markdownFileWriter — Phase 4 delta write path', () => {
     expect(written).toContain('zeta: 1');
     expect(written).toContain('alpha: 2'); // key order preserved (zeta before alpha)
     expect(written.indexOf('zeta')).toBeLessThan(written.indexOf('alpha'));
-    expect(written).toContain('new body');
-    expect(written).not.toContain('old body');
+    expect(written).toContain('old body'); // disk body preserved (P1.4)
+    expect(written).not.toContain('caller body that must be ignored');
   });
 
   it('rejects + marks the path failed when the in-chain read fails (no resurrection)', async () => {

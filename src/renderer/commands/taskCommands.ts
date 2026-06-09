@@ -15,15 +15,14 @@ import type {
 } from '../schema/placement';
 import {
   scheduleFrontmatterWrite,
-  flushAllPendingFrontmatterWrites,
+  flushFrontmatterWriteForPath,
 } from '../lib/boards/frontmatterWriteScheduler';
 import { seedDocumentFrontmatterFromDisk } from '../lib/boards/seedFrontmatterFromDisk';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { applyFrontmatterPatchRebased, captureInverseFromCache } from './frontmatterRebase';
 import { patchToFrontmatterDelta } from '../lib/vault/frontmatterDelta';
-import { trackComponentWrite } from '../lib/boards/writeStateTracking';
+import { writeMarkdownAndReconcile } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
 import { reportError } from '../lib/utils/errorBus';
-import { invokeOk } from '../lib/utils/invokeOk';
 import { deleteVaultPath } from '../lib/vault/vaultOperations';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import type { DeletedFileSnapshot } from './tileCommands';
@@ -286,12 +285,23 @@ export class DeleteTaskCommand extends Command {
     if (this.vaultRoot && this.fileSnapshot) {
       const { rel, content } = this.fileSnapshot;
       const vaultRoot = this.vaultRoot;
-      this.lastUndoCompletion = trackComponentWrite(vaultRoot, rel, async () =>
-        // allow-direct-write: one-shot snapshot-restore on task-delete
-        // undo — file no longer exists on disk, mkdir -p required, the
-        // task placement re-binds to it on persistAddTaskPlacement.
-        invokeOk('vault:write-file-text', vaultRoot, rel, content),
-      ).catch((err) => {
+      // Audit-14 7.3 — route the snapshot-restore through the coupled
+      // write+reconcile helper (Phase 6.6) instead of a raw `vault:write-file-text`.
+      // The restored task `.md` can be open as a Document on a second pane (the
+      // same file viewed two ways); that editor holds a stale frontmatter cache,
+      // so its next debounced body save would silently invert this restore — the
+      // #4 class the 2.3 DeleteTilesCommand fix closed for tiles. `mode: 'full'`
+      // reloads the open editor (frontmatter + body) for the SAME path; `create:
+      // true` recreates the file the delete removed (mkdir -p). The helper still
+      // wraps the write in trackComponentWrite, so the .filo/.dirty sentinel +
+      // in-flight counter behave exactly as the inline form did.
+      this.lastUndoCompletion = writeMarkdownAndReconcile({
+        vaultRoot,
+        path: rel,
+        content,
+        mode: 'full',
+        create: true,
+      }).catch((err) => {
         uiStore.toast(
           `Task restored but file content could not be recovered: ${rel}`,
           'error',
@@ -387,6 +397,10 @@ export class UpdateTaskFieldCommand extends Command {
   // Audit2 4.2 — false on the user's initial Apply (apply directly), true once
   // executed so a later redo rebases like undo instead of clobbering.
   private hasExecuted = false;
+  // REC-2 — when set, undo/redo treat the patch as a coupled pair on a conflict
+  // (a recurrence roll-forward writes {completed, dueDate} together). Set by
+  // buildTaskFieldCommand when the patch carries both keys.
+  private atomic: boolean;
 
   constructor(
     boardId: string,
@@ -395,6 +409,7 @@ export class UpdateTaskFieldCommand extends Command {
     patch: Record<string, unknown>,
     inversePatch: Record<string, unknown>,
     description?: string,
+    atomic = false,
   ) {
     super();
     // 6.2.H7 — refuse construction with a null docId. The pre-fix command
@@ -425,6 +440,7 @@ export class UpdateTaskFieldCommand extends Command {
     // mutate the inverse patch's would-be-restored array.
     this.patch = this.snapshot(patch);
     this.inversePatch = this.snapshot(inversePatch);
+    this.atomic = atomic;
     this.description = description ?? `Update task ${Object.keys(patch).join(', ')}`;
   }
 
@@ -439,7 +455,9 @@ export class UpdateTaskFieldCommand extends Command {
     // completion, so a fast Apply → Undo would overlap: the forward
     // debounced write was still in-flight when undo queued the inverse
     // patch and the inverse landed on disk first.
-    await flushAllPendingFrontmatterWrites();
+    // SEL-5 — drain only THIS path (the race is same-docId), not the whole
+    // vault, so a bulk batch of field commands doesn't do O(N²) global flushes.
+    await flushFrontmatterWriteForPath(this.relPath);
     // First execute = the user's own action: apply it directly (the inverse
     // patch was just read from this same live cache). A redo re-applies an old
     // patch and must rebase like undo so an external edit since isn't clobbered.
@@ -453,6 +471,7 @@ export class UpdateTaskFieldCommand extends Command {
         applying: this.patch,
         expectedCurrent: this.inversePatch,
         label: this.relPath,
+        atomic: this.atomic,
       });
       return;
     }
@@ -497,7 +516,7 @@ export class UpdateTaskFieldCommand extends Command {
   }
 
   async undo(): Promise<void> {
-    await flushAllPendingFrontmatterWrites();
+    await flushFrontmatterWriteForPath(this.relPath); // SEL-5 — own path only
     // Audit2 4.2 — rebase onto the live frontmatter so an external edit to
     // the same field isn't silently clobbered (prompts to apply anyway).
     // 6.2.H7 — docId is guaranteed non-null by the constructor's throw, so
@@ -509,6 +528,7 @@ export class UpdateTaskFieldCommand extends Command {
       applying: this.inversePatch,
       expectedCurrent: this.patch,
       label: this.relPath,
+      atomic: this.atomic,
     });
   }
 }

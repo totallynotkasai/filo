@@ -51,7 +51,7 @@ async function launchApp(): Promise<{
   window: Awaited<ReturnType<Awaited<ReturnType<typeof electron.launch>>['firstWindow']>>;
 }> {
   const app = await electron.launch({
-    args: [path.join(__dirname, '..', '..', '..', 'dist-electron', 'main', 'main.js')],
+    args: [path.join(__dirname, '..', '..', '..', 'dist', 'main', 'main.js')],
     env: {
       ...process.env,
       NODE_ENV: 'test',

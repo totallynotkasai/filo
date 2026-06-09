@@ -129,6 +129,14 @@ const SIDEBAR_ORDER_PATH = '.filo/sidebar-order.json';
 // B's body to disk.
 let renameQueue: Promise<unknown> = Promise.resolve();
 
+// Audit-14 1.8 — non-null while a vault swap is mid-flight (the registry-null
+// window between `vault:close` and `commitVaultCandidate`). `save()` awaits it
+// before draining so a quit landing in that window doesn't fire writes against
+// the released registry (fail-closed, no breadcrumb). Set/cleared by
+// `openVault` / `closeVault`; a plain module var (read only by `save()`, not
+// reactive UI).
+let swapInProgress: Promise<void> | null = null;
+
 // ── Project / vault metadata state ──
 let currentProject = $state<Project | null>(null);
 
@@ -1061,8 +1069,11 @@ export const vaultStore = {
     //  - Cancel (button 2): return early. No flush, no sentinel touch,
     //    no in-memory state cleanup. Pending timers continue to run
     //    against the still-active old vault.
+    // Audit-14 1.8 — hoisted to function scope so the swap-lifecycle block below
+    // (now in a separate `if (currentProject)` inside the swap-window try) can
+    // still read it for `saveOutgoing`.
+    let choice: -1 | 0 | 1 | 2 = 2;
     if (currentProject) {
-      let choice: -1 | 0 | 1 | 2 = 2;
       try {
         const raw = await window.filo.invoke(
           'dialog:choice',
@@ -1089,66 +1100,90 @@ export const vaultStore = {
           return false;
         }
       }
-      // Phase 4 (Consolidation 2026-05-25) — fire the pre-swap lifecycle.
-      // Every store / scheduler / sentinel that holds vault-scoped state
-      // subscribes via `onVaultSwap('pre-swap', ...)` at module load; the
-      // event drains them in dependency order:
-      //   - boardWriteScheduler cancels every queued debounced timer so a
-      //     closure armed against the outgoing vault can't fire after the
-      //     new vault opens.
-      //   - writeStateTracking honours `saveOutgoing`: the Save branch
-      //     (choice === 0) clears the `.filo/.dirty` sentinel; the Don't
-      //     Save branch (choice === 1) preserves it so reopening the
-      //     outgoing vault surfaces the Recovery modal.
-      //   - history / vaultIndex / orphans / fileTags / theme / pending
-      //     settings / saveState / tabs / workspace / etc. drop their
-      //     local state so the new vault hydrates against a clean slate.
-      await fireVaultSwap({
-        phase: 'pre-swap',
-        previousVault: vaultPath || null,
-        nextVault: newVaultPath,
-        saveOutgoing: choice === 0,
-      });
-      // Phase 3 (IMPL_PLAN 2026-05-25) — drop the rename queue's chain
-      // head. vault.svelte.ts owns the swap event so it can't subscribe
-      // (would be circular), but the chain still holds promises that
-      // target the outgoing vault's `handleExternalRename` /
-      // `refreshTreeAndCleanup`. Leaving them attached lets a stale
-      // watcher event enqueued just before the swap continue resolving
-      // against the now-decommissioned vaultStore state. Resetting to a
-      // fresh `Promise.resolve()` ensures the new vault's first
-      // watcher event runs immediately on an empty chain.
-      renameQueue = Promise.resolve();
-      // Phase 6.0.C1 — release the main-side registry before init-config;
-      // board.ipc.ts refuses to re-anchor while a different vault is active.
-      try {
-        await window.filo.invoke('vault:close');
-      } catch (err) {
-        reportError('vault.close', err, 'Failed to release the previous vault');
-      }
     }
 
-    // ── Phase R4 — load the candidate against the new vault ───────
-    // Every IPC + parse + recovery snapshot happens here against a
-    // local object; nothing in `vaultStore` or any peer store is
-    // touched until `commitVaultCandidate` runs synchronously below.
-    let candidate: VaultCandidate;
+    // Audit-14 1.8 — mark the swap "in progress" for the whole window during
+    // which the main-side registry may be released (`vault:close`) but the new
+    // vault is not yet committed. A quit (`handleFlushAndQuit` → `save()`)
+    // landing in this window would otherwise fire writes against the now-null
+    // registry and fail closed with neither data nor a breadcrumb; `save()`
+    // awaits this promise first so it drains against a live, committed vault.
+    // Only meaningful when there's an outgoing vault to release (no window on
+    // first open). The `finally` always settles it — commit, revert, or throw.
+    const hadOutgoingVault = currentProject !== null;
+    let resolveSwapWindow: () => void = () => {};
+    if (hadOutgoingVault) {
+      swapInProgress = new Promise<void>((res) => { resolveSwapWindow = res; });
+    }
     try {
-      candidate = await loadVaultCandidate(newVaultPath);
-    } catch (err) {
-      reportError('vault', err, 'Failed to open vault');
-      // H3 (Audit-13) — DECISION: the outgoing vault was already torn down above
-      // (close-before-load is mandatory — see `revertToOutgoingVault`). Revert to
-      // it rather than strand the user on a stale, empty half-open vault.
-      if (outgoingVaultPath) {
-        await revertToOutgoingVault(outgoingVaultPath, this);
+      if (currentProject) {
+        // Phase 4 (Consolidation 2026-05-25) — fire the pre-swap lifecycle.
+        // Every store / scheduler / sentinel that holds vault-scoped state
+        // subscribes via `onVaultSwap('pre-swap', ...)` at module load; the
+        // event drains them in dependency order:
+        //   - boardWriteScheduler cancels every queued debounced timer so a
+        //     closure armed against the outgoing vault can't fire after the
+        //     new vault opens.
+        //   - writeStateTracking honours `saveOutgoing`: the Save branch
+        //     (choice === 0) clears the `.filo/.dirty` sentinel; the Don't
+        //     Save branch (choice === 1) preserves it so reopening the
+        //     outgoing vault surfaces the Recovery modal.
+        //   - history / vaultIndex / orphans / fileTags / theme / pending
+        //     settings / saveState / tabs / workspace / etc. drop their
+        //     local state so the new vault hydrates against a clean slate.
+        await fireVaultSwap({
+          phase: 'pre-swap',
+          previousVault: vaultPath || null,
+          nextVault: newVaultPath,
+          saveOutgoing: choice === 0,
+        });
+        // Phase 3 (IMPL_PLAN 2026-05-25) — drop the rename queue's chain
+        // head. vault.svelte.ts owns the swap event so it can't subscribe
+        // (would be circular), but the chain still holds promises that
+        // target the outgoing vault's `handleExternalRename` /
+        // `refreshTreeAndCleanup`. Leaving them attached lets a stale
+        // watcher event enqueued just before the swap continue resolving
+        // against the now-decommissioned vaultStore state. Resetting to a
+        // fresh `Promise.resolve()` ensures the new vault's first
+        // watcher event runs immediately on an empty chain.
+        renameQueue = Promise.resolve();
+        // Phase 6.0.C1 — release the main-side registry before init-config;
+        // board.ipc.ts refuses to re-anchor while a different vault is active.
+        try {
+          await window.filo.invoke('vault:close');
+        } catch (err) {
+          reportError('vault.close', err, 'Failed to release the previous vault');
+        }
       }
-      return false;
-    }
 
-    commitVaultCandidate(candidate, this);
-    runPostCommitTasks(candidate, this);
-    return true;
+      // ── Phase R4 — load the candidate against the new vault ───────
+      // Every IPC + parse + recovery snapshot happens here against a
+      // local object; nothing in `vaultStore` or any peer store is
+      // touched until `commitVaultCandidate` runs synchronously below.
+      let candidate: VaultCandidate;
+      try {
+        candidate = await loadVaultCandidate(newVaultPath);
+      } catch (err) {
+        reportError('vault', err, 'Failed to open vault');
+        // H3 (Audit-13) — DECISION: the outgoing vault was already torn down above
+        // (close-before-load is mandatory — see `revertToOutgoingVault`). Revert to
+        // it rather than strand the user on a stale, empty half-open vault.
+        if (outgoingVaultPath) {
+          await revertToOutgoingVault(outgoingVaultPath, this);
+        }
+        return false;
+      }
+
+      commitVaultCandidate(candidate, this);
+      runPostCommitTasks(candidate, this);
+      return true;
+    } finally {
+      // Audit-14 1.8 — close the swap window so a deferred `save()` proceeds.
+      if (hadOutgoingVault) {
+        swapInProgress = null;
+        resolveSwapWindow();
+      }
+    }
   },
 
 
@@ -1187,29 +1222,41 @@ export const vaultStore = {
         return false;
       }
     }
-    await fireVaultSwap({
-      phase: 'pre-swap',
-      previousVault: vaultPath || null,
-      nextVault: null,
-      saveOutgoing: choice === 0,
-    });
-    renameQueue = Promise.resolve();
+    // Audit-14 1.8 — same swap-window guard as `openVault`: defer a concurrent
+    // quit's drain until the close has settled (registry released + globals
+    // reset) so it doesn't fire writes against the released registry.
+    let resolveSwapWindow: () => void = () => {};
+    swapInProgress = new Promise<void>((res) => { resolveSwapWindow = res; });
     try {
-      await window.filo.invoke('vault:close');
-    } catch (err) {
-      reportError('vault.close', err, 'Failed to release vault watcher');
-      // Continue anyway — the renderer is already torn down.
+      await fireVaultSwap({
+        phase: 'pre-swap',
+        previousVault: vaultPath || null,
+        nextVault: null,
+        saveOutgoing: choice === 0,
+      });
+      renameQueue = Promise.resolve();
+      try {
+        await window.filo.invoke('vault:close');
+      } catch (err) {
+        reportError('vault.close', err, 'Failed to release vault watcher');
+        // Continue anyway — the renderer is already torn down.
+      }
+      currentProject = null;
+      vaultPath = '';
+      // G1 — bump the generation on close too, so work captured against the
+      // closed vault no-ops if it resumes after the return-to-home teardown.
+      beginVaultGeneration('');
+      fileTree = [];
+      // The post-commit/teardown work is done above; there is no `post-swap`
+      // lifecycle phase (retired in Audit 5.7 — it was never registered or fired
+      // on open, and fired into an empty handler set here).
+      return true;
+    } finally {
+      // Audit-14 1.8 — close the swap window so a deferred `save()` proceeds
+      // (the promise is always created on the close path).
+      swapInProgress = null;
+      resolveSwapWindow();
     }
-    currentProject = null;
-    vaultPath = '';
-    // G1 — bump the generation on close too, so work captured against the
-    // closed vault no-ops if it resumes after the return-to-home teardown.
-    beginVaultGeneration('');
-    fileTree = [];
-    // The post-commit/teardown work is done above; there is no `post-swap`
-    // lifecycle phase (retired in Audit 5.7 — it was never registered or fired
-    // on open, and fired into an empty handler set here).
-    return true;
   },
 
   /**
@@ -1273,6 +1320,21 @@ export const vaultStore = {
     // has pending state, the flush completes against the prior vault root
     // those writers were registered with, so data is preserved.
     //
+    // Audit-14 1.8 — if a vault swap is mid-flight (the registry-null window
+    // between `vault:close` and `commitVaultCandidate`), defer the drain until
+    // it settles. Otherwise a quit landing in that window fires writes against
+    // the released registry → `assertActiveVault` rejects them → fail-closed
+    // with neither data nor a `.filo/.dirty` breadcrumb. Awaiting here lets the
+    // drain target a live, committed vault. The quit path bounds the overall
+    // `save()` with its own deadline race, so this can't hang quit. `save()` is
+    // never called from within the swap, so there's no self-deadlock.
+    if (swapInProgress) {
+      try {
+        await swapInProgress;
+      } catch {
+        /* swap-window errors are handled in openVault; just stop deferring */
+      }
+    }
     // L31 (Audit-6) — drain the async command chain FIRST. An async command
     // (e.g. UpdateCardFieldCommand) schedules its debounced disk writes only
     // after its `execute`/`undo` body runs on `runChained`; flushing before the

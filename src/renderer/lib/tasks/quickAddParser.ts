@@ -50,6 +50,31 @@ function fmtDate(d: Date): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+/**
+ * Validates a (year, month, day) triple and returns the constructed local
+ * midnight Date, or `null` when the triple is out of range or silently rolls
+ * over (e.g. Feb 30 → Mar 2). Mirrors `recurrence.ts parseIsoDate` so quick-add
+ * and the recurrence engine agree on what counts as a real calendar date —
+ * without this round-trip check an impossible date is written verbatim to
+ * frontmatter and then displayed/treated as a *different* day (QA-1/2).
+ */
+function validDateOrNull(y: number, mo: number, d: number): Date | null {
+  if (!Number.isInteger(y) || !Number.isInteger(mo) || !Number.isInteger(d)) return null;
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  const out = new Date(y, mo - 1, d);
+  out.setHours(0, 0, 0, 0);
+  if (out.getFullYear() !== y || out.getMonth() !== mo - 1 || out.getDate() !== d) {
+    return null;
+  }
+  return out;
+}
+
+/** `fmtDate` that yields `undefined` for an Invalid Date so an overflowed
+ *  offset can't write the literal string "NaN-NaN-NaN" as a due date (QA-3). */
+function fmtDateOrNull(d: Date): string | undefined {
+  return Number.isNaN(d.getTime()) ? undefined : fmtDate(d);
+}
+
 function startOfDay(d: Date): Date {
   const out = new Date(d);
   out.setHours(0, 0, 0, 0);
@@ -58,8 +83,12 @@ function startOfDay(d: Date): Date {
 
 function nextWeekday(today: Date, dayIdx: number): Date {
   const out = new Date(today);
-  // "next mon" always means the upcoming Monday strictly after today.
-  // If today IS a Monday, we mean Monday next week (+7 days), not today.
+  // DECISION (QA-6): "next <weekday>" uniformly means the SOONEST occurrence of
+  // that weekday STRICTLY AFTER today — one rule, applied to every weekday. So
+  // from a Friday, "next mon" is +3 and "next fri" is +7 (today is excluded, so
+  // the same weekday lands a week out). The `|| 7` encodes only that exclusion;
+  // it is not a special case for the same weekday. Matches common task apps and
+  // is pinned by the quickAddParser tests.
   const diff = (dayIdx - today.getDay() + 7) % 7 || 7;
   out.setDate(today.getDate() + diff);
   return out;
@@ -71,6 +100,10 @@ function parseClockTime(s: string): string | null {
   let h = parseInt(m[1] ?? '', 10);
   const min = m[2] ? parseInt(m[2], 10) : 0;
   const ampm = m[3]?.toLowerCase();
+  // QA-5 — with an am/pm suffix the hour must read 1..12. `@13pm`/`@0am` are
+  // nonsense and were previously accepted as 24h (the suffix is ignored once
+  // h >= 12, so `13pm` became 13:00). Reject so the token stays in the title.
+  if (ampm && (h < 1 || h > 12)) return null;
   if (ampm === 'pm' && h < 12) h += 12;
   if (ampm === 'am' && h === 12) h = 0;
   if (h < 0 || h > 23 || min < 0 || min > 59) return null;
@@ -107,34 +140,39 @@ export function parseQuickAdd(
     return ' ';
   });
 
-  // Priority — try `!!word`, then bare `!!`, then `!word`.
-  working = working.replace(/\s!!(urgent|high|med(?:ium)?|low)(?=\s)/i, (_m, w: string) => {
-    priority = normalizePriority(w);
+  // Priority. Precedence: a `!!word` / bare `!!` (urgent) wins over a plain
+  // `!word`. Each pass is GLOBAL so a second priority token is stripped from the
+  // title (QA-8) instead of leaking; the inner guard keeps the first value seen
+  // in pass order.
+  working = working.replace(/\s!!(urgent|high|med(?:ium)?|low)(?=\s)/gi, (_m, w: string) => {
+    if (!priority) priority = normalizePriority(w);
     return ' ';
   });
-  if (!priority) {
-    working = working.replace(/\s!!(?=\s)/, () => {
-      priority = 'urgent';
-      return ' ';
-    });
-  }
-  if (!priority) {
-    working = working.replace(/\s!(urgent|high|med(?:ium)?|low)(?=\s)/i, (_m, w: string) => {
-      priority = normalizePriority(w);
-      return ' ';
-    });
-  }
-
-  // Status.
-  working = working.replace(/\s=([a-zA-Z0-9_-]+)(?=\s)/, (_m, s: string) => {
-    status = s;
+  working = working.replace(/\s!!(?=\s)/g, () => {
+    if (!priority) priority = 'urgent';
+    return ' ';
+  });
+  working = working.replace(/\s!(urgent|high|med(?:ium)?|low)(?=\s)/gi, (_m, w: string) => {
+    if (!priority) priority = normalizePriority(w);
     return ' ';
   });
 
-  // Time of day.
-  working = working.replace(/\s@(\d{1,2}(?::\d{2})?(?:am|pm)?)(?=\s)/i, (_m, t: string) => {
+  // Status. Global so a second `=status` is stripped from the title (QA-8); the
+  // first wins. Lowercased at write (QA-9) because FIELD_READERS.status reads it
+  // lowercased — storing raw case would make the .md disagree with the view.
+  working = working.replace(/\s=([a-zA-Z0-9_-]+)(?=\s)/g, (_m, s: string) => {
+    if (!status) status = s.toLowerCase();
+    return ' ';
+  });
+
+  // Time of day. Global so a second @time is stripped from the title (QA-8); the
+  // first valid one wins.
+  working = working.replace(/\s@(\d{1,2}(?::\d{2})?(?:am|pm)?)(?=\s)/gi, (full, t: string) => {
     const parsed = parseClockTime(t);
-    if (parsed) dueTime = parsed;
+    // QA-4 — a malformed @time (`@99`, `@13pm`) is left untouched in the title
+    // instead of being silently swallowed (so "@99 East St" keeps its number).
+    if (!parsed) return full;
+    if (!dueTime) dueTime = parsed;
     return ' ';
   });
 
@@ -146,16 +184,40 @@ export function parseQuickAdd(
     re: RegExp;
     handler: (m: RegExpExecArray) => string | undefined;
   }> = [
-    { re: /\s\^?(\d{4}-\d{2}-\d{2})(?=\s)/, handler: (m) => m[1] },
+    {
+      re: /\s\^?(\d{4}-\d{2}-\d{2})(?=\s)/,
+      handler: (m) => {
+        const iso = m[1] ?? '';
+        const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+        if (!parts) return undefined;
+        // QA-1 — reject an impossible ISO date (2026-02-30, 2026-13-01) so it
+        // stays in the title instead of persisting verbatim and rendering as a
+        // rolled-over day.
+        const valid = validDateOrNull(
+          parseInt(parts[1] ?? '', 10),
+          parseInt(parts[2] ?? '', 10),
+          parseInt(parts[3] ?? '', 10),
+        );
+        return valid ? iso : undefined;
+      },
+    },
     {
       re: /\s\^?(\d{1,2})\/(\d{1,2})(?=\s)/,
       handler: (m) => {
         const month = parseInt(m[1] ?? '', 10);
         const day = parseInt(m[2] ?? '', 10);
-        if (month < 1 || month > 12 || day < 1 || day > 31) return undefined;
-        const candidate = new Date(today.getFullYear(), month - 1, day);
-        candidate.setHours(0, 0, 0, 0);
-        if (candidate < today) candidate.setFullYear(today.getFullYear() + 1);
+        // QA-2 — validate day-vs-month BEFORE the year-roll. Without the
+        // round-trip check, `2/30` constructs Mar 2 (rolled over), which is
+        // then < today so the +1-year branch silently shoves it to Mar 2 of
+        // NEXT year. Reject the impossible date so the token stays in the title.
+        const candidate = validDateOrNull(today.getFullYear(), month, day);
+        if (!candidate) return undefined;
+        if (candidate < today) {
+          // The same M/D one year out can be invalid (Feb 29 this leap year,
+          // not next) — re-validate rather than letting Date roll it to Mar 1.
+          const rolled = validDateOrNull(today.getFullYear() + 1, month, day);
+          return rolled ? fmtDate(rolled) : undefined;
+        }
         return fmtDate(candidate);
       },
     },
@@ -183,14 +245,18 @@ export function parseQuickAdd(
       re: /\s\^?in\s+(\d+)\s*(d|days?|w|weeks?|m|months?)(?=\s)/i,
       handler: (m) => {
         const count = parseInt(m[1] ?? '', 10);
+        // QA-3 — bound the offset so a 20-digit count can't overflow Date into
+        // an Invalid Date that `fmtDate` then stringifies as "NaN-NaN-NaN" and
+        // writes to frontmatter. ~10 years is well past any quick-add horizon.
+        if (!Number.isFinite(count) || count > 3650) return undefined;
         const u = (m[2] ?? '').toLowerCase()[0];
         const t = new Date(today);
         if (u === 'd') t.setDate(t.getDate() + count);
         else if (u === 'w') t.setDate(t.getDate() + count * 7);
         // Audit-8 L6 — clamp month-end (Jan 31 + 1m → Feb 28) via the shared
         // helper instead of raw setMonth, which overflows to Mar 3.
-        else if (u === 'm') return fmtDate(addMonthsClamped(today, count));
-        return fmtDate(t);
+        else if (u === 'm') return fmtDateOrNull(addMonthsClamped(today, count));
+        return fmtDateOrNull(t);
       },
     },
   ];

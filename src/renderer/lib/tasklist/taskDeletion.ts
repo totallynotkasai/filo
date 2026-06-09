@@ -46,6 +46,12 @@ export interface TaskDeletionDeps {
   ) => UpdateTaskFieldCommand | null;
   tickAndPersist: () => void;
   announce: (message: string) => void;
+  /**
+   * SEL-2 — drops just-deleted tile ids from the multi-select set so the action
+   * bar's "N selected" count + anchor don't go stale. Optional: the selection
+   * lives in the host's MultiSelectController, which isn't visible to this slice.
+   */
+  pruneSelection?: (ids: string[]) => void;
 }
 
 export interface TaskDeleter {
@@ -64,6 +70,7 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
     buildTaskFieldCommand,
     tickAndPersist,
     announce,
+    pruneSelection,
   } = deps;
 
   function deleteTaskPlacementOnly(tileId: string): void {
@@ -73,6 +80,7 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
     const titleForAnnounce = tilesById[tileId]?.title ?? 'Task';
     historyStore.execute(new DeleteTaskCommand(board.id, tileId));
     tickAndPersist();
+    pruneSelection?.([tileId]); // SEL-2
     announce(`Task removed: ${titleForAnnounce}`);
   }
 
@@ -118,6 +126,7 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
           const cmds = ordered.map((id) => new DeleteTaskCommand(b.id, id));
           historyStore.execute(new BatchCommand(`Delete task + ${childCount} subtasks`, cmds));
           tickAndPersist();
+          pruneSelection?.(descendants); // SEL-2 — parent + every removed subtask
           announce(`Task and ${childCount} subtask${childCount === 1 ? '' : 's'} removed`);
         },
       },
@@ -137,6 +146,7 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
           cmds.push(new DeleteTaskCommand(b.id, tileId));
           historyStore.execute(new BatchCommand(`Delete task (keep subtasks)`, cmds));
           tickAndPersist();
+          pruneSelection?.([tileId]); // SEL-2 — only the parent is removed; kids stay
           announce(
             `Task removed; ${directKids.length} subtask${directKids.length === 1 ? '' : 's'} kept`,
           );
@@ -178,6 +188,7 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
         );
         historyStore.execute(new BatchCommand(`Delete ${cmds.length} completed tasks`, cmds));
         tickAndPersist();
+        pruneSelection?.(completedTileIds); // SEL-2
         uiStore.toast(
           `${completedTileIds.length} task${completedTileIds.length === 1 ? '' : 's'} removed`,
           'success',
@@ -238,6 +249,7 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
           );
         }
         tickAndPersist();
+        pruneSelection?.([tileId]); // SEL-2
         announce(`Task removed: ${tile.title || 'task'}`);
       });
     } catch (err) {

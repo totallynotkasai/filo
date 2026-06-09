@@ -196,7 +196,16 @@ export function registerBoardHandlers(): void {
   ipcMain.handle('board:save', async (_event, vaultRoot: string, relativePath: string, data: unknown) => {
     try {
       assertActiveVault(vaultRoot);
-      assertSafeRelativePath(relativePath);
+      // Audit-14 4.6 — `board:save` is a CREATING channel (it writes a brand-new
+      // `.board.json` the first time a board is persisted, then overwrites it on
+      // every later save). Validate with `forCreation: true` so the Windows-only
+      // rules (reserved DOS stems like `CON.board.json`, illegal chars) apply on
+      // every platform — a POSIX user must not be able to author a board path
+      // that breaks the same vault when opened on Windows. `board:create`
+      // already does this for its name; `board:save` is the path a renderer can
+      // also reach directly. (`board:load`/`board:delete` stay creation-free —
+      // they operate on paths that already exist; see ci:no-forcreation-on-read-delete.)
+      assertSafeRelativePath(relativePath, { forCreation: true });
       assertPayloadByteSize(jsonPayloadByteSize(data), PAYLOAD_LIMITS.BOARD, 'board:save');
       const fullPath = resolveBoardPath(vaultRoot, relativePath);
       assertWithinVault(vaultRoot, fullPath);

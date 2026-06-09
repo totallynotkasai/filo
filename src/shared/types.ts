@@ -142,6 +142,32 @@ export type SendChannel =
   | 'app:drain-heartbeat';
 
 /**
+ * Audit-15 P3.3 — channels the renderer may SUBSCRIBE to via `window.filo.on`.
+ * These are the pure main→renderer events main pushes with
+ * `webContents.send(...)`; the renderer is receive-only on them. The preload
+ * `on` wrapper validates against this list at runtime so a compromised renderer
+ * can't attach a listener to an arbitrary channel string — defence in depth,
+ * since `invoke` and `send` are already payload-validated and `on` was the one
+ * un-gated bridge method.
+ *
+ * MUST stay in sync with `MAIN_TO_RENDERER_EVENTS` in
+ * `scripts/check-ipc-parity.mjs` (the parity gate forces every such event into
+ * that set — this is its renderer-facing twin) and with the `broadcastOnly`
+ * set in `ipcChannelParity.test.ts`. The `: readonly IpcChannel[]` annotation
+ * makes every entry compile-time-checked against the `IpcChannel` union, so a
+ * typo or a removed channel fails the build rather than silently mis-gating.
+ */
+export const RECEIVE_CHANNELS: readonly IpcChannel[] = [
+  'vault:files-changed',
+  'vault:tree-updated',
+  'vault:file-renamed',
+  'vault:watcher-failed',
+  'vault:watcher-state',
+  'vault:tree-too-large',
+  'app:flush-and-quit',
+];
+
+/**
  * File tree node representing a file or folder in the vault.
  */
 export interface FileTreeNode {

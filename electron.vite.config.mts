@@ -7,7 +7,13 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: ['nanoid'] })],
+    // Audit-14 6.3 — bundle `zod` INTO dist/main rather than leaving it an
+    // external runtime `require('zod')`. Packaging then carries no runtime
+    // node_modules dependency for it (electron-builder 26's module collector
+    // *should* find an externalized zod, but bundling removes that reliance
+    // entirely — zod is tiny). `nanoid` was the previous exclude but it is
+    // never imported in the main process, so excluding it was a no-op.
+    plugins: [externalizeDepsPlugin({ exclude: ['zod'] })],
     build: {
       outDir: 'dist/main',
       rollupOptions: {

@@ -29,6 +29,17 @@
  *
  * Bite-verify: rename the locals + use a raw `===`/`.startsWith(` on an un-folded
  * value (findBoardIdForPath) or inside the rebind loop (renameBoardPath) → red.
+ *
+ * Audit-15 P6.2 — extend the same case-fold discipline to the board-EXTENSION
+ * match, the enumeration + classification half the M13 compares above never
+ * covered. `scanBoardFiles` (the authoritative `board:list` enumerator) and
+ * `classifyChange` (the watcher's path router) each `.endsWith(<board-ext>)`; on
+ * a case-insensitive FS an externally case-mangled `.board.json` (external tool /
+ * cloud sync writes `Plan.Board.json`) is otherwise excluded from the project at
+ * open (scanBoardFiles) or routed to `tree` instead of `board` (classifyChange),
+ * skipping the board reconciler — the P1.3 bug. The gate asserts each
+ * `.endsWith(BOARD_EXTENSION | '.board.json')` sits on a `.toLowerCase()` receiver.
+ * Bite-verify: drop a `.toLowerCase()` before either `.endsWith(...)` → red.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -68,6 +79,43 @@ function blankStringsAndComments(src) {
     if (c === '\\') { out += '  '; i += 2; continue; }
     if (c === '`') { state = 'code'; out += ' '; i += 1; continue; }
     out += c === '\n' ? '\n' : ' '; i += 1; continue;
+  }
+  return out;
+}
+
+/**
+ * Blank ONLY comment bodies (offsets preserved) while keeping string CONTENTS
+ * intact. The extension-casefold targets (P6.2) must SEE the `'.board.json'`
+ * string literal to locate the compare — the fully-blanked copy above hides it.
+ * Still string-aware so a `//` inside a string can't be mistaken for a comment.
+ */
+function blankCommentsKeepStrings(src) {
+  let out = '';
+  let state = 'code'; // code | line | block | sq | dq | tpl
+  for (let i = 0; i < src.length; ) {
+    const c = src[i];
+    const c2 = src[i + 1];
+    if (state === 'code') {
+      if (c === '/' && c2 === '/') { state = 'line'; out += '  '; i += 2; continue; }
+      if (c === '/' && c2 === '*') { state = 'block'; out += '  '; i += 2; continue; }
+      if (c === "'") { state = 'sq'; out += c; i += 1; continue; }
+      if (c === '"') { state = 'dq'; out += c; i += 1; continue; }
+      if (c === '`') { state = 'tpl'; out += c; i += 1; continue; }
+      out += c; i += 1; continue;
+    }
+    if (state === 'line') {
+      if (c === '\n') { state = 'code'; out += '\n'; i += 1; continue; }
+      out += ' '; i += 1; continue;
+    }
+    if (state === 'block') {
+      if (c === '*' && c2 === '/') { state = 'code'; out += '  '; i += 2; continue; }
+      out += c === '\n' ? '\n' : ' '; i += 1; continue;
+    }
+    // string states (sq | dq | tpl) — copy characters verbatim.
+    const q = state === 'sq' ? "'" : state === 'dq' ? '"' : '`';
+    if (c === '\\') { out += c + (c2 ?? ''); i += 2; continue; }
+    if (c === q) { state = 'code'; out += c; i += 1; continue; }
+    out += c; i += 1; continue;
   }
   return out;
 }
@@ -223,6 +271,53 @@ for (const target of TARGETS) {
   }
 }
 
+// ── Audit-15 P6.2 — the board-EXTENSION match (`board:list` enumeration +
+//    watcher classification) must case-fold, mirroring fileOps/the watcher's
+//    `.md`/`.txt` lowercasing. Each `.endsWith(<board-ext>)` must sit on a
+//    `.toLowerCase()` receiver, else an externally case-mangled `.board.json`
+//    is silently dropped from the project (scanBoardFiles) / misrouted to `tree`
+//    (classifyChange). Run on a comment-stripped, STRING-PRESERVING copy so the
+//    literal `'.board.json'` is visible.
+const EXTENSION_CASEFOLD_TARGETS = [
+  { file: 'src/main/vault/boardFileOps.ts', what: 'scanBoardFiles' },
+  { file: 'src/main/services/fileWatcherClassify.ts', what: 'classifyChange' },
+];
+
+for (const target of EXTENSION_CASEFOLD_TARGETS) {
+  let raw;
+  try {
+    raw = readFileSync(join(ROOT, target.file), 'utf8');
+  } catch (err) {
+    failures.push(`${target.file} — cannot read: ${err.message}`);
+    continue;
+  }
+  const code = blankCommentsKeepStrings(raw);
+  // A board-extension membership test: `.endsWith(BOARD_EXTENSION)` or
+  // `.endsWith('.board.json')` (single/double quotes). The `.tmp`/`.bak` suffix
+  // checks in the watcher use a `suffix` variable, so they don't match here.
+  const extEndsWith = /\.endsWith\s*\(\s*(?:BOARD_EXTENSION|['"]\.board\.json['"])\s*\)/g;
+  let m;
+  let count = 0;
+  while ((m = extEndsWith.exec(code))) {
+    count++;
+    const before = code.slice(0, m.index);
+    if (!/\.toLowerCase\(\)\s*$/.test(before)) {
+      failures.push(
+        `${target.file} → ${target.what} — \`${m[0].trim()}\` is not case-folded ` +
+          '(the receiver must be `.toLowerCase()` immediately before `.endsWith`). An external ' +
+          'tool / cloud sync diverging the `.board.json` extension casing would then be silently ' +
+          'dropped from board:list / misrouted to `tree`.',
+      );
+    }
+  }
+  if (count === 0) {
+    failures.push(
+      `${target.file} → ${target.what} — could not find a \`.endsWith(<board-ext>)\` compare ` +
+        '(moved/renamed?) — the case-fold check can no longer be verified.',
+    );
+  }
+}
+
 if (failures.length > 0) {
   console.error('[check-board-path-casefold] FAILED — board-path compare regressed to case-sensitive:');
   for (const f of failures) console.error(`  ${f}`);
@@ -238,5 +333,8 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('[check-board-path-casefold] OK — findBoardIdForPath + renameBoardPath compare case-insensitively.');
+console.log(
+  '[check-board-path-casefold] OK — findBoardIdForPath + renameBoardPath compare case-insensitively; ' +
+    'scanBoardFiles + classifyChange case-fold the .board.json extension.',
+);
 process.exit(0);

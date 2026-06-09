@@ -73,8 +73,16 @@ const RECONCILE_EXEMPT = new Map([
   ['src/renderer/lib/kanban/kanbanTileCreation.ts', 'creates a new Kanban card backing .md'],
   ['src/renderer/lib/tasklist/taskCreation.ts', 'creates a new task backing .md'],
   ['src/renderer/lib/tasklist/fileDropHandler.ts', 'writes a freshly OS-dropped file into the vault'],
-  ['src/renderer/commands/tileCommands.ts', 'tile add creates/restores the backing .md; tile + editor mount afterward'],
-  ['src/renderer/commands/taskCommands.ts', 'task add seeds the backing .md'],
+  // Audit-14 7.3 — `tileCommands.ts` + `taskCommands.ts` were REMOVED from this
+  // list. Their file-level exemption ("editor mounts afterward") was false for
+  // the delete-UNDO snapshot-restore writes (DeleteTilesCommand.undo /
+  // DeleteTaskCommand.undo): the restored `.md` can be open as a Document on a
+  // SECOND pane, whose stale frontmatter cache would silently invert the restore
+  // (#4). 2.3 routed DeleteTilesCommand.undo and 7.3 routed DeleteTaskCommand.undo
+  // through `writeMarkdownAndReconcile`, so neither file does a raw `.md` write
+  // anymore (the scan skips them automatically). Their brand-new-file ADD seeds
+  // live in the still-exempt dedicated creation modules (seedTextFileForNewTile /
+  // kanbanTileCreation / taskCreation), which never target a possibly-open editor.
   // `.filo/` crash-recovery sentinels + per-machine config — not editor-backed.
   ['src/renderer/lib/vault/renameCascadeSentinel.ts', '.filo/ rename-cascade sentinel (not editor-backed)'],
   ['src/renderer/lib/vault/tagRewriteSentinel.ts', '.filo/ tag-rewrite sentinel (not editor-backed)'],

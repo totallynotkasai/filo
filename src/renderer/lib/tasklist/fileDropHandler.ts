@@ -15,6 +15,7 @@ import { reportError } from '../utils/errorBus';
 import { invokeOk } from '../utils/invokeOk';
 import { buildTextTileDefFromMarkdownFile } from '../canvas/markdownTileSeed';
 import { vaultRelativeFromAbsolute } from '../canvas/vaultPath';
+import { createId } from '../utils/ids';
 import { isMarkdownExtension } from '../vault/extension';
 import {
   fileNameSafe,
@@ -187,8 +188,22 @@ export function makeFileDropHandler(deps: FileDropDeps): FileDropHandler {
     // default-folder/vault-root change can diverge. `relPath` is the file we just
     // wrote, so stamp it unconditionally (a no-op when the helper already set it).
     (def as Record<string, unknown>).filePath = relPath;
+    // SHARE-1 — the OS import COPIES the file to a brand-new vault path. If the
+    // source `.md` carried a frontmatter `id:`, `buildTextTileDefFromMarkdownFile`
+    // reused it as the contentId (docId); importing the same source twice — or one
+    // whose `id:` collides with an in-vault file — would then back TWO distinct
+    // files with ONE docId, sharing a frontmatter cache so a field edit on one row
+    // silently rewrites the other. A freshly created file gets a fresh identity:
+    // mint a new contentId so one file == one docId.
+    (def as Record<string, unknown>).contentId = createId();
+    // DROP-1 — thread the resolved target section into the command so
+    // persistAddTaskPlacement pins it (parity with createTaskInSection). Without
+    // it the placement lands by raw numeric position only, misrouting a drop onto
+    // an empty / adjacent-tie section into the wrong one (SEC-1 class).
     const insertPos = computeInsertPos(realTargetId, clientY);
-    historyStore.execute(new AddTaskCommand(board.id, def, insertPos));
+    historyStore.execute(
+      new AddTaskCommand(board.id, def, insertPos, undefined, realTargetId ?? undefined),
+    );
     if (def.tags && def.tags.length > 0) {
       fileTagsStore.setFileTags(tagFileKey, def.tags);
     }
@@ -292,9 +307,15 @@ export function makeFileDropHandler(deps: FileDropDeps): FileDropHandler {
     // onto the def pre-clone so a cold field/tag edit on this subfolder task
     // resolves to the real file even if the folder cascade later diverges.
     (def as Record<string, unknown>).filePath = relPath;
+    // DROP-1 — thread the resolved target section (see importOsMarkdownFile).
+    // The vault-sidebar drop references the file in place (same path), so unlike
+    // the OS import it keeps any reused contentId — that is the legitimate
+    // "same file referenced again" case, deduped at bulk-edit time (SHARE-1).
     const insertPos = computeInsertPos(realTargetId, e.clientY);
 
-    historyStore.execute(new AddTaskCommand(board.id, def, insertPos));
+    historyStore.execute(
+      new AddTaskCommand(board.id, def, insertPos, undefined, realTargetId ?? undefined),
+    );
     if (def.tags && def.tags.length > 0) {
       fileTagsStore.setFileTags(tagFileKey, def.tags);
     }

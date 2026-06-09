@@ -81,6 +81,22 @@
  * a doc-comment that merely describes the old shape can't trip it. Escape hatch
  * for a genuinely intentional silent return on a NON-write path:
  * `// allow-silent-abort: <reason>` anywhere in that file.
+ *
+ * ── Audit-14 7.2 — this gate is a TRIPWIRE, not a proof ──
+ * The forbidden-shape regexes catch the exact silent-success spelling AND its
+ * common variants (`=== undefined` / `== null` / optional-chained / bare
+ * `continue`, via `silentAbortRe`), but a renamed local, a helper that returns
+ * the guard, or a `?? return` ternary can still slip a regex. The LOAD-BEARING
+ * protection is the behavioral matrices that drive a real field-edit write with
+ * NO `loadDocument` and assert the edit reaches disk:
+ *   src/tests/unit/kanbanFrontmatterSeedFromDisk.test.ts  (B1)
+ *   src/tests/unit/auditNinePhase2.test.ts                (A9-L2 / A9-L3)
+ *   src/tests/unit/audit10Phase2.test.ts                  (H2 gateway empty-cache)
+ *   src/tests/unit/documentEditorHydrateFailure.test.ts   (M1 DocumentEditor)
+ * Treat green here as "the obvious regressions are absent", not "the class is
+ * closed". When you add a write path, add a no-editor behavioral case to those
+ * matrices — not just a spelling here. The gate self-tests its own matchers on
+ * every run (`selfTestFixtures`) so it can't quietly stop catching what it claims.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
@@ -229,11 +245,93 @@ function hasUnscopedSilentFm(blanked) {
   return false;
 }
 
-// FORBIDDEN — the bare silent-success aborts.
-const SILENT_DOCSTATE = /!\s*docState\s*\)\s*\{?\s*return\b/;
-const SILENT_FM = /!\s*\bfm\b\s*\)\s*\{?\s*return\b/;
+/**
+ * Audit-14 7.2 — builds the forbidden "missing-VALUE guard then silent abort"
+ * matcher for a variable. Broadened from the original `!x) return` literal so a
+ * REFACTOR of the B1 / A9-L3 silent-success drop into another spelling can't slip
+ * the tripwire. Catches the absence test as:
+ *     !x        !x?.prop  /  !x.prop
+ *     x === undefined   x == null   x === null   x == undefined
+ *     undefined === x   null == x          (yoda)
+ * immediately followed (after the `if (...)` close + optional `{`) by a BARE
+ * abort verb — `return` OR `continue`. `\b${v}\b` keeps `fm` from matching inside
+ * `frontmatter` / `confirm`, exactly as the prior hand-written regex did.
+ *
+ * This is a TRIPWIRE, NOT a proof — a renamed local, a helper that returns the
+ * guard, or a `?? return` ternary can still pass it. The LOAD-BEARING guarantee
+ * is the no-`loadDocument` behavioral matrices (see the file header). Treat a
+ * green result here as "the obvious regressions are absent", not "the class is
+ * closed"; when you add a write path, add a no-editor behavioral case, not just a
+ * spelling here.
+ */
+function silentAbortRe(varName) {
+  const v = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const absent =
+    `(?:!\\s*\\b${v}\\b(?:\\s*\\??\\.\\s*\\w+)?` + // !x  /  !x?.prop  /  !x.prop
+    `|\\b${v}\\s*===?\\s*(?:undefined|null)` + // x === undefined / x == null …
+    `|(?:undefined|null)\\s*===?\\s*\\b${v}\\b)`; // undefined === x (yoda)
+  return new RegExp(`${absent}\\s*\\)\\s*\\{?\\s*(?:return|continue)\\b`);
+}
+
+// FORBIDDEN — the silent-success aborts (bare + the 7.2-broadened spellings).
+const SILENT_DOCSTATE = silentAbortRe('docState');
+const SILENT_FM = silentAbortRe('fm');
 const ESCAPE = /\/\/\s*allow-silent-abort:\s*\S+/;
 const MARK_PATH_FAILED = /markPathFailed\s*\(/;
+
+/**
+ * Audit-14 7.2 — embedded FIXTURES + intrinsic bite-check. Every alternate
+ * spelling of the silent-success abort MUST trip the matcher, and every known-
+ * SAFE shape must NOT, so weakening a regex without noticing fails the gate on
+ * its own fixtures (the bite-check is automatic, every run). Returns a list of
+ * fixture-violation messages (empty when the matchers behave).
+ */
+function selfTestFixtures() {
+  const fails = [];
+  const docStateShouldMatch = [
+    'if (!docState) return;',
+    'if (!docState) { return; }',
+    'if (!docState) continue;',
+    'if (docState === undefined) return;',
+    'if (docState == null) return;',
+    'if (docState === null) return result;',
+    'if (!docState?.body) return;',
+    'if (!docState.body) return;',
+    'if (undefined === docState) return;',
+  ];
+  const docStateShouldNotMatch = [
+    'const docState = docId ? getDoc(docId) : undefined;',
+    'if (docState) { body = docState.body; }',
+    'const body = docState?.body ?? "";',
+    'docStateMap.delete(key); return;', // a different identifier with `return` nearby
+  ];
+  // `!fm` shapes WITHOUT markPathFailed in scope must flag…
+  const fmUnscopedShouldFlag = [
+    'function w() { const fm = idx(); if (!fm) return; }',
+    'function w() { const fm = idx(); if (fm === undefined) return; }',
+    'function w() { const fm = idx(); if (!fm) continue; }',
+  ];
+  // …and WITH markPathFailed in the same top-level function must pass (the real
+  // frontmatterWriteScheduler shape: `if (!delta && !fm) return` + a later
+  // markPathFailed + throw on the no-editor read failure).
+  const fmScopedShouldPass = [
+    'function w() { const fm = idx(); if (!fm) { markPathFailed(v, p); throw e; } if (!fm) return; }',
+    'function w() { if (!delta && !fm) return; markPathFailed(v, p); throw e; }',
+  ];
+  for (const s of docStateShouldMatch) {
+    if (!SILENT_DOCSTATE.test(blankStringsAndComments(s))) fails.push(`docState shape NOT caught: ${s}`);
+  }
+  for (const s of docStateShouldNotMatch) {
+    if (SILENT_DOCSTATE.test(blankStringsAndComments(s))) fails.push(`safe docState shape wrongly caught: ${s}`);
+  }
+  for (const s of fmUnscopedShouldFlag) {
+    if (!hasUnscopedSilentFm(blankStringsAndComments(s))) fails.push(`unscoped !fm shape NOT flagged: ${s}`);
+  }
+  for (const s of fmScopedShouldPass) {
+    if (hasUnscopedSilentFm(blankStringsAndComments(s))) fails.push(`markPathFailed-scoped !fm wrongly flagged: ${s}`);
+  }
+  return fails;
+}
 
 const files = [];
 for (const d of SCAN_DIRS) walk(join(ROOT, d), files);
@@ -241,6 +339,13 @@ files.sort();
 
 const failures = [];
 let scanned = 0;
+
+// Audit-14 7.2 — run the embedded fixtures FIRST. A weakened matcher fails here
+// before the real scan, so the gate can never silently degrade into a no-op that
+// "passes" because its own regex stopped catching the shape it polices.
+for (const f of selfTestFixtures()) {
+  failures.push(`self-test fixture regressed — ${f} (a forbidden-shape matcher in this gate was weakened; restore it)`);
+}
 
 for (const abs of files) {
   const rel = toPosix(relative(ROOT, abs));

@@ -23,9 +23,14 @@ import { boardStore } from '@renderer/stores/board.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import {
   registerPendingProbe,
+  markRecentSelfWrite,
   __resetDirtyTrackingForTests,
   __clearRecentSelfWritesForTests,
 } from '@renderer/lib/boards/writeStateTracking';
+import {
+  noteBaseline,
+  __resetBaselinesForTests,
+} from '@renderer/lib/vault/fileBaselineRegistry';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard } from '@renderer/schema/index';
 
@@ -121,5 +126,73 @@ describe('board reconciler — silent reload guards a write that lands during th
     await dispatchExternalChange({ kind: 'board', filename: REL, eventType: 'change' });
 
     expect(boardName()).toBe('from-disk');
+  });
+});
+
+/**
+ * Audit-15 P2.4 — the `.board.json` reconciler mirrors the `.md` path's Audit-13
+ * M4 divergence tiebreak: a recent self-write is dropped as our own echo ONLY
+ * when its fresh disk stat still matches the baseline we wrote. A diverged stat
+ * means a second writer touched the file inside the suppression window, so it's
+ * a real external edit and must be reconciled proactively, not waited out.
+ */
+describe('board reconciler — P2.4 self-write divergence tiebreak', () => {
+  beforeEach(() => {
+    __resetDirtyTrackingForTests();
+    __resetBaselinesForTests();
+    _resetRegistryForTests();
+    _resetRegistrationGuardForTests();
+    registerExternalChangeReconcilers();
+    vaultStore.setPath('/vault');
+    boardCacheStore.clear();
+    registerPendingProbe(() => false); // nothing pending in these cases
+  });
+
+  afterEach(() => {
+    vaultStore.setPath('');
+    boardCacheStore.clear();
+    __resetDirtyTrackingForTests();
+    __resetBaselinesForTests();
+    _resetRegistryForTests();
+    _resetRegistrationGuardForTests();
+    delete (window as unknown as Record<string, unknown>).filo;
+  });
+
+  it('reconciles a recent self-write whose disk stat DIVERGED from the baseline (a 2nd writer touched it)', async () => {
+    boardCacheStore.hydrate({ kb: makeBoard('original') }, { kb: REL });
+    __clearRecentSelfWritesForTests();
+    // Our own write: record the baseline we wrote, then mark it a recent self-write.
+    noteBaseline(REL, 1, 100);
+    markRecentSelfWrite(REL);
+
+    installRoutes({
+      'board:load': () => JSON.stringify(makeBoard('from-disk')),
+      // Fresh stat DIVERGES from the baseline {1,100} → a 2nd writer touched it.
+      'vault:stat': () => ({ success: true, mtimeMs: 2, size: 200 }),
+    });
+
+    await dispatchExternalChange({ kind: 'board', filename: REL, eventType: 'change' });
+
+    // The divergence tiebreak treats it as a real external edit → reconciled.
+    // Bite: pre-P2.4 the bare `isRecentSelfWrite` early-return dropped it (stays 'original').
+    expect(boardName()).toBe('from-disk');
+  });
+
+  it('drops a recent self-write whose disk stat MATCHES the baseline (our own echo)', async () => {
+    boardCacheStore.hydrate({ kb: makeBoard('original') }, { kb: REL });
+    __clearRecentSelfWritesForTests();
+    noteBaseline(REL, 1, 100);
+    markRecentSelfWrite(REL);
+
+    installRoutes({
+      'board:load': () => JSON.stringify(makeBoard('from-disk')),
+      // Fresh stat MATCHES the baseline {1,100} → it's our own write echoing back.
+      'vault:stat': () => ({ success: true, mtimeMs: 1, size: 100 }),
+    });
+
+    await dispatchExternalChange({ kind: 'board', filename: REL, eventType: 'change' });
+
+    // Matched baseline → dropped as our own echo, no reconcile.
+    expect(boardName()).toBe('original');
   });
 });

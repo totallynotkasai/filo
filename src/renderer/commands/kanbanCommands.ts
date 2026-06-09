@@ -1,4 +1,5 @@
 import { Command, cloneForSnapshot } from './Command';
+import { toastMissingUndoRedoTarget } from './missingTargetToast';
 import { boardCacheStore } from '../stores/boardCache.svelte';
 import { documentStore } from '../stores/document.svelte';
 import { uiStore } from '../stores/ui.svelte';
@@ -69,19 +70,18 @@ export class AddCardCommand extends Command {
     this.targetBoardId = boardId;
     this.boardId = boardId;
     this.columnId = columnId;
-    // Phase 31 B4.4 — `this.snapshot(...)` deep-clones the def so the caller
-    // can't corrupt the snapshot via a post-construction mutation (tag
-    // change, completion toggle, frontmatter back-merge).
+    // Snapshot (deep-clone) def + style so a caller-side mutation after
+    // construction can't corrupt what redo re-applies (Phase 31 B4.4 / A6 L30).
     this.def = this.snapshot(def);
     this.position = position;
-    // L30 (Audit-6) — deep-clone the optional style so a caller-side mutation
-    // of the same object after construction can't corrupt the value this
-    // command re-applies on redo (mirrors the `def` snapshot above).
     this.style = style ? this.snapshot(style) : style;
     this.description = `Add card "${def.title ?? ''}"`;
   }
 
   execute() {
+    // P4.5 — toast + bail rather than orphan the card when the column is gone (undo removes by id).
+    const cached = boardCacheStore.cache[this.boardId];
+    if (cached?.board.type !== 'kanban' || !cached.board.columns?.some((c) => c.id === this.columnId)) { toastMissingUndoRedoTarget('redo', 'the column'); return; }
     boardCacheStore.persistAddKanbanPlacement(
       this.boardId,
       this.columnId,
@@ -105,6 +105,12 @@ export class DeleteCardCommand extends Command {
   private snapshotPlacement: KanbanTilePlacement | null;
   private snapshotColumnId: string | null;
   private snapshotPosition: number;
+  // 2.2 (Audit-14) — tileId of the next surviving card in the column at
+  // construction time (the card immediately AFTER the deleted one), or null
+  // when the deleted card was the column tail. undo() inserts immediately
+  // before this sibling so an intervening sibling add/remove doesn't land the
+  // restored card at a stale absolute index. Mirrors MoveCardCommand 6.4.M16.
+  private beforeTileId: string | null;
 
   constructor(boardId: string, tileId: string) {
     super();
@@ -116,11 +122,13 @@ export class DeleteCardCommand extends Command {
     this.snapshotPlacement = null;
     this.snapshotColumnId = null;
     this.snapshotPosition = 0;
+    this.beforeTileId = null;
     const cached = boardCacheStore.cache[boardId];
     if (cached && cached.board.type === 'kanban') {
       const kb = cached.board as KanbanBoard;
       for (const col of kb.columns ?? []) {
-        const idx = (col.tilePlacements ?? []).findIndex((p) => p.tileId === tileId);
+        const placements = col.tilePlacements ?? [];
+        const idx = placements.findIndex((p) => p.tileId === tileId);
         if (idx >= 0) {
           this.snapshotColumnId = col.id;
           this.snapshotPosition = idx;
@@ -129,8 +137,11 @@ export class DeleteCardCommand extends Command {
           // and undo() doesn't mutate shared inner refs (style, coverImage,
           // tags, …) on the snapshot we plan to restore from. Mirrors
           // AddCardCommand's Phase 31 B4.4 deep-clone pattern.
-          const placement = (col.tilePlacements ?? [])[idx];
+          const placement = placements[idx];
           if (placement) this.snapshotPlacement = this.snapshot(placement);
+          // 2.2 — capture the next surviving sibling as the undo anchor (only
+          // this one card is removed, so it's simply the card at idx + 1).
+          this.beforeTileId = placements[idx + 1]?.tileId ?? null;
           break;
         }
       }
@@ -157,6 +168,7 @@ export class DeleteCardCommand extends Command {
       this.snapshotPosition,
       this.snapshotPlacement.style,
       this.snapshotPlacement.coverImage,
+      this.beforeTileId, // 2.2 — anchor over the stale absolute index
     );
   }
 }
@@ -575,7 +587,7 @@ export class UpdateCardFieldCommand extends Command {
   readonly targetBoardId: string;
   private boardId: string;
   private relPath: string;
-  private docId: string | null;
+  private docId: string;
   private patch: Record<string, unknown>;
   private inversePatch: Record<string, unknown>;
   // Audit2 4.2 — false on the user's initial Apply (apply directly), true once
@@ -591,6 +603,16 @@ export class UpdateCardFieldCommand extends Command {
     description?: string,
   ) {
     super();
+    // P2.6 (Audit-15) — refuse a null docId, mirroring UpdateTaskFieldCommand's
+    // 6.2.H7 guard. The old dead null-docId branch scheduled a no-delta write that
+    // re-emitted unchanged FM → Apply AND Undo silent no-ops. Both callers already
+    // route null docIds through UpdateOrphanFrontmatterCommand; this is the
+    // chokepoint that stops a new caller re-introducing the silent loss.
+    if (!docId) {
+      throw new Error(
+        'UpdateCardFieldCommand requires a non-null docId; route null-docId card edits through UpdateOrphanFrontmatterCommand instead',
+      );
+    }
     this.targetBoardId = boardId;
     this.boardId = boardId;
     this.relPath = relPath;
@@ -622,7 +644,7 @@ export class UpdateCardFieldCommand extends Command {
     // patch and must rebase like undo so an external edit since isn't clobbered.
     const isRedo = this.hasExecuted;
     this.hasExecuted = true;
-    if (this.docId && isRedo) {
+    if (isRedo) {
       applyFrontmatterPatchRebased({
         docId: this.docId,
         relPath: this.relPath,
@@ -633,71 +655,61 @@ export class UpdateCardFieldCommand extends Command {
       });
       return;
     }
-    if (this.docId) {
-      // A9-H1 — capture vault identity before the seed's disk read; an Open Vault
-      // → "Don't Save" swap can commit mid-read. Bailing after (below) means we
-      // never re-inject (A9-M1) the old vault's FM or arm a write onto the new
-      // vault's same-named file.
-      const identity = captureVaultIdentity();
-      // Audit-7 H1 — seed the FM cache from a FRESH disk read HERE, inside the
-      // chained command body, so vaultStore.save()/quit (which await
-      // historyStore.whenChainSettled() before flushing) cover this read. The
-      // seed used to run in the writer BEFORE historyStore.execute(); a Ctrl+S /
-      // quit landing in that pre-chain await window saw an empty chain, reported
-      // a premature "Saved", and tore down the renderer before the field write
-      // was scheduled — a silent loss with no .filo/.dirty sentinel (the vault
-      // was clean at edit time). No-op when an open editor / prior edit already
-      // seeded the cache, or when the disk read fails.
-      await seedDocumentFrontmatterFromDisk(this.docId, vaultStore.path, this.relPath);
-      // A9-H1 — swap landed mid-seed: abandon before any index/merge/schedule/markDirty sink.
-      if (!isStillSameVault(identity)) return;
-      if (!documentStore.getFrontmatter(this.docId)) {
-        // Disk read failed (ENOENT / transient) — fall back to the vault-index
-        // snapshot, exactly as the writer's old ensureSeededFm did, so the merge
-        // has a full FM object and the source-preserving write can't drop keys.
-        documentStore.setFrontmatter(
-          this.docId,
-          (vaultIndexStore.getMetadata(this.relPath)?.frontmatter ?? {}) as Record<string, unknown>,
-        );
-      }
-      // Recapture the inverse from the just-seeded cache so undo restores the
-      // TRUE prior value of each patched key — the writer computed it before
-      // this seed ran, off a possibly-stale index / empty cache.
-      this.inversePatch = this.snapshot(captureInverseFromCache(this.docId, this.patch));
-      // Phase 4 — mergeFrontmatter feeds the DISPLAY cache; the delta is the
-      // write SOURCE (applied to fresh disk in the gateway), so an untouched
-      // external key is preserved by construction instead of dropped from a
-      // stale cache. Decoupled — the cache is never the write source.
-      documentStore.mergeFrontmatter(this.docId, this.patch);
+    // A9-H1 — capture vault identity before the seed's disk read; an Open Vault
+    // → "Don't Save" swap can commit mid-read. Bailing after (below) means we
+    // never re-inject (A9-M1) the old vault's FM or arm a write onto the new
+    // vault's same-named file.
+    const identity = captureVaultIdentity();
+    // Audit-7 H1 — seed the FM cache from a FRESH disk read HERE, inside the
+    // chained command body, so vaultStore.save()/quit (which await
+    // historyStore.whenChainSettled() before flushing) cover this read. The
+    // seed used to run in the writer BEFORE historyStore.execute(); a Ctrl+S /
+    // quit landing in that pre-chain await window saw an empty chain, reported
+    // a premature "Saved", and tore down the renderer before the field write
+    // was scheduled — a silent loss with no .filo/.dirty sentinel (the vault
+    // was clean at edit time). No-op when an open editor / prior edit already
+    // seeded the cache, or when the disk read fails.
+    await seedDocumentFrontmatterFromDisk(this.docId, vaultStore.path, this.relPath);
+    // A9-H1 — swap landed mid-seed: abandon before any index/merge/schedule/markDirty sink.
+    if (!isStillSameVault(identity)) return;
+    if (!documentStore.getFrontmatter(this.docId)) {
+      // Disk read failed (ENOENT / transient) — fall back to the vault-index
+      // snapshot, exactly as the writer's old ensureSeededFm did, so the merge
+      // has a full FM object and the source-preserving write can't drop keys.
+      documentStore.setFrontmatter(
+        this.docId,
+        (vaultIndexStore.getMetadata(this.relPath)?.frontmatter ?? {}) as Record<string, unknown>,
+      );
     }
-    // The delta routes through the gateway's fresh-disk apply (docId path). The
-    // null-docId card is dead in production (the writer routes it through
-    // UpdateOrphanFrontmatterCommand), so it keeps the legacy no-delta path.
-    scheduleFrontmatterWrite(
-      this.relPath,
-      this.docId,
-      this.docId ? patchToFrontmatterDelta(this.patch) : undefined,
-    );
+    // Recapture the inverse from the just-seeded cache so undo restores the
+    // TRUE prior value of each patched key — the writer computed it before
+    // this seed ran, off a possibly-stale index / empty cache.
+    this.inversePatch = this.snapshot(captureInverseFromCache(this.docId, this.patch));
+    // Phase 4 — mergeFrontmatter feeds the DISPLAY cache; the delta is the
+    // write SOURCE (applied to fresh disk in the gateway), so an untouched
+    // external key is preserved by construction instead of dropped from a
+    // stale cache. Decoupled — the cache is never the write source.
+    documentStore.mergeFrontmatter(this.docId, this.patch);
+    // Phase 4 — the delta routes through the gateway's fresh-disk apply (docId
+    // path); docId is now guaranteed non-null (P2.6 constructor guard).
+    scheduleFrontmatterWrite(this.relPath, this.docId, patchToFrontmatterDelta(this.patch));
     boardCacheStore.markDirty(this.targetBoardId);
   }
 
   async undo(): Promise<void> {
     await flushAllPendingFrontmatterWrites();
-    if (this.docId) {
-      // Audit2 4.2 — rebase onto the live frontmatter so an external edit to
-      // the same field isn't silently clobbered (prompts to apply anyway).
-      applyFrontmatterPatchRebased({
-        docId: this.docId,
-        relPath: this.relPath,
-        targetBoardId: this.targetBoardId,
-        applying: this.inversePatch,
-        expectedCurrent: this.patch,
-        label: this.relPath,
-      });
-    } else {
-      scheduleFrontmatterWrite(this.relPath, this.docId);
-      boardCacheStore.markDirty(this.targetBoardId);
-    }
+    // Audit2 4.2 — rebase onto the live frontmatter so an external edit to
+    // the same field isn't silently clobbered (prompts to apply anyway).
+    // docId is guaranteed non-null (P2.6 constructor guard), so the dead
+    // null-docId no-delta branch this replaced is gone.
+    applyFrontmatterPatchRebased({
+      docId: this.docId,
+      relPath: this.relPath,
+      targetBoardId: this.targetBoardId,
+      applying: this.inversePatch,
+      expectedCurrent: this.patch,
+      label: this.relPath,
+    });
   }
 }
 

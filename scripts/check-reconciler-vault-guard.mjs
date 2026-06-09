@@ -131,11 +131,33 @@ const GUARD_TARGETS = [
     // `findUnits` doesn't see as units, but they live inside the named `prompt*`
     // functions Pass 1 discovers, so the trigger on the CONTAINING function's body
     // catches them (and the already-guarded `handleExternalMarkdownChanges`).
+    // Audit-15 P5.1 — the `prompt*` builders moved to the two sibling modules
+    // below; this file keeps only the dispatcher slice + rename cascade, all of
+    // which already carry the guard, so no exemption remains here.
+    triggers: { vaultStorePath: true, vaultRootParam: false, getVaultPath: true, applyChanges: true },
+    exempt: new Map(),
+  },
+  // Audit-15 P5.1 — the toast prompt builders (`promptModifiedFile`,
+  // `promptBulkExternalChanges`, `promptPropertiesPopupModified`,
+  // `promptPartialReadExhausted`, etc.) extracted from `vaultExternalChanges.ts`.
+  // Several re-read disk via `vaultIndexStore.applyChanges()` inside an async
+  // Reload handler then mutate stores keyed by relPath (Audit-13 L17), so they
+  // carry the SAME triggers as the dispatcher. The move can't drop coverage: the
+  // gate scans this file with the identical config. No exemptions.
+  {
+    file: 'src/renderer/stores/vaultExternalPrompts.ts',
+    triggers: { vaultStorePath: true, vaultRootParam: false, getVaultPath: true, applyChanges: true },
+    exempt: new Map(),
+  },
+  // Audit-15 P5.1 — the Promise-based drift prompts + `recreateDeletedFile`
+  // recovery write, also extracted from `vaultExternalChanges.ts`.
+  // `promptExternalEditOnSync` re-reads disk via `applyChanges` and stays guarded;
+  // `recreateDeletedFile` keeps the documented main-side-mitigation exemption it
+  // carried in the dispatcher (it moved here, so the exemption moved with it).
+  {
+    file: 'src/renderer/stores/vaultExternalDriftPrompts.ts',
     triggers: { vaultStorePath: true, vaultRootParam: false, getVaultPath: true, applyChanges: true },
     exempt: new Map([
-      // `handleExternalAttachmentChanges` was here (A8 main-side-mitigated); Audit-13
-      // L16 converted it to a real `isStillSameVault` guard, so the exemption is gone
-      // and reverting that guard now re-flags it (the bite test relies on this).
       [
         'recreateDeletedFile',
         'user-initiated Keep-local recreate; the write uses the captured vaultRoot ' +

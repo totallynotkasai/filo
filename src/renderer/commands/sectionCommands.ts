@@ -15,6 +15,17 @@ export class AddSectionCommand extends Command {
    * whole sections array.
    */
   private newSection: TaskListSection;
+  /**
+   * SEC-3 — when this add was the FIRST real section on a section-less board, it
+   * also had to materialise the virtual `__default__` placeholder into a real
+   * section (so the board's existing unsectioned tasks keep a home alongside the
+   * new empty section). Folding that default INTO the command — rather than a
+   * separate, command-less pre-persist in `sectionOps.addSection` — lets undo
+   * strip BOTH and restore the section-less `[]` state (the virtual default
+   * re-appears; the unsectioned tasks stay put in the `tasks` array). Null for
+   * the common case where the board already had at least one persisted section.
+   */
+  private autoDefault: TaskListSection | null;
 
   constructor(
     boardId: string,
@@ -25,12 +36,17 @@ export class AddSectionCommand extends Command {
     before: { sections: TaskListSection[]; tasks: TaskPlacement[] },
     after: { sections: TaskListSection[]; tasks: TaskPlacement[] },
     title: string,
+    autoDefault: TaskListSection | null = null,
   ) {
     super();
     this.targetBoardId = boardId;
     this.boardId = boardId;
+    this.autoDefault = autoDefault ? this.snapshot(autoDefault) : null;
     const beforeIds = new Set(before.sections.map((s) => s.id));
-    const newSection = after.sections.find((s) => !beforeIds.has(s.id));
+    const autoId = autoDefault?.id;
+    // The new section is the after-section that's neither in `before` nor the
+    // auto-materialised default (which is also absent from a section-less before).
+    const newSection = after.sections.find((s) => !beforeIds.has(s.id) && s.id !== autoId);
     if (!newSection) {
       // Fallback to the last after-section (legacy callers always append).
       const last = after.sections[after.sections.length - 1];
@@ -49,11 +65,27 @@ export class AddSectionCommand extends Command {
     const cached = boardCacheStore.cache[this.boardId];
     const board = cached?.board as { sections?: TaskListSection[] } | undefined;
     if (!board?.sections) return;
-    // No-op if a re-execute hits a tree that already contains the section
-    // (out-of-band re-add or redo after partial undo).
-    if (board.sections.some((s) => s.id === this.newSection.id)) return;
+    let sections = board.sections as TaskListSection[];
+    // SEC-3 — re-materialise the auto-default first. On the FIRST execute this
+    // turns the section-less `[]` into `[default]`; on a redo (after an undo that
+    // stripped the board back to `[]`) it restores the default the same way. At
+    // position 0 it owns the leading unsectioned tasks; persistTaskListStructure
+    // clamps/normalises positions, so the new tail section lands correctly.
+    const auto = this.autoDefault;
+    if (auto && !sections.some((s) => s.id === auto.id)) {
+      sections = [this.snapshot(auto), ...sections];
+    }
+    // No-op the new-section add if it's already present (out-of-band re-add or
+    // redo after a partial undo) — but still persist if we just re-added the
+    // default above.
+    if (sections.some((s) => s.id === this.newSection.id)) {
+      if (sections !== board.sections) {
+        boardCacheStore.persistTaskListStructure(this.boardId, sections);
+      }
+      return;
+    }
     boardCacheStore.persistTaskListStructure(this.boardId, [
-      ...board.sections,
+      ...sections,
       // L8 (Audit-13) — deep-clone again (defense-in-depth) so the command stays
       // self-sufficient: the persisted copy can't alias this command's retained
       // `newSection.style` even if a future persist path stops re-wrapping it.
@@ -65,10 +97,17 @@ export class AddSectionCommand extends Command {
     const cached = boardCacheStore.cache[this.boardId];
     const board = cached?.board as { sections?: TaskListSection[] } | undefined;
     if (!board?.sections) return;
-    boardCacheStore.persistTaskListStructure(
-      this.boardId,
-      board.sections.filter((s) => s.id !== this.newSection.id),
-    );
+    let next = (board.sections as TaskListSection[]).filter((s) => s.id !== this.newSection.id);
+    // SEC-3 — also strip the auto-materialised default when it's the ONLY section
+    // left (nothing else was added since, so the board is back to its "section-
+    // less + one add" shape). Restoring `[]` makes add-then-undo a true on-disk
+    // no-op; the virtual default re-appears. When other real sections exist the
+    // default is now load-bearing (it partitions the task array) — leave it.
+    const auto = this.autoDefault;
+    if (auto && next.length === 1 && next[0]?.id === auto.id) {
+      next = [];
+    }
+    boardCacheStore.persistTaskListStructure(this.boardId, next);
   }
 }
 

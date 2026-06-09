@@ -17,6 +17,8 @@ import { stopActiveWatcher } from './ipc/vault.ipc';
 import { vaultRegistry } from './services/vaultRegistry';
 import { writeQuitFailureBreadcrumb } from './services/quitFailureBreadcrumb';
 import { decideWindowClose } from './utils/windowCloseDecision';
+import { buildAppContentSecurityPolicy } from './utils/contentSecurityPolicy';
+import { installPermissionHandlers } from './utils/permissionPolicy';
 
 // Must run before `app.whenReady`. Registers the `filo://` URL scheme as a
 // privileged standard scheme so the renderer can load vault-local media
@@ -87,7 +89,12 @@ function captureAndSaveWindowState(): void {
  *
  * The `<meta>` CSP governs the app document but does NOT cover web workers or
  * non-document responses; a response header does. The policy string mirrors
- * index.html — keep the two in sync if either changes.
+ * index.html with ONE deliberate prod divergence (Audit-14 4.7): the dev-only
+ * `ws://localhost:*` (Vite HMR socket) is dropped from `connect-src` when
+ * `app.isPackaged`. The `filo-strip-dev-csp` Vite plugin strips the same token
+ * from the index.html `<meta>` at build time, so in a packaged build the header
+ * and the `<meta>` agree (no `ws://`); in dev both keep it for HMR. Keep the two
+ * in sync if either changes.
  *
  * Scope: only responses served from the app's own origin (the Vite dev server
  * in dev, `file://` in prod) receive the header. Everything else is passed
@@ -96,13 +103,19 @@ function captureAndSaveWindowState(): void {
  *     SVGs (see protocol/filoMedia.ts), nor
  *   - impose `default-src 'self'` on third-party `https:` documents loaded
  *     inside Iframe tiles (which the policy's `frame-src https:` permits).
+ *
+ * Audit-14 4.5 — `frame-src https:` is intentionally broad: Iframe tiles let the
+ * user embed ANY https origin (YouTube, CodePen, etc.), so a fixed origin
+ * allowlist isn't possible. It's accepted defense-in-depth — the tile iframe is
+ * sandboxed (`allow-scripts` WITHOUT `allow-same-origin`) and every src is run
+ * through `asSafeIframeSrc`. See KNOWN_LIMITATIONS.md #10.
  */
 function installContentSecurityPolicy(): void {
-  const CSP =
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-    "img-src 'self' data: blob: filo:; media-src 'self' blob: filo:; " +
-    "font-src 'self' data:; connect-src 'self' ws://localhost:*; " +
-    'frame-src https:; child-src https:;';
+  // Audit-14 4.7 — assemble from a single pure builder so the packaged header
+  // never authorises a localhost websocket the app doesn't open. Dev keeps
+  // `ws://localhost:*` for Vite HMR; prod (`app.isPackaged`) drops it, matching
+  // the index.html `<meta>` the build-time strip plugin patches.
+  const CSP = buildAppContentSecurityPolicy(app.isPackaged);
 
   const appOrigin =
     !app.isPackaged && process.env.ELECTRON_RENDERER_URL
@@ -375,6 +388,11 @@ app.whenReady().then(() => {
   }
 
   installContentSecurityPolicy();
+  // Audit-15 P1.5 — deny-by-default permission handler on the shared session,
+  // so an embedded https iframe (CSP allows any origin) can't be granted
+  // geolocation / camera / mic / notifications / clipboard by a version-
+  // dependent Electron default. See utils/permissionPolicy.ts.
+  installPermissionHandlers(session.defaultSession);
   registerAllHandlers();
   registerFiloProtocol();
   void createWindow();

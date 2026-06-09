@@ -82,6 +82,41 @@ export function detectCharsetFromContentType(contentType: string): string {
 }
 
 /**
+ * Audit-15 P3.2 — defence-in-depth sanitiser for the `image` / `favicon`
+ * URLs `link:fetch-metadata` hands back to the renderer. Both are extracted
+ * from attacker-controllable page markup (`og:image` / `<link rel=icon>`), so
+ * a hostile page could aim them at an internal address
+ * (`http://169.254.169.254/…`, `http://10.0.0.5/…`). Today the renderer CSP
+ * (`img-src 'self' data: blob: filo:`) blocks any remote http(s) load, so they
+ * never fetch — but if a future code path fetches them main-side, or the CSP
+ * widens, an un-validated URL becomes an SSRF vector. Resolve against the
+ * (already SSRF-validated) final page URL, then:
+ *
+ *   - empty / unparseable → ''   (no resource)
+ *   - data: URL           → kept (CSP permits it; no network fetch → no SSRF)
+ *   - http(s)             → kept only if `isPrivateUrl` says public; a
+ *                           private / loopback / link-local host → ''
+ *   - any other scheme    → ''   (javascript:, file:, blob:, …)
+ *
+ * Static `isPrivateUrl` (no DNS) is proportionate because these resources are
+ * never fetched main-side; if that ever changes, upgrade to the async
+ * `isHostnamePrivate` DNS-resolution check the fetch path already uses.
+ */
+export function sanitizeReturnedResourceUrl(raw: string, baseUrl: string): string {
+  if (!raw) return '';
+  let resolved: URL;
+  try {
+    resolved = new URL(raw, baseUrl);
+  } catch {
+    return '';
+  }
+  if (resolved.protocol === 'data:') return resolved.href;
+  if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') return '';
+  if (isPrivateUrl(resolved.href)) return '';
+  return resolved.href;
+}
+
+/**
  * Registers IPC handlers for media operations:
  * - Saving audio recordings as MP3
  * - Reading media files from vault
@@ -188,6 +223,14 @@ export function registerMediaHandlers(): void {
     try {
       assertActiveVault(vaultRoot);
       assertSafeRelativePath(relativePath);
+      // Audit-15 P3.1 — refuse reads into `.filo/`, like every other vault
+      // channel that takes a renderer-supplied relative path. Not currently
+      // exploitable (every sensitive `.filo/` file is JSON/font →
+      // octet-stream → refused by the MIME allowlist below), but this channel
+      // must enforce its OWN containment rather than lean on an adjacent
+      // control: a future readable media type dropped under `.filo/` would
+      // otherwise leak through. Mirrors `media:save-audio` (1.4).
+      assertNotInFiloDir(relativePath);
       const fullPath = path.join(vaultRoot, relativePath);
       assertWithinVault(vaultRoot, fullPath);
       const mimeType = getMimeType(fullPath);
@@ -301,6 +344,25 @@ export function registerMediaHandlers(): void {
               /^(https?:\/\/)?(localhost|127\.)/i.test(target);
             if (!devOK) {
               return { success: false, error: 'URL not allowed' };
+            }
+          } else {
+            // Audit-14 4.1 — DNS-resolution SSRF parity with
+            // `link:fetch-metadata`. The static `isPrivateUrl` above only
+            // catches IP-literal / numeric-encoded hosts; a public-looking
+            // hostname that RESOLVES to a private range — DNS rebinding, or
+            // an attacker-chosen name pointing at 169.254.169.254 /
+            // 10.x — would otherwise be handed straight to the OS browser
+            // (which can reach internal network devices the renderer can't).
+            // Resolve every A/AAAA record and refuse if any lands private,
+            // exactly as the link-metadata fetcher does before it connects.
+            let host: string;
+            try {
+              host = new URL(target).hostname;
+            } catch {
+              return { success: false, error: 'Malformed URL' };
+            }
+            if (await isHostnamePrivate(host)) {
+              return { success: false, error: 'URL not allowed (resolves to private address)' };
             }
           }
         }
@@ -576,7 +638,10 @@ export function registerMediaHandlers(): void {
       const titleMatch = headSection.match(/<title[^>]*>([^<]*)<\/title>/i);
       const title = getMetaContent('og:title') || (titleMatch?.[1] ?? '').trim();
       const description = getMetaContent('og:description') || getMetaContent('description');
-      const image = getMetaContent('og:image');
+      // Audit-15 P3.2 — resolve `og:image` against the final page URL (it may
+      // be relative / protocol-relative) and drop it if it points at a private
+      // address or a non-displayable scheme before returning it to the renderer.
+      const image = sanitizeReturnedResourceUrl(getMetaContent('og:image'), currentUrl);
 
       // Build favicon URL against the final (post-redirect) origin so a
       // shortlink → publisher chain resolves to the publisher's favicon
@@ -591,6 +656,9 @@ export function registerMediaHandlers(): void {
       } else {
         favicon = `${parsedUrl.origin}/favicon.ico`;
       }
+      // Audit-15 P3.2 — sanitise the resolved favicon (a page can declare an
+      // absolute `<link rel=icon href="http://10.0.0.1/…">`) before returning it.
+      favicon = sanitizeReturnedResourceUrl(favicon, currentUrl);
 
       return {
         success: true,

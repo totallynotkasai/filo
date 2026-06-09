@@ -1,4 +1,5 @@
 import * as path from 'path';
+import { vaultRegistry } from './vaultRegistry';
 
 /**
  * Audit-12 S1 — approved-source registry for `vault:copy-file`.
@@ -30,6 +31,17 @@ import * as path from 'path';
  *     schema rejects any `window.filo.send/invoke('vault:register-source-path')`
  *     attempt as a belt-and-braces second line of defence).
  *
+ * Audit-14 4.2 — VAULT-BINDING. Each registered source is now tagged with the
+ * vault that was active when it was minted (the registry's canonical path), and
+ * `isApprovedCopySource` requires that binding to equal the CURRENTLY-active
+ * vault. Before this, the set was keyed by absolute path alone, so a path the
+ * user picked while vault A was open stayed approved for whatever vault was
+ * current — `vault:copy-file` under vault B would accept it. Both the binding
+ * (at registration) and the comparison (at check) read the SAME
+ * `vaultRegistry.currentVaultPath`, so they agree regardless of any
+ * symlinked-vs-canonical spelling the renderer passes. The `clearApprovedSources`
+ * swap-clear (Audit-13 M11) is kept as defence-in-depth.
+ *
  * This is defence-in-depth — N/A for first-party vaults — but it removes the
  * arbitrary-read primitive entirely without restricting any legitimate
  * dialog/drag-drop import.
@@ -48,27 +60,48 @@ function normalizeSourceKey(absPath: string): string {
 }
 
 /**
+ * The canonical key for the currently-active vault, or null when none is open.
+ * Used as the binding anchor at BOTH registration and check time so the two
+ * always reference the same value. Reads the registry (which stores the
+ * realpath-canonicalised path), so a renderer that passes a symlinked vault
+ * spelling to `vault:copy-file` still matches a binding minted under the
+ * canonical path.
+ */
+function activeVaultKey(): string | null {
+  const root = vaultRegistry.currentVaultPath;
+  return root && root.length > 0 ? normalizeSourceKey(root) : null;
+}
+
+/**
  * Bounded so a long-running session that drops thousands of files can't grow
- * the set without limit. Insertion order = recency; the oldest entries evict
+ * the map without limit. Insertion order = recency; the oldest entries evict
  * first once the cap is exceeded. 512 is comfortably above any realistic batch
- * of in-flight imports.
+ * of in-flight imports. Value = the active-vault key at registration time.
  */
 const MAX_APPROVED_SOURCES = 512;
-const approvedSources = new Set<string>();
+const approvedSources = new Map<string, string>();
 
 /**
  * Records that the user legitimately selected `absPath` as an import source
- * (via a native dialog or a real OS drop). Idempotent; re-registering refreshes
- * recency so a frequently-used source isn't evicted under churn.
+ * (via a native dialog or a real OS drop), bound to the currently-active vault.
+ * Idempotent; re-registering refreshes recency so a frequently-used source
+ * isn't evicted under churn.
+ *
+ * Audit-14 4.2 — with no active vault there is nothing to bind the approval to,
+ * so the registration is refused. The legitimate dialog/drop minting points
+ * only fire while a vault is open (the file picker is gated on it; an OS drop
+ * targets a board), so this never drops a real approval.
  */
 export function registerApprovedSource(absPath: string): void {
   if (typeof absPath !== 'string' || absPath.length === 0) return;
+  const vaultKey = activeVaultKey();
+  if (vaultKey === null) return;
   const key = normalizeSourceKey(absPath);
   // Delete-then-add bumps recency to the tail so eviction is LRU-ish.
   if (approvedSources.has(key)) approvedSources.delete(key);
-  approvedSources.add(key);
+  approvedSources.set(key, vaultKey);
   while (approvedSources.size > MAX_APPROVED_SOURCES) {
-    const oldest = approvedSources.values().next().value;
+    const oldest = approvedSources.keys().next().value;
     if (oldest === undefined) break;
     approvedSources.delete(oldest);
   }
@@ -77,11 +110,9 @@ export function registerApprovedSource(absPath: string): void {
 /**
  * Audit-13 M11 — drops every approved source. Called on `vault:close` and at the
  * start of the `vault:watch` swap path so a path the user picked while vault A
- * was open does NOT stay approved for vault B. Without this the set is
- * process-global and keyed by absolute path alone: a compromised renderer in a
- * later vault could re-import any file the user ever selected this session. The
- * legitimate dialog/drop registration always runs AFTER the vault is open, so
- * clearing at swap time never wipes the current vault's freshly-picked sources.
+ * was open does NOT stay approved for vault B. Audit-14 4.2's per-source vault
+ * binding now makes a leaked approval unusable across a swap on its own, but
+ * this clear is kept as defence-in-depth (and to bound the map at swap time).
  */
 export function clearApprovedSources(): void {
   approvedSources.clear();
@@ -105,8 +136,9 @@ function isWithinVaultLexical(vaultRoot: string, candidate: string): boolean {
 /**
  * True iff `sourcePath` is an approved `vault:copy-file` source for the given
  * active vault: inside the vault, or previously registered via a trusted
- * dialog/drop. The copy-file handler calls this BEFORE it stats or opens the
- * path, so an unapproved path is never even touched on disk.
+ * dialog/drop AND bound to the currently-active vault. The copy-file handler
+ * calls this BEFORE it stats or opens the path, so an unapproved path is never
+ * even touched on disk.
  */
 export function isApprovedCopySource(vaultRoot: string, sourcePath: string): boolean {
   if (typeof sourcePath !== 'string' || sourcePath.length === 0) return false;
@@ -117,7 +149,15 @@ export function isApprovedCopySource(vaultRoot: string, sourcePath: string): boo
   ) {
     return true;
   }
-  return approvedSources.has(normalizeSourceKey(sourcePath));
+  // Registered external source — the approval is bound to the vault that was
+  // active when it was minted; require that binding to equal the CURRENTLY
+  // active vault (read from the same registry the binding used). So a path
+  // picked under vault A can't be copied into vault B even if the swap-time
+  // clear was somehow skipped.
+  const bound = approvedSources.get(normalizeSourceKey(sourcePath));
+  if (bound === undefined) return false;
+  const current = activeVaultKey();
+  return current !== null && bound === current;
 }
 
 /** Test seam — clears the registry between specs. Not used in production. */

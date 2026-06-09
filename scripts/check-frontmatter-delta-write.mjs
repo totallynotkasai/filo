@@ -179,7 +179,16 @@ const checks = [
       { token: /frontmatterDelta\s*:/, why: 'the orphan write threads frontmatterDelta into writeMarkdownFile' },
     ],
     forbidden: [
-      { token: /\bfrontmatter\s*:/, why: 'a `frontmatter:` whole-object write reintroduces the FILO-UR-1 clean-loop key drop' },
+      // Audit-14 7.8 — tightened from the over-broad `/\bfrontmatter\s*:/` (which
+      // would false-positive ANY future benign `frontmatter:` key — a type
+      // annotation, a read of `frontmatter:` on an options object, etc.) to the
+      // actual regression SHAPE: a `frontmatter:` whose value is an OBJECT LITERAL
+      // (`frontmatter: { ...baseFm, ...patch }` — the FILO-UR-1 clean-loop). The
+      // delta path threads `frontmatterDelta:` (a different key), so the orphan
+      // write never legitimately assigns an object literal to `frontmatter:`. The
+      // byte-survival round-trip in audit11Phase1.test.ts remains the real guard
+      // against an indirect whole-object write the narrowed regex can't see.
+      { token: /\bfrontmatter\s*:\s*\{/, why: 'a `frontmatter: { … }` whole-object write reintroduces the FILO-UR-1 clean-loop key drop' },
     ],
   },
   {

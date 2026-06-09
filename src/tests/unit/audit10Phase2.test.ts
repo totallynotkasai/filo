@@ -124,7 +124,10 @@ describe('Audit-10 H2 — body-only save with an empty FM cache re-reads disk', 
     const docId = 'doc-seeded';
     installDisk('---\ntitle: Seeded\ntags:\n  - a\n---\nbody\n');
     // A normally-hydrated doc: the cache holds the real FM, so buildWriteArgs
-    // threads it (non-empty) — the H2 re-read must NOT engage.
+    // threads it (non-empty) — the H2 re-read must NOT engage. (Audit-15 P2.2
+    // confirmed the body-only path keeps this verbatim passthrough with no
+    // re-read: a clean cache is seeded together with a drift baseline, so the
+    // pre-write drift check — not a re-read — owns external-change detection.)
     documentStore.setFrontmatter(docId, { title: 'Seeded', tags: ['a'] }, 'title: Seeded\ntags:\n  - a');
     markHydrated(relPath, false);
 

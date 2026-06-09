@@ -415,3 +415,36 @@ describe('ReplaceAllCommand — open-editor sync (audit 2.1)', () => {
     expect(documentStore.getDocument('doc-a')?.body).toBe('hello sam');
   });
 });
+
+describe('ReplaceAllCommand — Audit-14 3.1 frontmatter-boundary parity', () => {
+  it('replaces a body match in a file whose fences carry a trailing space (--- )', async () => {
+    // 3.1 — the body offsets the search produced come from `splitFrontmatterSource`
+    // (`FileMetadata.content`), whose fence regex tolerates a trailing space on a
+    // fence (`--- \n`). The replace path used to translate those offsets with a
+    // DIVERGENT local regex (`---\r?\n`) that did NOT tolerate the trailing space:
+    // on such a file it matched nothing, returned fmEnd=0, and every match then
+    // failed the byte-equality guard → silently skipped (or, at a colliding
+    // offset, spliced into the FM). The fix shares `splitFrontmatterSource`, so the
+    // FM byte length matches the offset basis exactly.
+    const original = '--- \ntitle: keep me\n--- \n# Heading\nhello frodo here\n';
+    const filesystem: FileMap = { 'a.md': original };
+    const { writes } = installFiloStub(filesystem);
+    vaultIndexStore.restoreMetadata('a.md', parseMarkdown('a.md', filesystem['a.md']));
+    boardCacheStore.hydrate(
+      { mm: makeMindMap('Board', 'mm', { ta: makeTextDef('ta', 'A', 'a.md') }) },
+      { mm: 'a.board.json' },
+    );
+
+    searchStore.setQuery('frodo');
+    searchStore.setReplaceText('sam');
+    expect(searchStore.matches.length).toBe(1);
+
+    await runReplaceAllCommand();
+
+    // Match found + replaced (the bite: the old regex silently skipped it).
+    expect(writes.some((w) => w.path === 'a.md')).toBe(true);
+    // The frontmatter block (trailing-space fences included) is byte-untouched;
+    // only the body's `frodo` → `sam`.
+    expect(filesystem['a.md']).toBe('--- \ntitle: keep me\n--- \n# Heading\nhello sam here\n');
+  });
+});

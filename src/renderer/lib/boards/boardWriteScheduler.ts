@@ -103,8 +103,12 @@ const boardScheduler = createScheduler<BoardWriteArgs>({
     ...args,
     cached: JSON.parse(JSON.stringify(args.cached)) as V7BoardFileData,
   }),
-  performWrite: async (args) => {
-    await writeBoardFile(args.vaultRoot, args.boardPath, args.cached);
+  performWrite: async (args, ctx) => {
+    // Audit-14 1.4 — thread the per-fire currency check so a board write whose
+    // `board:save` overran `writeTimeoutMs` (and was superseded by a newer write
+    // for the same path) skips its post-write drift-baseline stamp on a late
+    // landing, instead of anchoring the baseline to its now-stale bytes.
+    await writeBoardFile(args.vaultRoot, args.boardPath, args.cached, ctx.isLatestWrite);
   },
   getSentinelInfo: (args) => ({ vaultRoot: args.vaultRoot, path: args.boardPath }),
   getFailureId: (args) => args.boardPath,
@@ -168,6 +172,12 @@ export async function writeBoardFile(
   vaultRoot: string,
   boardPath: string,
   cached: V7BoardFileData,
+  // Audit-14 1.4 — optional currency check from the scheduler. When this write
+  // is no longer the newest fire for `boardPath` (a later write superseded it
+  // while this one's IPC overran the timeout), the post-write baseline stamp is
+  // SKIPPED so it can't anchor the drift baseline to its stale bytes. Defaults
+  // to "latest" for direct (non-scheduler) callers.
+  isLatestWrite?: () => boolean,
 ): Promise<void> {
   const fileData = cached;
   // Stamp the envelope version on every write so files round-trip with a
@@ -313,11 +323,21 @@ export async function writeBoardFile(
     // Audit-4 DI-14 — KEEP the prior baseline on an unusable stat (reverting
     // 6.4.M2's clear): clearing would disable the next write's drift check and
     // open a silent-overwrite window. See `refreshBaselineAfterWrite`.
-    try {
-      const postStat = await invokeOk('vault:stat', vaultRoot, boardPath);
-      refreshBaselineAfterWrite(boardPath, postStat.mtimeMs, postStat.size);
-    } catch {
-      refreshBaselineAfterWrite(boardPath, undefined, undefined);
+    //
+    // Audit-14 1.4 — but ONLY when this write is still the newest for the path.
+    // A superseded write whose `board:save` overran the scheduler's
+    // `writeTimeoutMs` (so a newer write already fired) must not stamp the
+    // baseline: if the OS landed this stale write last, stamping here would
+    // anchor the baseline to the stale bytes and the next drift check would see
+    // "no drift" and never warn. Skipping leaves the baseline stale-vs-disk so
+    // the next external/stale state is still detected as drift.
+    if (!isLatestWrite || isLatestWrite()) {
+      try {
+        const postStat = await invokeOk('vault:stat', vaultRoot, boardPath);
+        refreshBaselineAfterWrite(boardPath, postStat.mtimeMs, postStat.size);
+      } catch {
+        refreshBaselineAfterWrite(boardPath, undefined, undefined);
+      }
     }
   } catch (err) {
     console.error('Failed to save board:', err);

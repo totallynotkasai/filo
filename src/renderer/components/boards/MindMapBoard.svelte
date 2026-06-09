@@ -428,6 +428,13 @@
   //                      cascade-aware confirm gate
   //   • C              — start a connection from the focused tile
   function handleKeydown(e: KeyboardEvent) {
+    // Audit-14 5.1 — pane-scope gate. `<svelte:window onkeydown>` fires for
+    // EVERY mounted Mind Map pane, so without this an inactive split pane would
+    // also act on a bare key: one `n` creating a tile on two boards, arrows
+    // moving the selection in both, Delete/Backspace double-dispatching. Mirror
+    // Kanban / Task List, which gate their shared bare-key shortcuts on the
+    // focused pane (the pointerdown that focuses a pane sets the active scope).
+    if (!isActiveScope(scope)) return;
     // TipTap (and any input/textarea) needs Ctrl+Arrow for word-jump.
     if (isArrowConsumingTarget(document.activeElement)) return;
 
@@ -520,7 +527,15 @@
       return;
     }
 
-    if ((e.key === 'Delete' || e.key === 'Backspace') && !e.ctrlKey && !e.metaKey) {
+    // Audit-14 5.2 — Delete is owned by the GLOBAL gated `tile:delete` command
+    // (AppShell), which also removes selected connections + offers the
+    // delete-backing-file option — richer than this branch, and a single
+    // confirm. Handling `Delete` here too double-dispatched (two confirm
+    // dialogs) even single-pane. `Backspace` stays as a board-local,
+    // tiles-only alias (pane-gated above) so the mind map keeps its
+    // Backspace-to-delete affordance without a second GLOBAL Backspace binding
+    // (which would double-fire against Task List / Kanban rows that bind it).
+    if (e.key === 'Backspace' && !e.ctrlKey && !e.metaKey) {
       const ids = [...selectionStore.selectedIds];
       if (ids.length === 0) return;
       e.preventDefault();

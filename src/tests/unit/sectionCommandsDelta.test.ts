@@ -339,7 +339,7 @@ describe('Audit-6 H1 — ReorderSectionCommand (general N-section reorder)', () 
   });
 });
 
-describe('Audit-6 L22 — persistTaskListStructure forces strictly-increasing section positions', () => {
+describe('SEC-2 — persistTaskListStructure clamps section positions into [0, taskCount]', () => {
   beforeEach(() => {
     installFiloMock(() => null);
     vaultStore.setPath('/vault');
@@ -352,11 +352,13 @@ describe('Audit-6 L22 — persistTaskListStructure forces strictly-increasing se
     boardCacheStore.clear();
   });
 
-  it('de-collides multiple trailing sections whose positions clamp onto taskCount', () => {
-    // 3 tasks exist; three sections whose stored positions all EXCEED taskCount
-    // (3). The bare Math.min clamp would collapse them onto 3 (a tie), making the
-    // task-slice partition order-ambiguous. Strict normalization must return
-    // distinct, strictly-increasing positions while preserving sorted order.
+  it('PINS trailing sections whose positions exceed taskCount AT taskCount (no position > taskCount)', () => {
+    // 3 tasks exist; two sections store positions beyond taskCount (3). They
+    // clamp to taskCount and PIN there as empty tail ties — they are NOT bumped
+    // to taskCount+1, taskCount+2 (the old L22 behavior, which emitted an
+    // invalid `position > taskCount` that can't index `tasks` and misroutes a
+    // later add — SEC-1/SEC-2). Sorted array order is preserved; the LAST tied
+    // section owns any future tail slot via sectionIdForPlacementIndex.
     boardCacheStore.persistTaskListStructure('tl', [
       { id: 'x', title: 'X', position: 0, collapsed: false },
       { id: 'y', title: 'Y', position: 5, collapsed: false },
@@ -364,11 +366,9 @@ describe('Audit-6 L22 — persistTaskListStructure forces strictly-increasing se
     ]);
     const secs = sections();
     expect(secs.map((s) => s.id)).toEqual(['x', 'y', 'z']);
-    const positions = secs.map((s) => s.position);
-    for (let i = 1; i < positions.length; i++) {
-      expect(positions[i]).toBeGreaterThan(positions[i - 1]);
-    }
-    expect(new Set(positions).size).toBe(positions.length);
+    expect(secs.map((s) => s.position)).toEqual([0, 3, 3]);
+    // SEC-2 invariant: no position exceeds taskCount.
+    for (const s of secs) expect(s.position).toBeLessThanOrEqual(3);
   });
 
   it('leaves already strictly-increasing in-range positions unchanged', () => {

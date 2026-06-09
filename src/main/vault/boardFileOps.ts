@@ -1,5 +1,5 @@
 import { promises as fs } from 'fs';
-import { join, dirname, basename } from 'path';
+import { join, dirname } from 'path';
 import { atomicWriteFile, ensureDir, pathExists, sanitizeFilename } from './filenameUtils';
 import { relativePosix } from '../utils/pathHelpers';
 
@@ -108,31 +108,17 @@ async function scanDir(
       // Skip hidden directories (.filo, .git, etc.) and node_modules
       if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
       await scanDir(fullPath, vaultRoot, results);
-    } else if (entry.name.endsWith(BOARD_EXTENSION)) {
+    } else if (entry.name.toLowerCase().endsWith(BOARD_EXTENSION)) {
+      // Audit-15 P1.3 — case-fold the extension match (siblings `fileOps`/the
+      // watcher already do). Filo only ever CREATES lowercase `.board.json`, so
+      // this is robustness against an external tool / cloud sync diverging the
+      // casing: without it, such a board is silently excluded from `board:list`.
       results.push(relativePosix(vaultRoot, fullPath));
     }
   }
 }
 
 // ── Utilities ──
-
-/**
- * Returns the board name from a .board.json filename (strips extension).
- */
-export function boardNameFromPath(filePath: string): string {
-  const base = basename(filePath);
-  if (base.endsWith(BOARD_EXTENSION)) {
-    return base.slice(0, -BOARD_EXTENSION.length);
-  }
-  return base;
-}
-
-/**
- * Checks whether a file path is a .board.json file.
- */
-export function isBoardFile(filePath: string): boolean {
-  return filePath.endsWith(BOARD_EXTENSION);
-}
 
 /**
  * Returns the full absolute path from a vault root and a vault-relative board path.

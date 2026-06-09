@@ -10,6 +10,11 @@ import {
 import { parseMarkdownFile, assembleMarkdownFile } from '@renderer/lib/editor/markdownSync';
 import { valuesEqual } from '@renderer/lib/vault/frontmatterEngine';
 import { patchFrontmatterSourceCst } from '@renderer/lib/vault/frontmatterCstModel';
+import {
+  applyFrontmatterDelta,
+  isEmptyFrontmatterDelta,
+  type FrontmatterDelta,
+} from '@renderer/lib/vault/frontmatterDelta';
 
 /**
  * 1.7 — the frontmatter data-loss invariant gate.
@@ -1047,5 +1052,182 @@ describe('frontmatter object-patch invariant — Phase 6.0 corpus gaps', () => {
     expect(re!.tags).toEqual(['x']);
     expect(re!.title).toBe('Note');
     expect(re!.count).toBe(3);
+  });
+});
+
+/**
+ * Audit-14 7.5 — the Phase-4 DELTA write path across the hostile corpus.
+ *
+ * The invariant suite fuzzed tag-ops + the body-only save, but NOT the
+ * delta-on-fresh-read path the field/popup edits take. The gateway WIRING
+ * (sourcing the delta from a fresh in-chain read, not the cache) is pinned by
+ * `ci:frontmatter-delta-write` + gatewayDeltaWrite.test.ts; this fuzzes the delta
+ * APPLICATION across the hostile corpus. `applyDeltaLikeGateway` mirrors the
+ * gateway branch exactly — parse the disk bytes (the "fresh read"), apply ONLY
+ * the delta keys to `parsed.frontmatter`, assemble against the SAME fresh source
+ * with the fresh-read EOL/BOM — and asserts the Phase-4 guarantee: a field edit
+ * that writes a delta never silently drops the user's OTHER (untouched) keys, and
+ * a block the engine can't model (unresolvable alias / `<<` merge / malformed
+ * YAML) is preserved verbatim while the edit is refused. Bite-check: revert the
+ * delta primitive / the engine's source-preservation → these go red.
+ */
+describe('frontmatter DELTA-write invariant — fresh-read delta across hostile corpus (Audit-14 7.5)', () => {
+  function applyDeltaLikeGateway(diskMd: string, delta: FrontmatterDelta): string {
+    // markdownFileWriter.ts `writeMarkdownFileImpl` delta branch (~L684-759).
+    const parsed = parseMarkdownFile(diskMd);
+    const nextFm = applyFrontmatterDelta(parsed.frontmatter, delta);
+    const freshEol: '\r\n' | '\n' | undefined =
+      diskMd.length === 0 ? undefined : diskMd.includes('\r\n') ? '\r\n' : '\n';
+    return assembleMarkdownFile(nextFm, parsed.body, {
+      bom: parsed.hadBom,
+      rawFrontmatter: parsed.rawFrontmatter,
+      frontmatterDirty: !isEmptyFrontmatterDelta(delta),
+      originalFrontmatter: parsed.rawFrontmatter,
+      eol: freshEol,
+    });
+  }
+
+  /**
+   * SAFE delta write: the body is untouched, and EITHER the disk FM block was
+   * preserved verbatim (refusal — poison/unparseable/empty-object source) OR the
+   * delta applied cleanly and every key the delta did NOT touch keeps its VALUE
+   * (no silent drop). Untouched-scalar BYTE preservation is asserted by the
+   * fuzzer separately, where disjoint delta keys guarantee the patch path.
+   */
+  function assertSafeDeltaWrite(diskMd: string, delta: FrontmatterDelta, label: string): void {
+    const parsed = parseMarkdownFile(diskMd);
+    const out = applyDeltaLikeGateway(diskMd, delta);
+    const inR = fmRegion(diskMd);
+    const outR = fmRegion(out);
+
+    // The delta path NEVER edits body CONTENT; the only transform is assemble's
+    // trailing-newline normalisation (an empty/no-final-newline body gains one).
+    // Compare modulo a single trailing newline so that benign normalisation isn't
+    // read as a body change, while any real content edit still trips.
+    const stripEol = (s: string): string => s.replace(/\r?\n$/, '');
+    expect(stripEol(outR.body), `${label}: body changed`).toBe(stripEol(inR.body));
+    if (!inR.has) return; // no FM on disk — an add-FM write, nothing to preserve.
+
+    const diskKeys = Object.keys(parsed.frontmatter);
+    if (diskKeys.length === 0) {
+      // The source had a block but parsed to {} (unresolvable alias / `<<` merge /
+      // unparseable). The engine refuses + keep-raw preserves it verbatim (the
+      // edit is dropped loudly via onFrontmatterRefused in the real gateway).
+      expect(outR.raw, `${label}: poison/empty FM not preserved verbatim`).toBe(inR.raw);
+      return;
+    }
+
+    const out2 = parseFm(outR.raw);
+    expect(out2, `${label}: delta write produced unparseable FM`).not.toBeNull();
+    if (!out2) return;
+    for (const k of diskKeys) {
+      if (k in delta.set || delta.unset.includes(k)) continue; // touched — checked below
+      expect(out2[k], `${label}: untouched key "${k}" value changed`).toEqual(parsed.frontmatter[k]);
+    }
+    for (const k of Object.keys(delta.set)) {
+      expect(valuesEqual(out2[k], delta.set[k]), `${label}: set key "${k}" wrong`).toBe(true);
+    }
+    for (const k of delta.unset) {
+      if (k in parsed.frontmatter) expect(k in out2, `${label}: unset key "${k}" survived`).toBe(false);
+    }
+  }
+
+  // Field-edit-style keys, DISJOINT from every HOSTILE_CORPUS key, so a generated
+  // delta only ADDs/SETs keys the disk block lacks → the patch never refuses for
+  // a touched anchored key → every disk key stays untouched + byte-preserved.
+  // This is the realistic shape: a Kanban/Task field edit stamps
+  // `completed`/`priority`/`due`, never the user's arbitrary keys.
+  const FIELD_KEYS = ['completed', 'priority', 'due', 'status', 'assignee', 'reviewer'];
+  const fieldValArb = fc.oneof(
+    fc.constant(true),
+    fc.constant(false),
+    fc.constantFrom('high', 'low', 'done', 'todo'),
+    fc.constant('2026-06-08'),
+    fc.integer({ min: 0, max: 99 }),
+  );
+  const deltaArb = fc
+    .record({
+      corpus: fc.constantFrom(...HOSTILE_CORPUS.map((c) => c.md)),
+      setKeys: fc.uniqueArray(fc.constantFrom(...FIELD_KEYS), { maxLength: 3 }),
+      setVals: fc.array(fieldValArb, { maxLength: 3 }),
+      unsetKeys: fc.uniqueArray(fc.constantFrom(...FIELD_KEYS), { maxLength: 2 }),
+    })
+    .map(({ corpus, setKeys, setVals, unsetKeys }) => {
+      const set: Record<string, unknown> = {};
+      setKeys.forEach((k, i) => {
+        set[k] = setVals[i] ?? true;
+      });
+      const unset = unsetKeys.filter((k) => !(k in set)); // never both (delta invariant)
+      return { diskMd: corpus, delta: { set, unset } as FrontmatterDelta };
+    });
+
+  it('a field-edit delta preserves every untouched disk key (value + scalar bytes) or refuses', () => {
+    fc.assert(
+      fc.property(deltaArb, ({ diskMd, delta }) => {
+        assertSafeDeltaWrite(diskMd, delta, 'fuzz');
+        // Disjoint delta keys never touch a disk key, so the patch path always
+        // wins (no dump) → every untouched single-line scalar is byte-preserved.
+        const inR = fmRegion(diskMd);
+        if (!inR.has) return;
+        const parsed = parseMarkdownFile(diskMd);
+        if (Object.keys(parsed.frontmatter).length === 0) return; // poison — verbatim already asserted
+        const outFm = fmRegion(applyDeltaLikeGateway(diskMd, delta)).raw.replace(/\r\n/g, '\n');
+        const outLines = new Set(outFm.split('\n'));
+        for (const k of Object.keys(parsed.frontmatter)) {
+          const line = topLevelKeyLine(inR.raw, k);
+          if (line === null) continue; // bare/nested/sequence — value compare already done
+          expect(outLines.has(line), `fuzz: untouched key "${k}" line canonicalised ("${line}")`).toBe(true);
+        }
+      }),
+      { numRuns: 400 },
+    );
+  });
+
+  // The untested shape the plan calls out: a delta-SET of a key whose disk value
+  // is an unresolvable alias / `<<` merge. The engine refuses (toJS throws), the
+  // assemble keeps the raw block verbatim, the edit is dropped — NEVER a partial
+  // dump that erases the other keys.
+  const POISON_ROWS: ReadonlyArray<{ label: string; md: string }> = [
+    { label: 'unresolvable alias sibling', md: '---\ntitle: X\ntags: *missing\n---\nbody\n' },
+    { label: 'missing-anchor << merge', md: '---\nwidget:\n  <<: *gone\ntitle: X\n---\nbody\n' },
+  ];
+  for (const { label, md } of POISON_ROWS) {
+    it(`refuses + keeps the raw block verbatim on a delta-set: ${label}`, () => {
+      // set a NEW key, and set the poison key itself — both must keep-raw.
+      assertSafeDeltaWrite(md, { set: { priority: 'high' }, unset: [] }, label);
+      assertSafeDeltaWrite(md, { set: { tags: ['x'] }, unset: [] }, `${label} (set poison key)`);
+      expect(fmRegion(applyDeltaLikeGateway(md, { set: { priority: 'high' }, unset: [] })).raw).toBe(
+        fmRegion(md).raw,
+      );
+    });
+  }
+
+  it('a delta that SETS an existing scalar keeps the other siblings byte-identical', () => {
+    const md = '---\ntitle: Note\ncount: 3\nzip: 02134\nflag: true\n---\nbody\n';
+    const out = applyDeltaLikeGateway(md, { set: { count: 4 }, unset: [] });
+    const re = parseFm(fmRegion(out).raw);
+    expect(re).not.toBeNull();
+    expect(re!.count).toBe(4); // delta applied
+    expect(re!.title).toBe('Note');
+    const outLines = fmRegion(out).raw.split('\n');
+    expect(outLines, 'untouched non-canonical scalar canonicalised').toContain('zip: 02134');
+    expect(outLines).toContain('flag: true');
+  });
+
+  it('a delta that UNSETS an existing key drops only it and preserves siblings', () => {
+    const md = '---\ntitle: Note\ncount: 3\nzip: 02134\n---\nbody\n';
+    const out = applyDeltaLikeGateway(md, { set: {}, unset: ['count'] });
+    const re = parseFm(fmRegion(out).raw);
+    expect(re).not.toBeNull();
+    expect('count' in re!, 'unset key survived').toBe(false);
+    expect(re!.title).toBe('Note');
+    expect(fmRegion(out).raw.split('\n'), 'untouched scalar canonicalised').toContain('zip: 02134');
+  });
+
+  it('an empty delta emits the disk frontmatter verbatim (comments + exotic scalars)', () => {
+    const md = '---\n# kept\nzeta: 02134\nalpha: 1_000\n---\nold\n';
+    const out = applyDeltaLikeGateway(md, { set: {}, unset: [] });
+    expect(fmRegion(out).raw).toBe(fmRegion(md).raw);
+    expect(fmRegion(out).body).toBe('old\n');
   });
 });

@@ -148,6 +148,17 @@ export interface RebaseFrontmatterArgs {
   expectedCurrent: Record<string, unknown>;
   /** Label for the conflict toast (the backing file path). */
   label: string;
+  /**
+   * REC-2 — treat `applying` as a semantically-ATOMIC unit on a conflict. A
+   * recurrence roll-forward writes `{ completed: false, dueDate: next }`
+   * together; the default per-key rebase could apply one key and keep the other
+   * external, producing a `completed: true` + advanced-`dueDate` state the
+   * roll-forward invariant must never create. When true, ANY conflict skips the
+   * WHOLE patch (applies nothing) and offers an all-or-nothing "Apply anyway".
+   * Omitted/false ⇒ the per-key safe-merge below (correct for independent
+   * multi-field edits like a Properties popup).
+   */
+  atomic?: boolean;
 }
 
 /**
@@ -157,7 +168,7 @@ export interface RebaseFrontmatterArgs {
  * matching the post-merge bookkeeping the callers used to do inline.
  */
 export function applyFrontmatterPatchRebased(args: RebaseFrontmatterArgs): void {
-  const { docId, relPath, targetBoardId, applying, expectedCurrent, label } = args;
+  const { docId, relPath, targetBoardId, applying, expectedCurrent, label, atomic } = args;
 
   const commit = (patch: Record<string, unknown>): void => {
     // Phase 4 — mergeFrontmatter keeps the DISPLAY cache live (Kanban cards /
@@ -184,6 +195,24 @@ export function applyFrontmatterPatchRebased(args: RebaseFrontmatterArgs): void 
 
   if (conflicts.length === 0) {
     commit(applying);
+    return;
+  }
+
+  if (atomic) {
+    // REC-2 — the patch is a coupled pair (recurrence roll-forward). Don't split
+    // it: a partial apply could leave `completed: true` with an advanced
+    // `dueDate`. Apply NOTHING and offer to force the whole patch.
+    uiStore.pushToast({
+      text: `External edit changed ${conflicts.join(', ')} in ${label}. Skipped this undo/redo to keep the recurring task consistent.`,
+      type: 'warning',
+      duration: 0,
+      actions: [
+        {
+          label: 'Apply anyway',
+          handler: () => commit(applying),
+        },
+      ],
+    });
     return;
   }
 

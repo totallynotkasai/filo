@@ -38,6 +38,7 @@ import { invokeOk } from '../lib/utils/invokeOk';
 import { reportError } from '../lib/utils/errorBus';
 import { writeMarkdownAndReconcile } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
 import { runSerializedMarkdownWrite } from '../lib/vault/markdownFileWriter';
+import { splitFrontmatterSource } from '../lib/vault/frontmatterRead';
 
 interface FilePlan {
   /** Vault-relative path of the .md file. */
@@ -94,9 +95,21 @@ async function buildPlans(
     // The match offsets in `SearchMatch.matchStart` / `matchEnd` are
     // computed against the parsed BODY (FileMetadata.content), not the
     // raw file (which also contains the YAML frontmatter block at the
-    // top). Compute the frontmatter byte length so we can translate body
-    // offsets back into raw-file offsets when we splice the replacement.
-    const fmEnd = findFrontmatterEnd(content);
+    // top). Translate body offsets back into raw-file offsets by measuring
+    // the frontmatter prefix with the SAME splitter the search index used.
+    //
+    // 3.1 (Audit-14) — `FileMetadata.content` is produced by
+    // `splitFrontmatterSource` (see `lib/vault/vaultIndex.ts`), so the FM byte
+    // length MUST come from that exact splitter or the offsets diverge. A prior
+    // local `findFrontmatterEnd` regex (`---\r?\n`) disagreed with the index's
+    // fence regex (`---[ \t]*\r?\n`) on a trailing-space fence (`--- \n`):
+    // it matched nothing, returned 0, and every match then failed the
+    // byte-equality guard below (silent skip) — or, at a colliding offset,
+    // could splice into the frontmatter. The body is a suffix of `content`
+    // (the splitter strips a BOM then slices), so its start offset in the raw
+    // file is exactly `content.length - body.length`.
+    const { body: indexedBody } = splitFrontmatterSource(content);
+    const fmEnd = content.length - indexedBody.length;
 
     // Sort matches by descending start offset so each splice doesn't
     // shift the offsets of later matches.
@@ -123,30 +136,6 @@ async function buildPlans(
     return { ok: false, failedPaths };
   }
   return { ok: true, plans };
-}
-
-/**
- * Locates the byte offset where the YAML frontmatter ends in a raw file.
- * Returns 0 when no frontmatter is present. Used to translate body-relative
- * match offsets (from `FileMetadata.content`) into raw-file offsets for the
- * splice-based replacement.
- *
- * Conservative: only recognises the canonical `---\n…---\n` envelope at the
- * head of the file. Files with leading whitespace or BOM still parse but
- * with `fmEnd` correctly reflecting the BOM/whitespace prefix.
- */
-function findFrontmatterEnd(raw: string): number {
-  // Strip BOM if present so the regex anchors cleanly.
-  let prefix = 0;
-  // allow-bom-sniff: `raw` is the unmodified byte payload from `vault:read-file-text` (no BOM-stripping intermediate), so this is the legitimate gateway-side sniff
-  if (raw.charCodeAt(0) === 0xfeff) prefix = 1;
-  // Body parsing in `gray-matter` strips frontmatter regardless of whitespace
-  // before the leading fence, so accept whitespace before the first `---`.
-  const rest = raw.slice(prefix);
-  const FRONTMATTER_RE = /^\s*---\r?\n([\s\S]*?)\r?\n---\r?\n/;
-  const m = rest.match(FRONTMATTER_RE);
-  if (!m) return 0;
-  return prefix + m[0].length;
 }
 
 export class ReplaceAllCommand extends Command {

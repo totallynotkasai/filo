@@ -271,9 +271,12 @@ describe('AddTaskCommand targetSectionId disambiguation', () => {
     const tl = boardCacheStore.cache.tl.board as TaskListBoard;
     const sections = (tl.sections ?? []) as TaskListSection[];
 
-    // B must shift to 4; C keeps its position 3 so the new task at index
-    // 3 belongs to C this time.
-    expect(sections.find((s) => s.id === 'b')?.position).toBe(4);
+    // C is the LAST tied section (array order [a, b, c]), so it naturally owns
+    // the new tail slot — no section needs to move. Both B and C stay at 3
+    // (the sorted, no-position-bump representation); the new task at index 3
+    // resolves to C because sectionIdForPlacementIndex picks the last tied
+    // section. (Pre-fix this bumped B to 4, leaving the array mis-sorted.)
+    expect(sections.find((s) => s.id === 'b')?.position).toBe(3);
     expect(sections.find((s) => s.id === 'c')?.position).toBe(3);
     expect(sectionIdForPlacementIndex(sections, 3)).toBe('c');
   });

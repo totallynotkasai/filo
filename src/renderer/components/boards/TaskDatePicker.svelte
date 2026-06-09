@@ -14,6 +14,7 @@
   import { portal } from '../../lib/utils/portal';
   import { tick } from 'svelte';
   import { SvelteDate } from 'svelte/reactivity';
+  import { DatePickerViewState } from '../../lib/tasklist/datePickerViewState.svelte';
   let {
     value,
     time = '',
@@ -53,50 +54,24 @@
     return toIso(d);
   }
 
-  function parseIso(iso: string): Date | null {
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-    if (!m) return null;
-    return new Date(parseInt(m[1] ?? '', 10), parseInt(m[2] ?? '', 10) - 1, parseInt(m[3] ?? '', 10));
-  }
-
-  // View month/year — initialised to the current value's month, today otherwise.
-  let viewYear = $state(0);
-  let viewMonth = $state(0);
-
+  // View month/year is owned by DatePickerViewState so the "seed once per value,
+  // never reset on navigation" logic (DATE-1) is unit-tested in isolation — the
+  // repo's vitest setup can't mount a Svelte component that has a scoped style
+  // block.
+  const view = new DatePickerViewState();
   $effect(() => {
-    // Re-seed when the popover (re-)opens with a fresh value. Pure idempotent
-    // assignments inside the effect avoid an extra render.
-    const seed = parseIso(value) ?? new Date();
-    if (viewYear !== seed.getFullYear() || viewMonth !== seed.getMonth()) {
-      viewYear = seed.getFullYear();
-      viewMonth = seed.getMonth();
-    }
+    // Reads ONLY `value`; the view-state decides whether `value` actually
+    // changed before re-seeding, so the ‹/› arrows (which mutate the view but
+    // not `value`) are never clobbered by this effect.
+    view.syncToValue(value);
   });
 
   let monthLabel = $derived(
-    new Date(viewYear, viewMonth, 1).toLocaleDateString(undefined, {
+    new Date(view.viewYear, view.viewMonth, 1).toLocaleDateString(undefined, {
       month: 'long',
       year: 'numeric',
     }),
   );
-
-  function prevMonth() {
-    if (viewMonth === 0) {
-      viewMonth = 11;
-      viewYear -= 1;
-    } else {
-      viewMonth -= 1;
-    }
-  }
-
-  function nextMonth() {
-    if (viewMonth === 11) {
-      viewMonth = 0;
-      viewYear += 1;
-    } else {
-      viewMonth += 1;
-    }
-  }
 
   interface GridCell {
     iso: string;
@@ -109,9 +84,9 @@
   // Calendar grid: 6 rows × 7 columns, padded so the first cell is the
   // Sunday on or before the 1st of the visible month.
   let grid = $derived.by<GridCell[]>(() => {
-    const first = new Date(viewYear, viewMonth, 1);
+    const first = new Date(view.viewYear, view.viewMonth, 1);
     const startOffset = first.getDay(); // 0 = Sun
-    const start = new Date(viewYear, viewMonth, 1 - startOffset);
+    const start = new Date(view.viewYear, view.viewMonth, 1 - startOffset);
     const today = todayIso();
     const cells: GridCell[] = [];
     for (let i = 0; i < 42; i++) {
@@ -121,7 +96,7 @@
       cells.push({
         iso,
         day: d.getDate(),
-        inMonth: d.getMonth() === viewMonth,
+        inMonth: d.getMonth() === view.viewMonth,
         isToday: iso === today,
         isSelected: iso === value,
       });
@@ -143,6 +118,10 @@
 
   function handleTimeInput(e: Event) {
     const t = (e.currentTarget as HTMLInputElement).value;
+    // DATE-2 — refuse an orphan time (a dueTime with no dueDate is invisible:
+    // the chip only renders inside `{#if dueDate}`). The input is also disabled
+    // when there's no date, so this is a belt-and-suspenders guard.
+    if (!value) return;
     onPickTime?.(t);
   }
 
@@ -213,13 +192,13 @@
     </div>
 
     <div class="month-header">
-      <button class="nav-btn" onclick={prevMonth} aria-label="Previous month">
+      <button class="nav-btn" onclick={() => view.prevMonth()} aria-label="Previous month">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
           <polyline points="15 18 9 12 15 6" />
         </svg>
       </button>
       <span class="month-label">{monthLabel}</span>
-      <button class="nav-btn" onclick={nextMonth} aria-label="Next month">
+      <button class="nav-btn" onclick={() => view.nextMonth()} aria-label="Next month">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
           <polyline points="9 18 15 12 9 6" />
         </svg>
@@ -256,7 +235,9 @@
           type="time"
           class="time-input"
           value={time}
-          oninput={handleTimeInput}
+          disabled={!value}
+          title={value ? '' : 'Pick a date first'}
+          onchange={handleTimeInput}
         />
         {#if time}
           <button
@@ -433,6 +414,11 @@
 
   .time-input:focus:not(:focus-visible) {
     outline: none;
+  }
+
+  .time-input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .time-clear {

@@ -118,7 +118,10 @@ const failures = [];
 
 // ── Target 1: the vault:copy-file handler must validate the SOURCE. ──────────
 {
-  const file = 'src/main/ipc/vault.ipc.ts';
+  // Audit-14 6.1 — the vault:copy-file handler was split into its own file when
+  // vault.ipc.ts was trimmed back under the 1000-LOC ceiling. (vault:close /
+  // vault:watch — Target 3 — stayed in vault.ipc.ts.)
+  const file = 'src/main/ipc/vaultCopy.ipc.ts';
   let raw;
   try {
     raw = readFileSync(join(ROOT, file), 'utf8');

@@ -38,14 +38,17 @@ interface Window {
 }
 
 /**
- * Vite-injected build-time flags. We only consume `DEV` (true in dev builds,
- * false in production) for the dev-only invariant guards — bringing in the
- * full `vite/client` reference would also pull glob-import / asset-URL types
- * we don't use.
+ * Vite-injected build-time flags. We consume `DEV` (true in dev builds, false in
+ * production) for the dev-only invariant guards, plus `MODE` (the literal build
+ * mode: `'development'` under `npm run dev`, `'production'` for a packaged build,
+ * `'test'` under vitest) so a dev-only tripwire can stay silent in the test
+ * runner (Audit-14 6.2). Bringing in the full `vite/client` reference would also
+ * pull glob-import / asset-URL types we don't use.
  */
 interface ImportMetaEnv {
   readonly DEV: boolean;
   readonly PROD: boolean;
+  readonly MODE: string;
 }
 interface ImportMeta {
   readonly env: ImportMetaEnv;

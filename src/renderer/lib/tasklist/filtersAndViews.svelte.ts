@@ -44,8 +44,9 @@ export interface SavedView {
  * value lives in a hand-editable .board.json.
  */
 export interface LastViewSlice {
-  groupBy?: GroupBy;
-  sortBy?: SortBy;
+  // VIEW-5 — groupBy/sortBy are NOT part of lastView: they live canonically in
+  // board settings and `hydrateFromLastView` never reads them back. They used to
+  // be written here, double-writing .board.json on every sort/group change.
   filterTags?: string[];
   filterStatus?: string | null;
   filterPriority?: Priority | null;
@@ -197,8 +198,7 @@ export class TaskListFiltersAndViews {
    */
   buildLastView(): LastViewSlice {
     return {
-      groupBy: this.deps.getGroupBy(),
-      sortBy: this.deps.getSortBy(),
+      // VIEW-5 — groupBy/sortBy intentionally omitted (see LastViewSlice).
       filterTags: [...this.activeFilterTags],
       filterStatus: this.activeFilterStatus,
       filterPriority: this.activeFilterPriority,

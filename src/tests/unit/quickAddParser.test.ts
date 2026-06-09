@@ -214,6 +214,60 @@ describe('parseQuickAdd: dates', () => {
   });
 });
 
+describe('parseQuickAdd: invalid dates stay in the title (QA-1/2/3)', () => {
+  // The handlers must reject impossible/overflow dates so they are never written
+  // verbatim to canonical frontmatter (where the app would then render/treat
+  // them as a rolled-over day). A rejected token is left in the title untouched.
+
+  it('QA-1: rejects an impossible ISO day (Feb 30)', () => {
+    const r = parseQuickAdd('Pay rent 2026-02-30', { now: NOW });
+    expect(r.dueDate).toBeUndefined();
+    expect(r.title).toBe('Pay rent 2026-02-30');
+  });
+
+  it('QA-1: rejects an out-of-range ISO month (13) and zero month/day', () => {
+    expect(parseQuickAdd('x 2026-13-01', { now: NOW }).dueDate).toBeUndefined();
+    expect(parseQuickAdd('x 2026-00-00', { now: NOW }).dueDate).toBeUndefined();
+    expect(parseQuickAdd('x 2026-02-00', { now: NOW }).dueDate).toBeUndefined();
+  });
+
+  it('QA-2: rejects M/D Feb 30 instead of rolling it to next-year Mar 2', () => {
+    const r = parseQuickAdd('Pay rent 2/30', { now: NOW });
+    expect(r.dueDate).toBeUndefined();
+    expect(r.title).toBe('Pay rent 2/30');
+  });
+
+  it('QA-2: rejects M/D Apr 31', () => {
+    expect(parseQuickAdd('x 4/31', { now: NOW }).dueDate).toBeUndefined();
+  });
+
+  it('QA-2: rejects 2/29 in a non-leap year (NOW=2026)', () => {
+    expect(parseQuickAdd('x 2/29', { now: NOW }).dueDate).toBeUndefined();
+  });
+
+  it('QA-3: rejects a numeric-overflow offset instead of writing NaN-NaN-NaN', () => {
+    const r = parseQuickAdd('Do thing in 99999999999999999999d', { now: NOW });
+    expect(r.dueDate).toBeUndefined();
+    expect(r.title).toBe('Do thing in 99999999999999999999d');
+  });
+
+  it('QA-3: rejects an out-of-bounds month/week offset', () => {
+    expect(parseQuickAdd('x in 9999999999m', { now: NOW }).dueDate).toBeUndefined();
+    expect(parseQuickAdd('x in 4000w', { now: NOW }).dueDate).toBeUndefined();
+  });
+
+  it('CONTROL: a leap-day 2/29 still parses in a leap year (NOW=2028)', () => {
+    const leapNow = new Date(2028, 0, 10, 10, 0); // 2028-01-10, before Feb 29
+    expect(parseQuickAdd('x 2/29', { now: leapNow }).dueDate).toBe('2028-02-29');
+  });
+
+  it('CONTROL: valid ISO + M/D + bounded offset still parse', () => {
+    expect(parseQuickAdd('x 2026-12-31', { now: NOW }).dueDate).toBe('2026-12-31');
+    expect(parseQuickAdd('x 6/1', { now: NOW }).dueDate).toBe('2026-06-01');
+    expect(parseQuickAdd('x in 30d', { now: NOW }).dueDate).toBe('2026-06-14');
+  });
+});
+
 describe('parseQuickAdd: start date (caret prefix)', () => {
   it('parses ^tomorrow as startDate, no dueDate', () => {
     const r = parseQuickAdd('Defer me ^tomorrow', { now: NOW });
@@ -278,5 +332,90 @@ describe('parseQuickAdd: combined', () => {
     expect(r.tags).toEqual(['urgent']);
     expect(r.priority).toBe('high');
     expect(r.dueDate).toBe('2026-05-16');
+  });
+});
+
+describe('parseQuickAdd: malformed @time stays in the title (QA-4)', () => {
+  it('keeps a non-time @token in the title instead of swallowing it', () => {
+    const r = parseQuickAdd('Meet @99 East St', { now: NOW });
+    expect(r.dueTime).toBeUndefined();
+    expect(r.title).toBe('Meet @99 East St');
+  });
+
+  it('keeps an invalid am/pm @time in the title', () => {
+    const r = parseQuickAdd('x @13pm', { now: NOW });
+    expect(r.dueTime).toBeUndefined();
+    expect(r.title).toBe('x @13pm');
+  });
+});
+
+describe('parseQuickAdd: am/pm hour bounds (QA-5)', () => {
+  it('rejects @13pm..@23pm (the suffix is meaningless past 12)', () => {
+    expect(parseQuickAdd('x @13pm', { now: NOW }).dueTime).toBeUndefined();
+    expect(parseQuickAdd('x @23pm', { now: NOW }).dueTime).toBeUndefined();
+  });
+
+  it('rejects @0am (use @12am for midnight)', () => {
+    expect(parseQuickAdd('x @0am', { now: NOW }).dueTime).toBeUndefined();
+  });
+
+  it('still accepts the valid am/pm range', () => {
+    expect(parseQuickAdd('x @1pm', { now: NOW }).dueTime).toBe('13:00');
+    expect(parseQuickAdd('x @11pm', { now: NOW }).dueTime).toBe('23:00');
+    expect(parseQuickAdd('x @12am', { now: NOW }).dueTime).toBe('00:00');
+    expect(parseQuickAdd('x @12pm', { now: NOW }).dueTime).toBe('12:00');
+  });
+});
+
+describe('parseQuickAdd: duplicate tokens stripped, first wins (QA-8)', () => {
+  it('strips a second @time from the title', () => {
+    const r = parseQuickAdd('x @9am @5pm', { now: NOW });
+    expect(r.dueTime).toBe('09:00');
+    expect(r.title).toBe('x');
+  });
+
+  it('strips a second !priority from the title', () => {
+    const r = parseQuickAdd('x !high !low', { now: NOW });
+    expect(r.priority).toBe('high');
+    expect(r.title).toBe('x');
+  });
+
+  it('strips a second =status from the title', () => {
+    const r = parseQuickAdd('x =todo =done', { now: NOW });
+    expect(r.status).toBe('todo');
+    expect(r.title).toBe('x');
+  });
+});
+
+describe('parseQuickAdd: status case + tag case (QA-9)', () => {
+  it('lowercases status at write (FIELD_READERS.status reads it lowercased)', () => {
+    const r = parseQuickAdd('Build feature =In-Progress', { now: NOW });
+    expect(r.status).toBe('in-progress');
+  });
+
+  it('preserves tag case (tags are NOT read lowercased)', () => {
+    // DECISION: tags keep their authored case — every other tag-add path does,
+    // and FIELD_READERS.tags / normalizeTagsField do not lowercase. Only status
+    // is lowercased at write.
+    const r = parseQuickAdd('x #Work', { now: NOW });
+    expect(r.tags).toEqual(['Work']);
+  });
+});
+
+describe('parseQuickAdd: next-weekday is one uniform rule (QA-6)', () => {
+  // NOW = Friday 2026-05-15. "next <wd>" = soonest occurrence STRICTLY after
+  // today, applied identically to every weekday (today excluded ⇒ same weekday
+  // lands a week out).
+  it('next sat = +1 (this coming Saturday)', () => {
+    expect(parseQuickAdd('x next sat', { now: NOW }).dueDate).toBe('2026-05-16');
+  });
+  it('next sun = +2 (this coming Sunday)', () => {
+    expect(parseQuickAdd('x next sun', { now: NOW }).dueDate).toBe('2026-05-17');
+  });
+  it('next thu = +6 (this coming Thursday)', () => {
+    expect(parseQuickAdd('x next thu', { now: NOW }).dueDate).toBe('2026-05-21');
+  });
+  it('next fri (same weekday) = +7, not today', () => {
+    expect(parseQuickAdd('x next fri', { now: NOW }).dueDate).toBe('2026-05-22');
   });
 });

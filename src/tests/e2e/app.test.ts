@@ -6,7 +6,7 @@ let window: Awaited<ReturnType<typeof electronApp.firstWindow>>;
 
 test.beforeAll(async () => {
   electronApp = await electron.launch({
-    args: [path.join(__dirname, '..', '..', '..', 'dist-electron', 'main', 'main.js')],
+    args: [path.join(__dirname, '..', '..', '..', 'dist', 'main', 'main.js')],
     env: {
       ...process.env,
       NODE_ENV: 'test',
@@ -67,25 +67,34 @@ test.describe('Filo E2E — App Shell', () => {
     const dropdown = window.locator('.dropdown-trigger').first();
     await dropdown.click();
 
-    // Click Project Settings
+    // Audit-14 7.6 — the Project Settings entry must be reachable. The prior
+    // `if (await settingsBtn.isVisible())` guard made the whole test vacuous: it
+    // silently passed when the dropdown never rendered the entry. Assert it
+    // exists, then drive the open/close flow with real assertions.
     const settingsBtn = window.locator('text=Project Settings').first();
-    if (await settingsBtn.isVisible()) {
-      await settingsBtn.click();
+    await expect(settingsBtn).toBeVisible({ timeout: 3000 });
+    await settingsBtn.click();
 
-      // Settings modal should appear
-      const modal = window.locator('.modal-dialog');
-      await expect(modal).toBeVisible({ timeout: 3000 });
+    // Settings modal should appear…
+    const modal = window.locator('.modal-dialog');
+    await expect(modal).toBeVisible({ timeout: 3000 });
 
-      // Close modal
-      await window.keyboard.press('Escape');
-    }
+    // …and Escape should close it.
+    await window.keyboard.press('Escape');
+    await expect(modal).toBeHidden({ timeout: 3000 });
   });
 
   test('keyboard shortcuts work', async () => {
-    // Ctrl+F should open find/replace
-    await window.keyboard.press('Control+f');
-    // The modal might open
-    await window.waitForTimeout(300);
+    // Audit-14 7.6 — assert a real effect instead of pressing a key and checking
+    // nothing. Ctrl+Shift+F is the vault-wide Search shortcut (AppShell registers
+    // `vault:search` on { key:'f', ctrl:true, shift:true } → searchStore.openPanel).
+    // The prior test pressed the wrong combo (Control+f) and asserted nothing.
+    await window.keyboard.press('Control+Shift+F');
+    const searchPanel = window.locator('.search-panel');
+    await expect(searchPanel).toBeVisible({ timeout: 3000 });
+
+    // Escape closes it (the role="search" landmark captures the bubbled Escape).
     await window.keyboard.press('Escape');
+    await expect(searchPanel).toBeHidden({ timeout: 3000 });
   });
 });

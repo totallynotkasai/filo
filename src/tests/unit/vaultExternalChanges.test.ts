@@ -16,6 +16,10 @@ import {
   __resetDirtyTrackingForTests,
 } from '@renderer/lib/boards/writeStateTracking';
 import { beginVaultGeneration } from '@renderer/lib/vault/vaultIdentity';
+import {
+  markPropertiesPopupDirty,
+  __resetPropertiesPopupTrackerForTests,
+} from '@renderer/lib/vault/propertiesPopupTracker';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
@@ -520,6 +524,113 @@ describe('vaultExternalChanges — 6.2.H1: sync-frontmatter refreshes originalFr
     // body-only save's diff would re-emit `priority: high` and lose the
     // comment because the source the engine diffs against still said `low`.
     const baseline = documentStore.getOriginalFrontmatterSource('doc_H1');
+    expect(baseline).toBeDefined();
+    expect(baseline).toContain('priority: high');
+    expect(baseline).toContain('# inline note');
+  });
+});
+
+/**
+ * Audit-15 P2.1 — the Properties-popup-modified Reload handler
+ * (`promptPropertiesPopupModified`) must thread `next.rawFrontmatter` into
+ * `setFrontmatter`, mirroring the 6 sibling reload sites (L1/L13). Pre-fix it
+ * called `setFrontmatter(docId, next.frontmatter)` with NO raw bytes, so
+ * `originalFrontmatterCache` stayed at the pre-external-edit source: a later
+ * body-only save would diff fresh FM against the stale baseline and could lose
+ * an external key's inline comment / quoting.
+ */
+describe('vaultExternalChanges — P2.1: Properties-popup Reload refreshes originalFrontmatterSource', () => {
+  let ctx: VaultContext;
+  let slice: ReturnType<typeof makeExternalChangesSlice>;
+
+  beforeEach(() => {
+    documentStore.clear();
+    vaultIndexStore.clear();
+    clearToasts();
+    __resetPropertiesPopupTrackerForTests();
+    vaultStore.setPath('/vault');
+    ctx = {
+      getVaultPath: () => '/vault',
+      setVaultPath: () => {},
+      getFileTree: () => [],
+      setFileTree: () => {},
+      getSearchQuery: () => '',
+      setSearchQuery: () => {},
+      getIsLoading: () => false,
+      setIsLoading: () => {},
+      getExpandedFolders: () => new Set(),
+      setExpandedFolders: () => {},
+      getSelectedPaths: () => new Set(),
+      setSelectedPaths: () => {},
+      getProject: () => null,
+      setProject: () => {},
+      getRecoveryPendingPaths: () => [],
+      setRecoveryPendingPaths: () => {},
+      markMetaDirty: () => {},
+      refreshTree: async () => {},
+      clearSelection: () => {},
+      clearActiveRootFolderIfMatches: () => {},
+    };
+    slice = makeExternalChangesSlice(ctx);
+  });
+
+  afterEach(() => {
+    restoreFiloDefault();
+    vaultStore.setPath('');
+    documentStore.clear();
+    vaultIndexStore.clear();
+    clearToasts();
+    __resetPropertiesPopupTrackerForTests();
+  });
+
+  it('Reload threads next.rawFrontmatter so the baseline reflects the external bytes', async () => {
+    const initial = '---\ntitle: Hello\npriority: low   # inline note\n---\nbody';
+    installFiloMock((channel: string) => {
+      if (channel === 'vault:read-file-text') return { success: true, content: initial };
+      return { success: true };
+    });
+    await vaultIndexStore.applyChanges(['Note.md']);
+
+    documentStore.loadDocument({
+      docId: 'doc_P21',
+      filename: 'Note.md',
+      title: 'Note',
+      body: 'body',
+      htmlContent: '<p>body</p>',
+      richText: [],
+    });
+    documentStore.setFrontmatter(
+      'doc_P21',
+      { title: 'Hello', priority: 'low' },
+      'title: Hello\npriority: low   # inline note',
+    );
+
+    // A Properties popup is open + dirty for this path → the classifier routes a
+    // frontmatter-only external edit to promptPropertiesPopupModified (not a
+    // silent sync-frontmatter).
+    markPropertiesPopupDirty('props-caller', 'Note.md');
+
+    // External editor flips priority and keeps the inline comment (body unchanged).
+    const updated = '---\ntitle: Hello\npriority: high   # inline note\n---\nbody';
+    installFiloMock((channel: string) => {
+      if (channel === 'vault:read-file-text') return { success: true, content: updated };
+      return { success: true };
+    });
+
+    await slice.handleExternalMarkdownChanges(['Note.md']);
+
+    const toast = uiStore.toasts.find((t) =>
+      /Properties of .* were modified externally/.test(t.text),
+    );
+    expect(toast).toBeDefined();
+    expect(toast!.actions?.[0].label).toBe('Reload');
+
+    toast!.actions![0].handler(); // Reload
+
+    // P2.1: the baseline now reflects the post-external raw bytes (still carrying
+    // the inline comment). Bite: pre-fix setFrontmatter omitted rawFrontmatter,
+    // so this stayed at the pre-edit `priority: low` source.
+    const baseline = documentStore.getOriginalFrontmatterSource('doc_P21');
     expect(baseline).toBeDefined();
     expect(baseline).toContain('priority: high');
     expect(baseline).toContain('# inline note');

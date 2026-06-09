@@ -451,34 +451,22 @@
       return;
     }
 
-    const sortedReal = [...sections].sort((a, b) => a.position - b.position);
-    const realById = new SvelteMap(sortedReal.map((s) => [s.id, s]));
-    const leadingEnd = sortedReal[0]?.position ?? placements.length;
-    const leadingSlice = placements.slice(0, leadingEnd);
-    const sliceById = new SvelteMap<string, TaskPlacement[]>();
-    for (let i = 0; i < sortedReal.length; i++) {
-      const s = sortedReal[i];
-      if (!s) continue; // i < sortedReal.length; narrow for the type-checker
-      const start = s.position;
-      const end = sortedReal[i + 1]?.position ?? placements.length;
-      sliceById.set(s.id, placements.slice(start, end));
-    }
-
-    const nextPlacements: TaskPlacement[] = [...leadingSlice];
+    // VIEW-6 — ReorderSectionCommand consumes ONLY the new section ID ORDER (it
+    // sorts `after.sections` by position; `applySectionOrderLive` then recomputes
+    // every position AND re-slices `tasks` from the live cache). So emit just the
+    // real sections renumbered into the dropped order — the old leadingSlice /
+    // per-section placement rebuild was dead work the command threw away.
+    const realById = new SvelteMap(sections.map((s) => [s.id, s]));
     const nextSections: TaskListSection[] = [];
-    let pos = leadingSlice.length;
+    let pos = 0;
     for (const id of newOrderedIds) {
       if (id === DEFAULT_SECTION_ID) continue;
       const oldSection = realById.get(id);
-      const slice = sliceById.get(id) ?? [];
-      if (!oldSection) continue;
-      nextSections.push({ ...oldSection, position: pos });
-      nextPlacements.push(...slice);
-      pos += slice.length;
+      if (oldSection) nextSections.push({ ...oldSection, position: pos++ });
     }
     const beforeSnap = snapshotSections();
     historyStore.execute(
-      new ReorderSectionCommand(board.id, beforeSnap, { sections: nextSections, tasks: nextPlacements }),
+      new ReorderSectionCommand(board.id, beforeSnap, { sections: nextSections, tasks: [] }),
     );
     tickAndPersist();
     // Mirror the committed order so the dndzone's keyed each renders the
@@ -667,7 +655,7 @@
   $effect(() => {
     const id = board?.id;
     untrack(() => {
-      if (id) lastTargetedSectionId = null;
+      if (id) { lastTargetedSectionId = null; collapsedGroups.clear(); } // VIEW-1: group-collapse is per-board
     });
     void id;
   });
@@ -718,6 +706,7 @@
     buildTaskFieldCommand,
     tickAndPersist,
     announce,
+    pruneSelection: (ids) => multiSelect.pruneSelection(ids), // SEL-2
   });
   const deleteTask = taskDeleter.deleteTask;
   const deleteTaskWithFile = taskDeleter.deleteTaskWithFile;
@@ -785,6 +774,9 @@
         'info',
         3500,
       );
+    } else if (desiredSafe !== trimmed) {
+      // REN-2 — sanitization changed the title (illegal/reserved), e.g. "???"→"Untitled".
+      uiStore.toast(`"${trimmed}" isn't a valid file name — saved as "${finalTitle}".`, 'info', 3500);
     }
 
     // Phase 7 / 7.9 — route through RenameTitleCommand so Ctrl+Z reverses
@@ -800,10 +792,13 @@
       const root = vaultRoot.replace(/[\\/]+$/, '');
       const renameResult = await vaultStore.rename(`${root}/${oldRel}`, `${root}/${newRel}`);
       if (!renameResult.success) {
-        const msg = renameResult.code === 'ENOENT'
-          ? `Task file '${oldRel}' is no longer on disk`
+        const code = renameResult.code;
+        // VIEW-2 — surface a real-disk collision (the IPC refuses to clobber)
+        // distinctly from a missing source or a generic failure.
+        const msg = code === 'ENOENT' ? `Task file '${oldRel}' is no longer on disk`
+          : code === 'TARGET_EXISTS' ? `A file named '${newRel}' already exists on disk`
           : 'Failed to rename task file';
-        uiStore.toast(msg, renameResult.code === 'ENOENT' ? 'warning' : 'error', 2500);
+        uiStore.toast(msg, code === 'ENOENT' || code === 'TARGET_EXISTS' ? 'warning' : 'error', 2500);
         return;
       }
       // Disk rename succeeded; push the command with pushWithoutExecute so
@@ -929,17 +924,18 @@
     commitIndent: (tileId, newParent) => {
       const row = viewModel.rows.find((r) => r.tile.id === tileId);
       if (!row || !board) return;
+      // VIEW-3 — auto-expand a collapsed new-parent on BOTH paths (command +
+      // docId-less fallback), else the indented child is swallowed under the
+      // collapsed parent until the chevron is clicked. The command path batches
+      // the expand into the same undo unit; the rare fallback expands separately.
+      const expandParent = collapsedSubtasks.has(newParent);
       const cmd = buildTaskFieldCommand(row, { parent: newParent }, 'Indent task');
       if (!cmd) {
-        // Tile has no docId — fall back to the legacy direct path.
+        if (expandParent) toggleSubtaskCollapsed(newParent);
         updateRowField(row, { parent: newParent });
         return;
       }
-      // If the new parent is collapsed, auto-expand it as part of the same
-      // undo unit so a single Ctrl+Z restores both the indent and the prior
-      // collapsed state. Otherwise dropping a child into a collapsed parent
-      // would visually swallow the row until the user clicks the chevron.
-      if (collapsedSubtasks.has(newParent)) {
+      if (expandParent) {
         const before = Array.from(collapsedSubtasks);
         const afterSet = new SvelteSet(collapsedSubtasks);
         afterSet.delete(newParent);
@@ -1146,8 +1142,8 @@
     void filters.activeFilterPriority;
     void filters.showCompleted;
     void filters.activeSmartList;
-    void groupBy;
-    void sortBy;
+    // VIEW-5 — groupBy/sortBy aren't in lastView (canonical in board settings,
+    // never hydrated back), so a sort/group change must not re-fire this persist.
     const id = board?.id;
     if (!id || id !== filters.hydratedForBoardId) return;
     if (filters.lastViewPersistTimer) clearTimeout(filters.lastViewPersistTimer);
@@ -1375,6 +1371,10 @@
     // any stale inline styles svelte-dnd-action may have left on neighbour
     // sections so they don't end up invisible.
     const cancelSectionDrag = () => {
+      // VIEW-4 — skip the re-render-forcing recovery when no drag is in flight
+      // (section drag active ⇔ `sectionDragDisabled` false; row drag ⇔ a live
+      // `dragTileId`), so a bare Escape doesn't churn the list every keypress.
+      if (sectionDragDisabled && dragController.dragTileId === null) return;
       sectionDragDisabled = true;
       // Re-assign by identity so the `use:clearStaleDndStyles` action's
       // `update` callback fires on every section. Cancelled drags don't

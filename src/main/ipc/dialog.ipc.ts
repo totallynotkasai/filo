@@ -2,6 +2,7 @@ import { ipcMain, dialog, BrowserWindow } from 'electron';
 import { z } from 'zod';
 import { logMainError } from '../utils/mainLogger';
 import { registerApprovedSource } from '../services/approvedSources';
+import { vaultRegistry } from '../services/vaultRegistry';
 
 /**
  * Phase 8 / 8.4 — narrow validation for the `dialog:*` options bag.
@@ -131,6 +132,17 @@ export function registerDialogHandlers(): void {
       const parsed = DialogOpenFileOptionsSchema.safeParse(options);
       if (!parsed.success) {
         logMainError('dialog:open-file', parsed.error);
+        return null;
+      }
+      // Audit-14 4.2 — require an active vault. The whole point of this picker
+      // is to import a file into the open vault, and every picked path is
+      // registered as an approved `vault:copy-file` source bound to the active
+      // vault (below). With no vault open there is nothing to bind to and a
+      // copy-file would be refused anyway, so fail closed rather than mint an
+      // unbindable approval during the no-vault startup/close window. (The
+      // home-screen vault picker uses the separate `vault:select`
+      // openDirectory channel, so this never blocks opening a vault.)
+      if (!vaultRegistry.currentVaultPath) {
         return null;
       }
       const safeOptions = parsed.data;

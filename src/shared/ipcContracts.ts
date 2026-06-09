@@ -258,15 +258,21 @@ export interface IpcChannelMap {
   };
 
   // ── Tags ─────────────────────────────────────────────────────────
-  // tags handlers `throw` on failure rather than envelope. The renderer
-  // is fine with that — the existing try/catch pipeline catches them.
+  // Audit-14 4.4 — bare value on success (`string | null` / `void`), a
+  // `{ ok: false }` envelope on error (NO_ACTIVE_VAULT during a swap, an
+  // oversize/locked file). Like `theme:load`, this is a bare-with-
+  // envelope-on-error channel (deliberately NOT in the
+  // `ci:check-ipc-envelope-usage` allowlist): every renderer caller routes
+  // the result through `assertIpcOk`, which passes bare values through and
+  // re-throws on `{ ok: false }` — preserving the old throw-based control
+  // flow the miscScheduler / vault-open pipeline relies on, now with a code.
   'tags:load': {
     args: [vaultRoot: string];
-    result: string | null;
+    result: string | null | { ok: false; code?: string; error?: string };
   };
   'tags:save': {
     args: [vaultRoot: string, data: string];
-    result: void;
+    result: void | { ok: false; code?: string; error?: string };
   };
 
   // ── Theme ────────────────────────────────────────────────────────

@@ -31,7 +31,7 @@ import { fileNameSafe } from '../lib/vault/conventionPaths';
 import { reportError } from '../lib/utils/errorBus';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { invokeOk } from '../lib/utils/invokeOk';
-import { normalizePath, toPosix, normalizeVaultRelative } from '../lib/utils/path';
+import { normalizePath, toPosix, normalizeVaultRelative, stripLeadingSlash } from '../lib/utils/path';
 import { createId } from '../lib/utils/ids';
 import { uiStore } from './ui.svelte';
 import type { CacheContext } from './boardCacheTypes';
@@ -381,8 +381,10 @@ export const boardCacheStore = {
    */
   renameBoardPath(oldPath: string, newPath: string): string[] {
     if (!oldPath || !newPath) return [];
-    const normalisedOld = normalizePath(oldPath);
-    const normalisedNew = normalizePath(newPath);
+    // P2.7 (Audit-15) — strip leading slashes so the case-preserving `oldPrefix`
+    // and case-folded `foldedPrefix` (below) share a length (else `slice` desyncs).
+    const normalisedOld = stripLeadingSlash(normalizePath(oldPath));
+    const normalisedNew = stripLeadingSlash(normalizePath(newPath));
     // L2 (Audit-13) — only a TRUE no-op (identical bytes after separator/trailing
     // normalisation) returns early. A case-ONLY rename folds equal but the raw
     // casing differs, and the stored path must still track disk: the prior

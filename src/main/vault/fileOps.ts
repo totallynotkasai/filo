@@ -1,4 +1,4 @@
-import { promises as fs } from 'fs';
+import { promises as fs, constants as fsConstants } from 'fs';
 import type { FileHandle } from 'fs/promises';
 import { randomBytes } from 'crypto';
 import { join, extname, basename, dirname, resolve, sep } from 'path';
@@ -454,6 +454,38 @@ const COPY_CHUNK_BYTES = 64 * 1024;
 const COPY_RENAME_RETRY_DELAYS = [10, 20, 40, 80, 160];
 
 /**
+ * Audit-14 4.3 — opens a copy SOURCE while defeating a regular-file→SYMLINK swap
+ * that lands between the handler's pre-flight `lstat` and this open.
+ * `copyFileToVault`'s fstat `.isFile()` re-check catches a swap to a
+ * device/dir/FIFO, but `fs.open(path,'r')` FOLLOWS a symlink, so a swap to a
+ * symlink pointing at a regular file (e.g. `/etc/passwd`) would fstat as a file
+ * and slip through.
+ *
+ *   - POSIX: open with `O_NOFOLLOW`, so the open itself fails (`ELOOP`) when the
+ *     final path component is a symlink. Solid, with no false positives (a real
+ *     regular-file source is never a symlink).
+ *   - Windows: no `O_NOFOLLOW`, and no fd→path API without native bindings, so
+ *     `lstat` immediately before the open and refuse a symlink. This narrows the
+ *     TOCTOU window to a couple of instructions WITHOUT the false-positive risk
+ *     a realpath/casing comparison carries (8.3 short names, junction parents).
+ *
+ * Gated on `noFollow` — `vault:copy-file` sets it; default-`false` non-IPC
+ * callers keep the plain `'r'` open unchanged.
+ */
+async function openSourceForCopy(sourcePath: string, noFollow: boolean): Promise<FileHandle> {
+  if (!noFollow) return fs.open(sourcePath, 'r');
+  if (process.platform === 'win32') {
+    const pre = await fs.lstat(sourcePath);
+    if (pre.isSymbolicLink()) {
+      throw new Error('Source is a symlink (changed after pre-flight check)');
+    }
+    return fs.open(sourcePath, 'r');
+  }
+  const noFollowFlag = (fsConstants.O_NOFOLLOW as number | undefined) ?? 0;
+  return fs.open(sourcePath, fsConstants.O_RDONLY | noFollowFlag);
+}
+
+/**
  * Copies a file into the vault. Returns the destination path.
  *
  * Phase 37 / 37.4 — the bare basename derived from `sourcePath` is run
@@ -493,12 +525,20 @@ const COPY_RENAME_RETRY_DELAYS = [10, 20, 40, 80, 160];
  * `maxBytes` defaults to Infinity for non-IPC callers; `vault:copy-file`
  * passes its `VAULT_COPY_MAX_SIZE_BYTES` cap. WHICH paths may be named as a
  * source is enforced upstream in the handler via `isApprovedCopySource`.
+ *
+ * Audit-14 4.3 — `noFollowSource` (set by `vault:copy-file`) additionally
+ * defeats a regular-file→SYMLINK swap landing between the handler's pre-flight
+ * lstat and this open: `fs.open(path,'r')` follows a symlink, so the fstat
+ * `.isFile()` re-check above would pass for a symlink pointing at a regular
+ * file (e.g. `/etc/passwd`). See `openSourceForCopy`. Defaults `false` so non-IPC
+ * callers are unchanged.
  */
 export async function copyFileToVault(
   sourcePath: string,
   vaultPath: string,
   subfolder?: string,
   maxBytes: number = Number.POSITIVE_INFINITY,
+  noFollowSource = false,
 ): Promise<string> {
   const targetDir = subfolder ? join(vaultPath, subfolder) : vaultPath;
   await fs.mkdir(targetDir, { recursive: true });
@@ -544,7 +584,7 @@ export async function copyFileToVault(
   let tmp: FileHandle | null = null;
   try {
     tmp = await fs.open(tmpPath, 'wx');
-    const source = await fs.open(sourcePath, 'r');
+    const source = await openSourceForCopy(sourcePath, noFollowSource);
     try {
       // Audit-12 S1 (TOCTOU) — re-stat through the OPEN fd, which is immune to
       // a path swap between the handler's pre-flight `lstat` and this `open`.

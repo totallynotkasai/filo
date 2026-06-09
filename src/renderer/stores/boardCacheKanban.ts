@@ -326,6 +326,13 @@ export function makeKanbanSlice(ctx: CacheContext) {
       position: number,
       style?: PartialKanbanCardStyle,
       coverImage?: string,
+      // 2.2 (Audit-14) — optional neighbour anchor, mirroring moveKanbanPlacement
+      // (6.4.M16). When the card should sit immediately before a specific sibling
+      // (DeleteCardCommand.undo restoring a mid-column card), pass that sibling's
+      // tileId and the insert resolves against its LIVE index instead of the
+      // stale absolute `position`. `undefined`/`null` or an anchor no longer in
+      // the column falls back to the clamped `position` (prior behaviour).
+      beforeTileId?: string | null,
     ): void {
       // Zod-validate the def before it enters the cache. Mirrors the
       // updateTile P0-6 fix: a corrupt def would otherwise persist to disk
@@ -369,11 +376,18 @@ export function makeKanbanSlice(ctx: CacheContext) {
         if (typeof coverImage === 'string' && coverImage.length > 0) {
           placement.coverImage = coverImage;
         }
+        // 2.2 (Audit-14) — prefer the neighbour anchor when it's still present,
+        // so an undo after an intervening sibling add/remove lands the restored
+        // card next to its original sibling rather than at a stale absolute
+        // index (mirrors moveKanbanPlacement's anchor logic).
+        const anchorIdx =
+          beforeTileId != null ? placements.findIndex((p) => p.tileId === beforeTileId) : -1;
         // L9 — clamp BOTH ends (mirrors the TaskList sibling). The high end was
         // already clamped; flooring at 0 keeps a stray negative position from
         // splicing relative to the array end (defensive — the schema's
         // nonnegative-int already blocks a persisted negative).
-        const insertAt = Math.min(Math.max(position, 0), placements.length);
+        const insertAt =
+          anchorIdx >= 0 ? anchorIdx : Math.min(Math.max(position, 0), placements.length);
         placements.splice(insertAt, 0, placement);
         return {
           ...c,

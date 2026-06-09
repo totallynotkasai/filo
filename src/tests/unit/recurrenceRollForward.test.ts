@@ -1,19 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import { nextDueDate, parseRecurrence, type RecurrenceMode } from '@renderer/lib/tasks/recurrence';
+import { parseRecurrence, type RecurrenceMode } from '@renderer/lib/tasks/recurrence';
+import { completionPatchForRow } from '@renderer/lib/tasklist/frontmatterWriter';
+import type { TaskRow } from '@renderer/lib/tasks/taskListModel';
 
 /**
  * Phase 6 — "complete a recurring task" flow coverage.
  *
- * The TaskListBoard.toggleCompleted path is the production caller. It only
- * uses the pure `nextDueDate` helper, so we can reproduce the flow by:
- *   1. Reading the row's current dueDate + recurrence + recurrenceMode.
- *   2. Calling nextDueDate(dueDate, recurrence, mode, new Date()).
- *   3. If non-null, writing back `{ completed: false, dueDate: next }`.
- *   4. Otherwise, flipping `completed`.
- *
- * These tests exercise that decision tree against representative inputs so
- * the behaviour is locked even though the consuming code lives inside a
- * Svelte component.
+ * `TaskListBoard.toggleCompleted` is the production caller; its per-row patch
+ * comes from `completionPatchForRow`. `decideCompletion` below DELEGATES to that
+ * production helper (rather than re-implementing the decision tree) so these
+ * cases exercise real code — including the Phase-2 REC-1 fallback (an undated
+ * schedule-mode repeat now rolls forward from the completion day instead of
+ * silently terminating). The un-complete direction stays inline, matching
+ * toggleCompleted (`completionPatchForRow` only handles completing).
  */
 
 interface RowSnapshot {
@@ -29,23 +28,22 @@ interface CompletionDecision {
   completed: boolean;
 }
 
-/**
- * Mirror of TaskListBoard's `toggleCompleted` decision tree. Pure — accepts
- * an explicit `now` so tests can pin time.
- */
 function decideCompletion(row: RowSnapshot, now: Date): CompletionDecision {
-  if (!row.completed && row.recurrence) {
-    const next = nextDueDate(
-      row.dueDate || undefined,
-      row.recurrence,
-      row.recurrenceMode,
-      now,
-    );
-    if (next) {
-      return { rolledForward: true, nextDueDate: next, completed: false };
-    }
+  if (row.completed) {
+    // toggleCompleted flips an already-complete row straight back to incomplete.
+    return { rolledForward: false, completed: false };
   }
-  return { rolledForward: false, completed: !row.completed };
+  const taskRow = {
+    completed: false,
+    dueDate: row.dueDate,
+    recurrence: row.recurrence,
+    recurrenceMode: row.recurrenceMode,
+  } as unknown as TaskRow;
+  const patch = completionPatchForRow(taskRow, now);
+  if (patch.completed === false) {
+    return { rolledForward: true, nextDueDate: patch.dueDate as string, completed: false };
+  }
+  return { rolledForward: false, completed: true };
 }
 
 describe('decideCompletion — non-recurring rows toggle in place', () => {
@@ -129,14 +127,20 @@ describe('decideCompletion — recurring rows roll forward on first complete', (
   });
 });
 
-describe('decideCompletion — recurring rows that cannot roll forward fall back to plain toggle', () => {
-  it('schedule mode without a dueDate falls back (returns null from nextDueDate)', () => {
+describe('decideCompletion — recurring completion edge cases', () => {
+  it('schedule mode without a dueDate rolls forward from the completion day (REC-1)', () => {
+    // REC-1 — schedule mode has no anchor, so nextDueDate(schedule) is null; the
+    // helper falls back to completion-mode semantics (completion day + interval)
+    // so the repeat survives instead of being permanently completed. Schedule is
+    // the DEFAULT mode, so this is the default undated-repeat path. Fri 2026-05-15
+    // + 1 week = 2026-05-22.
     const out = decideCompletion(
       { completed: false, dueDate: '', recurrence: 'weekly', recurrenceMode: 'schedule' },
-      new Date(),
+      new Date(2026, 4, 15),
     );
-    expect(out.rolledForward).toBe(false);
-    expect(out.completed).toBe(true);
+    expect(out.rolledForward).toBe(true);
+    expect(out.nextDueDate).toBe('2026-05-22');
+    expect(out.completed).toBe(false);
   });
 
   it('unparseable recurrence falls back to plain toggle', () => {

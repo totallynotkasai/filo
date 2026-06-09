@@ -175,11 +175,22 @@ registry holds each path for `RECENT_SELF_WRITE_TTL_MS = 1500` ms (or
 rename) workloads. Widening them unconditionally would slow genuine external-edit
 detection.
 
-**Impact:** On a pathologically slow disk or under aggressive antivirus, the OS
-change event can arrive after both windows expire, so the app's own write is
-classified as an external edit — surfacing a spurious "Reload / Keep local"
-toast. This is a UX annoyance, **not** data loss. Monitor; widen the window only
-if it bites in practice.
+**Audit-13 M4 — in-window handling is content-aware, not time-only:** A watcher
+event for a recently self-written path is no longer suppressed by the timer
+alone. `handleExternalMarkdownChanges`
+([src/renderer/stores/vaultExternalChanges.ts](src/renderer/stores/vaultExternalChanges.ts))
+drops it ONLY when the file's fresh disk stat still matches the baseline Filo
+wrote (`selfWriteDivergedFromBaseline` → `hasBaselineDrifted`); a diverged
+mtime/size means a *second* writer touched the file inside the window, so the
+event is kept and reconciled. So a genuine external edit that lands inside the
+suppression window is **not** dropped — only the benign direction below remains.
+
+**Impact:** On a pathologically slow disk or under aggressive antivirus, a
+self-write's OS echo can arrive *after* the recent-self-write window has expired
+(`isRecentSelfWrite` already false), so the app's own write is classified as an
+external edit — surfacing a spurious "Reload / Keep local" toast. This is a UX
+annoyance, **not** data loss (and, per M4 above, never a *dropped* external
+edit). Monitor; widen the window only if it bites in practice.
 
 ---
 
@@ -187,21 +198,33 @@ if it bites in practice.
 
 **What:** The minimap (on by default) reads the entire `boardStore.tiles` map
 and renders one absolutely-positioned DOM pip per tile. `boardStore.tiles`
-re-derives through `getFullTiles`, which allocates fresh tile objects on every
-drag frame, so the minimap's `activeMediaIds` set, bounding box, per-pip
-`effectiveTileStyle` resolution, and all N pip nodes recompute each frame — not
-just the tile that moved. The viewport also feeds the bounds, so `mapScale` /
-offset (and therefore every pip's pixel position) can shift each frame too.
+re-derives through `getFullTiles`, which allocates fresh tile objects whenever a
+tile changes, so on an actual tile **drag** the minimap's `activeMediaIds` set,
+the all-tiles bounding box, per-pip `effectiveTileStyle` resolution, and all N
+pip nodes recompute — not just the tile that moved.
+
+**Already narrowed (H4 perf split) — a pure pan/zoom no longer walks every
+tile.** The bounds math was split into
+[src/renderer/lib/canvas/minimapBounds.ts](src/renderer/lib/canvas/minimapBounds.ts):
+`tilesAABB = $derived(computeTilesAABB(tiles))` is keyed on the tile set ONLY
+(not the viewport) and `bounds = $derived(computeMinimapBounds(tilesAABB,
+viewportRect))` is the cheap viewport union + padding. So panning/zooming re-runs
+only the cheap `bounds`; the tile walk is cached. The remaining per-frame
+recompute is confined to an actual tile drag, where the moved tile's fresh
+identity out of `getFullTiles` invalidates `tilesAABB`, `activeMediaIds`, and the
+pips.
 
 **Where:** [src/renderer/components/canvas/Minimap.svelte](src/renderer/components/canvas/Minimap.svelte)
 (`allTiles`, `activeMediaIds`, `bounds`, the pip `#each`). Root cause: the
 referential churn of `getFullTiles` in
 [src/renderer/stores/board.svelte.ts](src/renderer/stores/board.svelte.ts) (`tiles`).
 
-**Why deferred (not a permanent trade-off):** A minimap-local memo can't fix
-this on its own — a content-keyed pip cache still can't skip the viewport-driven
-`mapScale` reposition, and skipping `effectiveTileStyle` per pip needs a stable
-per-tile identity that `getFullTiles` doesn't provide. The robust fix is the
+**Why deferred (not a permanent trade-off):** The viewport-driven half is already
+done — the H4 split above memoizes `tilesAABB` independently of the viewport, so
+pan/zoom no longer re-walks the tiles. The residual tile-drag recompute can't be
+fixed by a minimap-local memo alone — skipping `effectiveTileStyle` per pip and
+reusing pip nodes needs a stable per-tile identity that `getFullTiles` doesn't
+provide. The robust fix is the
 same stable-identity refactor deferred from Audit2 3.3 (return reference-stable
 tile objects from `getFullTiles` when a tile's placement + def are unchanged),
 which removes the connection-path **and** minimap recompute together. It was
@@ -312,3 +335,100 @@ watcher-driven reconcile recovers it. Frontmatter is always correct (it comes
 from the in-chain read). Documented rather than closed because closing it
 (threading a single combined read) would entangle the gateway's body-source
 policy with the open-editor-wins rule for no real-world benefit.
+
+## 10. CSP `frame-src https:` permits any third-party iframe origin
+
+**What:** The Content-Security-Policy (`<meta>` in `index.html` + the matching
+HTTP-header CSP) allows `frame-src https:` / `child-src https:` — i.e. an Iframe
+tile may embed *any* `https://` origin. A narrow origin allowlist isn't possible
+because embedding arbitrary sites (YouTube, CodePen, a docs page, …) is the
+whole point of the Iframe tile.
+
+**Where:** [src/main/main.ts](src/main/main.ts) (`installContentSecurityPolicy`)
+and [index.html](index.html). The src is validated by `asSafeIframeSrc`
+([src/shared/untrusted.ts](src/shared/untrusted.ts)) and the tile renders inside
+a `sandbox="allow-scripts"` iframe (deliberately WITHOUT `allow-same-origin`).
+
+**Why accepted (Audit-14 4.5):** This is defense-in-depth, not a hole. Because
+the embedding iframe has no `allow-same-origin`, embedded content runs in an
+opaque origin and cannot read Filo's `file://` document, its storage, or other
+vault contents; `default-src 'self'` still governs the app document itself. The
+residual risk is the embedded page exfiltrating *its own* request URL or
+fingerprinting — inherent to letting the user embed arbitrary sites, and bounded
+by the sandbox. Tightening `frame-src` to a fixed allowlist would break the
+feature for no real security gain given the sandbox.
+
+**Impact:** An Iframe tile can load any https origin the user types. No access to
+vault data (sandbox + opaque origin). Revisit only if Iframe tiles gain a
+same-origin capability, which would change this calculus.
+
+## 11. Partial-read guard can refuse a save for a body that legitimately starts with `---`
+
+**What:** The delta-write gateway's truncation guard
+([src/renderer/lib/vault/markdownFileWriter.ts](src/renderer/lib/vault/markdownFileWriter.ts),
+Audit-14 3.3) refuses to write when a file that *previously had* frontmatter is
+read back with an opening `---` fence but no closing fence — it assumes a
+non-atomic external writer was caught mid-write, and refusing protects the
+on-disk frontmatter from being stripped. If frontmatter is instead *legitimately*
+removed by an external editor AND the new body's first line happens to be a `---`
+thematic break (a horizontal rule), the guard mis-reads that stable shape as a
+partial read and refuses the next field/Properties save. Because the shape is
+stable, the refusal repeats on retry rather than clearing.
+
+**Where:** the `!parsedFresh.hasFrontmatter` branch in `writeMarkdownFileImpl`.
+
+**Why accepted (Audit-15 P2.3):** It fails **safe** — the refusal is loud
+(`markPathFailed` + a "save failed" surface), no data is lost, and the on-disk
+file is untouched. Every attempt to distinguish "stable FM-removed body that
+starts with `---`" from "genuine partial read" using only the read is
+undecidable: a size heuristic (e.g. "read is < ½ the prior byte size") lets a
+truncated read of *most* of a small file through, which re-opens the
+HIGH-severity Audit-14 3.3 silent-frontmatter-drop (the `audit14Phase3` "refuses
+… truncated" test pins exactly that 25-of-38-byte case). For a data-integrity
+guard, "never silently drop frontmatter" correctly wins over "never show a
+spurious toast."
+
+**Impact:** A field/Properties edit on a card whose backing `.md` had its
+frontmatter externally deleted *and* whose body's first line is `---` will keep
+failing to save until the user adds a non-`---` first line (e.g. a heading) or
+re-adds a frontmatter block. Rare; surfaced loudly; never silent loss.
+
+## 12. Empty "Unsectioned" leading bucket is not a drop target
+
+**What:** On a Task List board with sections, tasks whose placement sits before
+the first section render in a synthetic leading "Unsectioned" bucket. That bucket
+is only emitted when it actually contains rows
+([src/renderer/lib/tasklist/taskListViewModel.svelte.ts](src/renderer/lib/tasklist/taskListViewModel.svelte.ts),
+`sectionedView`), so when it is empty there is no dndzone to drag a task *above*
+the first section (back into the unsectioned area).
+
+**Why accepted (DRAG-7):** Sections are the organizing unit; the leading bucket
+is a backward-compat construct for pre-section boards. Always rendering an empty
+"Unsectioned" header would add visual noise to every sectioned board for a rare
+gesture (and the host renders one dndzone per emitted `SectionView`, so an
+always-present zone is a host change too). A task can still leave the first
+section by being dragged into any other section.
+
+**Impact:** Once the unsectioned area is empty you can't drag a task back into it.
+Minor; it is a legacy bucket. A minimal always-present leading drop zone is a
+possible future enhancement, not a correctness fix.
+
+## 13. Hand-edited quoted `completed: "true"` reads as incomplete
+
+**What:** A task's completion is read as a strict `fm.completed === true`
+([src/renderer/lib/tasks/frontmatterReaders.ts](src/renderer/lib/tasks/frontmatterReaders.ts),
+`FIELD_READERS.completed`) — a real YAML boolean (`completed: true` /
+`completed: yes` both parse to `true`). If a file is hand-edited so the value is
+the QUOTED STRING `completed: "true"`, it parses as the string `"true"`, which is
+not `=== true`, so the row displays as **incomplete** even though the author meant
+"done."
+
+**Why accepted (COERCE-1):** A strict boolean read is correct for Filo-written
+files (Filo always writes a real boolean) and deliberately avoids coercing
+arbitrary strings (`"false"`, `"no"`, `"0"`) into a truthiness guess. Toggling the
+checkbox once normalizes the value to a real boolean while preserving every other
+key (the source-preserving engine).
+
+**Impact:** A hand-edited quoted `completed: "true"` shows the task as incomplete
+until the checkbox is toggled once. Rare (only hand-edited files); self-heals on
+first toggle; never data loss — only a display mismatch.

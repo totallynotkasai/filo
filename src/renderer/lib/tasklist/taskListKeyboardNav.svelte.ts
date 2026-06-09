@@ -159,7 +159,17 @@ export class TaskListKeyboardNav {
     const currentOffset = placementIdx - sectionStart;
 
     const descendantIds = collectDescendantIds(this.deps.getRows(), tileId).filter((id) => id !== tileId);
-    const blockSize = 1 + descendantIds.length;
+    // DRAG-6 — the reorder stays inside the current section, so only descendants
+    // whose placement actually sits in [sectionStart, sectionEnd) belong to the
+    // moving block. Counting ALL descendants (a leaf reachable via a legacy
+    // placement↔parent divergence could live in another section) would inflate
+    // blockSize and wrongly block an in-bounds move; the move itself likewise
+    // only shifts the in-section block.
+    const blockDescendantIds = descendantIds.filter((id) => {
+      const i = placements.findIndex((p) => p.tileId === id);
+      return i >= sectionStart && i < sectionEnd;
+    });
+    const blockSize = 1 + blockDescendantIds.length;
 
     let targetOffset: number;
     if (direction < 0) {
@@ -175,7 +185,7 @@ export class TaskListKeyboardNav {
       placements,
       sections,
       draggedId: tileId,
-      descendantIds,
+      descendantIds: blockDescendantIds,
       targetSectionId: sectionId,
       insertOffset: targetOffset,
     });

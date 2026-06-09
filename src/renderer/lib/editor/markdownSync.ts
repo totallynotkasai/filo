@@ -578,17 +578,3 @@ export function assembleMarkdownFile(
   // Genuinely no frontmatter.
   return `${bomPrefix}${body}`;
 }
-
-/**
- * One-shot helper: pulls the editor's current markdown, merges into the
- * supplied frontmatter, and returns a complete `.md` file string ready for
- * `vault:write-file-text`.
- */
-export function buildMarkdownFileFromEditor(
-  editor: Editor,
-  frontmatter: Record<string, unknown>,
-  options: AssembleMarkdownOptions = {},
-): string {
-  const body = editorMarkdown(editor);
-  return assembleMarkdownFile(frontmatter, body, options);
-}

@@ -61,8 +61,12 @@ export type TileLikeCache = Partial<Record<SyncedField, unknown>>;
 export const normalizeTags = normalizeTagsField;
 
 /**
- * YAML parsers (gray-matter) auto-coerce ISO date strings to `Date`. We keep
- * dates as strings so they round-trip through JSON and compare stably.
+ * Defensive date normalisation. The single-parser `yaml`-package read (Audit-13
+ * M2) keeps an unquoted `date:` as a string (its core schema resolves no
+ * timestamp tag), so this rarely fires now — but any `Date` instance that
+ * reaches here (e.g. a programmatic caller, or a value built before the read)
+ * is folded back to a `YYYY-MM-DD` string so it round-trips through JSON and
+ * compares stably against the on-disk string.
  */
 function normalizeScalar(value: unknown): unknown {
   if (value instanceof Date && !isNaN(value.getTime())) {

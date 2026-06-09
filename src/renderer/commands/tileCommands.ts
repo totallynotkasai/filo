@@ -1,4 +1,5 @@
 import { Command } from './Command';
+import { toastMissingUndoRedoTarget } from './missingTargetToast';
 import { boardStore } from '../stores/board.svelte';
 import { boardCacheStore } from '../stores/boardCache.svelte';
 import { vaultIndexStore } from '../stores/vaultIndex.svelte';
@@ -7,9 +8,8 @@ import { uiStore } from '../stores/ui.svelte';
 import { framesStore } from '../stores/frames.svelte';
 import type { Tile, Connection } from '../schema/index';
 import { cloneTile } from '../lib/utils/cloneTile';
-import { trackComponentWrite } from '../lib/boards/writeStateTracking';
 import { reportError } from '../lib/utils/errorBus';
-import { invokeOk } from '../lib/utils/invokeOk';
+import { writeMarkdownAndReconcile } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
 import { deleteVaultPath } from '../lib/vault/vaultOperations';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 
@@ -371,12 +371,21 @@ export class DeleteTilesCommand extends Command {
     for (const snap of this.fileSnapshots) {
       const rel = snap.rel;
       const content = snap.content;
-      const writeP = trackComponentWrite(vaultRoot, rel, async () => {
-        // allow-direct-write: one-shot snapshot-restore on tile-delete
-        // undo — the file no longer exists on disk, mkdir -p semantics
-        // are required, and the tile will mount + hydrate the gateway
-        // immediately after.
-        return invokeOk('vault:write-file-text', vaultRoot, rel, content);
+      // 2.3 (Audit-14) — route through the coupled write+reconcile helper
+      // (Phase 6.6) instead of a raw `vault:write-file-text`. The restored `.md`
+      // can be open as a Document on a SECOND board/pane (the same file placed
+      // twice); that editor holds a stale frontmatter cache, so its next
+      // debounced body save would silently invert this restore (#4). `mode:
+      // 'full'` reloads the open editor (frontmatter + body) for the SAME path,
+      // matching CascadeDeleteCommand.undo; `create: true` recreates the file the
+      // delete removed (mkdir -p). The tile re-mounts + hydrates immediately
+      // after restorePlacements().
+      const writeP = writeMarkdownAndReconcile({
+        vaultRoot,
+        path: rel,
+        content,
+        mode: 'full',
+        create: true,
       }).catch((err) => {
         uiStore.toast(
           `Tile restored but file content could not be recovered: ${rel}`,
@@ -599,10 +608,12 @@ export class ResizeTileCommand extends Command {
   }
 
   execute() {
+    if (!boardStore.getTile(this.tileId)) { toastMissingUndoRedoTarget('redo', 'the tile'); return; }
     boardStore.updateTile(this.tileId, { size: { ...this.afterSize } });
   }
 
   undo() {
+    if (!boardStore.getTile(this.tileId)) { toastMissingUndoRedoTarget('undo', 'the tile'); return; }
     boardStore.updateTile(this.tileId, { size: { ...this.beforeSize } });
   }
 }
@@ -639,10 +650,12 @@ export class UpdateTileStyleCommand extends Command {
   }
 
   execute() {
+    if (!boardStore.getTile(this.tileId)) { toastMissingUndoRedoTarget('redo', 'the tile'); return; }
     boardStore.updateTile(this.tileId, this.afterUpdates);
   }
 
   undo() {
+    if (!boardStore.getTile(this.tileId)) { toastMissingUndoRedoTarget('undo', 'the tile'); return; }
     boardStore.updateTile(this.tileId, this.beforeUpdates);
   }
 }
@@ -680,10 +693,12 @@ export class UpdateImageAltCommand extends Command {
   }
 
   execute() {
+    if (!boardStore.getTile(this.tileId)) { toastMissingUndoRedoTarget('redo', 'the tile'); return; }
     boardStore.updateTile(this.tileId, { alt: this.after } as Partial<Tile>);
   }
 
   undo() {
+    if (!boardStore.getTile(this.tileId)) { toastMissingUndoRedoTarget('undo', 'the tile'); return; }
     boardStore.updateTile(this.tileId, { alt: this.before } as Partial<Tile>);
   }
 }
@@ -730,6 +745,7 @@ export class UpdateTimerConfigCommand extends Command {
   }
 
   execute() {
+    if (!boardStore.getTile(this.tileId)) { toastMissingUndoRedoTarget('redo', 'the tile'); return; }
     boardStore.updateTile(this.tileId, {
       mode: this.after.mode,
       duration: this.after.duration,
@@ -739,6 +755,7 @@ export class UpdateTimerConfigCommand extends Command {
   }
 
   undo() {
+    if (!boardStore.getTile(this.tileId)) { toastMissingUndoRedoTarget('undo', 'the tile'); return; }
     boardStore.updateTile(this.tileId, {
       mode: this.before.mode,
       duration: this.before.duration,

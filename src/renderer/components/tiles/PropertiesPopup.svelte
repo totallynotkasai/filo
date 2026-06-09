@@ -175,9 +175,9 @@
     // Phase 6.1.R5 — hydration is now seeded by the `hydrateBackingFile`
     // disk read fired from onMount. The previous code sniffed `hadBom`
     // from `vaultIndexStore.content`, which is the body-only field
-    // already BOM-stripped by gray-matter, so the sniff was permanently
-    // `false` and Notepad-saved files lost their BOM on the popup's
-    // first save. The onMount disk read seeds the correct hadBom into
+    // already BOM-stripped by the index splitter (`splitFrontmatterSource`),
+    // so the sniff was permanently `false` and Notepad-saved files lost their
+    // BOM on the popup's first save. The onMount disk read seeds the correct hadBom into
     // `fileState` AND seeds the drift baseline. If onMount's read
     // failed (ENOENT / race), fall back to a no-BOM hydrate so the
     // write below ENOENT-fails with the same surfaced toast path the

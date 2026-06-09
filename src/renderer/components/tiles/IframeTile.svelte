@@ -137,11 +137,17 @@
       <!-- Blocker prevents iframe from eating canvas pan events.
            Double-click the tile to enter interact mode. -->
       {#if !interacting}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <!-- Audit-14 5.8 — role=button + Enter/Space give a keyboard path into
+             interact mode (was dblclick-only). Double-click stays the mouse
+             affordance so a single canvas click can't accidentally arm it. -->
         <div
           class="iframe-blocker"
           ondblclick={enterInteract}
-          title="Double-click to interact"
+          onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); enterInteract(); } }}
+          role="button"
+          tabindex="0"
+          aria-label="Interact with embedded content"
+          title="Double-click (or press Enter) to interact"
         >
           <div class="interact-hint">Double-click to interact</div>
         </div>

@@ -128,11 +128,18 @@
     tile.fileExtension.match(/zip|tar|gz|rar/i) ? 'archive' :
     'generic'
   );
+
+  // P4.4 (Audit-15) — proactively surface a missing-file state in the tile
+  // body when the backing file is gone, rather than only failing with a toast
+  // after the user clicks Open. Mirrors ImageTile/VideoTile inline broken
+  // badges; reads the same board-level broken-ref tracking the TileHeader `!`
+  // badge already uses.
+  let isMissing = $derived(!!tile.filePath && boardStore.isBrokenTile(tile.id));
 </script>
 
 <div class="file-tile">
   {#if tile.filePath}
-    <div class="file-container">
+    <div class="file-container" class:missing={isMissing}>
       <div class="file-icon" aria-hidden="true">
         {#if iconType === 'pdf'}
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -164,6 +171,15 @@
         <div class="file-name" title={tile.fileName}>{tile.fileName}</div>
         <div class="file-ext">{tile.fileExtension.toUpperCase()} File</div>
       </div>
+      {#if isMissing}
+        <div class="file-missing" role="alert">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <span>File not found on disk</span>
+        </div>
+      {/if}
       <button class="open-btn" onclick={handleOpen}>Open Externally</button>
       
       <div class="actions">
@@ -220,6 +236,21 @@
     font-size: 11px;
     color: var(--text-tertiary);
     margin-top: 4px;
+  }
+  /* P4.4 — missing-file affordance (mirrors ImageTile's inline broken badge).
+     The icon dims to the danger accent and a notice line appears under the
+     file name. */
+  .file-container.missing .file-icon {
+    color: var(--accent-danger);
+    opacity: 0.85;
+  }
+  .file-missing {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--accent-danger);
   }
   .open-btn {
     margin-top: 8px;

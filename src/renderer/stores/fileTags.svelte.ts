@@ -84,6 +84,7 @@ import { resolveTextTileVaultPath } from '../lib/boards/textTilePath';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { flushAllPendingFrontmatterWrites } from '../lib/boards/frontmatterWriteScheduler';
 import { invokeOk } from '../lib/utils/invokeOk';
+import { assertIpcOk } from '../lib/utils/ipcEnvelope';
 import { reportError } from '../lib/utils/errorBus';
 import { uiStore } from './ui.svelte';
 import { onVaultSwap, vaultSwapResettable } from '../core/vaultLifecycle';
@@ -194,9 +195,10 @@ function scheduleSave(): void {
       vaultRoot: root,
       path: TAGS_PATH,
       write: async () => {
-        // tags:save is documented as `throws on error` (no envelope).
-        // Use bare invoke; the surrounding miscScheduler catches throws.
-        await window.filo.invoke('tags:save', root, snapshot);
+        // Audit-14 4.4 — tags:save resolves `{ ok:false }` on failure now;
+        // assertIpcOk re-throws so the miscScheduler's catch still records it
+        // (dirty-flag + retry), exactly as the old raw rejection did.
+        assertIpcOk(await window.filo.invoke('tags:save', root, snapshot), 'tags:save');
         // A8-M6 — record exactly what landed on disk as the new merge base, so a
         // later external reload diffs un-flushed mutations against THIS, not a
         // stale ancestor. Only on success (a throw skips this line).
@@ -530,7 +532,8 @@ export const fileTagsStore = {
   async hydrate(vaultRoot: string): Promise<void> {
     activeVaultRoot = vaultRoot;
     try {
-      const raw = (await window.filo.invoke('tags:load', vaultRoot)) as string | null;
+      // Audit-14 4.4 — assertIpcOk re-throws a `{ ok:false }` envelope into the catch below.
+      const raw = assertIpcOk(await window.filo.invoke('tags:load', vaultRoot), 'tags:load') as string | null;
       const loaded = loadTagsFile(raw);
       file = loaded.file;
       setMergeBase(cloneTagsFile(loaded.file)); // A8-M6 — disk baseline

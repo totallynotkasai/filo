@@ -53,6 +53,7 @@ const EXEMPT_MODULES = new Set([
   'src/renderer/lib/tasklist/filtersAndViews.svelte.ts',
   'src/renderer/lib/tasklist/multiSelectController.svelte.ts',
   'src/renderer/lib/tasklist/taskDragController.svelte.ts',
+  'src/renderer/lib/tasklist/datePickerViewState.svelte.ts',
   // Audit 5.3 — per-instance aria-live announcer created by each board and
   // disposed on unmount; its $state is function-local (per createAriaAnnouncer
   // call), never module-level, so nothing survives a vault swap.

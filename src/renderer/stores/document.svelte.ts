@@ -4,6 +4,7 @@ import { uiStore } from './ui.svelte';
 import { samePath, normalizePath, stripLeadingSlash, toPosix } from '../lib/utils/path';
 import {
   cancelMarkdownWritesForDocument,
+  cancelAndAwaitMarkdownWritesForDocument,
   forceWriteForDocument,
 } from '../lib/vault/markdownFileWriter';
 import { noteBaseline } from '../lib/vault/fileBaselineRegistry';
@@ -843,7 +844,21 @@ export const documentStore = {
 // Drops every loaded document, the frontmatter cache, mutation versions
 // and read-only flags so the new vault can't see fragments of the prior
 // vault's open documents.
-onVaultSwap('pre-swap', 'document', (event) => {
+onVaultSwap('pre-swap', 'document', async (event) => {
+  // Audit-14 1.7 — before discarding open-document state, AWAIT any markdown
+  // write still pumping bytes for each open doc. The async drain cancels armed
+  // timers AND awaits the in-flight write IPC for matching editor-backed writers
+  // (TextTile / DocumentEditor), so a writer can't land bytes against the
+  // outgoing vault after the swap has torn down its state — honoring the
+  // swap-await guarantee its docstring asserts (previously wired nowhere; the
+  // handler only called the sync `cancelMarkdownWritesForDocument` via clear()).
+  // Bounded by each writer's own `writeTimeoutMs`, so a wedged write can't hang
+  // the swap. `fireVaultSwap` awaits this handler (errors are caught + reported
+  // there). Snapshot the ids first — `clear()` empties the map below.
+  const openDocIds = Array.from(openDocuments.keys());
+  await Promise.all(
+    openDocIds.map((docId) => cancelAndAwaitMarkdownWritesForDocument(docId)),
+  );
   // Audit 3.3 — bind to the incoming vault so loadDocument refuses stale
   // outgoing-vault loads until vaultStore.path flips to it.
   documentStore.clear(event.nextVault);

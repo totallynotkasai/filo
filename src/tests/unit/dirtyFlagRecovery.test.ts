@@ -4,6 +4,7 @@ import {
   markClean,
   checkRecovery,
   __resetDirtyRecoveryDedupeForTests,
+  __getLaunchIdForTests,
 } from '@renderer/lib/vault/dirtyFlagRecovery';
 import {
   onError,
@@ -167,6 +168,59 @@ describe('dirtyFlagRecovery', () => {
     expect(status.reason).toBe('sentinel-unreadable');
     expect(errors).toHaveLength(1);
     expect(errors[0].context).toBe('dirtyFlag.check');
+  });
+
+  // Audit-14 1.3 — a per-launch session id distinguishes a sentinel THIS
+  // process wrote (e.g. a migration-repair write during open) from a genuine
+  // prior-crash breadcrumb, so a legacy-vault open doesn't surface a spurious
+  // Recovery modal.
+  it('markDirty stamps the current launchId (1.3)', async () => {
+    const stub = installIpcStub();
+    await markDirty('/vault', ['x.md']);
+    const write = stub.writes.find((w) => w.channel === 'vault:write-file-text');
+    const body = JSON.parse(write?.args[2] as string);
+    expect(body.launchId).toBe(__getLaunchIdForTests());
+  });
+
+  it('checkRecovery SUPPRESSES a sentinel stamped by the current launch (1.3)', async () => {
+    const stub = installIpcStub();
+    stub.responses.set('vault:read-file-text', {
+      success: true,
+      content: JSON.stringify({
+        dirtyAt: 1700000000000,
+        launchId: __getLaunchIdForTests(),
+        pendingPaths: ['boards/just-repaired.board.json'],
+      }),
+    });
+    const status = await checkRecovery('/vault');
+    // This launch wrote it — not a prior crash, so no recovery prompt.
+    expect(status.needsRecovery).toBe(false);
+  });
+
+  it('checkRecovery STILL prompts for a sentinel from a prior launch (1.3)', async () => {
+    const stub = installIpcStub();
+    stub.responses.set('vault:read-file-text', {
+      success: true,
+      content: JSON.stringify({
+        dirtyAt: 1700000000000,
+        launchId: 'a-different-prior-session-id',
+        pendingPaths: ['Notes.md'],
+      }),
+    });
+    const status = await checkRecovery('/vault');
+    expect(status.needsRecovery).toBe(true);
+    expect(status.pendingPaths).toEqual(['Notes.md']);
+  });
+
+  it('checkRecovery prompts for a legacy sentinel with no launchId (1.3 back-compat)', async () => {
+    const stub = installIpcStub();
+    stub.responses.set('vault:read-file-text', {
+      success: true,
+      content: JSON.stringify({ dirtyAt: 1700000000000, pendingPaths: ['Old.md'] }),
+    });
+    const status = await checkRecovery('/vault');
+    expect(status.needsRecovery).toBe(true);
+    expect(status.pendingPaths).toEqual(['Old.md']);
   });
 
   it('markDirty persists pendingPaths when provided', async () => {

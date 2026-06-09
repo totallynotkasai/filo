@@ -215,7 +215,7 @@ const writerScheduler = createScheduler<WriteArgs>({
 // show up in the ledger, so the probe only covers the pending-timer window.
 registerPendingProbe((path) => {
   const target = vaultPath(path);
-  return writerScheduler.hasPending((args) => vaultPath(args.relPath) === target);
+  return writerScheduler.hasPendingTimer((args) => vaultPath(args.relPath) === target);
 });
 
 /**
@@ -682,9 +682,11 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
     // cache can no longer be the write source, so a stale / over-cleaned / empty
     // cache can't silently drop a key.
     let parsedFresh: ReturnType<typeof parseMarkdownFile>;
+    let freshContent: string;
     try {
       const fresh = await invokeOk('vault:read-file-text', vaultRoot, relPath);
-      parsedFresh = parseMarkdownFile(fresh.content);
+      freshContent = fresh.content;
+      parsedFresh = parseMarkdownFile(freshContent);
     } catch (err) {
       // The backing `.md` is gone/unreadable between the caller's hydrate read
       // and this in-chain read (ENOENT, EACCES). Surface the loss (sentinel +
@@ -694,14 +696,56 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
       markPathFailed(vaultRoot, relPath);
       throw err;
     }
+    // 3.3 (Audit-14) — guard a TRUNCATED/partial in-chain read from silently
+    // dropping the on-disk frontmatter. A non-atomic external writer caught
+    // mid-write can return bytes that begin with an opening `---` fence but whose
+    // CLOSING fence wasn't in the partial read → `parseMarkdownFile` reports
+    // `hasFrontmatter:false`, and assembling the delta against that would emit
+    // ONLY the delta keys + the truncated body, erasing the real frontmatter.
+    // So: prior-indexed FM block + fresh read parsed none + raw still opens with
+    // `---` → read anomaly, markPathFailed + throw (next debounce retries).
+    // Audit-15 P2.3 — do NOT tighten this with a size/heuristic gate to suppress
+    // the accepted, fail-safe body-starts-with-`---`-after-FM-removal false-
+    // positive: it re-opens this HIGH silent-FM-drop. See KNOWN_LIMITATIONS #11.
+    if (!parsedFresh.hasFrontmatter) {
+      const priorRawFm = vaultIndexStore.getMetadata(relPath)?.rawFrontmatter ?? '';
+      // allow-bom-sniff: `freshContent` is the raw in-chain `vault:read-file-text` payload (BOM intact)
+      const strippedFresh =
+        freshContent.charCodeAt(0) === 0xfeff ? freshContent.slice(1) : freshContent;
+      if (priorRawFm !== '' && /^---[ \t]*\r?\n/.test(strippedFresh)) {
+        markPathFailed(vaultRoot, relPath);
+        throw new Error(
+          `markdownFileWriter: refusing delta write to "${relPath}" — fresh read opens with a ` +
+          `frontmatter fence but has no closing fence (likely a partial read of an in-progress ` +
+          `external write); not overwriting so the on-disk frontmatter is not dropped`,
+        );
+      }
+    }
     const nextFm = applyFrontmatterDelta(parsedFresh.frontmatter, delta);
-    // Audit-11 N2 (ACCEPTED micro-TOCTOU) — `body` came from a SEPARATE disk read
-    // (the scheduler's no-editor hydrate read / orphan read) while the FM is from
-    // THIS in-chain read. Benign: the delta path only carries FIELD/FM edits
-    // (none touch the body, so it's identical between the two reads), and an open
-    // editor's LIVE body must still win — so we can't blanket-swap in
-    // `parsedFresh.body`. A late external body edit self-heals via the watcher.
-    fileText = assembleMarkdownFile(nextFm, body, {
+    // 3.2 (Audit-14) — derive the EOL from the SAME fresh in-chain read that
+    // sources the FM + BOM, not the hydrate-time `state.eol` snapshot. If an
+    // external editor converted LF↔CRLF since hydrate, the stale snapshot would
+    // emit mixed EOLs (the FM bytes are fresh but `detectFrontmatterEol` honours
+    // the stale `options.eol`). Sniff CRLF/LF from the fresh content; fall back
+    // to `state.eol` only for an empty file (no EOL signal at all).
+    const freshEol: '\r\n' | '\n' | undefined =
+      freshContent.length === 0 ? state.eol : freshContent.includes('\r\n') ? '\r\n' : '\n';
+    // Audit-11 N2 / Audit-15 P1.4 — pick the body source. The delta path carries
+    // only FIELD/FM edits (none touch the body), so the body is just "re-emit the
+    // rest of the file". With a LIVE editor open for this docId, the caller's
+    // `body` is its un-debounced live text and MUST win (swapping in
+    // `parsedFresh.body` would drop unsaved keystrokes) — the N2 invariant. With
+    // NO live editor (orphan / Kanban card / Mind-Map tile never opened as a doc
+    // tab), the caller's `body` is a watcher-index SNAPSHOT an unreliable
+    // `fs.watch` may have left stale (it missed an external body edit). A missed
+    // watcher event also left the drift baseline un-updated, so the pre-write stat
+    // can't catch it and the snapshot body would silently revert the external
+    // edit — so source the fresh in-chain disk `parsedFresh.body` instead. The
+    // `getDocument(docId)` presence check mirrors PropertiesPopup's own
+    // `docState?.body ??` source decision, so the two agree on which case applies.
+    const hasLiveEditorBody = docId ? documentStore.getDocument(docId) !== undefined : false;
+    const deltaBody = hasLiveEditorBody ? body : parsedFresh.body;
+    fileText = assembleMarkdownFile(nextFm, deltaBody, {
       // Audit-11 N3 — BOM flag from THIS in-chain read (not the pre-write
       // `state.hadBom` snapshot), so a BOM an external editor added/stripped
       // since hydrate is honoured rather than re-imposing the stale mark.
@@ -713,7 +757,8 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
       rawFrontmatter: parsedFresh.rawFrontmatter,
       frontmatterDirty: !isEmptyFrontmatterDelta(delta),
       originalFrontmatter: parsedFresh.rawFrontmatter,
-      eol: state.eol,
+      // 3.2 (Audit-14) — fresh-read EOL, not the stale hydrate snapshot.
+      eol: freshEol,
       onFrontmatterRefused,
     });
   } else {
@@ -898,8 +943,8 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
   // dirty (that write clears it) rather than flash a transient clean window an
   // external-edit reconciler could misread into a silent reload of the unsaved
   // keystrokes. Cheap + side-effect-free — `scheduleMarkdownWrite` stores a
-  // stable `() => args` getter, so `hasPending` only reads the already-built args.
-  if (docId && !writerScheduler.hasPending((pendingArgs) => pendingArgs.callerId === callerId)) {
+  // stable `() => args` getter, so `hasPendingTimer` only reads the already-built args.
+  if (docId && !writerScheduler.hasPendingTimer((pendingArgs) => pendingArgs.callerId === callerId)) {
     documentStore.markClean(docId, callerId);
   }
   // Audit-11 WC-2 — deliberately NOT also gated on a pending FM write for this

@@ -127,6 +127,25 @@
     try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* already released */ }
   }
 
+  // Audit-14 5.8 — keyboard resize for the corner handle (was pointer-only).
+  // Arrow keys nudge width/height; Shift takes a larger step. Clamped exactly
+  // like the pointer path so it can't escape the viewport.
+  function onResizeKeydown(e: KeyboardEvent) {
+    const step = e.shiftKey ? 40 : 16;
+    let nw = bw;
+    let nh = bh;
+    if (e.key === 'ArrowRight') nw += step;
+    else if (e.key === 'ArrowLeft') nw -= step;
+    else if (e.key === 'ArrowDown') nh += step;
+    else if (e.key === 'ArrowUp') nh -= step;
+    else return;
+    e.preventDefault();
+    const c = clamp(bx, by, nw, nh);
+    bw = c.w;
+    bh = c.h;
+    uiStore.setFloatingBounds({ x: bx, y: by, width: bw, height: bh });
+  }
+
   // Drag handlers passed down to the embedded `VaultSidebar` so its
   // `.sidebar-header` strip acts as the drag handle. Action buttons inside
   // that header stop pointerdown propagation to keep clicks working.
@@ -154,10 +173,13 @@
   });
 </script>
 
+<!-- Audit-14 5.8 — `region` (labelled landmark), not `dialog`: this is a
+     persistent, non-modal floating panel, not a modal dialog with a focus
+     trap / Escape-to-close contract. -->
 <div
   class="floating-vault-panel"
   style="left: {bx}px; top: {by}px; width: {bw}px; height: {bh}px; z-index: calc(var(--z-sidebar) + 2);"
-  role="dialog"
+  role="region"
   aria-label="Vault"
 >
   <div class="floating-body">
@@ -171,6 +193,8 @@
     <VaultSidebar open={true} role="main" dragHandlers={headerDragHandlers} />
   </div>
 
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
     class="floating-resize-handle"
     class:resizing={isResizing}
@@ -178,8 +202,11 @@
     onpointermove={onResizeMove}
     onpointerup={onResizeEnd}
     onpointercancel={onResizeEnd}
-    aria-label="Resize vault panel"
+    onkeydown={onResizeKeydown}
+    aria-label="Resize vault panel (arrow keys)"
+    aria-orientation="vertical"
     role="separator"
+    tabindex="0"
   ></div>
 </div>
 

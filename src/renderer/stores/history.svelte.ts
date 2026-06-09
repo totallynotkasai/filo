@@ -99,6 +99,21 @@ function getActiveStack(): HistoryStack | null {
 }
 
 /**
+ * 2.1 (Audit-14) — pure read of a SPECIFIC board's stack (or `null` when no
+ * stack has been allocated for it / the id is empty). `undo()`/`redo()` capture
+ * the board active at call time and pass it to their rollback so a body that
+ * rejects AFTER the cross-board auto-switch flipped `activeBoardId` rolls back
+ * the stack the synchronous move actually touched — NOT whichever board the
+ * auto-switch landed on. (`getActiveStack` reads the post-switch board, which is
+ * the 2.1 corruption.) Returns `null` if the stack is gone (vault swap
+ * mid-flight) so the rollback no-ops, mirroring the prior guard.
+ */
+function getStackFor(boardId: string | null): HistoryStack | null {
+  if (!boardId) return null;
+  return stacks[boardId] ?? null;
+}
+
+/**
  * Lazy-create the active board's stack on first write. Used from
  * `execute` and `pushWithoutExecute` — paths that are already mutating
  * `$state` so the write here is unambiguous. `undo` and `redo` use
@@ -360,8 +375,14 @@ function rollbackExecute(command: Command, preRedoStack: Command[], redoStackRef
  * command stranded on the redo stack with its inverse only half-applied, so a
  * follow-up Ctrl+Z skipped it and the next Ctrl+Y replayed a no-op.
  */
-function rollbackUndo(command: Command, preUndoStack: Command[]): void {
-  const stack = getActiveStack();
+function rollbackUndo(command: Command, preUndoStack: Command[], originBoardId: string | null): void {
+  // 2.1 (Audit-14) — resolve the stack `undo()`'s synchronous move actually
+  // touched (the board active when undo() STARTED), not `getActiveStack()`: a
+  // cross-board auto-switch has by now flipped `activeBoardId` to the target,
+  // so the old `getActiveStack()` read the WRONG board — removing the command
+  // from a board it was never on and clobbering that board's undo stack with
+  // this board's pre-undo snapshot.
+  const stack = getStackFor(originBoardId);
   if (!stack) return;
   const idx = stack.redoStack.lastIndexOf(command);
   if (idx >= 0) {
@@ -371,7 +392,10 @@ function rollbackUndo(command: Command, preUndoStack: Command[]): void {
     ];
   }
   stack.undoStack = preUndoStack;
-  if (activeBoardId) boardStore.markDirty(activeBoardId);
+  // Dirty the board the command actually mutates (its target), falling back to
+  // the originating board for board-agnostic commands.
+  const dirtyId = command.targetBoardId || originBoardId;
+  if (dirtyId) boardStore.markDirty(dirtyId);
 }
 
 /**
@@ -382,8 +406,11 @@ function rollbackUndo(command: Command, preUndoStack: Command[]): void {
  * head by `pushBoundedAndNotify`'s cap is not resurrected — the redo body
  * failing is the rare path and this matches the execute-side contract.
  */
-function rollbackRedo(command: Command, preRedoStack: Command[]): void {
-  const stack = getActiveStack();
+function rollbackRedo(command: Command, preRedoStack: Command[], originBoardId: string | null): void {
+  // 2.1 (Audit-14) — see `rollbackUndo`: roll back the stack `redo()`'s move
+  // touched (the board active when redo() STARTED), not the post-auto-switch
+  // active board.
+  const stack = getStackFor(originBoardId);
   if (!stack) return;
   const idx = stack.undoStack.lastIndexOf(command);
   if (idx >= 0) {
@@ -393,7 +420,8 @@ function rollbackRedo(command: Command, preRedoStack: Command[]): void {
     ];
   }
   stack.redoStack = preRedoStack;
-  if (activeBoardId) boardStore.markDirty(activeBoardId);
+  const dirtyId = command.targetBoardId || originBoardId;
+  if (dirtyId) boardStore.markDirty(dirtyId);
 }
 
 export const historyStore = {
@@ -497,6 +525,11 @@ export const historyStore = {
     if (!stack || stack.undoStack.length === 0) return Promise.resolve();
     const command = stack.undoStack[stack.undoStack.length - 1];
     if (!command) return Promise.resolve(); // length checked above; narrow for the type-checker
+    // 2.1 (Audit-14) — the board whose stack we're about to mutate. Capture it
+    // NOW: a cross-board auto-switch below flips `activeBoardId` to the target
+    // inside the async body, so the rollback can't re-read it (it would resolve
+    // the wrong board's stack). This is the board the synchronous move touches.
+    const originBoardId = activeBoardId;
     let didAutoSwitch = false;
     if (command.targetBoardId && command.targetBoardId !== activeBoardId) {
       // Audit 5.3 — auto-switch to the originating board when it's open, then
@@ -535,7 +568,7 @@ export const historyStore = {
         }
       : () => command.undo();
     return runChained(op).catch((err) => {
-      rollbackUndo(command, preUndoStack);
+      rollbackUndo(command, preUndoStack, originBoardId);
       // 6.4.M15 — see execute(): report before the (mostly unobserved) rethrow.
       reportError('historyStore', err, `Undo of "${command.description}" failed and was rolled back.`);
       throw err;
@@ -554,6 +587,9 @@ export const historyStore = {
     if (!stack || stack.redoStack.length === 0) return Promise.resolve();
     const command = stack.redoStack[stack.redoStack.length - 1];
     if (!command) return Promise.resolve(); // length checked above; narrow for the type-checker
+    // 2.1 (Audit-14) — see undo(): capture the board whose stack we mutate
+    // before a cross-board auto-switch flips `activeBoardId`.
+    const originBoardId = activeBoardId;
     let didAutoSwitch = false;
     if (command.targetBoardId && command.targetBoardId !== activeBoardId) {
       // Audit 5.3 — symmetric with undo(): auto-switch to the originating
@@ -585,7 +621,7 @@ export const historyStore = {
         }
       : () => command.execute();
     return runChained(op).catch((err) => {
-      rollbackRedo(command, preRedoStack);
+      rollbackRedo(command, preRedoStack, originBoardId);
       // 6.4.M15 — see execute(): report before the (mostly unobserved) rethrow.
       reportError('historyStore', err, `Redo of "${command.description}" failed and was rolled back.`);
       throw err;
@@ -659,12 +695,33 @@ export const historyStore = {
   },
 
   /**
-   * Clears history for a specific board (e.g. when deleting a board).
+   * Clears history for a specific board (e.g. when deleting a board, or when
+   * its last open tab closes — every caller fires only once the board is truly
+   * gone, never for a board still pinned in another pane).
+   *
+   * 2.4 (Audit-14) — history is filed by the GLOBAL active board, not the
+   * command's `targetBoardId`, so a command mutating board B can sit on board
+   * A's stack (B was edited from an inactive split pane). Deleting B's own
+   * stack below leaves those B-targeting commands stranded on sibling stacks;
+   * on Ctrl+Z `boardActivator(B)` fails (B is gone) → the switch-back toast
+   * fires and the command is NOT popped, wedging A's undo behind it forever.
+   * So after dropping B's own stack, sweep every surviving stack and drop
+   * commands that target the removed board. Routed through `mutateStack` so a
+   * swept command carrying file snapshots still fires the escalated
+   * "deleted files cannot be restored" toast (the drop-discipline invariant).
    */
   clearBoard(boardId: string) {
     delete stacks[boardId];
     delete truncationNotified[boardId];
     delete truncationLossNotified[boardId];
+    for (const id of Object.keys(stacks)) {
+      const stack = stacks[id];
+      if (!stack) continue;
+      mutateStack(stack, id, (s) => {
+        s.undoStack = s.undoStack.filter((c) => c.targetBoardId !== boardId);
+        s.redoStack = s.redoStack.filter((c) => c.targetBoardId !== boardId);
+      });
+    }
   },
 
   /**

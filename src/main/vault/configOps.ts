@@ -369,34 +369,17 @@ export async function saveConfig(
 }
 
 /**
- * Convenience savers for each config file.
+ * Saves the workspace layout config (open tabs, sidebar, split panes).
+ *
+ * Audit-14 6.4 — the six sibling per-file savers (`saveAppConfig`,
+ * `saveAppearanceConfig`, `saveDefaultsConfig`, `saveHotkeysConfig`,
+ * `saveViewportsConfig`, `saveSidebarOrderConfig`) were deleted as dead
+ * code: the live write path is the generic `saveConfig` reached via the
+ * `config:save` IPC channel. Only `saveWorkspaceConfig` retained a real
+ * caller (`board.ipc.ts` → `config:save-workspace`), so it stays.
  */
-export async function saveAppConfig(vaultRoot: string, data: unknown) {
-  return saveConfig(vaultRoot, 'app.json', data);
-}
-
-export async function saveAppearanceConfig(vaultRoot: string, data: unknown) {
-  return saveConfig(vaultRoot, 'appearance.json', data);
-}
-
-export async function saveDefaultsConfig(vaultRoot: string, data: unknown) {
-  return saveConfig(vaultRoot, 'defaults.json', data);
-}
-
-export async function saveHotkeysConfig(vaultRoot: string, data: unknown) {
-  return saveConfig(vaultRoot, 'hotkeys.json', data);
-}
-
 export async function saveWorkspaceConfig(vaultRoot: string, data: unknown) {
   return saveConfig(vaultRoot, 'workspace.json', data);
-}
-
-export async function saveViewportsConfig(vaultRoot: string, data: unknown) {
-  return saveConfig(vaultRoot, 'viewports.json', data);
-}
-
-export async function saveSidebarOrderConfig(vaultRoot: string, data: unknown) {
-  return saveConfig(vaultRoot, 'sidebar-order.json', data);
 }
 
 // ── Themes ──

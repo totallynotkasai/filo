@@ -8,6 +8,7 @@
   import Tab from './Tab.svelte';
   import { boardRegistry } from '../../core/boardRegistry';
   import { handleListKeyNav } from '../../lib/utils/listKeyNav';
+  import { BOARD_TYPE_ICON_PATH } from '../../constants/boardIcons';
 
   // Tab bar color flows through `--tabbar-bg` (written to :root by App.svelte
   // from `general.tabBarColor`). Height derives from `--ui-tabbar-scale`,
@@ -15,11 +16,26 @@
 
   let showNewTabMenu = $state(false);
 
+  // Audit-14 5.8 — refs to the menu triggers so Escape-to-close can return
+  // focus to the button that opened the popup (WAI-ARIA menu pattern).
+  let newTabBtnEl = $state<HTMLButtonElement | null>(null);
+  let overflowBtnEl = $state<HTMLButtonElement | null>(null);
+
+  function closeNewTabMenu() {
+    showNewTabMenu = false;
+    newTabBtnEl?.focus();
+  }
+
+  function closeOverflowMenu() {
+    showOverflowMenu = false;
+    overflowBtnEl?.focus();
+  }
+
   const allBoardTypes: { type: BoardType; label: string; icon: string }[] = [
-    { type: 'mindmap', label: 'Mind Map', icon: 'M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z' },
-    { type: 'kanban', label: 'Kanban', icon: 'M3 3h18v18H3zM9 3v18M15 3v18' },
-    { type: 'tasklist', label: 'Task List', icon: 'M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11' },
-    { type: 'document', label: 'Document', icon: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z' },
+    { type: 'mindmap', label: 'Mind Map', icon: BOARD_TYPE_ICON_PATH.mindmap },
+    { type: 'kanban', label: 'Kanban', icon: BOARD_TYPE_ICON_PATH.kanban },
+    { type: 'tasklist', label: 'Task List', icon: BOARD_TYPE_ICON_PATH.tasklist },
+    { type: 'document', label: 'Document', icon: BOARD_TYPE_ICON_PATH.document },
   ];
 
   // Document board type isn't directly creatable — documents are opened via
@@ -204,8 +220,10 @@
   {#if hasOverflow}
     <div class="tabbar-overflow-wrapper">
       <button
+        bind:this={overflowBtnEl}
         class="tabbar-overflow-btn"
         onclick={() => (showOverflowMenu = !showOverflowMenu)}
+        onkeydown={(e) => { if (e.key === 'Escape' && showOverflowMenu) { e.preventDefault(); closeOverflowMenu(); } }}
         title="Show all open tabs"
         aria-label="Show all open tabs"
         aria-expanded={showOverflowMenu}
@@ -217,7 +235,12 @@
       </button>
 
       {#if showOverflowMenu}
-        <div class="tabbar-overflow-menu" role="menu">
+        <div
+          class="tabbar-overflow-menu"
+          role="menu"
+          tabindex="-1"
+          onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); closeOverflowMenu(); } }}
+        >
           {#each tabStore.tabs as tab (tab.id)}
             <button
               class="tabbar-overflow-item"
@@ -240,10 +263,14 @@
 
   <div class="new-tab-wrapper">
     <button
+      bind:this={newTabBtnEl}
       class="new-tab-btn"
       onclick={() => showNewTabMenu = !showNewTabMenu}
+      onkeydown={(e) => { if (e.key === 'Escape' && showNewTabMenu) { e.preventDefault(); closeNewTabMenu(); } }}
       title="New Tab"
       aria-label="New tab"
+      aria-haspopup="menu"
+      aria-expanded={showNewTabMenu}
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
         <line x1="12" y1="5" x2="12" y2="19"/>
@@ -252,9 +279,14 @@
     </button>
 
     {#if showNewTabMenu}
-      <div class="new-tab-menu">
+      <div
+        class="new-tab-menu"
+        role="menu"
+        tabindex="-1"
+        onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); closeNewTabMenu(); } }}
+      >
         {#each boardTypes as bt (bt.type)}
-          <button class="new-tab-option" onclick={() => createQuickBoard(bt.type)}>
+          <button class="new-tab-option" role="menuitem" onclick={() => createQuickBoard(bt.type)}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
               <path d={bt.icon}/>
             </svg>

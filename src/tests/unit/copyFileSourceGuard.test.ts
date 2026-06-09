@@ -9,6 +9,7 @@ import {
   clearApprovedSources,
   __resetApprovedSourcesForTests,
 } from '../../main/services/approvedSources';
+import { vaultRegistry } from '../../main/services/vaultRegistry';
 import { copyFileToVault } from '../../main/vault/fileOps';
 
 /**
@@ -35,6 +36,14 @@ describe('Audit-12 S1 — approved copy-source policy', () => {
 
   beforeEach(() => {
     __resetApprovedSourcesForTests();
+    // Audit-14 4.2 — registration now BINDS to the active vault (read from the
+    // registry), so a registerApprovedSource(...) only takes effect with a vault
+    // set. Anchor on VAULT for the generic specs; cross-vault specs override.
+    vaultRegistry.setCurrentVault(VAULT);
+  });
+
+  afterEach(() => {
+    vaultRegistry.setCurrentVault(null);
   });
 
   it('rejects an unregistered source outside the vault (the core hole)', () => {
@@ -76,26 +85,46 @@ describe('Audit-12 S1 — approved copy-source policy', () => {
     expect(isApprovedCopySource(VAULT, 'c:\\users\\me\\A.PNG')).toBe(true);
   });
 
-  it('Audit-13 M11 — a source approved under vault A does NOT survive a swap to vault B', () => {
+  it('Audit-14 4.2 — a source approved under vault A is NOT approved after a swap to vault B (binding)', () => {
     const VAULT_A = process.platform === 'win32' ? 'C:\\Users\\me\\VaultA' : '/home/me/VaultA';
     const VAULT_B = process.platform === 'win32' ? 'C:\\Users\\me\\VaultB' : '/home/me/VaultB';
     const picked = process.platform === 'win32' ? 'D:\\Photos\\holiday.jpg' : '/mnt/usb/holiday.jpg';
 
-    // User picks an external file while vault A is open.
+    // User picks an external file while vault A is active → bound to A.
+    vaultRegistry.setCurrentVault(VAULT_A);
     registerApprovedSource(picked);
     expect(isApprovedCopySource(VAULT_A, picked)).toBe(true);
 
-    // Swap to vault B clears the process-global set (the `vault:close` /
-    // `vault:watch` swap path calls this). The leaked approval is gone.
-    clearApprovedSources();
+    // Swap to vault B WITHOUT clearing — the per-source binding alone rejects the
+    // cross-vault reuse (clearApprovedSources is a separate defence layer below).
+    vaultRegistry.setCurrentVault(VAULT_B);
     expect(isApprovedCopySource(VAULT_B, picked)).toBe(false);
-    // ...and it's no longer approved for A either — the registry is per-session,
-    // not per-vault, so a fresh pick is required after any swap.
-    expect(isApprovedCopySource(VAULT_A, picked)).toBe(false);
 
     // A file that lives INSIDE the newly-open vault still needs no registration.
     const insideB = join(VAULT_B, 'attachments', 'a.png');
     expect(isApprovedCopySource(VAULT_B, insideB)).toBe(true);
+  });
+
+  it('Audit-13 M11 — clearApprovedSources() drops a leaked approval (defence in depth)', () => {
+    const VAULT_A = process.platform === 'win32' ? 'C:\\Users\\me\\VaultA' : '/home/me/VaultA';
+    const picked = process.platform === 'win32' ? 'D:\\Photos\\holiday.jpg' : '/mnt/usb/holiday.jpg';
+
+    vaultRegistry.setCurrentVault(VAULT_A);
+    registerApprovedSource(picked);
+    expect(isApprovedCopySource(VAULT_A, picked)).toBe(true);
+
+    // The `vault:close` / `vault:watch` swap path calls clearApprovedSources();
+    // even back under vault A the approval is gone (a fresh pick is required).
+    clearApprovedSources();
+    expect(isApprovedCopySource(VAULT_A, picked)).toBe(false);
+  });
+
+  it('Audit-14 4.2 — registration with no active vault is a no-op (nothing to bind)', () => {
+    const picked = process.platform === 'win32' ? 'D:\\Photos\\x.jpg' : '/mnt/usb/x.jpg';
+    vaultRegistry.setCurrentVault(null);
+    registerApprovedSource(picked); // no active vault → not recorded
+    vaultRegistry.setCurrentVault(VAULT);
+    expect(isApprovedCopySource(VAULT, picked)).toBe(false);
   });
 
   it('ignores empty / non-string inputs (defensive)', () => {
@@ -179,6 +208,45 @@ describe('Audit-12 S1 — copyFileToVault TOCTOU + streamed-byte cap', () => {
     await fs.writeFile(src, payload);
     const dest = await copyFileToVault(src, vaultDir);
     expect(dirname(dest)).toBe(vaultDir);
+    expect((await fs.readFile(dest)).equals(payload)).toBe(true);
+  });
+
+  // ── Audit-14 4.3 — symlink-target-swap defence (noFollowSource) ────────────
+
+  it('refuses a symlink source when noFollowSource is true (O_NOFOLLOW / lstat-reject)', async () => {
+    // Models the post-lstat swap: the source the IPC handler validated as a
+    // regular file is now a symlink pointing at another file. With
+    // noFollowSource=true the open must refuse it (POSIX: ELOOP; Windows:
+    // pre-open lstat rejects the symlink).
+    const realTarget = join(sourceDir, 'real-secret.txt');
+    await fs.writeFile(realTarget, Buffer.from('secret bytes'));
+    const linkPath = join(sourceDir, 'link-to-secret.txt');
+    try {
+      await fs.symlink(realTarget, linkPath);
+    } catch {
+      return; // symlink creation needs privilege (common on Windows) — skip
+    }
+
+    await expect(
+      copyFileToVault(linkPath, vaultDir, undefined, undefined, true),
+    ).rejects.toThrow();
+    // No partial / placeholder left behind in the vault.
+    expect(await fs.readdir(vaultDir)).toEqual([]);
+  });
+
+  it('still follows a symlink source when noFollowSource is false (non-IPC callers unchanged)', async () => {
+    const realTarget = join(sourceDir, 'real-ok.txt');
+    const payload = Buffer.from('followed bytes', 'utf-8');
+    await fs.writeFile(realTarget, payload);
+    const linkPath = join(sourceDir, 'link-ok.txt');
+    try {
+      await fs.symlink(realTarget, linkPath);
+    } catch {
+      return; // skip without symlink privilege
+    }
+
+    // Default (5th arg omitted) keeps the legacy follow-the-symlink behaviour.
+    const dest = await copyFileToVault(linkPath, vaultDir);
     expect((await fs.readFile(dest)).equals(payload)).toBe(true);
   });
 });

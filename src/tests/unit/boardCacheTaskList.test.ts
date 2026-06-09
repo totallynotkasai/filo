@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
+import { sectionIdForPlacementIndex } from '@renderer/lib/tasklist/sectionMath';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
-import type { TileDefinition, TaskListBoard } from '@renderer/schema/index';
+import type { TileDefinition, TaskListBoard, TaskListSection } from '@renderer/schema/index';
 
 /**
  * Phase C — Task List placement CRUD on the board cache store.
@@ -129,6 +130,25 @@ describe('boardCache — Task List CRUD', () => {
     boardCacheStore.reorderTaskPlacement('tl', 'missing', 0);
     const tasks = (boardCacheStore.cache.tl.board as TaskListBoard).tasks ?? [];
     expect(tasks.map((p) => p.tileId)).toEqual(['t1']);
+  });
+
+  it('DRAG-5: reorderTaskPlacement refuses (no-op + warn) on a sectioned board', () => {
+    boardCacheStore.persistAddTaskPlacement('tl', defOf('t1', 'A'), 0);
+    boardCacheStore.persistAddTaskPlacement('tl', defOf('t2', 'B'), 1);
+    boardCacheStore.persistAddTaskPlacement('tl', defOf('t3', 'C'), 2);
+    // A real section means the helper (which doesn't adjust section ranges)
+    // would desync the slices — it must bail rather than corrupt the board.
+    boardCacheStore.persistTaskListStructure('tl', [
+      { id: 'S', title: 'S', position: 0, collapsed: false },
+    ]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    boardCacheStore.reorderTaskPlacement('tl', 't3', 0);
+
+    const tasks = (boardCacheStore.cache.tl.board as TaskListBoard).tasks ?? [];
+    expect(tasks.map((p) => p.tileId)).toEqual(['t1', 't2', 't3']); // unchanged
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('refusing on a sectioned board'));
+    warn.mockRestore();
   });
 
   it('getFullTasksForBoard returns tile defs fused with synthetic placement', () => {
@@ -342,6 +362,101 @@ describe('boardCache — Task List previously-untested mutators', () => {
     // Sorted in ascending position order; clamped to [0, 2] (taskCount = 2).
     expect(sections.map((s) => s.position)).toEqual([0, 1, 2]);
     expect(sections.map((s) => s.id)).toEqual(['s-neg', 's-mid', 's-end']);
+  });
+
+  it('persistTaskListStructure PRESERVES an in-range tie (empty section before a populated one)', () => {
+    // Cross-section drag regression guard. Three sections, one task each; the
+    // middle task is dragged up so section 2 is emptied. The drag pipeline
+    // persists the (correct) tied positions [s1:0, s2:2, s3:2] — s2 owns the
+    // empty [2,2) slice, s3 owns [2,3). The OLD strict-increasing normalization
+    // bumped s3 → 3, re-partitioning the array so s2 stole s3's task. An in-range
+    // tie must survive (schema/board.ts: "Empty sections are representable (two
+    // consecutive section positions)").
+    boardCacheStore.persistAddTaskPlacement('tl', defOf('t1', 'A'), 0);
+    boardCacheStore.persistAddTaskPlacement('tl', defOf('t2', 'B'), 1);
+    boardCacheStore.persistAddTaskPlacement('tl', defOf('t3', 'C'), 2);
+
+    boardCacheStore.persistTaskListStructure('tl', [
+      { id: 's1', title: 'One', position: 0, collapsed: false },
+      { id: 's2', title: 'Two', position: 2, collapsed: false },
+      { id: 's3', title: 'Three', position: 2, collapsed: false },
+    ]);
+
+    const sections = (boardCacheStore.cache.tl.board as TaskListBoard).sections ?? [];
+    // s1 → [0,2)={A,B}, s2 → [2,2)={} (empty), s3 → [2,3)={C}. The tie at 2 stays.
+    expect(sections.map((s) => s.position)).toEqual([0, 2, 2]);
+    expect(sections.map((s) => s.id)).toEqual(['s1', 's2', 's3']);
+  });
+
+  it('persistTaskListStructure PINS empty TAIL ties at taskCount (SEC-2: no position > taskCount)', () => {
+    // Trailing empty sections are all zero-length regardless of order, so they
+    // pin at taskCount rather than being bumped to taskCount+1, taskCount+2, …
+    // A position > taskCount is not a valid index into `tasks`: it can't own a
+    // task and silently misroutes a later add-to-section (SEC-1). The bump used
+    // to emit [0, 3, 4]; the on-disk invariant now holds at [0, 3, 3].
+    boardCacheStore.persistAddTaskPlacement('tl', defOf('t1', 'A'), 0);
+    boardCacheStore.persistAddTaskPlacement('tl', defOf('t2', 'B'), 1);
+    boardCacheStore.persistAddTaskPlacement('tl', defOf('t3', 'C'), 2);
+
+    boardCacheStore.persistTaskListStructure('tl', [
+      { id: 's1', title: 'One', position: 0, collapsed: false },
+      { id: 's2', title: 'Tail A', position: 3, collapsed: false },
+      { id: 's3', title: 'Tail B', position: 3, collapsed: false },
+    ]);
+
+    const sections = (boardCacheStore.cache.tl.board as TaskListBoard).sections ?? [];
+    expect(sections.map((s) => s.position)).toEqual([0, 3, 3]);
+    expect(sections.map((s) => s.id)).toEqual(['s1', 's2', 's3']);
+  });
+
+  it('SEC-1: adds a task into the 2nd empty tail section, not an earlier neighbour', () => {
+    // One populated section A owning [t1,t2,t3]; B and C are empty tail sections.
+    boardCacheStore.persistAddTaskPlacement('tl', defOf('t1', 'A'), 0);
+    boardCacheStore.persistAddTaskPlacement('tl', defOf('t2', 'B'), 1);
+    boardCacheStore.persistAddTaskPlacement('tl', defOf('t3', 'C'), 2);
+    boardCacheStore.persistTaskListStructure('tl', [
+      { id: 'A', title: 'A', position: 0, collapsed: false },
+      { id: 'B', title: 'B', position: 3, collapsed: false },
+      { id: 'C', title: 'C', position: 3, collapsed: false },
+    ]);
+
+    // Add a task explicitly targeting the SECOND empty section (C). The insert
+    // index (3) is what endOfSectionIndex(C) computes; targetSectionId='C'
+    // pins it into C.
+    boardCacheStore.persistAddTaskPlacement('tl', defOf('t4', 'D'), 3, undefined, 'C');
+
+    const tasks = (boardCacheStore.cache.tl.board as TaskListBoard).tasks ?? [];
+    const sections = (boardCacheStore.cache.tl.board as TaskListBoard).sections ?? [];
+    const t4Idx = tasks.findIndex((p) => p.tileId === 't4');
+    expect(t4Idx).toBeGreaterThanOrEqual(0);
+    // The new task lands in C (the targeted section), NOT in A (the misroute).
+    expect(sectionIdForPlacementIndex(sections as TaskListSection[], t4Idx)).toBe('C');
+    // B stays empty — no placement index resolves to it.
+    const ownedByB = tasks
+      .map((_, i) => sectionIdForPlacementIndex(sections as TaskListSection[], i))
+      .filter((id) => id === 'B');
+    expect(ownedByB).toEqual([]);
+  });
+
+  it('SEC-1: adds a task into the 1st empty tail section, bumping the later tie', () => {
+    boardCacheStore.persistAddTaskPlacement('tl', defOf('t1', 'A'), 0);
+    boardCacheStore.persistAddTaskPlacement('tl', defOf('t2', 'B'), 1);
+    boardCacheStore.persistAddTaskPlacement('tl', defOf('t3', 'C'), 2);
+    boardCacheStore.persistTaskListStructure('tl', [
+      { id: 'A', title: 'A', position: 0, collapsed: false },
+      { id: 'B', title: 'B', position: 3, collapsed: false },
+      { id: 'C', title: 'C', position: 3, collapsed: false },
+    ]);
+
+    // Target the FIRST empty section (B): the later tie (C) must shift to 4 so
+    // B owns the new slot and C stays empty.
+    boardCacheStore.persistAddTaskPlacement('tl', defOf('t4', 'D'), 3, undefined, 'B');
+
+    const tasks = (boardCacheStore.cache.tl.board as TaskListBoard).tasks ?? [];
+    const sections = (boardCacheStore.cache.tl.board as TaskListBoard).sections ?? [];
+    const t4Idx = tasks.findIndex((p) => p.tileId === 't4');
+    expect(sectionIdForPlacementIndex(sections as TaskListSection[], t4Idx)).toBe('B');
+    expect(sections.map((s) => s.position)).toEqual([0, 3, 4]);
   });
 
   it('setTaskListCollapsedSubtasks round-trips a tile-id array', () => {

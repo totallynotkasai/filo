@@ -43,6 +43,7 @@ import {
   syncSentinelIfIdle,
   markPathFailed,
   clearFailedPathAfterLateSuccess,
+  isPathPending,
 } from './writeStateTracking';
 import { reportError } from '../utils/errorBus';
 import { vaultPath, type VaultPath } from '../../../shared/vaultPath';
@@ -75,6 +76,26 @@ export interface PerformWriteResult {
   failed?: string[];
 }
 
+/**
+ * Audit-14 1.4 — per-fire context handed to `performWrite`. Lets a write
+ * decide whether its post-write side effects (notably the drift-baseline
+ * stamp) are still valid by the time its IPC lands.
+ */
+export interface PerformWriteContext {
+  /**
+   * True while THIS fire is still the newest write scheduled for its path —
+   * i.e. no later write for the same path has fired since (which would have
+   * bumped the per-path write generation). A board/config write whose IPC
+   * exceeded `writeTimeoutMs` (so `drainPriorInFlight` stopped awaiting it and
+   * a newer write for the same path fired) lands late as a SUPERSEDED write;
+   * it must NOT stamp the post-write drift baseline, because that would anchor
+   * the baseline to its now-stale bytes and silently defeat future drift
+   * detection (1.4). Always `true` for a write whose sentinel info carries no
+   * path (no generation tracked).
+   */
+  isLatestWrite(): boolean;
+}
+
 export interface CreateSchedulerOptions<TArgs> {
   /** Diagnostic name (used in error reports). */
   name: string;
@@ -84,8 +105,12 @@ export interface CreateSchedulerOptions<TArgs> {
    * Performs the disk write. Resolve `void` for success, resolve
    * `{ failed: [...] }` for partial failure, or throw for whole-write
    * failure. Throws are attributed to a single failureId.
+   *
+   * The second argument is a per-fire {@link PerformWriteContext}; consumers
+   * that have no post-write generation-sensitive side effect may ignore it
+   * (a `(args) => …` callback is assignable here).
    */
-  performWrite: (args: TArgs) => Promise<PerformWriteResult | void>;
+  performWrite: (args: TArgs, ctx: PerformWriteContext) => Promise<PerformWriteResult | void>;
   /** Maps args → (vaultRoot, path) for `beginWrite`/`endWrite`. */
   getSentinelInfo: (args: TArgs) => SchedulerSentinelInfo;
   /**
@@ -283,13 +308,13 @@ export interface Scheduler<TArgs> {
   reset(): void;
   /**
    * Phase 4 / E3 — true when any armed (pending, not-yet-fired) timer's args
-   * satisfy `predicate`. Lets a scheduler that opts out of sentinel
-   * management (`manageSentinel: false`, e.g. the markdown gateway) still
-   * expose its scheduled writes to the single `isPathPending` authority via
-   * a registered probe. Does NOT consult in-flight writes — those already
-   * live in the shared ledger via `beginWrite`/`trackComponentWrite`.
+   * satisfy `predicate` (a `manageSentinel:false` scheduler's probe into
+   * `isPathPending`). P2.5 (Audit-15) — `hasPendingTimer`, NOT `hasPending`:
+   * ONLY armed timers, never `parked`/`inFlight` (no args; `markClean` needs
+   * "is a NEWER timer armed"). Durability checks use the sentinel ledger
+   * (`isPathPending`/`hasPendingWrite`), which tracks parked + in-flight.
    */
-  hasPending(predicate: (args: TArgs) => boolean): boolean;
+  hasPendingTimer(predicate: (args: TArgs) => boolean): boolean;
   /**
    * Test-only — count of attributed-but-undrained failure identifiers retained
    * in the internal `failures` Set. Pins the Audit-7 L12 fix: a fire-and-forget
@@ -298,6 +323,21 @@ export interface Scheduler<TArgs> {
    * never needs this; the Set is otherwise an opaque internal.
    */
   __failuresSizeForTests(): number;
+  /**
+   * Test-only — count of retained per-path write-generation entries
+   * (`writeGenByPath`). Pins the Audit-14 1.6 fix: after N distinct paths are
+   * written to completion this returns to ~0 (each successful, still-newest
+   * settle prunes its entry), rather than retaining one entry per
+   * distinct-path-ever-written until `reset()`. Production code never needs it.
+   */
+  __writeGenSizeForTests(): number;
+  /**
+   * Test-only (Audit-15 P1.1) — registers a parked-fire placeholder for `key`
+   * and returns a release that clears it. Lets a test construct the
+   * production-unreachable "parked but pending/inFlight empty" gap to prove
+   * `flush(key)` waits on it. Production code never needs it.
+   */
+  __parkForTests(key: string): () => void;
 }
 
 export function createScheduler<TArgs>(
@@ -317,6 +357,39 @@ export function createScheduler<TArgs>(
    * prompt on next launch).
    */
   const inFlight = new Map<string, Set<InFlightEntry>>();
+  /**
+   * Audit-14 1.1 — PARKED fires. A debounce timer firing for a key with a write
+   * already in flight DEFERS the new write behind `drainPriorInFlight(key)` so
+   * the newest lands LAST (Audit-13 H1). During that await the write is in
+   * NEITHER `pending` (timer deleted it) NOR `inFlight` (`fireWrite` hasn't run)
+   * — and `flush`/`flushAll` snapshot both maps once, so a flush in that gap
+   * could resolve while the newest edit hadn't landed (recovery-caught, but a
+   * dropped edit on a hard-quit race). Each parked fire registers a promise here
+   * before the await and resolves it once `fireFromTimer` has registered the
+   * `inFlight` entry (or no-op'd), so the write is never in none of {pending,
+   * parked, inFlight}. `flush`/`flushAll` await these then re-drain the fresh
+   * `inFlight` entries. A Set per key tracks two parked fires for one key.
+   */
+  const parked = new Map<string, Set<Promise<void>>>();
+
+  const addParked = (key: string, promise: Promise<void>): void => {
+    let set = parked.get(key);
+    if (!set) {
+      set = new Set<Promise<void>>();
+      parked.set(key, set);
+    }
+    set.add(promise);
+  };
+  const removeParked = (key: string, promise: Promise<void>): void => {
+    const set = parked.get(key);
+    if (!set) return;
+    set.delete(promise);
+    if (set.size === 0) parked.delete(key);
+  };
+  const anyParked = (): boolean => {
+    for (const set of parked.values()) if (set.size > 0) return true;
+    return false;
+  };
   /**
    * Per-failure-id Set populated by `fireWrite` on rejection / partial
    * failure. `flush(key)` and `flushAll()` consume entries that match the
@@ -412,7 +485,15 @@ export function createScheduler<TArgs>(
     const innerPromise: Promise<string[]> = (async () => {
       const writePromise: Promise<string[]> = (async () => {
         try {
-          const result = await opts.performWrite(args);
+          // Audit-14 1.4 — hand the write a currency check. A write whose IPC
+          // overruns `writeTimeoutMs` and lands AFTER a newer write for the same
+          // path fired is superseded; `isLatestWrite()` lets it skip its
+          // post-write drift-baseline stamp so the baseline isn't anchored to
+          // stale bytes (which would defeat the next drift check).
+          const result = await opts.performWrite(args, {
+            isLatestWrite: () =>
+              writePathKey === undefined || writeGenByPath.get(writePathKey) === writeGen,
+          });
           return result?.failed ?? [];
         } catch {
           return [failureId];
@@ -533,6 +614,19 @@ export function createScheduler<TArgs>(
         // unaffected: the `.filo/.dirty` sentinel + `failedVaultPaths` are
         // owned by `endWrite`/`markPathFailed`, not this attribution Set.
         failures.delete(failureId);
+        // Audit-14 1.6 — prune this path's write-generation entry on a still-
+        // newest, now-clean success (checked AFTER `safeEndWrite` cleared this
+        // write from the pending/failed sets), bounding `writeGenByPath` growth
+        // within a session (was cleared only on vault swap). A later write
+        // re-creates it at gen 1; a timed-out write keeps its entry (settles via
+        // the failure branch, which the late-heal gen guard still needs).
+        if (
+          writePathKey !== undefined &&
+          writeGenByPath.get(writePathKey) === writeGen &&
+          !(sentinel.path && isPathPending(sentinel.path))
+        ) {
+          writeGenByPath.delete(writePathKey);
+        }
       } else {
         for (const f of failureList) failures.add(f);
       }
@@ -642,9 +736,23 @@ export function createScheduler<TArgs>(
         // own timer; both fires serialize via this same drain and last-wins, so
         // the extra write is benign. The drain awaits the timeout-bounded
         // tracker, so a wedged prior can't block past its `writeTimeoutMs`.
+        //
+        // Audit-14 1.1 — register a PARKED promise BEFORE awaiting the drain so
+        // this deferred fire is visible to `flush()` / `flushAll()` while it
+        // waits (it is in neither `pending` nor `inFlight` yet). Resolve it only
+        // after `fireFromTimer` has registered the `inFlight` entry (or no-op'd),
+        // so there is no gap where the write is in no structure.
+        let resolveParked!: () => void;
+        const parkedPromise = new Promise<void>((res) => { resolveParked = res; });
+        addParked(key, parkedPromise);
         void (async () => {
-          await drainPriorInFlight(key);
-          fireFromTimer();
+          try {
+            await drainPriorInFlight(key);
+            fireFromTimer();
+          } finally {
+            removeParked(key, parkedPromise);
+            resolveParked();
+          }
         })();
       } else {
         // Common case — nothing in flight for this key. Fire synchronously so
@@ -686,8 +794,19 @@ export function createScheduler<TArgs>(
   ): Promise<{ ok: boolean }> {
     const pendingEntry = pending.get(key);
     const initialBucket = inFlight.get(key);
-
-    if (!pendingEntry && (!initialBucket || initialBucket.size === 0)) {
+    // Audit-15 P1.1 — a PARKED fire (a debounce fire deferred behind an in-flight
+    // write by `drainPriorInFlight`) is in NEITHER `pending` nor `inFlight` while
+    // it waits, so this early-return must check `parked` too — matching the drain
+    // loop below + `flushAll()`. Without it, in the microtask gap after the prior
+    // write leaves `inFlight` but before the parked fire registers its own entry,
+    // a single-key `flush` (tab-close) saw both maps empty and returned {ok:true}
+    // before the newest edit landed — a false "saved".
+    const initialParked = parked.get(key);
+    if (
+      !pendingEntry &&
+      (!initialBucket || initialBucket.size === 0) &&
+      !(initialParked && initialParked.size > 0)
+    ) {
       return { ok: true };
     }
 
@@ -759,16 +878,28 @@ export function createScheduler<TArgs>(
       }
     }
 
-    // Await every remaining in-flight write for this key. Overlapping fires each
-    // own a bucket entry (Phase F2); the freshly fired pending write above and
-    // any WC-3 pre-drained entries already settled and removed themselves, so
-    // this catches the only-in-flight (no pending) case and any fire that
-    // appeared concurrently. Snapshot the survivors now — fireWrite's settle
-    // callback removes them from the bucket as they land.
-    const bucket = inFlight.get(key);
-    const inflightEntries = bucket ? Array.from(bucket) : [];
-    for (const inflightEntry of inflightEntries) {
-      await consumeInflight(inflightEntry);
+    // Await every remaining in-flight write for this key AND any PARKED fire
+    // (Audit-14 1.1) until both are quiescent. Overlapping fires each own a
+    // bucket entry (Phase F2); the freshly fired pending write above and any
+    // WC-3 pre-drained entries already settled and removed themselves. A parked
+    // fire (deferred behind a prior in-flight write) is in neither map while it
+    // waits — await its promise (which resolves once it has registered its own
+    // `inFlight` entry), then the next loop pass drains that fresh entry.
+    // Bounded so a pathological reschedule chain can't hang the flush.
+    let guard = 0;
+    do {
+      const bucket = inFlight.get(key);
+      for (const inflightEntry of bucket ? Array.from(bucket) : []) {
+        await consumeInflight(inflightEntry);
+      }
+      const parkedSet = parked.get(key);
+      if (parkedSet && parkedSet.size > 0) {
+        await Promise.all(Array.from(parkedSet));
+      }
+      guard++;
+    } while ((inFlight.get(key)?.size || parked.get(key)?.size) && guard < 50);
+    if (guard >= 50) {
+      console.warn(`[${opts.name}] flush("${key}") drain hit the iteration bound (50) — possible reschedule loop.`);
     }
 
     return { ok: success };
@@ -891,7 +1022,50 @@ export function createScheduler<TArgs>(
       }
     }
 
-    const ok = Math.max(0, drainedTotal - failed.length);
+    // Audit-14 1.1 — drain PARKED fires until quiescent. A timer that fired into
+    // the drained branch is deferred behind a prior in-flight write — in neither
+    // `pending` nor the `inflightSnapshot` above — so without this `flushAll`
+    // (hence `save()`/quit) could resolve while the newest edit hadn't landed.
+    // Re-drain BOTH fresh in-flight entries AND still-parked promises each pass:
+    // a parked fire transitions parked → in-flight when the prior write resolves
+    // and may already be in `inFlight` (not the snapshot) by the time we look.
+    // Bounded so a reschedule chaining behind a wedge can't strand the flush.
+    let parkedDrainedTotal = 0;
+    let parkedGuard = 0;
+    while ((anyParked() || inFlight.size > 0) && parkedGuard < 50) {
+      parkedGuard++;
+      // Drain freshly-registered in-flight entries (a parked fire that already
+      // fired, or any write that appeared after the snapshot). Snapshot the live
+      // buckets — entries self-remove from them as they settle in `fireWrite`.
+      const fresh: InFlightEntry[] = [];
+      for (const bucket of inFlight.values()) for (const entry of bucket) fresh.push(entry);
+      if (fresh.length > 0) {
+        await Promise.all(fresh.map((e) => e.promise));
+        for (const entry of fresh) {
+          parkedDrainedTotal++;
+          const captured = entry.capturedFailures;
+          if (captured && captured.length > 0) {
+            for (const f of captured) {
+              failures.delete(f);
+              if (!failed.includes(f)) failed.push(f);
+            }
+          }
+        }
+      }
+      // Await any parked promise so its deferred fire registers an in-flight
+      // entry (drained on the next pass). Resolves once the fire has fired or
+      // no-op'd, so a still-parked write can't slip past the loop condition.
+      if (anyParked()) {
+        const parkedPromises: Promise<void>[] = [];
+        for (const set of parked.values()) for (const p of set) parkedPromises.push(p);
+        await Promise.all(parkedPromises);
+      }
+    }
+    if (parkedGuard >= 50) {
+      console.warn(`[${opts.name}] flushAll parked-drain hit the iteration bound (50) — possible reschedule loop.`);
+    }
+
+    const ok = Math.max(0, drainedTotal + parkedDrainedTotal - failed.length);
     return { vaultRoot: trackedVault, failed, ok };
   }
 
@@ -909,6 +1083,13 @@ export function createScheduler<TArgs>(
     }
     pending.clear();
     inFlight.clear();
+    // Audit-14 1.1 — drop parked-fire references. A dangling parked async
+    // closure (already past `pending.delete`, awaiting the now-cleared drain)
+    // still resolves its own promise in its `finally`; clearing here just stops
+    // new flushes from seeing the stale entry. Any write it fires against the
+    // OUTGOING vault is bounded by main-side `assertActiveVault` (rejected) and
+    // the `trackerIsCurrent` settle guard (no new-vault sentinel mutation).
+    parked.clear();
     failures.clear();
     // Audit-13 M3 — drop the per-path generations so the new vault's first write
     // to a same-named path starts at generation 1 (a stale late-success
@@ -916,7 +1097,7 @@ export function createScheduler<TArgs>(
     writeGenByPath.clear();
   }
 
-  function hasPending(predicate: (args: TArgs) => boolean): boolean {
+  function hasPendingTimer(predicate: (args: TArgs) => boolean): boolean {
     for (const entry of pending.values()) {
       const args = entry.getArgs();
       if (args && predicate(args)) return true;
@@ -928,5 +1109,36 @@ export function createScheduler<TArgs>(
     return failures.size;
   }
 
-  return { schedule, cancel, cancelAll, flush, flushAll, reset, hasPending, __failuresSizeForTests };
+  function __writeGenSizeForTests(): number {
+    return writeGenByPath.size;
+  }
+
+  /**
+   * Test-only (Audit-15 P1.1) — constructs the production-unreachable state where
+   * a parked fire is pending but `pending`/`inFlight` are empty (the prior
+   * in-flight write already settled + removed itself; the parked fire has not yet
+   * registered its own `inFlight` entry — a one-microtask gap no external code can
+   * land in). Returns a release that clears the parked entry, mirroring the parked
+   * IIFE's `removeParked` tail. Lets a test prove `flush(key)` no longer reports
+   * success while a write is still parked.
+   */
+  function __parkForTests(key: string): () => void {
+    let release!: () => void;
+    const parkedPromise = new Promise<void>((res) => { release = res; });
+    addParked(key, parkedPromise);
+    return () => { removeParked(key, parkedPromise); release(); };
+  }
+
+  return {
+    schedule,
+    cancel,
+    cancelAll,
+    flush,
+    flushAll,
+    reset,
+    hasPendingTimer,
+    __failuresSizeForTests,
+    __writeGenSizeForTests,
+    __parkForTests,
+  };
 }

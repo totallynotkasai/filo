@@ -18,8 +18,27 @@ import { reportError } from '../utils/errorBus';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { invokeOk } from '../utils/invokeOk';
 import { onVaultSwap } from '../../core/vaultLifecycle';
+import { createId } from '../utils/ids';
 
 const DIRTY_SENTINEL_PATH = '.filo/.dirty';
+
+/**
+ * Audit-14 1.3 — per-launch session id, minted ONCE for the lifetime of this
+ * renderer process. Stamped into every `.filo/.dirty` payload by `markDirty`
+ * and compared in `checkRecovery`.
+ *
+ * Why: opening a vault that triggers a migration repair (groupsBackfilled /
+ * orphan-prune / boardId-normalize) schedules board writes during the swap,
+ * and each `beginWrite` lays down a FRESH `.filo/.dirty` for those repaired
+ * paths. `checkRecovery` (which runs just after the commit) then reads a
+ * sentinel THIS launch just wrote and — with no session marker — cannot tell
+ * it from a genuine prior-crash breadcrumb, surfacing a spurious Recovery
+ * modal naming the just-repaired boards. A sentinel whose `launchId` equals
+ * `LAUNCH_ID` was written by THIS process, so it is treated as "self, not a
+ * prior crash" and suppressed. A prior session's sentinel carries a different
+ * id (or none, for legacy/pre-fix sentinels) and still prompts.
+ */
+const LAUNCH_ID = createId();
 
 /**
  * Promise-chained mutex serialising every sentinel mutation (markDirty,
@@ -110,6 +129,12 @@ export interface RecoveryStatus {
 interface SentinelPayload {
   dirtyAt: number;
   pendingPaths?: string[];
+  /**
+   * Audit-14 1.3 — the {@link LAUNCH_ID} of the process that wrote this
+   * sentinel. Absent on legacy / pre-fix sentinels (treated as a prior
+   * session, so they still prompt).
+   */
+  launchId?: string;
 }
 
 /**
@@ -126,7 +151,10 @@ export function markDirty(
   pendingPaths?: readonly string[],
 ): Promise<void> {
   if (!vaultRoot) return Promise.resolve();
-  const payload: SentinelPayload = { dirtyAt: Date.now() };
+  // Audit-14 1.3 — stamp the per-launch session id so `checkRecovery` can tell
+  // a sentinel THIS process wrote (e.g. a migration-repair write during open)
+  // from a genuine prior-crash breadcrumb.
+  const payload: SentinelPayload = { dirtyAt: Date.now(), launchId: LAUNCH_ID };
   if (pendingPaths && pendingPaths.length > 0) {
     payload.pendingPaths = [...pendingPaths];
   }
@@ -278,6 +306,14 @@ export async function checkRecovery(vaultRoot: string): Promise<RecoveryStatus> 
   }
   try {
     const parsed = JSON.parse(content) as SentinelPayload;
+    // Audit-14 1.3 — a sentinel stamped with THIS launch's id was written by
+    // the current process (e.g. a migration-repair write during the open that
+    // is about to call us), not a prior crash. Suppress the prompt. A prior
+    // session's sentinel carries a different id, and a legacy/pre-fix sentinel
+    // carries none — both fall through and prompt as before.
+    if (parsed.launchId !== undefined && parsed.launchId === LAUNCH_ID) {
+      return { needsRecovery: false };
+    }
     const pendingPaths = Array.isArray(parsed.pendingPaths)
       ? parsed.pendingPaths.filter((p): p is string => typeof p === 'string')
       : undefined;
@@ -289,6 +325,15 @@ export async function checkRecovery(vaultRoot: string): Promise<RecoveryStatus> 
   } catch {
     return { needsRecovery: true };
   }
+}
+
+/**
+ * Test-only — the current process's {@link LAUNCH_ID}. Lets the 1.3 unit test
+ * assert `markDirty` stamps it and craft a "prior session" sentinel with a
+ * deliberately different id. Production code never needs this.
+ */
+export function __getLaunchIdForTests(): string {
+  return LAUNCH_ID;
 }
 
 /**

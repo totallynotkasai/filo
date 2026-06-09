@@ -18,6 +18,7 @@ import {
   ReorderColumnCommand,
   AddCardCommand,
   MoveCardsCommand,
+  DeleteCardCommand,
 } from '@renderer/commands/index';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard, TileDefinition } from '@renderer/schema/index';
@@ -238,5 +239,68 @@ describe('Audit-7 M3 — MoveCardsCommand neighbour-anchored undo', () => {
     cmd.undo();
     expect(cardIds('src')).toEqual(['A', 'B', 'C', 'D', 'E']);
     expect(cardIds('dst')).toEqual([]);
+  });
+});
+
+// ── Audit-14 2.2 — DeleteCardCommand neighbour-anchored undo ──────────────────
+//
+// DeleteCardCommand.undo restored the card at its absolute snapshotPosition,
+// which goes stale if a sibling is added/removed between the delete and the
+// undo (the move commands already got the next-surviving-sibling anchor;
+// delete did not). The command now captures the card immediately AFTER the
+// deleted one and undo inserts before that anchor, falling back to the clamped
+// absolute position when the deleted card was the column tail.
+
+describe('Audit-14 2.2 — DeleteCardCommand neighbour-anchored undo', () => {
+  beforeEach(() => {
+    installFiloMock(() => null);
+    vaultStore.setPath('/vault');
+    boardCacheStore.clear();
+    boardCacheStore.hydrate({ kb: makeKanbanWithCards() }, { kb: 'k.board.json' });
+  });
+  afterEach(() => {
+    restoreFiloDefault();
+    vaultStore.setPath('');
+    boardCacheStore.clear();
+  });
+
+  it('undo lands a deleted mid-column card before its original sibling after an intervening insert', () => {
+    // src = [A,B,C,D,E]; delete C (idx 2). Construction captures anchor C→D.
+    const cmd = new DeleteCardCommand('kb', 'C');
+    cmd.execute();
+    expect(cardIds('src')).toEqual(['A', 'B', 'D', 'E']);
+
+    // Intervening mutation: insert Z at the FRONT of the column, so the saved
+    // absolute position (2) now points at the wrong slot.
+    boardCacheStore.persistAddKanbanPlacement('kb', 'src', cardDef('Z', 'Z'), 0);
+    expect(cardIds('src')).toEqual(['Z', 'A', 'B', 'D', 'E']);
+
+    cmd.undo();
+
+    // 2.2 — the D anchor restores C immediately before D despite the shift.
+    // Absolute-only undo (insert at index 2) would scramble this to
+    // [Z,A,C,B,D,E].
+    expect(cardIds('src')).toEqual(['Z', 'A', 'B', 'C', 'D', 'E']);
+  });
+
+  it('falls back to the absolute position when the anchor sibling is gone', () => {
+    // Delete C (anchor → D), then delete D so the anchor is unresolvable.
+    const cmd = new DeleteCardCommand('kb', 'C');
+    cmd.execute();
+    boardCacheStore.removeKanbanPlacement('kb', 'D');
+    expect(cardIds('src')).toEqual(['A', 'B', 'E']);
+
+    cmd.undo();
+    // Anchor gone → clamp the absolute snapshotPosition (2): A,B,[C],E.
+    expect(cardIds('src')).toEqual(['A', 'B', 'C', 'E']);
+  });
+
+  it('plain construct → execute → undo round-trips a tail card with no intervening mutation', () => {
+    // E is the column tail → no anchor (null) → absolute-position fallback.
+    const cmd = new DeleteCardCommand('kb', 'E');
+    cmd.execute();
+    expect(cardIds('src')).toEqual(['A', 'B', 'C', 'D']);
+    cmd.undo();
+    expect(cardIds('src')).toEqual(['A', 'B', 'C', 'D', 'E']);
   });
 });

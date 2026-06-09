@@ -147,3 +147,78 @@ describe('Audit-6 Phase 5.5 — Task-List structure command round-trips', () => 
     expect(taskIds()).toEqual(['t2', 't1', 't3']);
   });
 });
+
+describe('SEC-3 — add-then-undo on a section-less board restores []', () => {
+  beforeEach(() => {
+    installFiloMock(() => null);
+    vaultStore.setPath('/vault');
+    boardCacheStore.clear();
+    // Section-less board (virtual __default__ shown) with three unsectioned tasks.
+    const file = makeBoard();
+    (file.board as TaskListBoard).sections = [];
+    boardCacheStore.hydrate({ tl: file }, { tl: 'tl.board.json' });
+  });
+  afterEach(() => {
+    restoreFiloDefault();
+    vaultStore.setPath('');
+    boardCacheStore.clear();
+  });
+
+  /** Builds the command exactly as sectionOps.addSection does for a section-less board. */
+  function addSectionCmd(): AddSectionCommand {
+    const placements = (board().tasks ?? []).map((p: TaskPlacement) => ({ ...p }));
+    const autoDefault: TaskListSection = {
+      id: 'sec-default',
+      title: 'Task List',
+      position: 0,
+      collapsed: false,
+    };
+    const newSection: TaskListSection = {
+      id: 'sec-new',
+      title: 'New Section',
+      position: placements.length,
+      collapsed: false,
+    };
+    return new AddSectionCommand(
+      'tl',
+      { sections: [], tasks: placements },
+      { sections: [autoDefault, newSection], tasks: placements },
+      'New Section',
+      autoDefault,
+    );
+  }
+
+  it('execute materialises [default, new]; undo restores []; redo re-adds', () => {
+    expect(sections()).toEqual([]); // section-less to start
+    const cmd = addSectionCmd();
+
+    cmd.execute();
+    expect(sectionIds()).toEqual(['sec-default', 'sec-new']);
+    // Tasks are untouched — the default at position 0 owns them all.
+    expect(taskIds()).toEqual(['t1', 't2', 't3']);
+
+    cmd.undo();
+    expect(sections()).toEqual([]); // SEC-3 — back to section-less, NOT a stranded [default]
+    expect(taskIds()).toEqual(['t1', 't2', 't3']); // tasks preserved (now under the virtual default)
+
+    cmd.execute(); // redo re-materialises both
+    expect(sectionIds()).toEqual(['sec-default', 'sec-new']);
+    expect(taskIds()).toEqual(['t1', 't2', 't3']);
+  });
+
+  it('undo leaves the now-load-bearing default when another section was added after', () => {
+    const cmd = addSectionCmd();
+    cmd.execute();
+    // Out-of-band: a SECOND real section is added after the materialising add.
+    const placements = (board().tasks ?? []) as TaskPlacement[];
+    boardCacheStore.persistTaskListStructure('tl', [
+      ...(board().sections ?? []),
+      { id: 'sec-x', title: 'X', position: placements.length, collapsed: false },
+    ]);
+    cmd.undo();
+    // The default now partitions the task array alongside sec-x, so it must stay;
+    // only the command's own new section is stripped.
+    expect(sectionIds()).toContain('sec-default');
+    expect(sectionIds()).not.toContain('sec-new');
+  });
+});

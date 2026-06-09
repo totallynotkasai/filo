@@ -111,7 +111,8 @@ export const uniqueStrings = (
  * semantic prefix like `sec_`) and easily satisfy this even at the
  * looser bound.
  */
-export const NANOID_REGEX = /^[A-Za-z0-9_-]+$/;
+// Audit-14 6.5 — de-exported: referenced only by `idString` below.
+const NANOID_REGEX = /^[A-Za-z0-9_-]+$/;
 
 /**
  * Re-usable Zod string schema for record keys that must look like an

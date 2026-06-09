@@ -30,7 +30,8 @@ export const TILE_DELETE_MEDIA_SNAPSHOT_MAX_BYTES = 5 * 1024 * 1024;
  * snapshots. Mirrors the main-process watcher's `MEDIA_EXTENSIONS` so the
  * renderer-side walker and the OS-level rename correlator stay in sync.
  */
-export const MEDIA_SNAPSHOT_EXTENSIONS = new Set<string>([
+// Audit-14 6.5 — de-exported: referenced only by `isCascadeMediaPath` below.
+const MEDIA_SNAPSHOT_EXTENSIONS = new Set<string>([
   // Images
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp',
   '.heic', '.heif', '.avif',

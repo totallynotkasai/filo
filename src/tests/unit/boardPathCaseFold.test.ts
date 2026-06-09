@@ -67,6 +67,41 @@ describe('Audit-12 M4 — renameBoardPath compares case-insensitively', () => {
     expect(boardCacheStore.paths.b1).toBe('Notes/B.board.json');
   });
 
+  it('P2.7 — a leading-slash oldPath still rebinds descendants correctly (no slice desync)', () => {
+    boardCacheStore.hydrate({}, {
+      b1: 'Proj/Deep/A.board.json',
+      b2: 'Proj/B.board.json',
+      b3: 'Other/Keep.board.json',
+    });
+    // An out-of-contract caller passes a LEADING-SLASH oldPath. Pre-P2.7 the
+    // case-PRESERVING `oldPrefix` ("/Proj/") was one char longer than the
+    // case-FOLDED `foldedPrefix` ("proj/", which strips the leading slash), so
+    // `norm.slice(oldPrefix.length)` dropped the first suffix char → e.g.
+    // "Renamed/eep/A.board.json". Stripping leading slashes at entry keeps both
+    // prefix lengths equal so the suffix slices correctly.
+    const changed = boardCacheStore.renameBoardPath('/Proj', 'Renamed').sort();
+    expect(changed).toEqual(['b1', 'b2']);
+    expect(boardCacheStore.paths.b1).toBe('Renamed/Deep/A.board.json');
+    expect(boardCacheStore.paths.b2).toBe('Renamed/B.board.json');
+    expect(boardCacheStore.paths.b3).toBe('Other/Keep.board.json'); // unrelated, untouched
+  });
+
+  it('P2.7 — a deep multi-level descendant tree all rebinds under an exact folder rename', () => {
+    boardCacheStore.hydrate({}, {
+      b1: 'Top/A.board.json',
+      b2: 'Top/Mid/B.board.json',
+      b3: 'Top/Mid/Deep/C.board.json',
+      b4: 'TopSibling/D.board.json', // shares the `Top` prefix but NOT under `Top/`
+    });
+    const changed = boardCacheStore.renameBoardPath('Top', 'Renamed').sort();
+    expect(changed).toEqual(['b1', 'b2', 'b3']);
+    expect(boardCacheStore.paths.b1).toBe('Renamed/A.board.json');
+    expect(boardCacheStore.paths.b2).toBe('Renamed/Mid/B.board.json');
+    expect(boardCacheStore.paths.b3).toBe('Renamed/Mid/Deep/C.board.json');
+    // `TopSibling/` is a prefix-overlap, not a descendant — must NOT rebind.
+    expect(boardCacheStore.paths.b4).toBe('TopSibling/D.board.json');
+  });
+
   it('findBoardIdForPath lookup contract: samePath folds the divergent casing', () => {
     // findBoardIdForPath is module-private to the reconciler; this locks the
     // helper it now uses — the same `samePath` the gate requires there.

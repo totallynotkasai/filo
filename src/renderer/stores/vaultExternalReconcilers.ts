@@ -56,11 +56,13 @@ import { templatesStore } from './templates.svelte';
 import { uiStore } from './ui.svelte';
 import { vaultStore } from './vault.svelte';
 import { reportError } from '../lib/utils/errorBus';
+import { assertIpcOk } from '../lib/utils/ipcEnvelope';
 import { isRecentSelfWrite, isPathPending } from '../lib/boards/boardSaver';
 import { loadBoard } from '../lib/boards/boardLoader';
 import { loadTagsFile } from '../lib/vault/tagsStorage';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { samePath } from '../lib/utils/path';
+import { selfWriteDivergedFromBaseline } from './vaultExternalChanges';
 
 // ── Board JSON reconciler ─────────────────────────────────────────────
 
@@ -82,7 +84,23 @@ import { samePath } from '../lib/utils/path';
  */
 async function reconcileBoardJsonChange(event: ExternalChangeEvent): Promise<void> {
   const rel = event.filename;
-  if (isRecentSelfWrite(rel)) return;
+  // P2.4 (Audit-15) — mirror the `.md` path's Audit-13 M4 divergence tiebreak: a
+  // recent self-write is dropped as our own echo ONLY when its fresh disk stat
+  // still matches the baseline we wrote. A diverged stat means a SECOND writer
+  // touched the `.board.json` inside the self-write suppression window, so treat
+  // it as a real external edit and fall through to the proactive reconcile.
+  // Data-safe either way (no baseline / unreadable / matching stat → drop, prior
+  // behaviour). Capture vault identity before the stat await and bail on a swap
+  // (the downstream reloadBoardFromDisk also re-checks, but the gate — and
+  // correctness — wants the guard at the live-path read here too).
+  if (isRecentSelfWrite(rel)) {
+    const captured = captureVaultIdentity();
+    const root = vaultStore.path;
+    if (!root) return;
+    const diverged = await selfWriteDivergedFromBaseline(root, rel);
+    if (!isStillSameVault(captured)) return;
+    if (!diverged) return;
+  }
 
   // Look up boardId for this path. Reconciler is a no-op when no board
   // in the active project points at this path — a side `.board.json`
@@ -231,7 +249,12 @@ async function reconcileTagsJsonChange(event: ExternalChangeEvent): Promise<void
   const vaultRoot = vaultStore.path;
   if (!vaultRoot) return;
   try {
-    const raw = (await window.filo.invoke('tags:load', vaultRoot)) as string | null;
+    // Audit-14 4.4 — assertIpcOk re-throws a `{ ok: false }` error envelope
+    // into the catch below; a bare string|null passes through unchanged.
+    const raw = assertIpcOk(
+      await window.filo.invoke('tags:load', vaultRoot),
+      'tags:load',
+    ) as string | null;
     if (!isStillSameVault(captured)) return;
     // F6 — route through the version migrator so an externally-written
     // from-future tags.json flips the store read-only (preventing a

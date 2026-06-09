@@ -1,8 +1,9 @@
 <script lang="ts">
   import type { TimerTile } from '../../schema/index';
-  import { onMount, onDestroy, getContext, untrack } from 'svelte';
+  import { onDestroy, getContext, untrack } from 'svelte';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { historyStore } from '../../stores/history.svelte';
+  import { uiStore } from '../../stores/ui.svelte';
   import { UpdateTimerConfigCommand, type TimerMode } from '../../commands/index';
 
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
@@ -10,7 +11,6 @@
 
   let { tile }: { tile: TimerTile } = $props();
 
-  let intervalId: ReturnType<typeof setInterval> | null = null;
   let lastTickMs = 0;
   let displayTime = $state('');
   // Phase 31 C2.4 — last second-stamp we wrote to displayTime. The 100 ms
@@ -30,6 +30,32 @@
   let editingCustom = $state(false);
   let customInput = $state('');
   let customInputEl = $state<HTMLInputElement | null>(null);
+
+  // P4.3 (Audit-15) — end-of-timer cue. `finished` drives a brief flash
+  // (transform/opacity only; degrades to a static colour highlight under
+  // reduced motion) and `announceText` feeds a visually-hidden aria-live
+  // region so a completed countdown is perceivable even when the tile is
+  // scrolled off-canvas. Both self-clear after the flash window so the next
+  // completion re-triggers the flash and re-announces.
+  let finished = $state(false);
+  let announceText = $state('');
+  let flashTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function announceFinished(): void {
+    finished = true;
+    announceText = 'Timer finished';
+    uiStore.toast('Timer finished', 'info', 3000);
+    if (flashTimer) clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => {
+      finished = false;
+      announceText = '';
+    }, 1500);
+  }
+
+  // The display is only editable (click / Enter → custom-time input) while a
+  // non-clock timer is stopped. Drives the role/tabindex + keyboard handler so
+  // the affordance is reachable without a mouse (Audit-14 5.8).
+  let displayEditable = $derived(tile.mode !== 'clock' && !tile.isRunning);
 
   $effect(() => {
     if (editingCustom && customInputEl) {
@@ -133,6 +159,7 @@
       if (liveRemaining === 0) {
         // allow-direct-mutation: countdown reached zero; persist the stop once.
         boardStore.updateTile(tileRef.id, { remaining: 0, isRunning: false });
+        announceFinished();
       }
     }
     const remainingSecond = Math.max(0, Math.floor(liveRemaining / 1000));
@@ -174,21 +201,45 @@
       const before = { mode: tile.mode, duration: tile.duration, remaining: tile.remaining, isRunning: tile.isRunning };
       const after = { ...before, duration: totalMs, remaining: totalMs, isRunning: false };
       historyStore.execute(new UpdateTimerConfigCommand(tile.id, before, after, 'Set timer duration'));
+      editingCustom = false;
+    } else {
+      // P4.3 — give feedback instead of silently discarding an unparseable
+      // value; keep the editor open so the user can correct it.
+      uiStore.toast('Enter a time like "25" (minutes) or "25:00" (mm:ss).', 'warning', 3000);
     }
-    editingCustom = false;
   }
 
-  onMount(() => {
-    // Initialise tick baseline so elapsed starts at 0 on this mount.
-    // isRunning is NOT reset here — a timer that was running should keep
-    // running when the user switches boards and returns.
-    lastTickMs = Date.now();
-    tick();
-    intervalId = setInterval(tick, 100);
+  // Audit-14 5.7 — only run the ticking interval when time actually moves: a
+  // running countdown needs the 100 ms cadence to stay accurate, clock mode
+  // only needs a 1 s tick, and a stopped/paused countdown needs NO interval at
+  // all (the display is static until the next user action). Previously a fixed
+  // 100 ms interval ran for the tile's whole lifetime regardless of mode/run
+  // state. The effect re-arms whenever `mode` / `isRunning` flip; the handle
+  // lives in the effect's own cleanup so it's cleared on every re-arm + unmount
+  // (no component-scope timer binding to leak).
+  $effect(() => {
+    const mode = tile.mode;
+    const running = tile.isRunning;
+    // `tick()` reads reactive state (liveRemaining, the cached tile) and the
+    // interval mutates it every fire; untrack the body so those reads don't
+    // become effect dependencies (which would re-arm the interval on every
+    // tick). Only `mode`/`isRunning` above gate the re-arm.
+    return untrack(() => {
+      // Render once immediately so a mode swap / pause / resume reflects in the
+      // display without waiting for the first interval fire.
+      lastTickMs = Date.now();
+      lastDisplaySecond = -1;
+      tick();
+      if (mode !== 'clock' && !running) return; // static — no interval
+      const cadence = mode === 'clock' ? 1000 : 100;
+      const id = setInterval(tick, cadence);
+      return () => clearInterval(id);
+    });
   });
 
   onDestroy(() => {
-    if (intervalId !== null) clearInterval(intervalId);
+    // P4.3 — clear the end-of-timer flash handle so it can't fire after unmount.
+    if (flashTimer) clearTimeout(flashTimer);
     // Save countdown progress on unmount (e.g. board switch mid-run) — while
     // RUNNING we don't write tile.remaining per tick, so the cached value is
     // otherwise stale.
@@ -222,13 +273,17 @@
       <button class="apply-btn" onclick={applyCustomInput}>Set</button>
     </div>
   {:else}
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <div
       class="display"
       class:clock={tile.mode === 'clock'}
-      class:clickable={tile.mode !== 'clock' && !tile.isRunning}
+      class:clickable={displayEditable}
+      class:finished
       onclick={handleDisplayClick}
-      title={tile.mode !== 'clock' && !tile.isRunning ? 'Click to set custom time' : undefined}
+      onkeydown={(e) => { if (displayEditable && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); handleDisplayClick(); } }}
+      role={displayEditable ? 'button' : undefined}
+      tabindex={displayEditable ? 0 : undefined}
+      title={displayEditable ? 'Click or press Enter to set custom time' : undefined}
     >
       {displayTime}
     </div>
@@ -268,6 +323,9 @@
       <button onclick={() => setDuration(60)}>1h</button>
     </div>
   {/if}
+
+  <!-- P4.3 — visually-hidden live region: announces countdown completion. -->
+  <span class="sr-only" aria-live="assertive">{announceText}</span>
 </div>
 
 <style>
@@ -299,6 +357,20 @@
   }
   .display.clickable:hover {
     background: var(--ui-surface-hover);
+  }
+  /* P4.3 — end-of-timer cue. GPU-friendly (transform/opacity only); the
+     accent colour stays as a static highlight so reduced-motion users still
+     get a visual cue alongside the aria-live announcement + toast. */
+  .display.finished {
+    color: var(--accent-primary);
+    animation: timerFlash 0.5s ease-in-out 3;
+  }
+  @keyframes timerFlash {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.35; transform: scale(1.08); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .display.finished { animation: none; }
   }
   .custom-input-wrap {
     display: flex;

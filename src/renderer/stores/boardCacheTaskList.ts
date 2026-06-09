@@ -149,11 +149,27 @@ export function makeTaskListSlice(ctx: CacheContext) {
       if (sections.length > 0) {
         if (targetSectionId) {
           const targetArrayIdx = sections.findIndex((s) => s.id === targetSectionId);
-          (tl as Record<string, unknown>).sections = sections.map((s, arrayIdx) =>
-            targetArrayIdx >= 0 && arrayIdx > targetArrayIdx
-              ? { ...s, position: s.position + 1 }
-              : s,
-          );
+          if (targetArrayIdx < 0) {
+            // 2.3 (Audit-16) — stale/missing target id (the section was
+            // removed between capture and apply: an undo racing an external
+            // board reload, or a quick-add aimed at a just-deleted section).
+            // The task is already spliced into `tasks` above, so shifting NO
+            // boundaries would leave every section whose slice starts
+            // at/after `insertAt` off by one (transitively misrouting later
+            // adds). Fall back to the legacy numeric shift so the boundaries
+            // stay anchored to the same tasks.
+            console.warn(
+              '[boardCache] persistAddTaskPlacement: targetSectionId not found; falling back to numeric boundary shift',
+              { targetSectionId },
+            );
+            (tl as Record<string, unknown>).sections = sections.map((s) =>
+              s.position >= insertAt ? { ...s, position: s.position + 1 } : s,
+            );
+          } else {
+            (tl as Record<string, unknown>).sections = sections.map((s, arrayIdx) =>
+              arrayIdx > targetArrayIdx ? { ...s, position: s.position + 1 } : s,
+            );
+          }
         } else {
           const isAppend = insertAt >= oldLength;
           (tl as Record<string, unknown>).sections = sections.map((s) => {

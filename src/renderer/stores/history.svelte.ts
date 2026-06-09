@@ -166,6 +166,24 @@ const truncationLossNotified: Record<string, true> = {};
 let pendingChain: Promise<void> = Promise.resolve();
 let chainInflightDepth = 0;
 
+/**
+ * 2.5 (Audit-16) — generation token for the depth bookkeeping. The pre-swap
+ * reset zeroes `chainInflightDepth` while an outgoing-vault command body may
+ * still be in flight (the Don't-Save branch never awaits `whenChainSettled`);
+ * that body's settle handler then decremented the FRESH counter to -1, after
+ * which `chainInflightDepth === 0` was never true again — every later command
+ * body in the new vault, including purely synchronous ones, deferred to a
+ * microtask for the rest of the session (each deferred op's own settle
+ * re-decrementing to -1). Settle handlers capture the generation at creation
+ * and only decrement while it still matches; the reset bumps it, orphaning
+ * any handler tethered to the dead chain.
+ */
+let chainGeneration = 0;
+
+function noteChainOpSettled(generation: number): void {
+  if (generation === chainGeneration) chainInflightDepth--;
+}
+
 function runChained(op: () => Promise<void> | void): Promise<void> {
   if (chainInflightDepth === 0) {
     let result: Promise<void> | void;
@@ -178,10 +196,11 @@ function runChained(op: () => Promise<void> | void): Promise<void> {
       return Promise.resolve();
     }
     chainInflightDepth++;
+    const generation = chainGeneration;
     const p = result as Promise<void>;
     const settled = p.then(
-      () => { chainInflightDepth--; },
-      (err) => { chainInflightDepth--; throw err; },
+      () => { noteChainOpSettled(generation); },
+      (err) => { noteChainOpSettled(generation); throw err; },
     );
     pendingChain = settled.then(() => undefined, () => undefined);
     return p;
@@ -189,10 +208,11 @@ function runChained(op: () => Promise<void> | void): Promise<void> {
   // Prior async op still in flight — queue this body so its own internal
   // awaits can't interleave with the prior command's.
   chainInflightDepth++;
+  const generation = chainGeneration;
   const next = pendingChain.then(() => op());
   const settled = next.then(
-    () => { chainInflightDepth--; },
-    (err) => { chainInflightDepth--; throw err; },
+    () => { noteChainOpSettled(generation); },
+    (err) => { noteChainOpSettled(generation); throw err; },
   );
   pendingChain = settled.then(() => undefined, () => undefined);
   return next;
@@ -341,11 +361,24 @@ function commitExecute(command: Command): { preRedoStack: Command[]; redoStackRe
  * Phase R3 — undoes `commitExecute` when the body throws / rejects.
  * Removes `command` from the undo stack (lastIndexOf so a same-instance
  * push-twice scenario only rolls back the last one) and restores the
- * pre-execute redo stack. Idempotent on the active board: if the stack
- * is gone (vault swap mid-flight), no-op.
+ * pre-execute redo stack. If the stack is gone (vault swap mid-flight),
+ * no-op.
+ *
+ * 2.1 (Audit-16) — resolve the stack `commitExecute` actually pushed onto
+ * (the board active when `execute()` STARTED), not `getActiveStack()`: the
+ * user can switch tabs while an async body is in flight, and the Audit-14
+ * 2.1 fix covered only `rollbackUndo`/`rollbackRedo`. A wrong-board read
+ * here missed the `lastIndexOf`, failed the redo identity check, and left
+ * the never-applied command on the origin stack — a later Ctrl+Z replayed
+ * its inverse (a stale full-slice snapshot) over state it never changed.
  */
-function rollbackExecute(command: Command, preRedoStack: Command[], redoStackRef: Command[]): void {
-  const stack = getActiveStack();
+function rollbackExecute(
+  command: Command,
+  preRedoStack: Command[],
+  redoStackRef: Command[],
+  originBoardId: string | null,
+): void {
+  const stack = getStackFor(originBoardId);
   if (!stack) return;
   const idx = stack.undoStack.lastIndexOf(command);
   if (idx >= 0) {
@@ -363,7 +396,11 @@ function rollbackExecute(command: Command, preRedoStack: Command[], redoStackRef
   if (stack.redoStack === redoStackRef) {
     stack.redoStack = preRedoStack;
   }
-  if (activeBoardId) boardStore.markDirty(activeBoardId);
+  // 2.1 — dirty the board the command actually mutates, falling back to the
+  // origin board (whose stack we just repaired) — not the post-switch active
+  // board, which this rollback never touched.
+  const dirtyId = command.targetBoardId || originBoardId;
+  if (dirtyId) boardStore.markDirty(dirtyId);
 }
 
 /**
@@ -498,9 +535,14 @@ export const historyStore = {
    * commit alone.
    */
   execute(command: Command): Promise<void> {
+    // 2.1 (Audit-16) — capture the board whose stack commitExecute pushes
+    // onto BEFORE the (possibly async) body runs; a tab switch during the
+    // awaited body flips `activeBoardId`, and the rollback must repair the
+    // stack the synchronous commit actually touched. See rollbackExecute.
+    const originBoardId = activeBoardId;
     const { preRedoStack, redoStackRef } = commitExecute(command);
     return runChained(() => command.execute()).catch((err) => {
-      rollbackExecute(command, preRedoStack, redoStackRef);
+      rollbackExecute(command, preRedoStack, redoStackRef, originBoardId);
       // 6.4.M15 — almost every caller fires execute() fire-and-forget, so the
       // rethrow below surfaces only as a silent unhandled rejection. Report it
       // first so a command body that throws is never invisible (the rollback
@@ -711,6 +753,19 @@ export const historyStore = {
    * "deleted files cannot be restored" toast (the drop-discipline invariant).
    */
   clearBoard(boardId: string) {
+    // 2.4 (Audit-16) — drop the closed board's OWN stack through `mutateStack`
+    // first. The raw `delete` below bypassed the mandatory file-snapshot scan
+    // (the module's drop-discipline invariant), so closing the last tab of a
+    // board whose history held a CascadeDelete/DeleteTiles command — the only
+    // in-memory copy of a deleted .md body — discarded those snapshots with
+    // no escalated toast. The sibling sweep below already routes through it.
+    const own = stacks[boardId];
+    if (own) {
+      mutateStack(own, boardId, (s) => {
+        s.undoStack = [];
+        s.redoStack = [];
+      });
+    }
     delete stacks[boardId];
     delete truncationNotified[boardId];
     delete truncationLossNotified[boardId];
@@ -782,4 +837,8 @@ onVaultSwap('pre-swap', 'history', () => {
   historyStore.clear();
   pendingChain = Promise.resolve();
   chainInflightDepth = 0;
+  // 2.5 (Audit-16) — orphan any settle handler still tethered to an
+  // outgoing-vault command body so its late settle can't decrement the
+  // fresh counter to -1 (see `chainGeneration`).
+  chainGeneration++;
 });

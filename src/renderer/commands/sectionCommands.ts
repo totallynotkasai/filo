@@ -128,6 +128,20 @@ export class DeleteSectionCommand extends Command {
   private removedSection: TaskListSection;
   private removedPlacements: TaskPlacement[];
   private removedDefs: Record<string, TileDefinition>;
+  /**
+   * 2.2 (Audit-16) — ids of the sections that FOLLOWED the removed one in
+   * array order at construction time. Among sections tied at the same
+   * `position` the LAST in array order owns the slice (see
+   * `persistTaskListStructure`), so undo must re-insert the marker at its
+   * original array slot: appending it LAST made a restored EMPTY section
+   * (tied with its populated successor) the new owner of that successor's
+   * entire slice — every task silently re-homed into the "empty" section.
+   * undo() splices the marker back in front of the first surviving
+   * successor (an id anchor over a stale absolute index — the
+   * `DeleteCardCommand.beforeTileId` pattern from Audit-14 2.2); when none
+   * survive it appends, which IS the original tail slot.
+   */
+  private successorIds: string[];
 
   constructor(
     boardId: string,
@@ -148,6 +162,10 @@ export class DeleteSectionCommand extends Command {
     this.removedSection = this.snapshot(
       removed ?? { id: '', title, position: 0, collapsed: false },
     );
+    // 2.2 — capture the array-order successors as the undo re-insert anchor.
+    const removedIdx = removed ? beforeSections.indexOf(removed) : -1;
+    this.successorIds =
+      removedIdx >= 0 ? beforeSections.slice(removedIdx + 1).map((s) => s.id) : [];
     const afterTileIds = new Set((after?.tasks ?? []).map((p) => p.tileId));
     const removedPlacements = (before?.tasks ?? []).filter(
       (p) => !afterTileIds.has(p.tileId),
@@ -208,10 +226,21 @@ export class DeleteSectionCommand extends Command {
     const shiftedSections = liveSections.map((s) =>
       s.position >= insertAt ? { ...s, position: s.position + block.length } : { ...s },
     );
-    const nextSections = [
-      ...shiftedSections,
-      { ...this.removedSection, position: insertAt },
-    ];
+    // 2.2 (Audit-16) — splice the marker back at its ORIGINAL array slot
+    // (before the first surviving successor), not at the end. Appending an
+    // empty section AFTER a sibling tied at the same position handed it the
+    // sibling's whole slice (last-tied-owns) — see `successorIds`.
+    const successorSet = new Set(this.successorIds);
+    const markerIdx = shiftedSections.findIndex((s) => successorSet.has(s.id));
+    const marker = { ...this.removedSection, position: insertAt };
+    const nextSections =
+      markerIdx >= 0
+        ? [
+            ...shiftedSections.slice(0, markerIdx),
+            marker,
+            ...shiftedSections.slice(markerIdx),
+          ]
+        : [...shiftedSections, marker];
     if (block.length > 0) {
       const nextTasks = [
         ...liveTasks.slice(0, insertAt),

@@ -12,9 +12,10 @@
  * These tests pin: the deleted/reordered structure round-trips exactly with no
  * interference, AND an out-of-band change between execute and undo survives.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
+import { sectionIdForPlacementIndex } from '@renderer/lib/tasklist/sectionMath';
 import { AddSectionCommand, DeleteSectionCommand, ReorderSectionCommand } from '@renderer/commands/index';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TaskListBoard, TaskListSection, TileDefinition } from '@renderer/schema/index';
@@ -377,6 +378,168 @@ describe('SEC-2 — persistTaskListStructure clamps section positions into [0, t
       { id: 'y', title: 'Y', position: 2, collapsed: false },
     ]);
     expect(sections().map((s) => s.position)).toEqual([0, 2]);
+  });
+});
+
+/**
+ * Audit-16 2.2 — DeleteSectionCommand.undo re-inserts the restored marker at
+ * its ORIGINAL array slot (anchored on the first surviving successor), not at
+ * the end of the sections array.
+ *
+ * Among sections tied at the same `position` the LAST in array order owns the
+ * slice (persistTaskListStructure's documented tie semantics — empty ties are
+ * listed BEFORE the populated owner). The pre-fix undo appended the restored
+ * section LAST, so deleting an EMPTY section tied with its populated successor
+ * and hitting Ctrl+Z silently re-homed every one of the successor's tasks into
+ * the restored "empty" section — persisted to .board.json and compounding with
+ * later add-to-section ops.
+ */
+describe('Audit-16 2.2 — DeleteSectionCommand.undo restores a tied section\'s array slot', () => {
+  /**
+   * Board: A@0 owns t1,t2; E@2 EMPTY, tied with B@2 (E listed before B, so B —
+   * last in array order — owns the slice [2, end) = t3).
+   */
+  function makeTiedBoard(): V7BoardFileData {
+    return {
+      board: {
+        id: 'tl',
+        type: 'tasklist',
+        name: 'Tasks',
+        emoji: '',
+        createdAt: 0,
+        updatedAt: 0,
+        settings: { groupBy: 'status', sortBy: 'manual' },
+        sections: [
+          { id: 'sec-A', title: 'A', position: 0, collapsed: false },
+          { id: 'sec-E', title: 'E', position: 2, collapsed: false },
+          { id: 'sec-B', title: 'B', position: 2, collapsed: false },
+        ],
+        tasks: [
+          { tileId: 't1', position: 0 },
+          { tileId: 't2', position: 1 },
+          { tileId: 't3', position: 2 },
+        ],
+      } as unknown as TaskListBoard,
+      tileDefs: { t1: textDef('t1', 'Task 1'), t2: textDef('t2', 'Task 2'), t3: textDef('t3', 'Task 3') },
+      connections: {},
+      frames: [],
+    };
+  }
+
+  /** Raw array order (NOT position-sorted) — the tie-ownership discriminator. */
+  function rawSectionIds(): string[] {
+    return (board().sections ?? []).map((s) => s.id);
+  }
+
+  beforeEach(() => {
+    installFiloMock(() => null);
+    vaultStore.setPath('/vault');
+    boardCacheStore.clear();
+    boardCacheStore.hydrate({ tl: makeTiedBoard() }, { tl: 'tl.board.json' });
+  });
+  afterEach(() => {
+    restoreFiloDefault();
+    vaultStore.setPath('');
+    boardCacheStore.clear();
+  });
+
+  it('delete EMPTY tied section → undo: the populated sibling keeps its slice (execute→undo AND redo→undo)', () => {
+    const before = slice();
+    const after = {
+      sections: before.sections.filter((s) => s.id !== 'sec-E'),
+      tasks: before.tasks,
+      defs: before.defs,
+    };
+    const cmd = new DeleteSectionCommand('tl', before, after, 'E');
+
+    cmd.execute();
+    expect(rawSectionIds()).toEqual(['sec-A', 'sec-B']);
+    expect(sectionIdForPlacementIndex(board().sections ?? [], 2)).toBe('sec-B');
+
+    cmd.undo();
+    // 2.2 — original array order restored: E back BEFORE its tied owner B, so
+    // B still owns t3. Pre-fix the marker was appended last → [A, B, E] → the
+    // restored "empty" E owned the slice and t3 silently re-homed into it.
+    expect(rawSectionIds()).toEqual(['sec-A', 'sec-E', 'sec-B']);
+    expect(sectionIdForPlacementIndex(board().sections ?? [], 2)).toBe('sec-B');
+    expect(taskIds()).toEqual(['t1', 't2', 't3']);
+
+    cmd.execute(); // redo
+    cmd.undo();
+    expect(rawSectionIds()).toEqual(['sec-A', 'sec-E', 'sec-B']);
+    expect(sectionIdForPlacementIndex(board().sections ?? [], 2)).toBe('sec-B');
+  });
+
+  it('delete the POPULATED tied owner (no successor) → undo: append restores the owning tail slot', () => {
+    const before = slice();
+    // Delete B keep-tasks style: only the marker goes; its tasks stay.
+    const after = {
+      sections: before.sections.filter((s) => s.id !== 'sec-B'),
+      tasks: before.tasks,
+      defs: before.defs,
+    };
+    const cmd = new DeleteSectionCommand('tl', before, after, 'B');
+
+    cmd.execute();
+    expect(rawSectionIds()).toEqual(['sec-A', 'sec-E']);
+
+    cmd.undo();
+    // B had no array-order successor, so appending IS its original slot —
+    // last among the position-2 ties, owning [2, end) again.
+    expect(rawSectionIds()).toEqual(['sec-A', 'sec-E', 'sec-B']);
+    expect(sectionIdForPlacementIndex(board().sections ?? [], 2)).toBe('sec-B');
+  });
+});
+
+/**
+ * Audit-16 2.3 — persistAddTaskPlacement with a stale/missing targetSectionId
+ * falls back to the numeric boundary shift.
+ *
+ * The SEC-1 rewrite resolves the target section by findIndex and bumps only
+ * sections AFTER it in array order — on a miss (the section was deleted
+ * between capture and apply: an undo racing an external board reload, or a
+ * quick-add aimed at a just-removed section) the condition was false for
+ * EVERY section, but the task had already been spliced into `tasks[]`. Every
+ * section whose slice starts at/after the insert point ended up off by one,
+ * transitively misrouting later adds.
+ */
+describe('Audit-16 2.3 — persistAddTaskPlacement stale-targetSectionId fallback', () => {
+  beforeEach(() => {
+    installFiloMock(() => null);
+    vaultStore.setPath('/vault');
+    boardCacheStore.clear();
+    boardCacheStore.hydrate({ tl: makeBoard() }, { tl: 'tl.board.json' });
+  });
+  afterEach(() => {
+    restoreFiloDefault();
+    vaultStore.setPath('');
+    boardCacheStore.clear();
+  });
+
+  it('shifts later section boundaries by one and keeps every existing section\'s membership', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      // Insert into A's slice (index 1) targeting a section that no longer exists.
+      boardCacheStore.persistAddTaskPlacement('tl', textDef('t4', 'Task 4'), 1, undefined, 'sec-GONE');
+
+      expect(taskIds()).toEqual(['t1', 't4', 't2', 't3']);
+      // 2.3 — B's boundary shifted with the insert (pre-fix it stayed at 2,
+      // silently stealing t2 into B). A's start is before the insert: unchanged.
+      const secs = sections();
+      expect(secs.find((s) => s.id === 'sec-A')?.position).toBe(0);
+      expect(secs.find((s) => s.id === 'sec-B')?.position).toBe(3);
+      // Membership of every existing section is unchanged: B still owns
+      // exactly t3; the new task landed in A (whose range the caller named).
+      expect(sectionIdForPlacementIndex(board().sections ?? [], 3)).toBe('sec-B');
+      expect(sectionIdForPlacementIndex(board().sections ?? [], 1)).toBe('sec-A');
+      // The unresolved id is surfaced for diagnosis, not swallowed.
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('targetSectionId not found'),
+        expect.objectContaining({ targetSectionId: 'sec-GONE' }),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 

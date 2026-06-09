@@ -742,7 +742,38 @@ phase summary so a future audit doesn't re-raise them.
     edit-during-in-flight, 4.3 mid-IPC merge, 1.2 delta-on-read-only (disk body byte-preserved) +
     loud delta-less refusal, refresh-seed body-tolerance + A9-M2 field-edit blocking. All 8
     bite-verified (red against the pre-fix tree via stash, green after).
-- [ ] Phase 2 — 2.1, 2.2, 2.3, 2.4, 2.5
+- [x] Phase 2 — 2.1, 2.2, 2.3, 2.4, 2.5 — **DONE 2026-06-10.** No findings refuted: the three
+  ⚠️ UNVERIFIED items (2.3, 2.4, 2.5) were each confirmed in source before fixing.
+  Implementation notes for the record:
+  - **2.1** — `execute()` captures `originBoardId` before `commitExecute`; `rollbackExecute`
+    takes it and resolves `getStackFor(originBoardId)` (mirroring the Audit-14 2.1 fix for
+    `rollbackUndo`/`rollbackRedo`); marks dirty via `command.targetBoardId || originBoardId`.
+  - **2.2** — took the successor-ID anchor (not the raw array index): the constructor captures
+    the ids of the sections AFTER the removed one in `before.sections` array order
+    (`successorIds`), and `undo()` splices the marker back in front of the FIRST surviving
+    successor (append only when none survive — which IS the original tail slot, so deleting the
+    populated tied OWNER round-trips too). Survives out-of-band section deletes between execute
+    and undo, like the `DeleteCardCommand.beforeTileId` pattern it mirrors.
+  - **2.3** — confirmed: on `findIndex → -1` no boundary shifted while the task was already
+    spliced in. Fix is the planned legacy numeric fallback (`position >= insertAt` bump) +
+    `console.warn` naming the unresolved id. The legacy branch's empty-tail-append carve-out is
+    deliberately NOT applied to the fallback: the caller DID name a target section, so anchoring
+    every at/after-insert boundary (rather than keeping an empty tail section pinned) is the
+    conservative membership-preserving choice.
+  - **2.4** — confirmed (`tabStore.close`/`closeOthers` → `clearBoard` was the most common
+    stack-discard path). Own-stack drop now routes through
+    `mutateStack(own, boardId, s => { undoStack = []; redoStack = []; })` before the record
+    delete; the optional close-confirm gate was not added (out of scope, toast-only contract).
+  - **2.5** — took the preferred generation token (`chainGeneration`, bumped by the pre-swap
+    reset); both `runChained` settle paths route through `noteChainOpSettled(generation)` which
+    decrements only while the generation still matches. No clamp — the token is exact and a
+    clamp would only mask a future bookkeeping bug.
+  - Tests: `audit16Phase2.test.ts` (4 — 2.1 origin-stack repair + redo restore, 2.4 escalated
+    toast + silent-without-snapshots, 2.5 sync-body contract after an in-flight Don't-Save swap);
+    `sectionCommandsDelta.test.ts` +3 (2.2 tied-empty round-trip incl. redo→undo cycle + the
+    no-successor populated-owner case, 2.3 stale-id boundary shift + membership). 5 of the 7
+    bite (red against the pre-fix tree via stash); the other 2 are negative/guard cases green on
+    both sides by design.
 - [ ] Phase 3 — 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7
 - [ ] Phase 4 — 4.1, 4.2, 4.4, 4.5, 4.6, 4.7, 4.8
 - [ ] Phase 5 — 5.1, 5.2, 5.3, 5.4, 5.5

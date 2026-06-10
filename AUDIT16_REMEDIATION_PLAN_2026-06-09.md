@@ -826,7 +826,50 @@ phase summary so a future audit doesn't re-raise them.
     no-stamp back-compat; the 1.3 suppression row now stamps the current generation). Every
     guard test bite-verified red against the pre-fix tree via stash; positive controls green
     on both sides by design.
-- [ ] Phase 4 — 4.1, 4.2, 4.4, 4.5, 4.6, 4.7, 4.8
+- [x] Phase 4 — 4.1, 4.2, 4.4, 4.5, 4.6, 4.7, 4.8 — **DONE 2026-06-10.** No findings refuted:
+  all six ⚠️ items (4.2, 4.4–4.8) were confirmed against source line-by-line before fixing
+  (4.3 had already shipped with Phase 1). Implementation notes:
+  - **4.1 + 4.2** — one shared fix, as planned: a session-monotonic
+    `mintWriteGeneration()` counter in `writeStateTracking.ts`, used by BOTH per-path maps
+    (`writeGenByPath` in the scheduler primitive, `componentWriteGenByPath` in
+    `trackComponentWrite`). The heal/endWrite guards keep their `!==` compares — a missing
+    (pruned) entry already reads "not current" — so only the MINT changed. The counter is
+    deliberately NOT reset on vault swap (the maps are; a stale continuation's generation must
+    keep comparing unequal to every post-swap mint). The Audit-14 1.6/1.5 boundedness prunes
+    and both `__*GenSizeForTests` probes are unchanged and still green.
+  - **4.4** — `parked` entries became `ParkedEntry` objects (`{ promise, vaultRoot, path,
+    cancelled }`); `cancel(key)` now marks every un-cancelled parked fire cancelled and emits
+    its balanced `endWrite(success=true)` (same contract as a pending timer), and the parked
+    IIFE bails after the drain on `cancelled` — sitting beside the 3.4 `schedulerGeneration`
+    bail, exactly the "one generation/cancel mechanism" the plan called for. `flush`/
+    `flushAll` await `entry.promise` as before.
+  - **4.5** — the benign-reappear branch rebases ONLY when `reappearedVerifiedOurs` (read
+    succeeded AND content === `lastWrittenConfigs`); the permissive read-hiccup path (
+    `reappearedIsForeign = false` without verification) deliberately does NOT adopt the new
+    baseline — unverified bytes must still face the drift check.
+  - **4.6** — `clearPreservedEmergencyFilesForTarget(targetPath)` (win32 case-fold +
+    `path.normalize`) called after the successful rename in BOTH `atomicWriteFile` and
+    `copyFileToVault`. The preserved `.tmp` is left on disk per the plan's safer option (no
+    content-match deletion).
+  - **4.7** — per-key `failureIdsByKey` ledger: a failed fire records its attributed id list
+    under its key; the key's next success prunes those ids from `failures` (not just the
+    primary failureId). Cleared in `reset()`.
+  - **4.8** — new NARROW probe `isPathQueuedOrInFlight` (pendingVaultPaths + gateway probes,
+    deliberately EXCLUDING `failedVaultPaths` — a failed path doesn't explain a divergence,
+    and including it would drop genuine external-edit echoes). The reconciler's tiebreak
+    drops a diverged self-write echo only while a newer write is queued/in flight; a genuine
+    external edit in that window is still caught by `writeBoardFile`'s pre-write drift check
+    (positive control pinned in the test).
+  - **File size:** `writeScheduler.ts` sat AT its 1175 ceiling; per the split-don't-bump rule
+    the public type surface moved to `writeSchedulerTypes.ts` (type-only re-exports keep all
+    importers unchanged), bringing the impl to ~998 LOC and REMOVING it from the
+    `ci:file-sizes` allowlist (13 → 12 grandfathered files).
+  - Tests: `audit16Phase4.test.ts` (13 — the 4.1 A/B/C/A-late interleaving + M2 control, the
+    4.2 trackComponentWrite twin, 4.4 cancelled-parked-fire + fires-without-cancel control,
+    4.5 blip-then-two-writes, 4.6 atomicWriteFile prune / breadcrumb no-op / case-fold, 4.7
+    bundle-failure→success Set drain, 4.8 echo-dropped + two positive controls). All 8 guard
+    tests bite-verified red against an in-place pre-fix emulation (each fix individually
+    reverted in one pass → exactly the 8 guards red, all 5 positive controls green).
 - [ ] Phase 5 — 5.1, 5.2, 5.3, 5.4, 5.5
 - [ ] Phase 6 — 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8
 - [ ] Phase 7 — 7.1, 7.2, 7.3, 7.4, 7.5

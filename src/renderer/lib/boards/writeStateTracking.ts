@@ -178,13 +178,42 @@ const failedVaultPaths = new Set<VaultPath>();
 const componentWriteGenByPath = new Map<VaultPath, number>();
 
 /**
- * Bumps and returns the component write generation for `path`. Called by
+ * Audit-16 4.1/4.2 — session-monotonic write-generation mint, shared by the
+ * scheduler-level per-path map (`writeScheduler.ts` `writeGenByPath`) and
+ * `componentWriteGenByPath` above. Never reissues a value within the
+ * process: both per-path maps PRUNE their entry on a still-newest success
+ * (the Audit-14 1.5/1.6 boundedness fix), so a per-path `(get(key) ?? 0) + 1`
+ * re-mint restarted at 1 and could COLLIDE with a generation an OLDER write's
+ * late-success heal still holds — A times out (gen 1, failed mark + heal
+ * continuation), B succeeds (prunes the entry), C re-mints gen 1 and fails
+ * (legitimate failed mark), A finally lands → generations match → A's heal
+ * erases C's mark: clean save indicator, wiped `.filo/.dirty`, no recovery
+ * prompt while C's payload never reached disk. With a counter that only
+ * climbs, a captured generation is unambiguous for the session, and a
+ * MISSING map entry still reads "not current" (`get() !== gen` for any real
+ * gen). Deliberately NOT reset on vault swap — the maps are cleared there,
+ * and a stale continuation's old generation must keep comparing unequal to
+ * every post-swap mint.
+ */
+// allow-module-state: monotonic by design; per-path maps reset on vault swap
+let writeGenerationCounter = 0;
+
+/** Mints the next session-unique write generation (always ≥ 1). */
+export function mintWriteGeneration(): number {
+  writeGenerationCounter += 1;
+  return writeGenerationCounter;
+}
+
+/**
+ * Mints and records the component write generation for `path`. Called by
  * `trackComponentWrite` before its `beginWrite`; the returned value is handed
  * back to `endWrite` so the success branch can check it's still newest.
+ * Audit-16 4.2 — routed through {@link mintWriteGeneration} (see its doc for
+ * the prune/re-mint collision this closes).
  */
 function bumpComponentWriteGen(path: string): number {
   const key = vaultPath(path);
-  const next = (componentWriteGenByPath.get(key) ?? 0) + 1;
+  const next = mintWriteGeneration();
   componentWriteGenByPath.set(key, next);
   return next;
 }
@@ -394,6 +423,27 @@ export function isPathPending(path: string): boolean {
  */
 export function hasPendingWrite(path: string): boolean {
   return isPathPending(path);
+}
+
+/**
+ * Audit-16 4.8 — "is a write for this path armed or mid-flight RIGHT NOW?"
+ * Distinct from {@link isPathPending}: deliberately EXCLUDES
+ * `failedVaultPaths`. The board reconciler's self-write divergence tiebreak
+ * (`reconcileBoardJsonChange`) uses this to recognise write N's watcher echo
+ * arriving while write N+1 is still queued or in flight — N+1's bytes are on
+ * disk but its post-write baseline stamp hasn't run, so the stat-vs-baseline
+ * compare reads "diverged" even though both writers were Filo. A pending or
+ * in-flight newer write EXPLAINS the divergence; a failed path does not, and
+ * including it would silently drop genuine external-edit echoes for a path
+ * whose last write failed.
+ */
+export function isPathQueuedOrInFlight(path: string): boolean {
+  const key = vaultPath(path);
+  if (pendingVaultPaths.has(key)) return true;
+  for (const probe of pendingProbes) {
+    if (probe(path)) return true;
+  }
+  return false;
 }
 
 /**

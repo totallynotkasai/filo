@@ -274,7 +274,10 @@ export async function writeConfigs(
     const sentinelPath = target === 'config:save-workspace'
       ? '.filo/workspace.json'
       : `.filo/${target}`;
-    const baseline = getBaseline(sentinelPath);
+    // Audit-16 4.5 — `let`, not `const`: the benign-reappear branch below
+    // rebases the baseline to the recreated file's stat and must re-read it
+    // so the drift check compares against the rebased value.
+    let baseline = getBaseline(sentinelPath);
     if (baseline !== undefined) {
       let preWriteStat: { mtimeMs: number; size: number } | undefined;
       try {
@@ -319,6 +322,12 @@ export async function writeConfigs(
             if (lastWritten !== undefined) {
               const configFile = target === 'config:save-workspace' ? 'workspace.json' : target;
               let reappearedIsForeign = false;
+              // Audit-16 4.5 — true ONLY when the read succeeded AND the
+              // content provably matches our last write. Distinct from
+              // `!reappearedIsForeign`: the read-hiccup catch below is
+              // permissive (not foreign) but UNVERIFIED, and an unverified
+              // recreate must not adopt the new baseline.
+              let reappearedVerifiedOurs = false;
               try {
                 const loaded = await window.filo.invoke('config:load', vaultRoot, configFile);
                 if (loaded && typeof loaded === 'object' && '__corrupt' in loaded) {
@@ -328,6 +337,7 @@ export async function writeConfigs(
                   // JSON round-trips, so disk == our-last-write re-serialises
                   // to the exact canonical 2-space form `lastWritten` holds.
                   reappearedIsForeign = JSON.stringify(loaded, null, 2) !== lastWritten;
+                  reappearedVerifiedOurs = !reappearedIsForeign;
                 }
               } catch {
                 // Read hiccup — can't verify. Be permissive (don't block a
@@ -352,9 +362,26 @@ export async function writeConfigs(
                 noteBaseline(sentinelPath, preWriteStat.mtimeMs, preWriteStat.size);
                 continue;
               }
+              if (reappearedVerifiedOurs) {
+                // Audit-16 4.5 — the recreate provably holds OUR last-written
+                // bytes (the common OneDrive/Dropbox/AV unlink+recreate
+                // blip), but the recreated file carries a NEW mtime, so the
+                // drift check below compared it against the STALE pre-delete
+                // baseline → always "drifted" → abort + notifyWriteError +
+                // `lastWrittenConfigs.delete`, and NO rebase. That wedged the
+                // target for the whole session: every later write re-aborted
+                // against the stale baseline, and with the dedup cache gone a
+                // future ENOENT couldn't even content-verify. Adopting the
+                // recreated stat is safe — the bytes are ours — so rebase and
+                // fall through; the armed write then proceeds normally.
+                noteBaseline(sentinelPath, preWriteStat.mtimeMs, preWriteStat.size);
+                const rebased = getBaseline(sentinelPath);
+                if (rebased !== undefined) baseline = rebased;
+              }
             }
-            // Reappeared content matches our last write (benign blip) or is
-            // unverifiable — fall through to the drift check + write.
+            // Reappeared content matches our last write (benign blip, baseline
+            // rebased above) or is unverifiable (lastWritten unset / read
+            // hiccup) — fall through to the drift check + write.
           } catch (reErr) {
             if (reErr instanceof IpcEnvelopeError && reErr.code === 'ENOENT') {
               // Still gone ⇒ a real (intentional) delete. 6.4.M12 — the file is

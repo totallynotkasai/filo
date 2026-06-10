@@ -48,6 +48,7 @@ export {
   isRecentSelfWrite,
   hasPendingWrite,
   isPathPending,
+  isPathQueuedOrInFlight,
   hasFailedWrites,
   __resetDirtyTrackingForTests,
   __clearRecentSelfWritesForTests,

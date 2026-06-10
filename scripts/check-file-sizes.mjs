@@ -466,34 +466,13 @@ const ALLOWLIST = {
   // MoveCardCommand 6.4.M16). +12 LOC. New snapshot: 1093 LOC. The structural
   // split still pends.
   'src/renderer/commands/kanbanCommands.ts': 1093,
-  // Shared debounced write-pipeline primitive (`createScheduler`): pending +
-  // in-flight + parked + failure bookkeeping, the timer/flush/flushAll/cancel
-  // surface, per-path write generation, and the `writeTimeoutMs` race. Heavily
-  // commented by convention — each race it closes carries its rationale inline.
-  // AUDIT14_REMEDIATION_PLAN_2026-06-07 Phase 1 — 1.1 adds a `parked` ledger so a
-  // debounce fire deferred behind an in-flight write is awaited by flush/flushAll
-  // (it was invisible to both → a dropped edit on a hard-quit race); 1.4 threads a
-  // `PerformWriteContext.isLatestWrite()` so a superseded late write skips its
-  // drift-baseline stamp; 1.6 prunes `writeGenByPath` on a clean, still-newest
-  // success. +~110 LOC of logic + comments crossed the 1000-LOC limit (the file
-  // was ungrandfathered at 933). New snapshot: 1109 LOC. A structural split of the
-  // flush / parked machinery is the eventual fix (see Audit-14 plan 6.1).
-  // AUDIT15_REMEDIATION_PLAN_2026-06-08 Phase 1 P1.1 — the `flush(key)`
-  // early-return now also blocks on a PARKED fire (matching the drain loop +
-  // flushAll), closing a microtask-gap false-"saved"; plus the `__parkForTests`
-  // hook (+ its `Scheduler` interface member) that constructs the prod-
-  // unreachable parked-only state for the bite test. +35 LOC of guard + comment +
-  // hook + type. New snapshot: 1144 LOC. The flush/parked split (Audit-15 P5.1 /
-  // Audit-14 6.1) is still the eventual fix.
-  // AUDIT16_REMEDIATION_PLAN_2026-06-09 Phase 3 3.4 — `schedulerGeneration`
-  // bumped by reset(); the parked IIFE captures it at park time and bails
-  // after the drain when it moved, so a dangling parked closure surviving a
-  // vault swap can neither re-fire its stale write into the NEW vault's
-  // fresh inFlight map nor pollute the new session's failed set + sentinel
-  // via the missing-source `safeEndWrite(false)` (which never passes the
-  // `trackerIsCurrent` settle guard). +31 LOC of counter + bail + rationale
-  // comments. New snapshot: 1175 LOC. The flush/parked split still pends.
-  'src/renderer/lib/boards/writeScheduler.ts': 1175,
+  // writeScheduler.ts left the allowlist in AUDIT16 Phase 4: the public type
+  // surface (CreateSchedulerOptions / Scheduler / FlushAllResult / entry
+  // interfaces) moved to writeSchedulerTypes.ts (re-exported, importers
+  // unchanged), bringing the implementation back under the limit even with
+  // the 4.1 monotonic-generation mint, 4.4 parked-fire cancel, and 4.7
+  // per-key failure-id prune added in the same phase. Bump history for its
+  // 933→1175 era is in git log.
 };
 
 function toPosix(p) {

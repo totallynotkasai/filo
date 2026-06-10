@@ -57,7 +57,7 @@ import { uiStore } from './ui.svelte';
 import { vaultStore } from './vault.svelte';
 import { reportError } from '../lib/utils/errorBus';
 import { assertIpcOk } from '../lib/utils/ipcEnvelope';
-import { isRecentSelfWrite, isPathPending } from '../lib/boards/boardSaver';
+import { isRecentSelfWrite, isPathPending, isPathQueuedOrInFlight } from '../lib/boards/boardSaver';
 import { loadBoard } from '../lib/boards/boardLoader';
 import { loadTagsFile } from '../lib/vault/tagsStorage';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
@@ -100,6 +100,18 @@ async function reconcileBoardJsonChange(event: ExternalChangeEvent): Promise<voi
     const diverged = await selfWriteDivergedFromBaseline(root, rel);
     if (!isStillSameVault(captured)) return;
     if (!diverged) return;
+    // Audit-16 4.8 — a diverged stat while a NEWER self-write for this path
+    // is still queued or in flight is write N+1's bytes landing between
+    // write N's watcher echo and N+1's post-write baseline stamp — Filo's
+    // own back-to-back saves during normal rapid editing, not a second
+    // writer. Falling through here surfaced a spurious "Board changed
+    // externally" prompt (the isPathPending branch below), and a "Reload"
+    // answer would clobber the un-persisted in-memory edits. Drop the echo;
+    // a genuine external edit in this narrow window is still caught lazily
+    // by `writeBoardFile`'s pre-write drift check on the next save. The
+    // probe deliberately excludes failed paths (see isPathQueuedOrInFlight)
+    // so a failed write doesn't suppress real external-edit echoes.
+    if (isPathQueuedOrInFlight(rel)) return;
   }
 
   // Look up boardId for this path. Reconciler is a no-op when no board

@@ -2,7 +2,10 @@ import { promises as fs } from 'fs';
 import { randomBytes } from 'crypto';
 import { dirname, join } from 'path';
 import { RESERVED_WINDOWS_NAMES } from '../utils/pathSecurity';
-import { recordPreservedEmergencyFile } from '../services/emergencyFileRegistry';
+import {
+  recordPreservedEmergencyFile,
+  clearPreservedEmergencyFilesForTarget,
+} from '../services/emergencyFileRegistry';
 
 /**
  * Characters that are illegal in Windows filenames.
@@ -295,6 +298,13 @@ export async function atomicWriteFile(
     }
     throw lastErr;
   }
+
+  // Audit-16 4.6 — the write landed: drop any emergency-registry entries a
+  // PRIOR failed write to this same destination recorded, so the quit
+  // breadcrumb stops pointing the user at superseded bytes (phantom
+  // "Filo preserved emergency files" notice on the next launch). The
+  // preserved `.tmp` itself stays on disk — see the registry's doc.
+  clearPreservedEmergencyFilesForTarget(filePath);
 
   // Best-effort fsync of the containing directory so the rename's metadata
   // is durably persisted on POSIX. Windows can't open a directory for

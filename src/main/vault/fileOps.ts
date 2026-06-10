@@ -3,7 +3,10 @@ import type { FileHandle } from 'fs/promises';
 import { randomBytes } from 'crypto';
 import { join, extname, basename, dirname, resolve, sep } from 'path';
 import { assertSafeFilename } from '../utils/pathSecurity';
-import { recordPreservedEmergencyFile } from '../services/emergencyFileRegistry';
+import {
+  recordPreservedEmergencyFile,
+  clearPreservedEmergencyFilesForTarget,
+} from '../services/emergencyFileRegistry';
 import type { FileTreeNode } from '../../shared/types';
 
 // `extname()` only returns the final segment, so `foo.board.json` → `.json`.
@@ -673,6 +676,11 @@ export async function copyFileToVault(
     }
     throw renameErr;
   }
+
+  // Audit-16 4.6 — the copy landed: drop registry entries a prior failed
+  // copy to this destination recorded (mirrors atomicWriteFile; the
+  // preserved partial `.tmp` stays on disk).
+  clearPreservedEmergencyFilesForTarget(destPath);
 
   // Best-effort directory fsync so the new entry is durably visible
   // across an unclean shutdown. Some filesystems (FAT, certain network

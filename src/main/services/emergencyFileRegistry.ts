@@ -14,11 +14,14 @@
  * persist the locations into `.filo/quit-failure.json`, and the next vault
  * open can surface them (`readQuitFailureBreadcrumb` on the renderer).
  *
- * LEAF MODULE BY DESIGN — it imports nothing from `../vault/*`, so the write
- * primitives (`filenameUtils.atomicWriteFile`, `fileOps.copyFileToVault`) can
- * record into it without a circular import. The breadcrumb WRITE (which needs
- * `atomicWriteFile`) lives in `quitFailureBreadcrumb.ts`.
+ * LEAF MODULE BY DESIGN — it imports nothing from `../vault/*` (only node
+ * `path`), so the write primitives (`filenameUtils.atomicWriteFile`,
+ * `fileOps.copyFileToVault`) can record into it without a circular import.
+ * The breadcrumb WRITE (which needs `atomicWriteFile`) lives in
+ * `quitFailureBreadcrumb.ts`.
  */
+import { normalize } from 'path';
+
 export interface PreservedEmergencyFile {
   /** Absolute path where the partial bytes were preserved on disk. */
   preservedPath: string;
@@ -57,6 +60,38 @@ export function recordPreservedEmergencyFile(entry: {
 /** Snapshot of every preserved emergency file recorded this session. */
 export function listPreservedEmergencyFiles(): readonly PreservedEmergencyFile[] {
   return session;
+}
+
+/**
+ * Comparison key for an absolute target path. Windows paths are
+ * case-insensitive, and the writer call sites can legitimately reach the
+ * same destination with differing separators/casing across retries.
+ */
+function targetKey(p: string): string {
+  const norm = normalize(p);
+  return process.platform === 'win32' ? norm.toLowerCase() : norm;
+}
+
+/**
+ * Audit-16 4.6 — drops every entry whose `targetPath` matches a destination
+ * that has since been written SUCCESSFULLY. Without this, a transient
+ * ENOSPC/EIO/EACCES failure followed by a successful retry of the SAME write
+ * left the entry for the whole session: the quit drain then persisted a
+ * `.filo/quit-failure.json` breadcrumb pointing at superseded bytes, and the
+ * next launch surfaced a phantom "Filo preserved emergency files" notice.
+ * Called by `atomicWriteFile` / `copyFileToVault` after their rename lands.
+ *
+ * The preserved `.tmp` itself is deliberately LEFT on disk — deleting it
+ * would require proving its bytes match what landed, and a stale recovery
+ * file is safer than a deleted one. Never throws (mirror of the recorder).
+ */
+export function clearPreservedEmergencyFilesForTarget(targetPath: string): void {
+  if (typeof targetPath !== 'string' || targetPath.length === 0) return;
+  const key = targetKey(targetPath);
+  for (let i = session.length - 1; i >= 0; i--) {
+    const target = session[i]?.targetPath;
+    if (target !== undefined && targetKey(target) === key) session.splice(i, 1);
+  }
 }
 
 /** Test-only: reset the session registry between cases. */

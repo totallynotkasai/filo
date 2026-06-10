@@ -896,9 +896,19 @@ phase summary so a future audit doesn't re-raise them.
     debounced write re-detects the drift and prompts). One extra `vault:stat` per delta write,
     skipped when no baseline existed (freshly-seeded file — same trust as before).
   - **5.3** — the 3.3 torn-read guard logic was extracted to a NEW shared module
-    `lib/vault/tornFrontmatterRead.ts` (`freshReadLooksTornMidFrontmatter`) — required anyway:
-    the inline additions put `markdownFileWriter.ts` at 1379 vs its 1369 ceiling, and
-    split-don't-bump applies (now 1361). The H2 empty-cache seed re-read was restructured so the
+    `lib/vault/tornFrontmatterRead.ts` (`freshReadLooksTornMidFrontmatter`); the Phase-5
+    additions still put `markdownFileWriter.ts` over its 1369 ceiling (1418 raw), so per
+    split-don't-bump the long-queued drift-prompt split (already noted as queued in
+    `check-file-sizes.mjs`) was ALSO executed: the whole Phase R6 + 6.4.M13 pre-write drift
+    gate moved to NEW `lib/vault/preWriteDriftGate.ts` (`runPreWriteDriftGate` — returns
+    proceed/drop + the 5.2 `verifyStat` anchor; throws loudly for defer/exhaustion exactly as
+    before), bringing the gateway to ~1330 raw LOC. Extraction nuance: the NO-BASELINE
+    short-circuit stays at the gateway call site (sync `getBaseline` check, no await) — the
+    pre-split code had zero awaits on that path, and the one extra microtask an `await` of the
+    async gate added delayed the write IPC's handler attachment enough for an already-rejected
+    IPC promise to surface as an unhandled rejection (caught by `test:unit:strict` via
+    `frontmatterSchedulerCrossVaultFinalizer.test.ts`'s 3-tick drain budget).
+    The H2 empty-cache seed re-read was restructured so the
     read's ENOENT-swallowing catch can't eat the guard throw: torn read → `markPathFailed` +
     throw, and the bogus `{}` is NEVER seeded into the cache (pre-fix it poisoned every later
     save for the docId, not just the current one).

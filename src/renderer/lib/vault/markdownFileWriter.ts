@@ -52,11 +52,11 @@ import { documentStore } from '../../stores/document.svelte';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import { parseMarkdown } from './vaultIndex';
 import { onVaultSwap, vaultSwapResettable } from '../../core/vaultLifecycle';
-import { getBaseline, noteBaseline, resetAllBaselines, hasBaselineDrifted, refreshBaselineAfterWrite } from './fileBaselineRegistry';
+import { getBaseline, noteBaseline, resetAllBaselines, refreshBaselineAfterWrite } from './fileBaselineRegistry';
 import { registerPathRenamable } from './renamePathKeys';
 import { captureVaultIdentity, isStillSameVault } from './vaultIdentity';
-import { getExternalEditPromptHandler } from './externalEditPrompt';
 import { freshReadLooksTornMidFrontmatter } from './tornFrontmatterRead';
+import { runPreWriteDriftGate } from './preWriteDriftGate';
 
 /**
  * Default 300ms idle debounce. Mirrors `FM_DEBOUNCE_MS` and the historical
@@ -560,115 +560,24 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
   // vault's index / drift baseline / FM-version for `relPath`.
   const writeIdentity = captureVaultIdentity();
 
-  // Phase R6 — pre-write drift check. If the file's mtime on disk
-  // differs from the baseline captured at hydrate-time (or after the
-  // most recent self-write), an external editor wrote to the file
-  // since we last knew about it. Surface the Reload / Keep-local
-  // prompt so the user explicitly chooses whether to clobber the
-  // external bytes — never silently overwrite. No baseline → no
-  // comparison anchor, fall through to the legacy unguarded write
-  // path (e.g. first write to a freshly-seeded file).
-  const baseline = getBaseline(relPath);
-  // 5.2 (Audit-16) — the last disk stat the drift decision TRUSTED (the
-  // pre-write stat, or the post-prompt re-stat the user approved). The delta
-  // branch re-stats after its in-chain read and verifies against this anchor,
-  // so an external write landing in the stat→read gap — invisible to the drift
-  // check, and a torn/stale read of it would be written back verbatim as the
-  // delta body — aborts loudly instead. Undefined ⇒ no anchor, verify skipped.
-  let preWriteVerifyStat: { mtimeMs: number; size: number } | undefined;
-  if (baseline !== undefined) {
-    let preWriteStat: { mtimeMs: number; size: number } | undefined;
-    try {
-      preWriteStat = await invokeOk('vault:stat', vaultRoot, relPath);
-    } catch {
-      // Stat failed (ENOENT, EACCES, NO_ACTIVE_VAULT). Fall through —
-      // the IPC below will surface the same shape via trackComponentWrite.
-    }
-    preWriteVerifyStat = preWriteStat;
-    if (preWriteStat !== undefined && hasBaselineDrifted(baseline, preWriteStat)) {
-      // 6.4.M13 — the Reload / Keep-local prompt is async, so the file can
-      // drift AGAIN while the modal is open. After each 'keep-local',
-      // re-stat: if the bytes the user agreed to overwrite changed since they
-      // were shown the prompt, re-prompt so an external edit the user never
-      // saw is never silently clobbered. Bounded to avoid a livelock against a
-      // rapid external writer; on exhaustion, abort (the next debounced write
-      // re-detects the drift and prompts again with the latest state).
-      const handler = getExternalEditPromptHandler();
-      const MAX_DRIFT_REPROMPTS = 3;
-      let approved = false;
-      let shownStat = preWriteStat;
-      for (let attempt = 0; attempt < MAX_DRIFT_REPROMPTS; attempt++) {
-        const choice = handler ? await handler(relPath) : 'keep-local';
-        if (choice === 'reload') {
-          // The Reload handler refreshed the vault index + editor content
-          // from disk and re-stamped the drift baseline (applyReloadFromDisk
-          // → noteBaseline, threaded from the read). Drop this scheduled
-          // write — the user explicitly chose to discard their pending bytes.
-          return;
-        }
-        if (choice === 'defer') {
-          // 6.4.M4 — dismissed without choosing (auto-dismiss or manual
-          // close). Neither side was touched; abort so the external edit on
-          // disk survives, and let the dirty in-memory state persist so the
-          // next debounced write re-prompts. No baseline refresh.
-          //
-          // Audit-6 M1 — a bare `return` here resolved performWrite as SUCCESS,
-          // so the scheduler's `safeEndWrite(true)` dropped the path from
-          // pending and `syncSentinelIfIdle` markClean'd `.filo/.dirty` (the
-          // path was never in failedVaultPaths). The editor stayed dirty but
-          // disk was unchanged → quit lost the edit with a CLEAN sentinel (no
-          // recovery prompt). Mirror frontmatterWriteScheduler DI-13:
-          // markPathFailed keeps the sentinel dirty + the indicator showing
-          // error, and the throw attributes the path to flushAll().failed so
-          // save() returns false instead of flashing "Saved".
-          markPathFailed(vaultRoot, relPath);
-          throw new Error(
-            `markdownFileWriter: write to "${relPath}" deferred — external edit on disk unresolved; not overwritten`,
-          );
-        }
-        // 'keep-local' — the user chose to overwrite. Confirm nothing drifted
-        // while the modal was open before committing the clobber.
-        let recheckStat: { mtimeMs: number; size: number } | undefined;
-        try {
-          recheckStat = await invokeOk('vault:stat', vaultRoot, relPath);
-        } catch {
-          // Re-stat failed — can't confirm a second drift. Proceed with the
-          // overwrite as the pre-M13 code did; the write IPC below surfaces
-          // any genuine IO error through the failure-attribution pipeline.
-          recheckStat = undefined;
-        }
-        if (
-          recheckStat === undefined ||
-          (recheckStat.mtimeMs === shownStat.mtimeMs && recheckStat.size === shownStat.size)
-        ) {
-          approved = true;
-          // 5.2 — the approval re-anchors the verify stat: the user agreed to
-          // overwrite the bytes recheckStat observed. A failed re-stat keeps
-          // the legacy proceed-without-confirmation decision — no anchor.
-          preWriteVerifyStat = recheckStat;
-          break;
-        }
-        // The file drifted again during the prompt — loop to re-prompt against
-        // the freshly-observed state rather than overwrite bytes never shown.
-        shownStat = recheckStat;
-      }
-      if (!approved) {
-        // Re-prompt budget exhausted against a churning external writer. Abort
-        // rather than clobber an unseen edit; the next debounced write
-        // re-detects the drift and prompts again.
-        //
-        // Audit-6 M1 — same silent-loss-with-clean-sentinel hazard as the
-        // 'defer' branch above: a bare `return` reported success and let the
-        // sentinel be markClean'd while the dirty edit never reached disk.
-        // markPathFailed + throw keeps `.filo/.dirty` alive and surfaces the
-        // failure to save()'s aggregate boolean.
-        markPathFailed(vaultRoot, relPath);
-        throw new Error(
-          `markdownFileWriter: write to "${relPath}" aborted — external edit kept churning across drift re-prompts; not overwritten`,
-        );
-      }
-    }
-  }
+  // Phase R6 / 6.4.M13 / Audit-16 5.2 — pre-write drift gate (Reload /
+  // Keep-local prompt + bounded re-prompt loop), extracted to
+  // `preWriteDriftGate.ts` (the queued file-size split). 'drop' = the user
+  // chose Reload (the handler already refreshed editor + baseline) — discard
+  // this scheduled write; 'defer' / budget-exhaustion throw loudly inside the
+  // gate (markPathFailed, Audit-6 M1). `verifyStat` anchors the delta branch's
+  // post-read verification below (5.2). The no-baseline short-circuit stays at
+  // THIS call site, not just inside the gate: the pre-split code had NO await
+  // at all on that path, and the extra microtask an `await` of the async gate
+  // would add delays the write IPC's handler attachment by one tick — enough
+  // for an already-rejected IPC promise to surface as an unhandled rejection
+  // under a tight drain budget (and zero-cost parity for unseeded new files).
+  const driftGate =
+    getBaseline(relPath) === undefined
+      ? { action: 'proceed' as const, verifyStat: undefined }
+      : await runPreWriteDriftGate(vaultRoot, relPath);
+  if (driftGate.action === 'drop') return;
+  const preWriteVerifyStat = driftGate.verifyStat;
 
   // Audit-11 N1 — toast when an assemble below REFUSES a frontmatter edit over
   // unparseable on-disk YAML (the block is kept verbatim, the edit dropped), so

@@ -1,6 +1,6 @@
 import { Document, parseDocument, isSeq } from 'yaml';
 import { parseTagsField } from '../utils/normalizeTagsField';
-import { patchFrontmatterSourceCst } from './frontmatterCstModel';
+import { patchFrontmatterSourceCst, frontmatterSourceHasNonScalarKey } from './frontmatterCstModel';
 
 /**
  * Frontmatter-only tag rewriter.
@@ -224,6 +224,12 @@ function itemUnsafeForLinePath(rawItem: string): boolean {
   if (QUOTED_RE.test(t)) return false; // cleanly '...'/"..." — unquote round-trips it
   if (/['"]/.test(t)) return true; // embedded / escaped quote (e.g. 'it''s')
   if (/(^|\s)#/.test(t)) return true; // inline comment after the value
+  // 5.5 (Audit-16) — an UNQUOTED leading `&`/`*` is an anchor/alias, never a
+  // literal tag (indicator chars are illegal at plain-scalar start). The naive
+  // matcher used to accept `- *shared` as the literal tag "*shared"; declining
+  // routes the field to the fallback, where the widened anchored-field skip
+  // leaves the file untouched.
+  if (/^[&*]/.test(t)) return true;
   return false;
 }
 
@@ -323,21 +329,52 @@ function hasTagsHeader(yamlSource: string): boolean {
 }
 
 /**
- * True when the top-level `tags:` field's value is a YAML anchor (`tags: &x
- * [..]`) or alias (`tags: *x`). `locateTagsField` declines these — a line edit
- * can't safely follow the reference — and the load→dump fallback would EXPAND
- * the anchor (`dump({ noRefs: true })`) and re-emit the whole block, a larger
+ * True when the top-level `tags:` field carries a YAML anchor (`tags: &x
+ * [..]`) or alias (`tags: *x`) ANYWHERE in its value range. `locateTagsField`
+ * declines these — a line edit can't safely follow the reference — and the
+ * load→dump fallback would RESOLVE the reference and re-emit the whole block
+ * (anchors on other keys dropped, aliases inlined, comments lost), a larger
  * and more surprising mutation than the documented comment loss. Callers skip
  * the rewrite entirely in this case, leaving the file byte-for-byte untouched.
- * Detection is precise (the value starts with `&`/`*`) so a tag whose text
- * merely contains those characters still takes the established path. (7.5)
+ *
+ * 5.5 (Audit-16) — the original check inspected only the START of the header
+ * value, so an alias INSIDE the collection (`tags: [*shared]`, a block item
+ * `- *shared`) reported "not anchored" and fell through to the dump. Scan the
+ * field's FULL value range: the header rest, each flow item, and each block
+ * item. Detection stays precise — an UNQUOTED leading `&`/`*` is always an
+ * anchor/alias in YAML (they're indicator chars, illegal at plain-scalar
+ * start), while a quoted tag whose text contains them starts with the quote
+ * and still takes the established path. (7.5)
  */
 function tagsFieldIsAnchored(yamlSource: string): boolean {
-  for (const line of yamlSource.split('\n')) {
-    const match = TAGS_HEADER_RE.exec(line);
+  const startsAnchored = (raw: string): boolean => /^[&*]/.test(raw.trim());
+  const lines = yamlSource.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const match = TAGS_HEADER_RE.exec(lines[i] ?? '');
     if (!match) continue;
     const value = (match[1] ?? '').trim();
-    return value.startsWith('&') || value.startsWith('*');
+    if (startsAnchored(value)) return true;
+    if (value.startsWith('[')) {
+      // Flow list — check each comma-separated item (a quote can hide a comma,
+      // but a HIDDEN comma can only over-split, never make a non-anchored item
+      // LOOK anchored: an unquoted leading `&`/`*` survives any split).
+      const inside = value.endsWith(']') ? value.slice(1, -1) : value.slice(1);
+      return inside.split(',').some((item) => startsAnchored(item));
+    }
+    if (value === '') {
+      // Block list — scan the item lines (same walk as locateTagsField,
+      // including blank lines inside the list).
+      for (let j = i + 1; j < lines.length; j++) {
+        const itemMatch = BLOCK_ITEM_RE.exec(lines[j] ?? '');
+        if (itemMatch) {
+          if (startsAnchored(itemMatch[2] ?? '')) return true;
+          continue;
+        }
+        if (/^\s*$/.test(lines[j] ?? '') && BLOCK_ITEM_RE.test(lines[j + 1] ?? '')) continue;
+        break;
+      }
+    }
+    return false;
   }
   return false;
 }
@@ -494,7 +531,11 @@ export function rewriteTagInMarkdown(
   // comments / key order). Patch the original YAML source source-preservingly via
   // the `yaml` Document engine, keeping the lossy dump only as a last resort if
   // the engine can't parse the block as a mapping.
-  return reassemble(patchFrontmatterSourceCst(yamlSource, fm) ?? dumpYaml(fm), body, false, eol, hadBom);
+  const patchedRename = patchFrontmatterSourceCst(yamlSource, fm);
+  // 5.4 (Audit-16) — the engine refuses a non-scalar mapping key (`[a, b]: x`);
+  // the dump would rewrite that key as its stringified twin. Skip instead.
+  if (patchedRename === null && frontmatterSourceHasNonScalarKey(yamlSource)) return rawContent;
+  return reassemble(patchedRename ?? dumpYaml(fm), body, false, eol, hadBom);
 }
 
 /**
@@ -535,7 +576,10 @@ export function removeTagFromMarkdown(rawContent: string, tag: string): string {
   // comments / key order). Patch the original YAML source source-preservingly via
   // the `yaml` Document engine, keeping the lossy dump only as a last resort if
   // the engine can't parse the block as a mapping.
-  return reassemble(patchFrontmatterSourceCst(yamlSource, fm) ?? dumpYaml(fm), body, false, eol, hadBom);
+  const patchedRemove = patchFrontmatterSourceCst(yamlSource, fm);
+  // 5.4 (Audit-16) — non-scalar mapping key: refuse rather than dump (see rename).
+  if (patchedRemove === null && frontmatterSourceHasNonScalarKey(yamlSource)) return rawContent;
+  return reassemble(patchedRemove ?? dumpYaml(fm), body, false, eol, hadBom);
 }
 
 /**
@@ -603,5 +647,8 @@ export function addTagToMarkdown(rawContent: string, tag: string): string {
   // comments / key order). Patch the original YAML source source-preservingly via
   // the `yaml` Document engine, keeping the lossy dump only as a last resort if
   // the engine can't parse the block as a mapping.
-  return reassemble(patchFrontmatterSourceCst(yamlSource, fm) ?? dumpYaml(fm), body, false, eol, hadBom);
+  const patchedAdd = patchFrontmatterSourceCst(yamlSource, fm);
+  // 5.4 (Audit-16) — non-scalar mapping key: refuse rather than dump (see rename).
+  if (patchedAdd === null && frontmatterSourceHasNonScalarKey(yamlSource)) return rawContent;
+  return reassemble(patchedAdd ?? dumpYaml(fm), body, false, eol, hadBom);
 }

@@ -275,6 +275,63 @@ describe('tag rewriter — anchored/aliased tags field is left untouched (7.5)',
     expect(rewriteTagInMarkdown(anchored, 'alpha', 'gamma')).toBe(anchored);
     expect(addTagToMarkdown(anchored, 'delta')).toBe(anchored);
   });
+
+  // 5.5 (Audit-16) — the original anchored check inspected only the START of
+  // the header value, so an alias INSIDE the collection reported "not anchored"
+  // and fell through to the load→dump fallback: the alias was resolved on the
+  // load, the CST engine refused (alias on the changed tags key), and the dump
+  // re-emitted the WHOLE frontmatter from the resolved object — anchors on
+  // other keys dropped, aliases inlined, comments lost. The widened scan covers
+  // the full value range (flow items + block items), so these skip instead.
+  it('5.5 — an alias INSIDE a flow collection skips the rewrite (file untouched)', () => {
+    const flowAlias = [
+      '---',
+      'keep: &s shared',
+      '# a comment the dump would destroy',
+      'tags: [*s]',
+      '---',
+      'body',
+      '',
+    ].join('\n');
+    expect(rewriteTagInMarkdown(flowAlias, 'shared', 'work')).toBe(flowAlias);
+    expect(removeTagFromMarkdown(flowAlias, 'shared')).toBe(flowAlias);
+    expect(addTagToMarkdown(flowAlias, 'delta')).toBe(flowAlias);
+  });
+
+  it('5.5 — an alias as a BLOCK item skips the rewrite (file untouched)', () => {
+    const blockAlias = [
+      '---',
+      'keep: &s shared',
+      '# a comment the dump would destroy',
+      'tags:',
+      '  - literal',
+      '  - *s',
+      '---',
+      'body',
+      '',
+    ].join('\n');
+    expect(rewriteTagInMarkdown(blockAlias, 'shared', 'work')).toBe(blockAlias);
+    expect(removeTagFromMarkdown(blockAlias, 'shared')).toBe(blockAlias);
+    expect(addTagToMarkdown(blockAlias, 'delta')).toBe(blockAlias);
+    // The literal sibling is ALSO protected: a remove of it would re-emit the
+    // alias item as a quoted literal, so the whole field skips.
+    expect(removeTagFromMarkdown(blockAlias, 'literal')).toBe(blockAlias);
+  });
+
+  it('5.5 — an ANCHOR defined on a flow/block item skips the rewrite', () => {
+    const flowAnchor = ['---', 'tags: [&t alpha, beta]', '---', 'body', ''].join('\n');
+    expect(rewriteTagInMarkdown(flowAnchor, 'alpha', 'gamma')).toBe(flowAnchor);
+    const blockAnchor = ['---', 'tags:', '  - &t alpha', '  - beta', '---', 'body', ''].join('\n');
+    expect(removeTagFromMarkdown(blockAnchor, 'beta')).toBe(blockAnchor);
+  });
+
+  it('5.5 — a QUOTED tag merely containing &/* still takes the established path', () => {
+    const quoted = ['---', 'title: X', "tags: ['*not-an-alias', foo]", '---', 'body', ''].join('\n');
+    const out = rewriteTagInMarkdown(quoted, 'foo', 'bar');
+    expect(out).toContain('bar');
+    expect(out).toContain('*not-an-alias'); // sibling intact, file rewritten
+    expect(out).toContain('title: X');
+  });
 });
 
 // ── 1.3 ───────────────────────────────────────────────────────────────────

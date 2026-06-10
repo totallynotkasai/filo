@@ -268,6 +268,19 @@ export function patchFrontmatterSourceCst(
   const presentKeys = new Set<string>();
 
   if (mapToken) {
+    // 5.4 (Audit-16) — refuse a mapping carrying a NON-SCALAR key (`[a, b]: x`,
+    // `{k: 1}: x`, an explicit-key `? …` form, an empty key). `toJS()`
+    // STRINGIFIES such keys ("[ a, b ]") because a plain JS object can't hold
+    // them, so `currentObj`/`nextObj` are NOT faithful views of the source: the
+    // item can't be matched to an object key (`itemKeyString` → null) and the
+    // added-keys pass below would emit the stringified twin as a NEW string key
+    // — a silent semantic duplicate (`[a, b]: x` + `"[ a, b ]": x`) appended by
+    // any unrelated edit. Mirror the multi-document and anchor refusals: fail
+    // closed and let the caller's keep-raw/dump decision handle it.
+    for (const item of mapToken.items) {
+      if (itemKeyString(item) === null) return null;
+    }
+
     // Pass 1 — L27 anchor guard. Refuse before mutating anything if any
     // changed/deleted key's subtree carries an anchor/alias.
     for (const item of mapToken.items) {
@@ -416,4 +429,29 @@ export function frontmatterSourceKeys(source: string): Set<string> {
     /* unparseable — no keys to preserve */
   }
   return new Set();
+}
+
+/**
+ * 5.4 (Audit-16) — true when the source's top-level block mapping carries an
+ * item whose KEY is not a single scalar (`[a, b]: x`, `{k: 1}: x`, an
+ * explicit-key `? …` form, an empty key). For such a source the OBJECT view is
+ * not faithful: `toJS()` stringifies the key ("[ a, b ]") because a plain JS
+ * object can't hold it, so a full dump from that object would rewrite the key
+ * as its quoted STRING twin — a semantic change, not a reformat. The assemble
+ * path uses this to route the engine's refusal to keep-raw (refuse the metadata
+ * edit, preserve the block byte-for-byte) instead of the dump fallback, which
+ * is reserved for refusals where the dump is data-preserving.
+ */
+export function frontmatterSourceHasNonScalarKey(source: string): boolean {
+  try {
+    const tokens = [...new Parser().parse(source.replace(/\r\n/g, '\n'))];
+    const mapToken = blockMapOf(tokens);
+    if (!mapToken) return false;
+    for (const item of mapToken.items) {
+      if (itemKeyString(item) === null) return true;
+    }
+  } catch {
+    /* tokeniser failure — not this helper's concern (the parse gate refuses) */
+  }
+  return false;
 }

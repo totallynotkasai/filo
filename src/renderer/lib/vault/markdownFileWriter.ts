@@ -56,6 +56,7 @@ import { getBaseline, noteBaseline, resetAllBaselines, hasBaselineDrifted, refre
 import { registerPathRenamable } from './renamePathKeys';
 import { captureVaultIdentity, isStillSameVault } from './vaultIdentity';
 import { getExternalEditPromptHandler } from './externalEditPrompt';
+import { freshReadLooksTornMidFrontmatter } from './tornFrontmatterRead';
 
 /**
  * Default 300ms idle debounce. Mirrors `FM_DEBOUNCE_MS` and the historical
@@ -568,6 +569,13 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
   // comparison anchor, fall through to the legacy unguarded write
   // path (e.g. first write to a freshly-seeded file).
   const baseline = getBaseline(relPath);
+  // 5.2 (Audit-16) — the last disk stat the drift decision TRUSTED (the
+  // pre-write stat, or the post-prompt re-stat the user approved). The delta
+  // branch re-stats after its in-chain read and verifies against this anchor,
+  // so an external write landing in the stat→read gap — invisible to the drift
+  // check, and a torn/stale read of it would be written back verbatim as the
+  // delta body — aborts loudly instead. Undefined ⇒ no anchor, verify skipped.
+  let preWriteVerifyStat: { mtimeMs: number; size: number } | undefined;
   if (baseline !== undefined) {
     let preWriteStat: { mtimeMs: number; size: number } | undefined;
     try {
@@ -576,6 +584,7 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
       // Stat failed (ENOENT, EACCES, NO_ACTIVE_VAULT). Fall through —
       // the IPC below will surface the same shape via trackComponentWrite.
     }
+    preWriteVerifyStat = preWriteStat;
     if (preWriteStat !== undefined && hasBaselineDrifted(baseline, preWriteStat)) {
       // 6.4.M13 — the Reload / Keep-local prompt is async, so the file can
       // drift AGAIN while the modal is open. After each 'keep-local',
@@ -633,6 +642,10 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
           (recheckStat.mtimeMs === shownStat.mtimeMs && recheckStat.size === shownStat.size)
         ) {
           approved = true;
+          // 5.2 — the approval re-anchors the verify stat: the user agreed to
+          // overwrite the bytes recheckStat observed. A failed re-stat keeps
+          // the legacy proceed-without-confirmation decision — no anchor.
+          preWriteVerifyStat = recheckStat;
           break;
         }
         // The file drifted again during the prompt — loop to re-prompt against
@@ -696,27 +709,45 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
       throw err;
     }
     // 3.3 (Audit-14) — guard a TRUNCATED/partial in-chain read from silently
-    // dropping the on-disk frontmatter. A non-atomic external writer caught
-    // mid-write can return bytes that begin with an opening `---` fence but whose
-    // CLOSING fence wasn't in the partial read → `parseMarkdownFile` reports
-    // `hasFrontmatter:false`, and assembling the delta against that would emit
-    // ONLY the delta keys + the truncated body, erasing the real frontmatter.
-    // So: prior-indexed FM block + fresh read parsed none + raw still opens with
-    // `---` → read anomaly, markPathFailed + throw (next debounce retries).
-    // Audit-15 P2.3 — do NOT tighten this with a size/heuristic gate to suppress
-    // the accepted, fail-safe body-starts-with-`---`-after-FM-removal false-
-    // positive: it re-opens this HIGH silent-FM-drop. See KNOWN_LIMITATIONS #11.
-    if (!parsedFresh.hasFrontmatter) {
-      const priorRawFm = vaultIndexStore.getMetadata(relPath)?.rawFrontmatter ?? '';
-      // allow-bom-sniff: `freshContent` is the raw in-chain `vault:read-file-text` payload (BOM intact)
-      const strippedFresh =
-        freshContent.charCodeAt(0) === 0xfeff ? freshContent.slice(1) : freshContent;
-      if (priorRawFm !== '' && /^---[ \t]*\r?\n/.test(strippedFresh)) {
+    // dropping the on-disk frontmatter: assembling the delta against a read
+    // whose closing fence is missing would emit ONLY the delta keys + the
+    // truncated body. Prior-indexed FM block + fresh read parsed none + raw
+    // still opens with `---` → read anomaly, markPathFailed + throw (next
+    // debounce retries). Heuristic scope documented on the helper.
+    if (!parsedFresh.hasFrontmatter && freshReadLooksTornMidFrontmatter(relPath, freshContent)) {
+      markPathFailed(vaultRoot, relPath);
+      throw new Error(
+        `markdownFileWriter: refusing delta write to "${relPath}" — fresh read opens with a ` +
+        `frontmatter fence but has no closing fence (likely a partial read of an in-progress ` +
+        `external write); not overwriting so the on-disk frontmatter is not dropped`,
+      );
+    }
+    // 5.2 (Audit-16) — the 3.3 guard catches only the torn-MID-FRONTMATTER
+    // shape; a torn/stale BODY in the fresh read parses cleanly and would be
+    // written back verbatim as `deltaBody` for the common no-live-editor case
+    // (the pre-write drift stat ran BEFORE this read, so a write landing in the
+    // stat→read gap is invisible to it, and the post-write baseline then adopts
+    // our bytes — suppressing later detection). Re-stat and verify the file is
+    // still exactly the one the drift decision trusted; on mismatch abort
+    // loudly (the next debounced write re-detects the drift and prompts).
+    if (preWriteVerifyStat !== undefined) {
+      let postReadStat: { mtimeMs: number; size: number } | undefined;
+      try {
+        postReadStat = await invokeOk('vault:stat', vaultRoot, relPath);
+      } catch {
+        // Can't re-stat (transient IO) while the read itself succeeded —
+        // proceed as the pre-verify code did rather than wedge on a stat hiccup.
+      }
+      if (
+        postReadStat !== undefined &&
+        (postReadStat.mtimeMs !== preWriteVerifyStat.mtimeMs ||
+          postReadStat.size !== preWriteVerifyStat.size)
+      ) {
         markPathFailed(vaultRoot, relPath);
         throw new Error(
-          `markdownFileWriter: refusing delta write to "${relPath}" — fresh read opens with a ` +
-          `frontmatter fence but has no closing fence (likely a partial read of an in-progress ` +
-          `external write); not overwriting so the on-disk frontmatter is not dropped`,
+          `markdownFileWriter: refusing delta write to "${relPath}" — the file changed on disk ` +
+          `between the pre-write drift check and the in-chain read (the read may be torn or ` +
+          `stale); not overwriting an edit the drift prompt never showed`,
         );
       }
     }
@@ -795,16 +826,34 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
     const cacheHasFm = docId ? documentStore.hasFrontmatter(docId) : false;
     const argsFmEmpty = !args.frontmatter || Object.keys(args.frontmatter).length === 0;
     if (docId && !cacheHasFm && argsFmEmpty) {
+      let readResult: { content: string } | undefined;
       try {
-        const readResult = await invokeOk('vault:read-file-text', vaultRoot, relPath);
-        const parsed = parseMarkdownFile(readResult.content);
-        documentStore.setFrontmatter(docId, parsed.frontmatter, parsed.rawFrontmatter);
-        fm = parsed.frontmatter;
+        readResult = await invokeOk('vault:read-file-text', vaultRoot, relPath);
       } catch {
         // ENOENT / EACCES — a genuinely new (or vanished) file. Keep fm = {}; the
         // body-only assemble then emits no FM (correct for a new file) and the
         // `vault:write-existing-file-text` IPC below surfaces a real missing-file
         // failure through trackComponentWrite rather than this read swallowing it.
+      }
+      if (readResult !== undefined) {
+        const parsed = parseMarkdownFile(readResult.content);
+        // 5.3 (Audit-16) — same torn-read guard as the delta branch: a partial
+        // read (opening fence, no closing fence) parses as "no frontmatter", and
+        // pre-guard the assemble would strip the on-disk YAML block AND the bogus
+        // `{}` seed was CACHED — poisoning every later save for this docId, not
+        // just this one. Thrown OUTSIDE the try so the ENOENT swallow above
+        // can't eat it; markPathFailed keeps the sentinel dirty and attributes
+        // the path to flushAll().failed (next debounce retries clean).
+        if (!parsed.hasFrontmatter && freshReadLooksTornMidFrontmatter(relPath, readResult.content)) {
+          markPathFailed(vaultRoot, relPath);
+          throw new Error(
+            `markdownFileWriter: refusing body-only write to "${relPath}" — the cache-seed read ` +
+            `opens with a frontmatter fence but has no closing fence (likely a partial read of ` +
+            `an in-progress external write); not seeding {} or stripping the on-disk frontmatter`,
+          );
+        }
+        documentStore.setFrontmatter(docId, parsed.frontmatter, parsed.rawFrontmatter);
+        fm = parsed.frontmatter;
       }
     }
     if (docId) {

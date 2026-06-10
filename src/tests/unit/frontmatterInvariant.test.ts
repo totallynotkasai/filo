@@ -193,6 +193,22 @@ const HOSTILE_CORPUS: ReadonlyArray<{ label: string; md: string }> = [
   },
   { label: 'folded > scalar', md: '---\nsummary: >\n  line one\n  line two\ntags:\n  - foo\n---\nbody\n' },
   { label: 'special-char tags on BOM', md: '﻿---\ntags:\n  - "@home"\n  - foo\n---\nbody\n' },
+  // Audit-16 Phase 5 — corpus gaps the ninth audit surfaced:
+  //  5.1 — `tags: []` on disk (a common Obsidian/template shape) must survive
+  //        any UNRELATED edit byte-for-byte (the unconditional empty-tags drop
+  //        predated and bypassed the 1.1 baseline rescue, which covers `null`).
+  //  5.5 — an alias INSIDE the tags collection (the old anchored check only
+  //        inspected the START of the header value) — skip, never dump.
+  //  5.4 — a NON-SCALAR mapping key (`[a, b]: x`): `toJS()` stringifies it, so
+  //        the object view is unfaithful — the engine refuses, file untouched.
+  { label: 'empty tags array on disk', md: '---\ntitle: X\ntags: []\n---\nbody\n' },
+  { label: 'alias inside tags collection (flow)', md: '---\nkeep: &s shared\ntags: [*s]\n---\nbody\n' },
+  {
+    label: 'alias inside tags collection (block item)',
+    md: '---\nkeep: &s shared\ntags:\n  - *s\n---\nbody\n',
+  },
+  { label: 'non-scalar seq key sibling', md: '---\n[a, b]: x\ntitle: X\ntags:\n  - foo\n---\nbody\n' },
+  { label: 'non-scalar map key sibling', md: '---\n{k: 1}: x\ntitle: X\ntags:\n  - foo\n---\nbody\n' },
   { label: 'no frontmatter', md: 'just a body, no frontmatter\n' },
   { label: 'empty', md: '' },
 ];
@@ -1108,6 +1124,12 @@ describe('frontmatter DELTA-write invariant — fresh-read delta across hostile 
     expect(stripEol(outR.body), `${label}: body changed`).toBe(stripEol(inR.body));
     if (!inR.has) return; // no FM on disk — an add-FM write, nothing to preserve.
 
+    // 5.4 (Audit-16) — a byte-identical FM block is ALWAYS safe: the engine
+    // refused (e.g. a non-scalar mapping key) and the assemble kept the raw
+    // bytes verbatim; the edit is dropped loudly via onFrontmatterRefused in
+    // the real gateway. Nothing was lost, so there's nothing more to assert.
+    if (outR.raw === inR.raw) return;
+
     const diskKeys = Object.keys(parsed.frontmatter);
     if (diskKeys.length === 0) {
       // The source had a block but parsed to {} (unresolvable alias / `<<` merge /
@@ -1230,4 +1252,75 @@ describe('frontmatter DELTA-write invariant — fresh-read delta across hostile 
     expect(fmRegion(out).raw).toBe(fmRegion(md).raw);
     expect(fmRegion(out).body).toBe('old\n');
   });
+
+  // 5.1 (Audit-16) — an on-disk `tags: []` must survive an UNRELATED field
+  // delta byte-for-byte. Pre-fix the assemble's unconditional empty-tags drop
+  // ran even on the delta path (where `fm` IS the fresh disk read), so the CST
+  // engine saw `tags` as deleted and spliced the line out — the exact
+  // "untouched key dropped" class this gate forbids.
+  it('5.1 — an on-disk `tags: []` survives an unrelated field delta byte-for-byte', () => {
+    const md = '---\ntitle: X\ntags: []\n---\nbody\n';
+    const out = applyDeltaLikeGateway(md, { set: { completed: true }, unset: [] });
+    const outRaw = fmRegion(out).raw;
+    expect(outRaw.split('\n'), 'the `tags: []` line was dropped/reformatted').toContain('tags: []');
+    const re = parseFm(outRaw)!;
+    expect(re.tags, 'tags value changed').toEqual([]);
+    expect(re.completed, 'delta not applied').toBe(true);
+    expect(re.title).toBe('X');
+  });
+
+  // …while a file with NO baseline `tags` key keeps the cosmetic drop: a delta
+  // that sets tags to [] on a file that never had the key does not write a
+  // gratuitous `tags: []` line (the drop is gated on the baseline, not removed).
+  it('5.1 — no baseline tags key ⇒ an empty-tags set still drops (cosmetic clean kept)', () => {
+    const md = '---\ntitle: X\n---\nbody\n';
+    const out = applyDeltaLikeGateway(md, { set: { tags: [] }, unset: [] });
+    expect(fmRegion(out).raw).not.toContain('tags');
+  });
+});
+
+/**
+ * 5.4 (Audit-16) — NON-SCALAR mapping keys (`[a, b]: x`, `{k: 1}: x`). The
+ * `yaml` package parses them with zero errors but `toJS()` STRINGIFIES the key
+ * ("[ a, b ]") because a plain JS object can't hold it — so the object view is
+ * not faithful to the source. Pre-fix the engine passed the item through
+ * WITHOUT recording it in `presentKeys`, then the added-keys pass appended the
+ * stringified twin as a NEW string key: one unrelated edit grew a silent
+ * semantic duplicate (`[a, b]: x` + `"[ a, b ]": x`). The engine now refuses,
+ * and the assemble routes the refusal to keep-raw (NOT the dump fallback, which
+ * would rewrite the key as its quoted string twin — a semantic change).
+ */
+describe('frontmatter non-scalar mapping keys — engine refuses, file byte-identical (Audit-16 5.4)', () => {
+  const CASES: ReadonlyArray<{ label: string; src: string }> = [
+    { label: 'flow-seq key', src: '[a, b]: x\ntitle: t' },
+    { label: 'flow-map key', src: '{k: 1}: x\ntitle: t' },
+  ];
+
+  for (const { label, src } of CASES) {
+    it(`the engine refuses an unrelated edit on: ${label}`, () => {
+      const cur = parseFm(src);
+      expect(cur, `${label}: corpus source must parse (stringified-key view)`).not.toBeNull();
+      // Pre-fix this returned a string carrying BOTH the original item and the
+      // appended stringified twin; post-fix it refuses.
+      expect(patchFrontmatterSourceCst(src, { ...cur!, title: 'u' })).toBeNull();
+    });
+
+    it(`an unrelated metadata edit keeps the whole file byte-identical: ${label}`, () => {
+      const md = `---\n${src}\n---\nbody\n`;
+      const parsed = parseMarkdownFile(md);
+      let refused = false;
+      const out = assembleMarkdownFile({ ...parsed.frontmatter, title: 'u' }, parsed.body, {
+        rawFrontmatter: parsed.rawFrontmatter,
+        originalFrontmatter: parsed.rawFrontmatter,
+        frontmatterDirty: true,
+        onFrontmatterRefused: () => {
+          refused = true;
+        },
+      });
+      // Keep-raw, not dump: the dump would emit the quoted string twin and drop
+      // the original collection-keyed line.
+      expect(out, `${label}: file must be byte-identical`).toBe(md);
+      expect(refused, `${label}: the dropped edit must surface loudly`).toBe(true);
+    });
+  }
 });

@@ -10,6 +10,7 @@ import {
   patchFrontmatterSourceCst,
   frontmatterSourceParses,
   frontmatterSourceKeys,
+  frontmatterSourceHasNonScalarKey,
 } from '../vault/frontmatterCstModel';
 
 /**
@@ -444,10 +445,27 @@ export function assembleMarkdownFile(
 ): string {
   const fm = { ...frontmatter };
 
+  // 1.1 — the set of top-level keys present in the disk-baseline source. Gates
+  // BOTH clean passes below: a key the user kept on disk must never be dropped
+  // from the object by a cosmetic clean, or the CST engine sees it as DELETED
+  // and splices the line out on an UNRELATED edit.
+  const baselineKeys = options.originalFrontmatter
+    ? frontmatterSourceKeys(options.originalFrontmatter)
+    : null;
+
+  // 5.1 (Audit-16) — drop an EMPTY tags array only when `tags` is NOT already on
+  // disk. The unconditional drop predated the 1.1 baseline rescue (which covers
+  // only `null` values — `tags: []` parses to an empty ARRAY) and ran even on the
+  // Phase-4 delta path where `fm` is the FRESH disk read, so editing an
+  // UNRELATED field on a file carrying `tags: []` (a common Obsidian/template
+  // shape) silently deleted the key. A baseline `tags: []` is kept as-is so the
+  // engine byte-preserves the original line; without a baseline (new file /
+  // cleared in-memory tags) the cosmetic drop stands.
   if (
     'tags' in fm &&
     Array.isArray(fm.tags) &&
-    (fm.tags as unknown[]).length === 0
+    (fm.tags as unknown[]).length === 0 &&
+    !baselineKeys?.has('tags')
   ) {
     delete fm.tags;
   }
@@ -465,9 +483,6 @@ export function assembleMarkdownFile(
   // persisted key we must not write back as a bare `key:`. `undefined` (never a
   // YAML value) is always dropped; a baseline `null` is kept as-is so the engine
   // byte-preserves the original empty-key line.
-  const baselineKeys = options.originalFrontmatter
-    ? frontmatterSourceKeys(options.originalFrontmatter)
-    : null;
   for (const key of Object.keys(fm)) {
     const v = fm[key];
     if (v !== undefined && v !== null) continue;
@@ -511,15 +526,20 @@ export function assembleMarkdownFile(
     // there the dump preserves the data (or replaces a block the app never read
     // as metadata). `frontmatterSourceParses` is false only for a true parse
     // failure, so the keep-raw path is scoped to exactly the data-loss case.
+    //
+    // 5.4 (Audit-16) — a NON-SCALAR mapping key (`[a, b]: x`) is the second
+    // keep-raw case: it parses fine, but `toJS()` STRINGIFIED the key, so the
+    // dump would rewrite it as its quoted string twin — a semantic key change,
+    // not a data-preserving reformat. Refuse the edit and keep the bytes.
     const original = options.originalFrontmatter;
     if (
       patched === null &&
       original &&
       original.trim().length > 0 &&
-      !frontmatterSourceParses(original)
+      (!frontmatterSourceParses(original) || frontmatterSourceHasNonScalarKey(original))
     ) {
       console.warn(
-        '[markdownSync] Refusing to overwrite unparseable frontmatter; metadata edit not applied. Fix the YAML on disk to re-enable property writes.',
+        '[markdownSync] Refusing to overwrite unparseable/unmodelable frontmatter; metadata edit not applied. Fix the YAML on disk to re-enable property writes.',
       );
       // Audit-11 N1 — surface the dropped edit to the user (the gateway wires a
       // toast). Without this the metadata change vanished as a silent success.

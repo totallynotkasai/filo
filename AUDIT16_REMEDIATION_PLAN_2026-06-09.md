@@ -535,6 +535,11 @@ phase summary so a future audit doesn't re-raise them.
 - **Mechanism:** one unrelated field edit on a file with an exotic YAML key appends a duplicate;
   next parse fails uniqueKeys → metadata collapses to `{}` and edits are refused (keep-raw).
   Raw data preserved but the user must hand-fix.
+  - **Correction (verified 2026-06-10):** the "next parse fails uniqueKeys" half does NOT hold —
+    a collection key and its string twin are distinct node types to the parser, and `toJS()`
+    dedupes them silently (verified against yaml@2.9). So no metadata brick; the damage is a
+    silent semantic DUPLICATE key appended by any unrelated edit. Mechanism otherwise as
+    described; fix unchanged; LOW stands.
 - **Fix:** when any mapping item's key is non-scalar (`itemKeyString === null`), return null
   (refuse → existing keep-raw/dump fallback decides), mirroring the multi-document and anchor
   refusals.
@@ -870,6 +875,58 @@ phase summary so a future audit doesn't re-raise them.
     bundle-failure→success Set drain, 4.8 echo-dropped + two positive controls). All 8 guard
     tests bite-verified red against an in-place pre-fix emulation (each fix individually
     reverted in one pass → exactly the 8 guards red, all 5 positive controls green).
-- [ ] Phase 5 — 5.1, 5.2, 5.3, 5.4, 5.5
+- [x] Phase 5 — 5.1, 5.2, 5.3, 5.4, 5.5 — **DONE 2026-06-10.** No findings refuted: all five
+  ⚠️ UNVERIFIED items confirmed in source before fixing, with one SEVERITY CORRECTION on 5.4:
+  the appended stringified twin does NOT trip `uniqueKeys` on the next read (a collection key
+  and its string twin are distinct node types to the parser, and `toJS()` dedupes silently —
+  verified empirically against yaml@2.9), so the file's metadata is not "bricked"; the real
+  damage is a silent semantic DUPLICATE key (`[a, b]: x` + `"[ a, b ]": x`) appended by any
+  unrelated edit. Mechanism real, fix unchanged, severity LOW stands.
+  Implementation notes for the record:
+  - **5.1** — `assembleMarkdownFile` computes `baselineKeys` BEFORE the empty-tags drop and
+    gates the drop on `!baselineKeys?.has('tags')`, exactly like the 1.1 null rescue (one gate
+    now covers both clean passes). On the delta path `originalFrontmatter` IS the fresh in-chain
+    read, so the disk truth gates it by construction. Deliberate behaviour note: clearing the
+    LAST tag via the FM-object path now leaves `tags: []` on disk instead of deleting the key —
+    consistent with `tagRewriter.renderTagsField`, which already emits `tags: []` for empty.
+  - **5.2** — new `preWriteVerifyStat` anchor in `writeMarkdownFileImpl`: the pre-write drift
+    stat, re-anchored to the APPROVED re-check stat after a keep-local prompt (cleared when the
+    legacy proceed-on-failed-re-stat path ran — no anchor, no verify). The delta branch re-stats
+    AFTER its in-chain read; a `(mtimeMs, size)` mismatch → `markPathFailed` + throw (the next
+    debounced write re-detects the drift and prompts). One extra `vault:stat` per delta write,
+    skipped when no baseline existed (freshly-seeded file — same trust as before).
+  - **5.3** — the 3.3 torn-read guard logic was extracted to a NEW shared module
+    `lib/vault/tornFrontmatterRead.ts` (`freshReadLooksTornMidFrontmatter`) — required anyway:
+    the inline additions put `markdownFileWriter.ts` at 1379 vs its 1369 ceiling, and
+    split-don't-bump applies (now 1361). The H2 empty-cache seed re-read was restructured so the
+    read's ENOENT-swallowing catch can't eat the guard throw: torn read → `markPathFailed` +
+    throw, and the bogus `{}` is NEVER seeded into the cache (pre-fix it poisoned every later
+    save for the docId, not just the current one).
+  - **5.4** — `patchFrontmatterSourceCst` refuses (returns null) when ANY mapping item's key is
+    non-scalar (`itemKeyString === null` — also covers explicit-key `? …` and empty-key forms).
+    Routing decision beyond the plan text: the refusal goes to KEEP-RAW, not the dump — a new
+    `frontmatterSourceHasNonScalarKey` joins `!frontmatterSourceParses` in the assemble's
+    keep-raw condition (the dump would rewrite the key as its quoted string twin, a semantic key
+    change, unlike the data-preserving flow-root/anchor dumps), surfacing via the existing
+    `onFrontmatterRefused` toast. The same guard fronts tagRewriter's three `?? dumpYaml(fm)`
+    fallbacks, so a tag op on such a file skips byte-identically too.
+  - **5.5** — `tagsFieldIsAnchored` scans the field's FULL value range: header rest, each flow
+    item, each block item (same blank-line-tolerant walk as `locateTagsField`). Detection stays
+    precise — an UNQUOTED leading `&`/`*` is always an anchor/alias (indicator chars are illegal
+    at plain-scalar start); a quoted tag containing them still rewrites. Also hardened
+    `itemUnsafeForLinePath` with the same `/^[&*]/` decline so the block fast path can never
+    treat an alias item as the LITERAL tag `*shared` (a latent corruption shape the audit text
+    didn't name: a rewrite would re-emit the alias as a quoted literal).
+  - Phase-7 advance: the 7.2 corpus rows for 5.1/5.4/5.5 shipped here — 5 new `HOSTILE_CORPUS`
+    rows (exercised by the tag-op matrix, the body-only save, AND the Audit-14 7.5 delta
+    fuzzer, which caught the 5.1 bug on its own once the row existed), plus dedicated 5.1/5.4
+    describes; `assertSafeDeltaWrite` gained the byte-identical-refusal early return the
+    non-scalar-key rows need.
+  - Tests: `audit16Phase5.test.ts` (6 — 5.2 gap-write abort + stable control + no-baseline
+    legacy-trust control; 5.3 torn-seed refuse-and-never-cache + clean-seed control +
+    FM-less-file control), `frontmatterInvariant.test.ts` (+5 corpus rows, +2 5.1 delta rows,
+    +4 5.4 engine/byte-identical rows), `tagRewriter.test.ts` (+4 — flow alias / block alias /
+    item anchors / quoted-`*` negative control). All 11 guard tests bite-verified red against
+    the pre-fix tree via stash (controls green on both sides); full strict unit suite green.
 - [ ] Phase 6 — 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8
 - [ ] Phase 7 — 7.1, 7.2, 7.3, 7.4, 7.5

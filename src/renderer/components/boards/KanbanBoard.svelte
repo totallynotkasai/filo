@@ -508,7 +508,7 @@
           vaultRoot,
           board,
           allTilesById,
-          refreshTree: () => vaultStore.refreshTree(),
+          refreshTree: async () => { await vaultStore.refreshTree(); },
         });
         if (def) {
           cmds.push(new AddCardCommand(board.id, columnId, def, baseInsertIndex + cmds.length));

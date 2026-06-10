@@ -411,6 +411,22 @@ export function createScheduler<TArgs>(
    * vault swap via `reset()`.
    */
   const writeGenByPath = new Map<VaultPath, number>();
+  /**
+   * Audit-16 3.4 — scheduler-wide generation, bumped by `reset()` (the vault
+   * swap). A PARKED fire's async closure survives `reset()` (the timer
+   * already fired, so cancelAll's clearTimeout can't reach it); when the old
+   * write finally settles, the dangling closure resumed and called
+   * `fireFromTimer()` against the NEW vault's fresh tracking state — the
+   * missing-source branch's direct `safeEndWrite(false)` never passes
+   * `fireWrite`'s `trackerIsCurrent` settle guard (contrary to what reset()'s
+   * pre-fix comment claimed), so the OLD vault's path entered the new
+   * session's failed set + `.filo/.dirty` (false "couldn't save" toast,
+   * phantom recovery prompt next launch); a still-non-null `getArgs()` even
+   * re-FIRED the stale write into the fresh `inFlight` map. The closure
+   * captures this generation at park time and bails after the drain when it
+   * moved. (Audit-16 4.4 extends the same mechanism to per-key `cancel()`.)
+   */
+  let schedulerGeneration = 0;
 
   // Back-compat: `manageSentinel: false` → 'none'; default → 'full'.
   const sentinelMode: 'full' | 'none' | 'pending-path' =
@@ -745,9 +761,18 @@ export function createScheduler<TArgs>(
         let resolveParked!: () => void;
         const parkedPromise = new Promise<void>((res) => { resolveParked = res; });
         addParked(key, parkedPromise);
+        // Audit-16 3.4 — capture the scheduler generation at park time; a
+        // `reset()` (vault swap) during the drain bumps it, and the dangling
+        // closure must then neither fire (a stale write into the NEW vault's
+        // fresh inFlight map) nor surface missing-source (its direct
+        // `safeEndWrite(false)` would pollute the new session's failed set +
+        // sentinel with the OUTGOING vault's path). The parked promise still
+        // resolves via `finally`, so nothing awaiting it can hang.
+        const parkedGeneration = schedulerGeneration;
         void (async () => {
           try {
             await drainPriorInFlight(key);
+            if (schedulerGeneration !== parkedGeneration) return;
             fireFromTimer();
           } finally {
             removeParked(key, parkedPromise);
@@ -1086,10 +1111,15 @@ export function createScheduler<TArgs>(
     // Audit-14 1.1 — drop parked-fire references. A dangling parked async
     // closure (already past `pending.delete`, awaiting the now-cleared drain)
     // still resolves its own promise in its `finally`; clearing here just stops
-    // new flushes from seeing the stale entry. Any write it fires against the
-    // OUTGOING vault is bounded by main-side `assertActiveVault` (rejected) and
-    // the `trackerIsCurrent` settle guard (no new-vault sentinel mutation).
+    // new flushes from seeing the stale entry.
+    // Audit-16 3.4 — the generation bump below is what actually neutralises
+    // the dangling closure: it bails after its drain instead of firing or
+    // calling the missing-source `safeEndWrite(false)` against the new
+    // vault's fresh tracking state (the pre-fix comment here wrongly claimed
+    // the `trackerIsCurrent` settle guard covered that path — the
+    // missing-source branch never reaches `fireWrite`).
     parked.clear();
+    schedulerGeneration += 1;
     failures.clear();
     // Audit-13 M3 — drop the per-path generations so the new vault's first write
     // to a same-named path starts at generation 1 (a stale late-success

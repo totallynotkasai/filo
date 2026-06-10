@@ -19,6 +19,7 @@ import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { invokeOk } from '../utils/invokeOk';
 import { onVaultSwap } from '../../core/vaultLifecycle';
 import { createId } from '../utils/ids';
+import { currentVaultGeneration } from './vaultIdentity';
 
 const DIRTY_SENTINEL_PATH = '.filo/.dirty';
 
@@ -135,6 +136,20 @@ interface SentinelPayload {
    * session, so they still prompt).
    */
   launchId?: string;
+  /**
+   * Audit-16 3.3 — the vault-identity generation active when this sentinel
+   * was written. The launchId alone over-matched: it suppresses by PROCESS,
+   * so a sentinel deliberately PRESERVED across a same-session swap-away
+   * (the Don't-Save branch keeps `.filo/.dirty` precisely so reopening the
+   * vault surfaces the Recovery modal) — or left by a failed write — was
+   * swallowed on an A→B→A or close→reopen in the same session, and the
+   * first clean write cycle then destroyed the breadcrumb permanently.
+   * Suppression now requires BOTH the launchId and the generation of the
+   * CURRENT open to match, scoping it to "written during this very vault
+   * open" (the migration-repair case 1.3 actually targeted). Absent on
+   * legacy sentinels (prompt, as before).
+   */
+  vaultGeneration?: number;
 }
 
 /**
@@ -153,8 +168,14 @@ export function markDirty(
   if (!vaultRoot) return Promise.resolve();
   // Audit-14 1.3 — stamp the per-launch session id so `checkRecovery` can tell
   // a sentinel THIS process wrote (e.g. a migration-repair write during open)
-  // from a genuine prior-crash breadcrumb.
-  const payload: SentinelPayload = { dirtyAt: Date.now(), launchId: LAUNCH_ID };
+  // from a genuine prior-crash breadcrumb. Audit-16 3.3 — pair it with the
+  // vault-identity generation so the suppression is scoped to this vault OPEN,
+  // not the whole process (see SentinelPayload.vaultGeneration).
+  const payload: SentinelPayload = {
+    dirtyAt: Date.now(),
+    launchId: LAUNCH_ID,
+    vaultGeneration: currentVaultGeneration(),
+  };
   if (pendingPaths && pendingPaths.length > 0) {
     payload.pendingPaths = [...pendingPaths];
   }
@@ -311,7 +332,21 @@ export async function checkRecovery(vaultRoot: string): Promise<RecoveryStatus> 
     // is about to call us), not a prior crash. Suppress the prompt. A prior
     // session's sentinel carries a different id, and a legacy/pre-fix sentinel
     // carries none — both fall through and prompt as before.
-    if (parsed.launchId !== undefined && parsed.launchId === LAUNCH_ID) {
+    //
+    // Audit-16 3.3 — the launchId must ALSO carry the CURRENT open's vault
+    // generation. The repair writes that 1.3 targets fire after
+    // `commitVaultCandidate`'s `beginVaultGeneration`, i.e. inside the same
+    // open that is now calling checkRecovery, so they match. A sentinel
+    // preserved by the Don't-Save swap-away (or left by a failed write)
+    // carries an EARLIER generation — same process, different open — and
+    // must prompt: it is the documented breadcrumb contract for "reopening
+    // the outgoing vault surfaces the Recovery modal".
+    if (
+      parsed.launchId !== undefined
+      && parsed.launchId === LAUNCH_ID
+      && parsed.vaultGeneration !== undefined
+      && parsed.vaultGeneration === currentVaultGeneration()
+    ) {
       return { needsRecovery: false };
     }
     const pendingPaths = Array.isArray(parsed.pendingPaths)

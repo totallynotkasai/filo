@@ -244,7 +244,16 @@ const ALLOWLIST = {
   // tried and reverted for a microtask race, on the most data-integrity-critical
   // file (vault swap / recovery). Not worth that risk for a LOW maintainability
   // item; revisit in a focused, isolated session. No LOC change. Snapshot 1771.
-  'src/renderer/stores/vault.svelte.ts': 1771,
+  // AUDIT16_REMEDIATION_PLAN_2026-06-09 Phase 3 — three cross-vault guard
+  // fixes: 3.2 step-2 tag-rewrite onConfirm/onCancel vault-identity guards
+  // (entry + after every await, so a swap-auto-cancelled confirm can't prune
+  // the NEW vault's whole fileTags registry); 3.5 owner-checked
+  // `swapInProgress` clear in openVault/closeVault finallys (a concurrent
+  // swap's window survives the first swap's finally); 3.6 `refreshTree`
+  // success boolean + `refreshTreeAndCleanup` skip-on-stale + per-candidate
+  // `vault:file-exists` confirm before board eviction. +75 LOC of guards +
+  // rationale comments. New snapshot: 1846 LOC.
+  'src/renderer/stores/vault.svelte.ts': 1846,
   // In-app rename/delete/move orchestrator: drained disk-shape IPC + the
   // in-memory cascade (board cache, documentStore, tags, tabs, viewport,
   // undo) with per-await vault-identity bails so a swap mid-op can't apply the
@@ -476,7 +485,15 @@ const ALLOWLIST = {
   // unreachable parked-only state for the bite test. +35 LOC of guard + comment +
   // hook + type. New snapshot: 1144 LOC. The flush/parked split (Audit-15 P5.1 /
   // Audit-14 6.1) is still the eventual fix.
-  'src/renderer/lib/boards/writeScheduler.ts': 1144,
+  // AUDIT16_REMEDIATION_PLAN_2026-06-09 Phase 3 3.4 — `schedulerGeneration`
+  // bumped by reset(); the parked IIFE captures it at park time and bails
+  // after the drain when it moved, so a dangling parked closure surviving a
+  // vault swap can neither re-fire its stale write into the NEW vault's
+  // fresh inFlight map nor pollute the new session's failed set + sentinel
+  // via the missing-source `safeEndWrite(false)` (which never passes the
+  // `trackerIsCurrent` settle guard). +31 LOC of counter + bail + rationale
+  // comments. New snapshot: 1175 LOC. The flush/parked split still pends.
+  'src/renderer/lib/boards/writeScheduler.ts': 1175,
 };
 
 function toPosix(p) {

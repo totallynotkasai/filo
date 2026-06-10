@@ -331,7 +331,9 @@ const vaultCtx: VaultContext = {
     ctx.resolve();
   },
   markMetaDirty,
-  refreshTree: () => vaultStore.refreshTree(),
+  // Audit-16 3.6 — refreshTree now returns a success boolean; slice
+  // consumers don't need it, so the ctx keeps the Promise<void> shape.
+  refreshTree: async () => { await vaultStore.refreshTree(); },
   clearSelection: () => vaultStore.clearSelection(),
   clearActiveRootFolderIfMatches: (deletedPath) =>
     vaultStore.clearActiveRootFolderIfMatches(deletedPath),
@@ -799,14 +801,34 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
         // 6.2.H2 — `awaitConfirm` now awaits these handlers, so we return
         // the promise instead of fire-and-forgetting. Without this, the
         // sequencer's next step could race the still-pumping converge.
-        onConfirm: () => convergeForward(),
+        //
+        // Audit-16 3.2 — both handlers are vault-identity-guarded. The
+        // pre-swap handler in ui.svelte.ts auto-CANCELS a parked confirm
+        // when the user opens another vault instead of answering — so
+        // onCancel can run with the swap already committed: `fileTree` is
+        // then vault B's tree while `newVaultPath` is vault A's root,
+        // `flattenTreePaths` returns the EMPTY set (no node startsWith A's
+        // root), and `pruneOrphanFileTags` would drop EVERY fileTags entry
+        // and schedule the emptied registry into vault B's .filo/tags.json.
+        // Attachment tags are vault-local — unrecoverable. Guard at entry
+        // AND after every await (a swap can land mid-convergeForward too);
+        // the prune stays on live `fileTree` because a passing
+        // `isStillSameVault(captured)` proves it is still THIS open's tree,
+        // and no await separates the check from the prune.
+        onConfirm: async () => {
+          if (!isStillSameVault(captured)) return;
+          await convergeForward();
+        },
         onCancel: async () => {
+          if (!isStillSameVault(captured)) return;
           // Partial: converge forward before clearing the breadcrumb so the
           // vault doesn't stay split; a clean state just clears it.
           if (partialDetected) {
             await convergeForward();
+            if (!isStillSameVault(captured)) return;
           }
           await clearPendingRewrite(newVaultPath);
+          if (!isStillSameVault(captured)) return;
           const flat = flattenTreePaths(fileTree, newVaultPath);
           fileTagsStore.pruneOrphanFileTags(flat);
         },
@@ -1112,8 +1134,17 @@ export const vaultStore = {
     // first open). The `finally` always settles it — commit, revert, or throw.
     const hadOutgoingVault = currentProject !== null;
     let resolveSwapWindow: () => void = () => {};
+    // Audit-16 3.5 — keep a local handle so the finally can clear the module
+    // slot ONLY while it still owns it. A second concurrent openVault (double-
+    // fired open) overwrites `swapInProgress` with ITS window; the first
+    // swap's unconditional `swapInProgress = null` would then null the
+    // second's window mid-swap, letting a quit's `save()` drain inside the
+    // second swap's registry-null window — the exact fail-closed hole
+    // Audit-14 1.8 closed, reintroduced under concurrency.
+    let mySwapWindow: Promise<void> | null = null;
     if (hadOutgoingVault) {
-      swapInProgress = new Promise<void>((res) => { resolveSwapWindow = res; });
+      mySwapWindow = new Promise<void>((res) => { resolveSwapWindow = res; });
+      swapInProgress = mySwapWindow;
     }
     try {
       if (currentProject) {
@@ -1179,8 +1210,11 @@ export const vaultStore = {
       return true;
     } finally {
       // Audit-14 1.8 — close the swap window so a deferred `save()` proceeds.
+      // Audit-16 3.5 — clear the slot only while this swap still owns it;
+      // resolving OUR window is always correct (whoever awaited it waited
+      // for THIS swap), but the slot may already belong to a newer swap.
       if (hadOutgoingVault) {
-        swapInProgress = null;
+        if (swapInProgress === mySwapWindow) swapInProgress = null;
         resolveSwapWindow();
       }
     }
@@ -1226,7 +1260,9 @@ export const vaultStore = {
     // quit's drain until the close has settled (registry released + globals
     // reset) so it doesn't fire writes against the released registry.
     let resolveSwapWindow: () => void = () => {};
-    swapInProgress = new Promise<void>((res) => { resolveSwapWindow = res; });
+    // Audit-16 3.5 — same owner-checked clear as openVault (see there).
+    const mySwapWindow = new Promise<void>((res) => { resolveSwapWindow = res; });
+    swapInProgress = mySwapWindow;
     try {
       await fireVaultSwap({
         phase: 'pre-swap',
@@ -1254,7 +1290,8 @@ export const vaultStore = {
     } finally {
       // Audit-14 1.8 — close the swap window so a deferred `save()` proceeds
       // (the promise is always created on the close path).
-      swapInProgress = null;
+      // Audit-16 3.5 — owner-checked clear (see openVault's finally).
+      if (swapInProgress === mySwapWindow) swapInProgress = null;
       resolveSwapWindow();
     }
   },
@@ -1377,8 +1414,16 @@ export const vaultStore = {
     });
   },
 
-  async refreshTree(): Promise<void> {
-    if (!vaultPath) return;
+  /**
+   * Audit-16 3.6 — returns whether `fileTree` now reflects a SUCCESSFUL
+   * read. A failed read (envelope failure, IPC throw) leaves the existing
+   * tree untouched and returns false so `refreshTreeAndCleanup` can skip
+   * its eviction/clear walks instead of treating the stale tree as truth.
+   * The trees-equal short-circuit and the no-vault early return both count
+   * as success (the tree on hand IS the current disk state).
+   */
+  async refreshTree(): Promise<boolean> {
+    if (!vaultPath) return true;
     // Only toggle `isLoading` on the initial cold-path scan (empty tree).
     // Subsequent refreshes — triggered by watcher events on every vault
     // write — must swap `fileTree` atomically without flipping the UI
@@ -1409,7 +1454,7 @@ export const vaultStore = {
             `Could not read vault tree (${code}). The sidebar may be out of date.`,
           );
         }
-        return;
+        return false;
       }
       const tree = envelope.tree;
       // The watcher fires `vault:tree-updated` after any vault write that
@@ -1417,7 +1462,7 @@ export const vaultStore = {
       // didn't actually change the tree shape. Skipping the reassignment
       // when nothing changed keeps `treeView` (and every VaultFileItem
       // sub-tree it feeds) referentially stable.
-      if (treesEqual(fileTree, tree)) return;
+      if (treesEqual(fileTree, tree)) return true;
       fileTree = tree;
       const knownPaths = new SvelteSet<VaultPath>();
       const walk = (nodes: FileTreeNode[]) => {
@@ -1452,8 +1497,10 @@ export const vaultStore = {
         for (const p of selectedPaths) if (allAbsPaths.has(p)) pruned.add(p);
         if (pruned.size !== selectedPaths.size) selectedPaths = pruned;
       }
+      return true;
     } catch (err) {
       reportError('vault', err, 'Failed to refresh vault tree');
+      return false;
     } finally {
       if (isInitialLoad) isLoading = false;
     }
@@ -1471,7 +1518,15 @@ export const vaultStore = {
    * `cleanupMissingBoard` on the old path — evicting the renamed board.
    */
   async refreshTreeAndCleanup(): Promise<void> {
-    await this.refreshTree();
+    const refreshed = await this.refreshTree();
+    // Audit-16 3.6 — every walk below treats `fileTree` as the truth about
+    // what exists on disk. After a FAILED read the tree is stale: a board
+    // created since the last good read is in `boardStore.paths` but not in
+    // the tree, and the missing-board walk would evict it —
+    // `removeBoardFromCache` cancels its pending debounced writes and closes
+    // its tabs, silently losing recent edits. Skip the cleanup entirely; the
+    // next successful refresh re-runs it.
+    if (!refreshed) return;
     // External deletion of the active-root folder (OS file explorer, git,
     // sync clients) — clear the stale pointer so the next autosave
     // doesn't resurrect it.
@@ -1509,10 +1564,29 @@ export const vaultStore = {
       const flat = flattenTreePaths(fileTree, root);
       const flatLower = new SvelteSet<string>();
       for (const p of flat) flatLower.add(p.toLowerCase());
+      // Audit-16 3.6 — eviction is destructive (cancels pending writes,
+      // closes tabs), so confirm each candidate with a direct stat before
+      // acting: the tree enumeration can race a concurrent `board:create`
+      // (read started before the create landed, applied after), making a
+      // LIVE board look missing. Mirrors `handleExternalAttachmentChanges`'
+      // re-existence probe. A probe failure means we can't PROVE the file
+      // is gone — keep the board (the next reconcile retries).
+      const captured = captureVaultIdentity();
       for (const [boardId, relPath] of Object.entries(boardStore.paths)) {
         if (!relPath) continue;
         if (!flatLower.has(relPath.toLowerCase())) {
-          boardStore.cleanupMissingBoard(boardId);
+          let confirmedMissing = false;
+          try {
+            const exists = await window.filo.invoke('vault:file-exists', root, relPath);
+            confirmedMissing = exists === false;
+          } catch {
+            confirmedMissing = false;
+          }
+          // A vault swap landing during the probe means `boardStore.paths`
+          // now belongs to the NEW vault — stop instead of evicting its
+          // same-id boards on the OLD vault's evidence.
+          if (!isStillSameVault(captured)) return;
+          if (confirmedMissing) boardStore.cleanupMissingBoard(boardId);
         }
       }
     }

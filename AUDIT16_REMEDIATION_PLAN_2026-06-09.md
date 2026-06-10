@@ -774,7 +774,58 @@ phase summary so a future audit doesn't re-raise them.
     no-successor populated-owner case, 2.3 stale-id boundary shift + membership). 5 of the 7
     bite (red against the pre-fix tree via stash); the other 2 are negative/guard cases green on
     both sides by design.
-- [ ] Phase 3 — 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7
+- [x] Phase 3 — 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7 — **DONE 2026-06-10.** No findings refuted:
+  all four ⚠️ UNVERIFIED items (3.2, 3.4, 3.5, 3.6, 3.7) were confirmed in source before
+  fixing (3.4's reset() comment even claimed the `trackerIsCurrent` guard covered the dangling
+  parked closure — it doesn't: the missing-source branch never reaches `fireWrite`).
+  Implementation notes for the record:
+  - **3.1** — both halves: `if (this.aborted) return;` immediately after the single await
+    (`correlateRenames`) in `notifyRenderers`, AND the in-flight notify pass is tracked like the
+    reconcile walk (`notifyInFlightPromise`, published before any suspension via a
+    `notifyRenderers` wrapper around `notifyRenderersImpl`, owner-checked clear) and awaited in
+    `stop()`. Test: `fileWatcherLateNotify.test.ts` (gated `correlateRenames` mock — stop()
+    blocks while the pass is parked; the late resolution emits zero sends; positive control).
+  - **3.2** — step 2's onConfirm AND onCancel guard with the sequencer's existing `captured`
+    identity at entry and after every await. The prune deliberately stays on live `fileTree`:
+    a passing `isStillSameVault(captured)` proves it is still THIS open's tree, and no await
+    separates the check from the prune (a sequencer-start tree capture would be STALER). Steps
+    0/1/3/4 were already guarded (VS-1 / D.9).
+  - **3.3** — generation stamp, as preferred: `markDirty` stamps
+    `vaultGeneration: currentVaultGeneration()` alongside the launchId; `checkRecovery`
+    suppresses only when BOTH match. Sequencing verified: the 1.3 migration-repair writes fire
+    after `commitVaultCandidate`'s `beginVaultGeneration` (L383 → L398), so same-open
+    suppression is preserved; a Don't-Save-preserved sentinel carries the EARLIER generation
+    and now prompts. A same-launch sentinel with NO generation stamp also prompts (pre-fix
+    payloads from this very session are the only producers — prompting is the safe direction).
+  - **3.4** — scheduler-wide `schedulerGeneration` bumped in `reset()`; the parked IIFE
+    captures it at park time and bails after `drainPriorInFlight` when it moved — neither
+    `fireFromTimer()` (stale re-fire into the fresh `inFlight` map) nor the missing-source
+    `safeEndWrite(false)` (foreign path in the new session's failed set + sentinel) can run.
+    The parked promise still resolves in `finally`. 4.4 will extend the same mechanism per-key.
+  - **3.5** — owner-checked clear in all three finallys (openVault + closeVault):
+    `if (swapInProgress === mySwapWindow) swapInProgress = null;` — resolving OUR window stays
+    unconditional (its awaiters waited for THIS swap). No re-entrancy latch added (out of
+    scope; the two-line owner check closes the reported hole).
+  - **3.6** — `refreshTree()` now returns a success boolean (envelope failure / IPC throw →
+    false; trees-equal short-circuit and no-vault both count as success);
+    `refreshTreeAndCleanup` skips ALL its walks on a failed refresh (every one of them treats
+    `fileTree` as disk truth), and the missing-board eviction additionally confirms each
+    candidate with a direct `vault:file-exists` probe (probe failure ⇒ can't prove missing ⇒
+    keep) plus an `isStillSameVault` bail after the awaits. `VaultContext.refreshTree` stays
+    `Promise<void>` — slice consumers don't need the boolean and the narrower type keeps the
+    three test-stub literals valid.
+  - **3.7** — the `listenForChanges` $effect moved from VaultSidebar.svelte to App.svelte
+    (app-lifetime, keyed on `vaultStore.isOpen`), removing the docked↔floating unmount gap
+    entirely. Pinned by a source-shape test (the unit suite has no component-mount harness):
+    App.svelte must contain the call, VaultSidebar/FloatingVaultPanel must not.
+  - Tests: `fileWatcherLateNotify.test.ts` (2 — 3.1), `audit16Phase3.test.ts` (12 — 3.2 swap
+    mid-converge / swap-before-cancel / positive control; 3.4 stale re-fire / missing-source
+    pollution / positive control; 3.5 interleaved-swaps save-defer; 3.6 failed-read skip /
+    create-vs-read probe rescue / genuine-delete control; 3.7 source pins), and
+    `dirtyFlagRecovery.test.ts` +3 (3.3 generation stamp / same-session-reopen prompt /
+    no-stamp back-compat; the 1.3 suppression row now stamps the current generation). Every
+    guard test bite-verified red against the pre-fix tree via stash; positive controls green
+    on both sides by design.
 - [ ] Phase 4 — 4.1, 4.2, 4.4, 4.5, 4.6, 4.7, 4.8
 - [ ] Phase 5 — 5.1, 5.2, 5.3, 5.4, 5.5
 - [ ] Phase 6 — 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8

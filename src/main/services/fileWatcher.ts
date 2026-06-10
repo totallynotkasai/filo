@@ -164,6 +164,17 @@ export class FileWatcher {
   private reconcileInFlightPromise: Promise<void> | null = null;
 
   /**
+   * Audit-16 3.1 — promise handle to the in-flight `notifyRenderers()` pass
+   * (or `null` when none is running). The cross-basename rename pass inside
+   * it awaits real fs hash probes (`correlateRenames`), which on a slow
+   * volume can take hundreds of ms — long enough for a vault swap to
+   * complete. `stop()` awaits this so a late `vault:file-renamed` /
+   * `vault:files-changed` send can never land on the NEW vault's renderer
+   * and drive the rename cascade against same-named files in the new vault.
+   */
+  private notifyInFlightPromise: Promise<void> | null = null;
+
+  /**
    * Phase 3 / 3.1 — set by `stop()`. Once true, every emit path
    * (`notifyRenderers`, `scheduleNotify`, the reconcile diff loop) short-
    * circuits so any work that races past the `reconcileInFlight` check
@@ -464,6 +475,21 @@ export class FileWatcher {
         // just need the synchronisation.
       }
     }
+    // Audit-16 3.1 — same synchronisation for an in-flight notify pass:
+    // its `await correlateRenames(...)` window is exactly where a vault
+    // swap can land, and the post-await `aborted` re-check inside
+    // `notifyRenderers` only helps if the swap sequencing actually waits
+    // for the pass to observe it. (vault:close awaits stop() before the
+    // candidate load, so awaiting here removes the window entirely.)
+    const pendingNotify = this.notifyInFlightPromise;
+    if (pendingNotify) {
+      try {
+        await pendingNotify;
+      } catch {
+        // Notify errors are logged by the scheduleNotify catch; we just
+        // need the synchronisation.
+      }
+    }
     this.pendingChanges = [];
     this.suppressedPaths.clear();
     this.suppressedPrefixes.clear();
@@ -472,6 +498,7 @@ export class FileWatcher {
     this.reconcileSnapshot = null;
     this.reconcileInFlight = false;
     this.reconcileInFlightPromise = null;
+    this.notifyInFlightPromise = null;
   }
 
   /**
@@ -727,6 +754,23 @@ export class FileWatcher {
   }
 
   private async notifyRenderers(): Promise<void> {
+    // Audit-16 3.1 — publish the in-flight handle so `stop()` can await
+    // the pass. Assigned before any await suspension (same contract as
+    // `reconcileInFlightPromise`), and cleared only when THIS pass is
+    // still the published one, so an overlapping pass can't drop a
+    // sibling's handle.
+    const promise = this.notifyRenderersImpl();
+    this.notifyInFlightPromise = promise;
+    try {
+      await promise;
+    } finally {
+      if (this.notifyInFlightPromise === promise) {
+        this.notifyInFlightPromise = null;
+      }
+    }
+  }
+
+  private async notifyRenderersImpl(): Promise<void> {
     // Phase 3 / 3.1 — final guard: even if a debounce armed before
     // `stop()` (clearTimeout in stop() should have cancelled it, but
     // defence-in-depth keeps the contract clear), no events should ever
@@ -830,6 +874,14 @@ export class FileWatcher {
       }
     };
     const { filtered, renames } = await correlateRenames(unique, exists, sizeOf, hashAsync);
+    // Audit-16 3.1 — re-check after the ONLY await in this function. The
+    // hash probes above can take hundreds of ms on a slow volume; a vault
+    // swap completing inside that window (vault:close → stop() → candidate
+    // load → commit) must not let this pass send the OLD vault's
+    // rename/change events to the renderer — the renderer's rename queue
+    // captures vault identity at ARRIVAL time, so a late send would drive
+    // the rename cascade against the NEW vault's same-named files.
+    if (this.aborted) return;
     // Move cached sizes + hashes onto the new path so a future delete of
     // the new path can still resolve, and drop the old-path entries.
     for (const r of renames) {

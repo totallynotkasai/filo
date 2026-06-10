@@ -125,6 +125,22 @@
     return true;
   });
 
+  // Audit-16 3.7 — the external-change renderer bridge (watcher events →
+  // reconcilers) is app-lifetime, keyed only on "a vault is open". It used
+  // to live in VaultSidebar's mount lifecycle, but the docked and floating
+  // sidebars are mutually exclusive `{#if}` branches in AppShell — toggling
+  // float/dock destroyed one instance (unsubscribing every watcher listener
+  // and discarding a mid-debounce tree reconcile) before mounting the
+  // other, and any watcher event delivered in that gap was dropped. A
+  // dropped `vault:file-renamed` is the worst case: the rename cascade
+  // never runs, and the later reconcile sees delete+create and can evict
+  // the board as missing. Data plumbing must not ride on UI layout state.
+  $effect(() => {
+    if (vaultStore.isOpen) {
+      return vaultStore.listenForChanges();
+    }
+  });
+
   // Write project font-size settings onto `:root` as CSS variables.
   // NOTE: only `--font-size-base` (system chrome) cascades globally.
   // The Default Board Font Size values (tileTitle, tileBody,

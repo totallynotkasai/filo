@@ -11,6 +11,11 @@ import {
   __resetErrorBusForTests,
   type ReportedError,
 } from '@renderer/lib/utils/errorBus';
+import {
+  beginVaultGeneration,
+  currentVaultGeneration,
+  __resetVaultIdentityForTests,
+} from '@renderer/lib/vault/vaultIdentity';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 type IpcStub = {
@@ -42,6 +47,9 @@ describe('dirtyFlagRecovery', () => {
     // reset it so each test starts fresh (and the per-test toast-count
     // assertions below stay accurate).
     __resetDirtyRecoveryDedupeForTests();
+    // Audit-16 3.3 — the generation-scoped suppression reads vaultIdentity
+    // module state; reset so a test's beginVaultGeneration doesn't bleed.
+    __resetVaultIdentityForTests();
   });
   afterEach(() => {
     restoreFiloDefault();
@@ -182,19 +190,70 @@ describe('dirtyFlagRecovery', () => {
     expect(body.launchId).toBe(__getLaunchIdForTests());
   });
 
-  it('checkRecovery SUPPRESSES a sentinel stamped by the current launch (1.3)', async () => {
+  it('checkRecovery SUPPRESSES a sentinel stamped by the current launch AND open (1.3 + 3.3)', async () => {
+    const stub = installIpcStub();
+    // Audit-16 3.3 — suppression is now scoped to the vault OPEN, so the
+    // same-open sentinel carries the current vault generation too (exactly
+    // what markDirty stamps for a migration-repair write during this open).
+    stub.responses.set('vault:read-file-text', {
+      success: true,
+      content: JSON.stringify({
+        dirtyAt: 1700000000000,
+        launchId: __getLaunchIdForTests(),
+        vaultGeneration: currentVaultGeneration(),
+        pendingPaths: ['boards/just-repaired.board.json'],
+      }),
+    });
+    const status = await checkRecovery('/vault');
+    // This launch + this open wrote it — not a prior crash, so no prompt.
+    expect(status.needsRecovery).toBe(false);
+  });
+
+  // Audit-16 3.3 — the launchId alone suppressed by PROCESS, swallowing the
+  // breadcrumb the Don't-Save swap-away deliberately preserves: a same-session
+  // reopen (A→B→A or close→reopen) never prompted, and the first clean write
+  // cycle then destroyed the breadcrumb permanently.
+  it('markDirty stamps the current vault generation (3.3)', async () => {
+    const stub = installIpcStub();
+    await markDirty('/vault', ['x.md']);
+    const write = stub.writes.find((w) => w.channel === 'vault:write-file-text');
+    const body = JSON.parse(write?.args[2] as string);
+    expect(body.vaultGeneration).toBe(currentVaultGeneration());
+  });
+
+  it('checkRecovery PROMPTS for a same-launch sentinel preserved across a same-session reopen (3.3)', async () => {
+    const stub = installIpcStub();
+    // The sentinel was written during an EARLIER open of this same process
+    // (the Don't-Save branch preserved it), then the vault was reopened —
+    // beginVaultGeneration bumped the generation.
+    const preservedGeneration = currentVaultGeneration();
+    stub.responses.set('vault:read-file-text', {
+      success: true,
+      content: JSON.stringify({
+        dirtyAt: 1700000000000,
+        launchId: __getLaunchIdForTests(),
+        vaultGeneration: preservedGeneration,
+        pendingPaths: ['Notes.md'],
+      }),
+    });
+    beginVaultGeneration('/vault'); // the same-session reopen
+    const status = await checkRecovery('/vault');
+    expect(status.needsRecovery).toBe(true);
+    expect(status.pendingPaths).toEqual(['Notes.md']);
+  });
+
+  it('checkRecovery PROMPTS for a same-launch sentinel with no generation stamp (3.3 back-compat)', async () => {
     const stub = installIpcStub();
     stub.responses.set('vault:read-file-text', {
       success: true,
       content: JSON.stringify({
         dirtyAt: 1700000000000,
         launchId: __getLaunchIdForTests(),
-        pendingPaths: ['boards/just-repaired.board.json'],
+        pendingPaths: ['Notes.md'],
       }),
     });
     const status = await checkRecovery('/vault');
-    // This launch wrote it — not a prior crash, so no recovery prompt.
-    expect(status.needsRecovery).toBe(false);
+    expect(status.needsRecovery).toBe(true);
   });
 
   it('checkRecovery STILL prompts for a sentinel from a prior launch (1.3)', async () => {

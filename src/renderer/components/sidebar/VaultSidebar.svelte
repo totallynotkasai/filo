@@ -276,13 +276,13 @@
     return () => ro.disconnect();
   });
 
-  // Start listening for file system changes when the component mounts
-  $effect(() => {
-    if (vaultStore.isOpen) {
-      const unsub = vaultStore.listenForChanges();
-      return unsub;
-    }
-  });
+  // Audit-16 3.7 — the external-change bridge subscription
+  // (`vaultStore.listenForChanges`) moved to App.svelte. It used to live
+  // here, but the docked and floating sidebars are mutually exclusive
+  // mounts: a float/dock toggle destroyed this instance (tearing down every
+  // watcher listener mid-session) before mounting the other, dropping any
+  // watcher event delivered in the gap. The bridge is app-lifetime data
+  // plumbing, not sidebar UI.
 
   let fileTreeEl = $state<HTMLDivElement | null>(null);
 

@@ -24,7 +24,7 @@ import {
   type V7BoardFileData,
 } from './tileDefBuilder';
 import { CURRENT_BOARD_FILE_VERSION } from '../../schema/boardFile';
-import { BOARD_WRITE_DEBOUNCE_MS, WRITE_TIMEOUT_MS } from './boardWriteDebounce';
+import { BOARD_WRITE_DEBOUNCE_MS, WRITE_TIMEOUT_MS, writtenByteLength } from './boardWriteDebounce';
 import { getViewportFromCache, setViewport } from './viewportCache';
 import {
   notifyWriteError,
@@ -47,10 +47,11 @@ import { getBaseline, noteBaseline, hasBaselineDrifted, refreshBaselineAfterWrit
  * at module-load via `setBoardExternalEditHandler`.
  *
  * When no handler is registered (test environments, boot before the
- * store layer loads), the writer falls back to `notifyWriteError` so the
- * failure still surfaces through the save indicator. Returning `false`
- * from the handler tells the writer to abort; returning `true` lets the
- * write proceed (the user explicitly chose Keep-local).
+ * store layer loads), the writer treats the drift as 'defer' — abort +
+ * `notifyWriteError` — so the failure still surfaces through the save
+ * indicator and the external edit is never silently overwritten
+ * (Audit-17 2.4; the code briefly drifted to a silent 'keep-local').
+ * The handler resolves 'reload' / 'keep-local' / 'defer' — see below.
  */
 /**
  * 6.4.M4 — `'defer'` was added so the toast's auto-dismiss / manual-close
@@ -61,6 +62,16 @@ import { getBaseline, noteBaseline, hasBaselineDrifted, refreshBaselineAfterWrit
  */
 export type BoardExternalEditHandler = (path: string) => Promise<'reload' | 'keep-local' | 'defer'>;
 let boardExternalEditHandler: BoardExternalEditHandler | null = null;
+
+/**
+ * Audit-17 2.3 — grace delay before the pre-write ENOENT re-stat. A sync
+ * client's unlink→recreate blip usually completes within tens of ms; the
+ * delay gives the recreate time to land so the re-stat sees the file and the
+ * armed write falls through to the drift check instead of resolving as a
+ * silent success. Kept far below the scheduler's `writeTimeoutMs` bound.
+ * Exported for the unit test's fake-timer control.
+ */
+export const BOARD_ENOENT_RESTAT_DELAY_MS = 150;
 
 export function setBoardExternalEditHandler(handler: BoardExternalEditHandler | null): void {
   boardExternalEditHandler = handler;
@@ -276,7 +287,32 @@ export async function writeBoardFile(
       // successful write) has no baseline, skips this block entirely, and is
       // never aborted — so first writes are unaffected.
       if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
-        return;
+        // Audit-17 2.3 — re-stat ONCE before treating the ENOENT as an
+        // intentional delete (parity with the config scheduler's Audit-6 L24:
+        // its comment claimed this guard "mirrors writeBoardFile", but the
+        // re-stat half only ever landed config-side). A sync client / AV can
+        // momentarily unlink-then-recreate the .board.json; the bare `return`
+        // read that blip as "user deleted it" and resolved the armed write as
+        // SUCCESS — silently dropping the debounce window's board mutations
+        // (pending path + sentinel cleaned, Ctrl+S reported saved). If the
+        // file reappears within the grace delay, fall through to the EXISTING
+        // drift check below: a recreate carries a new mtime, so foreign bytes
+        // drift → the handler prompts (Reload / Keep-local / defer) — a user
+        // decision instead of silent loss. No board `lastWritten` content
+        // cache is needed for that. Still missing on the re-stat → genuine
+        // delete; keep the current clean-no-op semantics (the watcher's
+        // delete pipeline owns it).
+        await new Promise((resolve) => setTimeout(resolve, BOARD_ENOENT_RESTAT_DELAY_MS));
+        try {
+          preWriteStat = await invokeOk('vault:stat', vaultRoot, boardPath);
+        } catch (reErr) {
+          if (reErr instanceof IpcEnvelopeError && reErr.code === 'ENOENT') {
+            return;
+          }
+          // Re-stat hit a different error (EACCES / transient share hiccup):
+          // fall through with no preWriteStat — the save IPC below surfaces
+          // a genuine IO problem through the failure attribution pipeline.
+        }
       }
       // Any other stat error (EACCES, a transient share hiccup): fall through
       // — the save IPC below surfaces a genuine IO problem through the failure
@@ -284,7 +320,14 @@ export async function writeBoardFile(
     }
     if (preWriteStat !== undefined && hasBaselineDrifted(baseline, preWriteStat)) {
       const handler = boardExternalEditHandler;
-      const choice = handler ? await handler(boardPath) : 'keep-local';
+      // Audit-17 2.4 — no registered handler (boot ordering edge, tests) used
+      // to default to 'keep-local', silently overwriting the external edit —
+      // contradicting the module docstring's promised notifyWriteError
+      // fallback. Default to 'defer' instead: the abort branch below fires
+      // notifyWriteError (failure surfaces through the save indicator) and
+      // the dirty cache survives, so the next debounced write re-detects the
+      // drift and re-prompts once the handler is registered.
+      const choice = handler ? await handler(boardPath) : 'defer';
       if (choice === 'reload' || choice === 'defer') {
         // Abort the write. On 'reload', the handler refreshed the
         // renderer's in-memory cache against disk; on 'defer' (6.4.M4)
@@ -309,14 +352,10 @@ export async function writeBoardFile(
   // resolves; marking after the await would let `vault:files-changed` see
   // the path as unknown-self-write and route it into the external-edit
   // pipeline. Re-marked on success below to refresh the TTL.
+  const payload = JSON.stringify(fileData, null, 2);
   markRecentSelfWrite(boardPath);
   try {
-    await invokeOk(
-      'board:save',
-      vaultRoot,
-      boardPath,
-      JSON.stringify(fileData, null, 2),
-    );
+    await invokeOk('board:save', vaultRoot, boardPath, payload);
     markRecentSelfWrite(boardPath);
     // Phase R6 — refresh baseline so subsequent writes compare against
     // the state we just wrote (not the pre-write baseline). Best-effort.
@@ -334,7 +373,18 @@ export async function writeBoardFile(
     if (!isLatestWrite || isLatestWrite()) {
       try {
         const postStat = await invokeOk('vault:stat', vaultRoot, boardPath);
-        refreshBaselineAfterWrite(boardPath, postStat.mtimeMs, postStat.size);
+        // Audit-17 5.4 — mirror the gateway's Audit-7 L5 written-bytes verify:
+        // stamp the baseline only when the post-write stat's size matches the
+        // bytes we wrote. The `isLatestWrite` gate above covers only superseded
+        // SELF-writes; a FOREIGN write landing in the save→stat gap would
+        // otherwise become Filo's own baseline and the next write would
+        // match-and-clobber it promptless. On a size mismatch keep the prior
+        // baseline (DI-14) so the next write's drift check re-detects + prompts.
+        if (postStat.size === writtenByteLength(payload)) {
+          refreshBaselineAfterWrite(boardPath, postStat.mtimeMs, postStat.size);
+        } else {
+          refreshBaselineAfterWrite(boardPath, undefined, undefined);
+        }
       } catch {
         refreshBaselineAfterWrite(boardPath, undefined, undefined);
       }

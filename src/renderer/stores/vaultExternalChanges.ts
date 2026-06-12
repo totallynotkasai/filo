@@ -363,6 +363,17 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
                   editorDoc,
                   reason: decision.reason,
                 });
+              } else if (decision.reason === 'properties-popup-dirty') {
+                // Audit-17 5.8 — a dirty Properties popup over a NEVER-loaded
+                // doc (no open editor) still needs the conflict prompt. The
+                // classifier already routed this to prompt-user (the popup's
+                // pending row edits would otherwise be silently clobbered by
+                // the external frontmatter sync), but the editorDoc-gated push
+                // above dropped it. Dispatch the popup-aware toast directly
+                // (sync, inside the loop — like the F4 pending-write conflict
+                // above) with a null editorDoc: the prompt only needs `rel` +
+                // metadata, and its FM-cache refresh is docId-guarded (5.8).
+                promptPropertiesPopupModified(rel, next, null);
               }
               // notePossiblyStale fires regardless — the external write
               // happened on disk and the undo stack's inverse may no
@@ -548,6 +559,9 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
       // vault's cache with the OLD rename's paths. Capturing pre-drain lets the
       // cascade's internal checks bail if the vault changed under the await.
       const captured = captureVaultIdentity();
+      // Audit-17 3.6 — capture the root pre-drain too, for the drain-failure
+      // breadcrumb below (post-drain the vault may have swapped).
+      const preDrainVaultRoot = ctx.getVaultPath();
 
       // Phase R2 — drain pending writers BEFORE the cascade. The OS
       // already did the rename, but a debounced editor write armed
@@ -565,8 +579,36 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
       } catch (err) {
         if (err instanceof PendingWritesFailedError) {
           // Drain toasted; we still skip the cascade so we don't propagate
-          // partial state. The next reconcile pass will pick the rename
-          // up if anything pinned to `oldRel` is still referenced.
+          // partial state. Audit-17 3.6 — but the OS rename already happened,
+          // and the "next reconcile pass picks it up" assumption is false:
+          // the watcher advances its reconcile snapshot BEFORE synthesised
+          // events debounce, so a walk-surfaced rename is never
+          // re-synthesised. Without a breadcrumb the skipped cascade is
+          // silent — boards at least surface broken-ref badges, but the old
+          // path's vault-local attachment tags are pruned permanently by
+          // `pruneOrphanFileTags` on next open. Lay the rename-cascade
+          // sentinel (matching the success path's "sentinel BEFORE the
+          // flush" discipline) so next-open recovery replays the cascade:
+          // `repairRenameCascade` recomputes the affected boards itself, so
+          // an empty `affectedBoardIds` is sufficient. Guarded — a swap
+          // during the drain means the breadcrumb would land in the wrong
+          // vault (and the write IPC would be refused anyway).
+          if (isStillSameVault(captured) && preDrainVaultRoot && oldRel && newRel) {
+            try {
+              await writePendingRenameCascade(preDrainVaultRoot, {
+                oldPath: oldRel,
+                newPath: newRel,
+                affectedBoardIds: [],
+                tagsAffected: true,
+              });
+            } catch (sentinelErr) {
+              reportError(
+                'vault.handleRename.sentinel',
+                sentinelErr,
+                "Couldn't record a rename-recovery sentinel after the pre-rename flush failed — board references and attachment tags for the renamed file may need manual repair.",
+              );
+            }
+          }
           return;
         }
         throw err;

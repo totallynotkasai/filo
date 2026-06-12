@@ -272,11 +272,6 @@ async function applySnapshot(
   // the documentStore.setFrontmatter cache mutation below is not.
   if (!isStillSameVault(identity)) return;
 
-  // Sync the live FM cache so an open editor/popup sees the applied result.
-  // Without this, an already-open PropertiesPopup would re-write its stale
-  // snapshot 300ms later and clobber what we just applied.
-  if (docId) documentStore.setFrontmatter(docId, merged);
-
   try {
     await writeMarkdownFile({
       vaultRoot,
@@ -286,10 +281,27 @@ async function applySnapshot(
       callerId: `update-properties-command:${relPath}`,
       docId,
       frontmatterDelta: delta,
+      // Audit-16 6.8 — fire-time body-source decision (`body` above prefers
+      // `docState?.body`); the gateway must not re-derive it at write time.
+      bodyIsLive: docState != null,
     });
   } catch (err) {
     reportError('updateProperties', err, `Failed to apply properties to ${relPath}`);
+    // A17-1.4 — rethrow so execute()/undo() reject and historyStore's
+    // rollbackExecute/rollbackUndo drop the never-applied command from the
+    // stack. The old swallow resolved failure as success: the command sat on
+    // the stack as "applied" while disk never changed.
+    throw err;
   }
+
+  // Sync the live FM cache so an open editor/popup sees the applied result
+  // (an already-open PropertiesPopup would otherwise re-write its stale
+  // snapshot 300ms later and clobber what we just applied). A17-1.4 — stamped
+  // AFTER the successful write: the history rollback doesn't revert cache
+  // mutations, so a pre-write stamp left the display cache diverged from disk
+  // when the write failed. Identity-guarded — a swap completing during the
+  // write IPC must not re-create the outgoing doc's entry in the new vault.
+  if (docId && isStillSameVault(identity)) documentStore.setFrontmatter(docId, merged);
 
   if (conflicts.length > 0) {
     uiStore.pushToast({
@@ -300,33 +312,59 @@ async function applySnapshot(
         {
           label: 'Apply anyway',
           handler: () => {
+            // A17-1.3 class — the `duration: 0` toast can be clicked after a
+            // vault swap; bail so the outgoing vault's patch never lands on
+            // the new vault's same-named file (the different-path swap is
+            // main-side rejected, but a close→reopen of the SAME path passes).
+            if (!isStillSameVault(identity)) return;
             // The user insists — force the owned snapshot value onto the
             // conflicting fields too, still preserving untouched (external) keys.
             // Phase 4 — the forced fields become their own delta so the gateway
             // applies ONLY them to fresh disk (every other key, incl. external
-            // additions, stays). `cleaned` updates the display cache.
-            const forced: Record<string, unknown> = { ...merged };
+            // additions, stays).
             const forcedDelta: FrontmatterDelta = { set: {}, unset: [] };
             for (const k of conflicts) {
               const v = targetFm[k];
               if (k in targetFm && v !== '' && v !== null && v !== undefined) {
-                forced[k] = v;
                 forcedDelta.set[k] = v;
               } else {
-                delete forced[k];
                 forcedDelta.unset.push(k);
               }
             }
-            const cleaned = cleanFrontmatter(forced);
-            if (docId) documentStore.setFrontmatter(docId, cleaned);
+            // A17-1.2 — re-resolve the body at CLICK time. The old handler
+            // froze `body`/`bodyIsLive` at CONFLICT time, so a click minutes
+            // later wrote the frozen body back — reverting every editor save
+            // made in the interim (and a doc CLOSED since the conflict still
+            // claimed its frozen body was live). With no live editor,
+            // `bodyIsLive: false` makes the gateway's delta branch source the
+            // body from its fresh in-chain disk read instead of the snapshot.
+            const liveDoc = docId ? documentStore.getDocument(docId) : null;
+            // Display cache — merge the forced keys onto the CURRENT cache,
+            // not the conflict-time `merged` object (stale by click time).
+            if (docId) {
+              const liveBase = documentStore.getFrontmatter(docId);
+              if (liveBase) {
+                const updated: Record<string, unknown> = { ...liveBase };
+                for (const k of conflicts) {
+                  const v = targetFm[k];
+                  if (k in targetFm && v !== '' && v !== null && v !== undefined) {
+                    updated[k] = v;
+                  } else {
+                    delete updated[k];
+                  }
+                }
+                documentStore.setFrontmatter(docId, cleanFrontmatter(updated));
+              }
+            }
             void writeMarkdownFile({
               vaultRoot,
               relPath,
-              frontmatter: cleaned,
-              body,
+              body: liveDoc?.body ?? body,
               callerId: `update-properties-command:${relPath}`,
               docId,
               frontmatterDelta: forcedDelta,
+              // Audit-16 6.8 / A17-1.2 — click-time liveness decision.
+              bodyIsLive: liveDoc != null,
             }).catch((err) =>
               reportError('updateProperties', err, `Failed to apply properties to ${relPath}`),
             );

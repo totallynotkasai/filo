@@ -24,7 +24,7 @@ import type {
   WorkspaceState,
 } from '../../schema/index';
 import type { WorkspaceLayout } from '../../stores/workspace.svelte';
-import { BOARD_WRITE_DEBOUNCE_MS, WRITE_TIMEOUT_MS } from './boardWriteDebounce';
+import { BOARD_WRITE_DEBOUNCE_MS, WRITE_TIMEOUT_MS, writtenByteLength } from './boardWriteDebounce';
 import {
   notifyWriteError,
   registerResetCallback,
@@ -442,7 +442,17 @@ export async function writeConfigs(
       // 6.4.M2's clear); see `refreshBaselineAfterWrite` for the trade-off.
       try {
         const postStat = await invokeOk('vault:stat', vaultRoot, sentinelPath);
-        refreshBaselineAfterWrite(sentinelPath, postStat.mtimeMs, postStat.size);
+        // Audit-17 5.4 — mirror the gateway's Audit-7 L5 written-bytes verify:
+        // stamp only when the post-write stat's size matches the bytes we wrote.
+        // A foreign write landing in the save→stat gap would otherwise become
+        // Filo's own baseline and the next write would clobber it promptless; on
+        // a size mismatch keep the prior baseline (DI-14) so the next write's
+        // drift check re-detects + prompts.
+        if (postStat.size === writtenByteLength(payload)) {
+          refreshBaselineAfterWrite(sentinelPath, postStat.mtimeMs, postStat.size);
+        } else {
+          refreshBaselineAfterWrite(sentinelPath, undefined, undefined);
+        }
       } catch {
         refreshBaselineAfterWrite(sentinelPath, undefined, undefined);
       }

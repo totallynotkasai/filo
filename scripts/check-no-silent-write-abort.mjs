@@ -46,6 +46,36 @@
  * re-read and reopen the body-only-wipe. See AUDIT10_REMEDIATION_PLAN_2026-06-04
  * H2 + the gateway test in src/tests/unit/audit10Phase2.test.ts.
  *
+ * ── Audit-16 7.1 — the read-only (1.2) and body-version (1.1) twins ──
+ * (a) A POSITIVE read-only test followed by a bare abort verb
+ * (`if (docId && documentStore.isReadOnly(docId)) return;` or the local-alias
+ * spelling `if (readOnlyDoc) return;` / `if (readOnlyDoc && !delta) return;`)
+ * is the Audit-16 1.2 silent-success drop: a Kanban/Task FIELD edit on a doc
+ * flagged read-only (lossy tiptap round-trip) merged into the FM cache, armed
+ * the scheduler, and the bare return resolved performWrite as SUCCESS →
+ * markClean wiped `.filo/.dirty` while nothing ever re-fired the orphaned
+ * delta. Post-1.2 there is NO legitimate bare return on a read-only test in
+ * these files — a DELTA write must PROCEED (body forced to a fresh disk read,
+ * never the lossy `docState.body`) and a delta-less write must refuse LOUDLY
+ * (`reportError` + `markPathFailed` + throw). The plan sketched a same-file
+ * `markPathFailed` co-presence escape, but the scheduler ALWAYS has unrelated
+ * `markPathFailed` calls (the disk-read-failure branch), which would make the
+ * arm a permanent no-op — so the shape is forbidden OUTRIGHT (the
+ * `// allow-silent-abort:` escape still applies). Two REQUIRED tokens pin the
+ * positive halves in the scheduler: `readOnlyDoc && !delta` (the refusal is
+ * scoped to delta-LESS writes — delta writes are not refused) and
+ * `!readOnlyDoc ?` (the read-only delta body is forced onto the disk-read
+ * branch).
+ * (b) The Audit-16 1.1 fix must survive in `document.svelte.ts`: a BODY change
+ * via `updateContent` bumps the SAME `mutationVersions` staleness token an FM
+ * change does (plus the lockstep `bodyMutationVersions` mirror so FM-only
+ * consumers — the A9-M2 refresh-seed guard — can subtract it back out, via
+ * `getFrontmatterOnlyMutationVersion`). Without the bump, every second-and-
+ * later Task-notes edit fired with `scheduledVersion <= lastFlushedVersion`,
+ * bare-returned as SUCCESS, and the note died on quit. The bump tokens are
+ * required INSIDE the `updateContent` method body (extracted by brace-match on
+ * a blanked copy), so an unrelated bump elsewhere can't satisfy them.
+ *
  * ── What this gate enforces ──
  * Audit-9 L4 widened the scan from the single `frontmatterWriteScheduler.ts`
  * file (which the docstring used to overstate as the only scope) so the shape
@@ -124,6 +154,14 @@ const GATEWAY_FILE = 'src/renderer/lib/vault/markdownFileWriter.ts';
 // survive so a refactor can't silently flip the editor back to "blank but
 // writable on a failed read".
 const DOC_EDITOR_FILE = 'src/renderer/components/boards/DocumentEditor.svelte';
+// Audit-16 1.1 — the document store owns the shared write-staleness token
+// (`mutationVersions`). `updateContent` (the body mutation) must bump it — and
+// mirror the bump into `bodyMutationVersions` — or a delta-less notes write
+// scheduled after a flushed version is mistaken for stale and silently
+// no-ops as SUCCESS (the 1.1 quit-loss). Required tokens are scoped to the
+// `updateContent` method body; `getFrontmatterOnlyMutationVersion` (the
+// FM-only consumer API the A9-M2 seed guard compares against) is file-wide.
+const DOCUMENT_STORE_FILE = 'src/renderer/stores/document.svelte.ts';
 
 // Writers (`*riter*` — "writer" contains "riter") + schedulers (`*scheduler*`):
 // the files that own a frontmatter write path. Case-insensitive substring on the
@@ -279,6 +317,26 @@ const SILENT_FM = silentAbortRe('fm');
 const ESCAPE = /\/\/\s*allow-silent-abort:\s*\S+/;
 const MARK_PATH_FAILED = /markPathFailed\s*\(/;
 
+// Audit-16 7.1(a) — the 1.2 shape: a POSITIVE read-only test followed by a bare
+// abort verb. Unlike silentAbortRe (which matches a MISSING-value guard), the
+// dangerous read-only spelling is the truthy test: `isReadOnly(docId)) return`
+// (direct call) or `readOnlyDoc) return` / `readOnlyDoc && !delta) return`
+// (local alias). Forbidden OUTRIGHT in the swept writer/scheduler files — see
+// the 7.1 docstring section for why there is no markPathFailed co-presence
+// escape (it would be a permanent no-op in the scheduler).
+//
+// Audit-17 6.1 — two matcher bugs fixed:
+//  - false-NEGATIVE: the `isReadOnly(...)` arm used `[^()]*`, which can't cross a
+//    nested `(`, so a `isReadOnly(idOf(tile)))` call slipped through (and the
+//    case-sensitive alias arm can't rescue it — `isReadOnly` has a capital `R`).
+//    The arm now allows ONE level of balanced nesting.
+//  - false-POSITIVE: the alias arm `\breadOnly\w*\b` matched the SAFE negated
+//    guard `!readOnlyDoc` (a `\b` exists between `!` and `r`). A `(?<![!\w])`
+//    lookbehind (Node-supported) now excludes a `!`-prefixed (and word-char-
+//    prefixed) occurrence, so `if (!readOnlyDoc) return;` no longer trips.
+const SILENT_READONLY =
+  /(?:isReadOnly\s*\([^()]*(?:\([^()]*\)[^()]*)*\)|(?<![!\w])readOnly\w*)\s*(?:&&[^)\n]*)?\)\s*\{?\s*(?:return|continue)\b/;
+
 /**
  * Audit-14 7.2 — embedded FIXTURES + intrinsic bite-check. Every alternate
  * spelling of the silent-success abort MUST trip the matcher, and every known-
@@ -330,7 +388,76 @@ function selfTestFixtures() {
   for (const s of fmScopedShouldPass) {
     if (hasUnscopedSilentFm(blankStringsAndComments(s))) fails.push(`markPathFailed-scoped !fm wrongly flagged: ${s}`);
   }
+  // Audit-16 7.1(a) — the read-only silent-drop spellings must trip…
+  const readOnlyShouldMatch = [
+    'if (docId && documentStore.isReadOnly(docId)) return;',
+    'if (documentStore.isReadOnly(docId)) { return; }',
+    'if (readOnlyDoc) return;',
+    'if (readOnlyDoc && !delta) return;',
+    'if (readOnlyDoc) continue;',
+    // Audit-17 6.1 — a NESTED-paren argument to isReadOnly must still trip (the
+    // old `[^()]*` arm could not cross the inner `(` and silently slipped this).
+    'if (documentStore.isReadOnly(idOf(tile))) return;',
+  ];
+  // …and the LEGITIMATE post-1.2 shapes must not (the alias assignment, the
+  // loud delta-less refusal, and the forced disk-body ternary).
+  const readOnlyShouldNotMatch = [
+    'const readOnlyDoc = docId ? documentStore.isReadOnly(docId) : false;',
+    'if (readOnlyDoc && !delta) {\n  reportError(k, null, msg);\n  markPathFailed(v, p);\n  throw new Error(msg);\n}',
+    'const docState = docId && !readOnlyDoc ? documentStore.getDocument(docId) : undefined;',
+    // Audit-17 6.1 — a NEGATED guard (`!readOnlyDoc`) is the SAFE early-bail
+    // (return when NOT read-only); it must not be flagged as a silent drop.
+    'if (!readOnlyDoc) return;',
+  ];
+  for (const s of readOnlyShouldMatch) {
+    if (!SILENT_READONLY.test(blankStringsAndComments(s))) fails.push(`read-only shape NOT caught: ${s}`);
+  }
+  for (const s of readOnlyShouldNotMatch) {
+    if (SILENT_READONLY.test(blankStringsAndComments(s))) fails.push(`safe read-only shape wrongly caught: ${s}`);
+  }
   return fails;
+}
+
+/**
+ * Audit-16 7.1(b) — extracts the body of the named object-literal method from a
+ * BLANKED copy (so braces in strings/comments can't skew the match). Returns
+ * null when the method (or its body brace) can't be found — callers treat that
+ * as a failure so a rename can't silently drop the required-token check.
+ */
+function methodBody(blanked, name) {
+  const head = new RegExp(`\\b${name}\\s*\\(`, 'g');
+  let m;
+  while ((m = head.exec(blanked))) {
+    // Balance the params from the '(' just consumed.
+    let i = head.lastIndex - 1;
+    let depth = 0;
+    let paramEnd = -1;
+    for (; i < blanked.length; i++) {
+      if (blanked[i] === '(') depth++;
+      else if (blanked[i] === ')') {
+        depth--;
+        if (depth === 0) { paramEnd = i; i++; break; }
+      }
+    }
+    if (paramEnd < 0) continue;
+    // Next non-whitespace must open the body (or a return type) — else a call.
+    let k = i;
+    while (k < blanked.length && /\s/.test(blanked[k])) k++;
+    if (blanked[k] !== '{' && blanked[k] !== ':') continue;
+    let j = k;
+    while (j < blanked.length && blanked[j] !== '{') j++;
+    if (j >= blanked.length) continue;
+    let bdepth = 0;
+    const bodyStart = j;
+    for (; j < blanked.length; j++) {
+      if (blanked[j] === '{') bdepth++;
+      else if (blanked[j] === '}') {
+        bdepth--;
+        if (bdepth === 0) return blanked.slice(bodyStart, j + 1);
+      }
+    }
+  }
+  return null;
 }
 
 const files = [];
@@ -371,6 +498,15 @@ for (const abs of files) {
         '`markPathFailed` + `throw`), never resolve performWrite as a silent success.',
     );
   }
+  // Audit-16 7.1(a) — the 1.2 read-only silent drop, forbidden outright.
+  if (!hasEscape && SILENT_READONLY.test(blanked)) {
+    failures.push(
+      `${rel} — found a bare read-only abort (\`isReadOnly(...)) return\` / \`readOnlyDoc) return\` — ` +
+        'the Audit-16 1.2 silent-success shape). The read-only flag protects the BODY, not the FM: ' +
+        'a DELTA write must PROCEED with the body forced to a fresh disk read, and a delta-less ' +
+        'write must refuse LOUDLY (reportError + markPathFailed + throw) — never resolve as a silent success.',
+    );
+  }
   // Audit-13 M13 — the `!fm) return` is allowed ONLY when the SAME enclosing
   // function also calls `markPathFailed` (was: anywhere in the file, which an
   // unrelated sibling-function `markPathFailed` re-opened).
@@ -395,6 +531,16 @@ const schedCode = stripComments(schedRaw);
 const REQUIRED = [
   { token: /markPathFailed\s*\(/, why: 'the no-live-editor read failure attributes the loss (markPathFailed)' },
   { token: /readMarkdownForHydrate\s*\(/, why: 'the no-docState branch reads the canonical body from disk' },
+  // Audit-16 7.1(a) — the positive halves of the 1.2 fix (exact local names, by
+  // convention — a rename means updating these tokens alongside the code):
+  {
+    token: /readOnlyDoc\s*&&\s*!\s*delta/,
+    why: 'the read-only refusal is scoped to delta-LESS writes only (Audit-16 1.2 — a field-edit DELTA on a read-only doc must still be written)',
+  },
+  {
+    token: /!\s*readOnlyDoc\s*\?/,
+    why: "a read-only doc's delta write forces the disk-body branch (Audit-16 1.2 — never re-emit the lossy docState.body)",
+  },
 ];
 for (const { token, why } of REQUIRED) {
   if (!token.test(schedCode)) {
@@ -458,6 +604,49 @@ for (const { token, why } of DOC_EDITOR_REQUIRED) {
   }
 }
 
+// REQUIRED — Audit-16 1.1 (7.1(b)): `updateContent` bumps the shared write-
+// staleness token on a body change. Scoped to the METHOD BODY (extracted by
+// brace-match on a blanked copy) so an unrelated `bumpMutationVersion` in
+// `setFrontmatter`/`mergeFrontmatter` can't satisfy it. A missing method is a
+// loud failure — a rename can't silently drop the check.
+let docStoreRaw = '';
+try {
+  docStoreRaw = readFileSync(join(ROOT, DOCUMENT_STORE_FILE), 'utf8');
+} catch (err) {
+  failures.push(`${DOCUMENT_STORE_FILE} — cannot read (REQUIRED file): ${err.message}`);
+}
+const docStoreBlanked = blankStringsAndComments(docStoreRaw);
+const updateContentBody = methodBody(docStoreBlanked, 'updateContent');
+if (updateContentBody === null) {
+  failures.push(
+    `${DOCUMENT_STORE_FILE} — could not locate the \`updateContent\` method body ` +
+      '(renamed/moved? The Audit-16 1.1 body-version bump must move with it — update this gate).',
+  );
+} else {
+  const UPDATE_CONTENT_REQUIRED = [
+    {
+      token: /bumpMutationVersion\s*\(/,
+      why: 'a BODY change must bump the shared `mutationVersions` staleness token (Audit-16 1.1 — without it a delta-less notes write is mistaken for stale and silently no-ops as SUCCESS, dying on quit)',
+    },
+    {
+      token: /bodyMutationVersions\.set\s*\(/,
+      why: 'the body bump must mirror into `bodyMutationVersions` so FM-only consumers (the A9-M2 refresh-seed guard) can subtract it back out — without the mirror, rapid typing blocks the disk-FM refresh and strands a lossy placeholder',
+    },
+  ];
+  for (const { token, why } of UPDATE_CONTENT_REQUIRED) {
+    if (!token.test(updateContentBody)) {
+      failures.push(`${DOCUMENT_STORE_FILE} — \`updateContent\` missing /${token.source}/ — ${why}`);
+    }
+  }
+}
+if (docStoreRaw && !/getFrontmatterOnlyMutationVersion/.test(stripComments(docStoreRaw))) {
+  failures.push(
+    `${DOCUMENT_STORE_FILE} — missing \`getFrontmatterOnlyMutationVersion\` — the FM-only ` +
+      'consumer API (shared counter minus body bumps) the A9-M2 seed sites compare against; ' +
+      'removing it re-couples the disk-FM refresh guard to body keystrokes (Audit-16 1.1).',
+  );
+}
+
 if (failures.length > 0) {
   console.error('[check-no-silent-write-abort] FAILED — silent-write-abort invariant regressed:');
   for (const f of failures) console.error(`  ${f}`);
@@ -487,6 +676,6 @@ if (failures.length > 0) {
 
 console.log(
   `[check-no-silent-write-abort] OK — ${scanned} writer/scheduler file(s) scanned; no silent-success abort. ` +
-    'Gateway H2 disk-re-read + DocumentEditor M1 failed-read guards present.',
+    'Gateway H2 disk-re-read + DocumentEditor M1 failed-read + A16 1.2 read-only + 1.1 body-version guards present.',
 );
 process.exit(0);

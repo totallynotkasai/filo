@@ -40,3 +40,16 @@ export const BOARD_WRITE_DEBOUNCE_MS = 300;
  * time. `markdownFileWriter` re-exports it as `MARKDOWN_WRITE_TIMEOUT_MS`.
  */
 export const WRITE_TIMEOUT_MS = 60_000;
+
+/**
+ * Audit-17 5.4 — UTF-8 byte length of a payload string. The board/config writers
+ * encode their payload as UTF-8, so this equals the on-disk byte size of a clean
+ * self-write — used by their post-write baseline TOCTOU guards (mirroring the
+ * markdown gateway's Audit-7 L5 check) to tell our own bytes from a foreign edit
+ * that landed in the save→stat gap. Lives in this dependency-free leaf so every
+ * scheduler can share one implementation.
+ */
+const utf8Encoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
+export function writtenByteLength(text: string): number {
+  return utf8Encoder ? utf8Encoder.encode(text).length : text.length;
+}

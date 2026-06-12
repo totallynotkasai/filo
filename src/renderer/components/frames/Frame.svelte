@@ -22,6 +22,9 @@
   import { createLabelEditor } from '../../lib/editor/createEditor';
   import { tiptapToolbar } from '../../lib/editor/toolbarConfig';
   import { sanitizeInlineHtml } from '../../lib/utils/sanitizeHtml';
+  import { resolveTitleCommitValues, type ResolvedTitleCommit } from '../../lib/editor/titleCommit';
+  import { revertFrameDragOnTeardown } from '../../lib/frames/frameDragCancel';
+  import { boardCacheStore } from '../../stores/boardCache.svelte';
   import FrameStylePopup from './FrameStylePopup.svelte';
   import { historyStore } from '../../stores/history.svelte';
   import { UpdateFrameCommand, MoveFrameCommand } from '../../commands/index';
@@ -51,6 +54,12 @@
   let titleEditorElement = $state<HTMLDivElement | null>(null);
   let titleEditor: Editor | null = $state(null);
   let showStyle = $state(false);
+  // Audit-17 4.2 — handle for the inline blur→commit defer (the Audit-11 R3
+  // treatment Frame never got): stored so teardown/destroy can cancel it and
+  // so repeated blur/focus cycles don't stack timers. Cleared by hand in
+  // `destroyTitleEditor()` — the `ci:component-timer-cleanup` gate can't see
+  // a timer armed inside a TipTap callback.
+  let blurCommitTimer: ReturnType<typeof setTimeout> | null = null;
 
   let titleDisplay = $derived.by(() => {
     const raw = (frame as FrameType & { titleHtml?: string }).titleHtml;
@@ -153,6 +162,12 @@
   }
 
   function destroyTitleEditor() {
+    // Audit-17 4.2 — cancel a pending blur→commit defer so it can't fire
+    // after the editor is gone (commit/cancel/unmount all route through here).
+    if (blurCommitTimer) {
+      clearTimeout(blurCommitTimer);
+      blurCommitTimer = null;
+    }
     if (titleEditor) {
       if (tiptapToolbar.activeEditor === titleEditor) {
         tiptapToolbar.clearActiveEditor();
@@ -162,32 +177,48 @@
     }
   }
 
+  /** Audit-17 4.2 — read the live editor BEFORE destroy (mirrors TileHeader). */
+  function snapshotEditorTitle(): ResolvedTitleCommit | null {
+    if (!titleEditor) return null;
+    return resolveTitleCommitValues(titleEditor.getText(), titleEditor.getHTML(), 'Frame');
+  }
+
   function commitTitle() {
-    if (!titleEditor) {
-      isEditingTitle = false;
-      return;
-    }
-    const plain = titleEditor.getText().trim() || 'Frame';
-    const html = titleEditor.getHTML();
-    const stripped = html.replace(/<\/?p[^>]*>/gi, '').trim();
-    const isPlain = stripped === plain || stripped === '';
-    const updates: Partial<FrameType> = isPlain
-      ? ({ title: plain, titleHtml: undefined } as Partial<FrameType>)
-      : ({ title: plain, titleHtml: html } as Partial<FrameType>);
+    const snap = snapshotEditorTitle();
     destroyTitleEditor();
     isEditingTitle = false;
+    if (!snap) return;
+    applyFrameTitleCommit(snap, false);
+  }
+
+  /**
+   * Audit-17 4.2 — shared by the normal blur/Enter commit and the unmount
+   * teardown. A teardown commit writes through the cache (resolves the
+   * frame's home board even when the pane has already switched boards) and
+   * pushes no history entry — mid-swap the global active stack can't be
+   * trusted (same rule as TileHeader's 4.1 teardown commit).
+   */
+  function applyFrameTitleCommit(snap: ResolvedTitleCommit, fromTeardown: boolean): void {
+    const { plain, titleHtml } = snap;
     const prevHtml = (frame as FrameType & { titleHtml?: string }).titleHtml ?? '';
-    const nextHtml = (updates as { titleHtml?: string }).titleHtml ?? '';
-    if (plain !== frame.title || prevHtml !== nextHtml) {
-      // Phase 16 / H4 — undoable. Snapshot the prior title/titleHtml pair
-      // so Ctrl+Z restores both even when only one changed.
-      historyStore.execute(new UpdateFrameCommand(
-        frame.id,
-        { title: frame.title, titleHtml: prevHtml || undefined },
-        updates,
-        `Rename frame`,
-      ));
+    if (plain === frame.title && prevHtml === (titleHtml ?? '')) return;
+    if (fromTeardown) {
+      boardCacheStore.persistUpdateFrame(frame.id, {
+        ...frame,
+        title: plain,
+        titleHtml,
+        updatedAt: Date.now(),
+      } as FrameType);
+      return;
     }
+    // Phase 16 / H4 — undoable. Snapshot the prior title/titleHtml pair
+    // so Ctrl+Z restores both even when only one changed.
+    historyStore.execute(new UpdateFrameCommand(
+      frame.id,
+      { title: frame.title, titleHtml: prevHtml || undefined },
+      { title: plain, titleHtml } as Partial<FrameType>,
+      `Rename frame`,
+    ));
   }
 
   function cancelTitleEdit() {
@@ -216,7 +247,13 @@
           if (titleEditor) tiptapToolbar.setActiveEditor(titleEditor);
         },
         onBlur: () => {
-          setTimeout(() => {
+          // Slight delay so toolbar-button clicks (which blur the editor)
+          // don't trigger a premature commit. Audit-17 4.2 — store the handle
+          // (and clear any prior one) so a teardown inside the window can
+          // commit-not-drop; null it once it fires (mirrors TileHeader R3).
+          if (blurCommitTimer) clearTimeout(blurCommitTimer);
+          blurCommitTimer = setTimeout(() => {
+            blurCommitTimer = null;
             if (titleEditor && tiptapToolbar.activeEditor !== titleEditor) {
               commitTitle();
             }
@@ -235,7 +272,21 @@
     }
   });
 
-  $effect(() => () => destroyTitleEditor());
+  // Audit-17 4.2 — commit-on-unmount: an armed blur→commit at teardown means
+  // the user finished editing and the 200 ms window was still open (clicking
+  // another tab/board blurs AND unmounts within ms — same class as
+  // TileHeader's Audit-17 4.1). Snapshot before the editor is destroyed,
+  // clear the timer (inline so `ci:component-timer-cleanup` recognises it),
+  // then commit through the teardown-safe path.
+  $effect(() => {
+    return () => {
+      const snap = blurCommitTimer !== null ? snapshotEditorTitle() : null;
+      if (blurCommitTimer) clearTimeout(blurCommitTimer);
+      blurCommitTimer = null;
+      destroyTitleEditor();
+      if (snap) applyFrameTitleCommit(snap, true);
+    };
+  });
 
   function escapeForInitial(text: string): string {
     return text
@@ -285,6 +336,10 @@
   let dragContainedTileIds: string[] = [];
   let dragRafPending = false;
   let dragLatestEvent: PointerEvent | null = null;
+  // Audit-17 4.4 — board the frame belonged to when the drag began. The
+  // unmount-mid-drag teardown needs it to route its revert through the cache
+  // when the pane's scope has already switched boards.
+  let dragHomeBoardId: string | null = null;
   // Local mirror of the last frame position the RAF wrote, used to compute
   // the per-RAF tile delta without depending on the cache↔active proxy
   // bridge staying stale across the `boardStore.updateFrame` call.
@@ -302,6 +357,7 @@
     lastFrameX = frame.position.x;
     lastFrameY = frame.position.y;
     dragContainedTileIds = [...frame.tileIds];
+    dragHomeBoardId = boardStore.current?.id ?? null;
     // Batch the spatial revision bumps from each contained-tile move so
     // the viewport-culling consumers only re-derive once per RAF, not once
     // per dragged tile per frame.
@@ -351,12 +407,15 @@
 
   function handleDragEnd() {
     if (!isDragging) return;
-    isDragging = false;
     // Flush any RAF-pending move synchronously so the final position lands
     // on disk + history without waiting for the next animation frame.
+    // Audit-17 4.3 — flush BEFORE flipping the flag: `flushDragMove`'s first
+    // guard is `if (!isDragging) return`, so the old order silently dropped
+    // the pointer motion since the last RAF tick.
     if (dragRafPending && dragLatestEvent) {
       flushDragMove();
     }
+    isDragging = false;
     dragLatestEvent = null;
     dragRafPending = false;
     spatialStore.endBatch();
@@ -405,6 +464,81 @@
 
     boardStore.updateFrame(frame.id, { size: { width: newW, height: newH } });
   }
+
+  // Audit-16 6.1 — pointercancel / lostpointercapture teardown. A native
+  // pointercancel mid-drag (touch/pen OS gesture, browser fullscreen) used to
+  // leave `spatialStore.beginBatch()` open forever (revision frozen →
+  // viewport-culled rendering stopped updating until a board switch) and
+  // `isDragging` stuck true (the next hover across the header moved the frame
+  // with NO undo command). Route both cancel signals through the same end
+  // handlers — they're idempotent (`if (!isDragging/!isResizing) return`), so
+  // the lostpointercapture that follows every normal pointerup is a no-op.
+  // Commit-current semantics (not tileDrag's snap-back): the incremental
+  // `updateFrame` writes already landed, so ending the drag records the
+  // command for what's on screen rather than silently reverting it.
+  function handleDragCancel() {
+    handleDragEnd();
+  }
+
+  function handleResizeCancel() {
+    handleResizeEnd();
+  }
+
+  // Audit-16 6.1 + Audit-17 4.4 — unmount mid-drag (frame deleted by an
+  // external reload / board switch while dragging) must close the spatial
+  // batch (or viewport culling stays frozen for the whole board session) AND
+  // truly CANCEL the drag. The move was written incrementally per RAF and
+  // only handleDragEnd pushes MoveFrameCommand, so leaving the dragged
+  // positions in place persisted a frame+tile move with NO undo entry.
+  // Mirror tileDrag's destroy(): revert the frame and the captured contained
+  // tiles to their drag-start positions ("a half-committed move would
+  // corrupt undo"). No history push from a teardown $effect — mid-board-swap
+  // the global active stack can't be trusted. Cleanup-only $effect (no
+  // reactive reads in setup), matching the title-editor teardown above.
+  $effect(() => () => {
+    if (isDragging) {
+      isDragging = false;
+      dragRafPending = false;
+      dragLatestEvent = null;
+      const homeBoardId = dragHomeBoardId;
+      revertFrameDragOnTeardown(
+        {
+          frameId: frame.id,
+          startX: dragStartPosX,
+          startY: dragStartPosY,
+          lastX: lastFrameX,
+          lastY: lastFrameY,
+          containedTileIds: dragContainedTileIds,
+        },
+        {
+          // Dual-route: the pane's scope stores while the board is still
+          // active (keeps the spatial index in sync), else the cache keyed
+          // by the home board captured at drag start.
+          updateFramePosition: (id, position) => {
+            if (boardStore.frames.some((f) => f.id === id)) {
+              boardStore.updateFrame(id, { position });
+            } else {
+              boardCacheStore.persistUpdateFrame(id, {
+                ...frame,
+                position,
+                updatedAt: Date.now(),
+              } as FrameType);
+            }
+          },
+          getTile: (id) =>
+            boardStore.getTile(id)
+              ?? (homeBoardId
+                ? boardCacheStore.getFullTilesForBoard(homeBoardId)[id]
+                : undefined),
+          moveTile: (id, position) => {
+            if (boardStore.getTile(id)) boardStore.updateTile(id, { position });
+            else if (homeBoardId) boardCacheStore.persistUpdateTile(id, { position }, homeBoardId);
+          },
+        },
+      );
+      spatialStore.endBatch();
+    }
+  });
 
   function handleResizeEnd() {
     if (!isResizing) return;
@@ -460,6 +594,8 @@
     onpointerdown={handleDragStart}
     onpointermove={handleDragMove}
     onpointerup={handleDragEnd}
+    onpointercancel={handleDragCancel}
+    onlostpointercapture={handleDragCancel}
   >
     <div class="frame-header-left">
       <!-- Collapse button -->
@@ -554,6 +690,8 @@
       onpointerdown={handleResizeStart}
       onpointermove={handleResizeMove}
       onpointerup={handleResizeEnd}
+      onpointercancel={handleResizeCancel}
+      onlostpointercapture={handleResizeCancel}
     ></div>
   {/if}
 </div>

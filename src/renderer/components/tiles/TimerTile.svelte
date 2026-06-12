@@ -5,6 +5,7 @@
   import { historyStore } from '../../stores/history.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { UpdateTimerConfigCommand, type TimerMode } from '../../commands/index';
+  import { createCoarsePersistGate } from '../../lib/utils/coarsePersistGate';
 
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
   const boardStore = scope.board;
@@ -26,6 +27,14 @@
   // untrack: deliberately snapshot the initial value — the $effect below
   // re-seeds it on genuine external changes, and tick() mutates it locally.
   let liveRemaining = $state(untrack(() => tile.remaining));
+  // Audit-17 4.6 — coarse periodic persist of a RUNNING countdown. Quit never
+  // unmounts the Svelte tree (onDestroy's persist below never runs) and a
+  // vault swap clears the board cache BEFORE unmount, so a running timer's
+  // progress was unrecoverable from either. The gate fires every 45 s — far
+  // above the board's 300 ms write debounce, so the Audit2 4.1 per-tick
+  // re-arm-forever bug is NOT reintroduced. Armed per running countdown by
+  // the interval $effect below; null while stopped / in clock mode.
+  let coarsePersistDue: ((nowMs: number) => boolean) | null = null;
   // Custom time input state (shown when clicking the display while stopped)
   let editingCustom = $state(false);
   let customInput = $state('');
@@ -73,9 +82,12 @@
     void tile.duration;
     // Re-seed the local countdown whenever the persisted value changes from
     // outside our tick — mode swap, duration set, reset, or external reload.
-    // A running countdown never writes tile.remaining, so this fires only on
-    // genuine external changes, not on our own per-second ticks (liveRemaining
-    // is written but not read here, so there is no effect loop).
+    // A running countdown writes tile.remaining only via the 45 s coarse
+    // persist (Audit-17 4.6), whose value equals the live countdown at write
+    // time — that echo re-seeds by at most one 100 ms tick, a harmless
+    // rewind. Otherwise this fires only on genuine external changes, not on
+    // our own per-second ticks (liveRemaining is written but not read here,
+    // so there is no effect loop).
     liveRemaining = tile.remaining;
     lastDisplaySecond = -1;
   });
@@ -160,6 +172,12 @@
         // allow-direct-mutation: countdown reached zero; persist the stop once.
         boardStore.updateTile(tileRef.id, { remaining: 0, isRunning: false });
         announceFinished();
+      } else if (coarsePersistDue?.(now)) {
+        // Audit-17 4.6 — coarse periodic persist so a running countdown
+        // survives quit / vault swap within a minute of truth (see the gate
+        // declaration above).
+        // allow-direct-mutation: transient countdown progress, not history-worthy.
+        boardStore.updateTile(tileRef.id, { remaining: liveRemaining });
       }
     }
     const remainingSecond = Math.max(0, Math.floor(liveRemaining / 1000));
@@ -231,6 +249,11 @@
       lastDisplaySecond = -1;
       tick();
       if (mode !== 'clock' && !running) return; // static — no interval
+      // Audit-17 4.6 — fresh cadence gate per RUNNING arm (start / resume):
+      // the first coarse persist comes one full interval after arming.
+      coarsePersistDue = mode !== 'clock' && running
+        ? createCoarsePersistGate(Date.now())
+        : null;
       const cadence = mode === 'clock' ? 1000 : 100;
       const id = setInterval(tick, cadence);
       return () => clearInterval(id);

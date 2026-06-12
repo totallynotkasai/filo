@@ -938,5 +938,63 @@ phase summary so a future audit doesn't re-raise them.
     +4 5.4 engine/byte-identical rows), `tagRewriter.test.ts` (+4 — flow alias / block alias /
     item anchors / quoted-`*` negative control). All 11 guard tests bite-verified red against
     the pre-fix tree via stash (controls green on both sides); full strict unit suite green.
-- [ ] Phase 6 — 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8
-- [ ] Phase 7 — 7.1, 7.2, 7.3, 7.4, 7.5
+- [ ] Phase 6 — 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8 (source fixes for all eight items are
+  present in the working tree as of 2026-06-10 — uncommitted, tests + status entry pending)
+- [x] Phase 7 — 7.1, 7.2, 7.3, 7.4, 7.5 — **DONE 2026-06-10.** No findings refuted.
+  Implementation notes for the record:
+  - **7.1** — both arms in `check-no-silent-write-abort.mjs`, self-test fixtures extended.
+    (a) DEVIATION from the plan text, documented in the gate docstring: the sketched same-file
+    `markPathFailed` co-presence escape would make the arm a permanent no-op (the scheduler
+    ALWAYS has unrelated `markPathFailed` calls on its disk-read-failure branch), so a positive
+    read-only test followed by a bare abort (`isReadOnly(...)) return` / `readOnlyDoc) return` /
+    `readOnlyDoc && !delta) return`, incl. `continue`) is forbidden OUTRIGHT in the swept
+    writer/scheduler files (`// allow-silent-abort:` escape still applies); two REQUIRED
+    scheduler tokens pin the positive halves of 1.2 (`readOnlyDoc && !delta` — refusal scoped to
+    delta-less writes; `!readOnlyDoc ?` — read-only delta body forced onto the disk-read branch).
+    (b) the 1.1 single-counter fix is pinned in `document.svelte.ts`: `bumpMutationVersion(` +
+    `bodyMutationVersions.set(` required INSIDE the brace-matched `updateContent` method body
+    (an unrelated bump in `setFrontmatter` can't satisfy it; a renamed/moved method fails loud),
+    plus file-wide `getFrontmatterOnlyMutationVersion` (the A9-M2 FM-only consumer API).
+    All three arms bite-verified in place (forbidden insert / token reorder / bump removal →
+    exit 1 with the right message; reverted byte-exact).
+  - **7.2** — already shipped as the Phase-5 advance (verified present): the 5 `HOSTILE_CORPUS`
+    rows + dedicated 5.1 delta rows + 5.4 engine/byte-identical rows in
+    `frontmatterInvariant.test.ts`, and the 5.5 alias/anchor tag-rename skips in
+    `tagRewriter.test.ts`. Nothing further to add.
+  - **7.3** — all five matrices verified shipped with their phases: 1.1 two-sequential-notes /
+    toggle-then-notes / in-flight (`audit16Phase1.test.ts`); 2.2 tied-sections execute→undo AND
+    redo→undo + no-successor populated-owner (`sectionCommandsDelta.test.ts`, inside the suite
+    `ci:command-roundtrip-coverage` counts); 4.1/4.2 A/B/C generation-collision for BOTH per-path
+    maps (`audit16Phase4.test.ts`); 3.3 suppression matrix — same-open suppressed / same-session
+    reopen prompts / prior-launch prompts + two back-compat rows (`dirtyFlagRecovery.test.ts`);
+    parked-fire × {reset (3.4, both arg shapes), cancel (4.4), missing-source (both)} across
+    `audit16Phase3.test.ts` + `audit16Phase4.test.ts`. No gaps found.
+  - **7.4** — verified Part 1 CANNOT cover 3.2: `vault.svelte.ts` is not (and should not be) a
+    Part 1 sweep target — the vault store's own lifecycle functions legitimately read the live
+    path across awaits, so a sweep there would drown in exemptions — and the step-2 handlers are
+    anonymous arrows besides. Pinned `runRecoverySequencer` in Part 3's explicit list (the VS-1
+    pattern): its body (nested closures included) must reference `isStillSameVault`.
+    Bite-verified (token-rename in `vault.svelte.ts` → exit 1 naming the function; restored).
+  - **7.5** — 6.1 confirmed (fix present in the working tree), so the ratchet shipped — but
+    NARROWED per the plan's own survey instruction: 22 files use `setPointerCapture` and 10
+    bind no cancel signal, all benign popup/toolbar drags (stale local flag, self-heals, no open
+    batch) — the broad shape would be false-positive-heavy. New `check-pointer-capture-cleanup.mjs`
+    (47th gate, `ci:pointer-capture-cleanup`) instead flags any `src/renderer` file combining
+    `setPointerCapture(` + `beginBatch(` with no `pointercancel`/`lostpointercapture` reference
+    (comment-stripped, STRING-preserving — the lib evidence is the addEventListener literal;
+    zero exemptions: Frame.svelte + tileDrag.ts), plus a Frame.svelte named anchor (both cancel
+    bindings + ≥2 `spatialStore.endBatch(` sites so the unmount teardown can't be dropped).
+    Tripwires (≥10 capture files, ≥2 combo files) fail loud on collector staleness. All three
+    arms bite-verified. NOTE: the Frame anchor pins the (uncommitted) 6.1 fix — reverting the
+    Phase 6 working-tree changes turns this gate red by design.
+  - Docs: CLAUDE.md gate count 46→47 + load-bearing entries updated (no-silent-write-abort A16
+    arms, reconciler-vault-guard Part 3 addition, new pointer-capture-cleanup entry);
+    `package.json` registers `ci:pointer-capture-cleanup` and appends it to `ci:verify`.
+  - **ci:verify status (updated 2026-06-11, Audit-17 0.1):** FULLY GREEN — lint + svelte-check +
+    build + all 47 gates pass (48 steps). The two reds previously recorded here are CLEARED:
+    (a) `test:unit:strict` — the 4 tests in 3 files (`tabsStoreCloseFlush` ×2, `vaultExternalChanges`
+    P2.1, `cardPendingWriteClobber`) were updated to the intentional new behaviors (the now-async
+    6.3 Reload handlers are awaited; the 6.7 double-flush counts asserted) and now pass; (b)
+    `ci:file-sizes` — `kanbanCommands.ts` (1096→1093) and `TaskListBoard.svelte` (2203→2202) were
+    brought back under ceiling by comment compression — **no ceiling bumps**. There are no known
+    pre-existing reds; any red is a genuine regression.

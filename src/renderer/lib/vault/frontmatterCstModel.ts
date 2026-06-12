@@ -88,35 +88,45 @@ function isFlowScalar(token: CST.Token | null | undefined): token is CST.FlowSca
 }
 
 /**
- * L27 — does an item's key/sep/value subtree carry a YAML anchor (`&a`, a
- * SourceToken of type `anchor`, which sits in the item's `sep`/`start`) or an
- * alias (`*a`, a FlowScalar of type `alias`)? Re-emitting a CHANGED or DELETED
- * anchored key would dangle its aliases (js-yaml then throws on re-read,
- * collapsing the block) or inline an alias the object diff already resolved
- * (silently diverging anchor from alias). Recurses nested collections so a
- * `widget:\n  <<: *base` alias is found on `widget` even though the alias is
- * nested. An anchor/alias confined to UNTOUCHED keys is spliced verbatim and
- * stays valid (DI-05's `<<: *base` survives a tag-add).
+ * L27 + 5.2 (Audit-17) — does an item's key/sep/value subtree carry a YAML
+ * anchor (`&a`, a SourceToken of type `anchor`, in the item's `sep`/`start`), an
+ * alias (`*a`, a FlowScalar of type `alias`), or an explicit `!!tag` / `!tag`
+ * (a SourceToken of type `tag`, also in `sep`/`start`)? Re-emitting a CHANGED or
+ * DELETED such key is unsafe:
+ *  - anchor: re-emitting dangles its aliases (js-yaml then throws on re-read,
+ *    collapsing the block) — or inlines an alias the object diff already
+ *    resolved (silently diverging anchor from alias).
+ *  - tag (5.2): the value-only splice keeps the `tag` SourceToken while
+ *    replacing the value, emitting e.g. `priority: !!int high` — Filo's own read
+ *    then `parseInt`s it to NaN (silent corruption) and js-yaml-based tools
+ *    (Obsidian) throw on the file. Treating `tag` like `anchor` routes a touched
+ *    tagged key to the full-dump fallback (structure expanded, data exact),
+ *    matching the documented anchor semantics.
+ * Recurses nested collections so a `widget:\n  <<: *base` alias is found on
+ * `widget` even though the alias is nested. An anchor/alias/tag confined to
+ * UNTOUCHED keys is spliced verbatim and stays valid (DI-05's `<<: *base`
+ * survives a tag-add; an untouched `!!int 5` stays byte-exact).
  */
-function tokenHasAnchorOrAlias(token: CST.Token | null | undefined): boolean {
+function tokenHasAnchorAliasOrTag(token: CST.Token | null | undefined): boolean {
   if (!token) return false;
   if (token.type === 'alias' || token.type === 'anchor') return true;
   if (CST.isCollection(token)) {
-    for (const item of token.items) if (itemHasAnchorOrAlias(item)) return true;
+    for (const item of token.items) if (itemHasAnchorAliasOrTag(item)) return true;
   }
   return false;
 }
 
-function sourceTokensHaveAnchor(tokens: CST.SourceToken[] | undefined): boolean {
-  return !!tokens && tokens.some((t) => t.type === 'anchor');
+/** True when any SourceToken in the list is an anchor (`&a`) or an explicit tag (`!!t` / `!t`). */
+function sourceTokensHaveAnchorOrTag(tokens: CST.SourceToken[] | undefined): boolean {
+  return !!tokens && tokens.some((t) => t.type === 'anchor' || t.type === 'tag');
 }
 
-function itemHasAnchorOrAlias(item: CollectionItem): boolean {
+function itemHasAnchorAliasOrTag(item: CollectionItem): boolean {
   return (
-    sourceTokensHaveAnchor(item.start) ||
-    tokenHasAnchorOrAlias(item.key) ||
-    sourceTokensHaveAnchor(item.sep) ||
-    tokenHasAnchorOrAlias(item.value)
+    sourceTokensHaveAnchorOrTag(item.start) ||
+    tokenHasAnchorAliasOrTag(item.key) ||
+    sourceTokensHaveAnchorOrTag(item.sep) ||
+    tokenHasAnchorAliasOrTag(item.value)
   );
 }
 
@@ -200,7 +210,7 @@ function gapWithoutCommentLines(tokens: CST.SourceToken[]): CST.SourceToken[] {
  *
  * Returns `null` (caller falls back to a full dump) when the source is not a
  * parseable single BLOCK mapping, or when a changed/deleted key carries an
- * anchor/alias (L27).
+ * anchor/alias (L27) or an explicit YAML tag (5.2).
  */
 export function patchFrontmatterSourceCst(
   originalSource: string,
@@ -281,14 +291,15 @@ export function patchFrontmatterSourceCst(
       if (itemKeyString(item) === null) return null;
     }
 
-    // Pass 1 — L27 anchor guard. Refuse before mutating anything if any
-    // changed/deleted key's subtree carries an anchor/alias.
+    // Pass 1 — L27 anchor/alias + 5.2 tag guard. Refuse before mutating anything
+    // if any changed/deleted key's subtree carries an anchor, alias, or explicit
+    // YAML tag.
     for (const item of mapToken.items) {
       const key = itemKeyString(item);
       if (key === null) continue;
       const deleted = !(key in nextObj) || nextObj[key] === undefined;
       const changed = !deleted && !valuesEqual(currentObj[key], nextObj[key]);
-      if ((deleted || changed) && itemHasAnchorOrAlias(item)) return null;
+      if ((deleted || changed) && itemHasAnchorAliasOrTag(item)) return null;
     }
 
     // Pass 2 — apply. Build the surviving-items array so a deleted item's leading
@@ -378,8 +389,10 @@ export function patchFrontmatterSourceCst(
  *  - returns `true` here → the source is valid YAML; the engine refused for a
  *    reason where the dump is DATA-PRESERVING (a flow-mapping root reformats to a
  *    block mapping; a changed/deleted key carrying an anchor/alias expands its
- *    aliases — L27) or replaces a non-mapping root the app never treated as
- *    metadata (a top-level sequence/scalar). The caller's full dump must proceed.
+ *    aliases — L27; a changed/deleted key carrying an explicit `!!tag` drops the
+ *    now-meaningless tag — 5.2) or replaces a non-mapping root the app never
+ *    treated as metadata (a top-level sequence/scalar). The caller's full dump
+ *    must proceed.
  *
  * Narrow by design: only a parse FAILURE — where dump = unrecoverable loss —
  * trips the caller's refuse-and-keep-raw path. Valid-but-non-mapping YAML keeps

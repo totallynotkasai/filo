@@ -103,7 +103,14 @@ export function makeTilesSlice(ctx: CacheContext) {
 
     persistRemoveTile(tileId: string): void {
       const boardId = ctx.findBoardIdForTile(tileId);
-      if (!boardId) return;
+      // Audit-16 6.5 — warn instead of bare-returning (sibling of the
+      // persistAddTile fix above): an unresolved boardId here means a remove
+      // the cache never applied (e.g. a cascade delete hitting an evicted
+      // board cache entry), which would otherwise vanish without a trace.
+      if (!boardId) {
+        ctx.warnUnresolved('persistRemoveTile', `tile ${tileId}`);
+        return;
+      }
 
       const cached = ctx.getCache()[boardId];
       if (!cached) return;
@@ -113,7 +120,11 @@ export function makeTilesSlice(ctx: CacheContext) {
 
     persistUpdateTile(tileId: string, updates: Partial<Tile>, boardId?: string): void {
       const resolvedBoardId = boardId ?? ctx.findBoardIdForTile(tileId);
-      if (!resolvedBoardId) return;
+      // Audit-16 6.5 — same warn-not-swallow as persistRemoveTile above.
+      if (!resolvedBoardId) {
+        ctx.warnUnresolved('persistUpdateTile', `tile ${tileId}`);
+        return;
+      }
 
       const cached = ctx.getCache()[resolvedBoardId];
       if (!cached) return;

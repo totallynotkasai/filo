@@ -77,7 +77,10 @@ describe('tabStore.close — Sprint B / B2 flush before unmount', () => {
     resolveFlush?.();
     await closePromise;
 
-    expect(events).toEqual(['flush-done']);
+    // Audit-16 6.7 — close() runs the flush pass TWICE (the second pass
+    // captures keystrokes that re-armed a debounce during the first drain /
+    // interactive confirm), so the flusher fires once per pass.
+    expect(events).toEqual(['flush-done', 'flush-done']);
     expect(tabStore.tabs.some((t) => t.id === tab.id)).toBe(false);
   });
 
@@ -104,7 +107,8 @@ describe('tabStore.close — Sprint B / B2 flush before unmount', () => {
 
     await tabStore.closeOthers(t2.id);
 
-    expect(flushCount).toBe(2);
+    // Audit-16 6.7 — two flushers × two flush passes (see close() test above).
+    expect(flushCount).toBe(4);
     expect(tabStore.tabs.length).toBe(1);
     expect(tabStore.tabs[0].id).toBe(t2.id);
     // Suppress unused-variable lint for t1/t3 (their ids are the basis of

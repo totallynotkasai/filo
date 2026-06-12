@@ -398,10 +398,30 @@ export function registerVaultHandlers(): void {
       // `NoActiveVaultError` when no vault is open or the path doesn't
       // match — `vault:watch` is not a registration vector.
       assertActiveVault(vaultPath);
+      // Audit-17 3.5 — TOCTOU guard. This handler awaits twice (stat +
+      // watcher stop) and then UNCONDITIONALLY re-arms the registry and
+      // starts a watcher. A `vault:close` (or a rapid swap-to-B whose
+      // init-config re-armed B) completing inside either await window was
+      // silently reversed — worst case re-arming the STALE vault A after B
+      // committed, failing every gated write of B's session. Capture the
+      // registry epoch (bumped on every `setCurrentVault`, so a same-path
+      // close→reopen is caught too) and bail after each await on mismatch
+      // — mirroring the renderer's `isStillSameVault` discipline. The bail
+      // after the stat also keeps a stale call from stopping the NEW
+      // vault's already-running watcher.
+      const epochAtStart = vaultRegistry.epoch;
+      const assertEpochUnchanged = (): void => {
+        if (vaultRegistry.epoch !== epochAtStart) {
+          throw new Error(
+            'vault registration changed while starting the watcher — stale vault:watch aborted',
+          );
+        }
+      };
       const stat = await fsPromises.stat(vaultPath);
       if (!stat.isDirectory()) {
         throw new Error('vaultPath is not a directory');
       }
+      assertEpochUnchanged();
 
       if (activeWatcher) {
         // Phase 3 / 3.1 — `stop()` is now async; it awaits any in-flight
@@ -412,6 +432,9 @@ export function registerVaultHandlers(): void {
         // 300ms debounce, and surface as "external edit" prompts naming
         // paths from the prior vault.
         await activeWatcher.stop();
+        // Audit-17 3.5 — a close/swap may have landed during the stop await;
+        // re-arming + starting a watcher now would reverse it.
+        assertEpochUnchanged();
       }
       // Sprint A / A3 — canonicalise via `realpathSync` once so the same
       // resolved path drives the local `currentVaultRoot`, the watcher,

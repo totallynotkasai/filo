@@ -88,9 +88,40 @@ describe('Audit-7 L5 — post-write baseline TOCTOU guard', () => {
     expect(getBaseline(relPath)).toBeUndefined();
   });
 
-  it('stamps the baseline to the post-write stat when its size matches the bytes written', async () => {
+  it('stamps the baseline to the post-write stat when the read-back is byte-identical to what we wrote', async () => {
     const docId = 'doc-l5-b';
     const relPath = 'Notes/L5B.md';
+    const callerId = `text-tile:${docId}`;
+    setup(docId, relPath);
+
+    let writtenBytes = 0;
+    let writtenText = '';
+    installFiloMock((channel: string, ...args: unknown[]) => {
+      if (channel === 'vault:write-existing-file-text') {
+        writtenText = String(args[2]);
+        writtenBytes = new TextEncoder().encode(writtenText).length;
+        return { ok: true, success: true };
+      }
+      // Clean self-write: the post-write stat reflects exactly our bytes…
+      if (channel === 'vault:stat') return { ok: true, mtimeMs: 4242, size: writtenBytes };
+      // …and the Audit-17 5.3 read-back returns exactly what we wrote.
+      if (channel === 'vault:read-file-text') {
+        return { ok: true, success: true, content: writtenText, mtimeMs: 4242, size: writtenBytes };
+      }
+      return { ok: true, success: true };
+    });
+
+    documentStore.updateContent(docId, '<p>x</p>', 'edited body', callerId);
+    scheduleMarkdownWrite(bodyWriteArgs(docId, relPath, 'edited body'));
+    await flushMarkdownWrite(callerId);
+
+    expect(getBaseline(relPath)).toEqual({ mtimeMs: 4242, size: writtenBytes });
+    expect(writtenBytes).toBeGreaterThan(0);
+  });
+
+  it('Audit-17 5.3 — does NOT stamp when a SAME-byte-count foreign write landed in the gap', async () => {
+    const docId = 'doc-l5-c';
+    const relPath = 'Notes/L5C.md';
     const callerId = `text-tile:${docId}`;
     setup(docId, relPath);
 
@@ -100,8 +131,16 @@ describe('Audit-7 L5 — post-write baseline TOCTOU guard', () => {
         writtenBytes = new TextEncoder().encode(String(args[2])).length;
         return { ok: true, success: true };
       }
-      // Clean self-write: the post-write stat reflects exactly our bytes.
-      if (channel === 'vault:stat') return { ok: true, mtimeMs: 4242, size: writtenBytes };
+      // The post-write stat's SIZE matches our bytes (the size-only guard would
+      // have been fooled)…
+      if (channel === 'vault:stat') return { ok: true, mtimeMs: 777, size: writtenBytes };
+      // …but the read-back is FOREIGN content of the same byte length — a
+      // different edit landed in the write→stat gap. Pad/truncate to writtenBytes
+      // so the size matches but the bytes differ.
+      if (channel === 'vault:read-file-text') {
+        const foreign = 'Z'.repeat(writtenBytes);
+        return { ok: true, success: true, content: foreign, mtimeMs: 777, size: writtenBytes };
+      }
       return { ok: true, success: true };
     });
 
@@ -109,7 +148,9 @@ describe('Audit-7 L5 — post-write baseline TOCTOU guard', () => {
     scheduleMarkdownWrite(bodyWriteArgs(docId, relPath, 'edited body'));
     await flushMarkdownWrite(callerId);
 
-    expect(getBaseline(relPath)).toEqual({ mtimeMs: 4242, size: writtenBytes });
+    // Content mismatch → the foreign (mtime,size) is rejected; no prior baseline
+    // existed (markHydrated had no mtime), so it stays absent — NOT poisoned.
+    expect(getBaseline(relPath)).toBeUndefined();
     expect(writtenBytes).toBeGreaterThan(0);
   });
 });

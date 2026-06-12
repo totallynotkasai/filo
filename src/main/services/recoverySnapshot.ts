@@ -4,15 +4,17 @@
  * disk is intact (parse / schema-invalid), so the user can recover by
  * editing the original outside Filo.
  *
- * Snapshots land in `<vault>/.filo/recovery/<timestamp>/<basename>`. The
+ * Snapshots land in `<vault>/.filo/recovery/<timestamp>/<flattened-path>`
+ * (Audit-17 3.8 — the rel path's segments joined with `__`, so same-named
+ * files in different folders neither collide nor share a prune bucket). The
  * directory is created on demand; older snapshots beyond
- * `MAX_SNAPSHOTS_PER_BASENAME` (per-basename) are pruned automatically so
- * a long-lived vault doesn't accumulate hundreds of `.board.json` copies
+ * `MAX_SNAPSHOTS_PER_BASENAME` (per flattened path) are pruned automatically
+ * so a long-lived vault doesn't accumulate hundreds of `.board.json` copies
  * after a flaky write window. Phase 23 M22.
  */
 
 import { promises as fs } from 'fs';
-import { basename, join } from 'path';
+import { join } from 'path';
 import { assertWithinVault } from '../utils/pathSecurity';
 import { atomicWriteFile, ensureDir } from '../vault/filenameUtils';
 import { logMainError } from '../utils/mainLogger';
@@ -34,6 +36,20 @@ const SENTINEL_BASENAMES = new Set<string>([
   'rename-cascade-pending.json',
   'quit-failure.json',
 ]);
+
+/**
+ * Audit-17 3.8 — sentinel snapshots are now stored under their FLATTENED rel
+ * path (`.filo/.dirty` → `.filo__.dirty`), so the listing filter must match
+ * the final `__`-segment as well as the bare name (legacy snapshots taken
+ * before the flattening keep the bare basename). A user file that happens to
+ * share a sentinel's name was already filtered under the old basename scheme,
+ * so the suffix check doesn't widen the (deliberate) exclusion.
+ */
+function isSentinelSnapshotName(name: string): boolean {
+  if (SENTINEL_BASENAMES.has(name)) return true;
+  const lastSegment = name.split('__').pop();
+  return lastSegment !== undefined && SENTINEL_BASENAMES.has(lastSegment);
+}
 
 /**
  * Per-basename retention cap. Each failed-load preserves one copy in a
@@ -81,7 +97,34 @@ const MAX_SNAPSHOTS_TOTAL = 100;
 const MAX_SNAPSHOT_BYTES = 25 * 1024 * 1024;
 
 /**
- * Copies `<vault>/<relativePath>` into `<vault>/.filo/recovery/<ts>/<base>`.
+ * Audit-17 3.8 — flattens a vault-relative path into a single snapshot
+ * filename by joining its segments with `__` (e.g. `folderA/Notes.md` →
+ * `folderA__Notes.md`). The previous `basename(relativePath)` discarded the
+ * folder, which had two consequences: (a) two same-basename files snapshotted
+ * in the same ms landed at the SAME dest path and silently kept only one;
+ * (b) the per-basename pruner conflated unrelated same-named files across
+ * folders, so 20+ snapshots of `folderB/Notes.md` deterministically evicted
+ * every preserved copy of `folderA/Notes.md`. Keying both the dest filename
+ * AND the prune on the flattened path fixes both legs at once.
+ *
+ * Defensive tail-truncation: a pathologically deep rel path could push the
+ * flattened name past the OS filename limit (~255 bytes). Keep the LAST
+ * 180 chars — the deep tail (including the real basename) is what
+ * distinguishes files; the lost prefix only risks a collision between two
+ * near-identical deep paths, which then share a prune bucket (bounded loss,
+ * no crash).
+ */
+function flattenSnapshotName(relativePath: string): string {
+  const flat = relativePath
+    .split(/[\\/]+/)
+    .filter(Boolean)
+    .join('__');
+  return flat.length > 180 ? flat.slice(flat.length - 180) : flat;
+}
+
+/**
+ * Copies `<vault>/<relativePath>` into
+ * `<vault>/.filo/recovery/<ts>/<flattened-rel-path>`.
  *
  * `relativePath` is validated against `assertWithinVault` so an attacker
  * who reaches this handler can't snapshot an arbitrary OS file into the
@@ -109,7 +152,10 @@ export async function snapshotForRecovery(
   const destDir = join(vaultRoot, RECOVERY_DIR, timestamp);
   await ensureDir(destDir);
 
-  const destAbs = join(destDir, basename(relativePath));
+  // Audit-17 3.8 — flattened rel path, not `basename(relativePath)`, so two
+  // same-named files from different folders can't collide in one ms-dir and
+  // the pruner below scopes to THIS file rather than every same-named one.
+  const destAbs = join(destDir, flattenSnapshotName(relativePath));
 
   // Phase 7 (IMPLEMENTATION_PLAN_2026-05-27) — refuse to snapshot files
   // larger than MAX_SNAPSHOT_BYTES (25 MB). The size check runs BEFORE
@@ -144,7 +190,7 @@ export async function snapshotForRecovery(
   // unbounded snapshots invisibly. The fresh snapshot we just wrote is
   // what matters; tidy-up is not on the critical path, so we still
   // swallow the failure here.
-  await pruneOldSnapshotsForBasename(vaultRoot, basename(relativePath)).catch((err) => {
+  await pruneOldSnapshotsForBasename(vaultRoot, flattenSnapshotName(relativePath)).catch((err) => {
     logMainError('recovery:snapshot:prune', err);
   });
 
@@ -161,9 +207,11 @@ export async function snapshotForRecovery(
 }
 
 /**
- * Walks `.filo/recovery/*` looking for snapshots whose basename matches
- * `targetBasename`, sorts them by mtime ascending (oldest first), and
- * deletes everything past the most recent `MAX_SNAPSHOTS_PER_BASENAME`.
+ * Walks `.filo/recovery/*` looking for snapshots whose filename matches
+ * `targetBasename` (Audit-17 3.8 — the FLATTENED rel path, so `a/Notes.md`
+ * and `b/Notes.md` prune independently instead of evicting each other),
+ * sorts them by mtime ascending (oldest first), and deletes everything past
+ * the most recent `MAX_SNAPSHOTS_PER_BASENAME`.
  * Empty timestamp subdirectories are removed after their last file goes.
  *
  * Defensive: every fs operation that could plausibly fail is wrapped so a
@@ -310,7 +358,12 @@ async function pruneOldSnapshotsGlobal(vaultRoot: string): Promise<void> {
 export interface RecoverySnapshotInfo {
   /** Vault-relative path to the snapshot copy (forward-slashed). */
   relPath: string;
-  /** The snapshotted file's basename, e.g. `Notes.board.json`. */
+  /**
+   * The snapshot's filename. Audit-17 3.8 — for snapshots taken after the
+   * path-flattening fix this is the FLATTENED vault-relative path
+   * (`folderA__Notes.md`); legacy snapshots keep the bare basename
+   * (`Notes.board.json`). Either way it's what sits on disk under `<ts>/`.
+   */
   basename: string;
   /** The timestamp subdirectory name, ISO-ish: `2026-06-02T14-30-15.123`. */
   timestamp: string;
@@ -352,7 +405,8 @@ export async function listRecoverySnapshots(vaultRoot: string): Promise<Recovery
     }
     for (const name of subEntries) {
       // L13 — never list Filo's own sentinels as recoverable user files.
-      if (SENTINEL_BASENAMES.has(name)) continue;
+      // (Audit-17 3.8 — matches both flattened and legacy bare names.)
+      if (isSentinelSnapshotName(name)) continue;
       try {
         const stat = await fs.stat(join(subdirPath, name));
         if (!stat.isFile()) continue;

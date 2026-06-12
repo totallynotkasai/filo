@@ -15,6 +15,7 @@
   import { boardCacheStore } from '../../stores/boardCache.svelte';
   import { tiptapToolbar } from '../../lib/editor/toolbarConfig';
   import { createTiptapEditor } from '../../lib/editor/createEditor';
+  import { closeDrainGate } from '../../lib/editor/closeDrainGate.svelte';
   import {
     parseMarkdownFile,
     loadMarkdownIntoEditor,
@@ -245,22 +246,30 @@
 
   async function flushPendingMarkdownWrite(): Promise<void> {
     if (!callerId) return;
-    try {
-      await flushMarkdownWrite(callerId);
+    // Audit-17 2.1 — `flushMarkdownWrite` never rejects (the scheduler
+    // primitive resolves failures as `{ ok: false }`), so the old try/catch
+    // here was dead code: markClean ran unconditionally on a FAILED flush and
+    // the ENOENT degraded mode was unreachable. Branch on the result instead.
+    const result = await flushMarkdownWrite(callerId);
+    if (result.ok) {
       if (docState && !backingFileMissing) documentStore.markClean(docState.docId, callerId);
-    } catch (err) {
-      if (err instanceof IpcEnvelopeError && err.code === 'ENOENT' && docState) {
-        backingFileMissing = true;
-        reportError(
-          'DocumentEditor',
-          null,
-          `"${docState.filename}" no longer exists on disk. Further edits won't be saved until the file is restored.`,
-        );
-        return;
-      }
-      reportError('DocumentEditor', err, 'Failed to write markdown');
-      if (docState) documentStore.markDirty(docState.docId, callerId);
+      return;
     }
+    const err = result.error;
+    if (err instanceof IpcEnvelopeError && err.code === 'ENOENT' && docState) {
+      backingFileMissing = true;
+      reportError(
+        'DocumentEditor',
+        null,
+        `"${docState.filename}" no longer exists on disk. Further edits won't be saved until the file is restored.`,
+      );
+      return;
+    }
+    // Generic failure — keep the doc dirty so the next flush attempt retries.
+    // No reportError here: the gateway already surfaced the failure through
+    // trackComponentWrite's save-error pipeline (toast + sentinel), so a
+    // second toast would double-report.
+    if (docState) documentStore.markDirty(docState.docId, callerId);
   }
 
   onMount(() => {
@@ -454,6 +463,18 @@
 
   // Phase 27 / A4 — read-only state for the banner.
   let readOnly = $derived(docState ? documentStore.isReadOnly(docState.docId) : false);
+
+  // Audit-17 5.7 — freeze the editor while a tab-close drain is in flight so a
+  // keystroke typed during the drain / failed-drain confirm can't re-arm a
+  // debounce the unmount would then destroy. Keyed on the reactive gate flag +
+  // `hydrateReadFailed` (which the hydrate path owns); we never re-enable while
+  // a read failed (that path holds it non-editable for its own reason).
+  $effect(() => {
+    const frozen = closeDrainGate.draining;
+    if (editor && !editor.isDestroyed && !hydrateReadFailed) {
+      editor.setEditable(!frozen);
+    }
+  });
 
   // M1 (Audit-12) — re-run the disk hydrate after a transient read failure
   // (file lock released, OneDrive synced, AV finished). On success

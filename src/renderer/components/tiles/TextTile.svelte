@@ -3,6 +3,7 @@
   import { onMount, onDestroy } from 'svelte';
   import type { Editor } from '@tiptap/core';
   import { createTiptapEditor } from '../../lib/editor/createEditor';
+  import { closeDrainGate } from '../../lib/editor/closeDrainGate.svelte';
   import { tiptapToolbar } from '../../lib/editor/toolbarConfig';
   import {
     parseMarkdownFile,
@@ -480,6 +481,17 @@
    * documentStore.isReadOnly which reads the SvelteSet under a version tick.
    */
   let readOnly = $derived(tile.contentId ? documentStore.isReadOnly(tile.contentId) : false);
+
+  // Audit-17 5.7 — freeze the tile's editor while a tab-close drain is in flight
+  // so a keystroke can't re-arm a debounce the unmount would destroy. Lossy
+  // read-only disables SAVING (buildWriteArgs), not editing, so the only reason
+  // to toggle TipTap editability here is the close drain.
+  $effect(() => {
+    const frozen = closeDrainGate.draining;
+    if (editor && !editor.isDestroyed) {
+      editor.setEditable(!frozen);
+    }
+  });
 
   function takeOwnership(): void {
     if (!tile.contentId) return;

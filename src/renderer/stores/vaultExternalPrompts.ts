@@ -41,6 +41,11 @@ import {
   clearPropertiesPopupDirty,
 } from '../lib/vault/propertiesPopupTracker';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
+// Audit-16 6.3 — the click-time-reload no-editor branch re-anchors the drift
+// baseline + drops the seeded-but-not-open FM cache (the applyReloadFromDisk
+// path does both internally; the no-editor / setFrontmatter paths must not skip them).
+import { noteBaseline } from '../lib/vault/fileBaselineRegistry';
+import { dropStaleSeededFrontmatterCache } from '../lib/vault/staleSeededFrontmatter';
 import type { DocumentState } from './document.svelte';
 import type { VaultContext } from './vaultStoreTypes';
 // Audit-15 P5.1 — `recreateDeletedFile` (the Keep-local recovery write) lives in
@@ -533,23 +538,81 @@ export function promptMarkdownPendingWriteConflict(
     actions: [
       {
         label: 'Reload',
-        handler: () => {
-          // Cancel the still-armed local frontmatter write AND drop its Phase-4
-          // field delta (Audit-11 EER-1) first; without this it would fire
-          // ~300 ms later (or via the reload's flush) and overwrite the disk
-          // version we're about to apply, defeating the user's Reload choice.
+        // Audit-16 6.3 — async + click-time disk re-read, mirroring
+        // promptModifiedFile: replaying the detection-time `next` snapshot
+        // would apply already-stale content when a SECOND external write
+        // landed between toast-open and the click.
+        handler: async () => {
+          // Audit-17 2.5 — the awaited re-read runs FIRST; the destructive
+          // work (write cancel + store applies) runs in the synchronous tail
+          // AFTER it. The prior 6.3 ordering cancelled the armed frontmatter
+          // write up front, so a rejecting re-read left the user's pending
+          // edit cancelled AND the reload never applied — a destructive
+          // prefix on a failed action. With the re-read first, a failure
+          // leaves everything intact (the toast-action catch in
+          // `uiStore.invokeToastAction` surfaces it). The trade-off this
+          // inverts — the ~300 ms debounce firing DURING the re-read and the
+          // fresh read adopting the user's own discarded change as the
+          // "external" version — is fronted by the drift gate + pending-path
+          // sentinel and was weighed in the Audit-17 review (refuted
+          // finding #5); the cancel lands in the same synchronous tail as
+          // the applies, so no further async gap exists after the read.
+          //
+          // L17 (Audit-13) shape — bail if a vault swap lands during the
+          // re-read, before mutating any store with the outgoing vault's
+          // disk content (the swap reset disarms the writers itself).
+          const identity = captureVaultIdentity();
+          const wasIndexed = vaultIndexStore.getMetadata(rel) !== undefined;
+          await vaultIndexStore.applyChanges([rel]);
+          if (!isStillSameVault(identity)) return;
+          // Audit-17 5.6(b) — undefined after the targeted re-read of a path
+          // that WAS indexed means applyChanges processed a DELETION (file
+          // gone). Skip all store mutations + the baseline stamp — the watcher
+          // delete pipeline owns teardown, and the stale `next` snapshot would
+          // resurrect deleted-file metadata and re-anchor a baseline for a
+          // vanished path. A path that was NEVER indexed (transient — a
+          // never-loaded doc the index hadn't built) keeps the documented
+          // `?? next` fallback.
+          const reread = vaultIndexStore.getMetadata(rel);
+          if (!reread && wasIndexed) return;
+          const fresh = reread ?? next;
+          // Cancel the still-armed local frontmatter write AND drop its
+          // Phase-4 field delta (Audit-11 EER-1) before the applies, so the
+          // debounce can't fire after the reload and re-clobber disk with
+          // the change the user just discarded.
           cancelFrontmatterWrite(rel);
-          boardStore.applyFrontmatterToBackedTiles(rel, next);
-          fileTagsStore.setFileTags(rel, normalizeTags(next.frontmatter.tags));
+          boardStore.applyFrontmatterToBackedTiles(rel, fresh);
+          fileTagsStore.setFileTags(rel, normalizeTags(fresh.frontmatter.tags));
           if (editorDoc) {
             documentStore.applyReloadFromDisk(
               editorDoc.docId,
-              next.content,
+              fresh.content,
               editorDoc.richText,
-              next.frontmatter,
-              next.rawFrontmatter, // L1 (Audit-13) — refresh originalFrontmatterCache too
-              { mtimeMs: next.lastModified, size: next.rawByteSize },
+              fresh.frontmatter,
+              fresh.rawFrontmatter, // L1 (Audit-13) — refresh originalFrontmatterCache too
+              { mtimeMs: fresh.lastModified, size: fresh.rawByteSize },
             );
+          } else {
+            // Audit-17 5.6(a) — FIRST cancel any surviving GATEWAY writer armed
+            // for this path (a dirty Properties popup over this never-loaded
+            // doc): without this, re-anchoring the baseline below would let that
+            // armed write sail past the pre-write drift gate (its baseline now
+            // matches disk) and clobber the delta's FM keys with the rows the
+            // user just discarded. Mirrors the sibling Reload handlers
+            // (promptPropertiesPopupModified / promptBulkExternalChanges).
+            for (const callerId of getDirtyInstancesForPath(rel)) {
+              cancelMarkdownWrite(callerId);
+              clearPropertiesPopupDirty(callerId);
+            }
+            // Audit-16 6.3 — no open editor: applyReloadFromDisk (which
+            // re-stamps the drift baseline via its diskIdentity arg) never
+            // runs, so re-anchor the per-file baseline here (A8-M2 shape —
+            // a stale baseline makes the NEXT in-app save fire a false
+            // drift prompt) and drop any seeded-but-not-open FM cache so
+            // the next field edit re-seeds from the disk truth the user
+            // just accepted.
+            noteBaseline(rel, fresh.lastModified, fresh.rawByteSize);
+            dropStaleSeededFrontmatterCache(rel);
           }
         },
       },
@@ -592,9 +655,13 @@ export function promptMarkdownPendingWriteConflict(
 export function promptPropertiesPopupModified(
   rel: string,
   next: FileMetadata,
-  editorDoc: DocumentState,
+  // Audit-17 5.8 — nullable: the dispatcher also routes here when a Properties
+  // popup is dirty over a NEVER-loaded doc (no open editor), where `editorDoc`
+  // is null. The prompt only needs `rel` + metadata; the editor-only effects
+  // (title label, FM-cache refresh) are guarded on `editorDoc` presence.
+  editorDoc: DocumentState | null,
 ): void {
-  const filename = editorDoc.title || rel;
+  const filename = editorDoc?.title || rel;
   uiStore.pushToast({
     text: `Properties of "${filename}" were modified externally while your Properties popup has unsaved edits. Reload from disk (discard popup edits) or keep your local edits?`,
     type: 'warning',
@@ -602,23 +669,58 @@ export function promptPropertiesPopupModified(
     actions: [
       {
         label: 'Reload',
-        handler: () => {
-          // Apply external frontmatter trio. The body is unchanged
-          // (sync-frontmatter precondition), so applyReloadFromDisk is overkill —
-          // setFrontmatter (with rawFrontmatter, P2.1) refreshes the editor's FM
-          // cache AND originalFrontmatterCache (mirrors the L1/L13 sibling sites).
-          boardStore.applyFrontmatterToBackedTiles(rel, next);
-          fileTagsStore.setFileTags(rel, normalizeTags(next.frontmatter.tags));
-          documentStore.setFrontmatter(editorDoc.docId, next.frontmatter, next.rawFrontmatter);
-          // Cancel any popup gateway timer armed for this path so the
-          // user's discarded rows don't land on disk after the debounce
-          // fires. Clearing the tracker entry is also defensive — a
-          // still-open popup that hadn't yet typed further would
-          // otherwise re-block the next sync-frontmatter for this path.
+        // Audit-16 6.3 — async + click-time disk re-read, mirroring
+        // promptModifiedFile (a second external write between toast-open and
+        // the click would otherwise be reverted by the stale `next` snapshot).
+        handler: async () => {
+          // Audit-17 2.5 — re-read FIRST, destructive tail after (mirrors the
+          // `promptMarkdownPendingWriteConflict` Reload reorder; see the full
+          // rationale there). The prior 6.3 ordering cancelled the popup's
+          // armed gateway writes + cleared the dirty tracker up front, so a
+          // rejecting re-read dropped the popup's pending rows AND its
+          // conflict routing while the reload never applied.
+          //
+          // L17 (Audit-13) shape — bail if a vault swap lands during the re-read.
+          const identity = captureVaultIdentity();
+          const wasIndexed = vaultIndexStore.getMetadata(rel) !== undefined;
+          await vaultIndexStore.applyChanges([rel]);
+          if (!isStillSameVault(identity)) return;
+          // Audit-17 5.6(b) — undefined after the targeted re-read of a path
+          // that WAS indexed means applyChanges processed a DELETION (file
+          // gone). Skip the store mutations + baseline stamp; the watcher
+          // delete pipeline owns teardown. A never-indexed path (transient)
+          // keeps the documented `?? next` fallback.
+          const reread = vaultIndexStore.getMetadata(rel);
+          if (!reread && wasIndexed) return;
+          const fresh = reread ?? next;
+          // Cancel any popup gateway timer armed for this path before the
+          // applies, so a debounce armed for the popup's pre-Reload rows
+          // can't fire moments later and overwrite the just-applied external
+          // frontmatter. Clearing the tracker entry is also defensive — a
+          // still-open popup that hadn't yet typed further would otherwise
+          // re-block the next sync-frontmatter for this path.
           for (const callerId of getDirtyInstancesForPath(rel)) {
             cancelMarkdownWrite(callerId);
             clearPropertiesPopupDirty(callerId);
           }
+          // Apply external frontmatter trio. The body is unchanged
+          // (sync-frontmatter precondition), so applyReloadFromDisk is overkill —
+          // setFrontmatter (with rawFrontmatter, P2.1) refreshes the editor's FM
+          // cache AND originalFrontmatterCache (mirrors the L1/L13 sibling sites).
+          boardStore.applyFrontmatterToBackedTiles(rel, fresh);
+          fileTagsStore.setFileTags(rel, normalizeTags(fresh.frontmatter.tags));
+          // Audit-17 5.8 — guard on docId presence: with no open editor (the
+          // never-loaded-doc popup case) there is no FM cache to refresh; the
+          // tile-def + tag applies above already carry the external change.
+          if (editorDoc) {
+            documentStore.setFrontmatter(editorDoc.docId, fresh.frontmatter, fresh.rawFrontmatter);
+          }
+          // Audit-16 6.3 — setFrontmatter (unlike applyReloadFromDisk) never
+          // re-stamps the drift baseline, so re-anchor it to the accepted disk
+          // state (A8-M2 shape) and drop any seeded-but-not-open FM cache for
+          // sibling cards/rows backed by this path.
+          noteBaseline(rel, fresh.lastModified, fresh.rawByteSize);
+          dropStaleSeededFrontmatterCache(rel);
         },
       },
       {

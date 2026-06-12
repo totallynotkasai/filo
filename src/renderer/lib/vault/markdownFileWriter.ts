@@ -137,6 +137,20 @@ export interface WriteArgs {
    * open-editor-reconciled cache path).
    */
   frontmatterDelta?: FrontmatterDelta;
+  /**
+   * Audit-16 6.8 — whether `body` was sourced from a LIVE editor document at
+   * the moment the caller built these args (fire time). The delta branch uses
+   * this to pick its body source: a live body MUST win over the in-chain disk
+   * read (it carries un-debounced keystrokes — the N2 invariant), a snapshot
+   * body must LOSE to it (the watcher-index snapshot can be stale). Decided
+   * at fire time because the live documentStore can change during the
+   * per-path chain wait + IPC: a doc UNLOADING mid-write used to flip the
+   * write-time re-derivation to false and silently discard the fire-time live
+   * body (the keystrokes it carried), and a doc LOADING mid-write used to
+   * promote a stale snapshot body over fresher disk. Omitted → write-time
+   * derivation from `docId` (legacy fallback for direct callers).
+   */
+  bodyIsLive?: boolean;
 }
 
 interface FileState {
@@ -206,7 +220,13 @@ const writerScheduler = createScheduler<WriteArgs>({
 // show up in the ledger, so the probe only covers the pending-timer window.
 registerPendingProbe((path) => {
   const target = vaultPath(path);
-  return writerScheduler.hasPendingTimer((args) => vaultPath(args.relPath) === target);
+  // Audit-17 5.5 — also consult PARKED fires (in neither `pending` nor `inFlight`
+  // while draining); belt-and-suspenders here since the pending-path ledger
+  // already keeps `isPathPending` true across the park.
+  return (
+    writerScheduler.hasPendingTimer((args) => vaultPath(args.relPath) === target) ||
+    writerScheduler.hasParked((info) => info.path !== undefined && vaultPath(info.path) === target)
+  );
 });
 
 /**
@@ -261,6 +281,15 @@ const inFlightWrites = new Map<string, Promise<void>>();
  */
 // allow-module-state: drained synchronously by cancelAllMarkdownWrites at vault swap
 const writeChainByPath = new Map<VaultPath, Promise<void>>();
+
+/**
+ * Audit-17 2.1 — last write failure per callerId; `flushMarkdownWrite` hands
+ * it (e.g. ENOENT) to the flushing component, since `fireWrite` never rejects.
+ * Cleared at write START (a stale error must not be misattributed to a later
+ * timeout whose IPC is still in flight) and on vault swap.
+ */
+// allow-module-state: drained synchronously by cancelAllMarkdownWrites at vault swap
+const lastWriteFailureByCaller = new Map<string, unknown>();
 
 // ── Hydrate gate ──
 
@@ -480,8 +509,13 @@ export async function writeMarkdownFile(args: WriteArgs): Promise<void> {
     writeMarkdownFileImpl({ ...args, mutationVersionAtCapture }),
   );
   inFlightWrites.set(args.callerId, promise);
+  // Audit-17 2.1 — record this caller's outcome for `flushMarkdownWrite`.
+  lastWriteFailureByCaller.delete(args.callerId);
   try {
     await promise;
+  } catch (err) {
+    lastWriteFailureByCaller.set(args.callerId, err);
+    throw err;
   } finally {
     if (inFlightWrites.get(args.callerId) === promise) {
       inFlightWrites.delete(args.callerId);
@@ -679,10 +713,18 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
     // `fs.watch` may have left stale (it missed an external body edit). A missed
     // watcher event also left the drift baseline un-updated, so the pre-write stat
     // can't catch it and the snapshot body would silently revert the external
-    // edit — so source the fresh in-chain disk `parsedFresh.body` instead. The
-    // `getDocument(docId)` presence check mirrors PropertiesPopup's own
-    // `docState?.body ??` source decision, so the two agree on which case applies.
-    const hasLiveEditorBody = docId ? documentStore.getDocument(docId) !== undefined : false;
+    // edit — so source the fresh in-chain disk `parsedFresh.body` instead.
+    //
+    // Audit-16 6.8 — the live/snapshot decision is the CALLER's, made at FIRE
+    // time (`args.bodyIsLive`): re-deriving it here from the mutable
+    // documentStore raced doc unload/load against the per-path chain wait +
+    // IPC (an unload mid-write discarded a fire-time live body's keystrokes;
+    // a load mid-write promoted a stale fire-time snapshot over fresher
+    // disk). All four delta callers thread the flag from their own
+    // `docState?.body ??` decision; the `getDocument(docId)` derivation
+    // remains only as the legacy fallback for a direct caller that omits it.
+    const hasLiveEditorBody =
+      args.bodyIsLive ?? (docId ? documentStore.getDocument(docId) !== undefined : false);
     const deltaBody = hasLiveEditorBody ? body : parsedFresh.body;
     fileText = assembleMarkdownFile(nextFm, deltaBody, {
       // Audit-11 N3 — BOM flag from THIS in-chain read (not the pre-write
@@ -850,14 +892,23 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
   // overwrite window. See `refreshBaselineAfterWrite` for the full trade-off.
   try {
     const postStat = await invokeOk('vault:stat', vaultRoot, relPath);
-    // Audit-7 L5 — TOCTOU guard. An external edit can land between the write
-    // IPC resolving and THIS stat resolving, so `postStat` may reflect FOREIGN
-    // (mtime,size). Only stamp the baseline when the stat's size matches the
-    // bytes we just wrote; a mismatch means the stat observed someone else's
-    // write, so KEEP the prior baseline (DI-14) and let the next write's drift
-    // check re-detect + prompt rather than silently adopting the foreign size
-    // (which would make the next write match-and-clobber the external edit).
+    // Audit-7 L5 — TOCTOU guard. A foreign edit can land in the write→stat gap.
+    // Size fast-path rejects the easy mismatch (keep prior baseline, DI-14).
+    // Audit-17 5.3 — size match is necessary but NOT sufficient (a same-byte-count
+    // foreign write would be adopted as our baseline → next write clobbers it
+    // promptless), so read the bytes BACK and stamp only when disk holds EXACTLY
+    // what we wrote; on any content mismatch / unreadable read-back keep the prior
+    // baseline so the drift gate re-detects + prompts next write.
+    let confirmed = false;
     if (postStat.size === writtenByteLength) {
+      try {
+        const readBack = await invokeOk('vault:read-file-text', vaultRoot, relPath);
+        confirmed = readBack.content === fileText;
+      } catch {
+        /* transient IO — keep prior baseline (safe direction) */
+      }
+    }
+    if (confirmed) {
       refreshBaselineAfterWrite(relPath, postStat.mtimeMs, postStat.size);
     } else {
       refreshBaselineAfterWrite(relPath, undefined, undefined);
@@ -901,9 +952,16 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
   // typed again mid-write a newer timer is armed for this caller, so leave it
   // dirty (that write clears it) rather than flash a transient clean window an
   // external-edit reconciler could misread into a silent reload of the unsaved
-  // keystrokes. Cheap + side-effect-free — `scheduleMarkdownWrite` stores a
-  // stable `() => args` getter, so `hasPendingTimer` only reads the already-built args.
-  if (docId && !writerScheduler.hasPendingTimer((pendingArgs) => pendingArgs.callerId === callerId)) {
+  // keystrokes. Cheap — `hasPendingTimer` only reads the already-built args.
+  // Audit-17 5.5 — ALSO leave it dirty when a newer fire for this caller is
+  // PARKED (timer fired, draining behind this write — in neither `pending` nor
+  // `inFlight`); the scheduler keys by callerId, so `info.key === callerId` finds
+  // it. Else markClean would flash a transient clean window over unsaved keystrokes.
+  if (
+    docId &&
+    !writerScheduler.hasPendingTimer((pendingArgs) => pendingArgs.callerId === callerId) &&
+    !writerScheduler.hasParked((info) => info.key === callerId)
+  ) {
     documentStore.markClean(docId, callerId);
   }
   // Audit-11 WC-2 — deliberately NOT also gated on a pending FM write for this
@@ -925,8 +983,7 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
  *
  * Failures inside the deferred write are silenced here — `trackComponentWrite`
  * already routes them through the save-error pipeline (toast + sentinel +
- * saveStateStore). Callers that need to await failure attribution can
- * call `flushMarkdownWrite(callerId)` directly.
+ * saveStateStore); callers that need the outcome use `flushMarkdownWrite`.
  */
 export function scheduleMarkdownWrite(args: WriteArgs, delay: number = MARKDOWN_WRITE_DEBOUNCE_MS): void {
   // Args getter returns the same stable args reference — the primitive
@@ -936,22 +993,28 @@ export function scheduleMarkdownWrite(args: WriteArgs, delay: number = MARKDOWN_
   writerScheduler.schedule(args.callerId, () => args, delay);
 }
 
+/** Audit-17 2.1 — outcome of a `flushMarkdownWrite` drain. */
+export interface FlushMarkdownResult {
+  /** True when every drained write landed (or nothing was pending). */
+  ok: boolean;
+  /** On failure, the caller's last write error (undefined on a timeout race). */
+  error?: unknown;
+}
+
 /**
- * Drains `callerId`'s pending write immediately. Re-entrant — a concurrent
- * call against the same caller awaits the in-flight write rather than
- * racing it. Re-throws any IPC failure so an awaiting Ctrl+S / vault-swap
- * path can refuse to report "saved" when the write actually rejected.
+ * Drains `callerId`'s pending write immediately; re-entrant (a concurrent
+ * call awaits the in-flight write); no-op (ok: true) when nothing is armed.
  *
- * No-op when no schedule is armed and no write is in flight.
+ * Audit-17 2.1 — `fireWrite` never rejects, so this CANNOT throw on a failed
+ * write (the old "re-throws any IPC failure" docstring was false — the
+ * component catch blocks were dead code; a failed flush reported success).
+ * Returns `{ ok, error }` so callers branch honestly; user-facing attribution
+ * rides `trackComponentWrite` / `markPathFailed`.
  */
-export async function flushMarkdownWrite(callerId: string): Promise<void> {
-  // The primitive's `flush(key)` drains the pending timer, awaits any
-  // in-flight write, and surfaces the per-write outcome via `ok`. We
-  // intentionally drop the boolean here — every error path inside
-  // `writeMarkdownFile` already routes through `trackComponentWrite` /
-  // `notifyWriteError`, so awaiting callers only need the "the write
-  // landed (or failed visibly)" signal that `await flush` provides.
-  await writerScheduler.flush(callerId);
+export async function flushMarkdownWrite(callerId: string): Promise<FlushMarkdownResult> {
+  const { ok } = await writerScheduler.flush(callerId);
+  if (ok) return { ok: true };
+  return { ok: false, error: lastWriteFailureByCaller.get(callerId) };
 }
 
 /**
@@ -1139,6 +1202,8 @@ export function cancelAllMarkdownWrites(): void {
   // first write to a same-named path doesn't chain behind an outgoing-vault
   // write that's still settling.
   writeChainByPath.clear();
+  // Audit-17 2.1 — an outgoing vault's flush error must not leak into the new vault.
+  lastWriteFailureByCaller.clear();
 }
 
 // ── Keep-local force-write API ──

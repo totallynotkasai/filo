@@ -3,6 +3,7 @@
  */
 import { SvelteMap } from 'svelte/reactivity';
 import { onVaultSwap } from '../core/vaultLifecycle';
+import { reportError } from '../lib/utils/errorBus';
 
 // ── Sidebar ──
 let sidebarOpen = $state(true);
@@ -424,15 +425,21 @@ export const uiStore = {
     if (!toast) return;
     const action = toast.actions?.[actionIndex];
     if (action) {
+      // Audit-17 2.5 — route failures through the errorBus (→ aggregated
+      // toast) instead of a console-only swallow. Toast actions are exactly
+      // the destructive user decisions (Reload, Apply anyway, Keep local)
+      // whose silent failure trains the user to believe the action took
+      // effect; the toast itself is already dismissed by then, so the
+      // errorBus surface is the only honest signal left.
+      const surface = (err: unknown): void =>
+        reportError('toast.action', err, `Toast action "${action.label}" failed.`);
       try {
         const result = action.handler();
-        // Catch the rejection of async handlers so the user sees the failure
-        // in the dev console (and the unhandled-rejection logger doesn't fire).
         if (result && typeof (result as Promise<void>).then === 'function') {
-          (result as Promise<void>).catch((err) => console.error('[Toast] Action failed:', err));
+          (result as Promise<void>).catch(surface);
         }
       } catch (err) {
-        console.error('[Toast] Action failed:', err);
+        surface(err);
       }
     }
     this.dismissToast(id, { silent: true });

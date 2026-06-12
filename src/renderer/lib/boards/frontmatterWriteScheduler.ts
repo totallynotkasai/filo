@@ -389,6 +389,12 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
       // time, when the body/FM were read), so the gateway's flushed-version
       // bump can't mark a mid-IPC mutation as flushed.
       mutationVersionAtCapture: docId ? scheduledVersion : undefined,
+      // Audit-16 6.8 — fire-time body-source decision: `body` above came from
+      // the live docState exactly when one resolved (the 1.2 read-only force
+      // to the disk branch correctly reads as NOT live). The gateway must not
+      // re-derive this from the mutable documentStore at write time — a doc
+      // unload during the per-path chain wait would discard the live body.
+      bodyIsLive: docState !== undefined,
     });
     // Phase 4 — the delta landed on disk; drop it from the accumulator, UNLESS a
     // newer edit folded in since we peeked (ref-identity: a fresh schedule

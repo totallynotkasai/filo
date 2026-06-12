@@ -263,15 +263,21 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     // the await). The chain reports its own errors; swallow here on this
     // fire-and-forget UI path.
     const insertPos = endOfSectionIndex(targetSectionId);
-    await historyStore
+    // Audit-16 6.2 — gate the success announcement on the chain resolving.
+    // Pre-fix the `.catch(() => {})` swallow announced "Task added" even when
+    // the seed write failed and execute() rolled the placement back. The
+    // failure announcement gives SR users parity with the visual error toast
+    // the seed's trackComponentWrite pipeline already raised.
+    const ok = await historyStore
       .execute(
         new AddTaskCommand(board.id, def, insertPos, undefined, targetSectionId ?? undefined, () =>
           seedMdFile({ contentId, relPath, finalTitle, fm: null }, 'new task'),
         ),
       )
-      .catch(() => {});
+      .then(() => true, () => false);
     tickAndPersist();
-    announce(`Task added: ${finalTitle}`);
+    if (ok) announce(`Task added: ${finalTitle}`);
+    else announce(`Adding task failed: ${finalTitle} — see the error notification`);
   }
 
   async function addTaskToSection(sectionId: string | null): Promise<void> {
@@ -355,16 +361,18 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
       }
     }
 
-    await historyStore
+    // Audit-16 6.2 — success announcement gated on the chain resolving (see addTask).
+    const ok = await historyStore
       .execute(
         new AddTaskCommand(board.id, def, insertPos, undefined, resolvedTargetId ?? undefined, () =>
           seedMdFile({ contentId, relPath, finalTitle, fm },'quick-add task'),
         ),
       )
-      .catch(() => {});
+      .then(() => true, () => false);
     tickAndPersist();
     if (resolvedTargetId) setLastTargetedSectionId(resolvedTargetId);
-    announce(`Task added from quick add: ${finalTitle}`);
+    if (ok) announce(`Task added from quick add: ${finalTitle}`);
+    else announce(`Adding task failed: ${finalTitle} — see the error notification`);
   }
 
   async function addSubtaskFor(parentTileId: string): Promise<void> {
@@ -399,13 +407,14 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     const parentIdx = placementsNow.findIndex((p) => p.tileId === parentTileId);
     const insertAt = parentIdx >= 0 ? parentIdx + 1 : placementsNow.length;
     const parentSection = parentIdx >= 0 ? sectionIdForPlacementIndex(sectionsNow, parentIdx) : null;
-    await historyStore
+    // Audit-16 6.2 — success announcement gated on the chain resolving (see addTask).
+    const ok = await historyStore
       .execute(
         new AddTaskCommand(board.id, def, insertAt, undefined, parentSection ?? undefined, () =>
           seedMdFile({ contentId, relPath, finalTitle, fm },'subtask'),
         ),
       )
-      .catch(() => {});
+      .then(() => true, () => false);
 
     if (collapsedSubtasks.has(parentTileId)) {
       const next = new Set(collapsedSubtasks);
@@ -416,7 +425,8 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     if (parentSection) setLastTargetedSectionId(parentSection);
 
     tickAndPersist();
-    announce(`Subtask added: ${finalTitle}`);
+    if (ok) announce(`Subtask added: ${finalTitle}`);
+    else announce(`Adding subtask failed: ${finalTitle} — see the error notification`);
   }
 
   return {

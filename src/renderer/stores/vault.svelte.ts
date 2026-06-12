@@ -145,34 +145,24 @@ let recoveryPendingPaths = $state<string[]>([]);
 
 /**
  * Phase 3 / 3.3 — pending resolver for the recovery-files modal. Set when the
- * recovery sequencer opens the modal; resolved by `acknowledgeRecovery()` (the
- * only "user confirmed" exit) so the sequencer can advance to the next pending
- * sentinel without stacking modals on top of each other. Cleared when consumed.
- *
- * D.9 — paired with the vault path captured at resolver-creation time so the
- * sequencer can verify it's still operating on the same vault before
- * running any side effects after the modal closes. A vault swap during the
- * modal's lifetime previously left the sequencer running against the
- * outgoing vault's `newVaultPath` capture, scheduling further sentinel
- * checks / toasts that no longer applied to anything the user could see.
+ * recovery sequencer opens the modal; resolved by `acknowledgeRecovery()` so
+ * the sequencer can advance without stacking modals. Cleared when consumed.
+ * D.9 — carries the vault path captured at creation so the sequencer can
+ * detect a swap during the modal's lifetime before running side effects.
  */
 let recoveryDismissedResolver: { resolve: () => void; vaultPath: string } | null = null;
 
 /**
- * Promisifies the recovery-files modal close. Routes through the existing
- * `acknowledgeRecovery` dismiss path; the returned promise resolves when the
- * user clicks Dismiss (which clears the `.filo/.dirty` sentinel). Esc / X /
- * backdrop closes do NOT resolve this — those leave the sentinel intact for
- * the next launch by design.
+ * Promisifies the recovery-files modal close; resolves via
+ * `acknowledgeRecovery`. Audit-17 3.3 — EVERY close path acknowledges now
+ * (Dismiss directly; Esc / X / backdrop via the Modal `beforeClose` hook in
+ * AppShell), so a bypassed close can no longer park the sequencer forever
+ * with steps 2–4 silently skipped.
  *
- * D.4 — a second `openVault()` while a previous recovery modal was still
- * parked would orphan the prior resolver (its sequencer chain hangs
- * forever). Resolve the stale resolver before overwriting; downstream
- * guarded steps no-op since the vault path has already swapped.
- *
- * D.9 — capture `vaultPath` at resolver creation so the sequencer (which
- * may run further side effects after the await) can detect a vault swap
- * during the modal's lifetime.
+ * D.4 — a second `openVault()` while a previous modal was still parked would
+ * orphan the prior resolver (its sequencer chain hangs forever). Resolve the
+ * stale resolver before overwriting; downstream guarded steps no-op since
+ * the vault has already swapped.
  */
 function awaitRecoveryDismiss(): Promise<void> {
   const stale = recoveryDismissedResolver;
@@ -185,16 +175,11 @@ function awaitRecoveryDismiss(): Promise<void> {
 }
 
 /**
- * Phase 3 / 3.3 — promisifies `uiStore.openConfirm`. Resolves true on the
- * Confirm button, false on Cancel. The original `onConfirm`/`onCancel`
- * callbacks still fire, so existing per-action side effects stay intact.
- *
- * 6.2.H2 — `onConfirm` / `onCancel` may now return a Promise; the wrapper
- * `await`s them before resolving the outer promise. Without this, a
- * `void convergeForward()` inside the handler fired-and-forgot, and the
- * sequencer's next `await awaitConfirm(...)` step could start mid-flight
- * — two recoveries mutating `boardCacheStore.cache` / `flushAllDirty`
- * concurrently against the same vault.
+ * Phase 3 / 3.3 — promisifies `uiStore.openConfirm` (true on Confirm, false
+ * on Cancel); the original callbacks still fire. 6.2.H2 — `onConfirm` /
+ * `onCancel` may return a Promise and are AWAITED before the outer promise
+ * resolves, so the sequencer's next step can't start mid-flight (two
+ * recoveries mutating the board cache / flushAllDirty concurrently).
  */
 function awaitConfirm(config: {
   title: string;
@@ -502,30 +487,23 @@ function runPostCommitTasks(
 
   // ── 2. Vault-index rebuild + tags self-seed / orphan prune ───────
   void vaultIndexStore.rebuild(fileTree).then(async () => {
-    // Audit2 5.3 — reconcile every board's cached tile metadata against
-    // the canonical frontmatter we just rebuilt the index from. The
-    // live event path (vaultExternalChanges) already runs this for each
-    // mid-session edit, but the on-load drift between `.board.json`
-    // (cached completed / priority / date) and the backing `.md`
-    // frontmatter was only ever reconciled when something touched the
-    // file afterwards. Renders read frontmatter directly so the bug
-    // never surfaces visually (the cache is invisible), but the on-disk
-    // cache stays stale until a board write rewrites it — which means
-    // any consumer that DOES read the cache (a downstream agent / a
-    // future migration / a third-party tool) sees out-of-date values.
-    // Walking the index once at open closes the drift in O(P × M × T)
-    // where each inner check short-circuits on `tileBacksMarkdownPath`,
-    // so the practical cost is tile count × backed-tile lookups.
+    // Audit2 5.3 — reconcile every board's cached tile metadata against the
+    // canonical frontmatter the index was just rebuilt from. The live event
+    // path (vaultExternalChanges) covers mid-session edits, but on-load drift
+    // between `.board.json` cached fields (completed / priority / date) and
+    // the backing `.md` frontmatter used to persist until something touched
+    // the file. Renders read frontmatter directly so it never surfaced
+    // visually, but any consumer that DOES read the cache (a migration / a
+    // third-party tool) saw stale values. One walk at open closes the drift;
+    // each inner check short-circuits on `tileBacksMarkdownPath`.
     //
-    // 6.2.H9 — route through the BATCHED variant: one setCache identity
-    // flip at the end (not one per md), no `updatedAt` stamp on
-    // reconcile-driven patches (it's not a user edit), microtask yields
-    // every 50 mds, and a mtime gate that skips mds we already
-    // reconciled against this exact disk state.
+    // 6.2.H9 — BATCHED variant: one terminal setCache identity flip, no
+    // `updatedAt` stamp on reconcile-driven patches, microtask yields every
+    // 50 mds, and an mtime gate that skips already-reconciled mds.
     // M6 (Audit-12) — thread the captured identity INTO the batch so it bails
-    // before its own terminal setCache if a swap lands mid-reconcile. The
-    // line-523 guard below is one statement too late: the batch's setCache fires
-    // INSIDE the await above, before control returns here.
+    // before its own terminal setCache if a swap lands mid-reconcile (the
+    // post-await guard below is one statement too late: the batch's setCache
+    // fires INSIDE the await).
     await boardCacheStore.applyFrontmatterToBackedTilesBatch(
       vaultIndexStore.allMetadata(),
       identity,
@@ -581,10 +559,32 @@ function runPostCommitTasks(
       mutated = true;
     }
     if (mutated) fileTagsStore.setAll(seed);
+  }).catch((err) => {
+    // Audit-17 2.7 — `rebuild()` can't reject (internally caught); backstop a
+    // programming error in the follow-up above (matches the vault:watch catch).
+    reportError(
+      'vault.postCommit',
+      err,
+      'Post-open housekeeping failed (frontmatter reconcile / tag seeding). Reopen the vault to retry.',
+    );
   });
 
   // ── 3. Recovery sentinel sequencer ───────────────────────────────
   void runRecoverySequencer(newVaultPath);
+}
+
+/**
+ * Audit-17 3.1 — best-effort registry release after a failed open with NO
+ * outgoing vault to revert to. init-config arms the registry before later
+ * candidate reads can throw; left armed, every OTHER vault fails the
+ * "different vault already active" guard until restart.
+ */
+async function releaseRegistryBestEffort(): Promise<void> {
+  try {
+    await window.filo.invoke('vault:close');
+  } catch {
+    // Best-effort — the home screen is the safe fallback either way.
+  }
 }
 
 /**
@@ -1201,6 +1201,10 @@ export const vaultStore = {
         // it rather than strand the user on a stale, empty half-open vault.
         if (outgoingVaultPath) {
           await revertToOutgoingVault(outgoingVaultPath, this);
+        } else {
+          // Audit-17 3.1 — first open: init-config may have left the registry
+          // armed at the failed path, locking out every OTHER vault.
+          await releaseRegistryBestEffort();
         }
         return false;
       }
@@ -1317,6 +1321,10 @@ export const vaultStore = {
       return this.openVault(newVaultPath);
     } catch (err) {
       reportError('vault', err, 'Failed to create vault');
+      // Audit-17 3.1 — the pre-openVault init-config above may have armed the
+      // registry before `config:save` failed. Only release when no vault is
+      // open — never yank a live vault's registry out from under it.
+      if (!currentProject) await releaseRegistryBestEffort();
       return false;
     }
   },
@@ -1342,20 +1350,12 @@ export const vaultStore = {
    * that references them.
    */
   async save(): Promise<boolean> {
-    // Phase 7 (IMPLEMENTATION_PLAN_2026-05-27) — flush-and-quit path.
-    // Previously this short-circuited `if (!currentProject) return false`,
-    // which meant a quit fired while the home screen was showing skipped
-    // every pending debounced write (markdown bodies, frontmatter, board
-    // JSON, .filo/ config). In practice this is rare — closing a vault
-    // drains writes first — but a quit triggered during the close
-    // transition (or after a partial close failure) could race the
-    // currentProject reset with the flush.
-    //
-    // Run all flushers unconditionally. When there's nothing to flush
-    // each scheduler returns `{ failed: [] }` and the boolean is `true`
-    // (vacuously safe). When `currentProject` is null but a writer still
-    // has pending state, the flush completes against the prior vault root
-    // those writers were registered with, so data is preserved.
+    // Phase 7 (IMPLEMENTATION_PLAN_2026-05-27) — flush-and-quit path: run all
+    // flushers unconditionally (no `!currentProject` short-circuit, which let
+    // a quit during the close transition skip every pending debounced write).
+    // With nothing to flush each scheduler returns `{ failed: [] }`
+    // (vacuously true); with a null currentProject the flush still lands
+    // against the prior vault root the writers were registered with.
     //
     // Audit-14 1.8 — if a vault swap is mid-flight (the registry-null window
     // between `vault:close` and `commitVaultCandidate`), defer the drain until

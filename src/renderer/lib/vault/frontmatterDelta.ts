@@ -152,6 +152,12 @@ export function mergeFrontmatterDelta(a: FrontmatterDelta, b: FrontmatterDelta):
  */
 function valuesShallowEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
+  // 5.1 (Audit-17) — `NaN !== NaN`, but two `.nan` values are the same data;
+  // treat them equal so a `.nan` key isn't spuriously diffed as changed on every
+  // unrelated popup edit (mirrors `valuesEqual` in frontmatterEngine.ts).
+  if (typeof a === 'number' && typeof b === 'number' && Number.isNaN(a) && Number.isNaN(b)) {
+    return true;
+  }
   if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;
   if (Array.isArray(a) || Array.isArray(b)) {
     if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;

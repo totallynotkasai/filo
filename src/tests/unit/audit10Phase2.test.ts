@@ -44,7 +44,17 @@ function lastWrite(captured: Captured[]): string | undefined {
 }
 
 function readCount(captured: Captured[]): number {
-  return captured.filter((c) => c.channel === 'vault:read-file-text').length;
+  // Audit-17 5.3 — count only PRE-write reads (the H2 cache-empty seed re-read
+  // these assertions pin). The gateway now also reads the file BACK after a
+  // clean self-write to content-verify the drift baseline (5.3); that post-write
+  // read is not the "cache-empty re-read" and must not skew the count.
+  const writeIdx = captured.findIndex((c) => c.channel === 'vault:write-existing-file-text');
+  const upto = writeIdx === -1 ? captured.length : writeIdx;
+  let n = 0;
+  for (let i = 0; i < upto; i++) {
+    if (captured[i].channel === 'vault:read-file-text') n++;
+  }
+  return n;
 }
 
 describe('Audit-10 H2 — body-only save with an empty FM cache re-reads disk', () => {

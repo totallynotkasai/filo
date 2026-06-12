@@ -329,12 +329,11 @@ export class FileWatcher {
 
   /**
    * Phase 3 / 3.2 — test-only access to the granular path classifier.
-   * The walker normally skips `.filo/` entirely, so the only production
-   * path for `config-tags` / `config-theme` / `config-template`
-   * classifications is the live `fs.watch` callback. That makes the
-   * classifier hard to exercise deterministically in unit tests; this
-   * public method gives the suite a direct probe without weakening the
-   * encapsulation in production code.
+   * The live `fs.watch` callback (non-deterministic in unit tests) and —
+   * since Audit-16 6.4 — the reconcile walk's `walkFiloConfig` carve-out
+   * both produce `config-tags` / `config-theme` / `config-template`
+   * classifications in production; this public method remains as a direct
+   * deterministic probe without weakening the encapsulation.
    */
   classifyForTests(relativePath: string): FileChangeType {
     return classifyChange(relativePath);
@@ -645,7 +644,41 @@ export class FileWatcher {
       return null;
     }
     await this.walkDir(this.vaultPath, out);
+    await this.walkFiloConfig(out);
     return out;
+  }
+
+  /**
+   * Audit-16 6.4 — the main walk skips `.filo/` wholesale (cache / recovery /
+   * viewports rewrite constantly and would synthesise noise), which left the
+   * renderer-RECONCILED config files invisible to reconciliation: while the
+   * live `fs.watch` handle was down (`reconnecting`), an external edit to
+   * tags.json / a theme / a template produced no event, and nothing replayed
+   * it after the handle came back — yet the reconcile walk is exactly the
+   * mechanism that covers live-handle downtime for every other file class.
+   * Stat JUST the `.filo` paths `classifyChange` maps to a granular
+   * `config-*` type, so the periodic walk (which keeps running through
+   * `reconnecting`) synthesises the same `config-tags` / `config-theme` /
+   * `config-template` events the live watcher would have fired. Self-write
+   * echoes follow the identical renderer path the live watcher's `.filo`
+   * events already take (the granular reconcilers are echo-tolerant).
+   */
+  private async walkFiloConfig(out: Map<string, ReconcileEntry>): Promise<void> {
+    const tagsRel = '.filo/tags.json';
+    try {
+      const stat = await fsPromises.stat(join(this.vaultPath, tagsRel));
+      if (stat.isFile()) {
+        out.set(tagsRel, { mtimeMs: stat.mtimeMs, size: stat.size, hash: undefined });
+      }
+    } catch {
+      // No tags.json yet (fresh vault) — nothing to track.
+    }
+    for (const sub of ['themes', 'templates'] as const) {
+      // walkDir's `.filo`-skip only fires at the vault ROOT, so walking the
+      // subdirectory directly reuses the EACCES/ENOENT-tolerant walk + the
+      // `.tmp`/`.bak` filter; entries land as `.filo/<sub>/…` rel paths.
+      await this.walkDir(join(this.vaultPath, '.filo', sub), out);
+    }
   }
 
   private async walkDir(dir: string, out: Map<string, ReconcileEntry>): Promise<void> {
@@ -663,9 +696,12 @@ export class FileWatcher {
     for (const entry of entries) {
       if (entry.name.startsWith('.git')) continue;
       if (entry.name === '.filo' && dir === this.vaultPath) {
-        // .filo is owned by Filo; skip the whole subtree from the
-        // reconciliation pass. Cache, recovery, viewports rewrite often
+        // .filo is owned by Filo; skip the whole subtree from the main
+        // reconciliation walk. Cache, recovery, viewports rewrite often
         // and would produce constant synthesised events for no benefit.
+        // Audit-16 6.4 — the renderer-reconciled config files (tags.json,
+        // themes/, templates/) are re-added by walkFiloConfig() so external
+        // edits to them survive live-watcher downtime like everything else.
         continue;
       }
       if (entry.name.endsWith('.tmp') || entry.name.endsWith('.bak')) continue;

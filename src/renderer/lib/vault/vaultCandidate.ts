@@ -60,6 +60,7 @@ import type { TagsFile } from '../../schema/tagsFile';
 import { loadTagsFile } from './tagsStorage';
 import { normalizePath, toPosix } from '../utils/path';
 import { noteBaseline } from './fileBaselineRegistry';
+import { stashRecoveryStatusBeforeCommit } from './dirtyFlagRecovery';
 
 /**
  * Toast specs buffered during load and drained during commit. Keeping
@@ -187,6 +188,16 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
   const corruptionTargets: CorruptionTarget[] = [];
 
   await invokeOk('vault:init-config', newVaultPath);
+
+  // Audit-17 3.2 — read + stash the prior session's `.filo/.dirty` payload
+  // BEFORE the commit can schedule any write. Open-time repair writes
+  // (loader-repaired boards marked dirty at commit) REPLACE the on-disk
+  // sentinel with this session's pending set, destroying a genuine
+  // prior-crash breadcrumb before the recovery sequencer reads it; the
+  // sequencer's `checkRecovery` consumes this stash instead. Must run after
+  // `vault:init-config` (the read IPC is gated on the armed registry).
+  // Never throws — read failures stash the `sentinel-unreadable` status.
+  await stashRecoveryStatusBeforeCommit(newVaultPath);
 
   // ── 1. Read & classify `.filo/*.json` configs ────────────────────
   // Audit-7 L3 — a transient whole-folder read failure (OneDrive/AV lock at

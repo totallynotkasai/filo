@@ -700,7 +700,22 @@
   {/if}
 
   {#if uiStore.isModalOpen('recovery-files')}
-    <Modal id="recovery-files" title="Recovered from unflushed changes" width="520px">
+    <!-- Audit-17 3.3 — dismiss-is-acknowledge: Esc / X / backdrop must resolve
+         the same gate as the Dismiss button. The recovery sequencer parks on
+         `awaitRecoveryDismiss()` until `acknowledgeRecovery()` runs; a bypassed
+         close left it parked forever, so steps 2–4 (tag-rewrite Resume/Discard,
+         rename-cascade retry, snapshot listing) never ran that session. The
+         old "sentinel survives for next launch" rationale was false anyway —
+         the session's first write replaces it (Audit-17 3.2). -->
+    <Modal
+      id="recovery-files"
+      title="Recovered from unflushed changes"
+      width="520px"
+      beforeClose={async () => {
+        await vaultStore.acknowledgeRecovery();
+        return true;
+      }}
+    >
       <RecoveryFilesModal />
     </Modal>
   {/if}

@@ -1,38 +1,29 @@
 /**
  * writeScheduler — unified primitive for debounced disk-write pipelines.
  *
- * Five legacy scheduler modules (board / markdown / frontmatter / config /
- * misc) each reimplemented the same shape: pending Map + in-flight Map +
- * failure Set + timer cancellation + begin/endWrite integration. Two of
- * those reimplementations dropped in-flight failure attribution and
- * silently reported "saved" while writes were rejecting — markdownFileWriter
- * never populated its `inFlightFailures` Set, and configWriteScheduler
- * had no in-flight map at all so `flushScheduledConfig` returned `null`
- * the moment the timer fired even if the IPC was still pending.
- *
- * `createScheduler(opts)` owns the shared bookkeeping; each consumer
- * supplies `performWrite`, a sentinel-info mapper, and the small handful
- * of policy hooks (skip-write, failure-id, rename-mid-debounce).
+ * Five legacy scheduler modules (board / markdown / frontmatter / config / misc)
+ * each reimplemented the same shape (pending + in-flight Maps, failure Set, timer
+ * cancellation, begin/endWrite). Two dropped in-flight failure attribution and
+ * silently reported "saved" while writes rejected (markdownFileWriter never
+ * populated its failures Set; configWriteScheduler had no in-flight map, so
+ * `flushScheduledConfig` returned `null` the moment the timer fired).
+ * `createScheduler(opts)` owns the shared bookkeeping; each consumer supplies
+ * `performWrite`, a sentinel-info mapper, and a few policy hooks.
  *
  * Contract:
- *  - One `beginWrite` per `schedule()` call (the debounce window covers
- *    sentinel state from arming to disk landing).
- *  - One matching `endWrite` per write outcome: timer-fire success/failure,
- *    flush success/failure, missing-source, skipped, or single-key cancel.
- *  - `cancelAll()` is the vault-swap exception — pairs are NOT closed
- *    because `resetWriteTracking` resets the counter; this matches the
- *    legacy schedulers' deferred-cleanup contract.
- *  - `reset()` clears in-flight tracker entries so a late `.then`/`.catch`
- *    against the OUTGOING vault doesn't mutate the new vault's tracking.
- *    A `trackerIsCurrent` guard inside `fireWrite` covers that race.
+ *  - One `beginWrite` per `schedule()` (the debounce window covers sentinel state
+ *    from arming to disk landing); one matching `endWrite` per outcome (timer-fire
+ *    success/failure, flush, missing-source, skipped, single-key cancel).
+ *  - `cancelAll()` is the vault-swap exception — pairs are NOT closed because
+ *    `resetWriteTracking` resets the counter (legacy deferred-cleanup contract).
+ *  - `reset()` clears in-flight trackers so a late `.then`/`.catch` against the
+ *    OUTGOING vault can't mutate the new one (the `trackerIsCurrent` guard in
+ *    `fireWrite` also covers that race).
  *
- * Failure attribution model:
- *  - `performWrite` either resolves (success), resolves with
- *    `{ failed: [...] }` (per-target partial failure — used by
- *    config bundle), or throws (whole-write failure → single failureId).
- *  - The scheduler aggregates failures into a shared Set, then drains
- *    them per-key from `flush()` / `flushAll()` so callers attribute
- *    failures honestly to the Ctrl+S aggregate boolean.
+ * Failure attribution: `performWrite` resolves (success), resolves `{ failed }`
+ * (per-target partial failure — config bundle), or throws (whole-write → one
+ * failureId). Failures aggregate into a shared Set, drained per-key by
+ * `flush()` / `flushAll()` so the Ctrl+S aggregate boolean stays honest.
  */
 
 import {
@@ -96,20 +87,17 @@ export function createScheduler<TArgs>(
   const inFlight = new Map<string, Set<InFlightEntry>>();
   /**
    * Audit-14 1.1 — PARKED fires. A debounce timer firing for a key with a write
-   * already in flight DEFERS the new write behind `drainPriorInFlight(key)` so
-   * the newest lands LAST (Audit-13 H1). During that await the write is in
-   * NEITHER `pending` (timer deleted it) NOR `inFlight` (`fireWrite` hasn't run)
-   * — and `flush`/`flushAll` snapshot both maps once, so a flush in that gap
-   * could resolve while the newest edit hadn't landed (recovery-caught, but a
-   * dropped edit on a hard-quit race). Each parked fire registers a promise here
-   * before the await and resolves it once `fireFromTimer` has registered the
-   * `inFlight` entry (or no-op'd), so the write is never in none of {pending,
-   * parked, inFlight}. `flush`/`flushAll` await these then re-drain the fresh
-   * `inFlight` entries. A Set per key tracks two parked fires for one key.
-   *
-   * Audit-16 4.4 — entries are {@link ParkedEntry} objects (not bare
-   * promises) carrying the schedule-time sentinel info + a `cancelled` flag,
-   * so `cancel(key)` can reach a parked fire (see `cancel` below).
+   * already in flight DEFERS the new write behind `drainPriorInFlight(key)` so the
+   * newest lands LAST (Audit-13 H1). During that await it is in NEITHER `pending`
+   * (timer deleted it) NOR `inFlight` (`fireWrite` hasn't run); `flush`/`flushAll`
+   * snapshot both maps once, so a flush in that gap could resolve before the newest
+   * edit landed. Each parked fire registers a promise here BEFORE the await and
+   * resolves it once `fireFromTimer` registered the `inFlight` entry (or no-op'd),
+   * so it's never in none of {pending, parked, inFlight}; `flush`/`flushAll` await
+   * these then re-drain. A Set per key tracks two parked fires for one key.
+   * Audit-16 4.4 — entries are {@link ParkedEntry} objects carrying the
+   * schedule-time sentinel info + a `cancelled` flag, so `cancel(key)` can reach
+   * a parked fire (see `cancel` below).
    */
   const parked = new Map<string, Set<ParkedEntry>>();
 
@@ -132,21 +120,18 @@ export function createScheduler<TArgs>(
     return false;
   };
   /**
-   * Per-failure-id Set populated by `fireWrite` on rejection / partial
-   * failure. `flush(key)` and `flushAll()` consume entries that match the
-   * in-flight failureId(s) they awaited, so the attribution stays scoped
-   * to writes the caller actually waited on (not unrelated failures from
-   * earlier fire-and-forget timer fires).
+   * Per-failure-id Set populated by `fireWrite` on rejection / partial failure.
+   * `flush(key)` / `flushAll()` consume entries matching the in-flight failureId(s)
+   * they awaited, so attribution stays scoped to writes the caller waited on (not
+   * unrelated failures from earlier fire-and-forget timer fires).
    */
   const failures = new Set<string>();
   /**
    * Audit-16 4.7 — failure ids recorded per KEY by past failed fires. A
-   * partial-failure writer (the config bundle) attributes PER-TARGET ids
-   * (`app.json`, …) that differ from the key's primary failureId; the
-   * success-path prune used to delete only the primary id, so fire-and-forget
-   * partial failures leaked in `failures` until reset() — memory-only growth
-   * plus a latent mis-attribution hazard for a later flush of the same key.
-   * Each failed fire records its id list under its key; the key's next
+   * partial-failure writer (config bundle) attributes PER-TARGET ids that differ
+   * from the key's primary failureId; the success-path prune deleted only the
+   * primary, so fire-and-forget partial failures leaked in `failures` until
+   * reset(). Each failed fire records its id list under its key; the key's next
    * SUCCESS prunes exactly those ids. Cleared on reset().
    */
   const failureIdsByKey = new Map<string, Set<string>>();
@@ -954,6 +939,20 @@ export function createScheduler<TArgs>(
     return false;
   }
 
+  // Audit-17 5.5 — true when a non-cancelled PARKED fire matches `predicate` (a
+  // fire deferred behind drainPriorInFlight, in neither `pending` nor `inFlight`).
+  // SEPARATE from `hasPendingTimer` (P2.5 armed-timer-only); probes that must not
+  // report idle/clean over a newer parked write OR the two. Parked entries carry
+  // no args → the predicate sees the schedule-time `{ key, path }`.
+  function hasParked(predicate: (info: { key: string; path: string | undefined }) => boolean): boolean {
+    for (const [key, set] of parked.entries()) {
+      for (const entry of set) {
+        if (!entry.cancelled && predicate({ key, path: entry.path })) return true;
+      }
+    }
+    return false;
+  }
+
   function __failuresSizeForTests(): number {
     return failures.size;
   }
@@ -992,6 +991,7 @@ export function createScheduler<TArgs>(
     flushAll,
     reset,
     hasPendingTimer,
+    hasParked,
     __failuresSizeForTests,
     __writeGenSizeForTests,
     __parkForTests,

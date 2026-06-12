@@ -109,8 +109,21 @@ export class PendingWritesFailedError extends Error {
  * new vault's disk-shape op would run WITHOUT draining the new vault's
  * writers. Scoping to the generation means a call only counts as re-entrant
  * when it shares the generation of the in-flight drain.
+ *
+ * Audit-17 3.4 — `drainPromise` distinguishes a genuinely NESTED call (op()
+ * invoking a convenience helper — runs only after the drain settled) from a
+ * CONCURRENT sibling that arrives while the drain is still in flight (e.g. a
+ * watcher-driven `handleExternalRename` landing while a user-initiated delete
+ * is parked behind a board drift prompt for up to ~60 s). Both used to take
+ * the bare `return op()` short-circuit, so the sibling's disk-shape op ran
+ * with NO drain at all. Siblings now await the in-flight drain: it resolves
+ * `true` on success (proceed with the op — the writers are drained), `false`
+ * on failure (fall back to a fresh `withDrainedWrites` pass that runs its own
+ * drain and surfaces its own failure). A nested call sees an already-resolved
+ * `true` and proceeds immediately — identical to the old short-circuit.
  */
 let drainingGeneration: number | null = null;
+let drainPromise: Promise<boolean> | null = null;
 
 function summariseFailedPaths(results: PendingWritesFailedDetail): string[] {
   const out: string[] = [];
@@ -136,16 +149,30 @@ function summariseFailedPaths(results: PendingWritesFailedDetail): string[] {
  */
 export async function withDrainedWrites<T>(op: () => Promise<T>): Promise<T> {
   const generation = currentVaultGeneration();
-  if (drainingGeneration === generation) {
-    // Already inside an outer drain for THIS vault generation — re-entrant
-    // call short-circuits its own drain and just runs the op. Without this
-    // guard, every complex sequence (e.g. delete-with-snapshots calling
-    // deleteVaultPath) would pay an unnecessary second drain on every IPC
-    // helper invocation. A different generation (vault swapped mid-drain)
-    // falls through and drains the new vault's writers properly.
-    return op();
+  if (drainingGeneration === generation && drainPromise) {
+    // Already covered by an outer drain for THIS vault generation. Two cases:
+    //  - NESTED call (op() invoking a convenience helper): the outer drain has
+    //    already settled successfully (op only runs post-drain), so the await
+    //    below resolves `true` immediately and we just run the op — the old
+    //    short-circuit, with no second drain cost.
+    //  - CONCURRENT sibling (Audit-17 3.4): the outer drain is still in
+    //    flight (possibly parked behind an interactive drift prompt). Await it
+    //    rather than running the op un-drained. On drain success the writers
+    //    are quiescent for this generation, so the sibling op proceeds; on
+    //    drain failure, re-enter so the sibling runs (and surfaces) its OWN
+    //    drain — by then the failed pass has cleared the guard, and the
+    //    recursion also re-captures the generation in case a vault swap
+    //    landed while we were parked.
+    const outerDrainSucceeded = await drainPromise;
+    if (outerDrainSucceeded) return op();
+    return withDrainedWrites(op);
   }
   drainingGeneration = generation;
+  // Audit-17 3.4 — settled `true` once every writer pipeline drained clean
+  // (before op runs), `false` if the drain failed. Never rejects, so a parked
+  // sibling can't crash on an error that the outer call already surfaced.
+  let settleDrain: (ok: boolean) => void = () => {};
+  drainPromise = new Promise<boolean>((resolve) => { settleDrain = resolve; });
   try {
     // 6.4.M1 — misc + config schedulers must drain alongside md/fm/board.
     // Without them, a debounced sidebar-order / viewports / tags.json /
@@ -193,12 +220,23 @@ export async function withDrainedWrites<T>(op: () => Promise<T>): Promise<T> {
       throw new PendingWritesFailedError(detail);
     }
 
+    // Drain phase complete — release any concurrent siblings parked above
+    // BEFORE the op runs (their ops were never serialised behind the outer
+    // op, only behind the drain).
+    settleDrain(true);
     return await op();
   } finally {
     // Only clear if we're still the generation that set it. A swap mid-drain
     // bumps `currentVaultGeneration()`; if a newer-generation drain set the
-    // flag in the meantime, this stale `finally` must not clear ITS flag.
-    if (drainingGeneration === generation) drainingGeneration = null;
+    // flag in the meantime, this stale `finally` must not clear ITS flag
+    // (or its drainPromise).
+    if (drainingGeneration === generation) {
+      drainingGeneration = null;
+      drainPromise = null;
+    }
+    // Idempotent: a no-op on the success path (already settled `true`);
+    // settles `false` when the drain threw so parked siblings re-enter.
+    settleDrain(false);
   }
 }
 
@@ -290,4 +328,5 @@ export async function copyFileIntoVault(
  */
 export function __resetDrainGuardForTests(): void {
   drainingGeneration = null;
+  drainPromise = null;
 }

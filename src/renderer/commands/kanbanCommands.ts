@@ -645,7 +645,7 @@ export class UpdateCardFieldCommand extends Command {
     const isRedo = this.hasExecuted;
     this.hasExecuted = true;
     if (isRedo) {
-      applyFrontmatterPatchRebased({
+      await applyFrontmatterPatchRebased({
         docId: this.docId,
         relPath: this.relPath,
         targetBoardId: this.targetBoardId,
@@ -700,9 +700,9 @@ export class UpdateCardFieldCommand extends Command {
     await flushAllPendingFrontmatterWrites();
     // Audit2 4.2 — rebase onto the live frontmatter so an external edit to
     // the same field isn't silently clobbered (prompts to apply anyway).
-    // docId is guaranteed non-null (P2.6 constructor guard), so the dead
-    // null-docId no-delta branch this replaced is gone.
-    applyFrontmatterPatchRebased({
+    // docId is guaranteed non-null (P2.6 constructor guard). A17-1.1 —
+    // awaited: the rebase re-reads disk when no cache is seeded.
+    await applyFrontmatterPatchRebased({
       docId: this.docId,
       relPath: this.relPath,
       targetBoardId: this.targetBoardId,
@@ -976,7 +976,7 @@ async function applyOrphanPatchRebased(args: {
   // the rebase's write lands immediately instead of riding the debounce.
   const openDoc = documentStore.findByFilename(relPath);
   if (openDoc) {
-    applyFrontmatterPatchRebased({
+    await applyFrontmatterPatchRebased({
       docId: openDoc.docId,
       relPath,
       targetBoardId,
@@ -1038,9 +1038,9 @@ async function applyOrphanPatchRebased(args: {
       body,
       callerId: `kanban-orphan-patch:${relPath}`,
       docId: null,
-      // A9-L5 / FILO-UR-1 — delta branch derives its baseline from its own fresh
-      // in-chain read; baseRawFm stays threaded for the no-delta fallback.
+      // A9-L5 / FILO-UR-1 — delta baselines from its own fresh read; baseRawFm = no-delta fallback.
       originalFrontmatter: baseRawFm,
+      bodyIsLive: false, // Audit-16 6.8 — always a snapshot body, never a live editor's
     });
     // allow-non-target-markdirty: shared helper, callers pass this.targetBoardId per the CI gate
     boardCacheStore.markDirty(targetBoardId);

@@ -1,8 +1,12 @@
 import { documentStore } from '../stores/document.svelte';
 import { uiStore } from '../stores/ui.svelte';
 import { boardCacheStore } from '../stores/boardCache.svelte';
+import { vaultStore } from '../stores/vault.svelte';
+import { vaultIndexStore } from '../stores/vaultIndex.svelte';
 import { scheduleFrontmatterWrite } from '../lib/boards/frontmatterWriteScheduler';
 import { patchToFrontmatterDelta } from '../lib/vault/frontmatterDelta';
+import { readMarkdownForHydrate } from '../lib/vault/markdownFileWriter';
+import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 
 /**
  * Audit2 4.2 — apply a frontmatter-field patch on undo/redo, rebased onto the
@@ -24,7 +28,7 @@ import { patchToFrontmatterDelta } from '../lib/vault/frontmatterDelta';
  * realisation of "prompt instead of clobber".
  */
 
-/** True while no editor seeded the cache — we then have no baseline to rebase on. */
+/** Empty-equivalent under mergeFrontmatter's cleaning rule (absent === '' === null === undefined). */
 function isEmptyish(v: unknown): boolean {
   return v === '' || v === null || v === undefined;
 }
@@ -166,9 +170,21 @@ export interface RebaseFrontmatterArgs {
  * field an external edit changed out from under the command. Also schedules the
  * debounced write and marks the board dirty for whatever it actually applied —
  * matching the post-merge bookkeeping the callers used to do inline.
+ *
+ * A17-1.1 — when no FM cache is seeded for `docId` (never-opened doc, or the
+ * seed was dropped by `dropStaleSeededFrontmatterCache` after a classified
+ * external FM edit), the compare base is a FRESH disk read (index fallback),
+ * never a blind commit — so an undo/redo can't silently clobber an external
+ * same-field edit. Async since that read; callers await it.
  */
-export function applyFrontmatterPatchRebased(args: RebaseFrontmatterArgs): void {
+export async function applyFrontmatterPatchRebased(args: RebaseFrontmatterArgs): Promise<void> {
   const { docId, relPath, targetBoardId, applying, expectedCurrent, label, atomic } = args;
+
+  // A17-1.3 — captured ONCE here and consulted by the "Apply anyway" toast
+  // handlers below: a click after a vault swap must not schedule this patch
+  // onto the NEW vault's same-named file (`scheduleFrontmatterWrite` resolves
+  // its vaultRoot live at fire time). Also guards the disk read below.
+  const identity = captureVaultIdentity();
 
   const commit = (patch: Record<string, unknown>): void => {
     // Phase 4 — mergeFrontmatter keeps the DISPLAY cache live (Kanban cards /
@@ -181,12 +197,44 @@ export function applyFrontmatterPatchRebased(args: RebaseFrontmatterArgs): void 
     boardCacheStore.markDirty(targetBoardId);
   };
 
-  const current = documentStore.getFrontmatter(docId);
+  let current = documentStore.getFrontmatter(docId);
   if (current === undefined) {
-    // No editor seeded the cache — no baseline to compare against, so we can't
-    // tell an external edit from a fresh field. Preserve the prior blind merge.
-    commit(applying);
-    return;
+    // A17-1.1 (HIGH) — no editor seeded the cache (or a classified external FM
+    // edit dropped the seed via dropStaleSeededFrontmatterCache). The old code
+    // blind-`commit(applying)`-ed here with NO conflict detection, so an undo/
+    // redo of a field edit on a never-opened doc silently clobbered an external
+    // same-field edit. Re-read disk fresh and use it as the compare base (the
+    // same shape as propertiesCommands.applySnapshot); the vault index is the
+    // degraded fallback when the read fails.
+    const vaultRoot = vaultStore.path;
+    if (!vaultRoot) return;
+    let base: Record<string, unknown> | null = null;
+    let rawFm: string | undefined;
+    try {
+      const hydrate = await readMarkdownForHydrate(vaultRoot, relPath);
+      base = hydrate.frontmatter;
+      rawFm = hydrate.rawFrontmatter;
+    } catch {
+      // ENOENT / transient — fall through to the index snapshot below.
+    }
+    // A swap landed during the read: don't seed the new vault's cache or
+    // schedule a write onto its same-named file.
+    if (!isStillSameVault(identity)) return;
+    if (base === null) {
+      const indexed = vaultIndexStore.getMetadata(relPath)?.frontmatter;
+      if (indexed) base = indexed as Record<string, unknown>;
+    }
+    if (base === null) {
+      // Nothing visible anywhere (file unreadable AND never indexed) — there is
+      // no baseline to detect a conflict against, and nothing visible to lose.
+      // Preserve the legacy blind merge for this narrow corner only.
+      commit(applying);
+      return;
+    }
+    // Seed the display cache from the base so the merge in `commit` lands on a
+    // complete object (mirrors the execute legs' seedDocumentFrontmatterFromDisk).
+    documentStore.setFrontmatter(docId, base, rawFm);
+    current = base;
   }
 
   const conflicts = Object.keys(applying).filter(
@@ -209,7 +257,12 @@ export function applyFrontmatterPatchRebased(args: RebaseFrontmatterArgs): void 
       actions: [
         {
           label: 'Apply anyway',
-          handler: () => commit(applying),
+          handler: () => {
+            // A17-1.3 — the toast can be clicked after a vault swap; bail so
+            // the outgoing vault's patch never lands on the new vault's file.
+            if (!isStillSameVault(identity)) return;
+            commit(applying);
+          },
         },
       ],
     });
@@ -231,6 +284,8 @@ export function applyFrontmatterPatchRebased(args: RebaseFrontmatterArgs): void 
       {
         label: 'Apply anyway',
         handler: () => {
+          // A17-1.3 — see the atomic handler above: bail after a vault swap.
+          if (!isStillSameVault(identity)) return;
           // The user insists — replay the patch over the conflicting fields too.
           const forced: Record<string, unknown> = {};
           for (const key of conflicts) forced[key] = applying[key];

@@ -18,6 +18,7 @@
 import { createId } from '../utils/ids';
 import { historyStore } from '../../stores/history.svelte';
 import { UpdateSavedViewsCommand } from '../../commands/index';
+import { flushLastViewForBoard } from '../boards/lastViewFlush';
 import type { Priority } from '../tasks/frontmatterReaders';
 import type { GroupBy, SortBy, SmartListId } from '../tasks/taskListModel';
 
@@ -110,11 +111,21 @@ export class TaskListFiltersAndViews {
    * mid-window doesn't fire `updateSettings` + push a history entry against
    * a board that's already torn down. Called from `TaskListBoard.svelte`'s
    * `onDestroy`. Idempotent — safe to call when no timer is armed.
+   *
+   * Audit-17 4.5 — flush, don't drop: a pending slice is written through the
+   * cache keyed by the hydrated board id (teardown-safe — never the pane's
+   * live board, which mid-swap is already the switched-in one). The host's
+   * persist-$effect teardown does the same; whichever runs first nulls the
+   * timer so the other no-ops, and the helper's JSON-equality guard makes a
+   * double flush a no-op anyway.
    */
   dispose(): void {
     if (this.lastViewPersistTimer) {
       clearTimeout(this.lastViewPersistTimer);
       this.lastViewPersistTimer = null;
+      if (this.hydratedForBoardId) {
+        flushLastViewForBoard(this.hydratedForBoardId, this.buildLastView());
+      }
     }
   }
 

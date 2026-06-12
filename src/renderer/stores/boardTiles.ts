@@ -136,9 +136,27 @@ export function makeTilesSlice(ctx: BoardContext) {
       tileId: string,
       newTitle: string,
       newTitleHtml: string | undefined,
+      homeBoardId?: string,
     ): Promise<RenameTextTileResult> {
-      const tile = ctx.getTiles()[tileId];
+      // Audit-17 4.1 — resolve from the active scope first, falling back to
+      // the home board's cache when given. The fallback serves the unmount-
+      // time blur-commit (TileHeader's teardown): clicking another tab both
+      // blurs AND unmounts, so by the time the commit runs the pane's scope
+      // already points at the switched-in board and the active lookup misses.
+      const activeTile = ctx.getTiles()[tileId];
+      const tile = activeTile
+        ?? (homeBoardId
+          ? boardCacheStore.getFullTilesForBoard(homeBoardId)[tileId]
+          : undefined);
       if (!tile || tile.type !== 'text') return { success: false };
+
+      // Dual-route tile updates for the same reason: the scope writer (Zod +
+      // spatial sync) while the tile is still in the active board, the cache
+      // writer keyed by the tile's home board once it isn't.
+      const applyTileUpdate = (updates: Partial<Tile>): void => {
+        if (ctx.getTiles()[tileId]) ctx.updateTile(tileId, updates);
+        else boardCacheStore.persistUpdateTile(tileId, updates, tile.boardId);
+      };
 
       const oldTitle = tile.title;
       const oldTitleHtml = tile.titleHtml;
@@ -149,13 +167,13 @@ export function makeTilesSlice(ctx: BoardContext) {
         return { success: true, oldTitle, newTitle, oldTitleHtml, newTitleHtml };
       }
       if (!titleChanged) {
-        ctx.updateTile(tileId, { titleHtml: newTitleHtml });
+        applyTileUpdate({ titleHtml: newTitleHtml });
         return { success: true, oldTitle, newTitle, oldTitleHtml, newTitleHtml };
       }
 
       const vaultRoot = vaultStore.path;
       if (!vaultRoot) {
-        ctx.updateTile(tileId, { title: newTitle, titleHtml: newTitleHtml });
+        applyTileUpdate({ title: newTitle, titleHtml: newTitleHtml });
         return { success: true, oldTitle, newTitle, oldTitleHtml, newTitleHtml };
       }
 
@@ -164,13 +182,13 @@ export function makeTilesSlice(ctx: BoardContext) {
       // defaultFolder, not whichever board happens to be active.
       const oldRel = resolveTextTileVaultPath(tile, tile.boardId);
       if (!oldRel) {
-        ctx.updateTile(tileId, { title: newTitle, titleHtml: newTitleHtml });
+        applyTileUpdate({ title: newTitle, titleHtml: newTitleHtml });
         return { success: true, oldTitle, newTitle, oldTitleHtml, newTitleHtml };
       }
 
       const newRel = replaceTitleInVaultPath(oldRel, newTitle);
       if (oldRel === newRel) {
-        ctx.updateTile(tileId, { title: newTitle, titleHtml: newTitleHtml });
+        applyTileUpdate({ title: newTitle, titleHtml: newTitleHtml });
         return { success: true, oldTitle, newTitle, oldTitleHtml, newTitleHtml };
       }
 
@@ -220,7 +238,7 @@ export function makeTilesSlice(ctx: BoardContext) {
       // backing file without going through the full cascade.
       renameAllPathKeys(oldRel, newRel);
 
-      ctx.updateTile(tileId, { title: newTitle, titleHtml: newTitleHtml });
+      applyTileUpdate({ title: newTitle, titleHtml: newTitleHtml });
       return {
         success: true,
         oldTitle,

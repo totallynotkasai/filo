@@ -72,6 +72,7 @@
     getActiveContentFolder,
   } from '../../lib/vault/conventionPaths';
   import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
+  import { flushLastViewForBoard } from '../../lib/boards/lastViewFlush';
   import { onMount, onDestroy, untrack } from 'svelte';
   import { createAriaAnnouncer } from '../../lib/utils/ariaAnnouncer.svelte';
   import { dndzone, type DndEvent } from 'svelte-dnd-action';
@@ -661,9 +662,8 @@
   });
 
   // Task creation, deletion, frontmatter writes, and file drops are owned by
-  // factory slices in `lib/tasklist/`. Each factory closes over the host's
-  // reactive accessors so the extracted helpers always see the live board /
-  // sections / rows state. Mirrors the Phase 5.7 kanban slice pattern.
+  // factory slices in `lib/tasklist/` closing over the host's reactive accessors,
+  // so the helpers always see live board state (Phase 5.7 kanban slice pattern).
   //
   // Order matters: `frontmatterWriter` exposes `buildTaskFieldCommand`, which
   // both the deleter (cascade "keep subtasks" branch) and the bulk-action
@@ -673,6 +673,7 @@
     vaultPathForTile,
     readFrontmatter,
     bumpCacheVersion: () => { cacheVersion++; },
+    announce,
   });
   const buildTaskFieldCommand = frontmatterWriter.buildTaskFieldCommand;
   const updateRowField = frontmatterWriter.updateRowField;
@@ -1146,29 +1147,26 @@
     // never hydrated back), so a sort/group change must not re-fire this persist.
     const id = board?.id;
     if (!id || id !== filters.hydratedForBoardId) return;
+    // Audit-17 4.5 — snapshot at ARM time (a teardown can run after the next
+    // board's hydrate re-seeded `filters`) and write keyed by the CAPTURED id
+    // via flushLastViewForBoard (never the pane's live board — Audit-4 DI-08's
+    // wrong-board-write hazard; its JSON-equality guard skips no-change writes).
+    const nextLastView = filters.buildLastView();
     if (filters.lastViewPersistTimer) clearTimeout(filters.lastViewPersistTimer);
     filters.lastViewPersistTimer = setTimeout(() => {
       filters.lastViewPersistTimer = null;
-      const nextLastView = filters.buildLastView();
-      const prevSettings = settings as Record<string, unknown>;
-      const prevLastView = prevSettings.lastView;
-      // Avoid emitting a write on the first hydrate when nothing actually
-      // changed (deep-equal check via JSON; lastView is a plain-data object).
-      if (JSON.stringify(prevLastView) === JSON.stringify(nextLastView)) return;
-      // Audit-4 DI-08 — pane-scoped, NON-undoable persist (mirrors
-      // KanbanBoard): `boardStore` is this pane's `scope.board`, so the write
-      // targets its own `currentBoard.id` and stays off the undo stack. The
-      // old `updateBoardSettingsWithHistory` captured the GLOBAL active board
-      // and filed onto its stack, so in split view a surviving timer wrote one
-      // pane's lastView into the active board and polluted that board's stack.
-      // allow-direct-mutation: transient lastView view state, not undoable (mirrors KanbanBoard).
-      boardStore.updateSettings({ lastView: nextLastView });
+      flushLastViewForBoard(id, nextLastView);
     }, 300);
-
     // Audit-4 DI-08 — clear the debounce with the effect (mirrors KanbanBoard
-    // 6.1.R2) so a teardown inside the 300 ms window can't fire the stale write.
+    // 6.1.R2); Audit-17 4.5 — but flush, don't drop: a filter change within
+    // 300 ms of a board switch was otherwise never written (the
+    // hydratedForBoardId guard blocks any re-fire after the switch).
     return () => {
-      if (filters.lastViewPersistTimer) clearTimeout(filters.lastViewPersistTimer);
+      if (filters.lastViewPersistTimer) {
+        clearTimeout(filters.lastViewPersistTimer);
+        filters.lastViewPersistTimer = null;
+        flushLastViewForBoard(id, nextLastView);
+      }
     };
   });
 
@@ -1403,9 +1401,9 @@
     // Drain any queued frontmatter writes so a board close during the
     // 300ms debounce window doesn't lose the user's last field edit.
     void flushAllPendingFrontmatterWrites();
-    // Audit2 5.6 / Audit-4 DI-08 — cancel the lastView debounce so a board
-    // close mid-window doesn't fire `updateSettings` against the now-defunct
-    // board ~300 ms after teardown (the persist $effect adds a matching cleanup).
+    // Audit2 5.6 / Audit-4 DI-08 — cancel the lastView debounce; Audit-17 4.5
+    // — dispose() now FLUSHES the pending slice (cache write keyed by the
+    // hydrated board id) instead of dropping it.
     filters.dispose();
     unregisterFocusQuickAdd?.();
     unregisterFocusQuickAdd = null;

@@ -19,6 +19,7 @@
   import { sanitizeInlineHtml } from '../../lib/utils/sanitizeHtml';
   import { getAnchorBelow } from '../../lib/utils/popupAnchor';
   import { buildDeleteSnapshots, TILE_DELETE_SNAPSHOT_MAX_BYTES } from '../../lib/canvas/deleteTileSnapshots';
+  import { resolveTitleCommitValues, type ResolvedTitleCommit } from '../../lib/editor/titleCommit';
   import { historyStore } from '../../stores/history.svelte';
   import { RenameTitleCommand, ToggleFramelessCommand } from '../../commands/index';
   import {
@@ -109,35 +110,54 @@
     }
   }
 
+  /**
+   * Audit-17 4.1 — snapshot the live editor's value as resolved commit
+   * inputs. Must be read BEFORE `destroyTitleEditor()` — a torn-down TipTap
+   * editor can't be queried (the R3 hazard the old cancel-on-unmount dodged
+   * by dropping the rename instead).
+   */
+  function snapshotEditorTitle(): ResolvedTitleCommit | null {
+    if (!titleEditor) return null;
+    return resolveTitleCommitValues(titleEditor.getText(), titleEditor.getHTML(), 'New Tile');
+  }
+
   async function commitTitleEdit() {
-    if (!titleEditor) {
-      isEditing = false;
-      return;
-    }
-    const plain = titleEditor.getText().trim() || 'New Tile';
-    const html = titleEditor.getHTML();
-    // Suppress identity HTML when the user didn't add any marks — keeps the
-    // schema slim and avoids "<p>foo</p>" appearing for an unstyled title.
-    const stripped = html.replace(/<\/?p[^>]*>/gi, '').trim();
-    const isPlain = stripped === plain || stripped === '';
-    const newTitleHtml = isPlain ? undefined : html;
-    const titleChanged = plain !== tile.title;
-    const titleHtmlChanged = (tile.titleHtml ?? '') !== (newTitleHtml ?? '');
-    const oldTitle = tile.title;
-    const oldTitleHtml = tile.titleHtml;
+    const snap = snapshotEditorTitle();
     destroyTitleEditor();
     isEditing = false;
+    if (!snap) return;
+    await applyTitleCommit(snap, false);
+  }
+
+  /**
+   * Applies a resolved title commit to the tile. `fromTeardown` marks the
+   * unmount-time commit (Audit-17 4.1): by then the pane's scope may already
+   * point at the switched-in board (the very switch that unmounted us), so
+   * the write resolves through the tile's home board (`tile.boardId`) and no
+   * history entry is pushed — mid-swap the global active board's undo stack
+   * can't be trusted (same rule as the 4.4 drag teardown).
+   */
+  async function applyTitleCommit(snap: ResolvedTitleCommit, fromTeardown: boolean): Promise<void> {
+    const { plain, titleHtml: newTitleHtml } = snap;
+    const titleChanged = plain !== tile.title;
+    const titleHtmlChanged = (tile.titleHtml ?? '') !== (newTitleHtml ?? '');
     if (!titleChanged && !titleHtmlChanged) return;
+    const oldTitle = tile.title;
+    const oldTitleHtml = tile.titleHtml;
     if (tile.type === 'text') {
       // Route through the rename helper so the backing .md file moves in
       // lockstep with the title. On collision the helper toasts + returns
       // success: false; we leave the existing tile.title in place so the UI
       // snaps back automatically (the editor is already destroyed).
+      // `tile.boardId` lets the helper fall back to the home board's cache
+      // when the active scope no longer has the tile (teardown commit).
       //
       // Phase 5 / 5.6 — push RenameTitleCommand on success so Ctrl+Z
       // reverses both the filename rename and the title update.
-      const result = await boardStore.renameTextTileBackingFile(tile.id, plain, newTitleHtml);
-      if (result.success) {
+      const result = await boardStore.renameTextTileBackingFile(
+        tile.id, plain, newTitleHtml, tile.boardId,
+      );
+      if (result.success && !fromTeardown) {
         historyStore.pushWithoutExecute(
           new RenameTitleCommand(
             tile.id,
@@ -149,12 +169,20 @@
           ),
         );
       }
-    } else {
+    } else if (!fromTeardown) {
       // Non-text tile: no backing file, just the title. RenameTitleCommand
       // with null paths skips the IPC dance and only touches updateTile.
       boardStore.updateTile(tile.id, { title: plain, titleHtml: newTitleHtml } as Partial<Tile>);
       historyStore.pushWithoutExecute(
         new RenameTitleCommand(tile.id, oldTitle, plain, oldTitleHtml, newTitleHtml),
+      );
+    } else {
+      // Teardown commit for a non-text tile: cache write keyed by the home
+      // board — resolves whether or not that board is still the active one.
+      boardCacheStore.persistUpdateTile(
+        tile.id,
+        { title: plain, titleHtml: newTitleHtml } as Partial<Tile>,
+        tile.boardId,
       );
     }
   }
@@ -215,14 +243,24 @@
     }
   });
 
-  // Guard against unmount during edit. Audit-11 R3 — the cleanup clears the
-  // pending blur→commit timer directly (so `ci:component-timer-cleanup` sees it
-  // in a recognised `$effect` teardown; `destroyTitleEditor` also clears it for
-  // the commit/cancel paths) before tearing down the editor.
+  // Guard against unmount during edit. Audit-11 R3 cleared the pending
+  // blur→commit timer here so it couldn't fire against a torn-down editor —
+  // but cancel-not-commit silently DROPPED the rename when the unmount landed
+  // inside the 200 ms blur window (Audit-17 4.1: clicking another tab/board
+  // blurs AND unmounts within ms). An armed timer at teardown means the user
+  // finished editing and the commit was still pending: snapshot the editor's
+  // value BEFORE tearing it down, clear the timer (kept inline so
+  // `ci:component-timer-cleanup` sees it in a recognised `$effect` teardown;
+  // `destroyTitleEditor` also clears it for the commit/cancel paths), then
+  // commit fire-and-forget (the rename helper is async-safe and self-guards
+  // when the tile is already gone, e.g. mid-vault-swap).
   $effect(() => {
     return () => {
+      const snap = blurCommitTimer !== null ? snapshotEditorTitle() : null;
       if (blurCommitTimer) clearTimeout(blurCommitTimer);
+      blurCommitTimer = null;
       destroyTitleEditor();
+      if (snap) void applyTitleCommit(snap, true);
     };
   });
 

@@ -449,9 +449,33 @@ for (const target of GUARD_TARGETS) {
 // `runRename` takes a `vaultPath` PARAM (no live-path read), `repairRenameCascade`
 // takes a captured `VaultIdentity` PARAM, and the wrappers only delegate — so pin
 // the cascade functions by name here.
+// Audit-16 7.4 — the recovery sequencer (`runRecoverySequencer`, vault.svelte.ts).
+// Its step-2 tag-rewrite confirm handlers (onConfirm/onCancel) await
+// `convergeForward()` / `clearPendingRewrite()` then prune the fileTags registry
+// against the live `fileTree` — a vault swap straddling those awaits used to
+// flatten vault A's root against vault B's tree (EMPTY set) and wipe EVERY
+// fileTags entry in the new vault (3.2). Part 1 cannot enforce this: the gate
+// deliberately never scans `vault.svelte.ts` (the vault store's own lifecycle
+// functions — openVault, commitVaultCandidate — legitimately read the live path
+// across awaits, so a Part 1 sweep there would drown in exemptions), and the
+// step-2 handlers are anonymous arrows anyway. So pin the containing function by
+// name (the VS-1 pattern): its body — nested closures included — must reference
+// `isStillSameVault`.
+// Audit-17 1.3 — the rebased field-patch helper (`applyFrontmatterPatchRebased`,
+// frontmatterRebase.ts). Its "Apply anyway" conflict-toast handlers are anonymous
+// arrows that can fire long after a vault swap, and the `commit` they invoke
+// schedules a write whose vaultRoot is resolved LIVE at fire time — so a click
+// post-swap wrote the outgoing vault's field patch onto the NEW vault's
+// same-named file (the exact class this gate exists to kill). The 1.1 fix also
+// added an awaited fresh-disk read inside the same function. Part 1 doesn't sweep
+// commands/frontmatterRebase.ts, and the handlers are anonymous anyway — so pin
+// the containing function by name (the VS-1 / 7.4 pattern): its body — nested
+// closures included — must reference `isStillSameVault`.
 const PART3_TARGETS = [
   { file: 'src/renderer/stores/vaultFolderOps.ts', names: ['runRename', 'performDelete'] },
   { file: 'src/renderer/lib/vault/renameCascadeRepair.ts', names: ['repairRenameCascade'] },
+  { file: 'src/renderer/stores/vault.svelte.ts', names: ['runRecoverySequencer'] },
+  { file: 'src/renderer/commands/frontmatterRebase.ts', names: ['applyFrontmatterPatchRebased'] },
 ];
 for (const { file, names } of PART3_TARGETS) {
   let raw;

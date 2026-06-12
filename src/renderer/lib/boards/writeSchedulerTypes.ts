@@ -299,6 +299,16 @@ export interface Scheduler<TArgs> {
    */
   hasPendingTimer(predicate: (args: TArgs) => boolean): boolean;
   /**
+   * Audit-17 5.5 — true when a non-cancelled PARKED fire (a debounce fire
+   * deferred behind an in-flight write by `drainPriorInFlight`, in neither
+   * `pending` nor `inFlight` while it awaits the drain) matches `predicate`.
+   * Kept SEPARATE from `hasPendingTimer` (whose P2.5 armed-timer-only contract
+   * other callers depend on); a probe that must NOT report idle / clean while a
+   * newer parked write is unsaved ORs the two. Parked entries carry no args, so
+   * the predicate sees the schedule-time `{ key, path }`.
+   */
+  hasParked(predicate: (info: { key: string; path: string | undefined }) => boolean): boolean;
+  /**
    * Test-only — count of attributed-but-undrained failure identifiers retained
    * in the internal `failures` Set. Pins the Audit-7 L12 fix: a fire-and-forget
    * failure followed by a successful write to the SAME key must prune the stale

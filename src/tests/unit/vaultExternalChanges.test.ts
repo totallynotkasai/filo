@@ -625,7 +625,8 @@ describe('vaultExternalChanges — P2.1: Properties-popup Reload refreshes origi
     expect(toast).toBeDefined();
     expect(toast!.actions?.[0].label).toBe('Reload');
 
-    toast!.actions![0].handler(); // Reload
+    // Audit-16 6.3 — the Reload handler is now async (click-time disk re-read).
+    await toast!.actions![0].handler(); // Reload
 
     // P2.1: the baseline now reflects the post-external raw bytes (still carrying
     // the inline comment). Bite: pre-fix setFrontmatter omitted rawFrontmatter,
@@ -634,6 +635,90 @@ describe('vaultExternalChanges — P2.1: Properties-popup Reload refreshes origi
     expect(baseline).toBeDefined();
     expect(baseline).toContain('priority: high');
     expect(baseline).toContain('# inline note');
+  });
+});
+
+/**
+ * Audit-17 5.8 — a dirty Properties popup over a NEVER-loaded doc (Kanban card /
+ * Task row, no open Document editor) must still surface the conflict prompt on a
+ * frontmatter-only external edit. Pre-fix the dispatcher's prompt-user arm only
+ * pushed when `editorDoc` was non-null, so the popup case fell through silently
+ * and the external frontmatter was synced over the popup's pending row edits with
+ * no user say-so.
+ */
+describe('vaultExternalChanges — 5.8: popup-dirty over a never-loaded doc still prompts', () => {
+  let ctx: VaultContext;
+  let slice: ReturnType<typeof makeExternalChangesSlice>;
+
+  beforeEach(() => {
+    documentStore.clear();
+    vaultIndexStore.clear();
+    clearToasts();
+    __resetPropertiesPopupTrackerForTests();
+    vaultStore.setPath('/vault');
+    ctx = {
+      getVaultPath: () => '/vault',
+      setVaultPath: () => {},
+      getFileTree: () => [],
+      setFileTree: () => {},
+      getSearchQuery: () => '',
+      setSearchQuery: () => {},
+      getIsLoading: () => false,
+      setIsLoading: () => {},
+      getExpandedFolders: () => new Set(),
+      setExpandedFolders: () => {},
+      getSelectedPaths: () => new Set(),
+      setSelectedPaths: () => {},
+      getProject: () => null,
+      setProject: () => {},
+      getRecoveryPendingPaths: () => [],
+      setRecoveryPendingPaths: () => {},
+      markMetaDirty: () => {},
+      refreshTree: async () => {},
+      clearSelection: () => {},
+      clearActiveRootFolderIfMatches: () => {},
+    };
+    slice = makeExternalChangesSlice(ctx);
+  });
+
+  afterEach(() => {
+    restoreFiloDefault();
+    vaultStore.setPath('');
+    documentStore.clear();
+    vaultIndexStore.clear();
+    clearToasts();
+    __resetPropertiesPopupTrackerForTests();
+  });
+
+  it('raises the popup prompt (not a silent sync) when the doc was never opened', async () => {
+    const initial = '---\ntitle: Hello\npriority: low\n---\nbody';
+    installFiloMock((channel: string) => {
+      if (channel === 'vault:read-file-text') return { success: true, content: initial };
+      return { success: true };
+    });
+    await vaultIndexStore.applyChanges(['Note.md']);
+
+    // NO documentStore.loadDocument — the backing doc was never opened, so
+    // `findByFilename('Note.md')` returns null. But a Properties popup is dirty
+    // for the path (a Kanban card / Task row editing its frontmatter).
+    markPropertiesPopupDirty('props-caller', 'Note.md');
+
+    // External editor flips a frontmatter-only field (body unchanged).
+    const updated = '---\ntitle: Hello\npriority: high\n---\nbody';
+    installFiloMock((channel: string) => {
+      if (channel === 'vault:read-file-text') return { success: true, content: updated };
+      return { success: true };
+    });
+
+    await slice.handleExternalMarkdownChanges(['Note.md']);
+
+    // 5.8: the popup-aware toast fires even with no open editor. Bite: pre-fix
+    // (editorDoc-gated push) there was NO toast.
+    const toast = uiStore.toasts.find((t) =>
+      /Properties of .* were modified externally/.test(t.text),
+    );
+    expect(toast).toBeDefined();
+    expect(toast!.actions?.[0].label).toBe('Reload');
   });
 });
 

@@ -32,6 +32,15 @@ import { Document } from 'yaml';
  */
 export function valuesEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
+  // 5.1 (Audit-17) — `NaN !== NaN` by IEEE-754, but two `.nan` frontmatter
+  // values are the SAME data. Without this an untouched `.nan` key is flagged
+  // changed on every unrelated edit: a scalar gets spelling-canonicalised, a
+  // collection containing NaN is rebuilt (`rebuildPair`) — permanently dropping
+  // that pair's inner comments / flow formatting (an untouched-key byte-
+  // preservation violation). Treat NaN as equal to NaN.
+  if (typeof a === 'number' && typeof b === 'number' && Number.isNaN(a) && Number.isNaN(b)) {
+    return true;
+  }
   if (a === null || b === null) return false;
   if (typeof a !== typeof b) return false;
   // DI-01b — a Date is `typeof 'object'` with NO own keys, so the generic

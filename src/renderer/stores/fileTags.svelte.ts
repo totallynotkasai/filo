@@ -634,26 +634,24 @@ export const fileTagsStore = {
    * F6 — applies a tags file re-read after an external `.filo/tags.json`
    * edit, carrying the migrator's read-only verdict so a from-future file
    * flips the store read-only (gating `scheduleSave`). A current-version
-   * file behaves exactly like `setAll`.
+   * file behaves exactly like `setAll`. Audit-17 0.2 — returns `false` (caller
+   * skips the toast) when disk deep-equals our in-memory registry: a self-write
+   * echo in the 30 s reconcile pass, not an external edit.
    */
-  applyExternalReload(loaded: LoadTagsFileResult): void {
-    // A8-M6 — 3-way merge instead of wholesale overwrite. A tag add/remove still
-    // in the ~300 ms save debounce window (attachment tags have NO other home)
-    // was previously discarded: `file = loaded.file` dropped it and the ensuing
-    // scheduleSave persisted the external copy back, losing the user's change.
-    // Re-apply our un-flushed delta (vs the last persisted base) on top of the
-    // external disk copy.
+  applyExternalReload(loaded: LoadTagsFileResult): boolean {
+    const diskDiffersFromMemory = !sameJson(loaded.file, file);
+    // A8-M6 — 3-way merge, not wholesale overwrite: a tag add/remove still in the
+    // ~300 ms save debounce (attachment tags have NO other home) would otherwise
+    // be discarded. Re-apply our un-flushed delta on top of the external copy.
     file = mergeTagsThreeWay(lastSavedFile, file, loaded.file);
-    // Disk currently holds `loaded.file`; our un-flushed delta now lives as
-    // (file − loaded.file). Until our merged write lands, the external copy is
-    // the ancestor a further reload must diff against — so base = loaded.file
-    // (the successful save above advances it to the merged bytes).
-    // A9-L7 — bump the merge-base token so an in-flight `tags:save` (still in
-    // its debounce/await window) can't clobber this fresh base back to its
-    // pre-reload snapshot.
+    // A9-L7 — bump the merge-base token so an in-flight `tags:save` can't clobber
+    // this fresh base (the external disk copy) back to its pre-reload snapshot.
     setMergeBase(cloneTagsFile(loaded.file));
     readOnlyFromFuture = loaded.fromFuture || loaded.noMigrationPath;
-    scheduleSave();
+    // Audit-17 0.2 — only re-save when the merge diverged from disk; an
+    // identical-bytes echo would bump mtime and re-arm the 30 s reconcile loop.
+    if (!sameJson(file, loaded.file)) scheduleSave();
+    return diskDiffersFromMemory;
   },
 
   reset(): void {

@@ -14,13 +14,19 @@ export function makeRecoverySlice(ctx: VaultContext) {
     },
 
     /**
-     * Explicit user acknowledgement of the Recovery modal. Drops the
-     * pending-paths list AND clears the on-disk `.filo/.dirty` sentinel.
+     * User acknowledgement of the Recovery modal. Drops the pending-paths
+     * list AND clears the on-disk `.filo/.dirty` sentinel.
      *
-     * Distinct from `clearRecoveryPendingPaths` because the sentinel must
-     * survive Esc / backdrop / X-button closes of the modal — otherwise
-     * a user who closes the modal without reading it would silently lose
-     * the breadcrumb. Only the explicit "Dismiss" button calls this.
+     * Audit-17 3.3 — EVERY close path of the modal calls this now: the
+     * Dismiss button directly, and Esc / backdrop / X via the Modal's
+     * `beforeClose` hook in AppShell. The old "Esc preserves the sentinel
+     * for next launch" contract was doubly broken: the parked recovery
+     * sequencer never resolved (steps 2–4 — tag-rewrite, rename-cascade,
+     * snapshot listing — silently skipped for the session), and the
+     * session's first scheduled write replaced the sentinel anyway (the
+     * pre-commit stash in Audit-17 3.2 is what actually preserves the
+     * prior payload now). Safe to call more than once per close — the
+     * second call no-ops (paths already cleared, resolver consumed).
      *
      * Audit-14 1.2 — clear via `syncSentinelIfIdle`, NOT an unconditional
      * `markClean`. Every other sentinel-clear gates on the write tracker being

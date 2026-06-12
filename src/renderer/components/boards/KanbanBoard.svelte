@@ -46,6 +46,7 @@
   import { makeKanbanFrontmatterWriter } from '../../lib/kanban/kanbanFrontmatterWriter';
   import { makeKanbanTileCreator } from '../../lib/kanban/kanbanTileCreation';
   import { computeKanbanInsertIndex } from '../../lib/kanban/kanbanInsertPosition';
+  import { flushLastViewForBoard } from '../../lib/boards/lastViewFlush';
   import {
     KanbanFiltersAndSort,
     type KanbanLastView,
@@ -863,29 +864,26 @@
     const prop = filtersAndSort.activeFilterProp;
     const id = board?.id;
     if (!id || id !== hydratedForBoardId) return;
+    // Audit-17 4.5 — snapshot at ARM time (a teardown can run after the next
+    // board's hydrate re-seeded the filters) and write keyed by the CAPTURED
+    // id via flushLastViewForBoard (never the live board — the DI-08 wrong-
+    // board-write hazard; its JSON-equality guard skips no-change writes).
+    const nextLastView = { sortBy, filterTags: [...tags], filterProp: prop ? { ...prop } : null };
     if (lastViewPersistTimer) clearTimeout(lastViewPersistTimer);
     lastViewPersistTimer = setTimeout(() => {
       lastViewPersistTimer = null;
-      // updateSettings accepts a partial that gets merged onto the
-      // board's settings; pass only the lastView field, not the whole
-      // settings object.
-      // allow-direct-mutation: lastView is transient UI state restored on board reopen; deliberately not undoable.
-      boardStore.updateSettings({
-        lastView: {
-          sortBy,
-          filterTags: [...tags],
-          filterProp: prop ? { ...prop } : null,
-        },
-      });
+      flushLastViewForBoard(id, nextLastView);
     }, 300);
-
-    // 6.1.R2 (follow-up) — tear the debounce down with the effect. Without
-    // this, a board close / vault swap inside the 300 ms window fires
-    // `boardStore.updateSettings` against the swapped-in board ~300 ms later.
-    // The cleanup also runs before each re-arm, which is harmless (the body
-    // re-clears at the top before scheduling the next write).
+    // 6.1.R2 — tear the debounce down with the effect (a board close / vault
+    // swap mid-window must not fire a stale write); Audit-17 4.5 — but flush,
+    // don't drop: a filter/sort change within 300 ms of a board switch was
+    // otherwise never written (hydratedForBoardId blocks any re-fire after).
     return () => {
-      if (lastViewPersistTimer) clearTimeout(lastViewPersistTimer);
+      if (lastViewPersistTimer) {
+        clearTimeout(lastViewPersistTimer);
+        lastViewPersistTimer = null;
+        flushLastViewForBoard(id, nextLastView);
+      }
     };
   });
 

@@ -130,6 +130,13 @@ export interface FrontmatterWriterDeps {
   readFrontmatter: (tile: Tile) => Record<string, unknown>;
   /** Bumps the host's reactivity tick so derived views re-render. */
   bumpCacheVersion: () => void;
+  /**
+   * Audit-16 6.2 — screen-reader announcer (aria-live region), used to
+   * announce a FAILED bulk mark-incomplete. The visual error toast already
+   * comes from the command chain's reportError pipeline; this gives SR users
+   * parity with it. Optional so older test harnesses keep constructing deps.
+   */
+  announce?: (message: string) => void;
 }
 
 export interface FrontmatterWriter {
@@ -152,7 +159,7 @@ export interface FrontmatterWriter {
 }
 
 export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterWriter {
-  const { getBoard, vaultPathForTile, readFrontmatter, bumpCacheVersion } = deps;
+  const { getBoard, vaultPathForTile, readFrontmatter, bumpCacheVersion, announce } = deps;
 
   /** Returns the tile's docId; seeds the FM cache from the vault index on first touch. */
   function ensureSeededFm(tile: Tile): string | null {
@@ -449,17 +456,28 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
     }
     // Await the batch (Audit-7 H1) so the per-row disk seeds + writes — now
     // inside each child's execute() — finish before the confirmation toast,
-    // matching the old per-row `await preSeedRow` timing. The chain reports its
-    // own errors; swallow here to keep this fire-and-forget UI path quiet.
-    await historyStore
+    // matching the old per-row `await preSeedRow` timing.
+    //
+    // Audit-16 6.2 — the success toast is GATED on the chain actually
+    // resolving. Pre-fix the `.catch(() => {})` swallow meant a rejected
+    // batch (write failure → execute() rolled back) still toasted
+    // "N tasks marked incomplete" — a false success sitting next to the
+    // error toast the chain's reportError pipeline raised. On failure we
+    // only announce for screen readers (the visual error toast already
+    // exists); the rejection itself stays swallowed (fire-and-forget UI path).
+    const ok = await historyStore
       .execute(new BatchCommand(`Mark ${cmds.length} tasks incomplete`, cmds))
-      .catch(() => {});
+      .then(() => true, () => false);
     bumpCacheVersion();
-    uiStore.toast(
-      `${cmds.length} task${cmds.length === 1 ? '' : 's'} marked incomplete`,
-      'success',
-      2000,
-    );
+    if (ok) {
+      uiStore.toast(
+        `${cmds.length} task${cmds.length === 1 ? '' : 's'} marked incomplete`,
+        'success',
+        2000,
+      );
+    } else {
+      announce?.('Marking tasks incomplete failed — see the error notification');
+    }
   }
 
   return {

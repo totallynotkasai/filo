@@ -417,8 +417,15 @@ const ALLOWLIST = {
   // snapshot, so a never-opened card/orphan write can't revert an external body
   // edit `fs.watch` missed. +5 LOC (live-editor check + body pick + comment). New
   // snapshot: 1369 LOC.
-  // The gateway remains a candidate for a structural split in a later pass.
-  'src/renderer/lib/vault/markdownFileWriter.ts': 1369,
+  // AUDIT17_REMEDIATION_PLAN_2026-06-11 Phase 5 (5.3 + 5.5) — 5.3 makes the
+  // post-write baseline TOCTOU guard content-EXACT: a same-byte-count foreign
+  // write in the write→stat gap is no longer adopted as our baseline (read the
+  // bytes back; stamp only on a byte-identical self-write). 5.5 makes the
+  // markClean guard + pending probe consult PARKED fires (a debounce fire
+  // draining behind drainPriorInFlight, in neither pending nor inFlight). +23 LOC
+  // net of the read-back + parked OR-terms (own comments trimmed). New snapshot:
+  // 1392 LOC. The gateway remains a candidate for a structural split in a later pass.
+  'src/renderer/lib/vault/markdownFileWriter.ts': 1392,
   // AUDIT8_REMEDIATION_PLAN_2026-06-04 Phase 3 M5 — `UpdateOrphanFrontmatterCommand.
   // execute()` recomputes its inverse from a FRESH on-disk read on the first
   // execute (a `hasExecuted` guard) — mirroring the docId path's

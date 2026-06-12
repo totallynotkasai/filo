@@ -276,11 +276,23 @@ export async function atomicWriteFile(
     // can fix and then move the tmp into place. Preserving the tmp lets
     // them recover the staged write after they regain write access on
     // the destination.
-    // Other rename failures (ENOENT — missing parent dir, EPERM/EBUSY
-    // after retry exhaustion) leave nothing valuable, so the pre-existing
-    // best-effort cleanup still runs.
+    // Audit-17 2.2 — EPERM + EBUSY join too. The old comment claimed an
+    // exhausted EPERM/EBUSY tmp held "nothing valuable" — false: by this
+    // point the tmp is fully written AND fsynced; on a quit-time flush it
+    // holds the user's last bytes. The EACCES rationale applies verbatim
+    // (a lingering AV/sync lock the user can wait out, then move the tmp
+    // into place). Only ENOENT (missing parent dir / expectExisting abort
+    // — the DESTINATION is gone, the staged bytes describe a file the
+    // user deleted) still falls to the best-effort cleanup.
     const code = (lastErr as NodeJS.ErrnoException | null)?.code;
-    if (code === 'ENOSPC' || code === 'EIO' || code === 'ENOMEM' || code === 'EACCES') {
+    if (
+      code === 'ENOSPC' ||
+      code === 'EIO' ||
+      code === 'ENOMEM' ||
+      code === 'EACCES' ||
+      code === 'EPERM' ||
+      code === 'EBUSY'
+    ) {
       if (lastErr && typeof lastErr === 'object') {
         (lastErr as { preservedTmpPath?: string }).preservedTmpPath = tmpPath;
         const original = (lastErr as { message?: unknown }).message;

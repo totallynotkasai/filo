@@ -17,6 +17,23 @@ import './lib/boards/boardScopeFactory';
 
 import { mount } from 'svelte';
 import App from './App.svelte';
+import { reportError } from './lib/utils/errorBus';
+
+// Audit-17 2.6 — renderer-wide backstops for unknown-unknowns. Every audited
+// write path already routes its failures through trackComponentWrite /
+// markPathFailed, but a programming error in a `void`-ed chain or an event
+// handler otherwise dies as a console-only unhandled rejection. Routing
+// through reportError feeds App.svelte's coalescing errorToastAggregator
+// (rate-limited, count-badged), so a rejection storm collapses into one
+// toast per context instead of spamming the stack. Registered before mount;
+// reports that fire before App.svelte subscribes still hit the console via
+// reportError's breadcrumb.
+window.addEventListener('unhandledrejection', (event) => {
+  reportError('unhandledrejection', event.reason, 'An unexpected background task failed.');
+});
+window.addEventListener('error', (event) => {
+  reportError('window.onerror', event.error ?? event.message, 'An unexpected error occurred.');
+});
 
 const app = mount(App, {
   target: document.getElementById('app')!,

@@ -29,7 +29,7 @@
  *    after it, bailing before any store mutation. A vault swap can interleave
  *    on the await; without the re-check the outgoing vault's data is applied to
  *    the new vault — the worst case being `reconcileTagsJsonChange`, whose
- *    `applyExternalReload` unconditionally `scheduleSave`s, persisting vault A's
+ *    `applyExternalReload` can `scheduleSave` a merged delta, persisting vault A's
  *    tag registry into vault B's `.filo/tags.json` on disk. This is the G1
  *    discipline (`vaultIdentity.ts`) the rename/cascade paths already follow;
  *    `scripts/check-reconciler-vault-guard.mjs` enforces it here so a future
@@ -272,7 +272,13 @@ async function reconcileTagsJsonChange(event: ExternalChangeEvent): Promise<void
     // from-future tags.json flips the store read-only (preventing a
     // downgrade re-save) instead of being parsed + persisted blindly.
     const loaded = loadTagsFile(raw);
-    fileTagsStore.applyExternalReload(loaded);
+    // Audit-17 0.2 — `applyExternalReload` returns false when the disk copy
+    // deep-equals our in-memory registry (a self-write echo surfacing in the
+    // 30 s reconcile pass). Skip the toast AND the re-save in that case so an
+    // in-app tags save can't spin a perpetual "modified externally" + re-save
+    // loop. Only a genuine external diff surfaces the toast.
+    const changed = fileTagsStore.applyExternalReload(loaded);
+    if (!changed) return;
     uiStore.pushToast({
       text: '.filo/tags.json was modified externally — tag registry refreshed.',
       type: 'info',
@@ -298,6 +304,13 @@ async function reconcileTagsJsonChange(event: ExternalChangeEvent): Promise<void
  * No prompts here: themes are visual chrome, not data. A user hand-
  * editing `dark.json` clearly wants the new variables applied
  * immediately.
+ *
+ * Audit-17 0.2 (accepted) — the theme/template reconcilers share the tags
+ * reconciler's expired-TTL hole: a self-write's echo can surface in the 30 s
+ * reconcile pass and trigger one spurious refresh/re-apply. Unlike tags this
+ * does NOT loop — neither reconciler re-saves on reload — so the cost is a
+ * single (visual-only) CSS-variable re-apply per self-edit. A content-compare
+ * would need a second theme-file load to dedup; not worth it for a one-shot.
  */
 async function reconcileThemeChange(event: ExternalChangeEvent): Promise<void> {
   if (isRecentSelfWrite(event.filename)) return;

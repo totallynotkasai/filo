@@ -72,15 +72,25 @@ function installFiloStub(opts: FiloStubOptions = {}): InvokeArgs[] {
   // foreign edit. Pre-write / recheck stats still use `statSizes` so the
   // size-drift scenarios keep working; only post-write stats track the write.
   let lastWrittenBytes: number | null = null;
+  // Audit-17 5.3 — the gateway's post-write baseline guard now reads the bytes
+  // BACK (vault:read-file-text) and stamps only on a byte-exact self-write. These
+  // docId-less writes issue no PRE-write read, so the only read-file-text here is
+  // that post-write read-back; model it returning exactly what we wrote so a clean
+  // self-write confirms (a `vault:stat` size match alone no longer stamps).
+  let lastWrittenText: string | null = null;
   (window as unknown as Record<string, unknown>).filo = {
     invoke: async (channel: string, ...args: unknown[]) => {
       captured.push({ channel, args });
       if (channel === 'vault:write-existing-file-text') {
-        lastWrittenBytes = new TextEncoder().encode(String(args[2])).length;
+        lastWrittenText = String(args[2]);
+        lastWrittenBytes = new TextEncoder().encode(lastWrittenText).length;
       }
       if (opts.intercept) {
         const result = opts.intercept(channel, args);
         if (result !== undefined) return result;
+      }
+      if (channel === 'vault:read-file-text' && lastWrittenText !== null) {
+        return { success: true, content: lastWrittenText, mtimeMs: 1, size: lastWrittenBytes };
       }
       if (channel === 'vault:stat') {
         const mtimes = opts.statMtimes ?? [1000];
@@ -545,19 +555,22 @@ describe('F1 — read-driven hydrate seeds the drift baseline', () => {
     // rejected). Track the written length; pre-write / recheck stats (before
     // the write) keep the external mtime bump that drives the drift.
     let writtenLen = 0;
+    let writtenText = '';
     installFiloMock({
-      'vault:read-file-text': () => ({
-        success: true,
-        content: '---\ncompleted: false\n---\nbody',
-        mtimeMs: 1000,
-        size: 100,
-      }),
+      // Audit-17 5.3 — pre-write reads (hydrate / delta fresh-read) return the
+      // original disk content; the post-write read-back (after the write fired)
+      // must return the bytes we wrote so the baseline-refresh guard confirms.
+      'vault:read-file-text': () =>
+        writtenLen > 0
+          ? { success: true, content: writtenText, mtimeMs: 2000, size: writtenLen }
+          : { success: true, content: '---\ncompleted: false\n---\nbody', mtimeMs: 1000, size: 100 },
       'vault:stat': () =>
         writtenLen > 0
           ? { success: true, mtimeMs: 2000, size: writtenLen }
           : { success: true, mtimeMs: 2000, size: 100 },
       'vault:write-existing-file-text': (...args: unknown[]) => {
-        writtenLen = new TextEncoder().encode(String(args[2])).length;
+        writtenText = String(args[2]);
+        writtenLen = new TextEncoder().encode(writtenText).length;
         return { success: true };
       },
       'vault:file-exists': () => true,
@@ -594,19 +607,22 @@ describe('F1 — read-driven hydrate seeds the drift baseline', () => {
     // Audit-7 L5 — post-write stat reports the bytes we wrote so the baseline
     // refreshes cleanly (a fixed size would read as foreign and be rejected).
     let writtenLen = 0;
+    let writtenText = '';
     installFiloMock({
-      'vault:read-file-text': () => ({
-        success: true,
-        content: '---\ncompleted: false\n---\nbody',
-        mtimeMs: 1000,
-        size: 100,
-      }),
+      // Audit-17 5.3 — post-write read-back returns the bytes we wrote (pre-write
+      // reads return the original disk content) so the self-write baseline refresh
+      // confirms.
+      'vault:read-file-text': () =>
+        writtenLen > 0
+          ? { success: true, content: writtenText, mtimeMs: 1000, size: writtenLen }
+          : { success: true, content: '---\ncompleted: false\n---\nbody', mtimeMs: 1000, size: 100 },
       'vault:stat': () =>
         writtenLen > 0
           ? { success: true, mtimeMs: 1000, size: writtenLen }
           : { success: true, mtimeMs: 1000, size: 100 },
       'vault:write-existing-file-text': (...args: unknown[]) => {
-        writtenLen = new TextEncoder().encode(String(args[2])).length;
+        writtenText = String(args[2]);
+        writtenLen = new TextEncoder().encode(writtenText).length;
         return { success: true };
       },
       'vault:file-exists': () => true,

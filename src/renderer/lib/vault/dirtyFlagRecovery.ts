@@ -244,8 +244,58 @@ export function markClean(vaultRoot: string): Promise<void> {
 }
 
 /**
+ * Audit-17 3.2 — pre-commit stash of the prior session's sentinel status.
+ *
+ * `commitVaultCandidate` marks loader-repaired boards dirty, which schedules
+ * writes whose `beginWrite` → `refreshSentinel` → `markDirty` REPLACES the
+ * on-disk `.filo/.dirty` with THIS session's pending set (stamped with this
+ * launchId + generation) — destroying a genuine prior-crash payload before
+ * the recovery sequencer's `checkRecovery` (which runs post-commit) ever
+ * reads it; the Audit-16 3.3 self-write suppression then hides the crash
+ * entirely. Repairs are merely today's vector — ANY write scheduled between
+ * commit and sequencer step 1 has the same effect. So the candidate phase
+ * reads + stashes the sentinel BEFORE the commit (no write of the new open
+ * can have fired yet), and `checkRecovery` consumes the stashed copy.
+ *
+ * The stashed read deliberately skips the launchId/generation self-write
+ * suppression: pre-commit, no write of the upcoming open exists, so ANY
+ * sentinel present is by definition a prior session/open's breadcrumb — and
+ * MUST prompt. (Suppressing here would also regress the Audit-16 3.3
+ * same-path-reopen case: at stash time the generation hasn't been bumped
+ * yet, so a Don't-Save-preserved sentinel from the previous open of the
+ * SAME path still matches the current launchId + generation.)
+ */
+let stashedPreCommitStatus: { vaultRoot: string; status: RecoveryStatus } | null = null;
+
+/**
+ * Reads the sentinel and stashes the result for the next `checkRecovery`
+ * call against the same `vaultRoot`. Called by `loadVaultCandidate` right
+ * after `vault:init-config` (the registry must be armed for the read IPC).
+ * Never rejects — read failures resolve to the `sentinel-unreadable` status
+ * exactly as a live `checkRecovery` would.
+ */
+export async function stashRecoveryStatusBeforeCommit(vaultRoot: string): Promise<void> {
+  if (!vaultRoot) return;
+  const status = await readRecoveryStatus(vaultRoot, { suppressSelfWrites: false });
+  stashedPreCommitStatus = { vaultRoot, status };
+}
+
+/** Test-only: drops the pre-commit stash. */
+export function __resetRecoveryStashForTests(): void {
+  stashedPreCommitStatus = null;
+}
+
+/**
  * Reads the sentinel to determine whether the previous session ended with
  * unflushed writes. Called once on vault open.
+ *
+ * Audit-17 3.2 — consumes the pre-commit stash when one exists for this
+ * `vaultRoot` (see `stashRecoveryStatusBeforeCommit`), so open-time repair
+ * writes that replaced the on-disk sentinel between commit and this call
+ * can't hide a genuine prior-crash payload. Falls back to a live read when
+ * no stash matches (direct callers / tests). The stash is single-consume
+ * and always cleared here so a stale entry from an aborted open can't leak
+ * into an unrelated later check.
  *
  * Two failure modes are deliberately split. ENOENT (sentinel missing) is the
  * "all clean" path — the last session shut down without a pending write. Any
@@ -257,6 +307,24 @@ export function markClean(vaultRoot: string): Promise<void> {
  * skipped recovery the moment Filo couldn't see its own sentinel.
  */
 export async function checkRecovery(vaultRoot: string): Promise<RecoveryStatus> {
+  const stash = stashedPreCommitStatus;
+  stashedPreCommitStatus = null;
+  if (stash && stash.vaultRoot === vaultRoot) {
+    return stash.status;
+  }
+  return readRecoveryStatus(vaultRoot, { suppressSelfWrites: true });
+}
+
+/**
+ * The actual sentinel read. `suppressSelfWrites: true` (the live-read path)
+ * applies the Audit-14 1.3 + Audit-16 3.3 launchId/generation suppression so
+ * a sentinel written DURING the current open doesn't prompt; the pre-commit
+ * stash path passes `false` (see `stashRecoveryStatusBeforeCommit`).
+ */
+async function readRecoveryStatus(
+  vaultRoot: string,
+  opts: { suppressSelfWrites: boolean },
+): Promise<RecoveryStatus> {
   if (!vaultRoot) return { needsRecovery: false };
   let content: string;
   try {
@@ -342,7 +410,8 @@ export async function checkRecovery(vaultRoot: string): Promise<RecoveryStatus> 
     // must prompt: it is the documented breadcrumb contract for "reopening
     // the outgoing vault surfaces the Recovery modal".
     if (
-      parsed.launchId !== undefined
+      opts.suppressSelfWrites
+      && parsed.launchId !== undefined
       && parsed.launchId === LAUNCH_ID
       && parsed.vaultGeneration !== undefined
       && parsed.vaultGeneration === currentVaultGeneration()

@@ -202,6 +202,10 @@
       callerId: flusherId,
       docId: docId ?? null,
       frontmatterDelta: delta,
+      // Audit-16 6.8 — fire-time body-source decision (`body` above prefers
+      // the live `docState?.body`); the gateway must not re-derive it from
+      // the mutable documentStore at write time.
+      bodyIsLive: docState != null,
     };
   }
 
@@ -234,29 +238,36 @@
 
   async function flushPendingWrite(): Promise<void> {
     if (!flusherId) return;
-    try {
-      await flushMarkdownWrite(flusherId);
+    // Audit-17 2.1 — `flushMarkdownWrite` never rejects (the scheduler
+    // primitive resolves failures as `{ ok: false }`), so the old try/catch
+    // was dead code: the dirty flag was cleared on a FAILED flush, dropping
+    // the classifier's popup-dirty conflict routing for rows that never
+    // landed. Branch on the result instead.
+    const result = await flushMarkdownWrite(flusherId);
+    if (result.ok) {
       // Sprint C / C.1 — write landed; the popup's tracked rows match disk
       // now. Clear the dirty bit so the classifier stops routing future
       // external frontmatter edits to the popup-dirty prompt path.
       clearPropertiesPopupDirty(flusherId);
-    } catch (err) {
-      if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
-        const relPath = vaultRelativePath(tile);
-        backingFileMissing = true;
-        // Backing file is gone — there is no path left to be dirty against.
-        clearPropertiesPopupDirty(flusherId);
-        reportError(
-          'PropertiesPopup',
-          null,
-          `"${relPath ?? 'File'}" no longer exists on disk. Further property changes won't be saved until the file is restored.`,
-        );
-        return;
-      }
-      // Don't clear on other failures — the next flush attempt (close, Ctrl+S)
-      // should still see the rows as dirty so the user's choice is honoured.
-      reportError('PropertiesPopup', err, 'Failed to write markdown');
+      return;
     }
+    const err = result.error;
+    if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
+      const relPath = vaultRelativePath(tile);
+      backingFileMissing = true;
+      // Backing file is gone — there is no path left to be dirty against.
+      clearPropertiesPopupDirty(flusherId);
+      reportError(
+        'PropertiesPopup',
+        null,
+        `"${relPath ?? 'File'}" no longer exists on disk. Further property changes won't be saved until the file is restored.`,
+      );
+      return;
+    }
+    // Don't clear on other failures — the next flush attempt (close, Ctrl+S)
+    // should still see the rows as dirty so the user's choice is honoured.
+    // No reportError: trackComponentWrite already surfaced the failure
+    // through the save-error pipeline; a second toast would double-report.
   }
 
   function addProperty(): void {

@@ -464,7 +464,8 @@ export class UpdateTaskFieldCommand extends Command {
     const isRedo = this.hasExecuted;
     this.hasExecuted = true;
     if (isRedo) {
-      applyFrontmatterPatchRebased({
+      // A17-1.1 — awaited: the rebase now re-reads disk when no cache is seeded.
+      await applyFrontmatterPatchRebased({
         docId: this.docId,
         relPath: this.relPath,
         targetBoardId: this.targetBoardId,
@@ -521,7 +522,8 @@ export class UpdateTaskFieldCommand extends Command {
     // the same field isn't silently clobbered (prompts to apply anyway).
     // 6.2.H7 — docId is guaranteed non-null by the constructor's throw, so
     // the legacy null-docId else-branch (a silent no-op in practice) is gone.
-    applyFrontmatterPatchRebased({
+    // A17-1.1 — awaited: the rebase now re-reads disk when no cache is seeded.
+    await applyFrontmatterPatchRebased({
       docId: this.docId,
       relPath: this.relPath,
       targetBoardId: this.targetBoardId,

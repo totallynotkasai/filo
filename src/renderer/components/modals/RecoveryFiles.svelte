@@ -4,11 +4,13 @@
 
   let paths = $derived(vaultStore.recoveryPendingPaths);
 
-  // Explicit acknowledgement — drops the pending-paths list AND clears the
-  // on-disk `.filo/.dirty` sentinel. Only this button calls it; closing the
-  // modal via Esc / backdrop / X leaves the sentinel intact so the modal
-  // re-appears on the next vault open (the user must explicitly read and
-  // dismiss the list to clear it).
+  // Acknowledgement — drops the pending-paths list, clears the on-disk
+  // `.filo/.dirty` sentinel (if the write tracker is idle), and un-parks the
+  // recovery sequencer so the remaining sentinel prompts (tag-rewrite,
+  // rename-cascade, snapshot listing) can surface. Audit-17 3.3 — Esc /
+  // backdrop / X now acknowledge too (via the Modal's `beforeClose` in
+  // AppShell): every close path is an acknowledgement, otherwise a bypassed
+  // close parked the sequencer forever and steps 2–4 never ran that session.
   async function dismiss() {
     await vaultStore.acknowledgeRecovery();
     uiStore.closeModal();

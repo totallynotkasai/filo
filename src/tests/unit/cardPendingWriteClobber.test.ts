@@ -144,7 +144,8 @@ describe('vaultExternalChanges — pending-write guard (F4)', () => {
     const toast = uiStore.toasts.find((t) => t.text.includes('modified externally'));
     expect(toast).toBeDefined();
 
-    toast!.actions![0].handler(); // Reload
+    // Audit-16 6.3 — the Reload handler is now async (click-time disk re-read).
+    await toast!.actions![0].handler(); // Reload
 
     // Pending write cancelled so it can't fire and re-clobber the reload.
     expect(hasPendingWrite('Card.md')).toBe(false);

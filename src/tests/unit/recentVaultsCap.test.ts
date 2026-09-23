@@ -66,42 +66,56 @@ describe('vault:add-recent / pin-recent caps (Phase 8 / 8.5)', () => {
     await fs.rm(userDataDir, { recursive: true, force: true });
   });
 
+  // Audit-18 4.5 — `vault:add-recent` now returns an `{ ok, recents }` envelope
+  // so the renderer can tell a failed add from a genuinely empty list.
+  type AddRecentEnvelope =
+    | { ok: true; recents: { path: string }[] }
+    | { ok: false; code?: string; error?: string };
+
   describe('input validation', () => {
     it('accepts a normal vault path and name', async () => {
       // Sprint C / C21 — `vault:add-recent` now stat-checks the path
       // and rejects non-directories, so pass a real temp directory.
       const realVault = await fs.mkdtemp(join(tmpdir(), 'filo-recents-vault-'));
       try {
-        const result = (await addHandler({}, realVault, 'MyVault')) as unknown[];
-        expect(Array.isArray(result)).toBe(true);
-        expect(result).toHaveLength(1);
+        const result = (await addHandler({}, realVault, 'MyVault')) as AddRecentEnvelope;
+        expect(result.ok).toBe(true);
+        if (result.ok) expect(result.recents).toHaveLength(1);
       } finally {
         await fs.rm(realVault, { recursive: true, force: true });
       }
     });
 
-    it('rejects a path longer than 4096 characters (returns [])', async () => {
+    it('rejects a path longer than 4096 characters ({ ok: false })', async () => {
       const longPath = '/' + 'a'.repeat(4096);
-      const result = (await addHandler({}, longPath, 'MyVault')) as unknown[];
-      expect(result).toEqual([]);
+      const result = (await addHandler({}, longPath, 'MyVault')) as AddRecentEnvelope;
+      expect(result.ok).toBe(false);
       // recent-vaults.json should still not exist (no successful write).
       await expect(fs.stat(join(userDataDir, 'recent-vaults.json'))).rejects.toThrow();
     });
 
     it('rejects a path containing a null byte', async () => {
-      const result = (await addHandler({}, '/vault\0evil', 'MyVault')) as unknown[];
-      expect(result).toEqual([]);
+      const result = (await addHandler({}, '/vault\0evil', 'MyVault')) as AddRecentEnvelope;
+      expect(result.ok).toBe(false);
     });
 
     it('rejects a name longer than 4096 characters', async () => {
       const longName = 'a'.repeat(4097);
-      const result = (await addHandler({}, '/home/me/V', longName)) as unknown[];
-      expect(result).toEqual([]);
+      const result = (await addHandler({}, '/home/me/V', longName)) as AddRecentEnvelope;
+      expect(result.ok).toBe(false);
     });
 
     it('rejects an empty path', async () => {
-      const result = (await addHandler({}, '', 'V')) as unknown[];
-      expect(result).toEqual([]);
+      const result = (await addHandler({}, '', 'V')) as AddRecentEnvelope;
+      expect(result.ok).toBe(false);
+    });
+
+    it('rejects a non-existent directory with { ok: false } (not an empty list)', async () => {
+      // Audit-18 4.5 — the failure case must NOT be an empty array; the
+      // renderer keys off `ok` so it can leave the displayed list intact.
+      const result = (await addHandler({}, '/does/not/exist/at/all', 'Ghost')) as AddRecentEnvelope;
+      expect(result.ok).toBe(false);
+      expect(Array.isArray(result)).toBe(false);
     });
 
     it('vault:pin-recent also rejects oversize paths', async () => {
@@ -140,7 +154,9 @@ describe('vault:add-recent / pin-recent caps (Phase 8 / 8.5)', () => {
       const newVault = await fs.mkdtemp(join(tmpdir(), 'filo-recents-new-'));
       try {
         // Trigger a write via add-recent — the helper trims on every write.
-        const result = (await addHandler({}, newVault, 'New')) as { path: string }[];
+        const envelope = (await addHandler({}, newVault, 'New')) as AddRecentEnvelope;
+        expect(envelope.ok).toBe(true);
+        const result = envelope.ok ? envelope.recents : [];
         // 50 entries max; the new unpinned entry is in there.
         expect(result.length).toBeLessThanOrEqual(50);
         expect(result.some((v) => v.path === newVault)).toBe(true);

@@ -86,6 +86,20 @@ function utf8ByteLength(text: string): number {
   return utf8Encoder ? utf8Encoder.encode(text).length : text.length;
 }
 
+/**
+ * Audit-18 5.4 — byte threshold above which the Audit-17 5.3 post-write CONTENT
+ * read-back is skipped (size-only baseline confirmation instead). A markdown
+ * write is 300 ms idle-debounced and bound by `MARKDOWN_WRITE_TIMEOUT_MS`
+ * (60 s); a full content read-back on EVERY write doubles write-path IO, and for
+ * a multi-MB note on a slow volume (OneDrive/SMB/AV) that can push past the
+ * timeout into timeout-then-self-heal flapping. Small notes (the overwhelming
+ * majority) keep the read-back's same-byte-count-foreign-write protection; notes
+ * at or above the threshold fall back to size-only (the residual hole is
+ * documented in KNOWN_LIMITATIONS #15, mirroring the board scheduler's whole-file
+ * decision in #14). Exported so the behavioural matrix can pin the boundary.
+ */
+export const MARKDOWN_READBACK_BYTE_THRESHOLD = 1_000_000; // 1 MB
+
 // Phase R6 — the Reload / Keep-local prompt-handler slot lives in the leaf
 // `externalEditPrompt.ts` (Audit-16 split); re-exported for existing imports.
 export { setExternalEditPromptHandler } from './externalEditPrompt';
@@ -899,13 +913,22 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
     // promptless), so read the bytes BACK and stamp only when disk holds EXACTLY
     // what we wrote; on any content mismatch / unreadable read-back keep the prior
     // baseline so the drift gate re-detects + prompts next write.
+    // Audit-18 5.4 — size-gate the read-back: only small notes pay the second
+    // read. Notes at/above MARKDOWN_READBACK_BYTE_THRESHOLD accept size-only
+    // confirmation to avoid doubling IO on slow volumes (KNOWN_LIMITATIONS #15).
     let confirmed = false;
     if (postStat.size === writtenByteLength) {
-      try {
-        const readBack = await invokeOk('vault:read-file-text', vaultRoot, relPath);
-        confirmed = readBack.content === fileText;
-      } catch {
-        /* transient IO — keep prior baseline (safe direction) */
+      if (writtenByteLength < MARKDOWN_READBACK_BYTE_THRESHOLD) {
+        try {
+          const readBack = await invokeOk('vault:read-file-text', vaultRoot, relPath);
+          confirmed = readBack.content === fileText;
+        } catch {
+          /* transient IO — keep prior baseline (safe direction) */
+        }
+      } else {
+        // Large note: size matched our written bytes; accept it (residual
+        // same-byte-count-foreign-write hole documented in KNOWN_LIMITATIONS #15).
+        confirmed = true;
       }
     }
     if (confirmed) {
@@ -1021,9 +1044,10 @@ export async function flushMarkdownWrite(callerId: string): Promise<FlushMarkdow
  * Cancels `callerId`'s pending timer without flushing it. Used by the
  * editor's onDestroy when the component is unmounting and a write would
  * land against a now-stale relPath (rename mid-debounce, vault swap, etc.).
+ * `pendingOnly` (Audit-18 H1): see the scheduler `cancel` doc in writeSchedulerTypes.
  */
-export function cancelMarkdownWrite(callerId: string): void {
-  writerScheduler.cancel(callerId);
+export function cancelMarkdownWrite(callerId: string, pendingOnly = false): void {
+  writerScheduler.cancel(callerId, undefined, pendingOnly);
 }
 
 // ── Global hooks ──

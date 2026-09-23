@@ -432,3 +432,89 @@ key (the source-preserving engine).
 **Impact:** A hand-edited quoted `completed: "true"` shows the task as incomplete
 until the checkbox is toggled once. Rare (only hand-edited files); self-heals on
 first toggle; never data loss — only a display mismatch.
+
+## 14. Board post-write drift baseline is size-only (no content read-back)
+
+**What:** After a successful `.board.json` self-write,
+[src/renderer/lib/boards/boardWriteScheduler.ts](src/renderer/lib/boards/boardWriteScheduler.ts)
+(`writeBoardFile`) refreshes the pre-write drift baseline only when the
+post-write `vault:stat` **size** equals the bytes it wrote. The markdown gateway
+(Audit-17 5.3, for notes below the 1 MB read-back threshold — see #15) and the
+`.filo/` config scheduler (Audit-18 3.6) go further and read the bytes **back** to
+also reject a *same-byte-count* foreign write that landed in the save→stat gap;
+the board writer deliberately does **not**.
+
+**Where:** the post-write `refreshBaselineAfterWrite` block in `writeBoardFile`.
+
+**Why accepted (Audit-18 3.6):** A `.board.json` can be multi-MB and is rewritten
+every 300 ms while a user drags tiles. A full content read-back on every save
+would double the write-path IO on the hot path — a real perf cost — to close a
+window that requires a foreign tool to write the *exact same byte count* to the
+board file within the ~millisecond save→stat gap. The small `.filo/` configs pay
+the read-back cheaply; whole-file board writes do not.
+
+**Impact:** In the (extraordinarily narrow) case above, a foreign edit could be
+adopted as Filo's own baseline and overwritten without a drift prompt on the next
+save. The main-process watcher's **content-hash** reconcile pass (which compares
+hashes, not just mtime/size) remains the backstop and re-surfaces such an edit.
+Upgrade to a size-gated or hashed read-back if this ever bites in practice.
+
+## 15. Markdown post-write read-back is skipped for notes ≥ 1 MB
+
+**What:** After a successful `.md` self-write, the markdown gateway
+([src/renderer/lib/vault/markdownFileWriter.ts](src/renderer/lib/vault/markdownFileWriter.ts))
+refreshes the post-write drift baseline by reading the bytes **back** for notes
+*below* `MARKDOWN_READBACK_BYTE_THRESHOLD` (1 MB) to reject a *same-byte-count*
+foreign write that landed in the save→stat gap (Audit-17 5.3). For a note at or
+above that threshold the read-back is skipped and only the post-write **size** is
+checked, mirroring the board scheduler's whole-file decision (#14).
+
+**Where:** the post-write `refreshBaselineAfterWrite` block in
+`writeMarkdownFileImpl` (the `MARKDOWN_READBACK_BYTE_THRESHOLD` size-gate).
+
+**Why accepted (Audit-18 5.4):** A markdown write is 300 ms idle-debounced and
+bound by a 60-second timeout (`MARKDOWN_WRITE_TIMEOUT_MS`). A full content
+read-back on every write doubles write-path IO; for multi-MB notes on a slow
+volume (OneDrive/SMB/AV) that doubling can push a write past the timeout into
+timeout-then-self-heal flapping. The 1 MB threshold keeps the read-back's
+protection for the overwhelming majority of notes (typical task/note tiles) while
+sparing large notes the IO doubling. The triggering case — a foreign tool writing
+the *exact same byte count* to a ≥ 1 MB note within the ~millisecond save→stat gap
+— is extraordinarily rare.
+
+**Impact:** In that (extraordinarily narrow) case, a foreign edit to a ≥ 1 MB note
+could be adopted as Filo's own baseline and overwritten without a drift prompt on
+the next save. The main-process watcher's **content-hash** reconcile pass remains
+the backstop and re-surfaces such an edit. Upgrade to a hashed read-back (no IO
+doubling) if this ever bites in practice.
+
+## 16. `documentStore` mutation-version maps grow per-docId until vault swap
+
+**What:** The document store keeps two staleness-token maps,
+`mutationVersions` and `bodyMutationVersions`
+([src/renderer/stores/document.svelte.ts](src/renderer/stores/document.svelte.ts),
+Audit-16 1.1), keyed by `docId`. They are **deliberately NOT pruned** when a
+document is unloaded — only `clear()` (vault swap) empties them. A docId's entry
+therefore survives `unloadDocument`, so an early write after the same file is
+reopened still compares its scheduled version against the pre-unload high-water
+mark and can't be mistaken for stale (the silent-drop class 1.1 closes). The
+trade-off is that the maps accumulate one small `number` entry per distinct docId
+touched during a session and only shrink on a vault swap.
+
+**Where:** `mutationVersions` / `bodyMutationVersions` in
+[src/renderer/stores/document.svelte.ts](src/renderer/stores/document.svelte.ts)
+(declared with the `// allow-module-state` annotation; cleared together in
+`clear()`).
+
+**Why accepted (Audit-18 6.2):** Pruning an entry on unload would re-open the
+post-reopen staleness hole 1.1 was written to close — a reopened doc's first
+write would have no high-water mark to compare against, or worse, compare against
+a reset-to-zero token and be skipped. Each entry is a single integer, growth is
+bounded by the number of distinct documents opened in one vault session (already
+bounded by the vault's file count), and every entry is released on the next vault
+swap. There is no real-world session large enough for this to matter.
+
+**Impact:** Negligible. Two `Map<string, number>` entries per distinct docId
+opened this session, fully released on vault swap. No code change unless a real
+memory complaint surfaces — at which point an LRU-with-floor (keep the last N
+high-water marks) would close it without re-opening the 1.1 class.

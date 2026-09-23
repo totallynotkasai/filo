@@ -53,5 +53,33 @@ export function makeRecoverySlice(ctx: VaultContext) {
       // pending sentinel can surface. No-op when no sequencer is waiting.
       ctx.resolveRecoveryDismissed();
     },
+
+    /**
+     * Audit-18 4.1 — bypassed close of the Recovery modal (Esc / X / backdrop).
+     *
+     * UN-PARKS the recovery sequencer so steps 2–4 (tag-rewrite Resume/Discard,
+     * rename-cascade retry, snapshot listing) still run this session — that is
+     * the part of the Audit-17 3.3 fix this KEEPS — but it does NOT clear the
+     * pending-paths list or the on-disk `.filo/.dirty` sentinel, so recovery
+     * RE-QUEUES on the next launch.
+     *
+     * A17-3.3 routed every close path (including Esc/X/backdrop) through
+     * `acknowledgeRecovery`, which over-reached: a bypassed close is NOT a user
+     * acknowledgement of "I've reviewed these files", so it shouldn't destroy
+     * the breadcrumb. Only the explicit Dismiss button does (the comment in
+     * `runRecoverySequencer` step 1 — "its Dismiss button is the only 'user
+     * acknowledged' signal" — always intended this). This is a NARROWING of
+     * A17-3.3, not a reversal: the sequencer is still un-parked so steps 2–4
+     * never silently skip again.
+     *
+     * Idempotent: a second call no-ops (the resolver is consumed on first call).
+     */
+    bypassRecoveryModalClose(): void {
+      // Deliberately NOT touching `recoveryPendingPaths` or the sentinel — the
+      // breadcrumb survives so the prior session's unflushed files re-surface
+      // next launch (unless this session's first write clears it via the
+      // normal `syncSentinelIfIdle` path, which is the correct active-use case).
+      ctx.resolveRecoveryDismissed();
+    },
   };
 }

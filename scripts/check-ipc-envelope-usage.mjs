@@ -46,6 +46,10 @@ const ENVELOPE_CHANNELS = new Set([
   'config:save-workspace',
   'theme:save',
   'theme:delete',
+  // Audit-18 4.5 — add-recent now returns `IpcOk<{ recents }>` so a failed add
+  // is distinguishable from an empty list (the read-only recents siblings stay
+  // bare arrays).
+  'vault:add-recent',
   // success-discriminated
   'vault:create-folder',
   'vault:suggest-folder-name',

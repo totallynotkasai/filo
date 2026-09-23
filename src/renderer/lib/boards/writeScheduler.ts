@@ -574,7 +574,7 @@ export function createScheduler<TArgs>(
     });
   }
 
-  function cancel(key: string, fallbackPath?: string): void {
+  function cancel(key: string, fallbackPath?: string, pendingOnly = false): void {
     const entry = pending.get(key);
     if (entry) {
       clearTimeout(entry.timer);
@@ -582,6 +582,7 @@ export function createScheduler<TArgs>(
       const resolvedPath = fallbackPath ?? entry.schedulePath;
       safeEndWrite({ vaultRoot: entry.scheduleVaultRoot, path: resolvedPath }, true);
     }
+    if (pendingOnly) return; // Audit-18 H1 — skip the parked-fire cancel below; a teardown that already flushed owns it (see Scheduler.cancel doc).
     // Audit-16 4.4 — also reach PARKED fires. A debounce timer that fired
     // into the drained branch is in NEITHER `pending` (timer deleted it) NOR
     // `inFlight` (it hasn't fired yet) while it awaits the drain, so the

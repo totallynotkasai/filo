@@ -226,6 +226,12 @@ describe('UpdatePropertiesCommand — frontmatter (text tile)', () => {
   });
 
   it('snapshots deep-cloned so later mutations do not poison the command', async () => {
+    // Disk holds the post-execute "after" state (tags: [b]); undo reverts it to
+    // the "before" snapshot. Audit-18 6.3 — a successful read is REQUIRED now: a
+    // docId-less Properties undo against an UNREADABLE file refuses rather than
+    // blind-writing a stale body, so this test mocks the (realistic) readable
+    // disk and asserts the deep-cloned snapshot is what reaches the write.
+    recorder = installRecorder('---\ntags:\n  - b\n---\nbody\n');
     const sharedFm = { tags: ['a'] };
     const cmd = new UpdatePropertiesCommand(
       { kind: 'frontmatter', relPath: 'X.md', docId: null, fm: sharedFm },

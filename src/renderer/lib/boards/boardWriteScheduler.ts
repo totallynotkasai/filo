@@ -24,7 +24,7 @@ import {
   type V7BoardFileData,
 } from './tileDefBuilder';
 import { CURRENT_BOARD_FILE_VERSION } from '../../schema/boardFile';
-import { BOARD_WRITE_DEBOUNCE_MS, WRITE_TIMEOUT_MS, writtenByteLength } from './boardWriteDebounce';
+import { BOARD_WRITE_DEBOUNCE_MS, WRITE_TIMEOUT_MS, ENOENT_RESTAT_DELAY_MS, writtenByteLength } from './boardWriteDebounce';
 import { getViewportFromCache, setViewport } from './viewportCache';
 import {
   notifyWriteError,
@@ -64,17 +64,42 @@ export type BoardExternalEditHandler = (path: string) => Promise<'reload' | 'kee
 let boardExternalEditHandler: BoardExternalEditHandler | null = null;
 
 /**
- * Audit-17 2.3 — grace delay before the pre-write ENOENT re-stat. A sync
- * client's unlink→recreate blip usually completes within tens of ms; the
- * delay gives the recreate time to land so the re-stat sees the file and the
- * armed write falls through to the drift check instead of resolving as a
- * silent success. Kept far below the scheduler's `writeTimeoutMs` bound.
- * Exported for the unit test's fake-timer control.
+ * Audit-17 2.3 — grace delay before the pre-write ENOENT re-stat. Moved to the
+ * shared `boardWriteDebounce` leaf in Audit-18 M5 (the config scheduler needs the
+ * same delay); re-exported here under the original name so the board scheduler's
+ * fake-timer unit test is unchanged. Exported for the test's timer control.
  */
-export const BOARD_ENOENT_RESTAT_DELAY_MS = 150;
+export const BOARD_ENOENT_RESTAT_DELAY_MS = ENOENT_RESTAT_DELAY_MS;
 
 export function setBoardExternalEditHandler(handler: BoardExternalEditHandler | null): void {
   boardExternalEditHandler = handler;
+}
+
+/**
+ * Audit-18 3.11 — board paths whose `.board.json` is being deleted. `deleteBoard`
+ * (boardCache) marks the path here BEFORE the `board:delete` IPC and clears it
+ * once any in-flight write has drained. `writeBoardFile` consults it just before
+ * `board:save`: a board write that was IN FLIGHT at delete time — most acutely
+ * one suspended on the interactive external-edit drift prompt — would otherwise
+ * resume AFTER the unlink and RE-CREATE the `.board.json` as a ghost board
+ * (cancelBoardWrite only reaches pending/parked timers, never an in-flight write).
+ * Bailing before `board:save` is a hard-cancel that doesn't block the delete on
+ * the up-to-`writeTimeoutMs` prompt wait. Cleared on vault swap via the scheduler
+ * reset below.
+ */
+// allow-module-state: reset via the boardScheduler reset callback (vault swap)
+const boardsBeingDeleted = new Set<string>();
+
+export function markBoardPathDeleting(boardPath: string): void {
+  if (boardPath) boardsBeingDeleted.add(boardPath);
+}
+
+export function clearBoardPathDeleting(boardPath: string): void {
+  boardsBeingDeleted.delete(boardPath);
+}
+
+function isBoardPathDeleting(boardPath: string): boolean {
+  return boardsBeingDeleted.has(boardPath);
 }
 
 export interface BoardWriteArgs {
@@ -190,6 +215,11 @@ export async function writeBoardFile(
   // to "latest" for direct (non-scheduler) callers.
   isLatestWrite?: () => boolean,
 ): Promise<void> {
+  // Audit-18 3.11 — the board was deleted while this write was pending/in flight;
+  // skip as a clean no-op so we don't re-create the just-unlinked `.board.json`.
+  // (Re-checked again right before `board:save` below to cover a write that was
+  // suspended on the drift prompt across the delete.)
+  if (isBoardPathDeleting(boardPath)) return;
   const fileData = cached;
   // Stamp the envelope version on every write so files round-trip with a
   // version field even if they were loaded from a legacy (pre-version)
@@ -347,6 +377,13 @@ export async function writeBoardFile(
     }
   }
 
+  // Audit-18 3.11 — re-check AFTER the drift-prompt await above. A write
+  // suspended on the interactive external-edit prompt (`boardExternalEditHandler`)
+  // can have the board deleted out from under it while it waited; resuming into
+  // `board:save` here would resurrect the unlinked file as a ghost board. Bail as
+  // a clean no-op — `deleteBoard` owns the teardown.
+  if (isBoardPathDeleting(boardPath)) return;
+
   // Phase A.2a — mark the path BEFORE the IPC fires. The OS watcher event
   // for our own write can reach the renderer before the IPC promise
   // resolves; marking after the await would let `vault:files-changed` see
@@ -380,6 +417,15 @@ export async function writeBoardFile(
         // otherwise become Filo's own baseline and the next write would
         // match-and-clobber it promptless. On a size mismatch keep the prior
         // baseline (DI-14) so the next write's drift check re-detects + prompts.
+        //
+        // Audit-18 3.6 — DELIBERATELY size-only here (no content read-back). The
+        // markdown gateway (A17-5.3) and the config scheduler (3.6) read the bytes
+        // BACK to also catch a SAME-SIZE foreign write in the gap, but a
+        // `.board.json` can be multi-MB and is rewritten every 300 ms while a user
+        // drags tiles — a full read-back per save would double that IO on the hot
+        // path. The residual (a foreign write of the EXACT same byte count landing
+        // in the ~ms save→stat gap) is accepted + documented in KNOWN_LIMITATIONS;
+        // the watcher's content-hash reconcile remains the backstop for it.
         if (postStat.size === writtenByteLength(payload)) {
           refreshBaselineAfterWrite(boardPath, postStat.mtimeMs, postStat.size);
         } else {
@@ -483,5 +529,12 @@ export function cancelAllPendingBoardWrites(): void {
 // and pending state. The board scheduler does the same via the primitive's
 // `reset()` so a new-vault Ctrl+S won't await an old-vault IPC and
 // surface its outcome against the new vault.
-registerResetCallback(() => boardScheduler.reset());
-registerTestResetCallback(() => boardScheduler.reset());
+registerResetCallback(() => {
+  boardScheduler.reset();
+  // Audit-18 3.11 — a deleting-mark must not leak across vaults.
+  boardsBeingDeleted.clear();
+});
+registerTestResetCallback(() => {
+  boardScheduler.reset();
+  boardsBeingDeleted.clear();
+});

@@ -142,14 +142,34 @@ describe('export:save — payload cap + .filo guard (Phase 8 / 8.2)', () => {
     expect(written).toBe('# hello');
   });
 
-  it('returns canceled (success: false, no error) when the user dismisses the dialog', async () => {
+  it('returns canceled (success: false, canceled: true, no error) when the user dismisses the dialog', async () => {
     dialogCanceled = true;
     dialogPickedPath = null;
     const result = (await exportHandler({}, 'md', 'hi', 'note')) as {
       success: boolean;
+      canceled?: boolean;
       error?: string;
     };
     expect(result.success).toBe(false);
+    // Audit-18 4.4 — the cancel discriminator lets the renderer treat a
+    // dismissed dialog as a no-op instead of toasting "Export failed".
+    expect(result.canceled).toBe(true);
     expect(result.error).toBeUndefined();
+  });
+
+  it('a real write failure stays { success: false } with NO canceled flag', async () => {
+    // Point at a path whose parent directory does not exist → fs.writeFile
+    // rejects → the catch returns { success: false, error } but NOT canceled,
+    // so the renderer DOES surface the error toast (Audit-18 4.4 counter-case).
+    dialogCanceled = false;
+    dialogPickedPath = join(outDir, 'no-such-subdir', 'note.md');
+    const result = (await exportHandler({}, 'md', 'hi', 'note')) as {
+      success: boolean;
+      canceled?: boolean;
+      error?: string;
+    };
+    expect(result.success).toBe(false);
+    expect(result.canceled).toBeUndefined();
+    expect(typeof result.error).toBe('string');
   });
 });

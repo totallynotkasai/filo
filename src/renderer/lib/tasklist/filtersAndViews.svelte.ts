@@ -123,9 +123,19 @@ export class TaskListFiltersAndViews {
     if (this.lastViewPersistTimer) {
       clearTimeout(this.lastViewPersistTimer);
       this.lastViewPersistTimer = null;
-      if (this.hydratedForBoardId) {
-        flushLastViewForBoard(this.hydratedForBoardId, this.buildLastView());
-      }
+    }
+    // Audit-18 5.1 — flush on unmount INDEPENDENTLY of the timer. The host's
+    // persist-$effect cleanup now flushes only on a real board switch and just
+    // clears the timer on a same-board tick (so the 300 ms debounce can
+    // accumulate); on a true unmount that cleanup nulls the timer WITHOUT
+    // flushing, so gating this flush on the timer would drop the pending slice
+    // when the cleanup ran first. Gate on the hydrated board id instead. The
+    // JSON-equality guard in flushLastViewForBoard makes a no-change teardown a
+    // no-op, and buildLastView() is unmount-safe (no next-board hydrate
+    // re-seeds the filters on a true teardown — the board-switch late-build
+    // hazard is owned by the effect cleanup's arm-time snapshot).
+    if (this.hydratedForBoardId) {
+      flushLastViewForBoard(this.hydratedForBoardId, this.buildLastView());
     }
   }
 

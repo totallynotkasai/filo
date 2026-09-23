@@ -32,6 +32,7 @@
   import KanbanCardStylePopup from './KanbanCardStylePopup.svelte';
   import KanbanSideToolbar from './KanbanSideToolbar.svelte';
   import KanbanNewTileModal from './KanbanNewTileModal.svelte';
+  import TagPromptPopup from './TagPromptPopup.svelte';
   import BoardBackground from '../canvas/BoardBackground.svelte';
   import {
     effectiveColumnStyle,
@@ -126,6 +127,20 @@
   // via `<TileContainer flowLayout=true>`). Same pattern as Mind Map / Task
   // List wiring so kanban cards share the unified TagEditor component.
   let tagEditorPopup = $state<{ tileId: string; x: number; y: number } | null>(null);
+  // Audit-18 M7 — in-app tag-input prompt for the bulk "Add tag" action. The
+  // controller (`KanbanMultiSelect`) awaits the injected `promptForTag()`; it
+  // mounts <TagPromptPopup> and resolves on Add / Cancel / Escape. Replaces
+  // `window.prompt`, which throws in Electron's renderer.
+  let tagPromptResolve = $state<((value: string | null) => void) | null>(null);
+  function promptForTag(): Promise<string | null> {
+    if (tagPromptResolve) tagPromptResolve(null); // never strand a prior prompt
+    return new Promise<string | null>((resolve) => { tagPromptResolve = resolve; });
+  }
+  function resolveTagPrompt(value: string | null): void {
+    const resolve = tagPromptResolve;
+    tagPromptResolve = null;
+    resolve?.(value);
+  }
   function openColumnStyle(col: { id: string; style?: Record<string, unknown> }, x: number, y: number) {
     columnStylePopup = { columnId: col.id, style: col.style, x, y };
   }
@@ -826,6 +841,22 @@
     // Drain any queued frontmatter writes so a board close during the
     // 300ms debounce window doesn't lose the user's last field edit.
     void flushAllPendingFrontmatterWrites();
+    // Audit-18 5.1 — flush the pending lastView on a true unmount. The persist
+    // $effect cleanup now flushes only on a real board switch and just clears
+    // the timer on the unmount tick (board id unchanged), so without this the
+    // last filter/sort change within the 300 ms window before a board close /
+    // vault swap would be dropped. Keyed by the CAPTURED hydrated id through
+    // the cache (teardown-safe; JSON-equality guard makes a no-change flush a
+    // no-op). Mirrors TaskListBoard's filters.dispose().
+    if (hydratedForBoardId) {
+      flushLastViewForBoard(hydratedForBoardId, {
+        sortBy: filtersAndSort.activeSortBy,
+        filterTags: [...filtersAndSort.activeFilterTags],
+        filterProp: filtersAndSort.activeFilterProp
+          ? { ...filtersAndSort.activeFilterProp }
+          : null,
+      });
+    }
   });
 
   // ── Filtering / sorting (applied per column at render time) ──
@@ -878,11 +909,18 @@
     // swap mid-window must not fire a stale write); Audit-17 4.5 — but flush,
     // don't drop: a filter/sort change within 300 ms of a board switch was
     // otherwise never written (hydratedForBoardId blocks any re-fire after).
+    // Audit-18 5.1 — the $effect cleanup runs before EVERY re-execution, not
+    // only teardown; flushing unconditionally here fired on every filter/sort
+    // tick and structurally defeated the 300 ms debounce. Flush ONLY on a real
+    // board switch (the live id moved off the armed id); a same-board re-run
+    // just re-arms the timer. Unmount is flushed in onDestroy below.
     return () => {
       if (lastViewPersistTimer) {
         clearTimeout(lastViewPersistTimer);
         lastViewPersistTimer = null;
-        flushLastViewForBoard(id, nextLastView);
+        if (board?.id !== id) {
+          flushLastViewForBoard(id, nextLastView);
+        }
       }
     };
   });
@@ -962,6 +1000,7 @@
     tickAndPersist,
     ensureSeededFm: (tile) => fmWriter.ensureSeededFm(tile),
     vaultPathForTile,
+    promptForTag,
   });
 
   // ── Floating-vault offset ──
@@ -1194,6 +1233,11 @@
   <div class="kanban-tag-popup-anchor" style="position: fixed; left: {tagEditorPopup.x}px; top: {tagEditorPopup.y}px;">
     <TagEditor tileId={tagEditorPopup.tileId} onClose={() => tagEditorPopup = null} />
   </div>
+{/if}
+
+{#if tagPromptResolve}
+  <!-- Audit-18 M7 — bulk "Add tag" prompt (replaces window.prompt). -->
+  <TagPromptPopup onResolve={resolveTagPrompt} />
 {/if}
 
 <style>

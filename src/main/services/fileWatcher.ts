@@ -286,6 +286,22 @@ export class FileWatcher {
     return false;
   }
 
+  /**
+   * 3.7 (Audit-18) — true when `relativePath` is under an active TREE-suppress
+   * prefix (`suppressTree`, i.e. an in-flight folder DELETE). The reconcile
+   * delete carry-forward (below) uses this to EXCLUDE intentional self-deletes
+   * from re-surfacing as external deletes once suppression lifts.
+   */
+  private isTreeSuppressed(relativePath: string): boolean {
+    const normalized = vaultPath(relativePath);
+    const now = Date.now();
+    for (const [prefix, exp] of this.suppressedPrefixes.entries()) {
+      if (now > exp) continue;
+      if (normalized.startsWith(prefix)) return true;
+    }
+    return false;
+  }
+
   private gcSuppressedPaths(): void {
     const now = Date.now();
     for (const [path, expiry] of this.suppressedPaths.entries()) {
@@ -551,6 +567,19 @@ export class FileWatcher {
             const priorEntry = previous.get(path);
             if (priorEntry !== undefined) current.set(path, priorEntry);
             else current.delete(path);
+          }
+          // 3.7 (Audit-18) — Audit-10 M3 carried forward only paths that still
+          // EXIST. A path DELETED while suppressed (in `previous`, GONE from
+          // `current`) let the snapshot advance past it — the deletion diff skips
+          // it this pass and no later pass can re-detect it, so an external DELETE
+          // inside a SELF-WRITE suppression window was swallowed forever. Carry the
+          // prior entry forward so it re-surfaces when the window lifts. EXCLUDE
+          // tree-suppressed paths (`suppressTree` = intentional folder self-delete).
+          for (const [path, priorEntry] of previous) {
+            if (current.has(path)) continue;
+            if (!this.isSuppressed(path)) continue;
+            if (this.isTreeSuppressed(path)) continue;
+            current.set(path, priorEntry);
           }
         }
         this.reconcileSnapshot = current;

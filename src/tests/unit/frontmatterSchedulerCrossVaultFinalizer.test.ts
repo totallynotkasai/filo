@@ -56,8 +56,19 @@ describe('frontmatterWriteScheduler — cross-vault finalizer (Phase B.2)', () =
     const ipcA = new Promise<unknown>((_, rej) => {
       rejectA = rej;
     });
+    // 3.3 (Audit-18) — the write now `await`s an on-demand hydrate read before it
+    // reaches (and attaches its handler to) this write IPC promise, so the
+    // `rejectA(...)` below can fire one microtask BEFORE the write awaits `ipcA`.
+    // The write still handles the rejection (via the scheduler's catch); this
+    // no-op catch just suppresses the artificial "unhandled rejection" the
+    // controlled early reject would otherwise flag (in prod the IPC promise is
+    // created + awaited together, so this gap never exists).
+    void ipcA.catch(() => {});
     installFiloMock({
       'vault:file-exists': () => true,
+      // 3.3 (Audit-18) — writeFrontmatter hydrates on demand + fails loud on a
+      // read error; supply a working read mock so the docState write proceeds.
+      'vault:read-file-text': () => ({ success: true, content: 'x', mtimeMs: 1, size: 1 }),
       'vault:write-existing-file-text': () => ipcA,
     });
 
@@ -95,6 +106,9 @@ describe('frontmatterWriteScheduler — cross-vault finalizer (Phase B.2)', () =
     });
     installFiloMock({
       'vault:file-exists': () => true,
+      // 3.3 (Audit-18) — writeFrontmatter hydrates on demand + fails loud on a
+      // read error; supply a working read mock so the docState write proceeds.
+      'vault:read-file-text': () => ({ success: true, content: 'x', mtimeMs: 1, size: 1 }),
       'vault:write-existing-file-text': () => ipcB,
     });
 
@@ -138,6 +152,9 @@ describe('frontmatterWriteScheduler — cross-vault finalizer (Phase B.2)', () =
     });
     installFiloMock({
       'vault:file-exists': () => true,
+      // 3.3 (Audit-18) — writeFrontmatter hydrates on demand + fails loud on a
+      // read error; supply a working read mock so the docState write proceeds.
+      'vault:read-file-text': () => ({ success: true, content: 'x', mtimeMs: 1, size: 1 }),
       'vault:write-existing-file-text': () => ipcA,
     });
 
@@ -177,6 +194,9 @@ describe('frontmatterWriteScheduler — cross-vault finalizer (Phase B.2)', () =
     });
     installFiloMock({
       'vault:file-exists': () => true,
+      // 3.3 (Audit-18) — writeFrontmatter hydrates on demand + fails loud on a
+      // read error; supply a working read mock so the docState write proceeds.
+      'vault:read-file-text': () => ({ success: true, content: 'x', mtimeMs: 1, size: 1 }),
       'vault:write-existing-file-text': () => ipcB,
     });
 
@@ -210,6 +230,9 @@ describe('frontmatterWriteScheduler — cross-vault finalizer (Phase B.2)', () =
 
     installFiloMock({
       'vault:file-exists': () => true,
+      // 3.3 (Audit-18) — writeFrontmatter hydrates on demand + fails loud on a
+      // read error; supply a working read mock so the docState write proceeds.
+      'vault:read-file-text': () => ({ success: true, content: 'x', mtimeMs: 1, size: 1 }),
       'vault:write-existing-file-text': () => ({ success: true }),
     });
 

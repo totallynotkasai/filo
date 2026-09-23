@@ -126,6 +126,15 @@ export interface ToastMessage {
   actions?: ToastAction[];
   /** Fires when the toast dismisses without any action being invoked. */
   onDismiss?: () => void;
+  /**
+   * M1 (Audit-18) — the toast's `onDismiss` means "the user acknowledged this
+   * → destroy the underlying recovery breadcrumb" (e.g. `clearQuitFailureBreadcrumb`,
+   * `markClean`). Such a toast must be dismissed by a GENUINE user action only:
+   * the automatic dismissal paths (vault-swap teardown, TOAST_CAP eviction)
+   * skip firing its `onDismiss`, so a swap/cap can't silently consume the
+   * breadcrumb — it survives to re-surface next launch instead.
+   */
+  acknowledgeOnly?: boolean;
 }
 
 let toasts = $state<ToastMessage[]>([]);
@@ -342,6 +351,7 @@ export const uiStore = {
     duration?: number;
     actions?: ToastAction[];
     onDismiss?: () => void;
+    acknowledgeOnly?: boolean;
   }): string {
     // E.4 — cap the visible queue at 8 so an error storm (e.g. a tag-rename
     // sweep hitting an EPERM directory) can't paint the entire viewport.
@@ -372,7 +382,12 @@ export const uiStore = {
       // was available to drop instead); disposable victims have none, so the
       // dismissal stays silent for them — preserving the existing behaviour for
       // the common case.
-      this.dismissToast(victim.id, { silent: isDisposable(victim) });
+      //
+      // M1 (Audit-18) — but NEVER fire onDismiss for an `acknowledgeOnly` toast
+      // (a recovery breadcrumb): the cap evicting it from the screen must not
+      // also destroy the on-disk breadcrumb. Evict it silently; it re-surfaces
+      // next launch.
+      this.dismissToast(victim.id, { silent: isDisposable(victim) || victim.acknowledgeOnly === true });
     }
 
     const id = `toast-${++toastCounter}`;
@@ -383,6 +398,7 @@ export const uiStore = {
       duration: opts.duration ?? TOAST_MAX_LIFETIME_MS,
       actions: opts.actions,
       onDismiss: opts.onDismiss,
+      acknowledgeOnly: opts.acknowledgeOnly,
     };
     toasts = [...toasts, toast];
 
@@ -488,7 +504,13 @@ onVaultSwap('pre-swap', 'ui', () => {
   // unresolved. The dispatch is best-effort — a thrown onDismiss must not
   // block the rest of the swap.
   for (const toast of toasts) {
-    if (toast.onDismiss) {
+    // M1 (Audit-18) — skip `acknowledgeOnly` toasts (recovery breadcrumbs). The
+    // pre-swap teardown fires BEFORE the generation bump, so their onDismiss'
+    // `isStillSameVault` guard still passes and the destructive
+    // `clearQuitFailureBreadcrumb` / `markClean` IPC would land on the OUTGOING
+    // vault — deleting the pointer to preserved unsaved bytes unread. Leave the
+    // breadcrumb on disk so it re-surfaces next launch.
+    if (toast.onDismiss && !toast.acknowledgeOnly) {
       try { toast.onDismiss(); } catch (err) {
         console.error('[Toast] onDismiss failed during vault swap:', err);
       }

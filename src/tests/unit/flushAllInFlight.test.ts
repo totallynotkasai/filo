@@ -79,6 +79,10 @@ describe('flushAllPendingFrontmatterWrites — awaits in-flight writes', () => {
     });
     installFiloMock({
       'vault:file-exists': () => true,
+      // 3.3 (Audit-18) — writeFrontmatter hydrates on demand + fails loud on a
+      // read error; supply a working read mock so the docState write proceeds to
+      // the controllable in-flight write IPC this test drives.
+      'vault:read-file-text': () => ({ success: true, content: 'x', mtimeMs: 1, size: 1 }),
       'vault:write-existing-file-text': () => ipcPromise,
     });
 
@@ -117,6 +121,10 @@ describe('flushAllPendingFrontmatterWrites — awaits in-flight writes', () => {
     });
     installFiloMock({
       'vault:file-exists': () => true,
+      // 3.3 (Audit-18) — writeFrontmatter hydrates on demand + fails loud on a
+      // read error; supply a working read mock so the docState write proceeds to
+      // the controllable in-flight write IPC this test drives.
+      'vault:read-file-text': () => ({ success: true, content: 'x', mtimeMs: 1, size: 1 }),
       'vault:write-existing-file-text': () => ipcPromise,
     });
 

@@ -46,6 +46,7 @@ import {
   captureVaultIdentity,
   isStillSameVault,
 } from '../lib/vault/vaultIdentity';
+import { isRenameInFlight } from '../lib/vault/renameInFlight';
 import {
   scheduleConfigWrite,
   scheduleMiscWrite,
@@ -519,9 +520,16 @@ function runPostCommitTasks(
     if (!isStillSameVault(identity)) return;
     if (!fileTagsStore.isEmpty()) {
       // Phase 23 M13 — prune `.filo/tags.json:fileTags` entries whose path is
-      // no longer in the tree. DI-03 — flatten the candidate's *captured* tree
-      // (always paired with `newVaultPath`), not the live module `fileTree`.
-      const flat = flattenTreePaths(candidate.tree, newVaultPath);
+      // no longer in the tree.
+      //
+      // 3.10 (Audit-18) — prune against the LIVE `fileTree`, not the LOAD-TIME
+      // `candidate.tree`: a file added/moved DURING the (possibly long) index
+      // rebuild lands in the live tree but not the captured snapshot, so pruning
+      // against the snapshot dropped its tag entry and persisted the emptied
+      // registry. The DI-03 / A8-H2(b) cross-vault hazard is already covered by
+      // the `isStillSameVault(identity)` bail above (no await before this), so
+      // `fileTree` is guaranteed to be `newVaultPath`'s — and is fresher.
+      const flat = flattenTreePaths(fileTree, newVaultPath);
       const dropped = fileTagsStore.pruneOrphanFileTags(flat);
       if (dropped.length > 0) {
         uiStore.toast(
@@ -698,6 +706,10 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
           `The unsaved bytes were preserved on disk — recover or delete them:\n${locations}`,
         type: 'error',
         duration: 0,
+        // M1 (Audit-18) — only a genuine user dismiss may clear the breadcrumb;
+        // a vault swap / toast-cap eviction must NOT (its onDismiss would delete
+        // quit-failure.json on the outgoing vault before the user reads it).
+        acknowledgeOnly: true,
         onDismiss: () => {
           if (isStillSameVault(captured)) void clearQuitFailureBreadcrumb(newVaultPath);
         },
@@ -730,6 +742,9 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
           text: "Filo detected an incomplete write but couldn't identify the unflushed file. Check `.filo/.dirty` manually if recent edits are missing.",
           type: 'error',
           duration: 0,
+          // M1 (Audit-18) — see above: acknowledge-only so a swap/cap can't
+          // `markClean` the outgoing vault's `.filo/.dirty` sentinel unread.
+          acknowledgeOnly: true,
           onDismiss: () => {
             if (isStillSameVault(captured)) void markClean(newVaultPath);
           },
@@ -1586,7 +1601,14 @@ export const vaultStore = {
           // now belongs to the NEW vault — stop instead of evicting its
           // same-id boards on the OLD vault's evidence.
           if (!isStillSameVault(captured)) return;
-          if (confirmedMissing) boardStore.cleanupMissingBoard(boardId);
+          // M2 (Audit-18) — an in-app rename rebinds `boardStore.paths[boardId]`
+          // to the new (not-yet-on-disk) path before the rename IPC lands, so a
+          // probe here confirms "missing" for a LIVE board. Defer eviction while
+          // a rename is in flight, or the path was rebound since we sampled it
+          // (the rename queue / next reconcile re-checks once it settles).
+          if (confirmedMissing && !isRenameInFlight() && boardStore.paths[boardId] === relPath) {
+            boardStore.cleanupMissingBoard(boardId);
+          }
         }
       }
     }

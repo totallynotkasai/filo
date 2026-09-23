@@ -1161,11 +1161,20 @@
     // 6.1.R2); Audit-17 4.5 — but flush, don't drop: a filter change within
     // 300 ms of a board switch was otherwise never written (the
     // hydratedForBoardId guard blocks any re-fire after the switch).
+    // Audit-18 5.1 — the $effect cleanup runs before EVERY re-execution, not
+    // only on teardown, so flushing unconditionally here fired on every filter
+    // tick and structurally defeated the 300 ms debounce (each change wrote one
+    // behind). Flush ONLY on a real board switch (the live id moved off the
+    // armed id); a same-board re-run just re-arms the timer. Unmount is flushed
+    // by `filters.dispose()` in onDestroy (which no longer depends on the timer
+    // this cleanup may have just nulled).
     return () => {
       if (filters.lastViewPersistTimer) {
         clearTimeout(filters.lastViewPersistTimer);
         filters.lastViewPersistTimer = null;
-        flushLastViewForBoard(id, nextLastView);
+        if (board?.id !== id) {
+          flushLastViewForBoard(id, nextLastView);
+        }
       }
     };
   });

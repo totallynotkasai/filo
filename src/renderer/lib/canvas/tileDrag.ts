@@ -1,13 +1,10 @@
-import { canvasStore } from '../../stores/canvas.svelte';
-import { boardStore } from '../../stores/board.svelte';
-import { selectionStore } from '../../stores/selection.svelte';
 import { historyStore } from '../../stores/history.svelte';
 import { guidesStore } from '../../stores/guides.svelte';
-import { spatialStore } from '../../stores/spatial.svelte';
 import { framesStore } from '../../stores/frames.svelte';
 import { MoveTilesCommand } from '../../commands/index';
 import { computeGuides, capCandidatesByDistance, type TileBounds } from './smartGuides';
 import { startEdgePan, stopEdgePan, updateEdgePanMouse } from './edgePan';
+import type { BoardScope } from '../boards/boardScope.svelte';
 
 /**
  * Tile drag action — applied to the tile header element.
@@ -15,7 +12,13 @@ import { startEdgePan, stopEdgePan, updateEdgePanMouse } from './edgePan';
  * Supports multi-select drag (moves all selected tiles together).
  * Creates a single MoveTilesCommand on drag end for undo/redo.
  *
- * Usage: <div use:tileDragAction={{ tileId, locked }}>...</div>
+ * Audit-18 6.1 — pane-scoped. The action binds `board`/`canvas`/`selection`/
+ * `spatial` from the THREADED `scope` (the pane the drag started on), never the
+ * global facades, which resolve to whatever pane is globally active. See the
+ * `scope` field below and `boardScope.svelte.ts`. Mirrors Audit-12 M5
+ * (dragDrop.ts).
+ *
+ * Usage: <div use:tileDragAction={{ tileId, locked, scope }}>...</div>
  */
 
 export interface TileDragOptions {
@@ -23,6 +26,18 @@ export interface TileDragOptions {
   locked: boolean;
   snapToGrid?: boolean;
   gridSize?: number;
+  /**
+   * Audit-18 6.1 — the pane's `BoardScope`, threaded so the drag's spatial
+   * batch (and every board/canvas/selection read) operates on the pane the
+   * gesture STARTED on, not whichever pane is globally active. The drag is
+   * pointer-captured to this pane's node, so its own handlers keep firing here
+   * for the whole gesture — but a second touch on the OTHER pane retargets the
+   * global facades (PaneView activates on pointerdowncapture) mid-drag. Without
+   * the threaded scope, `spatialStore.beginBatch()` would open pane A's batch
+   * while `endBatch()` closed pane B's — leaking pane A's batch forever (frozen
+   * spatial revision → viewport culling stops updating; looks like data loss).
+   */
+  scope: BoardScope;
 }
 
 const GRID_SIZE = 20;
@@ -42,6 +57,20 @@ const SMART_GUIDE_MAX_CANDIDATES = 100;
 
 export function tileDragAction(node: HTMLElement, options: TileDragOptions) {
   let currentOptions = options;
+  // Audit-18 6.1 — resolve the pane-scoped store slices from the threaded
+  // `BoardScope`, NOT the global `boardStore`/`canvasStore`/`selectionStore`/
+  // `spatialStore` facades. A tile never moves between panes without
+  // unmount/remount (each PaneView owns its scope via context), so the scope is
+  // stable for this action's life — capture it once. Binding here keeps
+  // begin/endBatch balanced on the SAME spatial index and the drag math on the
+  // originating board even if a second touch on the other pane flips the active
+  // scope mid-gesture. The locals keep the facade names so the body is unchanged.
+  const {
+    board: boardStore,
+    canvas: canvasStore,
+    selection: selectionStore,
+    spatial: spatialStore,
+  } = options.scope;
   let isDragging = false;
   let hasMoved = false;
   let edgePanStarted = false;
@@ -214,8 +243,11 @@ export function tileDragAction(node: HTMLElement, options: TileDragOptions) {
     // loop never operates on stale data — keep this synchronous.
     if (!edgePanStarted) {
       updateEdgePanMouse(e.clientX, e.clientY);
-      // Tile drag is pointer-captured to the active pane, so the global
-      // facade resolves to the right canvas for the whole gesture (Audit 5.4).
+      // Audit-18 6.1 — edge-pan on THIS pane's canvas (the threaded scope's
+      // slice), not the global facade. A mid-drag touch on the other pane
+      // retargets the facade; pinning the originating pane's canvas keeps the
+      // auto-pan on the right viewport for the whole gesture (supersedes the
+      // earlier Audit-5.4 captured-pane==active-pane assumption).
       startEdgePan(canvasStore);
       edgePanStarted = true;
     }

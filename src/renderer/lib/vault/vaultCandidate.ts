@@ -470,9 +470,12 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     ) as string | null;
     // F6 — route through the version migrator so a from-future tags file is
     // detected (and surfaced) here rather than silently re-saved later.
+    // Audit-18 H2 — `corrupt` (parse/schema failure) joins the read-only verdict
+    // so the vault open itself can't overwrite a recoverable-but-unparseable
+    // tags.json via post-commit FM tag-seeding.
     const loaded = loadTagsFile(tagsRaw);
     tagsFile = loaded.file;
-    tagsReadOnly = loaded.fromFuture || loaded.noMigrationPath;
+    tagsReadOnly = loaded.fromFuture || loaded.noMigrationPath || loaded.corrupt;
   } catch (err) {
     throw new Error(
       `Failed to load .filo/tags.json: ${err instanceof Error ? err.message : String(err)}`,

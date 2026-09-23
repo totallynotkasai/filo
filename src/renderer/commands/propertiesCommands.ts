@@ -33,6 +33,7 @@ import {
   isHydrated,
   readMarkdownForHydrate,
 } from '../lib/vault/markdownFileWriter';
+import { markPathFailed } from '../lib/boards/writeStateTracking';
 import { flushAllPendingFrontmatterWrites } from '../lib/boards/frontmatterWriteScheduler';
 import { reportError } from '../lib/utils/errorBus';
 import { uiStore } from '../stores/ui.svelte';
@@ -194,6 +195,9 @@ async function applySnapshot(
   let base: Record<string, unknown> | null =
     docState && docId ? documentStore.getFrontmatter(docId) ?? null : null;
   let diskBody: string | undefined;
+  // Audit-18 6.3 — track whether the hydrate read THREW so the no-baseline
+  // branch below can tell "file genuinely has no FM" from "file unreadable".
+  let readFailed = false;
   // Read disk when we still need a base (not-open doc, or an unseeded open doc)
   // OR when the gateway hasn't hydrated this path yet (the write below needs
   // hydration for the BOM + drift baseline).
@@ -213,7 +217,10 @@ async function applySnapshot(
     } catch {
       // File missing or unreadable — mark hydrated with no BOM so the write
       // below ENOENT-fails on missing files, surfacing the same toast path
-      // the old direct write produced.
+      // the old direct write produced. Audit-18 6.3 — flag the failure so the
+      // no-baseline branch refuses (rather than blind-writes) when there's no
+      // live editor body to fall back on.
+      readFailed = true;
       markHydrated(relPath, false);
     }
   }
@@ -239,9 +246,33 @@ async function applySnapshot(
   // ENOENT-fail on the same unreadable file).
   let delta: FrontmatterDelta | undefined;
   if (base === null) {
-    // No baseline obtainable (file unreadable AND nothing cached/indexed) — we
-    // can't see any external keys to preserve, so blind-apply the target
-    // snapshot. This is the legacy behaviour for that corner; with nothing
+    // No baseline obtainable. base===null here means the disk read THREW
+    // (`readFailed`) AND neither the cache nor the index held frontmatter — a
+    // successful read always yields an object (even `{}`), so it can't land
+    // here.
+    //
+    // Audit-18 6.3 — the old comment "with nothing visible there's no external
+    // key to lose" wrongly assumed a read failure implies the WRITE will fail
+    // too (ENOENT on a missing file). But a NON-ENOENT read failure
+    // (FILE_TOO_LARGE on a >25 MB note, transient EACCES/EBUSY from AV/OneDrive)
+    // leaves the file PRESENT — the write below would SUCCEED and overwrite it
+    // with the target snapshot's FM plus a STALE/empty body (`docState?.body`
+    // is null here, so `body` fell back to the index `content` or `''`). That
+    // silently replaces the real on-disk note. Refuse like the B1 contract:
+    // markPathFailed (keeps the `.filo/.dirty` sentinel + "save failed" surface)
+    // + reportError + throw, so the command rejects and history's rollback drops
+    // it — never a blind write against an unverified body.
+    if (readFailed && !docState) {
+      markPathFailed(vaultRoot, relPath);
+      const err = new Error(
+        `Could not read ${relPath} to apply properties; refusing to overwrite it with an unverified body.`,
+      );
+      reportError('updateProperties', err, `Failed to apply properties to ${relPath}`);
+      throw err;
+    }
+    // Otherwise a live editor body IS available (`docState.body`), so the body
+    // is safe to write — blind-apply the target snapshot's FM. This is the
+    // legacy behaviour for that corner; with a live body and nothing else
     // visible there's no external key to lose.
     merged = cleanFrontmatter({ ...targetFm });
   } else {

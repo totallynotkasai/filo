@@ -414,7 +414,13 @@ describe('A9-L1 — Kanban bulk tag-add routes through an undoable, chained Batc
     vaultStore.setPath('');
   });
 
-  function makeMultiSelect(selection: ReturnType<typeof createSelectionScope>) {
+  // Audit-18 M7 — the bulk tag value is injected via `promptForTag` (an in-app
+  // popup resolver) rather than `window.prompt`, which throws in Electron's
+  // renderer. The test supplies the resolver directly.
+  function makeMultiSelect(
+    selection: ReturnType<typeof createSelectionScope>,
+    promptValue: string | null = 'urgent',
+  ) {
     const tiles: Record<string, Tile> = {
       a: { id: 'a', type: 'text', contentId: 'docA', title: 'A', tags: [] } as unknown as Tile,
       b: { id: 'b', type: 'text', contentId: 'docB', title: 'B', tags: [] } as unknown as Tile,
@@ -429,14 +435,14 @@ describe('A9-L1 — Kanban bulk tag-add routes through an undoable, chained Batc
       tickAndPersist: () => {},
       ensureSeededFm: () => null,
       vaultPathForTile: (t: Tile) => `${t.id}.md`,
+      promptForTag: () => Promise.resolve(promptValue),
     });
   }
 
   it('routes the bulk tag add through a single chained, undoable BatchCommand', async () => {
     const selection = createSelectionScope();
     selection.addMultiple(['a', 'b']);
-    const ms = makeMultiSelect(selection);
-    const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('urgent');
+    const ms = makeMultiSelect(selection, 'urgent');
     // Capture the command WITHOUT running the per-card write pipeline (the
     // children's on-chain seeds + gateway writes are exercised by the A9-H1 /
     // A9-M2 tests). The structural claim here is: one BatchCommand, dispatched
@@ -451,7 +457,6 @@ describe('A9-L1 — Kanban bulk tag-add routes through an undoable, chained Batc
 
     await ms.tagSelectedTiles();
     execSpy.mockRestore();
-    promptSpy.mockRestore();
 
     expect(dispatched).toHaveLength(1);
     const batch = dispatched[0] as { constructor: { name: string }; description: string };
@@ -465,13 +470,11 @@ describe('A9-L1 — Kanban bulk tag-add routes through an undoable, chained Batc
     documentStore.setFrontmatter('docB', { tags: ['urgent'] });
     const selection = createSelectionScope();
     selection.addMultiple(['a', 'b']);
-    const ms = makeMultiSelect(selection);
-    const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('urgent');
+    const ms = makeMultiSelect(selection, 'urgent');
     const execSpy = vi.spyOn(historyStore, 'execute').mockImplementation(async () => {});
 
     await ms.tagSelectedTiles();
     execSpy.mockRestore();
-    promptSpy.mockRestore();
 
     expect(execSpy).not.toHaveBeenCalled();
   });

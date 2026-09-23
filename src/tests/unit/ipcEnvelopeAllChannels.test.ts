@@ -50,6 +50,8 @@ const OK_DISCRIMINATED: readonly string[] = [
   'config:save-workspace',
   'theme:save',
   'theme:delete',
+  // Audit-18 4.5 — `IpcOk<{ recents }>` so a failed add ≠ empty list.
+  'vault:add-recent',
 ];
 
 const SUCCESS_DISCRIMINATED: readonly string[] = [

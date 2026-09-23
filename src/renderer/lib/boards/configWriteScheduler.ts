@@ -24,7 +24,7 @@ import type {
   WorkspaceState,
 } from '../../schema/index';
 import type { WorkspaceLayout } from '../../stores/workspace.svelte';
-import { BOARD_WRITE_DEBOUNCE_MS, WRITE_TIMEOUT_MS, writtenByteLength } from './boardWriteDebounce';
+import { BOARD_WRITE_DEBOUNCE_MS, WRITE_TIMEOUT_MS, ENOENT_RESTAT_DELAY_MS, writtenByteLength } from './boardWriteDebounce';
 import {
   notifyWriteError,
   registerResetCallback,
@@ -90,12 +90,25 @@ const lastWrittenConfigs = new Map<ConfigTarget, string>();
 // allow-module-state: reset via resetConfigWriteScheduler called from boardSaver's pre-swap handler
 const corruptConfigTargets = new Set<ConfigTarget>();
 
+/**
+ * Audit-18 4.2 — targets whose corrupt-suppression toast has already fired
+ * this session. The suppression itself runs on EVERY debounce flush of a
+ * changed-but-corrupt config, so without this the once-honest "we're not
+ * saving this" notice would re-toast on each keystroke window. Cleared on
+ * vault swap (with `corruptConfigTargets`) and when the user resolves a
+ * target (`clearCorruptConfigTarget`) so a later re-corruption re-notifies.
+ */
+// allow-module-state: reset via resetConfigWriteScheduler called from boardSaver's pre-swap handler
+const corruptSuppressToastShown = new Set<ConfigTarget>();
+
 export function markCorruptConfigTarget(target: ConfigTarget): void {
   corruptConfigTargets.add(target);
 }
 
 export function clearCorruptConfigTarget(target: ConfigTarget): void {
   corruptConfigTargets.delete(target);
+  // Re-arm the honest toast for a future re-corruption of this target.
+  corruptSuppressToastShown.delete(target);
 }
 
 export function isConfigTargetCorrupt(target: ConfigTarget): boolean {
@@ -128,11 +141,13 @@ export function isConfigPathCorrupt(path: string): boolean {
 registerResetCallback(() => {
   lastWrittenConfigs.clear();
   corruptConfigTargets.clear();
+  corruptSuppressToastShown.clear();
   configScheduler.reset();
 });
 registerTestResetCallback(() => {
   lastWrittenConfigs.clear();
   corruptConfigTargets.clear();
+  corruptSuppressToastShown.clear();
   configScheduler.reset();
 });
 
@@ -261,6 +276,31 @@ export async function writeConfigs(
       // has on disk. Resolution happens externally (user fixes the file
       // and reopens the vault, or picks "Use defaults" which calls
       // clearCorruptConfigTarget and re-arms the write).
+      //
+      // Audit-18 4.2 — but DON'T resolve it as a clean no-op: the user can
+      // edit defaults / viewports for hours with every change silently
+      // dropped while Ctrl+S flashes "Saved". Report it honestly:
+      //   (a) push the target onto `failed` so `vaultStore.save()`'s aggregate
+      //       boolean returns false and the saveState `failed>0` badge reads
+      //       'error' (the Audit-7 L1 pattern) — the change genuinely isn't
+      //       persisting and the indicator must say so;
+      //   (b) surface a once-per-target toast naming the corrupt file (the
+      //       `corruptSuppressToastShown` guard keeps later debounce cycles
+      //       from re-toasting). `notifyWriteError` routes through App.svelte's
+      //       coalescing aggregator; the `CONFIG_CORRUPT` code makes
+      //       `buildWriteErrorToast` emit a corrupt-specific message instead of
+      //       the misleading generic "check disk space / permissions" copy.
+      failed.push(target);
+      if (!corruptSuppressToastShown.has(target)) {
+        corruptSuppressToastShown.add(target);
+        const corruptError = Object.assign(
+          new Error(
+            `Config "${target}" is corrupt on disk; changes are not being saved so the existing file isn't clobbered.`,
+          ),
+          { code: 'CONFIG_CORRUPT' },
+        );
+        notifyWriteError({ kind: 'config', path: target, error: corruptError });
+      }
       continue;
     }
     // Phase R6 — pre-write drift check. Compare on-disk mtime against
@@ -305,6 +345,16 @@ export async function writeConfigs(
           // in-memory change. If the file has already reappeared by the retry,
           // proceed with the write (fall through to the drift check below)
           // instead of losing the change.
+          //
+          // Audit-18 M5 — grace delay before the re-stat (parity with the board
+          // scheduler's A17-2.3 `ENOENT_RESTAT_DELAY_MS`). This twin's own L24
+          // comment claimed it "mirrors writeBoardFile", but it re-stated
+          // microseconds later — too fast for a sync client's unlink→recreate
+          // blip to land, so the blip still read as a delete and the armed config
+          // change was dropped as a clean success. Wait first so the recreate has
+          // time to reappear; a recreate carries a new mtime, so it then drifts
+          // and the content-verify / drift path runs instead of a silent no-op.
+          await new Promise((resolve) => setTimeout(resolve, ENOENT_RESTAT_DELAY_MS));
           try {
             preWriteStat = await invokeOk('vault:stat', vaultRoot, sentinelPath);
             // L11 (Audit-7) — the file vanished then reappeared. A
@@ -442,13 +492,30 @@ export async function writeConfigs(
       // 6.4.M2's clear); see `refreshBaselineAfterWrite` for the trade-off.
       try {
         const postStat = await invokeOk('vault:stat', vaultRoot, sentinelPath);
-        // Audit-17 5.4 — mirror the gateway's Audit-7 L5 written-bytes verify:
-        // stamp only when the post-write stat's size matches the bytes we wrote.
-        // A foreign write landing in the save→stat gap would otherwise become
-        // Filo's own baseline and the next write would clobber it promptless; on
-        // a size mismatch keep the prior baseline (DI-14) so the next write's
-        // drift check re-detects + prompts.
+        // Audit-17 5.4 — size verify (necessary). Audit-18 3.6 — content
+        // read-back (sufficient), mirroring the markdown gateway's A17-5.3: a
+        // SAME-BYTE-COUNT foreign write landing in the save→stat gap would
+        // otherwise be adopted as Filo's own baseline and the next write would
+        // match-and-clobber it promptless. So read the file BACK and stamp only
+        // when disk re-serialises to EXACTLY what we wrote; on any content
+        // mismatch / unreadable read-back keep the prior baseline (DI-14) so the
+        // next write's drift check re-detects + prompts. Config files are small,
+        // so the extra read is cheap (the WHOLE-FILE board writer keeps size-only
+        // — see boardWriteScheduler's 3.6 note + KNOWN_LIMITATIONS). Uses the same
+        // `config:load` round-trip the ENOENT-reappear content-verify above does.
+        let confirmed = false;
         if (postStat.size === writtenByteLength(payload)) {
+          try {
+            const configFile = target === 'config:save-workspace' ? 'workspace.json' : target;
+            const loaded = await window.filo.invoke('config:load', vaultRoot, configFile);
+            if (loaded && typeof loaded === 'object' && !('__corrupt' in loaded)) {
+              confirmed = JSON.stringify(loaded, null, 2) === payload;
+            }
+          } catch {
+            /* transient IO — keep prior baseline (safe direction) */
+          }
+        }
+        if (confirmed) {
           refreshBaselineAfterWrite(sentinelPath, postStat.mtimeMs, postStat.size);
         } else {
           refreshBaselineAfterWrite(sentinelPath, undefined, undefined);

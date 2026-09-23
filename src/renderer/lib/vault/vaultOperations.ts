@@ -122,8 +122,25 @@ export class PendingWritesFailedError extends Error {
  * drain and surfaces its own failure). A nested call sees an already-resolved
  * `true` and proceeds immediately — identical to the old short-circuit.
  */
+/**
+ * Audit-18 5.3 — the in-flight drain's outcome, carried IN `drainPromise` so a
+ * parked sibling can react without re-running its own full drain:
+ *  - `{ ok: true }` — every writer pipeline drained clean; the sibling proceeds
+ *    (after a vault-generation re-check, see below).
+ *  - `{ ok: false, detail }` — the drain failed the `totalFailed` check; the
+ *    sibling throws the SAME `PendingWritesFailedError` instead of recursing
+ *    into a fresh up-to-60 s drain per sibling (the old `return
+ *    withDrainedWrites(op)` ran one full drain per parked sibling serially — an
+ *    N×60 s latency cliff that re-surfaced the toast each time).
+ *  - `{ ok: false, detail: null }` — an UNEXPECTED drain/op rejection (a flush
+ *    threw, not the `totalFailed` branch); the sibling bails too.
+ * Carrying the verdict in the promise (rather than a separate module var) makes
+ * it immune to the finally-clears-it-before-the-await-resolves race.
+ */
+type DrainOutcome = { ok: true } | { ok: false; detail: PendingWritesFailedDetail | null };
+
 let drainingGeneration: number | null = null;
-let drainPromise: Promise<boolean> | null = null;
+let drainPromise: Promise<DrainOutcome> | null = null;
 
 function summariseFailedPaths(results: PendingWritesFailedDetail): string[] {
   const out: string[] = [];
@@ -153,26 +170,47 @@ export async function withDrainedWrites<T>(op: () => Promise<T>): Promise<T> {
     // Already covered by an outer drain for THIS vault generation. Two cases:
     //  - NESTED call (op() invoking a convenience helper): the outer drain has
     //    already settled successfully (op only runs post-drain), so the await
-    //    below resolves `true` immediately and we just run the op — the old
-    //    short-circuit, with no second drain cost.
-    //  - CONCURRENT sibling (Audit-17 3.4): the outer drain is still in
-    //    flight (possibly parked behind an interactive drift prompt). Await it
-    //    rather than running the op un-drained. On drain success the writers
-    //    are quiescent for this generation, so the sibling op proceeds; on
-    //    drain failure, re-enter so the sibling runs (and surfaces) its OWN
-    //    drain — by then the failed pass has cleared the guard, and the
-    //    recursion also re-captures the generation in case a vault swap
-    //    landed while we were parked.
-    const outerDrainSucceeded = await drainPromise;
-    if (outerDrainSucceeded) return op();
-    return withDrainedWrites(op);
+    //    below resolves `{ ok: true }` immediately and we just run the op — the
+    //    old short-circuit, with no second drain cost.
+    //  - CONCURRENT sibling (Audit-17 3.4): the outer drain is still in flight
+    //    (possibly parked behind an interactive drift prompt for up to ~60 s).
+    //    Await it rather than running the op un-drained.
+    const outcome = await drainPromise;
+    if (outcome.ok) {
+      // Audit-18 5.3 — re-validate AFTER the park. Removing the failure-path
+      // recursion (it used to be `return withDrainedWrites(op)`) also removed
+      // its implicit generation re-capture, so guard explicitly: a vault swap
+      // during the park would otherwise run this op's stale captured inputs
+      // against the NEW vault. The main side's `assertActiveVault` gates the
+      // disk IPC, but the in-memory half of a cascade op is not gated — bail
+      // loudly here rather than act on moved-on state.
+      if (currentVaultGeneration() !== generation) {
+        throw new Error(
+          'Vault changed during write drain — refusing the disk-shape op (stale generation).',
+        );
+      }
+      return op();
+    }
+    // Audit-18 5.3 — the outer drain FAILED. Share its verdict rather than
+    // re-entering a fresh full drain per sibling: the old recursion ran one
+    // ~60 s drain per parked sibling serially and re-surfaced the aggregated
+    // toast each time. The outer call already toasted, so we just throw the
+    // same error (or a generic one for an unexpected-rejection drain) and let
+    // the caller bail — the safe direction for a disk-shape op behind a
+    // failed flush.
+    throw outcome.detail
+      ? new PendingWritesFailedError(outcome.detail)
+      : new Error('Pending writes drain failed — refusing the disk-shape op.');
   }
   drainingGeneration = generation;
-  // Audit-17 3.4 — settled `true` once every writer pipeline drained clean
-  // (before op runs), `false` if the drain failed. Never rejects, so a parked
-  // sibling can't crash on an error that the outer call already surfaced.
-  let settleDrain: (ok: boolean) => void = () => {};
-  drainPromise = new Promise<boolean>((resolve) => { settleDrain = resolve; });
+  // Audit-17 3.4 / Audit-18 5.3 — `drainPromise` carries the drain outcome
+  // (see `DrainOutcome`): settled `{ ok: true }` once every writer pipeline
+  // drained clean (before op runs), `{ ok: false, detail }` on a `totalFailed`
+  // drain, `{ ok: false, detail: null }` on an unexpected rejection. Never
+  // rejects, so a parked sibling can't crash on an error the outer call already
+  // surfaced.
+  let settleDrain: (outcome: DrainOutcome) => void = () => {};
+  drainPromise = new Promise<DrainOutcome>((resolve) => { settleDrain = resolve; });
   try {
     // 6.4.M1 — misc + config schedulers must drain alongside md/fm/board.
     // Without them, a debounced sidebar-order / viewports / tags.json /
@@ -217,13 +255,16 @@ export async function withDrainedWrites<T>(op: () => Promise<T>): Promise<T> {
         type: 'error',
         duration: 0,
       });
+      // Audit-18 5.3 — settle the failure DETAIL into drainPromise before the
+      // throw so parked siblings bail with the same error (no re-drain).
+      settleDrain({ ok: false, detail });
       throw new PendingWritesFailedError(detail);
     }
 
     // Drain phase complete — release any concurrent siblings parked above
     // BEFORE the op runs (their ops were never serialised behind the outer
     // op, only behind the drain).
-    settleDrain(true);
+    settleDrain({ ok: true });
     return await op();
   } finally {
     // Only clear if we're still the generation that set it. A swap mid-drain
@@ -234,9 +275,12 @@ export async function withDrainedWrites<T>(op: () => Promise<T>): Promise<T> {
       drainingGeneration = null;
       drainPromise = null;
     }
-    // Idempotent: a no-op on the success path (already settled `true`);
-    // settles `false` when the drain threw so parked siblings re-enter.
-    settleDrain(false);
+    // Idempotent (first settle wins): a no-op on the success path (already
+    // `{ ok: true }`) and the totalFailed path (already `{ ok: false, detail }`
+    // above). Catches an UNEXPECTED drain/op rejection (a flush threw, not the
+    // totalFailed branch) → `{ ok: false, detail: null }` so parked siblings
+    // bail rather than hang on a promise that never resolves.
+    settleDrain({ ok: false, detail: null });
   }
 }
 

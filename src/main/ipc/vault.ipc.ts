@@ -833,23 +833,38 @@ export function registerVaultHandlers(): void {
     s.length > 0 && s.length <= max && !s.includes('\0');
 
   ipcMain.handle('vault:add-recent', async (_event, path: unknown, name: unknown) => {
-    if (typeof path !== 'string' || typeof name !== 'string') return [];
-    if (!isSafeRecentString(path, MAX_RECENT_PATH_LEN)) return [];
-    if (!isSafeRecentString(name, MAX_RECENT_NAME_LEN)) return [];
+    // Audit-18 4.5 — typed `{ ok, recents }` envelope. The previous
+    // `[]`-on-failure return overloaded the failure case with a genuinely
+    // empty list, so the renderer (`HomeScreen.recordOpen`) WIPED the
+    // displayed recents on a transient stat failure (e.g. a network-share
+    // vault briefly offline, or a path that no longer exists). Distinguishing
+    // them lets the renderer leave the list intact on failure. (The read-only
+    // sibling channels keep their bare-array return — only the add path can
+    // mistake failure for empty and clobber the UI.)
+    if (typeof path !== 'string' || typeof name !== 'string') {
+      return { ok: false, code: 'INVALID_ARG', error: 'add-recent requires a string path and name' };
+    }
+    if (!isSafeRecentString(path, MAX_RECENT_PATH_LEN)) {
+      return { ok: false, code: 'INVALID_ARG', error: 'vault path is empty, too long, or contains a null byte' };
+    }
+    if (!isSafeRecentString(name, MAX_RECENT_NAME_LEN)) {
+      return { ok: false, code: 'INVALID_ARG', error: 'vault name is empty, too long, or contains a null byte' };
+    }
     // Sprint C / C21 — confirm the path actually points at an existing
     // directory before persisting it to `recent-vaults.json`. Without
     // this gate, any string the renderer passes (typo, deleted folder,
     // raw file path, network share that's gone offline) lands in the
     // recent list and the user gets a confusing "Vault not found" error
-    // on next click. Surface the failure as an empty-array return so the
-    // renderer's existing `loadRecentVaults` flow handles it.
+    // on next click.
     try {
       const stat = await fsPromises.stat(path);
-      if (!stat.isDirectory()) return [];
-    } catch {
-      return [];
+      if (!stat.isDirectory()) {
+        return { ok: false, code: 'NOT_A_DIRECTORY', error: `not a directory: ${path}` };
+      }
+    } catch (err) {
+      return { ok: false, code: 'ENOENT', error: String(err) };
     }
-    return addRecentVault(path, name);
+    return { ok: true, recents: await addRecentVault(path, name) };
   });
 
   ipcMain.handle('vault:remove-recent', async (_event, path: unknown) => {

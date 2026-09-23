@@ -55,6 +55,19 @@ function matchPreservedPath(text: string): string | undefined {
   return m ? m[1] : undefined;
 }
 
+/**
+ * Reads the `code` string off an error-like value (the `{ code }` annotation
+ * schedulers attach via `Object.assign(new Error(...), { code })`). Audit-18
+ * 4.2 uses it to branch the toast copy for `CONFIG_CORRUPT`.
+ */
+function errorCode(error: unknown): string | undefined {
+  if (error && typeof error === 'object') {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === 'string') return code;
+  }
+  return undefined;
+}
+
 export interface WriteErrorToastSpec {
   /**
    * Display prefix for the aggregator. One per write kind so all board
@@ -81,6 +94,21 @@ export interface WriteErrorToastSpec {
  */
 export function buildWriteErrorToast(info: WriteErrorInfo): WriteErrorToastSpec {
   const where = info.path ? ` (${info.path})` : '';
+  // Audit-18 4.2 — a corrupt-config suppression is NOT a disk-space / permission
+  // failure, so it gets its own honest copy instead of the generic message
+  // below. The config write is being SKIPPED on purpose to preserve the
+  // unparseable file on disk; tell the user their in-memory changes won't
+  // persist and how to resolve it. Coalesces per target so a burst of edits to
+  // the same corrupt file shows one count-badged toast, not one per keystroke.
+  if (errorCode(info.error) === 'CONFIG_CORRUPT') {
+    return {
+      context: 'Settings not saving',
+      message:
+        `Filo isn't saving changes${where} — its on-disk copy is unreadable, so it's left untouched to avoid clobbering it. ` +
+        'Your edits stay in memory but won\'t persist. Fix or replace the file (or choose "Use defaults"), then reopen the vault.',
+      coalesceKey: `config-corrupt::${info.path ?? ''}`,
+    };
+  }
   const context =
     info.kind === 'board'
       ? 'Board save failed'

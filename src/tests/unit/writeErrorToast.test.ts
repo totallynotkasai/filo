@@ -78,6 +78,24 @@ describe('buildWriteErrorToast (M5)', () => {
     expect(buildWriteErrorToast({ kind: 'config', error: new Error('x') }).context).toBe('Settings save failed');
     expect(buildWriteErrorToast({ kind: 'component', error: new Error('x') }).context).toBe('File save failed');
   });
+
+  // Audit-18 4.2 — a corrupt-config suppression is NOT a disk-space / permission
+  // failure, so it gets an honest "we're not saving, fix the file" message and a
+  // per-target coalescing key instead of the misleading generic copy.
+  it('emits an honest, per-target message for a CONFIG_CORRUPT error', () => {
+    const info: WriteErrorInfo = {
+      kind: 'config',
+      path: 'defaults.json',
+      error: Object.assign(new Error('corrupt on disk'), { code: 'CONFIG_CORRUPT' }),
+    };
+    const { context, message, coalesceKey } = buildWriteErrorToast(info);
+    expect(context).toBe('Settings not saving');
+    expect(message).toContain('(defaults.json)');
+    expect(message).toContain('Use defaults');
+    // Must NOT reuse the misleading "check disk space / permissions" copy.
+    expect(message).not.toContain('check disk space');
+    expect(coalesceKey).toBe('config-corrupt::defaults.json');
+  });
 });
 
 describe('write-error coalescing (L2)', () => {

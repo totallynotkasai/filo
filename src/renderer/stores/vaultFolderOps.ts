@@ -17,6 +17,7 @@ import {
 } from '../lib/vault/renameCascadeSentinel';
 import { renameAllPathKeys } from '../lib/vault/renamePathKeys';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
+import { beginRenameInFlight, endRenameInFlight } from '../lib/vault/renameInFlight';
 import {
   PendingWritesFailedError,
   createVaultFolder,
@@ -311,6 +312,13 @@ export function makeFolderOpsSlice(ctx: VaultContext) {
       // Replaces the bespoke `flushAllMarkdownWriters()` call that
       // covered the editor-path race (Phase 8.2) but missed the
       // frontmatter scheduler and the board-write scheduler.
+      // M2 (Audit-18) — flag the rename in flight across the WHOLE sequence
+      // (drain + in-memory cascade + IPC + any failure revert). `runRename`
+      // rebinds the board cache to the new path before the rename IPC lands, so
+      // for that window a watcher reconcile would see the path missing on disk
+      // and evict the live board. `refreshTreeAndCleanup` checks
+      // `isRenameInFlight()` and defers eviction. See renameInFlight.ts.
+      beginRenameInFlight();
       try {
         return await withDrainedWrites(() =>
           runRename(ctx, vaultPath, oldPath, newPath, oldRel, newRel),
@@ -323,6 +331,8 @@ export function makeFolderOpsSlice(ctx: VaultContext) {
           return { success: false, code: 'IO_ERROR' };
         }
         throw err;
+      } finally {
+        endRenameInFlight();
       }
     },
 

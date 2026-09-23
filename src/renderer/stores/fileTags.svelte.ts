@@ -78,7 +78,7 @@ import {
 } from '../commands/index';
 import { scheduleMiscWrite, flushAllMisc, flushMiscWrite, markPathFailed } from '../lib/boards/boardSaver';
 import { flushAllMarkdownWriters, runSerializedMarkdownWrite } from '../lib/vault/markdownFileWriter';
-import { refreshBaselineAfterWrite } from '../lib/vault/fileBaselineRegistry';
+import { refreshBaselineAfterWrite, getBaseline, hasBaselineDrifted } from '../lib/vault/fileBaselineRegistry';
 import { writeMarkdownAndReconcile } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
 import { resolveTextTileVaultPath } from '../lib/boards/textTilePath';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
@@ -171,18 +171,20 @@ function mergeTagsThreeWay(base: TagsFile, ours: TagsFile, theirs: TagsFile): Ta
   return merged;
 }
 
-// F6 (2026-05-28) — true when the loaded `.filo/tags.json` was written by a
-// newer Filo (or declares an un-migratable version). `scheduleSave` is then
-// gated so we never re-save (downgrade) it. Set on every load path.
-let readOnlyFromFuture = false;
+// F6 / Audit-18 H2 — true when the loaded `.filo/tags.json` must NOT be re-saved:
+// written by a newer Filo, an un-migratable version, OR a corrupt (parse/schema-
+// fail) file. `scheduleSave` is gated on it so we never overwrite the on-disk
+// bytes. (Renamed from `readOnlyFromFuture` now it also covers the corrupt case.)
+let readOnlyTags = false;
 
 const TAGS_WRITE_KEY = 'tags';
 const TAGS_PATH = '.filo/tags.json';
 
 function scheduleSave(): void {
   if (!activeVaultRoot) return;
-  // F6 — never persist over a from-future / un-migratable tags file.
-  if (readOnlyFromFuture) return;
+  // F6 / Audit-18 H2 — never persist over a from-future / un-migratable / corrupt
+  // tags file (the disk bytes are preserved verbatim for the session).
+  if (readOnlyTags) return;
   scheduleMiscWrite(TAGS_WRITE_KEY, () => {
     const root = activeVaultRoot;
     if (!root) return null;
@@ -242,6 +244,27 @@ function resolveTileMediaPath(tile: Tile): string | null {
 }
 
 /**
+ * 3.4 (Audit-18) — true when the bytes the single-tag fast path just READ had
+ * already drifted from the pre-write baseline (an undetected external edit).
+ * `readMtimeMs`/`readSize` come from the same `vault:read-file-text` (its own
+ * coherent stat), so no extra IPC. Gates the post-write `refreshBaselineAfter-
+ * Write`: stamping on drift would LAUNDER the external edit into the baseline
+ * and the open editor's next save would silently revert it; on drift we keep the
+ * prior baseline (DI-14). Conservative: no prior baseline → false; read withheld
+ * its stat (a write raced the read) → treat as drifted.
+ */
+function baselineDriftedAtRead(
+  relPath: string,
+  readMtimeMs: number | undefined,
+  readSize: number | undefined,
+): boolean {
+  const baseline = getBaseline(relPath);
+  if (baseline === undefined) return false;
+  if (readMtimeMs === undefined || readSize === undefined) return true;
+  return hasBaselineDrifted(baseline, { mtimeMs: readMtimeMs, size: readSize });
+}
+
+/**
  * Writes a single tag membership change into the tile's backing `.md` file
  * frontmatter. Routed through `trackComponentWrite` so a failed write
  * surfaces through the same toast + sentinel pipeline as the rest of the
@@ -272,9 +295,15 @@ async function writeTagChangeToTileMarkdown(
     await runSerializedMarkdownWrite(relPath, async () => {
       // Phase 37 / 37.6 — canonical two-arg shape.
       let raw: string | null = null;
+      // 3.4 (Audit-18) — capture the read's own coherent stat (no extra IPC) so
+      // the post-write baseline stamp below can be suppressed on pre-write drift.
+      let readMtimeMs: number | undefined;
+      let readSize: number | undefined;
       try {
         const readResult = await invokeOk('vault:read-file-text', vaultRoot, relPath);
         raw = readResult.content;
+        readMtimeMs = readResult.mtimeMs;
+        readSize = readResult.size;
       } catch {
         // Read failed (likely envelope-failure or transient I/O). Falls
         // through to the file-exists check below.
@@ -297,6 +326,8 @@ async function writeTagChangeToTileMarkdown(
         }
         return;
       }
+      // 3.4 — pre-write drift? (gates the post-write baseline stamp; see helper)
+      const driftedBeforeWrite = baselineDriftedAtRead(relPath, readMtimeMs, readSize);
       const next = operation === 'add'
         ? addTagToMarkdown(raw, tagName)
         : removeTagFromMarkdown(raw, tagName);
@@ -320,13 +351,20 @@ async function writeTagChangeToTileMarkdown(
       // so it stays here at the call site.
       // VS-2 — refreshBaselineAfterWrite is keyed by relPath ALONE, so a swap
       // here would poison the new vault's same-named file; bail before stamping.
-      try {
-        const postStat = await invokeOk('vault:stat', vaultRoot, relPath);
-        if (!isStillSameVault(identity)) return;
-        refreshBaselineAfterWrite(relPath, postStat.mtimeMs, postStat.size);
-      } catch {
+      // 3.4 — keep the prior baseline (don't stamp) when disk had drifted before
+      // this write, so the open editor's next save re-detects + prompts.
+      if (driftedBeforeWrite) {
         if (!isStillSameVault(identity)) return;
         refreshBaselineAfterWrite(relPath, undefined, undefined);
+      } else {
+        try {
+          const postStat = await invokeOk('vault:stat', vaultRoot, relPath);
+          if (!isStillSameVault(identity)) return;
+          refreshBaselineAfterWrite(relPath, postStat.mtimeMs, postStat.size);
+        } catch {
+          if (!isStillSameVault(identity)) return;
+          refreshBaselineAfterWrite(relPath, undefined, undefined);
+        }
       }
       wrote = true;
     });
@@ -456,9 +494,14 @@ async function writeTagChangeToMarkdownPath(
     await runSerializedMarkdownWrite(relPath, async () => {
       // Phase 37 / 37.6 — canonical two-arg shape.
       let raw: string | null = null;
+      // 3.4 (Audit-18) — capture the read's own stat (see writeTagChangeToTileMarkdown).
+      let readMtimeMs: number | undefined;
+      let readSize: number | undefined;
       try {
         const readResult = await invokeOk('vault:read-file-text', vaultRoot, relPath);
         raw = readResult.content;
+        readMtimeMs = readResult.mtimeMs;
+        readSize = readResult.size;
       } catch {
         // Read failed (likely envelope-failure or transient I/O). Falls
         // through to the file-exists check below.
@@ -480,6 +523,8 @@ async function writeTagChangeToMarkdownPath(
         }
         return;
       }
+      // 3.4 — keep-baseline-on-pre-write-drift (see writeTagChangeToTileMarkdown).
+      const driftedBeforeWrite = baselineDriftedAtRead(relPath, readMtimeMs, readSize);
       const next = operation === 'add'
         ? addTagToMarkdown(raw, tagName)
         : removeTagFromMarkdown(raw, tagName);
@@ -500,13 +545,19 @@ async function writeTagChangeToMarkdownPath(
       // post-write stat the coupled helper does not perform, so it stays here.
       // VS-2 — refreshBaselineAfterWrite is keyed by relPath ALONE, so a swap
       // here would poison the new vault's same-named file; bail before stamping.
-      try {
-        const postStat = await invokeOk('vault:stat', vaultRoot, relPath);
-        if (!isStillSameVault(identity)) return;
-        refreshBaselineAfterWrite(relPath, postStat.mtimeMs, postStat.size);
-      } catch {
+      // 3.4 — keep the prior baseline on pre-write drift (see other site).
+      if (driftedBeforeWrite) {
         if (!isStillSameVault(identity)) return;
         refreshBaselineAfterWrite(relPath, undefined, undefined);
+      } else {
+        try {
+          const postStat = await invokeOk('vault:stat', vaultRoot, relPath);
+          if (!isStillSameVault(identity)) return;
+          refreshBaselineAfterWrite(relPath, postStat.mtimeMs, postStat.size);
+        } catch {
+          if (!isStillSameVault(identity)) return;
+          refreshBaselineAfterWrite(relPath, undefined, undefined);
+        }
       }
       wrote = true;
     });
@@ -537,7 +588,7 @@ export const fileTagsStore = {
       const loaded = loadTagsFile(raw);
       file = loaded.file;
       setMergeBase(cloneTagsFile(loaded.file)); // A8-M6 — disk baseline
-      readOnlyFromFuture = loaded.fromFuture || loaded.noMigrationPath;
+      readOnlyTags = loaded.fromFuture || loaded.noMigrationPath || loaded.corrupt;
     } catch (err) {
       reportError(
         'fileTags.hydrate',
@@ -546,7 +597,7 @@ export const fileTagsStore = {
       );
       file = emptyTagsFile();
       setMergeBase(emptyTagsFile());
-      readOnlyFromFuture = false;
+      readOnlyTags = false;
     }
     isHydrated = true;
   },
@@ -563,9 +614,9 @@ export const fileTagsStore = {
     activeVaultRoot = vaultRoot;
     file = tagsFile;
     setMergeBase(cloneTagsFile(tagsFile)); // A8-M6 — disk baseline
-    // F6 — the candidate phase already ran the version migrator; carry its
-    // read-only verdict so a from-future tags file isn't re-saved.
-    readOnlyFromFuture = readOnly;
+    // F6 / Audit-18 H2 — carry the candidate phase's read-only verdict (migrator
+    // + corrupt-parse check) so a from-future / un-migratable / corrupt file isn't re-saved.
+    readOnlyTags = readOnly;
     isHydrated = true;
   },
 
@@ -647,7 +698,7 @@ export const fileTagsStore = {
     // A9-L7 — bump the merge-base token so an in-flight `tags:save` can't clobber
     // this fresh base (the external disk copy) back to its pre-reload snapshot.
     setMergeBase(cloneTagsFile(loaded.file));
-    readOnlyFromFuture = loaded.fromFuture || loaded.noMigrationPath;
+    readOnlyTags = loaded.fromFuture || loaded.noMigrationPath || loaded.corrupt;
     // Audit-17 0.2 — only re-save when the merge diverged from disk; an
     // identical-bytes echo would bump mtime and re-arm the 30 s reconcile loop.
     if (!sameJson(file, loaded.file)) scheduleSave();
@@ -659,7 +710,7 @@ export const fileTagsStore = {
     isHydrated = false;
     file = emptyTagsFile();
     setMergeBase(emptyTagsFile());
-    readOnlyFromFuture = false;
+    readOnlyTags = false;
   },
 
   /** Forces a synchronous write of any pending debounced save. */

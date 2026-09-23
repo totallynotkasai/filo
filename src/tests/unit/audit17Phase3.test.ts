@@ -263,7 +263,7 @@ describe('Audit-17 3.4 — concurrent withDrainedWrites siblings queue behind th
     expect(events.indexOf('drain-write:end')).toBeLessThan(events.indexOf('op2'));
   });
 
-  it('a sibling re-enters with its OWN drain when the piggybacked drain fails (no hang)', async () => {
+  it('Audit-18 5.3 — a sibling SHARES a failed drain verdict instead of re-draining (no hang, no per-sibling re-drain)', async () => {
     const events: string[] = [];
     let releaseWrite: () => void = () => {};
     const writeGate = new Promise<void>((res) => { releaseWrite = res; });
@@ -287,13 +287,17 @@ describe('Audit-17 3.4 — concurrent withDrainedWrites siblings queue behind th
     });
 
     releaseWrite();
-    // The outer call surfaces the drain failure; the sibling must neither
-    // hang on the settled-false drainPromise nor inherit the failure blindly
-    // — it re-enters and runs its own (now-vacuous) drain.
+    // Audit-18 5.3 — the outer drain fails; the sibling now SHARES that verdict
+    // and throws the same error rather than re-entering a fresh full drain (the
+    // old `return withDrainedWrites(op)` ran one ~60 s drain per parked sibling
+    // and re-toasted each time). Neither op runs — refusing a disk-shape op
+    // behind a failed flush is the safe direction. (The proof of "no re-drain"
+    // is the sibling REJECTING: a re-drain would find no pending misc write,
+    // succeed vacuously, and run op2.)
     await expect(first).rejects.toThrow();
-    await sibling;
+    await expect(sibling).rejects.toThrow();
     expect(events).not.toContain('op1');
-    expect(events).toContain('op2');
+    expect(events).not.toContain('op2');
   });
 });
 
@@ -642,8 +646,8 @@ describe('Audit-17 3.8 — recovery snapshots flatten the rel path into the file
 
 // ── 3.3 — dismiss-is-acknowledge wiring pin ──────────────────────────
 
-describe('Audit-17 3.3 — every Recovery modal close path acknowledges', () => {
-  it('AppShell wires beforeClose → acknowledgeRecovery on the recovery-files Modal', async () => {
+describe('Audit-17 3.3 — every Recovery modal close path un-parks the sequencer', () => {
+  it('AppShell wires beforeClose → bypassRecoveryModalClose on the recovery-files Modal', async () => {
     const src = await fs.readFile(
       join(process.cwd(), 'src/renderer/components/layout/AppShell.svelte'),
       'utf-8',
@@ -651,11 +655,17 @@ describe('Audit-17 3.3 — every Recovery modal close path acknowledges', () => 
     const idx = src.indexOf('id="recovery-files"');
     expect(idx).toBeGreaterThan(-1);
     // The Esc / X / backdrop close paths all route through Modal's
-    // `beforeClose`; without this hook they bypass `acknowledgeRecovery`
-    // and the recovery sequencer parks forever (steps 2–4 never run).
+    // `beforeClose`; without this hook they bypass the recovery sequencer
+    // resolver and it parks forever (steps 2–4 never run). Audit-18 4.1
+    // NARROWED A17-3.3: a bypassed close un-parks the sequencer via
+    // `bypassRecoveryModalClose()` (which preserves the `.filo/.dirty`
+    // sentinel) rather than `acknowledgeRecovery()` (which destroys it) —
+    // only the explicit Dismiss button acknowledges.
     const block = src.slice(idx, idx + 600);
     expect(block).toMatch(/beforeClose=/);
-    expect(block).toMatch(/acknowledgeRecovery\(\)/);
+    expect(block).toMatch(/bypassRecoveryModalClose\(\)/);
+    // And must NOT acknowledge (destroy the breadcrumb) on a bypassed close.
+    expect(block).not.toMatch(/acknowledgeRecovery\(\)/);
   });
 });
 

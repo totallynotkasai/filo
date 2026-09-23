@@ -179,7 +179,11 @@ export interface IpcChannelMap {
   };
   'vault:add-recent': {
     args: [path: string, name: string];
-    result: RecentVault[];
+    // Audit-18 4.5 — `ok`-discriminated so a failed add (validation / missing
+    // directory) is distinguishable from a genuinely empty list; the renderer
+    // leaves the displayed recents intact on `{ ok: false }` instead of wiping
+    // them. The read-only sibling channels keep their bare `RecentVault[]`.
+    result: IpcOk<{ recents: RecentVault[] }>;
   };
   'vault:remove-recent': {
     args: [path: string];
@@ -362,7 +366,13 @@ export interface IpcChannelMap {
     args:
       | [filename: string, data: string]
       | [filename: string, data: string, mimeType: string | undefined];
-    result: IpcSuccess<{ path: string }>;
+    // Audit-18 4.4 — the failure branch carries an optional `canceled` flag so
+    // the renderer can tell a save-dialog dismissal (no-op) from a real write
+    // failure (error toast). Spelled out rather than `IpcSuccess<…>` so the
+    // discriminator is part of the contract.
+    result:
+      | { success: true; path: string }
+      | { success: false; canceled?: boolean; code?: string; error?: string };
   };
 
   // ── Fonts ────────────────────────────────────────────────────────

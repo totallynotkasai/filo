@@ -83,6 +83,10 @@
       uiStore.dismissToast(progressToastId, { silent: true });
       if (result.success) {
         uiStore.toast(`Exported as ${format.toUpperCase()}`, 'success');
+      } else if (result.canceled) {
+        // Audit-18 4.4 — the user dismissed the save dialog; treat it as a
+        // no-op. The old code surfaced the same `{ success: false }` path as a
+        // real write failure, so cancelling spuriously toasted "Export failed".
       } else {
         uiStore.toast(result.error || 'Export failed', 'error');
       }

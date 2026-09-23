@@ -97,7 +97,15 @@ export function parseMarkdownFile(raw: string): ParsedMarkdownDocument {
   // that IS valid scalar content is indented, so `\r?\n---` (column 0) never
   // matches it. The first-fence split is therefore consistent with YAML's own
   // document model. No failing test could be constructed.
-  const fenced = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?([\s\S]*)$/.exec(text);
+  //
+  // 3.1 (Audit-18) — the interior group is OPTIONAL (`(?:…\r?\n)?`) so a
+  // zero-interior fence pair (`---\n---\n`, a common empty-frontmatter
+  // placeholder) parses as an EMPTY frontmatter block (`hasFrontmatter: true`,
+  // `rawFrontmatter: ''`) instead of "no frontmatter". Without it the
+  // tag-rewriter saw no frontmatter and PREPENDED a second `---` block above the
+  // orphaned fences (demoting them into the body). The group is still group 1
+  // (undefined → `''` below) and the body is still group 2.
+  const fenced = /^---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)?---[ \t]*\r?\n?([\s\S]*)$/.exec(text);
   if (!fenced) {
     return { frontmatter: {}, rawFrontmatter: '', body: text, hasFrontmatter: false, hadBom };
   }

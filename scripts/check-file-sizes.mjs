@@ -44,7 +44,13 @@ const ALLOWLIST = {
   // +9 LOC of comment + cleanup. New snapshot: 2201 LOC.
   // AUDIT13_REMEDIATION_PLAN_2026-06-06 Phase 9 L12 — noUncheckedIndexedAccess
   // section-slice loop guard. +1 LOC. New snapshot: 2202 LOC.
-  'src/renderer/components/boards/TaskListBoard.svelte': 2202,
+  // AUDIT18_REMEDIATION_PLAN_2026-06-12 Phase 5 5.1 — the lastView-persist
+  // `$effect` cleanup now flushes ONLY on a real board switch (`board?.id !== id`)
+  // instead of on every filter dep tick (which defeated the 300 ms debounce);
+  // `filters.dispose()` was decoupled from the timer so the unmount flush still
+  // fires after the cleanup nulls it. +7 LOC of guard + rationale. New snapshot:
+  // 2209 LOC.
+  'src/renderer/components/boards/TaskListBoard.svelte': 2209,
   // Phase 7.1 — tightened to current LOC (was 1506).
   // PHASE6_PLAN_2026-06-01 Phase 6.3.P5 — added the `// allow-direct-write`
   // escape note above the `.filo/kanban-toolbar-pos.json` write so the
@@ -93,7 +99,20 @@ const ALLOWLIST = {
   // narrowing guards in the board keydown / arrow-nav helpers (column-swap
   // endpoints, focused-card reads, neighbour lookups). +10 LOC of guards +
   // one-line reasons. New snapshot: 1429 LOC.
-  'src/renderer/components/boards/KanbanBoard.svelte': 1429,
+  // AUDIT18_REMEDIATION_PLAN_2026-06-12 Phase 1 1.6 (M7) — bulk "Add tag" now
+  // routes through an in-app popup (the injected `promptForTag` resolver +
+  // <TagPromptPopup> mount) instead of `window.prompt`, which throws in
+  // Electron's renderer. The popup markup + CSS were SPLIT into the sibling
+  // `TagPromptPopup.svelte` (the CLAUDE.md remedy); only the irreducible glue —
+  // the resolver state, `promptForTag`/`resolveTagPrompt`, the dep wire, and the
+  // `{#if}` mount — remains here. +19 LOC of glue. New snapshot: 1448 LOC.
+  // AUDIT18_REMEDIATION_PLAN_2026-06-12 Phase 5 5.1 — the lastView-persist
+  // `$effect` cleanup now flushes ONLY on a real board switch (`board?.id !== id`),
+  // not on every filter/sort dep tick (which structurally defeated the 300 ms
+  // debounce), and a new onDestroy flush keyed by the captured hydrated id covers
+  // the unmount path the cleanup no longer handles. +23 LOC of guard + onDestroy
+  // flush + rationale. New snapshot: 1471 LOC.
+  'src/renderer/components/boards/KanbanBoard.svelte': 1471,
   // KanbanColumn: column header (3-dot menu + WIP popover), card dndzone
   // shadow-placeholder rendering, outer `.kanban-column` drag handlers (so
   // OS file drops over the header don't paint the no-entry cursor), per-
@@ -253,7 +272,18 @@ const ALLOWLIST = {
   // success boolean + `refreshTreeAndCleanup` skip-on-stale + per-candidate
   // `vault:file-exists` confirm before board eviction. +75 LOC of guards +
   // rationale comments. New snapshot: 1846 LOC.
-  'src/renderer/stores/vault.svelte.ts': 1846,
+  // AUDIT18_REMEDIATION_PLAN_2026-06-12 Phase 2 — M1 (two crash-recovery
+  // breadcrumb toasts gain `acknowledgeOnly: true` so a vault swap / toast-cap
+  // eviction can't fire their destroy-the-breadcrumb onDismiss on the outgoing
+  // vault) + M2 (`refreshTreeAndCleanup` defers board eviction while an in-app
+  // rename is in flight / the cache path was rebound, via `isRenameInFlight()`
+  // + a path re-read). +14 LOC of guards + rationale. New snapshot: 1860 LOC.
+  // AUDIT18_REMEDIATION_PLAN_2026-06-12 Phase 3 3.10 — `runPostCommitTasks`
+  // prunes orphan fileTags against the LIVE `fileTree` (post the isStillSameVault
+  // bail) instead of the LOAD-TIME `candidate.tree`, so a file added/moved during
+  // a long index rebuild isn't dropped + persisted as an emptied registry. +7 LOC
+  // of rationale. New snapshot: 1867 LOC.
+  'src/renderer/stores/vault.svelte.ts': 1867,
   // In-app rename/delete/move orchestrator: drained disk-shape IPC + the
   // in-memory cascade (board cache, documentStore, tags, tabs, viewport,
   // undo) with per-await vault-identity bails so a swap mid-op can't apply the
@@ -266,7 +296,13 @@ const ALLOWLIST = {
   // guards + comments tipped it just over the default 1000-LOC limit. New
   // snapshot: 1008 LOC. Splitting the cascade out of the entry point is the
   // eventual fix.
-  'src/renderer/stores/vaultFolderOps.ts': 1008,
+  // AUDIT18_REMEDIATION_PLAN_2026-06-12 Phase 2 M2 — the `rename` method
+  // brackets its whole sequence in `beginRenameInFlight()` / `endRenameInFlight()`
+  // (new leaf `renameInFlight.ts`) so a concurrent watcher reconcile defers
+  // evicting a board whose cache path was rebound to the new (not-yet-on-disk)
+  // path before the rename IPC lands. +10 LOC of guard + rationale + import.
+  // New snapshot: 1018 LOC.
+  'src/renderer/stores/vaultFolderOps.ts': 1018,
   // tileCommands.ts dropped off the allowlist (AUDIT_REMEDIATION_PLAN_2026-05-29
   // Phase 5 / C-3): the tag-driven commands (AddTileTag / RemoveTileTag /
   // AddPathTag / RemovePathTag / ToggleTagFade) moved to the new sibling
@@ -323,7 +359,24 @@ const ALLOWLIST = {
   // + two wrapped invokes) so the failure still re-throws into the existing
   // miscScheduler / catch paths, now carrying a typed code. +3 LOC. New
   // snapshot: 1203 LOC.
-  'src/renderer/stores/fileTags.svelte.ts': 1203,
+  // AUDIT18_REMEDIATION_PLAN_2026-06-12 Phase 3 3.4 — both single-tag writers
+  // capture the read's own stat and gate the post-write `refreshBaselineAfter-
+  // Write` on a new `baselineDriftedAtRead` helper: stamping on pre-write drift
+  // would launder an undetected external edit into the baseline and the open
+  // editor's next save would silently revert it (keep-baseline-on-drift, DI-14).
+  // +49 LOC of helper + per-site capture/gating + comments (net of trimming).
+  // New snapshot: 1252 LOC. The queued cascade-orchestrator split will reclaim it.
+  'src/renderer/stores/fileTags.svelte.ts': 1252,
+  // Per-board file cache + persist* CRUD + deleteBoard.
+  // AUDIT18_REMEDIATION_PLAN_2026-06-12 Phase 3 3.11 — `deleteBoard` marks the
+  // board path "deleting" before the `board:delete` IPC (so an IN-FLIGHT
+  // `board:save` suspended on the external-edit drift prompt bails before its
+  // save and can't resurrect the just-unlinked `.board.json` as a ghost board),
+  // then clears the mark after a fire-and-forget in-flight drain. The file sat
+  // EXACTLY at the 1000-LOC hard limit, so the irreducible functional lines
+  // (mark + drain-clear + catch-clear) push it over; reaching <=1000 needs a
+  // structural split (queued, out of scope for this LOW fix). New snapshot: 1009 LOC.
+  'src/renderer/stores/boardCache.svelte.ts': 1009,
   // Markdown write gateway: per-caller debounce, BOM-preserving hydrate,
   // pre-write drift prompt, in-flight tracking, force-write + cancel APIs.
   // PHASE6_PLAN_2026-06-01 Phase 6.4.M13 — the pre-write Reload/Keep-local
@@ -425,7 +478,17 @@ const ALLOWLIST = {
   // draining behind drainPriorInFlight, in neither pending nor inFlight). +23 LOC
   // net of the read-back + parked OR-terms (own comments trimmed). New snapshot:
   // 1392 LOC. The gateway remains a candidate for a structural split in a later pass.
-  'src/renderer/lib/vault/markdownFileWriter.ts': 1392,
+  // AUDIT18_REMEDIATION_PLAN_2026-06-12 Phase 1 1.2 (H1) — `cancelMarkdownWrite`
+  // gained an optional `pendingOnly` param (threaded to the scheduler `cancel`)
+  // so PropertiesPopup teardown cancels only an armed timer, never a flush-owned
+  // parked fire. +1 LOC of doc. New snapshot: 1393 LOC.
+  // AUDIT18_REMEDIATION_PLAN_2026-06-12 Phase 5 5.4 — the Audit-17 5.3 post-write
+  // content read-back is now size-gated by the new `MARKDOWN_READBACK_BYTE_THRESHOLD`
+  // (1 MB): notes below it read the bytes back (same-byte-count foreign-write
+  // protection), notes at/above accept size-only confirmation to avoid doubling
+  // write-path IO on slow volumes (residual hole documented in KNOWN_LIMITATIONS
+  // #15). +23 LOC of constant + size-gate + rationale. New snapshot: 1416 LOC.
+  'src/renderer/lib/vault/markdownFileWriter.ts': 1416,
   // AUDIT8_REMEDIATION_PLAN_2026-06-04 Phase 3 M5 — `UpdateOrphanFrontmatterCommand.
   // execute()` recomputes its inverse from a FRESH on-disk read on the first
   // execute (a `hasExecuted` guard) — mirroring the docId path's

@@ -609,7 +609,7 @@ export async function doExport(
   element: HTMLElement | null,
   project: Project | null,
   projectName?: string,
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; canceled?: boolean }> {
   try {
     const name = projectName || project?.name || 'export';
 

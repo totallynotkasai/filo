@@ -6,6 +6,10 @@ import { historyStore } from '@renderer/stores/history.svelte';
 import { selectionStore } from '@renderer/stores/selection.svelte';
 import { canvasStore } from '@renderer/stores/canvas.svelte';
 import { tileDragAction } from '@renderer/lib/canvas/tileDrag';
+// Audit-18 6.1 — the action now requires the pane's BoardScope. The global
+// stores these tests assert through resolve to `getActiveScope()`, so passing
+// it keeps the action operating on the same active scope.
+import { getActiveScope } from '@renderer/lib/boards/boardScope.svelte';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Tile } from '@renderer/schema/index';
 
@@ -124,7 +128,7 @@ describe('tileDragAction — Escape cancels in-flight drag', () => {
     const node = document.createElement('div');
     document.body.appendChild(node);
     stubPointerCapture(node);
-    const action = tileDragAction(node, { tileId: 't1', locked: false });
+    const action = tileDragAction(node, { tileId: 't1', locked: false, scope: getActiveScope() });
 
     // Drag start at screen (200, 200)
     node.dispatchEvent(makePointerEvent('pointerdown', { clientX: 200, clientY: 200 }));
@@ -159,7 +163,7 @@ describe('tileDragAction — Escape cancels in-flight drag', () => {
     const node = document.createElement('div');
     document.body.appendChild(node);
     stubPointerCapture(node);
-    const action = tileDragAction(node, { tileId: 't1', locked: false });
+    const action = tileDragAction(node, { tileId: 't1', locked: false, scope: getActiveScope() });
 
     node.dispatchEvent(makePointerEvent('pointerdown', { clientX: 200, clientY: 200 }));
     // Simulate an in-flight move
@@ -185,7 +189,7 @@ describe('tileDragAction — Escape cancels in-flight drag', () => {
     const node = document.createElement('div');
     document.body.appendChild(node);
     stubPointerCapture(node);
-    const action = tileDragAction(node, { tileId: 't1', locked: false });
+    const action = tileDragAction(node, { tileId: 't1', locked: false, scope: getActiveScope() });
 
     // No pointerdown yet — Escape should not touch the tile.
     boardStore.updateTile('t1', { position: { x: 500, y: 500 } });
@@ -201,7 +205,7 @@ describe('tileDragAction — Escape cancels in-flight drag', () => {
     const node = document.createElement('div');
     document.body.appendChild(node);
     stubPointerCapture(node);
-    const action = tileDragAction(node, { tileId: 't1', locked: false });
+    const action = tileDragAction(node, { tileId: 't1', locked: false, scope: getActiveScope() });
 
     node.dispatchEvent(makePointerEvent('pointerdown', { clientX: 200, clientY: 200 }));
     // Simulate an in-flight move that left the tile away from its start.
@@ -242,7 +246,7 @@ describe('tileDragAction — Escape cancels in-flight drag', () => {
     const node = document.createElement('div');
     document.body.appendChild(node);
     stubPointerCapture(node);
-    const action = tileDragAction(node, { tileId: 't1', locked: false });
+    const action = tileDragAction(node, { tileId: 't1', locked: false, scope: getActiveScope() });
 
     node.dispatchEvent(makePointerEvent('pointerdown', { clientX: 200, clientY: 200 }));
     // Simulate move applied to both selected tiles

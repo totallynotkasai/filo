@@ -28,6 +28,15 @@ export interface KanbanMultiSelectDeps {
   tickAndPersist: () => void;
   ensureSeededFm: (tile: Tile) => string | null;
   vaultPathForTile: (tile: Tile) => string | null;
+  /**
+   * Audit-18 M7 — opens an in-app text-input popup for the bulk "Add tag" flow
+   * and resolves with the entered tag (raw, un-normalised) or `null` if the user
+   * cancelled. Injected by `KanbanBoard` because `window.prompt` is unimplemented
+   * in Electron's renderer (it throws → a generic unhandled-rejection toast, so
+   * the feature is dead in the packaged app). The controller stays UI-agnostic;
+   * the component owns the popup.
+   */
+  promptForTag: () => Promise<string | null>;
 }
 
 /**
@@ -162,7 +171,9 @@ export class KanbanMultiSelect {
   async tagSelectedTiles(): Promise<void> {
     const selected = Array.from(this.deps.selection.selectedIds);
     if (selected.length === 0) return;
-    const tagName = window.prompt('Add tag to selected cards (without leading #):');
+    // Audit-18 M7 — route through the injected in-app popup, NOT `window.prompt`
+    // (unimplemented in Electron's renderer → throws). Resolves null on cancel.
+    const tagName = await this.deps.promptForTag();
     if (!tagName) return;
     const norm = tagName.trim().replace(/^#/, '');
     if (!norm) return;
@@ -212,12 +223,18 @@ export class KanbanMultiSelect {
       return;
     }
     // Crash-safe (whenChainSettled covers the batch on quit) + undoable in one step.
-    // The chain reports its own errors; swallow on this fire-and-forget UI path.
-    await historyStore
+    // Audit-18 4.6 — gate the success toast on the chain actually resolving. The
+    // pre-fix `.catch(() => {})` swallow meant a rejected batch (a write failure →
+    // execute() rolled back) still flashed "Added #tag" next to the chain's own
+    // error toast (historyStore.execute's reportError). On failure, stay silent
+    // here — the chain already surfaced the visual error.
+    const ok = await historyStore
       .execute(new BatchCommand(`Add #${norm} to ${commands.length} card(s)`, commands, boardId))
-      .catch(() => {});
+      .then(() => true, () => false);
     this.deps.bumpCacheVersion();
-    uiStore.toast(`Added #${norm} to ${commands.length} card(s)`, 'success', 2000);
+    if (ok) {
+      uiStore.toast(`Added #${norm} to ${commands.length} card(s)`, 'success', 2000);
+    }
   }
 
   openBulkContextMenu(e: MouseEvent, _tileId: string): void {

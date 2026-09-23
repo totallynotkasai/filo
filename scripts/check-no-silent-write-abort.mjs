@@ -154,6 +154,18 @@ const GATEWAY_FILE = 'src/renderer/lib/vault/markdownFileWriter.ts';
 // survive so a refactor can't silently flip the editor back to "blank but
 // writable on a failed read".
 const DOC_EDITOR_FILE = 'src/renderer/components/boards/DocumentEditor.svelte';
+// Audit-18 H3 (7.1) — the TextTile twin of the Audit-12 M1 silent-loss class. A
+// failed on-mount hydrate read (non-ENOENT: a >25 MB note's FILE_TOO_LARGE, or a
+// transient EACCES/EBUSY from AV / OneDrive holding a read lock) used to fall
+// through to the embedded board-JSON seed: it seeded the FM cache from the stale
+// `tile.content` parse and `markHydrated` with no disk mtime → no drift baseline,
+// leaving the tile WRITABLE. The next keystroke then wrote the creation-time seed
+// (body + FM) over the real (unread) file, silently. The fix flags the failed
+// read (`hydrateReadFailed = true`) and `buildWriteArgs` REFUSES to write while
+// it's set with no real body loaded (`hydrateReadFailed && !lastLoadedBody`).
+// Both distinctive tokens must survive so a refactor can't silently flip the
+// tile back to "blank but writable on a failed read".
+const TEXT_TILE_FILE = 'src/renderer/components/tiles/TextTile.svelte';
 // Audit-16 1.1 — the document store owns the shared write-staleness token
 // (`mutationVersions`). `updateContent` (the body mutation) must bump it — and
 // mirror the bump into `bodyMutationVersions` — or a delta-less notes write
@@ -604,6 +616,36 @@ for (const { token, why } of DOC_EDITOR_REQUIRED) {
   }
 }
 
+// REQUIRED — Audit-18 H3 (7.1): the TextTile twin. Same two distinctive tokens
+// as the DocumentEditor M1 arm (the fix is a deliberate mirror) — a failed
+// non-ENOENT hydrate read flags `hydrateReadFailed = true` and `buildWriteArgs`
+// bails on `hydrateReadFailed && !lastLoadedBody`, so a keystroke into the blank
+// tile can't overwrite the file Filo couldn't read with the stale embedded seed.
+// Token check on the comment-stripped source (a doc-comment describing the old
+// embedded-fallback behaviour can't satisfy it).
+let textTileRaw = '';
+try {
+  textTileRaw = readFileSync(join(ROOT, TEXT_TILE_FILE), 'utf8');
+} catch (err) {
+  failures.push(`${TEXT_TILE_FILE} — cannot read (REQUIRED file): ${err.message}`);
+}
+const textTileCode = stripComments(textTileRaw);
+const TEXT_TILE_REQUIRED = [
+  {
+    token: /hydrateReadFailed\s*=\s*true/,
+    why: 'the failed non-ENOENT hydrate-read branch flags the failure (hydrateReadFailed = true) instead of seeding the embedded board-JSON content into a writable tile',
+  },
+  {
+    token: /hydrateReadFailed\s*&&\s*!\s*lastLoadedBody/,
+    why: 'buildWriteArgs REFUSES to write while the read failed and no real body is loaded (hydrateReadFailed && !lastLoadedBody), so a keystroke into the blank tile cannot overwrite the unread file with the stale embedded seed',
+  },
+];
+for (const { token, why } of TEXT_TILE_REQUIRED) {
+  if (!token.test(textTileCode)) {
+    failures.push(`${TEXT_TILE_FILE} — missing /${token.source}/ — ${why}`);
+  }
+}
+
 // REQUIRED — Audit-16 1.1 (7.1(b)): `updateContent` bumps the shared write-
 // staleness token on a body change. Scoped to the METHOD BODY (extracted by
 // brace-match on a blanked copy) so an unrelated `bumpMutationVersion` in
@@ -669,13 +711,19 @@ if (failures.length > 0) {
       'read must flag `hydrateReadFailed = true` and buildWriteArgs must bail on\n' +
       '`hydrateReadFailed && !lastLoadedBody` so a keystroke into the blank editor\n' +
       "can't truncate the file Filo couldn't read (Audit-12 M1). See\n" +
-      'AUDIT12_REMEDIATION_PLAN_2026-06-06.md M1 + src/tests/unit/documentEditorHydrateFailure.test.ts.',
+      'AUDIT12_REMEDIATION_PLAN_2026-06-06.md M1 + src/tests/unit/documentEditorHydrateFailure.test.ts.\n\n' +
+      'For a TEXT_TILE_FILE miss (TextTile.svelte): the same two tokens — a failed\n' +
+      'non-ENOENT hydrate read must flag `hydrateReadFailed = true` and buildWriteArgs\n' +
+      'must bail on `hydrateReadFailed && !lastLoadedBody` so a keystroke into the\n' +
+      "blank tile can't overwrite the unread file with the stale embedded seed\n" +
+      '(Audit-18 H3). See AUDIT18_REMEDIATION_PLAN_2026-06-12.md 1.1 +\n' +
+      'src/tests/unit/audit18Phase1.test.ts.',
   );
   process.exit(1);
 }
 
 console.log(
   `[check-no-silent-write-abort] OK — ${scanned} writer/scheduler file(s) scanned; no silent-success abort. ` +
-    'Gateway H2 disk-re-read + DocumentEditor M1 failed-read + A16 1.2 read-only + 1.1 body-version guards present.',
+    'Gateway H2 disk-re-read + DocumentEditor M1 + TextTile H3 failed-read + A16 1.2 read-only + 1.1 body-version guards present.',
 );
 process.exit(0);

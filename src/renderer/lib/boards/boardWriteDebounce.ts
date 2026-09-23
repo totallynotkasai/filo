@@ -42,6 +42,24 @@ export const BOARD_WRITE_DEBOUNCE_MS = 300;
 export const WRITE_TIMEOUT_MS = 60_000;
 
 /**
+ * Audit-17 2.3 / Audit-18 M5 — grace delay (ms) before a scheduler's pre-write
+ * ENOENT re-stat. A sync client's (OneDrive / Dropbox / AV) unlink→recreate blip
+ * during an armed write usually completes within tens of ms; the delay gives the
+ * recreate time to land so the re-stat SEES the file and the armed write falls
+ * through to the drift check (a recreate carries a new mtime → drift → prompt)
+ * instead of treating the transient gap as an intentional delete and resolving
+ * the write as a SILENT clean success (dropping the debounce window's mutations).
+ *
+ * Shared by the board AND config schedulers. The board scheduler added the delay
+ * in A17-2.3 (`boardWriteScheduler.BOARD_ENOENT_RESTAT_DELAY_MS`, now a
+ * re-export of this const); the config twin re-stated microseconds later with no
+ * grace, so its own comment's "mirrors writeBoardFile" claim was false — that
+ * gap is Audit-18 M5. Lives in this dependency-free leaf so both import it
+ * without a cross-scheduler dependency. Kept far below `WRITE_TIMEOUT_MS`.
+ */
+export const ENOENT_RESTAT_DELAY_MS = 150;
+
+/**
  * Audit-17 5.4 — UTF-8 byte length of a payload string. The board/config writers
  * encode their payload as UTF-8, so this equals the on-disk byte size of a clean
  * self-write — used by their post-write baseline TOCTOU guards (mirroring the

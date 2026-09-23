@@ -73,7 +73,7 @@ describe('A9-L7 — a concurrent external reload is not clobbered by an in-fligh
   });
 
   function reloadResult(file: TagsFile): LoadTagsFileResult {
-    return { file, fromFuture: false, noMigrationPath: false };
+    return { file, fromFuture: false, noMigrationPath: false, corrupt: false };
   }
 
   it('keeps the reload as the merge base so a later external edit to an untouched file is taken', async () => {

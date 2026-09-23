@@ -133,9 +133,14 @@
    * Applies a resolved title commit to the tile. `fromTeardown` marks the
    * unmount-time commit (Audit-17 4.1): by then the pane's scope may already
    * point at the switched-in board (the very switch that unmounted us), so
-   * the write resolves through the tile's home board (`tile.boardId`) and no
-   * history entry is pushed — mid-swap the global active board's undo stack
-   * can't be trusted (same rule as the 4.4 drag teardown).
+   * the write resolves through the tile's home board (`tile.boardId`).
+   *
+   * Audit-18 5.2 — a text-tile teardown commit now ALSO pushes
+   * `RenameTitleCommand` onto the tile's HOME board's undo stack (via
+   * `pushWithoutExecuteOnBoard`, keyed by `tile.boardId`) so the `.md` rename
+   * is undoable. Earlier it dropped the entry because the GLOBAL active board's
+   * stack can't be trusted mid-swap — but the home board's stack always can.
+   * The non-text teardown path stays a cache write (no file rename to reverse).
    */
   async function applyTitleCommit(snap: ResolvedTitleCommit, fromTeardown: boolean): Promise<void> {
     const { plain, titleHtml: newTitleHtml } = snap;
@@ -157,17 +162,28 @@
       const result = await boardStore.renameTextTileBackingFile(
         tile.id, plain, newTitleHtml, tile.boardId,
       );
-      if (result.success && !fromTeardown) {
-        historyStore.pushWithoutExecute(
-          new RenameTitleCommand(
-            tile.id,
-            oldTitle,
-            plain,
-            oldTitleHtml,
-            newTitleHtml,
-            { oldPath: result.oldPath ?? null, newPath: result.newPath ?? null },
-          ),
-        );
+      if (result.success) {
+        const paths = { oldPath: result.oldPath ?? null, newPath: result.newPath ?? null };
+        if (fromTeardown) {
+          // Audit-18 5.2 — file the rename onto the HOME board's stack (keyed
+          // by tile.boardId) so it's undoable, instead of dropping it. Thread
+          // `boardId` so the command's targetBoardId is the home board (a later
+          // cross-board Ctrl+Z auto-switches) and undo can fall back to the
+          // cache when the tile isn't on the active canvas.
+          historyStore.pushWithoutExecuteOnBoard(
+            new RenameTitleCommand(
+              tile.id, oldTitle, plain, oldTitleHtml, newTitleHtml, paths,
+              { boardId: tile.boardId },
+            ),
+            tile.boardId,
+          );
+        } else {
+          historyStore.pushWithoutExecute(
+            new RenameTitleCommand(
+              tile.id, oldTitle, plain, oldTitleHtml, newTitleHtml, paths,
+            ),
+          );
+        }
       }
     } else if (!fromTeardown) {
       // Non-text tile: no backing file, just the title. RenameTitleCommand
@@ -254,13 +270,19 @@
   // `destroyTitleEditor` also clears it for the commit/cancel paths), then
   // commit fire-and-forget (the rename helper is async-safe and self-guards
   // when the tile is already gone, e.g. mid-vault-swap).
+  //
+  // Audit-18 5.2 — DEFER the commit one microtask past the synchronous
+  // teardown so the `.md` rename doesn't race the board switch's own
+  // reactivity, and `applyTitleCommit` pushes the undo command onto the tile's
+  // HOME board's stack (see there) instead of dropping it. `snap` is captured
+  // synchronously (before destroy), so the deferred call uses the right value.
   $effect(() => {
     return () => {
       const snap = blurCommitTimer !== null ? snapshotEditorTitle() : null;
       if (blurCommitTimer) clearTimeout(blurCommitTimer);
       blurCommitTimer = null;
       destroyTitleEditor();
-      if (snap) void applyTitleCommit(snap, true);
+      if (snap) queueMicrotask(() => void applyTitleCommit(snap, true));
     };
   });
 

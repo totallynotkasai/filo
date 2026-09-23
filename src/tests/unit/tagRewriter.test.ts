@@ -181,12 +181,51 @@ describe('addTagToMarkdown', () => {
     expect(out).toBe(['---', 'title: X', 'tags:', '  - a', '---', 'body', ''].join('\n'));
   });
 
-  it('inserts before a trailing blank line in the frontmatter', () => {
+  // 3.2 (Audit-18) — the fresh tags block now APPENDS after every existing
+  // line instead of splicing before a single trailing blank line, and
+  // `reassemble` re-emits the one separator newline, so the FM's trailing
+  // blank line survives instead of being collapsed.
+  it('appends the tags block and preserves the FM trailing blank line (3.2)', () => {
     const input = ['---', 'title: X', '', '---', 'body'].join('\n');
     const out = addTagToMarkdown(input, 'a');
-    expect(out).toContain('title: X');
-    expect(out).toMatch(/tags:\n {2}- a/);
-    expect(out).toMatch(/\n---\nbody/);
+    // The blank line the file carried is preserved (no value/structure drift).
+    expect(out).toBe(['---', 'title: X', '', 'tags:', '  - a', '---', 'body', ''].join('\n'));
+  });
+
+  // 3.2 (Audit-18) — leg (b): `splitFrontmatter`/`reassemble` used to collapse
+  // the FM's trailing blank line on EVERY successful tag edit (the fast path
+  // included). When that blank is SEMANTIC — the keep-chomped trailing newline a
+  // `notes: |+` scalar owns as its LAST key — the collapse was a silent VALUE
+  // change a parse-only validation passes. `reassemble` now re-emits the one
+  // separator newline, so a line-path tag edit preserves the `|+` value verbatim.
+  it('preserves a trailing |+ block scalar’s value on a line-path tag edit (3.2)', () => {
+    const input = ['---', 'tags:', '  - x', '  - y', 'notes: |+', '  hello', '', '---', 'body'].join('\n');
+    const out = removeTagFromMarkdown(input, 'y');
+    // The blank line after `hello` is the keep-chomped trailing newline `|+`
+    // owns; it survives byte-for-byte (the pre-fix reassemble collapsed it).
+    expect(out).toBe(
+      ['---', 'tags:', '  - x', 'notes: |+', '  hello', '', '---', 'body', ''].join('\n'),
+    );
+  });
+
+  // 3.2 (Audit-18) — leg (b), the verifier superset: the trailing blank is
+  // preserved on EVERY successful tag edit, not just the |+ case.
+  it('preserves a cosmetic FM trailing blank line on a tag remove (3.2)', () => {
+    const input = ['---', 'tags:', '  - x', '  - y', '', '---', 'body'].join('\n');
+    const out = removeTagFromMarkdown(input, 'y');
+    expect(out).toBe(['---', 'tags:', '  - x', '', '---', 'body', ''].join('\n'));
+  });
+
+  // 3.1 (Audit-18) — a zero-interior fence pair (`---\n---\n`, a common empty
+  // frontmatter placeholder) is now recognised as an EMPTY frontmatter block, so
+  // a tag-add edits that block instead of PREPENDING a second `---` block above
+  // the orphaned fences (which used to demote them into the body).
+  it('adds a tag into an EMPTY frontmatter block instead of prepending a duplicate (3.1)', () => {
+    const input = ['---', '---', 'body'].join('\n');
+    const out = addTagToMarkdown(input, 'a');
+    expect(out).toBe(['---', 'tags:', '  - a', '---', 'body', ''].join('\n'));
+    // Exactly one frontmatter fence pair — no orphaned second block.
+    expect(out.match(/^---$/gm)?.length).toBe(2);
   });
 
   it('still upgrades a legacy string-form field via the dump path (unchanged)', () => {

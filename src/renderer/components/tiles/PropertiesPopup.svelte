@@ -443,12 +443,15 @@
     // (history entry is pushed after).
     flushIfPending();
     pushHistoryEntry();
-    // Best-effort: cancel the gateway timer for this flusherId so a late
+    // Best-effort: cancel the gateway TIMER for this flusherId so a late
     // schedule armed in the same tick as onDestroy doesn't fire against a
-    // popup that's already torn down. Idempotent against the
-    // flushIfPending above (which converts pending to in-flight).
+    // popup that's already torn down. Audit-18 H1 — `pendingOnly: true` cancels
+    // ONLY an armed timer, never a PARKED fire: `flushIfPending()` above already
+    // owns the parked/in-flight write and lands its newest rows, so the plain
+    // cancel (which marks a parked fire cancelled, Audit-16 4.4) would silently
+    // drop the freshest edits while `flush` still reports success.
     if (flusherId) {
-      cancelMarkdownWrite(flusherId);
+      cancelMarkdownWrite(flusherId, true);
       // Sprint C / C.1 — defence in depth: ensure the popup's tracker entry
       // is gone even if flushPendingWrite never resolved (sync teardown
       // before the promise settled). A stale entry would block the

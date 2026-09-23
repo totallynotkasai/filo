@@ -700,19 +700,22 @@
   {/if}
 
   {#if uiStore.isModalOpen('recovery-files')}
-    <!-- Audit-17 3.3 — dismiss-is-acknowledge: Esc / X / backdrop must resolve
-         the same gate as the Dismiss button. The recovery sequencer parks on
-         `awaitRecoveryDismiss()` until `acknowledgeRecovery()` runs; a bypassed
-         close left it parked forever, so steps 2–4 (tag-rewrite Resume/Discard,
-         rename-cascade retry, snapshot listing) never ran that session. The
-         old "sentinel survives for next launch" rationale was false anyway —
-         the session's first write replaces it (Audit-17 3.2). -->
+    <!-- Audit-17 3.3 — a bypassed close (Esc / X / backdrop) must still UN-PARK
+         the recovery sequencer; leaving it parked forever silently skipped
+         steps 2–4 (tag-rewrite Resume/Discard, rename-cascade retry, snapshot
+         listing) for the session.
+         Audit-18 4.1 — but a bypassed close is NOT an acknowledgement, so it
+         routes through `bypassRecoveryModalClose()` (un-park only) rather than
+         `acknowledgeRecovery()`: the `.filo/.dirty` sentinel + pending paths
+         are preserved so recovery RE-QUEUES next launch. Only the explicit
+         Dismiss button (RecoveryFiles.svelte → acknowledgeRecovery) destroys
+         the breadcrumb. -->
     <Modal
       id="recovery-files"
       title="Recovered from unflushed changes"
       width="520px"
-      beforeClose={async () => {
-        await vaultStore.acknowledgeRecovery();
+      beforeClose={() => {
+        vaultStore.bypassRecoveryModalClose();
         return true;
       }}
     >

@@ -69,6 +69,16 @@
   // flag (mirrored here for the legacy "skip write before hydrate" check)
   // flips true once `hydrateFromDisk` resolves and `markHydrated` runs.
   let hydrated = false;
+  // Audit-18 H3 — the TextTile twin of the DocumentEditor M1 guard. Set when the
+  // on-mount disk hydrate read fails with a NON-ENOENT error (a >25 MB note's
+  // deterministic FILE_TOO_LARGE, or a transient EACCES/EBUSY from AV / OneDrive
+  // holding a read lock at board open). While true the editor is held
+  // non-writable and `buildWriteArgs` refuses to write, so a keystroke into the
+  // unexpectedly-blank tile can't overwrite the real (unread) file with the stale
+  // board-JSON seed. ENOENT stays on the embedded-fallback path (a genuinely
+  // missing backing file is the designed legacy/fresh-tile behaviour). A
+  // successful retry clears the flag and resumes editing.
+  let hydrateReadFailed = $state(false);
   // `tile.id` is reactive in Svelte 5; reading it inside `$derived` captures
   // the live value so a tile-id rebind (rare but possible during cache
   // mutation) re-keys the caller without re-mounting the component.
@@ -109,6 +119,12 @@
    */
   function buildWriteArgs(): WriteArgs | null {
     if (!editor || backingFileMissing || !hydrated) return null;
+    // Audit-18 H3 — the on-mount disk read failed (non-ENOENT) and we have no
+    // real body loaded, so the editor is blank for reasons unrelated to the
+    // file's content. Never write that emptiness / the stale embedded seed over
+    // the file we couldn't read; a successful retry (clears hydrateReadFailed)
+    // resumes writes. Mirrors DocumentEditor's M1 buildWriteArgs guard.
+    if (hydrateReadFailed && !lastLoadedBody) return null;
     if (tile.contentId && documentStore.isReadOnly(tile.contentId)) return null;
     const vaultRoot = vaultStore.path;
     const relPath = vaultRelativePath();
@@ -312,6 +328,14 @@
         // the same read's mtime, so a later debounced write detects an
         // external edit that lands after this hydrate.
         const { body, frontmatter, rawFrontmatter } = await readMarkdownForHydrate(vaultRoot, relPath);
+        // Audit-18 H3 — a retry that succeeds lands here: clear the failed-read
+        // flag and re-enable editing (the close-drain $effect re-runs on the
+        // reactive flag, but flip it directly too so a non-frozen tile resumes
+        // immediately). Mirrors DocumentEditor's M1 resume path.
+        if (hydrateReadFailed) {
+          hydrateReadFailed = false;
+          if (editor && !editor.isDestroyed) editor.setEditable(true);
+        }
         // 1.2 — seed the verbatim frontmatter bytes so a later body-only save
         // emits them untouched (comments / key order / line endings preserved).
         if (tile.contentId) documentStore.setFrontmatter(tile.contentId, frontmatter, rawFrontmatter);
@@ -352,11 +376,29 @@
           // main process already skips its own stack trace for ENOENT reads.
           console.debug('[TextTile] backing markdown missing (ENOENT); using embedded fallback:', relPath);
         } else {
-          console.warn('[TextTile] Failed to read markdown file, using legacy content:', err);
+          // Audit-18 H3 — a NON-ENOENT read failure is NOT a missing backing
+          // file: the bytes exist on disk but Filo couldn't read them (a
+          // >25 MB note's FILE_TOO_LARGE, or a transient EACCES/EBUSY from AV /
+          // OneDrive holding a read lock). Falling through to the embedded seed
+          // below would seed the FM cache from the stale `tile.content` parse and
+          // markHydrated with NO disk mtime → no drift baseline → the next
+          // keystroke writes the creation-time seed (body + FM) over the real
+          // file, silently. Instead flag the failure (buildWriteArgs then
+          // refuses to write), hold the editor non-writable, mark hydrated with
+          // no baseline (the write-side invariant holds once a retry succeeds),
+          // and skip the embedded seed. A retry re-reads disk. Mirrors
+          // DocumentEditor's M1 failed-read branch.
+          console.warn('[TextTile] Failed to read markdown file; holding non-writable until retry:', err);
+          hydrateReadFailed = true;
+          if (relPath) markHydrated(relPath, false);
+          if (editor && !editor.isDestroyed) editor.setEditable(false);
+          return;
         }
       }
 
-      // No backing file (legacy tile or fresh tile) — fall back to embedded content.
+      // No backing file (legacy tile or fresh tile) — fall back to embedded
+      // content. Reached only on the ENOENT path now; the non-ENOENT failure
+      // branch returns above so a stale seed never lands over an unread file.
       const seed = (tile.content as string) ?? '';
       const parsed = parseMarkdownFile(seed);
       if (tile.contentId) documentStore.setFrontmatter(tile.contentId, parsed.frontmatter);
@@ -486,12 +528,22 @@
   // so a keystroke can't re-arm a debounce the unmount would destroy. Lossy
   // read-only disables SAVING (buildWriteArgs), not editing, so the only reason
   // to toggle TipTap editability here is the close drain.
+  // Audit-18 H3 — never re-enable while a hydrate read failed: that path holds
+  // the editor non-writable for its own reason (a keystroke would otherwise
+  // overwrite the unread file). Mirrors DocumentEditor's M1 close-drain gate.
   $effect(() => {
     const frozen = closeDrainGate.draining;
-    if (editor && !editor.isDestroyed) {
+    if (editor && !editor.isDestroyed && !hydrateReadFailed) {
       editor.setEditable(!frozen);
     }
   });
+
+  // Audit-18 H3 — re-run the disk hydrate after a transient read failure (file
+  // lock released, OneDrive synced, AV finished). On success `hydrateFromDisk`
+  // clears `hydrateReadFailed` and re-enables editing. Mirrors DocumentEditor M1.
+  function retryHydrate(): void {
+    void hydrateFromDisk();
+  }
 
   function takeOwnership(): void {
     if (!tile.contentId) return;
@@ -508,6 +560,14 @@
 </script>
 
 <div class="text-tile">
+  {#if hydrateReadFailed}
+    <!-- Audit-18 H3 — read failed; editing is paused so a keystroke can't
+         overwrite the real (unread) file with the embedded seed. Retry re-reads disk. -->
+    <div class="readonly-banner" role="alert">
+      <span class="readonly-text">Filo couldn't read this file. Editing is paused so your changes can't overwrite it — retry once the file is readable.</span>
+      <button class="readonly-action" onclick={retryHydrate}>Retry</button>
+    </div>
+  {/if}
   {#if readOnly}
     <div class="readonly-banner" role="status">
       <span class="readonly-text">Filo couldn't preserve some syntax in this file. Saving is disabled.</span>

@@ -169,16 +169,21 @@ export class MultiSelectController {
 
   /**
    * Builds and runs a BatchCommand of UpdateTaskFieldCommand entries — one per
-   * selected row whose `perRowPatch` returns a non-null patch. Returns the
-   * count of rows that were touched.
+   * selected row whose `perRowPatch` returns a non-null patch.
+   *
+   * Returns the count of rows touched AND a `settled` promise that resolves
+   * `true` only if the command chain resolved (Audit-18 4.6). Callers gate
+   * their success toast on `settled` so a rejected batch (write failure →
+   * execute() rolled back) doesn't claim success; clearSelection /
+   * bumpCacheVersion stay synchronous so selection bookkeeping is unaffected.
    */
   bulkApplyFieldPatch(
     sel: TaskRow[],
     perRowPatch: (r: TaskRow) => Record<string, unknown> | null,
     description: string,
-  ): number {
+  ): { touched: number; settled: Promise<boolean> } {
     const board = this.deps.getBoard();
-    if (!board || sel.length === 0) return 0;
+    if (!board || sel.length === 0) return { touched: 0, settled: Promise.resolve(true) };
     const cmds: UpdateTaskFieldCommand[] = [];
     // Plain object, not a Set: this is a non-reactive local dedup ledger, and the
     // `svelte/prefer-svelte-reactivity` lint rule forbids `new Set()` in
@@ -204,48 +209,78 @@ export class MultiSelectController {
       const cmd = this.deps.buildTaskFieldCommand(r, patch, description);
       if (cmd) cmds.push(cmd);
     }
-    if (cmds.length === 0) return 0;
-    historyStore.execute(new BatchCommand(description, cmds));
+    if (cmds.length === 0) return { touched: 0, settled: Promise.resolve(true) };
+    // Audit-18 4.6 — keep the settle promise so callers gate their success
+    // toast on the chain resolving. `.then(() => true, () => false)` also
+    // CATCHES the rejection (execute() rethrows after rollback), so the old
+    // fire-and-forget unhandled-rejection is gone too.
+    const settled = historyStore
+      .execute(new BatchCommand(description, cmds))
+      .then(() => true, () => false);
     this.deps.bumpCacheVersion();
-    return cmds.length;
+    return { touched: cmds.length, settled };
+  }
+
+  /**
+   * Audit-18 4.6 — shared tail for the field-patch bulk ops: clear the
+   * selection synchronously (SEL-1 visibility bookkeeping, asserted by the
+   * unit tests), then announce + toast success ONLY once the chain resolves.
+   * On failure stay silent — `historyStore.execute`'s reportError already
+   * surfaced the visual error; we add a screen-reader announcement for parity.
+   */
+  private finalizeBulkFieldOp(
+    touched: number,
+    settled: Promise<boolean>,
+    successMsg: string,
+    failAnnounce: string,
+  ): void {
+    if (touched <= 0) return;
+    this.clearSelection();
+    void settled.then((ok) => {
+      if (ok) {
+        uiStore.toast(successMsg, 'success', 1800);
+        this.deps.announce(successMsg);
+      } else {
+        this.deps.announce(failAnnounce);
+      }
+    });
   }
 
   bulkSetPriority(p: Priority): void {
     const sel = this.selectedRows();
-    const touched = this.bulkApplyFieldPatch(
+    const { touched, settled } = this.bulkApplyFieldPatch(
       sel,
       () => ({ priority: p === 'none' ? '' : p }),
       `Set priority on ${sel.length} tasks`,
     );
-    if (touched > 0) {
-      uiStore.toast(`Priority set on ${touched} task${touched === 1 ? '' : 's'}`, 'success', 1800);
-      this.deps.announce(`Priority set on ${touched} task${touched === 1 ? '' : 's'}`);
-      this.clearSelection();
-    }
+    this.finalizeBulkFieldOp(
+      touched,
+      settled,
+      `Priority set on ${touched} task${touched === 1 ? '' : 's'}`,
+      'Setting priority failed — see the error notification',
+    );
   }
 
   bulkSetDueDate(iso: string): void {
     const sel = this.selectedRows();
-    const touched = this.bulkApplyFieldPatch(
+    const { touched, settled } = this.bulkApplyFieldPatch(
       sel,
       () => ({ dueDate: iso }),
       iso ? `Set due date on ${sel.length} tasks` : `Clear due date on ${sel.length} tasks`,
     );
-    if (touched > 0) {
-      uiStore.toast(
-        iso
-          ? `Due set on ${touched} task${touched === 1 ? '' : 's'}`
-          : `Due cleared on ${touched} task${touched === 1 ? '' : 's'}`,
-        'success',
-        1800,
-      );
-      this.clearSelection();
-    }
+    this.finalizeBulkFieldOp(
+      touched,
+      settled,
+      iso
+        ? `Due set on ${touched} task${touched === 1 ? '' : 's'}`
+        : `Due cleared on ${touched} task${touched === 1 ? '' : 's'}`,
+      'Setting the due date failed — see the error notification',
+    );
   }
 
   bulkMarkComplete(): void {
     const sel = this.selectedRows();
-    const touched = this.bulkApplyFieldPatch(
+    const { touched, settled } = this.bulkApplyFieldPatch(
       sel,
       // BULK-1 — route completion through the shared helper so recurring tasks
       // roll forward ({completed:false, dueDate:next}) instead of being stamped
@@ -253,34 +288,34 @@ export class MultiSelectController {
       (r) => (r.completed ? null : completionPatchForRow(r)),
       `Mark ${sel.length} tasks complete`,
     );
-    if (touched > 0) {
-      const msg = `Marked ${touched} task${touched === 1 ? '' : 's'} complete`;
-      uiStore.toast(msg, 'success', 1800);
-      this.deps.announce(msg);
-      // SEL-1 — clear the selection after a visibility-changing bulk op. With a
-      // "hide completed" filter active, the just-completed rows vanish but would
-      // otherwise stay selected, so the bar shows "N selected" for invisible rows
-      // and a follow-up bulk op silently acts on them. We CLEAR rather than prune
-      // to the still-visible rows because the underlying field writes settle
-      // ASYNCHRONOUSLY (UpdateTaskFieldCommand.execute awaits a flush before
-      // merging), so a synchronous prune-to-filtered would read stale visibility.
-      this.clearSelection();
-    }
+    // SEL-1 — clear the selection after a visibility-changing bulk op (handled
+    // synchronously inside finalizeBulkFieldOp). With a "hide completed" filter
+    // active, the just-completed rows vanish but would otherwise stay selected,
+    // so the bar shows "N selected" for invisible rows and a follow-up bulk op
+    // silently acts on them. We CLEAR rather than prune to the still-visible
+    // rows because the field writes settle ASYNCHRONOUSLY, so a synchronous
+    // prune-to-filtered would read stale visibility.
+    this.finalizeBulkFieldOp(
+      touched,
+      settled,
+      `Marked ${touched} task${touched === 1 ? '' : 's'} complete`,
+      'Marking tasks complete failed — see the error notification',
+    );
   }
 
   bulkMarkIncomplete(): void {
     const sel = this.selectedRows();
-    const touched = this.bulkApplyFieldPatch(
+    const { touched, settled } = this.bulkApplyFieldPatch(
       sel,
       (r) => (r.completed ? { completed: false } : null),
       `Mark ${sel.length} tasks incomplete`,
     );
-    if (touched > 0) {
-      const msg = `Marked ${touched} task${touched === 1 ? '' : 's'} incomplete`;
-      uiStore.toast(msg, 'success', 1800);
-      this.deps.announce(msg);
-      this.clearSelection(); // SEL-1 (see bulkMarkComplete)
-    }
+    this.finalizeBulkFieldOp(
+      touched,
+      settled,
+      `Marked ${touched} task${touched === 1 ? '' : 's'} incomplete`,
+      'Marking tasks incomplete failed — see the error notification',
+    );
   }
 
   bulkDelete(): void {
@@ -299,12 +334,22 @@ export class MultiSelectController {
         // restores every row at once.
         const cmds: Command[] = sel.map((r) => new DeleteTaskCommand(board.id, r.tile.id));
         if (cmds.length === 0) return;
-        historyStore.execute(new BatchCommand(`Delete ${cmds.length} tasks`, cmds));
+        // Audit-18 4.6 — gate the "removed" toast on the chain resolving (and
+        // catch the rejection so a failed delete doesn't unhandled-reject). The
+        // placement removal runs synchronously inside execute(); persisting it
+        // can still fail, in which case execute()'s reportError surfaces the
+        // error and we stay silent here.
+        const settled = historyStore
+          .execute(new BatchCommand(`Delete ${cmds.length} tasks`, cmds))
+          .then(() => true, () => false);
         this.deps.tickAndPersist();
         this.clearSelection();
         const msg = `${sel.length} task${sel.length === 1 ? '' : 's'} removed`;
-        uiStore.toast(msg, 'success', 1800);
-        this.deps.announce(msg);
+        void settled.then((ok) => {
+          if (!ok) return;
+          uiStore.toast(msg, 'success', 1800);
+          this.deps.announce(msg);
+        });
       },
     });
   }
@@ -396,18 +441,26 @@ export class MultiSelectController {
 
     const targetTitle =
       sections.find((s) => s.id === realTargetSectionId)?.title ?? 'section';
-    historyStore.execute(
-      new MoveTaskBlockCommand(
-        board.id,
-        before,
-        { sections: after.sections, tasks: after.placements },
-        `Move ${blockIds.length} task${blockIds.length === 1 ? '' : 's'} to ${targetTitle}`,
-      ),
-    );
+    // Audit-18 4.6 — gate the "moved" toast on the chain resolving (and catch
+    // the rejection). The reorder runs synchronously inside execute(); a failed
+    // board persist surfaces via execute()'s reportError, so we stay silent.
+    const settled = historyStore
+      .execute(
+        new MoveTaskBlockCommand(
+          board.id,
+          before,
+          { sections: after.sections, tasks: after.placements },
+          `Move ${blockIds.length} task${blockIds.length === 1 ? '' : 's'} to ${targetTitle}`,
+        ),
+      )
+      .then(() => true, () => false);
     this.deps.tickAndPersist();
-    const msg = `Moved ${blockIds.length} task${blockIds.length === 1 ? '' : 's'} to "${targetTitle}"`;
-    uiStore.toast(msg, 'success', 2000);
-    this.deps.announce(msg);
     this.clearSelection(); // SEL-1 (see bulkMarkComplete) — a section filter can hide moved rows
+    const msg = `Moved ${blockIds.length} task${blockIds.length === 1 ? '' : 's'} to "${targetTitle}"`;
+    void settled.then((ok) => {
+      if (!ok) return;
+      uiStore.toast(msg, 'success', 2000);
+      this.deps.announce(msg);
+    });
   }
 }

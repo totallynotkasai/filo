@@ -25,7 +25,7 @@ import {
   setViewport,
   removeViewport,
 } from '../lib/boards/boardSaver';
-import { flushAllScheduledBoards } from '../lib/boards/boardWriteScheduler';
+import { flushAllScheduledBoards, markBoardPathDeleting, clearBoardPathDeleting } from '../lib/boards/boardWriteScheduler';
 import { loadBoard } from '../lib/boards/boardLoader';
 import { fileNameSafe } from '../lib/vault/conventionPaths';
 import { reportError } from '../lib/utils/errorBus';
@@ -747,16 +747,25 @@ export const boardCacheStore = {
     if (!boardPath) return false;
 
     // Phase 1.3 — cancel any pending debounced write BEFORE the delete IPC,
-    // otherwise a 300ms-old setTimeout fires after the unlink and resurrects
-    // the board file. The cancel is also treated as a successful endWrite
-    // for sentinel purposes (see cancelBoardWrite).
+    // else a 300ms-old setTimeout fires after the unlink and resurrects the file.
     cancelBoardWrite(boardId, boardPath);
+
+    // Audit-18 3.11 — cancelBoardWrite only reaches pending/parked timers; an
+    // IN-FLIGHT board:save (e.g. suspended on the drift prompt) would resolve
+    // after this delete and resurrect the .board.json as a ghost. Mark the path
+    // so writeBoardFile bails before board:save; clear it once any in-flight
+    // write drains (so a board re-created here later isn't blocked).
+    markBoardPathDeleting(boardPath);
 
     try {
       await invokeOk('board:delete', vaultRoot, boardPath);
       this.removeBoardFromCache(boardId);
+      // Drain the in-flight write (neutralised by the mark above), then clear —
+      // fire-and-forget so the delete returns promptly (getArgs null = no fire).
+      void flushBoardWrite(boardId, () => null).finally(() => clearBoardPathDeleting(boardPath));
       return true;
     } catch (err) {
+      clearBoardPathDeleting(boardPath); // delete failed — re-enable writes
       reportError(
         'boardCache.delete',
         err,

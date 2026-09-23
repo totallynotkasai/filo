@@ -383,6 +383,19 @@ export async function loadBoard(
   vaultRoot: string,
   relPath: string,
 ): Promise<LoadBoardResult | LoadBoardError> {
+  // 3.5 (Audit-18) — stat the file BEFORE the content read so the post-read
+  // stat below can be BRACKETED. The baseline must reflect the bytes we actually
+  // loaded; a foreign write landing in the read→stat gap would otherwise make a
+  // lone post-read stat "our" baseline, and the next save would match-and-clobber
+  // the external edit with no drift prompt. Best-effort — a failed pre-stat just
+  // skips the baseline (the writer's drift check no-ops, legacy unguarded write).
+  let preStat: { mtimeMs: number; size: number } | null = null;
+  try {
+    preStat = await invokeOk('vault:stat', vaultRoot, relPath);
+  } catch {
+    preStat = null;
+  }
+
   let raw: string | null;
   try {
     raw = (await window.filo.invoke('board:load', vaultRoot, relPath)) as string | null;
@@ -398,9 +411,16 @@ export async function loadBoard(
   // that land between load and the next debounced write. Best-effort:
   // a failed stat just leaves the baseline empty (writer's drift check
   // no-ops, falling back to the legacy unguarded write).
+  //
+  // 3.5 (Audit-18) — stat-read-stat: stamp ONLY when the bracketing stats match
+  // (mtime + size). A mismatch means a write landed around the content read, so
+  // this stat reflects bytes we didn't load — leave the baseline unstamped so the
+  // next save's drift check re-detects + prompts rather than adopting foreign bytes.
   try {
     const stat = await invokeOk('vault:stat', vaultRoot, relPath);
-    noteBaseline(relPath, stat.mtimeMs, stat.size);
+    if (preStat && preStat.mtimeMs === stat.mtimeMs && preStat.size === stat.size) {
+      noteBaseline(relPath, stat.mtimeMs, stat.size);
+    }
   } catch {
     // Non-fatal — no baseline, no pre-write drift check for this board.
   }

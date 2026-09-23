@@ -123,6 +123,37 @@ function flattenSnapshotName(relativePath: string): string {
 }
 
 /**
+ * Audit-18 4.3 — the bare basename a snapshot of `relativePath` would have used
+ * BEFORE the Audit-17 3.8 flattening (e.g. `folderA/Notes.md` → `Notes.md`).
+ * Derived from the ORIGINAL rel path's last segment (not from the flattened
+ * name) so a basename that itself contains `__` isn't mis-split.
+ *
+ * The per-basename pruner now counts BOTH this legacy bare name and the
+ * flattened name toward the cap, so legacy snapshots taken before the flatten
+ * (which the flattened-name-only pruner could never match) stop accumulating
+ * outside the per-basename retention. Matching the bare name re-introduces the
+ * old cross-folder conflation for LEGACY data only — but legacy snapshots were
+ * stored under that very bare name, so they already shared a prune bucket;
+ * this is the pre-existing behaviour for them, not a regression.
+ */
+function legacyBasename(relativePath: string): string {
+  const segments = relativePath.split(/[\\/]+/).filter(Boolean);
+  return segments[segments.length - 1] ?? relativePath;
+}
+
+/**
+ * The distinct snapshot filenames that all denote `relativePath`: the
+ * Audit-17 3.8 flattened name plus the legacy bare basename (deduped — a
+ * root-level file's flattened name IS its bare name). Used by the per-basename
+ * pruner so both naming generations count toward the same retention cap.
+ */
+function snapshotNameCandidates(relativePath: string): string[] {
+  const flattened = flattenSnapshotName(relativePath);
+  const legacy = legacyBasename(relativePath);
+  return flattened === legacy ? [flattened] : [flattened, legacy];
+}
+
+/**
  * Copies `<vault>/<relativePath>` into
  * `<vault>/.filo/recovery/<ts>/<flattened-rel-path>`.
  *
@@ -190,7 +221,7 @@ export async function snapshotForRecovery(
   // unbounded snapshots invisibly. The fresh snapshot we just wrote is
   // what matters; tidy-up is not on the critical path, so we still
   // swallow the failure here.
-  await pruneOldSnapshotsForBasename(vaultRoot, flattenSnapshotName(relativePath)).catch((err) => {
+  await pruneOldSnapshotsForBasename(vaultRoot, snapshotNameCandidates(relativePath)).catch((err) => {
     logMainError('recovery:snapshot:prune', err);
   });
 
@@ -207,11 +238,13 @@ export async function snapshotForRecovery(
 }
 
 /**
- * Walks `.filo/recovery/*` looking for snapshots whose filename matches
- * `targetBasename` (Audit-17 3.8 — the FLATTENED rel path, so `a/Notes.md`
- * and `b/Notes.md` prune independently instead of evicting each other),
- * sorts them by mtime ascending (oldest first), and deletes everything past
- * the most recent `MAX_SNAPSHOTS_PER_BASENAME`.
+ * Walks `.filo/recovery/*` looking for snapshots whose filename matches any of
+ * `targetNames` (Audit-17 3.8 — the FLATTENED rel path, so `a/Notes.md` and
+ * `b/Notes.md` prune independently instead of evicting each other; Audit-18 4.3
+ * — PLUS the legacy bare basename so pre-flatten snapshots of the same file
+ * count toward the cap instead of orphaning), sorts them by mtime ascending
+ * (oldest first), and deletes everything past the most recent
+ * `MAX_SNAPSHOTS_PER_BASENAME`.
  * Empty timestamp subdirectories are removed after their last file goes.
  *
  * Defensive: every fs operation that could plausibly fail is wrapped so a
@@ -221,7 +254,7 @@ export async function snapshotForRecovery(
  */
 async function pruneOldSnapshotsForBasename(
   vaultRoot: string,
-  targetBasename: string,
+  targetNames: string[],
 ): Promise<void> {
   const recoveryRoot = join(vaultRoot, RECOVERY_DIR);
   let entries: Array<{ name: string; isDirectory: boolean }>;
@@ -242,13 +275,17 @@ async function pruneOldSnapshotsForBasename(
   for (const entry of entries) {
     if (!entry.isDirectory) continue;
     const subdirPath = join(recoveryRoot, entry.name);
-    const filePath = join(subdirPath, targetBasename);
-    try {
-      const stat = await fs.stat(filePath);
-      if (!stat.isFile()) continue;
-      matches.push({ filePath, subdirPath, mtime: stat.mtimeMs });
-    } catch {
-      // No matching file in this subdir, or stat failed — skip.
+    // Audit-18 4.3 — a subdir can hold both the flattened name AND the legacy
+    // bare name (distinct files, distinct paths); count each that exists.
+    for (const candidate of targetNames) {
+      const filePath = join(subdirPath, candidate);
+      try {
+        const stat = await fs.stat(filePath);
+        if (!stat.isFile()) continue;
+        matches.push({ filePath, subdirPath, mtime: stat.mtimeMs });
+      } catch {
+        // No matching file in this subdir, or stat failed — skip.
+      }
     }
   }
   if (matches.length <= MAX_SNAPSHOTS_PER_BASENAME) return;

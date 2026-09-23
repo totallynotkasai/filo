@@ -34,7 +34,6 @@
 
 import {
   writeMarkdownFile,
-  markHydrated,
   isHydrated,
   readMarkdownForHydrate,
 } from '../vault/markdownFileWriter';
@@ -344,8 +343,19 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
     if (!isHydrated(relPath)) {
       try {
         await readMarkdownForHydrate(vaultRoot, relPath);
-      } catch {
-        markHydrated(relPath, false);
+      } catch (err) {
+        // 3.3 (Audit-18) — a NON-ENOENT hydrate read failure (EACCES/EBUSY from
+        // AV / OneDrive, or a transient share hiccup) used to fall through to
+        // `markHydrated(relPath, false)` and write ANYWAY against a file we
+        // never read: BOM stripped, a CRLF file's FM flipped to LF, and the
+        // pre-write drift gate blind (no baseline) for that write. Fail LOUDLY
+        // instead — same contract as the no-docState branch below and the H3
+        // TextTile fix: `markPathFailed` surfaces the loss in the save indicator
+        // + `.filo/.dirty` sentinel, and the `throw` attributes `relPath` to
+        // `flushAll().failed` so `save()` returns false. The edit stays queued
+        // (the cache still shows it) for a retry once the file is readable.
+        markPathFailed(vaultRoot, relPath);
+        throw err;
       }
     }
   } else {

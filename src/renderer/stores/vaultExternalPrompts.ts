@@ -79,7 +79,22 @@ export function promptExternalAttachmentDeleted(
     actions: [
       {
         label: 'Remove references',
-        handler: () => {
+        handler: async () => {
+          // 3.8 (Audit-18) — re-probe at click time. The attachment-delete grace
+          // window can't suppress a RECONCILE-synthesised rename (a cross-folder
+          // MOVE the live correlator missed lands after the window), and the user
+          // can restore the file from trash before clicking. If the file is back
+          // on disk this isn't a deletion — skip the cascade so a merely-moved /
+          // restored file doesn't lose its placements. (A move whose rename
+          // already rebound the refs makes `cascadeDeleteByVaultPath` a no-op
+          // anyway; the probe additionally covers same-path restore.)
+          try {
+            const exists = await window.filo.invoke('vault:file-exists', vaultRoot, rel);
+            if (exists) return;
+          } catch {
+            // Probe failure → treat as still-missing; fall through to the cascade
+            // (better to surface the removal than swallow a real delete).
+          }
           boardStore.cascadeDeleteByVaultPath(rel, {}, vaultRoot);
         },
       },
@@ -407,7 +422,19 @@ export function promptClosedBoardFileMissing(
     actions: [
       {
         label: 'Mark broken refs',
-        handler: () => {
+        handler: async () => {
+          // 3.8 (Audit-18) — re-probe at click time (see
+          // `promptExternalAttachmentDeleted`). A document-backed file gets NO
+          // grace window before this prompt, so a reconcile-synthesised rename
+          // (cross-folder MOVE) or a trash-restore can make the file present
+          // again by the time the user clicks. If it's back on disk, this isn't a
+          // deletion — skip the cascade + the tags drop.
+          try {
+            const exists = await window.filo.invoke('vault:file-exists', vaultRoot, rel);
+            if (exists) return;
+          } catch {
+            // Probe failure → treat as still-missing; fall through.
+          }
           // Routes through the existing undoable cascade so the user can
           // Ctrl+Z if they made a mistake. fileSnapshots empty because the
           // file is already gone — undo restores tiles but not bodies.
@@ -427,6 +454,30 @@ export function promptClosedBoardFileMissing(
       },
     ],
   });
+}
+
+/**
+ * Audit-18 M3/M6 — cancels every dirty GATEWAY writer armed for `rel` (a
+ * Properties popup mid-debounce over this path) and clears its popup-dirty
+ * tracker entry. A no-op when nothing is dirty.
+ *
+ * Every Reload handler MUST call this BEFORE it re-anchors the drift baseline:
+ * `applyReloadFromDisk` (and the no-editor `noteBaseline` tail) re-stamp the
+ * baseline to the accepted disk state, so a surviving armed gateway write would
+ * then sail PAST the pre-write drift gate (its baseline now matches disk) and
+ * clobber the FM keys with the rows the user just chose to discard on Reload.
+ *
+ * Hoisted from the A17-5.6(a) inline loop, which only ran in the no-editor
+ * branches. The editor-dirty prompt (`promptModifiedFile`) had NO such loop, and
+ * the pending-write-conflict prompt ran it only when no editor was open — so a
+ * dirty popup over an OPEN dirty editor re-applied the discarded keys after
+ * Reload (M3 + its M6 sibling). One helper, called unconditionally, closes both.
+ */
+function cancelDirtyGatewayWritersForPath(rel: string): void {
+  for (const callerId of getDirtyInstancesForPath(rel)) {
+    cancelMarkdownWrite(callerId);
+    clearPropertiesPopupDirty(callerId);
+  }
 }
 
 /**
@@ -479,6 +530,14 @@ export function promptModifiedFile(
           await vaultIndexStore.applyChanges([rel]);
           if (!isStillSameVault(identity)) return;
           const fresh = vaultIndexStore.getMetadata(rel) ?? next;
+          // Audit-18 M3 — cancel any dirty GATEWAY writer (a Properties popup
+          // armed over this same path) BEFORE the applies below re-anchor the
+          // drift baseline. The editor-dirty classification routes here, but a
+          // user can have BOTH a dirty editor and a dirty Properties popup on the
+          // file; without this cancel the popup's armed delta write sails past
+          // the re-stamped drift gate and re-applies the FM keys the user just
+          // discarded on Reload. No-op when nothing is dirty.
+          cancelDirtyGatewayWritersForPath(rel);
           // Atomic trio — match the bulk Reload-all branch.
           boardStore.applyFrontmatterToBackedTiles(rel, fresh);
           fileTagsStore.setFileTags(rel, normalizeTags(fresh.frontmatter.tags));
@@ -565,6 +624,20 @@ export function promptMarkdownPendingWriteConflict(
           const wasIndexed = vaultIndexStore.getMetadata(rel) !== undefined;
           await vaultIndexStore.applyChanges([rel]);
           if (!isStillSameVault(identity)) return;
+          // Cancel the still-armed local frontmatter write AND drop its
+          // Phase-4 field delta (Audit-11 EER-1), plus any dirty GATEWAY writer
+          // (a Properties popup armed over this path — Audit-18 M6, hoisted above
+          // the editor branch). No-op when nothing is dirty.
+          //
+          // 3.9 (Audit-18) — these cancels run BEFORE the 5.6(b) deletion
+          // early-return below. A reload that resolves into a DELETION still has
+          // to disarm the armed write: skipping the cancel would leave it to fire
+          // moments later against the now-deleted file (ENOENT-fail, or worse
+          // resurrect it). They still run AFTER the awaited re-read (Audit-17 2.5
+          // — a rejecting re-read leaves everything intact since this is reached
+          // only on success).
+          cancelFrontmatterWrite(rel);
+          cancelDirtyGatewayWritersForPath(rel);
           // Audit-17 5.6(b) — undefined after the targeted re-read of a path
           // that WAS indexed means applyChanges processed a DELETION (file
           // gone). Skip all store mutations + the baseline stamp — the watcher
@@ -576,11 +649,6 @@ export function promptMarkdownPendingWriteConflict(
           const reread = vaultIndexStore.getMetadata(rel);
           if (!reread && wasIndexed) return;
           const fresh = reread ?? next;
-          // Cancel the still-armed local frontmatter write AND drop its
-          // Phase-4 field delta (Audit-11 EER-1) before the applies, so the
-          // debounce can't fire after the reload and re-clobber disk with
-          // the change the user just discarded.
-          cancelFrontmatterWrite(rel);
           boardStore.applyFrontmatterToBackedTiles(rel, fresh);
           fileTagsStore.setFileTags(rel, normalizeTags(fresh.frontmatter.tags));
           if (editorDoc) {
@@ -593,24 +661,14 @@ export function promptMarkdownPendingWriteConflict(
               { mtimeMs: fresh.lastModified, size: fresh.rawByteSize },
             );
           } else {
-            // Audit-17 5.6(a) — FIRST cancel any surviving GATEWAY writer armed
-            // for this path (a dirty Properties popup over this never-loaded
-            // doc): without this, re-anchoring the baseline below would let that
-            // armed write sail past the pre-write drift gate (its baseline now
-            // matches disk) and clobber the delta's FM keys with the rows the
-            // user just discarded. Mirrors the sibling Reload handlers
-            // (promptPropertiesPopupModified / promptBulkExternalChanges).
-            for (const callerId of getDirtyInstancesForPath(rel)) {
-              cancelMarkdownWrite(callerId);
-              clearPropertiesPopupDirty(callerId);
-            }
             // Audit-16 6.3 — no open editor: applyReloadFromDisk (which
             // re-stamps the drift baseline via its diskIdentity arg) never
             // runs, so re-anchor the per-file baseline here (A8-M2 shape —
             // a stale baseline makes the NEXT in-app save fire a false
             // drift prompt) and drop any seeded-but-not-open FM cache so
             // the next field edit re-seeds from the disk truth the user
-            // just accepted.
+            // just accepted. (The surviving-gateway-writer cancel that used to
+            // live here moved above the branch — Audit-18 M6.)
             noteBaseline(rel, fresh.lastModified, fresh.rawByteSize);
             dropStaleSeededFrontmatterCache(rel);
           }
@@ -698,11 +756,9 @@ export function promptPropertiesPopupModified(
           // can't fire moments later and overwrite the just-applied external
           // frontmatter. Clearing the tracker entry is also defensive — a
           // still-open popup that hadn't yet typed further would otherwise
-          // re-block the next sync-frontmatter for this path.
-          for (const callerId of getDirtyInstancesForPath(rel)) {
-            cancelMarkdownWrite(callerId);
-            clearPropertiesPopupDirty(callerId);
-          }
+          // re-block the next sync-frontmatter for this path. (Audit-18 M6 —
+          // the shared helper; this site already had the loop.)
+          cancelDirtyGatewayWritersForPath(rel);
           // Apply external frontmatter trio. The body is unchanged
           // (sync-frontmatter precondition), so applyReloadFromDisk is overkill —
           // setFrontmatter (with rawFrontmatter, P2.1) refreshes the editor's FM

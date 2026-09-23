@@ -209,6 +209,11 @@ const HOSTILE_CORPUS: ReadonlyArray<{ label: string; md: string }> = [
   },
   { label: 'non-scalar seq key sibling', md: '---\n[a, b]: x\ntitle: X\ntags:\n  - foo\n---\nbody\n' },
   { label: 'non-scalar map key sibling', md: '---\n{k: 1}: x\ntitle: X\ntags:\n  - foo\n---\nbody\n' },
+  // Audit-18 3.2 — a trailing `|+` keep-chomped block scalar OWNS the FM's
+  // trailing blank line as part of its value. A tag op (or a body-only save)
+  // must not collapse that separator newline (the pre-fix `reassemble` did,
+  // silently changing `notes`). Last key, so the blank is its EOF-keep.
+  { label: 'trailing |+ keep-chomped scalar', md: '---\ntags:\n  - foo\nnotes: |+\n  hello\n\n---\nbody\n' },
   { label: 'no frontmatter', md: 'just a body, no frontmatter\n' },
   { label: 'empty', md: '' },
 ];

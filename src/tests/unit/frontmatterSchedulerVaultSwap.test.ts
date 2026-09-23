@@ -41,6 +41,9 @@ describe('frontmatterWriteScheduler — vault-swap reset (Sprint 35.4)', () => {
     vaultStore.setPath('/vault-A');
     installFiloMock({
       'vault:file-exists': () => true,
+      // 3.3 (Audit-18) — writeFrontmatter now hydrates on demand and fails loud
+      // on a read error, so the docState write path needs a working read mock.
+      'vault:read-file-text': () => ({ success: true, content: 'x', mtimeMs: 1, size: 1 }),
       'vault:write-existing-file-text': () => ({ success: true }),
     });
 
@@ -74,6 +77,9 @@ describe('frontmatterWriteScheduler — vault-swap reset (Sprint 35.4)', () => {
     let writeCount = 0;
     installFiloMock({
       'vault:file-exists': () => true,
+      // 3.3 (Audit-18) — writeFrontmatter now hydrates on demand and fails loud
+      // on a read error, so the docState write path needs a working read mock.
+      'vault:read-file-text': () => ({ success: true, content: 'x', mtimeMs: 1, size: 1 }),
       'vault:write-existing-file-text': () => {
         writeCount++;
         return { success: true };

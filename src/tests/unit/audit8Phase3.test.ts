@@ -405,7 +405,7 @@ describe('A8-M6 — applyExternalReload merges un-flushed tag mutations', () => 
   });
 
   function reloadResult(file: TagsFile) {
-    return { file, fromFuture: false, noMigrationPath: false };
+    return { file, fromFuture: false, noMigrationPath: false, corrupt: false };
   }
 
   it('a pending attachment-tag add survives an external reload that lacks it', async () => {

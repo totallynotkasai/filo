@@ -48,10 +48,20 @@ describe('Audit-12 L5(a) — TextTile adopt-sibling sniffs eol from the body', (
     expect(threaded.length).toBe(2);
   });
 
-  it('no longer makes a bare 2-arg markHydrated(relPath, false) adopt call', () => {
-    // The old eol-less adopt call. The disk-read / fallback paths use
+  it('the only bare markHydrated(relPath, false) is the Audit-18 H3 failed-read branch', () => {
+    // The old eol-less ADOPT call must not return — the two adopt branches use
+    // the 5-arg eol form (asserted above). The disk-read / fallback paths use
     // `markHydrated(relPath, parsed.hadBom)`, which this regex does not match.
-    expect(src).not.toMatch(/markHydrated\(relPath,\s*false\)/);
+    //
+    // Audit-18 H3 introduced ONE legitimate bare 2-arg call: the non-ENOENT
+    // failed-read branch, which has no body to sniff an eol from (the read
+    // failed) and marks hydrated with no baseline so a later retry's disk read
+    // re-seeds it (mirrors DocumentEditor's M1 `markHydrated(filename, false)`).
+    // Pin it at exactly one occurrence, co-located with `hydrateReadFailed`, so
+    // an adopt branch can't silently regress to the bare form.
+    const bare = src.match(/markHydrated\(relPath,\s*false\)/g) ?? [];
+    expect(bare.length).toBe(1);
+    expect(src).toMatch(/hydrateReadFailed = true;[\s\S]*?markHydrated\(relPath, false\)/);
   });
 });
 

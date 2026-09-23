@@ -205,6 +205,10 @@ describe('flushAllPendingFrontmatterWrites — envelope failure', () => {
 
     installFiloMock({
       'vault:file-exists': () => true,
+      // 3.3 (Audit-18) — writeFrontmatter hydrates on demand + fails loud on a
+      // read error; supply a working read mock so the failure under test is the
+      // WRITE IPC (not the hydrate read).
+      'vault:read-file-text': () => ({ success: true, content: 'x', mtimeMs: 1, size: 1 }),
       // Phase 31 A4.2 — frontmatter writer now calls
       // `vault:write-existing-file-text` (ENOENT-short-circuits instead
       // of resurrecting a deleted file). Mock that channel here.
@@ -244,6 +248,10 @@ describe('flushAllPendingFrontmatterWrites — envelope failure', () => {
 
     installFiloMock({
       'vault:file-exists': () => true,
+      // 3.3 (Audit-18) — writeFrontmatter hydrates on demand + fails loud on a
+      // read error; supply a working read mock so the failure under test is the
+      // WRITE IPC (not the hydrate read).
+      'vault:read-file-text': () => ({ success: true, content: 'x', mtimeMs: 1, size: 1 }),
       // A4.2 — same channel migration as above.
       'vault:write-existing-file-text': () => ({ success: false, error: 'EPERM' }),
     });

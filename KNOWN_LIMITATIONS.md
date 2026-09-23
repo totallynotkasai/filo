@@ -459,6 +459,14 @@ save. The main-process watcher's **content-hash** reconcile pass (which compares
 hashes, not just mtime/size) remains the backstop and re-surfaces such an edit.
 Upgrade to a size-gated or hashed read-back if this ever bites in practice.
 
+**Board encoding (Audit-19 ERR-1):** boards written by builds after Audit-19 are
+plain JSON objects (main writes the renderer's serialised payload verbatim, so the
+size check above actually matches). Builds from before Audit-19 double-encoded the
+file as a JSON string literal and **cannot open** a plain-JSON board — update every
+machine that opens a synced vault before using the new build on any of them. The
+new build still loads legacy double-encoded boards and migrates each one on its
+next save.
+
 ## 15. Markdown post-write read-back is skipped for notes ≥ 1 MB
 
 **What:** After a successful `.md` self-write, the markdown gateway

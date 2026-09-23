@@ -94,6 +94,17 @@ describe('boardLoader', () => {
       }
     });
 
+    // Audit-19 ERR-1 — main now returns the parsed OBJECT (it unwraps legacy
+    // double-encoded files itself); string stubs above still load too.
+    it('loads when board:load returns an object', async () => {
+      const file = validBoardFile();
+      installFiloStub({ 'board:load': () => structuredClone(file) });
+
+      const result = await loadBoard('/vault', 'alpha.board.json');
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.data.board.id).toBe('mindmap-1');
+    });
+
     it('preserves unknown top-level envelope keys on load (DI-11 passthrough)', async () => {
       // A forward-compat top-level key a future Filo (e.g. a V8 migration)
       // wrote. `V7BoardFileDataSchema.passthrough()` keeps it through the parse;

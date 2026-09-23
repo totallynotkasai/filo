@@ -15,23 +15,44 @@ const BOARD_EXTENSION = '.board.json';
 // ── Read ──
 
 /**
- * Loads and returns the raw parsed JSON of a .board.json file.
+ * Loads and returns the parsed board object of a .board.json file.
  * Caller is responsible for Zod validation.
+ *
+ * Audit-19 ERR-1 — builds before Audit-19 JSON-encoded the renderer's already-
+ * serialised payload a second time, so legacy files hold a JSON STRING literal.
+ * Unwrap one level (the configOps precedent); a plain-JSON file (written by a
+ * fixed build, or hand-edited) loads as-is. Each legacy file migrates to plain
+ * JSON on its next save.
  */
 export async function loadBoardFile(filePath: string): Promise<unknown> {
   const raw = await fs.readFile(filePath, 'utf-8');
-  return JSON.parse(raw);
+  const parsed: unknown = JSON.parse(raw);
+  return typeof parsed === 'string' ? JSON.parse(parsed) : parsed;
+}
+
+/**
+ * Audit-19 ERR-1 — the renderer sends the board already serialised; write that
+ * string VERBATIM so the on-disk size equals the renderer's payload byte length
+ * (the post-write drift-baseline check depends on it). Non-string data (tests,
+ * internal callers) is serialised here. A cheap sniff refuses a string that
+ * isn't a JSON object without re-parsing a multi-MB board on the hot path.
+ */
+function serializeBoardPayload(data: unknown): string {
+  if (typeof data !== 'string') return JSON.stringify(data, null, 2);
+  if (data.trimStart()[0] !== '{') throw new Error('board payload is not a JSON object');
+  return data;
 }
 
 // ── Write ──
 
 /**
  * Saves board data to a .board.json file using atomic write.
- * Creates parent directories if they don't exist.
+ * Creates parent directories if they don't exist. A string payload (the
+ * renderer's serialised board) is written verbatim — see serializeBoardPayload.
  */
 export async function saveBoardFile(filePath: string, data: unknown): Promise<void> {
   await ensureDir(dirname(filePath));
-  const json = JSON.stringify(data, null, 2);
+  const json = serializeBoardPayload(data);
   await atomicWriteFile(filePath, json);
 }
 
@@ -62,7 +83,7 @@ export async function createBoardFile(
     }
   }
 
-  const json = JSON.stringify(data, null, 2);
+  const json = serializeBoardPayload(data);
   await atomicWriteFile(filePath, json);
   return filePath;
 }

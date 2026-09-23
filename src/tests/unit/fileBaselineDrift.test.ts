@@ -1,6 +1,10 @@
 /**
  * fileBaselineDrift (Phase R6) — pre-write stat drift detection.
  *
+ * NOTE (Audit-19 ERR-1): this file unit-tests the drift LOGIC with stubbed
+ * sizes. The authority on real on-disk sizes is
+ * boardFileEncodingRoundTrip.test.ts (real main-side board IO + real fs.stat).
+ *
  * Phase R6 of the architectural refactor plan closes the
  * silent-external-edit-loss path that the legacy time-windowed
  * suppression introduced: when Filo wrote `Notes.md`, any external edit

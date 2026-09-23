@@ -205,7 +205,8 @@ export interface IpcChannelMap {
   };
   'board:load': {
     args: [vaultRoot: string, relPath: string];
-    result: string | null;
+    /** Audit-19 ERR-1 — the parsed board object (legacy double-encoded files are unwrapped main-side), or null. */
+    result: unknown;
   };
   'board:save': {
     args: [vaultRoot: string, relPath: string, data: unknown];

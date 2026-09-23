@@ -396,13 +396,16 @@ export async function loadBoard(
     preStat = null;
   }
 
-  let raw: string | null;
+  // Audit-19 ERR-1 — main now returns the parsed board OBJECT (it unwraps a
+  // legacy double-encoded file itself); a string still parses below, for older
+  // mains / test stubs that return `JSON.stringify(board)`.
+  let raw: unknown;
   try {
-    raw = (await window.filo.invoke('board:load', vaultRoot, relPath)) as string | null;
+    raw = await window.filo.invoke('board:load', vaultRoot, relPath);
   } catch (err) {
     return { ok: false, error: 'io-error', message: `${err}` };
   }
-  if (!raw) {
+  if (raw == null) {
     return { ok: false, error: 'not-found', message: `No board at ${relPath}` };
   }
 
@@ -427,7 +430,7 @@ export async function loadBoard(
 
   let rawJson: unknown;
   try {
-    rawJson = JSON.parse(raw);
+    rawJson = typeof raw === 'string' ? JSON.parse(raw) : raw;
   } catch (err) {
     return { ok: false, error: 'parse-error', message: `${err}` };
   }

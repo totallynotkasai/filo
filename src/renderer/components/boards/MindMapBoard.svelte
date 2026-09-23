@@ -11,7 +11,7 @@
   import WaypointMarker from '../canvas/WaypointMarker.svelte';
   import MindMapPopups from './MindMapPopups.svelte';
   import { getContext } from 'svelte';
-  import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
+  import { BOARD_SCOPE_KEY, isActiveScope, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { connectionsStore } from '../../stores/connections.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { TILE_DEFAULTS, FRAME_DEFAULTS, defaultTileStyleSnapshot, defaultFrameStyleSnapshot } from '../../constants/defaults';
@@ -22,13 +22,17 @@
   // call sites throughout this component while routing reads to this pane's
   // scope — so two panes can show different boards independently.
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
+  // R1 (Audit-11) — BoardRouter passes every board the pane's `tabId`. This board
+  // is pane-correct via BoardScope, so it declares + ignores it (silences Svelte's
+  // dev-mode "unknown prop" warning).
+  let { tabId }: { tabId?: string } = $props();
   const boardStore = scope.board;
   const canvasStore = scope.canvas;
   const selectionStore = scope.selection;
   const spatialStore = scope.spatial;
   import { viewportAction } from '../../lib/canvas/gestures';
   import { dragDropAction } from '../../lib/canvas/dragDrop';
-  import { edgePanAction, startEdgePan, stopEdgePan } from '../../lib/canvas/edgePan';
+  import { edgePanAction, syncConnectionEdgePan } from '../../lib/canvas/edgePan';
   import { createId } from '../../lib/utils/ids';
   import { historyStore } from '../../stores/history.svelte';
   import { DeleteTilesCommand, MoveTilesCommand, UpdateFrameCommand } from '../../commands/index';
@@ -116,15 +120,15 @@
   });
 
   // ── Edge-pan during connection drawing ──
-  // Pass THIS pane's canvas scope (not the global facade). Connection
-  // drawing has no pointer capture, so if another pane is activated
-  // mid-draw the facade would route edge-pan to the wrong canvas (Audit 5.4).
+  // `connectionsStore.drawing` is GLOBAL, so in split view BOTH panes' effects
+  // fire on its transition and the module-singleton edge-pan is first-caller-
+  // wins. Gate on this pane being the active one so only the pane the user is
+  // drawing in arms edge-pan (the draw's pointerdown activates its pane first
+  // via PaneView's capture handler) — otherwise the wrong pane's scope is
+  // pinned and edge-pan scrolls the wrong canvas (Audit 5.2; the earlier
+  // Audit-5.4 fix pinned a scope but not necessarily the right pane's).
   $effect(() => {
-    if (connectionsStore.drawing) {
-      startEdgePan(canvasStore);
-    } else {
-      stopEdgePan();
-    }
+    syncConnectionEdgePan(canvasStore, !!connectionsStore.drawing, isActiveScope(scope));
   });
 
   const viewModel = new VisibleTilesViewModel({
@@ -214,6 +218,7 @@
 
     if (hitIds.length > 0) {
       const tileId = hitIds[hitIds.length - 1];
+      if (tileId === undefined) return; // hitIds non-empty (checked above)
       if (!selectionStore.isSelected(tileId)) {
         selectionStore.select(tileId);
       }
@@ -423,6 +428,13 @@
   //                      cascade-aware confirm gate
   //   • C              — start a connection from the focused tile
   function handleKeydown(e: KeyboardEvent) {
+    // Audit-14 5.1 — pane-scope gate. `<svelte:window onkeydown>` fires for
+    // EVERY mounted Mind Map pane, so without this an inactive split pane would
+    // also act on a bare key: one `n` creating a tile on two boards, arrows
+    // moving the selection in both, Delete/Backspace double-dispatching. Mirror
+    // Kanban / Task List, which gate their shared bare-key shortcuts on the
+    // focused pane (the pointerdown that focuses a pane sets the active scope).
+    if (!isActiveScope(scope)) return;
     // TipTap (and any input/textarea) needs Ctrl+Arrow for word-jump.
     if (isArrowConsumingTarget(document.activeElement)) return;
 
@@ -443,13 +455,14 @@
       if (tilesArr.length === 0) return;
 
       if (ids.length === 0) {
-        selectionStore.select(tilesArr[0].id);
+        const first = tilesArr[0];
+        if (first) selectionStore.select(first.id);
         return;
       }
 
       // Anchor on the most-recently-selected tile so consecutive presses
       // walk the selection through neighbors (matching IDE Shift+Arrow).
-      const anchor = boardStore.getTile(ids[ids.length - 1]);
+      const anchor = boardStore.getTile(ids[ids.length - 1] ?? '');
       if (!anchor) return;
 
       const best = findNeighborTile({
@@ -498,10 +511,11 @@
       e.preventDefault();
       const ids = [...selectionStore.selectedIds];
       if (ids.length === 0) {
-        selectionStore.select(tilesArr[0].id);
+        const first = tilesArr[0];
+        if (first) selectionStore.select(first.id);
         return;
       }
-      const anchor = boardStore.getTile(ids[ids.length - 1]);
+      const anchor = boardStore.getTile(ids[ids.length - 1] ?? '');
       if (!anchor) return;
       const best = findNeighborTile({
         key: e.key,
@@ -513,7 +527,15 @@
       return;
     }
 
-    if ((e.key === 'Delete' || e.key === 'Backspace') && !e.ctrlKey && !e.metaKey) {
+    // Audit-14 5.2 — Delete is owned by the GLOBAL gated `tile:delete` command
+    // (AppShell), which also removes selected connections + offers the
+    // delete-backing-file option — richer than this branch, and a single
+    // confirm. Handling `Delete` here too double-dispatched (two confirm
+    // dialogs) even single-pane. `Backspace` stays as a board-local,
+    // tiles-only alias (pane-gated above) so the mind map keeps its
+    // Backspace-to-delete affordance without a second GLOBAL Backspace binding
+    // (which would double-fire against Task List / Kanban rows that bind it).
+    if (e.key === 'Backspace' && !e.ctrlKey && !e.metaKey) {
       const ids = [...selectionStore.selectedIds];
       if (ids.length === 0) return;
       e.preventDefault();
@@ -542,7 +564,7 @@
         createTileAtViewportCenter();
         return;
       }
-      const anchor = boardStore.getTile(ids[ids.length - 1]);
+      const anchor = boardStore.getTile(ids[ids.length - 1] ?? '');
       if (!anchor) {
         createTileAtViewportCenter();
         return;
@@ -590,7 +612,7 @@
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const ids = [...selectionStore.selectedIds];
       if (ids.length !== 1) return;
-      const tile = boardStore.getTile(ids[0]);
+      const tile = boardStore.getTile(ids[0] ?? '');
       if (!tile) return;
       e.preventDefault();
       // Enter connection mode so the user's next click on another tile
@@ -616,8 +638,8 @@
   aria-label="Mind map canvas"
   aria-roledescription="Infinite canvas. Drag to pan, scroll to zoom, shift-drag to box-select."
   tabindex="0"
-  use:viewportAction
-  use:dragDropAction
+  use:viewportAction={canvasStore}
+  use:dragDropAction={scope}
   use:edgePanAction
   onpointerdown={(e) => marquee.handlePointerDown(e)}
   onpointermove={(e) => marquee.handlePointerMove(e)}

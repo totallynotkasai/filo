@@ -36,7 +36,7 @@ import { assertActiveVault, isActiveVault, NoActiveVaultError } from '../utils/a
 import { logMainError } from '../utils/mainLogger';
 import { vaultRegistry } from '../services/vaultRegistry';
 import { getActiveWatcher } from './vault.ipc';
-import { snapshotForRecovery } from '../services/recoverySnapshot';
+import { snapshotForRecovery, listRecoverySnapshots } from '../services/recoverySnapshot';
 import { toPosix } from '../utils/pathHelpers';
 import {
   assertPayloadByteSize,
@@ -118,7 +118,18 @@ export function registerBoardHandlers(): void {
       // watcher is started later (vault:watch); registering here is purely
       // about gating the IPC surface.
       vaultRegistry.setCurrentVault(vaultRoot);
-      await initVaultConfig(vaultRoot);
+      try {
+        await initVaultConfig(vaultRoot);
+      } catch (initErr) {
+        // Audit 5.8 — roll the registry back so a failed `.filo/` init (EACCES
+        // on a read-only mount, ENOSPC, a flaky network share) doesn't leave a
+        // half-initialised vault armed. A stale registry would block a clean
+        // re-open of a DIFFERENT vault via the guard above while the renderer
+        // believes the open failed. Restore the PRIOR value (not unconditional
+        // null) so a same-vault re-init failure leaves the active vault armed.
+        vaultRegistry.setCurrentVault(current);
+        throw initErr;
+      }
       return { ok: true };
     } catch (err) {
       logMainError('vault:init-config', err);
@@ -185,7 +196,16 @@ export function registerBoardHandlers(): void {
   ipcMain.handle('board:save', async (_event, vaultRoot: string, relativePath: string, data: unknown) => {
     try {
       assertActiveVault(vaultRoot);
-      assertSafeRelativePath(relativePath);
+      // Audit-14 4.6 — `board:save` is a CREATING channel (it writes a brand-new
+      // `.board.json` the first time a board is persisted, then overwrites it on
+      // every later save). Validate with `forCreation: true` so the Windows-only
+      // rules (reserved DOS stems like `CON.board.json`, illegal chars) apply on
+      // every platform — a POSIX user must not be able to author a board path
+      // that breaks the same vault when opened on Windows. `board:create`
+      // already does this for its name; `board:save` is the path a renderer can
+      // also reach directly. (`board:load`/`board:delete` stay creation-free —
+      // they operate on paths that already exist; see ci:no-forcreation-on-read-delete.)
+      assertSafeRelativePath(relativePath, { forCreation: true });
       assertPayloadByteSize(jsonPayloadByteSize(data), PAYLOAD_LIMITS.BOARD, 'board:save');
       const fullPath = resolveBoardPath(vaultRoot, relativePath);
       assertWithinVault(vaultRoot, fullPath);
@@ -220,13 +240,19 @@ export function registerBoardHandlers(): void {
       // Mirrors the pattern added to `vault:copy-file` in Phase 37 / 37.5.
       // `assertWithinVault` below would also catch a traversal, but only
       // after the file has been written outside the vault.
-      if (subfolder) assertSafeRelativePath(subfolder);
+      //
+      // 6.3.P1/P2 — `board:create` is a creation channel; pass
+      // `forCreation: true` so the Windows-only rules (illegal chars,
+      // reserved DOS names) apply on every platform. A POSIX user
+      // creating `CON.board.json` would otherwise produce a file that
+      // breaks the same vault on Windows.
+      if (subfolder) assertSafeRelativePath(subfolder, { forCreation: true });
       // Phase B / B.1 — reject DOS device names (CON, NUL, LPT1, ...) on the
       // board name before `createBoardFile` calls `atomicWriteFile`. Without
       // this gate `CON.board.json` opens a console device handle on Windows
       // and the write either silently no-ops or hangs the IPC. The basename
       // form matches the rename gate at `vault:rename` (Phase 31 A3.6).
-      assertSafeFilename(`${name}.board.json`);
+      assertSafeFilename(`${name}.board.json`, { forCreation: true });
       assertPayloadByteSize(jsonPayloadByteSize(data), PAYLOAD_LIMITS.BOARD, 'board:create');
       const fullPath = await createBoardFile(vaultRoot, name, data, subfolder);
       assertWithinVault(vaultRoot, fullPath);
@@ -312,7 +338,21 @@ export function registerBoardHandlers(): void {
       return { app, appearance, defaults, hotkeys, workspace, viewports, sidebarOrder };
     } catch (err) {
       logMainError('config:load-all', err);
-      return { app: {}, appearance: {}, defaults: {}, hotkeys: {}, workspace: {}, viewports: {}, sidebarOrder: {} };
+      // L18 (Audit-6) — a TOP-LEVEL failure reaches here only for a hard error
+      // the per-file loaders re-throw (e.g. a transient EACCES/EPERM on fs.stat
+      // under a OneDrive/AV lock; ENOENT → default and parse/too-large →
+      // `__corrupt` are handled inside `loadConfig` and never reject). The old
+      // all-empty return made openVault seed BOOTSTRAP DEFAULTS in memory, and a
+      // later config save could then overwrite the intact-but-was-locked files
+      // on disk. Tag the bag with a top-level failure marker (the shape stays a
+      // plain object — no `{ ok }` envelope, so the bare-channel contract is
+      // unchanged) so `loadVaultCandidate` pauses EVERY config write (preserving
+      // the on-disk files) and shows one low-key toast instead of seeding
+      // defaults. Reopening the vault retries the read.
+      return {
+        app: {}, appearance: {}, defaults: {}, hotkeys: {}, workspace: {}, viewports: {}, sidebarOrder: {},
+        __loadAllFailed: String(err),
+      };
     }
   });
 
@@ -374,7 +414,10 @@ export function registerBoardHandlers(): void {
   ipcMain.handle('theme:save', async (_event, vaultRoot: string, name: string, data: unknown) => {
     try {
       assertActiveVault(vaultRoot);
-      assertSafeFilename(name);
+      // 6.3.P1/P2 — `theme:save` creates `<vault>/.filo/themes/<name>.json`;
+      // creation rules apply on every platform so a saved theme stays
+      // portable.
+      assertSafeFilename(name, { forCreation: true });
       assertPayloadByteSize(jsonPayloadByteSize(data), PAYLOAD_LIMITS.THEME, `theme:save ${name}`);
       await saveTheme(vaultRoot, name, data);
       return { ok: true };
@@ -429,6 +472,35 @@ export function registerBoardHandlers(): void {
       logMainError(`recovery:snapshot ${relativePath}`, err);
       const code = classifyError(err);
       return { ok: false, ...(code ? { code } : {}), error: String(err) };
+    }
+  });
+
+  /**
+   * #11 — lists preserved snapshots under `.filo/recovery/` so the renderer
+   * can surface them on vault open (basename + timestamp + reveal). Read-only:
+   * it never prunes, so the user's recovery backups are only removed when they
+   * act on them or the write-time cap trims the oldest — never silently on
+   * open. BARE channel (returns the array directly, like `theme:load`): a scan
+   * failure logs on the main side and resolves to `[]` so the open proceeds
+   * without the (defensive) listing. Not an envelope channel — there is no
+   * data-integrity decision riding on distinguishing "scan failed" from "no
+   * snapshots"; both mean "show nothing".
+   */
+  ipcMain.handle('recovery:list', async (_event, vaultRoot: string) => {
+    try {
+      assertActiveVault(vaultRoot);
+      return await listRecoverySnapshots(vaultRoot);
+    } catch (err) {
+      logMainError('recovery:list', err);
+      // L20/L21 (Audit-6) — `listRecoverySnapshots` already maps ENOENT (no
+      // recovery dir → steady state) to `[]` internally, so any error reaching
+      // here is a REAL scan failure: EACCES / EBUSY on a locked share, ENOTDIR,
+      // NO_ACTIVE_VAULT after a swap. Swallowing it into `[]` is indistinguishable
+      // from "no snapshots" and hides the user's backup exactly when the disk is
+      // locked. Re-throw (the channel stays bare — no `{ ok }` envelope) so the
+      // renderer's `vault.recovery-snapshots` catch surfaces the low-key
+      // "couldn't scan recovery, check .filo/recovery manually" toast.
+      throw err;
     }
   });
 }

@@ -1,7 +1,12 @@
-import { promises as fs } from 'fs';
+import { promises as fs, constants as fsConstants } from 'fs';
 import type { FileHandle } from 'fs/promises';
-import { join, extname, basename } from 'path';
+import { randomBytes } from 'crypto';
+import { join, extname, basename, dirname, resolve, sep } from 'path';
 import { assertSafeFilename } from '../utils/pathSecurity';
+import {
+  recordPreservedEmergencyFile,
+  clearPreservedEmergencyFilesForTarget,
+} from '../services/emergencyFileRegistry';
 import type { FileTreeNode } from '../../shared/types';
 
 // `extname()` only returns the final segment, so `foo.board.json` → `.json`.
@@ -81,7 +86,41 @@ export async function readDirectoryTree(
 ): Promise<FileTreeNode[]> {
   const max = options.maxNodes ?? VAULT_TREE_MAX_NODES;
   const maxBytes = options.maxSerializedBytes ?? VAULT_TREE_MAX_SERIALIZED_BYTES;
-  return walkDirectoryTree(dirPath, { count: 0, max, bytes: 0, maxBytes });
+  // Audit-11 P2 — resolve the vault root to its real path ONCE so the
+  // per-entry reparse-point check (see `walkDirectoryTree`) compares
+  // real-vs-real: a junction inside the vault whose target escapes is then
+  // reliably detected regardless of how the caller spelled the root. A
+  // realpath failure (e.g. the root itself is gone) falls back to the raw
+  // path — the walk's own readdir will surface the real error.
+  let realRoot = dirPath;
+  try {
+    realRoot = await fs.realpath(dirPath);
+  } catch {
+    // keep dirPath
+  }
+  return walkDirectoryTree(dirPath, { count: 0, max, bytes: 0, maxBytes }, realRoot);
+}
+
+/**
+ * Audit-11 P2 — true iff `candidate` (an absolute, realpath-resolved path)
+ * is the vault root itself or lives beneath it. Used to exclude a reparse
+ * point (NTFS junction / POSIX symlink) whose target escapes the vault.
+ *
+ * Audit-12 S2 — case-fold both sides on Windows (mirrors `assertWithinVault`).
+ * NTFS is case-preserving but not case-sensitive, so a junction target whose
+ * OS-reported casing diverged from the vault root casing (e.g. `C:\VAULT\sub`
+ * vs `C:\vault`) was wrongly classified as escaping the vault and the legit
+ * in-vault reparse point was dropped from the tree. Case-folding keeps the
+ * containment check correct without weakening it — a target that escapes to
+ * `C:\Windows` still fails the folded prefix test.
+ */
+function isWithinVaultRoot(candidate: string, vaultRoot: string): boolean {
+  const isWin = process.platform === 'win32';
+  const c0 = resolve(candidate);
+  const r0 = resolve(vaultRoot);
+  const c = isWin ? c0.toLowerCase() : c0;
+  const r = isWin ? r0.toLowerCase() : r0;
+  return c === r || c.startsWith(r.endsWith(sep) ? r : r + sep);
 }
 
 interface TreeWalkerCounter {
@@ -98,6 +137,7 @@ interface TreeWalkerCounter {
 async function walkDirectoryTree(
   dirPath: string,
   counter: TreeWalkerCounter,
+  vaultRoot: string = dirPath,
 ): Promise<FileTreeNode[]> {
   const entries = await fs.readdir(dirPath, { withFileTypes: true });
   const nodes: FileTreeNode[] = [];
@@ -111,12 +151,32 @@ async function walkDirectoryTree(
     // .tmp file appears and disappears within ~10ms.
     if (entry.name.endsWith('.tmp') || entry.name.endsWith('.bak')) continue;
 
+    const fullPath = join(dirPath, entry.name);
+
+    // Audit-11 P2 — exclude a reparse point (NTFS junction / POSIX symlink)
+    // whose target escapes the vault, BEFORE counting it (mirroring the
+    // hidden/.tmp skips above). libuv reports BOTH junctions and symlinks as a
+    // link entry on Windows, so `isSymbolicLink()` flags them; `realpath` then
+    // confirms the target stays inside the vault root. An escaping link is
+    // dropped entirely — enumerating it would leak an out-of-vault path's name
+    // into the sidebar (its contents are already guarded by the read IPC's
+    // `assertWithinVault`). A within-vault link is enumerated normally; a
+    // realpath failure (broken link / permission) is skipped. The `typeof`
+    // guard keeps mock Dirents that predate `isSymbolicLink` working.
+    if (typeof entry.isSymbolicLink === 'function' && entry.isSymbolicLink()) {
+      let realTarget: string;
+      try {
+        realTarget = await fs.realpath(fullPath);
+      } catch {
+        continue;
+      }
+      if (!isWithinVaultRoot(realTarget, vaultRoot)) continue;
+    }
+
     counter.count++;
     if (counter.count > counter.max) {
       throw new VaultTooLargeError(counter.max);
     }
-
-    const fullPath = join(dirPath, entry.name);
 
     // Sprint B / B18 — credit the cumulative serialized-size budget. Each
     // node's two string fields (`path`, `name`) dominate JSON size; the
@@ -129,7 +189,7 @@ async function walkDirectoryTree(
     }
 
     if (entry.isDirectory()) {
-      const children = await walkDirectoryTree(fullPath, counter);
+      const children = await walkDirectoryTree(fullPath, counter, vaultRoot);
       nodes.push({
         name: entry.name,
         path: fullPath,
@@ -313,7 +373,32 @@ export async function renameItem(oldPath: string, newPath: string): Promise<void
     if ((err as NodeJS.ErrnoException | null)?.code === 'EXDEV') {
       const stat = await fs.stat(oldPath);
       if (stat.isDirectory()) throw err;
-      await fs.copyFile(oldPath, newPath);
+      // L10 (Audit-13) — cross-device move (rename across filesystems). The prior
+      // `copyFile(old → new)` streamed straight to the final name, non-fsync'd, so
+      // a crash mid-copy left a torn file at `newPath` while the source was about
+      // to be unlinked. Stage into a temp, fsync, atomically rename, best-effort
+      // dir-fsync, THEN unlink the source — the project's uniform atomic-write
+      // contract for the one move path that can't use a same-volume rename.
+      const nonce = randomBytes(6).toString('hex');
+      const tmpPath = `${newPath}.${nonce}.tmp`;
+      try {
+        await fs.copyFile(oldPath, tmpPath);
+        const fh = await fs.open(tmpPath, 'r+');
+        try {
+          await fh.sync();
+        } finally {
+          await fh.close().catch(() => undefined);
+        }
+        await fs.rename(tmpPath, newPath);
+      } catch (copyErr) {
+        await fs.unlink(tmpPath).catch(() => undefined);
+        throw copyErr;
+      }
+      try {
+        const dirHandle = await fs.open(dirname(newPath), 'r');
+        try { await dirHandle.sync(); } catch { /* dir fsync unsupported */ }
+        await dirHandle.close().catch(() => undefined);
+      } catch { /* dir handle open failed — non-fatal */ }
       await fs.unlink(oldPath);
       return;
     }
@@ -366,6 +451,42 @@ export class TargetNameExhaustedError extends Error {
 
 const MAX_CANDIDATE_ATTEMPTS = 1000;
 const COPY_CHUNK_BYTES = 64 * 1024;
+// L10 (Audit-13) — backoff for the staging-temp → final-name rename on transient
+// Windows lock codes (antivirus / the recursive watch handle / a sync client
+// briefly gripping the destination), mirroring atomicWriteFile's retry schedule.
+const COPY_RENAME_RETRY_DELAYS = [10, 20, 40, 80, 160];
+
+/**
+ * Audit-14 4.3 — opens a copy SOURCE while defeating a regular-file→SYMLINK swap
+ * that lands between the handler's pre-flight `lstat` and this open.
+ * `copyFileToVault`'s fstat `.isFile()` re-check catches a swap to a
+ * device/dir/FIFO, but `fs.open(path,'r')` FOLLOWS a symlink, so a swap to a
+ * symlink pointing at a regular file (e.g. `/etc/passwd`) would fstat as a file
+ * and slip through.
+ *
+ *   - POSIX: open with `O_NOFOLLOW`, so the open itself fails (`ELOOP`) when the
+ *     final path component is a symlink. Solid, with no false positives (a real
+ *     regular-file source is never a symlink).
+ *   - Windows: no `O_NOFOLLOW`, and no fd→path API without native bindings, so
+ *     `lstat` immediately before the open and refuse a symlink. This narrows the
+ *     TOCTOU window to a couple of instructions WITHOUT the false-positive risk
+ *     a realpath/casing comparison carries (8.3 short names, junction parents).
+ *
+ * Gated on `noFollow` — `vault:copy-file` sets it; default-`false` non-IPC
+ * callers keep the plain `'r'` open unchanged.
+ */
+async function openSourceForCopy(sourcePath: string, noFollow: boolean): Promise<FileHandle> {
+  if (!noFollow) return fs.open(sourcePath, 'r');
+  if (process.platform === 'win32') {
+    const pre = await fs.lstat(sourcePath);
+    if (pre.isSymbolicLink()) {
+      throw new Error('Source is a symlink (changed after pre-flight check)');
+    }
+    return fs.open(sourcePath, 'r');
+  }
+  const noFollowFlag = (fsConstants.O_NOFOLLOW as number | undefined) ?? 0;
+  return fs.open(sourcePath, fsConstants.O_RDONLY | noFollowFlag);
+}
 
 /**
  * Copies a file into the vault. Returns the destination path.
@@ -387,27 +508,52 @@ const COPY_CHUNK_BYTES = 64 * 1024;
  * whichever caller wins the open keeps that name; the loser bumps the
  * counter and retries, capped at {@link MAX_CANDIDATE_ATTEMPTS}.
  *
- * The bytes are streamed through the held fd in 64 KB chunks
- * (memory-bounded for large media), then `fsync`'d and the parent dir
- * is `fsync`'d so the new entry is durable. On non-fatal failure
- * (EACCES / EPERM / etc.) the partial file is unlinked; on
- * ENOSPC/EIO/ENOMEM the partial file is preserved at its final
- * destination and the path is attached to the rejected error via
- * `preservedTmpPath` so the IPC layer can name it in a toast (the
- * field name is retained for parity with the previous tmp+rename
- * contract — the path now points at the actual partial file, no `.tmp`
- * suffix).
+ * L10 (Audit-13) — atomic new-file create. The reserved placeholder above is
+ * only a NAME claim; the bytes are streamed in 64 KB chunks (memory-bounded for
+ * large media) into a sibling `<dest>.<nonce>.tmp`, `fsync`'d, then atomically
+ * `rename`d OVER the placeholder (with a transient-Windows-lock retry), and the
+ * parent dir is `fsync`'d. So a reader or a crash mid-stream never observes a
+ * torn/partial file at the final name — the prior code streamed straight into the
+ * destination, leaving a truncated import on a power loss. On non-fatal failure
+ * (EACCES / EPERM / etc.) the temp AND the placeholder are unlinked; on
+ * ENOSPC/EIO/ENOMEM (or a rename that exhausts its retries) the temp is preserved
+ * (its partial/complete bytes may be the user's only copy), the placeholder is
+ * dropped, and the temp path is attached to the rejected error via
+ * `preservedTmpPath` so the IPC layer can name it in a toast.
+ *
+ * Audit-12 S1 — TOCTOU hardening: the source is re-stat'd through the open
+ * fd (catching a device/FIFO/dir swapped in after the caller's pre-flight
+ * lstat) and the bytes STREAMED are capped at `maxBytes` (defeating a
+ * `/dev/zero`-style device that under-reports `size` then never EOFs).
+ * `maxBytes` defaults to Infinity for non-IPC callers; `vault:copy-file`
+ * passes its `VAULT_COPY_MAX_SIZE_BYTES` cap. WHICH paths may be named as a
+ * source is enforced upstream in the handler via `isApprovedCopySource`.
+ *
+ * Audit-14 4.3 — `noFollowSource` (set by `vault:copy-file`) additionally
+ * defeats a regular-file→SYMLINK swap landing between the handler's pre-flight
+ * lstat and this open: `fs.open(path,'r')` follows a symlink, so the fstat
+ * `.isFile()` re-check above would pass for a symlink pointing at a regular
+ * file (e.g. `/etc/passwd`). See `openSourceForCopy`. Defaults `false` so non-IPC
+ * callers are unchanged.
  */
 export async function copyFileToVault(
   sourcePath: string,
   vaultPath: string,
   subfolder?: string,
+  maxBytes: number = Number.POSITIVE_INFINITY,
+  noFollowSource = false,
 ): Promise<string> {
   const targetDir = subfolder ? join(vaultPath, subfolder) : vaultPath;
   await fs.mkdir(targetDir, { recursive: true });
 
   const fileName = basename(sourcePath);
-  assertSafeFilename(fileName);
+  // 6.3.P1/P2 — `copyFileToVault` copies an external file into the
+  // vault as a NEW file; creation rules apply on every platform so the
+  // resulting filename stays portable. Without `forCreation: true`, a
+  // POSIX user dropping `weird:name.png` from outside the vault would
+  // succeed locally but produce a file that breaks the same vault on
+  // Windows.
+  assertSafeFilename(fileName, { forCreation: true });
   const ext = extname(fileName);
   const nameWithoutExt = fileName.slice(0, fileName.length - ext.length);
 
@@ -416,7 +562,7 @@ export async function copyFileToVault(
   for (let attempt = 0; attempt < MAX_CANDIDATE_ATTEMPTS; attempt++) {
     const candidate =
       attempt === 0 ? fileName : `${nameWithoutExt} (${attempt})${ext}`;
-    if (attempt > 0) assertSafeFilename(candidate);
+    if (attempt > 0) assertSafeFilename(candidate, { forCreation: true });
     const candidatePath = join(targetDir, candidate);
     try {
       dest = await fs.open(candidatePath, 'wx');
@@ -429,41 +575,112 @@ export async function copyFileToVault(
     }
   }
   if (!dest) throw new TargetNameExhaustedError(fileName, MAX_CANDIDATE_ATTEMPTS);
+  // The O_EXCL open RESERVED the destination NAME as a 0-byte placeholder
+  // (collision-free vs a concurrent same-basename copy). It is only a name claim;
+  // close it now — L10 streams the bytes into a sibling temp and renames it OVER
+  // the placeholder so the final name never holds a torn partial.
+  await dest.close().catch(() => undefined);
 
+  const nonce = randomBytes(6).toString('hex');
+  const tmpPath = `${destPath}.${nonce}.tmp`;
   let writeErr: unknown = null;
+  let tmp: FileHandle | null = null;
   try {
-    const source = await fs.open(sourcePath, 'r');
+    tmp = await fs.open(tmpPath, 'wx');
+    const source = await openSourceForCopy(sourcePath, noFollowSource);
     try {
+      // Audit-12 S1 (TOCTOU) — re-stat through the OPEN fd, which is immune to
+      // a path swap between the handler's pre-flight `lstat` and this `open`.
+      // `fstat` reports the type of what we ACTUALLY opened, so a source
+      // swapped to a character device / FIFO / directory after the lstat is
+      // caught here instead of streamed (`open` follows symlinks, so this is
+      // the only point a post-lstat device-swap surfaces).
+      const openedStat = await source.stat();
+      if (!openedStat.isFile()) {
+        throw new Error('Source is not a regular file (changed after pre-flight check)');
+      }
       const buf = Buffer.alloc(COPY_CHUNK_BYTES);
       let written = 0;
       // Sequential source read (position: null) + monotonically-increasing
-      // dest offset. Chunked so a multi-GB media file doesn't sit in
+      // temp offset. Chunked so a multi-GB media file doesn't sit in
       // memory in one allocation.
       while (true) {
         const { bytesRead } = await source.read(buf, 0, COPY_CHUNK_BYTES, null);
         if (bytesRead === 0) break;
-        await dest.write(buf, 0, bytesRead, written);
+        await tmp.write(buf, 0, bytesRead, written);
         written += bytesRead;
+        // Audit-12 S1 — cap the BYTES STREAMED, not just the pre-read `size`.
+        // A device that reports `size === 0` but never EOFs (`/dev/zero`) or a
+        // file that grows mid-copy would otherwise fill the disk; the running
+        // tally aborts the moment it crosses the cap. Defaults to Infinity so
+        // non-IPC callers are unaffected; `vault:copy-file` passes its cap.
+        if (written > maxBytes) {
+          throw new Error(`Source exceeded the ${maxBytes}-byte copy cap mid-stream`);
+        }
       }
     } finally {
       await source.close().catch(() => undefined);
     }
-    await dest.sync();
+    await tmp.sync();
   } catch (err) {
     writeErr = err;
   } finally {
-    await dest.close().catch(() => undefined);
+    if (tmp) await tmp.close().catch(() => undefined);
   }
 
   if (writeErr) {
+    // The bytes never reached the final name (it is still the 0-byte
+    // placeholder), so drop the placeholder unconditionally — only the temp can
+    // hold recoverable data. On a non-fatal failure clean up the temp too; on
+    // ENOSPC/EIO/ENOMEM preserve it (its partial bytes may be the user's only
+    // copy) and attach the temp path for the toast.
     const code = (writeErr as NodeJS.ErrnoException | null)?.code;
+    await fs.unlink(destPath).catch(() => undefined);
     if (code !== 'ENOSPC' && code !== 'EIO' && code !== 'ENOMEM') {
-      await fs.unlink(destPath).catch(() => undefined);
+      await fs.unlink(tmpPath).catch(() => undefined);
     } else if (writeErr && typeof writeErr === 'object') {
-      (writeErr as { preservedTmpPath?: string }).preservedTmpPath = destPath;
+      (writeErr as { preservedTmpPath?: string }).preservedTmpPath = tmpPath;
+      // 6.2.H4 (follow-up) — record the preserved partial copy so the quit
+      // drain can surface its location via `.filo/quit-failure.json`.
+      recordPreservedEmergencyFile({ preservedPath: tmpPath, targetPath: destPath, code });
     }
     throw writeErr;
   }
+
+  // L10 — atomically swap the fully-written, fsync'd temp OVER the reserved
+  // placeholder. Retry on transient Windows lock codes (EPERM/EBUSY/EACCES from
+  // antivirus / the recursive watch handle) before giving up; if the rename
+  // still can't land, the intact temp is preserved for recovery.
+  let renamed = false;
+  let renameErr: unknown = null;
+  for (let attempt = 0; attempt <= COPY_RENAME_RETRY_DELAYS.length; attempt++) {
+    try {
+      await fs.rename(tmpPath, destPath);
+      renamed = true;
+      break;
+    } catch (err) {
+      renameErr = err;
+      const code = (err as NodeJS.ErrnoException | null)?.code;
+      if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES') break;
+      if (attempt < COPY_RENAME_RETRY_DELAYS.length) {
+        await new Promise((r) => setTimeout(r, COPY_RENAME_RETRY_DELAYS[attempt]));
+      }
+    }
+  }
+  if (!renamed) {
+    await fs.unlink(destPath).catch(() => undefined);
+    const code = (renameErr as NodeJS.ErrnoException | null)?.code;
+    if (renameErr && typeof renameErr === 'object') {
+      (renameErr as { preservedTmpPath?: string }).preservedTmpPath = tmpPath;
+      recordPreservedEmergencyFile({ preservedPath: tmpPath, targetPath: destPath, code });
+    }
+    throw renameErr;
+  }
+
+  // Audit-16 4.6 — the copy landed: drop registry entries a prior failed
+  // copy to this destination recorded (mirrors atomicWriteFile; the
+  // preserved partial `.tmp` stays on disk).
+  clearPreservedEmergencyFilesForTarget(destPath);
 
   // Best-effort directory fsync so the new entry is durably visible
   // across an unclean shutdown. Some filesystems (FAT, certain network
@@ -482,4 +699,84 @@ export async function copyFileToVault(
  */
 export async function readFileContents(filePath: string): Promise<string> {
   return fs.readFile(filePath, 'utf-8');
+}
+
+/**
+ * Outcome of {@link readFileWithCoherentStat}. `content` is always present
+ * on success; `mtimeMs` and `size` are present only when the pre-read stat
+ * and post-read stat agree (i.e. no external write landed in the gap).
+ *
+ * Callers seed their drift baseline from `mtimeMs`/`size`; when they're
+ * `undefined`, the baseline is deliberately NOT seeded — a fresh hydrate
+ * or successful self-write will reseed once a coherent (content, stat)
+ * pair can be observed.
+ */
+export interface CoherentReadResult {
+  content: string;
+  mtimeMs?: number;
+  size?: number;
+}
+
+/**
+ * 6.4.M7 — read a file's content with a coherent (mtime, size) baseline.
+ *
+ * The legacy `vault:read-file-text` handler did `stat → read`, so a write
+ * landing in the gap meant the renderer recorded a baseline OLDER than
+ * the bytes it actually received. The renderer's next drift check then
+ * fired a spurious "modified externally" prompt for content that already
+ * matched disk — the comment in the handler called this "the safe failure
+ * direction", but the inverse race (write-then-read-then-stat) silently
+ * pinned an OLDER baseline against the rendered NEWER bytes, masking real
+ * future drift.
+ *
+ * This helper takes a stat snapshot BEFORE the read, reads the bytes,
+ * then takes another stat snapshot AFTER. If the two stats agree on
+ * `mtimeMs` and `size`, the read is coherent and we return all three; if
+ * they disagree, the content we read may be from either side of the gap
+ * — we return `content` (so the caller still gets bytes) but withhold
+ * `mtimeMs`/`size` so the renderer skips seeding a possibly-wrong
+ * baseline. A subsequent successful read on a quiescent file will
+ * succeed coherently and reseed.
+ *
+ * The size cap is enforced from the pre-read stat (cheapest place to
+ * refuse a 25 GB file before reading any bytes).
+ *
+ * Optional `_deps` lets tests inject `stat`/`readFile` mocks without
+ * monkey-patching the global `fs.promises` namespace. Production callers
+ * omit it and the real `fs.promises` is used.
+ */
+export async function readFileWithCoherentStat(
+  filePath: string,
+  maxBytes: number,
+  _deps?: {
+    stat?: (p: string) => Promise<{ mtimeMs: number; size: number }>;
+    readFile?: (p: string) => Promise<string>;
+  },
+): Promise<CoherentReadResult | { tooLarge: true; size: number }> {
+  const stat = _deps?.stat ?? (async (p) => fs.stat(p));
+  const readFile = _deps?.readFile ?? readFileContents;
+
+  const preStat = await stat(filePath);
+  if (preStat.size > maxBytes) {
+    return { tooLarge: true, size: preStat.size };
+  }
+
+  const content = await readFile(filePath);
+
+  let postStat: { mtimeMs: number; size: number } | undefined;
+  try {
+    postStat = await stat(filePath);
+  } catch {
+    // Post-stat failed — return content with no baseline. ENOENT here
+    // typically means a delete landed during the read; the renderer's
+    // hydrate path will surface the missing file separately.
+    return { content };
+  }
+
+  if (preStat.mtimeMs === postStat.mtimeMs && preStat.size === postStat.size) {
+    return { content, mtimeMs: postStat.mtimeMs, size: postStat.size };
+  }
+  // Pre and post disagree — a write landed in the gap. Return bytes
+  // without an unsafe baseline; the next quiescent read seeds coherently.
+  return { content };
 }

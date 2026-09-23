@@ -176,6 +176,39 @@ describe('AddConnectionCommand — deep clone snapshot', () => {
     expect(stored).toBeDefined();
     expect(stored.label.text).toBe('original-label');
   });
+
+  // Audit-8 L5 — a genuine execute → undo → redo round-trip. The prior file
+  // only constructed + executed AddConnectionCommand (the deep-clone test
+  // above), so the file-level roundtrip-coverage gate passed it for free via
+  // sibling commands' `.undo(` calls; the tightened window-scoped gate exposed
+  // that there was no real round-trip. AddConnectionCommand is a deterministic
+  // add (execute adds, undo removes by id) — this pins both directions.
+  it('execute adds the connection, undo removes it, redo re-adds', () => {
+    activate();
+    const conn: Connection = {
+      id: 'c-rt',
+      boardId: 'mm',
+      fromTileId: 't_a',
+      toTileId: 't_b',
+      fromBubble: 1,
+      toBubble: 2,
+      pathColor: '#aaa',
+      arrowColor: '#aaa',
+      label: { text: 'L', textColor: '#000', backgroundColor: '', position: 0.5, locked: false },
+      visibility: 'visible',
+      labelVisibility: 'visible',
+      createdAt: 0,
+      updatedAt: 0,
+    } as unknown as Connection;
+
+    const cmd = new AddConnectionCommand(conn);
+    cmd.execute();
+    expect(boardStore.connections['c-rt']).toBeDefined();
+    cmd.undo();
+    expect(boardStore.connections['c-rt']).toBeUndefined();
+    cmd.execute(); // redo
+    expect(boardStore.connections['c-rt']).toBeDefined();
+  });
 });
 
 /**

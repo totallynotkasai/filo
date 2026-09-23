@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { uiStore } from '@renderer/stores/ui.svelte';
 
 describe('uiStore — toast aggregation helpers', () => {
@@ -33,5 +33,49 @@ describe('uiStore — toast aggregation helpers', () => {
     expect(uiStore.toasts.find((t) => t.id === a)?.text).toBe('A');
     expect(uiStore.toasts.find((t) => t.id === b)?.text).toBe('B-updated');
     expect(uiStore.toasts.find((t) => t.id === c)?.text).toBe('C');
+  });
+});
+
+/**
+ * 1.6 (WRITE_PATH_REMEDIATION_PLAN_2026-06-04) — a genuinely-sticky error toast
+ * (save failed, recovery-location hint) used to expire at the 15s cap even
+ * though the failure persists. Error toasts with no explicit positive duration
+ * are now sticky. The Audit5 R3 cap is preserved for every NON-error toast
+ * (including the promise-backed external-edit decision warnings) so a re-firing
+ * prompt can't blanket the screen and a write-blocking promise can't strand.
+ */
+describe('uiStore — sticky error toasts (1.6)', () => {
+  beforeEach(() => {
+    for (const toast of [...uiStore.toasts]) {
+      uiStore.dismissToast(toast.id, { silent: true });
+    }
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    for (const toast of [...uiStore.toasts]) {
+      uiStore.dismissToast(toast.id, { silent: true });
+    }
+  });
+
+  it('an error toast with duration 0 stays past the 15s cap', () => {
+    vi.useFakeTimers();
+    const id = uiStore.pushToast({ text: 'save failed', type: 'error', duration: 0 });
+    vi.advanceTimersByTime(20000);
+    expect(uiStore.toasts.find((t) => t.id === id)).toBeTruthy();
+  });
+
+  it('a NON-error toast with duration 0 still auto-dismisses at the cap (Audit5 R3 preserved)', () => {
+    vi.useFakeTimers();
+    const id = uiStore.pushToast({ text: 'reload?', type: 'warning', duration: 0 });
+    vi.advanceTimersByTime(16000);
+    expect(uiStore.toasts.find((t) => t.id === id)).toBeFalsy();
+  });
+
+  it('an error toast with an explicit positive duration still auto-dismisses', () => {
+    vi.useFakeTimers();
+    const id = uiStore.pushToast({ text: 'delete failed', type: 'error', duration: 6000 });
+    vi.advanceTimersByTime(7000);
+    expect(uiStore.toasts.find((t) => t.id === id)).toBeFalsy();
   });
 });

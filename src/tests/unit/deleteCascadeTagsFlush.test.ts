@@ -8,7 +8,7 @@ import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { tabStore } from '@renderer/stores/tabs.svelte';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
-import { __resetMarkdownFlushersForTests } from '@renderer/lib/boards/markdownWriteRegistry';
+import { __resetMarkdownFileWriterForTests as __resetMarkdownFlushersForTests } from '@renderer/lib/vault/markdownFileWriter';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**

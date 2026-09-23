@@ -3,6 +3,7 @@ import {
   asSafeIframeSrc,
   asSafeThemeValue,
   asSafeOpenExternal,
+  launcherExtension,
   UNSAFE_LOCAL_FILE_EXTENSIONS_FOR_TESTS,
 } from '@shared/untrusted';
 
@@ -119,6 +120,18 @@ describe('asSafeThemeValue — theme CSS variable value sanitiser', () => {
     expect(asSafeThemeValue('vbscript:msgbox')).toBeNull();
   });
 
+  it('rejects a bare `;` even without url()/@import (6.2 — defends the single-declaration contract)', () => {
+    // No url()/@import/expression/image — the ONLY suspect token is the
+    // `;`. In a real renderer the `CSS.supports('--probe: …')` gate rejects
+    // a multi-declaration value, but in jsdom (and any env where
+    // `CSS.supports` is absent) the substring blocklist is the sole line of
+    // defence — so `;` must be on it. A single CSS custom-property value
+    // never legitimately contains `;`.
+    expect(asSafeThemeValue('red; color: blue')).toBeNull();
+    expect(asSafeThemeValue('#fff;')).toBeNull();
+    expect(asSafeThemeValue('1rem ;')).toBeNull();
+  });
+
   it('rejects empty / nullish input', () => {
     expect(asSafeThemeValue('')).toBeNull();
     expect(asSafeThemeValue('   ')).toBeNull();
@@ -195,6 +208,16 @@ describe('asSafeOpenExternal — shell.openExternal allowlist + unsafe-extension
       }
     });
 
+    it('rejects OS launcher / shell-shortcut extensions added by Audit-13 M12', () => {
+      // `.url` / `.scf` / `.website` can point at a UNC share and leak NetNTLM
+      // creds; `.reg` / `.inf` import/run on activation; `.pif` executes;
+      // `.desktop` runs its `Exec=` line on Linux.
+      const exts = ['.url', '.scf', '.website', '.pif', '.reg', '.inf', '.desktop'];
+      for (const ext of exts) {
+        expect(asSafeOpenExternal(`/vault/notes/file${ext}`)).toBeNull();
+      }
+    });
+
     it('case-insensitive extension matching', () => {
       expect(asSafeOpenExternal('/vault/notes/EVIL.EXE')).toBeNull();
       expect(asSafeOpenExternal('/vault/notes/REPORT.Html')).toBeNull();
@@ -202,6 +225,22 @@ describe('asSafeOpenExternal — shell.openExternal allowlist + unsafe-extension
 
     it("disguised double-extensions still fail (.pdf.exe → .exe wins)", () => {
       expect(asSafeOpenExternal('/vault/notes/report.pdf.exe')).toBeNull();
+    });
+
+    it('Audit-10 B3 — Win32 trailing-dot / trailing-space / NTFS-ADS bypasses are blocked', () => {
+      // `path.extname` reads these as `.` / `.exe ` / `.exe::$DATA` — none in
+      // the blocklist — but the OS shell strips the trailing dot/space and
+      // resolves the ADS suffix, launching `evil.exe`. `launcherExtension`
+      // sees the true `.exe`, so the validator now rejects them.
+      expect(asSafeOpenExternal('/vault/notes/evil.exe.')).toBeNull();
+      expect(asSafeOpenExternal('/vault/notes/evil.exe ')).toBeNull();
+      expect(asSafeOpenExternal('/vault/notes/evil.exe::$DATA')).toBeNull();
+      // HTML-renderable variants of the same trick.
+      expect(asSafeOpenExternal('/vault/notes/page.html.')).toBeNull();
+      expect(asSafeOpenExternal('/vault/notes/page.svg::$DATA')).toBeNull();
+      // Backslash separators (Windows-style absolute path) take the same path.
+      expect(asSafeOpenExternal('C:\\vault\\notes\\evil.exe.')).toBeNull();
+      expect(asSafeOpenExternal('C:\\vault\\notes\\evil.exe::$DATA')).toBeNull();
     });
 
     it('accepts ordinary file extensions', () => {
@@ -228,6 +267,44 @@ describe('asSafeOpenExternal — shell.openExternal allowlist + unsafe-extension
   });
 });
 
+describe('launcherExtension — robust Win32/NTFS extension extraction (Audit-10 B3)', () => {
+  it('reads the plain final extension, lowercased', () => {
+    expect(launcherExtension('/vault/notes/report.pdf')).toBe('.pdf');
+    expect(launcherExtension('C:\\vault\\notes\\REPORT.PDF')).toBe('.pdf');
+    expect(launcherExtension('photo.JPG')).toBe('.jpg');
+  });
+
+  it('strips Win32 trailing dots and spaces before reading the extension', () => {
+    expect(launcherExtension('evil.exe.')).toBe('.exe');
+    expect(launcherExtension('evil.exe ')).toBe('.exe');
+    expect(launcherExtension('evil.exe...  ')).toBe('.exe');
+  });
+
+  it('drops an NTFS Alternate-Data-Stream suffix before reading the extension', () => {
+    expect(launcherExtension('evil.exe::$DATA')).toBe('.exe');
+    expect(launcherExtension('evil.exe:hidden')).toBe('.exe');
+    // The ADS suffix can disguise a safe-looking extension — the real
+    // launch extension is what precedes the `:`.
+    expect(launcherExtension('report.pdf:evil')).toBe('.pdf');
+  });
+
+  it('takes the last extension of a double-extension name', () => {
+    expect(launcherExtension('report.pdf.exe')).toBe('.exe');
+    expect(launcherExtension('report.pdf.exe.')).toBe('.exe');
+  });
+
+  it('returns empty for no-extension names and leading-dot dotfiles', () => {
+    expect(launcherExtension('/vault/README')).toBe('');
+    expect(launcherExtension('.gitignore')).toBe('');
+    expect(launcherExtension('/vault/.env')).toBe('');
+  });
+
+  it('isolates the basename (a dot in a parent directory is not an extension)', () => {
+    expect(launcherExtension('/vault/v1.2/notes/README')).toBe('');
+    expect(launcherExtension('C:\\my.files\\report')).toBe('');
+  });
+});
+
 describe('UNSAFE_LOCAL_FILE_EXTENSIONS_FOR_TESTS — parity with main-side blocklist', () => {
   it('contains every HTML-renderable extension added by Phase 5', () => {
     // If main-side `media.ipc.ts:UNSAFE_FILE_EXTENSIONS` drops any of
@@ -246,6 +323,13 @@ describe('UNSAFE_LOCAL_FILE_EXTENSIONS_FOR_TESTS — parity with main-side block
       '.msi', '.jar', '.lnk', '.sh', '.msc',
     ];
     for (const ext of legacy) {
+      expect(UNSAFE_LOCAL_FILE_EXTENSIONS_FOR_TESTS.has(ext)).toBe(true);
+    }
+  });
+
+  it('contains every OS launcher / shell-shortcut extension added by Audit-13 M12', () => {
+    const launchers = ['.url', '.scf', '.website', '.pif', '.reg', '.inf', '.desktop'];
+    for (const ext of launchers) {
       expect(UNSAFE_LOCAL_FILE_EXTENSIONS_FOR_TESTS.has(ext)).toBe(true);
     }
   });

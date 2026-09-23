@@ -113,6 +113,16 @@ export class KanbanDragController {
   private mediaQuery: MediaQueryList | null = null;
   private mediaListener: ((e: MediaQueryListEvent) => void) | null = null;
 
+  /**
+   * L16 (Audit-6) — window `pointerup` listeners armed by a pointerdown that
+   * hasn't fired yet (card / column drag-gate reset). Tracked so `dispose()`
+   * can detach them if the host unmounts while the pointer is still held —
+   * otherwise the `{ once: true }` closure never fires, pinning the controller
+   * and (harmlessly but wastefully) mutating a disposed instance on a later
+   * release. A normal pointerup auto-removes its own entry via the wrapper.
+   */
+  private pendingPointerUps = new SvelteSet<() => void>();
+
   constructor(private deps: KanbanDragControllerDeps) {
     if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
       this.mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -139,6 +149,27 @@ export class KanbanDragController {
       this.mediaQuery = null;
       this.mediaListener = null;
     }
+    // L16 — detach any pointerup listener still armed at unmount (pointer held
+    // through teardown). A normal release removes its own entry first.
+    for (const handler of this.pendingPointerUps) {
+      window.removeEventListener('pointerup', handler);
+    }
+    this.pendingPointerUps.clear();
+  }
+
+  /**
+   * L16 — arm a one-shot window `pointerup` that re-locks a drag gate, tracking
+   * the handler so `dispose()` can detach it if the host unmounts before the
+   * release fires. The wrapper deletes its own tracking entry when it runs, so
+   * the steady-state (press → release) path leaves nothing behind.
+   */
+  private armPointerUp(onUp: () => void): void {
+    const handler = (): void => {
+      this.pendingPointerUps.delete(handler);
+      onUp();
+    };
+    this.pendingPointerUps.add(handler);
+    window.addEventListener('pointerup', handler, { once: true });
   }
 
   /**
@@ -193,13 +224,9 @@ export class KanbanDragController {
     if (tgt && isEditableTextTarget(tgt)) return;
     if (tgt && tgt.closest('button, a, input, textarea, select')) return;
     this.cardDragDisabled = false;
-    window.addEventListener(
-      'pointerup',
-      () => {
-        this.cardDragDisabled = true;
-      },
-      { once: true },
-    );
+    this.armPointerUp(() => {
+      this.cardDragDisabled = true;
+    });
     this.dragTileId = tileId;
     this.dragBlockIds = this.computeDragBlockIds(tileId);
     this.dragBlockSnapshots = this.snapshotBlockPlacements(this.dragBlockIds);
@@ -449,13 +476,9 @@ export class KanbanDragController {
     const tgt = e.target as HTMLElement | null;
     if (tgt && tgt.closest('button, a, input, textarea, select')) return;
     this.columnDragDisabled = false;
-    window.addEventListener(
-      'pointerup',
-      () => {
-        this.columnDragDisabled = true;
-      },
-      { once: true },
-    );
+    this.armPointerUp(() => {
+      this.columnDragDisabled = true;
+    });
   };
 
   onConsiderColumns = (e: CustomEvent<{ items: KanbanBoardType['columns'] }>): void => {

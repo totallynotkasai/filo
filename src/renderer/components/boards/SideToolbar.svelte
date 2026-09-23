@@ -278,7 +278,7 @@
     const ids = [...selectionStore.selectedIds];
     if (ids.length < 2) { uiStore.toast('Select 2+ tiles to group', 'info', 1500); return; }
     // If all selected are in the same group, ungroup; otherwise group
-    const group = boardStore.getGroupForTile(ids[0]);
+    const group = boardStore.getGroupForTile(ids[0] ?? '');
     const allInSameGroup = group && ids.every(id => boardStore.getGroupForTile(id)?.id === group.id);
     const groupsBefore = [...boardStore.groups];
     if (allInSameGroup) {

@@ -67,10 +67,14 @@ describe('frontmatterSync.canonicalValues', () => {
     expect(canonicalValues(m2).title).toBe('Quick');
   });
 
-  it('normalizes tags', () => {
+  it('preserves the authored tag order (deduped, # stripped) — not sorted', () => {
+    // 7.4 — canonical tags follow the .md's authored order so a reconciled
+    // tile def matches the file on disk. Sorting is reserved for
+    // normalizeTagsField (the comparison/index view). Here `b` precedes `a`,
+    // the duplicate `a` is dropped, and the leading `#` on `c` is stripped.
     const m = meta('a.md', '---\ntags: [b, a, a, "#c"]\n---\n# T');
     const c = canonicalValues(m);
-    expect(c.tags).toEqual(['a', 'b', 'c']);
+    expect(c.tags).toEqual(['b', 'a', 'c']);
   });
 
   it('only includes optional fields when present in frontmatter', () => {
@@ -159,6 +163,17 @@ describe('frontmatterSync.reconcile', () => {
     expect(result.next.tags).toEqual(['a']);
     expect((result.next as any).extra).toBe('preserved');
     expect(result.changes.map((c) => c.field).sort()).toEqual(['tags', 'title']);
+  });
+
+  it('writes the authored tag order into the cache on a tags-set divergence (7.4)', () => {
+    // The .md authored order is [banana, apple]; the cache is stale. After
+    // reconcile the cache must carry the AUTHORED order (deduped), NOT the
+    // sorted form [apple, banana] — otherwise the tile def's tag chips
+    // disagree with the order in the file the user just edited.
+    const m = meta('a.md', '---\ntags: [banana, apple, banana]\n---\n# T');
+    const cache = { tags: ['old'] };
+    const result = reconcile(cache, m);
+    expect(result.next.tags).toEqual(['banana', 'apple']);
   });
 
   it('applyCanonical is a pure patch', () => {
@@ -301,5 +316,40 @@ describe('frontmatterSync.reconcileBoardCacheWithFrontmatter', () => {
     // captures every cache override (not just the first one detected).
     const fields = result.perBoard.board1[0].changes.map((c) => c.field).sort();
     expect(fields).toEqual(['completed', 'status']);
+  });
+
+  // Audit 2.3 — a frontmatter field the tile def never carried (e.g. a dueDate
+  // typed into the .md in an external editor) must reconcile onto the live
+  // cache without waiting for a board reload. Pre-fix, cacheSubset was built
+  // only from fields already on the def, so detectDivergence's "field in cache"
+  // guard skipped the new field entirely and smart-list filters/sort silently
+  // ignored it mid-session.
+  it('reconciles a frontmatter field the tile def did not previously carry', () => {
+    const def = textTileDef({ id: 't1', title: 'Task' }); // no dueDate / priority
+    const cache: Record<string, V7BoardFileData> = { b1: emptyBoard('b1', { t1: def }) };
+    const m = meta('Task.md', '---\ntitle: Task\ndueDate: 2026-06-01\npriority: high\n---\n# Task');
+
+    const res = reconcileBoardCacheWithFrontmatter(cache, 'Task.md', m);
+
+    expect(res.changedBoardIds).toEqual(['b1']);
+    const patched = cache.b1.tileDefs['t1'] as Record<string, unknown>;
+    expect(patched.dueDate).toBe('2026-06-01');
+    expect(patched.priority).toBe('high');
+  });
+
+  // Guard against over-reach: a synced field absent from BOTH the def and the
+  // frontmatter must NOT be invented on the def (no spurious writes / no
+  // pollution of non-task tiles with task fields the file doesn't have).
+  it('does not invent a synced field absent from both the def and the frontmatter', () => {
+    const def = textTileDef({ id: 't1', title: 'Task' }); // no priority / dueDate
+    const cache: Record<string, V7BoardFileData> = { b1: emptyBoard('b1', { t1: def }) };
+    const m = meta('Task.md', '---\ntitle: Task\n---\n# Task'); // no priority / dueDate in fm
+
+    const res = reconcileBoardCacheWithFrontmatter(cache, 'Task.md', m);
+
+    expect(res.changedBoardIds).toEqual([]);
+    const patched = cache.b1.tileDefs['t1'] as Record<string, unknown>;
+    expect('priority' in patched).toBe(false);
+    expect('dueDate' in patched).toBe(false);
   });
 });

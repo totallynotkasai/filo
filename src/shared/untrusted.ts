@@ -99,10 +99,15 @@ export function asSafeIframeSrc(raw: string | null | undefined): SanitisedSrc | 
 /**
  * CSS-injection patterns we refuse. `url(…)` would fetch external
  * resources; `expression(` is legacy IE-CSS-script; `image(` /
- * `image-set(` smuggle URLs. Strings carrying `;` would break out of the
- * single declaration we're writing and could append a follow-up rule —
- * `setProperty` only writes one declaration, but `;`-terminated input
- * still indicates a malformed value that doesn't belong on `:root`.
+ * `image-set(` smuggle URLs. `;` is refused outright (6.2): a single CSS
+ * custom-property value never legitimately contains one, and a `;` is the
+ * delimiter that would let a tampered value append a follow-up declaration.
+ * `setProperty` only ever writes one declaration so a `;` can't actually
+ * break out there, and in the renderer the `CSS.supports` gate below
+ * rejects a multi-declaration value anyway — but blocklisting `;` keeps the
+ * sanitiser matching its contract in EVERY environment, including jsdom and
+ * any host where `CSS.supports` is absent (where the substring list is the
+ * only line of defence).
  */
 const THEME_VALUE_BLOCKED_SUBSTRINGS = [
   'url(',
@@ -112,6 +117,7 @@ const THEME_VALUE_BLOCKED_SUBSTRINGS = [
   '@import',
   'javascript:',
   'vbscript:',
+  ';',
 ];
 
 /**
@@ -135,15 +141,18 @@ export function asSafeThemeValue(raw: string | null | undefined): SanitisedColor
   for (const bad of THEME_VALUE_BLOCKED_SUBSTRINGS) {
     if (lower.includes(bad)) return null;
   }
-  // CSS.supports is available in the renderer but not in jsdom; gate
-  // the call so unit tests keep working. When unavailable, the
-  // substring blocklist + length cap are the load-bearing defence.
-  if (typeof CSS !== 'undefined' && typeof CSS.supports === 'function') {
+  // CSS.supports is available in the renderer (DOM) but not in the main
+  // process or jsdom. Reach for it through `globalThis` (typed, not the bare
+  // identifier) so this shared module type-checks under BOTH the DOM lib
+  // (renderer) and the no-DOM lib (main). When unavailable, the substring
+  // blocklist + length cap are the load-bearing defence.
+  const cssApi = (globalThis as { CSS?: { supports?: (cond: string) => boolean } }).CSS;
+  if (cssApi && typeof cssApi.supports === 'function') {
     // `--probe` is a synthetic property name; CSS.supports returns true
     // for any value the engine considers parsable for a custom property.
     // Failing the check rejects values containing control chars,
     // unterminated tokens, etc.
-    if (!CSS.supports(`--probe: ${trimmed}`)) return null;
+    if (!cssApi.supports(`--probe: ${trimmed}`)) return null;
   }
   return trimmed as SanitisedColor;
 }
@@ -156,6 +165,16 @@ export function asSafeThemeValue(raw: string | null | undefined): SanitisedColor
  * javascript:, data:, custom schemes) is rejected — the main-side
  * handler in `media.ipc.ts` re-checks this allowlist, so a renderer
  * bypass would still fail closed.
+ *
+ * L11 (Audit-13) — INTENTIONAL asymmetry with main: `media.ipc.ts` DROPPED
+ * `http://` from its allowlist in Audit-12 S2 (cleartext downgrade / SSRF
+ * surface) and is the authority. This renderer-side list deliberately KEEPS
+ * `http://` so a legacy `http://` link passes the brand wrapper and reaches
+ * main, which returns a clean "use https" error — instead of being mangled by
+ * the local-path branch (where `http://example.com` would read `.com` as an
+ * executable extension). Harmless: main fails it closed either way. The prefix
+ * test below is already case-insensitive (`.toLowerCase()`), matching main's
+ * L11 fix. Keep this asymmetry documented, not "reconciled".
  */
 const OPEN_EXTERNAL_ALLOWED_PREFIXES = ['https://', 'http://', 'mailto:', 'tel:'];
 
@@ -191,7 +210,48 @@ const UNSAFE_LOCAL_FILE_EXTENSIONS = new Set([
   '.msi', '.jar', '.lnk', '.appref-ms', '.app', '.bin', '.sh', '.msc',
   // HTML-renderable — Phase 5 / P1-10 addition
   '.html', '.htm', '.xhtml', '.svg', '.shtml', '.xml',
+  // Audit-13 M12 — OS launcher / shell-acted-on shortcuts (kept in sync with
+  // media.ipc.ts UNSAFE_FILE_EXTENSIONS). The shell acts on these even though
+  // they're not executables: `.url`/`.scf`/`.website` can point at a UNC share
+  // and leak NetNTLM creds; `.reg`/`.inf` import/run on activation; `.pif`
+  // executes; `.desktop` runs its `Exec=` line on Linux.
+  '.url', '.scf', '.website', '.pif', '.reg', '.inf', '.desktop',
 ]);
+
+/**
+ * Audit-10 B3 — extract a file's launcher-relevant extension robustly,
+ * defeating the Win32 / NTFS filename-normalisation tricks that
+ * `path.extname` (and a naive `lastIndexOf('.')`) miss because the OS
+ * shell launches a DIFFERENT byte-name than the one we inspected:
+ *
+ *   - `evil.exe.`         → Win32 strips the trailing dot, launching
+ *                           `evil.exe`; `path.extname` sees `'.'`.
+ *   - `evil.exe ` (space) → Win32 strips the trailing space → `evil.exe`.
+ *   - `evil.exe::$DATA`   → NTFS Alternate-Data-Stream suffix; the real
+ *                           file is `evil.exe`; `path.extname` sees
+ *                           `'.exe::$DATA'`.
+ *
+ * None of those mangled values land in the blocklist, so the executable
+ * slips through to `shell.openPath`. We mirror what the shell actually
+ * opens: take the basename, strip trailing dots/spaces, drop any
+ * `:`-introduced ADS suffix, THEN read the final `.ext`. Pure string math
+ * (identical on every platform), so it is the single source of truth for
+ * both the renderer slice (`asSafeOpenExternal`) and the main-side
+ * `media:open-external` handler.
+ *
+ * Returns the lowercased extension WITH its leading dot (`.exe`), or `''`
+ * when the normalised basename has no extension — including a leading-dot
+ * dotfile like `.gitignore` (no separator after the dot).
+ */
+export function launcherExtension(rawPath: string): string {
+  const lastSlash = Math.max(rawPath.lastIndexOf('/'), rawPath.lastIndexOf('\\'));
+  let base = lastSlash >= 0 ? rawPath.slice(lastSlash + 1) : rawPath;
+  base = base.replace(/[ .]+$/, ''); // Win32 strips trailing dots/spaces
+  const ads = base.indexOf(':'); // NTFS ADS suffix → real ext precedes it
+  if (ads >= 0) base = base.slice(0, ads);
+  const dot = base.lastIndexOf('.');
+  return dot > 0 ? base.slice(dot).toLowerCase() : '';
+}
 
 /**
  * Wraps a vault-shipped URL or vault-relative path for use with
@@ -225,12 +285,13 @@ export function asSafeOpenExternal(raw: string | null | undefined): SanitisedUrl
     return trimmed as SanitisedUrl;
   }
 
-  // Local path branch — must not carry an unsafe extension. Extract the
-  // final extension after the last `.` in the basename; case-insensitive.
-  const lastSlash = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
-  const basename = lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed;
-  const dotIdx = basename.lastIndexOf('.');
-  const ext = dotIdx > 0 ? basename.slice(dotIdx).toLowerCase() : '';
+  // Local path branch — must not carry an unsafe extension. Use the
+  // robust launcher-extension extractor (Audit-10 B3) so a Win32 trailing
+  // dot / space (`evil.exe.`) or an NTFS Alternate-Data-Stream suffix
+  // (`evil.exe::$DATA`) can't smuggle an executable past the blocklist:
+  // the OS shell normalises those away and launches `evil.exe`, but a
+  // naive `lastIndexOf('.')` reads the extension as `.` / `.exe::$DATA`.
+  const ext = launcherExtension(trimmed);
   if (UNSAFE_LOCAL_FILE_EXTENSIONS.has(ext)) return null;
 
   return trimmed as SanitisedUrl;

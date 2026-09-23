@@ -6,6 +6,13 @@
  * frontmatter scheduler reads from vaultIndexStore (not the patch) when
  * docId is null. The new `UpdateOrphanFrontmatterCommand` writes directly
  * via `vault:write-existing-file-text` and supports undo.
+ *
+ * FILO-UR-1 (Audit-11) — the orphan write now threads a FrontmatterDelta, so the
+ * gateway reads disk in-chain and applies only the changed keys (preserving
+ * untouched keys, incl. present-but-empty ones). The mock therefore models a real
+ * mutable file (reads return current disk, writes mutate it), and a genuinely
+ * failed disk read is a LOUD failure — no silent resurrection from the stale
+ * index. See the read-fail test below.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -14,17 +21,37 @@ import { boardStore } from '@renderer/stores/board.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { UpdateOrphanFrontmatterCommand } from '@renderer/commands/index';
+import { cancelAllMarkdownWrites } from '@renderer/lib/vault/markdownFileWriter';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 interface FiloRecorder {
   calls: Array<{ channel: string; args: unknown[] }>;
 }
 
-function installRecorder(): FiloRecorder {
+/**
+ * Mutable-disk mock. The orphan write routes through the gateway DELTA branch
+ * (FILO-UR-1), which reads `vault:read-file-text` in-chain and applies the delta
+ * to those fresh bytes — so the recorder models a real file: reads return the
+ * current disk and a write mutates it (so an execute→undo round-trip observes its
+ * own prior write). `vault:stat` mirrors the same (mtime,size) so the pre-write
+ * drift check sees no external change.
+ */
+function installRecorder(
+  initialDisk = '---\npriority: low\nstatus: active\n---\nbody content',
+): FiloRecorder {
   const calls: FiloRecorder['calls'] = [];
+  let disk = initialDisk;
   installFiloMock((channel: unknown, ...args: unknown[]) => {
     calls.push({ channel: channel as string, args });
+    if (channel === 'vault:read-file-text') {
+      return { success: true, content: disk, mtimeMs: 1, size: disk.length };
+    }
+    if (channel === 'vault:stat') {
+      return { success: true, mtimeMs: 1, size: disk.length };
+    }
     if (channel === 'vault:write-existing-file-text') {
+      disk = args[2] as string;
       return { success: true };
     }
     return undefined;
@@ -36,13 +63,15 @@ describe('UpdateOrphanFrontmatterCommand', () => {
   let recorder: FiloRecorder;
 
   beforeEach(() => {
+    __resetDirtyTrackingForTests();
+    cancelAllMarkdownWrites();
     recorder = installRecorder();
     vaultStore.setPath('/vault');
     boardCacheStore.clear();
     boardStore.clearBoard();
     vaultIndexStore.clear();
-    // Seed vaultIndex with a known FM + body so the command reads from
-    // disk and produces a deterministic assembled file.
+    // Seed vaultIndex with a known FM + body. With the disk read succeeding this
+    // is only the degraded fallback the read-fail test exercises.
     vaultIndexStore.restoreMetadata('Card.md', {
       path: 'Card.md',
       title: 'Card',
@@ -56,6 +85,8 @@ describe('UpdateOrphanFrontmatterCommand', () => {
   });
   afterEach(() => {
     restoreFiloDefault();
+    __resetDirtyTrackingForTests();
+    cancelAllMarkdownWrites();
     vaultStore.setPath('');
     boardCacheStore.clear();
     boardStore.clearBoard();
@@ -116,11 +147,11 @@ describe('UpdateOrphanFrontmatterCommand', () => {
     expect(writeCall?.args[2]).not.toContain('poisoned');
   });
 
-  it('drops empty/null/undefined values from the merged frontmatter (clean semantics)', async () => {
+  it('clears a field via an unset delta (empty value → key removed)', async () => {
     const cmd = new UpdateOrphanFrontmatterCommand(
       'kb',
       'Card.md',
-      { priority: '' },           // clears
+      { priority: '' }, // clears
       { priority: 'low' },
     );
     await cmd.execute();
@@ -130,21 +161,19 @@ describe('UpdateOrphanFrontmatterCommand', () => {
   });
 
   /**
-   * D.8 — when an external edit landed on disk between the last index
-   * rebuild and the orphan-frontmatter command running, the command
-   * must assemble the patched FM over the *fresh* disk body, not the
-   * stale index snapshot. Without this, the user's frontmatter patch
-   * would clobber any body change made externally since the last
-   * cache rebuild.
+   * D.8 — when an external edit landed on disk between the last index rebuild and
+   * the orphan-frontmatter command running, the command must assemble the patched
+   * FM over the *fresh* disk body, not the stale index snapshot.
    */
   it('reads body fresh from disk so external edits do not get clobbered', async () => {
     const freshDiskContent = '---\npriority: low\n---\nfresh disk body — index is stale';
-    // Override the recorder so vault:read-file-text returns the disk
-    // snapshot, not the stale index baseline.
     installFiloMock((channel: unknown, ...args: unknown[]) => {
       recorder.calls.push({ channel: channel as string, args });
       if (channel === 'vault:read-file-text') {
-        return { success: true, content: freshDiskContent };
+        return { success: true, content: freshDiskContent, mtimeMs: 1, size: freshDiskContent.length };
+      }
+      if (channel === 'vault:stat') {
+        return { success: true, mtimeMs: 1, size: freshDiskContent.length };
       }
       if (channel === 'vault:write-existing-file-text') {
         return { success: true };
@@ -160,19 +189,23 @@ describe('UpdateOrphanFrontmatterCommand', () => {
     );
     await cmd.execute();
 
-    const writeCall = recorder.calls.find(
-      (c) => c.channel === 'vault:write-existing-file-text',
-    );
+    const writeCall = recorder.calls.find((c) => c.channel === 'vault:write-existing-file-text');
     expect(writeCall).toBeDefined();
-    // Body came from the fresh disk read, not the (stale) index entry
-    // that said "body content".
+    // Body came from the fresh disk read, not the (stale) index entry.
     expect(writeCall?.args[2]).toContain('fresh disk body');
     expect(writeCall?.args[2]).not.toContain('body content');
     expect(writeCall?.args[2]).toContain('priority: high');
   });
 
-  it('falls back to vaultIndex when fresh disk read fails (no-data-loss)', async () => {
-    // Disk read returns `success: false` → fallback to index baseline.
+  /**
+   * FILO-UR-1 (Audit-11) — a genuinely failed disk read is a LOUD failure.
+   * Pre-fix, the orphan write fell back to the (possibly stale) vault index and
+   * WROTE it, resurrecting a file the user may have deleted externally. The delta
+   * path reads disk in-chain; a read failure rejects (markPathFailed + throw)
+   * rather than committing stale bytes — matching the gateway's "never resurrect
+   * from a stale snapshot" rule.
+   */
+  it('surfaces a loud failure when the disk read fails (no silent resurrection)', async () => {
     installFiloMock((channel: unknown, ...args: unknown[]) => {
       recorder.calls.push({ channel: channel as string, args });
       if (channel === 'vault:read-file-text') {
@@ -190,13 +223,10 @@ describe('UpdateOrphanFrontmatterCommand', () => {
       { priority: 'high' },
       { priority: 'low' },
     );
-    await cmd.execute();
+    await expect(cmd.execute()).rejects.toThrow();
 
-    const writeCall = recorder.calls.find(
-      (c) => c.channel === 'vault:write-existing-file-text',
-    );
-    // Body falls back to the index entry's `content`.
-    expect(writeCall?.args[2]).toContain('body content');
-    expect(writeCall?.args[2]).toContain('priority: high');
+    // No bytes were written — the stale index was NOT resurrected to disk.
+    const writeCall = recorder.calls.find((c) => c.channel === 'vault:write-existing-file-text');
+    expect(writeCall).toBeUndefined();
   });
 });

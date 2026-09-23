@@ -60,6 +60,120 @@ const TEXT_LIKE_EXTENSIONS = new Set(['.md', '.txt', '.markdown']);
 const CROSS_BASENAME_HASH_REQUIRED_BELOW = 10 * 1024 * 1024;
 
 /**
+ * Audit2 2.1 — "balanced" content-identity check for a same-basename
+ * missing+present pair before treating it as a rename.
+ *
+ * The same-basename pass pairs a 1-missing + 1-present bucket as a move, but
+ * two *unrelated* files that merely share a basename across folders (the
+ * textbook PKM layout — a `Notes.md` / `README.md` / `index.md` per folder)
+ * deleted and created in a single watcher batch would otherwise be paired,
+ * silently rewriting every tile reference from the deleted file onto the
+ * unrelated new one (`propagateRename`) with no undo.
+ *
+ * A genuine move preserves bytes, so when size/hash are observable we require
+ * them to match. The policy is deliberately *balanced*, not strict: refuse
+ * only on a POSITIVE size or hash mismatch, and fall back to basename-only
+ * pairing when a probe is absent or a side's value is uncached. That keeps a
+ * cold cache (cold start before the first reconcile walk) and unhashed file
+ * types from blocking a legitimate rename — the SHA-1 rename-hash cache is
+ * seeded only for `.md` (see fileWatcher's reconcile walk), so attachments
+ * and `.board.json` rely on the size match alone. Production always supplies
+ * both probes; callers/tests that omit them keep the pre-2.1 behaviour.
+ *
+ * Returns true when the pair is safe to treat as a move.
+ */
+/** SHA-1 of the empty buffer — the universal hash of every zero-byte file. */
+const EMPTY_BUFFER_SHA1 = 'da39a3ee5e6b4b0d3255bfef95601890afd80709';
+
+function parentFolder(filename: string): string {
+  const i = filename.lastIndexOf('/');
+  return i >= 0 ? filename.slice(0, i) : '';
+}
+
+async function sameBasenameBytesPreserved(
+  missing: FileChangeEvent,
+  present: FileChangeEvent,
+  relPathSize?: (relPath: string) => number | null,
+  relPathHash?: (relPath: string) => string | null | Promise<string | null>,
+): Promise<boolean> {
+  let mSize: number | null = null;
+  let pSize: number | null = null;
+  if (relPathSize) {
+    mSize = relPathSize(missing.filename);
+    pSize = relPathSize(present.filename);
+    // Both sizes known and unequal ⇒ not a pure move ⇒ refuse.
+    if (mSize !== null && pSize !== null && mSize !== pSize) return false;
+  }
+  let mHash: string | null = null;
+  let pHash: string | null = null;
+  if (relPathHash) {
+    mHash = await relPathHash(missing.filename);
+    pHash = await relPathHash(present.filename);
+    // Both hashes known and unequal ⇒ different content ⇒ refuse. A null
+    // (uncached / unhashable) hash is not a mismatch — see the doc comment's
+    // "balanced, not strict" rationale.
+    if (mHash && pHash && mHash !== pHash) return false;
+  }
+  // 6.2.H6 — empty / identical-empty guard.
+  //
+  // Two files in DIFFERENT folders sharing a basename and both being
+  // zero-byte (or both content-hashing to the empty buffer SHA1) is
+  // overwhelmingly an unrelated delete + create pair, not a move — every
+  // user's vault accumulates empty placeholder `Notes.md` / `README.md`
+  // across folders. The pre-fix gate refused only on POSITIVE mismatches,
+  // so two empties (same size 0, same SHA1) passed and we silently
+  // rewrote every tile reference. The cross-basename pass had a 256-byte
+  // floor that already covered this — the same-basename pass was missing
+  // the parallel guard.
+  //
+  // Same-folder empty renames (`drafts/Old.md` → `drafts/New.md`) hit
+  // the cross-basename pass with its own 256-byte floor, so an empty file
+  // there also won't pair — the user-facing broken-ref relink covers
+  // that rare case. We only refuse here when the parent folders DIFFER.
+  const isEmpty = (mSize === 0 && pSize === 0) || (mHash === EMPTY_BUFFER_SHA1 && pHash === EMPTY_BUFFER_SHA1);
+  if (isEmpty && parentFolder(missing.filename) !== parentFolder(present.filename)) {
+    return false;
+  }
+  // Audit-4 DI-17 (cold-cache) — when BOTH probes were supplied (production
+  // always supplies both) yet NEITHER could perform a comparison, we have zero
+  // evidence the two same-basename files share bytes: the missing (old) side
+  // was never observed, so its size AND hash are both unknown. A cold cache
+  // (vault just opened, no reconcile walk yet, the old path never seen) is
+  // exactly when identity is unknowable — pairing on basename alone here would
+  // rewire tile `file`/`src`/`coverImage` refs (and `.filo/tags.json`) to a
+  // possibly-unrelated file with no undo. Refuse: the pair falls through to
+  // delete+create, recoverable via the broken-ref relink once the cache warms.
+  // Probe-absent callers (legacy tests) keep the pre-2.1 basename-only pairing,
+  // so this only tightens the production both-probes path.
+  if (relPathSize && relPathHash) {
+    const sizeComparable = mSize !== null && pSize !== null;
+    const hashComparable = mHash !== null && pHash !== null;
+    // A CONFIRMED content match is the strongest move signal — pair regardless
+    // of size (even a tiny file with a real hash match is a genuine move). This
+    // also exempts confirmed moves from the small-file floor below.
+    if (hashComparable && mHash === pHash) return true;
+    // DI-17 — neither size nor hash comparable ⇒ fully cold cache (missing side
+    // never observed) ⇒ refuse rather than pair on basename alone.
+    if (!sizeComparable && !hashComparable) return false;
+    // L15 (Audit-6) — apply the cross-basename pass's small-file floor here too.
+    // Without a positive hash match, an equal SIZE is the only signal, and tiny
+    // files collide on size constantly (the per-folder Notes.md / README.md /
+    // index.md layout), so a <256-byte same-basename "move" is more likely an
+    // unrelated delete+create than a real move — refuse and let it surface as
+    // delete+create (recoverable via the broken-ref relink). This is the
+    // coincidence-prone band; a >=256-byte same-size pair keeps the balanced
+    // size-only pairing (a moved attachment / .board.json is never hash-seeded,
+    // and a large same-size+same-basename pair has a high move prior — see the
+    // asymmetric-hash attachment-move test). Equal-size only: an unequal size is
+    // already refused above.
+    if (mSize !== null && pSize !== null && mSize === pSize && mSize < CROSS_BASENAME_MIN_SIZE_BYTES) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Correlates a batch of file-change events into rename pairs + a filtered
  * residual feed. Pure function — takes a `relPathExists` probe so callers
  * (production: `statSync`; tests: an in-memory map) decide post-flush
@@ -140,9 +254,24 @@ export async function correlateRenames(
       else missing.push(c);
     }
     if (missing.length === 1 && present.length === 1) {
-      renames.push({ oldPath: missing[0].filename, newPath: present[0].filename });
-      suppressedKeys.add(`${missing[0].type}:${missing[0].filename}`);
-      suppressedKeys.add(`${present[0].type}:${present[0].filename}`);
+      // Audit2 2.1 — gate the same-basename pair on a content-identity check
+      // so a delete + unrelated create of two different files sharing a
+      // basename across folders isn't mis-correlated into a rename (which
+      // would silently rewire tile references to the wrong file). A refusal
+      // here leaves both events to flow on: the cross-basename pass below
+      // (also content-gated) handles the same-size case, otherwise they
+      // surface as delete + create (recoverable via the broken-ref relink).
+      const miss = missing[0];
+      const pres = present[0];
+      // The length checks above guarantee both index-0 reads are defined;
+      // narrow for the type-checker (the guard can't fail at runtime).
+      if (miss !== undefined && pres !== undefined) {
+        if (await sameBasenameBytesPreserved(miss, pres, relPathSize, relPathHash)) {
+          renames.push({ oldPath: miss.filename, newPath: pres.filename });
+          suppressedKeys.add(`${miss.type}:${miss.filename}`);
+          suppressedKeys.add(`${pres.type}:${pres.filename}`);
+        }
+      }
       continue;
     }
     // Phase A.2 — case-only rename on a case-insensitive filesystem.
@@ -155,16 +284,19 @@ export async function correlateRenames(
     // them by emission order — the earlier-seen casing is the old path,
     // the later-seen is the new path. Skipping when more than two
     // casings appear avoids ambiguity from multi-step renames.
+    const oldEvent = bucket[0];
+    const newEvent = bucket[1];
     if (
       caseInsensitiveFs &&
       missing.length === 0 &&
       present.length === 2 &&
       bucket.length === 2 &&
-      bucket[0].type === bucket[1].type &&
-      bucket[0].filename !== bucket[1].filename &&
-      bucket[0].filename.toLowerCase() === bucket[1].filename.toLowerCase()
+      oldEvent !== undefined &&
+      newEvent !== undefined &&
+      oldEvent.type === newEvent.type &&
+      oldEvent.filename !== newEvent.filename &&
+      oldEvent.filename.toLowerCase() === newEvent.filename.toLowerCase()
     ) {
-      const [oldEvent, newEvent] = bucket;
       renames.push({ oldPath: oldEvent.filename, newPath: newEvent.filename });
       suppressedKeys.add(`${oldEvent.type}:${oldEvent.filename}`);
       suppressedKeys.add(`${newEvent.type}:${newEvent.filename}`);
@@ -202,6 +334,8 @@ export async function correlateRenames(
       if (missingBucket.length !== 1 || presentBucket.length !== 1) continue;
       const m = missingBucket[0];
       const p = presentBucket[0];
+      // length checks above guarantee both are defined; narrow for the type-checker.
+      if (m === undefined || p === undefined) continue;
       if (m.type !== p.type) continue;
       // Sprint B / B8 — exact same-extension OR both sides in the
       // text-like set (`.md`, `.txt`, `.markdown`). A user retyping a

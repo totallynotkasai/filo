@@ -39,7 +39,7 @@
   }
 
   function extensionFor(mimeType: string): string {
-    const base = mimeType.split(';')[0].trim().toLowerCase();
+    const base = (mimeType.split(';')[0] ?? '').trim().toLowerCase();
     if (base === 'audio/webm') return 'webm';
     if (base === 'audio/ogg') return 'ogg';
     if (base === 'audio/mp4') return 'm4a';
@@ -84,7 +84,7 @@
         const reader = new FileReader();
         reader.readAsDataURL(audioBlob);
         reader.onloadend = async () => {
-          const base64data = (reader.result as string).split(',')[1];
+          const base64data = (reader.result as string).split(',')[1] ?? '';
           const fileName = buildRecordingFilename(extensionFor(actualType));
 
           try {

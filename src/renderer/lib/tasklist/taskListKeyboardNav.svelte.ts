@@ -93,16 +93,19 @@ export class TaskListKeyboardNav {
     if (ids.length === 0) return;
     const focused = this.focusedTaskRow();
     if (!focused) {
-      this.focusRowById(delta > 0 ? ids[0] : ids[ids.length - 1]);
+      const targetId = delta > 0 ? ids[0] : ids[ids.length - 1];
+      if (targetId) this.focusRowById(targetId); // ids non-empty (checked above)
       return;
     }
     const idx = ids.indexOf(focused.tile.id);
     if (idx < 0) {
-      this.focusRowById(ids[0]);
+      const first = ids[0];
+      if (first) this.focusRowById(first);
       return;
     }
     const nextIdx = Math.max(0, Math.min(ids.length - 1, idx + delta));
-    this.focusRowById(ids[nextIdx]);
+    const next = ids[nextIdx];
+    if (next) this.focusRowById(next);
   }
 
   indentFocused(row: TaskRow, outdent: boolean): void {
@@ -115,6 +118,7 @@ export class TaskListKeyboardNav {
     const idx = ids.indexOf(row.tile.id);
     if (idx <= 0) return;
     const newParentId = ids[idx - 1];
+    if (!newParentId) return; // idx > 0 and < ids.length; narrow for the type-checker
     // Cycle guard: target cannot be a descendant of focused.
     if (collectDescendantIds(this.deps.getRows(), row.tile.id).includes(newParentId)) return;
     if (row.parent === newParentId) return;
@@ -145,7 +149,7 @@ export class TaskListKeyboardNav {
     if (sectionId !== null) {
       const sIdx = sortedLive.findIndex((s) => s.id === sectionId);
       if (sIdx >= 0) {
-        sectionStart = sortedLive[sIdx].position;
+        sectionStart = sortedLive[sIdx]?.position ?? 0;
         sectionEnd = sortedLive[sIdx + 1]?.position ?? placements.length;
       }
     } else {
@@ -155,7 +159,17 @@ export class TaskListKeyboardNav {
     const currentOffset = placementIdx - sectionStart;
 
     const descendantIds = collectDescendantIds(this.deps.getRows(), tileId).filter((id) => id !== tileId);
-    const blockSize = 1 + descendantIds.length;
+    // DRAG-6 — the reorder stays inside the current section, so only descendants
+    // whose placement actually sits in [sectionStart, sectionEnd) belong to the
+    // moving block. Counting ALL descendants (a leaf reachable via a legacy
+    // placement↔parent divergence could live in another section) would inflate
+    // blockSize and wrongly block an in-bounds move; the move itself likewise
+    // only shifts the in-section block.
+    const blockDescendantIds = descendantIds.filter((id) => {
+      const i = placements.findIndex((p) => p.tileId === id);
+      return i >= sectionStart && i < sectionEnd;
+    });
+    const blockSize = 1 + blockDescendantIds.length;
 
     let targetOffset: number;
     if (direction < 0) {
@@ -171,7 +185,7 @@ export class TaskListKeyboardNav {
       placements,
       sections,
       draggedId: tileId,
-      descendantIds,
+      descendantIds: blockDescendantIds,
       targetSectionId: sectionId,
       insertOffset: targetOffset,
     });

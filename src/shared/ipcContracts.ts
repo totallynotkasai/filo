@@ -179,7 +179,11 @@ export interface IpcChannelMap {
   };
   'vault:add-recent': {
     args: [path: string, name: string];
-    result: RecentVault[];
+    // Audit-18 4.5 — `ok`-discriminated so a failed add (validation / missing
+    // directory) is distinguishable from a genuinely empty list; the renderer
+    // leaves the displayed recents intact on `{ ok: false }` instead of wiping
+    // them. The read-only sibling channels keep their bare `RecentVault[]`.
+    result: IpcOk<{ recents: RecentVault[] }>;
   };
   'vault:remove-recent': {
     args: [path: string];
@@ -223,6 +227,13 @@ export interface IpcChannelMap {
     args: [vaultRoot: string, relPath: string];
     result: IpcOk<{ path: string }>;
   };
+  // Bare channel (like theme:load) — returns the snapshot list directly,
+  // `[]` on scan failure. Not envelope-discriminated: surfacing the list is
+  // best-effort UX, so "scan failed" and "none" both render as nothing.
+  'recovery:list': {
+    args: [vaultRoot: string];
+    result: Array<{ relPath: string; basename: string; timestamp: string }>;
+  };
 
   // ── Config ───────────────────────────────────────────────────────
   'config:load': {
@@ -251,15 +262,21 @@ export interface IpcChannelMap {
   };
 
   // ── Tags ─────────────────────────────────────────────────────────
-  // tags handlers `throw` on failure rather than envelope. The renderer
-  // is fine with that — the existing try/catch pipeline catches them.
+  // Audit-14 4.4 — bare value on success (`string | null` / `void`), a
+  // `{ ok: false }` envelope on error (NO_ACTIVE_VAULT during a swap, an
+  // oversize/locked file). Like `theme:load`, this is a bare-with-
+  // envelope-on-error channel (deliberately NOT in the
+  // `ci:check-ipc-envelope-usage` allowlist): every renderer caller routes
+  // the result through `assertIpcOk`, which passes bare values through and
+  // re-throws on `{ ok: false }` — preserving the old throw-based control
+  // flow the miscScheduler / vault-open pipeline relies on, now with a code.
   'tags:load': {
     args: [vaultRoot: string];
-    result: string | null;
+    result: string | null | { ok: false; code?: string; error?: string };
   };
   'tags:save': {
     args: [vaultRoot: string, data: string];
-    result: void;
+    result: void | { ok: false; code?: string; error?: string };
   };
 
   // ── Theme ────────────────────────────────────────────────────────
@@ -349,7 +366,13 @@ export interface IpcChannelMap {
     args:
       | [filename: string, data: string]
       | [filename: string, data: string, mimeType: string | undefined];
-    result: IpcSuccess<{ path: string }>;
+    // Audit-18 4.4 — the failure branch carries an optional `canceled` flag so
+    // the renderer can tell a save-dialog dismissal (no-op) from a real write
+    // failure (error toast). Spelled out rather than `IpcSuccess<…>` so the
+    // discriminator is part of the contract.
+    result:
+      | { success: true; path: string }
+      | { success: false; canceled?: boolean; code?: string; error?: string };
   };
 
   // ── Fonts ────────────────────────────────────────────────────────
@@ -370,6 +393,24 @@ export interface IpcChannelMap {
 
   // ── App lifecycle (renderer → main) ──────────────────────────────
   'app:ready-to-quit': {
+    args: [];
+    result: void;
+  };
+  // 6.2.H4 — renderer cancels the in-flight quit (user picked "Stay
+  // open and retry" on the save-failure confirm).
+  'app:cancel-quit': {
+    args: [];
+    result: void;
+  };
+  // Audit-4 DI-04 — renderer heartbeat before the open-ended save-failure
+  // confirm; main clears the auto-destroy flush timer on receipt.
+  'app:quit-awaiting-user': {
+    args: [];
+    result: void;
+  };
+  // Audit5 2.1 — periodic drain heartbeat WHILE the quit flush runs; main
+  // re-arms the auto-destroy flush timer on each beat.
+  'app:drain-heartbeat': {
     args: [];
     result: void;
   };

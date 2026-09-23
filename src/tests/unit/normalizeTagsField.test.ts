@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeTagsField, parseTagsField } from '@renderer/lib/utils/normalizeTagsField';
+import {
+  normalizeTagsField,
+  orderPreservingTagsField,
+  parseTagsField,
+} from '@renderer/lib/utils/normalizeTagsField';
 
 describe('normalizeTagsField', () => {
   it('returns array form deduped and sorted', () => {
@@ -34,6 +38,34 @@ describe('normalizeTagsField', () => {
   it('returns empty for empty / whitespace-only string', () => {
     expect(normalizeTagsField('')).toEqual([]);
     expect(normalizeTagsField('   ')).toEqual([]);
+  });
+});
+
+describe('orderPreservingTagsField', () => {
+  it('keeps the authored first-seen order (does NOT sort)', () => {
+    expect(orderPreservingTagsField(['b', 'a'])).toEqual(['b', 'a']);
+    expect(orderPreservingTagsField('gamma, alpha, beta')).toEqual(['gamma', 'alpha', 'beta']);
+  });
+
+  it('dedupes by exact string, keeping the first occurrence', () => {
+    expect(orderPreservingTagsField(['dup', 'other', 'dup'])).toEqual(['dup', 'other']);
+  });
+
+  it('strips a single leading # and drops empty / hash-only entries', () => {
+    expect(orderPreservingTagsField(['#hash', 'plain'])).toEqual(['hash', 'plain']);
+    expect(orderPreservingTagsField(['', 'real', '', '#'])).toEqual(['real']);
+  });
+
+  it('returns empty for missing / null / junk input', () => {
+    expect(orderPreservingTagsField(undefined)).toEqual([]);
+    expect(orderPreservingTagsField(null)).toEqual([]);
+    expect(orderPreservingTagsField(123)).toEqual([]);
+  });
+
+  it('yields the same SET as normalizeTagsField — only the order differs', () => {
+    for (const input of [['b', 'a', '#c', 'a'], 'zoo, apple, mango', ['#x', 'y', 'x']]) {
+      expect([...orderPreservingTagsField(input)].sort()).toEqual(normalizeTagsField(input));
+    }
   });
 });
 

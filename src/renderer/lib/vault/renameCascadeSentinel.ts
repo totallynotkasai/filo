@@ -131,7 +131,13 @@ async function readSentinelInternal(vaultRoot: string): Promise<ReadResult> {
     );
     return { unreadable: true };
   }
-  if (!content) return {};
+  // Audit-4 DI-16 — reaching here means the read SUCCEEDED (ENOENT, the
+  // healthy "no sentinel" steady state, already returned `{}` above), so a
+  // present-but-empty file is a partial write: a crash created the sentinel
+  // but never filled it, stranding an in-flight rename cascade. Surface it as
+  // `unreadable` (recovery UI prompts) rather than silently treating it as
+  // clean — symmetric with the 6.4.M5 `.dirty` zero-byte-is-dirty rule.
+  if (!content) return { unreadable: true };
   try {
     const parsed = JSON.parse(content) as Partial<SentinelFile>;
     if (!Array.isArray(parsed.entries)) return { unreadable: true };
@@ -194,6 +200,8 @@ async function writeSentinelInternal(vaultRoot: string, entries: RenameCascadeEn
     return;
   }
   const payload: SentinelFile = { entries };
+  // allow-direct-write: `.filo/rename-cascade-pending.json` is a one-shot
+  // crash-recovery sentinel — not a `.md` file, no editor hydrates from it.
   await invokeOk(
     'vault:write-file-text',
     vaultRoot,
@@ -216,6 +224,16 @@ export function readPendingRenameCascades(vaultRoot: string): Promise<ReadResult
  * Awaited so a sentinel-write failure aborts the rename pipeline (we'd
  * rather not move the disk file without a recovery breadcrumb).
  *
+ * Audit-17 3.7 — refuses to append over an UNREADABLE sentinel. The siblings
+ * (`clearPendingRenameCascade`, `markRenameCascadeFlushFailed`) already bail
+ * on `!existing.entries`; this append path used to take `entries ?? []` and
+ * replace a torn / zero-byte / transiently-locked (AV/EACCES) sentinel with a
+ * fresh single-entry file — destroying the prior crash breadcrumb AND, on a
+ * transient read failure, any OTHER healthy in-flight entries. Preserve the
+ * file, surface the failure, and throw so the caller's existing
+ * sentinel-failure handling runs (the in-app rename aborts crash protection
+ * loudly; the external-rename sites report and continue).
+ *
  * Returns the entry's id so the caller can clear it on full success.
  */
 export function writePendingRenameCascade(
@@ -230,6 +248,17 @@ export function writePendingRenameCascade(
       ...partial,
     };
     const existing = await readSentinelInternal(vaultRoot);
+    if (existing.unreadable) {
+      const err = new Error(
+        'rename-cascade sentinel exists but is unreadable — refusing to overwrite it',
+      );
+      reportError(
+        'renameCascadeSentinel.append',
+        err,
+        "Couldn't record the rename in `.filo/rename-cascade-pending.json` — the existing file is unreadable and was preserved. Check it manually if a previous rename looks incomplete.",
+      );
+      throw err;
+    }
     const entries = existing.entries ?? [];
     entries.push(entry);
     await writeSentinelInternal(vaultRoot, entries);

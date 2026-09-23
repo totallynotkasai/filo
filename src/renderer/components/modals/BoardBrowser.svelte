@@ -269,6 +269,7 @@
 
     const updated = [...boards];
     const [moved] = updated.splice(fromIndex, 1);
+    if (!moved) return; // fromIndex >= 0 (checked above)
     updated.splice(toIndex, 0, moved);
     vaultStore.project.boards = updated;
     vaultStore.markMetaDirty();

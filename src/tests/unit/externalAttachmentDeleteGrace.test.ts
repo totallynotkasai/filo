@@ -204,4 +204,32 @@ describe('handleExternalAttachmentChanges — D.4 grace window', () => {
     );
     expect(toast).toBeUndefined();
   });
+
+  it('L16 (Audit-13) — drops the prompt on a close→reopen of the SAME path during the grace window', async () => {
+    // Audit-13 L16: the grace guard was a path-string compare
+    // (`ctx.getVaultPath() !== vaultRoot`), which a close→reopen of the SAME path
+    // (a new vault generation, unchanged path string) silently passes — so a
+    // deferred "attachment deleted externally" prompt could surface against the
+    // reopened vault. The fix captures `captureVaultIdentity()` before the grace
+    // window and bails via `isStillSameVault`, which the generation bump trips.
+    const a = makeMindMapWithImage('a', 't_img', 'attachments/hero.png');
+    boardCacheStore.hydrate({ a }, { a: 'a.board.json' });
+
+    installFiloMock({
+      'vault:file-exists': () => false,
+    });
+
+    const settled = slice.handleExternalAttachmentChanges(['attachments/hero.png']);
+    // Close→reopen the SAME path during the grace window. `setPath` bumps the
+    // vault generation (via beginVaultGeneration) while leaving the path string
+    // unchanged — exactly what a same-path reopen does. The pre-fix string
+    // compare would NOT bail here; the generation-aware guard does.
+    vaultStore.setPath('/vault');
+    await settled;
+
+    const toast = uiStore.toasts.find(
+      (t) => t.text.includes('hero.png') && t.text.includes('deleted externally'),
+    );
+    expect(toast).toBeUndefined();
+  });
 });

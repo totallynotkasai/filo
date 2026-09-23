@@ -292,24 +292,28 @@
 
   let isEditing = $state(false);
   let editTitle = $state(untrack(() => tile.title));
+  let titleAtEditStart = ''; // REN-3 — title when editing began (detect an external mid-edit rename)
 
   function startEdit(e?: Event) {
     e?.stopPropagation();
     editTitle = tile.title;
+    titleAtEditStart = tile.title;
     isEditing = true;
   }
 
   function commitEdit() {
+    // REN-1 — one-shot: first commit flips isEditing=false, so the unmount-blur re-commit no-ops.
+    if (!isEditing) return;
     isEditing = false;
+    // REN-3 — backing title changed externally mid-edit; keep it (the field
+    // re-renders to the new name), drop the stale draft.
+    if (tile.title !== titleAtEditStart) return;
     if (editTitle.trim() && editTitle !== tile.title) {
       onRename(editTitle.trim());
     }
   }
 
-  // Mouse-only users need a visible way to abandon the inline rename;
-  // Escape covers the keyboard path. The flag suppresses the textbox's
-  // own onblur commit when the user clicks Cancel, otherwise blur would
-  // race with the click and re-commit the draft.
+  // `cancellingEdit` suppresses the input's onblur re-commit on Cancel-click.
   let cancellingEdit = false;
 
   function cancelEdit(e?: Event) {
@@ -333,15 +337,11 @@
     }
   }
 
-  // `formatTimeChip` / `formatDueDateAbsolute` / `isOverdue` are imported from
-  // `lib/tasks/dueDateFormat.ts` so the Task List and Kanban surfaces stay in
-  // sync on how dates and overdue state are rendered.
+  // formatTimeChip / formatDueDateAbsolute / isOverdue come from
+  // lib/tasks/dueDateFormat.ts (shared with Kanban so dates/overdue render alike).
 
   // ── Date picker popover ──
-  //
-  // Replaces the four-option context menu with an inline calendar grid.
-  // Lives behind the existing chip click to keep the affordance identical;
-  // a one-click chip still gets you a date with no extra navigation.
+  // Inline calendar grid behind the chip click (replaces the old 4-option menu).
   let dueDatePickerOpen = $state(false);
   let dueDatePickerAnchor = $state<{ x: number; y: number } | null>(null);
   let startDatePickerOpen = $state(false);
@@ -638,6 +638,9 @@
 
   <button
     class="task-checkbox"
+    role="checkbox"
+    aria-checked={completed}
+    aria-label={`Completed: ${tile.title}`}
     onclick={(e) => { e.stopPropagation(); onToggleComplete(); }}
     title={completed ? 'Mark incomplete' : 'Mark complete'}
     style:border-color={completed ? accentColor : 'var(--ui-border)'}
@@ -940,7 +943,7 @@
     label="Due date"
     onPick={(iso) => onSetDueDate(iso)}
     onPickTime={(t) => onSetDueTime?.(t)}
-    onClear={() => { onSetDueDate(''); onSetDueTime?.(''); }}
+    onClear={() => onSetDueDate('')}
     onClose={() => { dueDatePickerOpen = false; dueDatePickerAnchor = null; }}
   />
 {/if}

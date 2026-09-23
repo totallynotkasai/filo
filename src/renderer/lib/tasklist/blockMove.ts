@@ -186,6 +186,7 @@ export function rebuildPlacementsFromDndItems(args: {
   fallbackSlice.set(leadingSectionId, placements.slice(0, leadingEnd));
   for (let i = 0; i < sortedSections.length; i++) {
     const s = sortedSections[i];
+    if (!s) continue; // i < sortedSections.length; narrow for the type-checker
     const start = s.position;
     const end = sortedSections[i + 1]?.position ?? placements.length;
     fallbackSlice.set(s.id, placements.slice(start, end));

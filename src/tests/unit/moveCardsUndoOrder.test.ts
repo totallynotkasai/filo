@@ -114,3 +114,47 @@ describe('Audit 5.1 — MoveCardsCommand.undo preserves order (ascending is corr
     expect(order('Y')).toEqual([]);
   });
 });
+
+describe('Audit-13 M5 — MoveCardsCommand redo anchors the forward leg', () => {
+  beforeEach(() => {
+    boardCacheStore.clear();
+  });
+  afterEach(() => {
+    boardCacheStore.clear();
+    restoreFiloDefault();
+  });
+
+  it('redo lands the block before its original sibling after the target column was mutated', () => {
+    // Source X = [A, B]; target Y = [P, Q, R]. Move A,B into Y at position 1
+    // (between P and Q). The forward-leg anchor captured at construction is Q
+    // (the survivor at index 1). The cache must be hydrated BEFORE constructing
+    // so the anchor resolves.
+    hydrate([col('X', ['A', 'B']), col('Y', ['P', 'Q', 'R'])], ['A', 'B', 'P', 'Q', 'R']);
+    const cmd = new MoveCardsCommand('kb', ['A', 'B'], 'Y', 1, [
+      { tileId: 'A', fromColumnId: 'X', fromPosition: 0 },
+      { tileId: 'B', fromColumnId: 'X', fromPosition: 1 },
+    ]);
+
+    cmd.execute();
+    expect(order('Y')).toEqual(['P', 'A', 'B', 'Q', 'R']);
+
+    cmd.undo();
+    expect(order('Y')).toEqual(['P', 'Q', 'R']);
+    expect(order('X')).toEqual(['A', 'B']);
+
+    // Mutate the target column between undo and redo: prepend a new card P2.
+    // The absolute `toPosition` (1) now points at P; the anchor (Q) points at
+    // index 2 — the slot that still preserves the original "before Q" intent.
+    const kb = boardCacheStore.cache.kb.board as KanbanBoard;
+    const y = (kb.columns ?? []).find((c) => c.id === 'Y')!;
+    y.tilePlacements = [
+      { tileId: 'P2', position: 0 },
+      ...(y.tilePlacements ?? []).map((p, i) => ({ ...p, position: i + 1 })),
+    ];
+
+    // Redo (= execute). With the anchor the block lands before Q; the stale
+    // absolute index 1 would have put it before P ([P2, A, B, P, Q, R]).
+    cmd.execute();
+    expect(order('Y')).toEqual(['P2', 'P', 'A', 'B', 'Q', 'R']);
+  });
+});

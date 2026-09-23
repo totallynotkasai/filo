@@ -9,7 +9,7 @@ import { PAYLOAD_LIMITS } from '../utils/payloadLimits';
  *
  * All vault-wide settings live in `.filo/` as individual JSON files:
  *   .filo/app.json           — Core app settings (toolbar, fonts, radar)
- *   .filo/appearance.json    — Active theme, font, CSS snippet toggles
+ *   .filo/appearance.json    — Active theme + font (Filo-owned: these two keys only)
  *   .filo/defaults.json      — Board-type defaults (tile, connection, frame styles)
  *   .filo/hotkeys.json       — Custom keyboard shortcut overrides
  *   .filo/workspace.json     — Layout state (open tabs, sidebar, split panes)
@@ -126,10 +126,15 @@ export async function initVaultConfig(vaultRoot: string): Promise<void> {
         columns: true,
       },
     },
+    // Audit 3.3 — appearance.json is fully Filo-owned: activeTheme + font only.
+    // Must match the writer's payload shape in
+    // `configWriteScheduler.buildConfigPayloads` exactly, so the first
+    // theme/font save (a whole-file atomic replace) doesn't drop a key the
+    // seed itself put here. Do NOT re-add `snippets` without also teaching the
+    // writer to round-trip it (audit option (a)).
     'appearance.json': {
       activeTheme: 'light',
       font: 'Inter, system-ui, sans-serif',
-      snippets: [],
     },
     'defaults.json': {
       mindmap: {},
@@ -364,34 +369,17 @@ export async function saveConfig(
 }
 
 /**
- * Convenience savers for each config file.
+ * Saves the workspace layout config (open tabs, sidebar, split panes).
+ *
+ * Audit-14 6.4 — the six sibling per-file savers (`saveAppConfig`,
+ * `saveAppearanceConfig`, `saveDefaultsConfig`, `saveHotkeysConfig`,
+ * `saveViewportsConfig`, `saveSidebarOrderConfig`) were deleted as dead
+ * code: the live write path is the generic `saveConfig` reached via the
+ * `config:save` IPC channel. Only `saveWorkspaceConfig` retained a real
+ * caller (`board.ipc.ts` → `config:save-workspace`), so it stays.
  */
-export async function saveAppConfig(vaultRoot: string, data: unknown) {
-  return saveConfig(vaultRoot, 'app.json', data);
-}
-
-export async function saveAppearanceConfig(vaultRoot: string, data: unknown) {
-  return saveConfig(vaultRoot, 'appearance.json', data);
-}
-
-export async function saveDefaultsConfig(vaultRoot: string, data: unknown) {
-  return saveConfig(vaultRoot, 'defaults.json', data);
-}
-
-export async function saveHotkeysConfig(vaultRoot: string, data: unknown) {
-  return saveConfig(vaultRoot, 'hotkeys.json', data);
-}
-
 export async function saveWorkspaceConfig(vaultRoot: string, data: unknown) {
   return saveConfig(vaultRoot, 'workspace.json', data);
-}
-
-export async function saveViewportsConfig(vaultRoot: string, data: unknown) {
-  return saveConfig(vaultRoot, 'viewports.json', data);
-}
-
-export async function saveSidebarOrderConfig(vaultRoot: string, data: unknown) {
-  return saveConfig(vaultRoot, 'sidebar-order.json', data);
 }
 
 // ── Themes ──
@@ -465,7 +453,10 @@ export async function saveTheme(
   themeName: string,
   data: unknown,
 ): Promise<void> {
-  assertSafeFilename(themeName);
+  // 6.3.P1/P2 — `saveTheme` writes a NEW theme file (atomic write into
+  // `.filo/themes/`); creation rules apply on every platform so the
+  // saved theme stays portable across OSes.
+  assertSafeFilename(themeName, { forCreation: true });
   await ensureDir(themesDirPath(vaultRoot));
   const filePath = join(themesDirPath(vaultRoot), `${themeName}.json`);
   const json = JSON.stringify(data, null, 2);

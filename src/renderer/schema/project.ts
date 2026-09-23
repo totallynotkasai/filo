@@ -21,7 +21,7 @@ export const WorkspaceStateSchema = z.object({
         boardId: z.string().min(1),
       }).passthrough(),
     )
-    .default([]),
+    .default(() => []),
   activeTabId: z.string().default(''),
 }).passthrough();
 
@@ -48,12 +48,12 @@ export const ProjectSchema = z.object({
   vaultPath: z.string().default(''),
   name: z.string().default(''),
   theme: z.enum(['light', 'dark', 'blueprint', 'retro', 'nature']).default('light'),
-  settings: ProjectSettingsSchema.default({}),
-  boards: z.array(BoardSchema).default([]).refine(...uniqueBy('id', 'boards')),
-  connections: z.record(z.string(), ConnectionSchema).default({}),
-  frames: z.array(FrameSchema).default([]).refine(...uniqueBy('id', 'frames')),
+  settings: ProjectSettingsSchema.prefault({}),
+  boards: z.array(BoardSchema).default(() => []).refine(...uniqueBy('id', 'boards')),
+  connections: z.record(z.string(), ConnectionSchema).default(() => ({})),
+  frames: z.array(FrameSchema).default(() => []).refine(...uniqueBy('id', 'frames')),
   /** Open tabs + active tab, captured at save time. */
-  workspace: WorkspaceStateSchema.default({ openTabs: [], activeTabId: '' }),
+  workspace: WorkspaceStateSchema.prefault({}),
   // Phase 31 A6.6 — .finite() rejects NaN / ±Infinity from hand-edited files.
   createdAt: z.number().finite(),
   updatedAt: z.number().finite(),

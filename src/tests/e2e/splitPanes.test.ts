@@ -6,7 +6,7 @@ let window: Awaited<ReturnType<typeof electronApp.firstWindow>>;
 
 test.beforeAll(async () => {
   electronApp = await electron.launch({
-    args: [path.join(__dirname, '..', '..', '..', 'dist-electron', 'main', 'main.js')],
+    args: [path.join(__dirname, '..', '..', '..', 'dist', 'main', 'main.js')],
     env: {
       ...process.env,
       NODE_ENV: 'test',

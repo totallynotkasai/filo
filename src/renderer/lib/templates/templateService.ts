@@ -1,7 +1,7 @@
 import MiniSearch from 'minisearch';
-import matter from 'gray-matter';
 import type { FileTreeNode } from '../../../shared/types';
 import { normalizePath, stripLeadingSlash, toPosix } from '../utils/path';
+import { splitFrontmatterSource, parseFrontmatterObject } from '../vault/frontmatterRead';
 
 /**
  * Templates live as plain Markdown files in a designated vault folder
@@ -111,22 +111,19 @@ export function parseTemplate(
   ref: TemplateRef,
   rawContent: string,
 ): TemplateContent {
-  let frontmatter: Record<string, unknown> = {};
-  let body = rawContent;
-  try {
-    const parsed = matter(rawContent);
-    frontmatter = (parsed.data ?? {}) as Record<string, unknown>;
-    body = parsed.content ?? '';
-  } catch {
-    // Fall through with raw content as body — invalid YAML shouldn't break the template.
-  }
+  // M2 (Audit-13) — parse frontmatter with the `yaml` package (was gray-matter,
+  // whose bundled js-yaml v3 coerced an unquoted `date:` → Date / `0b1010` → 10,
+  // a second parser disagreeing with the rest of the app). The shared split
+  // helper strips the `---` fences + a leading BOM; the body keeps its bytes.
+  const { rawFrontmatter, body } = splitFrontmatterSource(rawContent);
+  const frontmatter = parseFrontmatterObject(rawFrontmatter);
 
   const fenceMatch = FILO_BOARD_FENCE_RE.exec(body);
   let boardJson: unknown | null = null;
   let bodyWithoutBoardBlock = body;
   if (fenceMatch) {
     try {
-      boardJson = JSON.parse(fenceMatch[1]);
+      boardJson = JSON.parse(fenceMatch[1] ?? '');
     } catch {
       boardJson = null;
     }
@@ -196,7 +193,7 @@ export function interpolate(input: string, vars: TemplateVariables = {}): string
   };
 
   return input.replace(VARIABLE_RE, (match, key: string) => {
-    if (Object.prototype.hasOwnProperty.call(builtin, key)) return builtin[key];
+    if (Object.prototype.hasOwnProperty.call(builtin, key)) return builtin[key] ?? match;
     return match;
   });
 }

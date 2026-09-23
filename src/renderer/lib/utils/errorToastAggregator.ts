@@ -3,17 +3,38 @@
  * sweep that fails 30 .md writes) coalesces into a single toast with a count
  * badge instead of N separate toasts.
  *
- * Keyed by `context`. Within `windowMs` of the last error for that context,
- * subsequent reports update the existing toast text via `updateToastText`. The
- * window resets on every fresh report — so a steady stream extends the same
- * toast indefinitely. After `windowMs` of silence the entry is dropped, and
- * the next error opens a brand new toast.
+ * Keyed by `coalesceKey ?? context`. Within `windowMs` of the last error for
+ * that key, subsequent reports update the existing toast text via
+ * `updateToastText`. The window resets on every fresh report — so a steady
+ * stream extends the same toast indefinitely. After `windowMs` of silence the
+ * entry is dropped, and the next error opens a brand new toast.
+ *
+ * A9-L10 — the optional per-report `coalesceKey` overrides the coalescing key
+ * WITHOUT changing the displayed `context` prefix. The write-error wiring sets
+ * it to `context + preservedTmpPath` so two same-kind failures that preserved
+ * bytes at DIFFERENT recovery locations each keep their own toast (otherwise
+ * the second's `updateToastText` replaced the first's path, hiding a recovery
+ * location the user needs). Reports without a `coalesceKey` (the common case)
+ * still coalesce by `context` exactly as before.
  *
  * Separated from the `App.svelte` wiring so the aggregation behaviour can be
  * unit-tested without mounting the component.
  */
 
 import type { ReportedError } from './errorBus';
+
+/**
+ * A9-L10 — a `ReportedError` plus an optional coalescing-key override. Kept a
+ * superset of `ReportedError` so the generic `onError(aggregator)` path (which
+ * never sets `coalesceKey`) still type-checks against the `Handler` signature.
+ */
+export interface AggregatedReport extends ReportedError {
+  /**
+   * Overrides the Map key the report coalesces under. Defaults to `context`.
+   * The DISPLAY prefix always remains `context`.
+   */
+  coalesceKey?: string;
+}
 
 export interface AggregatorToastApi {
   /**
@@ -49,13 +70,17 @@ export interface ErrorToastAggregatorOptions {
 export function createErrorToastAggregator(
   api: AggregatorToastApi,
   options: ErrorToastAggregatorOptions = {},
-): (err: ReportedError) => void {
+): (err: AggregatedReport) => void {
   const windowMs = options.windowMs ?? 1000;
   const recent = new Map<string, AggregatedToast>();
 
-  return ({ context, message, error }) => {
+  return ({ context, message, error, coalesceKey }) => {
+    // A9-L10 — coalesce by `coalesceKey` when supplied, else by `context`. The
+    // display prefix below always stays `context`, so the count badge reads per
+    // write KIND while distinct recovery locations keep separate toasts.
+    const key = coalesceKey ?? context;
     const detail = message ?? (error instanceof Error ? error.message : String(error));
-    const existing = recent.get(context);
+    const existing = recent.get(key);
 
     if (existing) {
       const updated = api.updateToastText(
@@ -65,12 +90,12 @@ export function createErrorToastAggregator(
       if (updated) {
         existing.count++;
         clearTimeout(existing.expiryTimer);
-        existing.expiryTimer = setTimeout(() => recent.delete(context), windowMs);
+        existing.expiryTimer = setTimeout(() => recent.delete(key), windowMs);
         return;
       }
       // Existing entry was dismissed by the user — fall through and push fresh.
       clearTimeout(existing.expiryTimer);
-      recent.delete(context);
+      recent.delete(key);
     }
 
     const toastId = api.pushToast({
@@ -78,14 +103,14 @@ export function createErrorToastAggregator(
       type: 'error',
       duration: 0,
       onDismiss: () => {
-        const entry = recent.get(context);
+        const entry = recent.get(key);
         if (entry?.toastId === toastId) {
           clearTimeout(entry.expiryTimer);
-          recent.delete(context);
+          recent.delete(key);
         }
       },
     });
-    const expiryTimer = setTimeout(() => recent.delete(context), windowMs);
-    recent.set(context, { toastId, count: 1, expiryTimer });
+    const expiryTimer = setTimeout(() => recent.delete(key), windowMs);
+    recent.set(key, { toastId, count: 1, expiryTimer });
   };
 }

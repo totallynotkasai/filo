@@ -75,14 +75,14 @@ export type LoadVersionedResult<T> =
  * synchronous and pure; async interstitial work (e.g. the board loader's
  * `recovery:snapshot`) stays in the caller, around this call.
  *
- * Generic over the schema (`S extends z.ZodTypeAny`) rather than the parsed
+ * Generic over the schema (`S extends z.ZodType`) rather than the parsed
  * type so `data` is the schema's `z.output<S>` (post-default / post-coerce
  * shape). Typing the schema as `z.ZodType<T>` lets inference pick the looser
  * INPUT type — e.g. a field with `.default()` becomes `string | undefined`
  * instead of `string` — which then fails to assign to the caller's output
  * type.
  */
-export function loadVersionedFile<S extends z.ZodTypeAny>(
+export function loadVersionedFile<S extends z.ZodType>(
   schema: S,
   migrate: VersionMigrator,
   raw: unknown,

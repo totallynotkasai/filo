@@ -32,18 +32,27 @@ describe('saveStateStore', () => {
     expect(saveStateStore.state).toBe('idle');
   });
 
-  it('error state is sticky until a clean drain', () => {
+  it('error state is sticky until a clean drain — even while a new write is inflight (L1)', () => {
     saveStateStore.setStatus(0, 1);
     expect(saveStateStore.state).toBe('error');
-    // Another inflight start during the error window
+    // Audit-7 L1 — a new inflight write while a failure is outstanding now
+    // reads 'error' (failed outranks saving), not the old perpetual 'saving'.
+    // This is the wedged-then-timed-out write case: inflight held, path failed.
     saveStateStore.setStatus(1, 1);
-    expect(saveStateStore.state).toBe('saving');
+    expect(saveStateStore.state).toBe('error');
     // Drain still has a failed path → stays in error
     saveStateStore.setStatus(0, 1);
     expect(saveStateStore.state).toBe('error');
     // Finally a clean drain
     saveStateStore.setStatus(0, 0);
     expect(saveStateStore.state).toBe('saved');
+  });
+
+  it('a wedged-then-failed write (inflight AND failed) reads error, not saving (L1)', () => {
+    // The gateway's writeTimeoutMs fired: markPathFailed bumped `failed` while
+    // trackComponentWrite still holds the inflight increment (IPC never settled).
+    saveStateStore.setStatus(1, 1);
+    expect(saveStateStore.state).toBe('error');
   });
 
   it('cancels the saved-decay timer if a new write starts mid-window', () => {

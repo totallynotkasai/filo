@@ -5,9 +5,10 @@ import type { Board, WorkspaceState } from '../schema/index';
 import { boardCacheStore } from './boardCache.svelte';
 import { historyStore } from './history.svelte';
 import { uiStore } from './ui.svelte';
-import { flushAllMarkdownWriters } from '../lib/boards/markdownWriteRegistry';
+import { flushAllMarkdownWriters } from '../lib/vault/markdownFileWriter';
 import { flushAllPendingFrontmatterWrites } from '../lib/boards/frontmatterWriteScheduler';
 import { onVaultSwap } from '../core/vaultLifecycle';
+import { runWithCloseDrain } from '../lib/editor/closeDrainGate.svelte';
 
 /**
  * Sprint B / B15 — partitions a `flushAllMarkdownWriters` failure list into
@@ -233,45 +234,70 @@ export const tabStore = {
 
     const closing = tabs[idx];
 
-    // B2 — drain pending writes synchronously before unmount.
-    //
-    // Phase 4 / 4.2 — collect any failures from the drains so we can
-    // surface a confirm before destroying the editor (and its in-memory
-    // edits). Without this gate, closing a tab while disk is full
-    // silently dropped the user's last edits with no UI indication.
-    const mdResult = await flushAllMarkdownWriters();
-    const fmResult = await flushAllPendingFrontmatterWrites();
-    let boardOk = true;
-    if (closing) {
-      const result = await boardCacheStore.flushDirty(closing.boardId);
-      boardOk = result.ok;
-    }
+    // Audit-17 5.7 — raise the close-drain gate for the ENTIRE drain → confirm
+    // → re-drain window. The editors stay mounted through it, so without this
+    // a keystroke typed during the drain (or during the failed-drain confirm,
+    // which can sit open for minutes) re-arms a debounce the snapshots never
+    // saw and the unmount below destroys it. While the gate is raised the
+    // editors go read-only (a visual "saving…" freeze), so no keystroke can be
+    // stranded. `runWithCloseDrain` lowers the gate on EVERY exit (cancel,
+    // throw, success) via try/finally.
+    const proceed = await runWithCloseDrain(async () => {
+      // B2 — drain pending writes synchronously before unmount.
+      //
+      // Phase 4 / 4.2 — collect any failures from the drains so we can
+      // surface a confirm before destroying the editor (and its in-memory
+      // edits). Without this gate, closing a tab while disk is full
+      // silently dropped the user's last edits with no UI indication.
+      const mdResult = await flushAllMarkdownWriters();
+      const fmResult = await flushAllPendingFrontmatterWrites();
+      let boardOk = true;
+      if (closing) {
+        const result = await boardCacheStore.flushDirty(closing.boardId);
+        boardOk = result.ok;
+      }
 
-    // Sprint B / B15 — only block the close on failures attributable to
-    // editors inside the closing tab. Failures in OTHER tabs are surfaced
-    // via a non-blocking toast so the user knows about them, but they
-    // don't gate this tab's close (the user has no recourse to retry a
-    // foreign tab's editor from this dialog).
-    const { inTab, otherTabs } = partitionMarkdownFailuresByBoard(
-      mdResult.failed,
-      closing?.boardId ?? null,
-    );
-    if (otherTabs.length > 0) {
-      uiStore.toast(
-        `Pending writes failed for ${otherTabs.length} editor${otherTabs.length === 1 ? '' : 's'} in other tabs. Retry from those tabs.`,
-        'warning',
-        6000,
+      // Sprint B / B15 — only block the close on failures attributable to
+      // editors inside the closing tab. Failures in OTHER tabs are surfaced
+      // via a non-blocking toast so the user knows about them, but they
+      // don't gate this tab's close (the user has no recourse to retry a
+      // foreign tab's editor from this dialog).
+      const { inTab, otherTabs } = partitionMarkdownFailuresByBoard(
+        mdResult.failed,
+        closing?.boardId ?? null,
       );
-    }
-    const failed =
-      inTab.length > 0 ||
-      fmResult.failed.length > 0 ||
-      !boardOk;
-    if (failed) {
-      const details = buildFailureDetails(inTab.length, fmResult.failed, boardOk);
-      const proceed = await confirmCloseAnyway(details);
-      if (!proceed) return;
-    }
+      if (otherTabs.length > 0) {
+        uiStore.toast(
+          `Pending writes failed for ${otherTabs.length} editor${otherTabs.length === 1 ? '' : 's'} in other tabs. Retry from those tabs.`,
+          'warning',
+          6000,
+        );
+      }
+      const failed =
+        inTab.length > 0 ||
+        fmResult.failed.length > 0 ||
+        !boardOk;
+      if (failed) {
+        const details = buildFailureDetails(inTab.length, fmResult.failed, boardOk);
+        const ok = await confirmCloseAnyway(details);
+        if (!ok) return false;
+      }
+
+      // Audit-16 6.7 — the editor stays mounted through the drains above (and
+      // through the interactive confirm when one was shown). 5.7 makes it
+      // read-only for that window, so the re-arm window is gone; this second
+      // pass remains as a belt-and-suspenders capture of anything armed before
+      // the gate engaged. A failure in this second pass is not re-confirmed
+      // (no loop) — the writers' trackComponentWrite pipeline surfaces it
+      // loudly (toast + `.filo/.dirty` sentinel), so the bytes are recoverable.
+      await flushAllMarkdownWriters();
+      await flushAllPendingFrontmatterWrites();
+      if (closing) {
+        await boardCacheStore.flushDirty(closing.boardId);
+      }
+      return true;
+    });
+    if (!proceed) return;
 
     tabs = tabs.filter((t) => t.id !== tabId);
 
@@ -289,7 +315,7 @@ export const tabStore = {
         activeTabId = '';
       } else {
         const newIdx = Math.min(idx, tabs.length - 1);
-        activeTabId = tabs[newIdx].id;
+        activeTabId = tabs[newIdx]?.id ?? '';
       }
     }
     notifyChange();
@@ -310,41 +336,57 @@ export const tabStore = {
   async closeOthers(tabId: string): Promise<void> {
     const keepBoardId = tabs.find((t) => t.id === tabId)?.boardId;
 
-    // B2 — drain pending writes synchronously before bulk unmount.
-    //
-    // Phase 4 / 4.2 — same save-failure gate as `close()`: if any of the
-    // drains failed, prompt the user before destroying the editors.
-    const mdResult = await flushAllMarkdownWriters();
-    const fmResult = await flushAllPendingFrontmatterWrites();
-
-    // A1.4 — mirror per-tab board flush from close(); collect ids first
-    // (dedupe so we don't double-flush when the same boardId is open in
-    // multiple tabs) and await every flush before mutating the tab list.
+    // A1.4 — collect the closing board ids first (dedupe so we don't
+    // double-flush when the same boardId is open in multiple tabs).
     const closingBoardIds: string[] = [];
     for (const t of tabs) {
       if (t.id === tabId) continue;
       if (!closingBoardIds.includes(t.boardId)) closingBoardIds.push(t.boardId);
     }
-    let boardFailedCount = 0;
-    for (const boardId of closingBoardIds) {
-      const result = await boardCacheStore.flushDirty(boardId);
-      if (!result.ok) boardFailedCount++;
-    }
 
-    const failed =
-      mdResult.failed.length > 0 ||
-      fmResult.failed.length > 0 ||
-      boardFailedCount > 0;
-    if (failed) {
-      const details = buildFailureDetails(
-        mdResult.failed.length,
-        fmResult.failed,
-        boardFailedCount === 0,
-        boardFailedCount,
-      );
-      const proceed = await confirmCloseAnyway(details);
-      if (!proceed) return;
-    }
+    // Audit-17 5.7 — same close-drain gate as close(): editors go read-only for
+    // the whole drain → confirm → re-drain window so no keystroke can re-arm a
+    // debounce the bulk unmount would destroy. Gate lowered on every exit.
+    const proceed = await runWithCloseDrain(async () => {
+      // B2 — drain pending writes synchronously before bulk unmount.
+      //
+      // Phase 4 / 4.2 — same save-failure gate as `close()`: if any of the
+      // drains failed, prompt the user before destroying the editors.
+      const mdResult = await flushAllMarkdownWriters();
+      const fmResult = await flushAllPendingFrontmatterWrites();
+
+      // A1.4 — await every closing board's flush before mutating the tab list.
+      let boardFailedCount = 0;
+      for (const boardId of closingBoardIds) {
+        const result = await boardCacheStore.flushDirty(boardId);
+        if (!result.ok) boardFailedCount++;
+      }
+
+      const failed =
+        mdResult.failed.length > 0 ||
+        fmResult.failed.length > 0 ||
+        boardFailedCount > 0;
+      if (failed) {
+        const details = buildFailureDetails(
+          mdResult.failed.length,
+          fmResult.failed,
+          boardFailedCount === 0,
+          boardFailedCount,
+        );
+        const ok = await confirmCloseAnyway(details);
+        if (!ok) return false;
+      }
+
+      // Audit-16 6.7 — belt-and-suspenders re-flush (now that 5.7 holds the
+      // editors read-only, the re-arm window is gone) before the bulk unmount.
+      await flushAllMarkdownWriters();
+      await flushAllPendingFrontmatterWrites();
+      for (const boardId of closingBoardIds) {
+        await boardCacheStore.flushDirty(boardId);
+      }
+      return true;
+    });
+    if (!proceed) return;
 
     tabs = tabs.filter((t) => t.id === tabId);
     activeTabId = tabId;
@@ -387,6 +429,7 @@ export const tabStore = {
     if (fromIndex === toIndex) return;
     const updated = [...tabs];
     const [moved] = updated.splice(fromIndex, 1);
+    if (!moved) return; // fromIndex out of range — nothing to move
     updated.splice(toIndex, 0, moved);
     tabs = updated;
     notifyChange();
@@ -448,7 +491,7 @@ export const tabStore = {
     if (workspace.activeTabId && restored.some((t) => t.id === workspace.activeTabId)) {
       activeTabId = workspace.activeTabId;
     } else if (restored.length > 0) {
-      activeTabId = restored[0].id;
+      activeTabId = restored[0]?.id ?? '';
     }
   },
 };

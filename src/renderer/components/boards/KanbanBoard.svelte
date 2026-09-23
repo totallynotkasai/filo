@@ -14,9 +14,9 @@
   import { uiStore } from '../../stores/ui.svelte';
   import { reportError } from '../../lib/utils/errorBus';
 
-  // Per-pane scope; aliases preserve the existing call sites. See
-  // PaneView.svelte / boardScope.svelte.ts for the scope ownership model.
+  // Per-pane scope; aliases preserve existing call sites. See boardScope.svelte.ts.
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
+  let { tabId }: { tabId?: string } = $props(); // R1 (Audit-11): pane-correct via scope; accepted + ignored
   const boardStore = scope.board;
   const selectionStore = scope.selection;
   import { createId } from '../../lib/utils/ids';
@@ -32,6 +32,7 @@
   import KanbanCardStylePopup from './KanbanCardStylePopup.svelte';
   import KanbanSideToolbar from './KanbanSideToolbar.svelte';
   import KanbanNewTileModal from './KanbanNewTileModal.svelte';
+  import TagPromptPopup from './TagPromptPopup.svelte';
   import BoardBackground from '../canvas/BoardBackground.svelte';
   import {
     effectiveColumnStyle,
@@ -46,6 +47,7 @@
   import { makeKanbanFrontmatterWriter } from '../../lib/kanban/kanbanFrontmatterWriter';
   import { makeKanbanTileCreator } from '../../lib/kanban/kanbanTileCreation';
   import { computeKanbanInsertIndex } from '../../lib/kanban/kanbanInsertPosition';
+  import { flushLastViewForBoard } from '../../lib/boards/lastViewFlush';
   import {
     KanbanFiltersAndSort,
     type KanbanLastView,
@@ -59,6 +61,7 @@
   import KanbanTemplatePicker from './KanbanTemplatePicker.svelte';
   import TagEditor from '../tags/TagEditor.svelte';
   import { onMount, onDestroy, untrack } from 'svelte';
+  import { createAriaAnnouncer } from '../../lib/utils/ariaAnnouncer.svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { dndzone } from 'svelte-dnd-action';
   import { historyStore, type Command } from '../../stores/history.svelte';
@@ -124,6 +127,20 @@
   // via `<TileContainer flowLayout=true>`). Same pattern as Mind Map / Task
   // List wiring so kanban cards share the unified TagEditor component.
   let tagEditorPopup = $state<{ tileId: string; x: number; y: number } | null>(null);
+  // Audit-18 M7 — in-app tag-input prompt for the bulk "Add tag" action. The
+  // controller (`KanbanMultiSelect`) awaits the injected `promptForTag()`; it
+  // mounts <TagPromptPopup> and resolves on Add / Cancel / Escape. Replaces
+  // `window.prompt`, which throws in Electron's renderer.
+  let tagPromptResolve = $state<((value: string | null) => void) | null>(null);
+  function promptForTag(): Promise<string | null> {
+    if (tagPromptResolve) tagPromptResolve(null); // never strand a prior prompt
+    return new Promise<string | null>((resolve) => { tagPromptResolve = resolve; });
+  }
+  function resolveTagPrompt(value: string | null): void {
+    const resolve = tagPromptResolve;
+    tagPromptResolve = null;
+    resolve?.(value);
+  }
   function openColumnStyle(col: { id: string; style?: Record<string, unknown> }, x: number, y: number) {
     columnStylePopup = { columnId: col.id, style: col.style, x, y };
   }
@@ -230,12 +247,10 @@
   // add/delete/rename, card add/move/delete on the row level. The local
   // announcement state fills that gap so SR users get parity with the
   // visible UI without duplicating toast traffic.
-  let announcement = $state('');
-  let announceClearTimer: ReturnType<typeof setTimeout> | null = null;
+  // Auto-clearing aria-live announcer; announcer.dispose() in onDestroy (Audit 5.3).
+  const announcer = createAriaAnnouncer();
   function announce(message: string): void {
-    announcement = message === announcement ? `${message}​` : message;
-    if (announceClearTimer) clearTimeout(announceClearTimer);
-    announceClearTimer = setTimeout(() => { announcement = ''; announceClearTimer = null; }, 4000);
+    announcer.announce(message);
   }
 
   // ── Column lifecycle ──
@@ -375,7 +390,11 @@
     const target = idx + direction;
     if (target < 0 || target >= ids.length) return;
     const next = [...ids];
-    [next[idx], next[target]] = [next[target], next[idx]];
+    const a = next[idx];
+    const b = next[target];
+    if (a === undefined || b === undefined) return; // idx/target bounds-checked above
+    next[idx] = b;
+    next[target] = a;
     reorderColumns(next);
   }
 
@@ -505,7 +524,7 @@
           vaultRoot,
           board,
           allTilesById,
-          refreshTree: () => vaultStore.refreshTree(),
+          refreshTree: async () => { await vaultStore.refreshTree(); },
         });
         if (def) {
           cmds.push(new AddCardCommand(board.id, columnId, def, baseInsertIndex + cmds.length));
@@ -518,7 +537,7 @@
     if (cmds.length > 0) {
       historyStore.execute(
         cmds.length === 1
-          ? cmds[0]
+          ? cmds[0]! // length === 1 guarantees index 0 is defined
           : new BatchCommand(`Import ${cmds.length} cards`, cmds),
       );
       tickAndPersist();
@@ -604,11 +623,13 @@
       if (flat.length === 0) return;
       if (ids.length === 0) {
         e.preventDefault();
-        selectionStore.select(flat[0]);
+        const first = flat[0];
+        if (first) selectionStore.select(first); // flat non-empty (checked above)
         announce('Card focused');
         return;
       }
       const focusedId = ids[ids.length - 1];
+      if (focusedId === undefined) return; // ids non-empty here
       const focusInfo = findColumnAndIndex(focusedId);
       if (!focusInfo) return;
       const target = neighbourTileId(focusInfo, e.key);
@@ -631,10 +652,12 @@
       && selectionStore.count === 1
     ) {
       const ids = [...selectionStore.selectedIds];
-      const tile = allTilesById[ids[0]];
+      const firstId = ids[0];
+      if (firstId === undefined) return; // count === 1 checked above
+      const tile = allTilesById[firstId];
       if (!tile || tile.type !== 'text') return;
       e.preventDefault();
-      openTileAsDocument(ids[0]);
+      openTileAsDocument(firstId);
       return;
     }
   }
@@ -650,7 +673,7 @@
     for (const col of columns) {
       const placements = filtersAndSort.visiblePlacementsForColumn(col.id);
       for (let i = 0; i < placements.length; i++) {
-        if (placements[i].tileId === tileId) {
+        if (placements[i]?.tileId === tileId) {
           return { columnId: col.id, rowIdx: i };
         }
       }
@@ -673,16 +696,18 @@
       const placements = filtersAndSort.visiblePlacementsForColumn(from.columnId);
       const nextIdx = key === 'ArrowUp' ? from.rowIdx - 1 : from.rowIdx + 1;
       if (nextIdx < 0 || nextIdx >= placements.length) return null;
-      return placements[nextIdx].tileId;
+      return placements[nextIdx]?.tileId ?? null;
     }
     // Horizontal — walk left/right past empty columns until a visible card
     // is found. Clamp the row index against each column's visible length.
     let probe = colIdx + (key === 'ArrowRight' ? 1 : -1);
     while (probe >= 0 && probe < columns.length) {
-      const placements = filtersAndSort.visiblePlacementsForColumn(columns[probe].id);
+      const col = columns[probe];
+      if (!col) break; // probe bounds-checked by the while condition
+      const placements = filtersAndSort.visiblePlacementsForColumn(col.id);
       if (placements.length > 0) {
         const targetIdx = Math.min(from.rowIdx, placements.length - 1);
-        return placements[targetIdx].tileId;
+        return placements[targetIdx]?.tileId ?? null;
       }
       probe += key === 'ArrowRight' ? 1 : -1;
     }
@@ -812,9 +837,26 @@
     unregisterAddColumn?.();
     unregisterAddColumn = null;
     dragController.dispose();
+    announcer.dispose();
     // Drain any queued frontmatter writes so a board close during the
     // 300ms debounce window doesn't lose the user's last field edit.
     void flushAllPendingFrontmatterWrites();
+    // Audit-18 5.1 — flush the pending lastView on a true unmount. The persist
+    // $effect cleanup now flushes only on a real board switch and just clears
+    // the timer on the unmount tick (board id unchanged), so without this the
+    // last filter/sort change within the 300 ms window before a board close /
+    // vault swap would be dropped. Keyed by the CAPTURED hydrated id through
+    // the cache (teardown-safe; JSON-equality guard makes a no-change flush a
+    // no-op). Mirrors TaskListBoard's filters.dispose().
+    if (hydratedForBoardId) {
+      flushLastViewForBoard(hydratedForBoardId, {
+        sortBy: filtersAndSort.activeSortBy,
+        filterTags: [...filtersAndSort.activeFilterTags],
+        filterProp: filtersAndSort.activeFilterProp
+          ? { ...filtersAndSort.activeFilterProp }
+          : null,
+      });
+    }
   });
 
   // ── Filtering / sorting (applied per column at render time) ──
@@ -853,21 +895,34 @@
     const prop = filtersAndSort.activeFilterProp;
     const id = board?.id;
     if (!id || id !== hydratedForBoardId) return;
+    // Audit-17 4.5 — snapshot at ARM time (a teardown can run after the next
+    // board's hydrate re-seeded the filters) and write keyed by the CAPTURED
+    // id via flushLastViewForBoard (never the live board — the DI-08 wrong-
+    // board-write hazard; its JSON-equality guard skips no-change writes).
+    const nextLastView = { sortBy, filterTags: [...tags], filterProp: prop ? { ...prop } : null };
     if (lastViewPersistTimer) clearTimeout(lastViewPersistTimer);
     lastViewPersistTimer = setTimeout(() => {
       lastViewPersistTimer = null;
-      // updateSettings accepts a partial that gets merged onto the
-      // board's settings; pass only the lastView field, not the whole
-      // settings object.
-      // allow-direct-mutation: lastView is transient UI state restored on board reopen; deliberately not undoable.
-      boardStore.updateSettings({
-        lastView: {
-          sortBy,
-          filterTags: [...tags],
-          filterProp: prop ? { ...prop } : null,
-        },
-      });
+      flushLastViewForBoard(id, nextLastView);
     }, 300);
+    // 6.1.R2 — tear the debounce down with the effect (a board close / vault
+    // swap mid-window must not fire a stale write); Audit-17 4.5 — but flush,
+    // don't drop: a filter/sort change within 300 ms of a board switch was
+    // otherwise never written (hydratedForBoardId blocks any re-fire after).
+    // Audit-18 5.1 — the $effect cleanup runs before EVERY re-execution, not
+    // only teardown; flushing unconditionally here fired on every filter/sort
+    // tick and structurally defeated the 300 ms debounce. Flush ONLY on a real
+    // board switch (the live id moved off the armed id); a same-board re-run
+    // just re-arms the timer. Unmount is flushed in onDestroy below.
+    return () => {
+      if (lastViewPersistTimer) {
+        clearTimeout(lastViewPersistTimer);
+        lastViewPersistTimer = null;
+        if (board?.id !== id) {
+          flushLastViewForBoard(id, nextLastView);
+        }
+      }
+    };
   });
 
   function openTagsBrowser() {
@@ -945,6 +1000,7 @@
     tickAndPersist,
     ensureSeededFm: (tile) => fmWriter.ensureSeededFm(tile),
     vaultPathForTile,
+    promptForTag,
   });
 
   // ── Floating-vault offset ──
@@ -1140,7 +1196,7 @@
     fires on column/card add, rename, delete, where the visual UI updates
     but no toast is dispatched. Phase C item 14.
   -->
-  <div class="kanban-sr-live" aria-live="polite" aria-atomic="true">{announcement}</div>
+  <div class="kanban-sr-live" aria-live="polite" aria-atomic="true">{announcer.message}</div>
 </div>
 
 {#if columnStylePopup && board}
@@ -1177,6 +1233,11 @@
   <div class="kanban-tag-popup-anchor" style="position: fixed; left: {tagEditorPopup.x}px; top: {tagEditorPopup.y}px;">
     <TagEditor tileId={tagEditorPopup.tileId} onClose={() => tagEditorPopup = null} />
   </div>
+{/if}
+
+{#if tagPromptResolve}
+  <!-- Audit-18 M7 — bulk "Add tag" prompt (replaces window.prompt). -->
+  <TagPromptPopup onResolve={resolveTagPrompt} />
 {/if}
 
 <style>

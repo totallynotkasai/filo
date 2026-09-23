@@ -25,17 +25,18 @@
  * — keeps the heavy logic out of the already-large fileTagsStore module.
  */
 
-import { rewriteTagInMarkdown, removeTagFromMarkdown } from './tagRewriter';
-import { trackComponentWrite } from '../boards/boardSaver';
+import { rewriteTagInMarkdown, removeTagFromMarkdown, tagsEqual } from './tagRewriter';
 import {
   writePendingRewrite,
   clearPendingRewrite,
+  type TagRewriteSentinelPayload,
 } from './tagRewriteSentinel';
 import { reportError } from '../utils/errorBus';
 import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { onVaultSwap } from '../../core/vaultLifecycle';
 import { PendingWritesFailedError, withDrainedWrites } from './vaultOperations';
+import { writeMarkdownAndReconcile } from './syncOpenEditorsAfterDiskMutation';
 import type { FileMetadata } from './vaultIndex';
 
 /**
@@ -139,11 +140,20 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
   const { vaultRoot, metadata, oldName, newName, applyChanges, pathFilter } = args;
   if (!vaultRoot) return { attempted: 0, succeeded: [], failed: [] };
 
-  const plan: Array<{ path: string; nextContent: string }> = [];
+  // Audit-7 M2 — the plan holds only PATHS; the rewritten bytes are recomputed
+  // from a fresh re-read inside the post-drain commit loop (not snapshotted
+  // here), so a `nextContent` captured now can't go stale against an editor
+  // body the drain later flushes. Phase 1 still computes `next` locally for the
+  // `next === raw` dedup that decides whether a file needs rewriting at all.
+  const plan: Array<{ path: string }> = [];
   const failed: string[] = [];
 
   for (const md of metadata) {
-    if (!md.tags.some((t) => t === oldName)) continue;
+    // Audit 2.2 — case-insensitive match. The index preserves the file's
+    // authored casing (`Project`) while the registry canonical may be
+    // `project`; a strict `===` here skipped the file and the rename never
+    // reached its `.md`. Fold to the identity used everywhere else.
+    if (!md.tags.some((t) => tagsEqual(t, oldName))) continue;
     if (pathFilter && !pathFilter.has(md.path)) continue;
 
     let raw: string | null = null;
@@ -173,7 +183,7 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
       ? removeTagFromMarkdown(raw, oldName)
       : rewriteTagInMarkdown(raw, oldName, newName);
     if (next === raw) continue;
-    plan.push({ path: md.path, nextContent: next });
+    plan.push({ path: md.path });
   }
 
   // Sprint B / B3 — lay down the recovery sentinel BEFORE Phase 2 begins so
@@ -183,23 +193,28 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
   // safely (files already at newName are no-ops). Sentinel-write failure
   // aborts the rewrite — we'd rather refuse to proceed than commit writes
   // without a recovery breadcrumb.
+  // 6.3 — keep the live payload so the removal path can re-write it with
+  // incremental `committedPaths` progress as each .md is stripped.
+  const sentinelPayload: TagRewriteSentinelPayload = {
+    timestamp: Date.now(),
+    oldName,
+    newName,
+    plan: plan.map((p) => p.path),
+    // Phase 7.3 — snapshot files that ALREADY carry `newName` before the
+    // sweep touches disk (a merge-rename into an existing tag, or files
+    // the user independently tagged). Partial-state detection excludes
+    // these so recovery doesn't falsely flag "some files already rewritten"
+    // on every open. Empty for removals.
+    preexistingNewNamePaths:
+      newName === null
+        ? []
+        : metadata.filter((m) => m.tags.includes(newName)).map((m) => m.path),
+    // 6.3 — filled incrementally below (removals only).
+    committedPaths: [],
+  };
   if (plan.length > 0) {
     try {
-      await writePendingRewrite(vaultRoot, {
-        timestamp: Date.now(),
-        oldName,
-        newName,
-        plan: plan.map((p) => p.path),
-        // Phase 7.3 — snapshot files that ALREADY carry `newName` before the
-        // sweep touches disk (a merge-rename into an existing tag, or files
-        // the user independently tagged). Partial-state detection excludes
-        // these so recovery doesn't falsely flag "some files already rewritten"
-        // on every open. Empty for removals.
-        preexistingNewNamePaths:
-          newName === null
-            ? []
-            : metadata.filter((m) => m.tags.includes(newName)).map((m) => m.path),
-      });
+      await writePendingRewrite(vaultRoot, sentinelPayload);
     } catch (err) {
       reportError('tagRewriteSweep', err, 'Failed to write recovery sentinel, aborting');
       // Treat every planned path as failed so the caller knows the rewrite
@@ -229,25 +244,96 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
     await withDrainedWrites(async () => {
       for (const item of plan) {
         try {
-          // Phase 31 A4.5 — tag rewrites are edits to EXISTING files; the
-          // .md was found by the prior metadata scan. Switched from
-          // `vault:write-file-text` (mkdir -p, creates if missing) to
-          // `vault:write-existing-file-text` so a file that was deleted
-          // out-of-band between scan and write is recorded as a failure
-          // instead of being resurrected silently.
+          // Audit-7 M2 — recompute the rewrite from a POST-DRAIN read instead of
+          // a Phase-1 snapshot. `withDrainedWrites` (above) just flushed any
+          // editor body a keystroke re-armed after the caller's up-front drain;
+          // the Phase-1 read ran seconds ago (longer on a large vault), so a
+          // snapshotted `nextContent` would predate that body and writing it
+          // would silently roll the keystroke back — and the `mode: 'full'`
+          // reconcile would reload the open editor to the stale body too. Reading
+          // here, after the drain, keeps the live body and only swaps the tag.
+          let freshRaw: string | null = null;
+          try {
+            const reread = await invokeOk('vault:read-file-text', vaultRoot, item.path);
+            freshRaw = reread.content;
+          } catch (err) {
+            // A non-envelope throw (programmer error, OOM) is unexpected — let
+            // the outer catch attribute the failure. An envelope failure means
+            // the file vanished or is unreadable; resolve it like Phase 1 did.
+            if (!(err instanceof IpcEnvelopeError)) throw err;
+          }
+          if (freshRaw === null) {
+            // Mirror the Phase-1 policy: a genuinely-missing file is dropped (the
+            // rewrite intent is moot), a present-but-unreadable file is a failure
+            // the caller retries.
+            const exists = await window.filo.invoke('vault:file-exists', vaultRoot, item.path);
+            if (exists) failed.push(item.path);
+            continue;
+          }
+          const freshNext = newName === null
+            ? removeTagFromMarkdown(freshRaw, oldName)
+            : rewriteTagInMarkdown(freshRaw, oldName, newName);
+          if (freshNext === freshRaw) {
+            // The post-drain bytes already lack the old tag (e.g. the flushed
+            // editor body had dropped it). The file is already in the desired
+            // state — skip the write; it's neither a failure nor a rewrite.
+            continue;
+          }
+          // Phase 31 A4.5 — tag rewrites edit EXISTING files (found by the prior
+          // metadata scan), so `writeMarkdownAndReconcile` uses the
+          // `vault:write-existing-file-text` channel (create:false): a file
+          // deleted out-of-band between scan and write surfaces as ENOENT
+          // (→ failed) instead of being resurrected. `invokeOk` (inside the
+          // helper) unwraps the `{ success: false, error }` envelope so a write
+          // failure reaches `trackComponentWrite` / the failed-paths surface.
+          // Phase 6.6 — coupled write+reconcile keyed to the SAME path we write.
+          // `mode: 'full'` reloads any open editor on this rewritten file with
+          // the new bytes (its pre-rewrite body would otherwise re-clobber the
+          // rewrite on the next debounce; applyReloadFromDisk self-cancels,
+          // 6.0.C2). `notifyOnError: false` keeps the bulk loop from spamming one
+          // toast per file — the caller surfaces an aggregate retry toast. The
+          // sweep operates on raw markdown text and is atomic with the pre-flight
+          // scan, so it bypasses the debounced gateway deliberately.
           //
-          // CONSOLIDATION_PLAN Phase 1 (bug #3) — switched bare `invoke +
-          // cast as Promise<void>` to `invokeOk`. The cast was swallowing
-          // the `{ success: false, error }` envelope on write failure, so
-          // `trackComponentWrite` saw a successful resolve and the failure
-          // never reached the recovery sentinel / failed-paths surface.
-          await trackComponentWrite(
+          // Audit-11 T2 (ACCEPTED — see KNOWN_LIMITATIONS.md #8) — there is a
+          // narrow window: this loop runs inside `withDrainedWrites` (drained at
+          // entry), so a keystroke typed into an ALREADY-PROCESSED file's editor
+          // *during* a large sweep arms a fresh write after that drain. The
+          // post-drain re-read above sees disk WITHOUT those keystrokes, and the
+          // `mode: 'full'` reload here cancels the editor's armed write and swaps
+          // in the rewritten (keystroke-free) body — losing the in-flight
+          // keystrokes for that one file. Not closed in code because the fix
+          // (frontmatter-only reconcile when `isPathPending(path)`) would couple
+          // this deliberately store-free pure-rewrite module to scheduler state;
+          // the race needs simultaneous typing + a vault-wide tag rename, the
+          // .md tag rewrite still lands on disk, and undo restores the keystrokes.
+          await writeMarkdownAndReconcile({
             vaultRoot,
-            item.path,
-            () => invokeOk('vault:write-existing-file-text', vaultRoot, item.path, item.nextContent), // allow-direct-write: bulk tag-rename sweep operates on raw markdown text, not a frontmatter+body assembly
-            { notifyOnError: false },
-          );
+            path: item.path,
+            content: freshNext,
+            mode: 'full',
+            track: { notifyOnError: false },
+          });
           succeeded.push(item.path);
+          // 6.3 — for REMOVALS, persist the per-path commit breadcrumb
+          // incrementally so a crash mid-sweep leaves the partial state
+          // detectable on reopen (renames detect partial state from the index
+          // and skip this extra write). The breadcrumb write is best-effort:
+          // the .md strip already landed, so a failed breadcrumb only risks a
+          // committedPaths list short by one — harmless, because recovery
+          // converges forward idempotently regardless of the exact list.
+          if (newName === null) {
+            sentinelPayload.committedPaths.push(item.path);
+            try {
+              await writePendingRewrite(vaultRoot, sentinelPayload);
+            } catch (breadcrumbErr) {
+              reportError(
+                'tagRewriteSweep',
+                breadcrumbErr,
+                `Failed to update tag-removal progress breadcrumb after ${item.path}`,
+              );
+            }
+          }
         } catch (err) {
           reportError('tagRewriteSweep', err, `Failed to rewrite tag in ${item.path}`);
           failed.push(item.path);
@@ -269,6 +355,11 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
   }
 
   if (succeeded.length > 0) await applyChanges(succeeded);
+
+  // Phase 6.6 — the open-editor reconcile now happens inside each
+  // writeMarkdownAndReconcile in the write loop above (write-path ==
+  // reconcile-path by construction), so the post-drain batch sync that used to
+  // re-derive the (path, content) list from the plan is gone.
 
   // Sprint B / B16 — only clear the sentinel when EVERY planned path
   // succeeded. On partial failure (EACCES on a subset, mid-sweep

@@ -6,19 +6,23 @@ import { tmpdir } from 'os';
 import { copyFileToVault, TargetNameExhaustedError } from '../../main/vault/fileOps';
 
 /**
- * Phase 1 / 1.2 — `copyFileToVault` uses `fs.open(..., 'wx')`
- * (O_WRONLY|O_CREAT|O_EXCL) inside the unique-suffix counter loop so two
- * concurrent calls with the same basename can never race onto the same
- * destination. Contract:
+ * Phase 1 / 1.2 + L10 (Audit-13) — `copyFileToVault` uses `fs.open(..., 'wx')`
+ * (O_WRONLY|O_CREAT|O_EXCL) inside the unique-suffix counter loop to RESERVE the
+ * destination NAME (a 0-byte placeholder) so two concurrent same-basename copies
+ * can never race onto the same name. L10 then streams the bytes into a sibling
+ * `<dest>.<nonce>.tmp` and atomically `rename`s it OVER the placeholder, so the
+ * final name never holds a torn/partial file. Contract:
  *
- *   1. On success the destination exists; no `.tmp` siblings are left
- *      behind (the implementation no longer goes through a tmp file).
+ *   1. On success the destination exists and no `.tmp` siblings remain (the
+ *      staging temp is renamed onto the placeholder).
  *   2. Two concurrent copies of the same source resolve to two distinct
  *      destination names; neither caller observes the other's bytes.
- *   3. On a copy failure (non-ENOSPC) the partial destination is unlinked.
- *   4. On ENOSPC/EIO/ENOMEM the partial destination is preserved and its
- *      absolute path is attached to the rejected error via
- *      `preservedTmpPath` so the IPC layer can surface it in a toast.
+ *   3. On a copy failure (non-ENOSPC) BOTH the staging temp and the reserved
+ *      placeholder are unlinked.
+ *   4. On ENOSPC/EIO/ENOMEM the partially-written staging temp is preserved (the
+ *      placeholder is dropped, so no torn partial lands at the final name) and the
+ *      temp path is attached to the rejected error via `preservedTmpPath` so the
+ *      IPC layer can surface it in a toast.
  *   5. If 1000 same-basename candidates are all taken, the call rejects
  *      with `TargetNameExhaustedError` rather than spinning forever.
  */
@@ -164,6 +168,11 @@ describe('copyFileToVault — Phase 1.2 O_EXCL contract', () => {
     // The partial file remains at the preserved path so the user can
     // recover it / clear it manually.
     await expect(fs.access(preserved!)).resolves.toBeUndefined();
+    // L10 — atomicity: the partial bytes live ONLY in the staging temp. The
+    // FINAL destination name never holds a torn file (the placeholder is dropped),
+    // and the preserved path is the `.tmp`, not the destination itself.
+    expect(preserved!.endsWith('.tmp')).toBe(true);
+    await expect(fs.access(join(vaultDir, 'image.png'))).rejects.toBeDefined();
   });
 
   it('throws TargetNameExhaustedError after 1000 same-basename collisions', async () => {

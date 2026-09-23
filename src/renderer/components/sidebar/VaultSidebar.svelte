@@ -269,19 +269,20 @@
   $effect(() => {
     if (!innerEl) return;
     const ro = new ResizeObserver(([entry]) => {
+      if (!entry) return;
       innerHeight = entry.contentRect.height;
     });
     ro.observe(innerEl);
     return () => ro.disconnect();
   });
 
-  // Start listening for file system changes when the component mounts
-  $effect(() => {
-    if (vaultStore.isOpen) {
-      const unsub = vaultStore.listenForChanges();
-      return unsub;
-    }
-  });
+  // Audit-16 3.7 — the external-change bridge subscription
+  // (`vaultStore.listenForChanges`) moved to App.svelte. It used to live
+  // here, but the docked and floating sidebars are mutually exclusive
+  // mounts: a float/dock toggle destroyed this instance (tearing down every
+  // watcher listener mid-session) before mounting the other, dropping any
+  // watcher event delivered in the gap. The bridge is app-lifetime data
+  // plumbing, not sidebar UI.
 
   let fileTreeEl = $state<HTMLDivElement | null>(null);
 
@@ -338,18 +339,18 @@
       if (idx === -1) next = delta > 0 ? 0 : items.length - 1;
       else next = (idx + delta + items.length) % items.length;
       e.preventDefault();
-      items[next].focus();
+      items[next]?.focus();
     };
     switch (e.key) {
       case 'ArrowDown': step(1); break;
       case 'ArrowUp': step(-1); break;
       case 'Home':
         e.preventDefault();
-        items[0].focus();
+        items[0]?.focus();
         break;
       case 'End':
         e.preventDefault();
-        items[items.length - 1].focus();
+        items[items.length - 1]?.focus();
         break;
       case 'ArrowRight': {
         if (idx === -1 || !active) return;

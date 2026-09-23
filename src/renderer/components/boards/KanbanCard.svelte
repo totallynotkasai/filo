@@ -580,7 +580,8 @@
     transition: opacity 0.15s ease, background-color 0.15s ease;
   }
 
-  .kanban-card-cover:hover .cover-action {
+  .kanban-card-cover:hover .cover-action,
+  .kanban-card-shell:focus-within .cover-action {
     opacity: 1;
   }
 
@@ -638,7 +639,8 @@
     transition: opacity 0.15s ease;
   }
 
-  .kanban-card-shell:hover .card-priority-empty {
+  .kanban-card-shell:hover .card-priority-empty,
+  .kanban-card-shell:focus-within .card-priority-empty {
     opacity: 1;
   }
 
@@ -697,7 +699,8 @@
     transition: opacity 0.15s ease, background-color 0.15s ease;
   }
 
-  .kanban-card-shell:hover .card-due-btn {
+  .kanban-card-shell:hover .card-due-btn,
+  .kanban-card-shell:focus-within .card-due-btn {
     opacity: 1;
   }
 
@@ -721,7 +724,11 @@
     transition: opacity 0.15s ease, background-color 0.15s ease;
   }
 
-  .kanban-card-shell:hover .cover-toggle-btn {
+  /* Audit2 5.7 — `:focus-within` mirrors `:hover` so keyboard users see
+     the due-date / cover / priority controls instead of tabbing into
+     invisible buttons. Matches the TileHeader / TaskItem pattern. */
+  .kanban-card-shell:hover .cover-toggle-btn,
+  .kanban-card-shell:focus-within .cover-toggle-btn {
     opacity: 1;
   }
 

@@ -158,33 +158,33 @@ const DocumentElementDefaultsSchema = z.object({
 export const MindMapDefaultsSchema = z.object({
   backgroundColor: z.string().default(''),
   backgroundPattern: z.enum(['grid', 'dots', 'lines', 'none']).default('grid'),
-  tile: TileDefaultsSchema.default({}),
-  connectionPath: ConnectionPathDefaultsSchema.default({}),
-  connectionLabel: ConnectionLabelDefaultsSchema.default({}),
-  frame: FrameDefaultsSchema.default({}),
+  tile: TileDefaultsSchema.prefault({}),
+  connectionPath: ConnectionPathDefaultsSchema.prefault({}),
+  connectionLabel: ConnectionLabelDefaultsSchema.prefault({}),
+  frame: FrameDefaultsSchema.prefault({}),
 });
 
 export const KanbanDefaultsSchema = z.object({
   backgroundColor: z.string().default(''),
   backgroundPattern: z.enum(['grid', 'dots', 'lines', 'none']).default('none'),
   accentColor: z.string().default(''),
-  column: ColumnDefaultsSchema.default({}),
-  card: CardDefaultsSchema.default({}),
+  column: ColumnDefaultsSchema.prefault({}),
+  card: CardDefaultsSchema.prefault({}),
 });
 
 export const TaskListDefaultsSchema = z.object({
   backgroundColor: z.string().default(''),
   backgroundPattern: z.enum(['grid', 'dots', 'lines', 'none']).default('none'),
   accentColor: z.string().default(''),
-  task: TaskDefaultsSchema.default({}),
-  section: TaskSectionDefaultsSchema.default({}),
+  task: TaskDefaultsSchema.prefault({}),
+  section: TaskSectionDefaultsSchema.prefault({}),
 });
 
 export const DocumentDefaultsSchema = z.object({
   backgroundColor: z.string().default(''),
   backgroundPattern: z.enum(['grid', 'dots', 'lines', 'none']).default('none'),
   accentColor: z.string().default(''),
-  document: DocumentElementDefaultsSchema.default({}),
+  document: DocumentElementDefaultsSchema.prefault({}),
 });
 
 // ── General settings ──
@@ -213,7 +213,7 @@ const DefaultBoardFontSizeSchema = z.object({
   taskItemBody: z.number().min(8).max(48).default(12),
   /** Default title font-size for task-list section headers. */
   taskSectionTitle: z.number().min(8).max(48).default(14),
-}).default({});
+}).prefault({});
 
 /**
  * Per-object-type toggle controlling whether action buttons are revealed on
@@ -227,7 +227,7 @@ const HoverButtonsSchema = z.object({
   frames: z.boolean().default(true),
   connectionLabels: z.boolean().default(true),
   columns: z.boolean().default(true),
-}).default({});
+}).prefault({});
 
 export const GeneralSettingsSchema = z.object({
   globalFont: z.string().default('Inter, system-ui, sans-serif'),
@@ -242,7 +242,7 @@ export const GeneralSettingsSchema = z.object({
   defaultBoardFontSize: DefaultBoardFontSizeSchema,
   systemFonts: z
     .array(z.string())
-    .default(['Inter', 'Arial', 'Georgia', 'Courier New', 'Verdana']),
+    .default(() => ['Inter', 'Arial', 'Georgia', 'Courier New', 'Verdana']),
   /**
    * Per-surface UI scale factors (1.0 = 100%). Range 0.5–2.0, default 1.0.
    * Wired into CSS via `--ui-toolbar-scale`, `--ui-board-toolbar-scale`,
@@ -261,7 +261,7 @@ export const GeneralSettingsSchema = z.object({
    * at 8 to match the picker's two-row grid (`ColorPicker.svelte` slices
    * to 8 and uses `grid-template-columns: repeat(8, 1fr)`).
    */
-  recentColors: z.array(z.string()).max(8).default([]),
+  recentColors: z.array(z.string()).max(8).default(() => []),
   /**
    * Per-board undo/redo stack size (M23). The default of 500 covers the long
    * tail of "I refactored the board and want to step back" without growing
@@ -303,11 +303,11 @@ export const GeneralSettingsSchema = z.object({
 // ── Project settings root ──
 
 export const ProjectSettingsSchema = z.object({
-  general: GeneralSettingsSchema.default({}),
-  mindmap: MindMapDefaultsSchema.default({}),
-  kanban: KanbanDefaultsSchema.default({}),
-  tasklist: TaskListDefaultsSchema.default({}),
-  document: DocumentDefaultsSchema.default({}),
+  general: GeneralSettingsSchema.prefault({}),
+  mindmap: MindMapDefaultsSchema.prefault({}),
+  kanban: KanbanDefaultsSchema.prefault({}),
+  tasklist: TaskListDefaultsSchema.prefault({}),
+  document: DocumentDefaultsSchema.prefault({}),
 }).passthrough();
 
 export type ProjectSettings = z.infer<typeof ProjectSettingsSchema>;
@@ -318,7 +318,9 @@ export type ProjectSettings = z.infer<typeof ProjectSettingsSchema>;
  * (vault load fallback, "Apply Theme Defaults to all Boards", tests) all go
  * through one path and can't drift apart when a new sub-schema is added.
  *
- * Note: every sub-schema is declared with `.default({})`, so `parse({})`
+ * Note: every sub-schema is declared with `.prefault({})` (Zod 4: the
+ * default input is parsed through the sub-schema so its inner field defaults
+ * apply — a plain `.default({})` would return a bare `{}`), so `parse({})`
  * always succeeds without surprises. If a future field is added without a
  * default it will throw here at startup rather than producing a partial
  * settings object that fails downstream consumers in obscure ways.

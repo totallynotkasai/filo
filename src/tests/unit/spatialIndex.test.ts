@@ -79,4 +79,26 @@ describe('SpatialIndex', () => {
     index.clear();
     expect(index.all()).toEqual([]);
   });
+
+  // H4 — searchRegion backs smart-connection obstacle lookup (replaced an
+  // all().filter() linear scan). Returns full items intersecting the rect.
+  describe('searchRegion', () => {
+    it('returns full items intersecting the region rect', () => {
+      index.insert('inside', 100, 100, 50, 50); // 100..150
+      index.insert('overlap', 140, 140, 50, 50); // 140..190 overlaps 0..150
+      index.insert('outside', 2000, 2000, 50, 50);
+
+      const hits = index.searchRegion(0, 0, 150, 150);
+      const ids = hits.map((h) => h.id).sort();
+      expect(ids).toEqual(['inside', 'overlap']);
+      // Full SpatialItem (extents) is returned, not just the id.
+      const insideItem = hits.find((h) => h.id === 'inside');
+      expect(insideItem).toMatchObject({ minX: 100, minY: 100, maxX: 150, maxY: 150 });
+    });
+
+    it('returns [] when nothing is in the region', () => {
+      index.insert('far', 5000, 5000, 100, 100);
+      expect(index.searchRegion(0, 0, 200, 200)).toEqual([]);
+    });
+  });
 });

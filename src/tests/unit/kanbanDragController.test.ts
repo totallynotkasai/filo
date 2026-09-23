@@ -270,3 +270,51 @@ describe('KanbanDragController — multi-card drag block', () => {
     c.dispose();
   });
 });
+
+describe('KanbanDragController — L16 pointerup cleanup', () => {
+  beforeEach(() => {
+    const { mql } = makeMatchMedia(false);
+    window.matchMedia = vi.fn(() => mql) as unknown as typeof window.matchMedia;
+  });
+
+  function pe(): PointerEvent {
+    return {
+      button: 0,
+      target: { closest: () => null } as unknown as EventTarget,
+    } as unknown as PointerEvent;
+  }
+
+  it('detaches the armed pointerup on dispose() when the pointer is still held', () => {
+    const addSpy = vi.spyOn(window, 'addEventListener');
+    const removeSpy = vi.spyOn(window, 'removeEventListener');
+    const c = new KanbanDragController(noopDeps());
+
+    c.onCardPointerDown(pe(), 't1', false);
+    const armed = addSpy.mock.calls.find(([type]) => type === 'pointerup');
+    expect(armed, 'onCardPointerDown did not arm a pointerup').toBeTruthy();
+    const handler = armed![1];
+
+    // Unmount WITHOUT a pointerup firing (pointer held through teardown).
+    c.dispose();
+    expect(removeSpy).toHaveBeenCalledWith('pointerup', handler);
+
+    addSpy.mockRestore();
+    removeSpy.mockRestore();
+  });
+
+  it('a real pointerup self-clears so dispose() has no pointerup to detach', () => {
+    const c = new KanbanDragController(noopDeps());
+    c.onCardPointerDown(pe(), 't1', false);
+    expect(c.cardDragDisabled).toBe(false);
+    // Real release: re-locks the gate AND removes itself ({ once: true } + the
+    // tracking-delete wrapper).
+    window.dispatchEvent(new Event('pointerup'));
+    expect(c.cardDragDisabled).toBe(true);
+
+    const removeSpy = vi.spyOn(window, 'removeEventListener');
+    c.dispose();
+    const removedPointerup = removeSpy.mock.calls.some(([type]) => type === 'pointerup');
+    expect(removedPointerup, 'dispose double-removed an already-fired pointerup').toBe(false);
+    removeSpy.mockRestore();
+  });
+});

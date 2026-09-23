@@ -14,6 +14,11 @@ import {
 import { flushSidebarStateNow } from './services/sidebarState';
 import { logMainError } from './utils/mainLogger';
 import { stopActiveWatcher } from './ipc/vault.ipc';
+import { vaultRegistry } from './services/vaultRegistry';
+import { writeQuitFailureBreadcrumb } from './services/quitFailureBreadcrumb';
+import { decideWindowClose } from './utils/windowCloseDecision';
+import { buildAppContentSecurityPolicy } from './utils/contentSecurityPolicy';
+import { installPermissionHandlers } from './utils/permissionPolicy';
 
 // Must run before `app.whenReady`. Registers the `filo://` URL scheme as a
 // privileged standard scheme so the renderer can load vault-local media
@@ -84,7 +89,12 @@ function captureAndSaveWindowState(): void {
  *
  * The `<meta>` CSP governs the app document but does NOT cover web workers or
  * non-document responses; a response header does. The policy string mirrors
- * index.html — keep the two in sync if either changes.
+ * index.html with ONE deliberate prod divergence (Audit-14 4.7): the dev-only
+ * `ws://localhost:*` (Vite HMR socket) is dropped from `connect-src` when
+ * `app.isPackaged`. The `filo-strip-dev-csp` Vite plugin strips the same token
+ * from the index.html `<meta>` at build time, so in a packaged build the header
+ * and the `<meta>` agree (no `ws://`); in dev both keep it for HMR. Keep the two
+ * in sync if either changes.
  *
  * Scope: only responses served from the app's own origin (the Vite dev server
  * in dev, `file://` in prod) receive the header. Everything else is passed
@@ -93,13 +103,19 @@ function captureAndSaveWindowState(): void {
  *     SVGs (see protocol/filoMedia.ts), nor
  *   - impose `default-src 'self'` on third-party `https:` documents loaded
  *     inside Iframe tiles (which the policy's `frame-src https:` permits).
+ *
+ * Audit-14 4.5 — `frame-src https:` is intentionally broad: Iframe tiles let the
+ * user embed ANY https origin (YouTube, CodePen, etc.), so a fixed origin
+ * allowlist isn't possible. It's accepted defense-in-depth — the tile iframe is
+ * sandboxed (`allow-scripts` WITHOUT `allow-same-origin`) and every src is run
+ * through `asSafeIframeSrc`. See KNOWN_LIMITATIONS.md #10.
  */
 function installContentSecurityPolicy(): void {
-  const CSP =
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-    "img-src 'self' data: blob: filo:; media-src 'self' blob: filo:; " +
-    "font-src 'self' data:; connect-src 'self' ws://localhost:*; " +
-    'frame-src https:; child-src https:;';
+  // Audit-14 4.7 — assemble from a single pure builder so the packaged header
+  // never authorises a localhost websocket the app doesn't open. Dev keeps
+  // `ws://localhost:*` for Vite HMR; prod (`app.isPackaged`) drops it, matching
+  // the index.html `<meta>` the build-time strip plugin patches.
+  const CSP = buildAppContentSecurityPolicy(app.isPackaged);
 
   const appOrigin =
     !app.isPackaged && process.env.ELECTRON_RENDERER_URL
@@ -169,19 +185,59 @@ async function createWindow(): Promise<void> {
     // the flush sequence.
     captureAndSaveWindowState();
 
-    if (isFlushingForQuit) return;
-    if (!mainWindow || mainWindow.webContents.isDestroyed()) return;
+    // 1.3 — a second X-click while a drain is already in flight MUST keep
+    // blocking the close (preventDefault), not fall through to Electron's
+    // destroy and abort the in-flight write drain. `decideWindowClose` is the
+    // pure guard; see windowCloseDecision.ts.
+    const decision = decideWindowClose({
+      isFlushing: isFlushingForQuit,
+      windowAlive: !!mainWindow && !mainWindow.webContents.isDestroyed(),
+    });
+    if (decision.preventDefault) event.preventDefault();
+    if (!decision.startDrain) return;
 
-    event.preventDefault();
     isFlushingForQuit = true;
 
-    const timer = setTimeout(() => {
+    const destroyOnTimeout = (): void => {
       console.warn('[main] flush-and-quit timed out on window close, destroying anyway');
       mainWindow?.destroy();
-    }, FLUSH_TIMEOUT_MS);
+    };
+    let timer = setTimeout(destroyOnTimeout, FLUSH_TIMEOUT_MS);
 
-    ipcMain.once('app:ready-to-quit', () => {
+    // Audit5 2.1 — drain heartbeat. The renderer beats this immediately and
+    // then every ~2 s while its flush drains. Re-arm the auto-destroy timer on
+    // each beat so an honest drain that runs longer than FLUSH_TIMEOUT_MS (a
+    // large vault on a contended volume — the user's vault lives under OneDrive)
+    // isn't destroyed mid-write. The ceiling now bounds inter-beat SILENCE (a
+    // wedged renderer), not total honest drain time.
+    const onHeartbeat = (): void => {
       clearTimeout(timer);
+      timer = setTimeout(destroyOnTimeout, FLUSH_TIMEOUT_MS);
+    };
+
+    // Audit-4 DI-04 — heartbeat. The renderer sends this right before it opens
+    // an open-ended "Save failed" confirm. Clear the auto-destroy timer so the
+    // FLUSH_TIMEOUT_MS ceiling bounds only the automated flush, not the human's
+    // decision time at the dialog — otherwise the window destroys out from
+    // under the dialog and the user's choice (and edits) are discarded. The
+    // ready/cancel reply still drives the real quit; a renderer that never
+    // replies just leaves the window open, the safe direction (no data loss).
+    // Drop the heartbeat listener too so a late beat can't re-arm the timer
+    // while the user reads the dialog.
+    const onAwaitingUser = (): void => {
+      clearTimeout(timer);
+      ipcMain.removeListener('app:drain-heartbeat', onHeartbeat);
+    };
+
+    // 6.2.H4 — two terminal signals from the renderer: ready (proceed to
+    // destroy) and cancel (user picked "Stay open and retry" on the save-
+    // failure confirm; rewind isFlushingForQuit so they can keep editing).
+    // Whichever fires first wins and removes the other listener.
+    const onReady = (): void => {
+      clearTimeout(timer);
+      ipcMain.removeListener('app:cancel-quit', onCancel);
+      ipcMain.removeListener('app:quit-awaiting-user', onAwaitingUser);
+      ipcMain.removeListener('app:drain-heartbeat', onHeartbeat);
       // Phase 4 / 4.4 — drain windowState + sidebarState before destroying
       // the window. The renderer's flush completed first; now wait on the
       // main-side debounces so the next launch sees the latest geometry.
@@ -191,15 +247,40 @@ async function createWindow(): Promise<void> {
         flushWindowStateNow(),
         flushSidebarStateNow(),
         stopActiveWatcher(),
+        // 6.2.H4 (follow-up) — persist any preserved-partial locations to
+        // `.filo/quit-failure.json` before the window destroys (no-op unless
+        // a write preserved a partial this session).
+        writeQuitFailureBreadcrumb(vaultRegistry.currentVaultPath),
       ]).finally(() => {
         mainWindow?.destroy();
       });
-    });
+    };
+    const onCancel = (): void => {
+      clearTimeout(timer);
+      ipcMain.removeListener('app:ready-to-quit', onReady);
+      ipcMain.removeListener('app:quit-awaiting-user', onAwaitingUser);
+      ipcMain.removeListener('app:drain-heartbeat', onHeartbeat);
+      isFlushingForQuit = false;
+    };
+    ipcMain.once('app:ready-to-quit', onReady);
+    ipcMain.once('app:cancel-quit', onCancel);
+    ipcMain.once('app:quit-awaiting-user', onAwaitingUser);
+    // Audit5 2.1 — persistent (`on`, not `once`) so every periodic beat lands;
+    // removed in onReady/onCancel/onAwaitingUser and the catch below.
+    ipcMain.on('app:drain-heartbeat', onHeartbeat);
 
     try {
+      // startDrain is only true when the window was alive (see decideWindowClose
+      // above); the guard narrows the nullable ref and routes the impossible
+      // null case through the existing catch → destroy path.
+      if (!mainWindow) throw new Error('mainWindow released before flush-and-quit');
       mainWindow.webContents.send('app:flush-and-quit');
     } catch (err) {
       clearTimeout(timer);
+      ipcMain.removeListener('app:ready-to-quit', onReady);
+      ipcMain.removeListener('app:cancel-quit', onCancel);
+      ipcMain.removeListener('app:quit-awaiting-user', onAwaitingUser);
+      ipcMain.removeListener('app:drain-heartbeat', onHeartbeat);
       logMainError('main:flush-and-quit-on-close', err);
       mainWindow?.destroy();
     }
@@ -307,6 +388,11 @@ app.whenReady().then(() => {
   }
 
   installContentSecurityPolicy();
+  // Audit-15 P1.5 — deny-by-default permission handler on the shared session,
+  // so an embedded https iframe (CSP allows any origin) can't be granted
+  // geolocation / camera / mic / notifications / clipboard by a version-
+  // dependent Electron default. See utils/permissionPolicy.ts.
+  installPermissionHandlers(session.defaultSession);
   registerAllHandlers();
   registerFiloProtocol();
   void createWindow();
@@ -374,29 +460,78 @@ app.on('before-quit', (event) => {
   // event loop has torn down.
   const finish = (): void => {
     ipcMain.removeAllListeners('app:ready-to-quit');
+    // 6.2.H4 — also drain the cancel-quit listener so a late renderer
+    // signal can't bring the (already torn down) flush state out of sync.
+    ipcMain.removeAllListeners('app:cancel-quit');
+    // Audit-4 DI-04 — drain the awaiting-user listener too.
+    ipcMain.removeAllListeners('app:quit-awaiting-user');
+    // Audit5 2.1 — and the periodic drain heartbeat listener.
+    ipcMain.removeAllListeners('app:drain-heartbeat');
     void Promise.allSettled([
       flushWindowStateNow(),
       flushSidebarStateNow(),
       stopActiveWatcher(),
+      // 6.2.H4 (follow-up) — see the close-event path above.
+      writeQuitFailureBreadcrumb(vaultRegistry.currentVaultPath),
     ]).finally(() => {
       app.exit(0);
     });
   };
 
-  const timer = setTimeout(() => {
+  const exitOnTimeout = (): void => {
     console.warn('[main] flush-and-quit timed out, exiting anyway');
     finish();
-  }, FLUSH_TIMEOUT_MS);
+  };
+  let timer = setTimeout(exitOnTimeout, FLUSH_TIMEOUT_MS);
 
-  ipcMain.once('app:ready-to-quit', () => {
+  // Audit5 2.1 — drain heartbeat (see the close-event path for the full
+  // rationale). Each beat re-arms the auto-exit timer so an honest drain that
+  // outlasts FLUSH_TIMEOUT_MS isn't cut short; the ceiling bounds inter-beat
+  // silence, not total drain time.
+  const onHeartbeat = (): void => {
     clearTimeout(timer);
+    timer = setTimeout(exitOnTimeout, FLUSH_TIMEOUT_MS);
+  };
+
+  // Audit-4 DI-04 — heartbeat (see the close-event path for the full
+  // rationale). Clear the auto-exit timer when the renderer signals a human
+  // is reading the open-ended save-failure confirm, so the 5 s ceiling bounds
+  // only the automated flush. The ready/cancel reply still drives the exit.
+  const onAwaitingUser = (): void => {
+    clearTimeout(timer);
+    ipcMain.removeListener('app:drain-heartbeat', onHeartbeat);
+  };
+
+  // 6.2.H4 — same two-signal handshake as the close-event path. On Cancel
+  // we don't exit, we rewind `isFlushingForQuit` and remove the listeners.
+  const onReady = (): void => {
+    clearTimeout(timer);
+    ipcMain.removeListener('app:cancel-quit', onCancel);
+    ipcMain.removeListener('app:quit-awaiting-user', onAwaitingUser);
     finish();
-  });
+  };
+  const onCancel = (): void => {
+    clearTimeout(timer);
+    ipcMain.removeListener('app:ready-to-quit', onReady);
+    ipcMain.removeListener('app:quit-awaiting-user', onAwaitingUser);
+    ipcMain.removeListener('app:drain-heartbeat', onHeartbeat);
+    isFlushingForQuit = false;
+  };
+  ipcMain.once('app:ready-to-quit', onReady);
+  ipcMain.once('app:cancel-quit', onCancel);
+  ipcMain.once('app:quit-awaiting-user', onAwaitingUser);
+  // Audit5 2.1 — persistent (`on`) drain heartbeat; drained by finish() /
+  // onCancel / onAwaitingUser / the catch below.
+  ipcMain.on('app:drain-heartbeat', onHeartbeat);
 
   try {
     win.webContents.send('app:flush-and-quit');
   } catch (err) {
     clearTimeout(timer);
+    ipcMain.removeListener('app:ready-to-quit', onReady);
+    ipcMain.removeListener('app:cancel-quit', onCancel);
+    ipcMain.removeListener('app:quit-awaiting-user', onAwaitingUser);
+    ipcMain.removeListener('app:drain-heartbeat', onHeartbeat);
     logMainError('main:flush-and-quit', err);
     finish();
   }

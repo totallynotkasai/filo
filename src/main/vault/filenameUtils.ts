@@ -1,6 +1,11 @@
 import { promises as fs } from 'fs';
 import { randomBytes } from 'crypto';
 import { dirname, join } from 'path';
+import { RESERVED_WINDOWS_NAMES } from '../utils/pathSecurity';
+import {
+  recordPreservedEmergencyFile,
+  clearPreservedEmergencyFilesForTarget,
+} from '../services/emergencyFileRegistry';
 
 /**
  * Characters that are illegal in Windows filenames.
@@ -14,21 +19,41 @@ const MAX_NAME_LENGTH = 200;
 
 /**
  * Sanitizes a string for use as a filename.
- * Strips illegal characters, collapses whitespace, and truncates to max length.
+ * Strips illegal characters, collapses whitespace, truncates to max length,
+ * strips trailing dots / spaces (Audit2 5.5 — Win32 silently strips them at
+ * file-create time, which collides with a same-stem neighbour), and prefixes
+ * an underscore in front of any name whose stem matches a Windows DOS device
+ * name (CON / NUL / COM1 / LPT1 / …) so the sanitised result can pass
+ * `assertSafeFilename` instead of throwing downstream.
  */
 export function sanitizeFilename(name: string): string {
   let sanitized = name
     .replace(ILLEGAL_CHARS, '')
     .replace(/\s+/g, ' ')
-    .trim();
+    .trim()
+    // Audit2 5.5 — strip any trailing dots (or dot+space runs) BEFORE the
+    // length truncation. `note.` on Win32 saves as `note`, masking a name
+    // collision with a sibling `note`.
+    .replace(/[. ]+$/, '');
 
   if (sanitized.length > MAX_NAME_LENGTH) {
-    sanitized = sanitized.slice(0, MAX_NAME_LENGTH).trim();
+    sanitized = sanitized
+      .slice(0, MAX_NAME_LENGTH)
+      .trim()
+      .replace(/[. ]+$/, '');
   }
 
   // Fallback for empty names
   if (!sanitized) {
     sanitized = 'Untitled';
+  }
+
+  // Audit2 5.5 — same stem-based match as `assertSafeFilename`: `CON.md` /
+  // `aux.tar.gz` / `nul` all collide. Prefix with `_` so the sanitised
+  // result clears the assert instead of throwing.
+  const stem = (sanitized.split('.')[0] ?? '').toUpperCase();
+  if (RESERVED_WINDOWS_NAMES.has(stem)) {
+    sanitized = `_${sanitized}`;
   }
 
   return sanitized;
@@ -138,8 +163,22 @@ export async function pathExists(filePath: string): Promise<boolean> {
  * race on a shared `<path>.tmp`. With per-call nonces each write owns
  * its own tmp file, so the cleanup `unlink` on failure can't accidentally
  * delete the other call's buffer mid-rename. Phase 25 L1.
+ *
+ * Audit-7 L7 — `opts.expectExisting` narrows a file-resurrection race. The
+ * `vault:write-existing-file-text` channel exists to stop a dirty editor's
+ * debounce from recreating a file the user just deleted; the handler enforces
+ * that with a stat pre-check, but `fs.rename(tmp, dest)` creates `dest`
+ * unconditionally, so a delete landing in the (ms-long) tmp-write→rename gap
+ * still resurrects the file. With `expectExisting`, the destination's
+ * existence is re-verified immediately before each rename attempt and the
+ * write aborts with ENOENT if it's gone — shrinking the window to the
+ * check→rename gap (microseconds; the irreducible OS-level residual).
  */
-export async function atomicWriteFile(filePath: string, content: string | Buffer): Promise<void> {
+export async function atomicWriteFile(
+  filePath: string,
+  content: string | Buffer,
+  opts?: { expectExisting?: boolean },
+): Promise<void> {
   const nonce = randomBytes(6).toString('hex');
   const tmpPath = `${filePath}.${nonce}.tmp`;
 
@@ -196,14 +235,28 @@ export async function atomicWriteFile(filePath: string, content: string | Buffer
   let renamed = false;
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     try {
+      // Audit-7 L7 — when the caller asserts the destination must already
+      // exist, re-verify right before the rename. `fs.rename` creates `dest`
+      // unconditionally, so a delete that landed since the handler's stat
+      // pre-check would otherwise resurrect the file with stale editor bytes.
+      // Re-checked each attempt so a delete during the retry backoff is caught
+      // too. The check→rename gap itself is the irreducible OS-level residual.
+      if (opts?.expectExisting && !(await pathExists(filePath))) {
+        const gone: NodeJS.ErrnoException = new Error(
+          `atomicWriteFile: "${filePath}" no longer exists; refusing to recreate it`,
+        );
+        gone.code = 'ENOENT';
+        throw gone;
+      }
       await fs.rename(tmpPath, filePath);
       renamed = true;
       break;
     } catch (err) {
       lastErr = err;
       const code = (err as NodeJS.ErrnoException)?.code;
-      // Only retry transient Windows locking errors. ENOENT (missing src)
-      // and other codes mean the rename will never succeed, so fail fast.
+      // Only retry transient Windows locking errors. ENOENT (missing src, or
+      // the expectExisting abort above) and other codes mean the rename will
+      // never succeed, so fail fast.
       if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES') break;
       if (attempt === RETRY_DELAYS_MS.length) break;
       await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
@@ -223,23 +276,47 @@ export async function atomicWriteFile(filePath: string, content: string | Buffer
     // can fix and then move the tmp into place. Preserving the tmp lets
     // them recover the staged write after they regain write access on
     // the destination.
-    // Other rename failures (ENOENT — missing parent dir, EPERM/EBUSY
-    // after retry exhaustion) leave nothing valuable, so the pre-existing
-    // best-effort cleanup still runs.
+    // Audit-17 2.2 — EPERM + EBUSY join too. The old comment claimed an
+    // exhausted EPERM/EBUSY tmp held "nothing valuable" — false: by this
+    // point the tmp is fully written AND fsynced; on a quit-time flush it
+    // holds the user's last bytes. The EACCES rationale applies verbatim
+    // (a lingering AV/sync lock the user can wait out, then move the tmp
+    // into place). Only ENOENT (missing parent dir / expectExisting abort
+    // — the DESTINATION is gone, the staged bytes describe a file the
+    // user deleted) still falls to the best-effort cleanup.
     const code = (lastErr as NodeJS.ErrnoException | null)?.code;
-    if (code === 'ENOSPC' || code === 'EIO' || code === 'ENOMEM' || code === 'EACCES') {
+    if (
+      code === 'ENOSPC' ||
+      code === 'EIO' ||
+      code === 'ENOMEM' ||
+      code === 'EACCES' ||
+      code === 'EPERM' ||
+      code === 'EBUSY'
+    ) {
       if (lastErr && typeof lastErr === 'object') {
         (lastErr as { preservedTmpPath?: string }).preservedTmpPath = tmpPath;
         const original = (lastErr as { message?: unknown }).message;
         if (typeof original === 'string') {
           (lastErr as { message: string }).message = `${original} (data preserved at ${tmpPath})`;
         }
+        // 6.2.H4 (follow-up) — record the preserved partial so the quit
+        // drain can persist its location into `.filo/quit-failure.json`
+        // for next-launch recovery (the transient toast can be missed,
+        // especially when the failure lands during a quit-time flush).
+        recordPreservedEmergencyFile({ preservedPath: tmpPath, targetPath: filePath, code });
       }
     } else {
       await fs.unlink(tmpPath).catch(() => undefined);
     }
     throw lastErr;
   }
+
+  // Audit-16 4.6 — the write landed: drop any emergency-registry entries a
+  // PRIOR failed write to this same destination recorded, so the quit
+  // breadcrumb stops pointing the user at superseded bytes (phantom
+  // "Filo preserved emergency files" notice on the next launch). The
+  // preserved `.tmp` itself stays on disk — see the registry's doc.
+  clearPreservedEmergencyFilesForTarget(filePath);
 
   // Best-effort fsync of the containing directory so the rename's metadata
   // is durably persisted on POSIX. Windows can't open a directory for

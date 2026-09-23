@@ -116,8 +116,9 @@ export const Tag = Mark.create({
         getAttributes: (match) => {
           const editor = this.editor;
           if (editor && (editor.isActive('codeBlock') || editor.isActive('code'))) return null;
-          if (isHexColorToken(match[1])) return null;
-          return { value: match[1].slice(1) };
+          const raw = match[1] ?? '';
+          if (isHexColorToken(raw)) return null;
+          return { value: raw.slice(1) };
         },
       }),
     ];
@@ -131,8 +132,9 @@ export const Tag = Mark.create({
         getAttributes: (match) => {
           const editor = this.editor;
           if (editor && (editor.isActive('codeBlock') || editor.isActive('code'))) return null;
-          if (isHexColorToken(match[1])) return null;
-          return { value: match[1].slice(1) };
+          const raw = match[1] ?? '';
+          if (isHexColorToken(raw)) return null;
+          return { value: raw.slice(1) };
         },
       }),
     ];

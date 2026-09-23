@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
-  registerMarkdownFlusher,
-  unregisterMarkdownFlusher,
+  __testRegisterFlusher as registerMarkdownFlusher,
+  __testUnregisterFlusher as unregisterMarkdownFlusher,
   flushAllMarkdownWriters,
-  __resetMarkdownFlushersForTests,
-} from '../../renderer/lib/boards/markdownWriteRegistry';
+  __resetMarkdownFileWriterForTests as __resetMarkdownFlushersForTests,
+} from '../../renderer/lib/vault/markdownFileWriter';
 
 /**
  * Phase G.1 — `markdownWriteRegistry` flush contract test (carry-over from

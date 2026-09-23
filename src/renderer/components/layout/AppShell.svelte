@@ -338,7 +338,7 @@
         execute: () => {
           const ids = [...selectionStore.selectedIds];
           if (ids.length < 2) return;
-          const group = boardStore.getGroupForTile(ids[0]);
+          const group = boardStore.getGroupForTile(ids[0] ?? '');
           const allInSameGroup = group && ids.every(id => boardStore.getGroupForTile(id)?.id === group.id);
           const groupsBefore = [...boardStore.groups];
           if (allInSameGroup) {
@@ -469,7 +469,8 @@
           if (!cur) return;
           const idx = ids.indexOf(cur);
           if (idx < 0) return;
-          tabStore.setActive(ids[(idx + 1) % ids.length]);
+          const nextId = ids[(idx + 1) % ids.length];
+          if (nextId) tabStore.setActive(nextId);
         },
       }),
       registerCommandWithShortcut({
@@ -484,7 +485,8 @@
           if (!cur) return;
           const idx = ids.indexOf(cur);
           if (idx < 0) return;
-          tabStore.setActive(ids[(idx - 1 + ids.length) % ids.length]);
+          const prevId = ids[(idx - 1 + ids.length) % ids.length];
+          if (prevId) tabStore.setActive(prevId);
         },
       }),
     ];
@@ -698,7 +700,25 @@
   {/if}
 
   {#if uiStore.isModalOpen('recovery-files')}
-    <Modal id="recovery-files" title="Recovered from unflushed changes" width="520px">
+    <!-- Audit-17 3.3 — a bypassed close (Esc / X / backdrop) must still UN-PARK
+         the recovery sequencer; leaving it parked forever silently skipped
+         steps 2–4 (tag-rewrite Resume/Discard, rename-cascade retry, snapshot
+         listing) for the session.
+         Audit-18 4.1 — but a bypassed close is NOT an acknowledgement, so it
+         routes through `bypassRecoveryModalClose()` (un-park only) rather than
+         `acknowledgeRecovery()`: the `.filo/.dirty` sentinel + pending paths
+         are preserved so recovery RE-QUEUES next launch. Only the explicit
+         Dismiss button (RecoveryFiles.svelte → acknowledgeRecovery) destroys
+         the breadcrumb. -->
+    <Modal
+      id="recovery-files"
+      title="Recovered from unflushed changes"
+      width="520px"
+      beforeClose={() => {
+        vaultStore.bypassRecoveryModalClose();
+        return true;
+      }}
+    >
       <RecoveryFilesModal />
     </Modal>
   {/if}

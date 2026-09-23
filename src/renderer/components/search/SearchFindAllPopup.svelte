@@ -216,7 +216,7 @@
   }
 
   .findall-row.active {
-    background: var(--ui-surface-deep, var(--ui-surface-hover));
+    background: var(--ui-surface-hover);
   }
 
   .row-icon {
@@ -254,7 +254,7 @@
   }
 
   .row-tags {
-    color: var(--ui-accent, var(--text-secondary));
+    color: var(--accent-primary);
   }
 
   .row-snippet {

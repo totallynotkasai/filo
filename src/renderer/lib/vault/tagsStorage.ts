@@ -10,6 +10,8 @@
  * `fileTags` to keep references consistent.
  */
 
+// allow-jsyaml: D1 tag-name minting guard (isSafeNewTagName) — intentional YAML-1.1 coercion, NOT a frontmatter read
+import yaml from 'js-yaml';
 import type { TagsFile, TagDefinition } from '../../schema/tagsFile';
 import {
   TagsFileSchema,
@@ -30,23 +32,35 @@ export function emptyTagsFile(): TagsFile {
 }
 
 /**
- * Result of {@link loadTagsFile}. `file` is always usable; the two flags
- * signal that the on-disk version is one this build must NOT re-save:
+ * Result of {@link loadTagsFile}. `file` is always usable; the three flags
+ * signal that the on-disk bytes are ones this build must NOT re-save:
  *
  *  - `fromFuture`     — the file declares a version newer than
  *                       {@link CURRENT_TAGS_FILE_VERSION}. An older build
  *                       that re-saved it would silently downgrade the format.
  *  - `noMigrationPath`— the version is older than (or a fractional value
  *                       below) anything this build can migrate forward.
+ *  - `corrupt`        — the file failed JSON parse or schema validation. The
+ *                       in-memory registry falls back to EMPTY (the app must
+ *                       run), but the on-disk bytes may be hand-recoverable, so
+ *                       the caller must NOT overwrite them this session.
  *
- * When either flag is set the caller (`fileTagsStore`) puts the tag store
- * into read-only mode so the newer/unknown file is preserved verbatim.
+ * Audit-18 H2 — `corrupt` was added because the parse-fail / schema-fail
+ * branches previously returned all-false flags, so the empty registry was
+ * writable and the vault open itself (post-commit FM tag-seeding → `setAll` →
+ * `scheduleSave` → `tags:save`) atomically overwrote the recoverable file within
+ * the ~300 ms debounce, with zero user action. With `corrupt`, the file is
+ * preserved verbatim for the session exactly like a from-future file.
+ *
+ * When ANY flag is set the caller (`fileTagsStore`) puts the tag store into
+ * read-only mode so the newer / unknown / corrupt file is preserved verbatim.
  * Mirrors `boardLoader`'s `from-future` / `no-migration-path` handling.
  */
 export interface LoadTagsFileResult {
   file: TagsFile;
   fromFuture: boolean;
   noMigrationPath: boolean;
+  corrupt: boolean;
 }
 
 /**
@@ -70,17 +84,21 @@ export interface LoadTagsFileResult {
  * tag is silently dropped.
  */
 export function loadTagsFile(raw: string | null | undefined): LoadTagsFileResult {
-  if (!raw) return { file: emptyTagsFile(), fromFuture: false, noMigrationPath: false };
+  if (!raw) return { file: emptyTagsFile(), fromFuture: false, noMigrationPath: false, corrupt: false };
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
+    // Audit-18 H2 — `corrupt: true` gates the save so the unreadable-but-
+    // recoverable bytes are preserved verbatim this session (not overwritten by
+    // the empty registry). Copy says "preserved, not saved", not "reset to empty"
+    // — the disk file is intact, only the in-memory registry is empty.
     reportError(
       'tagsStorage.parse',
       err,
-      '.filo/tags.json is not valid JSON — tags reset to empty for this session',
+      '.filo/tags.json is not valid JSON — your tags are shown as empty this session, but the file on disk is preserved (not overwritten) so you can repair it.',
     );
-    return { file: emptyTagsFile(), fromFuture: false, noMigrationPath: false };
+    return { file: emptyTagsFile(), fromFuture: false, noMigrationPath: false, corrupt: true };
   }
 
   // F6 / Phase 4 E2 — route through the shared migrate→validate helper so
@@ -100,7 +118,7 @@ export function loadTagsFile(raw: string | null | undefined): LoadTagsFileResult
         `this build understands up to ${CURRENT_TAGS_FILE_VERSION}). Tag changes won't be saved this ` +
         'session so the newer file is not downgraded — update Filo to edit tags again.',
     );
-    return { file: bestEffortParse(parsed), fromFuture: true, noMigrationPath: false };
+    return { file: bestEffortParse(parsed), fromFuture: true, noMigrationPath: false, corrupt: false };
   }
 
   if (loaded.status === 'no-migration-path') {
@@ -110,19 +128,22 @@ export function loadTagsFile(raw: string | null | undefined): LoadTagsFileResult
       `.filo/tags.json declares an unrecognized format version (${loaded.migratedFrom}). Tag changes ` +
         "won't be saved this session so the file isn't corrupted — restore an earlier copy from your backup.",
     );
-    return { file: bestEffortParse(parsed), fromFuture: false, noMigrationPath: true };
+    return { file: bestEffortParse(parsed), fromFuture: false, noMigrationPath: true, corrupt: false };
   }
 
   if (loaded.status === 'ok') {
-    return { file: migrateFileTagKeys(loaded.data), fromFuture: false, noMigrationPath: false };
+    return { file: migrateFileTagKeys(loaded.data), fromFuture: false, noMigrationPath: false, corrupt: false };
   }
 
+  // Audit-18 H2 — schema failure is the second corrupt-but-recoverable branch
+  // (valid JSON, wrong shape, e.g. `tags: "oops"`). `corrupt: true` preserves the
+  // bytes for the session; copy mirrors the parse-fail branch (preserved, not reset).
   reportError(
     'tagsStorage.schema',
     loaded.error,
-    '.filo/tags.json failed schema validation — tags reset to empty for this session',
+    '.filo/tags.json failed schema validation — your tags are shown as empty this session, but the file on disk is preserved (not overwritten) so you can repair it.',
   );
-  return { file: emptyTagsFile(), fromFuture: false, noMigrationPath: false };
+  return { file: emptyTagsFile(), fromFuture: false, noMigrationPath: false, corrupt: true };
 }
 
 /**
@@ -221,6 +242,42 @@ export function isValidTagName(name: string): boolean {
   if (!stripped) return false;
   if (/\s/.test(stripped)) return false;
   return true;
+}
+
+/**
+ * Stricter validation for a tag name the USER is creating or renaming TO
+ * (1.5a). Beyond {@link isValidTagName} (empty / internal whitespace), rejects:
+ *  - any name YAML reads as a NON-string scalar — numbers (`123`, `2024`),
+ *    booleans (`true`/`false`), `null`;
+ *  - any name starting with a YAML indicator char (`@ \` * & ! % | > : ?`); and
+ *  - any name that fails to parse as a bare scalar (`,` `[` `{` etc.).
+ *
+ * The frontmatter rewriter quotes emitted scalars (1.5b / 1.6), so such names
+ * are SAFE on disk — this guard exists only to stop the user MINTING confusing
+ * tags at the input boundary. It is deliberately NOT used by `ensureTag` or
+ * other programmatic paths, so a tag that already exists in a file (e.g. a
+ * legacy numeric tag authored elsewhere) is never re-validated or disturbed.
+ */
+export function isSafeNewTagName(name: string): boolean {
+  if (!isValidTagName(name)) return false;
+  const stripped = name.trim().replace(/^#/, '');
+  // js-yaml throws on most leading indicators, but `:` / `?` load as plain
+  // strings — reject the whole set explicitly to match the plan. (`#` is
+  // already stripped above as the tag-syntax convenience.)
+  if (/^[@`*&!%|>:?]/.test(stripped)) return false;
+  let loaded: unknown;
+  try {
+    // This validates a single bare tag-name token, NOT a frontmatter block.
+    // DEFAULT_SCHEMA's YAML-1.1 coercion is the intent here: we WANT `2024` /
+    // `true` / `null` to read as non-strings so the guard rejects them as
+    // confusing new tag names. (Contrast the frontmatter readers, which are on
+    // the `yaml` package and resolve no such 1.1 tags — see the import's
+    // `// allow-jsyaml:` note and the `ci:no-jsyaml-in-frontmatter` gate.)
+    loaded = yaml.load(stripped);
+  } catch {
+    return false;
+  }
+  return typeof loaded === 'string' && loaded === stripped;
 }
 
 /**
@@ -426,6 +483,7 @@ export function renameFile(file: TagsFile, oldPath: string, newPath: string): Ta
   const newKey = normalisePath(newPath);
   if (oldKey === newKey || !(oldKey in file.fileTags)) return file;
   const tags = file.fileTags[oldKey];
+  if (tags === undefined) return file; // oldKey is present (checked above)
   const next = { ...file.fileTags };
   delete next[oldKey];
   next[newKey] = tags;

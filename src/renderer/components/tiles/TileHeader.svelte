@@ -19,6 +19,7 @@
   import { sanitizeInlineHtml } from '../../lib/utils/sanitizeHtml';
   import { getAnchorBelow } from '../../lib/utils/popupAnchor';
   import { buildDeleteSnapshots, TILE_DELETE_SNAPSHOT_MAX_BYTES } from '../../lib/canvas/deleteTileSnapshots';
+  import { resolveTitleCommitValues, type ResolvedTitleCommit } from '../../lib/editor/titleCommit';
   import { historyStore } from '../../stores/history.svelte';
   import { RenameTitleCommand, ToggleFramelessCommand } from '../../commands/index';
   import {
@@ -55,6 +56,13 @@
   let isEditing = $state(false);
   let titleEditorElement = $state<HTMLDivElement | null>(null);
   let titleEditor: Editor | null = $state(null);
+  // Audit-11 R3 — handle for the inline blur→commit defer below. Stored so it
+  // can be cancelled on teardown (and re-armed cleanly on a fresh blur);
+  // otherwise a tile deleted / board switched inside the 200ms window leaves a
+  // dangling timer that fires `commitTitleEdit()` against a torn-down editor.
+  // The `ci:component-timer-cleanup` gate can't see a timer armed inside a
+  // TipTap callback, so this is cleaned up by hand in `destroyTitleEditor()`.
+  let blurCommitTimer: ReturnType<typeof setTimeout> | null = null;
 
   // The rendered title falls back to plain text when no rich-text version
   // has been authored yet. titleHtml comes from the TipTap inline editor;
@@ -86,6 +94,13 @@
   }
 
   function destroyTitleEditor() {
+    // Audit-11 R3 — cancel a pending blur→commit defer so it can't fire after
+    // the editor is gone (commit/cancel/unmount all route through here; the
+    // `$effect` teardown at the bottom calls this on unmount).
+    if (blurCommitTimer) {
+      clearTimeout(blurCommitTimer);
+      blurCommitTimer = null;
+    }
     if (titleEditor) {
       if (tiptapToolbar.activeEditor === titleEditor) {
         tiptapToolbar.clearActiveEditor();
@@ -95,52 +110,95 @@
     }
   }
 
+  /**
+   * Audit-17 4.1 — snapshot the live editor's value as resolved commit
+   * inputs. Must be read BEFORE `destroyTitleEditor()` — a torn-down TipTap
+   * editor can't be queried (the R3 hazard the old cancel-on-unmount dodged
+   * by dropping the rename instead).
+   */
+  function snapshotEditorTitle(): ResolvedTitleCommit | null {
+    if (!titleEditor) return null;
+    return resolveTitleCommitValues(titleEditor.getText(), titleEditor.getHTML(), 'New Tile');
+  }
+
   async function commitTitleEdit() {
-    if (!titleEditor) {
-      isEditing = false;
-      return;
-    }
-    const plain = titleEditor.getText().trim() || 'New Tile';
-    const html = titleEditor.getHTML();
-    // Suppress identity HTML when the user didn't add any marks — keeps the
-    // schema slim and avoids "<p>foo</p>" appearing for an unstyled title.
-    const stripped = html.replace(/<\/?p[^>]*>/gi, '').trim();
-    const isPlain = stripped === plain || stripped === '';
-    const newTitleHtml = isPlain ? undefined : html;
-    const titleChanged = plain !== tile.title;
-    const titleHtmlChanged = (tile.titleHtml ?? '') !== (newTitleHtml ?? '');
-    const oldTitle = tile.title;
-    const oldTitleHtml = tile.titleHtml;
+    const snap = snapshotEditorTitle();
     destroyTitleEditor();
     isEditing = false;
+    if (!snap) return;
+    await applyTitleCommit(snap, false);
+  }
+
+  /**
+   * Applies a resolved title commit to the tile. `fromTeardown` marks the
+   * unmount-time commit (Audit-17 4.1): by then the pane's scope may already
+   * point at the switched-in board (the very switch that unmounted us), so
+   * the write resolves through the tile's home board (`tile.boardId`).
+   *
+   * Audit-18 5.2 — a text-tile teardown commit now ALSO pushes
+   * `RenameTitleCommand` onto the tile's HOME board's undo stack (via
+   * `pushWithoutExecuteOnBoard`, keyed by `tile.boardId`) so the `.md` rename
+   * is undoable. Earlier it dropped the entry because the GLOBAL active board's
+   * stack can't be trusted mid-swap — but the home board's stack always can.
+   * The non-text teardown path stays a cache write (no file rename to reverse).
+   */
+  async function applyTitleCommit(snap: ResolvedTitleCommit, fromTeardown: boolean): Promise<void> {
+    const { plain, titleHtml: newTitleHtml } = snap;
+    const titleChanged = plain !== tile.title;
+    const titleHtmlChanged = (tile.titleHtml ?? '') !== (newTitleHtml ?? '');
     if (!titleChanged && !titleHtmlChanged) return;
+    const oldTitle = tile.title;
+    const oldTitleHtml = tile.titleHtml;
     if (tile.type === 'text') {
       // Route through the rename helper so the backing .md file moves in
       // lockstep with the title. On collision the helper toasts + returns
       // success: false; we leave the existing tile.title in place so the UI
       // snaps back automatically (the editor is already destroyed).
+      // `tile.boardId` lets the helper fall back to the home board's cache
+      // when the active scope no longer has the tile (teardown commit).
       //
       // Phase 5 / 5.6 — push RenameTitleCommand on success so Ctrl+Z
       // reverses both the filename rename and the title update.
-      const result = await boardStore.renameTextTileBackingFile(tile.id, plain, newTitleHtml);
+      const result = await boardStore.renameTextTileBackingFile(
+        tile.id, plain, newTitleHtml, tile.boardId,
+      );
       if (result.success) {
-        historyStore.pushWithoutExecute(
-          new RenameTitleCommand(
-            tile.id,
-            oldTitle,
-            plain,
-            oldTitleHtml,
-            newTitleHtml,
-            { oldPath: result.oldPath ?? null, newPath: result.newPath ?? null },
-          ),
-        );
+        const paths = { oldPath: result.oldPath ?? null, newPath: result.newPath ?? null };
+        if (fromTeardown) {
+          // Audit-18 5.2 — file the rename onto the HOME board's stack (keyed
+          // by tile.boardId) so it's undoable, instead of dropping it. Thread
+          // `boardId` so the command's targetBoardId is the home board (a later
+          // cross-board Ctrl+Z auto-switches) and undo can fall back to the
+          // cache when the tile isn't on the active canvas.
+          historyStore.pushWithoutExecuteOnBoard(
+            new RenameTitleCommand(
+              tile.id, oldTitle, plain, oldTitleHtml, newTitleHtml, paths,
+              { boardId: tile.boardId },
+            ),
+            tile.boardId,
+          );
+        } else {
+          historyStore.pushWithoutExecute(
+            new RenameTitleCommand(
+              tile.id, oldTitle, plain, oldTitleHtml, newTitleHtml, paths,
+            ),
+          );
+        }
       }
-    } else {
+    } else if (!fromTeardown) {
       // Non-text tile: no backing file, just the title. RenameTitleCommand
       // with null paths skips the IPC dance and only touches updateTile.
       boardStore.updateTile(tile.id, { title: plain, titleHtml: newTitleHtml } as Partial<Tile>);
       historyStore.pushWithoutExecute(
         new RenameTitleCommand(tile.id, oldTitle, plain, oldTitleHtml, newTitleHtml),
+      );
+    } else {
+      // Teardown commit for a non-text tile: cache write keyed by the home
+      // board — resolves whether or not that board is still the active one.
+      boardCacheStore.persistUpdateTile(
+        tile.id,
+        { title: plain, titleHtml: newTitleHtml } as Partial<Tile>,
+        tile.boardId,
       );
     }
   }
@@ -177,7 +235,11 @@
           // don't trigger a premature commit. The Tile commit fires after
           // 200ms — long enough for a toolbar interaction to keep the
           // editor alive via `keepActiveEditor`.
-          setTimeout(() => {
+          // Audit-11 R3 — store the handle (and clear any prior one) so a
+          // teardown inside the window cancels it; null it once it fires.
+          if (blurCommitTimer) clearTimeout(blurCommitTimer);
+          blurCommitTimer = setTimeout(() => {
+            blurCommitTimer = null;
             if (titleEditor && tiptapToolbar.activeEditor !== titleEditor) {
               commitTitleEdit();
             }
@@ -197,8 +259,32 @@
     }
   });
 
-  // Guard against unmount during edit.
-  $effect(() => () => destroyTitleEditor());
+  // Guard against unmount during edit. Audit-11 R3 cleared the pending
+  // blur→commit timer here so it couldn't fire against a torn-down editor —
+  // but cancel-not-commit silently DROPPED the rename when the unmount landed
+  // inside the 200 ms blur window (Audit-17 4.1: clicking another tab/board
+  // blurs AND unmounts within ms). An armed timer at teardown means the user
+  // finished editing and the commit was still pending: snapshot the editor's
+  // value BEFORE tearing it down, clear the timer (kept inline so
+  // `ci:component-timer-cleanup` sees it in a recognised `$effect` teardown;
+  // `destroyTitleEditor` also clears it for the commit/cancel paths), then
+  // commit fire-and-forget (the rename helper is async-safe and self-guards
+  // when the tile is already gone, e.g. mid-vault-swap).
+  //
+  // Audit-18 5.2 — DEFER the commit one microtask past the synchronous
+  // teardown so the `.md` rename doesn't race the board switch's own
+  // reactivity, and `applyTitleCommit` pushes the undo command onto the tile's
+  // HOME board's stack (see there) instead of dropping it. `snap` is captured
+  // synchronously (before destroy), so the deferred call uses the right value.
+  $effect(() => {
+    return () => {
+      const snap = blurCommitTimer !== null ? snapshotEditorTitle() : null;
+      if (blurCommitTimer) clearTimeout(blurCommitTimer);
+      blurCommitTimer = null;
+      destroyTitleEditor();
+      if (snap) queueMicrotask(() => void applyTitleCommit(snap, true));
+    };
+  });
 
   // Phase 6.2 (IMPLEMENTATION_PLAN_2026-05-27) — keyboard "rename" hook.
   // MindMapBoard's Enter handler dispatches a `request-rename` event

@@ -47,7 +47,7 @@ export function getBubblePositions(rect: TileRect): BubblePosition[] {
  */
 export function getBubblePosition(rect: TileRect, bubbleIndex: number): { x: number; y: number } {
   const positions = getBubblePositions(rect);
-  return positions[bubbleIndex] ?? positions[1];
+  return positions[bubbleIndex] ?? positions[1] ?? { x: 0, y: 0 };
 }
 
 /**
@@ -64,55 +64,5 @@ export function getBubbleNormal(bubbleIndex: number): { nx: number; ny: number }
     { nx: -1, ny: 1 },  // 6: bottom-left
     { nx: -1, ny: 0 },  // 7: middle-left
   ];
-  return normals[bubbleIndex] ?? normals[1];
-}
-
-/**
- * Finds the nearest bubble on a tile to a given point.
- */
-export function findNearestBubble(rect: TileRect, px: number, py: number): number {
-  const positions = getBubblePositions(rect);
-  let minDist = Infinity;
-  let nearest = 1;
-
-  for (const pos of positions) {
-    const dx = pos.x - px;
-    const dy = pos.y - py;
-    const dist = dx * dx + dy * dy;
-    if (dist < minDist) {
-      minDist = dist;
-      nearest = pos.index;
-    }
-  }
-
-  return nearest;
-}
-
-/**
- * Returns the optimal pair of bubbles connecting two tile rects.
- * Picks the pair with the shortest distance.
- */
-export function findOptimalBubbles(
-  rectA: TileRect,
-  rectB: TileRect,
-): { fromBubble: number; toBubble: number } {
-  const bubblesA = getBubblePositions(rectA);
-  const bubblesB = getBubblePositions(rectB);
-
-  let minDist = Infinity;
-  let best = { fromBubble: 1, toBubble: 5 };
-
-  for (const a of bubblesA) {
-    for (const b of bubblesB) {
-      const dx = a.x - b.x;
-      const dy = a.y - b.y;
-      const dist = dx * dx + dy * dy;
-      if (dist < minDist) {
-        minDist = dist;
-        best = { fromBubble: a.index, toBubble: b.index };
-      }
-    }
-  }
-
-  return best;
+  return normals[bubbleIndex] ?? normals[1] ?? { nx: 0, ny: -1 };
 }

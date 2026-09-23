@@ -141,6 +141,20 @@ describe('boardCache — Kanban CRUD', () => {
     expect(boardCacheStore.cache.kb.tileDefs.t2).toBeDefined();
   });
 
+  it('persistAddKanbanPlacement clamps a negative position to the head, not the tail (L9)', () => {
+    boardCacheStore.persistAddKanbanPlacement('kb', 'c1', defOf('t1', 'A'), 0);
+    boardCacheStore.persistAddKanbanPlacement('kb', 'c1', defOf('t2', 'B'), 1);
+    // A stray negative position must floor to 0 (insert at head). The old
+    // high-end-only clamp `Math.min(position, len)` left -1 as `splice(-1, …)`,
+    // which inserts BEFORE the last element → ['t1','t3','t2'].
+    boardCacheStore.persistAddKanbanPlacement('kb', 'c1', defOf('t3', 'C'), -1);
+
+    const cols = (boardCacheStore.cache.kb.board as KanbanBoard).columns;
+    const placements = cols[0].tilePlacements ?? [];
+    expect(placements.map((p) => p.tileId)).toEqual(['t3', 't1', 't2']);
+    expect(placements.map((p) => p.position)).toEqual([0, 1, 2]);
+  });
+
   it('removeKanbanPlacement drops both the placement and its tileDef', () => {
     boardCacheStore.persistAddKanbanPlacement('kb', 'c1', defOf('t1', 'A'), 0);
     boardCacheStore.persistAddKanbanPlacement('kb', 'c1', defOf('t2', 'B'), 1);

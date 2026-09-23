@@ -49,9 +49,19 @@ describe('UpdateTaskFieldCommand — awaits flushAllPendingFrontmatterWrites', (
       { tl: makeTaskListFixture() },
       { tl: 'tasks.board.json' },
     );
-    // Seed the frontmatter cache so mergeFrontmatter has something to
-    // merge into. UpdateTaskFieldCommand only reads frontmatterCache
-    // (via mergeFrontmatter); no need to register the full document.
+    // Seed both the frontmatter cache AND the openDocuments entry. The
+    // scheduler's writeFrontmatter step needs the docState (6.2.H5 —
+    // post-fix it aborts the write when docId is set but docState is
+    // undefined, since the editor has vanished and the previous fall-
+    // through to vaultIndex.content or '' would have clobbered disk).
+    documentStore.loadDocument({
+      docId: 'doc-1',
+      filename: 'task.md',
+      title: 'task',
+      body: '',
+      htmlContent: '',
+      richText: [],
+    });
     documentStore.setFrontmatter('doc-1', {});
   });
   afterEach(() => {

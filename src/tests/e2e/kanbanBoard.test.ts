@@ -11,7 +11,7 @@ test.beforeAll(async () => {
   tempVault = fs.mkdtempSync(path.join(os.tmpdir(), 'filo-kanban-e2e-'));
 
   electronApp = await electron.launch({
-    args: [path.join(__dirname, '..', '..', '..', 'dist-electron', 'main', 'main.js')],
+    args: [path.join(__dirname, '..', '..', '..', 'dist', 'main', 'main.js')],
     env: {
       ...process.env,
       NODE_ENV: 'test',

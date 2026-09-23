@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   TaskDragController,
   type SectionItemsSnapshot,
@@ -8,6 +8,7 @@ import type {
   TaskListSection,
 } from '@renderer/schema/index';
 import type { RowDndItem } from '@renderer/lib/tasklist/blockMove';
+import { sectionIdForPlacementIndex } from '@renderer/lib/tasklist/sectionMath';
 
 /**
  * Phase 6 — TaskDragController integration.
@@ -162,6 +163,198 @@ describe('TaskDragController — cross-section drag', () => {
     expect(rec.reorder).toHaveLength(1);
     expect(rec.reorder[0].isCrossSection).toBe(true);
     expect(rec.reorder[0].description).toBe('Move task');
+  });
+
+  it('emptying section 2 leaves section 3 owning its task (section-3 spurious-move bug)', () => {
+    // The exact repro: 3 sections, one task each (S1=t1, S2=t2, S3=t3). Drag t2
+    // out of S2 into S1. S2 is now empty; its position ties S3's so S3 still owns
+    // t3. The controller must emit that tied representation [S1:0, S2:2, S3:2] —
+    // NOT bump S3 past t3. (The persist layer then preserves the tie; see
+    // boardCacheTaskList.test.ts.)
+    const placements = [p('t1', 0), p('t2', 1), p('t3', 2)];
+    const sections = [s('S1', 0), s('S2', 1), s('S3', 2)];
+    const snap: SectionItemsSnapshot = {
+      itemsBySection: { S1: [{ id: 't1' }], S2: [{ id: 't2' }], S3: [{ id: 't3' }] },
+      displaySectionIds: ['S1', 'S2', 'S3'],
+      leadingSectionId: '__lead',
+    };
+    const { controller, rec } = buildController({
+      rows: [row('t1'), row('t2'), row('t3')],
+      placements,
+      sections,
+      snapshot: snap,
+    });
+    controller.syncFromSnapshot();
+
+    // Source consider (t2 leaves S2 → empty), destination consider (t2 lands in
+    // S1 under t1), finalize on the destination.
+    controller.onConsiderRows('S2', dndEvent([], 't2'));
+    controller.onConsiderRows('S1', dndEvent([{ id: 't1' }, { id: 't2' }], 't2'));
+    controller.onFinalizeRows('S1', dndEvent([{ id: 't1' }, { id: 't2' }], 't2'));
+
+    expect(rec.reorder).toHaveLength(1);
+    const move = rec.reorder[0];
+    expect(move.isCrossSection).toBe(true);
+    expect(move.nextSections.map((x) => x.id)).toEqual(['S1', 'S2', 'S3']);
+    expect(move.nextSections.map((x) => x.position)).toEqual([0, 2, 2]);
+    expect(move.nextPlacements.map((x) => x.tileId)).toEqual(['t1', 't2', 't3']);
+  });
+});
+
+describe('TaskDragController — DRAG-1 cross-section subtask outdent', () => {
+  it('outdents a subtask dragged into another section (separate commit)', () => {
+    // A@0 owns [p, c] (c.parent = p); B@2 owns [b1]. Dragging the subtask c
+    // into B moves its placement but would leave it rendering under p in A
+    // (placement↔render divergence) unless we also clear its parent.
+    const placements = [p('p', 0), p('c', 1), p('b1', 2)];
+    const sections = [s('A', 0), s('B', 2)];
+    const snap: SectionItemsSnapshot = {
+      itemsBySection: { A: [{ id: 'p' }, { id: 'c' }], B: [{ id: 'b1' }] },
+      displaySectionIds: ['A', 'B'],
+      leadingSectionId: '__lead',
+    };
+    const { controller, rec } = buildController({
+      rows: [row('p'), row('c', 'p'), row('b1')],
+      placements,
+      sections,
+      snapshot: snap,
+    });
+    controller.syncFromSnapshot();
+    controller.armRow('A', 'c', 0, 0);
+
+    controller.onConsiderRows('A', dndEvent([{ id: 'p' }], 'c'));
+    controller.onConsiderRows('B', dndEvent([{ id: 'c' }, { id: 'b1' }], 'c'));
+    controller.onFinalizeRows('B', dndEvent([{ id: 'c' }, { id: 'b1' }], 'c'));
+
+    expect(rec.reorder).toHaveLength(1);
+    expect(rec.reorder[0].isCrossSection).toBe(true);
+    // The dragged subtask is outdented so its render follows its placement.
+    expect(rec.outdent).toEqual(['c']);
+    // c's placement now sits inside section B's range; once its parent is
+    // cleared the render (sectionedView) follows the placement → no divergence.
+    const { nextPlacements, nextSections } = rec.reorder[0];
+    const cIdx = nextPlacements.findIndex((pl) => pl.tileId === 'c');
+    expect(cIdx).toBeGreaterThanOrEqual(0);
+    expect(sectionIdForPlacementIndex(nextSections, cIdx)).toBe('B');
+  });
+
+  it('does NOT outdent a top-level row moved cross-section', () => {
+    const placements = [p('a1', 0), p('a2', 1), p('b1', 2)];
+    const sections = [s('A', 0), s('B', 2)];
+    const snap: SectionItemsSnapshot = {
+      itemsBySection: { A: [{ id: 'a1' }, { id: 'a2' }], B: [{ id: 'b1' }] },
+      displaySectionIds: ['A', 'B'],
+      leadingSectionId: '__lead',
+    };
+    const { controller, rec } = buildController({
+      rows: [row('a1'), row('a2'), row('b1')], // a2 has NO parent
+      placements,
+      sections,
+      snapshot: snap,
+    });
+    controller.syncFromSnapshot();
+    controller.armRow('A', 'a2', 0, 0);
+    controller.onConsiderRows('A', dndEvent([{ id: 'a1' }], 'a2'));
+    controller.onConsiderRows('B', dndEvent([{ id: 'a2' }, { id: 'b1' }], 'a2'));
+    controller.onFinalizeRows('B', dndEvent([{ id: 'a2' }, { id: 'b1' }], 'a2'));
+
+    expect(rec.reorder).toHaveLength(1);
+    expect(rec.outdent).toEqual([]);
+  });
+
+  it('does NOT outdent a same-section subtask reorder', () => {
+    // Reordering c within A keeps it nested under p (still in A) — no repair.
+    const placements = [p('p', 0), p('c', 1), p('p2', 2)];
+    const sections = [s('A', 0)];
+    const snap: SectionItemsSnapshot = {
+      itemsBySection: { A: [{ id: 'p' }, { id: 'c' }, { id: 'p2' }] },
+      displaySectionIds: ['A'],
+      leadingSectionId: '__lead',
+    };
+    const { controller, rec } = buildController({
+      rows: [row('p'), row('c', 'p'), row('p2')],
+      placements,
+      sections,
+      snapshot: snap,
+    });
+    controller.syncFromSnapshot();
+    controller.armRow('A', 'c', 0, 0);
+    controller.onConsiderRows('A', dndEvent([{ id: 'p' }, { id: 'p2' }, { id: 'c' }], 'c'));
+    controller.onFinalizeRows('A', dndEvent([{ id: 'p' }, { id: 'p2' }, { id: 'c' }], 'c'));
+
+    expect(rec.reorder).toHaveLength(1);
+    expect(rec.reorder[0].isCrossSection).toBe(false);
+    expect(rec.outdent).toEqual([]);
+  });
+});
+
+describe('TaskDragController — DRAG-2 cross-section indent reject', () => {
+  it('rejects an indent when the hovered target is in another section', () => {
+    // A@0 owns [a]; B@1 owns [b]. The drag finalizes in the SOURCE section A
+    // (so the same-section indent branch is reached), but the pointer's last
+    // hover was b in section B — re-parenting across sections would diverge.
+    const placements = [p('a', 0), p('b', 1)];
+    const sections = [s('A', 0), s('B', 1)];
+    const snap: SectionItemsSnapshot = {
+      itemsBySection: { A: [{ id: 'a' }], B: [{ id: 'b' }] },
+      displaySectionIds: ['A', 'B'],
+      leadingSectionId: '__lead',
+    };
+    const { controller, rec } = buildController({
+      rows: [row('a'), row('b')],
+      placements,
+      sections,
+      snapshot: snap,
+    });
+    controller.syncFromSnapshot();
+    controller.armRow('A', 'a', 0, 0);
+    controller.onConsiderRows('A', dndEvent([{ id: 'a' }], 'a'));
+
+    const target = document.createElement('div');
+    target.dataset.taskId = 'b';
+    document.body.appendChild(target);
+    const evt = new PointerEvent('pointermove', { clientX: 100, clientY: 5, bubbles: true });
+    Object.defineProperty(evt, 'target', { value: target });
+    window.dispatchEvent(evt);
+
+    controller.onFinalizeRows('A', dndEvent([{ id: 'a' }], 'a'));
+
+    expect(rec.indent).toHaveLength(0);
+    expect(rec.reorder).toHaveLength(0);
+    expect(rec.toast.some((t) => /another section/i.test(t.msg))).toBe(true);
+    target.remove();
+  });
+
+  it('still allows a same-section indent (control)', () => {
+    // a and b both in section A — indent a under b is permitted.
+    const placements = [p('a', 0), p('b', 1)];
+    const sections = [s('A', 0)];
+    const snap: SectionItemsSnapshot = {
+      itemsBySection: { A: [{ id: 'a' }, { id: 'b' }] },
+      displaySectionIds: ['A'],
+      leadingSectionId: '__lead',
+    };
+    const { controller, rec } = buildController({
+      rows: [row('a'), row('b')],
+      placements,
+      sections,
+      snapshot: snap,
+    });
+    controller.syncFromSnapshot();
+    controller.armRow('A', 'a', 0, 0);
+    controller.onConsiderRows('A', dndEvent([{ id: 'b' }, { id: 'a' }], 'a'));
+
+    const target = document.createElement('div');
+    target.dataset.taskId = 'b';
+    document.body.appendChild(target);
+    const evt = new PointerEvent('pointermove', { clientX: 100, clientY: 5, bubbles: true });
+    Object.defineProperty(evt, 'target', { value: target });
+    window.dispatchEvent(evt);
+
+    controller.onFinalizeRows('A', dndEvent([{ id: 'b' }, { id: 'a' }], 'a'));
+
+    expect(rec.indent).toEqual([{ tileId: 'a', newParent: 'b' }]);
+    target.remove();
   });
 });
 
@@ -561,6 +754,34 @@ describe('TaskDragController — ESC cancel', () => {
   });
 });
 
+describe('TaskDragController — DRAG-4 no-op drop', () => {
+  it('does NOT commit a reorder when the rebuilt order equals the pre-drag order', () => {
+    const placements = [p('a', 0), p('b', 1), p('c', 2)];
+    const sections = [s('S', 0)];
+    const snap: SectionItemsSnapshot = {
+      itemsBySection: { S: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] },
+      displaySectionIds: ['S'],
+      leadingSectionId: '__lead',
+    };
+    const { controller, rec } = buildController({
+      rows: [row('a'), row('b'), row('c')],
+      placements,
+      sections,
+      snapshot: snap,
+    });
+    controller.syncFromSnapshot();
+    controller.armRow('S', 'a', 0, 0);
+
+    // Drop restores the original order (dropped outside any zone, or back onto
+    // the same slot) — the rebuild equals the pre-drag placements.
+    controller.onConsiderRows('S', dndEvent([{ id: 'a' }, { id: 'b' }, { id: 'c' }], 'a'));
+    controller.onFinalizeRows('S', dndEvent([{ id: 'a' }, { id: 'b' }, { id: 'c' }], 'a'));
+
+    expect(rec.reorder).toHaveLength(0); // no phantom undo entry / "Switched to Manual" toast
+    expect(controller.dragTileId).toBeNull(); // state still resets cleanly
+  });
+});
+
 describe('TaskDragController — drag state lifecycle', () => {
   it('clears dragTileId and dragBlockIds after finalize', () => {
     const placements = [p('a', 0)];
@@ -652,5 +873,40 @@ describe('TaskDragController — syncFromSnapshot', () => {
     // rowItemsBySection should still reflect the in-flight items.
     expect(controller.rowItemsBySection.S.map((x) => x.id)).toEqual(['b', 'a']);
     controller.cancelDrag();
+  });
+});
+
+describe('TaskDragController — L16 pointerup cleanup', () => {
+  it('detaches the armRow pointerup on cancelDrag() even when no drag started', () => {
+    const snap: SectionItemsSnapshot = {
+      itemsBySection: { S: [{ id: 'a' }] },
+      displaySectionIds: ['S'],
+      leadingSectionId: '__lead',
+    };
+    const { controller } = buildController({
+      rows: [row('a')],
+      placements: [p('a', 0)],
+      sections: [s('S', 0)],
+      snapshot: snap,
+    });
+    controller.syncFromSnapshot();
+
+    const addSpy = vi.spyOn(window, 'addEventListener');
+    const removeSpy = vi.spyOn(window, 'removeEventListener');
+
+    // Pointer pressed on the drag handle — arms a window pointerup — but the
+    // gesture never begins (no onConsiderRows), so dragTileId stays null.
+    controller.armRow('S', 'a', 10, 10);
+    const armed = addSpy.mock.calls.find(([type]) => type === 'pointerup');
+    expect(armed, 'armRow did not arm a pointerup').toBeTruthy();
+    const handler = armed![1];
+
+    // Unmount path: cancelDrag must detach the listener even though no drag
+    // began (the early `dragTileId === null` return previously skipped cleanup).
+    controller.cancelDrag();
+    expect(removeSpy).toHaveBeenCalledWith('pointerup', handler);
+
+    addSpy.mockRestore();
+    removeSpy.mockRestore();
   });
 });

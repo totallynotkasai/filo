@@ -56,7 +56,8 @@ export function makeHistorySlice() {
       if (tiles.length > 0) commands.push(new AddTilesCommand(tiles, description));
       for (const conn of connections) commands.push(new AddConnectionCommand(conn));
       if (commands.length === 1) {
-        historyStore.execute(commands[0]);
+        const only = commands[0];
+        if (only) historyStore.execute(only);
         return;
       }
       historyStore.execute(new BatchCommand(description, commands));
@@ -190,6 +191,14 @@ export function makeHistorySlice() {
           // what undo would restore. structuredClone throws
           // DataCloneError on $state Proxies — JSON is the documented
           // safe pattern (see [[feedback-no-structuredclone-on-state-proxies]]).
+          //
+          // L6 (Audit-13) — DECISION: the JSON round-trip drops nested keys
+          // whose value is `undefined`. Accepted: `applyToTarget` restores the
+          // inverse by replacing the whole top-level settings key, and every
+          // settings reader treats a missing key the same as `undefined`
+          // (`?.` / `?? default`), so a dropped `undefined` sub-value is
+          // behaviourally identical to keeping it. Preserving it would mean a
+          // recursive undefined→delete-marker pass for zero observable gain.
           const v = prev[k];
           inversePatch[k] = (v !== null && typeof v === 'object')
             ? JSON.parse(JSON.stringify(v))

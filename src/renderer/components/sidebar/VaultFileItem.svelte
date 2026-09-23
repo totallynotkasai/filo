@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { dragHandle, dragHandleZone, type DndEvent } from 'svelte-dnd-action';
   import type { BoardType, FileTreeNode } from '../../../shared/types';
   import { vaultStore } from '../../stores/vault.svelte';
@@ -42,6 +43,14 @@
   let renameValue = $state('');
   let isDropTarget = $state(false);
   let autoExpandTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // 6.1.R2 (follow-up) — clear the hover auto-expand timer on unmount. Without
+  // this, a vault swap (or any unmount) while the timer is armed mid-drag-hover
+  // fires `vaultStore.toggleFolder(node.path)` ~600 ms later against the
+  // swapped-in vault. drag-leave / drop already clear it; this covers unmount.
+  onDestroy(() => {
+    if (autoExpandTimer != null) clearTimeout(autoExpandTimer);
+  });
 
   // Phase C / C.7 — auto-enter rename mode when this node was just created
   // via the sidebar's "New Folder" button. The toolbar sets
@@ -330,7 +339,7 @@
       const paths = boardCacheStore.paths;
       const target = toPosix(relPath).toLowerCase();
       const boardId = Object.keys(paths).find(
-        (id) => toPosix(paths[id]).toLowerCase() === target,
+        (id) => toPosix(paths[id] ?? '').toLowerCase() === target,
       );
       const board = boardId
         ? vaultStore.project?.boards?.find((b) => b.id === boardId)
@@ -919,7 +928,7 @@
     transition: opacity 0.1s ease;
   }
 
-  .vault-file-item:hover .file-actions,
+  .vault-file-item:hover .file-actions, .vault-file-item:focus-within .file-actions, /* 3.2: keyboard focus reveals row actions (WCAG 2.4.7), mirrors TileHeader */
   .file-actions.has-pinned-active {
     opacity: 1;
   }
@@ -945,7 +954,7 @@
    * mousedown on the right-hand area of the row falls *through* to
    * `.file-row` underneath, starting an HTML5 drag.
    */
-  .vault-file-item:hover .file-actions .action-btn,
+  .vault-file-item:hover .file-actions .action-btn, .vault-file-item:focus-within .file-actions .action-btn,
   .file-actions.has-pinned-active .action-btn {
     pointer-events: auto;
   }

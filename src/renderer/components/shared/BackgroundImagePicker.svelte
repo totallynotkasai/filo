@@ -56,7 +56,9 @@
     // Phase R2 — drain pending writers before the copy so a debounced
     // .board.json write referring to the new image path doesn't fire
     // before the file lands on disk.
-    const res = await copyFileIntoVault(paths[0], vaultPath);
+    const src = paths[0];
+    if (!src) return; // paths non-empty (checked above)
+    const res = await copyFileIntoVault(src, vaultPath);
     if (res.success) {
       onChange(res.relativePath ?? res.path ?? '');
     } else {

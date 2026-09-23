@@ -119,6 +119,18 @@ describe('UpdateCardFieldCommand / UpdateTaskFieldCommand — patch deep-clone (
     expect(taskSnapshot.patch.tags).toEqual(['old-tag']);
     expect(taskSnapshot.inversePatch.tags).toEqual(['restored']);
   });
+
+  // 6.2.H7 — `UpdateTaskFieldCommand` with a null docId used to silently
+  // no-op both execute and undo: the documentStore merge was gated on
+  // `if (this.docId)`, the FM patch was never applied, and the scheduled
+  // write committed unchanged FM back to disk. The constructor now throws
+  // so a future caller can't re-introduce the silent-no-op.
+  it('UpdateTaskFieldCommand throws on null docId (6.2.H7)', async () => {
+    const { UpdateTaskFieldCommand } = await import('@renderer/commands/taskCommands');
+    expect(() => {
+      new UpdateTaskFieldCommand('b1', 'a.md', null, { status: 'done' }, { status: 'todo' });
+    }).toThrow(/docId/);
+  });
 });
 
 describe('historyStore — redo-clear file-snapshot escalation (Phase R3 acceptance #2)', () => {

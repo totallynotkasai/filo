@@ -10,7 +10,8 @@
   import { getContext } from 'svelte';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
-  import { effectiveTileStyle } from '../../lib/styles/effectiveStyle';
+  import { effectiveTileHeaderColor } from '../../lib/styles/effectiveStyle';
+  import { computeTilesAABB, computeMinimapBounds } from '../../lib/canvas/minimapBounds';
 
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
   const boardStore = scope.board;
@@ -62,36 +63,19 @@
   });
 
   /**
-   * Bounding box — includes both tile extents AND the current viewport,
-   * with 10% + 100px padding on all sides.
+   * H4 (perf) — the all-tiles AABB is cached here, keyed on the tile set only
+   * (it does NOT read `viewportRect`), so a pure pan/zoom doesn't re-walk every
+   * tile. Recomputes only when a tile is added/removed/moved/resized.
    */
-  let bounds = $derived.by(() => {
-    const vp = canvasStore.viewportRect;
+  let tilesAABB = $derived(computeTilesAABB(Object.values(allTiles)));
 
-    let minX = vp.left;
-    let minY = vp.top;
-    let maxX = vp.right;
-    let maxY = vp.bottom;
-
-    for (const t of Object.values(allTiles)) {
-      minX = Math.min(minX, t.position.x);
-      minY = Math.min(minY, t.position.y);
-      maxX = Math.max(maxX, t.position.x + t.size.width);
-      maxY = Math.max(maxY, t.position.y + t.size.height);
-    }
-
-    // 10% + 100px padding
-    const rangeX = maxX - minX || 1000;
-    const rangeY = maxY - minY || 1000;
-    const padX = rangeX * 0.1 + 100;
-    const padY = rangeY * 0.1 + 100;
-    minX -= padX;
-    minY -= padY;
-    maxX += padX;
-    maxY += padY;
-
-    return { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY };
-  });
+  /**
+   * Bounding box — the union of the cached tile AABB and the current viewport,
+   * with 10% + 100px padding on all sides. Reads `viewportRect` (so it re-runs
+   * on pan), but that's now a cheap four-min/max union over the cached AABB
+   * instead of a full tile walk.
+   */
+  let bounds = $derived(computeMinimapBounds(tilesAABB, canvasStore.viewportRect));
 
   // Scale to fit bounds uniformly inside the map area
   let mapScale = $derived(
@@ -299,7 +283,7 @@
          show up in the minimap pips, not just per-tile overrides. -->
     {#each Object.values(allTiles).filter((t) => boardStore.getTile(t.id)) as tile (tile.id)}
       {@const isActive = activeMediaIds.has(tile.id)}
-      {@const resolved = effectiveTileStyle(tile, vaultStore.project?.settings, boardStore.current)}
+      {@const headerColor = effectiveTileHeaderColor(tile, vaultStore.project?.settings, boardStore.current)}
       <div
         class="minimap-pip"
         class:mm-active-media={isActive}
@@ -308,7 +292,7 @@
           top: {toMY(tile.position.y)}px;
           width: {Math.max(4, tile.size.width * mapScale)}px;
           height: {Math.max(3, tile.size.height * mapScale)}px;
-          background: {resolved.headerColor || 'var(--tile-header-bg)'};
+          background: {headerColor || 'var(--tile-header-bg)'};
         "
       >
         {#if isActive}

@@ -95,7 +95,7 @@ const BaseTileSchema = z.object({
   // not all set it. Readers treat absent as false (`tile.frameless === true`).
   // Only meaningful for media tile types (image / video / audio / file).
   frameless: z.boolean().optional(),
-  tags: z.array(z.string()).default([]), // tag names (canonical identifier)
+  tags: z.array(z.string()).default(() => []), // tag names (canonical identifier)
   boardId: z.string().min(1),
   /** Cached DOM-measured rendered width (for auto-height tiles). */
   renderedWidth: z.number().finite().optional(),
@@ -290,7 +290,7 @@ const TileDefinitionBase = z.object({
   title: z.string().default('New Tile'),
   titleHtml: z.string().optional(),
   style: TileStyleSchema,
-  tags: z.array(z.string()).default([]),
+  tags: z.array(z.string()).default(() => []),
   // Phase 31 A6.6 — .finite() rejects NaN / ±Infinity from hand-edited files.
   createdAt: z.number().finite(),
   updatedAt: z.number().finite(),

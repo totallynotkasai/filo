@@ -109,4 +109,35 @@ describe('Phase C / C.1 — historyStore async command serialisation', () => {
     await redoPromise;
     expect(order).toEqual(['exec', 'undo-start', 'undo-end', 'exec']);
   });
+
+  // L31 (Audit-6) — `whenChainSettled()` is the gate `vaultStore.save()` awaits
+  // before flushing, so an in-flight async command finishes scheduling its disk
+  // writes before the flush pass runs (no premature "saved").
+  it('L31: whenChainSettled() awaits an in-flight async command before resolving', async () => {
+    let resolveExecute: (() => void) | null = null;
+    const executePending = new Promise<void>((res) => { resolveExecute = res; });
+    let chainSettled = false;
+
+    const cmd: Command = {
+      description: 'async',
+      async execute() { await executePending; },
+      undo() {},
+    };
+
+    const execPromise = historyStore.execute(cmd);
+    // Command suspended mid-execute → the chain tail must NOT have settled.
+    const settledPromise = historyStore.whenChainSettled().then(() => { chainSettled = true; });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(chainSettled).toBe(false);
+
+    resolveExecute!();
+    await execPromise;
+    await settledPromise;
+    expect(chainSettled).toBe(true);
+  });
+
+  it('L31: whenChainSettled() resolves promptly when the chain is idle', async () => {
+    await expect(historyStore.whenChainSettled()).resolves.toBeUndefined();
+  });
 });

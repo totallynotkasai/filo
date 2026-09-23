@@ -59,7 +59,7 @@ describe('markdownSync — BOM handling', () => {
 
   it('parses empty input without crashing — hadBom defaults to false', () => {
     const r = parseMarkdownFile('');
-    expect(r).toEqual({ frontmatter: {}, body: '', hasFrontmatter: false, hadBom: false });
+    expect(r).toEqual({ frontmatter: {}, rawFrontmatter: '', body: '', hasFrontmatter: false, hadBom: false });
   });
 
   it('parses BOM-only input (no body, no frontmatter)', () => {

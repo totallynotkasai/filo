@@ -100,6 +100,21 @@ describe('parseTemplate', () => {
     const parsed = parseTemplate({ path: 't.md', name: 't', isBoard: false }, raw);
     expect(parsed.boardType).toBeNull();
   });
+
+  /**
+   * M2 (Audit-13) — template frontmatter parses via the `yaml` package now (was
+   * gray-matter, whose bundled js-yaml v3 coerced an unquoted `date:` → Date /
+   * `0b1010` → 10). Keeping these as strings matches the index + read/write
+   * gateway, so a template's metadata can't drift from the rest of the app.
+   */
+  it('parses frontmatter via the `yaml` package — date stays a string, body intact (M2)', () => {
+    const raw = '---\ntitle: Daily\ndue: 2026-06-01\ncount: 0b1010\n---\nBody {{date}}';
+    const parsed = parseTemplate({ path: 'Templates/Daily.md', name: 'Daily', isBoard: false }, raw);
+    expect(typeof parsed.frontmatter.due).toBe('string');
+    expect(parsed.frontmatter.due).toBe('2026-06-01');
+    expect(parsed.frontmatter.count).toBe('0b1010');
+    expect(parsed.body.trim()).toBe('Body {{date}}');
+  });
 });
 
 describe('templateMatchesBoardType', () => {

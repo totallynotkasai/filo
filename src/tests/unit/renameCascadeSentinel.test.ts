@@ -234,6 +234,18 @@ describe('renameCascadeSentinel (Sprint 35.3)', () => {
     expect(res.unreadable).toBe(true);
   });
 
+  it('returns unreadable for a present-but-empty (zero-byte) sentinel (DI-16)', async () => {
+    // Read SUCCEEDS (not ENOENT) but the file is empty: a crash created the
+    // sentinel without filling it. Must surface as unreadable, not be silently
+    // treated as the clean "no sentinel" steady state.
+    installStub({
+      'vault:read-file-text': () => ({ success: true, content: '' }),
+    });
+    const res = await readPendingRenameCascades('/vault');
+    expect(res.unreadable).toBe(true);
+    expect(res.entries).toBeUndefined();
+  });
+
   it('concurrent appends do not lose entries (mutex serialisation)', async () => {
     const { routes } = buildFsStub();
     installStub(routes);

@@ -2,6 +2,7 @@ import { SvelteSet } from 'svelte/reactivity';
 import type { CanvasScope } from '../../stores/canvas.svelte';
 import type { SpatialScope } from '../../stores/spatial.svelte';
 import type { BoardScopeBoard } from '../../stores/board.svelte';
+import type { Tile } from '../../schema/index';
 import { vaultStore } from '../../stores/vault.svelte';
 import { pendingSettingsStore } from '../../stores/pendingSettings.svelte';
 import { framesStore } from '../../stores/frames.svelte';
@@ -49,13 +50,48 @@ export class VisibleTilesViewModel {
 
   hiddenByFrame = $derived(framesStore.hiddenTileIds);
 
-  visibleTiles = $derived.by(() =>
-    this.deps.canvas.exportMode
-      ? Object.values(this.deps.board.tiles).filter((t) => !this.hiddenByFrame.has(t.id))
-      : Object.values(this.deps.board.tiles).filter(
-          (t) => this.visibleTileIds.has(t.id) && !this.hiddenByFrame.has(t.id),
-        ),
-  );
+  /**
+   * Audit-10 M6 — stable id→insertion-index map for the visible-tile sort
+   * below. Built from `board.tiles`' key order (insertion order = the canvas
+   * paint/stacking order for tiles sharing the `--z-tile` z-index) and
+   * recomputed ONLY when the tile SET changes. A pure pan mutates
+   * `canvas.viewportRect`, not `board.tiles`, so this derived stays cached and
+   * the hot pan path never pays its O(n) rebuild.
+   */
+  private tileOrder = $derived.by(() => {
+    // Non-reactive computation result — rebuilt wholesale when the tile set
+    // changes, never mutated in place after; reactivity comes from the
+    // enclosing `$derived`, so a plain Map (not SvelteMap) is correct.
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity
+    const order = new Map<string, number>();
+    let i = 0;
+    for (const id of Object.keys(this.deps.board.tiles)) order.set(id, i++);
+    return order;
+  });
+
+  /**
+   * Audit-10 M6 — in interactive mode, build the visible set by mapping over the
+   * culled `visibleTileIds` (size = on-screen tiles) instead of filtering EVERY
+   * tile on the board. A pan re-derives this on every viewport change, so the
+   * prior `Object.values(board.tiles).filter(...)` was O(total tiles) per frame;
+   * this is O(visible). Re-sorted into insertion order so overlapping
+   * same-z-index tiles keep their current DOM-order stacking. Export mode still
+   * walks every tile — viewport culling is intentionally disabled there.
+   */
+  visibleTiles = $derived.by(() => {
+    const tiles = this.deps.board.tiles;
+    if (this.deps.canvas.exportMode) {
+      return Object.values(tiles).filter((t) => !this.hiddenByFrame.has(t.id));
+    }
+    const order = this.tileOrder;
+    const out: Tile[] = [];
+    for (const id of this.visibleTileIds) {
+      const tile = tiles[id];
+      if (tile && !this.hiddenByFrame.has(tile.id)) out.push(tile);
+    }
+    out.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+    return out;
+  });
 
   isBoardEmpty = $derived(
     Object.keys(this.deps.board.tiles).length === 0 && this.deps.board.frames.length === 0,

@@ -180,8 +180,10 @@ describe('vaultExternalChanges — external attachment delete', () => {
     );
     expect(toast).toBeDefined();
 
-    // Invoke "Remove references".
-    toast?.actions?.[0].handler();
+    // Invoke "Remove references". 3.8 (Audit-18) — the handler is now async (it
+    // re-probes `vault:file-exists` at click time before cascading); the mock
+    // above keeps returning `false` (still gone), so the cascade proceeds.
+    await toast?.actions?.[0].handler();
 
     // Tile got removed via cascade.
     expect(boardStore.getTile('t_img')).toBeUndefined();

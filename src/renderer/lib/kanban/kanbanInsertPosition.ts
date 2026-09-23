@@ -21,10 +21,12 @@ export function computeKanbanInsertIndex(
   // mid-drag (display:none under svelte-dnd-action) can return a zeroed
   // rect, breaking the midpoint comparison; this guard runs first so the
   // common "drop above the column's first card" gesture stays robust.
-  const firstRect = cards[0].getBoundingClientRect();
-  if (clientY < firstRect.top) return 0;
+  const firstRect = cards[0]?.getBoundingClientRect();
+  if (firstRect && clientY < firstRect.top) return 0;
   for (let i = 0; i < cards.length; i++) {
-    const r = cards[i].getBoundingClientRect();
+    const card = cards[i];
+    if (!card) continue;
+    const r = card.getBoundingClientRect();
     if (clientY < r.top + r.height / 2) return i;
   }
   return baseCount;

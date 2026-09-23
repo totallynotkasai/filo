@@ -36,10 +36,9 @@ import { uiStore } from '../stores/ui.svelte';
 import { runVaultSearch, type SearchMatch } from '../lib/search/runSearch';
 import { invokeOk } from '../lib/utils/invokeOk';
 import { reportError } from '../lib/utils/errorBus';
-import { trackComponentWrite } from '../lib/boards/writeStateTracking';
-import { documentStore } from '../stores/document.svelte';
-import { parseMarkdownFile } from '../lib/editor/markdownSync';
-import { cancelMarkdownWritesForDocument } from '../lib/vault/markdownFileWriter';
+import { writeMarkdownAndReconcile } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
+import { runSerializedMarkdownWrite } from '../lib/vault/markdownFileWriter';
+import { splitFrontmatterSource } from '../lib/vault/frontmatterRead';
 
 interface FilePlan {
   /** Vault-relative path of the .md file. */
@@ -96,9 +95,21 @@ async function buildPlans(
     // The match offsets in `SearchMatch.matchStart` / `matchEnd` are
     // computed against the parsed BODY (FileMetadata.content), not the
     // raw file (which also contains the YAML frontmatter block at the
-    // top). Compute the frontmatter byte length so we can translate body
-    // offsets back into raw-file offsets when we splice the replacement.
-    const fmEnd = findFrontmatterEnd(content);
+    // top). Translate body offsets back into raw-file offsets by measuring
+    // the frontmatter prefix with the SAME splitter the search index used.
+    //
+    // 3.1 (Audit-14) — `FileMetadata.content` is produced by
+    // `splitFrontmatterSource` (see `lib/vault/vaultIndex.ts`), so the FM byte
+    // length MUST come from that exact splitter or the offsets diverge. A prior
+    // local `findFrontmatterEnd` regex (`---\r?\n`) disagreed with the index's
+    // fence regex (`---[ \t]*\r?\n`) on a trailing-space fence (`--- \n`):
+    // it matched nothing, returned 0, and every match then failed the
+    // byte-equality guard below (silent skip) — or, at a colliding offset,
+    // could splice into the frontmatter. The body is a suffix of `content`
+    // (the splitter strips a BOM then slices), so its start offset in the raw
+    // file is exactly `content.length - body.length`.
+    const { body: indexedBody } = splitFrontmatterSource(content);
+    const fmEnd = content.length - indexedBody.length;
 
     // Sort matches by descending start offset so each splice doesn't
     // shift the offsets of later matches.
@@ -125,29 +136,6 @@ async function buildPlans(
     return { ok: false, failedPaths };
   }
   return { ok: true, plans };
-}
-
-/**
- * Locates the byte offset where the YAML frontmatter ends in a raw file.
- * Returns 0 when no frontmatter is present. Used to translate body-relative
- * match offsets (from `FileMetadata.content`) into raw-file offsets for the
- * splice-based replacement.
- *
- * Conservative: only recognises the canonical `---\n…---\n` envelope at the
- * head of the file. Files with leading whitespace or BOM still parse but
- * with `fmEnd` correctly reflecting the BOM/whitespace prefix.
- */
-function findFrontmatterEnd(raw: string): number {
-  // Strip BOM if present so the regex anchors cleanly.
-  let prefix = 0;
-  if (raw.charCodeAt(0) === 0xfeff) prefix = 1;
-  // Body parsing in `gray-matter` strips frontmatter regardless of whitespace
-  // before the leading fence, so accept whitespace before the first `---`.
-  const rest = raw.slice(prefix);
-  const FRONTMATTER_RE = /^\s*---\r?\n([\s\S]*?)\r?\n---\r?\n/;
-  const m = rest.match(FRONTMATTER_RE);
-  if (!m) return 0;
-  return prefix + m[0].length;
 }
 
 export class ReplaceAllCommand extends Command {
@@ -182,42 +170,94 @@ export class ReplaceAllCommand extends Command {
   }
 
   async execute(): Promise<void> {
-    const items = this.plans.map((p) => ({ path: p.path, content: p.nextContent }));
-    await this.writeAll(items);
-    // Refresh the vault index so the search panel's matches re-derive against
-    // the new content. Without this, the next "Find" cycle would still see
-    // the old offsets until the file watcher fires (which may have already
-    // been suppressed by `trackComponentWrite`).
-    await vaultIndexStore.applyChanges(this.plans.map((p) => p.path));
-    this.syncOpenEditors(items);
+    // L4 (Audit-13) — re-read each file at execute time rather than trusting the
+    // build-time snapshot. `buildPlans` captured `originalContent` (the undo
+    // snapshot) and `nextContent` when the plan was built; on a REDO (or any gap
+    // before execute) the disk may have moved. Confirm disk STILL equals the
+    // planned `originalContent`; if it diverged, skip that file — a blind write
+    // would (a) clobber the intervening edit and (b) leave the undo snapshot
+    // pointing at bytes we never overwrote — and name it in the aggregate toast.
+    // (The first execute runs same-tick after buildPlans, so nothing drifts
+    // there in practice; this only bites a stale redo.)
+    const items: Array<{ path: string; content: string }> = [];
+    const skipped: string[] = [];
+    for (const p of this.plans) {
+      let diskNow: string | null = null;
+      try {
+        const read = await invokeOk('vault:read-file-text', this.vaultRoot, p.path);
+        diskNow = read.content;
+      } catch {
+        diskNow = null;
+      }
+      if (diskNow !== null && diskNow === p.originalContent) {
+        items.push({ path: p.path, content: p.nextContent });
+      } else {
+        skipped.push(p.path);
+      }
+    }
+    // Phase 6.6 — `writeAll` now writes AND reconciles each open editor per
+    // path via the coupled helper, so there is no separate batch reconcile
+    // here that could drift from the write list.
+    if (items.length > 0) {
+      await this.writeAll(items);
+      // Refresh the vault index so the search panel's matches re-derive against
+      // the new content. Without this, the next "Find" cycle would still see
+      // the old offsets until the file watcher fires (which may have already
+      // been suppressed by `trackComponentWrite`).
+      await vaultIndexStore.applyChanges(items.map((i) => i.path));
+    }
+    if (skipped.length > 0) {
+      const sample = skipped.slice(0, 3).join(', ');
+      const more = skipped.length > 3 ? `, +${skipped.length - 3} more` : '';
+      uiStore.toast(
+        `Replace skipped ${skipped.length} file(s) changed since the search (${sample}${more}) to avoid overwriting newer edits.`,
+        'warning',
+        6000,
+      );
+    }
   }
 
   async undo(): Promise<void> {
-    const items = this.plans.map((p) => ({ path: p.path, content: p.originalContent }));
-    await this.writeAll(items);
-    await vaultIndexStore.applyChanges(this.plans.map((p) => p.path));
-    this.syncOpenEditors(items);
-  }
-
-  /**
-   * Audit 2.1 — after the disk writes settle, bring every OPEN editor on an
-   * affected file back in step with what we just wrote. `writeAll` goes
-   * through `trackComponentWrite`, which suppresses the file-watcher event, so
-   * the normal external-change reconciliation never fires: an open TextTile /
-   * DocumentEditor keeps its stale in-memory body and its next debounced write
-   * would silently revert the replace (or, on undo, the restore). For each
-   * written path with a live document session we (1) cancel any armed editor
-   * write — it carries the pre-rewrite body — then (2) overwrite the in-memory
-   * document with the content just written so the editor's reload `$effect`
-   * re-renders from the disk-canonical content.
-   */
-  private syncOpenEditors(items: Array<{ path: string; content: string }>): void {
-    for (const item of items) {
-      const doc = documentStore.findByFilename(item.path);
-      if (!doc) continue;
-      cancelMarkdownWritesForDocument(doc.docId);
-      const parsed = parseMarkdownFile(item.content);
-      documentStore.applyReloadFromDisk(doc.docId, parsed.body, doc.richText, parsed.frontmatter);
+    // Phase 3 / 3.6 — per-file drift check before reverting. `execute` wrote
+    // each file's `nextContent`; if a file's CURRENT disk content no longer
+    // equals that, it was edited (externally, or via another in-app path)
+    // AFTER the replace, so a blind revert to `originalContent` would silently
+    // clobber that newer edit. Skip such files and name them in one aggregate
+    // toast. A vanished / unreadable file is also skipped — recreating it from
+    // `originalContent` could resurrect a file the user deleted in the gap.
+    // (Skip + warn rather than N interactive prompts: this is a bulk op, so one
+    // aggregate is more usable than a per-file modal. L4 (Audit-13) — `execute`
+    // now drift-skips symmetrically: it re-reads each file and writes only when
+    // disk still equals the planned `originalContent`, so on a stale redo it
+    // won't clobber an intervening edit either.)
+    const items: Array<{ path: string; content: string }> = [];
+    const skipped: string[] = [];
+    for (const p of this.plans) {
+      let diskNow: string | null = null;
+      try {
+        const read = await invokeOk('vault:read-file-text', this.vaultRoot, p.path);
+        diskNow = read.content;
+      } catch {
+        diskNow = null;
+      }
+      if (diskNow !== null && diskNow === p.nextContent) {
+        items.push({ path: p.path, content: p.originalContent });
+      } else {
+        skipped.push(p.path);
+      }
+    }
+    if (items.length > 0) {
+      await this.writeAll(items);
+      await vaultIndexStore.applyChanges(items.map((i) => i.path));
+    }
+    if (skipped.length > 0) {
+      const sample = skipped.slice(0, 3).join(', ');
+      const more = skipped.length > 3 ? `, +${skipped.length - 3} more` : '';
+      uiStore.toast(
+        `Undo skipped ${skipped.length} file(s) changed since the replace (${sample}${more}) to avoid overwriting newer edits.`,
+        'warning',
+        6000,
+      );
     }
   }
 
@@ -225,11 +265,33 @@ export class ReplaceAllCommand extends Command {
     const failed: string[] = [];
     for (const item of items) {
       try {
-        await trackComponentWrite(
-          this.vaultRoot,
-          item.path,
-          () => invokeOk('vault:write-existing-file-text', this.vaultRoot, item.path, item.content), // allow-direct-write: vault-wide Replace All operates on raw markdown text and is atomic with the pre-flight read; routing through the debounced markdown gateway would race the in-flight searches.
-          { notifyOnError: false },
+        // Phase 6.6 — coupled write+reconcile. `mode: 'full'` reloads any open
+        // editor on this path with the rewritten bytes (its prior in-memory
+        // body would otherwise re-clobber the replace on the next debounce;
+        // `applyReloadFromDisk` self-cancels the armed writer). The reconcile
+        // is keyed to the SAME path we write, so it can't drift from the write
+        // list. `notifyOnError: false` keeps the bulk loop from spamming a
+        // toast per file — the aggregate toast below names the failures.
+        // Replace All is atomic with the pre-flight read, so routing through
+        // the debounced markdown gateway (which would race the in-flight
+        // searches) is deliberately bypassed.
+        //
+        // Audit-10 M1 — but still enrol on the per-path write chain so this
+        // bulk write serialises behind any in-flight editor/gateway write to
+        // the SAME `.md` (a debounced TextTile / DocumentEditor save executing
+        // at the IPC layer would otherwise race it — OS-arbitrated order, the
+        // loser's bytes silently lost). The coupled reconcile below cancels the
+        // editor's ARMED writer; the chain covers the already-in-flight one the
+        // cancel can't reach. `runSerializedMarkdownWrite` is ordering-only (no
+        // debounce), so it doesn't reintroduce the gateway race noted above.
+        await runSerializedMarkdownWrite(item.path, () =>
+          writeMarkdownAndReconcile({
+            vaultRoot: this.vaultRoot,
+            path: item.path,
+            content: item.content,
+            mode: 'full',
+            track: { notifyOnError: false },
+          }),
         );
       } catch (err) {
         reportError('replaceAll.write', err, `Failed to write ${item.path}`);

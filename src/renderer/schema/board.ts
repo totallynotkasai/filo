@@ -26,6 +26,13 @@ import { uniqueBy, uniqueStrings, idString } from './schemaUtils';
  * unknown keys would only accumulate as dead weight on disk. Forward-
  * compat lives on the outer board envelopes instead — see the DECISION
  * comment on `BoardSchema`.
+ *
+ * L3 (Audit-13) — RE-CONFIRMED (2026-06-07) against the envelope's "don't
+ * destroy data we don't understand" docstring: kept non-passthrough by
+ * decision. A forward-compat style key written by a newer Filo is meaningless
+ * to an older one's cascade resolver, and the only loss is a newer→older→save
+ * downgrade round-trip the user controls via their version. Do NOT add
+ * `.passthrough()` here without re-opening that decision.
  */
 const PartialTileStyleSchema = z.object({
   headerColor: z.string().optional(),
@@ -229,7 +236,7 @@ const KanbanSavedViewSchema = z.object({
   id: z.string().min(1),
   name: z.string(),
   sortBy: z.enum(['manual', 'title', 'created', 'dueDate', 'priority']).default('manual'),
-  filterTags: z.array(z.string()).default([]),
+  filterTags: z.array(z.string()).default(() => []),
   filterProp: z
     .object({
       // Sprint C / C6 — empty filter key is meaningless: the filter UI
@@ -270,7 +277,7 @@ const KanbanSettingsSchema = BaseBoardSettingsSchema.extend({
   lastView: z
     .object({
       sortBy: z.enum(['manual', 'title', 'created', 'dueDate', 'priority']).default('manual'),
-      filterTags: z.array(z.string()).default([]),
+      filterTags: z.array(z.string()).default(() => []),
       filterProp: z
         .object({
           // Sprint C / C6 — mirrors KanbanSavedViewSchema.filterProp.key.
@@ -293,7 +300,7 @@ const TaskListSavedViewSchema = z.object({
   name: z.string(),
   groupBy: z.enum(['status', 'priority', 'tag', 'dueDate', 'category', 'none']).default('status'),
   sortBy: z.enum(['title', 'created', 'dueDate', 'priority', 'manual']).default('priority'),
-  filterTags: z.array(z.string()).default([]),
+  filterTags: z.array(z.string()).default(() => []),
   filterStatus: z.string().nullable().default(null),
   filterPriority: z.enum(['urgent', 'high', 'medium', 'low', 'none']).nullable().default(null),
   showCompleted: z.boolean().default(true),
@@ -330,7 +337,7 @@ const TaskListSettingsSchema = BaseBoardSettingsSchema.extend({
     .object({
       groupBy: z.enum(['status', 'priority', 'tag', 'dueDate', 'category', 'none']).default('status'),
       sortBy: z.enum(['title', 'created', 'dueDate', 'priority', 'manual']).default('priority'),
-      filterTags: z.array(z.string()).default([]),
+      filterTags: z.array(z.string()).default(() => []),
       filterStatus: z.string().nullable().default(null),
       filterPriority: z
         .enum(['urgent', 'high', 'medium', 'low', 'none'])
@@ -403,7 +410,7 @@ const BaseBoardSchema = z.object({
 
 export const MindMapBoardSchema = BaseBoardSchema.extend({
   type: z.literal('mindmap'),
-  settings: MindMapSettingsSchema.default({}),
+  settings: MindMapSettingsSchema.prefault({}),
   // Note: per-board pan/zoom now lives in `.filo/viewports.json` keyed by
   // boardId. Older `.board.json` files with an inline `viewport` field are
   // still accepted (the schema is .passthrough()) but the field is ignored
@@ -417,18 +424,18 @@ export const MindMapBoardSchema = BaseBoardSchema.extend({
    * special-character key would otherwise pass through and collide
    * silently with whatever the renderer minted next.
    */
-  placements: z.record(idString, TilePlacementSchema).default({}),
+  placements: z.record(idString, TilePlacementSchema).default(() => ({})),
   /**
    * Inline tiles (Link, Embed, Timer) — stored fully in project.json.
    * These tile types are not vault-backed and have no entry in tiles.json.
    */
-  inlineTiles: z.record(idString, InlineTileSchema).default({}),
+  inlineTiles: z.record(idString, InlineTileSchema).default(() => ({})),
   // Sprint A / A14 — `.min(1)` + uniqueness check on the flat ID arrays.
   // The connections record at the envelope level is the source of truth;
   // this array is the per-mindmap render-order list. A duplicate id here
   // double-renders a connection and confuses every selection / delete op.
-  connections: z.array(z.string().min(1)).default([]).refine(...uniqueStrings('MindMapBoard.connections')),
-  frames: z.array(z.string().min(1)).default([]).refine(...uniqueStrings('MindMapBoard.frames')),
+  connections: z.array(z.string().min(1)).default(() => []).refine(...uniqueStrings('MindMapBoard.connections')),
+  frames: z.array(z.string().min(1)).default(() => []).refine(...uniqueStrings('MindMapBoard.frames')),
   waypoints: z
     .array(
       z.object({
@@ -444,9 +451,9 @@ export const MindMapBoardSchema = BaseBoardSchema.extend({
         locked: z.boolean().default(false),
       }).passthrough(),
     )
-    .default([])
+    .default(() => [])
     .refine(...uniqueBy('id', 'waypoints')),
-  groups: z.array(TileGroupSchema).default([]).refine(...uniqueBy('id', 'groups')),
+  groups: z.array(TileGroupSchema).default(() => []).refine(...uniqueBy('id', 'groups')),
 }).passthrough();
 
 /**
@@ -471,7 +478,7 @@ const KanbanColumnSchema = z.object({
   position: z.number().int().nonnegative().default(0),
   collapsed: z.boolean().default(false),
   style: PartialColumnStyleSchema.optional(),
-  tilePlacements: z.array(KanbanTilePlacementSchema).default([]),
+  tilePlacements: z.array(KanbanTilePlacementSchema).default(() => []),
   wipLimit: z.number().int().min(0).optional(),
   // Sprint C / C23 — column-level cover image (vault-relative path).
   // Mirrors `KanbanTilePlacement.coverImage` but applies to the column
@@ -484,8 +491,8 @@ const KanbanColumnSchema = z.object({
 
 export const KanbanBoardSchema = BaseBoardSchema.extend({
   type: z.literal('kanban'),
-  settings: KanbanSettingsSchema.default({}),
-  columns: z.array(KanbanColumnSchema).default([]).refine(...uniqueBy('id', 'columns')),
+  settings: KanbanSettingsSchema.prefault({}),
+  columns: z.array(KanbanColumnSchema).default(() => []).refine(...uniqueBy('id', 'columns')),
   /**
    * Phase 2 / 2.3 — frozen on-disk folder name where this Kanban board's
    * cards live. Set once at board create-time to the sanitised board name;
@@ -526,14 +533,14 @@ const TaskListSectionSchema = z.object({
 
 export const TaskListBoardSchema = BaseBoardSchema.extend({
   type: z.literal('tasklist'),
-  settings: TaskListSettingsSchema.default({}),
+  settings: TaskListSettingsSchema.prefault({}),
   /**
    * Task placements — flat list. Each entry references `tileDefs[tileId]`
    * (always a `text` tile). `position` is honoured only when `sortBy` is
    * `'manual'`; other modes derive ordering from frontmatter at render time.
    */
-  tasks: z.array(TaskPlacementSchema).default([]).refine(...uniqueBy('tileId', 'tasks')),
-  sections: z.array(TaskListSectionSchema).default([]).refine(...uniqueBy('id', 'sections')),
+  tasks: z.array(TaskPlacementSchema).default(() => []).refine(...uniqueBy('tileId', 'tasks')),
+  sections: z.array(TaskListSectionSchema).default(() => []).refine(...uniqueBy('id', 'sections')),
   /**
    * Tile IDs whose subtree is collapsed in the renderer. Persisted so a
    * user's "hide subtasks" state survives tab switch / reload, matching
@@ -543,12 +550,12 @@ export const TaskListBoardSchema = BaseBoardSchema.extend({
   // Sprint A / A14 — `.min(1)` + uniqueness. A duplicate id here would
   // double-toggle the same subtree's collapsed state and corrupt the
   // collapse/expand UX.
-  collapsedSubtasks: z.array(z.string().min(1)).default([]).refine(...uniqueStrings('TaskListBoard.collapsedSubtasks')),
+  collapsedSubtasks: z.array(z.string().min(1)).default(() => []).refine(...uniqueStrings('TaskListBoard.collapsedSubtasks')),
 }).passthrough();
 
 export const DocumentBoardSchema = BaseBoardSchema.extend({
   type: z.literal('document'),
-  settings: DocumentSettingsSchema.default({}),
+  settings: DocumentSettingsSchema.prefault({}),
   contentId: z.string(), // shared content ID (links to text tile content)
   content: z.string().default(''),
 }).passthrough();
@@ -579,7 +586,7 @@ export const BoardSchema = z.discriminatedUnion('type', [
       for (const placement of (col.tilePlacements ?? [])) {
         if (seen.has(placement.tileId)) {
           ctx.addIssue({
-            code: z.ZodIssueCode.custom,
+            code: 'custom',
             message: `Kanban tileId duplicated across columns: ${placement.tileId}`,
             path: ['columns'],
           });
@@ -597,7 +604,7 @@ export const BoardSchema = z.discriminatedUnion('type', [
     for (const id of placementIds) {
       if (inlineIds.has(id)) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           message: `tileId appears in both placements and inlineTiles: ${id}`,
           path: ['inlineTiles'],
         });

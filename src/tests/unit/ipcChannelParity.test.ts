@@ -99,6 +99,19 @@ describe('IPC channel parity', () => {
       'vault:tree-too-large',
       'app:flush-and-quit',
       'app:ready-to-quit',
+      // 6.2.H4 — renderer → main one-way cancel signal; main listens
+      // via ipcMain.once inside the close/before-quit handlers.
+      'app:cancel-quit',
+      // Audit-4 DI-04 — renderer → main quit heartbeat; same ipcMain.once
+      // registration in main.ts (not an ipcMain.handle in src/main/ipc).
+      'app:quit-awaiting-user',
+      // Audit5 2.1 — renderer → main periodic drain heartbeat; registered via
+      // ipcMain.on in main.ts (not an ipcMain.handle in src/main/ipc).
+      'app:drain-heartbeat',
+      // Audit-12 S1 — preload-internal approved-source registration; registered
+      // via ipcMain.on in dialog.ipc.ts (not an ipcMain.handle), fired by the
+      // preload's getPathForFile through a direct ipcRenderer.send.
+      'vault:register-source-path',
     ]);
     const orphans = [...unionMembers].filter(
       (channel) => !registered.has(channel) && !broadcastOnly.has(channel),

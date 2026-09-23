@@ -25,6 +25,8 @@
  * Jan 31 + 1m = Feb 28 (or Feb 29 in a leap year).
  */
 
+import { addMonthsClamped } from './dateMath';
+
 export type RecurrenceMode = 'schedule' | 'completion';
 
 type RecurrenceUnit =
@@ -42,9 +44,9 @@ export function parseRecurrence(rec: string): RecurrenceUnit | null {
 
   const m = /^every\s+(\d+)\s*(d|days?|w|weeks?|m|months?|y|years?)$/i.exec(r);
   if (m) {
-    const count = parseInt(m[1], 10);
+    const count = parseInt(m[1] ?? '', 10);
     if (count < 1) return null;
-    const u = m[2].toLowerCase()[0] as 'd' | 'w' | 'm' | 'y';
+    const u = (m[2] ?? '').toLowerCase()[0] as 'd' | 'w' | 'm' | 'y';
     return { kind: 'fixed', count, unit: u };
   }
   return null;
@@ -66,9 +68,9 @@ function startOfDay(d: Date): Date {
 function parseIsoDate(iso: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
   if (!m) return null;
-  const y = parseInt(m[1], 10);
-  const mo = parseInt(m[2], 10);
-  const d = parseInt(m[3], 10);
+  const y = parseInt(m[1] ?? '', 10);
+  const mo = parseInt(m[2] ?? '', 10);
+  const d = parseInt(m[3] ?? '', 10);
   if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
   const out = new Date(y, mo - 1, d);
   out.setHours(0, 0, 0, 0);
@@ -108,13 +110,8 @@ function addInterval(from: Date, unit: RecurrenceUnit): Date {
     const lastDay = new Date(targetYear, targetMonth + 1, 0).getDate();
     return new Date(targetYear, targetMonth, Math.min(desiredDay, lastDay));
   }
-  // Months: preserve day-of-month and clamp.
-  const desiredDay = from.getDate();
-  const targetMonthIdx = from.getMonth() + unit.count;
-  // Use a constructor that handles wraparound, then clamp the day.
-  const wrap = new Date(from.getFullYear(), targetMonthIdx, 1);
-  const lastDay = new Date(wrap.getFullYear(), wrap.getMonth() + 1, 0).getDate();
-  return new Date(wrap.getFullYear(), wrap.getMonth(), Math.min(desiredDay, lastDay));
+  // Months: preserve day-of-month and clamp (shared with quick-add — Audit-8 L6).
+  return addMonthsClamped(from, unit.count);
 }
 
 /**

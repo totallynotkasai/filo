@@ -95,7 +95,7 @@ export async function exportToPdf(element: HTMLElement): Promise<string> {
   });
 
   pdf.addImage(dataUrl, 'PNG', 0, 0, width, height);
-  const pdfBase64 = pdf.output('datauristring').split(',')[1];
+  const pdfBase64 = pdf.output('datauristring').split(',')[1] ?? '';
   return pdfBase64;
 }
 
@@ -423,9 +423,10 @@ function renderCanvasTile(tile: Tile, offsetX: number, offsetY: number): string 
 
   const style = tile.style;
   const radius = style.shape === 'rounded' ? 8 : 0;
+  const shadowIntensity = style.shadowIntensity ?? 0;
   const shadow =
-    style.shadowIntensity > 0
-      ? `box-shadow: 0 ${Math.round(style.shadowIntensity * 12)}px ${Math.round(style.shadowIntensity * 24)}px rgba(0,0,0,${(style.shadowIntensity * 0.4).toFixed(2)});`
+    shadowIntensity > 0
+      ? `box-shadow: 0 ${Math.round(shadowIntensity * 12)}px ${Math.round(shadowIntensity * 24)}px rgba(0,0,0,${(shadowIntensity * 0.4).toFixed(2)});`
       : '';
 
   const tileStyle = [
@@ -609,7 +610,7 @@ export async function doExport(
   element: HTMLElement | null,
   project: Project | null,
   projectName?: string,
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; canceled?: boolean }> {
   try {
     const name = projectName || project?.name || 'export';
 
@@ -640,12 +641,12 @@ export async function doExport(
 
       if (format === 'png') {
         const dataUrl = await exportToPng(element);
-        data = dataUrl.split(',')[1]; // Strip data:image/png;base64, prefix
+        data = dataUrl.split(',')[1] ?? ''; // Strip data:image/png;base64, prefix
       } else if (format === 'svg') {
         data = await exportToSvg(element);
         // SVG comes as a data URL, extract the SVG
         if (data.startsWith('data:')) {
-          data = decodeURIComponent(data.split(',')[1]);
+          data = decodeURIComponent(data.split(',')[1] ?? '');
         }
       } else {
         data = await exportToPdf(element);

@@ -17,6 +17,8 @@ import {
   renameFile,
   renameFolderInTags,
   dropFolderInTags,
+  isValidTagName,
+  isSafeNewTagName,
 } from '@renderer/lib/vault/tagsStorage';
 import { CURRENT_TAGS_FILE_VERSION } from '@renderer/schema/tagsFile';
 import {
@@ -24,6 +26,52 @@ import {
   __resetErrorBusForTests,
   type ReportedError,
 } from '@renderer/lib/utils/errorBus';
+
+// ── 1.5a ───────────────────────────────────────────────────────────────────
+// Strict create/rename input guard. The frontmatter rewriter quotes scalars
+// (1.5b/1.6) so any name is SAFE on disk, but the user shouldn't be able to
+// MINT confusing tags (numbers, YAML keywords, leading indicator chars). This
+// is scoped to the input boundary only — `isValidTagName` stays lenient so
+// existing tags (e.g. a legacy numeric tag) are never disturbed.
+describe('isSafeNewTagName (1.5a — strict create/rename input guard)', () => {
+  it('accepts ordinary names (hierarchy, hyphens, mid-colon, on/yes/no)', () => {
+    for (const name of [
+      'project', 'todo', 'foo/bar', 'team/dev/lead', 'v2', '2024-q1', 'a:b', 'foo#bar', 'on', 'yes', 'no',
+    ]) {
+      expect(isSafeNewTagName(name)).toBe(true);
+    }
+  });
+
+  it('strips a single leading # before validating', () => {
+    expect(isSafeNewTagName('#todo')).toBe(true);
+  });
+
+  it('rejects empty / whitespace-bearing names', () => {
+    for (const name of ['', '   ', '#', 'a b', 'two words']) {
+      expect(isSafeNewTagName(name)).toBe(false);
+    }
+  });
+
+  it('rejects names YAML reads as a non-string scalar (number / bool / null)', () => {
+    for (const name of ['123', '2024', '3.14', 'true', 'false', 'null']) {
+      expect(isSafeNewTagName(name)).toBe(false);
+    }
+  });
+
+  it('rejects names starting with (or built from) a YAML indicator char', () => {
+    for (const name of [
+      '@home', '*anchor', '&anchor', '!tag', '%directive', '`tick', ':colon', '?question', '|pipe', '>gt',
+      '[bracket', '{brace', ',comma',
+    ]) {
+      expect(isSafeNewTagName(name)).toBe(false);
+    }
+  });
+
+  it('keeps isValidTagName lenient so existing tags are never disturbed', () => {
+    expect(isValidTagName('2024')).toBe(true); // a legacy numeric tag stays valid
+    expect(isSafeNewTagName('2024')).toBe(false); // but can't be freshly minted
+  });
+});
 
 describe('tagsStorage — pure CRUD', () => {
   describe('parseTagsFile', () => {

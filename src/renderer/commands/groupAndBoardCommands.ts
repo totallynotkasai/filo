@@ -9,6 +9,7 @@ import { cloneTile } from '../lib/utils/cloneTile';
 import { reportError } from '../lib/utils/errorBus';
 import { trackComponentWrite } from '../lib/boards/boardSaver';
 import { invokeOk } from '../lib/utils/invokeOk';
+import { writeMarkdownAndReconcile } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
 
 /**
  * D.5 — opens the inconsistent-state modal when one or more rollback
@@ -102,12 +103,25 @@ export class BatchCommand extends Command {
         await Promise.resolve(cmd.execute());
         executed.push(cmd);
       } catch (err) {
+        // 6.4.M14 — log the ORIGINAL child failure that triggered the
+        // rollback. Previously only rollback failures were reported; when the
+        // rollback itself succeeded the root-cause error was swallowed past the
+        // rollback (rethrown to a fire-and-forget historyStore caller as an
+        // unhandled rejection, with no breadcrumb pinpointing which child or
+        // why). The user-facing toast comes from historyStore's catch (6.4.M15);
+        // this is the diagnostic detail that toast can't carry.
+        console.error(
+          `[BatchCommand] Child "${cmd.description}" failed in batch "${this.description}"; rolling back ${executed.length} applied child/children.`,
+          err,
+        );
         // D.5 — track rollback failures so the user gets a danger modal
         // instead of (or in addition to) per-child toasts. A toast for a
         // half-applied batch is too easy to dismiss; the modal forces
         // acknowledgement of the inconsistency.
         const rollbackFailures: { description: string; phase: 'undo' }[] = [];
         for (let i = executed.length - 1; i >= 0; i--) {
+          const ex = executed[i];
+          if (!ex) continue;
           try {
             // Polish phase 2.2 — `Promise.resolve(...)` wraps the child's
             // return value so a sync `void` still works (Promise.resolve()
@@ -117,14 +131,14 @@ export class BatchCommand extends Command {
             // race their .md restores against subsequent rollback steps
             // and against the outer rethrow — exactly the silent-failure
             // window we're closing.
-            await Promise.resolve(executed[i].undo());
+            await Promise.resolve(ex.undo());
           } catch (rollbackErr) {
             reportError(
               'BatchCommand',
               rollbackErr,
-              `Rollback failure for "${executed[i].description}" while undoing partial batch "${this.description}".`,
+              `Rollback failure for "${ex.description}" while undoing partial batch "${this.description}".`,
             );
-            rollbackFailures.push({ description: executed[i].description, phase: 'undo' });
+            rollbackFailures.push({ description: ex.description, phase: 'undo' });
           }
         }
         if (rollbackFailures.length > 0) {
@@ -146,25 +160,35 @@ export class BatchCommand extends Command {
     const undone: Command[] = [];
     for (let i = this.commands.length - 1; i >= 0; i--) {
       const cmd = this.commands[i];
+      if (!cmd) continue;
       try {
         await Promise.resolve(cmd.undo());
         undone.push(cmd);
       } catch (err) {
+        // 6.4.M14 — log the original child-undo failure that triggered the
+        // re-apply (see execute() for the rationale); the toast comes from
+        // historyStore (6.4.M15), this is the per-child diagnostic.
+        console.error(
+          `[BatchCommand] Child "${cmd.description}" undo failed in batch "${this.description}"; re-applying ${undone.length} undone child/children.`,
+          err,
+        );
         // D.5 — same logic as execute(): if the rollback path itself
         // throws on one or more re-executes, the state is now genuinely
         // inconsistent. Surface a modal so the user can decide to close
         // without saving.
         const rollbackFailures: { description: string; phase: 'execute' }[] = [];
         for (let j = undone.length - 1; j >= 0; j--) {
+          const u = undone[j];
+          if (!u) continue;
           try {
-            await Promise.resolve(undone[j].execute());
+            await Promise.resolve(u.execute());
           } catch (rollbackErr) {
             reportError(
               'BatchCommand',
               rollbackErr,
-              `Rollback failure for "${undone[j].description}" while redoing partial batch undo "${this.description}".`,
+              `Rollback failure for "${u.description}" while redoing partial batch undo "${this.description}".`,
             );
-            rollbackFailures.push({ description: undone[j].description, phase: 'execute' });
+            rollbackFailures.push({ description: u.description, phase: 'execute' });
           }
         }
         if (rollbackFailures.length > 0) {
@@ -347,6 +371,14 @@ export class CascadeDeleteCommand extends Command {
     // legacy default-empty argument was used. The mismatch check itself
     // is unchanged so the existing in-memory-only test scenarios (where
     // both paths are empty) continue to exercise the un-guarded path.
+    //
+    // Audit-11 VS-6 — deliberately a path-STRING compare, NOT the
+    // generation-aware `isStillSameVault`. The only divergence between the two
+    // (same path, new generation — a close→reopen of the same path, or an
+    // A→B→A round-trip) requires a vault OPEN, which fires the `pre-swap` hook
+    // that runs `historyStore.clear()` (history.svelte.ts), so this command is
+    // off every undo/redo stack before it could observe a same-path-new-gen
+    // vault. The blind spot is therefore unreachable here.
     if (this.vaultRoot && vaultStore.path && vaultStore.path !== this.vaultRoot) {
       uiStore.toast(
         'Cannot redo cascade-delete: the vault has changed since the delete ran.',
@@ -356,6 +388,7 @@ export class CascadeDeleteCommand extends Command {
       return;
     }
 
+    // allow-board-store-current: active-vs-cache pivot — the command operates across boards, so we route same-board mutations through the runtime facade and other-board mutations through the cache-only persist path
     const activeId = boardStore.current?.id ?? null;
     for (const [boardId, tiles] of Object.entries(this.byBoard)) {
       for (const tile of tiles) {
@@ -389,6 +422,10 @@ export class CascadeDeleteCommand extends Command {
     // restoring bodies into the WRONG vault — is closed at construction
     // time; the guard form here is intentionally identical to
     // `execute()`'s.
+    //
+    // Audit-11 VS-6 — see `execute()`: the path-STRING compare is sufficient
+    // because the generation-only divergence (same path, new instance) is
+    // unreachable for a history-stack command (vault open clears the stack).
     if (this.vaultRoot && vaultStore.path && vaultStore.path !== this.vaultRoot) {
       uiStore.toast(
         'Cannot undo cascade-delete: the vault has changed since the delete ran.',
@@ -417,16 +454,24 @@ export class CascadeDeleteCommand extends Command {
       if (!this.vaultRoot) break;
       const vaultRoot = this.vaultRoot;
       restorePromises.push(
-        trackComponentWrite(
+        // Phase 6.6 — coupled write+reconcile. `create: true` restores the file
+        // the cascade deleted (mkdir -p, the placement re-binds immediately
+        // after), and `mode: 'full'` reloads any editor still mounted on it with
+        // the restored bytes for the SAME path so a still-armed debounce can't
+        // clobber the restoration ~300 ms later (applyReloadFromDisk
+        // self-cancels, 6.0.C2). Keying the reconcile to the just-written path
+        // replaces the post-Promise.all batch sync that used to follow.
+        writeMarkdownAndReconcile({
           vaultRoot,
-          relPath,
-          async () => {
-            await invokeOk('vault:write-file-text', vaultRoot, relPath, content);
-          },
-        ).catch((err) => {
-          // trackComponentWrite already reports via notifyWriteError +
-          // marks the path failed. We still log a topical message so the
-          // restored-undo path surfaces in errorBus alongside the toast.
+          path: relPath,
+          content,
+          mode: 'full',
+          create: true,
+        }).catch((err) => {
+          // trackComponentWrite (inside the helper) already reports via
+          // notifyWriteError + marks the path failed. We still log a topical
+          // message so the restored-undo path surfaces in errorBus alongside
+          // the toast.
           reportError('CascadeDeleteCommand', err, `Failed to restore ${relPath}`);
         }),
       );
@@ -452,6 +497,11 @@ export class CascadeDeleteCommand extends Command {
     }
     await Promise.all(restorePromises);
 
+    // Phase 6.6 — the open-editor reconcile now happens inside each
+    // writeMarkdownAndReconcile above (write-path == reconcile-path by
+    // construction), so the post-Promise.all batch syncOpenEditorsAfterDiskMutation
+    // is gone. Media restorations have no document state to sync, as before.
+
     // Sprint 35.2 — restore the style fields BEFORE the placements so a
     // restored kanban card sees its coverImage back at the same time as
     // the rest of its placement. Frames are board-scope and survive the
@@ -467,13 +517,16 @@ export class CascadeDeleteCommand extends Command {
     // the no-snapshot tiles would silently materialise a blank file in the
     // user's vault. With the flag the placement comes back pointing at a
     // missing file and the existing broken-ref UX kicks in.
+    // allow-board-store-current: active-vs-cache pivot, mirror of execute()
     const activeId = boardStore.current?.id ?? null;
     for (const [boardId, tiles] of Object.entries(this.byBoard)) {
       for (const tile of tiles) {
         if (boardId === activeId) {
           void boardStore.addTile(tile, { skipEmptySeed: true });
         } else {
-          void boardCacheStore.persistAddTile(tile, { skipEmptySeed: true });
+          // 6.4.M20 — pass the known boardId so the re-add doesn't depend on
+          // findBoardIdForTile resolving a tile that isn't in the cache yet.
+          void boardCacheStore.persistAddTile(tile, { skipEmptySeed: true }, boardId);
         }
       }
     }
@@ -562,16 +615,41 @@ export class UpdateBoardSettingsCommand extends Command {
     this.description = description ?? `Update board settings (${Object.keys(patch).join(', ')})`;
   }
 
+  /**
+   * Audit2 2.4 — apply settings to THIS command's board (`targetBoardId`) via
+   * the cache, not through the global `boardStore` facade. The facade mutates
+   * whatever board the active pane shows, and on a cross-board undo the pane
+   * pivot (`boardActivator`) is `$effect`-driven (async) while `undo()` runs
+   * synchronously, so the facade could still point at the previously-active
+   * board — landing the mutation on the wrong board. `updateBoardSettings`
+   * merges by board id and bumps that board's `settingsVersionByBoard`, so the
+   * target re-renders whether or not it is the active pane (matching how the
+   * Kanban/Task commands already self-target).
+   */
+  private applyToTarget(patch: Record<string, unknown>, deleteKeys: string[]): void {
+    const cached = boardCacheStore.cache[this.targetBoardId];
+    if (!cached) {
+      // L10 (Audit-7) — the target board was closed/evicted. Undo stacks file by
+      // the GLOBAL active board, so this command can sit on a still-live board's
+      // stack while its OWN target board is gone; a bare return would silently
+      // drop the user's undo/redo. Surface it like the cascade/Move* commands.
+      uiStore.toast('Cannot apply board settings — the target board was deleted.', 'warning', 5000);
+      return;
+    }
+    const current = (cached.board.settings ?? {}) as Record<string, unknown>;
+    const merged: Record<string, unknown> = { ...current, ...patch };
+    for (const k of deleteKeys) delete merged[k];
+    boardCacheStore.updateBoardSettings(this.targetBoardId, merged);
+  }
+
   execute() {
-    boardStore.updateSettings({ ...this.patch });
+    this.applyToTarget(this.patch, []);
   }
 
   undo() {
-    if (Object.keys(this.inversePatch).length > 0) {
-      boardStore.updateSettings({ ...this.inversePatch });
+    if (this.inversePatch && Object.keys(this.inversePatch).length === 0 && this.deleteOnUndo.length === 0) {
+      return;
     }
-    if (this.deleteOnUndo.length > 0) {
-      boardStore.deleteSettingsKeys(this.deleteOnUndo);
-    }
+    this.applyToTarget(this.inversePatch, this.deleteOnUndo);
   }
 }

@@ -1,4 +1,5 @@
 import type { FileMetadata } from './vaultIndex';
+import { valuesEqual } from './frontmatterEngine';
 
 /**
  * Describes what to do with an external change to a file the app may be
@@ -100,6 +101,17 @@ export function classifyExternalChange(params: {
   // and fall through to the editor-state path — that's the safe default.
   if (previousMetadata && isBodyEquivalent(previousMetadata, nextMetadata)) {
     if (!frontmatterEqual(previousMetadata, nextMetadata)) {
+      // VS1 (Audit-6) — even a frontmatter-only delta can be a mid-write
+      // truncated read: the surviving body bytes happen to match the prior
+      // version, but the RAW file shrank drastically (the FM block was caught
+      // mid-rewrite). Applying it would push a truncated frontmatter into tile
+      // caches / tags with no editor open to protect them. Hold for a delayed
+      // re-read — same raw-shrink + fresh-mtime signature the editor-clean
+      // branch already guards. (rawByteSize makes this fire even though the
+      // body — and thus the body-only ratio — looks unchanged.)
+      if (isLikelyPartialRead(previousMetadata, nextMetadata)) {
+        return { action: 'partial-read-retry', reason: 'size-shrink' };
+      }
       // Sprint C / C.1 — popup is the canonical frontmatter authority while
       // it's open + dirty. A silent sync here would clobber the popup's
       // pending row edits; force a user choice instead.
@@ -118,6 +130,21 @@ export function classifyExternalChange(params: {
     // tile later loads this file it will hydrate fresh from disk.
     if (!previousMetadata) {
       return { action: 'sync-frontmatter', reason: 'first-sight' };
+    }
+    // Audit-10 M4 — we are past the body-equivalent short-circuit, so the BODY
+    // changed; and no editor owns this path. If the FRONTMATTER also changed we
+    // must still sync it: otherwise a closed-file Kanban card / Task row keeps
+    // stale metadata in its tile cache / tag store / seeded-FM cache and renders
+    // (and computes its field-edit inverse) against the pre-external-edit values.
+    // The body itself needs no action — no editor holds it and the next tile
+    // load hydrates fresh from disk. Guard the same mid-write partial-read
+    // signature the editor branches do so a truncated read isn't pushed into the
+    // caches as if it were settled metadata.
+    if (!frontmatterEqual(previousMetadata, nextMetadata)) {
+      if (isLikelyPartialRead(previousMetadata, nextMetadata)) {
+        return { action: 'partial-read-retry', reason: 'size-shrink' };
+      }
+      return { action: 'sync-frontmatter', reason: 'frontmatter-only' };
     }
     return { action: 'ignore', reason: 'no-editor-open' };
   }
@@ -192,20 +219,45 @@ function utf8ByteLength(text: string): number {
  * looking at stale content waiting for a retry that won't change anything.
  * `now` is a parameter so tests can pin a deterministic baseline; production
  * callers default to `Date.now()`.
+ *
+ * A8-H1 (Audit-8) — the window is about *recency*, not direction, so it is
+ * measured with `Math.abs`. OneDrive / SMB / other synced volumes routinely
+ * stamp a file's mtime slightly AHEAD of the local clock; a strict `ageMs >= 0`
+ * gate then read a future mtime as "not recent", let the >90% mid-write
+ * truncation fall through to `reload-silently`, and clobbered a clean editor
+ * with the partial read. A future mtime within the window is exactly as
+ * suspicious as a past one — both mean "the rewrite is probably still in flight".
+ *
+ * DECISION (Audit-13 L19, deferred): L19 proposed treating a future mtime
+ * "beyond a small tolerance" as settled rather than in-flight, to avoid a ~5s
+ * retry delay on a genuine drastic truncation that happens to carry a future
+ * mtime. We deliberately do NOT do this — it directly tensions the A8-H1 fix
+ * above (pinned by `conflictResolver.test.ts`'s `Date.now() + 500` case): a
+ * mid-write truncation and a settled truncation are INDISTINGUISHABLE from a
+ * single stat on a clock-skewed volume, so any tolerance tight enough to help
+ * L19 would re-open A8-H1's clean-editor clobber. The retry-then-exhaustion
+ * prompt IS the correct disambiguator for that fundamental ambiguity; the brief
+ * delay is the price of never silently destroying a clean editor's view.
  */
 function isLikelyPartialRead(
   prev: FileMetadata,
   next: FileMetadata,
   now: number = Date.now(),
 ): boolean {
-  const prevSize = utf8ByteLength(prev.content);
+  // L12 (Audit-6) — measure the RAW file size (FM + body) when available, not
+  // the parsed body alone. A truncation that lands mostly in a large frontmatter
+  // block leaves the body looking intact, so a body-only ratio would miss it.
+  // Falls back to the body byte length for synthetic metadata without rawByteSize.
+  const prevSize = prev.rawByteSize ?? utf8ByteLength(prev.content);
   if (prevSize < MIN_PARTIAL_READ_PRIOR_BYTES) return false;
-  const nextSize = utf8ByteLength(next.content);
+  const nextSize = next.rawByteSize ?? utf8ByteLength(next.content);
   if (nextSize >= prevSize * PARTIAL_READ_SHRINK_RATIO) return false;
   // Only fire when the shrink is RECENT — an old mtime means the rewrite
-  // already finished and we're looking at stable state.
-  const ageMs = now - next.lastModified;
-  return ageMs >= 0 && ageMs < PARTIAL_READ_MTIME_WINDOW_MS;
+  // already finished and we're looking at stable state. `Math.abs` so a
+  // clock-skewed FUTURE mtime (OneDrive/SMB) is held for retry too, not
+  // mistaken for a settled edit (A8-H1).
+  const ageMs = Math.abs(now - next.lastModified);
+  return ageMs < PARTIAL_READ_MTIME_WINDOW_MS;
 }
 
 /**
@@ -217,21 +269,29 @@ function isBodyEquivalent(a: FileMetadata, b: FileMetadata): boolean {
   if (a.content !== b.content) return false;
   if (a.headings.length !== b.headings.length) return false;
   for (let i = 0; i < a.headings.length; i++) {
-    if (a.headings[i].text !== b.headings[i].text) return false;
-    if (a.headings[i].level !== b.headings[i].level) return false;
+    const ah = a.headings[i];
+    const bh = b.headings[i];
+    if (!ah || !bh) return false; // equal lengths + in-range; not-equivalent is the safe direction
+    if (ah.text !== bh.text) return false;
+    if (ah.level !== bh.level) return false;
   }
   return true;
 }
 
 function frontmatterEqual(a: FileMetadata, b: FileMetadata): boolean {
-  const ak = Object.keys(a.frontmatter).sort();
-  const bk = Object.keys(b.frontmatter).sort();
-  if (ak.length !== bk.length) return false;
-  for (let i = 0; i < ak.length; i++) {
-    if (ak[i] !== bk[i]) return false;
-    if (JSON.stringify(a.frontmatter[ak[i]]) !== JSON.stringify(b.frontmatter[bk[i]])) {
-      return false;
-    }
-  }
-  return true;
+  // P5.4 (Audit-15) — the hand-rolled key-set + per-key compare loop this
+  // replaced WAS `valuesEqual`'s own plain-object branch (same-key-set check +
+  // recursive value compare), so route through the shared helper instead of
+  // keeping a second copy of "is this a real frontmatter change".
+  //
+  // Deliberately `valuesEqual` (frontmatterEngine), NOT `fmValueEqual` /
+  // `fmDeepEqual` (frontmatterRebase): those compare arrays as an order-
+  // INSENSITIVE multiset and treat a Date as a keyless object. This resolver
+  // decides whether DISK diverged from the in-memory copy, so array order must
+  // stay significant (an externally REORDERED `tags: [...]` is a real byte
+  // change the cache must adopt) and a residual Date must compare by instant.
+  // L14 (Audit-6) — `valuesEqual` still recurses key-order-insensitively for a
+  // nested map, so a `{author, date}` → `{date, author}` external rewrite reads
+  // as a no-op rather than a spurious `sync-frontmatter`.
+  return valuesEqual(a.frontmatter, b.frontmatter);
 }

@@ -9,6 +9,7 @@ import {
   type LayoutTemplateRecord,
 } from '../lib/templates/layoutTemplateStore';
 import { onVaultSwap } from '../core/vaultLifecycle';
+import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 
 /**
  * Reactive cache of layout templates from `<vault>/.filo/templates/`.
@@ -36,14 +37,22 @@ async function refresh(): Promise<void> {
     loaded = true;
     return;
   }
+  // Audit-11 VS-5 — capture identity before the list await. A swap during the
+  // read would otherwise stamp the outgoing vault's templates into this
+  // display-only cache AFTER the pre-swap reset cleared it. Bail on swap.
+  const identity = captureVaultIdentity();
   loading = true;
   try {
-    records = await listLayoutTemplates(root);
+    const next = await listLayoutTemplates(root);
+    if (!isStillSameVault(identity)) return;
+    records = next;
     loaded = true;
   } catch (err) {
     reportError('templates.refresh', err, 'Failed to load layout templates');
   } finally {
-    loading = false;
+    // Only release the spinner if we're still the active vault — a swap that
+    // bailed above already had `loading` reset by the pre-swap handler.
+    if (isStillSameVault(identity)) loading = false;
   }
 }
 

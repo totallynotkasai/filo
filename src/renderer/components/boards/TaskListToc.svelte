@@ -34,13 +34,14 @@
     void sections; // re-run when section list changes
 
     observer?.disconnect();
-    observer = new IntersectionObserver(
+    const localObserver = new IntersectionObserver(
       (entries) => {
         const visible = entries
           .filter((e) => e.isIntersecting)
           .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
-        if (visible.length > 0) {
-          const id = (visible[0].target as HTMLElement).dataset.sectionId;
+        const first = visible[0];
+        if (first) {
+          const id = (first.target as HTMLElement).dataset.sectionId;
           if (id) activeId = id;
         }
       },
@@ -52,15 +53,29 @@
         threshold: 0,
       },
     );
+    observer = localObserver;
 
     // Defer one frame so headers added in the same tick are observable.
+    // Audit-14 5.6 — capture THIS run's observer and bail if a later effect
+    // run (a section add/remove) or teardown has replaced/disconnected it, so
+    // the deferred observe() can't attach targets to a stale instance.
     queueMicrotask(() => {
+      if (observer !== localObserver) return;
       const headers = scrollContainerEl.querySelectorAll<HTMLElement>('[data-section-id]');
       for (const el of Array.from(headers)) {
         const id = el.dataset.sectionId;
-        if (id) observer!.observe(el);
+        if (id) localObserver.observe(el);
       }
     });
+
+    // Audit-14 5.6 — per-run cleanup: disconnect this run's observer when the
+    // effect re-runs or the component unmounts (previously only the next run's
+    // top-of-body `disconnect()` and a single onDestroy covered it, leaving the
+    // last run's observer live across an in-place teardown edge).
+    return () => {
+      localObserver.disconnect();
+      if (observer === localObserver) observer = null;
+    };
   });
 
   onDestroy(() => observer?.disconnect());

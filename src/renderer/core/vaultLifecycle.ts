@@ -6,18 +6,21 @@ import { reportError } from '../lib/utils/errorBus';
  * Phase 4 (Consolidation 2026-05-25) — replaces the scattered inline reset
  * chain previously inside `vault.svelte.ts:openVault` with a publish/subscribe
  * registry. Every store / write scheduler / sentinel that holds vault-scoped
- * state subscribes once at module load; the openVault path fires `pre-swap`
- * before hydrating the new vault and `post-swap` after.
+ * state subscribes once at module load; the openVault / closeVault paths fire
+ * `pre-swap` before hydrating (or tearing down) the vault.
  *
- * Why two phases:
- *  - `pre-swap` runs while the OUTGOING vault is still semantically active.
- *    Handlers cancel debounced timers, flush sentinels against the outgoing
- *    vaultRoot, drop history stacks. Any "save before swap" disk write has
- *    already finished by the time the event fires (the dialog flow awaits
- *    `vaultStore.save()` first); pre-swap handlers must not assume the
- *    project is still hydrated.
- *  - `post-swap` runs after the new vault is hydrated. The vaultIndex
- *    rebuild lives here so it sees the freshly-loaded file tree.
+ * Single phase — `pre-swap`:
+ *  - Runs while the OUTGOING vault is still semantically active. Handlers
+ *    cancel debounced timers, flush sentinels against the outgoing vaultRoot,
+ *    drop history stacks. Any "save before swap" disk write has already
+ *    finished by the time the event fires (the dialog flow awaits
+ *    `vaultStore.save()` first); pre-swap handlers must not assume the project
+ *    is still hydrated.
+ *  - Post-commit hydration (vaultIndex rebuild, recovery sequencer, etc.) is
+ *    NOT a lifecycle phase — it lives in `vault.svelte.ts:runPostCommitTasks`,
+ *    which runs against the freshly-committed vault. A `post-swap` phase was
+ *    retired (Audit 5.7): nothing registered or fired it, so a documented-but-
+ *    dead phase was only a trap for future contributors.
  *
  * Ordering: handlers within a phase run sequentially, in registration order
  * by default. A handler may declare `runAfter: ['handlerName']` so a
@@ -31,7 +34,7 @@ import { reportError } from '../lib/utils/errorBus';
  * app in an inconsistent state worse than the original error.
  */
 
-export type VaultSwapPhase = 'pre-swap' | 'post-swap';
+export type VaultSwapPhase = 'pre-swap';
 
 export interface VaultSwapEvent {
   phase: VaultSwapPhase;
@@ -107,6 +110,57 @@ export function onVaultSwap(
     const idx = handlers.findIndex((h) => h.phase === phase && h.name === name);
     if (idx >= 0) handlers.splice(idx, 1);
   };
+}
+
+/**
+ * Phase 6.1.R2 — register a vault-swap RESET handler. Sugar over
+ * `onVaultSwap('pre-swap', name, fn)` that mirrors the registration in a
+ * queryable set so a CI gate (or a unit test) can confirm a specific
+ * module-state owner registered through THIS entry point — not just any
+ * swap handler. TypeScript's signature already requires `fn` to be a
+ * function; we don't try to detect "stub" arrow shapes at runtime
+ * (TS compiler dead-code elimination makes any literal-based detection
+ * brittle), so reviewer eyes are the only check that the body actually
+ * resets something. The CI gate's "file contains
+ * `vaultSwapResettable(`" detection is satisfied either way, on the
+ * understanding that an empty handler is dead-on-arrival in code review.
+ *
+ * For shared infrastructure that subscribes for reasons OTHER than
+ * resetting module-scoped state (sentinel flushes, rebuilds, registry
+ * mirrors), use the original `onVaultSwap` directly. Mixing both is
+ * fine — the `vaultSwapResettable` set is purely a marker, not an
+ * exclusivity claim.
+ *
+ * Per the Phase 6.1 user choice ("new helper for the new leakers
+ * only"): existing `onVaultSwap` subscribers are NOT migrated. New
+ * module-scoped state should subscribe via this helper.
+ *
+ * Returns an unsubscribe function (same shape as `onVaultSwap`). Calling
+ * it removes both the swap handler AND the resettable-name marker.
+ */
+const resettableNames = new Set<string>();
+
+export function vaultSwapResettable(
+  name: string,
+  fn: (event: VaultSwapEvent) => void | Promise<void>,
+  opts?: VaultSwapHandlerOptions,
+): () => void {
+  const unsub = onVaultSwap('pre-swap', name, fn, opts);
+  resettableNames.add(name);
+  return () => {
+    resettableNames.delete(name);
+    unsub();
+  };
+}
+
+/**
+ * Test-only: returns the set of names that subscribed through
+ * `vaultSwapResettable`. Used by the unit test for R2 and (potentially)
+ * future CI introspection to confirm a given module's owner registered
+ * via this entry point.
+ */
+export function __getResettableHandlerNames(): Set<string> {
+  return new Set(resettableNames);
 }
 
 /**
@@ -186,6 +240,7 @@ export async function fireVaultSwap(event: VaultSwapEvent): Promise<void> {
  */
 export function __resetVaultLifecycleForTests(): void {
   handlers.length = 0;
+  resettableNames.clear();
 }
 
 /**
@@ -196,6 +251,5 @@ export function __resetVaultLifecycleForTests(): void {
 export function __getRegisteredHandlerNames(): Record<VaultSwapPhase, string[]> {
   return {
     'pre-swap': handlers.filter((h) => h.phase === 'pre-swap').map((h) => h.name),
-    'post-swap': handlers.filter((h) => h.phase === 'post-swap').map((h) => h.name),
   };
 }

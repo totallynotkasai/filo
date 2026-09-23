@@ -36,6 +36,7 @@
  */
 
 import { stripLeadingSlash, toPosix } from '../utils/path';
+import { registerPathRenamable } from './renamePathKeys';
 
 function detectCaseInsensitiveFs(): boolean {
   const proc = (globalThis as { process?: { platform?: unknown } }).process;
@@ -65,7 +66,39 @@ export interface FileBaseline {
 }
 
 /** Vault-relative path -> last-observed (mtime, size) baseline. */
+// allow-module-state: reset via resetAllBaselines called from markdownFileWriter's pre-swap handler (cancelAllMarkdownWrites)
 const baselines = new Map<string, FileBaseline>();
+
+/**
+ * Phase 6.1.R4 — transfer the baseline from `oldRel` to `newRel` so a
+ * post-rename body write doesn't drift-fail against a phantom baseline
+ * still keyed under the OLD path. Also covers descendants when a folder
+ * was renamed: every baseline keyed under `oldRel + '/'` re-keys to
+ * `newRel + '/'`. Registered with `renameAllPathKeys` below so rename
+ * cascades pick it up automatically.
+ */
+export function renameBaselinePath(oldRel: string, newRel: string): void {
+  if (!oldRel || !newRel || oldRel === newRel) return;
+  const oldKey = normaliseKey(oldRel);
+  const newKey = normaliseKey(newRel);
+  if (oldKey === newKey) return;
+  const exact = baselines.get(oldKey);
+  if (exact !== undefined) {
+    baselines.delete(oldKey);
+    baselines.set(newKey, exact);
+  }
+  // Folder-prefix sweep — re-key every descendant.
+  const oldChildPrefix = oldKey + '/';
+  const newChildPrefix = newKey + '/';
+  const transfers: Array<[string, FileBaseline]> = [];
+  for (const [key, value] of baselines) {
+    if (key.startsWith(oldChildPrefix)) {
+      transfers.push([newChildPrefix + key.slice(oldChildPrefix.length), value]);
+      baselines.delete(key);
+    }
+  }
+  for (const [k, v] of transfers) baselines.set(k, v);
+}
 
 /**
  * True when a fresh stat diverges from the recorded baseline — i.e. an
@@ -138,6 +171,46 @@ export function clearBaseline(path: string): void {
 }
 
 /**
+ * Post-write baseline refresh: stamps a fresh baseline when the post-write
+ * stat supplies a usable mtime + size, and otherwise KEEPS the prior baseline
+ * untouched.
+ *
+ * Used by every successful self-write site (`markdownFileWriter`,
+ * `boardWriteScheduler`, `configWriteScheduler`) so the next write's pre-write
+ * drift check compares against the bytes we just wrote, not the pre-write
+ * state.
+ *
+ * Audit-4 DI-14 (2026-06-02) — on an unusable stat (the IPC threw, returned no
+ * fields, or returned NaN) this KEEPS the prior baseline. The interim 6.4.M2
+ * behaviour CLEARED it to suppress a spurious "modified externally" prompt on
+ * the next write — but clearing the baseline also DISABLES that next write's
+ * pre-write drift check entirely, opening a (narrow) window where a concurrent
+ * external edit is silently overwritten. Keeping the baseline is the data-safe
+ * direction: the worst case is a spurious Reload / Keep-local prompt (the user
+ * picks Keep-local and proceeds), never a silent clobber. The fs.watch
+ * reconcile pipeline never reads this baseline, so it stays an independent
+ * backstop; a post-write stat failure is rare (AV scanner, SMB latency, VFS
+ * quirk), so the false-positive cost is bounded. This restores the keep-on-
+ * failure behaviour the Phase R6 call-site comment originally described.
+ */
+export function refreshBaselineAfterWrite(
+  path: string,
+  mtimeMs: number | undefined | null,
+  size: number | undefined | null,
+): void {
+  if (!path) return;
+  if (
+    typeof mtimeMs === 'number' &&
+    Number.isFinite(mtimeMs) &&
+    typeof size === 'number' &&
+    Number.isFinite(size)
+  ) {
+    noteBaseline(path, mtimeMs, size);
+  }
+  // DI-14 — else: keep the prior baseline. Deliberately NO clearBaseline call.
+}
+
+/**
  * Wipes every baseline entry. Routed through the vault-swap reset hook
  * so a baseline captured against the outgoing vault can't suppress a
  * legitimate drift check against a same-named file in the new vault.
@@ -159,12 +232,12 @@ export function resetAllBaselines(): void {
  * legacy unguarded write, never a crash, so production skips the check
  * entirely.
  *
- * Scope: this checks the EAGERLY-seeded sink (boards). `.md` baselines are
- * seeded lazily on hydrate via the `readMarkdownForHydrate` gateway (enforced
- * statically by the E1 CI gate), so none are expected at commit time. Config
- * files (`.filo/*.json`) detect drift via the corruption sentinel /
- * external-change reconcilers rather than an mtime baseline, so they're out
- * of scope here.
+ * Scope: this checks the EAGERLY-seeded sinks — boards and (since 6.3.P3)
+ * the four `.filo/` configs the writer scheduler protects with a pre-write
+ * drift check (`defaults.json`, `app.json`, `appearance.json`,
+ * `workspace.json`). `.md` baselines are seeded lazily on hydrate via the
+ * `readMarkdownForHydrate` gateway (enforced statically by the E1 CI gate),
+ * so none are expected at commit time.
  *
  * The empty-registry short-circuit keeps unit tests that install boards
  * without going through the real stat-backed load path from tripping the
@@ -183,6 +256,12 @@ export function assertBaselinesSeeded(paths: Iterable<string>, label: string): v
       `pre-write external-edit detection is inert for them (F1 regression?): ${missing.join(', ')}`,
   );
 }
+
+// Phase 6.1.R4 — every rename cascade calls renameAllPathKeys(oldRel,
+// newRel) once, which fires this sweep. Without it, a post-rename body
+// write drift-fails against a phantom baseline still keyed under the
+// OLD path.
+registerPathRenamable('fileBaselineRegistry', renameBaselinePath);
 
 /**
  * Test-only — exposes the internal Map size so unit tests can assert

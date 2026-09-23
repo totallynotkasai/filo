@@ -7,6 +7,7 @@ import { uiStore } from './ui.svelte';
 import { isGeometryOnlyUpdate } from '../lib/utils/tileUpdateFastPath';
 import { normalizePath } from '../lib/utils/path';
 import { resolveTextTileVaultPath, replaceTitleInVaultPath } from '../lib/boards/textTilePath';
+import { renameAllPathKeys } from '../lib/vault/renamePathKeys';
 import type { BoardContext } from './boardStoreTypes';
 
 /**
@@ -135,9 +136,27 @@ export function makeTilesSlice(ctx: BoardContext) {
       tileId: string,
       newTitle: string,
       newTitleHtml: string | undefined,
+      homeBoardId?: string,
     ): Promise<RenameTextTileResult> {
-      const tile = ctx.getTiles()[tileId];
+      // Audit-17 4.1 — resolve from the active scope first, falling back to
+      // the home board's cache when given. The fallback serves the unmount-
+      // time blur-commit (TileHeader's teardown): clicking another tab both
+      // blurs AND unmounts, so by the time the commit runs the pane's scope
+      // already points at the switched-in board and the active lookup misses.
+      const activeTile = ctx.getTiles()[tileId];
+      const tile = activeTile
+        ?? (homeBoardId
+          ? boardCacheStore.getFullTilesForBoard(homeBoardId)[tileId]
+          : undefined);
       if (!tile || tile.type !== 'text') return { success: false };
+
+      // Dual-route tile updates for the same reason: the scope writer (Zod +
+      // spatial sync) while the tile is still in the active board, the cache
+      // writer keyed by the tile's home board once it isn't.
+      const applyTileUpdate = (updates: Partial<Tile>): void => {
+        if (ctx.getTiles()[tileId]) ctx.updateTile(tileId, updates);
+        else boardCacheStore.persistUpdateTile(tileId, updates, tile.boardId);
+      };
 
       const oldTitle = tile.title;
       const oldTitleHtml = tile.titleHtml;
@@ -148,13 +167,13 @@ export function makeTilesSlice(ctx: BoardContext) {
         return { success: true, oldTitle, newTitle, oldTitleHtml, newTitleHtml };
       }
       if (!titleChanged) {
-        ctx.updateTile(tileId, { titleHtml: newTitleHtml });
+        applyTileUpdate({ titleHtml: newTitleHtml });
         return { success: true, oldTitle, newTitle, oldTitleHtml, newTitleHtml };
       }
 
       const vaultRoot = vaultStore.path;
       if (!vaultRoot) {
-        ctx.updateTile(tileId, { title: newTitle, titleHtml: newTitleHtml });
+        applyTileUpdate({ title: newTitle, titleHtml: newTitleHtml });
         return { success: true, oldTitle, newTitle, oldTitleHtml, newTitleHtml };
       }
 
@@ -163,19 +182,20 @@ export function makeTilesSlice(ctx: BoardContext) {
       // defaultFolder, not whichever board happens to be active.
       const oldRel = resolveTextTileVaultPath(tile, tile.boardId);
       if (!oldRel) {
-        ctx.updateTile(tileId, { title: newTitle, titleHtml: newTitleHtml });
+        applyTileUpdate({ title: newTitle, titleHtml: newTitleHtml });
         return { success: true, oldTitle, newTitle, oldTitleHtml, newTitleHtml };
       }
 
       const newRel = replaceTitleInVaultPath(oldRel, newTitle);
       if (oldRel === newRel) {
-        ctx.updateTile(tileId, { title: newTitle, titleHtml: newTitleHtml });
+        applyTileUpdate({ title: newTitle, titleHtml: newTitleHtml });
         return { success: true, oldTitle, newTitle, oldTitleHtml, newTitleHtml };
       }
 
-      // `vaultStore.rename` now drains every registered markdown writer
-      // before issuing the IPC rename (Phase 8.2), so the per-tile
-      // `flushMarkdownWriter` that used to live here is no longer needed.
+      // `vaultStore.rename` wraps the sequence in `withDrainedWrites`, which
+      // drains every markdown writer (editor gateway + shim flushers) before
+      // issuing the IPC rename (Phase 8.2 / R2), so the per-tile markdown
+      // flush that used to live here is no longer needed.
 
       const docId = (tile as Tile & { contentId?: string }).contentId;
       const existingDoc = documentStore.findByFilename(newRel);
@@ -208,7 +228,17 @@ export function makeTilesSlice(ctx: BoardContext) {
         return { success: false };
       }
 
-      ctx.updateTile(tileId, { title: newTitle, titleHtml: newTitleHtml });
+      // Phase 6.1.R4 — `vaultStore.rename` runs `renameAllPathKeys`
+      // inside `runRename`, but only when the rename is a sidebar /
+      // folder-ops cascade. The text-tile path goes through
+      // `vaultStore.rename` (which calls the disk-shape IPC) but DOES
+      // include the runRename cascade because the wrapper goes through
+      // `vaultFolderOps`. This extra call is defense-in-depth: covers
+      // the case where a future code path renames the text-tile
+      // backing file without going through the full cascade.
+      renameAllPathKeys(oldRel, newRel);
+
+      applyTileUpdate({ title: newTitle, titleHtml: newTitleHtml });
       return {
         success: true,
         oldTitle,

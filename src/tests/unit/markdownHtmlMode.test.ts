@@ -41,7 +41,7 @@ afterEach(() => {
 
 // doc -> markdown(on disk) -> fresh editor -> html + markdown(stable)
 function roundTrip(doc: unknown): RoundTrip {
-  editor.commands.setContent(doc as never, false);
+  editor.commands.setContent(doc as never, { emitUpdate: false });
   const disk = editorMarkdown(editor);
 
   const ed2 = makeEditor();

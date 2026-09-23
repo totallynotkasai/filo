@@ -19,6 +19,11 @@
  * import them at runtime. Type-only imports below are erased by the
  * compiler so they don't trigger module loading.
  */
+// Runtime import — NOT one of the four store modules the circular-import
+// note below guards against. `vaultLifecycle` only depends on the leaf
+// `errorBus` util, so importing it here introduces no cycle back into the
+// store-facade graph.
+import { vaultSwapResettable } from '../../core/vaultLifecycle';
 import type { createBoardScopeBoard } from '../../stores/board.svelte';
 import type { createCanvasScope } from '../../stores/canvas.svelte';
 import type { createSelectionScope } from '../../stores/selection.svelte';
@@ -93,6 +98,28 @@ export function setActiveScope(scope: BoardScope): void {
   activeScopeRef = scope;
   activeScopeRaw = scope;
 }
+
+/**
+ * Audit-7 L18 — drops the active-scope references so the next
+ * `getActiveScope()` lazily rebuilds a fresh default scope.
+ *
+ * On vault swap `workspace.reset()` unmounts every `PaneView`, but the only
+ * writer of `activeScopeRef`/`activeScopeRaw` is a mounted PaneView's
+ * `setActiveScope` — so without this the outgoing vault's dead scope lingered
+ * in the global facades until the new vault's first PaneView `$effect` re-ran.
+ * Reads were null-safe (the dead scope's board id is absent from the new
+ * cache), but any facade consumer that mutated during the swap window saw the
+ * wrong vault's slice. Registered as a `pre-swap` reset below so it fires for
+ * both an open-other-vault swap AND a close-to-home (`nextVault === null`).
+ */
+export function resetActiveScope(): void {
+  activeScopeRef = null;
+  activeScopeRaw = null;
+}
+
+vaultSwapResettable('boardScope', () => {
+  resetActiveScope();
+});
 
 /**
  * Whether `scope` is the currently-active pane's scope, compared by raw object

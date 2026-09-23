@@ -6,6 +6,11 @@ import { __resetRenameCascadeSentinelForTests } from '@renderer/lib/vault/rename
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import {
+  onError,
+  __resetErrorBusForTests,
+  type ReportedError,
+} from '@renderer/lib/utils/errorBus';
 
 /**
  * Phase 2 / 2.4 — verifies the rename queue serialises `vault:tree-updated`
@@ -168,6 +173,43 @@ describe('Phase 2.4 — tree-updated vs file-renamed race', () => {
       'two-end',
       'three',
     ]);
+  });
+
+  // 6.4.M6 — when the listener routes through the rename queue, a failure
+  // in the queued task surfaces via reportError with the supplied label.
+  // The next enqueued task still runs. Without the label, behaviour is
+  // unchanged (caller is responsible for awaiting + handling the rejection).
+  it('routes rejected task to reportError when a label is supplied (M6)', async () => {
+    __resetErrorBusForTests();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const errors: ReportedError[] = [];
+    const off = onError((e) => errors.push(e));
+    try {
+      // First a task that rejects — labelled so the queue reports it.
+      const failing = vaultStore
+        .enqueueRenameQueueWork(
+          async () => {
+            throw new Error('rename failed');
+          },
+          { label: 'vault.testLabel', message: 'Failed in M6 test fixture' },
+        )
+        .catch(() => undefined);
+
+      // Then a labelless task — should still run, no extra reports.
+      let secondRan = false;
+      const second = vaultStore.enqueueRenameQueueWork(async () => {
+        secondRan = true;
+      });
+
+      await failing;
+      await second;
+
+      expect(secondRan).toBe(true);
+      expect(errors).toHaveLength(1);
+      expect(errors[0].context).toBe('vault.testLabel');
+    } finally {
+      off();
+    }
   });
 
   it('a single failing task does not poison the chain', async () => {

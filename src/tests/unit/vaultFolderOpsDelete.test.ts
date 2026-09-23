@@ -1,13 +1,18 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { tabStore } from '@renderer/stores/tabs.svelte';
 import { documentStore } from '@renderer/stores/document.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
+import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import {
-  __resetMarkdownFlushersForTests,
-} from '@renderer/lib/boards/markdownWriteRegistry';
+  beginVaultGeneration,
+  __resetVaultIdentityForTests,
+} from '@renderer/lib/vault/vaultIdentity';
+import {
+  __resetMarkdownFileWriterForTests as __resetMarkdownFlushersForTests,
+} from '@renderer/lib/vault/markdownFileWriter';
 import {
   cancelAllPendingWrites,
   __resetDirtyTrackingForTests,
@@ -139,6 +144,125 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
 
     expect(documentStore.getDocument('doc-foo')).toBeUndefined();
     expect(documentStore.getDocument('doc-bar')).toBeDefined();
+  });
+
+  it('bails before the in-memory cascade when the vault swaps during the post-delete flush (Audit-10 M2)', async () => {
+    // The existing identity bail covers the `ensureAllLoaded` await; M2 adds a
+    // second bail after the `flushAllDirty` await (the suspension point right
+    // before the in-memory cascade + doc-unload). We simulate a vault swap that
+    // lands during THAT flush: the disk delete already succeeded against the old
+    // vault, so the op must report success and skip the cross-vault cascade —
+    // leaving the documentStore entry for the deleted path untouched (it belongs
+    // to the outgoing vault, which the swap is tearing down).
+    installFiloStub({
+      'vault:delete': async () => ({ success: true }),
+      'vault:read-tree': async () => ({ ok: true, tree: [] }),
+    });
+
+    documentStore.loadDocument({
+      docId: 'doc-foo',
+      filename: 'Notes/2026/foo.md',
+      title: 'foo',
+      body: 'stale body',
+      htmlContent: '<p>stale</p>',
+      richText: [],
+    });
+
+    // Bump the vault generation during the FIRST flushAllDirty that runs AFTER
+    // ensureAllLoaded (i.e. the line-871 flush, not the drain's flush before it),
+    // so the swap lands at exactly the window the new bail guards.
+    let ensureLoadedDone = false;
+    let swapped = false;
+    const ensureSpy = vi
+      .spyOn(boardCacheStore, 'ensureAllLoaded')
+      .mockImplementation(async () => {
+        ensureLoadedDone = true;
+      });
+    const origFlush = boardCacheStore.flushAllDirty.bind(boardCacheStore);
+    const flushSpy = vi
+      .spyOn(boardCacheStore, 'flushAllDirty')
+      .mockImplementation(async () => {
+        const result = await origFlush();
+        if (ensureLoadedDone && !swapped) {
+          swapped = true;
+          beginVaultGeneration('/other-vault');
+        }
+        return result;
+      });
+
+    try {
+      const pending = vaultStore.delete('/vault/Notes/2026');
+      await autoConfirm();
+      const ok = await pending;
+
+      // Disk delete succeeded → reported as success.
+      expect(ok).toBe(true);
+      // The swap fired during the flush, so the bail skipped the in-memory
+      // cascade + doc-unload: the outgoing vault's docStore entry is untouched.
+      expect(swapped).toBe(true);
+      expect(documentStore.getDocument('doc-foo')).toBeDefined();
+    } finally {
+      ensureSpy.mockRestore();
+      flushSpy.mockRestore();
+      __resetVaultIdentityForTests();
+    }
+  });
+
+  it('bails before the in-memory cascade when the vault swaps during the tags-drop flush (Audit-12 L4)', async () => {
+    // L4 adds two more bails AFTER the M2 flushAllDirty bail: one after the
+    // `fileTagsStore.flushPendingSave()` await (before the B4 contentId-clear
+    // loop) and one after the `Promise.allSettled` await (before the doc-unload
+    // loop). We swap the vault during the tags-drop flush — the window the first
+    // new bail protects — and assert the B4 loop (cache mutation) AND the
+    // doc-unload loop were both skipped, leaving the outgoing vault's state
+    // untouched. Bite: remove both L4 bails → the board's contentId is cleared
+    // and doc-foo is unloaded against the swapped-in vault.
+    installFiloStub({
+      'vault:delete': async () => ({ success: true }),
+      'vault:read-tree': async () => ({ ok: true, tree: [] }),
+      'board:save': async () => ({ success: true }),
+    });
+
+    documentStore.loadDocument({
+      docId: 'doc-foo',
+      filename: 'Notes/2026/foo.md',
+      title: 'foo',
+      body: 'stale body',
+      htmlContent: '<p>stale</p>',
+      richText: [],
+    });
+    // A Document Board OUTSIDE the deleted tree whose contentId points at the
+    // deleted .md → the B4 loop would clear its contentId (the guard-1 window).
+    const fixture = makeDocumentBoardFixture('Boards/Daily.board.json', 'doc-foo');
+    boardCacheStore.hydrate({ daily: fixture }, { daily: 'Boards/Daily.board.json' });
+
+    // Swap during the single awaited fileTagsStore.flushPendingSave().
+    let swapped = false;
+    const flushSpy = vi
+      .spyOn(fileTagsStore, 'flushPendingSave')
+      .mockImplementation(async () => {
+        swapped = true;
+        beginVaultGeneration('/other-vault');
+        return { ok: true };
+      });
+
+    try {
+      const pending = vaultStore.delete('/vault/Notes/2026');
+      await autoConfirm();
+      const ok = await pending;
+
+      expect(ok).toBe(true); // disk delete landed → success
+      expect(swapped).toBe(true);
+      // guard-1: the B4 contentId-clear loop was skipped — board untouched.
+      expect((boardCacheStore.cache.daily?.board as { contentId?: string }).contentId).toBe(
+        'doc-foo',
+      );
+      // guards: the doc-unload loop was skipped — outgoing vault's doc untouched.
+      expect(documentStore.getDocument('doc-foo')).toBeDefined();
+    } finally {
+      flushSpy.mockRestore();
+      __resetVaultIdentityForTests();
+    }
   });
 
   it('closes Document Board tabs whose contentId points at a .md under the deleted folder, even when the .board.json lives outside the tree', async () => {

@@ -84,6 +84,18 @@ for (const m of unionMatch[1].matchAll(/['"]([^'"]+)['"]/g)) {
 
 const handlerSet = new Set(registered.keys());
 
+// Audit-14 7.8 — latent-fragility guard. REG_RE matches only string-LITERAL
+// channel names (`ipcMain.handle('vault:read', …)`). That is sound today (all
+// registrations are literals), but a future refactor to a constant or computed
+// channel (`ipcMain.handle(CHANNELS.vaultRead, …)`) would make every channel
+// invisible to this scan, silently collapsing `handlerSet` toward empty and
+// turning the whole parity gate into a no-op that "passes". Pin the literal-
+// registration count non-trivially above zero so that collapse fails loud
+// instead of silently voiding the gate. 49 today; floor well below that, far
+// above 0 — a legitimate channel removal won't trip it, a scan-blinding
+// refactor will.
+const MIN_LITERAL_REGISTRATIONS = 30;
+
 const handlersMissingFromUnion = [...handlerSet].filter((c) => !unionLiterals.has(c)).sort();
 const unionUnregisteredAndNotAllowlisted = [...unionLiterals]
   .filter((c) => !handlerSet.has(c) && !MAIN_TO_RENDERER_EVENTS.has(c))
@@ -122,6 +134,20 @@ if (staleAllowlist.length > 0) {
   );
   for (const c of staleAllowlist) console.error(`  '${c}'`);
   console.error('\nFix: remove these from MAIN_TO_RENDERER_EVENTS in scripts/check-ipc-parity.mjs.');
+}
+
+if (handlerSet.size < MIN_LITERAL_REGISTRATIONS) {
+  ok = false;
+  console.error(
+    `\n[check-ipc-parity] FAILED — found only ${handlerSet.size} string-literal ipcMain registration(s) ` +
+      `(expected ≥ ${MIN_LITERAL_REGISTRATIONS}).`,
+  );
+  console.error(
+    'This scan matches only literal channel names; a refactor to a constant/computed channel\n' +
+      '(e.g. `ipcMain.handle(CHANNELS.x, …)`) would make channels invisible and silently void this\n' +
+      'gate. Either keep ipcMain registrations as string literals, or extend REG_RE to resolve the\n' +
+      'constant form AND re-baseline MIN_LITERAL_REGISTRATIONS in scripts/check-ipc-parity.mjs.',
+  );
 }
 
 if (!ok) process.exit(1);

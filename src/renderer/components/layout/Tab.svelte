@@ -14,6 +14,7 @@
 
   let isRenaming = $state(false);
   let renameValue = $state('');
+  let renameInputEl = $state<HTMLInputElement | null>(null);
   let showEmojiPicker = $state(false);
   let emojiPickerPos = $state({ x: 0, y: 0 });
   let isDragOver = $state(false);
@@ -62,7 +63,22 @@
     renameValue = tab.name;
   }
 
+  // P4.1 (Audit-15) — auto-focus + select-all when the rename input mounts,
+  // mirroring VaultFileItem / KanbanColumn. The bind populates before this
+  // effect runs because Svelte mounts the input synchronously after
+  // isRenaming flips.
+  $effect(() => {
+    if (isRenaming && renameInputEl) {
+      renameInputEl.focus();
+      renameInputEl.select();
+    }
+  });
+
   function commitRename() {
+    // Escape sets isRenaming=false, then the input unmounts and its blur
+    // fires here — don't commit the rename the user just aborted. (Now that
+    // the input auto-focuses, the Escape→blur path is reliably reachable.)
+    if (!isRenaming) return;
     isRenaming = false;
     if (renameValue && renameValue !== tab.name) {
       tabStore.rename(tab.id, renameValue);
@@ -194,9 +210,11 @@
     <input
       class="tab-rename"
       type="text"
+      bind:this={renameInputEl}
       bind:value={renameValue}
       onblur={commitRename}
       onkeydown={handleRenameKeydown}
+      aria-label="Rename {tab.name}"
     />
   {:else}
     <span class="tab-name">{tab.name}</span>
@@ -205,6 +223,7 @@
   <button
     class="tab-close"
     onclick={close}
+    tabindex={isActive ? 0 : -1}
     title="Close tab"
     aria-label="Close {tab.name}"
   >
@@ -218,7 +237,10 @@
 {#if showEmojiPicker}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="emoji-picker-overlay" onclick={() => showEmojiPicker = false} onkeydown={(e) => { if (e.key === 'Escape') showEmojiPicker = false; }}></div>
-  <div class="emoji-picker-float" style="left: {emojiPickerPos.x}px; top: {emojiPickerPos.y - 300}px;">
+  <!-- Place the picker trigger at the cursor; EmojiPicker now clamps + flips
+       its own panel into the viewport (Audit-14 5.4), so the previous manual
+       `y - 300` upward nudge is no longer needed. -->
+  <div class="emoji-picker-float" style="left: {emojiPickerPos.x}px; top: {emojiPickerPos.y}px;">
     <EmojiPicker onselect={selectEmoji} />
   </div>
 {/if}
@@ -323,7 +345,8 @@
   }
 
   .tab:hover .tab-close,
-  .tab.active .tab-close {
+  .tab.active .tab-close,
+  .tab:focus-within .tab-close {
     opacity: 1;
   }
 

@@ -72,6 +72,14 @@ export const IPC_PAYLOAD_SCHEMAS = {
     z.tuple([nonEmptyString, nonEmptyString]),
     z.tuple([nonEmptyString, nonEmptyString, optionalString]),
   ]),
+  // Audit-12 S1 — `vault:register-source-path` is preload-INTERNAL: the only
+  // legitimate sender is the preload's `getPathForFile` via a direct
+  // `ipcRenderer.send` (which bypasses this gate entirely). `z.never()` matches
+  // NO argument shape, so any attempt to reach it through the contextBridge
+  // `api.send`/`api.invoke` (i.e. `window.filo.send('vault:register-source-path',
+  // …)` from hostile renderer JS) fails validation and is dropped before it can
+  // self-approve an arbitrary copy source. Do NOT relax this to a real tuple.
+  'vault:register-source-path': z.never(),
   // Phase 37 / 37.6 — canonical (vaultRoot, relativePath). The legacy
   // single-arg absolute-path branch is gone; every renderer caller has been
   // migrated.
@@ -104,6 +112,7 @@ export const IPC_PAYLOAD_SCHEMAS = {
 
   // ── Recovery snapshot ─────────────────────────────────────────────────
   'recovery:snapshot': z.tuple([nonEmptyString, nonEmptyString]),
+  'recovery:list': z.tuple([nonEmptyString]),
 
   // ── Config (.filo/) ───────────────────────────────────────────────────
   'config:load': z.tuple([nonEmptyString, nonEmptyString]),
@@ -164,11 +173,17 @@ export const IPC_PAYLOAD_SCHEMAS = {
 
   // ── App lifecycle (renderer → main) ───────────────────────────────────
   'app:ready-to-quit': z.tuple([]),
+  // 6.2.H4 — same shape as `app:ready-to-quit`; semantics differ in main.
+  'app:cancel-quit': z.tuple([]),
+  // Audit-4 DI-04 — quit heartbeat (no args); main clears its flush timer.
+  'app:quit-awaiting-user': z.tuple([]),
+  // Audit5 2.1 — periodic drain heartbeat (no args); main re-arms its timer.
+  'app:drain-heartbeat': z.tuple([]),
 
   // ── Sidebar geometry ──────────────────────────────────────────────────
   'sidebar:get-state': z.tuple([]),
   'sidebar:set-state': z.tuple([unknownArg]),
-} as const satisfies Partial<Record<IpcChannel, z.ZodTypeAny>>;
+} as const satisfies Partial<Record<IpcChannel, z.ZodType>>;
 
 export type ValidationResult =
   | { ok: true }
@@ -186,7 +201,7 @@ export function validateIpcPayload(
   channel: string,
   args: readonly unknown[],
 ): ValidationResult {
-  const schema = (IPC_PAYLOAD_SCHEMAS as Record<string, z.ZodTypeAny | undefined>)[channel];
+  const schema = (IPC_PAYLOAD_SCHEMAS as Record<string, z.ZodType | undefined>)[channel];
   if (!schema) return { ok: true };
   const parsed = schema.safeParse(args);
   if (parsed.success) return { ok: true };

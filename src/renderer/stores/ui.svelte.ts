@@ -3,6 +3,7 @@
  */
 import { SvelteMap } from 'svelte/reactivity';
 import { onVaultSwap } from '../core/vaultLifecycle';
+import { reportError } from '../lib/utils/errorBus';
 
 // ── Sidebar ──
 let sidebarOpen = $state(true);
@@ -125,6 +126,15 @@ export interface ToastMessage {
   actions?: ToastAction[];
   /** Fires when the toast dismisses without any action being invoked. */
   onDismiss?: () => void;
+  /**
+   * M1 (Audit-18) — the toast's `onDismiss` means "the user acknowledged this
+   * → destroy the underlying recovery breadcrumb" (e.g. `clearQuitFailureBreadcrumb`,
+   * `markClean`). Such a toast must be dismissed by a GENUINE user action only:
+   * the automatic dismissal paths (vault-swap teardown, TOAST_CAP eviction)
+   * skip firing its `onDismiss`, so a swap/cap can't silently consume the
+   * breadcrumb — it survives to re-surface next launch instead.
+   */
+  acknowledgeOnly?: boolean;
 }
 
 let toasts = $state<ToastMessage[]>([]);
@@ -246,7 +256,30 @@ export const uiStore = {
 
   // Confirm dialog
   get confirmDialog() { return confirmDialog; },
-  openConfirm(config: ConfirmDialogConfig) { confirmDialog = config; },
+  openConfirm(config: ConfirmDialogConfig) {
+    // Audit5 2.4 (#6) — a second openConfirm must NOT silently overwrite a
+    // pending one. The displaced dialog's onConfirm/onCancel is the ONLY way
+    // its awaiter resolves (tabStore.close → confirmCloseAnyway,
+    // handleFlushAndQuit's save-failure confirm, vaultExternalChanges'
+    // recreateDeletedFile); just reassigning `confirmDialog` stranded that
+    // promise forever, wedging the close/quit/recover. Fire the outgoing
+    // onCancel first — the safe, non-destructive resolution, mirroring
+    // `cancelTopLayer` and the vault-swap handler below — so the displaced
+    // decision resolves to "cancel" before the new dialog takes over.
+    //
+    // (No same-config guard: `$state` stores `config` behind a reactive proxy,
+    // so a later `=== config` reference check can't reliably re-identify it —
+    // and no call site re-opens an already-pending config, so firing the
+    // outgoing onCancel unconditionally is correct.)
+    if (confirmDialog) {
+      const displaced = confirmDialog;
+      confirmDialog = null;
+      try { displaced.onCancel?.(); } catch (err) {
+        console.error('[uiStore] displaced confirm onCancel failed:', err);
+      }
+    }
+    confirmDialog = config;
+  },
   closeConfirm() { confirmDialog = null; },
 
   // Phase C / C.7 — sidebar pending-rename signal.
@@ -318,16 +351,43 @@ export const uiStore = {
     duration?: number;
     actions?: ToastAction[];
     onDismiss?: () => void;
+    acknowledgeOnly?: boolean;
   }): string {
     // E.4 — cap the visible queue at 8 so an error storm (e.g. a tag-rename
     // sweep hitting an EPERM directory) can't paint the entire viewport.
     // Prefer dropping the oldest non-error first so error breadcrumbs stay
     // visible; if everything queued is an error, drop the oldest error.
+    //
+    // Audit5 R3 (#1) — NEVER silently evict a promise-backed toast (one with an
+    // `onDismiss` callback or action buttons). The external-edit drift prompt
+    // resolves the write awaiting it ONLY through onDismiss/action; a silent
+    // eviction (the old `{ silent: true }` on any victim) stranded that promise
+    // forever, so the flush chain — and a Ctrl+S / quit drain awaiting it —
+    // hung. Prefer evicting a "disposable" toast (no callback, no actions),
+    // oldest non-error first. Only if EVERY queued toast is promise-backed,
+    // evict the oldest but fire its onDismiss (drift → 'defer': keep dirty,
+    // re-prompt on the next write) so its promise resolves instead of stranding.
     const TOAST_CAP = 8;
+    const isDisposable = (t: ToastMessage): boolean =>
+      !t.onDismiss && (!t.actions || t.actions.length === 0);
     while (toasts.length >= TOAST_CAP) {
-      const nonError = toasts.find((t) => t.type !== 'error');
-      const victim = nonError ?? toasts[0];
-      this.dismissToast(victim.id, { silent: true });
+      const disposable = toasts.filter(isDisposable);
+      const victim =
+        disposable.find((t) => t.type !== 'error') ??
+        disposable[0] ??
+        toasts.find((t) => t.type !== 'error') ??
+        toasts[0];
+      if (!victim) break; // loop guard (length >= TOAST_CAP) ensures toasts[0] exists
+      // Fire onDismiss when the victim is promise-backed (no disposable toast
+      // was available to drop instead); disposable victims have none, so the
+      // dismissal stays silent for them — preserving the existing behaviour for
+      // the common case.
+      //
+      // M1 (Audit-18) — but NEVER fire onDismiss for an `acknowledgeOnly` toast
+      // (a recovery breadcrumb): the cap evicting it from the screen must not
+      // also destroy the on-disk breadcrumb. Evict it silently; it re-surfaces
+      // next launch.
+      this.dismissToast(victim.id, { silent: isDisposable(victim) || victim.acknowledgeOnly === true });
     }
 
     const id = `toast-${++toastCounter}`;
@@ -338,21 +398,36 @@ export const uiStore = {
       duration: opts.duration ?? TOAST_MAX_LIFETIME_MS,
       actions: opts.actions,
       onDismiss: opts.onDismiss,
+      acknowledgeOnly: opts.acknowledgeOnly,
     };
     toasts = [...toasts, toast];
 
-    // Always schedule a dismissal. A positive duration is honoured (capped at
-    // the max lifetime); `0`/unset — the old "persistent" sentinel — now maps
-    // to the 15s cap so even decision toasts time out instead of lingering.
-    const lifetime =
-      toast.duration && toast.duration > 0
-        ? Math.min(toast.duration, TOAST_MAX_LIFETIME_MS)
-        : TOAST_MAX_LIFETIME_MS;
-    const timer = setTimeout(() => {
-      toastTimers.delete(id);
-      this.dismissToast(id);
-    }, lifetime);
-    toastTimers.set(id, timer);
+    // 1.6 — a genuinely-sticky ERROR (save failed, recovery-location hint,
+    // unflushed-bytes breadcrumb) must persist until the user dismisses it: the
+    // failure it reports outlives the 15s window, and the rich recovery hint is
+    // the only place the user learns WHERE their bytes are. So an error toast
+    // with no explicit positive duration gets NO auto-dismiss timer.
+    //
+    // Audit5 R3 is preserved: NON-error toasts — including the promise-backed
+    // external-edit decision warnings that pass `duration: 0` — still always
+    // auto-dismiss within the cap, so a re-firing prompt can't blanket the
+    // screen and a promise-backed toast can't strand its write. An error toast
+    // with an explicit positive duration (e.g. a 6s delete failure) still
+    // honours that duration.
+    const isStickyError = toast.type === 'error' && !(toast.duration && toast.duration > 0);
+    if (!isStickyError) {
+      // A positive duration is honoured (capped at the max lifetime); `0`/unset
+      // — the old "persistent" sentinel — maps to the 15s cap.
+      const lifetime =
+        toast.duration && toast.duration > 0
+          ? Math.min(toast.duration, TOAST_MAX_LIFETIME_MS)
+          : TOAST_MAX_LIFETIME_MS;
+      const timer = setTimeout(() => {
+        toastTimers.delete(id);
+        this.dismissToast(id);
+      }, lifetime);
+      toastTimers.set(id, timer);
+    }
 
     return id;
   },
@@ -366,15 +441,21 @@ export const uiStore = {
     if (!toast) return;
     const action = toast.actions?.[actionIndex];
     if (action) {
+      // Audit-17 2.5 — route failures through the errorBus (→ aggregated
+      // toast) instead of a console-only swallow. Toast actions are exactly
+      // the destructive user decisions (Reload, Apply anyway, Keep local)
+      // whose silent failure trains the user to believe the action took
+      // effect; the toast itself is already dismissed by then, so the
+      // errorBus surface is the only honest signal left.
+      const surface = (err: unknown): void =>
+        reportError('toast.action', err, `Toast action "${action.label}" failed.`);
       try {
         const result = action.handler();
-        // Catch the rejection of async handlers so the user sees the failure
-        // in the dev console (and the unhandled-rejection logger doesn't fire).
         if (result && typeof (result as Promise<void>).then === 'function') {
-          (result as Promise<void>).catch((err) => console.error('[Toast] Action failed:', err));
+          (result as Promise<void>).catch(surface);
         }
       } catch (err) {
-        console.error('[Toast] Action failed:', err);
+        surface(err);
       }
     }
     this.dismissToast(id, { silent: true });
@@ -414,6 +495,27 @@ export const uiStore = {
 onVaultSwap('pre-swap', 'ui', () => {
   for (const timer of toastTimers.values()) clearTimeout(timer);
   toastTimers.clear();
+  // Phase 6.1.R2 — fire each toast's `onDismiss` before nulling the array.
+  // Audit-3 flagged the same shape as the Audit 3.1 confirm-dialog fix
+  // below: a Reload / Keep-local toast surfaced by `promptExternalEditOnSync`
+  // is awaited via a Promise that resolves only through onAction OR
+  // onDismiss; nulling the array directly stranded that Promise across the
+  // swap, leaving `inFlightDriftPrompts[path]` (and any caller awaiting it)
+  // unresolved. The dispatch is best-effort — a thrown onDismiss must not
+  // block the rest of the swap.
+  for (const toast of toasts) {
+    // M1 (Audit-18) — skip `acknowledgeOnly` toasts (recovery breadcrumbs). The
+    // pre-swap teardown fires BEFORE the generation bump, so their onDismiss'
+    // `isStillSameVault` guard still passes and the destructive
+    // `clearQuitFailureBreadcrumb` / `markClean` IPC would land on the OUTGOING
+    // vault — deleting the pointer to preserved unsaved bytes unread. Leave the
+    // breadcrumb on disk so it re-surfaces next launch.
+    if (toast.onDismiss && !toast.acknowledgeOnly) {
+      try { toast.onDismiss(); } catch (err) {
+        console.error('[Toast] onDismiss failed during vault swap:', err);
+      }
+    }
+  }
   toasts = [];
   contextMenu = { visible: false, x: 0, y: 0, items: [] };
   activeModal = null;

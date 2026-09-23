@@ -18,9 +18,11 @@
   const boardStore = scope.board;
   import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
   import { documentStore } from '../../stores/document.svelte';
+  import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
   import {
     markHydrated,
     isHydrated,
+    readMarkdownForHydrate,
     scheduleMarkdownWrite as gatewayScheduleMarkdownWrite,
     flushMarkdownWrite,
     cancelMarkdownWrite,
@@ -31,6 +33,8 @@
     clearPropertiesPopupDirty,
   } from '../../lib/vault/propertiesPopupTracker';
   import { reportError } from '../../lib/utils/errorBus';
+  import { type PropType, detectType, valueForRow } from '../../lib/utils/propertyRowTypes';
+  import { diffToFrontmatterDelta } from '../../lib/vault/frontmatterDelta';
   import { IpcEnvelopeError } from '@shared/ipcEnvelope';
   import { createId } from '../../lib/utils/ids';
   import { historyStore } from '../../stores/history.svelte';
@@ -38,8 +42,6 @@
     UpdatePropertiesCommand,
     type PropertiesSnapshot,
   } from '../../commands/index';
-
-  type PropType = 'text' | 'number' | 'boolean' | 'date' | 'list' | 'tag' | 'status';
 
   const DEFAULT_STATUSES: readonly string[] = ['todo', 'in-progress', 'done'];
 
@@ -79,44 +81,6 @@
   /** Per-row flag forcing the status row into custom-text-input mode. Keyed by row.rid. */
   let statusCustomMode = $state<Record<string, boolean>>({});
 
-  function detectType(key: string, value: unknown): PropType {
-    const k = key.trim().toLowerCase();
-    if (k === 'tags' && Array.isArray(value)) return 'tag';
-    // `status` key auto-detects as the status type for any string value, so
-    // custom values written to frontmatter round-trip correctly through the
-    // popup UI without forcing the user to re-pick the type each open.
-    if (k === 'status' && typeof value === 'string') return 'status';
-    if (typeof value === 'boolean') return 'boolean';
-    if (typeof value === 'number') return 'number';
-    if (Array.isArray(value)) return 'list';
-    if (typeof value === 'string') {
-      // ISO date detection — YYYY-MM-DD or full ISO 8601.
-      if (/^\d{4}-\d{2}-\d{2}(T|$)/.test(value)) return 'date';
-    }
-    return 'text';
-  }
-
-  function valueForRow(value: unknown, type: PropType): unknown {
-    switch (type) {
-      case 'boolean':
-        return Boolean(value);
-      case 'number':
-        return typeof value === 'number' ? value : Number(value) || 0;
-      case 'tag':
-      case 'list':
-        if (Array.isArray(value)) return value.map((v) => String(v));
-        if (typeof value === 'string') return value.split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
-        return [];
-      case 'date':
-        if (typeof value === 'string') return value.slice(0, 10);
-        return '';
-      case 'status':
-        return typeof value === 'string' && value.length > 0 ? value : 'todo';
-      default:
-        return typeof value === 'string' ? value : String(value ?? '');
-    }
-  }
-
   function rowsFromObject(obj: Record<string, unknown>): PropertyRow[] {
     return Object.entries(obj).map(([key, value]) => {
       const type = detectType(key, value);
@@ -134,11 +98,13 @@
     return out;
   }
 
+  // Audit-10 B2 — delegate to the canonical resolver so a subfolder tile's
+  // explicit `filePath` wins over the `${title}.md` root fallback. The old body
+  // ignored `filePath`, so editing properties on a subfolder card (Kanban) or a
+  // subfolder Mind-Map text tile read from / wrote to the wrong root path —
+  // losing the edit (ENOENT) or corrupting an unrelated same-named root file.
   function vaultRelativePath(t: Tile): string | null {
-    const docState = (t as TextTile).contentId
-      ? documentStore.getDocument((t as TextTile).contentId)
-      : null;
-    return docState?.filename || `${t.title || 'Untitled'}.md`;
+    return resolveTextTileVaultPath(t);
   }
 
   function loadFromBacking(): void {
@@ -206,15 +172,28 @@
     // truncate the last few keystrokes.
     const docState = docId ? documentStore.getDocument(docId) : null;
     const body = docState?.body ?? vaultIndexStore.getMetadata(relPath)?.content ?? '';
-    // If the file hasn't been hydrated yet (no sibling TextTile / DocumentEditor
-    // open AND the popup's own loadFromBacking hadn't seen the file before),
-    // markHydrated against the index content's BOM state — best effort,
-    // matches the watcher's view of disk.
-    if (!isHydrated(relPath)) {
-      const indexed = vaultIndexStore.getMetadata(relPath);
-      const hadBom = indexed?.content?.charCodeAt(0) === 0xfeff;
-      markHydrated(relPath, hadBom);
-    }
+    // Phase 6.1.R5 — hydration is now seeded by the `hydrateBackingFile`
+    // disk read fired from onMount. The previous code sniffed `hadBom`
+    // from `vaultIndexStore.content`, which is the body-only field
+    // already BOM-stripped by the index splitter (`splitFrontmatterSource`),
+    // so the sniff was permanently `false` and Notepad-saved files lost their
+    // BOM on the popup's first save. The onMount disk read seeds the correct hadBom into
+    // `fileState` AND seeds the drift baseline. If onMount's read
+    // failed (ENOENT / race), fall back to a no-BOM hydrate so the
+    // write below ENOENT-fails with the same surfaced toast path the
+    // legacy "no fileState entry" branch produced.
+    if (!isHydrated(relPath)) markHydrated(relPath, false);
+    // Phase 4 (WRITE_PATH_REMEDIATION_PLAN_2026-06-04) — the popup edits in
+    // whole-object terms, so the write SOURCE is the delta of everything that
+    // changed since the popup opened (`beforeSnapshot.fm` → current rows). A key
+    // the popup never touched — including one an external editor added to disk
+    // since the popup opened, which is in NEITHER snapshot — is absent from the
+    // delta, so the gateway sources it from fresh disk and never reverts it (the
+    // live variant of Finding #5). `frontmatter: obj` stays as the legacy
+    // fallback the gateway ignores while a delta is present.
+    const openFm =
+      beforeSnapshot?.kind === 'frontmatter' ? beforeSnapshot.fm : {};
+    const delta = diffToFrontmatterDelta(openFm, obj);
     return {
       vaultRoot,
       relPath,
@@ -222,6 +201,11 @@
       body,
       callerId: flusherId,
       docId: docId ?? null,
+      frontmatterDelta: delta,
+      // Audit-16 6.8 — fire-time body-source decision (`body` above prefers
+      // the live `docState?.body`); the gateway must not re-derive it from
+      // the mutable documentStore at write time.
+      bodyIsLive: docState != null,
     };
   }
 
@@ -254,29 +238,36 @@
 
   async function flushPendingWrite(): Promise<void> {
     if (!flusherId) return;
-    try {
-      await flushMarkdownWrite(flusherId);
+    // Audit-17 2.1 — `flushMarkdownWrite` never rejects (the scheduler
+    // primitive resolves failures as `{ ok: false }`), so the old try/catch
+    // was dead code: the dirty flag was cleared on a FAILED flush, dropping
+    // the classifier's popup-dirty conflict routing for rows that never
+    // landed. Branch on the result instead.
+    const result = await flushMarkdownWrite(flusherId);
+    if (result.ok) {
       // Sprint C / C.1 — write landed; the popup's tracked rows match disk
       // now. Clear the dirty bit so the classifier stops routing future
       // external frontmatter edits to the popup-dirty prompt path.
       clearPropertiesPopupDirty(flusherId);
-    } catch (err) {
-      if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
-        const relPath = vaultRelativePath(tile);
-        backingFileMissing = true;
-        // Backing file is gone — there is no path left to be dirty against.
-        clearPropertiesPopupDirty(flusherId);
-        reportError(
-          'PropertiesPopup',
-          null,
-          `"${relPath ?? 'File'}" no longer exists on disk. Further property changes won't be saved until the file is restored.`,
-        );
-        return;
-      }
-      // Don't clear on other failures — the next flush attempt (close, Ctrl+S)
-      // should still see the rows as dirty so the user's choice is honoured.
-      reportError('PropertiesPopup', err, 'Failed to write markdown');
+      return;
     }
+    const err = result.error;
+    if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
+      const relPath = vaultRelativePath(tile);
+      backingFileMissing = true;
+      // Backing file is gone — there is no path left to be dirty against.
+      clearPropertiesPopupDirty(flusherId);
+      reportError(
+        'PropertiesPopup',
+        null,
+        `"${relPath ?? 'File'}" no longer exists on disk. Further property changes won't be saved until the file is restored.`,
+      );
+      return;
+    }
+    // Don't clear on other failures — the next flush attempt (close, Ctrl+S)
+    // should still see the rows as dirty so the user's choice is honoured.
+    // No reportError: trackComponentWrite already surfaced the failure
+    // through the save-error pipeline; a second toast would double-report.
   }
 
   function addProperty(): void {
@@ -316,6 +307,20 @@
 
   function textToList(text: string): string[] {
     return text.split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
+  }
+
+  /**
+   * Audit-10 B1 — a compact, read-only preview for a `raw` row: a structured
+   * value (nested object/array, or an array with non-string items) the typed
+   * editors can't represent without loss. JSON is unambiguous; the value itself
+   * is preserved verbatim by `valueForRow('raw')`, so this is display-only.
+   */
+  function rawPreview(value: unknown): string {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
   }
 
   function getTagArray(value: unknown): string[] {
@@ -395,10 +400,40 @@
   }
 
   let flusherId = '';
+  // M3 (Audit-12) — capture the originating board at popup MOUNT, from the
+  // PANE-SCOPED `scope.board` (the `boardStore` alias above), not the global
+  // facade at destroy time. The deferred UpdatePropertiesCommand is constructed
+  // in `pushHistoryEntry` during onDestroy; resolving its board from the
+  // globally-active board THEN would push a non-text tile's property edit onto
+  // the wrong pane's undo stack (or no-op the metadata applySnapshot) when the
+  // user clicked a different pane before closing. Every sibling style popup
+  // already captures a mount-time id this way.
+  let mountBoardId = '';
 
   onMount(() => {
     flusherId = `properties-popup:${tile.id}:${createId(6)}`;
+    mountBoardId = boardStore.current?.id ?? '';
     loadFromBacking();
+    // Phase 6.1.R5 — async disk-read hydrate so the popup's first write
+    // assembles against the correct BOM byte AND a drift baseline seeded
+    // from the same read. Skip when a sibling editor already hydrated
+    // the file (its fileState entry is correct) or when there is no
+    // backing file (non-text tile / unresolved relPath). The promise is
+    // fire-and-forget — a failed read leaves `fileState` empty, and
+    // `buildFrontmatterWriteArgs` falls back to `markHydrated(false)`
+    // so the first write surfaces the ENOENT through the gateway's
+    // error path instead of crashing.
+    if (tile.type === 'text') {
+      const vaultRoot = vaultStore.path;
+      const relPath = vaultRelativePath(tile);
+      if (vaultRoot && relPath && !isHydrated(relPath)) {
+        void readMarkdownForHydrate(vaultRoot, relPath).catch(() => {
+          // Read failed (ENOENT, EACCES, …). buildFrontmatterWriteArgs's
+          // `if (!isHydrated) markHydrated(false)` fallback handles the
+          // write path; nothing to do here.
+        });
+      }
+    }
   });
 
   onDestroy(() => {
@@ -408,12 +443,15 @@
     // (history entry is pushed after).
     flushIfPending();
     pushHistoryEntry();
-    // Best-effort: cancel the gateway timer for this flusherId so a late
+    // Best-effort: cancel the gateway TIMER for this flusherId so a late
     // schedule armed in the same tick as onDestroy doesn't fire against a
-    // popup that's already torn down. Idempotent against the
-    // flushIfPending above (which converts pending to in-flight).
+    // popup that's already torn down. Audit-18 H1 — `pendingOnly: true` cancels
+    // ONLY an armed timer, never a PARKED fire: `flushIfPending()` above already
+    // owns the parked/in-flight write and lands its newest rows, so the plain
+    // cancel (which marks a parked fire cancelled, Audit-16 4.4) would silently
+    // drop the freshest edits while `flush` still reports success.
     if (flusherId) {
-      cancelMarkdownWrite(flusherId);
+      cancelMarkdownWrite(flusherId, true);
       // Sprint C / C.1 — defence in depth: ensure the popup's tracker entry
       // is gone even if flushPendingWrite never resolved (sync teardown
       // before the promise settled). A stale entry would block the
@@ -433,8 +471,10 @@
     const afterSnapshot = buildAfterSnapshot();
     if (!afterSnapshot) return;
     if (snapshotsEqual(beforeSnapshot, afterSnapshot)) return;
+    // M3 (Audit-12) — pass the mount-time board id so the command targets the
+    // pane this popup belongs to, not whichever board is active at close time.
     historyStore.pushWithoutExecute(
-      new UpdatePropertiesCommand(beforeSnapshot, afterSnapshot),
+      new UpdatePropertiesCommand(beforeSnapshot, afterSnapshot, mountBoardId),
     );
   }
 
@@ -505,8 +545,14 @@
             class="type-select"
             value={row.type}
             onchange={(e) => changeType(index, (e.target as HTMLSelectElement).value as PropType)}
+            disabled={row.type === 'raw'}
             aria-label="Property type for {propLabel}"
           >
+            {#if row.type === 'raw'}
+              <!-- Audit-10 B1 — a structured value can't be re-typed without
+                   loss, so the select is disabled; this option just labels it. -->
+              <option value="raw">Raw</option>
+            {/if}
             <option value="text">Text</option>
             <option value="number">Number</option>
             <option value="boolean">Boolean</option>
@@ -517,7 +563,15 @@
           </select>
 
           <div class="value-cell" class:value-cell-stack={row.type === 'tag'}>
-            {#if row.type === 'boolean'}
+            {#if row.type === 'raw'}
+              <!-- Audit-10 B1 — read-only verbatim preview. A nested object /
+                   numeric array round-trips untouched; editing it here would
+                   coerce it lossily, so it's display-only with a hint. -->
+              <code
+                class="raw-value"
+                title="Structured value — edit in your text editor to preserve it"
+              >{rawPreview(row.value)}</code>
+            {:else if row.type === 'boolean'}
               <input
                 type="checkbox"
                 checked={Boolean(row.value)}
@@ -579,7 +633,8 @@
                     commitTagInput(index);
                   } else if (e.key === 'Backspace' && !search && selectedTags.length > 0) {
                     e.preventDefault();
-                    removeTagFromRow(index, selectedTags[selectedTags.length - 1]);
+                    const lastTag = selectedTags[selectedTags.length - 1];
+                    if (lastTag) removeTagFromRow(index, lastTag);
                   }
                 }}
                 role="combobox"
@@ -767,6 +822,26 @@
 
   .value-input {
     width: 100%;
+  }
+
+  /* Audit-10 B1 — read-only structured-value preview. */
+  .raw-value {
+    display: block;
+    width: 100%;
+    height: 26px;
+    line-height: 22px;
+    padding: 2px 8px;
+    border: 1px solid var(--ui-border);
+    border-radius: 4px;
+    background: var(--ui-surface-hover);
+    color: var(--text-secondary);
+    font-family: var(--font-mono, monospace);
+    font-size: 11px;
+    box-sizing: border-box;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    cursor: default;
   }
 
   .tag-chips {

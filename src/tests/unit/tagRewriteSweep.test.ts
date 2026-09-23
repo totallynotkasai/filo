@@ -19,6 +19,10 @@ import {
   __resetTagRewriteSweepForTests,
 } from '@renderer/lib/vault/tagRewriteSweep';
 import { __resetTagRewriteSentinelForTests } from '@renderer/lib/vault/tagRewriteSentinel';
+import {
+  __testRegisterFlusher,
+  __resetMarkdownFileWriterForTests,
+} from '@renderer/lib/vault/markdownFileWriter';
 import type { FileMetadata } from '@renderer/lib/vault/vaultIndex';
 
 type InvokeRoute = (...args: unknown[]) => unknown | Promise<unknown>;
@@ -237,5 +241,160 @@ describe('rewriteTagInAllMarkdown — sweep mutex (polish phase 4.3)', () => {
     // Either path is acceptable: the contract is that second.await resolves,
     // not that it produces a write.
     expect(r2).toBeDefined();
+  });
+
+  // ── Audit 2.2 ─────────────────────────────────────────────────────────────
+  // The index preserves the file's authored casing (`Project`), but the
+  // registry canonical name is `project`. Pre-fix the candidate filter
+  // (`md.tags.some((t) => t === oldName)`) was case-SENSITIVE, so the file was
+  // skipped and the rename never reached its `.md` — leaving a stale `Project`
+  // that the next external-edit reconcile would re-assert. Both the filter AND
+  // the rewriter must fold case to match identity used everywhere else.
+  // ── 6.3 (AUDIT_REMEDIATION_PLAN_2026-05-31) ───────────────────────────────
+  // A crash mid tag-REMOVAL used to be undetectable: the sentinel recorded no
+  // per-path progress, and reopen-side detection short-circuited to "not
+  // partial" for removals — so a vault split between files that still carry
+  // the tag and files that don't went unwarned. The sweep must now record
+  // each committed path incrementally so reopen can detect the split.
+  it('records committedPaths incrementally for a partial removal (6.3)', async () => {
+    const withFm = (tag: string, body: string) => `---\ntags:\n  - ${tag}\n---\n${body}\n`;
+    fs.files.set('a.md', withFm('obsolete', 'note A'));
+    fs.files.set('b.md', withFm('obsolete', 'note B'));
+
+    // Fail the SECOND .md write so the removal strips a.md but not b.md —
+    // exactly the "vault split" crash window 6.3 must leave detectable.
+    let writeCount = 0;
+    (window as unknown as Record<string, unknown>).filo = {
+      invoke: async (channel: string, ...args: unknown[]) => {
+        if (channel === 'vault:write-existing-file-text') {
+          writeCount++;
+          if (writeCount === 2) return { success: false, code: 'EACCES' };
+          const [, relPath, content] = args as [unknown, string, string];
+          fs.files.set(relPath, content);
+          fs.writeLog.push({ path: relPath, content, at: 0 });
+          return { success: true };
+        }
+        if (channel === 'vault:write-file-text') {
+          // Sentinel writes — record so the test can read the final breadcrumb.
+          fs.files.set(args[1] as string, args[2] as string);
+          return { success: true };
+        }
+        if (channel === 'vault:read-file-text') {
+          const content = fs.files.get(args[1] as string);
+          if (content === undefined) return { success: false, code: 'ENOENT' };
+          return { success: true, content };
+        }
+        if (channel === 'vault:file-exists') return fs.files.has(args[1] as string);
+        if (channel === 'vault:delete') return { success: true };
+        return { success: false };
+      },
+      on: () => () => {},
+      send: () => {},
+    };
+
+    const meta = makeMetadata(['a.md', 'b.md'], 'obsolete');
+    const res = await rewriteTagInAllMarkdown({
+      vaultRoot: '/vault',
+      metadata: meta,
+      oldName: 'obsolete',
+      newName: null, // removal
+      applyChanges: async () => {},
+    });
+
+    expect(res.succeeded).toEqual(['a.md']);
+    expect(res.failed).toContain('b.md');
+
+    // The sentinel must survive (failed > 0 ⇒ not cleared) AND carry the
+    // path that was actually stripped, so reopen-side detection can see the
+    // removal got half-done.
+    const sentinelRaw = fs.files.get('.filo/tag-rewrite-pending.json');
+    expect(sentinelRaw, 'removal sentinel should survive a partial sweep').toBeDefined();
+    const sentinel = JSON.parse(sentinelRaw as string) as {
+      newName: string | null;
+      committedPaths?: string[];
+    };
+    expect(sentinel.newName).toBeNull();
+    expect(sentinel.committedPaths).toEqual(['a.md']);
+  });
+
+  it('rewrites a file whose frontmatter tag case differs from the registry name', async () => {
+    fs.files.set('note.md', '---\ntags:\n  - Project\n---\nbody\n');
+    const meta = makeMetadata(['note.md'], 'Project');
+    const applied: string[] = [];
+    const res = await rewriteTagInAllMarkdown({
+      vaultRoot: '/vault',
+      metadata: meta,
+      oldName: 'project',
+      newName: 'done',
+      applyChanges: async (paths) => {
+        applied.push(...paths);
+      },
+    });
+    expect(res.succeeded).toContain('note.md');
+    expect(applied).toContain('note.md');
+    expect(fs.files.get('note.md')).toMatch(/- done/);
+    expect(fs.files.get('note.md')).not.toMatch(/Project/);
+  });
+});
+
+// ── Audit-7 M2 — the sweep re-reads after the inner drain ─────────────────────
+//
+// Phase 1 read each candidate and (pre-fix) snapshotted `rewrite(rawBytes)`.
+// The Phase-2 commit loop's `withDrainedWrites` flushes any armed editor body to
+// disk; the sweep then wrote the STALE snapshot over it, and the `mode:'full'`
+// reconcile reloaded the open editor to that stale body — losing a keystroke
+// that landed after the caller's up-front drain. The fix recomputes the rewrite
+// from a POST-drain re-read so the flushed body survives (tag still rewritten).
+describe('rewriteTagInAllMarkdown — re-reads after the drain (Audit-7 M2)', () => {
+  let fs: FakeFs;
+
+  beforeEach(() => {
+    fs = { files: new Map(), writeLog: [], writeDelayMs: 0 };
+    installFiloStub(fs);
+    __resetTagRewriteSweepForTests();
+    __resetTagRewriteSentinelForTests();
+    __resetMarkdownFileWriterForTests();
+  });
+  afterEach(() => {
+    uninstallFiloStub();
+    __resetTagRewriteSweepForTests();
+    __resetTagRewriteSentinelForTests();
+    __resetMarkdownFileWriterForTests();
+  });
+
+  it('preserves a body the inner drain flushes instead of clobbering it with a pre-drain snapshot', async () => {
+    const withFm = (tag: string, body: string) => `---\ntags:\n  - ${tag}\n---\n${body}\n`;
+    const C0 = withFm('draft', 'OLD BODY'); // pre-flight disk content (Phase-1 read)
+    const C1 = withFm('draft', 'NEW BODY'); // the live keystroke the drain flushes (tag NOT renamed yet)
+    fs.files.set('note.md', C0);
+
+    // Simulate an editor body write that a keystroke re-armed after the caller's
+    // up-front drain: the sweep's own `withDrainedWrites` flushes it to disk.
+    // `flushAllMarkdownWriters` (inside withDrainedWrites) drains test flushers.
+    let flushed = false;
+    __testRegisterFlusher('editor:note.md', async () => {
+      if (flushed) return;
+      flushed = true;
+      fs.files.set('note.md', C1);
+      fs.writeLog.push({ path: 'note.md', content: C1, at: 0 });
+    });
+
+    const res = await rewriteTagInAllMarkdown({
+      vaultRoot: '/vault',
+      metadata: makeMetadata(['note.md'], 'draft'),
+      oldName: 'draft',
+      newName: 'review',
+      applyChanges: async () => {},
+    });
+
+    expect(flushed, 'the inner drain must have flushed the editor body').toBe(true);
+    expect(res.succeeded).toContain('note.md');
+    const final = fs.files.get('note.md')!;
+    // The drained body survives AND the tag is renamed — not the stale pre-drain
+    // body the Phase-1 snapshot would have re-written.
+    expect(final).toContain('NEW BODY');
+    expect(final).not.toContain('OLD BODY');
+    expect(final).toMatch(/- review/);
+    expect(final).not.toMatch(/draft/);
   });
 });

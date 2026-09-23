@@ -6,7 +6,7 @@ import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
-import { __resetMarkdownFlushersForTests } from '@renderer/lib/boards/markdownWriteRegistry';
+import { __resetMarkdownFileWriterForTests as __resetMarkdownFlushersForTests } from '@renderer/lib/vault/markdownFileWriter';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import type { FileMetadata } from '@renderer/lib/vault/vaultIndex';
 
@@ -104,6 +104,7 @@ describe('tag cascade — synchronous tags.json flush (Phase 4.3)', () => {
       links: [],
       content: '---\ntags: [old]\n---\nbody\n',
       lastModified: 0,
+      rawFrontmatter: 'tags: [old]',
     };
     vi.spyOn(vaultIndexStore, 'allMetadata').mockReturnValue([metadata]);
     vi.spyOn(vaultIndexStore, 'applyChanges').mockResolvedValue(undefined);

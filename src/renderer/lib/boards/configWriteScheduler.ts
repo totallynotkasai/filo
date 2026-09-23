@@ -24,7 +24,7 @@ import type {
   WorkspaceState,
 } from '../../schema/index';
 import type { WorkspaceLayout } from '../../stores/workspace.svelte';
-import { BOARD_WRITE_DEBOUNCE_MS } from './boardWriteDebounce';
+import { BOARD_WRITE_DEBOUNCE_MS, WRITE_TIMEOUT_MS, ENOENT_RESTAT_DELAY_MS, writtenByteLength } from './boardWriteDebounce';
 import {
   notifyWriteError,
   registerResetCallback,
@@ -32,8 +32,9 @@ import {
   markRecentSelfWrite,
 } from './writeStateTracking';
 import { invokeOk } from '../utils/invokeOk';
+import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { createScheduler } from './writeScheduler';
-import { getBaseline, noteBaseline, hasBaselineDrifted } from '../vault/fileBaselineRegistry';
+import { getBaseline, noteBaseline, hasBaselineDrifted, refreshBaselineAfterWrite } from '../vault/fileBaselineRegistry';
 
 export interface ConfigWriteArgs {
   vaultRoot: string;
@@ -74,6 +75,7 @@ type ConfigTarget =
  * time — isolated changes (theme only, workspace only) no longer rewrite
  * the other three files. Cleared on vault swap.
  */
+// allow-module-state: reset via resetConfigWriteScheduler called from boardSaver's pre-swap handler
 const lastWrittenConfigs = new Map<ConfigTarget, string>();
 
 /**
@@ -85,7 +87,19 @@ const lastWrittenConfigs = new Map<ConfigTarget, string>();
  * clears specific entries via `clearCorruptConfigTarget` once the user
  * resolves the issue (e.g. picks "Use defaults" in the modal).
  */
+// allow-module-state: reset via resetConfigWriteScheduler called from boardSaver's pre-swap handler
 const corruptConfigTargets = new Set<ConfigTarget>();
+
+/**
+ * Audit-18 4.2 — targets whose corrupt-suppression toast has already fired
+ * this session. The suppression itself runs on EVERY debounce flush of a
+ * changed-but-corrupt config, so without this the once-honest "we're not
+ * saving this" notice would re-toast on each keystroke window. Cleared on
+ * vault swap (with `corruptConfigTargets`) and when the user resolves a
+ * target (`clearCorruptConfigTarget`) so a later re-corruption re-notifies.
+ */
+// allow-module-state: reset via resetConfigWriteScheduler called from boardSaver's pre-swap handler
+const corruptSuppressToastShown = new Set<ConfigTarget>();
 
 export function markCorruptConfigTarget(target: ConfigTarget): void {
   corruptConfigTargets.add(target);
@@ -93,6 +107,8 @@ export function markCorruptConfigTarget(target: ConfigTarget): void {
 
 export function clearCorruptConfigTarget(target: ConfigTarget): void {
   corruptConfigTargets.delete(target);
+  // Re-arm the honest toast for a future re-corruption of this target.
+  corruptSuppressToastShown.delete(target);
 }
 
 export function isConfigTargetCorrupt(target: ConfigTarget): boolean {
@@ -125,11 +141,13 @@ export function isConfigPathCorrupt(path: string): boolean {
 registerResetCallback(() => {
   lastWrittenConfigs.clear();
   corruptConfigTargets.clear();
+  corruptSuppressToastShown.clear();
   configScheduler.reset();
 });
 registerTestResetCallback(() => {
   lastWrittenConfigs.clear();
   corruptConfigTargets.clear();
+  corruptSuppressToastShown.clear();
   configScheduler.reset();
 });
 
@@ -195,13 +213,15 @@ function buildConfigPayloads(
       showFileExtensions: settings.general?.showFileExtensions ?? false,
       hoverButtons: settings.general?.hoverButtons ?? {},
     }, null, 2),
-    // D.3 — Drop the hardcoded `snippets: []` from the appearance write.
-    // The renderer doesn't carry the snippets array in memory anywhere, so
-    // emitting an empty array on every save just clobbered whatever the
-    // user had on disk (or whatever a future Filo build might add). Now
-    // the payload only declares the two fields the renderer actually owns;
-    // any legacy snippets sit on disk untouched until something else
-    // rewrites the file.
+    // Audit 3.3 — appearance.json is fully Filo-owned: activeTheme + font only.
+    // saveConfig → atomicWriteFile is a whole-file (tmp+rename) replace, NOT a
+    // read-modify-write merge, so it cannot preserve any other on-disk key. The
+    // seed in configOps.initVaultConfig matches this exact shape, so disk shape
+    // and code ownership agree. A hand-added `snippets` array is therefore NOT
+    // preserved across a theme/font save — it is explicitly unmanaged, not
+    // round-tripped. (Preserving unknown keys would require carrying the loaded
+    // appearance object in memory and spreading it the way app.json spreads the
+    // general slice — the audit's option (a), deliberately not taken here.)
     'appearance.json': JSON.stringify({
       activeTheme: theme ?? 'light',
       font: settings.general?.globalFont ?? '',
@@ -256,6 +276,31 @@ export async function writeConfigs(
       // has on disk. Resolution happens externally (user fixes the file
       // and reopens the vault, or picks "Use defaults" which calls
       // clearCorruptConfigTarget and re-arms the write).
+      //
+      // Audit-18 4.2 — but DON'T resolve it as a clean no-op: the user can
+      // edit defaults / viewports for hours with every change silently
+      // dropped while Ctrl+S flashes "Saved". Report it honestly:
+      //   (a) push the target onto `failed` so `vaultStore.save()`'s aggregate
+      //       boolean returns false and the saveState `failed>0` badge reads
+      //       'error' (the Audit-7 L1 pattern) — the change genuinely isn't
+      //       persisting and the indicator must say so;
+      //   (b) surface a once-per-target toast naming the corrupt file (the
+      //       `corruptSuppressToastShown` guard keeps later debounce cycles
+      //       from re-toasting). `notifyWriteError` routes through App.svelte's
+      //       coalescing aggregator; the `CONFIG_CORRUPT` code makes
+      //       `buildWriteErrorToast` emit a corrupt-specific message instead of
+      //       the misleading generic "check disk space / permissions" copy.
+      failed.push(target);
+      if (!corruptSuppressToastShown.has(target)) {
+        corruptSuppressToastShown.add(target);
+        const corruptError = Object.assign(
+          new Error(
+            `Config "${target}" is corrupt on disk; changes are not being saved so the existing file isn't clobbered.`,
+          ),
+          { code: 'CONFIG_CORRUPT' },
+        );
+        notifyWriteError({ kind: 'config', path: target, error: corruptError });
+      }
       continue;
     }
     // Phase R6 — pre-write drift check. Compare on-disk mtime against
@@ -269,14 +314,144 @@ export async function writeConfigs(
     const sentinelPath = target === 'config:save-workspace'
       ? '.filo/workspace.json'
       : `.filo/${target}`;
-    const baseline = getBaseline(sentinelPath);
+    // Audit-16 4.5 — `let`, not `const`: the benign-reappear branch below
+    // rebases the baseline to the recreated file's stat and must re-read it
+    // so the drift check compares against the rebased value.
+    let baseline = getBaseline(sentinelPath);
     if (baseline !== undefined) {
       let preWriteStat: { mtimeMs: number; size: number } | undefined;
       try {
         preWriteStat = await invokeOk('vault:stat', vaultRoot, sentinelPath);
-      } catch {
-        // Stat failed — fall through; the save IPC will surface the
-        // failure if it matters (e.g. ENOENT after a manual delete).
+      } catch (err) {
+        // Audit2 5.1 — ENOENT means the `.filo/` config was deleted on disk
+        // (user / external tool / sync client) while this debounced write
+        // was armed. Falling through to `config:save` would re-create it,
+        // resurrecting a file the user intentionally removed. Skip the
+        // target as a clean no-op (continue, not throw) so the scheduler
+        // ends the entry successfully and the recovery sentinel isn't
+        // left dirty. Mirrors the equivalent guard in
+        // `writeBoardFile` (boardWriteScheduler.ts) — same rationale.
+        //
+        // Gated on `baseline !== undefined` (this whole block): the file
+        // was previously known to exist on disk, so its absence now is a
+        // deletion, not a fresh seed. Initial `configOps.initVaultConfig`
+        // writes happen before any baseline is noted, so they're
+        // unaffected.
+        if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
+          // L24 (Audit-6) — re-stat ONCE before treating the ENOENT as an
+          // intentional delete. A OneDrive / AV / sync client can momentarily
+          // unlink-then-recreate a `.filo/` config; the original code read that
+          // transient gap as "user removed it" and silently dropped the armed
+          // in-memory change. If the file has already reappeared by the retry,
+          // proceed with the write (fall through to the drift check below)
+          // instead of losing the change.
+          //
+          // Audit-18 M5 — grace delay before the re-stat (parity with the board
+          // scheduler's A17-2.3 `ENOENT_RESTAT_DELAY_MS`). This twin's own L24
+          // comment claimed it "mirrors writeBoardFile", but it re-stated
+          // microseconds later — too fast for a sync client's unlink→recreate
+          // blip to land, so the blip still read as a delete and the armed config
+          // change was dropped as a clean success. Wait first so the recreate has
+          // time to reappear; a recreate carries a new mtime, so it then drifts
+          // and the content-verify / drift path runs instead of a silent no-op.
+          await new Promise((resolve) => setTimeout(resolve, ENOENT_RESTAT_DELAY_MS));
+          try {
+            preWriteStat = await invokeOk('vault:stat', vaultRoot, sentinelPath);
+            // L11 (Audit-7) — the file vanished then reappeared. A
+            // delete+recreate is an external mutation the mtime+size drift
+            // check below can be BLIND to: a same-size, same-second recreate
+            // reads as "no drift" and the foreign content gets silently
+            // clobbered. So before trusting the reappeared stat, verify the
+            // file's CONTENT matches what Filo last wrote/seeded for this
+            // target; a foreign recreate (different bytes) is aborted instead.
+            // `lastWritten === undefined` (never written this session — e.g.
+            // before seedConfigSnapshots primed the cache) can't be verified,
+            // so fall through to the drift check (preserves L24's transient-
+            // blip behaviour, which a benign same-content reappear still hits).
+            const lastWritten = lastWrittenConfigs.get(target);
+            if (lastWritten !== undefined) {
+              const configFile = target === 'config:save-workspace' ? 'workspace.json' : target;
+              let reappearedIsForeign = false;
+              // Audit-16 4.5 — true ONLY when the read succeeded AND the
+              // content provably matches our last write. Distinct from
+              // `!reappearedIsForeign`: the read-hiccup catch below is
+              // permissive (not foreign) but UNVERIFIED, and an unverified
+              // recreate must not adopt the new baseline.
+              let reappearedVerifiedOurs = false;
+              try {
+                const loaded = await window.filo.invoke('config:load', vaultRoot, configFile);
+                if (loaded && typeof loaded === 'object' && '__corrupt' in loaded) {
+                  // Unparseable on disk — by definition not bytes Filo wrote.
+                  reappearedIsForeign = true;
+                } else {
+                  // JSON round-trips, so disk == our-last-write re-serialises
+                  // to the exact canonical 2-space form `lastWritten` holds.
+                  reappearedIsForeign = JSON.stringify(loaded, null, 2) !== lastWritten;
+                  reappearedVerifiedOurs = !reappearedIsForeign;
+                }
+              } catch {
+                // Read hiccup — can't verify. Be permissive (don't block a
+                // legit write on a transient read failure); fall through to the
+                // drift check, which still guards mtime/size.
+                reappearedIsForeign = false;
+              }
+              if (reappearedIsForeign) {
+                const externalEditError = Object.assign(
+                  new Error(`Config "${sentinelPath}" was deleted and recreated externally; write aborted.`),
+                  { code: 'EXTERNAL_EDIT' },
+                );
+                notifyWriteError({ kind: 'config', path: target, error: externalEditError });
+                failed.push(target);
+                // Mirror the drift-abort dedup clear (#19 / 6.4.M12) so a later
+                // revert-to-this-payload write re-evaluates instead of being
+                // dedup-suppressed, and re-base the baseline to the reappeared
+                // file so a deliberate later change compares against IT rather
+                // than perpetually re-aborting against the stale load-time
+                // baseline.
+                lastWrittenConfigs.delete(target);
+                noteBaseline(sentinelPath, preWriteStat.mtimeMs, preWriteStat.size);
+                continue;
+              }
+              if (reappearedVerifiedOurs) {
+                // Audit-16 4.5 — the recreate provably holds OUR last-written
+                // bytes (the common OneDrive/Dropbox/AV unlink+recreate
+                // blip), but the recreated file carries a NEW mtime, so the
+                // drift check below compared it against the STALE pre-delete
+                // baseline → always "drifted" → abort + notifyWriteError +
+                // `lastWrittenConfigs.delete`, and NO rebase. That wedged the
+                // target for the whole session: every later write re-aborted
+                // against the stale baseline, and with the dedup cache gone a
+                // future ENOENT couldn't even content-verify. Adopting the
+                // recreated stat is safe — the bytes are ours — so rebase and
+                // fall through; the armed write then proceeds normally.
+                noteBaseline(sentinelPath, preWriteStat.mtimeMs, preWriteStat.size);
+                const rebased = getBaseline(sentinelPath);
+                if (rebased !== undefined) baseline = rebased;
+              }
+            }
+            // Reappeared content matches our last write (benign blip, baseline
+            // rebased above) or is unverifiable (lastWritten unset / read
+            // hiccup) — fall through to the drift check + write.
+          } catch (reErr) {
+            if (reErr instanceof IpcEnvelopeError && reErr.code === 'ENOENT') {
+              // Still gone ⇒ a real (intentional) delete. 6.4.M12 — the file is
+              // gone, so the dedup cache must stop asserting this payload is on
+              // disk. Leaving the stale entry meant a later write whose payload
+              // reverted to the cached value was silently dedup-suppressed (line
+              // 258), so the config could never be re-established in-session.
+              // Clear it; the baseline is kept so the ENOENT-skip keeps
+              // respecting the deletion until the file returns.
+              lastWrittenConfigs.delete(target);
+              continue;
+            }
+            // Re-stat hit a different error (EACCES/EBUSY): fall through — the
+            // save IPC below surfaces a genuine IO problem.
+          }
+        } else {
+          // Any other stat error (EACCES, transient share hiccup): fall
+          // through — the save IPC below surfaces a genuine IO problem
+          // through the failure attribution pipeline.
+        }
       }
       if (preWriteStat !== undefined && hasBaselineDrifted(baseline, preWriteStat)) {
         const externalEditError = Object.assign(
@@ -285,6 +460,15 @@ export async function writeConfigs(
         );
         notifyWriteError({ kind: 'config', path: target, error: externalEditError });
         failed.push(target);
+        // #19 — mirror the ENOENT branch's dedup-cache clear (6.4.M12). The
+        // write was aborted, so the on-disk file holds the EXTERNAL edit, not
+        // this `payload`. Leaving `lastWrittenConfigs[target] = payload` would
+        // dedup-suppress (line 258) a later write whose payload reverts to that
+        // cached value — the user's in-app value could then never re-establish
+        // in-session even after they rebase (reopen). Clear it so a
+        // revert-to-prior write re-evaluates the drift check instead of being
+        // silently skipped.
+        lastWrittenConfigs.delete(target);
         continue;
       }
     }
@@ -304,11 +488,40 @@ export async function writeConfigs(
       lastWrittenConfigs.set(target, payload);
       // Phase R6 — refresh baseline so the next write compares against
       // the state we just wrote, not the pre-write one.
+      // Audit-4 DI-14 — KEEP the prior baseline on an unusable stat (reverting
+      // 6.4.M2's clear); see `refreshBaselineAfterWrite` for the trade-off.
       try {
         const postStat = await invokeOk('vault:stat', vaultRoot, sentinelPath);
-        noteBaseline(sentinelPath, postStat.mtimeMs, postStat.size);
+        // Audit-17 5.4 — size verify (necessary). Audit-18 3.6 — content
+        // read-back (sufficient), mirroring the markdown gateway's A17-5.3: a
+        // SAME-BYTE-COUNT foreign write landing in the save→stat gap would
+        // otherwise be adopted as Filo's own baseline and the next write would
+        // match-and-clobber it promptless. So read the file BACK and stamp only
+        // when disk re-serialises to EXACTLY what we wrote; on any content
+        // mismatch / unreadable read-back keep the prior baseline (DI-14) so the
+        // next write's drift check re-detects + prompts. Config files are small,
+        // so the extra read is cheap (the WHOLE-FILE board writer keeps size-only
+        // — see boardWriteScheduler's 3.6 note + KNOWN_LIMITATIONS). Uses the same
+        // `config:load` round-trip the ENOENT-reappear content-verify above does.
+        let confirmed = false;
+        if (postStat.size === writtenByteLength(payload)) {
+          try {
+            const configFile = target === 'config:save-workspace' ? 'workspace.json' : target;
+            const loaded = await window.filo.invoke('config:load', vaultRoot, configFile);
+            if (loaded && typeof loaded === 'object' && !('__corrupt' in loaded)) {
+              confirmed = JSON.stringify(loaded, null, 2) === payload;
+            }
+          } catch {
+            /* transient IO — keep prior baseline (safe direction) */
+          }
+        }
+        if (confirmed) {
+          refreshBaselineAfterWrite(sentinelPath, postStat.mtimeMs, postStat.size);
+        } else {
+          refreshBaselineAfterWrite(sentinelPath, undefined, undefined);
+        }
       } catch {
-        // Non-fatal — next load/write rebases.
+        refreshBaselineAfterWrite(sentinelPath, undefined, undefined);
       }
     } catch (err) {
       console.error(`[V7] Failed to save config file (${target}):`, err);
@@ -344,6 +557,11 @@ const configScheduler = createScheduler<ConfigWriteArgs>({
   getFailureId: () => CONFIG_SENTINEL_PATH,
   missingSourceMessage: () =>
     "Filo couldn't save the latest configuration changes. Re-apply them and save again.",
+  // Audit-11 WC-1 / QC-2 — `writeConfigs` awaits `vault:stat` + `config:save`
+  // IPCs with no interactive prompt, but a stalled network volume (OneDrive /
+  // SMB) can still wedge those IPCs and hang `flushAll` / quit. Bound for
+  // uniformity with the board / frontmatter schedulers.
+  writeTimeoutMs: WRITE_TIMEOUT_MS,
 });
 
 /**

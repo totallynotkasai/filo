@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { documentStore } from '@renderer/stores/document.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
+import { parseMarkdownFile } from '@renderer/lib/editor/markdownSync';
 
 /**
  * Regression test for the multi-view markdown sync fix.
@@ -325,5 +326,61 @@ describe('documentStore — external-edit toast byte-delta', () => {
     documentStore.handleExternalChange('doc_A', 'second', []);
     expect(uiStore.toasts).toHaveLength(0);
     expect(documentStore.getDocument('doc_A')?.body).toBe('second');
+  });
+});
+
+/**
+ * Audit2 2.2 (latent bug) — a SECOND view (a TextTile or DocumentEditor) that
+ * hydrates from the in-memory `DocumentState.body` instead of a fresh disk read
+ * must not re-seed frontmatter from that body. The store body is body-only by
+ * contract, so `parseMarkdownFile(body).frontmatter` is always `{}` — passing
+ * it to `setFrontmatter` clobbered the real FM (and dropped the 1.2 verbatim
+ * raw bytes) that the first view seeded from disk, after which a body-only save
+ * emitted no `---` fence and ERASED the file's frontmatter block. The fix gates
+ * those hydrate branches on `hasFrontmatter`; this suite pins the store
+ * contract those branches now rely on.
+ */
+describe('documentStore — cached-body hydrate must not clobber seeded frontmatter (audit2 2.2)', () => {
+  beforeEach(() => {
+    documentStore.clear();
+  });
+
+  it('hasFrontmatter reports whether a sibling view already seeded FM from disk', () => {
+    expect(documentStore.hasFrontmatter('doc_A')).toBe(false);
+    documentStore.setFrontmatter('doc_A', { title: 'X', tags: ['a'] }, '---\ntitle: X\ntags: [a]\n---');
+    expect(documentStore.hasFrontmatter('doc_A')).toBe(true);
+  });
+
+  it('a second view hydrating from the body-only store body preserves disk-seeded FM + raw bytes', () => {
+    // View 1 reads the file from disk and seeds the real frontmatter plus the
+    // verbatim (1.2) raw bytes.
+    const raw = '---\ntitle: X\ntags: [a]\n---';
+    documentStore.setFrontmatter('doc_A', { title: 'X', tags: ['a'] }, raw);
+    documentStore.loadDocument({
+      docId: 'doc_A',
+      filename: 'Notes.md',
+      title: 'Notes',
+      body: 'just the body, no fence',
+      htmlContent: '<p>just the body, no fence</p>',
+      richText: [],
+    });
+
+    // View 2's cached-body hydrate branch (TextTile / DocumentEditor). The
+    // store body is body-only, so re-parsing it yields no frontmatter…
+    const docState = documentStore.getDocument('doc_A')!;
+    const reparsed = parseMarkdownFile(docState.body);
+    expect(reparsed.frontmatter).toEqual({});
+
+    // …so the FIXED branch guards on `hasFrontmatter` and SKIPS the re-seed
+    // (pre-fix it called setFrontmatter('doc_A', {}) → clobber). Modelled here
+    // exactly as the component branch now decides.
+    if (!documentStore.hasFrontmatter('doc_A')) {
+      documentStore.setFrontmatter('doc_A', reparsed.frontmatter);
+    }
+
+    // Real FM and the verbatim raw bytes survive — a later body-only save will
+    // emit the fence untouched instead of erasing it.
+    expect(documentStore.getFrontmatter('doc_A')).toEqual({ title: 'X', tags: ['a'] });
+    expect(documentStore.getRawFrontmatter('doc_A')).toBe(raw);
   });
 });

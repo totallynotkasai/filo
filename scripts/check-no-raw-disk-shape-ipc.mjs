@@ -52,6 +52,9 @@ const ALLOWLIST = new Set([
   'src/renderer/lib/vault/tagRewriteSentinel.ts',
   'src/renderer/lib/vault/renameCascadeSentinel.ts',
   'src/renderer/lib/vault/dirtyFlagRecovery.ts',
+  // 6.2.H4 (follow-up) — clears `.filo/quit-failure.json`, the quit-time
+  // emergency-file breadcrumb. Internal recovery state, not user content.
+  'src/renderer/lib/vault/quitFailureRecovery.ts',
 ]);
 
 /**

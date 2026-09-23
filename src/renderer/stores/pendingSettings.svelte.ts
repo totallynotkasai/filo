@@ -66,6 +66,7 @@ function setNestedField(
   let cursor: Record<string, unknown> = obj;
   for (let i = 0; i < parts.length - 1; i++) {
     const key = parts[i];
+    if (key === undefined) continue; // i < parts.length - 1; narrow for the type-checker
     const next = cursor[key];
     if (typeof next !== 'object' || next === null) {
       // Create intermediate objects on-the-fly so the user can set a
@@ -75,7 +76,8 @@ function setNestedField(
     }
     cursor = cursor[key] as Record<string, unknown>;
   }
-  cursor[parts[parts.length - 1]] = value;
+  const lastKey = parts[parts.length - 1];
+  if (lastKey !== undefined) cursor[lastKey] = value; // split() always yields >= 1 part
 }
 
 export const pendingSettingsStore = {

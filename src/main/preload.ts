@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { IpcChannel, SendChannel } from '../shared/types';
+import { RECEIVE_CHANNELS } from '../shared/types';
 import { validateIpcPayload } from '../shared/ipcSchemas';
 
 /**
@@ -43,6 +44,22 @@ class BadPayloadError extends Error {
   }
 }
 
+/**
+ * Audit-15 P3.3 — thrown when the renderer tries to `window.filo.on(...)` a
+ * channel that isn't a known main→renderer event. Receive-only defence in
+ * depth: a compromised renderer can't attach a listener to an arbitrary
+ * channel string (the symmetric counterpart of `BadPayloadError` for `on`).
+ */
+class BadChannelError extends Error {
+  code = 'BAD_CHANNEL';
+  constructor(channel: string) {
+    super(`Channel not subscribable from the renderer: ${channel}`);
+    this.name = 'BadChannelError';
+  }
+}
+
+const RECEIVABLE_CHANNELS = new Set<string>(RECEIVE_CHANNELS);
+
 const api = {
   invoke: (channel: IpcChannel, ...args: unknown[]) => {
     const validation = validateIpcPayload(channel, args);
@@ -52,6 +69,15 @@ const api = {
     return ipcRenderer.invoke(channel, ...args);
   },
   on: (channel: IpcChannel, callback: (...args: unknown[]) => void) => {
+    // Audit-15 P3.3 — runtime allowlist. `on` was the only bridge method that
+    // forwarded its channel unchecked; restrict subscriptions to the known
+    // main→renderer events so a compromised renderer can't listen on an
+    // arbitrary channel. Throwing (vs a silent no-op) mirrors `send`'s reject
+    // and surfaces a typo'd channel loudly in dev — every legitimate caller
+    // passes one of RECEIVE_CHANNELS, so this never fires in practice.
+    if (!RECEIVABLE_CHANNELS.has(channel)) {
+      throw new BadChannelError(channel);
+    }
     const subscription = (_event: Electron.IpcRendererEvent, ...args: unknown[]) =>
       callback(...args);
     ipcRenderer.on(channel, subscription);
@@ -68,7 +94,27 @@ const api = {
   },
   getPathForFile: (file: File): string => {
     try {
-      return webUtils.getPathForFile(file);
+      const resolved = webUtils.getPathForFile(file);
+      // Audit-12 S1 — register the resolved drop path as an approved
+      // `vault:copy-file` source. `webUtils.getPathForFile` only returns a real
+      // path for a `File` backed by an actual on-disk file the user dropped, so
+      // this is a TRUSTED minting point a hostile renderer can't abuse: it
+      // can't synthesise a `File` for `/etc/passwd`. Fired via the DIRECT
+      // `ipcRenderer.send` (module-scoped, NOT the contextBridge-exposed
+      // `api.send`), so the registration channel is unreachable from renderer
+      // JS — `window.filo.send('vault:register-source-path', …)` hits the
+      // `z.never()` payload schema and is rejected. Fire-and-forget; delivered
+      // before the renderer's subsequent `vault:copy-file` invoke (FIFO on the
+      // same renderer→main pipe). Registration failure must never break path
+      // resolution, so it's swallowed.
+      if (resolved) {
+        try {
+          ipcRenderer.send('vault:register-source-path', resolved);
+        } catch {
+          /* best-effort registration */
+        }
+      }
+      return resolved;
     } catch {
       return '';
     }

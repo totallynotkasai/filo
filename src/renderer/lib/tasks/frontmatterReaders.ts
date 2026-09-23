@@ -42,8 +42,8 @@ export const FIELD_READERS = {
     if (typeof v !== 'string') return '';
     const m = /^(\d{1,2}):(\d{2})$/.exec(v.trim());
     if (!m) return '';
-    const h = Math.max(0, Math.min(23, parseInt(m[1], 10)));
-    const min = Math.max(0, Math.min(59, parseInt(m[2], 10)));
+    const h = Math.max(0, Math.min(23, parseInt(m[1] ?? '', 10)));
+    const min = Math.max(0, Math.min(59, parseInt(m[2] ?? '', 10)));
     return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
   },
 

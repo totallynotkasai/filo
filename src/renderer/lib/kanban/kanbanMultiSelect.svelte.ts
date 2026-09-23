@@ -4,9 +4,15 @@ import { documentStore } from '../../stores/document.svelte';
 import type { SelectionScope } from '../../stores/selection.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
-import { scheduleFrontmatterWrite as scheduleSharedFrontmatterWrite } from '../boards/frontmatterWriteScheduler';
 import { historyStore } from '../../stores/history.svelte';
-import { BatchCommand, DeleteCardCommand, MoveCardsCommand } from '../../commands/index';
+import type { Command } from '../../commands/Command';
+import {
+  BatchCommand,
+  DeleteCardCommand,
+  MoveCardsCommand,
+  UpdateCardFieldCommand,
+  UpdateOrphanFrontmatterCommand,
+} from '../../commands/index';
 
 export interface KanbanMultiSelectDeps {
   /** The pane's selection scope. Bulk actions and the click-toggle both
@@ -22,6 +28,15 @@ export interface KanbanMultiSelectDeps {
   tickAndPersist: () => void;
   ensureSeededFm: (tile: Tile) => string | null;
   vaultPathForTile: (tile: Tile) => string | null;
+  /**
+   * Audit-18 M7 — opens an in-app text-input popup for the bulk "Add tag" flow
+   * and resolves with the entered tag (raw, un-normalised) or `null` if the user
+   * cancelled. Injected by `KanbanBoard` because `window.prompt` is unimplemented
+   * in Electron's renderer (it throws → a generic unhandled-rejection toast, so
+   * the feature is dead in the packaged app). The controller stays UI-agnostic;
+   * the component owns the popup.
+   */
+  promptForTag: () => Promise<string | null>;
 }
 
 /**
@@ -128,7 +143,7 @@ export class KanbanMultiSelect {
       // Phase 16 / H5 — single-card path uses DeleteCardCommand (it
       // snapshots the placement + def for undo). Mirrors the multi-card
       // path below so context-menu single delete is just as recoverable.
-      historyStore.execute(new DeleteCardCommand(boardId, selected[0]));
+      historyStore.execute(new DeleteCardCommand(boardId, selected[0]!)); // length === 1 checked above
       this.deps.selection.clear();
       this.lastSelectedTileId = null;
       this.deps.tickAndPersist();
@@ -153,37 +168,72 @@ export class KanbanMultiSelect {
     });
   }
 
-  tagSelectedTiles(): void {
+  async tagSelectedTiles(): Promise<void> {
     const selected = Array.from(this.deps.selection.selectedIds);
     if (selected.length === 0) return;
-    const tagName = window.prompt('Add tag to selected cards (without leading #):');
+    // Audit-18 M7 — route through the injected in-app popup, NOT `window.prompt`
+    // (unimplemented in Electron's renderer → throws). Resolves null on cancel.
+    const tagName = await this.deps.promptForTag();
     if (!tagName) return;
     const norm = tagName.trim().replace(/^#/, '');
     if (!norm) return;
+    const boardId = this.deps.getBoardId();
+    if (!boardId) return;
     const allTilesById = this.deps.getAllTilesById();
-    let updated = 0;
+
+    // A9-L1 (Audit-9) — build one field command per card and run them as a
+    // single BatchCommand instead of the old per-card `await seed →
+    // mergeFrontmatter → scheduleSharedFrontmatterWrite` loop. That loop was
+    // (a) NOT undoable and (b) lost the tag on every still-unprocessed card if a
+    // quit landed while it was suspended at a card's seed `await`: cards N..end
+    // were never merged or scheduled, so their tag was in no cache/scheduler/
+    // sentinel. Each UpdateCardFieldCommand seeds the FM from disk INSIDE its own
+    // execute() (on the history chain), so vaultStore.save()/quit cover every
+    // card via whenChainSettled(), and the whole bulk add is one undo step.
+    //
+    // The `tags` patch is computed up front from the best-available source — the
+    // live cache when an open editor / prior edit seeded it, else the vault-index
+    // snapshot. A card whose disk frontmatter carries a tag the stale index never
+    // learned would have that one external tag dropped by the additive patch —
+    // the same narrow index-staleness edge every field-edit command's patch
+    // carries; acceptable for a bulk convenience op (LOW).
+    const commands: Command[] = [];
     for (const tileId of selected) {
       const tile = allTilesById[tileId];
       if (!tile) continue;
       const path = this.deps.vaultPathForTile(tile);
       if (!path) continue;
-      const docId = this.deps.ensureSeededFm(tile);
-      const fm = (docId ? documentStore.getFrontmatter(docId) : null)
+      const docId = (tile as Tile & { contentId?: string }).contentId ?? null;
+      const fm = (docId ? documentStore.getFrontmatter(docId) : undefined)
         ?? (vaultIndexStore.getMetadata(path)?.frontmatter ?? {});
       const existing = Array.isArray((fm as Record<string, unknown>).tags)
         ? ((fm as Record<string, unknown>).tags as unknown[]).map((t) => String(t).replace(/^#/, ''))
         : [];
       if (existing.includes(norm)) continue;
       const nextTags = [...existing, norm];
-      if (docId) documentStore.mergeFrontmatter(docId, { tags: nextTags });
-      scheduleSharedFrontmatterWrite(path, docId);
-      updated++;
+      const desc = `Add #${norm}`;
+      commands.push(
+        docId
+          ? new UpdateCardFieldCommand(boardId, path, docId, { tags: nextTags }, { tags: existing }, desc)
+          : new UpdateOrphanFrontmatterCommand(boardId, path, { tags: nextTags }, { tags: existing }, desc),
+      );
     }
-    this.deps.bumpCacheVersion();
-    if (updated > 0) {
-      uiStore.toast(`Added #${norm} to ${updated} card(s)`, 'success', 2000);
-    } else {
+    if (commands.length === 0) {
       uiStore.toast(`All selected cards already have #${norm}`, 'info', 2000);
+      return;
+    }
+    // Crash-safe (whenChainSettled covers the batch on quit) + undoable in one step.
+    // Audit-18 4.6 — gate the success toast on the chain actually resolving. The
+    // pre-fix `.catch(() => {})` swallow meant a rejected batch (a write failure →
+    // execute() rolled back) still flashed "Added #tag" next to the chain's own
+    // error toast (historyStore.execute's reportError). On failure, stay silent
+    // here — the chain already surfaced the visual error.
+    const ok = await historyStore
+      .execute(new BatchCommand(`Add #${norm} to ${commands.length} card(s)`, commands, boardId))
+      .then(() => true, () => false);
+    this.deps.bumpCacheVersion();
+    if (ok) {
+      uiStore.toast(`Added #${norm} to ${commands.length} card(s)`, 'success', 2000);
     }
   }
 

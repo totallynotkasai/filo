@@ -33,13 +33,19 @@ export function computeKeyboardReorder<T extends { id: string }>(
 
   const targetVisIdx = visIdx + delta;
   if (targetVisIdx < 0 || targetVisIdx >= visible.length) return null;
-  const neighbourId = visible[targetVisIdx].id;
+  const neighbour = visible[targetVisIdx];
+  if (!neighbour) return null; // bounds-checked above; narrow for the type-checker
+  const neighbourId = neighbour.id;
 
   const a = full.findIndex((b) => b.id === focusedId);
   const b = full.findIndex((bb) => bb.id === neighbourId);
   if (a === -1 || b === -1) return null;
 
   const updated = [...full];
-  [updated[a], updated[b]] = [updated[b], updated[a]];
+  const itemA = updated[a];
+  const itemB = updated[b];
+  if (itemA === undefined || itemB === undefined) return null; // a,b are valid findIndex results
+  updated[a] = itemB;
+  updated[b] = itemA;
   return updated;
 }

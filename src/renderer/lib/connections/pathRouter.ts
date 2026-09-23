@@ -130,16 +130,17 @@ function computeSmartPath(
   const MARGIN = 150;
   const MAX_ITER = 500;
 
-  // Filter obstacles to those near the path region
+  // Obstacles near the path region. H4 (perf): an R-tree range query bounded
+  // to the region instead of `all().filter(...)` over every tile on the board
+  // — the smart route only ever recomputes when a connection endpoint moves
+  // (see ConnectionLayer's path memo), and this keeps that recompute O(tiles
+  // in region) rather than O(tiles in board).
   const regionMinX = Math.min(from.x, to.x) - MARGIN;
   const regionMinY = Math.min(from.y, to.y) - MARGIN;
   const regionMaxX = Math.max(from.x, to.x) + MARGIN;
   const regionMaxY = Math.max(from.y, to.y) + MARGIN;
 
-  const obstacles = spatialIndex.all().filter((o) =>
-    o.minX < regionMaxX && o.maxX > regionMinX &&
-    o.minY < regionMaxY && o.maxY > regionMinY,
-  );
+  const obstacles = spatialIndex.searchRegion(regionMinX, regionMinY, regionMaxX, regionMaxY);
 
   if (obstacles.length === 0) {
     return computeCurvedPath(from, to, fromBubble, toBubble);
@@ -219,9 +220,11 @@ function computeSmartPath(
     // Pop lowest-f node
     let lowestIdx = 0;
     for (let i = 1; i < openList.length; i++) {
-      if (openList[i].f < openList[lowestIdx].f) lowestIdx = i;
+      // i and lowestIdx are both valid indices into openList
+      if (openList[i]!.f < openList[lowestIdx]!.f) lowestIdx = i;
     }
     const current = openList.splice(lowestIdx, 1)[0];
+    if (!current) break; // openList is non-empty (while guard) → splice yields one node
     const key = `${current.xi},${current.yi}`;
 
     if (current.xi === endXi && current.yi === endYi) {
@@ -241,6 +244,7 @@ function computeSmartPath(
 
       const nx = X[nxi];
       const ny = Y[nyi];
+      if (nx === undefined || ny === undefined) continue; // bounds checked above
 
       if (segmentIntersects(current.x, current.y, nx, ny)) continue;
 
@@ -274,9 +278,12 @@ function computeSmartPath(
   }
 
   const simplified = simplifyPolyline(raw);
-  let d = `M ${simplified[0].x} ${simplified[0].y}`;
+  const first = simplified[0];
+  if (!first) return computeCurvedPath(from, to, fromBubble, toBubble);
+  let d = `M ${first.x} ${first.y}`;
   for (let i = 1; i < simplified.length; i++) {
-    d += ` L ${simplified[i].x} ${simplified[i].y}`;
+    const pt = simplified[i];
+    if (pt) d += ` L ${pt.x} ${pt.y}`;
   }
   return d;
 }
@@ -286,16 +293,20 @@ function computeSmartPath(
  */
 function simplifyPolyline(points: PathPoint[]): PathPoint[] {
   if (points.length <= 2) return points;
-  const result = [points[0]];
+  const first = points[0];
+  if (!first) return points; // length > 2 guaranteed above
+  const result: PathPoint[] = [first];
   for (let i = 1; i < points.length - 1; i++) {
     const prev = result[result.length - 1];
     const curr = points[i];
     const next = points[i + 1];
+    if (!prev || !curr || !next) continue; // loop bound guarantees curr/next; result is non-empty
     // Cross product: non-zero means direction changes (keep the point)
     const cross = (curr.x - prev.x) * (next.y - curr.y) - (curr.y - prev.y) * (next.x - curr.x);
     if (cross !== 0) result.push(curr);
   }
-  result.push(points[points.length - 1]);
+  const last = points[points.length - 1];
+  if (last) result.push(last);
   return result;
 }
 
@@ -310,8 +321,11 @@ export function getClosestTOnPolyline(points: PathPoint[], target: PathPoint): n
   const segLengths: number[] = [];
   let totalLength = 0;
   for (let i = 0; i < points.length - 1; i++) {
-    const dx = points[i + 1].x - points[i].x;
-    const dy = points[i + 1].y - points[i].y;
+    // i and i+1 are both in range (loop bound i < length - 1)
+    const a = points[i]!;
+    const b = points[i + 1]!;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
     const len = Math.sqrt(dx * dx + dy * dy);
     segLengths.push(len);
     totalLength += len;
@@ -324,10 +338,13 @@ export function getClosestTOnPolyline(points: PathPoint[], target: PathPoint): n
   let cumLen = 0;
 
   for (let i = 0; i < points.length - 1; i++) {
-    const ax = points[i].x, ay = points[i].y;
-    const dx = points[i + 1].x - ax;
-    const dy = points[i + 1].y - ay;
-    const segLen = segLengths[i];
+    // i and i+1 are both in range (loop bound i < length - 1)
+    const a = points[i]!;
+    const b = points[i + 1]!;
+    const ax = a.x, ay = a.y;
+    const dx = b.x - ax;
+    const dy = b.y - ay;
+    const segLen = segLengths[i] ?? 0; // one entry pushed per segment i above
 
     if (segLen > 0) {
       // Project target onto segment, clamped to [0, 1]

@@ -1,7 +1,7 @@
 import type { FileMetadata } from './vaultIndex';
 import type { V7BoardFileData } from '../boards/boardSaver';
 import type { TileDefinition } from '../../schema/index';
-import { normalizeTagsField } from '../utils/normalizeTagsField';
+import { normalizeTagsField, orderPreservingTagsField } from '../utils/normalizeTagsField';
 import { normalizeVaultRelative } from '../utils/path';
 
 /**
@@ -13,7 +13,16 @@ export const SYNCED_FIELDS = [
   'title',
   'tags',
   'completed',
-  'date',
+  // Audit-11 B-INT-L1 — `date` is intentionally NOT synced. No tile / card /
+  // task reads a cached `date` (only `dueDate` / `startDate` drive display +
+  // smart-list filters), yet keeping it here let `reconcileBoardCacheWith-
+  // Frontmatter` seed-and-write a `date` field onto any text tile backing a
+  // note whose `.md` carried a `date:` key (ubiquitous in Obsidian-style
+  // vaults) — leaking a frontmatter-canonical value into `.board.json`. The
+  // schema's `TASK_METADATA_FIELDS` strip-on-load would then fire a warn-loop
+  // on every reconcile. Dropping it from the synced set closes the leak at its
+  // source (the reconcile never sets it, so it's never written). Do NOT re-add
+  // without also wiring a real cached-`date` reader + the strip-list entry.
   'dueDate',
   'dueTime',
   'startDate',
@@ -52,8 +61,12 @@ export type TileLikeCache = Partial<Record<SyncedField, unknown>>;
 export const normalizeTags = normalizeTagsField;
 
 /**
- * YAML parsers (gray-matter) auto-coerce ISO date strings to `Date`. We keep
- * dates as strings so they round-trip through JSON and compare stably.
+ * Defensive date normalisation. The single-parser `yaml`-package read (Audit-13
+ * M2) keeps an unquoted `date:` as a string (its core schema resolves no
+ * timestamp tag), so this rarely fires now — but any `Date` instance that
+ * reaches here (e.g. a programmatic caller, or a value built before the read)
+ * is folded back to a `YYYY-MM-DD` string so it round-trips through JSON and
+ * compares stably against the on-disk string.
  */
 function normalizeScalar(value: unknown): unknown {
   if (value instanceof Date && !isNaN(value.getTime())) {
@@ -84,10 +97,13 @@ export function canonicalValues(metadata: FileMetadata): Partial<Record<SyncedFi
   const out: Partial<Record<SyncedField, unknown>> = {};
 
   out.title = metadata.title;
-  out.tags = normalizeTags(fm.tags ?? metadata.tags);
+  // Authored order (not sorted) so a reconciled tile def's tag chips match
+  // the order in the .md. Divergence comparison still sorts via valuesEqual,
+  // so order here is purely cosmetic for the cache. (7.4)
+  out.tags = orderPreservingTagsField(fm.tags ?? metadata.tags);
 
   if ('completed' in fm) out.completed = normalizeScalar(fm.completed);
-  if ('date' in fm) out.date = normalizeScalar(fm.date);
+  // Audit-11 B-INT-L1 — `date` deliberately omitted (see SYNCED_FIELDS note).
   if ('dueDate' in fm) out.dueDate = normalizeScalar(fm.dueDate);
   if ('dueTime' in fm) out.dueTime = normalizeScalar(fm.dueTime);
   if ('startDate' in fm) out.startDate = normalizeScalar(fm.startDate);
@@ -144,7 +160,7 @@ export function applyCanonical<T extends TileLikeCache>(
   const next = { ...cache } as T;
   for (const d of divergences) {
     (next as Record<string, unknown>)[d.field] =
-      d.field === 'tags' ? normalizeTags(d.canonical) : d.canonical;
+      d.field === 'tags' ? orderPreservingTagsField(d.canonical) : d.canonical;
   }
   return next;
 }
@@ -214,7 +230,19 @@ export function reconcileBoardCacheWithFrontmatter(
   boardCache: Record<string, V7BoardFileData>,
   relPath: string,
   metadata: FileMetadata,
+  options?: {
+    /**
+     * 6.2.H9 — when false, suppresses the `patched.updatedAt = Date.now()`
+     * stamp on reconciled tiles. The on-open batch reconcile is not a
+     * user edit (the disk frontmatter was the canonical source we synced
+     * to), so the in-app "last touched" timestamp shouldn't bump. The
+     * live event path still stamps (it IS a user-initiated external
+     * edit), so the default stays `true`.
+     */
+    stampUpdatedAt?: boolean;
+  },
 ): BoardCacheReconcileResult {
+  const stampUpdatedAt = options?.stampUpdatedAt ?? true;
   const changedBoardIds: string[] = [];
   const perBoard: Record<string, Array<{ tileId: string; changes: FrontmatterDivergence[] }>> = {};
 
@@ -226,12 +254,22 @@ export function reconcileBoardCacheWithFrontmatter(
     for (const [tileId, def] of Object.entries(defs)) {
       if (!tileBacksMarkdownPath(def, relPath)) continue;
 
-      // Build the cache subset that participates in sync. Only fields the
-      // tile actually carries get reconciled — `reconcile` skips the rest.
+      // Build the cache subset that participates in sync. Include a key for
+      // every field already on the def, PLUS — Audit 2.3 — every field the
+      // canonical frontmatter carries even when the def never had it, seeded
+      // as an explicit `undefined`. Without that seed, detectDivergence's
+      // `field in cache` guard skips a field the tile didn't previously track,
+      // so a field added to the .md in an external editor (e.g. `dueDate` /
+      // `priority` / `status` on a task) wouldn't reach the live cache until a
+      // board reload — smart-list filters/sort would silently ignore it mid-
+      // session. Fields absent from BOTH the def and the frontmatter stay out,
+      // so we never invent task fields the file doesn't actually have.
       const cacheSubset: TileLikeCache = {};
       const d = def as Record<string, unknown>;
+      const canonical = canonicalValues(metadata);
       for (const field of SYNCED_FIELDS) {
         if (field in d) cacheSubset[field] = d[field];
+        else if (field in canonical) cacheSubset[field] = undefined;
       }
 
       const { changes } = reconcile(cacheSubset, metadata);
@@ -241,7 +279,7 @@ export function reconcileBoardCacheWithFrontmatter(
       // applyCanonical normalises canonical values (notably tag arrays) before we copy them in.
       const patchedSync = applyCanonical(cacheSubset, changes);
       for (const c of changes) patched[c.field] = patchedSync[c.field];
-      patched.updatedAt = Date.now();
+      if (stampUpdatedAt) patched.updatedAt = Date.now();
 
       updates[tileId] = patched as TileDefinition;
       perBoard[boardId] = perBoard[boardId] ?? [];

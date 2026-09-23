@@ -32,6 +32,17 @@ import * as fs from 'fs';
 let currentVaultPath: string | null = null;
 
 /**
+ * Audit-17 3.5 — monotonically increasing registration epoch, bumped on
+ * EVERY `setCurrentVault` call (open, close, re-arm). Lets a multi-await
+ * main-side handler (`vault:watch`) detect that the registry changed under
+ * one of its awaits — including a close→reopen of the SAME path, which a
+ * bare path compare would miss — and bail instead of silently reversing the
+ * newer state. The main-process mirror of the renderer's
+ * `isStillSameVault` generation discipline.
+ */
+let registrationEpoch = 0;
+
+/**
  * Sprint A / A3 — canonicalise a vault path via `fs.realpathSync`. Falls
  * back to the input string when the path doesn't exist (the caller's
  * responsibility to validate that separately) so callers receive
@@ -49,7 +60,12 @@ export const vaultRegistry = {
   get currentVaultPath(): string | null {
     return currentVaultPath;
   },
+  /** Audit-17 3.5 — see `registrationEpoch`. */
+  get epoch(): number {
+    return registrationEpoch;
+  },
   setCurrentVault(path: string | null): void {
+    registrationEpoch += 1;
     currentVaultPath = path === null ? null : canonicalise(path);
   },
 };

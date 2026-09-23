@@ -4,6 +4,7 @@ import {
   clearPendingRewrite,
   readPendingRewrite,
   hasPartialTagRewriteState,
+  hasPartialTagRemovalState,
   type TagRewriteSentinelPayload,
 } from '@renderer/lib/vault/tagRewriteSentinel';
 
@@ -86,6 +87,7 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
       newName: 'project-alpha',
       plan: ['notes/foo.md', 'archive/bar.md'],
       preexistingNewNamePaths: ['already/alpha.md'],
+      committedPaths: [],
     };
     await writePendingRewrite('/vault', payload);
     const result = await readPendingRewrite('/vault');
@@ -100,6 +102,7 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
       newName: null,
       plan: ['old/note.md'],
       preexistingNewNamePaths: [],
+      committedPaths: [],
     };
     await writePendingRewrite('/vault', payload);
     const result = await readPendingRewrite('/vault');
@@ -114,6 +117,7 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
       newName: 'b',
       plan: ['x.md'],
       preexistingNewNamePaths: [],
+      committedPaths: [],
     });
     await clearPendingRewrite('/vault');
     const result = await readPendingRewrite('/vault');
@@ -129,6 +133,16 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
 
   it('read on a malformed sentinel returns unreadable', async () => {
     fs.files.set('/vault::.filo/tag-rewrite-pending.json', '{ this is not valid json');
+    const result = await readPendingRewrite('/vault');
+    expect(result.payload).toBeUndefined();
+    expect(result.unreadable).toBe(true);
+  });
+
+  it('read on a present-but-empty (zero-byte) sentinel returns unreadable (DI-16)', async () => {
+    // The read SUCCEEDS (the key exists) but content is empty — a crash that
+    // created the sentinel without filling it. Must surface as unreadable, not
+    // the clean "no sentinel" steady state (which is ENOENT → key absent).
+    fs.files.set('/vault::.filo/tag-rewrite-pending.json', '');
     const result = await readPendingRewrite('/vault');
     expect(result.payload).toBeUndefined();
     expect(result.unreadable).toBe(true);
@@ -193,6 +207,7 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
       newName: 'newA',
       plan: ['a.md'],
       preexistingNewNamePaths: [],
+      committedPaths: [],
     };
     const payloadB: TagRewriteSentinelPayload = {
       timestamp: 2,
@@ -200,6 +215,7 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
       newName: 'newB',
       plan: ['b.md'],
       preexistingNewNamePaths: [],
+      committedPaths: [],
     };
     // Fire both without awaiting — the mutex must queue them so write #1
     // (delayed) commits before write #2 starts.
@@ -230,6 +246,7 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
         newName: 'b',
         plan: ['x.md'],
         preexistingNewNamePaths: [],
+        committedPaths: [],
       }),
     ).rejects.toThrow();
   });
@@ -259,6 +276,49 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
     );
     const result = await readPendingRewrite('/vault');
     expect(result.unreadable).toBe(true);
+  });
+
+  it('reads a legacy sentinel without committedPaths as an empty list (6.3 forward-compat)', async () => {
+    // A sentinel written by an app version before 6.3 lacks the field; it
+    // must still recover, defaulted to [] (which reads as "no partial
+    // removal" — the conservative, pre-6.3 behaviour).
+    fs.files.set(
+      '/vault::.filo/tag-rewrite-pending.json',
+      JSON.stringify({ timestamp: 1, oldName: 'a', newName: null, plan: ['x.md'] }),
+    );
+    const result = await readPendingRewrite('/vault');
+    expect(result.unreadable).toBeFalsy();
+    expect(result.payload?.committedPaths).toEqual([]);
+  });
+
+  it('read on a sentinel with non-string committedPaths returns unreadable (6.3)', async () => {
+    fs.files.set(
+      '/vault::.filo/tag-rewrite-pending.json',
+      JSON.stringify({
+        timestamp: 1,
+        oldName: 'a',
+        newName: null,
+        plan: ['x.md'],
+        committedPaths: [42],
+      }),
+    );
+    const result = await readPendingRewrite('/vault');
+    expect(result.unreadable).toBe(true);
+  });
+
+  it('round-trips committedPaths for a partially-committed removal (6.3)', async () => {
+    const payload: TagRewriteSentinelPayload = {
+      timestamp: 1700000000000,
+      oldName: 'obsolete',
+      newName: null,
+      plan: ['a.md', 'b.md'],
+      preexistingNewNamePaths: [],
+      committedPaths: ['a.md'],
+    };
+    await writePendingRewrite('/vault', payload);
+    const result = await readPendingRewrite('/vault');
+    expect(result.payload).toEqual(payload);
+    expect(result.payload?.committedPaths).toEqual(['a.md']);
   });
 });
 
@@ -294,5 +354,35 @@ describe('hasPartialTagRewriteState — Phase 7.3 exemption', () => {
         ['already.md'],
       ),
     ).toBe(true);
+  });
+});
+
+describe('hasPartialTagRemovalState — 6.3 removal partial-state detection', () => {
+  it('returns false when no path was committed (crashed before stripping any file)', () => {
+    expect(hasPartialTagRemovalState([])).toBe(false);
+  });
+
+  it('returns true when one of several planned files was stripped (the vault split)', () => {
+    // committedPaths records a.md was stripped; b.md (planned) was not →
+    // the vault is split between a tagged and an untagged file.
+    expect(hasPartialTagRemovalState(['a.md'])).toBe(true);
+  });
+
+  it('returns true when every file was stripped but the sentinel survived (registry cascade unfinished)', () => {
+    // Mirrors hasPartialTagRewriteState's "all rewritten → still partial" so
+    // Finalise re-runs the (idempotent) cascade and clears the breadcrumb.
+    expect(hasPartialTagRemovalState(['a.md', 'b.md'])).toBe(true);
+  });
+
+  it('accepts an iterable and short-circuits on the first element', () => {
+    let pulled = 0;
+    function* gen(): IterableIterator<string> {
+      pulled += 1;
+      yield 'a.md';
+      pulled += 1;
+      yield 'b.md';
+    }
+    expect(hasPartialTagRemovalState(gen())).toBe(true);
+    expect(pulled).toBe(1);
   });
 });

@@ -10,6 +10,9 @@
   } from './lib/boards/boardSaver';
   import { onError, reportError } from './lib/utils/errorBus';
   import { createErrorToastAggregator } from './lib/utils/errorToastAggregator';
+  import { buildWriteErrorToast } from './lib/boards/writeErrorToast';
+  import { handleFlushAndQuit } from './lib/vault/handleFlushAndQuit';
+  import { flushDirtyFlagSentinel } from './lib/vault/dirtyFlagRecovery';
   import { historyStore } from './stores/history.svelte';
   import { tabStore } from './stores/tabs.svelte';
   import { workspaceStore } from './stores/workspace.svelte';
@@ -29,15 +32,28 @@
   // markdown/frontmatter writers (TextTile, DocumentEditor, PropertiesPopup,
   // TaskListBoard); 'board' covers .board.json; 'config' covers .filo/
   // config files.
+  //
+  // Audit-7 L2 — route through a DEDICATED coalescing aggregator (keyed by
+  // write kind via `buildWriteErrorToast`'s context) so a multi-target failure
+  // (e.g. many dirty .board.json on a full disk) collapses into one
+  // count-badged toast per kind instead of one persistent toast per file.
+  // Separate instance from the errorBus aggregator below so the two coalescing
+  // namespaces can't cross-talk.
+  //
+  // Audit-7 M5 — when the atomic write preserved its tmp on ENOSPC/EIO/EACCES,
+  // `buildWriteErrorToast` names that location so the user can recover the
+  // bytes (the old hardcoded "not on disk yet" copy was wrong — they ARE on
+  // disk at the preserved tmp path).
+  const writeErrorAggregator = createErrorToastAggregator({
+    pushToast: (opts) => uiStore.pushToast(opts),
+    updateToastText: (id, text) => uiStore.updateToastText(id, text),
+  });
   setBoardWriteErrorListener((info) => {
-    const where = info.path ? ` (${info.path})` : '';
-    const subject =
-      info.kind === 'board' ? 'board' : info.kind === 'config' ? 'settings' : 'file';
-    uiStore.pushToast({
-      text: `Failed to save ${subject}${where}. Your changes are not on disk yet — check disk space or file permissions.`,
-      type: 'error',
-      duration: 0,
-    });
+    const { context, message, coalesceKey } = buildWriteErrorToast(info);
+    // A9-L10 — thread the per-preserved-path coalesceKey so two same-kind
+    // failures with DIFFERENT preserved-tmp locations each keep their own
+    // toast (the display prefix stays `context`).
+    writeErrorAggregator({ context, error: info.error, message, coalesceKey });
   });
 
   // Feed boardSaver's begin/end counts into the save-state store so the
@@ -46,8 +62,8 @@
   // Phase C / C.10 — also forward the concrete failed paths so the
   // toolbar popover can list them and offer a Retry button. setStatus
   // clears the path list on a clean drain (inflight=0, failed=0).
-  setBoardWriteStateListener(({ inflight, failed, failedPaths }) => {
-    saveStateStore.setStatus(inflight, failed);
+  setBoardWriteStateListener(({ inflight, failed, pending, failedPaths }) => {
+    saveStateStore.setStatus(inflight, failed, pending);
     for (const path of failedPaths) saveStateStore.noteFailedPath(path);
   });
 
@@ -70,23 +86,21 @@
   // Drain pending writes when the main process is about to quit.
   // Main blocks shutdown until we send `app:ready-to-quit` (or its 5s
   // timeout fires), so a graceful quit always gets a flush attempt.
-  // On a failed flush, defer the reply ~200ms so the error toast and
-  // `failedVaultPaths` sentinel have time to settle before teardown.
+  // 6.2.H4 — on a save failure, the handler surfaces a Confirm dialog
+  // ("Quit anyway" / "Stay open and retry") instead of sleeping 200 ms
+  // and unconditionally exiting. "Stay open and retry" sends the new
+  // `app:cancel-quit` signal so main rewinds `isFlushingForQuit`.
   window.filo.on('app:flush-and-quit', () => {
-    void (async () => {
-      let failed = false;
-      try {
-        const ok = await vaultStore.save();
-        if (!ok) failed = true;
-      } catch (err) {
-        reportError('App', err, 'flush-and-quit failed');
-        failed = true;
-      }
-      if (failed || saveStateStore.state === 'error') {
-        await new Promise<void>((resolve) => setTimeout(resolve, 200));
-      }
-      window.filo.send('app:ready-to-quit');
-    })();
+    void handleFlushAndQuit({
+      saveStateState: () => saveStateStore.state,
+      save: () => vaultStore.save(),
+      send: (channel) => window.filo.send(channel),
+      reportError,
+      // Audit-6 M5 — drain the dirty-flag sentinel mutex so the markClean
+      // queued by save() lands before main destroys the renderer (else a
+      // clean quit leaves `.filo/.dirty` → phantom recovery next launch).
+      flushSentinel: () => flushDirtyFlagSentinel(),
+    });
   });
 
   // Audit 5.3 — let the history store auto-switch to a command's originating
@@ -109,6 +123,22 @@
     }
     tabStore.setActive(tab.id);
     return true;
+  });
+
+  // Audit-16 3.7 — the external-change renderer bridge (watcher events →
+  // reconcilers) is app-lifetime, keyed only on "a vault is open". It used
+  // to live in VaultSidebar's mount lifecycle, but the docked and floating
+  // sidebars are mutually exclusive `{#if}` branches in AppShell — toggling
+  // float/dock destroyed one instance (unsubscribing every watcher listener
+  // and discarding a mid-debounce tree reconcile) before mounting the
+  // other, and any watcher event delivered in that gap was dropped. A
+  // dropped `vault:file-renamed` is the worst case: the rename cascade
+  // never runs, and the later reconcile sees delete+create and can evict
+  // the board as missing. Data plumbing must not ride on UI layout state.
+  $effect(() => {
+    if (vaultStore.isOpen) {
+      return vaultStore.listenForChanges();
+    }
   });
 
   // Write project font-size settings onto `:root` as CSS variables.

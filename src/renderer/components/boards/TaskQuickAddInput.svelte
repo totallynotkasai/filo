@@ -58,6 +58,9 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
+    // QA-11 — while an IME composition is active, Enter commits the candidate
+    // word, not the task. Don't submit (or clear on Escape) mid-composition.
+    if (e.isComposing) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       submit();
@@ -186,7 +189,7 @@
         <code>^next mon</code><span>start (defer) date — caret prefix</span>
         <code>@5pm</code><span>time-of-day (24h or am/pm)</span>
         <code>!high</code><span>priority (low/med/high/urgent)</span>
-        <code>!!</code><span>shorthand for urgent</span>
+        <code>!!</code><span>shorthand for urgent (use !high to name a level)</span>
         <code>#tag</code><span>add a tag (multiple allowed)</span>
         <code>=in-progress</code><span>set status</span>
       </div>

@@ -32,21 +32,40 @@ export const saveStateStore = {
 
   /**
    * Push a raw status from boardSaver. The store derives the UX state:
-   *   inflight > 0          → 'saving'
-   *   inflight = 0, failed  → 'error' (sticky until the next successful drain)
-   *   inflight = 0, no fail → 'saved' for 2s, then 'idle'
+   *   failed > 0                        → 'error' (sticky until next clean drain)
+   *   inflight > 0 OR pending > 0       → 'saving'
+   *   idle, no fail                     → 'saved' for 2s, then 'idle'
+   *
+   * Audit2 2.3 — `pending` (debounced-but-not-yet-inflight writes, e.g. a
+   * markdown body keystroke still inside its 300 ms debounce) also counts as
+   * "saving". Without it the indicator read a premature "idle"/"saved" while
+   * text was unwritten. Defaults to 0 so legacy two-arg callers are unaffected.
+   *
+   * Audit-7 L1 — `failed > 0` is checked BEFORE inflight/pending. A write that
+   * wedges past the gateway's `writeTimeoutMs` is `markPathFailed`'d (so
+   * `failed >= 1`) while its `trackComponentWrite` keeps the inflight increment
+   * (the real IPC never settled) — so the prior inflight-first ordering pinned
+   * the indicator on a perpetual "saving" spinner for a genuinely-failed write.
+   * A known failure now outranks in-flight writes so the badge reads "error".
+   * The failed-paths popover + dirty sentinel were already correct; this is
+   * at-a-glance honesty. (The failed count drops to 0 only once that exact path
+   * is rewritten successfully, after which a clean drain returns to "saved".)
    */
-  setStatus(inflight: number, failed: number): void {
-    if (inflight > 0) {
+  setStatus(inflight: number, failed: number, pending: number = 0): void {
+    if (failed > 0) {
+      if (savedDecayTimer) {
+        clearTimeout(savedDecayTimer);
+        savedDecayTimer = null;
+      }
+      state = 'error';
+      return;
+    }
+    if (inflight > 0 || pending > 0) {
       if (savedDecayTimer) {
         clearTimeout(savedDecayTimer);
         savedDecayTimer = null;
       }
       state = 'saving';
-      return;
-    }
-    if (failed > 0) {
-      state = 'error';
       return;
     }
     // inflight === 0 && failed === 0: a clean drain. Show "saved" briefly

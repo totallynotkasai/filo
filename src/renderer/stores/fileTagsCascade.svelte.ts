@@ -27,6 +27,7 @@ import {
   rewriteTagInAllMarkdown,
   type MarkdownRewriteResult,
 } from '../lib/vault/tagRewriteSweep';
+import { isStillSameVault, type VaultIdentity } from '../lib/vault/vaultIdentity';
 
 /**
  * Minimal structural type for the methods the cascade reaches into on the
@@ -119,17 +120,25 @@ export function cascadeTagToBoardSettings(oldName: string, newName: string | nul
 }
 
 /**
- * Convenience wrapper that pipes the store's reactive state
- * (vault path, metadata index, applyChanges callback) into the
- * pure `rewriteTagInAllMarkdown` sweep.
+ * Convenience wrapper that pipes the store's metadata index + applyChanges
+ * callback into the pure `rewriteTagInAllMarkdown` sweep.
+ *
+ * Audit-12 H3 — `vaultRoot` is now an EXPLICIT captured root (identity.path),
+ * NOT a live `vaultStore.path` read. The sweep is long-running; if the vault
+ * swaps mid-sweep the writes still target the CAPTURED (outgoing) root, which
+ * main-side `assertActiveVault` rejects — fail-closed, instead of applying the
+ * outgoing vault's tag op to the new vault's same-named files. The metadata walk
+ * stays live, but every write is anchored to the captured root, so a swapped-in
+ * vault's files are never touched.
  */
 export function runTagRewriteSweep(
   oldName: string,
   newName: string | null,
+  vaultRoot: string,
   pathFilter?: ReadonlySet<string>,
 ): Promise<MarkdownRewriteResult> {
   return rewriteTagInAllMarkdown({
-    vaultRoot: vaultStore.path,
+    vaultRoot,
     metadata: vaultIndexStore.allMetadata(),
     oldName,
     newName,
@@ -269,19 +278,30 @@ export async function rewriteAndCommitRetry(
   oldName: string,
   newName: string | null,
   failedPaths: ReadonlySet<string>,
+  identity: VaultIdentity,
 ): Promise<void> {
+  // Audit-12 H3 — the failure toast (duration: 0) survives a vault swap and this
+  // retry closure used to re-read the LIVE vault path at click time. After a swap,
+  // a retry walked the NEW vault's files (scoped to the OLD vault's failed rel
+  // paths) and main-side assertActiveVault ACCEPTED the writes (they targeted the
+  // active vault) — applying vault A's tag op to vault B. Bail if the vault swapped
+  // since the failed sweep was captured.
+  if (!isStillSameVault(identity)) return;
   const verb = newName === null ? 'Tag removal' : 'Tag rename';
-  const result = await runTagRewriteSweep(oldName, newName, failedPaths);
+  const result = await runTagRewriteSweep(oldName, newName, identity.path, failedPaths);
   if (result.failed.length > 0) {
     const stillFailed = new SvelteSet(result.failed);
     pushTagRewriteFailureToast({
       verb,
       failedCount: result.failed.length,
       attempted: result.attempted,
-      retry: () => rewriteAndCommitRetry(store, oldName, newName, stillFailed),
+      retry: () => rewriteAndCommitRetry(store, oldName, newName, stillFailed, identity),
     });
     return;
   }
+  // Guard the in-memory commit: a swap DURING the sweep above must not mutate the
+  // NEW vault's boardStore / registry with the outgoing vault's tag op.
+  if (!isStillSameVault(identity)) return;
   if (newName === null) {
     commitTagRemovalInMemory(store, oldName);
   } else {
@@ -291,5 +311,7 @@ export async function rewriteAndCommitRetry(
   // same crash-window guard as the non-retry renameTagEverywhere /
   // removeTagEverywhere paths.
   await store.flushPendingSave();
+  // Re-check before the board flush (flushPendingSave above can yield across a swap).
+  if (!isStillSameVault(identity)) return;
   await flushTagRewriteBoardWrites(verb);
 }

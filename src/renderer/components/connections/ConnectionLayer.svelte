@@ -3,15 +3,24 @@
    * ConnectionLayer — SVG overlay that renders all connection paths, labels,
    * bubbles (in connection mode), and the in-progress drawing line.
    */
-  import { getContext } from 'svelte';
+  import { getContext, untrack } from 'svelte';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { connectionsStore } from '../../stores/connections.svelte';
 
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
   const boardStore = scope.board;
+  const canvasScope = scope.canvas;
+  const spatialScope = scope.spatial;
   import { uiStore } from '../../stores/ui.svelte';
   import { getBubblePosition } from '../../lib/connections/bubblePositions';
   import { computePath } from '../../lib/connections/pathRouter';
+  import {
+    createConnectionPathMemo,
+    connectionPathSignature,
+  } from '../../lib/connections/connectionPathMemo';
+  import { effectiveConnectionPathStyle } from '../../lib/styles/effectiveStyle';
+  import { connectionIntersectsViewport } from '../../lib/connections/connectionCulling';
+  import { vaultStore } from '../../stores/vault.svelte';
   import type { Connection } from '../../schema/index';
   import type { SpatialIndex } from '../../lib/spatialIndex';
 
@@ -59,21 +68,61 @@
     return `M ${from.x} ${from.y} L ${drawing.currentX} ${drawing.currentY}`;
   });
 
+  // 3.3 — matches the tile-culling buffer (VisibleTilesViewModel) so the
+  // connection and tile sets stay consistent at the viewport edge.
+  const VIEWPORT_CULL_BUFFER = 200;
+
+  // H4 — per-connection path cache. The derived re-runs on every pan/zoom
+  // frame (it reads `viewportRect` to cull), but a pure pan doesn't move any
+  // tile, so each path's signature is unchanged and the cached `d` is reused —
+  // no `computePath`/A* runs on pan. See connectionPathMemo for the rationale.
+  const pathMemo = createConnectionPathMemo();
+
   /**
-   * Compute path d string for a connection (used for hidden measurement paths).
+   * 3.3 — single source of truth for what the path + label layers render.
+   * Culls to the buffered viewport (off-screen connections aren't rendered
+   * and their paths aren't computed at all — fixing the per-frame
+   * recompute-everything cliff on large boards) and computes each visible
+   * path ONCE here, shared by ConnectionPath and the label's measurement
+   * path. That kills the previous 2x `computePath` per connection per frame
+   * and uses the cascade-resolved pathType, so the label rides the same
+   * route the path actually draws (the old label loop hard-coded
+   * `conn.pathType ?? 'curved'`). Export mode renders everything (no cull).
+   *
+   * H4 — each visible path routes through `pathMemo`, so a pan (which re-runs
+   * this derived via `viewportRect`) reuses the cached `d` instead of
+   * recomputing. `smartRevision` is read UNTRACKED so a tile move bumping the
+   * spatial revision doesn't force this derived to re-run every drag frame
+   * (which would A*-storm all smart paths); when the derived does re-run
+   * (pan/zoom/endpoint move) it folds the latest revision into smart-path
+   * signatures so an obstacle that moved still re-routes.
    */
-  function getPathD(conn: Connection): string {
-    const fromTile = boardStore.getTile(conn.fromTileId);
-    const toTile = boardStore.getTile(conn.toTileId);
-    if (!fromTile || !toTile) return '';
-
-    const fromRect = { x: fromTile.position.x, y: fromTile.position.y, width: fromTile.size.width, height: fromTile.size.height };
-    const toRect = { x: toTile.position.x, y: toTile.position.y, width: toTile.size.width, height: toTile.size.height };
-    const from = getBubblePosition(fromRect, conn.fromBubble);
-    const to = getBubblePosition(toRect, conn.toBubble);
-
-    return computePath(from, to, conn.fromBubble, conn.toBubble, conn.pathType ?? 'curved', spatialIndex);
-  }
+  let renderableConnections = $derived.by((): Array<{ conn: Connection; pathD: string }> => {
+    const vp = canvasScope.viewportRect;
+    const exportMode = canvasScope.exportMode;
+    const smartRevision = untrack(() => spatialScope.revision);
+    const out: Array<{ conn: Connection; pathD: string }> = [];
+    for (const conn of Object.values(connections)) {
+      const fromTile = boardStore.getTile(conn.fromTileId);
+      const toTile = boardStore.getTile(conn.toTileId);
+      if (!fromTile || !toTile) continue; // drop stale connections
+      const fromRect = { x: fromTile.position.x, y: fromTile.position.y, width: fromTile.size.width, height: fromTile.size.height };
+      const toRect = { x: toTile.position.x, y: toTile.position.y, width: toTile.size.width, height: toTile.size.height };
+      if (!exportMode && !connectionIntersectsViewport(fromRect, toRect, vp, VIEWPORT_CULL_BUFFER)) {
+        continue;
+      }
+      const resolved = effectiveConnectionPathStyle(conn, vaultStore.project?.settings, boardStore.current);
+      const sig = connectionPathSignature(fromRect, toRect, conn.fromBubble, conn.toBubble, resolved.pathType, smartRevision);
+      const pathD = pathMemo.resolve(conn.id, sig, () => {
+        const from = getBubblePosition(fromRect, conn.fromBubble);
+        const to = getBubblePosition(toRect, conn.toBubble);
+        return computePath(from, to, conn.fromBubble, conn.toBubble, resolved.pathType, spatialIndex);
+      });
+      out.push({ conn, pathD });
+    }
+    pathMemo.pruneExcept(connections);
+    return out;
+  });
 
   function handleConnectionContextMenu(e: MouseEvent, conn: Connection) {
     uiStore.showContextMenu(e.clientX, e.clientY, [
@@ -130,10 +179,11 @@
   <!-- Connection paths. Drop connections whose endpoints no longer exist —
        prevents a stale connection from mounting a ConnectionPath whose
        <g> element lingers in the DOM after the referenced tile is deleted. -->
-  {#each Object.values(connections).filter((c) => boardStore.getTile(c.fromTileId) && boardStore.getTile(c.toTileId)) as conn (conn.id)}
+  {#each renderableConnections as { conn, pathD } (conn.id)}
     <g style="pointer-events: stroke;">
       <ConnectionPath
         connection={conn}
+        {pathD}
         {spatialIndex}
         oncontextmenu={handleConnectionContextMenu}
       />
@@ -179,8 +229,7 @@
   class="connection-label-layer"
   style="z-index: var(--z-connection-label); position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible;"
  aria-hidden="true">
-  {#each Object.values(connections).filter((c) => boardStore.getTile(c.fromTileId) && boardStore.getTile(c.toTileId)) as conn (conn.id)}
-    {@const pathD = getPathD(conn)}
+  {#each renderableConnections as { conn, pathD } (conn.id)}
     {#if pathD}
       <!-- Hidden measurement path for label positioning -->
       <path

@@ -40,9 +40,9 @@
   import FloatingTocPanel from './FloatingTocPanel.svelte';
   import TaskListSideToolbar from './TaskListSideToolbar.svelte';
 
-  // Per-pane scope; alias `boardStore` so the call sites below stay
-  // unchanged. See PaneView.svelte / boardScope.svelte.ts.
+  // Per-pane scope; alias `boardStore` so call sites stay unchanged. See boardScope.svelte.ts.
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
+  let { tabId }: { tabId?: string } = $props(); // R1 (Audit-11): pane-correct via scope; accepted + ignored
   const boardStore = scope.board;
   import TaskItemStylePopup from './TaskItemStylePopup.svelte';
   import TaskSectionStylePopup from './TaskSectionStylePopup.svelte';
@@ -72,7 +72,9 @@
     getActiveContentFolder,
   } from '../../lib/vault/conventionPaths';
   import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
+  import { flushLastViewForBoard } from '../../lib/boards/lastViewFlush';
   import { onMount, onDestroy, untrack } from 'svelte';
+  import { createAriaAnnouncer } from '../../lib/utils/ariaAnnouncer.svelte';
   import { dndzone, type DndEvent } from 'svelte-dnd-action';
   import { registerCommandWithShortcut } from '../../core/commandRegistry';
   import { moveTaskBlock } from '../../lib/tasks/taskMove';
@@ -244,15 +246,10 @@
   // covered. The local `announcement` text fills the gap for single-row
   // ops (add task, delete task, toggle complete) where no toast fires —
   // SR users would otherwise hear nothing when the row list mutates.
-  let announcement = $state('');
-  let announceClearTimer: ReturnType<typeof setTimeout> | null = null;
+  // Auto-clearing aria-live announcer; announcer.dispose() in onDestroy (Audit 5.3).
+  const announcer = createAriaAnnouncer();
   function announce(message: string): void {
-    // Re-assign to the same string would not re-trigger aria-live; pad
-    // with a zero-width-space when the message repeats so the live region
-    // does fire on every action.
-    announcement = message === announcement ? `${message}​` : message;
-    if (announceClearTimer) clearTimeout(announceClearTimer);
-    announceClearTimer = setTimeout(() => { announcement = ''; announceClearTimer = null; }, 4000);
+    announcer.announce(message);
   }
 
   // ── Filename utilities ──
@@ -455,33 +452,22 @@
       return;
     }
 
-    const sortedReal = [...sections].sort((a, b) => a.position - b.position);
-    const realById = new SvelteMap(sortedReal.map((s) => [s.id, s]));
-    const leadingEnd = sortedReal[0]?.position ?? placements.length;
-    const leadingSlice = placements.slice(0, leadingEnd);
-    const sliceById = new SvelteMap<string, TaskPlacement[]>();
-    for (let i = 0; i < sortedReal.length; i++) {
-      const s = sortedReal[i];
-      const start = s.position;
-      const end = sortedReal[i + 1]?.position ?? placements.length;
-      sliceById.set(s.id, placements.slice(start, end));
-    }
-
-    const nextPlacements: TaskPlacement[] = [...leadingSlice];
+    // VIEW-6 — ReorderSectionCommand consumes ONLY the new section ID ORDER (it
+    // sorts `after.sections` by position; `applySectionOrderLive` then recomputes
+    // every position AND re-slices `tasks` from the live cache). So emit just the
+    // real sections renumbered into the dropped order — the old leadingSlice /
+    // per-section placement rebuild was dead work the command threw away.
+    const realById = new SvelteMap(sections.map((s) => [s.id, s]));
     const nextSections: TaskListSection[] = [];
-    let pos = leadingSlice.length;
+    let pos = 0;
     for (const id of newOrderedIds) {
       if (id === DEFAULT_SECTION_ID) continue;
       const oldSection = realById.get(id);
-      const slice = sliceById.get(id) ?? [];
-      if (!oldSection) continue;
-      nextSections.push({ ...oldSection, position: pos });
-      nextPlacements.push(...slice);
-      pos += slice.length;
+      if (oldSection) nextSections.push({ ...oldSection, position: pos++ });
     }
     const beforeSnap = snapshotSections();
     historyStore.execute(
-      new ReorderSectionCommand(board.id, beforeSnap, { sections: nextSections, tasks: nextPlacements }),
+      new ReorderSectionCommand(board.id, beforeSnap, { sections: nextSections, tasks: [] }),
     );
     tickAndPersist();
     // Mirror the committed order so the dndzone's keyed each renders the
@@ -670,15 +656,14 @@
   $effect(() => {
     const id = board?.id;
     untrack(() => {
-      if (id) lastTargetedSectionId = null;
+      if (id) { lastTargetedSectionId = null; collapsedGroups.clear(); } // VIEW-1: group-collapse is per-board
     });
     void id;
   });
 
   // Task creation, deletion, frontmatter writes, and file drops are owned by
-  // factory slices in `lib/tasklist/`. Each factory closes over the host's
-  // reactive accessors so the extracted helpers always see the live board /
-  // sections / rows state. Mirrors the Phase 5.7 kanban slice pattern.
+  // factory slices in `lib/tasklist/` closing over the host's reactive accessors,
+  // so the helpers always see live board state (Phase 5.7 kanban slice pattern).
   //
   // Order matters: `frontmatterWriter` exposes `buildTaskFieldCommand`, which
   // both the deleter (cascade "keep subtasks" branch) and the bulk-action
@@ -688,6 +673,7 @@
     vaultPathForTile,
     readFrontmatter,
     bumpCacheVersion: () => { cacheVersion++; },
+    announce,
   });
   const buildTaskFieldCommand = frontmatterWriter.buildTaskFieldCommand;
   const updateRowField = frontmatterWriter.updateRowField;
@@ -721,6 +707,7 @@
     buildTaskFieldCommand,
     tickAndPersist,
     announce,
+    pruneSelection: (ids) => multiSelect.pruneSelection(ids), // SEL-2
   });
   const deleteTask = taskDeleter.deleteTask;
   const deleteTaskWithFile = taskDeleter.deleteTaskWithFile;
@@ -788,6 +775,9 @@
         'info',
         3500,
       );
+    } else if (desiredSafe !== trimmed) {
+      // REN-2 — sanitization changed the title (illegal/reserved), e.g. "???"→"Untitled".
+      uiStore.toast(`"${trimmed}" isn't a valid file name — saved as "${finalTitle}".`, 'info', 3500);
     }
 
     // Phase 7 / 7.9 — route through RenameTitleCommand so Ctrl+Z reverses
@@ -803,10 +793,13 @@
       const root = vaultRoot.replace(/[\\/]+$/, '');
       const renameResult = await vaultStore.rename(`${root}/${oldRel}`, `${root}/${newRel}`);
       if (!renameResult.success) {
-        const msg = renameResult.code === 'ENOENT'
-          ? `Task file '${oldRel}' is no longer on disk`
+        const code = renameResult.code;
+        // VIEW-2 — surface a real-disk collision (the IPC refuses to clobber)
+        // distinctly from a missing source or a generic failure.
+        const msg = code === 'ENOENT' ? `Task file '${oldRel}' is no longer on disk`
+          : code === 'TARGET_EXISTS' ? `A file named '${newRel}' already exists on disk`
           : 'Failed to rename task file';
-        uiStore.toast(msg, renameResult.code === 'ENOENT' ? 'warning' : 'error', 2500);
+        uiStore.toast(msg, code === 'ENOENT' || code === 'TARGET_EXISTS' ? 'warning' : 'error', 2500);
         return;
       }
       // Disk rename succeeded; push the command with pushWithoutExecute so
@@ -932,17 +925,18 @@
     commitIndent: (tileId, newParent) => {
       const row = viewModel.rows.find((r) => r.tile.id === tileId);
       if (!row || !board) return;
+      // VIEW-3 — auto-expand a collapsed new-parent on BOTH paths (command +
+      // docId-less fallback), else the indented child is swallowed under the
+      // collapsed parent until the chevron is clicked. The command path batches
+      // the expand into the same undo unit; the rare fallback expands separately.
+      const expandParent = collapsedSubtasks.has(newParent);
       const cmd = buildTaskFieldCommand(row, { parent: newParent }, 'Indent task');
       if (!cmd) {
-        // Tile has no docId — fall back to the legacy direct path.
+        if (expandParent) toggleSubtaskCollapsed(newParent);
         updateRowField(row, { parent: newParent });
         return;
       }
-      // If the new parent is collapsed, auto-expand it as part of the same
-      // undo unit so a single Ctrl+Z restores both the indent and the prior
-      // collapsed state. Otherwise dropping a child into a collapsed parent
-      // would visually swallow the row until the user clicks the chevron.
-      if (collapsedSubtasks.has(newParent)) {
+      if (expandParent) {
         const before = Array.from(collapsedSubtasks);
         const afterSet = new SvelteSet(collapsedSubtasks);
         afterSet.delete(newParent);
@@ -1068,7 +1062,7 @@
     // Snapshot for undo before computing the move.
     const sortedLive = [...sections].sort((a, b) => a.position - b.position);
     const targetIdx = sortedLive.findIndex((s) => s.id === realTargetId);
-    const sectionStart = targetIdx >= 0 ? sortedLive[targetIdx].position : 0;
+    const sectionStart = targetIdx >= 0 ? (sortedLive[targetIdx]?.position ?? 0) : 0;
     const sectionEnd = targetIdx >= 0
       ? (sortedLive[targetIdx + 1]?.position ?? placements.length)
       : placements.length;
@@ -1149,25 +1143,40 @@
     void filters.activeFilterPriority;
     void filters.showCompleted;
     void filters.activeSmartList;
-    void groupBy;
-    void sortBy;
+    // VIEW-5 — groupBy/sortBy aren't in lastView (canonical in board settings,
+    // never hydrated back), so a sort/group change must not re-fire this persist.
     const id = board?.id;
     if (!id || id !== filters.hydratedForBoardId) return;
+    // Audit-17 4.5 — snapshot at ARM time (a teardown can run after the next
+    // board's hydrate re-seeded `filters`) and write keyed by the CAPTURED id
+    // via flushLastViewForBoard (never the pane's live board — Audit-4 DI-08's
+    // wrong-board-write hazard; its JSON-equality guard skips no-change writes).
+    const nextLastView = filters.buildLastView();
     if (filters.lastViewPersistTimer) clearTimeout(filters.lastViewPersistTimer);
     filters.lastViewPersistTimer = setTimeout(() => {
       filters.lastViewPersistTimer = null;
-      const nextLastView = filters.buildLastView();
-      const prevSettings = settings as Record<string, unknown>;
-      const prevLastView = prevSettings.lastView;
-      // Avoid emitting an entry on the first hydrate when nothing actually
-      // changed (deep-equal check via JSON; lastView is a plain-data object).
-      if (JSON.stringify(prevLastView) === JSON.stringify(nextLastView)) return;
-      boardStore.updateBoardSettingsWithHistory(
-        { lastView: nextLastView },
-        prevSettings,
-        'Change task view',
-      );
+      flushLastViewForBoard(id, nextLastView);
     }, 300);
+    // Audit-4 DI-08 — clear the debounce with the effect (mirrors KanbanBoard
+    // 6.1.R2); Audit-17 4.5 — but flush, don't drop: a filter change within
+    // 300 ms of a board switch was otherwise never written (the
+    // hydratedForBoardId guard blocks any re-fire after the switch).
+    // Audit-18 5.1 — the $effect cleanup runs before EVERY re-execution, not
+    // only on teardown, so flushing unconditionally here fired on every filter
+    // tick and structurally defeated the 300 ms debounce (each change wrote one
+    // behind). Flush ONLY on a real board switch (the live id moved off the
+    // armed id); a same-board re-run just re-arms the timer. Unmount is flushed
+    // by `filters.dispose()` in onDestroy (which no longer depends on the timer
+    // this cleanup may have just nulled).
+    return () => {
+      if (filters.lastViewPersistTimer) {
+        clearTimeout(filters.lastViewPersistTimer);
+        filters.lastViewPersistTimer = null;
+        if (board?.id !== id) {
+          flushLastViewForBoard(id, nextLastView);
+        }
+      }
+    };
   });
 
   // ── Keyboard shortcuts ──
@@ -1369,6 +1378,10 @@
     // any stale inline styles svelte-dnd-action may have left on neighbour
     // sections so they don't end up invisible.
     const cancelSectionDrag = () => {
+      // VIEW-4 — skip the re-render-forcing recovery when no drag is in flight
+      // (section drag active ⇔ `sectionDragDisabled` false; row drag ⇔ a live
+      // `dragTileId`), so a bare Escape doesn't churn the list every keypress.
+      if (sectionDragDisabled && dragController.dragTileId === null) return;
       sectionDragDisabled = true;
       // Re-assign by identity so the `use:clearStaleDndStyles` action's
       // `update` callback fires on every section. Cancelled drags don't
@@ -1397,6 +1410,10 @@
     // Drain any queued frontmatter writes so a board close during the
     // 300ms debounce window doesn't lose the user's last field edit.
     void flushAllPendingFrontmatterWrites();
+    // Audit2 5.6 / Audit-4 DI-08 — cancel the lastView debounce; Audit-17 4.5
+    // — dispose() now FLUSHES the pending slice (cache write keyed by the
+    // hydrated board id) instead of dropping it.
+    filters.dispose();
     unregisterFocusQuickAdd?.();
     unregisterFocusQuickAdd = null;
     unregisterSelectAll?.();
@@ -1406,6 +1423,7 @@
     sectionDragCancelCleanup?.();
     sectionDragCancelCleanup = null;
     dragController.cancelDrag();
+    announcer.dispose();
   });
 
   // Bind the keydown handler to the scroll container in CAPTURE phase via an
@@ -1788,7 +1806,7 @@
     toast queue, covering the operations that DON'T toast (single-row
     add, subtask add, single delete). Phase C item 14.
   -->
-  <div class="tasklist-sr-live" aria-live="polite" aria-atomic="true">{announcement}</div>
+  <div class="tasklist-sr-live" aria-live="polite" aria-atomic="true">{announcer.message}</div>
 
   <!--
     Persistent keyboard hint footer — small, low-contrast, discoverable

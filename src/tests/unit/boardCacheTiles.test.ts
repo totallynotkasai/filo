@@ -144,6 +144,23 @@ describe('boardCache — tile persistence', () => {
 
     expect(boardCacheStore.cache.mm.tileDefs['t-new']).toBeDefined();
   });
+
+  // 6.4.M20 — cascade-delete rollback re-adds a tile that is NOT in any board's
+  // cache yet and may carry no boardId, so the findBoardIdForTile memo scan
+  // invalidates its stale entry and resolves nothing → the re-add was dropped.
+  // CascadeDeleteCommand.undo now passes the boardId it already knows via the
+  // explicit-boardId arg.
+  it('persistAddTile honors an explicit boardId arg for a tile not yet in any board', async () => {
+    boardCacheStore.hydrate(
+      { mm: makeMindMapFixture() },
+      { mm: 'map.board.json' },
+    );
+
+    const reAdded = makeNonTextTile('t-readd', ''); // empty boardId, not in cache
+    await boardCacheStore.persistAddTile(reAdded, { skipEmptySeed: true }, 'mm');
+
+    expect(boardCacheStore.cache.mm.tileDefs['t-readd']).toBeDefined();
+  });
 });
 
 describe('boardCache — persistAddTile stamps filePath on text tiles', () => {

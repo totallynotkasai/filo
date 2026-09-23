@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as dns from 'dns';
 import { promisify } from 'util';
-import { assertSafeFilename, assertSafeRelativePath, assertWithinVault, isPrivateUrl, normalizeNumericIPv4 } from '../utils/pathSecurity';
+import { assertNotInFiloDir, assertSafeFilename, assertSafeRelativePath, assertWithinVault, isPrivateUrl } from '../utils/pathSecurity';
 import { assertActiveVault } from '../utils/activeVaultCheck';
 import { getMimeType } from '../utils/mime';
 import { logMainError } from '../utils/mainLogger';
@@ -11,6 +11,7 @@ import { toPosix, relativePosix } from '../utils/pathHelpers';
 import { getVaultRoot, getActiveWatcher } from './vault.ipc';
 import { assertPayloadByteSize, PAYLOAD_LIMITS } from '../utils/payloadLimits';
 import { atomicWriteFile } from '../vault/filenameUtils';
+import { launcherExtension } from '../../shared/untrusted';
 
 /**
  * Phase 31 A5.3 — DNS-based SSRF defence. Resolves a hostname to every A/AAAA
@@ -29,7 +30,14 @@ async function isHostnamePrivate(hostname: string): Promise<boolean> {
   const bare = hostname.startsWith('[') && hostname.endsWith(']')
     ? hostname.slice(1, -1)
     : hostname;
-  const normalised = normalizeNumericIPv4(bare);
+  // 3.1 — static check first. Catches IP literals (incl. the IPv4-mapped /
+  // NAT64 IPv6 hex forms and numeric-encoded IPv4 that `isPrivateUrl` now
+  // decodes) before we even hit DNS, and covers the DNS-failure path below.
+  // Re-bracket IPv6 literals so `new URL` inside `isPrivateUrl` parses them
+  // — the old `http://${normalised}/` fallback fed a bracketless IPv6 to the
+  // URL parser, which threw and only fail-closed by accident.
+  const staticUrl = bare.includes(':') ? `http://[${bare}]/` : `http://${bare}/`;
+  if (isPrivateUrl(staticUrl)) return true;
   try {
     const addrs = await dnsLookupAll(bare, { all: true });
     if (addrs.length === 0) return false;
@@ -39,9 +47,10 @@ async function isHostnamePrivate(hostname: string): Promise<boolean> {
     }
     return false;
   } catch {
-    // DNS failure — fall back to URL-string heuristic so an unresolvable
-    // host doesn't silently bypass the check. The fetch will fail too.
-    return isPrivateUrl(`http://${normalised}/`);
+    // DNS failure — the static check above already classified any literal /
+    // numeric form; an unresolvable name can't be probed further (the fetch
+    // will fail too), so treat it as non-private.
+    return false;
   }
 }
 
@@ -62,7 +71,7 @@ const LINK_METADATA_MAX_BYTES = 512 * 1024;
 export function detectCharsetFromContentType(contentType: string): string {
   const match = /charset\s*=\s*["']?([^;"']+)/i.exec(contentType);
   if (!match) return 'utf-8';
-  const label = match[1].trim().toLowerCase();
+  const label = (match[1] ?? '').trim().toLowerCase();
   if (!label) return 'utf-8';
   try {
     new TextDecoder(label);
@@ -70,6 +79,41 @@ export function detectCharsetFromContentType(contentType: string): string {
   } catch {
     return 'utf-8';
   }
+}
+
+/**
+ * Audit-15 P3.2 — defence-in-depth sanitiser for the `image` / `favicon`
+ * URLs `link:fetch-metadata` hands back to the renderer. Both are extracted
+ * from attacker-controllable page markup (`og:image` / `<link rel=icon>`), so
+ * a hostile page could aim them at an internal address
+ * (`http://169.254.169.254/…`, `http://10.0.0.5/…`). Today the renderer CSP
+ * (`img-src 'self' data: blob: filo:`) blocks any remote http(s) load, so they
+ * never fetch — but if a future code path fetches them main-side, or the CSP
+ * widens, an un-validated URL becomes an SSRF vector. Resolve against the
+ * (already SSRF-validated) final page URL, then:
+ *
+ *   - empty / unparseable → ''   (no resource)
+ *   - data: URL           → kept (CSP permits it; no network fetch → no SSRF)
+ *   - http(s)             → kept only if `isPrivateUrl` says public; a
+ *                           private / loopback / link-local host → ''
+ *   - any other scheme    → ''   (javascript:, file:, blob:, …)
+ *
+ * Static `isPrivateUrl` (no DNS) is proportionate because these resources are
+ * never fetched main-side; if that ever changes, upgrade to the async
+ * `isHostnamePrivate` DNS-resolution check the fetch path already uses.
+ */
+export function sanitizeReturnedResourceUrl(raw: string, baseUrl: string): string {
+  if (!raw) return '';
+  let resolved: URL;
+  try {
+    resolved = new URL(raw, baseUrl);
+  } catch {
+    return '';
+  }
+  if (resolved.protocol === 'data:') return resolved.href;
+  if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') return '';
+  if (isPrivateUrl(resolved.href)) return '';
+  return resolved.href;
 }
 
 /**
@@ -90,7 +134,10 @@ export function registerMediaHandlers(): void {
       // direct the write into a stale or wrong vault root after a vault
       // swap. Mirrors `vault:write-file-text` / `media:read-file`.
       assertActiveVault(vaultPath);
-      assertSafeFilename(fileName);
+      // 6.3.P1/P2 — `media:save-audio` writes a NEW recording into the
+      // vault; creation rules apply on every platform so the saved
+      // filename + destination subfolder stay portable.
+      assertSafeFilename(fileName, { forCreation: true });
       // Phase 21 / M5 — cap base64 input by its decoded byte length. The
       // base64 alphabet expands 3 bytes to 4 chars, so a 100 MB cap on the
       // decoded buffer corresponds to ~133 MB of base64 string; checking
@@ -107,7 +154,18 @@ export function registerMediaHandlers(): void {
       // past it because the resolved path is still inside the vault.
       // Run `assertSafeRelativePath` on the folder so each segment also
       // has to clear `assertSafeFilename`.
-      if (normalisedFolder) assertSafeRelativePath(normalisedFolder);
+      //
+      // 6.3.P1/P2 — `forCreation: true` because mkdir-p creates the
+      // destination subfolder if it doesn't exist; keep the new folder
+      // path portable across platforms.
+      if (normalisedFolder) assertSafeRelativePath(normalisedFolder, { forCreation: true });
+
+      // 1.4 — refuse writes into `.filo/` like every other vault-writing channel.
+      // `media:save-audio` was the sole vault writer missing this guard; a buggy
+      // renderer passing `destFolder: '.filo'` could otherwise drop arbitrary
+      // bytes into the config dir. Guard the prospective relative destination
+      // (folder + filename) BEFORE mkdir, mirroring `vault:write-file-binary`.
+      assertNotInFiloDir(normalisedFolder ? `${normalisedFolder}/${fileName}` : fileName);
 
       const mediaDir = normalisedFolder
         ? path.join(vaultPath, normalisedFolder)
@@ -165,6 +223,14 @@ export function registerMediaHandlers(): void {
     try {
       assertActiveVault(vaultRoot);
       assertSafeRelativePath(relativePath);
+      // Audit-15 P3.1 — refuse reads into `.filo/`, like every other vault
+      // channel that takes a renderer-supplied relative path. Not currently
+      // exploitable (every sensitive `.filo/` file is JSON/font →
+      // octet-stream → refused by the MIME allowlist below), but this channel
+      // must enforce its OWN containment rather than lean on an adjacent
+      // control: a future readable media type dropped under `.filo/` would
+      // otherwise leak through. Mirrors `media:save-audio` (1.4).
+      assertNotInFiloDir(relativePath);
       const fullPath = path.join(vaultRoot, relativePath);
       assertWithinVault(vaultRoot, fullPath);
       const mimeType = getMimeType(fullPath);
@@ -224,7 +290,10 @@ export function registerMediaHandlers(): void {
       // OS shell handles (Phone app on macOS, FaceTime, default SIP client
       // on Windows). Same SSRF-skip rationale as mailto: no hostname-bearing
       // URL component.
-      const ALLOWED_URL_PREFIXES = ['https://', 'http://', 'mailto:', 'tel:'];
+      // Audit-12 S2 — `http://` dropped from the allowlist. Cleartext http is a
+      // downgrade / SSRF surface and every modern target serves https; legacy
+      // link tiles that stored an http:// URL are handled explicitly below.
+      const ALLOWED_URL_PREFIXES = ['https://', 'mailto:', 'tel:'];
       const DISALLOWED_URL_PATTERNS = [
         /^file:/i,
         /^javascript:/i,
@@ -237,13 +306,31 @@ export function registerMediaHandlers(): void {
           return { success: false, error: 'URL scheme not allowed' };
         }
       }
-      const isAllowedUrl = ALLOWED_URL_PREFIXES.some((prefix) => target.startsWith(prefix));
+      // Audit-12 S2 — explicit, distinct handling for legacy `http://` URLs: log
+      // a warning and refuse rather than silently opening cleartext (or falling
+      // through to the local-path branch with a confusing "outside vault" error).
+      if (/^http:\/\//i.test(target)) {
+        logMainError(
+          'media:open-external',
+          new Error(`Refusing to open insecure http:// URL: ${target}`),
+        );
+        return { success: false, error: 'Insecure http:// links are no longer opened — use https://' };
+      }
+      // L11 (Audit-13) — compare the scheme case-insensitively. A legitimate
+      // `HTTPS://…` / `Mailto:` link otherwise failed this prefix test (the
+      // prefixes are lowercase) and fell through to the local-path branch, which
+      // refused it — a fail-closed but confusing UX regression. The ORIGINAL
+      // `target` is still what we hand to the OS; only the allowlist + SSRF
+      // discrimination COMPARISONS use the lowercased copy (the URL constructor
+      // in `isPrivateUrl` already lowercases the scheme, so it needs no change).
+      const lowerTarget = target.toLowerCase();
+      const isAllowedUrl = ALLOWED_URL_PREFIXES.some((prefix) => lowerTarget.startsWith(prefix));
       if (isAllowedUrl) {
         // mailto:/tel: don't have a hostname-bearing URL component for the
         // private-IP check; skip the SSRF gate for them. Match the http(s)
         // schemes explicitly rather than a loose `startsWith('http')` so a
         // future allowlisted scheme like `httpx:` can't slip past the gate.
-        if (target.startsWith('http://') || target.startsWith('https://')) {
+        if (lowerTarget.startsWith('http://') || lowerTarget.startsWith('https://')) {
           if (isPrivateUrl(target)) {
             // Phase 37 / 37.7 — gate the dev-localhost allowance on
             // `app.isPackaged`. Electron packaged builds don't set
@@ -257,6 +344,25 @@ export function registerMediaHandlers(): void {
               /^(https?:\/\/)?(localhost|127\.)/i.test(target);
             if (!devOK) {
               return { success: false, error: 'URL not allowed' };
+            }
+          } else {
+            // Audit-14 4.1 — DNS-resolution SSRF parity with
+            // `link:fetch-metadata`. The static `isPrivateUrl` above only
+            // catches IP-literal / numeric-encoded hosts; a public-looking
+            // hostname that RESOLVES to a private range — DNS rebinding, or
+            // an attacker-chosen name pointing at 169.254.169.254 /
+            // 10.x — would otherwise be handed straight to the OS browser
+            // (which can reach internal network devices the renderer can't).
+            // Resolve every A/AAAA record and refuse if any lands private,
+            // exactly as the link-metadata fetcher does before it connects.
+            let host: string;
+            try {
+              host = new URL(target).hostname;
+            } catch {
+              return { success: false, error: 'Malformed URL' };
+            }
+            if (await isHostnamePrivate(host)) {
+              return { success: false, error: 'URL not allowed (resolves to private address)' };
             }
           }
         }
@@ -277,9 +383,17 @@ export function registerMediaHandlers(): void {
         // named `notes.exe` (or worse, `report.pdf.exe` masquerading as a
         // PDF) would otherwise run with the user's privileges. Match the
         // file's TRUE final extension case-insensitively against a
-        // blocklist of OS launcher / scripting formats. Renaming an .exe
-        // to .png doesn't bypass — `path.extname` returns the literal
-        // trailing `.ext`, so `report.pdf.exe` still extensions to `.exe`.
+        // blocklist of OS launcher / scripting formats.
+        //
+        // Audit-10 B3 — extension extraction must use `launcherExtension`,
+        // NOT `path.extname`: on Win32 a trailing dot / space (`evil.exe.`)
+        // is stripped by the path layer before launch, and an NTFS ADS
+        // suffix (`evil.exe::$DATA`) names the real `evil.exe`; both make
+        // `path.extname` read a non-blocklisted `'.'` / `'.exe::$DATA'`,
+        // so `shell.openPath` would run the executable. `assertWithinVault`
+        // realpaths past those (they resolve to the in-vault file) and this
+        // channel does NOT run `assertSafeFilename`, so the blocklist here
+        // is the only line of defence.
         //
         // Phase 5 / P1-10 — extend with HTML-renderable extensions
         // (.html / .htm / .xhtml / .svg / .shtml / .xml). The user's
@@ -295,8 +409,44 @@ export function registerMediaHandlers(): void {
           '.msi', '.jar', '.lnk', '.appref-ms', '.app', '.bin', '.sh', '.msc',
           // HTML-renderable — Phase 5 / P1-10
           '.html', '.htm', '.xhtml', '.svg', '.shtml', '.xml',
+          // Audit-13 M12 — OS launcher / shell-acted-on shortcuts. These aren't
+          // executables, but the shell ACTS on them: a `.url`/`.scf`/`.website`
+          // can point at `\\attacker\share` and leak NetNTLM creds on open;
+          // `.reg`/`.inf` import/run on activation; `.pif` executes; `.desktop`
+          // runs its `Exec=` on Linux. Kept in sync with untrusted.ts.
+          '.url', '.scf', '.website', '.pif', '.reg', '.inf', '.desktop',
         ]);
-        const ext = path.extname(target).toLowerCase();
+        // Audit-10 B3 (defence in depth) — refuse a basename Win32 would
+        // normalise into a DIFFERENT file than the one we validated: a
+        // trailing dot/space is silently stripped, and an embedded `:`
+        // opens an NTFS Alternate Data Stream (`report.pdf:evil`, whose
+        // safe-looking `.pdf` extension would otherwise pass). The basename
+        // is the segment after the last separator, so a drive-letter colon
+        // (`C:/…`) is never in scope here.
+        const lastSep = Math.max(target.lastIndexOf('/'), target.lastIndexOf('\\'));
+        const targetBasename = lastSep >= 0 ? target.slice(lastSep + 1) : target;
+        if (/[ .]$/.test(targetBasename) || targetBasename.includes(':')) {
+          return {
+            success: false,
+            error: 'Refusing to open file: unsafe filename (trailing dot/space or alternate data stream)',
+          };
+        }
+        // Audit-12 S2 — also run the shared filename guard on the basename so a
+        // Windows reserved DOS name (CON / NUL / LPT1 / CONIN$ …) can't be handed
+        // to shell.openPath as a device handle. assertSafeFilename platform-gates
+        // the reserved-name + illegal-char rules to win32 by default, so a
+        // legitimately-named POSIX vault file (e.g. `CON.md` on Linux) stays
+        // openable. The manual trailing-dot/ADS check above is kept because it
+        // applies on every platform; this adds the reserved-name coverage.
+        try {
+          assertSafeFilename(targetBasename);
+        } catch {
+          return {
+            success: false,
+            error: 'Refusing to open file: unsafe filename (Windows reserved name or illegal character)',
+          };
+        }
+        const ext = launcherExtension(target);
         if (UNSAFE_FILE_EXTENSIONS.has(ext)) {
           return {
             success: false,
@@ -478,17 +628,20 @@ export function registerMediaHandlers(): void {
         // Try property first (og:), then name
         const propMatch = headSection.match(new RegExp(`<meta[^>]+property=["']${nameOrProp}["'][^>]+content=["']([^"']*)["']`, 'i'))
           || headSection.match(new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+property=["']${nameOrProp}["']`, 'i'));
-        if (propMatch) return propMatch[1];
+        if (propMatch) return propMatch[1] ?? '';
 
         const nameMatch = headSection.match(new RegExp(`<meta[^>]+name=["']${nameOrProp}["'][^>]+content=["']([^"']*)["']`, 'i'))
           || headSection.match(new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+name=["']${nameOrProp}["']`, 'i'));
-        return nameMatch ? nameMatch[1] : '';
+        return nameMatch?.[1] ?? '';
       };
 
       const titleMatch = headSection.match(/<title[^>]*>([^<]*)<\/title>/i);
-      const title = getMetaContent('og:title') || (titleMatch ? titleMatch[1].trim() : '');
+      const title = getMetaContent('og:title') || (titleMatch?.[1] ?? '').trim();
       const description = getMetaContent('og:description') || getMetaContent('description');
-      const image = getMetaContent('og:image');
+      // Audit-15 P3.2 — resolve `og:image` against the final page URL (it may
+      // be relative / protocol-relative) and drop it if it points at a private
+      // address or a non-displayable scheme before returning it to the renderer.
+      const image = sanitizeReturnedResourceUrl(getMetaContent('og:image'), currentUrl);
 
       // Build favicon URL against the final (post-redirect) origin so a
       // shortlink → publisher chain resolves to the publisher's favicon
@@ -498,10 +651,14 @@ export function registerMediaHandlers(): void {
       const faviconMatch = headSection.match(/<link[^>]+rel=["'](?:shortcut )?icon["'][^>]+href=["']([^"']*)["']/i)
         || headSection.match(/<link[^>]+href=["']([^"']*)["'][^>]+rel=["'](?:shortcut )?icon["']/i);
       if (faviconMatch) {
-        favicon = faviconMatch[1].startsWith('http') ? faviconMatch[1] : `${parsedUrl.origin}${faviconMatch[1].startsWith('/') ? '' : '/'}${faviconMatch[1]}`;
+        const href = faviconMatch[1] ?? '';
+        favicon = href.startsWith('http') ? href : `${parsedUrl.origin}${href.startsWith('/') ? '' : '/'}${href}`;
       } else {
         favicon = `${parsedUrl.origin}/favicon.ico`;
       }
+      // Audit-15 P3.2 — sanitise the resolved favicon (a page can declare an
+      // absolute `<link rel=icon href="http://10.0.0.1/…">`) before returning it.
+      favicon = sanitizeReturnedResourceUrl(favicon, currentUrl);
 
       return {
         success: true,

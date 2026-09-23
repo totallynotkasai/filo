@@ -1,8 +1,13 @@
 import { watch, type FSWatcher, statSync, promises as fsPromises } from 'fs';
 import { BrowserWindow } from 'electron';
-import { extname, join } from 'path';
-import { createHash } from 'crypto';
+import { join } from 'path';
 import { correlateRenames } from './renameCorrelation';
+import {
+  WATCHER_HASH_MAX_BYTES,
+  fnv1a32,
+  sha1Hex,
+  hashFileForRename,
+} from './fileWatcherHash';
 import { logMainError } from '../utils/mainLogger';
 import { toPosix, relativePosix } from '../utils/pathHelpers';
 import { vaultPath, type VaultPath } from '../../shared/vaultPath';
@@ -11,116 +16,27 @@ import {
   WatcherSupervisor,
   type WatcherState,
 } from './watcherSupervisor';
+import { shouldIgnorePath, classifyChange } from './fileWatcherClassify';
 
 export { correlateRenames } from './renameCorrelation';
 export type { FileChangeEvent, FileChangeType } from './fileWatcherTypes';
 export type { WatcherState, WatcherStatePayload } from './watcherSupervisor';
 
-/**
- * Phase 31 B2.3 — per-segment matching rather than `string.includes`. The
- * legacy substring check matched `Article on Thumbs.db.md` because the
- * basename contains the literal "Thumbs.db" — which is a real-world title
- * pattern users have hit. We now split the relative path by `/` and apply
- * one rule per segment.
- *
- *  - `exactNames`: a segment whose entire string equals the pattern (e.g.
- *    `Thumbs.db`, `.DS_Store`). `Article on Thumbs.db.md` is no longer
- *    swallowed because the *basename* segment isn't exactly `Thumbs.db`.
- *  - `folderNames`: an INTERIOR segment (any but the last) matching the
- *    pattern (e.g. `node_modules`, `.git`). The last segment isn't a
- *    folder by definition, so a file literally named `node_modules` at
- *    the vault root still reaches the classifier — desired.
- *  - `suffixes`: the final segment ends with this string (e.g. `.tmp`,
- *    `.bak`). Editor-temp files plus the atomicWriteFile temp suffix all
- *    end in `.tmp`/`.bak`, so this catches them regardless of basename.
- *  - `prefixedPaths`: full path starts with this prefix (e.g.
- *    `.filo/cache/`). Lets us ignore an internal cache subtree without
- *    spuriously matching a user-created `cache` folder elsewhere.
- */
-const IGNORE_RULES = {
-  exactNames: new Set<string>(['Thumbs.db', '.DS_Store', 'desktop.ini']),
-  folderNames: new Set<string>(['node_modules', '.git']),
-  suffixes: ['.tmp', '.bak'] as const,
-  prefixedPaths: ['.filo/cache/'] as const,
-};
-
-function shouldIgnorePath(normalized: string): boolean {
-  for (const prefix of IGNORE_RULES.prefixedPaths) {
-    if (normalized.startsWith(prefix)) return true;
-  }
-  const segments = normalized.split('/');
-  const lastIdx = segments.length - 1;
-  for (let i = 0; i < segments.length; i++) {
-    const segment = segments[i];
-    if (i === lastIdx) {
-      if (IGNORE_RULES.exactNames.has(segment)) return true;
-      for (const suffix of IGNORE_RULES.suffixes) {
-        if (segment.endsWith(suffix)) return true;
-      }
-    } else {
-      if (IGNORE_RULES.folderNames.has(segment)) return true;
-    }
-  }
-  return false;
-}
-
-/**
- * File extensions that should be classified as `'attachment'` regardless of
- * the folder they live in. Phase 19 S4 — before this set existed, only files
- * under `attachments/` participated in rename correlation. An OS-level move
- * of `hero.jpg` from the vault root to `media/` produced two `'tree'` events
- * which the correlator ignores, so every tile pointing at the file silently
- * dangled.
- *
- * Keeps the same coverage as `mime.getMimeType`'s media types — anything the
- * media-tile reader could serve is something a user might place outside
- * `attachments/` and expect rename propagation for.
- */
-const MEDIA_EXTENSIONS = new Set<string>([
-  // Images (Phase 31 C3.8 adds .heic/.heif/.avif — modern Apple + browser
-  // capture formats users drag in from Photos.app and screenshots)
-  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp',
-  '.heic', '.heif', '.avif',
-  // Video
-  '.mp4', '.webm', '.ogv', '.mov',
-  // Audio (Phase 31 C3.8 adds .opus, .mid, .midi — Opus is the modern
-  // WebM Opus container, MIDI for music workflows)
-  '.mp3', '.wav', '.ogg', '.aac', '.flac', '.m4a',
-  '.opus', '.mid', '.midi',
-  // Documents the file-tile / link-tile expects to open
-  '.pdf',
-]);
-
 interface ReconcileEntry {
   mtimeMs: number;
   size: number;
   /**
-   * Phase 31 A6.5 — short FNV-1a 32-bit hash of the first 4 KB of the
-   * file (or the full content for smaller files). Catches the FAT/SMB
-   * case where mtime granularity is 2 seconds and two writes within the
-   * same second leave both stat fields unchanged. `undefined` for
-   * non-.md files (we don't hash media for cost reasons) and for files
-   * we couldn't open during the walk.
+   * Audit-4 DI-15 — FNV-1a 32-bit hash of the file content (the whole file
+   * under {@link WATCHER_HASH_MAX_BYTES}, a 4 KB prefix above it). Catches
+   * the FAT/SMB case where mtime granularity is 2 seconds and two writes
+   * within the same second leave both stat fields unchanged — including a
+   * deep `.board.json` edit past offset 4096 that the pre-fix 4 KB-only hash
+   * missed. `undefined` for non-`.md`/`.board.json` files (we don't hash
+   * media for cost reasons) and for files we couldn't open during the walk.
+   * The implementation lives in `fileWatcherHash.ts` so the walk seed and the
+   * on-demand rename probe share one comparable hashing window.
    */
   hash?: number;
-}
-
-/**
- * Phase 31 A6.5 — FNV-1a 32-bit hash over a Buffer slice. Used during
- * reconciliation to detect "same mtime + same size but different bytes"
- * mid-second rewrites that fs.stat alone misses. 4 KB is enough to vary
- * for almost every realistic .md edit and keeps the per-file cost in
- * the microseconds.
- */
-function fnv1a32(buf: Buffer): number {
-  let hash = 0x811c9dc5;
-  const max = Math.min(buf.length, 4096);
-  for (let i = 0; i < max; i++) {
-    hash ^= buf[i];
-    // FNV prime 16777619, kept inside int32 via Math.imul.
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return hash >>> 0;
 }
 
 /**
@@ -176,6 +92,11 @@ export class FileWatcher {
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingChanges: FileChangeEvent[] = [];
   private readonly debounceMs = 300;
+  // L20 (Audit-13) — max-wait cap: a continuous sub-300ms write stream re-arms
+  // the trailing debounce forever; the OLDEST unfired event's time lets
+  // `scheduleNotify` cap the delay so a flush still lands within ~1s.
+  private debounceFirstQueuedAt: number | null = null;
+  private readonly maxDebounceWaitMs = 1000;
 
   /** Vault-relative path -> expiry timestamp (ms since epoch). */
   private suppressedPaths = new Map<VaultPath, number>();
@@ -213,7 +134,7 @@ export class FileWatcher {
   /**
    * Phase 31 A4.3 — per-path content-hash cache. Populated lazily when a
    * file appears in a watcher event AND is small enough to hash cheaply
-   * (see `HASH_CACHE_MAX_BYTES`). Used by `correlateRenames`'s
+   * (see `WATCHER_HASH_MAX_BYTES`). Used by `correlateRenames`'s
    * cross-basename pass to refuse pairing two files that share a size
    * but not their content.
    */
@@ -241,6 +162,17 @@ export class FileWatcher {
    * vault's paths in the renderer's external-edit pipeline.
    */
   private reconcileInFlightPromise: Promise<void> | null = null;
+
+  /**
+   * Audit-16 3.1 — promise handle to the in-flight `notifyRenderers()` pass
+   * (or `null` when none is running). The cross-basename rename pass inside
+   * it awaits real fs hash probes (`correlateRenames`), which on a slow
+   * volume can take hundreds of ms — long enough for a vault swap to
+   * complete. `stop()` awaits this so a late `vault:file-renamed` /
+   * `vault:files-changed` send can never land on the NEW vault's renderer
+   * and drive the rename cascade against same-named files in the new vault.
+   */
+  private notifyInFlightPromise: Promise<void> | null = null;
 
   /**
    * Phase 3 / 3.1 — set by `stop()`. Once true, every emit path
@@ -354,6 +286,22 @@ export class FileWatcher {
     return false;
   }
 
+  /**
+   * 3.7 (Audit-18) — true when `relativePath` is under an active TREE-suppress
+   * prefix (`suppressTree`, i.e. an in-flight folder DELETE). The reconcile
+   * delete carry-forward (below) uses this to EXCLUDE intentional self-deletes
+   * from re-surfacing as external deletes once suppression lifts.
+   */
+  private isTreeSuppressed(relativePath: string): boolean {
+    const normalized = vaultPath(relativePath);
+    const now = Date.now();
+    for (const [prefix, exp] of this.suppressedPrefixes.entries()) {
+      if (now > exp) continue;
+      if (normalized.startsWith(prefix)) return true;
+    }
+    return false;
+  }
+
   private gcSuppressedPaths(): void {
     const now = Date.now();
     for (const [path, expiry] of this.suppressedPaths.entries()) {
@@ -397,15 +345,14 @@ export class FileWatcher {
 
   /**
    * Phase 3 / 3.2 — test-only access to the granular path classifier.
-   * The walker normally skips `.filo/` entirely, so the only production
-   * path for `config-tags` / `config-theme` / `config-template`
-   * classifications is the live `fs.watch` callback. That makes the
-   * classifier hard to exercise deterministically in unit tests; this
-   * public method gives the suite a direct probe without weakening the
-   * encapsulation in production code.
+   * The live `fs.watch` callback (non-deterministic in unit tests) and —
+   * since Audit-16 6.4 — the reconcile walk's `walkFiloConfig` carve-out
+   * both produce `config-tags` / `config-theme` / `config-template`
+   * classifications in production; this public method remains as a direct
+   * deterministic probe without weakening the encapsulation.
    */
   classifyForTests(relativePath: string): FileChangeType {
-    return this.classifyChange(relativePath);
+    return classifyChange(relativePath);
   }
 
   start(): void {
@@ -454,7 +401,7 @@ export class FileWatcher {
 
         if (shouldIgnorePath(normalized)) return;
 
-        const changeType = this.classifyChange(normalized);
+        const changeType = classifyChange(normalized);
         this.pendingChanges.push({
           type: changeType,
           filename: normalized,
@@ -516,6 +463,7 @@ export class FileWatcher {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
     }
+    this.debounceFirstQueuedAt = null; // L20 (Audit-13) — drop the max-wait marker
     if (this.reconcileTimer) {
       clearInterval(this.reconcileTimer);
       this.reconcileTimer = null;
@@ -542,6 +490,21 @@ export class FileWatcher {
         // just need the synchronisation.
       }
     }
+    // Audit-16 3.1 — same synchronisation for an in-flight notify pass:
+    // its `await correlateRenames(...)` window is exactly where a vault
+    // swap can land, and the post-await `aborted` re-check inside
+    // `notifyRenderers` only helps if the swap sequencing actually waits
+    // for the pass to observe it. (vault:close awaits stop() before the
+    // candidate load, so awaiting here removes the window entirely.)
+    const pendingNotify = this.notifyInFlightPromise;
+    if (pendingNotify) {
+      try {
+        await pendingNotify;
+      } catch {
+        // Notify errors are logged by the scheduleNotify catch; we just
+        // need the synchronisation.
+      }
+    }
     this.pendingChanges = [];
     this.suppressedPaths.clear();
     this.suppressedPrefixes.clear();
@@ -550,6 +513,7 @@ export class FileWatcher {
     this.reconcileSnapshot = null;
     this.reconcileInFlight = false;
     this.reconcileInFlightPromise = null;
+    this.notifyInFlightPromise = null;
   }
 
   /**
@@ -582,6 +546,42 @@ export class FileWatcher {
         if (current === null) return;
         if (this.aborted) return;
         const previous = this.reconcileSnapshot;
+        // Audit-10 M3 — don't let the snapshot advance past a path whose events
+        // are currently suppressed (a recent self-write, or an in-flight folder
+        // delete). The diff loop below SKIPS suppressed paths, so baking
+        // `current`'s post-suppression mtime/size into the snapshot would mask an
+        // EXTERNAL change that landed inside the same window: once suppression
+        // lifts, `current === snapshot` and the change never re-surfaces. Carry
+        // the prior entry forward (or drop a path that only just appeared) so the
+        // next un-suppressed pass re-diffs it. A pure self-write re-surfaces
+        // harmlessly — the renderer's index already reflects it, so its re-read
+        // finds disk === index and ignores it. Skipped entirely when nothing is
+        // suppressed (the common case), so a quiet vault pays nothing.
+        if (
+          previous !== null
+          && !options.seedOnly
+          && (this.suppressedPaths.size > 0 || this.suppressedPrefixes.size > 0)
+        ) {
+          for (const path of [...current.keys()]) {
+            if (!this.isSuppressed(path)) continue;
+            const priorEntry = previous.get(path);
+            if (priorEntry !== undefined) current.set(path, priorEntry);
+            else current.delete(path);
+          }
+          // 3.7 (Audit-18) — Audit-10 M3 carried forward only paths that still
+          // EXIST. A path DELETED while suppressed (in `previous`, GONE from
+          // `current`) let the snapshot advance past it — the deletion diff skips
+          // it this pass and no later pass can re-detect it, so an external DELETE
+          // inside a SELF-WRITE suppression window was swallowed forever. Carry the
+          // prior entry forward so it re-surfaces when the window lifts. EXCLUDE
+          // tree-suppressed paths (`suppressTree` = intentional folder self-delete).
+          for (const [path, priorEntry] of previous) {
+            if (current.has(path)) continue;
+            if (!this.isSuppressed(path)) continue;
+            if (this.isTreeSuppressed(path)) continue;
+            current.set(path, priorEntry);
+          }
+        }
         this.reconcileSnapshot = current;
         if (options.seedOnly || previous === null) return;
 
@@ -593,7 +593,7 @@ export class FileWatcher {
           const prior = previous.get(path);
           if (prior === undefined) {
             synthesised.push({
-              type: this.classifyChange(path),
+              type: classifyChange(path),
               filename: path,
               eventType: 'rename',
             });
@@ -606,7 +606,7 @@ export class FileWatcher {
             || (prior.hash !== undefined && entry.hash !== undefined && prior.hash !== entry.hash)
           ) {
             synthesised.push({
-              type: this.classifyChange(path),
+              type: classifyChange(path),
               filename: path,
               eventType: 'change',
             });
@@ -618,7 +618,7 @@ export class FileWatcher {
           if (shouldIgnorePath(path)) continue;
           if (this.isSuppressed(path)) continue;
           synthesised.push({
-            type: this.classifyChange(path),
+            type: classifyChange(path),
             filename: path,
             eventType: 'rename',
           });
@@ -673,7 +673,41 @@ export class FileWatcher {
       return null;
     }
     await this.walkDir(this.vaultPath, out);
+    await this.walkFiloConfig(out);
     return out;
+  }
+
+  /**
+   * Audit-16 6.4 — the main walk skips `.filo/` wholesale (cache / recovery /
+   * viewports rewrite constantly and would synthesise noise), which left the
+   * renderer-RECONCILED config files invisible to reconciliation: while the
+   * live `fs.watch` handle was down (`reconnecting`), an external edit to
+   * tags.json / a theme / a template produced no event, and nothing replayed
+   * it after the handle came back — yet the reconcile walk is exactly the
+   * mechanism that covers live-handle downtime for every other file class.
+   * Stat JUST the `.filo` paths `classifyChange` maps to a granular
+   * `config-*` type, so the periodic walk (which keeps running through
+   * `reconnecting`) synthesises the same `config-tags` / `config-theme` /
+   * `config-template` events the live watcher would have fired. Self-write
+   * echoes follow the identical renderer path the live watcher's `.filo`
+   * events already take (the granular reconcilers are echo-tolerant).
+   */
+  private async walkFiloConfig(out: Map<string, ReconcileEntry>): Promise<void> {
+    const tagsRel = '.filo/tags.json';
+    try {
+      const stat = await fsPromises.stat(join(this.vaultPath, tagsRel));
+      if (stat.isFile()) {
+        out.set(tagsRel, { mtimeMs: stat.mtimeMs, size: stat.size, hash: undefined });
+      }
+    } catch {
+      // No tags.json yet (fresh vault) — nothing to track.
+    }
+    for (const sub of ['themes', 'templates'] as const) {
+      // walkDir's `.filo`-skip only fires at the vault ROOT, so walking the
+      // subdirectory directly reuses the EACCES/ENOENT-tolerant walk + the
+      // `.tmp`/`.bak` filter; entries land as `.filo/<sub>/…` rel paths.
+      await this.walkDir(join(this.vaultPath, '.filo', sub), out);
+    }
   }
 
   private async walkDir(dir: string, out: Map<string, ReconcileEntry>): Promise<void> {
@@ -691,9 +725,12 @@ export class FileWatcher {
     for (const entry of entries) {
       if (entry.name.startsWith('.git')) continue;
       if (entry.name === '.filo' && dir === this.vaultPath) {
-        // .filo is owned by Filo; skip the whole subtree from the
-        // reconciliation pass. Cache, recovery, viewports rewrite often
+        // .filo is owned by Filo; skip the whole subtree from the main
+        // reconciliation walk. Cache, recovery, viewports rewrite often
         // and would produce constant synthesised events for no benefit.
+        // Audit-16 6.4 — the renderer-reconciled config files (tags.json,
+        // themes/, templates/) are re-added by walkFiloConfig() so external
+        // edits to them survive live-watcher downtime like everything else.
         continue;
       }
       if (entry.name.endsWith('.tmp') || entry.name.endsWith('.bak')) continue;
@@ -705,33 +742,35 @@ export class FileWatcher {
           const stat = await fsPromises.stat(full);
           const rel = relativePosix(this.vaultPath, full);
           let hash: number | undefined;
-          // Phase 31 A6.5 — hash `.md` files so reconcile can detect
-          // mid-second rewrites on filesystems with second-resolution
-          // mtime (FAT, SMB, some NFS configs). Capped at 4 KB inside
-          // fnv1a32 so multi-MB notes don't slow the walker.
+          // Hash `.md` + `.board.json` so reconcile can detect mid-second
+          // rewrites on filesystems with second-resolution mtime (FAT, SMB,
+          // some NFS configs), AND seed the SHA-1 the cross-basename
+          // correlator consumes for the now-missing source of a rename. One
+          // read feeds both digests so the walk stays at one open per file.
           //
-          // Sprint B / B10 — also seed the SHA-1 prefix hash that the
-          // cross-basename correlator consumes. Reading the head once
-          // and feeding both hashes off the same buffer keeps the walk
-          // cost at one fs.open per .md while ensuring the cache is
-          // populated before the first cross-basename rename event for
-          // the file. Without the seed, the first such event for any
-          // file always failed to pair (hashAsync had no cached value
-          // for the now-missing source).
-          if (rel.toLowerCase().endsWith('.md')) {
+          // Audit-4 DI-07/DI-15 — under WATCHER_HASH_MAX_BYTES read the WHOLE
+          // file: the reconcile FNV then covers a deep `.board.json` edit past
+          // offset 4096 (DI-15), and the SHA-1 seed matches the on-demand
+          // gate's whole-file digest (DI-07). Above the ceiling fall back to a
+          // 4 KB-prefix FNV only — a >10 MB growth changes the size (already
+          // flagged) and the rename gate refuses >10 MB pairs, so no SHA-1
+          // seed is written (`hashFileForRename` returns null there too).
+          const lower = rel.toLowerCase();
+          if (lower.endsWith('.md') || lower.endsWith('.board.json')) {
             try {
-              const fd = await fsPromises.open(full, 'r');
-              try {
-                const head = Buffer.alloc(4096);
-                const { bytesRead } = await fd.read(head, 0, 4096, 0);
-                const slice = head.slice(0, bytesRead);
-                hash = fnv1a32(slice);
-                this.lastKnownHashes.set(
-                  vaultPath(rel),
-                  createHash('sha1').update(slice).digest('hex'),
-                );
-              } finally {
-                await fd.close();
+              if (stat.size <= WATCHER_HASH_MAX_BYTES) {
+                const buf = await fsPromises.readFile(full);
+                hash = fnv1a32(buf);
+                this.lastKnownHashes.set(vaultPath(rel), sha1Hex(buf));
+              } else {
+                const fd = await fsPromises.open(full, 'r');
+                try {
+                  const head = Buffer.alloc(4096);
+                  const { bytesRead } = await fd.read(head, 0, 4096, 0);
+                  hash = fnv1a32(head.subarray(0, bytesRead));
+                } finally {
+                  await fd.close();
+                }
               }
             } catch {
               // Hash failure isn't fatal; leave undefined and the diff
@@ -747,65 +786,27 @@ export class FileWatcher {
     }
   }
 
-  private classifyChange(relativePath: string): FileChangeType {
-    if (relativePath.startsWith('.filo/')) {
-      // Phase 3 / 3.2 — granular `.filo/` classification. The renderer's
-      // exhaustive dispatcher then routes each kind to its dedicated
-      // reconciler (`tagsJsonReconciler`, `themeJsonReconciler`, etc.).
-      // Anything that doesn't match a granular subtype keeps the legacy
-      // `config` classification so dispatch can no-op cleanly.
-      if (relativePath === '.filo/tags.json') return 'config-tags';
-      if (relativePath.startsWith('.filo/themes/')) return 'config-theme';
-      if (relativePath.startsWith('.filo/templates/')) return 'config-template';
-      return 'config';
-    }
-
-    if (relativePath.endsWith('.board.json')) {
-      return 'board';
-    }
-
-    const lowerExt = extname(relativePath).toLowerCase();
-
-    // Phase 31 B2.6 — treat `.markdown` the same as `.md`. The renderer's
-    // `isMarkdownExtension` (src/renderer/lib/vault/extension.ts) accepts
-    // both spellings for tile creation; classifyChange used to accept only
-    // `.md`, which meant the watcher missed external edits to `.markdown`
-    // files entirely. Reconciliation, conflict resolution, and the bulk
-    // toast aggregator all hang off the `document` classification.
-    //
-    // Phase 7 (IMPLEMENTATION_PLAN_2026-05-27) — promote `.txt` to
-    // `'document'` so external `.txt` ↔ `.md` renames in a text editor
-    // pair through `correlateRenames` (already accepts both via
-    // `TEXT_LIKE_EXTENSIONS`). Without this promotion `.txt` events were
-    // classified as `'tree'` and skipped the same-basename / cross-basename
-    // correlation passes, so a `Notes.txt` → `Notes.md` rename surfaced as
-    // a delete + create and broke every tile pointing at the file.
-    if (lowerExt === '.md' || lowerExt === '.markdown' || lowerExt === '.txt') {
-      return 'document';
-    }
-
-    // S4: media files participate in rename correlation whether they live
-    // under `attachments/` or anywhere else in the vault. The legacy folder
-    // prefix is kept as a fallback so a user-defined extension we haven't
-    // listed (e.g. `.heic`) still classifies correctly when placed under
-    // `attachments/`.
-    if (MEDIA_EXTENSIONS.has(lowerExt) || relativePath.startsWith('attachments/')) {
-      return 'attachment';
-    }
-
-    return 'tree';
-  }
-
   private scheduleNotify(): void {
     // Phase 3 / 3.1 — refuse to arm a new debounce after `stop()` has
     // been called. The reconcile diff loop also checks `aborted` before
     // calling this, but the live watcher callback may have queued events
     // in the same tick stop() fired; this is the second guard.
     if (this.aborted) return;
+    // L20 (Audit-13) — cap the delay at the remaining max-wait so a sustained
+    // sub-debounce stream still flushes (a lone event still gets full debounce).
+    const now = Date.now();
+    if (this.debounceFirstQueuedAt === null) {
+      this.debounceFirstQueuedAt = now;
+    }
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
     }
+    const remainingMaxWait = Math.max(0, this.maxDebounceWaitMs - (now - this.debounceFirstQueuedAt));
+    const delay = Math.min(this.debounceMs, remainingMaxWait);
     this.debounceTimer = setTimeout(() => {
+      // Firing — clear the marker so the NEXT event starts a fresh window.
+      this.debounceFirstQueuedAt = null;
+      this.debounceTimer = null;
       // Polish phase 1.4 — `notifyRenderers` is now async because the
       // cross-basename rename hash probe reads file bytes off the main
       // thread. The setTimeout callback is fire-and-forget; we attach
@@ -814,10 +815,27 @@ export class FileWatcher {
       this.notifyRenderers().catch((err) => {
         logMainError('fileWatcher.notifyRenderers', err);
       });
-    }, this.debounceMs);
+    }, delay);
   }
 
   private async notifyRenderers(): Promise<void> {
+    // Audit-16 3.1 — publish the in-flight handle so `stop()` can await
+    // the pass. Assigned before any await suspension (same contract as
+    // `reconcileInFlightPromise`), and cleared only when THIS pass is
+    // still the published one, so an overlapping pass can't drop a
+    // sibling's handle.
+    const promise = this.notifyRenderersImpl();
+    this.notifyInFlightPromise = promise;
+    try {
+      await promise;
+    } finally {
+      if (this.notifyInFlightPromise === promise) {
+        this.notifyInFlightPromise = null;
+      }
+    }
+  }
+
+  private async notifyRenderersImpl(): Promise<void> {
     // Phase 3 / 3.1 — final guard: even if a debounce armed before
     // `stop()` (clearTimeout in stop() should have cancelled it, but
     // defence-in-depth keeps the contract clear), no events should ever
@@ -864,27 +882,24 @@ export class FileWatcher {
         return cached ?? null;
       }
     };
-    // Phase 31 A4.3 — content-hash probe for the cross-basename rename
-    // pass. For present files smaller than HASH_CACHE_MAX_BYTES (10 MB),
-    // hash the bytes and cache; for missing files, return whatever we
-    // cached when the file was last seen. Anything else returns null so
-    // the correlator's hash-required branch refuses to pair (defensive
-    // — better to emit delete+create than a false-positive rename).
-    const HASH_CACHE_MAX_BYTES = 10 * 1024 * 1024;
-    // Sprint B / B10 — bytes hashed for the cross-basename probe and the
-    // reconcile-walk seed. Must be identical at both call sites so the
-    // cached digest from the walk matches the on-demand digest from the
-    // correlator on first cross-basename event.
-    const HASH_PROBE_BYTES = 4096;
-    // Polish phase 1.4 — async hash read with a 5-concurrent semaphore.
-    // The pre-fix `readFileSync` blocked the event loop for the duration
-    // of every cross-basename hash probe, which on a 500-file vault with
-    // multi-MB notes could pin the main thread for hundreds of ms and
-    // back up every other IPC call. `fs.promises.readFile` runs the I/O
-    // on the libuv thread pool; the semaphore caps concurrent reads at
-    // 5 so a synthetic burst (e.g. a recursive directory rename arriving
-    // as N missing + N present events in one tick) doesn't saturate the
-    // pool and starve unrelated handlers.
+    // Content-hash probe for the cross-basename rename pass. For a present
+    // file under the ceiling, hash it and cache the digest; for a missing
+    // file (the now-gone old path) return whatever we cached when it was last
+    // seen. Anything else returns null so the correlator's hash-required
+    // branch refuses to pair (defensive — better to emit delete+create than a
+    // false-positive rename).
+    //
+    // Audit-4 DI-07 — `hashFileForRename` hashes the WHOLE file (capped at
+    // WATCHER_HASH_MAX_BYTES), identical to the reconcile-walk seed, so two
+    // files that share a 4 KB head but diverge later no longer collide and a
+    // seeded digest still matches an on-demand one.
+    //
+    // Polish phase 1.4 — async read with a 5-concurrent semaphore. The pre-fix
+    // `readFileSync` blocked the event loop for every probe, which on a
+    // 500-file vault with multi-MB notes could pin the main thread for
+    // hundreds of ms. The semaphore caps concurrent reads so a synthetic burst
+    // (a recursive rename arriving as N missing + N present in one tick) can't
+    // saturate the libuv pool and starve unrelated handlers.
     const HASH_CONCURRENCY = 5;
     let inflightHashes = 0;
     const hashQueue: Array<() => void> = [];
@@ -907,28 +922,13 @@ export class FileWatcher {
     const hashAsync = async (relPath: string): Promise<string | null> => {
       const key = vaultPath(relPath);
       try {
-        const sz = statSync(join(this.vaultPath, relPath)).size;
-        if (sz > HASH_CACHE_MAX_BYTES) return null;
+        const abs = join(this.vaultPath, relPath);
+        const sz = statSync(abs).size;
+        if (sz > WATCHER_HASH_MAX_BYTES) return null;
         await acquireHashSlot();
         try {
-          // Sprint B / B10 — hash only the first HASH_PROBE_BYTES of the
-          // file so the reconcile-walk seed (which uses the same prefix
-          // hash) and the on-demand correlator hash use a single,
-          // comparable digest format. Limits the probe cost to ~4 KB
-          // per file on disk; SHA-1 over 4 KB still gives 160 bits of
-          // identity, well above the cross-basename pair-uniqueness
-          // requirements (single missing + single present per size+ext
-          // bucket).
-          const fd = await fsPromises.open(join(this.vaultPath, relPath), 'r');
-          let hash: string;
-          try {
-            const head = Buffer.alloc(HASH_PROBE_BYTES);
-            const { bytesRead } = await fd.read(head, 0, HASH_PROBE_BYTES, 0);
-            hash = createHash('sha1').update(head.subarray(0, bytesRead)).digest('hex');
-          } finally {
-            await fd.close();
-          }
-          this.lastKnownHashes.set(key, hash);
+          const hash = await hashFileForRename(abs, sz);
+          if (hash) this.lastKnownHashes.set(key, hash);
           return hash;
         } finally {
           releaseHashSlot();
@@ -939,6 +939,14 @@ export class FileWatcher {
       }
     };
     const { filtered, renames } = await correlateRenames(unique, exists, sizeOf, hashAsync);
+    // Audit-16 3.1 — re-check after the ONLY await in this function. The
+    // hash probes above can take hundreds of ms on a slow volume; a vault
+    // swap completing inside that window (vault:close → stop() → candidate
+    // load → commit) must not let this pass send the OLD vault's
+    // rename/change events to the renderer — the renderer's rename queue
+    // captures vault identity at ARRIVAL time, so a late send would drive
+    // the rename cascade against the NEW vault's same-named files.
+    if (this.aborted) return;
     // Move cached sizes + hashes onto the new path so a future delete of
     // the new path can still resolve, and drop the old-path entries.
     for (const r of renames) {

@@ -82,7 +82,7 @@ export const ConnectionSchema = z.object({
   labelVisibility: z
     .enum(['visible', 'visible-locked', 'hidden', 'hidden-locked'])
     .default('visible'),
-  label: ConnectionLabelSchema.default({}),
+  label: ConnectionLabelSchema.prefault({}),
   // Phase 31 A6.6 — .finite() rejects NaN / ±Infinity from hand-edited files.
   createdAt: z.number().finite(),
   updatedAt: z.number().finite(),

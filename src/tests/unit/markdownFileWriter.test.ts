@@ -27,12 +27,20 @@ import {
   cancelAllMarkdownWrites,
   registerForceWriter,
   forceWriteForDocument,
+  setExternalEditPromptHandler,
+  flushFinalWriteOnDestroy,
   __resetMarkdownFileWriterForTests,
   type WriteArgs,
 } from '../../renderer/lib/vault/markdownFileWriter';
 import { fireVaultSwap } from '../../renderer/core/vaultLifecycle';
 import { __resetDirtyTrackingForTests } from '../../renderer/lib/boards/boardSaver';
 import { vaultIndexStore } from '../../renderer/stores/vaultIndex.svelte';
+import {
+  noteBaseline,
+  getBaseline,
+  __resetBaselinesForTests,
+} from '../../renderer/lib/vault/fileBaselineRegistry';
+import { isPathPending } from '../../renderer/lib/boards/writeStateTracking';
 
 interface InvokeArgs {
   channel: string;
@@ -54,7 +62,18 @@ function installFiloStub(): InvokeArgs[] {
 }
 
 function uninstallFiloStub(): void {
-  delete (window as unknown as Record<string, unknown>).filo;
+  // Audit2 2.3 — the markdown gateway now lays down the `.filo/.dirty` sentinel
+  // asynchronously on schedule/flush/cancel (sentinel-mode 'pending-path').
+  // Those fire-and-forget markDirty/markClean ops can resolve AFTER the test
+  // body, so restore a SILENT no-op stub rather than deleting `window.filo` —
+  // a deferred sentinel write must never hit `undefined.invoke` (the strict
+  // test-hygiene gate forbids the resulting TypeError). The `afterEach` drain
+  // below normally flushes them first; this is the belt-and-suspenders.
+  (window as unknown as Record<string, unknown>).filo = {
+    invoke: async () => undefined,
+    on: () => () => {},
+    send: () => {},
+  };
 }
 
 describe('markdownFileWriter — gateway contract', () => {
@@ -65,7 +84,14 @@ describe('markdownFileWriter — gateway contract', () => {
     __resetMarkdownFileWriterForTests();
     __resetDirtyTrackingForTests();
   });
-  afterEach(() => {
+  afterEach(async () => {
+    // Audit2 2.3 — drain the fire-and-forget `.filo/.dirty` sentinel writes the
+    // gateway now queues on schedule/flush/cancel (pending-path mode) so they
+    // resolve against the live stub before we tear it down — both to avoid a
+    // deferred op hitting a stale `window.filo` and to keep them from leaking
+    // into the next test's captured invokes. One macrotask drains the whole
+    // microtask-chained sentinel mutex; the 300 ms write timers never fire.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     __resetMarkdownFileWriterForTests();
     __resetDirtyTrackingForTests();
     uninstallFiloStub();
@@ -406,6 +432,296 @@ describe('markdownFileWriter — gateway contract', () => {
     expect(metadata!.content.trim()).toBe('Post-write body.');
     expect(metadata!.tags).toContain('after-write');
     expect(metadata!.frontmatter.status).toBe('done');
+  });
+});
+
+// Audit-4 DI-14 (reverses 6.4.M2) — when the post-write `vault:stat` fails or
+// returns a stat without finite mtime/size (AV scanner / SMB latency / VFS
+// quirks), the baseline is now KEPT, not cleared. 6.4.M2 cleared it to suppress
+// a spurious "modified externally" prompt on the next write, but clearing also
+// disabled that next write's pre-write drift check — opening a silent-overwrite
+// window. DI-14 keeps the prior baseline: the worst case is a spurious
+// Reload/Keep-local prompt (the user picks Keep-local), never a silent clobber.
+describe('markdownFileWriter — post-write baseline failures (DI-14, reverses M2)', () => {
+  beforeEach(() => {
+    __resetMarkdownFileWriterForTests();
+    __resetDirtyTrackingForTests();
+    __resetBaselinesForTests();
+  });
+  afterEach(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    __resetMarkdownFileWriterForTests();
+    __resetDirtyTrackingForTests();
+    __resetBaselinesForTests();
+    (window as unknown as Record<string, unknown>).filo = {
+      invoke: async () => undefined,
+      on: () => () => {},
+      send: () => {},
+    };
+  });
+
+  it('keeps prior baseline when post-write vault:stat throws (DI-14)', async () => {
+    const relPath = 'Notes/baselineThrow.md';
+
+    // Pre-stamp the baseline at the PRE-write state.
+    noteBaseline(relPath, 100, 10);
+    expect(getBaseline(relPath)).toEqual({ mtimeMs: 100, size: 10 });
+
+    markHydrated(relPath, false);
+
+    (window as unknown as Record<string, unknown>).filo = {
+      invoke: async (channel: string) => {
+        if (channel === 'vault:write-existing-file-text') {
+          return { success: true };
+        }
+        if (channel === 'vault:stat') {
+          // AV / SMB transient — stat throws after a successful write.
+          return { success: false, error: 'ENOENT (transient)' };
+        }
+        return { success: true, ok: true };
+      },
+      on: () => () => {},
+      send: () => {},
+    };
+
+    await writeMarkdownFile({
+      vaultRoot: '/vault',
+      relPath,
+      frontmatter: {},
+      body: 'New body',
+      callerId: 'baseline-throw',
+      docId: null,
+    });
+
+    // DI-14: the post-write stat failed, so the baseline is KEPT at the
+    // pre-write value rather than cleared. The next write's drift check stays
+    // armed (no silent-overwrite window); the cost is at most a spurious
+    // "modified externally" prompt the user dismisses with Keep-local.
+    expect(getBaseline(relPath)).toEqual({ mtimeMs: 100, size: 10 });
+  });
+
+  it('keeps prior baseline when post-write vault:stat returns unusable mtime/size (DI-14)', async () => {
+    const relPath = 'Notes/baselineMissing.md';
+
+    noteBaseline(relPath, 200, 20);
+    expect(getBaseline(relPath)).toEqual({ mtimeMs: 200, size: 20 });
+
+    markHydrated(relPath, false);
+
+    (window as unknown as Record<string, unknown>).filo = {
+      invoke: async (channel: string) => {
+        if (channel === 'vault:write-existing-file-text') {
+          return { success: true };
+        }
+        if (channel === 'vault:stat') {
+          // Some VFS layers return success without mtime/size (or NaN).
+          // noteBaseline early-outs on undefined — the prior code then
+          // left the stale baseline. Fix: clear instead.
+          return { success: true, mtimeMs: undefined, size: undefined };
+        }
+        return { success: true, ok: true };
+      },
+      on: () => () => {},
+      send: () => {},
+    };
+
+    await writeMarkdownFile({
+      vaultRoot: '/vault',
+      relPath,
+      frontmatter: {},
+      body: 'Body 2',
+      callerId: 'baseline-missing',
+      docId: null,
+    });
+
+    // DI-14: unusable post-write stat → baseline KEPT at the pre-write value.
+    expect(getBaseline(relPath)).toEqual({ mtimeMs: 200, size: 20 });
+  });
+});
+
+// 6.4.M13 — the pre-write Reload / Keep-local prompt is async, so the file can
+// drift AGAIN while the modal is open. After 'keep-local' the writer must
+// re-validate; otherwise it silently clobbers an external edit the user never
+// saw. The writer now re-prompts on a second drift and, against a churning
+// external writer, aborts rather than overwrite unseen bytes.
+describe('markdownFileWriter — re-validate drift across the async prompt (M13)', () => {
+  beforeEach(() => {
+    __resetMarkdownFileWriterForTests();
+    __resetDirtyTrackingForTests();
+    __resetBaselinesForTests();
+  });
+  afterEach(async () => {
+    setExternalEditPromptHandler(null);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    __resetMarkdownFileWriterForTests();
+    __resetDirtyTrackingForTests();
+    __resetBaselinesForTests();
+    (window as unknown as Record<string, unknown>).filo = {
+      invoke: async () => undefined,
+      on: () => () => {},
+      send: () => {},
+    };
+  });
+
+  // Drives vault:stat through a fixed mtime sequence (size held constant) and
+  // counts write-IPC hits. Stat reads past the end clamp to the last value.
+  function installStatSequence(relPath: string, mtimes: number[]): { writes: number } {
+    const counters = { writes: 0, stats: 0 };
+    (window as unknown as Record<string, unknown>).filo = {
+      invoke: async (channel: string, ...args: unknown[]) => {
+        if (channel === 'vault:stat' && args[1] === relPath) {
+          const i = Math.min(counters.stats, mtimes.length - 1);
+          counters.stats++;
+          return { success: true, ok: true, mtimeMs: mtimes[i], size: 10 };
+        }
+        if (channel === 'vault:write-existing-file-text' && args[1] === relPath) {
+          counters.writes++;
+          return { success: true, ok: true };
+        }
+        return { success: true, ok: true };
+      },
+      on: () => () => {},
+      send: () => {},
+    };
+    return counters;
+  }
+
+  it('re-prompts when the file drifts again during the keep-local prompt', async () => {
+    const relPath = 'Notes/m13-redrift.md';
+    noteBaseline(relPath, 100, 10);
+    markHydrated(relPath, false);
+
+    let prompts = 0;
+    setExternalEditPromptHandler(async () => {
+      prompts++;
+      return 'keep-local';
+    });
+
+    // pre-write 200 (drift) → recheck 300 (drifted again) → recheck 300
+    // (stable) → write → post-write 400.
+    const counters = installStatSequence(relPath, [200, 300, 300, 400]);
+
+    await writeMarkdownFile({
+      vaultRoot: '/vault', relPath, frontmatter: {}, body: 'mine', callerId: 'm13a', docId: null,
+    });
+
+    expect(prompts).toBe(2); // re-prompted on the second drift
+    expect(counters.writes).toBe(1); // committed once the file settled
+  });
+
+  it('aborts without writing when the external writer keeps churning', async () => {
+    const relPath = 'Notes/m13-churn.md';
+    noteBaseline(relPath, 100, 10);
+    markHydrated(relPath, false);
+
+    let prompts = 0;
+    setExternalEditPromptHandler(async () => {
+      prompts++;
+      return 'keep-local';
+    });
+
+    // Every stat returns a fresh mtime → the file never settles.
+    const counters = installStatSequence(relPath, [200, 300, 400, 500, 600]);
+
+    // Audit-6 M1 — the budget-exhausted abort now THROWS (was a bare `return`
+    // that resolved as success and let the sentinel be markClean'd while the
+    // dirty edit never landed).
+    await expect(
+      writeMarkdownFile({
+        vaultRoot: '/vault', relPath, frontmatter: {}, body: 'mine', callerId: 'm13b', docId: null,
+      }),
+    ).rejects.toThrow(/churning|aborted/);
+
+    expect(prompts).toBe(3); // bounded re-prompts
+    expect(counters.writes).toBe(0); // never clobbered the churning file
+    // M1 — path recorded failed so `.filo/.dirty` survives and save() fails.
+    expect(isPathPending(relPath)).toBe(true);
+  });
+
+  it('writes once when the file is stable through the prompt (no regression)', async () => {
+    const relPath = 'Notes/m13-stable.md';
+    noteBaseline(relPath, 100, 10);
+    markHydrated(relPath, false);
+
+    let prompts = 0;
+    setExternalEditPromptHandler(async () => {
+      prompts++;
+      return 'keep-local';
+    });
+
+    // pre-write 200 (drift) → recheck 200 (stable) → write → post-write 250.
+    const counters = installStatSequence(relPath, [200, 200, 250]);
+
+    await writeMarkdownFile({
+      vaultRoot: '/vault', relPath, frontmatter: {}, body: 'mine', callerId: 'm13c', docId: null,
+    });
+
+    expect(prompts).toBe(1);
+    expect(counters.writes).toBe(1);
+  });
+});
+
+// 6.4.M17 — TextTile.onDestroy flushed its final edit by calling
+// writeMarkdownFile directly. On a vault swap the gateway is reset first
+// (cancelAllMarkdownWrites clears the per-file hydrate state), so that direct
+// call threw "not hydrated" — a stray write attempt + error during teardown
+// that bypassed the swap reset. flushFinalWriteOnDestroy respects the reset:
+// it writes only while the file is still hydrated, otherwise no-ops.
+describe('markdownFileWriter — flushFinalWriteOnDestroy respects the swap reset (M17)', () => {
+  beforeEach(() => {
+    __resetMarkdownFileWriterForTests();
+    __resetDirtyTrackingForTests();
+    __resetBaselinesForTests();
+  });
+  afterEach(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    __resetMarkdownFileWriterForTests();
+    __resetDirtyTrackingForTests();
+    __resetBaselinesForTests();
+    (window as unknown as Record<string, unknown>).filo = {
+      invoke: async () => undefined,
+      on: () => () => {},
+      send: () => {},
+    };
+  });
+
+  function installWriteCounter(): { writes: number } {
+    const counters = { writes: 0 };
+    (window as unknown as Record<string, unknown>).filo = {
+      invoke: async (channel: string) => {
+        if (channel === 'vault:write-existing-file-text') counters.writes++;
+        return { success: true, ok: true };
+      },
+      on: () => () => {},
+      send: () => {},
+    };
+    return counters;
+  }
+
+  it('writes when the file is still hydrated (normal tile close)', async () => {
+    const relPath = 'Notes/m17-live.md';
+    markHydrated(relPath, false);
+    const counters = installWriteCounter();
+    await flushFinalWriteOnDestroy({
+      vaultRoot: '/vault', relPath, frontmatter: {}, body: 'final', callerId: 'm17a', docId: null,
+    });
+    expect(counters.writes).toBe(1);
+  });
+
+  it('skips the write (no throw) after a vault-swap reset cleared hydration', async () => {
+    const relPath = 'Notes/m17-swap.md';
+    markHydrated(relPath, false);
+    // The swap-hook full reset (run before components unmount) clears fileState.
+    cancelAllMarkdownWrites();
+    expect(isHydrated(relPath)).toBe(false);
+
+    const counters = installWriteCounter();
+    await expect(
+      flushFinalWriteOnDestroy({
+        vaultRoot: '/vault', relPath, frontmatter: {}, body: 'final', callerId: 'm17b', docId: null,
+      }),
+    ).resolves.toBeUndefined();
+    expect(counters.writes).toBe(0);
   });
 });
 

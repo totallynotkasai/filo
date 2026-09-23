@@ -114,4 +114,44 @@ describe('UR-1 — undo()/redo() rollback on body failure', () => {
     expect(historyStore.canRedo).toBe(false);
     expect(log).toEqual(['exec', 'undo', 'exec']);
   });
+
+  // #18 — `rollbackExecute` must restore the pre-execute redo stack ONLY when
+  // nothing replaced it since `commitExecute`. If command A's async body is in
+  // flight when command B commits (clearing the redo stack), A's later failure
+  // must NOT resurrect the redo entry B invalidated.
+  it('#18 — a failed async execute does not resurrect a redo entry a later command cleared', async () => {
+    // Seed a redo entry: execute then undo a throwaway command.
+    const seed: Command = { description: 'seed', targetBoardId: '', execute() {}, undo() {} };
+    historyStore.execute(seed);
+    await historyStore.undo();
+    expect(historyStore.canRedo).toBe(true); // redoStack = [seed]
+
+    // Command A — async body that stays pending until we reject it.
+    let rejectA: (e: Error) => void = () => {};
+    const aBody = new Promise<void>((_resolve, reject) => {
+      rejectA = reject;
+    });
+    const cmdA: Command = {
+      description: 'A-async-fails',
+      targetBoardId: '',
+      execute() {
+        return aBody;
+      },
+      undo() {},
+    };
+    // Command B — synchronous, succeeds.
+    const cmdB: Command = { description: 'B-sync', targetBoardId: '', execute() {}, undo() {} };
+
+    const pA = historyStore.execute(cmdA); // commit A clears redo ([seed] → [])
+    expect(historyStore.canRedo).toBe(false);
+    const pB = historyStore.execute(cmdB); // commit B replaces the (empty) redo array
+
+    rejectA(new Error('A boom'));
+    await expect(pA).rejects.toThrow('A boom');
+    await pB;
+
+    // A's rollback must NOT restore its pre-execute redo snapshot ([seed]) —
+    // B replaced the redo stack after A committed, so the seed stays gone.
+    expect(historyStore.canRedo).toBe(false);
+  });
 });

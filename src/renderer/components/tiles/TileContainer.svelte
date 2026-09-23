@@ -335,7 +335,7 @@
       <div
         class="tile-header-drag"
         class:frameless-header={frameless}
-        use:tileDragAction={{ tileId: tile.id, locked: tile.locked, snapToGrid: canvasStore.snapEnabled }}
+        use:tileDragAction={{ tileId: tile.id, locked: tile.locked, snapToGrid: canvasStore.snapEnabled, scope }}
       >
         <TileHeader {tile} {resolved} />
       </div>
@@ -350,7 +350,7 @@
         <div
           class="tile-body"
           style={bodyStyle}
-          use:tileDragAction={{ tileId: tile.id, locked: tile.locked, snapToGrid: canvasStore.snapEnabled }}
+          use:tileDragAction={{ tileId: tile.id, locked: tile.locked, snapToGrid: canvasStore.snapEnabled, scope }}
         >
           {@render children()}
         </div>

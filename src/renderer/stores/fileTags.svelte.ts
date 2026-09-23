@@ -20,7 +20,6 @@ import { SvelteSet } from 'svelte/reactivity';
 import type { TagsFile } from '../schema/tagsFile';
 import type {
   Tile,
-  TextTile,
   ImageTile,
   VideoTile,
   AudioTile,
@@ -77,59 +76,147 @@ import {
   AddPathTagCommand,
   RemovePathTagCommand,
 } from '../commands/index';
-import { scheduleMiscWrite, flushAllMisc, flushMiscWrite, trackComponentWrite, markPathFailed } from '../lib/boards/boardSaver';
-import { flushAllMarkdownWriters } from '../lib/boards/markdownWriteRegistry';
+import { scheduleMiscWrite, flushAllMisc, flushMiscWrite, markPathFailed } from '../lib/boards/boardSaver';
+import { flushAllMarkdownWriters, runSerializedMarkdownWrite } from '../lib/vault/markdownFileWriter';
+import { refreshBaselineAfterWrite, getBaseline, hasBaselineDrifted } from '../lib/vault/fileBaselineRegistry';
+import { writeMarkdownAndReconcile } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
+import { resolveTextTileVaultPath } from '../lib/boards/textTilePath';
+import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { flushAllPendingFrontmatterWrites } from '../lib/boards/frontmatterWriteScheduler';
 import { invokeOk } from '../lib/utils/invokeOk';
+import { assertIpcOk } from '../lib/utils/ipcEnvelope';
 import { reportError } from '../lib/utils/errorBus';
 import { uiStore } from './ui.svelte';
-import { onVaultSwap } from '../core/vaultLifecycle';
+import { onVaultSwap, vaultSwapResettable } from '../core/vaultLifecycle';
 
 let file = $state<TagsFile>(emptyTagsFile());
 let isHydrated = $state(false);
 let activeVaultRoot: string | null = null;
 
-// F6 (2026-05-28) — true when the loaded `.filo/tags.json` was written by a
-// newer Filo (or declares an un-migratable version). `scheduleSave` is then
-// gated so we never re-save (downgrade) it. Set on every load path.
-let readOnlyFromFuture = false;
+/**
+ * A8-M6 — the last `.filo/tags.json` state Filo loaded from / persisted to disk
+ * (the common ancestor `applyExternalReload`'s 3-way merge diffs against). Kept
+ * as an independent clone so in-memory mutations to `file` never alias it.
+ * Updated at hydrate / candidate-commit, on a successful debounced save, on an
+ * external reload (to the external disk copy), and cleared on reset.
+ */
+let lastSavedFile: TagsFile = emptyTagsFile();
+
+/**
+ * A9-L7 — guard token bumped by `setMergeBase` on every OUTSIDE re-set of the
+ * 3-way merge base (hydrate / candidate-commit / external reload / reset). The
+ * debounced save closure captures it at fire time to detect a reload/swap that
+ * landed during its `tags:save` await (see `scheduleSave` for the full why).
+ */
+let mergeBaseGeneration = 0;
+
+function cloneTagsFile(f: TagsFile): TagsFile {
+  return JSON.parse(JSON.stringify(f)) as TagsFile;
+}
+
+function sameJson(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * A8-M6 / A9-L7 — assigns the 3-way merge base and bumps the guard token.
+ * Every base re-set from OUTSIDE the debounced save closure (hydrate,
+ * candidate-commit, external reload, reset) routes through here so the closure
+ * can detect — via the token it captured at fire time — that a reload/swap
+ * superseded its in-flight write and skip its own now-stale base update.
+ */
+function setMergeBase(next: TagsFile): void {
+  lastSavedFile = next;
+  mergeBaseGeneration += 1;
+}
+
+/**
+ * A8-M6 — re-applies OUR un-flushed delta (`ours` vs `base`) on top of `merged`
+ * (a clone of the external `theirs`): our adds/changes overwrite, our removals
+ * delete. Entries neither side of our delta touched keep the external value, so
+ * a genuine external edit survives while a pending in-app mutation isn't lost.
+ * A true same-key conflict resolves to OUR value (the user's in-app intent).
+ */
+function reapplyTagDelta(
+  base: Record<string, unknown>,
+  ours: Record<string, unknown>,
+  merged: Record<string, unknown>,
+): void {
+  for (const key of Object.keys(ours)) {
+    if (!sameJson(ours[key], base[key])) merged[key] = ours[key];
+  }
+  for (const key of Object.keys(base)) {
+    if (!(key in ours)) delete merged[key];
+  }
+}
+
+/**
+ * A8-M6 — 3-way merge of `.filo/tags.json`. `base` = last persisted/loaded
+ * state, `ours` = live in-memory (`base` + un-flushed mutations), `theirs` =
+ * the external disk copy. Preserves un-flushed tag adds/removes (attachment
+ * tags have no other home) instead of the prior wholesale overwrite.
+ */
+function mergeTagsThreeWay(base: TagsFile, ours: TagsFile, theirs: TagsFile): TagsFile {
+  const merged = cloneTagsFile(theirs);
+  reapplyTagDelta(
+    base.tags as Record<string, unknown>,
+    ours.tags as Record<string, unknown>,
+    merged.tags as Record<string, unknown>,
+  );
+  reapplyTagDelta(
+    base.fileTags as Record<string, unknown>,
+    ours.fileTags as Record<string, unknown>,
+    merged.fileTags as Record<string, unknown>,
+  );
+  return merged;
+}
+
+// F6 / Audit-18 H2 — true when the loaded `.filo/tags.json` must NOT be re-saved:
+// written by a newer Filo, an un-migratable version, OR a corrupt (parse/schema-
+// fail) file. `scheduleSave` is gated on it so we never overwrite the on-disk
+// bytes. (Renamed from `readOnlyFromFuture` now it also covers the corrupt case.)
+let readOnlyTags = false;
 
 const TAGS_WRITE_KEY = 'tags';
 const TAGS_PATH = '.filo/tags.json';
 
 function scheduleSave(): void {
   if (!activeVaultRoot) return;
-  // F6 — never persist over a from-future / un-migratable tags file.
-  if (readOnlyFromFuture) return;
+  // F6 / Audit-18 H2 — never persist over a from-future / un-migratable / corrupt
+  // tags file (the disk bytes are preserved verbatim for the session).
+  if (readOnlyTags) return;
   scheduleMiscWrite(TAGS_WRITE_KEY, () => {
     const root = activeVaultRoot;
     if (!root) return null;
     const snapshot = JSON.stringify(file, null, 2);
+    // A9-L7 — capture the merge-base token at fire time (alongside the
+    // snapshot). The trailing assignment below only lands if no reload/reset
+    // advanced it during the await.
+    const baseGenAtFire = mergeBaseGeneration;
     return {
       vaultRoot: root,
       path: TAGS_PATH,
       write: async () => {
-        // tags:save is documented as `throws on error` (no envelope).
-        // Use bare invoke; the surrounding miscScheduler catches throws.
-        await window.filo.invoke('tags:save', root, snapshot);
+        // Audit-14 4.4 — tags:save resolves `{ ok:false }` on failure now;
+        // assertIpcOk re-throws so the miscScheduler's catch still records it
+        // (dirty-flag + retry), exactly as the old raw rejection did.
+        assertIpcOk(await window.filo.invoke('tags:save', root, snapshot), 'tags:save');
+        // A8-M6 — record exactly what landed on disk as the new merge base, so a
+        // later external reload diffs un-flushed mutations against THIS, not a
+        // stale ancestor. Only on success (a throw skips this line).
+        // A9-L7 — but skip it when a concurrent applyExternalReload/reset
+        // advanced the base during the await: clobbering its fresh base back to
+        // our pre-reload snapshot would desync the next reload's 3-way diff. The
+        // reload re-armed its own save carrying the merged bytes forward.
+        // Deliberately a bare assignment, NOT setMergeBase — two overlapping
+        // same-vault saves must each record their own bytes; only OUTSIDE
+        // re-sets bump the token.
+        if (mergeBaseGeneration === baseGenAtFire) {
+          lastSavedFile = JSON.parse(snapshot) as TagsFile;
+        }
       },
     };
   });
-}
-
-/**
- * Resolves the vault-relative `.md` path for a text tile, mirroring the
- * resolution used by TextTile.svelte. Returns null when no path can be
- * inferred (no vault open, non-text tile, etc.).
- */
-function resolveTextTileFilePath(tile: Tile): string | null {
-  if (tile.type !== 'text') return null;
-  if (!vaultStore.path) return null;
-  const explicit = (tile as TextTile & { filePath?: string }).filePath;
-  if (typeof explicit === 'string' && explicit.length > 0) return explicit;
-  const contentId = (tile as TextTile).contentId;
-  const docState = contentId ? documentStore.getDocument(contentId) : null;
-  return docState?.filename || `${tile.title || 'Untitled'}.md`;
 }
 
 /**
@@ -157,6 +244,27 @@ function resolveTileMediaPath(tile: Tile): string | null {
 }
 
 /**
+ * 3.4 (Audit-18) — true when the bytes the single-tag fast path just READ had
+ * already drifted from the pre-write baseline (an undetected external edit).
+ * `readMtimeMs`/`readSize` come from the same `vault:read-file-text` (its own
+ * coherent stat), so no extra IPC. Gates the post-write `refreshBaselineAfter-
+ * Write`: stamping on drift would LAUNDER the external edit into the baseline
+ * and the open editor's next save would silently revert it; on drift we keep the
+ * prior baseline (DI-14). Conservative: no prior baseline → false; read withheld
+ * its stat (a write raced the read) → treat as drifted.
+ */
+function baselineDriftedAtRead(
+  relPath: string,
+  readMtimeMs: number | undefined,
+  readSize: number | undefined,
+): boolean {
+  const baseline = getBaseline(relPath);
+  if (baseline === undefined) return false;
+  if (readMtimeMs === undefined || readSize === undefined) return true;
+  return hasBaselineDrifted(baseline, { mtimeMs: readMtimeMs, size: readSize });
+}
+
+/**
  * Writes a single tag membership change into the tile's backing `.md` file
  * frontmatter. Routed through `trackComponentWrite` so a failed write
  * surfaces through the same toast + sentinel pipeline as the rest of the
@@ -167,48 +275,103 @@ async function writeTagChangeToTileMarkdown(
   tagName: string,
   operation: 'add' | 'remove',
 ): Promise<void> {
+  // VS-2 (Audit-11) — capture identity before the live-path read so the
+  // post-await guards below bail on a vault swap instead of applying this
+  // vault's tag-write bookkeeping (markPathFailed / baseline / index) to the new one.
+  const identity = captureVaultIdentity();
   const vaultRoot = vaultStore.path;
-  const relPath = resolveTextTileFilePath(tile);
+  // Audit-12 H2 — canonical resolver (filePath → docState → folder cascade). The
+  // deleted helper's `${title}.md` vault-ROOT fallback wrote a cold-loaded
+  // subfolder tile's tag to a root file (corrupting an unrelated same-named note).
+  const relPath = resolveTextTileVaultPath(tile, (tile as { boardId?: string }).boardId);
   if (!vaultRoot || !relPath) return;
 
   try {
-    // Phase 37 / 37.6 — canonical two-arg shape.
-    let raw: string | null = null;
-    try {
-      const readResult = await invokeOk('vault:read-file-text', vaultRoot, relPath);
-      raw = readResult.content;
-    } catch {
-      // Read failed (likely envelope-failure or transient I/O). Falls
-      // through to the file-exists check below.
-    }
-    if (raw === null) {
-      // Distinguish "file is gone" (a deletion the user expects) from "file
-      // exists but we still couldn't read it" (a real I/O failure the user
-      // needs to see). Only the second case keeps the sentinel dirty +
-      // surfaces a toast — the first is a benign no-op so a delete + queued
-      // tag write doesn't resurrect a deleted file's sentinel state.
-      const exists = await window.filo.invoke('vault:file-exists', vaultRoot, relPath);
-      if (exists) {
-        markPathFailed(vaultRoot, relPath);
-        reportError(
-          'fileTags.writeTileFrontmatter',
-          null,
-          `Could not read ${relPath} to update frontmatter — your tag change is not on disk.`,
-        );
+    let wrote = false;
+    // Audit5 R2 (#8 / DI-09 parity) — run the whole read-modify-write serialised
+    // behind any in-flight gateway write to this path. The read happens INSIDE
+    // the chain so it observes a prior body write's bytes (no read-modify-write
+    // race), and the IPC write can't interleave with a concurrent editor write.
+    await runSerializedMarkdownWrite(relPath, async () => {
+      // Phase 37 / 37.6 — canonical two-arg shape.
+      let raw: string | null = null;
+      // 3.4 (Audit-18) — capture the read's own coherent stat (no extra IPC) so
+      // the post-write baseline stamp below can be suppressed on pre-write drift.
+      let readMtimeMs: number | undefined;
+      let readSize: number | undefined;
+      try {
+        const readResult = await invokeOk('vault:read-file-text', vaultRoot, relPath);
+        raw = readResult.content;
+        readMtimeMs = readResult.mtimeMs;
+        readSize = readResult.size;
+      } catch {
+        // Read failed (likely envelope-failure or transient I/O). Falls
+        // through to the file-exists check below.
       }
-      return;
-    }
-    const next = operation === 'add'
-      ? addTagToMarkdown(raw, tagName)
-      : removeTagFromMarkdown(raw, tagName);
-    if (next === raw) return;
-    await trackComponentWrite(vaultRoot, relPath, async () => {
-      // Phase 31 A4.5 — single-tag add/remove is an edit to an existing
-      // .md file (raw was just read above). Use write-existing so a
-      // race with an external delete surfaces as ENOENT rather than
-      // resurrecting the deleted file.
-      await invokeOk('vault:write-existing-file-text', vaultRoot, relPath, next); // allow-direct-write: inline-tag text rewrite (operates on raw markdown body, not a frontmatter+body assembly)
+      if (raw === null) {
+        // Distinguish "file is gone" (a deletion the user expects) from "file
+        // exists but we still couldn't read it" (a real I/O failure the user
+        // needs to see). Only the second case keeps the sentinel dirty +
+        // surfaces a toast — the first is a benign no-op so a delete + queued
+        // tag write doesn't resurrect a deleted file's sentinel state.
+        const exists = await window.filo.invoke('vault:file-exists', vaultRoot, relPath);
+        if (!isStillSameVault(identity)) return; // VS-2 — swap during read/exists
+        if (exists) {
+          markPathFailed(vaultRoot, relPath);
+          reportError(
+            'fileTags.writeTileFrontmatter',
+            null,
+            `Could not read ${relPath} to update frontmatter — your tag change is not on disk.`,
+          );
+        }
+        return;
+      }
+      // 3.4 — pre-write drift? (gates the post-write baseline stamp; see helper)
+      const driftedBeforeWrite = baselineDriftedAtRead(relPath, readMtimeMs, readSize);
+      const next = operation === 'add'
+        ? addTagToMarkdown(raw, tagName)
+        : removeTagFromMarkdown(raw, tagName);
+      if (next === raw) return;
+      // Phase 6.6 — coupled write+reconcile (frontmatter-only). Writes the
+      // existing .md (write-existing so a delete race surfaces as ENOENT, not a
+      // resurrection — Phase 31 A4.5) AND refreshes any open editor's FM cache
+      // for the SAME path so its next body save keeps the tag (#4). Body-preserving.
+      await writeMarkdownAndReconcile({
+        vaultRoot,
+        path: relPath,
+        content: next,
+        mode: 'frontmatter',
+      });
+      // Audit-6 M3 — refresh the gateway's pre-write drift baseline to the bytes
+      // we just wrote. The single-tag fast path writes the .md DIRECTLY (not via
+      // the markdown gateway), which is the only other site that stamps this
+      // baseline; without this the next gateway/editor write sees the mtime+size
+      // change as an external edit and surfaces a false "modified externally"
+      // prompt. Requires a post-write stat the coupled helper does not perform,
+      // so it stays here at the call site.
+      // VS-2 — refreshBaselineAfterWrite is keyed by relPath ALONE, so a swap
+      // here would poison the new vault's same-named file; bail before stamping.
+      // 3.4 — keep the prior baseline (don't stamp) when disk had drifted before
+      // this write, so the open editor's next save re-detects + prompts.
+      if (driftedBeforeWrite) {
+        if (!isStillSameVault(identity)) return;
+        refreshBaselineAfterWrite(relPath, undefined, undefined);
+      } else {
+        try {
+          const postStat = await invokeOk('vault:stat', vaultRoot, relPath);
+          if (!isStillSameVault(identity)) return;
+          refreshBaselineAfterWrite(relPath, postStat.mtimeMs, postStat.size);
+        } catch {
+          if (!isStillSameVault(identity)) return;
+          refreshBaselineAfterWrite(relPath, undefined, undefined);
+        }
+      }
+      wrote = true;
     });
+    if (!wrote) return;
+    // VS-2 — a swap during the serialized write must not re-index relPath into
+    // the new vault or fire its read-only toast against it.
+    if (!isStillSameVault(identity)) return;
     await vaultIndexStore.applyChanges([relPath]);
     // Phase 3 / 3.5 — read-only doc UX. The tag write went through
     // (frontmatter round-trips cleanly even when the body doesn't), but
@@ -236,8 +399,12 @@ async function writeTagChangeToTileMarkdown(
  * until the read-only flag is cleared (via the editor banner's "Take
  * ownership"). The dedupe Set is keyed by docId so the toast can re-fire
  * for the same path if the user reopens it under a fresh docId.
+ *
+ * Phase 6.1.R2 — reset on vault swap so a stale docId entry can't
+ * suppress a legitimate toast in the new vault.
  */
 const readOnlyTagToastShown = new SvelteSet<string>();
+vaultSwapResettable('fileTags.readOnlyTagToastShown', () => readOnlyTagToastShown.clear());
 
 function surfaceReadOnlyTagToastIfNeeded(relPath: string): void {
   const editorDoc = documentStore.findByFilename(relPath);
@@ -314,45 +481,90 @@ async function writeTagChangeToMarkdownPath(
   tagName: string,
   operation: 'add' | 'remove',
 ): Promise<void> {
+  // VS-2 (Audit-11) — see writeTagChangeToTileMarkdown: capture identity before
+  // the live-path read so the guards below bail on a vault swap.
+  const identity = captureVaultIdentity();
   const vaultRoot = vaultStore.path;
   if (!vaultRoot || !relPath) return;
   try {
-    // Phase 37 / 37.6 — canonical two-arg shape.
-    let raw: string | null = null;
-    try {
-      const readResult = await invokeOk('vault:read-file-text', vaultRoot, relPath);
-      raw = readResult.content;
-    } catch {
-      // Read failed (likely envelope-failure or transient I/O). Falls
-      // through to the file-exists check below.
-    }
-    if (raw === null) {
-      // See writeTagChangeToTileMarkdown above: distinguish a real I/O
-      // failure from a benign no-op when the file is gone. Keep the
-      // sentinel dirty + surface a toast only when the file is still on
-      // disk and the read failed for some other reason (permissions, etc.).
-      const exists = await window.filo.invoke('vault:file-exists', vaultRoot, relPath);
-      if (exists) {
-        markPathFailed(vaultRoot, relPath);
-        reportError(
-          'fileTags.writePathFrontmatter',
-          null,
-          `Could not read ${relPath} to update frontmatter — your tag change is not on disk.`,
-        );
+    let wrote = false;
+    // Audit5 R2 — see writeTagChangeToTileMarkdown: serialise the read-modify-
+    // write on the per-path chain (#8) and reconcile the open editor's
+    // frontmatter cache afterward (#4).
+    await runSerializedMarkdownWrite(relPath, async () => {
+      // Phase 37 / 37.6 — canonical two-arg shape.
+      let raw: string | null = null;
+      // 3.4 (Audit-18) — capture the read's own stat (see writeTagChangeToTileMarkdown).
+      let readMtimeMs: number | undefined;
+      let readSize: number | undefined;
+      try {
+        const readResult = await invokeOk('vault:read-file-text', vaultRoot, relPath);
+        raw = readResult.content;
+        readMtimeMs = readResult.mtimeMs;
+        readSize = readResult.size;
+      } catch {
+        // Read failed (likely envelope-failure or transient I/O). Falls
+        // through to the file-exists check below.
       }
-      return;
-    }
-    const next = operation === 'add'
-      ? addTagToMarkdown(raw, tagName)
-      : removeTagFromMarkdown(raw, tagName);
-    if (next === raw) return;
-    await trackComponentWrite(vaultRoot, relPath, async () => {
-      // Phase 31 A4.5 — single-tag add/remove is an edit to an existing
-      // .md file (raw was just read above). Use write-existing so a
-      // race with an external delete surfaces as ENOENT rather than
-      // resurrecting the deleted file.
-      await invokeOk('vault:write-existing-file-text', vaultRoot, relPath, next); // allow-direct-write: inline-tag text rewrite (operates on raw markdown body, not a frontmatter+body assembly)
+      if (raw === null) {
+        // See writeTagChangeToTileMarkdown above: distinguish a real I/O
+        // failure from a benign no-op when the file is gone. Keep the
+        // sentinel dirty + surface a toast only when the file is still on
+        // disk and the read failed for some other reason (permissions, etc.).
+        const exists = await window.filo.invoke('vault:file-exists', vaultRoot, relPath);
+        if (!isStillSameVault(identity)) return; // VS-2 — swap during read/exists
+        if (exists) {
+          markPathFailed(vaultRoot, relPath);
+          reportError(
+            'fileTags.writePathFrontmatter',
+            null,
+            `Could not read ${relPath} to update frontmatter — your tag change is not on disk.`,
+          );
+        }
+        return;
+      }
+      // 3.4 — keep-baseline-on-pre-write-drift (see writeTagChangeToTileMarkdown).
+      const driftedBeforeWrite = baselineDriftedAtRead(relPath, readMtimeMs, readSize);
+      const next = operation === 'add'
+        ? addTagToMarkdown(raw, tagName)
+        : removeTagFromMarkdown(raw, tagName);
+      if (next === raw) return;
+      // Phase 6.6 — coupled write+reconcile (frontmatter-only); see
+      // writeTagChangeToTileMarkdown. Writes the existing .md AND keeps any open
+      // editor's FM cache in step for the SAME path so its next body save keeps the tag (#4).
+      await writeMarkdownAndReconcile({
+        vaultRoot,
+        path: relPath,
+        content: next,
+        mode: 'frontmatter',
+      });
+      // Audit-6 M3 — refresh the gateway's pre-write drift baseline to the bytes
+      // we just wrote (see writeTagChangeToTileMarkdown): the direct tag write
+      // bypasses the gateway, so without this the next gateway/editor write
+      // false-positives a "modified externally" drift prompt. Requires a
+      // post-write stat the coupled helper does not perform, so it stays here.
+      // VS-2 — refreshBaselineAfterWrite is keyed by relPath ALONE, so a swap
+      // here would poison the new vault's same-named file; bail before stamping.
+      // 3.4 — keep the prior baseline on pre-write drift (see other site).
+      if (driftedBeforeWrite) {
+        if (!isStillSameVault(identity)) return;
+        refreshBaselineAfterWrite(relPath, undefined, undefined);
+      } else {
+        try {
+          const postStat = await invokeOk('vault:stat', vaultRoot, relPath);
+          if (!isStillSameVault(identity)) return;
+          refreshBaselineAfterWrite(relPath, postStat.mtimeMs, postStat.size);
+        } catch {
+          if (!isStillSameVault(identity)) return;
+          refreshBaselineAfterWrite(relPath, undefined, undefined);
+        }
+      }
+      wrote = true;
     });
+    if (!wrote) return;
+    // VS-2 — a swap during the serialized write must not re-index relPath into
+    // the new vault or fire its read-only toast against it.
+    if (!isStillSameVault(identity)) return;
     await vaultIndexStore.applyChanges([relPath]);
     // Phase 3 / 3.5 — same read-only doc UX as writeTagChangeToTileMarkdown.
     // The path-driven flow runs from the Document board tag strip and the
@@ -371,10 +583,12 @@ export const fileTagsStore = {
   async hydrate(vaultRoot: string): Promise<void> {
     activeVaultRoot = vaultRoot;
     try {
-      const raw = (await window.filo.invoke('tags:load', vaultRoot)) as string | null;
+      // Audit-14 4.4 — assertIpcOk re-throws a `{ ok:false }` envelope into the catch below.
+      const raw = assertIpcOk(await window.filo.invoke('tags:load', vaultRoot), 'tags:load') as string | null;
       const loaded = loadTagsFile(raw);
       file = loaded.file;
-      readOnlyFromFuture = loaded.fromFuture || loaded.noMigrationPath;
+      setMergeBase(cloneTagsFile(loaded.file)); // A8-M6 — disk baseline
+      readOnlyTags = loaded.fromFuture || loaded.noMigrationPath || loaded.corrupt;
     } catch (err) {
       reportError(
         'fileTags.hydrate',
@@ -382,7 +596,8 @@ export const fileTagsStore = {
         'Failed to load .filo/tags.json — tags reset to empty for this session',
       );
       file = emptyTagsFile();
-      readOnlyFromFuture = false;
+      setMergeBase(emptyTagsFile());
+      readOnlyTags = false;
     }
     isHydrated = true;
   },
@@ -398,9 +613,10 @@ export const fileTagsStore = {
   commitFromCandidate(vaultRoot: string, tagsFile: TagsFile, readOnly = false): void {
     activeVaultRoot = vaultRoot;
     file = tagsFile;
-    // F6 — the candidate phase already ran the version migrator; carry its
-    // read-only verdict so a from-future tags file isn't re-saved.
-    readOnlyFromFuture = readOnly;
+    setMergeBase(cloneTagsFile(tagsFile)); // A8-M6 — disk baseline
+    // F6 / Audit-18 H2 — carry the candidate phase's read-only verdict (migrator
+    // + corrupt-parse check) so a from-future / un-migratable / corrupt file isn't re-saved.
+    readOnlyTags = readOnly;
     isHydrated = true;
   },
 
@@ -469,19 +685,32 @@ export const fileTagsStore = {
    * F6 — applies a tags file re-read after an external `.filo/tags.json`
    * edit, carrying the migrator's read-only verdict so a from-future file
    * flips the store read-only (gating `scheduleSave`). A current-version
-   * file behaves exactly like `setAll`.
+   * file behaves exactly like `setAll`. Audit-17 0.2 — returns `false` (caller
+   * skips the toast) when disk deep-equals our in-memory registry: a self-write
+   * echo in the 30 s reconcile pass, not an external edit.
    */
-  applyExternalReload(loaded: LoadTagsFileResult): void {
-    file = loaded.file;
-    readOnlyFromFuture = loaded.fromFuture || loaded.noMigrationPath;
-    scheduleSave();
+  applyExternalReload(loaded: LoadTagsFileResult): boolean {
+    const diskDiffersFromMemory = !sameJson(loaded.file, file);
+    // A8-M6 — 3-way merge, not wholesale overwrite: a tag add/remove still in the
+    // ~300 ms save debounce (attachment tags have NO other home) would otherwise
+    // be discarded. Re-apply our un-flushed delta on top of the external copy.
+    file = mergeTagsThreeWay(lastSavedFile, file, loaded.file);
+    // A9-L7 — bump the merge-base token so an in-flight `tags:save` can't clobber
+    // this fresh base (the external disk copy) back to its pre-reload snapshot.
+    setMergeBase(cloneTagsFile(loaded.file));
+    readOnlyTags = loaded.fromFuture || loaded.noMigrationPath || loaded.corrupt;
+    // Audit-17 0.2 — only re-save when the merge diverged from disk; an
+    // identical-bytes echo would bump mtime and re-arm the 30 s reconcile loop.
+    if (!sameJson(file, loaded.file)) scheduleSave();
+    return diskDiffersFromMemory;
   },
 
   reset(): void {
     activeVaultRoot = null;
     isHydrated = false;
     file = emptyTagsFile();
-    readOnlyFromFuture = false;
+    setMergeBase(emptyTagsFile());
+    readOnlyTags = false;
   },
 
   /** Forces a synchronous write of any pending debounced save. */
@@ -570,7 +799,9 @@ export const fileTagsStore = {
     for (const def of Object.values(boardStore.allTileDefs)) {
       if (!def.tags?.includes(tagName)) continue;
       const tile = def as Tile;
-      const textPath = resolveTextTileFilePath(tile);
+      // Audit-12 H2 — canonical resolver so dedup keys by the same subfolder-aware
+      // path the write path uses (else a subfolder tile double-counts vs its file).
+      const textPath = resolveTextTileVaultPath(tile, (tile as { boardId?: string }).boardId);
       if (textPath) placedPaths.add(vaultPath(textPath));
       const mediaPath = resolveTileMediaPath(tile);
       if (mediaPath) placedPaths.add(vaultPath(mediaPath));
@@ -759,7 +990,10 @@ export const fileTagsStore = {
     }
     this.ensureTag(tagName);
     if (tile.type === 'text') {
-      const path = resolveTextTileFilePath(tile);
+      // Audit-12 H2 — same canonical resolver as the .md write, so the tags.json
+      // key + sibling propagation can't drift to root while the .md is in a
+      // subfolder (split-brain).
+      const path = resolveTextTileVaultPath(tile, (tile as { boardId?: string }).boardId);
       if (path) {
         this.addTagToFile(path, tagName);
         propagateTileTagChangeToSiblings(path, tagName, 'add', tile.id);
@@ -787,7 +1021,10 @@ export const fileTagsStore = {
       boardStore.persistUpdateTile(tileId, { tags: nextTags });
     }
     if (tile.type === 'text') {
-      const path = resolveTextTileFilePath(tile);
+      // Audit-12 H2 — same canonical resolver as the .md write, so the tags.json
+      // key + sibling propagation can't drift to root while the .md is in a
+      // subfolder (split-brain).
+      const path = resolveTextTileVaultPath(tile, (tile as { boardId?: string }).boardId);
       if (path) {
         this.removeTagFromFile(path, tagName);
         propagateTileTagChangeToSiblings(path, tagName, 'remove', tile.id);
@@ -876,6 +1113,12 @@ export const fileTagsStore = {
     const trimmed = newName.trim();
     if (!oldName || !trimmed || oldName === trimmed) return;
 
+    // Audit-12 H3 — capture identity up-front; threaded into the sweep (writes
+    // anchored to the outgoing root → main-side rejected) + the retry toast closure,
+    // and re-checked before every in-memory commit so a swap on any of the awaits
+    // below (ensureAllLoaded, the long rewrite, the flushes) can't rename the
+    // swapped-in vault.
+    const identity = captureVaultIdentity();
     await boardCacheStore.ensureAllLoaded();
 
     // Phase 31 A3.3 — drain pending per-file markdown / frontmatter
@@ -902,18 +1145,21 @@ export const fileTagsStore = {
       return;
     }
 
-    const result = await runTagRewriteSweep(oldName, trimmed);
+    const result = await runTagRewriteSweep(oldName, trimmed, identity.path);
     if (result.failed.length > 0) {
       const failedSet = new SvelteSet(result.failed);
       pushTagRewriteFailureToast({
         verb: 'Tag rename',
         failedCount: result.failed.length,
         attempted: result.attempted,
-        retry: () => rewriteAndCommitRetry(this, oldName, trimmed, failedSet),
+        retry: () => rewriteAndCommitRetry(this, oldName, trimmed, failedSet, identity),
       });
       return;
     }
 
+    // Audit-12 H3 — a swap during the sweep above must not mutate the new vault's
+    // boardStore/registry with this vault's rename.
+    if (!isStillSameVault(identity)) return;
     commitTagRenameInMemory(this, oldName, trimmed);
     // Phase 4.3 (2026-05-30) — flush the debounced registry write before the board flush so a crash can't strand the renamed tag on disk without its tags.json definition (mirrors 4.1 / F3).
     await this.flushPendingSave();
@@ -921,6 +1167,7 @@ export const fileTagsStore = {
     // failure is reported through the same toast surface as the .md
     // failures above (currently the boards would only retry silently via
     // the recovery sentinel on next save).
+    if (!isStillSameVault(identity)) return; // Audit-12 H3 — swap during flushPendingSave
     await flushTagRewriteBoardWrites('Tag rename');
   },
 
@@ -934,6 +1181,9 @@ export const fileTagsStore = {
   async removeTagEverywhere(tagName: string): Promise<void> {
     if (!tagName) return;
 
+    // Audit-12 H3 — see renameTagEverywhere: capture identity so a vault swap
+    // mid-sweep/commit can't apply this vault's tag removal to the swapped-in one.
+    const identity = captureVaultIdentity();
     await boardCacheStore.ensureAllLoaded();
 
     // Phase 31 A3.3 — see renameTagEverywhere for the rationale on
@@ -954,22 +1204,25 @@ export const fileTagsStore = {
       return;
     }
 
-    const result = await runTagRewriteSweep(tagName, null);
+    const result = await runTagRewriteSweep(tagName, null, identity.path);
     if (result.failed.length > 0) {
       const failedSet = new SvelteSet(result.failed);
       pushTagRewriteFailureToast({
         verb: 'Tag removal',
         failedCount: result.failed.length,
         attempted: result.attempted,
-        retry: () => rewriteAndCommitRetry(this, tagName, null, failedSet),
+        retry: () => rewriteAndCommitRetry(this, tagName, null, failedSet, identity),
       });
       return;
     }
 
+    // Audit-12 H3 — swap during the sweep must not mutate the new vault's state.
+    if (!isStillSameVault(identity)) return;
     commitTagRemovalInMemory(this, tagName);
     // Phase 4.3 (2026-05-30) — see renameTagEverywhere; flush before the board flush.
     await this.flushPendingSave();
     // Phase 23 M11 — see renameTagEverywhere for the rationale on flushing.
+    if (!isStillSameVault(identity)) return; // Audit-12 H3 — swap during flushPendingSave
     await flushTagRewriteBoardWrites('Tag removal');
   },
 

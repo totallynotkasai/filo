@@ -94,19 +94,27 @@ export function makeSectionOps(deps: SectionOpsDeps): SectionOps {
   function addSection(title = 'New Section'): void {
     const board = deps.getBoard();
     if (!board) return;
-    // When the board has only the virtual default, materialise it first so the
-    // new section is added alongside it instead of replacing it. Snapshot
-    // AFTER materialisation so the undo target is the post-materialisation
-    // state, not the synthetic-default state.
-    ensureDefaultSectionMaterialized();
+    // SEC-3 — snapshot the TRUE pre-add shape (possibly the section-less `[]`
+    // state) BEFORE materialising the default. When the board has only the
+    // virtual default, the new section needs the existing unsectioned tasks to
+    // keep a home, so we also materialise a real default — but we fold that into
+    // the command (via `autoDefault`) instead of a separate command-less
+    // pre-persist, so the command's undo can strip BOTH and restore `[]`. The
+    // previous flow pre-persisted the default and snapshotted AFTER it, leaving a
+    // permanent materialised default on the disk after add-then-undo.
     const before = deps.snapshotSections();
+    const wasEmpty = before.sections.length === 0;
+    const autoDefault: TaskListSection | null = wasEmpty
+      ? { id: `sec_${createId()}`, title: 'Task List', position: 0, collapsed: false }
+      : null;
     const id = `sec_${createId()}`;
     const placements = deps.getPlacements();
+    const baseSections = autoDefault ? [autoDefault] : before.sections;
     const after = {
-      sections: [...before.sections, { id, title, position: placements.length, collapsed: false }],
+      sections: [...baseSections, { id, title, position: placements.length, collapsed: false }],
       tasks: before.tasks,
     };
-    historyStore.execute(new AddSectionCommand(board.id, before, after, title));
+    historyStore.execute(new AddSectionCommand(board.id, before, after, title, autoDefault));
     deps.tickAndPersist();
   }
 
@@ -156,6 +164,7 @@ export function makeSectionOps(deps: SectionOpsDeps): SectionOps {
     const idx = sorted.findIndex((s) => s.id === id);
     if (idx < 0) return;
     const target = sorted[idx];
+    if (!target) return; // idx >= 0 from findIndex; narrow for the type-checker
     const end = sorted[idx + 1]?.position ?? placements.length;
     const beforeSnap = {
       sections: sections.map((s) => ({ ...s })),
@@ -206,6 +215,7 @@ export function makeSectionOps(deps: SectionOpsDeps): SectionOps {
 
     const a = sorted[idx];
     const b = sorted[swapIdx];
+    if (!a || !b) return; // idx/swapIdx bounds-checked above; narrow for the type-checker
     const aStart = a.position;
     const aEnd = sorted[idx + 1]?.position ?? placements.length;
     const bStart = b.position;

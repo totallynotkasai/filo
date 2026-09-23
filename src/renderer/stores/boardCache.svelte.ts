@@ -25,13 +25,13 @@ import {
   setViewport,
   removeViewport,
 } from '../lib/boards/boardSaver';
-import { flushAllScheduledBoards } from '../lib/boards/boardWriteScheduler';
+import { flushAllScheduledBoards, markBoardPathDeleting, clearBoardPathDeleting } from '../lib/boards/boardWriteScheduler';
 import { loadBoard } from '../lib/boards/boardLoader';
 import { fileNameSafe } from '../lib/vault/conventionPaths';
 import { reportError } from '../lib/utils/errorBus';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { invokeOk } from '../lib/utils/invokeOk';
-import { normalizePath, toPosix } from '../lib/utils/path';
+import { normalizePath, toPosix, normalizeVaultRelative, stripLeadingSlash } from '../lib/utils/path';
 import { createId } from '../lib/utils/ids';
 import { uiStore } from './ui.svelte';
 import type { CacheContext } from './boardCacheTypes';
@@ -42,6 +42,7 @@ import { makeTilesSlice } from './boardCacheTiles';
 import { makeFrontmatterSlice } from './boardCacheFrontmatter';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { boardDefaults } from '../core/boardDefaults';
+import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 
 /**
  * Board cache store — owns the per-board on-disk snapshot used to schedule
@@ -126,8 +127,8 @@ function getBoardWriteArgs(
 
 /**
  * Phase 7.5 — reverse-index memos (id → owning boardId) for the keyless
- * persist paths. A tile / connection / frame / kanban column is created on
- * exactly one board and never re-parented (V7 invariant), so a successful
+ * persist paths. A tile / connection / frame / kanban column / task is created
+ * on exactly one board and never re-parented (V7 invariant), so a successful
  * scan result stays valid for the entity's life. `resolveOwnerCached` caches
  * scan hits and verifies-on-hit (O(1)) before trusting the memo — on a miss
  * OR a stale hit it falls back to a full scan — so the memo can NEVER return
@@ -143,6 +144,7 @@ const tileBoardMemo = new Map<string, string>();
 const connectionBoardMemo = new Map<string, string>();
 const frameBoardMemo = new Map<string, string>();
 const kanbanColumnBoardMemo = new Map<string, string>();
+const taskBoardMemo = new Map<string, string>();
 /* eslint-enable svelte/prefer-svelte-reactivity */
 
 function resetBoardOwnerMemos(): void {
@@ -150,6 +152,7 @@ function resetBoardOwnerMemos(): void {
   connectionBoardMemo.clear();
   frameBoardMemo.clear();
   kanbanColumnBoardMemo.clear();
+  taskBoardMemo.clear();
 }
 
 function resolveOwnerCached(
@@ -267,12 +270,10 @@ function tasklistBoard(boardId: string): TaskListBoard | null {
  * mid-tab-switch) self-heal rather than silently no-op.
  */
 function findBoardIdForTask(tileId: string): string | null {
-  for (const [id, data] of Object.entries(boardCache)) {
-    if (data.board.type !== 'tasklist') continue;
-    const tl = data.board as TaskListBoard;
-    if ((tl.tasks ?? []).some((p) => p.tileId === tileId)) return id;
-  }
-  return null;
+  return resolveOwnerCached(taskBoardMemo, tileId, (data) => {
+    if (data.board.type !== 'tasklist') return false;
+    return ((data.board as TaskListBoard).tasks ?? []).some((p) => p.tileId === tileId);
+  });
 }
 
 /**
@@ -379,18 +380,40 @@ export const boardCacheStore = {
    * relocated `.board.json` rewrites under its new name).
    */
   renameBoardPath(oldPath: string, newPath: string): string[] {
-    if (!oldPath || !newPath || oldPath === newPath) return [];
-    const normalisedOld = normalizePath(oldPath);
-    const normalisedNew = normalizePath(newPath);
+    if (!oldPath || !newPath) return [];
+    // P2.7 (Audit-15) — strip leading slashes so the case-preserving `oldPrefix`
+    // and case-folded `foldedPrefix` (below) share a length (else `slice` desyncs).
+    const normalisedOld = stripLeadingSlash(normalizePath(oldPath));
+    const normalisedNew = stripLeadingSlash(normalizePath(newPath));
+    // L2 (Audit-13) — only a TRUE no-op (identical bytes after separator/trailing
+    // normalisation) returns early. A case-ONLY rename folds equal but the raw
+    // casing differs, and the stored path must still track disk: the prior
+    // `normalizeVaultRelative(old) === normalizeVaultRelative(new)` guard returned
+    // [] for it, leaving `boardPaths` keyed at the stale casing (phantom-file
+    // write + "missing on disk" eviction on a case-sensitive / synced FS). Fall
+    // through so the rebind loop below rewrites the entry to the new casing.
+    if (normalisedOld === normalisedNew) return [];
+    // M4 (Audit-12) — compare case-INSENSITIVELY (Windows/macOS aren't
+    // case-sensitive) so an OS-reported rename whose casing diverges from the
+    // stored casing still rebinds. The raw `===`/`startsWith` on the
+    // case-PRESERVING `normalizePath` form it replaces silently failed to
+    // rebind a case-only rename, leaving the cache keyed at the stale path
+    // (phantom-file write + "missing on disk" eviction). The descendant SLICE
+    // still uses the case-preserving `oldPrefix` length so the suffix keeps its
+    // on-disk casing — board paths carry no leading slash, so the folded and
+    // unfolded prefixes share the same length.
     const oldPrefix = `${normalisedOld}/`;
+    const foldedOld = normalizeVaultRelative(normalisedOld);
+    const foldedPrefix = `${foldedOld}/`;
     const updates: Record<string, string> = {};
     const changedIds: string[] = [];
     for (const [boardId, relPath] of Object.entries(boardPaths)) {
       const norm = toPosix(relPath);
-      if (norm === normalisedOld) {
+      const folded = normalizeVaultRelative(norm);
+      if (folded === foldedOld) {
         updates[boardId] = normalisedNew;
         changedIds.push(boardId);
-      } else if (norm.startsWith(oldPrefix)) {
+      } else if (folded.startsWith(foldedPrefix)) {
         updates[boardId] = normalisedNew + '/' + norm.slice(oldPrefix.length);
         changedIds.push(boardId);
       }
@@ -480,6 +503,12 @@ export const boardCacheStore = {
     const vaultRoot = vaultStore.path;
     const project = vaultStore.project;
     if (!vaultRoot || !project) return;
+    // Audit-11 VS-3 — snapshot the active vault identity before the awaited
+    // per-board loads. A swap (or close → reopen) landing mid-loop must NOT
+    // inject the OUTGOING vault's `.board.json` into the NEW vault's cache —
+    // the disk read is anchored to the captured `vaultRoot`, but the cache it
+    // writes into is the live one. Re-check after each await before injecting.
+    const identity = captureVaultIdentity();
 
     const missing = project.boards.filter((b) => !boardCache[b.id]);
     if (missing.length === 0) return;
@@ -493,6 +522,7 @@ export const boardCacheStore = {
         continue;
       }
       const result = await loadBoard(vaultRoot, relPath);
+      if (!isStillSameVault(identity)) return;
       if (!result.ok) {
         console.warn(
           `[boardCache.ensureAllLoaded] Failed to load ${relPath}: ${result.error} — ${result.message}`,
@@ -717,16 +747,25 @@ export const boardCacheStore = {
     if (!boardPath) return false;
 
     // Phase 1.3 — cancel any pending debounced write BEFORE the delete IPC,
-    // otherwise a 300ms-old setTimeout fires after the unlink and resurrects
-    // the board file. The cancel is also treated as a successful endWrite
-    // for sentinel purposes (see cancelBoardWrite).
+    // else a 300ms-old setTimeout fires after the unlink and resurrects the file.
     cancelBoardWrite(boardId, boardPath);
+
+    // Audit-18 3.11 — cancelBoardWrite only reaches pending/parked timers; an
+    // IN-FLIGHT board:save (e.g. suspended on the drift prompt) would resolve
+    // after this delete and resurrect the .board.json as a ghost. Mark the path
+    // so writeBoardFile bails before board:save; clear it once any in-flight
+    // write drains (so a board re-created here later isn't blocked).
+    markBoardPathDeleting(boardPath);
 
     try {
       await invokeOk('board:delete', vaultRoot, boardPath);
       this.removeBoardFromCache(boardId);
+      // Drain the in-flight write (neutralised by the mark above), then clear —
+      // fire-and-forget so the delete returns promptly (getArgs null = no fire).
+      void flushBoardWrite(boardId, () => null).finally(() => clearBoardPathDeleting(boardPath));
       return true;
     } catch (err) {
+      clearBoardPathDeleting(boardPath); // delete failed — re-enable writes
       reportError(
         'boardCache.delete',
         err,
@@ -830,14 +869,26 @@ async function syncTileMarkdown(
   const filename = doc.filename;
   const liveBody = doc.body ?? '';
 
-  // Phase A.3 — capture the file's mtime before reading so we can detect
-  // an external edit that lands in the read/write gap. The stat IPC
-  // throws (via invokeOk) for missing files (new tile path); in that
-  // case we skip the guard and proceed (no baseline to compare).
+  // Phase A.3 — capture the file's mtime AND size before reading so we can
+  // detect an external edit that lands in the read/write gap. The stat IPC
+  // throws (via invokeOk) for missing files (new tile path); read the fields
+  // INSIDE the try so a missing / null / malformed stat is caught here and
+  // treated as "no baseline" rather than deref'd later (a new tile has no
+  // backing file yet, so this is the common case, not an error).
+  //
+  // Phase 3 / 3.3 — compare SIZE as well as mtime. A coarse-resolution
+  // filesystem (FAT's 2 s stamp, some network / OneDrive mounts) can give a
+  // same-second external write an IDENTICAL `mtimeMs`, so the prior
+  // mtime-only guard silently clobbered it — Filo's worst data-loss class.
+  // `mtime || size` catches every external edit that changed the file's
+  // length even when the clock didn't move. (A same-size, same-mtime edit is
+  // the narrow residual; catching it needs a content hash, out of scope here.)
   let beforeMtime: number | undefined;
+  let beforeSize: number | undefined;
   try {
     const beforeStat = await invokeOk('vault:stat', vaultRoot, filename);
     beforeMtime = beforeStat.mtimeMs;
+    beforeSize = beforeStat.size;
   } catch {
     // File doesn't exist (or stat failed) — no baseline; proceed without guard.
   }
@@ -879,13 +930,32 @@ async function syncTileMarkdown(
   // class of data loss.
   if (beforeMtime !== undefined) {
     let writeMtime: number | undefined;
+    let writeSize: number | undefined;
     try {
       const writeStat = await invokeOk('vault:stat', vaultRoot, filename);
       writeMtime = writeStat.mtimeMs;
+      writeSize = writeStat.size;
     } catch {
       writeMtime = undefined;
     }
-    if (writeMtime !== undefined && writeMtime !== beforeMtime) {
+    let drift =
+      writeMtime !== undefined &&
+      (writeMtime !== beforeMtime || writeSize !== beforeSize);
+    // L9 (Audit-13) — a coarse-clock volume (FAT, some network/OneDrive mounts)
+    // can report IDENTICAL mtime AND size for a same-length external overwrite —
+    // the mtime||size guard's residual. Re-read the bytes and compare to what we
+    // read moments ago so that residual still routes through the prompt instead
+    // of being silently clobbered (the gateway's own drift path can't reach a
+    // recovery sync, which deliberately bypasses readMarkdownForHydrate above).
+    if (!drift && writeMtime !== undefined) {
+      try {
+        const recheck = await invokeOk('vault:read-file-text', vaultRoot, filename); // allow-hydrate-read: own mtime guard
+        if (recheck.content !== diskRaw) drift = true;
+      } catch {
+        // Re-read failed — leave `drift` as-is; the write below surfaces real errors.
+      }
+    }
+    if (drift) {
       const choice = await promptExternalEditOnSync({ path: filename });
       if (choice === 'reload') {
         // The prompt's Reload handler refreshed the vault index and
@@ -906,6 +976,14 @@ async function syncTileMarkdown(
   // and the gateway will reject the write). Mark hydrated with the BOM the
   // disk-read observed so the gateway's BOM preservation kicks in.
   if (!isHydrated(filename)) markHydrated(filename, diskParsed.hadBom);
+  // #17 — reconcile the open editor's cached frontmatter + raw baseline with
+  // the fresh disk read we're about to write FROM. Without this, the document
+  // store keeps whatever frontmatter it cached at hydrate time; a later
+  // body-only save through the gateway would emit THAT stale object and could
+  // revert external YAML keys this sync just read off disk. (Largely mooted by
+  // R1's byte-preserving writes, but keeps the cache + clean-bytes baseline
+  // coherent with disk regardless of the write path.)
+  documentStore.setFrontmatter(docId, diskParsed.frontmatter, diskParsed.rawFrontmatter);
   try {
     await writeMarkdownFile({
       vaultRoot,

@@ -52,6 +52,7 @@
     if (!drawing) {
       // Start drawing from this bubble
       const bubble = bubbles[bubbleIndex];
+      if (!bubble) return;
       connectionsStore.startDrawing(tile.id, bubbleIndex, bubble.x, bubble.y);
     } else if (drawing.fromTileId !== tile.id) {
       // Block duplicate connections between the same two bubble points

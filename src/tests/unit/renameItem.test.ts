@@ -113,4 +113,40 @@ describe('renameItem', () => {
     expect(entries.some((name) => name.includes('case-rename'))).toBe(false);
     await expect(fs.readFile(oldPath, 'utf-8')).resolves.toBe('restoration');
   });
+
+  // L10 (Audit-13) — a cross-device move (EXDEV) can't use a same-volume
+  // rename, so renameItem falls back to a STAGED copy: copy → fsync → atomic
+  // rename → best-effort dir-fsync → unlink source. The prior `copyFile(old → new)`
+  // streamed straight to the final name (non-fsync'd, torn on a crash mid-copy).
+  // Verify the bytes land intact, the source is gone, and no staging `.tmp`
+  // sibling is left behind.
+  it('falls back to an atomic staged copy on a cross-device (EXDEV) move', async () => {
+    const oldPath = join(dir, 'a.md');
+    const newPath = join(dir, 'b.md');
+    const payload = 'cross-device payload';
+    await fs.writeFile(oldPath, payload, 'utf-8');
+
+    const realRename = fs.rename.bind(fs);
+    const spy = vi
+      .spyOn(fs, 'rename')
+      .mockImplementation(async (from: PathLike, to: PathLike) => {
+        // Only the DIRECT old→new rename "spans devices"; the staging
+        // temp→new swap is same-dir and must go through to the real rename.
+        if (String(from) === oldPath && String(to) === newPath) {
+          throw Object.assign(new Error('cross-device link'), { code: 'EXDEV' });
+        }
+        return realRename(from, to);
+      });
+
+    try {
+      await renameItem(oldPath, newPath);
+    } finally {
+      spy.mockRestore();
+    }
+
+    await expect(fs.readFile(newPath, 'utf-8')).resolves.toBe(payload);
+    await expect(fs.access(oldPath)).rejects.toBeDefined();
+    // The staging temp was renamed away — only the moved file remains.
+    expect(await fs.readdir(dir)).toEqual(['b.md']);
+  });
 });

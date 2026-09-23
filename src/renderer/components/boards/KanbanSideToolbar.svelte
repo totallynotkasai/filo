@@ -20,7 +20,7 @@
   import { invokeOk } from '../../lib/utils/invokeOk';
   import { createFocusTrap, type FocusTrap } from 'focus-trap';
   import { safeDeactivateTrap } from '../../lib/utils/focusTrapSafe';
-  import { tick } from 'svelte';
+  import { tick, onDestroy } from 'svelte';
 
   type SortBy = 'manual' | 'title' | 'created' | 'dueDate' | 'priority';
 
@@ -107,6 +107,8 @@
     const vaultPath = vaultStore.path;
     if (!vaultPath) return;
     try {
+      // allow-direct-write: `.filo/kanban-toolbar-pos.json` is per-machine
+      // UI geometry, not a `.md` file — no editor hydrates from it.
       await trackComponentWrite(vaultPath, TOOLBAR_POS_FILE, () =>
         invokeOk(
           'vault:write-file-text',
@@ -330,6 +332,14 @@
   // that never came. 200ms is short enough to feel responsive and long
   // enough to coalesce fast typing.
   let propDebounce: ReturnType<typeof setTimeout> | null = null;
+
+  // 6.1.R2 (follow-up) — clear the live-filter debounce on unmount so a vault
+  // swap (or toolbar teardown) mid-typing can't fire `onFilterPropChange`
+  // ~200 ms later against a board that is no longer mounted.
+  onDestroy(() => {
+    if (propDebounce) clearTimeout(propDebounce);
+  });
+
   function scheduleApplyPropFilter() {
     if (propDebounce) clearTimeout(propDebounce);
     propDebounce = setTimeout(() => {
@@ -382,7 +392,11 @@
     const target = idx + dir;
     if (target < 0 || target >= reorderIds.length) return;
     const next = [...reorderIds];
-    [next[idx], next[target]] = [next[target], next[idx]];
+    const a = next[idx];
+    const b = next[target];
+    if (a === undefined || b === undefined) return; // target bounds-checked above
+    next[idx] = b;
+    next[target] = a;
     reorderIds = next;
   }
   function commitReorder() {

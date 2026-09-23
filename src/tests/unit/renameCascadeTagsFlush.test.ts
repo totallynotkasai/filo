@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { makeExternalChangesSlice } from '@renderer/stores/vaultExternalChanges';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
+import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { documentStore } from '@renderer/stores/document.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
@@ -125,5 +126,124 @@ describe('rename cascade — synchronous tags.json flush (F3)', () => {
     const latest = JSON.parse(tagsSaves[tagsSaves.length - 1]);
     expect(latest.fileTags['new.md']).toEqual(['mytag']);
     expect(latest.fileTags['old.md']).toBeUndefined();
+  });
+
+  // 6.4.M19 — a flushPendingSave rejection must NOT abort the rest of the
+  // cascade. (The realistic write-failure path resolves { ok:false } via the
+  // scheduler's internal catch, so it never reaches here; this exercises the
+  // narrow rejection path — getArgs throw / future regression — via a spy.)
+  it('a flushPendingSave rejection does not abort the board cascade', async () => {
+    const makeBoard = (): V7BoardFileData =>
+      ({
+        board: {
+          id: 'b1',
+          name: 'B1',
+          emoji: '',
+          type: 'mindmap',
+          settings: {},
+          placements: {},
+          inlineTiles: {},
+          createdAt: 0,
+          updatedAt: 0,
+        },
+        tileDefs: {},
+        connections: {},
+        frames: [],
+      }) as unknown as V7BoardFileData;
+    // Board b1 lives at b1.board.json; renaming it makes renamedBoardIds
+    // non-empty → hasCascadeWork true → the sentinel + flushAllDirty must run.
+    boardCacheStore.hydrate({ b1: makeBoard() }, { b1: 'b1.board.json' });
+
+    const flushSpy = vi.spyOn(boardCacheStore, 'flushAllDirty');
+    const tagsFlushSpy = vi
+      .spyOn(fileTagsStore, 'flushPendingSave')
+      .mockRejectedValue(new Error('tags flush boom'));
+
+    const slice = makeExternalChangesSlice(ctxFor());
+    // Pre-fix: the rejection propagates out of runExternalRenameCascade and
+    // handleExternalRename rethrows it (skipping the sentinel + board flush).
+    await expect(
+      slice.handleExternalRename('b1.board.json', 'b2.board.json'),
+    ).resolves.toBeUndefined();
+
+    expect(tagsFlushSpy).toHaveBeenCalled();
+    // M19 — the board cascade still flushed despite the tags-flush rejection.
+    expect(flushSpy).toHaveBeenCalled();
+
+    flushSpy.mockRestore();
+    tagsFlushSpy.mockRestore();
+  });
+
+  // Audit-4 DI-17 — a tags-only rename (no board cascade) whose synchronous
+  // tags flush FAILS must still leave a recovery breadcrumb. Without it the
+  // hasCascadeWork early-return skips the sentinel and the failed tag rename is
+  // silently unrecoverable, contradicting the F3 catch's promise.
+  it('DI-17 — a failed tags-only flush writes a recovery sentinel (no silent loss)', async () => {
+    const sentinelWrites: string[] = [];
+    installFiloMock((channel: string, ...args: unknown[]) => {
+      if (channel === 'tags:load') return null;
+      if (channel === 'tags:save') {
+        tagsSaves.push(String(args[1]));
+        return undefined;
+      }
+      if (channel === 'vault:read-file-text') return { success: false, code: 'ENOENT' };
+      if (
+        channel === 'vault:write-file-text' &&
+        String(args[1]).includes('rename-cascade-pending.json')
+      ) {
+        sentinelWrites.push(String(args[2]));
+        return { success: true };
+      }
+      return { success: true };
+    });
+
+    // The realistic failure: flushPendingSave RESOLVES { ok: false } (the misc
+    // scheduler caught the IPC error internally).
+    const tagsFlushSpy = vi
+      .spyOn(fileTagsStore, 'flushPendingSave')
+      .mockResolvedValue({ ok: false });
+
+    const slice = makeExternalChangesSlice(ctxFor());
+    // 'Old.md' is a note, not a board, and no tile references it → no board
+    // cascade → hits the hasCascadeWork early-return.
+    await slice.handleExternalRename('Old.md', 'New.md');
+
+    expect(tagsFlushSpy).toHaveBeenCalled();
+    expect(sentinelWrites.length).toBeGreaterThanOrEqual(1);
+    const payload = JSON.parse(sentinelWrites[sentinelWrites.length - 1]);
+    const entry = payload.entries[payload.entries.length - 1];
+    expect(entry.tagsAffected).toBe(true);
+    expect(entry.affectedBoardIds).toEqual([]);
+    expect(entry.oldPath).toBe('Old.md');
+    expect(entry.newPath).toBe('New.md');
+
+    tagsFlushSpy.mockRestore();
+  });
+
+  // Contrast: a SUCCESSFUL tags-only flush keeps the C-A5-4 skip — no sentinel
+  // noise when there's nothing to recover.
+  it('DI-17 — a successful tags-only flush writes NO sentinel', async () => {
+    const sentinelWrites: string[] = [];
+    installFiloMock((channel: string, ...args: unknown[]) => {
+      if (channel === 'tags:load') return null;
+      if (channel === 'tags:save') {
+        tagsSaves.push(String(args[1]));
+        return undefined;
+      }
+      if (channel === 'vault:read-file-text') return { success: false, code: 'ENOENT' };
+      if (
+        channel === 'vault:write-file-text' &&
+        String(args[1]).includes('rename-cascade-pending.json')
+      ) {
+        sentinelWrites.push(String(args[2]));
+        return { success: true };
+      }
+      return { success: true };
+    });
+
+    const slice = makeExternalChangesSlice(ctxFor());
+    await slice.handleExternalRename('Old.md', 'New.md');
+
+    expect(sentinelWrites).toHaveLength(0);
   });
 });

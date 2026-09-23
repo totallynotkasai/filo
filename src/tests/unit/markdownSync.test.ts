@@ -10,7 +10,7 @@ import {
 describe('markdownSync — parseMarkdownFile', () => {
   it('returns empty document for empty input', () => {
     const r = parseMarkdownFile('');
-    expect(r).toEqual({ frontmatter: {}, body: '', hasFrontmatter: false, hadBom: false });
+    expect(r).toEqual({ frontmatter: {}, rawFrontmatter: '', body: '', hasFrontmatter: false, hadBom: false });
   });
 
   it('parses body without frontmatter', () => {
@@ -41,6 +41,148 @@ describe('markdownSync — parseMarkdownFile', () => {
     const r = parseMarkdownFile(src);
     expect(r.frontmatter.title).toBe('Foo');
     expect(r.body).toBe('body');
+  });
+});
+
+// ── 6.4.M9 — fence trailing whitespace ───────────────────────────────────────
+// Editors and linters routinely leave trailing horizontal whitespace on a fence
+// line (`--- `). The fence regex required `---` IMMEDIATELY followed by a
+// newline, so such a file parsed as "no frontmatter" — its YAML leaked into the
+// body and (via tagRewriter) a duplicate `---` block was prepended on the next
+// tag edit. Trailing spaces/tabs on either fence are now tolerated.
+//
+// 6.4.M10 was REFUTED (see parseMarkdownFile's comment): a `---` embedded in a
+// multi-line scalar cannot mis-segment, because a column-0 `---` is a YAML
+// document boundary that both YAML parsers reject, and a valid in-scalar `---`
+// is indented and never matches the column-0 fence regex.
+describe('markdownSync — parseMarkdownFile fence robustness (6.4.M9)', () => {
+  it('M9 — tolerates trailing whitespace on the opening fence', () => {
+    const r = parseMarkdownFile('--- \ntitle: Foo\n---\nbody');
+    expect(r.hasFrontmatter).toBe(true);
+    expect(r.frontmatter.title).toBe('Foo');
+    expect(r.body).toBe('body');
+  });
+
+  it('M9 — tolerates trailing whitespace on the closing fence', () => {
+    const r = parseMarkdownFile('---\ntitle: Foo\n--- \nbody');
+    expect(r.hasFrontmatter).toBe(true);
+    expect(r.frontmatter.title).toBe('Foo');
+    expect(r.body).toBe('body');
+  });
+
+  it('M9 — tolerates a tab after the fence on a CRLF file', () => {
+    const r = parseMarkdownFile('---\t\r\ntitle: Foo\r\n---\t\r\nbody');
+    expect(r.hasFrontmatter).toBe(true);
+    expect(r.frontmatter.title).toBe('Foo');
+    expect(r.body).toBe('body');
+  });
+
+  it('M9 — does NOT treat `----` or `--- text` as a fence', () => {
+    // Four dashes is a thematic break; trailing non-space text isn't a fence.
+    expect(parseMarkdownFile('----\nnot fm\n----\nbody').hasFrontmatter).toBe(false);
+    expect(parseMarkdownFile('--- text\nx\n---\nbody').hasFrontmatter).toBe(false);
+  });
+
+  it('preserves an indented `---` inside a block scalar (6.4.M10 refutation)', () => {
+    // A column-0 `---` is a YAML document boundary (both parsers reject it), so a
+    // VALID multi-line scalar containing `---` keeps it indented — which the
+    // column-0 fence regex never matches. Confirms the first-fence split doesn't
+    // truncate real block-scalar content (the scenario M10 feared).
+    const src = '---\ntitle: Foo\nnote: |\n  before\n  ---\n  after\nstatus: ok\n---\nbody';
+    const r = parseMarkdownFile(src);
+    expect(r.hasFrontmatter).toBe(true);
+    expect(r.frontmatter.status).toBe('ok');
+    expect(r.frontmatter.note).toBe('before\n---\nafter\n');
+    expect(r.body).toBe('body');
+  });
+});
+
+// ── Audit2 / 1.1 + 1.2 — frontmatter preservation ───────────────────────────
+// 1.1 (amplifier): parseMarkdownFile flags `hasFrontmatter:true` but leaves
+// `frontmatter:{}` on unparseable / non-object YAML; assembleMarkdownFile gated
+// the fence only on `Object.keys(fm).length`, so a body-only re-assembly DROPPED
+// the fence and erased the whole block. The raw source is now threaded out of
+// parse and written back verbatim so a fence we couldn't parse is never lost.
+// 1.2 (cure): a clean body-only save emits the original frontmatter bytes
+// verbatim (comments / key order / line endings preserved) instead of re-dumping
+// the parsed object. The object is re-serialised only when it actually changed.
+describe('markdownSync — frontmatter preservation (Audit2 1.1/1.2)', () => {
+  it('threads the raw frontmatter source out of parseMarkdownFile', () => {
+    const r = parseMarkdownFile('---\ntitle: Foo\ntags: [a, b]\n---\nbody');
+    expect(r.rawFrontmatter).toBe('title: Foo\ntags: [a, b]');
+  });
+
+  it('returns an empty rawFrontmatter when there is no frontmatter', () => {
+    expect(parseMarkdownFile('# just a body').rawFrontmatter).toBe('');
+    expect(parseMarkdownFile('').rawFrontmatter).toBe('');
+  });
+
+  it('1.1 — preserves an unparseable (tab-indented) frontmatter block on body re-assembly', () => {
+    const src = ['---', 'title: Keep me', '\tbad: indentation', '---', 'old body'].join('\n');
+    const parsed = parseMarkdownFile(src);
+    // The parser can't build an object from this YAML…
+    expect(parsed.hasFrontmatter).toBe(true);
+    expect(Object.keys(parsed.frontmatter)).toHaveLength(0);
+    // …but the raw block must survive a body-only save, fence and all.
+    const out = assembleMarkdownFile(parsed.frontmatter, 'new body', {
+      rawFrontmatter: parsed.rawFrontmatter,
+    });
+    expect(out.startsWith('---\n')).toBe(true);
+    expect(out).toContain('title: Keep me');
+    expect(out).toContain('\tbad: indentation');
+    expect(out).toContain('new body');
+  });
+
+  it('1.1 — preserves a non-object (top-level scalar) frontmatter block', () => {
+    const src = ['---', 'just a bare string', '---', 'body'].join('\n');
+    const parsed = parseMarkdownFile(src);
+    expect(parsed.hasFrontmatter).toBe(true);
+    expect(Object.keys(parsed.frontmatter)).toHaveLength(0);
+    const out = assembleMarkdownFile(parsed.frontmatter, 'edited', {
+      rawFrontmatter: parsed.rawFrontmatter,
+    });
+    expect(out).toContain('just a bare string');
+    expect(out.startsWith('---\n')).toBe(true);
+  });
+
+  it('1.2 — a clean body-only save emits the frontmatter bytes verbatim (comment + key order kept)', () => {
+    const src = ['---', '# pinned — keep this comment', 'zeta: 1', 'alpha: 2', '---', 'old body'].join('\n');
+    const parsed = parseMarkdownFile(src);
+    const out = assembleMarkdownFile(parsed.frontmatter, 'new body', {
+      rawFrontmatter: parsed.rawFrontmatter,
+      frontmatterDirty: false,
+    });
+    expect(out).toBe(
+      ['---', '# pinned — keep this comment', 'zeta: 1', 'alpha: 2', '---', 'new body', ''].join('\n'),
+    );
+  });
+
+  it('1.2 — preserves CRLF inside the frontmatter block on a clean save', () => {
+    const src = '---\r\ntitle: x\r\ntags: [a]\r\n---\r\nold';
+    const parsed = parseMarkdownFile(src);
+    const out = assembleMarkdownFile(parsed.frontmatter, 'new body', {
+      rawFrontmatter: parsed.rawFrontmatter,
+      frontmatterDirty: false,
+    });
+    expect(out.startsWith('---\r\n')).toBe(true);
+    expect(out).toContain('title: x\r\ntags: [a]');
+    expect(out).toContain('\r\n---\r\nnew body');
+  });
+
+  it('1.2 — re-serialises (dumps) the object when frontmatter is dirty', () => {
+    // FM actually changed, so the captured raw bytes are stale and must NOT win.
+    const out = assembleMarkdownFile({ title: 'Foo', status: 'done' }, 'body', {
+      rawFrontmatter: 'title: Foo', // stale raw, missing `status`
+      frontmatterDirty: true,
+    });
+    expect(out).toContain('title: Foo');
+    expect(out).toContain('status: done'); // the new key is present → re-dumped
+  });
+
+  it('a clean save with no raw frontmatter falls back to the object dump', () => {
+    const out = assembleMarkdownFile({ title: 'Foo' }, 'body', { frontmatterDirty: false });
+    expect(out).toContain('title: Foo');
+    expect(out.startsWith('---\n')).toBe(true);
   });
 });
 
@@ -147,6 +289,42 @@ describe('markdownSync — assembleMarkdownFile', () => {
 });
 
 /**
+ * Phase 6.3 — the M2 cross-parser canonicalisation class proven DEAD.
+ *
+ * The read path (`parseMarkdownFile`) and the source-preserving write engine are
+ * now BOTH on the `yaml` package, so the only two scalar forms where js-yaml CORE
+ * and the `yaml` package ever disagreed — `1_000` / `0b1010` (NUMBERS under
+ * js-yaml CORE, STRINGS under the `yaml` package) — can no longer look "changed"
+ * to the engine when they're untouched. Under the old split (js-yaml read → a
+ * number, `yaml`-package engine compare → a string) an unrelated edit
+ * value-only-spliced them to their canonical number on the next dirty save
+ * (`1_000` → `1000`). These pin both halves of the cure: (1) the read surfaces
+ * them as strings, and (2) a dirty write on a DIFFERENT key leaves their exact
+ * source bytes intact — which can only hold if read and engine agree.
+ */
+describe('markdownSync — M2 cross-parser canonicalisation is dead (Phase 6.3)', () => {
+  it('parseMarkdownFile reads 1_000 / 0b1010 as strings (single parser)', () => {
+    const r = parseMarkdownFile('---\nthousands: 1_000\nflags: 0b1010\n---\nbody');
+    expect(r.frontmatter.thousands).toBe('1_000');
+    expect(r.frontmatter.flags).toBe('0b1010');
+  });
+
+  it('a dirty write on another key leaves an untouched 1_000 / 0b1010 byte-identical', () => {
+    const md = '---\ntitle: Old\nthousands: 1_000\nflags: 0b1010\n---\nbody text\n';
+    const parsed = parseMarkdownFile(md);
+    // Change ONLY title; thousands/flags are untouched. If the engine saw them as
+    // "changed" (the M2 split) it would canonicalise `1_000` → `1000`.
+    const out = assembleMarkdownFile({ ...parsed.frontmatter, title: 'New' }, parsed.body, {
+      originalFrontmatter: parsed.rawFrontmatter,
+    });
+    const lines = parseMarkdownFile(out).rawFrontmatter.split('\n');
+    expect(lines, 'untouched 1_000 canonicalised — M2 regression').toContain('thousands: 1_000');
+    expect(lines, 'untouched 0b1010 canonicalised — M2 regression').toContain('flags: 0b1010');
+    expect(lines).toContain('title: New');
+  });
+});
+
+/**
  * Phase 20 / S6 — caret preservation. Without this, an external edit hitting
  * `setContent` underneath an open editor resets the cursor to position 0 and
  * the user loses their place mid-keystroke. The stub editor below covers the
@@ -161,7 +339,7 @@ interface StubEditor {
     doc: { content: { size: number } };
   };
   commands: {
-    setContent: (body: string, emit: boolean) => void;
+    setContent: (body: string, options: { emitUpdate?: boolean }) => void;
     setTextSelection: (sel: { from: number; to: number }) => void;
     focus: (pos?: unknown, options?: { scrollIntoView?: boolean }) => void;
   };
@@ -182,8 +360,8 @@ function makeStubEditor(opts: {
       doc: { content: { size: 9999 } }, // any size before setContent
     },
     commands: {
-      setContent: (body, emit) => {
-        calls.push(['setContent', { body, emit }]);
+      setContent: (body, options) => {
+        calls.push(['setContent', { body, options }]);
         stub.state.doc.content.size = opts.newDocSize;
       },
       setTextSelection: (sel) => {
@@ -205,6 +383,22 @@ describe('markdownSync — loadMarkdownIntoEditor caret preservation', () => {
     loadMarkdownIntoEditor(stub as unknown as Editor, 'new body');
     const kinds = stub.calls.map((c) => c[0]);
     expect(kinds).toEqual(['setContent']);
+  });
+
+  // TipTap 3 — `setContent`'s 2nd arg is an OPTIONS object whose `emitUpdate`
+  // defaults to TRUE. A bare boolean (the TipTap 2 form) would no longer
+  // suppress onUpdate → every file load would fire a phantom write. Assert the
+  // exact options object, not just the call.
+  it('passes setContent a TipTap 3 options object with emitUpdate:false by default', () => {
+    const stub = makeStubEditor({ initialFrom: 0, initialTo: 0, newDocSize: 5 });
+    loadMarkdownIntoEditor(stub as unknown as Editor, 'body');
+    expect(stub.calls[0]).toEqual(['setContent', { body: 'body', options: { emitUpdate: false } }]);
+  });
+
+  it('forwards an explicit emitUpdate:true in the options object', () => {
+    const stub = makeStubEditor({ initialFrom: 0, initialTo: 0, newDocSize: 5 });
+    loadMarkdownIntoEditor(stub as unknown as Editor, 'body', { emitUpdate: true });
+    expect(stub.calls[0]).toEqual(['setContent', { body: 'body', options: { emitUpdate: true } }]);
   });
 
   it('restores selection in place when both ends still fit the new doc', () => {
@@ -293,6 +487,45 @@ describe('markdownSync — isLossyMarkdownRoundTrip', () => {
     // Intraword underscores (snake_case) are not emphasis and survive, while a
     // real underscore emphasis in the same line still normalises to a match.
     expect(isLossyMarkdownRoundTrip('_em_ and snake_case', '*em* and snake_case')).toBe(false);
+  });
+
+  // Audit-10 M5 — a hard line break written with two+ trailing spaces (common in
+  // verse / dialogue) is serialised by prosemirror-markdown as the backslash
+  // form. Without normalising the two encodings to one, the round-trip never
+  // compares equal and the document is forced read-only (saving disabled).
+  it('returns false when only hard-break encoding differs (two-space vs backslash)', () => {
+    expect(isLossyMarkdownRoundTrip('Roses are red  \nViolets are blue', 'Roses are red\\\nViolets are blue')).toBe(
+      false,
+    );
+    // Multi-line verse with hard breaks on every line.
+    const verse = 'Line one  \nLine two  \nLine three';
+    const serialised = 'Line one\\\nLine two\\\nLine three';
+    expect(isLossyMarkdownRoundTrip(verse, serialised)).toBe(false);
+    // A disk file already using the backslash form still round-trips.
+    expect(isLossyMarkdownRoundTrip('a\\\nb', 'a\\\nb')).toBe(false);
+  });
+
+  // Audit-10 M5 — thematic breaks (scene breaks in fiction) can be written with
+  // any of `---` / `***` / `___` / spaced variants; prosemirror-markdown emits a
+  // single canonical form. Treat every valid thematic-break line as equivalent
+  // so a `* * *` scene break doesn't force the document read-only.
+  it('returns false when only thematic-break marker style differs', () => {
+    expect(isLossyMarkdownRoundTrip('before\n\n***\n\nafter', 'before\n\n---\n\nafter')).toBe(false);
+    expect(isLossyMarkdownRoundTrip('before\n\n* * *\n\nafter', 'before\n\n---\n\nafter')).toBe(false);
+    expect(isLossyMarkdownRoundTrip('before\n\n___\n\nafter', 'before\n\n---\n\nafter')).toBe(false);
+    expect(isLossyMarkdownRoundTrip('before\n\n- - -\n\nafter', 'before\n\n---\n\nafter')).toBe(false);
+  });
+
+  // A `---` directly under a text line is a Setext H2, NOT a thematic break — the
+  // thematic-break normalisation must not steal it from the Setext pass.
+  it('still treats a dashed line directly under text as a Setext H2, not a rule', () => {
+    expect(isLossyMarkdownRoundTrip('Heading Two\n---\n\nbody', '## Heading Two\n\nbody')).toBe(false);
+  });
+
+  // Negative control — the thematic-break normalisation must not mask a genuine
+  // loss: a `* * *` the parser dropped entirely is still lossy.
+  it('returns true when a thematic break is dropped entirely', () => {
+    expect(isLossyMarkdownRoundTrip('before\n\n* * *\n\nafter', 'before\n\nafter')).toBe(true);
   });
 
   it('returns true when an Obsidian callout is dropped', () => {

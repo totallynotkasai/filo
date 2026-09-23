@@ -1,6 +1,8 @@
 <script lang="ts">
   import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
+  import { invokeOk } from '../../lib/utils/invokeOk';
+  import FiloLogo from '../shared/FiloLogo.svelte';
   interface Props {
     onReturnToProject?: () => void;
   }
@@ -104,10 +106,16 @@
 
   async function recordOpen(path: string, name: string): Promise<void> {
     try {
-      const updated = await window.filo.invoke('vault:add-recent', path, name);
-      if (Array.isArray(updated)) recentProjects = updated;
+      // Audit-18 4.5 — `invokeOk` throws on the `{ ok: false }` failure branch
+      // (validation / missing directory), so a failed add lands in the catch
+      // and the displayed list is left INTACT. The old bare-array call set
+      // `recentProjects = []` on any failure, wiping the UI on a transient
+      // stat miss (e.g. a network-share vault briefly offline).
+      const { recents } = await invokeOk('vault:add-recent', path, name);
+      recentProjects = recents;
     } catch {
-      // Best-effort — recent list is non-critical UI state.
+      // Best-effort — recent list is non-critical UI state. Leave the
+      // currently-shown list untouched rather than clearing it on a failed add.
     }
   }
 
@@ -207,10 +215,7 @@
     <!-- Logo and Title -->
     <div class="home-header">
       <div class="home-logo">
-        <svg width="72" height="72" viewBox="0 0 64 64" fill="none" aria-hidden="true">
-          <rect width="64" height="64" rx="16" fill="var(--accent-primary)" />
-          <path d="M20 18h24v4H20zM20 28h18v4H20zM20 38h22v4H20zM20 48h14v4H20z" fill="var(--text-inverse)" />
-        </svg>
+        <FiloLogo size={128} />
       </div>
       <h1 class="home-title">Filo</h1>
       <p class="home-subtitle">Personal Knowledge Management</p>

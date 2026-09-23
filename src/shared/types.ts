@@ -13,6 +13,16 @@ export type IpcChannel =
   | 'vault:watch'
   | 'vault:close'
   | 'vault:copy-file'
+  // Audit-12 S1 — preload-internal one-way registration of an approved
+  // vault:copy-file source (a real OS-dropped file path). Registered main-side
+  // via ipcMain.on and fired ONLY by the preload getPathForFile through a
+  // direct ipcRenderer.send. Deliberately absent from SendChannel so the
+  // contextBridge-exposed api.send cannot reach it. The z.never() payload
+  // schema is the runtime backstop. See services/approvedSources.ts.
+  // (This comment avoids apostrophe and quote characters on purpose: the
+  // ipc-parity scan harvests quoted literals from this union block, so a stray
+  // one would be misread as a channel name.)
+  | 'vault:register-source-path'
   | 'vault:read-file-text'
   | 'vault:write-file-text'
   | 'vault:write-existing-file-text'
@@ -50,6 +60,8 @@ export type IpcChannel =
   | 'board:delete'
   // Recovery snapshot (defensive backup of vault files before overwrite)
   | 'recovery:snapshot'
+  // Recovery snapshot listing (surfaced to the user on vault open)
+  | 'recovery:list'
   // Config operations (.filo/ directory)
   | 'config:load'
   | 'config:save'
@@ -89,6 +101,23 @@ export type IpcChannel =
   | 'app:flush-and-quit'
   // App lifecycle (renderer -> main)
   | 'app:ready-to-quit'
+  // 6.2.H4 — renderer-initiated quit cancellation. On a save-failure
+  // confirm, the Stay-open-and-retry choice sends this so main clears
+  // isFlushingForQuit and the flush-timeout timer, keeping the window
+  // alive for retry instead of destroying it.
+  | 'app:cancel-quit'
+  // Audit-4 DI-04 — renderer heartbeat. Sent right before the open-ended
+  // save-failure confirm so main clears its FLUSH_TIMEOUT_MS auto-destroy
+  // timer and waits on the user reply (Quit-anyway / Stay-open) instead of
+  // destroying the window out from under the dialog (and dropping the edits).
+  | 'app:quit-awaiting-user'
+  // Audit5 2.1 — renderer drain heartbeat. Beat immediately and then every
+  // ~2s WHILE the quit flush drains, so main re-arms its FLUSH_TIMEOUT_MS
+  // auto-destroy timer on each beat and an honest drain that runs longer than
+  // the ceiling (large vault on a contended volume such as OneDrive) does not
+  // destroy the window mid-write. The ceiling then bounds inter-beat silence
+  // (a wedged renderer), not total honest drain time.
+  | 'app:drain-heartbeat'
   // Sidebar — per-machine state (width, in-app floating mode, bounds)
   | 'sidebar:get-state'
   | 'sidebar:set-state';
@@ -106,7 +135,37 @@ export type IpcChannel =
  * run the same `validateIpcPayload` gate `invoke` uses, closing the hole
  * where `send` forwarded unvalidated args straight to the main process.
  */
-export type SendChannel = 'app:ready-to-quit';
+export type SendChannel =
+  | 'app:ready-to-quit'
+  | 'app:cancel-quit'
+  | 'app:quit-awaiting-user'
+  | 'app:drain-heartbeat';
+
+/**
+ * Audit-15 P3.3 — channels the renderer may SUBSCRIBE to via `window.filo.on`.
+ * These are the pure main→renderer events main pushes with
+ * `webContents.send(...)`; the renderer is receive-only on them. The preload
+ * `on` wrapper validates against this list at runtime so a compromised renderer
+ * can't attach a listener to an arbitrary channel string — defence in depth,
+ * since `invoke` and `send` are already payload-validated and `on` was the one
+ * un-gated bridge method.
+ *
+ * MUST stay in sync with `MAIN_TO_RENDERER_EVENTS` in
+ * `scripts/check-ipc-parity.mjs` (the parity gate forces every such event into
+ * that set — this is its renderer-facing twin) and with the `broadcastOnly`
+ * set in `ipcChannelParity.test.ts`. The `: readonly IpcChannel[]` annotation
+ * makes every entry compile-time-checked against the `IpcChannel` union, so a
+ * typo or a removed channel fails the build rather than silently mis-gating.
+ */
+export const RECEIVE_CHANNELS: readonly IpcChannel[] = [
+  'vault:files-changed',
+  'vault:tree-updated',
+  'vault:file-renamed',
+  'vault:watcher-failed',
+  'vault:watcher-state',
+  'vault:tree-too-large',
+  'app:flush-and-quit',
+];
 
 /**
  * File tree node representing a file or folder in the vault.

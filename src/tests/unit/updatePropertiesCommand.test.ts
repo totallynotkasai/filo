@@ -27,12 +27,28 @@ interface FiloRecorder {
   calls: Array<{ channel: string; args: unknown[] }>;
 }
 
-function installRecorder(): FiloRecorder {
+/**
+ * Phase 4 (WRITE_PATH_REMEDIATION_PLAN_2026-06-04) — the Properties write now
+ * applies its field delta to a FRESH disk read. Tests that exercise a text-tile
+ * FM write pass `diskContent` (the on-disk `.md` the gateway re-reads in-chain).
+ * Omitting it leaves `vault:read-file-text` unhandled (returns undefined), which
+ * the disk-read path treats as "unreadable" → the `base === null` blind-apply
+ * legacy write — the corner the docId-less / no-vault tests rely on.
+ */
+function installRecorder(diskContent?: string): FiloRecorder {
   const calls: FiloRecorder['calls'] = [];
   installFiloMock((channel: unknown, ...args: unknown[]) => {
     calls.push({ channel: channel as string, args });
     if (channel === 'vault:write-existing-file-text') {
       return { success: true };
+    }
+    if (diskContent !== undefined) {
+      if (channel === 'vault:read-file-text') {
+        return { success: true, content: diskContent, mtimeMs: 1, size: diskContent.length };
+      }
+      if (channel === 'vault:stat') {
+        return { success: true, mtimeMs: 1, size: diskContent.length };
+      }
     }
     return undefined;
   });
@@ -152,6 +168,8 @@ describe('UpdatePropertiesCommand — frontmatter (text tile)', () => {
   });
 
   it('execute writes the after snapshot via vault:write-existing-file-text', async () => {
+    // Phase 4 — disk holds the seeded "before" state; the delta is applied to it.
+    recorder = installRecorder('---\ntags:\n  - old\n---\nhello body\n');
     documentStore.loadDocument({
       docId: 'doc-1',
       filename: 'Notes.md',
@@ -180,6 +198,7 @@ describe('UpdatePropertiesCommand — frontmatter (text tile)', () => {
   });
 
   it('undo restores prior frontmatter via vault:write-existing-file-text', async () => {
+    recorder = installRecorder('---\npriority: low\n---\nbody\n');
     documentStore.loadDocument({
       docId: 'doc-2',
       filename: 'A.md',
@@ -207,6 +226,12 @@ describe('UpdatePropertiesCommand — frontmatter (text tile)', () => {
   });
 
   it('snapshots deep-cloned so later mutations do not poison the command', async () => {
+    // Disk holds the post-execute "after" state (tags: [b]); undo reverts it to
+    // the "before" snapshot. Audit-18 6.3 — a successful read is REQUIRED now: a
+    // docId-less Properties undo against an UNREADABLE file refuses rather than
+    // blind-writing a stale body, so this test mocks the (realistic) readable
+    // disk and asserts the deep-cloned snapshot is what reaches the write.
+    recorder = installRecorder('---\ntags:\n  - b\n---\nbody\n');
     const sharedFm = { tags: ['a'] };
     const cmd = new UpdatePropertiesCommand(
       { kind: 'frontmatter', relPath: 'X.md', docId: null, fm: sharedFm },
@@ -234,6 +259,97 @@ describe('UpdatePropertiesCommand — frontmatter (text tile)', () => {
     await cmd.execute();
     // No write attempted — only the missing-vault early-return fires.
     expect(recorder.calls.find((c) => c.channel === 'vault:write-existing-file-text')).toBeUndefined();
+  });
+});
+
+describe('UpdatePropertiesCommand — H2 undo preserves externally-added keys', () => {
+  let recorder: FiloRecorder;
+
+  beforeEach(() => {
+    recorder = installRecorder();
+    vaultStore.setPath('/vault');
+    boardCacheStore.clear();
+    boardStore.clearBoard();
+  });
+  afterEach(() => {
+    restoreFiloDefault();
+    vaultStore.setPath('');
+    boardCacheStore.clear();
+    boardStore.clearBoard();
+    documentStore.clear();
+  });
+
+  it('undo keeps a key added externally between edit and Ctrl+Z', async () => {
+    // Phase 4 — the external editor wrote `reviewed: true` to DISK; the gateway's
+    // delta write re-reads disk, so the untouched key survives by construction
+    // (the reconciler also merges it into the live cache, mirrored below).
+    recorder = installRecorder('---\npriority: high\nreviewed: true\n---\nh2 body\n');
+    documentStore.loadDocument({
+      docId: 'doc-h2',
+      filename: 'H2.md',
+      title: 'H2',
+      body: 'h2 body',
+      htmlContent: '',
+      richText: [],
+    });
+    documentStore.setFrontmatter('doc-h2', { priority: 'low' });
+
+    // User changes ONE property (priority low → high) via the popup.
+    const cmd = new UpdatePropertiesCommand(
+      { kind: 'frontmatter', relPath: 'H2.md', docId: 'doc-h2', fm: { priority: 'low' } },
+      { kind: 'frontmatter', relPath: 'H2.md', docId: 'doc-h2', fm: { priority: 'high' } },
+    );
+    await cmd.execute();
+    expect(documentStore.getFrontmatter('doc-h2')).toMatchObject({ priority: 'high' });
+
+    // Another tool added `reviewed: true` (on disk above); the sync reconciler
+    // merges it into the live cache — the state the next undo rebases against.
+    documentStore.setFrontmatter('doc-h2', { priority: 'high', reviewed: true });
+
+    await cmd.undo();
+    // Pre-fix the whole-snapshot replace wrote `{ priority: low }` and erased
+    // `reviewed`. The rebase keeps it: only the OWNED key (priority) reverts.
+    expect(documentStore.getFrontmatter('doc-h2')).toMatchObject({
+      priority: 'low',
+      reviewed: true,
+    });
+    const undoWrite = recorder.calls
+      .filter((c) => c.channel === 'vault:write-existing-file-text')
+      .pop();
+    expect(undoWrite?.args[2]).toContain('priority: low');
+    expect(undoWrite?.args[2]).toContain('reviewed: true');
+  });
+
+  it('undo keeps a key added externally ON DISK when no editor cache is seeded', async () => {
+    // No documentStore seed → the live base comes from a fresh disk read.
+    const calls: FiloRecorder['calls'] = [];
+    installFiloMock((channel: unknown, ...args: unknown[]) => {
+      calls.push({ channel: channel as string, args });
+      if (channel === 'vault:read-file-text') {
+        return {
+          success: true,
+          content: '---\npriority: high\nreviewed: true\n---\nDisk body\n',
+          mtimeMs: 1,
+          size: 60,
+        };
+      }
+      if (channel === 'vault:stat') return { success: true, mtimeMs: 1, size: 60 };
+      if (channel === 'vault:write-existing-file-text') return { success: true };
+      return undefined;
+    });
+
+    const cmd = new UpdatePropertiesCommand(
+      { kind: 'frontmatter', relPath: 'Disk.md', docId: 'doc-disk', fm: { priority: 'low' } },
+      { kind: 'frontmatter', relPath: 'Disk.md', docId: 'doc-disk', fm: { priority: 'high' } },
+    );
+
+    // Undo reverts priority high → low while preserving the on-disk reviewed key.
+    await cmd.undo();
+    const undoWrite = calls
+      .filter((c) => c.channel === 'vault:write-existing-file-text')
+      .pop();
+    expect(undoWrite?.args[2]).toContain('priority: low');
+    expect(undoWrite?.args[2]).toContain('reviewed: true');
   });
 });
 

@@ -33,7 +33,8 @@ export function basenameOf(path: string): string {
   if (!path) return '';
   const parts = path.split(/[\\/]/);
   for (let i = parts.length - 1; i >= 0; i--) {
-    if (parts[i]) return parts[i];
+    const seg = parts[i];
+    if (seg) return seg;
   }
   return path;
 }

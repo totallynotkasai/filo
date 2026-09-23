@@ -84,7 +84,12 @@ export function registerExportHandlers(): void {
       });
 
       if (result.canceled || !result.filePath) {
-        return { success: false, path: '' };
+        // Audit-18 4.4 — the user dismissed the save dialog. This is NOT a
+        // write failure, so carry a `canceled` discriminator: the renderer
+        // treats it as a no-op instead of raising a spurious "Export failed"
+        // error toast (a real failure returns `{ success: false }` with NO
+        // `canceled` flag, below).
+        return { success: false, path: '', canceled: true };
       }
 
       // Phase 8 / 8.2 — defence-in-depth: never write a user-facing export

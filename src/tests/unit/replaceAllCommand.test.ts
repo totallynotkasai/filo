@@ -4,6 +4,7 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { searchStore } from '@renderer/stores/search.svelte';
 import { historyStore } from '@renderer/stores/history.svelte';
+import { uiStore } from '@renderer/stores/ui.svelte';
 import { parseMarkdown } from '@renderer/lib/vault/vaultIndex';
 import { ReplaceAllCommand, runReplaceAllCommand } from '@renderer/commands/replaceAllCommand';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
@@ -12,6 +13,7 @@ import { documentStore } from '@renderer/stores/document.svelte';
 import {
   registerForceWriter,
   scheduleMarkdownWrite,
+  runSerializedMarkdownWrite,
   __resetMarkdownFileWriterForTests,
   type WriteArgs,
 } from '@renderer/lib/vault/markdownFileWriter';
@@ -177,6 +179,46 @@ describe('ReplaceAllCommand — atomicity', () => {
     expect(filesystem['b.md']).toBe('# B\nfrodo elsewhere');
   });
 
+  it('Audit-10 M1 — serialises behind an in-flight write to the same .md path', async () => {
+    // A debounced TextTile / DocumentEditor save can be executing at the IPC
+    // layer when Replace All fires its own direct write to the SAME file. The
+    // fix enrols the bulk write on the per-path chain so it ORDERS behind that
+    // in-flight write instead of racing it (OS-arbitrated order, loser's bytes
+    // lost). Here we hold the chain for `a.md` with a gated write and prove
+    // Replace All's write does not land until the chain is released.
+    const filesystem: FileMap = { 'a.md': '# A\nfind frodo here' };
+    const { writes } = installFiloStub(filesystem);
+    vaultIndexStore.restoreMetadata('a.md', parseMarkdown('a.md', filesystem['a.md']));
+    boardCacheStore.hydrate(
+      { mm: makeMindMap('Board', 'mm', { ta: makeTextDef('ta', 'A', 'a.md') }) },
+      { mm: 'a.board.json' },
+    );
+    searchStore.setQuery('frodo');
+    searchStore.setReplaceText('sam');
+    expect(searchStore.matches.length).toBe(1);
+
+    // Occupy the per-path write chain for a.md with a gated op.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const occupant = runSerializedMarkdownWrite('a.md', () => gate);
+
+    // Kick off Replace All; its write must queue behind the occupant.
+    const replaceP = runReplaceAllCommand();
+    // Let microtasks/timers settle — with serialization the write has NOT fired.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(writes.some((w) => w.path === 'a.md')).toBe(false);
+    expect(filesystem['a.md']).toContain('frodo');
+
+    // Release the chain; the queued Replace All write now lands.
+    release();
+    await occupant;
+    await replaceP;
+    expect(writes.some((w) => w.path === 'a.md')).toBe(true);
+    expect(filesystem['a.md']).toContain('sam');
+  });
+
   it('aborts when any file is unreadable (pre-flight failure → no writes)', async () => {
     const filesystem: FileMap = {
       'a.md': '# A\nfrodo here',
@@ -234,6 +276,48 @@ describe('ReplaceAllCommand — atomicity', () => {
     await runReplaceAllCommand();
 
     expect(writes).toHaveLength(0);
+  });
+});
+
+describe('ReplaceAllCommand — L4 execute-time drift skip', () => {
+  it('skips a file whose disk content diverged from the planned snapshot (no clobber)', async () => {
+    // Disk no longer equals the plan's `originalContent` (an edit landed since
+    // the plan was built / before this redo). execute() must re-read, detect
+    // the divergence, and skip the write rather than clobber the newer bytes.
+    const filesystem: FileMap = { 'a.md': 'EXTERNALLY CHANGED SINCE PLAN' };
+    const { writes } = installFiloStub(filesystem);
+    const cmd = new ReplaceAllCommand('/test/vault', [
+      {
+        path: 'a.md',
+        originalContent: 'original planned content',
+        nextContent: 'replaced content',
+        replacementCount: 1,
+      },
+    ]);
+
+    await cmd.execute();
+
+    expect(writes.some((w) => w.path === 'a.md')).toBe(false);
+    expect(filesystem['a.md']).toBe('EXTERNALLY CHANGED SINCE PLAN');
+    expect(uiStore.toasts.some((t) => t.text.includes('Replace skipped'))).toBe(true);
+  });
+
+  it('writes when disk still equals the planned originalContent', async () => {
+    const filesystem: FileMap = { 'a.md': 'original planned content' };
+    const { writes } = installFiloStub(filesystem);
+    const cmd = new ReplaceAllCommand('/test/vault', [
+      {
+        path: 'a.md',
+        originalContent: 'original planned content',
+        nextContent: 'replaced content',
+        replacementCount: 1,
+      },
+    ]);
+
+    await cmd.execute();
+
+    expect(writes.some((w) => w.path === 'a.md')).toBe(true);
+    expect(filesystem['a.md']).toBe('replaced content');
   });
 });
 
@@ -329,5 +413,38 @@ describe('ReplaceAllCommand — open-editor sync (audit 2.1)', () => {
     // The armed write would have fired 'hello frodo' back over 'hello sam'.
     expect(isPathPending('a.md')).toBe(false);
     expect(documentStore.getDocument('doc-a')?.body).toBe('hello sam');
+  });
+});
+
+describe('ReplaceAllCommand — Audit-14 3.1 frontmatter-boundary parity', () => {
+  it('replaces a body match in a file whose fences carry a trailing space (--- )', async () => {
+    // 3.1 — the body offsets the search produced come from `splitFrontmatterSource`
+    // (`FileMetadata.content`), whose fence regex tolerates a trailing space on a
+    // fence (`--- \n`). The replace path used to translate those offsets with a
+    // DIVERGENT local regex (`---\r?\n`) that did NOT tolerate the trailing space:
+    // on such a file it matched nothing, returned fmEnd=0, and every match then
+    // failed the byte-equality guard → silently skipped (or, at a colliding
+    // offset, spliced into the FM). The fix shares `splitFrontmatterSource`, so the
+    // FM byte length matches the offset basis exactly.
+    const original = '--- \ntitle: keep me\n--- \n# Heading\nhello frodo here\n';
+    const filesystem: FileMap = { 'a.md': original };
+    const { writes } = installFiloStub(filesystem);
+    vaultIndexStore.restoreMetadata('a.md', parseMarkdown('a.md', filesystem['a.md']));
+    boardCacheStore.hydrate(
+      { mm: makeMindMap('Board', 'mm', { ta: makeTextDef('ta', 'A', 'a.md') }) },
+      { mm: 'a.board.json' },
+    );
+
+    searchStore.setQuery('frodo');
+    searchStore.setReplaceText('sam');
+    expect(searchStore.matches.length).toBe(1);
+
+    await runReplaceAllCommand();
+
+    // Match found + replaced (the bite: the old regex silently skipped it).
+    expect(writes.some((w) => w.path === 'a.md')).toBe(true);
+    // The frontmatter block (trailing-space fences included) is byte-untouched;
+    // only the body's `frodo` → `sam`.
+    expect(filesystem['a.md']).toBe('--- \ntitle: keep me\n--- \n# Heading\nhello sam here\n');
   });
 });

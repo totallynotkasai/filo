@@ -18,6 +18,7 @@ import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { noteBaseline } from '../vault/fileBaselineRegistry';
 import { loadVersionedFile } from '../vault/loadVersionedFile';
 
+// allow-module-state: immutable lookup table derived from a build-time constant
 const TILE_TYPE_SET: ReadonlySet<string> = new Set(TILE_TYPES);
 
 /**
@@ -66,6 +67,18 @@ interface OrphanPruneReport {
   droppedKanbanDuplicates: string[];
   /** Task List duplicate placements dropped (first occurrence kept). */
   droppedTaskListDuplicates: string[];
+  /**
+   * Audit 2.1 — connection / frame / mindmap-group refs whose nested
+   * `boardId` disagreed with `envelope.board.id` and was rewritten to match.
+   * Each entry is a `kind:id` tag (e.g. `connection:c1`, `frame:f1`,
+   * `group:g1`) for diagnostics. Deliberately NOT counted by
+   * `orphanReportHasFindings`: a boardId rewrite is a benign, deterministic
+   * self-heal (the correct value *is* `board.id`), so it must not trip the
+   * orphan-prune recovery snapshot / refuse-to-load path. It is surfaced via
+   * the separate `boardIdsNormalized` result flag, which marks the board
+   * dirty so the repair reaches disk — the same way `groupsBackfilled` does.
+   */
+  normalizedBoardIdRefs: string[];
 }
 
 function emptyOrphanReport(): OrphanPruneReport {
@@ -74,10 +87,13 @@ function emptyOrphanReport(): OrphanPruneReport {
     framesWithStrippedTileIds: [],
     droppedKanbanDuplicates: [],
     droppedTaskListDuplicates: [],
+    normalizedBoardIdRefs: [],
   };
 }
 
 function orphanReportHasFindings(r: OrphanPruneReport): boolean {
+  // NB: `normalizedBoardIdRefs` is intentionally excluded — see its docstring.
+  // A boardId self-heal must not trigger the snapshot / refuse-to-load path.
   return (
     r.orphanConnections.length > 0 ||
     r.framesWithStrippedTileIds.length > 0 ||
@@ -131,10 +147,12 @@ function pruneOrphanRefsAndDuplicates(raw: unknown): OrphanPruneReport {
     connections?: Record<string, unknown>;
     frames?: unknown[];
     board?: {
+      id?: unknown;
       type?: string;
       columns?: unknown[];
       tasks?: unknown[];
       inlineTiles?: Record<string, unknown>;
+      groups?: unknown[];
     };
   };
   const tileIds = collectValidTileIds(envelope);
@@ -227,6 +245,53 @@ function pruneOrphanRefsAndDuplicates(raw: unknown): OrphanPruneReport {
     envelope.board.tasks = next;
   }
 
+  // Audit 2.1 — normalize nested boardId refs to the envelope's `board.id`.
+  // The superRefine in `schema/boardFile.ts` only warns on a mismatch and
+  // relies on THIS pass to repair it (its comment now reflects reality). A
+  // stale / foreign boardId — copied connections, a third-party tool, or a
+  // board file restored under a renamed id — would otherwise round-trip to
+  // disk unrepaired and could mask a cross-board mix-up (e.g. combined with a
+  // duplicate-id collision). Repair is deterministic (the correct value IS
+  // `board.id`), so no recovery snapshot is taken; the board is just marked
+  // dirty via the `boardIdsNormalized` flag so the corrected values persist.
+  const canonicalBoardId = envelope.board?.id;
+  if (typeof canonicalBoardId === 'string' && canonicalBoardId.length > 0) {
+    if (envelope.connections && typeof envelope.connections === 'object') {
+      for (const [id, c] of Object.entries(envelope.connections)) {
+        if (!c || typeof c !== 'object') continue;
+        const conn = c as { boardId?: unknown };
+        if (typeof conn.boardId === 'string' && conn.boardId !== canonicalBoardId) {
+          conn.boardId = canonicalBoardId;
+          report.normalizedBoardIdRefs.push(`connection:${id}`);
+        }
+      }
+    }
+    if (Array.isArray(envelope.frames)) {
+      for (const f of envelope.frames) {
+        if (!f || typeof f !== 'object') continue;
+        const frame = f as { id?: unknown; boardId?: unknown };
+        if (typeof frame.boardId === 'string' && frame.boardId !== canonicalBoardId) {
+          frame.boardId = canonicalBoardId;
+          report.normalizedBoardIdRefs.push(
+            `frame:${typeof frame.id === 'string' ? frame.id : '?'}`,
+          );
+        }
+      }
+    }
+    if (envelope.board?.type === 'mindmap' && Array.isArray(envelope.board.groups)) {
+      for (const g of envelope.board.groups) {
+        if (!g || typeof g !== 'object') continue;
+        const group = g as { id?: unknown; boardId?: unknown };
+        if (typeof group.boardId === 'string' && group.boardId !== canonicalBoardId) {
+          group.boardId = canonicalBoardId;
+          report.normalizedBoardIdRefs.push(
+            `group:${typeof group.id === 'string' ? group.id : '?'}`,
+          );
+        }
+      }
+    }
+  }
+
   return report;
 }
 
@@ -260,6 +325,14 @@ export interface LoadBoardResult {
    * `.filo/recovery/` (see snapshot path emitted in the toast).
    */
   orphansPruned: boolean;
+  /**
+   * Audit 2.1 — true when `pruneOrphanRefsAndDuplicates` rewrote at least one
+   * nested connection / frame / mindmap-group `boardId` to match
+   * `board.id`. Benign self-heal: unlike `orphansPruned` it takes no recovery
+   * snapshot and never refuses the load. The caller marks the board dirty so
+   * the corrected values land on disk (mirrors `groupsBackfilled`).
+   */
+  boardIdsNormalized: boolean;
 }
 
 export interface LoadBoardError {
@@ -292,7 +365,11 @@ export interface LoadBoardError {
  */
 export interface FailedBoardEntry {
   path: string;
-  errorKind: LoadBoardError['error'];
+  // `loadBoard` never returns `'duplicate-board-id'` — it's detected at the
+  // aggregate level in `loadAllBoards` when two files declare the same
+  // `board.id` (Audit 1.2). Widening here (rather than in `LoadBoardError`)
+  // keeps `loadBoard`'s own return type honest.
+  errorKind: LoadBoardError['error'] | 'duplicate-board-id';
   message: string;
 }
 
@@ -306,6 +383,19 @@ export async function loadBoard(
   vaultRoot: string,
   relPath: string,
 ): Promise<LoadBoardResult | LoadBoardError> {
+  // 3.5 (Audit-18) — stat the file BEFORE the content read so the post-read
+  // stat below can be BRACKETED. The baseline must reflect the bytes we actually
+  // loaded; a foreign write landing in the read→stat gap would otherwise make a
+  // lone post-read stat "our" baseline, and the next save would match-and-clobber
+  // the external edit with no drift prompt. Best-effort — a failed pre-stat just
+  // skips the baseline (the writer's drift check no-ops, legacy unguarded write).
+  let preStat: { mtimeMs: number; size: number } | null = null;
+  try {
+    preStat = await invokeOk('vault:stat', vaultRoot, relPath);
+  } catch {
+    preStat = null;
+  }
+
   let raw: string | null;
   try {
     raw = (await window.filo.invoke('board:load', vaultRoot, relPath)) as string | null;
@@ -321,9 +411,16 @@ export async function loadBoard(
   // that land between load and the next debounced write. Best-effort:
   // a failed stat just leaves the baseline empty (writer's drift check
   // no-ops, falling back to the legacy unguarded write).
+  //
+  // 3.5 (Audit-18) — stat-read-stat: stamp ONLY when the bracketing stats match
+  // (mtime + size). A mismatch means a write landed around the content read, so
+  // this stat reflects bytes we didn't load — leave the baseline unstamped so the
+  // next save's drift check re-detects + prompts rather than adopting foreign bytes.
   try {
     const stat = await invokeOk('vault:stat', vaultRoot, relPath);
-    noteBaseline(relPath, stat.mtimeMs, stat.size);
+    if (preStat && preStat.mtimeMs === stat.mtimeMs && preStat.size === stat.size) {
+      noteBaseline(relPath, stat.mtimeMs, stat.size);
+    }
   } catch {
     // Non-fatal — no baseline, no pre-write drift check for this board.
   }
@@ -436,7 +533,12 @@ export async function loadBoard(
     return {
       ok: false,
       error: 'schema-invalid',
-      message: loaded.error.issues.map((i) => i.message).join('; '),
+      // Prefix each issue with its path: Zod 4 messages are generic
+      // ("Invalid input: expected number, received undefined"), so without
+      // the path the recovery toast can't point at the broken field.
+      message: loaded.error.issues
+        .map((i) => (i.path.length > 0 ? `${i.path.join('.')}: ${i.message}` : i.message))
+        .join('; '),
     };
   }
 
@@ -489,7 +591,16 @@ export async function loadBoard(
   // overwrite an intentional collapse).
   warnUndersizedFrames(data.frames, data.board.name || relPath);
 
+  // Audit-4 DI-11 — spread the parsed envelope FIRST so unknown top-level keys
+  // that `V7BoardFileDataSchema.passthrough()` preserved at parse time survive
+  // the load → cache → save round-trip: the cache stores this object by
+  // reference (`cache[id] = data`) and the board write scheduler mutates +
+  // `JSON.stringify`s it in place, so a key present here is a key written back.
+  // Without the spread this reconstruction silently dropped any forward-compat
+  // envelope key a future Filo wrote, contradicting the schema's passthrough
+  // contract. The explicit fields below still pin the validated shape.
   const normalised: V7BoardFileData = {
+    ...data,
     board: data.board,
     tileDefs: data.tileDefs,
     connections: data.connections,
@@ -508,6 +619,7 @@ export async function loadBoard(
     droppedTileTypes,
     groupsBackfilled,
     orphansPruned: orphanReportHasFindings(orphanReport),
+    boardIdsNormalized: orphanReport.normalizedBoardIdRefs.length > 0,
   };
 }
 
@@ -600,6 +712,13 @@ export async function loadAllBoards(
    * path emitted in the per-board toast).
    */
   prunedBoardIds: string[];
+  /**
+   * Audit 2.1 — board IDs whose nested connection / frame / mindmap-group
+   * `boardId` was normalized to `board.id` on load. The caller marks each
+   * dirty so the corrected values reach disk (mirrors `backfilledBoardIds`;
+   * no recovery snapshot is involved).
+   */
+  normalizedBoardIds: string[];
 }> {
   const relList = (await window.filo.invoke('board:list', vaultRoot)) as string[];
 
@@ -611,6 +730,7 @@ export async function loadAllBoards(
   const failedBoards: FailedBoardEntry[] = [];
   const backfilledBoardIds: string[] = [];
   const prunedBoardIds: string[] = [];
+  const normalizedBoardIds: string[] = [];
 
   for (const relPath of relList) {
     const result = await loadBoard(vaultRoot, relPath);
@@ -634,6 +754,27 @@ export async function loadAllBoards(
       continue;
     }
     const { data } = result;
+    // Audit 1.2 — two .board.json files declaring the same board.id must not
+    // collapse. The first file loaded wins and stays reachable; route the
+    // collider into failedBoards (vaultCandidate snapshots it to
+    // .filo/recovery/) and skip merging its connections/frames so the
+    // survivor isn't polluted. Without this guard cache[id] / paths[id]
+    // silently overwrote — the first board became unreachable and its future
+    // saves hijacked the survivor's file — and the loser's connections/frames
+    // merged unconditionally under the survivor's id. Trivially produced by
+    // copying a .board.json in the OS file manager or restoring one from
+    // backup into the same vault.
+    if (Object.prototype.hasOwnProperty.call(cache, data.board.id)) {
+      const existingPath = paths[data.board.id];
+      const message = `Duplicate board id "${data.board.id}": ${relPath} collides with ${existingPath}`;
+      failedBoards.push({ path: relPath, errorKind: 'duplicate-board-id', message });
+      reportError(
+        'board-load',
+        message,
+        `Filo couldn't load ${relPath}: another board (${existingPath}) already uses id "${data.board.id}". The duplicate was left unloaded and snapshotted to .filo/recovery/ — give it a new id or remove the copy, then reopen the vault.`,
+      );
+      continue;
+    }
     boards.push(data.board);
     cache[data.board.id] = data;
     paths[data.board.id] = relPath;
@@ -641,6 +782,7 @@ export async function loadAllBoards(
     frames.push(...data.frames);
     if (result.groupsBackfilled) backfilledBoardIds.push(data.board.id);
     if (result.orphansPruned) prunedBoardIds.push(data.board.id);
+    if (result.boardIdsNormalized) normalizedBoardIds.push(data.board.id);
   }
 
   return {
@@ -652,6 +794,7 @@ export async function loadAllBoards(
     failedBoards,
     backfilledBoardIds,
     prunedBoardIds,
+    normalizedBoardIds,
   };
 }
 

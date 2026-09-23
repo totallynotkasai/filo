@@ -1,0 +1,374 @@
+/**
+ * Vault slice — external-edit DRIFT prompts (extracted from
+ * `vaultExternalPrompts.ts`, Audit-15 P5.1).
+ *
+ * The Promise-based Reload / Keep-local prompts the markdown + board write paths
+ * await when an external edit lands in the read->write gap
+ * (`promptExternalEditOnSync` / `promptBoardExternalEdit`), their shared per-path
+ * in-flight registry (`inFlightDriftPrompts` + its vault-swap reset and
+ * rename-transfer wiring, subscriber names UNCHANGED), the
+ * `recreateDeletedFile` Keep-local recovery write, and the deferred
+ * `queueMicrotask` that registers the two prompts with the writers via setters
+ * (the lib->store import cycle means wiring must go through a setter, deferred so
+ * the cycle's exports publish first).
+ *
+ * Split out of `vaultExternalPrompts.ts` purely to keep both prompt files under
+ * the file-size ceiling. Dependency direction: the toast-prompt file imports
+ * `recreateDeletedFile` from here; this file imports nothing back from it. The
+ * `prompt*` builders here that re-read disk via `vaultIndexStore.applyChanges()`
+ * then mutate stores are covered by `scripts/check-reconciler-vault-guard.mjs`,
+ * whose GUARD_TARGETS scans THIS file with the same triggers/exemption.
+ */
+import { vaultIndexStore } from './vaultIndex.svelte';
+import { documentStore } from './document.svelte';
+import { fileTagsStore } from './fileTags.svelte';
+import { boardStore } from './board.svelte';
+import { uiStore } from './ui.svelte';
+import { normalizeTags } from '../lib/vault/frontmatterSync';
+import { assembleMarkdownFile } from '../lib/editor/markdownSync';
+import { reportError } from '../lib/utils/errorBus';
+import { dropPendingDelta } from '../lib/boards/frontmatterWriteScheduler';
+import { markHydrated, setExternalEditPromptHandler } from '../lib/vault/markdownFileWriter';
+import { setBoardExternalEditHandler } from '../lib/boards/boardWriteScheduler';
+import { writeMarkdownAndReconcile } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
+import { registerPathRenamable } from '../lib/vault/renamePathKeys';
+import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
+import type { VaultContext } from './vaultStoreTypes';
+import { vaultSwapResettable } from '../core/vaultLifecycle';
+
+/**
+ * Audit2 5.2 — in-flight prompt registry. While a Reload / Keep-local toast
+ * is open for `path`, every concurrent caller awaits the SAME Promise so a
+ * second / third keystroke that also armed a body write doesn't pile a
+ * duplicate toast onto the stack. Cleared when the promise settles (either
+ * branch), so a *subsequent* external edit + write race opens a fresh
+ * prompt. Test-only access via `__inFlightDriftPromptsForTests` below.
+ *
+ * Phase 6.1.R2 — reset on vault swap so a stale unresolved entry can't
+ * block a fresh prompt for the same path in the new vault.
+ */
+const inFlightDriftPrompts = new Map<string, Promise<'reload' | 'keep-local' | 'defer'>>();
+vaultSwapResettable('vaultExternalChanges.inFlightDriftPrompts', () => inFlightDriftPrompts.clear());
+// Phase 6.1.R4 — transfer any in-flight prompt promise from oldRel to
+// newRel so a Reload/Keep-local toast still in flight when the user
+// renames the file doesn't get stranded under the old key (where no
+// caller looks anymore) AND so a post-rename keystroke for the new
+// path doesn't open a duplicate prompt.
+registerPathRenamable('vaultExternalChanges.inFlightDriftPrompts', (oldRel, newRel) => {
+  const inflight = inFlightDriftPrompts.get(oldRel);
+  if (inflight === undefined) return;
+  inFlightDriftPrompts.delete(oldRel);
+  inFlightDriftPrompts.set(newRel, inflight);
+});
+
+/**
+ * Phase A.3 — surfaces a Reload / Keep-local prompt when `syncTileMarkdown`
+ * detects an external edit landed in the read/write gap (file mtime
+ * changed between the pre-read stat and the pre-write stat).
+ *
+ * Returns a Promise that resolves to the user's choice:
+ *   - 'reload' — vault index is refreshed against disk, fresh content
+ *                is applied to the tile cache and (if open) the editor.
+ *                The caller skips its write.
+ *   - 'keep-local' — caller proceeds with the write. A confirmation
+ *                    toast is surfaced so the user sees their choice
+ *                    landed.
+ *   - 'defer' (6.4.M4) — user dismissed the prompt without choosing.
+ *                Caller MUST abort the write so the external edit on
+ *                disk survives; the in-memory dirty state is left intact
+ *                so the next debounced write re-prompts.
+ *
+ * Modelled on `promptModifiedFile` above but Promise-based because the
+ * sync caller needs to branch on the outcome before deciding whether to
+ * write. Persistent toast (duration: 0) — user MUST choose; the sync
+ * stays in-flight until they do.
+ *
+ * Audit2 5.2 — per-path dedupe: every concurrent caller for the same
+ * `path` awaits the same Promise so a typing storm against an externally-
+ * edited file produces ONE toast and ONE decision, not N.
+ */
+export function promptExternalEditOnSync(args: {
+  path: string;
+}): Promise<'reload' | 'keep-local' | 'defer'> {
+  const { path } = args;
+  const existing = inFlightDriftPrompts.get(path);
+  if (existing) return existing;
+
+  const promise = new Promise<'reload' | 'keep-local' | 'defer'>((resolve) => {
+    const editorDoc = documentStore.findByFilename(path);
+    uiStore.pushToast({
+      text: `"${editorDoc?.title || path}" was modified externally between Filo's read and write. Reload from disk, or keep your local edits? (Dismiss to defer — no changes saved.)`,
+      type: 'warning',
+      duration: 0,
+      // 6.4.M4 — the toast auto-dismisses (15s cap) and can be closed
+      // manually. On dismiss, resolve to 'defer' so the writer aborts
+      // without touching disk OR editor — both sides preserved. The
+      // dirty editor state survives, so the next debounced write
+      // re-prompts and the user must explicitly choose to overwrite.
+      onDismiss: () => resolve('defer'),
+      actions: [
+        {
+          label: 'Reload',
+          handler: () => {
+            // Refresh the vault index against the latest disk state, then
+            // pull the resulting FileMetadata. If the file vanished, fall
+            // back to keep-local (the upstream write will ENOENT-skip).
+            void (async () => {
+              // L17 (Audit-13) — capture identity before the disk re-read; on a
+              // swap during it, defer so the awaiting writer aborts without
+              // applying the outgoing vault's content to the new vault.
+              const identity = captureVaultIdentity();
+              await vaultIndexStore.applyChanges([path]);
+              if (!isStillSameVault(identity)) {
+                resolve('defer');
+                return;
+              }
+              const next = vaultIndexStore.getMetadata(path);
+              if (!next) {
+                resolve('keep-local');
+                return;
+              }
+              boardStore.applyFrontmatterToBackedTiles(path, next);
+              fileTagsStore.setFileTags(path, normalizeTags(next.frontmatter.tags));
+              // Audit-11 EER-1 — drop the armed field delta on this discard-reload.
+              dropPendingDelta(path);
+              if (editorDoc) {
+                documentStore.applyReloadFromDisk(
+                  editorDoc.docId,
+                  next.content,
+                  editorDoc.richText,
+                  next.frontmatter,
+                  next.rawFrontmatter, // L1 (Audit-13) — refresh originalFrontmatterCache too
+                  { mtimeMs: next.lastModified, size: next.rawByteSize },
+                );
+              }
+              resolve('reload');
+            })();
+          },
+        },
+        {
+          label: 'Keep local',
+          handler: () => {
+            uiStore.pushToast({
+              text: `External edit to "${editorDoc?.title || path}" overwritten with local changes.`,
+              type: 'info',
+              duration: 4000,
+            });
+            resolve('keep-local');
+          },
+        },
+      ],
+    });
+  });
+
+  inFlightDriftPrompts.set(path, promise);
+  // Drop the entry when the prompt settles (success OR rejection) so a
+  // future external-edit race opens a fresh prompt. `.finally` runs after
+  // the await chain in callers, so the next caller in the same microtask
+  // window still observes the in-flight promise.
+  void promise.finally(() => {
+    // Guard against an unrelated re-register having replaced our entry in
+    // the gap — only clear if the slot still points at our promise.
+    if (inFlightDriftPrompts.get(path) === promise) {
+      inFlightDriftPrompts.delete(path);
+    }
+  });
+  return promise;
+}
+
+/**
+ * Test-only — exposes the in-flight prompt map size + entries for assertion.
+ * Production code should never need this.
+ */
+export function __inFlightDriftPromptsForTests(): {
+  size: number;
+  has: (path: string) => boolean;
+} {
+  return {
+    size: inFlightDriftPrompts.size,
+    has: (path: string) => inFlightDriftPrompts.has(path),
+  };
+}
+
+export async function recreateDeletedFile(
+  rel: string,
+  editorDoc: { docId: string; body: string },
+  ctx: VaultContext,
+  snapshot?: {
+    fmSnapshot: Record<string, unknown>;
+    bodySnapshot: string;
+  },
+): Promise<void> {
+  const vaultRoot = ctx.getVaultPath();
+  if (!vaultRoot) return;
+
+  // Phase B / B.5 — prefer LIVE state when the doc still exists in the
+  // store (so user edits between toast-open and Keep-local click are
+  // honoured), fall back to the snapshot when the doc was unloaded mid-
+  // flow. The doc-loaded check via `getDocument` is the canonical
+  // "is this docId still alive" probe: a parallel unload would have
+  // removed it from `openDocuments`.
+  const stillLoaded = documentStore.getDocument(editorDoc.docId) !== undefined;
+  const liveFm = stillLoaded ? documentStore.getFrontmatter(editorDoc.docId) : undefined;
+  let fm: Record<string, unknown> | null = null;
+  let body: string | null = null;
+  if (stillLoaded && liveFm) {
+    fm = liveFm;
+    body = editorDoc.body;
+  } else if (snapshot) {
+    fm = snapshot.fmSnapshot;
+    body = snapshot.bodySnapshot;
+  }
+  if (fm === null || body === null) {
+    // Defence in depth — neither live nor snapshot available. Without
+    // a confirm-and-fallback, the user's "Keep local" click would
+    // either silently no-op or write an empty file. Surface a confirm
+    // that names the trade-off and lets them decide.
+    const proceedBodyOnly = await new Promise<boolean>((resolve) => {
+      uiStore.openConfirm({
+        title: 'Recover without frontmatter?',
+        body:
+          `Frontmatter for "${rel}" couldn't be recovered (the editor closed before you clicked Keep local). ` +
+          'Re-create the file with body content only? Tags, properties, and other YAML keys will be lost.',
+        confirmLabel: 'Recreate body-only',
+        danger: true,
+        onConfirm: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+    });
+    if (!proceedBodyOnly) return;
+    fm = {};
+    body = editorDoc.body ?? '';
+  }
+
+  const fileText = assembleMarkdownFile(fm, body);
+  try {
+    // Phase 6.6 — coupled write+reconcile. `create: true` uses the
+    // file-creating channel (not the gateway's write-existing) because the user
+    // explicitly opted to re-create the file the watcher reported missing, so
+    // mkdir -p semantics are desired. `mode: 'full'` cancels a debounced body
+    // write armed BEFORE the Keep-local click — it closure-captured the
+    // pre-recovery body and would otherwise fire ~300 ms later, silently
+    // reverting the recreation (applyReloadFromDisk self-cancels, 6.0.C2). The
+    // reconcile is keyed to the SAME path we write.
+    await writeMarkdownAndReconcile({
+      vaultRoot,
+      path: rel,
+      content: fileText,
+      mode: 'full',
+      create: true,
+    });
+    // Orphan-fm semantics: file just created on disk via the file-creating
+    // channel. Mark hydrated so subsequent gateway writes (e.g. the user
+    // making further edits in a still-open editor) can proceed without
+    // throwing. BOM is set to false — the assembled fileText didn't include
+    // one and the recreated file matches the assembly. (The reconcile ran inside
+    // the helper above; it and markHydrated touch independent state.)
+    markHydrated(rel, false);
+  } catch (err) {
+    reportError(
+      'vaultExternalChanges',
+      err,
+      `Failed to re-create "${rel}" on disk. Local edits remain in memory but are not yet on disk.`,
+    );
+  }
+}
+
+/**
+ * Phase R6 — Reload / Keep-local prompt for board JSON drift. Mirrors
+ * `promptExternalEditOnSync` (which targets `.md` editors) but the body
+ * names the .board.json path instead. Resolves to:
+ *   - 'reload' — user wants Filo to discard the in-memory cache and let
+ *                disk win. The caller is responsible for any reload
+ *                bookkeeping; the toast just resolves and returns.
+ *   - 'keep-local' — user wants their in-memory edits to overwrite the
+ *                    external change. The caller proceeds with the write.
+ *   - 'defer' (6.4.M4) — user dismissed the prompt without choosing.
+ *                Caller MUST abort the write so the external edit on
+ *                disk survives; the dirty board cache is left intact so
+ *                the next debounced write re-prompts.
+ *
+ * Persistent toast (duration: 0) — user MUST choose; the write stays
+ * paused until they do.
+ */
+export function promptBoardExternalEdit(args: {
+  path: string;
+}): Promise<'reload' | 'keep-local' | 'defer'> {
+  const { path } = args;
+  // #14 — share the same per-path dedup map as `promptExternalEditOnSync` so a
+  // save storm against an externally-edited `.board.json` produces ONE toast +
+  // ONE decision (not N stacked toasts), and so the prompt inherits the
+  // swap-reset (`vaultSwapResettable`) + rename-transfer (`registerPathRenamable`)
+  // wiring already attached to that map. Board paths (`.board.json`) and editor
+  // paths (`.md`) never collide as keys, so the shared map is safe. (The *hang*
+  // on toast eviction is already fixed by R3; this closes the missing dedup.)
+  const existing = inFlightDriftPrompts.get(path);
+  if (existing) return existing;
+
+  const promise = new Promise<'reload' | 'keep-local' | 'defer'>((resolve) => {
+    uiStore.pushToast({
+      text: `"${path}" was modified externally between Filo's load and the next save. Reload from disk (discard in-memory changes), or keep your local edits? (Dismiss to defer — no changes saved.)`,
+      type: 'warning',
+      duration: 0,
+      // 6.4.M4 — dismiss resolves to 'defer' so the writer aborts
+      // without touching disk OR cache. The dirty board cache survives,
+      // so the next debounced write re-prompts and the user must
+      // explicitly choose to overwrite.
+      onDismiss: () => resolve('defer'),
+      actions: [
+        {
+          label: 'Reload',
+          handler: () => {
+            // Caller decides how to surface the reload. We just signal
+            // the choice; the writer treats it as "abort this write".
+            resolve('reload');
+          },
+        },
+        {
+          label: 'Keep local',
+          handler: () => {
+            uiStore.pushToast({
+              text: `External edit to "${path}" will be overwritten on the next save.`,
+              type: 'info',
+              duration: 4000,
+            });
+            resolve('keep-local');
+          },
+        },
+      ],
+    });
+  });
+
+  inFlightDriftPrompts.set(path, promise);
+  // Drop the entry when the prompt settles so a future board-drift race opens
+  // a fresh prompt; guard against an unrelated re-register replacing our slot.
+  void promise.finally(() => {
+    if (inFlightDriftPrompts.get(path) === promise) {
+      inFlightDriftPrompts.delete(path);
+    }
+  });
+  return promise;
+}
+
+// Phase R6 + Audit-14 6.2 — register the Reload / Keep-local prompts with the
+// writers at module load. `lib/` writers can't import `stores/` (circular), so
+// wiring goes via setters, wrapped in `queueMicrotask` so the pre-existing eval
+// cycles (markdownFileWriter ↔ documentStore; vaultIndexStore → vaultStore →
+// vaultExternalChanges) publish their exports before we look up a setter. The
+// `typeof === 'function'` guards tolerate vitest's module reset swapping a
+// binding mid-microtask (prod: both are always functions). 6.2 — the guards
+// used to no-op SILENTLY on import-graph drift, so the dev-only `else` now fails
+// LOUD in `npm run dev` (not vitest/prod) instead of silently dropping the
+// prompts; the durable fix breaks the cycle for sync registration (option b).
+queueMicrotask(() => {
+  if (typeof setExternalEditPromptHandler === 'function') {
+    setExternalEditPromptHandler((path) => promptExternalEditOnSync({ path }));
+  } else if (import.meta.env.MODE === 'development') {
+    console.error('[vaultExternalChanges] setExternalEditPromptHandler not live at registration — external-edit drift prompts DISABLED (Audit-14 6.2 import-cycle regression).');
+  }
+  if (typeof setBoardExternalEditHandler === 'function') {
+    setBoardExternalEditHandler((path) => promptBoardExternalEdit({ path }));
+  } else if (import.meta.env.MODE === 'development') {
+    console.error('[vaultExternalChanges] setBoardExternalEditHandler not live at registration — board drift prompts DISABLED (Audit-14 6.2).');
+  }
+});

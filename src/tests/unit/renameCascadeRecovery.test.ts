@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { __runRecoverySequencerForTests, vaultStore } from '@renderer/stores/vault.svelte';
 import { documentStore } from '@renderer/stores/document.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
@@ -180,5 +180,167 @@ describe('rename-cascade recovery — Retry repoints open documents (Phase 4.4)'
     expect(newToasts.some((t) => /[Rr]epair/.test(t.text))).toBe(true);
 
     for (const t of newToasts) uiStore.dismissToast(t.id);
+  });
+});
+
+/**
+ * 6.2.H2 — `awaitConfirm` must await the `onConfirm` handler's async work
+ * before resolving its outer promise. Pre-fix: `onConfirm: () => void` ran
+ * synchronously and resolved immediately, so a `void convergeForward()`
+ * inside it fired-and-forgot. The sequencer's next `await awaitConfirm(...)`
+ * stage could then race against the still-pumping `renameTagEverywhere` —
+ * two recoveries mutating `boardCacheStore.cache` / `flushAllDirty` at once.
+ */
+describe('recovery sequencer — 6.2.H2: awaitConfirm awaits onConfirm', () => {
+  const TAG_SENTINEL = '.filo/tag-rewrite-pending.json';
+
+  beforeEach(() => {
+    resetAll();
+    vaultStore.setPath('/vault');
+    installFiloMock((channel: string, ...args: unknown[]) => {
+      if (channel === 'vault:read-file-text') {
+        const p = String(args[1]);
+        if (p === TAG_SENTINEL) {
+          return {
+            success: true,
+            content: JSON.stringify({
+              timestamp: 1,
+              oldName: 'oldTag',
+              newName: 'newTag',
+              plan: ['Notes/A.md'],
+              preexistingNewNamePaths: [],
+              committedPaths: [],
+            }),
+          };
+        }
+        return { success: false, code: 'ENOENT' };
+      }
+      if (channel === 'tags:load') return null;
+      if (channel === 'vault:read-tree') return { ok: true, tree: [] };
+      return { success: true };
+    });
+  });
+
+  afterEach(() => {
+    restoreFiloDefault();
+    resetAll();
+    vaultStore.setPath('');
+    vi.restoreAllMocks();
+  });
+
+  it('Resume awaits convergeForward before the sequencer returns', async () => {
+    // Stub `renameTagEverywhere` to return a deferred promise we control.
+    // Pre-fix: the sequencer would resolve immediately after firing the
+    // dialog because `void convergeForward()` fires-and-forgets; the
+    // deferred staying pending would NOT block `await seq`.
+    let resolveDeferred!: () => void;
+    const deferred = new Promise<void>((r) => {
+      resolveDeferred = r;
+    });
+    vi.spyOn(fileTagsStore, 'renameTagEverywhere').mockReturnValue(deferred);
+
+    const seq = __runRecoverySequencerForTests('/vault');
+    await fireDialog('confirm');
+
+    // Race the sequencer against a short timeout. If H2 is fixed, the
+    // sequencer is still awaiting `convergeForward`, so the timeout wins.
+    const TIMEOUT = Symbol('timeout');
+    const raced = await Promise.race([
+      seq.then(() => 'resolved' as const),
+      new Promise((r) => setTimeout(() => r(TIMEOUT), 50)),
+    ]);
+    expect(raced).toBe(TIMEOUT);
+
+    resolveDeferred();
+    await seq;
+    expect(fileTagsStore.renameTagEverywhere).toHaveBeenCalledWith('oldTag', 'newTag');
+  });
+});
+
+/**
+ * 6.2.H3 — the tag-rewrite step's partial-state detection reads
+ * `vaultIndexStore.allMetadata()` — which would return a mid-chunk empty/
+ * partial sample if `vaultIndexStore.rebuild()` is still running. Without
+ * the `whenBuildComplete()` await, the sequencer could see "no newName
+ * carrier" mid-rebuild, decide "not partial", and show the Discard label —
+ * users then discarding what was actually a half-committed rename.
+ */
+describe('recovery sequencer — 6.2.H3: awaits vaultIndex rebuild before metadata sample', () => {
+  const TAG_SENTINEL = '.filo/tag-rewrite-pending.json';
+
+  beforeEach(() => {
+    resetAll();
+    vaultStore.setPath('/vault');
+    installFiloMock((channel: string, ...args: unknown[]) => {
+      if (channel === 'vault:read-file-text') {
+        const p = String(args[1]);
+        if (p === TAG_SENTINEL) {
+          return {
+            success: true,
+            content: JSON.stringify({
+              timestamp: 1,
+              oldName: 'oldTag',
+              newName: 'newTag',
+              plan: ['Notes/A.md'],
+              preexistingNewNamePaths: [],
+              committedPaths: [],
+            }),
+          };
+        }
+        return { success: false, code: 'ENOENT' };
+      }
+      if (channel === 'tags:load') return null;
+      if (channel === 'vault:read-tree') return { ok: true, tree: [] };
+      return { success: true };
+    });
+  });
+
+  afterEach(() => {
+    restoreFiloDefault();
+    resetAll();
+    vaultStore.setPath('');
+    vi.restoreAllMocks();
+  });
+
+  it('does not sample allMetadata until whenBuildComplete resolves', async () => {
+    // Track whether `allMetadata` was called and when.
+    const callOrder: string[] = [];
+    const realAllMetadata = vaultIndexStore.allMetadata.bind(vaultIndexStore);
+    vi.spyOn(vaultIndexStore, 'allMetadata').mockImplementation(() => {
+      callOrder.push('allMetadata');
+      return realAllMetadata();
+    });
+
+    // Stub `whenBuildComplete` to return a deferred so we can observe ordering.
+    let resolveBuild!: () => void;
+    const buildDone = new Promise<void>((r) => {
+      resolveBuild = r;
+    });
+    vi.spyOn(vaultIndexStore, 'whenBuildComplete').mockImplementation(() => {
+      callOrder.push('whenBuildComplete-await');
+      return buildDone.then(() => {
+        callOrder.push('whenBuildComplete-resolved');
+      });
+    });
+
+    const seq = __runRecoverySequencerForTests('/vault');
+
+    // Give the sequencer time to reach the build-complete await.
+    await new Promise((r) => setTimeout(r, 30));
+
+    // Pre-fix: `allMetadata` would have run already (before the build).
+    // Post-fix: only the await is logged, no metadata sample yet.
+    expect(callOrder).toEqual(['whenBuildComplete-await']);
+
+    // Resolve the build; the sequencer proceeds to sample metadata, then
+    // surfaces the confirm dialog.
+    resolveBuild();
+    await fireDialog('cancel'); // close the dialog so the sequencer can finish
+    await seq;
+
+    expect(callOrder.indexOf('whenBuildComplete-resolved')).toBeGreaterThanOrEqual(0);
+    expect(callOrder.indexOf('allMetadata')).toBeGreaterThan(
+      callOrder.indexOf('whenBuildComplete-resolved'),
+    );
   });
 });

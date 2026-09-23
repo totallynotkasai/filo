@@ -19,7 +19,7 @@
  * and the missing-source toast copy.
  */
 
-import { BOARD_WRITE_DEBOUNCE_MS } from './boardWriteDebounce';
+import { BOARD_WRITE_DEBOUNCE_MS, WRITE_TIMEOUT_MS } from './boardWriteDebounce';
 import {
   notifyWriteError,
   registerResetCallback,
@@ -55,6 +55,10 @@ const miscScheduler = createScheduler<MiscWriteArgs>({
   shouldSkipWrite: (args) => isConfigPathCorrupt(args.path),
   missingSourceMessage: () =>
     "Filo couldn't save a pending change (tags / theme / template / viewport). Re-apply if needed.",
+  // Audit-11 WC-1 / QC-2 — the per-key `args.write()` closure is an IPC write
+  // (tags / theme / template / viewport) that a stalled network volume can wedge.
+  // Bound for uniformity so a wedged misc write can't hang `flushAll` / quit.
+  writeTimeoutMs: WRITE_TIMEOUT_MS,
 });
 
 // Self-register cleanup so vault swap and test reset don't leak between vaults.

@@ -117,6 +117,41 @@ export function makeKanbanSlice(ctx: CacheContext) {
       ctx.markDirty(boardId);
     },
 
+    /**
+     * Audit5 Phase 4 (#9) — re-insert a previously-removed column as a DELTA
+     * against the LIVE columns array (used by `DeleteColumnCommand.undo`).
+     *
+     * Unlike the old whole-`columns`-slice restore, this splices ONE column
+     * back at `index` and leaves every surviving column untouched, so an edit
+     * made to a sibling column between the delete and the undo (rename, card
+     * move/add, WIP limit, collapse, width, style, cover image) survives.
+     * Idempotent: a no-op if a column with the same id is already present
+     * (out-of-band re-add / redo after partial undo).
+     *
+     * Positions are renormalised to array index afterwards — the invariant
+     * `reorderKanbanColumns` maintains — so a restored column keeps export
+     * order (`exportService` sorts columns by `position`) consistent with the
+     * on-screen array order even if a sibling column was added/reordered in the
+     * interval. Only the `position` scalar is rewritten; every content field on
+     * sibling columns is left as-is.
+     */
+    insertKanbanColumnAt(
+      boardId: string,
+      column: KanbanBoard['columns'][number],
+      index: number,
+    ): void {
+      const kb = ctx.kanbanBoardOrWarn(boardId, 'insertKanbanColumnAt');
+      if (!kb) return;
+      const cols = [...((kb.columns ?? []) as KanbanBoard['columns'])];
+      if (cols.some((c) => c.id === column.id)) return;
+      const at = Math.min(Math.max(index, 0), cols.length);
+      cols.splice(at, 0, column);
+      (kb as Record<string, unknown>).columns = cols.map((c, idx) =>
+        c.position === idx ? c : { ...c, position: idx },
+      );
+      ctx.markDirty(boardId);
+    },
+
     renameKanbanColumn(boardId: string, columnId: string, title: string): void {
       const kb = ctx.kanbanBoardOrWarn(boardId, 'renameKanbanColumn');
       if (!kb) return;
@@ -128,14 +163,28 @@ export function makeKanbanSlice(ctx: CacheContext) {
     reorderKanbanColumns(boardId: string, orderedIds: string[]): void {
       const kb = ctx.kanbanBoardOrWarn(boardId, 'reorderKanbanColumns');
       if (!kb) return;
-      const byId = new Map((kb.columns ?? []).map((c) => [c.id, c]));
-      const reordered = orderedIds
-        .map((id, idx) => {
-          const col = byId.get(id);
-          return col ? { ...col, position: idx } : null;
-        })
-        .filter((c): c is NonNullable<typeof c> => c !== null);
-      (kb as Record<string, unknown>).columns = reordered;
+      const liveCols = (kb.columns ?? []) as KanbanBoard['columns'];
+      const byId = new Map(liveCols.map((c) => [c.id, c]));
+      // Phase 3 / 3.5 — append any LIVE column NOT named in `orderedIds`, in
+      // live order, so an out-of-band-added column survives a stale-order
+      // reorder/undo. `ReorderColumnCommand.undo` replays a `beforeOrder`
+      // captured BEFORE that add; the old slice-replace
+      // (`columns = orderedIds.map(...)`) silently dropped any column missing
+      // from the captured order. Mirrors `applySectionOrderLive`'s
+      // append-survivors logic for the Task List sibling.
+      const requested = new Set(orderedIds);
+      const ordered = [
+        ...orderedIds
+          .map((id) => byId.get(id))
+          .filter((c): c is NonNullable<typeof c> => c != null),
+        ...liveCols.filter((c) => !requested.has(c.id)),
+      ];
+      // Renormalise positions to array index (the `reorderKanbanColumns`
+      // invariant) but only rewrite the scalar when it actually changed, so a
+      // survivor column's object identity / content fields are left intact.
+      (kb as Record<string, unknown>).columns = ordered.map((c, idx) =>
+        c.position === idx ? c : { ...c, position: idx },
+      );
       ctx.markDirty(boardId);
     },
 
@@ -276,6 +325,14 @@ export function makeKanbanSlice(ctx: CacheContext) {
       def: TileDefinition,
       position: number,
       style?: PartialKanbanCardStyle,
+      coverImage?: string,
+      // 2.2 (Audit-14) — optional neighbour anchor, mirroring moveKanbanPlacement
+      // (6.4.M16). When the card should sit immediately before a specific sibling
+      // (DeleteCardCommand.undo restoring a mid-column card), pass that sibling's
+      // tileId and the insert resolves against its LIVE index instead of the
+      // stale absolute `position`. `undefined`/`null` or an anchor no longer in
+      // the column falls back to the clamped `position` (prior behaviour).
+      beforeTileId?: string | null,
     ): void {
       // Zod-validate the def before it enters the cache. Mirrors the
       // updateTile P0-6 fix: a corrupt def would otherwise persist to disk
@@ -310,7 +367,28 @@ export function makeKanbanSlice(ctx: CacheContext) {
         const placements = [...(c.tilePlacements ?? [])];
         const placement: KanbanTilePlacement = { tileId: validDef.id, position };
         if (style) placement.style = style;
-        placements.splice(Math.min(position, placements.length), 0, placement);
+        // 6.4.M11 — restore a snapshotted coverImage atomically as part of the
+        // placement add (used by DeleteCardCommand.undo). Set directly: the value
+        // is a trusted snapshot of already-persisted state, and undo is not an
+        // input boundary, so it intentionally does NOT re-run the
+        // setKanbanPlacementCoverImage sanitizer (which would silently drop a
+        // pre-existing value it deems unsafe, making undo unfaithful).
+        if (typeof coverImage === 'string' && coverImage.length > 0) {
+          placement.coverImage = coverImage;
+        }
+        // 2.2 (Audit-14) — prefer the neighbour anchor when it's still present,
+        // so an undo after an intervening sibling add/remove lands the restored
+        // card next to its original sibling rather than at a stale absolute
+        // index (mirrors moveKanbanPlacement's anchor logic).
+        const anchorIdx =
+          beforeTileId != null ? placements.findIndex((p) => p.tileId === beforeTileId) : -1;
+        // L9 — clamp BOTH ends (mirrors the TaskList sibling). The high end was
+        // already clamped; flooring at 0 keeps a stray negative position from
+        // splicing relative to the array end (defensive — the schema's
+        // nonnegative-int already blocks a persisted negative).
+        const insertAt =
+          anchorIdx >= 0 ? anchorIdx : Math.min(Math.max(position, 0), placements.length);
+        placements.splice(insertAt, 0, placement);
         return {
           ...c,
           tilePlacements: placements.map((p, i) => ({ ...p, position: i })),
@@ -392,6 +470,12 @@ export function makeKanbanSlice(ctx: CacheContext) {
       tileId: string,
       targetColumnId: string,
       targetPosition: number,
+      // 6.4.M16 — optional neighbour anchor. When the moved card should sit
+      // immediately before a specific sibling, pass that sibling's tileId and
+      // the insert resolves against its LIVE index instead of the stale
+      // absolute `targetPosition`. `undefined`/`null` or an anchor no longer in
+      // the column falls back to the clamped `targetPosition` (prior behaviour).
+      beforeTileId?: string | null,
     ): void {
       const kb = ctx.kanbanBoardOrWarn(boardId, 'moveKanbanPlacement');
       if (!kb) return;
@@ -414,7 +498,13 @@ export function makeKanbanSlice(ctx: CacheContext) {
           };
         }
         const placements = [...(c.tilePlacements ?? [])];
-        const insertAt = Math.min(Math.max(targetPosition, 0), placements.length);
+        // 6.4.M16 — prefer the neighbour anchor when it's still present, so an
+        // undo/redo after an intervening column mutation lands the card next to
+        // its original sibling rather than at a stale absolute index.
+        const anchorIdx =
+          beforeTileId != null ? placements.findIndex((p) => p.tileId === beforeTileId) : -1;
+        const insertAt =
+          anchorIdx >= 0 ? anchorIdx : Math.min(Math.max(targetPosition, 0), placements.length);
         placements.splice(insertAt, 0, placement!);
         return {
           ...c,
@@ -440,6 +530,14 @@ export function makeKanbanSlice(ctx: CacheContext) {
       tileIds: string[],
       targetColumnId: string,
       targetPosition: number,
+      // M5 (Audit-13) — optional forward-leg neighbour anchor, mirroring the
+      // single-card `moveKanbanPlacement`. The bulk block is inserted
+      // immediately before this sibling when it's still present in the target
+      // column (resolved against the LIVE post-removal index), so a redo after
+      // an intervening column edit lands at the right slot instead of the stale
+      // absolute `targetPosition`. `undefined`/`null` or a missing anchor falls
+      // back to the clamped `targetPosition` (prior behaviour).
+      beforeTileId?: string | null,
     ): void {
       const kb = ctx.kanbanBoardOrWarn(boardId, 'moveKanbanPlacements');
       if (!kb) return;
@@ -476,7 +574,15 @@ export function makeKanbanSlice(ctx: CacheContext) {
           };
         }
         const placements = [...(c.tilePlacements ?? [])];
-        const insertAt = Math.min(Math.max(targetPosition, 0), placements.length);
+        // M5 (Audit-13) — prefer the live index of the forward-leg anchor when
+        // it's still present, so a redo after an intervening edit lands the
+        // block next to its original sibling rather than at a stale absolute
+        // index. The anchor is captured pre-move with the whole moved set
+        // removed, so `placements` (also post-removal here) shares its frame.
+        const anchorIdx =
+          beforeTileId != null ? placements.findIndex((p) => p.tileId === beforeTileId) : -1;
+        const insertAt =
+          anchorIdx >= 0 ? anchorIdx : Math.min(Math.max(targetPosition, 0), placements.length);
         placements.splice(insertAt, 0, ...orderedPlacements);
         return {
           ...c,

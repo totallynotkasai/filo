@@ -3,7 +3,6 @@
   import { uiStore } from '../../stores/ui.svelte';
   import { boardStore } from '../../stores/board.svelte';
   import { boardCacheStore } from '../../stores/boardCache.svelte';
-  import { doExport } from '../../lib/export/exportService';
   import Dropdown from './Dropdown.svelte';
 
   let projectDropdownOpen = $state(false);
@@ -76,10 +75,18 @@
     });
 
     try {
+      // Lazy-load the export subsystem (html-to-image + jspdf, ~hundreds of
+      // kB) only when the user actually exports, keeping it out of the
+      // first-paint renderer chunk. (7.6)
+      const { doExport } = await import('../../lib/export/exportService');
       const result = await doExport(format, boardEl, project, name);
       uiStore.dismissToast(progressToastId, { silent: true });
       if (result.success) {
         uiStore.toast(`Exported as ${format.toUpperCase()}`, 'success');
+      } else if (result.canceled) {
+        // Audit-18 4.4 — the user dismissed the save dialog; treat it as a
+        // no-op. The old code surfaced the same `{ success: false }` path as a
+        // real write failure, so cancelling spuriously toasted "Export failed".
       } else {
         uiStore.toast(result.error || 'Export failed', 'error');
       }

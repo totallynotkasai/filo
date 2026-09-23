@@ -26,6 +26,11 @@ vi.mock('electron', () => ({
     handle: (channel: string, handler: (...args: unknown[]) => unknown | Promise<unknown>) => {
       handlers.set(channel, handler);
     },
+    // Audit-12 S1 — registerDialogHandlers now also registers the preload-internal
+    // `vault:register-source-path` listener via ipcMain.on; stub it so the mock
+    // doesn't throw `ipcMain.on is not a function` during registration.
+    on: () => {},
+    once: () => {},
   },
   BrowserWindow: {
     getFocusedWindow: () => ({}),
@@ -43,6 +48,7 @@ vi.mock('electron', () => ({
 }));
 
 const { registerDialogHandlers } = await import('../../main/ipc/dialog.ipc');
+const { vaultRegistry } = await import('../../main/services/vaultRegistry');
 
 describe('dialog:* options validation (Phase 8 / 8.4)', () => {
   let choiceHandler: (...args: unknown[]) => unknown | Promise<unknown>;
@@ -61,11 +67,16 @@ describe('dialog:* options validation (Phase 8 / 8.4)', () => {
   beforeEach(() => {
     lastMessageBoxOpts = null;
     lastOpenDialogOpts = null;
+    // Audit-14 4.2 — dialog:open-file is now gated on an active vault. Set one so
+    // the options-validation specs below reach showOpenDialog (the no-vault gate
+    // has its own dedicated spec).
+    vaultRegistry.setCurrentVault('/test/vault');
     errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
     errSpy?.mockRestore();
+    vaultRegistry.setCurrentVault(null);
   });
 
   describe('dialog:choice', () => {
@@ -146,6 +157,18 @@ describe('dialog:* options validation (Phase 8 / 8.4)', () => {
 
     it('returns null when options contains an unknown field', async () => {
       const result = await openHandler({}, { evil: 'inject' });
+      expect(result).toBeNull();
+      expect(lastOpenDialogOpts).toBeNull();
+    });
+
+    it('Audit-14 4.2 — returns null without reaching showOpenDialog when no vault is open', async () => {
+      // Even with a perfectly valid options bag, the active-vault gate fails
+      // closed so no approval can be minted during the no-vault window.
+      vaultRegistry.setCurrentVault(null);
+      const result = await openHandler({}, {
+        title: 'Open',
+        filters: [{ name: 'Markdown', extensions: ['md'] }],
+      });
       expect(result).toBeNull();
       expect(lastOpenDialogOpts).toBeNull();
     });

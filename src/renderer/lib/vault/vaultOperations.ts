@@ -37,10 +37,13 @@
  * (which delete recovery breadcrumbs, not user files).
  */
 
-import { flushAllMarkdownWriters } from '../boards/markdownWriteRegistry';
+import { flushAllMarkdownWriters } from './markdownFileWriter';
 import { flushAllPendingFrontmatterWrites } from '../boards/frontmatterWriteScheduler';
+import { flushAllMisc } from '../boards/miscWriteScheduler';
+import { flushScheduledConfig } from '../boards/configWriteScheduler';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { uiStore } from '../../stores/ui.svelte';
+import { currentVaultGeneration } from './vaultIdentity';
 import type {
   ChannelArgs,
   ChannelResult,
@@ -59,10 +62,20 @@ interface BoardFlushResult {
   failed: string[];
 }
 
+interface MiscFlushResult {
+  failed: string[];
+}
+
+interface ConfigFlushResult {
+  failed: string[];
+}
+
 export interface PendingWritesFailedDetail {
   md: MarkdownFlushResult;
   fm: FrontmatterFlushResult;
   board: BoardFlushResult;
+  misc: MiscFlushResult;
+  config: ConfigFlushResult;
 }
 
 export class PendingWritesFailedError extends Error {
@@ -70,7 +83,11 @@ export class PendingWritesFailedError extends Error {
 
   constructor(results: PendingWritesFailedDetail) {
     const totalFailed =
-      results.md.failed.length + results.fm.failed.length + results.board.failed.length;
+      results.md.failed.length +
+      results.fm.failed.length +
+      results.board.failed.length +
+      results.misc.failed.length +
+      results.config.failed.length;
     super(
       `Pending writes failed (${totalFailed} file(s)): refusing to proceed with disk-shape change.`,
     );
@@ -84,14 +101,54 @@ export class PendingWritesFailedError extends Error {
  * their own — every IPC convenience helper calls `withDrainedWrites`, so a
  * complex sequence like `vaultFolderOps.delete` can wrap itself once and
  * still call `deleteVaultPath` for the IPC without paying a second drain.
+ *
+ * G1 — keyed by the vault GENERATION rather than a bare boolean. A bare
+ * `drainInProgress = true` would make a `withDrainedWrites` issued against a
+ * NEWLY-swapped vault (while an outer drain for the OLD vault is still in
+ * flight on its `await`) short-circuit its own drain as "re-entrant" — so the
+ * new vault's disk-shape op would run WITHOUT draining the new vault's
+ * writers. Scoping to the generation means a call only counts as re-entrant
+ * when it shares the generation of the in-flight drain.
+ *
+ * Audit-17 3.4 — `drainPromise` distinguishes a genuinely NESTED call (op()
+ * invoking a convenience helper — runs only after the drain settled) from a
+ * CONCURRENT sibling that arrives while the drain is still in flight (e.g. a
+ * watcher-driven `handleExternalRename` landing while a user-initiated delete
+ * is parked behind a board drift prompt for up to ~60 s). Both used to take
+ * the bare `return op()` short-circuit, so the sibling's disk-shape op ran
+ * with NO drain at all. Siblings now await the in-flight drain: it resolves
+ * `true` on success (proceed with the op — the writers are drained), `false`
+ * on failure (fall back to a fresh `withDrainedWrites` pass that runs its own
+ * drain and surfaces its own failure). A nested call sees an already-resolved
+ * `true` and proceeds immediately — identical to the old short-circuit.
  */
-let drainInProgress = false;
+/**
+ * Audit-18 5.3 — the in-flight drain's outcome, carried IN `drainPromise` so a
+ * parked sibling can react without re-running its own full drain:
+ *  - `{ ok: true }` — every writer pipeline drained clean; the sibling proceeds
+ *    (after a vault-generation re-check, see below).
+ *  - `{ ok: false, detail }` — the drain failed the `totalFailed` check; the
+ *    sibling throws the SAME `PendingWritesFailedError` instead of recursing
+ *    into a fresh up-to-60 s drain per sibling (the old `return
+ *    withDrainedWrites(op)` ran one full drain per parked sibling serially — an
+ *    N×60 s latency cliff that re-surfaced the toast each time).
+ *  - `{ ok: false, detail: null }` — an UNEXPECTED drain/op rejection (a flush
+ *    threw, not the `totalFailed` branch); the sibling bails too.
+ * Carrying the verdict in the promise (rather than a separate module var) makes
+ * it immune to the finally-clears-it-before-the-await-resolves race.
+ */
+type DrainOutcome = { ok: true } | { ok: false; detail: PendingWritesFailedDetail | null };
+
+let drainingGeneration: number | null = null;
+let drainPromise: Promise<DrainOutcome> | null = null;
 
 function summariseFailedPaths(results: PendingWritesFailedDetail): string[] {
   const out: string[] = [];
   for (const entry of results.md.failed) out.push(entry.ownerId);
   for (const path of results.fm.failed) out.push(path);
   for (const path of results.board.failed) out.push(path);
+  for (const path of results.misc.failed) out.push(path);
+  for (const path of results.config.failed) out.push(path);
   return out;
 }
 
@@ -108,29 +165,85 @@ function summariseFailedPaths(results: PendingWritesFailedDetail): string[] {
  * enough that re-arming a 300 ms debounce mid-rename is acceptable.
  */
 export async function withDrainedWrites<T>(op: () => Promise<T>): Promise<T> {
-  if (drainInProgress) {
-    // Already inside an outer drain — re-entrant call short-circuits its
-    // own drain and just runs the op. Without this guard, every complex
-    // sequence (e.g. delete-with-snapshots calling deleteVaultPath) would
-    // pay an unnecessary second drain on every IPC helper invocation.
-    return op();
+  const generation = currentVaultGeneration();
+  if (drainingGeneration === generation && drainPromise) {
+    // Already covered by an outer drain for THIS vault generation. Two cases:
+    //  - NESTED call (op() invoking a convenience helper): the outer drain has
+    //    already settled successfully (op only runs post-drain), so the await
+    //    below resolves `{ ok: true }` immediately and we just run the op — the
+    //    old short-circuit, with no second drain cost.
+    //  - CONCURRENT sibling (Audit-17 3.4): the outer drain is still in flight
+    //    (possibly parked behind an interactive drift prompt for up to ~60 s).
+    //    Await it rather than running the op un-drained.
+    const outcome = await drainPromise;
+    if (outcome.ok) {
+      // Audit-18 5.3 — re-validate AFTER the park. Removing the failure-path
+      // recursion (it used to be `return withDrainedWrites(op)`) also removed
+      // its implicit generation re-capture, so guard explicitly: a vault swap
+      // during the park would otherwise run this op's stale captured inputs
+      // against the NEW vault. The main side's `assertActiveVault` gates the
+      // disk IPC, but the in-memory half of a cascade op is not gated — bail
+      // loudly here rather than act on moved-on state.
+      if (currentVaultGeneration() !== generation) {
+        throw new Error(
+          'Vault changed during write drain — refusing the disk-shape op (stale generation).',
+        );
+      }
+      return op();
+    }
+    // Audit-18 5.3 — the outer drain FAILED. Share its verdict rather than
+    // re-entering a fresh full drain per sibling: the old recursion ran one
+    // ~60 s drain per parked sibling serially and re-surfaced the aggregated
+    // toast each time. The outer call already toasted, so we just throw the
+    // same error (or a generic one for an unexpected-rejection drain) and let
+    // the caller bail — the safe direction for a disk-shape op behind a
+    // failed flush.
+    throw outcome.detail
+      ? new PendingWritesFailedError(outcome.detail)
+      : new Error('Pending writes drain failed — refusing the disk-shape op.');
   }
-  drainInProgress = true;
+  drainingGeneration = generation;
+  // Audit-17 3.4 / Audit-18 5.3 — `drainPromise` carries the drain outcome
+  // (see `DrainOutcome`): settled `{ ok: true }` once every writer pipeline
+  // drained clean (before op runs), `{ ok: false, detail }` on a `totalFailed`
+  // drain, `{ ok: false, detail: null }` on an unexpected rejection. Never
+  // rejects, so a parked sibling can't crash on an error the outer call already
+  // surfaced.
+  let settleDrain: (outcome: DrainOutcome) => void = () => {};
+  drainPromise = new Promise<DrainOutcome>((resolve) => { settleDrain = resolve; });
   try {
-    const [mdResult, fmResult, boardResult] = await Promise.all([
-      flushAllMarkdownWriters(),
-      flushAllPendingFrontmatterWrites(),
-      boardCacheStore.flushAllDirty(),
-    ]);
+    // 6.4.M1 — misc + config schedulers must drain alongside md/fm/board.
+    // Without them, a debounced sidebar-order / viewports / tags.json /
+    // workspace.json write fires AFTER the disk-shape op lands, racing the
+    // rename or resurrecting a path the IPC just removed.
+    //
+    // `flushScheduledConfig`'s param is a vestigial getter — the underlying
+    // scheduler captures args at schedule time. We pass `() => null` so the
+    // signature stays satisfied without coupling this module to the project
+    // store's `getConfigWriteArgs`.
+    const [mdResult, fmResult, boardResult, miscResult, configResult] =
+      await Promise.all([
+        flushAllMarkdownWriters(),
+        flushAllPendingFrontmatterWrites(),
+        boardCacheStore.flushAllDirty(),
+        flushAllMisc(),
+        flushScheduledConfig(() => null),
+      ]);
 
     const detail: PendingWritesFailedDetail = {
       md: mdResult,
       fm: fmResult,
       board: boardResult,
+      misc: miscResult,
+      config: { failed: configResult?.failed ?? [] },
     };
 
     const totalFailed =
-      mdResult.failed.length + fmResult.failed.length + boardResult.failed.length;
+      mdResult.failed.length +
+      fmResult.failed.length +
+      boardResult.failed.length +
+      miscResult.failed.length +
+      (configResult?.failed.length ?? 0);
 
     if (totalFailed > 0) {
       const failedPaths = summariseFailedPaths(detail);
@@ -142,12 +255,32 @@ export async function withDrainedWrites<T>(op: () => Promise<T>): Promise<T> {
         type: 'error',
         duration: 0,
       });
+      // Audit-18 5.3 — settle the failure DETAIL into drainPromise before the
+      // throw so parked siblings bail with the same error (no re-drain).
+      settleDrain({ ok: false, detail });
       throw new PendingWritesFailedError(detail);
     }
 
+    // Drain phase complete — release any concurrent siblings parked above
+    // BEFORE the op runs (their ops were never serialised behind the outer
+    // op, only behind the drain).
+    settleDrain({ ok: true });
     return await op();
   } finally {
-    drainInProgress = false;
+    // Only clear if we're still the generation that set it. A swap mid-drain
+    // bumps `currentVaultGeneration()`; if a newer-generation drain set the
+    // flag in the meantime, this stale `finally` must not clear ITS flag
+    // (or its drainPromise).
+    if (drainingGeneration === generation) {
+      drainingGeneration = null;
+      drainPromise = null;
+    }
+    // Idempotent (first settle wins): a no-op on the success path (already
+    // `{ ok: true }`) and the totalFailed path (already `{ ok: false, detail }`
+    // above). Catches an UNEXPECTED drain/op rejection (a flush threw, not the
+    // totalFailed branch) → `{ ok: false, detail: null }` so parked siblings
+    // bail rather than hang on a promise that never resolves.
+    settleDrain({ ok: false, detail: null });
   }
 }
 
@@ -238,5 +371,6 @@ export async function copyFileIntoVault(
  * should never need this — the `finally` block always clears the flag.
  */
 export function __resetDrainGuardForTests(): void {
-  drainInProgress = false;
+  drainingGeneration = null;
+  drainPromise = null;
 }

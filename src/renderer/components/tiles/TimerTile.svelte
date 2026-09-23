@@ -1,16 +1,17 @@
 <script lang="ts">
   import type { TimerTile } from '../../schema/index';
-  import { onMount, onDestroy, getContext } from 'svelte';
+  import { onDestroy, getContext, untrack } from 'svelte';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { historyStore } from '../../stores/history.svelte';
+  import { uiStore } from '../../stores/ui.svelte';
   import { UpdateTimerConfigCommand, type TimerMode } from '../../commands/index';
+  import { createCoarsePersistGate } from '../../lib/utils/coarsePersistGate';
 
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
   const boardStore = scope.board;
 
   let { tile }: { tile: TimerTile } = $props();
 
-  let intervalId: ReturnType<typeof setInterval> | null = null;
   let lastTickMs = 0;
   let displayTime = $state('');
   // Phase 31 C2.4 — last second-stamp we wrote to displayTime. The 100 ms
@@ -18,10 +19,52 @@
   // changes once per second. Skip the formatTime + assignment when the
   // second hasn't changed (clock mode and idle/running countdowns alike).
   let lastDisplaySecond = -1;
+  // Audit2 4.1 — the live countdown lives in component state. Persisting the
+  // decrement on every 100 ms tick re-armed this board's 300 ms write debounce
+  // forever, so the board's writes never flushed: any real edit to the board
+  // was lost on a hard crash and the save indicator was pinned on "saving".
+  // We now write the tile only on pause / stop / reset / unmount-while-running.
+  // untrack: deliberately snapshot the initial value — the $effect below
+  // re-seeds it on genuine external changes, and tick() mutates it locally.
+  let liveRemaining = $state(untrack(() => tile.remaining));
+  // Audit-17 4.6 — coarse periodic persist of a RUNNING countdown. Quit never
+  // unmounts the Svelte tree (onDestroy's persist below never runs) and a
+  // vault swap clears the board cache BEFORE unmount, so a running timer's
+  // progress was unrecoverable from either. The gate fires every 45 s — far
+  // above the board's 300 ms write debounce, so the Audit2 4.1 per-tick
+  // re-arm-forever bug is NOT reintroduced. Armed per running countdown by
+  // the interval $effect below; null while stopped / in clock mode.
+  let coarsePersistDue: ((nowMs: number) => boolean) | null = null;
   // Custom time input state (shown when clicking the display while stopped)
   let editingCustom = $state(false);
   let customInput = $state('');
   let customInputEl = $state<HTMLInputElement | null>(null);
+
+  // P4.3 (Audit-15) — end-of-timer cue. `finished` drives a brief flash
+  // (transform/opacity only; degrades to a static colour highlight under
+  // reduced motion) and `announceText` feeds a visually-hidden aria-live
+  // region so a completed countdown is perceivable even when the tile is
+  // scrolled off-canvas. Both self-clear after the flash window so the next
+  // completion re-triggers the flash and re-announces.
+  let finished = $state(false);
+  let announceText = $state('');
+  let flashTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function announceFinished(): void {
+    finished = true;
+    announceText = 'Timer finished';
+    uiStore.toast('Timer finished', 'info', 3000);
+    if (flashTimer) clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => {
+      finished = false;
+      announceText = '';
+    }, 1500);
+  }
+
+  // The display is only editable (click / Enter → custom-time input) while a
+  // non-clock timer is stopped. Drives the role/tabindex + keyboard handler so
+  // the affordance is reachable without a mouse (Audit-14 5.8).
+  let displayEditable = $derived(tile.mode !== 'clock' && !tile.isRunning);
 
   $effect(() => {
     if (editingCustom && customInputEl) {
@@ -37,7 +80,15 @@
   $effect(() => {
     void tile.mode;
     void tile.duration;
-    void tile.remaining;
+    // Re-seed the local countdown whenever the persisted value changes from
+    // outside our tick — mode swap, duration set, reset, or external reload.
+    // A running countdown writes tile.remaining only via the 45 s coarse
+    // persist (Audit-17 4.6), whose value equals the live countdown at write
+    // time — that echo re-seeds by at most one 100 ms tick, a harmless
+    // rewind. Otherwise this fires only on genuine external changes, not on
+    // our own per-second ticks (liveRemaining is written but not read here,
+    // so there is no effect loop).
+    liveRemaining = tile.remaining;
     lastDisplaySecond = -1;
   });
 
@@ -50,14 +101,20 @@
     const modes: TimerMode[] = ['hms', 'ms', 's', 'clock'];
     const nextIdx = (modes.indexOf(tile.mode) + 1) % modes.length;
     const before = { mode: tile.mode, duration: tile.duration, remaining: tile.remaining, isRunning: tile.isRunning };
-    const after = { ...before, mode: modes[nextIdx], isRunning: false };
+    const after = { ...before, mode: modes[nextIdx] ?? tile.mode, isRunning: false };
     historyStore.execute(new UpdateTimerConfigCommand(tile.id, before, after, 'Change timer mode'));
   }
 
   // allow-direct-mutation: transient play/pause toggle, not history-worthy.
   function toggleRunning() {
     if (tile.mode === 'clock') return;
-    boardStore.updateTile(tile.id, { isRunning: !tile.isRunning });
+    if (tile.isRunning) {
+      // Pause — persist the live countdown so it survives reload / board swap.
+      boardStore.updateTile(tile.id, { remaining: liveRemaining, isRunning: false });
+    } else {
+      // Resume — liveRemaining already equals the persisted value while paused.
+      boardStore.updateTile(tile.id, { isRunning: true });
+    }
   }
 
   function resetTimer() {
@@ -108,15 +165,25 @@
       return;
     }
 
-    if (tileRef.isRunning && tileRef.remaining > 0) {
-      boardStore.updateTile(tileRef.id, { remaining: Math.max(0, tileRef.remaining - elapsed) });
-    } else if (tileRef.isRunning && tileRef.remaining === 0) {
-      boardStore.updateTile(tileRef.id, { isRunning: false });
+    if (tileRef.isRunning && liveRemaining > 0) {
+      // Count down in component state only — no per-tick markDirty.
+      liveRemaining = Math.max(0, liveRemaining - elapsed);
+      if (liveRemaining === 0) {
+        // allow-direct-mutation: countdown reached zero; persist the stop once.
+        boardStore.updateTile(tileRef.id, { remaining: 0, isRunning: false });
+        announceFinished();
+      } else if (coarsePersistDue?.(now)) {
+        // Audit-17 4.6 — coarse periodic persist so a running countdown
+        // survives quit / vault swap within a minute of truth (see the gate
+        // declaration above).
+        // allow-direct-mutation: transient countdown progress, not history-worthy.
+        boardStore.updateTile(tileRef.id, { remaining: liveRemaining });
+      }
     }
-    const remainingSecond = Math.max(0, Math.floor(tileRef.remaining / 1000));
+    const remainingSecond = Math.max(0, Math.floor(liveRemaining / 1000));
     if (remainingSecond !== lastDisplaySecond) {
       lastDisplaySecond = remainingSecond;
-      displayTime = formatTime(tileRef.remaining, tileRef.mode);
+      displayTime = formatTime(liveRemaining, tileRef.mode);
     }
   }
 
@@ -142,31 +209,75 @@
     const parts = customInput.trim().split(':');
     let totalMs = 0;
     if (parts.length === 2) {
-      const m = parseInt(parts[0], 10) || 0;
-      const s = parseInt(parts[1], 10) || 0;
+      const m = parseInt(parts[0] ?? '', 10) || 0;
+      const s = parseInt(parts[1] ?? '', 10) || 0;
       totalMs = (m * 60 + s) * 1000;
     } else if (parts.length === 1) {
-      totalMs = (parseInt(parts[0], 10) || 0) * 60 * 1000;
+      totalMs = (parseInt(parts[0] ?? '', 10) || 0) * 60 * 1000;
     }
     if (totalMs > 0) {
       const before = { mode: tile.mode, duration: tile.duration, remaining: tile.remaining, isRunning: tile.isRunning };
       const after = { ...before, duration: totalMs, remaining: totalMs, isRunning: false };
       historyStore.execute(new UpdateTimerConfigCommand(tile.id, before, after, 'Set timer duration'));
+      editingCustom = false;
+    } else {
+      // P4.3 — give feedback instead of silently discarding an unparseable
+      // value; keep the editor open so the user can correct it.
+      uiStore.toast('Enter a time like "25" (minutes) or "25:00" (mm:ss).', 'warning', 3000);
     }
-    editingCustom = false;
   }
 
-  onMount(() => {
-    // Initialise tick baseline so elapsed starts at 0 on this mount.
-    // isRunning is NOT reset here — a timer that was running should keep
-    // running when the user switches boards and returns.
-    lastTickMs = Date.now();
-    tick();
-    intervalId = setInterval(tick, 100);
+  // Audit-14 5.7 — only run the ticking interval when time actually moves: a
+  // running countdown needs the 100 ms cadence to stay accurate, clock mode
+  // only needs a 1 s tick, and a stopped/paused countdown needs NO interval at
+  // all (the display is static until the next user action). Previously a fixed
+  // 100 ms interval ran for the tile's whole lifetime regardless of mode/run
+  // state. The effect re-arms whenever `mode` / `isRunning` flip; the handle
+  // lives in the effect's own cleanup so it's cleared on every re-arm + unmount
+  // (no component-scope timer binding to leak).
+  $effect(() => {
+    const mode = tile.mode;
+    const running = tile.isRunning;
+    // `tick()` reads reactive state (liveRemaining, the cached tile) and the
+    // interval mutates it every fire; untrack the body so those reads don't
+    // become effect dependencies (which would re-arm the interval on every
+    // tick). Only `mode`/`isRunning` above gate the re-arm.
+    return untrack(() => {
+      // Render once immediately so a mode swap / pause / resume reflects in the
+      // display without waiting for the first interval fire.
+      lastTickMs = Date.now();
+      lastDisplaySecond = -1;
+      tick();
+      if (mode !== 'clock' && !running) return; // static — no interval
+      // Audit-17 4.6 — fresh cadence gate per RUNNING arm (start / resume):
+      // the first coarse persist comes one full interval after arming.
+      coarsePersistDue = mode !== 'clock' && running
+        ? createCoarsePersistGate(Date.now())
+        : null;
+      const cadence = mode === 'clock' ? 1000 : 100;
+      const id = setInterval(tick, cadence);
+      return () => clearInterval(id);
+    });
   });
 
   onDestroy(() => {
-    if (intervalId !== null) clearInterval(intervalId);
+    // P4.3 — clear the end-of-timer flash handle so it can't fire after unmount.
+    if (flashTimer) clearTimeout(flashTimer);
+    // Save countdown progress on unmount (e.g. board switch mid-run) — while
+    // RUNNING we don't write tile.remaining per tick, so the cached value is
+    // otherwise stale.
+    //
+    // 6.4.L3 (refuted — the isRunning gate is correct, not paused-timer drift):
+    // togglePlayPause's PAUSE writes `remaining: liveRemaining` synchronously,
+    // and the re-seed $effect above keeps `liveRemaining === tile.remaining`
+    // while paused. So a paused timer carries no unpersisted drift, and the
+    // gate rightly skips the write. Dropping it would be a regression: it would
+    // let unmount overwrite the canonical paused `remaining` with the local
+    // `liveRemaining`, which is only authoritative while the countdown runs.
+    if (tile.isRunning && liveRemaining !== tile.remaining) {
+      // allow-direct-mutation: persist countdown progress on unmount.
+      boardStore.updateTile(tile.id, { remaining: liveRemaining });
+    }
   });
 </script>
 
@@ -185,13 +296,17 @@
       <button class="apply-btn" onclick={applyCustomInput}>Set</button>
     </div>
   {:else}
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <div
       class="display"
       class:clock={tile.mode === 'clock'}
-      class:clickable={tile.mode !== 'clock' && !tile.isRunning}
+      class:clickable={displayEditable}
+      class:finished
       onclick={handleDisplayClick}
-      title={tile.mode !== 'clock' && !tile.isRunning ? 'Click to set custom time' : undefined}
+      onkeydown={(e) => { if (displayEditable && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); handleDisplayClick(); } }}
+      role={displayEditable ? 'button' : undefined}
+      tabindex={displayEditable ? 0 : undefined}
+      title={displayEditable ? 'Click or press Enter to set custom time' : undefined}
     >
       {displayTime}
     </div>
@@ -231,6 +346,9 @@
       <button onclick={() => setDuration(60)}>1h</button>
     </div>
   {/if}
+
+  <!-- P4.3 — visually-hidden live region: announces countdown completion. -->
+  <span class="sr-only" aria-live="assertive">{announceText}</span>
 </div>
 
 <style>
@@ -262,6 +380,20 @@
   }
   .display.clickable:hover {
     background: var(--ui-surface-hover);
+  }
+  /* P4.3 — end-of-timer cue. GPU-friendly (transform/opacity only); the
+     accent colour stays as a static highlight so reduced-motion users still
+     get a visual cue alongside the aria-live announcement + toast. */
+  .display.finished {
+    color: var(--accent-primary);
+    animation: timerFlash 0.5s ease-in-out 3;
+  }
+  @keyframes timerFlash {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.35; transform: scale(1.08); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .display.finished { animation: none; }
   }
   .custom-input-wrap {
     display: flex;

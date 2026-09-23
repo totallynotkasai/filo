@@ -18,6 +18,7 @@
 import { createId } from '../utils/ids';
 import { historyStore } from '../../stores/history.svelte';
 import { UpdateSavedViewsCommand } from '../../commands/index';
+import { flushLastViewForBoard } from '../boards/lastViewFlush';
 import type { Priority } from '../tasks/frontmatterReaders';
 import type { GroupBy, SortBy, SmartListId } from '../tasks/taskListModel';
 
@@ -44,8 +45,9 @@ export interface SavedView {
  * value lives in a hand-editable .board.json.
  */
 export interface LastViewSlice {
-  groupBy?: GroupBy;
-  sortBy?: SortBy;
+  // VIEW-5 — groupBy/sortBy are NOT part of lastView: they live canonically in
+  // board settings and `hydrateFromLastView` never reads them back. They used to
+  // be written here, double-writing .board.json on every sort/group change.
   filterTags?: string[];
   filterStatus?: string | null;
   filterPriority?: Priority | null;
@@ -103,6 +105,39 @@ export class TaskListFiltersAndViews {
 
   /** Debounce handle for the persistence write — owned by the host. */
   lastViewPersistTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * Audit2 5.6 — clears the pending lastView debounce so a host unmount
+   * mid-window doesn't fire `updateSettings` + push a history entry against
+   * a board that's already torn down. Called from `TaskListBoard.svelte`'s
+   * `onDestroy`. Idempotent — safe to call when no timer is armed.
+   *
+   * Audit-17 4.5 — flush, don't drop: a pending slice is written through the
+   * cache keyed by the hydrated board id (teardown-safe — never the pane's
+   * live board, which mid-swap is already the switched-in one). The host's
+   * persist-$effect teardown does the same; whichever runs first nulls the
+   * timer so the other no-ops, and the helper's JSON-equality guard makes a
+   * double flush a no-op anyway.
+   */
+  dispose(): void {
+    if (this.lastViewPersistTimer) {
+      clearTimeout(this.lastViewPersistTimer);
+      this.lastViewPersistTimer = null;
+    }
+    // Audit-18 5.1 — flush on unmount INDEPENDENTLY of the timer. The host's
+    // persist-$effect cleanup now flushes only on a real board switch and just
+    // clears the timer on a same-board tick (so the 300 ms debounce can
+    // accumulate); on a true unmount that cleanup nulls the timer WITHOUT
+    // flushing, so gating this flush on the timer would drop the pending slice
+    // when the cleanup ran first. Gate on the hydrated board id instead. The
+    // JSON-equality guard in flushLastViewForBoard makes a no-change teardown a
+    // no-op, and buildLastView() is unmount-safe (no next-board hydrate
+    // re-seeds the filters on a true teardown — the board-switch late-build
+    // hazard is owned by the effect cleanup's arm-time snapshot).
+    if (this.hydratedForBoardId) {
+      flushLastViewForBoard(this.hydratedForBoardId, this.buildLastView());
+    }
+  }
 
   /**
    * Parsed view of `board.settings.savedViews`. Defensively filters out
@@ -184,8 +219,7 @@ export class TaskListFiltersAndViews {
    */
   buildLastView(): LastViewSlice {
     return {
-      groupBy: this.deps.getGroupBy(),
-      sortBy: this.deps.getSortBy(),
+      // VIEW-5 — groupBy/sortBy intentionally omitted (see LastViewSlice).
       filterTags: [...this.activeFilterTags],
       filterStatus: this.activeFilterStatus,
       filterPriority: this.activeFilterPriority,

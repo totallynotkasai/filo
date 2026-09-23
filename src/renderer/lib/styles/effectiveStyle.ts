@@ -164,6 +164,33 @@ export function effectiveTileStyle(
   };
 }
 
+/**
+ * H4 (perf) — lightweight resolver for the Minimap pips. Walks ONLY the
+ * `headerColor` through the cascade (per-element > board > global) and skips the
+ * Dynamic-Contrast-Text work `effectiveTileStyle` does (a `resolveBackgroundColor`
+ * + `getDynamicContrastText` for both header and body, per tile). A minimap pip
+ * paints a flat fill and never renders text, so the contrast picks are pure
+ * waste there — and the full cascade ran per pip per pan/zoom frame on large
+ * boards. Returns the resolved header colour (empty string ⇒ caller falls back
+ * to the CSS variable).
+ */
+export function effectiveTileHeaderColor(
+  tile: Tile,
+  projectSettings: ProjectSettings | null | undefined,
+  board: Board | null | undefined = null,
+  boardType: 'mindmap' = 'mindmap',
+): string {
+  const globalDefaults = projectSettings?.[boardType]?.tile as
+    | Record<string, unknown>
+    | undefined;
+  const merged = resolveStyle<Record<string, unknown>>(
+    tile.style,
+    boardLayer(board, 'tile'),
+    globalDefaults,
+  );
+  return (merged.headerColor as string) ?? '';
+}
+
 // ── Connection path ─────────────────────────────────────────────────────
 
 export interface ResolvedConnectionPathStyle {

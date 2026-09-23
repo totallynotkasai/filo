@@ -15,9 +15,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { tabStore } from '@renderer/stores/tabs.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import {
-  registerMarkdownFlusher,
-  __resetMarkdownFlushersForTests,
-} from '@renderer/lib/boards/markdownWriteRegistry';
+  __testRegisterFlusher as registerMarkdownFlusher,
+  __resetMarkdownFileWriterForTests as __resetMarkdownFlushersForTests,
+} from '@renderer/lib/vault/markdownFileWriter';
 import {
   cancelAllPendingWrites,
   __resetDirtyTrackingForTests,

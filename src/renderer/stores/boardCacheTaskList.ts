@@ -127,13 +127,18 @@ export function makeTaskListSlice(ctx: CacheContext) {
       // Section positions are absolute indices into `tasks`.
       //
       // When `targetSectionId` is provided, the new task is going INTO that
-      // section: the target keeps its position (so its start stays <= the
-      // new task's index) and every OTHER section at-or-past the insert
-      // point shifts forward by one. This is what disambiguates multiple
-      // empty sections that share a `position` — without explicit
-      // ownership, sectionIdForPlacementIndex (which picks the last
-      // section with position <= idx) would assign the new task to the
-      // wrong neighbour.
+      // section as the last member of its slice. Sections are stored sorted by
+      // position with ties in array order (the LAST tied section owns the
+      // slice), so the section start that shifts is decided by ARRAY ORDER
+      // relative to the target — NOT a raw `position >= insertAt` compare.
+      //
+      // A numeric compare can't disambiguate sections that share a `position`
+      // (multiple empty tail sections, or an empty section just before a
+      // populated one): inserting into the LAST tied section would wrongly bump
+      // its earlier empty siblings (which sit at the same position), and
+      // inserting into an EARLIER tied section needs the later ones bumped.
+      // Bumping every section AFTER the target in array order gets both right
+      // (SEC-1). The target and everything before it keep their position.
       //
       // Legacy callers (no targetSectionId): fall back to the original
       // carve-out where any section whose start sits exactly at the
@@ -142,15 +147,36 @@ export function makeTaskListSlice(ctx: CacheContext) {
       // they meant.
       const sections = ((tl.sections ?? []) as Array<{ id: string; position: number }>);
       if (sections.length > 0) {
-        const isAppend = insertAt >= oldLength;
-        (tl as Record<string, unknown>).sections = sections.map((s) => {
-          if (targetSectionId) {
-            if (s.id === targetSectionId) return s;
-            return s.position >= insertAt ? { ...s, position: s.position + 1 } : s;
+        if (targetSectionId) {
+          const targetArrayIdx = sections.findIndex((s) => s.id === targetSectionId);
+          if (targetArrayIdx < 0) {
+            // 2.3 (Audit-16) — stale/missing target id (the section was
+            // removed between capture and apply: an undo racing an external
+            // board reload, or a quick-add aimed at a just-deleted section).
+            // The task is already spliced into `tasks` above, so shifting NO
+            // boundaries would leave every section whose slice starts
+            // at/after `insertAt` off by one (transitively misrouting later
+            // adds). Fall back to the legacy numeric shift so the boundaries
+            // stay anchored to the same tasks.
+            console.warn(
+              '[boardCache] persistAddTaskPlacement: targetSectionId not found; falling back to numeric boundary shift',
+              { targetSectionId },
+            );
+            (tl as Record<string, unknown>).sections = sections.map((s) =>
+              s.position >= insertAt ? { ...s, position: s.position + 1 } : s,
+            );
+          } else {
+            (tl as Record<string, unknown>).sections = sections.map((s, arrayIdx) =>
+              arrayIdx > targetArrayIdx ? { ...s, position: s.position + 1 } : s,
+            );
           }
-          if (isAppend && s.position === oldLength) return s;
-          return s.position >= insertAt ? { ...s, position: s.position + 1 } : s;
-        });
+        } else {
+          const isAppend = insertAt >= oldLength;
+          (tl as Record<string, unknown>).sections = sections.map((s) => {
+            if (isAppend && s.position === oldLength) return s;
+            return s.position >= insertAt ? { ...s, position: s.position + 1 } : s;
+          });
+        }
       }
 
       ctx.updateEntry(resolvedBoardId, { tileDefs: updatedDefs });
@@ -194,10 +220,25 @@ export function makeTaskListSlice(ctx: CacheContext) {
       const tl = ctx.tasklistBoardOrWarn(boardId, 'reorderTaskPlacement');
       if (!tl) return;
 
+      // DRAG-5 — this helper renumbers `tasks` but does NOT adjust section
+      // `position` boundaries, so on a sectioned board it would silently desync
+      // the section slices from the rows. It has no production caller today
+      // (drag + keyboard reorders route through moveTaskBlock /
+      // ReorderTaskWithinSectionCommand, which DO maintain section ranges).
+      // No-op-with-warn rather than corrupt a sectioned board if a future caller
+      // wires it in; the unsectioned path it was written for is unaffected.
+      if (((tl.sections ?? []) as TaskListSection[]).length > 0) {
+        console.warn(
+          '[boardCache] reorderTaskPlacement: refusing on a sectioned board — use moveTaskBlock / ReorderTaskWithinSectionCommand',
+        );
+        return;
+      }
+
       const placements = [...((tl.tasks ?? []) as TaskPlacement[])];
       const fromIdx = placements.findIndex((p) => p.tileId === tileId);
       if (fromIdx < 0) return;
       const [moved] = placements.splice(fromIdx, 1);
+      if (!moved) return; // fromIdx >= 0; splice yields one element
       const insertAt = Math.min(Math.max(targetPosition, 0), placements.length);
       placements.splice(insertAt, 0, moved);
       (tl as Record<string, unknown>).tasks = placements.map((p, i) => ({ ...p, position: i }));
@@ -210,7 +251,9 @@ export function makeTaskListSlice(ctx: CacheContext) {
       const placements = [...((tl.tasks ?? []) as TaskPlacement[])];
       const idx = placements.findIndex((p) => p.tileId === tileId);
       if (idx < 0) return;
-      const next: TaskPlacement = { ...placements[idx] };
+      const current = placements[idx];
+      if (!current) return; // idx >= 0 from findIndex; narrow for the type-checker
+      const next: TaskPlacement = { ...current };
       if (locked) next.locked = true;
       else delete next.locked;
       placements[idx] = next;
@@ -228,11 +271,13 @@ export function makeTaskListSlice(ctx: CacheContext) {
       const placements = [...((tl.tasks ?? []) as TaskPlacement[])];
       const idx = placements.findIndex((p) => p.tileId === tileId);
       if (idx < 0) return;
-      const next: TaskPlacement = { ...placements[idx] };
+      const current = placements[idx];
+      if (!current) return; // idx >= 0 from findIndex; narrow for the type-checker
+      const next: TaskPlacement = { ...current };
       if (!style || Object.keys(style).length === 0) {
         delete next.style;
       } else {
-        next.style = { ...(placements[idx].style ?? {}), ...style };
+        next.style = { ...(current.style ?? {}), ...style };
       }
       placements[idx] = next;
       (tl as Record<string, unknown>).tasks = placements;
@@ -278,6 +323,27 @@ export function makeTaskListSlice(ctx: CacheContext) {
         (tl as Record<string, unknown>).tasks = tasks.map((p, i) => ({ ...p, position: i }));
       }
       const taskCount = ((tl.tasks ?? []) as TaskPlacement[]).length;
+      // Section positions are absolute indices into `tasks`, partitioning it
+      // into contiguous [position, nextPosition) slices. Among sections tied at
+      // the same position the LAST in array order owns the slice and the earlier
+      // ones are empty (see sectionMath.sectionIdForPlacementIndex /
+      // taskListViewModel.sectionedView) — the schema's documented empty-section
+      // form ("Empty sections are representable (two consecutive section
+      // positions)" — schema/board.ts).
+      //
+      // Normalisation is a stable sort + a clamp into [0, taskCount].
+      //   - SEC-2: never emit `position > taskCount`. Such a position is not a
+      //     valid index into `tasks`; it can't own anything AND it silently
+      //     misroutes a later add-to-section into an earlier neighbour (SEC-1).
+      //     Trailing empty sections therefore PIN at taskCount (they used to be
+      //     bumped to taskCount+1, taskCount+2, … — the invalid representation).
+      //   - In-range ties are preserved exactly (bumping one would shift the
+      //     next section's start past its first task, silently stealing it — the
+      //     cross-section-drag corruption).
+      //   - SEC-4: the sort is stable, so the caller's array order is kept
+      //     deterministically. Callers must list empty ties BEFORE the populated
+      //     owner; the clamp + min() are monotonic so the array stays sorted by
+      //     position (a non-decreasing run can only tie, never invert).
       const normalised = sections
         .slice()
         .sort((a, b) => a.position - b.position)

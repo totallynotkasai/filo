@@ -248,6 +248,24 @@ const TASK_CREATION = 'src/renderer/lib/tasklist/taskCreation.ts';
   }
 }
 
+// ── Arm E (MD-2) ─────────────────────────────────────────────────────────
+{
+  const f = load(TEXT_TILE);
+  if (f) {
+    const destroy = arrowBodies(f, 'onDestroy(')[0];
+    const body = destroy ? slice(f, destroy) : '';
+    if (!destroy) failures.push(`[E] ${TEXT_TILE}: onDestroy not found`);
+    else {
+      if (!/\bisWriterDirty\s*\(/.test(body) || !/\bhasPendingMarkdownWriteFor\s*\(/.test(body)) {
+        failures.push(`[E] ${TEXT_TILE}: onDestroy must gate its final write on isWriterDirty( + hasPendingMarkdownWriteFor( (MD-2)`);
+      }
+      if (/const\s+finalArgs\s*=\s*buildWriteArgs\(\s*\)\s*;/.test(body)) {
+        failures.push(`[E] ${TEXT_TILE}: onDestroy builds its final write unconditionally — write only unsaved work (MD-2)`);
+      }
+    }
+  }
+}
+
 if (failures.length > 0) {
   process.stderr.write(`\n[ci:editor-body-discipline] ${failures.length} violation(s):\n\n`);
   for (const x of failures) process.stderr.write(`  ${x}\n`);

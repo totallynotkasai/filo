@@ -63,6 +63,16 @@ function normaliseKey(path: string): string {
 export interface FileBaseline {
   mtimeMs: number;
   size: number;
+  /**
+   * Audit-19 MD-2 — the exact bytes last CONFIRMED on disk for this baseline
+   * (a hydrate read, or a post-write read-back that matched), when small enough
+   * to keep (callers pass it only under the 1 MB read-back threshold). Lets the
+   * gateway skip a write whose assembled bytes are identical. Any re-stamp
+   * WITHOUT text (external reload, Keep-local re-anchor, a large note) drops it,
+   * so a stale copy can never justify a skip. Roughly doubles memory for
+   * hydrated notes under 1 MB — accepted.
+   */
+  text?: string;
 }
 
 /** Vault-relative path -> last-observed (mtime, size) baseline. */
@@ -131,6 +141,7 @@ export function noteBaseline(
   path: string,
   mtimeMs: number | undefined | null,
   size: number | undefined | null,
+  text?: string,
 ): void {
   if (!path) return;
   if (mtimeMs === undefined || mtimeMs === null || !Number.isFinite(mtimeMs)) return;
@@ -141,7 +152,8 @@ export function noteBaseline(
   if (size === undefined || size === null || !Number.isFinite(size)) return;
   const key = normaliseKey(path);
   if (!key) return;
-  baselines.set(key, { mtimeMs, size });
+  // REPLACES the entry: a re-stamp without `text` drops any previous text.
+  baselines.set(key, text === undefined ? { mtimeMs, size } : { mtimeMs, size, text });
 }
 
 /**
@@ -197,6 +209,7 @@ export function refreshBaselineAfterWrite(
   path: string,
   mtimeMs: number | undefined | null,
   size: number | undefined | null,
+  text?: string,
 ): void {
   if (!path) return;
   if (
@@ -205,9 +218,17 @@ export function refreshBaselineAfterWrite(
     typeof size === 'number' &&
     Number.isFinite(size)
   ) {
-    noteBaseline(path, mtimeMs, size);
+    noteBaseline(path, mtimeMs, size, text);
+    return;
   }
   // DI-14 — else: keep the prior baseline. Deliberately NO clearBaseline call.
+  // Audit-19 MD-2 — but drop its confirmed TEXT: a write was issued whose bytes
+  // we could not confirm, so the old text no longer proves what disk holds (on a
+  // coarse-mtime volume a same-size write could otherwise leave mtime+size
+  // "unchanged" and let a later write back to the old bytes be skipped).
+  const key = normaliseKey(path);
+  const prior = baselines.get(key);
+  if (prior?.text !== undefined) baselines.set(key, { mtimeMs: prior.mtimeMs, size: prior.size });
 }
 
 /**

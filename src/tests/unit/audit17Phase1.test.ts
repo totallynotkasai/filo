@@ -447,14 +447,21 @@ describe('A17-1.4 — UpdatePropertiesCommand surfaces a failed write to the his
     resetAll();
     captured = [];
     failWrites = false;
+    // Audit-19 MD-2 — the disk reflects successful writes (a static disk made
+    // undo's "back to low" look like an identical-bytes no-op the gateway skips).
+    let disk = '---\npriority: low\n---\nbody\n';
+    let mtime = 1;
     installFiloMock((channel: string, ...args: unknown[]) => {
       captured.push({ channel, args });
       if (channel === 'vault:read-file-text') {
-        return { success: true, content: '---\npriority: low\n---\nbody\n', mtimeMs: 1, size: 50 };
+        return { success: true, content: disk, mtimeMs: mtime, size: disk.length };
       }
-      if (channel === 'vault:stat') return { success: true, mtimeMs: 1, size: 50 };
+      if (channel === 'vault:stat') return { success: true, mtimeMs: mtime, size: disk.length };
       if (channel === 'vault:write-existing-file-text') {
-        return failWrites ? { success: false, code: 'ENOSPC' } : { success: true };
+        if (failWrites) return { success: false, code: 'ENOSPC' };
+        disk = String(args[2]);
+        mtime += 1;
+        return { success: true };
       }
       return { success: true };
     });

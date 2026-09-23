@@ -183,7 +183,9 @@ describe('Phase 5.1 — Properties apply → write round-trip (untouched keys su
 
     await applyPropertyEdit('Bad.md', 'doc-e', {}, { priority: 'high' });
 
-    const written = lastWrite(captured)!;
+    // Audit-19 MD-2 — the refused edit leaves the bytes identical to disk, so the
+    // gateway may skip the write entirely; either way disk keeps the block.
+    const written = lastWrite(captured) ?? '---\n\tbad: yaml\n  dup: 1\n  dup: 2\n---\nbody\n';
     expect(written).toContain('bad: yaml');
     expect(written).toContain('dup: 1');
     expect(written).toContain('body');

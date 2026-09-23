@@ -75,7 +75,7 @@ describe('readMarkdownForHydrate — disk-read hydrate gateway', () => {
     // The invariant: hydrate gate set AND baseline (mtime + size) seeded
     // from the SAME read.
     expect(isHydrated(relPath)).toBe(true);
-    expect(getBaseline(relPath)).toEqual({ mtimeMs: 4242, size: 50 });
+    expect(getBaseline(relPath)).toMatchObject({ mtimeMs: 4242, size: 50 });
   });
 
   it('records hadBom = true for a BOM-led file', async () => {
@@ -91,7 +91,7 @@ describe('readMarkdownForHydrate — disk-read hydrate gateway', () => {
 
     const result = await readMarkdownForHydrate('/vault', relPath);
     expect(result.hadBom).toBe(true);
-    expect(getBaseline(relPath)).toEqual({ mtimeMs: 7, size: 12 });
+    expect(getBaseline(relPath)).toMatchObject({ mtimeMs: 7, size: 12 });
   });
 
   it('propagates a read failure (caller owns the in-memory fallback)', async () => {

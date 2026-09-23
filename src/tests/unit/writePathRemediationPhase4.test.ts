@@ -206,9 +206,15 @@ describe('Phase 4 — field edit applies a delta to FRESH disk (stale cache, no 
     installDisk('---\n\tbad: yaml\n  dup: 1\n  dup: 2\n---\nbody\n');
 
     const tile = { id: 't1', type: 'text', contentId: 'doc5', title: 'Bad', tags: [] } as unknown as Tile;
-    await fieldEditAndFlush(tile, { priority: 'high' });
+    // Not fieldEditAndFlush: that waits for a write IPC, which the refused edit
+    // may legitimately never issue (Audit-19 MD-2 identical-bytes skip).
+    await makeWriter(tile).updateTileFrontmatter(tile.id, { priority: 'high' });
+    await flushAllPendingFrontmatterWrites();
+    await new Promise((r) => setTimeout(r, 50));
 
-    const written = lastWrite(captured)!;
+    // Audit-19 MD-2 — the refused edit leaves the bytes identical to disk, so the
+    // gateway may skip the write entirely; either way disk keeps the block.
+    const written = lastWrite(captured) ?? '---\n\tbad: yaml\n  dup: 1\n  dup: 2\n---\nbody\n';
     // Data-safe: the broken-but-present block is kept verbatim rather than
     // replaced by a dump of just the new key (total-FM-loss class).
     expect(written).toContain('bad: yaml');

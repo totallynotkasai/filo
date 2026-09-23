@@ -153,7 +153,7 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
     // match → write proceeds. Post-write stat returns 1100 → baseline
     // refreshes for the next round.
     markHydrated(relPath, false, 1000, 100);
-    expect(getBaseline(relPath)).toEqual({ mtimeMs: 1000, size: 100 });
+    expect(getBaseline(relPath)).toMatchObject({ mtimeMs: 1000, size: 100 });
 
     let promptCalled = 0;
     setExternalEditPromptHandler(async () => {
@@ -174,7 +174,7 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
     expect(invokes.some((i) => i.channel === 'vault:write-existing-file-text')).toBe(true);
     // Baseline refreshed to the post-write stat (size = the bytes we wrote;
     // Audit-7 L5 only stamps when the post-write stat size matches).
-    expect(getBaseline(relPath)).toEqual({ mtimeMs: 1100, size: writtenByteLength(invokes) });
+    expect(getBaseline(relPath)).toMatchObject({ mtimeMs: 1100, size: writtenByteLength(invokes) });
   });
 
   it('drift detected → prompt handler invoked, Reload aborts write', async () => {
@@ -207,7 +207,7 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
     // handler is responsible for any post-Reload bookkeeping (e.g. the
     // Reload branch of promptExternalEditOnSync re-hydrates via
     // markHydrated which re-stamps the baseline).
-    expect(getBaseline(relPath)).toEqual({ mtimeMs: 1000, size: 100 });
+    expect(getBaseline(relPath)).toMatchObject({ mtimeMs: 1000, size: 100 });
   });
 
   it('drift detected → Keep-local proceeds with write, baseline refreshes', async () => {
@@ -233,7 +233,7 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
     // Write IPC fired (the user chose Keep-local).
     expect(invokes.some((i) => i.channel === 'vault:write-existing-file-text')).toBe(true);
     // Baseline refreshed to the post-write mtime (size = the bytes we wrote).
-    expect(getBaseline(relPath)).toEqual({ mtimeMs: 2100, size: writtenByteLength(invokes) });
+    expect(getBaseline(relPath)).toMatchObject({ mtimeMs: 2100, size: writtenByteLength(invokes) });
   });
 
   it('drift detected on SIZE change alone, same mtime (coarse-mtime collision guard)', async () => {
@@ -271,7 +271,7 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
     expect(invokes.some((i) => i.channel === 'vault:write-existing-file-text')).toBe(true);
     // Keep-local proceeded → baseline refreshed to the post-write stat
     // (size = the bytes we wrote).
-    expect(getBaseline(relPath)).toEqual({ mtimeMs: 1000, size: writtenByteLength(invokes) });
+    expect(getBaseline(relPath)).toMatchObject({ mtimeMs: 1000, size: writtenByteLength(invokes) });
   });
 
   it('no baseline → drift check skipped (legacy unguarded behaviour)', async () => {
@@ -303,7 +303,7 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
     expect(preWriteStats.length).toBe(1);
     expect(invokes.some((i) => i.channel === 'vault:write-existing-file-text')).toBe(true);
     // Post-write stat seeded the baseline (size = the bytes we wrote).
-    expect(getBaseline(relPath)).toEqual({ mtimeMs: 9999, size: writtenByteLength(invokes) });
+    expect(getBaseline(relPath)).toMatchObject({ mtimeMs: 9999, size: writtenByteLength(invokes) });
   });
 
   it('successful self-write refreshes baseline (no spurious drift on next write)', async () => {
@@ -382,7 +382,7 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
     // The write landed (post-write stat fires only after a successful write).
     expect(invokes.some((i) => i.channel === 'vault:write-existing-file-text')).toBe(true);
     // DI-14: baseline KEPT, not cleared.
-    expect(getBaseline(relPath)).toEqual({ mtimeMs: 1000, size: 100 });
+    expect(getBaseline(relPath)).toMatchObject({ mtimeMs: 1000, size: 100 });
   });
 
   it('DI-09 — concurrent writes to the same path serialize across callerIds', async () => {
@@ -469,9 +469,9 @@ describe('fileBaselineRegistry — case-insensitive lookups', () => {
   it('exposes noteBaseline/getBaseline/clearBaseline contract', () => {
     expect(getBaseline('Notes/x.md')).toBeUndefined();
     noteBaseline('Notes/x.md', 1234, 100);
-    expect(getBaseline('Notes/x.md')).toEqual({ mtimeMs: 1234, size: 100 });
+    expect(getBaseline('Notes/x.md')).toMatchObject({ mtimeMs: 1234, size: 100 });
     noteBaseline('Notes/x.md', 5678, 200);
-    expect(getBaseline('Notes/x.md')).toEqual({ mtimeMs: 5678, size: 200 });
+    expect(getBaseline('Notes/x.md')).toMatchObject({ mtimeMs: 5678, size: 200 });
   });
 
   it('rejects non-finite mtimes (NaN, Infinity)', () => {
@@ -596,7 +596,7 @@ describe('F1 — read-driven hydrate seeds the drift baseline', () => {
     expect(promptCalls).toBe(1);
     // Keep-local proceeded → post-write stat refreshed the baseline.
     expect(writtenLen).toBeGreaterThan(0);
-    expect(getBaseline(relPath)).toEqual({ mtimeMs: 2000, size: writtenLen });
+    expect(getBaseline(relPath)).toMatchObject({ mtimeMs: 2000, size: writtenLen });
   });
 
   it('matching mtime does not spuriously prompt (no false positive on self-write)', async () => {
@@ -647,6 +647,6 @@ describe('F1 — read-driven hydrate seeds the drift baseline', () => {
 
     expect(promptCalls).toBe(0);
     expect(writtenLen).toBeGreaterThan(0);
-    expect(getBaseline(relPath)).toEqual({ mtimeMs: 1000, size: writtenLen });
+    expect(getBaseline(relPath)).toMatchObject({ mtimeMs: 1000, size: writtenLen });
   });
 });

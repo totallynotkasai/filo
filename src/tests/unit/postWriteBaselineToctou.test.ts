@@ -115,7 +115,7 @@ describe('Audit-7 L5 — post-write baseline TOCTOU guard', () => {
     scheduleMarkdownWrite(bodyWriteArgs(docId, relPath, 'edited body'));
     await flushMarkdownWrite(callerId);
 
-    expect(getBaseline(relPath)).toEqual({ mtimeMs: 4242, size: writtenBytes });
+    expect(getBaseline(relPath)).toMatchObject({ mtimeMs: 4242, size: writtenBytes });
     expect(writtenBytes).toBeGreaterThan(0);
   });
 

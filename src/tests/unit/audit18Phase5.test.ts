@@ -536,7 +536,8 @@ describe('Audit-18 5.4 — post-write read-back is size-gated', () => {
 
   it('source: the read-back is gated by writtenByteLength < MARKDOWN_READBACK_BYTE_THRESHOLD', () => {
     const src = readFileSync(
-      join(ROOT, 'src/renderer/lib/vault/markdownFileWriter.ts'),
+      // Audit-19 MD-2 — the post-write tail moved to markdownPostWrite.ts.
+      join(ROOT, 'src/renderer/lib/vault/markdownPostWrite.ts'),
       'utf8',
     );
     expect(src).toContain('if (writtenByteLength < MARKDOWN_READBACK_BYTE_THRESHOLD) {');

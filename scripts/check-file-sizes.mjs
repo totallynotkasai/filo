@@ -488,7 +488,12 @@ const ALLOWLIST = {
   // protection), notes at/above accept size-only confirmation to avoid doubling
   // write-path IO on slow volumes (residual hole documented in KNOWN_LIMITATIONS
   // #15). +23 LOC of constant + size-gate + rationale. New snapshot: 1416 LOC.
-  'src/renderer/lib/vault/markdownFileWriter.ts': 1416,
+  // AUDIT19 Phase 0 0.10 (MD-2) — the post-write tail (stat + read-back baseline
+  // confirm, index refresh, FM flushed-version, guarded markClean) and the
+  // read-back threshold moved to the new `markdownPostWrite.ts`, making room for
+  // the identical-bytes skip + `hasPendingMarkdownWriteFor`. Net -64 LOC; the
+  // ceiling is TIGHTENED, not bumped. New snapshot: 1352 LOC.
+  'src/renderer/lib/vault/markdownFileWriter.ts': 1352,
   // AUDIT8_REMEDIATION_PLAN_2026-06-04 Phase 3 M5 — `UpdateOrphanFrontmatterCommand.
   // execute()` recomputes its inverse from a FRESH on-disk read on the first
   // execute (a `hasExecuted` guard) — mirroring the docId path's

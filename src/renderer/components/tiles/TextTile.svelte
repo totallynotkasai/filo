@@ -34,6 +34,7 @@
     unregisterForceWriter,
     flushFinalWriteOnDestroy,
     cancelMarkdownWrite,
+    hasPendingMarkdownWriteFor,
     type WriteArgs,
   } from '../../lib/vault/markdownFileWriter';
   import { reportError } from '../../lib/utils/errorBus';
@@ -90,6 +91,9 @@
   // effect needs this signal to know when to re-run after the user
   // commits their IME input.
   let isComposing = $state(false);
+  // Audit-19 MD-2 — set on the first real user edit (after the isUpdatingFromStore
+  // skip). onDestroy writes only when this view actually changed something.
+  let userEdited = false;
 
   function vaultRelativePath(): string | null {
     const vaultRoot = vaultStore.path;
@@ -167,6 +171,7 @@
         // `hydrateReadFailed && !lastLoadedBody` refusal and write over the
         // unread file.
         if (hydrateReadFailed) return;
+        userEdited = true;
         const md = editorMarkdown(ed);
         const html = ed.getHTML();
         // Track our own write so the reactive $effect below treats it as a
@@ -487,7 +492,17 @@
     // doc + extensions + plugin state) alive for the full duration of the
     // disk write. With this re-ordering the editor is reclaimed
     // immediately; the IPC owns only the small `WriteArgs` snapshot.
-    const finalArgs = buildWriteArgs();
+    //
+    // Audit-19 MD-2 — but ONLY when this writer has unsaved work. Unmounts are
+    // routine (viewport culling, the LOD body switch, board/tab switch, Kanban
+    // cards), and an unconditional final write re-serialised every untouched
+    // note through the editor (`_x_` → `*x*`, mixed EOLs) — and combined with
+    // MD-3 it deleted content. A failed earlier write keeps the writer dirty
+    // (the gateway markCleans only on success), so destroy still retries it.
+    const hasUnsaved =
+      userEdited &&
+      (!contentId || documentStore.isWriterDirty(contentId, callerId) || hasPendingMarkdownWriteFor(callerId));
+    const finalArgs = hasUnsaved ? buildWriteArgs() : null;
     // Cancel any debounced timer for this caller so the snapshot we're
     // about to fire isn't shadowed by a slightly-older scheduled write
     // landing afterwards.

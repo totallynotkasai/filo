@@ -42,17 +42,13 @@ import { createScheduler } from '../boards/writeScheduler';
 import { WRITE_TIMEOUT_MS } from '../boards/boardWriteDebounce';
 import { registerPendingProbe, markPathFailed } from '../boards/writeStateTracking';
 import { vaultPath, type VaultPath } from '@shared/vaultPath';
-import {
-  getLastFlushedFrontmatterVersion,
-  noteFrontmatterFlushedVersion,
-} from '../boards/frontmatterWriteScheduler';
+import { getLastFlushedFrontmatterVersion } from '../boards/frontmatterWriteScheduler';
 import { invokeOk } from '../utils/invokeOk';
 import { reportError } from '../utils/errorBus';
 import { documentStore } from '../../stores/document.svelte';
-import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
-import { parseMarkdown } from './vaultIndex';
 import { onVaultSwap, vaultSwapResettable } from '../../core/vaultLifecycle';
-import { getBaseline, noteBaseline, resetAllBaselines, refreshBaselineAfterWrite } from './fileBaselineRegistry';
+import { getBaseline, noteBaseline, resetAllBaselines, hasBaselineDrifted } from './fileBaselineRegistry';
+import { confirmPostWriteBaseline, finishWriteBookkeeping, MARKDOWN_READBACK_BYTE_THRESHOLD } from './markdownPostWrite';
 import { registerPathRenamable } from './renamePathKeys';
 import { captureVaultIdentity, isStillSameVault } from './vaultIdentity';
 import { freshReadLooksTornMidFrontmatter } from './tornFrontmatterRead';
@@ -86,19 +82,8 @@ function utf8ByteLength(text: string): number {
   return utf8Encoder ? utf8Encoder.encode(text).length : text.length;
 }
 
-/**
- * Audit-18 5.4 — byte threshold above which the Audit-17 5.3 post-write CONTENT
- * read-back is skipped (size-only baseline confirmation instead). A markdown
- * write is 300 ms idle-debounced and bound by `MARKDOWN_WRITE_TIMEOUT_MS`
- * (60 s); a full content read-back on EVERY write doubles write-path IO, and for
- * a multi-MB note on a slow volume (OneDrive/SMB/AV) that can push past the
- * timeout into timeout-then-self-heal flapping. Small notes (the overwhelming
- * majority) keep the read-back's same-byte-count-foreign-write protection; notes
- * at or above the threshold fall back to size-only (the residual hole is
- * documented in KNOWN_LIMITATIONS #15, mirroring the board scheduler's whole-file
- * decision in #14). Exported so the behavioural matrix can pin the boundary.
- */
-export const MARKDOWN_READBACK_BYTE_THRESHOLD = 1_000_000; // 1 MB
+// Audit-18 5.4 / Audit-19 MD-2 — read-back size threshold (moved with the post-write tail).
+export { MARKDOWN_READBACK_BYTE_THRESHOLD };
 
 // Phase R6 — the Reload / Keep-local prompt-handler slot lives in the leaf
 // `externalEditPrompt.ts` (Audit-16 split); re-exported for existing imports.
@@ -243,6 +228,24 @@ registerPendingProbe((path) => {
   );
 });
 
+/** A newer write for `callerId` is armed (timer) or parked (fired, draining). */
+function hasNewerWriteForCaller(callerId: string): boolean {
+  return (
+    writerScheduler.hasPendingTimer((a) => a.callerId === callerId) ||
+    writerScheduler.hasParked((info) => info.key === callerId)
+  );
+}
+
+/**
+ * Audit-19 MD-2 — true when `callerId` still has unsaved work in the gateway:
+ * an armed debounce, a parked fire, or a write in flight. TextTile's onDestroy
+ * uses it (with the writer's dirty flag) to write ONLY when there is something
+ * to save, instead of on every unmount (culling, LOD, board/tab switch).
+ */
+export function hasPendingMarkdownWriteFor(callerId: string): boolean {
+  return hasNewerWriteForCaller(callerId) || inFlightWrites.has(callerId);
+}
+
 /**
  * callerId → fresh-args callback. Carry-over from the old
  * `markdownWriteRegistry.forceWriteForDocument` API: editor-backed writers
@@ -343,6 +346,8 @@ export function markHydrated(
   mtimeMs?: number,
   size?: number,
   eol?: '\r\n' | '\n',
+  /** Audit-19 MD-2 — the exact bytes just read (small notes only); see FileBaseline.text. */
+  diskText?: string,
 ): void {
   if (!relPath) return;
   // A8-M1 — record the file's real eol when the caller sniffed it from the raw
@@ -350,7 +355,7 @@ export function markHydrated(
   // pass none ⇒ the write path falls back to body/FM-source detection (LF for a
   // genuinely new file).
   fileState.set(relPath, { hadBom, eol });
-  if (mtimeMs !== undefined) noteBaseline(relPath, mtimeMs, size);
+  if (mtimeMs !== undefined) noteBaseline(relPath, mtimeMs, size, diskText);
 }
 
 /**
@@ -471,7 +476,10 @@ export async function readMarkdownForHydrate(
   // fence-stripped FM block, which loses the signal for a single-line FM) and
   // thread it through so a later metadata edit re-applies CRLF to the FM block.
   const eol: '\r\n' | '\n' = result.content.includes('\r\n') ? '\r\n' : '\n';
-  markHydrated(relPath, parsed.hadBom, result.mtimeMs, result.size, eol);
+  // Audit-19 MD-2 — keep the bytes read (small notes only) as the confirmed
+  // baseline text, so a later write that would re-emit them unchanged skips.
+  const keepText = utf8ByteLength(result.content) < MARKDOWN_READBACK_BYTE_THRESHOLD ? result.content : undefined;
+  markHydrated(relPath, parsed.hadBom, result.mtimeMs, result.size, eol, keepText);
   return {
     content: result.content,
     hadBom: parsed.hadBom,
@@ -881,6 +889,30 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
   // post-write baseline stamp below can reject a stat that observed a FOREIGN
   // edit instead of our bytes (see the TOCTOU guard at the post-write stat).
   const writtenByteLength = utf8ByteLength(fileText);
+  const bookkeeping = {
+    relPath,
+    fileText,
+    docId,
+    callerId,
+    mutationVersionAtCapture: args.mutationVersionAtCapture,
+    hasNewerWriteFor: hasNewerWriteForCaller,
+  };
+  // Audit-19 MD-2 — identical-bytes skip, anchored to the drift BASELINE: only
+  // when the gate proceeded on a NON-drifted stat and the assembled bytes equal
+  // the last bytes CONFIRMED on disk (hydrate read / matched read-back). A
+  // Keep-local choice (stat ≠ baseline) always writes; an external reload
+  // re-stamps text-less, so it can never skip. No IPC → no baseline/index
+  // change; a failed mark stays sticky until a real write lands (safe side).
+  const base = getBaseline(relPath);
+  if (
+    base?.text !== undefined &&
+    preWriteVerifyStat &&
+    !hasBaselineDrifted(base, preWriteVerifyStat) &&
+    fileText === base.text
+  ) {
+    if (isStillSameVault(writeIdentity)) finishWriteBookkeeping(bookkeeping);
+    return;
+  }
   await trackComponentWrite(vaultRoot, relPath, async () => {
     await invokeOk('vault:write-existing-file-text', vaultRoot, relPath, fileText);
   });
@@ -896,104 +928,8 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
   // cross-vault entry). (markClean is already a no-op post-swap since the doc
   // was cleared; the guard makes the whole tail coherent.)
   if (!isStillSameVault(writeIdentity)) return;
-  // Phase R6 — refresh the baseline to the post-write mtime so a
-  // late watcher echo (or the next debounced write) compares against
-  // the state we just wrote, not the pre-write state.
-  // Audit-4 DI-14 — on an unusable post-write stat KEEP the prior baseline
-  // (reverting 6.4.M2's clear). A stat failure then surfaces at worst a
-  // spurious drift prompt on the NEXT write — which the user dismisses with
-  // Keep-local — instead of disabling the drift check and opening a silent-
-  // overwrite window. See `refreshBaselineAfterWrite` for the full trade-off.
-  try {
-    const postStat = await invokeOk('vault:stat', vaultRoot, relPath);
-    // Audit-7 L5 — TOCTOU guard. A foreign edit can land in the write→stat gap.
-    // Size fast-path rejects the easy mismatch (keep prior baseline, DI-14).
-    // Audit-17 5.3 — size match is necessary but NOT sufficient (a same-byte-count
-    // foreign write would be adopted as our baseline → next write clobbers it
-    // promptless), so read the bytes BACK and stamp only when disk holds EXACTLY
-    // what we wrote; on any content mismatch / unreadable read-back keep the prior
-    // baseline so the drift gate re-detects + prompts next write.
-    // Audit-18 5.4 — size-gate the read-back: only small notes pay the second
-    // read. Notes at/above MARKDOWN_READBACK_BYTE_THRESHOLD accept size-only
-    // confirmation to avoid doubling IO on slow volumes (KNOWN_LIMITATIONS #15).
-    let confirmed = false;
-    if (postStat.size === writtenByteLength) {
-      if (writtenByteLength < MARKDOWN_READBACK_BYTE_THRESHOLD) {
-        try {
-          const readBack = await invokeOk('vault:read-file-text', vaultRoot, relPath);
-          confirmed = readBack.content === fileText;
-        } catch {
-          /* transient IO — keep prior baseline (safe direction) */
-        }
-      } else {
-        // Large note: size matched our written bytes; accept it (residual
-        // same-byte-count-foreign-write hole documented in KNOWN_LIMITATIONS #15).
-        confirmed = true;
-      }
-    }
-    if (confirmed) {
-      refreshBaselineAfterWrite(relPath, postStat.mtimeMs, postStat.size);
-    } else {
-      refreshBaselineAfterWrite(relPath, undefined, undefined);
-    }
-  } catch {
-    refreshBaselineAfterWrite(relPath, undefined, undefined);
-  }
-  // Sprint C / C-A5-2 — refresh the vault index from the just-written bytes
-  // so a late watcher echo past the renderer-side suppression TTL
-  // (1.5 s idle / 5 s bulk) classifies as 'ignore' / 'noop-change' instead
-  // of comparing the post-write disk content against the stale pre-write
-  // baseline (which would surface a spurious "modified externally" toast
-  // for the user's own write).
-  //
-  // We synthesise the FileMetadata locally rather than calling
-  // `applyChanges([relPath])` because trackComponentWrite already threw on
-  // IPC failure — the only way we reach this line is if the bytes landed
-  // on disk. `parseMarkdown(relPath, fileText)` produces the same
-  // FileMetadata the watcher's re-read path would produce, without the
-  // extra IPC round-trip. Best-effort: a parse failure here doesn't fail
-  // the write (the next watcher event will just re-classify normally).
-  try {
-    const refreshed = parseMarkdown(relPath, fileText);
-    vaultIndexStore.restoreMetadata(relPath, refreshed);
-  } catch (err) {
-    console.warn('[markdownFileWriter] post-write index refresh failed (best-effort):', err);
-  }
-  if (docId) {
-    // Audit-16 4.3 — record the CAPTURED version (what the assembled body/FM
-    // correspond to), never the live post-IPC counter, which would mark a
-    // mid-IPC mutation as flushed and let its follow-up write skip as stale.
-    noteFrontmatterFlushedVersion(docId, args.mutationVersionAtCapture ?? 0);
-  }
-
-  // Audit-7 M1 — a successful write clears THIS writer's dirty entry so a
-  // normally-saved editor goes clean. Without it the writerId lingered in
-  // `documentStore.dirtyWriters` forever (only reload / unload / vault-swap
-  // removed it), pinning `isDirty` true → a spurious "modified externally"
-  // prompt for a now-saved file and a frozen sibling reload `$effect`. Covers
-  // TextTile + DocumentEditor in one place. Guarded on `hasPending`: if the user
-  // typed again mid-write a newer timer is armed for this caller, so leave it
-  // dirty (that write clears it) rather than flash a transient clean window an
-  // external-edit reconciler could misread into a silent reload of the unsaved
-  // keystrokes. Cheap — `hasPendingTimer` only reads the already-built args.
-  // Audit-17 5.5 — ALSO leave it dirty when a newer fire for this caller is
-  // PARKED (timer fired, draining behind this write — in neither `pending` nor
-  // `inFlight`); the scheduler keys by callerId, so `info.key === callerId` finds
-  // it. Else markClean would flash a transient clean window over unsaved keystrokes.
-  if (
-    docId &&
-    !writerScheduler.hasPendingTimer((pendingArgs) => pendingArgs.callerId === callerId) &&
-    !writerScheduler.hasParked((info) => info.key === callerId)
-  ) {
-    documentStore.markClean(docId, callerId);
-  }
-  // Audit-11 WC-2 — deliberately NOT also gated on a pending FM write for this
-  // path: the save indicator reads the write LEDGER (the FM scheduler is
-  // `sentinelMode:'full'`, so its pending writes already count there), and the
-  // sole `isDirty`-field reader (`conflictResolver`) is downstream-guarded by
-  // F4 `isPathPending` (which sees the FM write). Gating here would instead
-  // STRAND this body callerId (the FM write clears only its own callerId) —
-  // re-opening the Audit-7 M1 "pinned dirty" hole. Correct as-is.
+  await confirmPostWriteBaseline(vaultRoot, relPath, fileText, writtenByteLength);
+  finishWriteBookkeeping(bookkeeping);
 }
 
 // ── Debounce wrapper ──

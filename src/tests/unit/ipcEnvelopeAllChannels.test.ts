@@ -73,6 +73,7 @@ const SUCCESS_DISCRIMINATED: readonly string[] = [
   'board:load',
   'board:list-conflicts',
   'recovery:list-sentinels',
+  'vault:convert-to-utf8',
   'media:save-audio',
   'media:read-file',
   'media:open-external',

@@ -139,7 +139,9 @@ export interface IpcChannelMap {
     // `vault:stat` round-trip. Both optional because a future handler revision
     // could omit them; callers pass them to `markHydrated`, which only seeds a
     // baseline when both are finite.
-    result: IpcSuccess<{ content: string; mtimeMs?: number; size?: number }>;
+    // Audit-19 ERR-7 — `encoding` is `'invalid-utf-8'` when the bytes aren't UTF-8
+    // (content is still decoded, with U+FFFD, for display only); absent = UTF-8.
+    result: IpcSuccess<{ content: string; mtimeMs?: number; size?: number; encoding?: 'utf-8' | 'invalid-utf-8' }>;
   };
   'vault:write-file-text': {
     args: [vaultRoot: string, relPath: string, content: string];
@@ -267,6 +269,11 @@ export interface IpcChannelMap {
   'app:machine-identity': {
     args: [];
     result: { machineId: string; hostname: string };
+  };
+  // Audit-19 ERR-7 — the only rewrite of a non-UTF-8 note (backs up first).
+  'vault:convert-to-utf8': {
+    args: [vaultRoot: string, relPath: string];
+    result: IpcSuccess<{ converted: boolean; backupPath?: string }>;
   };
   // Audit-19 EXT-5 — moves orphaned `*.<12hex>.tmp` / `.case-rename-*` files
   // older than 10 min into `.filo/recovery/orphan-tmp/` (never deletes).

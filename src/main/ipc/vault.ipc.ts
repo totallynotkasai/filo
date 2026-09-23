@@ -39,9 +39,19 @@ import {
 } from '../services/recentVaults';
 import { vaultRegistry } from '../services/vaultRegistry';
 import { ipcErrorCode } from './ipcErrorCode';
+import { noteReadEncoding, isRegisteredNonUtf8, renameNonUtf8 } from '../services/nonUtf8Registry';
 
 let activeWatcher: FileWatcher | null = null;
 let currentVaultRoot: string | null = null;
+
+/** Audit-19 ERR-7 — the typed refusal for a write over a non-UTF-8 file. */
+function notUtf8Refusal(relativePath: string): { success: false; code: 'NOT_UTF8'; error: string } {
+  return {
+    success: false,
+    code: 'NOT_UTF8',
+    error: `"${relativePath}" is not UTF-8 text; Filo won't overwrite it (use "Convert to UTF-8")`,
+  };
+}
 
 export function getVaultRoot(): string | null {
   return currentVaultRoot;
@@ -258,6 +268,7 @@ export function registerVaultHandlers(): void {
         suppressFn(newRel);
       }
       await renameItem(oldPath, newPath);
+      renameNonUtf8(oldPath, newPath); // Audit-19 ERR-7 — the write refusal follows the file
       // Post-rename re-suppress: the OS may emit the create-side event
       // moments after `renameItem` resolves on slow disks, especially for
       // recursive folder moves. Bracketing both sides keeps the
@@ -574,11 +585,15 @@ export function registerVaultHandlers(): void {
           error: `File is ${result.size} bytes; vault:read-file-text cap is ${PAYLOAD_LIMITS.MARKDOWN} bytes`,
         };
       }
+      // Audit-19 ERR-7 — record (or clear) a non-UTF-8 file so the text write
+      // channels refuse to overwrite it with U+FFFD-damaged text.
+      noteReadEncoding(abs, result.encoding === 'utf-8');
       return {
         success: true,
         content: result.content,
         mtimeMs: result.mtimeMs,
         size: result.size,
+        encoding: result.encoding,
       };
     } catch (err) {
       const code = ipcErrorCode(err);
@@ -687,6 +702,7 @@ export function registerVaultHandlers(): void {
         );
         const fullPath = join(vaultRoot, relativePath);
         assertWithinVault(vaultRoot, fullPath);
+        if (isRegisteredNonUtf8(fullPath)) return notUtf8Refusal(relativePath); // Audit-19 ERR-7
         await fsPromises.mkdir(dirname(fullPath), { recursive: true });
         activeWatcher?.suppress(relativePath, LOCK_AWARE_SUPPRESS_MS);
         await atomicWriteFile(fullPath, content);
@@ -786,6 +802,9 @@ export function registerVaultHandlers(): void {
           }
           throw statErr;
         }
+        // Audit-19 ERR-7 — never overwrite a file whose bytes aren't UTF-8 with
+        // text decoded from them (every non-ASCII byte would become U+FFFD).
+        if (isRegisteredNonUtf8(fullPath)) return notUtf8Refusal(relativePath);
         activeWatcher?.suppress(relativePath, LOCK_AWARE_SUPPRESS_MS);
         // Audit-7 L7 — `expectExisting` re-verifies the destination right
         // before the rename so a delete landing in the stat-precheck→rename

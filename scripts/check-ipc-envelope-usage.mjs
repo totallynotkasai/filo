@@ -69,6 +69,7 @@ const ENVELOPE_CHANNELS = new Set([
   'board:load',
   'board:list-conflicts',
   'recovery:list-sentinels',
+  'vault:convert-to-utf8',
   'media:save-audio',
   'media:read-file',
   'media:open-external',

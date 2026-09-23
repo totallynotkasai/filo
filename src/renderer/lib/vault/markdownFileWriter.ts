@@ -44,6 +44,7 @@ import { registerPendingProbe, markPathFailed } from '../boards/writeStateTracki
 import { vaultPath, type VaultPath } from '@shared/vaultPath';
 import { getLastFlushedFrontmatterVersion } from '../boards/frontmatterWriteScheduler';
 import { invokeOk } from '../utils/invokeOk';
+import { noteReadEncoding } from './nonUtf8Paths.svelte';
 import { reportError } from '../utils/errorBus';
 import { documentStore } from '../../stores/document.svelte';
 import { onVaultSwap, vaultSwapResettable } from '../../core/vaultLifecycle';
@@ -472,12 +473,11 @@ export async function readMarkdownForHydrate(
 ): Promise<HydrateReadResult> {
   const result = await invokeOk('vault:read-file-text', vaultRoot, relPath);
   const parsed = parseMarkdownFile(result.content);
-  // A8-M1 — sniff the file's real eol from the FULL raw content (not the
-  // fence-stripped FM block, which loses the signal for a single-line FM) and
-  // thread it through so a later metadata edit re-applies CRLF to the FM block.
+  noteReadEncoding(relPath, result.encoding); // Audit-19 ERR-7 — a non-UTF-8 note opens non-editable
+  // A8-M1 — sniff the real eol from the FULL raw content (a single-line FM's
+  // fence-stripped block loses the signal) so a metadata edit re-applies CRLF.
   const eol: '\r\n' | '\n' = result.content.includes('\r\n') ? '\r\n' : '\n';
-  // Audit-19 MD-2 — keep the bytes read (small notes only) as the confirmed
-  // baseline text, so a later write that would re-emit them unchanged skips.
+  // Audit-19 MD-2 — keep small notes' read bytes as the confirmed baseline text (unchanged re-emit skips).
   const keepText = utf8ByteLength(result.content) < MARKDOWN_READBACK_BYTE_THRESHOLD ? result.content : undefined;
   markHydrated(relPath, parsed.hadBom, result.mtimeMs, result.size, eol, keepText);
   return {

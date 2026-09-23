@@ -72,6 +72,8 @@ export type IpcChannel =
   | 'recovery:list-sentinels'
   // Audit-19 EXT-6 - this machine id (userData) and hostname
   | 'app:machine-identity'
+  // Audit-19 ERR-7 - rewrite a Windows-1252 note as UTF-8 after backing up the original
+  | 'vault:convert-to-utf8'
   // Audit-19 EXT-5 - move orphaned atomic-write temps into .filo/recovery/orphan-tmp
   | 'vault:sweep-orphan-tmp'
   // Config operations (.filo/ directory)

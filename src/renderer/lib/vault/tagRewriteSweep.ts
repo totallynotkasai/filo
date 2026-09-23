@@ -35,6 +35,7 @@ import { reportError } from '../utils/errorBus';
 import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { onVaultSwap } from '../../core/vaultLifecycle';
+import { uiStore } from '../../stores/ui.svelte';
 import { PendingWritesFailedError, withDrainedWrites } from './vaultOperations';
 import { writeMarkdownAndReconcile } from './syncOpenEditorsAfterDiskMutation';
 import type { FileMetadata } from './vaultIndex';
@@ -147,6 +148,10 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
   // `next === raw` dedup that decides whether a file needs rewriting at all.
   const plan: Array<{ path: string }> = [];
   const failed: string[] = [];
+  // Audit-19 ERR-7 — notes whose bytes aren't UTF-8: rewriting them from the
+  // decoded text would persist U+FFFD for every non-ASCII byte, so they are
+  // skipped (and main refuses the write anyway) and named in one toast.
+  const skippedNonUtf8: string[] = [];
 
   for (const md of metadata) {
     // Audit 2.2 — case-insensitive match. The index preserves the file's
@@ -160,6 +165,10 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
     try {
       // Phase 37 / 37.6 — canonical two-arg form.
       const readResult = await invokeOk('vault:read-file-text', vaultRoot, md.path);
+      if (readResult.encoding === 'invalid-utf-8') {
+        skippedNonUtf8.push(md.path);
+        continue;
+      }
       raw = readResult.content;
     } catch (err) {
       // Envelope failure (file deleted between scan + read, EACCES, …)
@@ -255,6 +264,10 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
           let freshRaw: string | null = null;
           try {
             const reread = await invokeOk('vault:read-file-text', vaultRoot, item.path);
+            if (reread.encoding === 'invalid-utf-8') {
+              skippedNonUtf8.push(item.path); // ERR-7 — became non-UTF-8 since Phase 1
+              continue;
+            }
             freshRaw = reread.content;
           } catch (err) {
             // A non-envelope throw (programmer error, OOM) is unexpected — let
@@ -355,6 +368,14 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
   }
 
   if (succeeded.length > 0) await applyChanges(succeeded);
+  if (skippedNonUtf8.length > 0) {
+    const names = skippedNonUtf8.slice(0, 5).join(', ') + (skippedNonUtf8.length > 5 ? `, +${skippedNonUtf8.length - 5} more` : '');
+    uiStore.pushToast({
+      text: `Tag rename skipped ${skippedNonUtf8.length} note${skippedNonUtf8.length === 1 ? '' : 's'} that aren't UTF-8 (converting them would damage accented characters): ${names}. Open each and use "Convert to UTF-8" first.`,
+      type: 'warning',
+      duration: 12000,
+    });
+  }
 
   // Phase 6.6 — the open-editor reconcile now happens inside each
   // writeMarkdownAndReconcile in the write loop above (write-path ==

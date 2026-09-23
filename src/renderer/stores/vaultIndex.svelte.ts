@@ -10,6 +10,7 @@ import { vaultStore } from './vault.svelte';
 import { reportError } from '../lib/utils/errorBus';
 import { isMarkdownExtension } from '../lib/vault/extension';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
+import { noteReadEncoding } from '../lib/vault/nonUtf8Paths.svelte';
 import { stripLeadingSlash, toPosix } from '../lib/utils/path';
 import type { FileTreeNode } from '../../shared/types';
 import { onVaultSwap } from '../core/vaultLifecycle';
@@ -65,6 +66,8 @@ interface ReadFileResult {
   // index stamps this (not Date.now()) so the partial-read stability window
   // measures the file's real age, not the moment we happened to read it.
   mtimeMs: number | null;
+  /** Audit-19 ERR-7 — 'invalid-utf-8' when the bytes aren't UTF-8 (absent = UTF-8). */
+  encoding?: 'utf-8' | 'invalid-utf-8';
 }
 
 // Phase 37 / 37.6 — two-arg canonical shape: (vaultRoot, relativePath).
@@ -73,7 +76,7 @@ interface ReadFileResult {
 async function readFileText(vaultRoot: string, relativePath: string): Promise<ReadFileResult> {
   const res = await window.filo.invoke('vault:read-file-text', vaultRoot, relativePath);
   if (res.success) {
-    return { ok: true, content: res.content, code: null, mtimeMs: res.mtimeMs ?? null };
+    return { ok: true, content: res.content, code: null, mtimeMs: res.mtimeMs ?? null, encoding: res.encoding };
   }
   return { ok: false, content: null, code: res.code ?? null, mtimeMs: null };
 }
@@ -100,6 +103,7 @@ async function indexOnePath(relativePath: string): Promise<void> {
     // settled external truncation through the ~5s retry path.
     const metadata = parseMarkdown(relativePath, res.content, res.mtimeMs ?? Date.now());
     index.upsert(metadata);
+    noteReadEncoding(rel, res.encoding); // Audit-19 ERR-7 — a non-UTF-8 note opens non-editable
     // Cancel any pending retry — the read succeeded this pass.
     const pending = pendingRetries.get(relativePath);
     if (pending) {

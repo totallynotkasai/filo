@@ -118,6 +118,7 @@ export const IPC_PAYLOAD_SCHEMAS = {
   'recovery:list': z.tuple([nonEmptyString]),
   'recovery:list-sentinels': z.tuple([nonEmptyString]),
   'app:machine-identity': z.tuple([]),
+  'vault:convert-to-utf8': z.tuple([nonEmptyString, nonEmptyString]),
   'vault:sweep-orphan-tmp': z.tuple([nonEmptyString]),
 
   // ── Config (.filo/) ───────────────────────────────────────────────────

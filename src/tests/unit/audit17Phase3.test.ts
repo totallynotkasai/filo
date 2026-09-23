@@ -628,7 +628,10 @@ describe('Audit-17 3.8 — recovery snapshots flatten the rel path into the file
       }
     }
     expect(bCount).toBe(20);
-  });
+    // ~80 real-fs ops (mkdir/write/utimes/readdir + the prune): well under a
+    // second alone, but it overran the 5s default under the full parallel
+    // suite. Budget for contention, not for a slow implementation.
+  }, 20_000);
 
   it('sentinel snapshots stay filtered from the listing under flattened names', async () => {
     const subdir = join(vaultRoot, '.filo', 'recovery', '2026-03-01T00-00-00.000');

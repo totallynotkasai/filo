@@ -1,4 +1,5 @@
 import { promises as fs, constants as fsConstants } from 'fs';
+import { isUtf8 } from 'buffer';
 import type { FileHandle } from 'fs/promises';
 import { randomBytes } from 'crypto';
 import { join, extname, basename, dirname, resolve, sep } from 'path';
@@ -673,7 +674,10 @@ export async function copyFileToVault(
  * Reads a file and returns its contents as a UTF-8 string.
  */
 export async function readFileContents(filePath: string): Promise<string> {
-  return fs.readFile(filePath, 'utf-8');
+  // Audit-19 ERR-7 — read bytes and decode explicitly (never the lossy
+  // `readFile(p, 'utf-8')` shortcut); callers that must know whether the bytes
+  // were valid UTF-8 use `readFileWithCoherentStat`.
+  return (await fs.readFile(filePath)).toString('utf8');
 }
 
 /**
@@ -690,6 +694,12 @@ export interface CoherentReadResult {
   content: string;
   mtimeMs?: number;
   size?: number;
+  /**
+   * Audit-19 ERR-7 — whether the bytes were valid UTF-8. `content` is still
+   * decoded (U+FFFD for bad sequences) so the note can be DISPLAYED, but an
+   * `'invalid-utf-8'` file must never be written back from that text.
+   */
+  encoding: 'utf-8' | 'invalid-utf-8';
 }
 
 /**
@@ -725,18 +735,23 @@ export async function readFileWithCoherentStat(
   maxBytes: number,
   _deps?: {
     stat?: (p: string) => Promise<{ mtimeMs: number; size: number }>;
-    readFile?: (p: string) => Promise<string>;
+    readFile?: (p: string) => Promise<string | Buffer>;
   },
 ): Promise<CoherentReadResult | { tooLarge: true; size: number }> {
   const stat = _deps?.stat ?? (async (p) => fs.stat(p));
-  const readFile = _deps?.readFile ?? readFileContents;
+  const readFile = _deps?.readFile ?? ((p: string) => fs.readFile(p));
 
   const preStat = await stat(filePath);
   if (preStat.size > maxBytes) {
     return { tooLarge: true, size: preStat.size };
   }
 
-  const content = await readFile(filePath);
+  // Audit-19 ERR-7 — validate, don't guess: a Buffer read + `isUtf8` (a string
+  // from a test double is trusted as valid).
+  const raw = await readFile(filePath);
+  const encoding: CoherentReadResult['encoding'] =
+    typeof raw === 'string' || isUtf8(raw) ? 'utf-8' : 'invalid-utf-8';
+  const content = typeof raw === 'string' ? raw : raw.toString('utf8');
 
   let postStat: { mtimeMs: number; size: number } | undefined;
   try {
@@ -745,13 +760,13 @@ export async function readFileWithCoherentStat(
     // Post-stat failed — return content with no baseline. ENOENT here
     // typically means a delete landed during the read; the renderer's
     // hydrate path will surface the missing file separately.
-    return { content };
+    return { content, encoding };
   }
 
   if (preStat.mtimeMs === postStat.mtimeMs && preStat.size === postStat.size) {
-    return { content, mtimeMs: postStat.mtimeMs, size: postStat.size };
+    return { content, mtimeMs: postStat.mtimeMs, size: postStat.size, encoding };
   }
   // Pre and post disagree — a write landed in the gap. Return bytes
   // without an unsafe baseline; the next quiescent read seeds coherently.
-  return { content };
+  return { content, encoding };
 }

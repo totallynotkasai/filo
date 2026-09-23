@@ -649,3 +649,25 @@ never deletes a per-machine file it doesn't own, but it can't stop an old build.
 
 **Impact:** Update every machine before relying on crash recovery in a synced
 vault (the ERR-1 board-format change already requires this).
+
+## 21. Non-UTF-8 notes are read-only; conversion assumes Windows-1252
+
+Filo reads every note as UTF-8. A file whose bytes aren't valid UTF-8 (a legacy
+Windows-1252 note, a "Unicode" UTF-16 Notepad file) is shown with replacement
+characters for the bad bytes, is frozen read-only with a "Convert to UTF-8…"
+banner, and main refuses every generic text write to it (`NOT_UTF8`). A vault-wide
+tag rename skips it and names it in a toast.
+
+**Where:** `readFileWithCoherentStat` in [src/main/vault/fileOps.ts](src/main/vault/fileOps.ts),
+[src/main/services/nonUtf8Registry.ts](src/main/services/nonUtf8Registry.ts),
+[src/main/ipc/vaultEncoding.ipc.ts](src/main/ipc/vaultEncoding.ipc.ts). Pinned by
+`ci:utf8-validated-read`.
+
+**Why accepted:** There is no reliable way to guess a legacy code page. The
+convert action backs up the original bytes to `.filo/recovery/` and decodes them
+as Windows-1252, the common Windows default. Other single-byte encodings (e.g.
+Latin-2, KOI8-R) will come out wrong, and UTF-16 is refused outright.
+
+**Impact:** For a non-1252 legacy note, re-save it as UTF-8 in another editor
+instead of converting. If a conversion comes out wrong, restore the backup from
+`.filo/recovery/`.

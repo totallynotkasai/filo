@@ -100,6 +100,18 @@ export interface WriteErrorToastSpec {
  */
 export function buildWriteErrorToast(info: WriteErrorInfo): WriteErrorToastSpec {
   const where = info.path ? ` (${info.path})` : '';
+  // Audit-19 ERR-7 — main refused to overwrite a note whose bytes aren't UTF-8
+  // (the write would have replaced every accented character with U+FFFD).
+  if (errorCode(info.error) === 'NOT_UTF8') {
+    return {
+      context: 'Note not saved',
+      message:
+        `Filo didn't save${where} because the file isn't UTF-8 text — saving would damage its accented characters. ` +
+        'Open the note and use "Convert to UTF-8…" (the original is backed up first).',
+      coalesceKey: `not-utf8::${info.path ?? ''}`,
+      retryable: false,
+    };
+  }
   // Audit-18 4.2 — a corrupt-config suppression is NOT a disk-space / permission
   // failure, so it gets its own honest copy instead of the generic message
   // below. The config write is being SKIPPED on purpose to preserve the

@@ -10,6 +10,8 @@
   import { tabStore } from '../../stores/tabs.svelte';
   import { documentStore } from '../../stores/document.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
+  import { isNonUtf8 } from '../../lib/vault/nonUtf8Paths.svelte';
+  import { confirmConvertToUtf8 } from '../../lib/vault/convertToUtf8';
   import { uiStore } from '../../stores/ui.svelte';
   import { fileTagsStore } from '../../stores/fileTags.svelte';
   import { boardCacheStore } from '../../stores/boardCache.svelte';
@@ -486,6 +488,8 @@
 
   // Phase 27 / A4 — read-only state for the banner.
   let readOnly = $derived(docState ? documentStore.isReadOnly(docState.docId) : false);
+  // Audit-19 ERR-7 — a note whose bytes aren't UTF-8 is non-editable until converted.
+  let nonUtf8 = $derived(isNonUtf8(docState?.filename));
 
   // Audit-17 5.7 — freeze the editor while a tab-close drain is in flight so a
   // keystroke typed during the drain / failed-drain confirm can't re-arm a
@@ -495,7 +499,7 @@
   // Audit-19 UX-1 — a lossy note is truly NON-editable (read-only used to block
   // only saving, so typed text was silently discarded); Take ownership clears it.
   $effect(() => {
-    const frozen = closeDrainGate.draining || readOnly;
+    const frozen = closeDrainGate.draining || readOnly || nonUtf8;
     if (!hydrateReadFailed) {
       // Non-emitting + untracked: see setEditorEditable (the §0.2 effect loop).
       untrack(() => setEditorEditable(editor, !frozen));
@@ -507,6 +511,11 @@
   // `hydrateFromDisk` clears `hydrateReadFailed` and re-enables editing.
   function retryHydrate(): void {
     void hydrateFromDisk();
+  }
+
+  function convertToUtf8(): void {
+    const vaultRoot = vaultStore.path;
+    if (vaultRoot && docState?.filename) confirmConvertToUtf8(vaultRoot, docState.filename);
   }
 
   function takeOwnership(): void {
@@ -545,7 +554,12 @@
           <button class="readonly-action" onclick={retryHydrate}>Retry</button>
         </div>
       {/if}
-      {#if readOnly}
+      {#if nonUtf8}
+        <div class="readonly-banner" role="status">
+          <span class="readonly-text">This note isn't UTF-8 (probably Windows-1252). Filo won't save it, to avoid corrupting characters.</span>
+          <button class="readonly-action" onclick={convertToUtf8}>Convert to UTF-8…</button>
+        </div>
+      {:else if readOnly}
         <div class="readonly-banner" role="status">
           <span class="readonly-text">Filo can't save this file without changing formatting it doesn't support, so it's open read-only.</span>
           <button class="readonly-action" onclick={takeOwnership}>Take ownership</button>

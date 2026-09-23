@@ -276,14 +276,17 @@ function promptBoardChangedExternally(rel: string, boardId: string): void {
  * `fileTags[*]` membership directly — tags don't have a dirty-editor
  * notion the way docs do, so a silent re-read is the right behaviour.
  *
- * If the user had pending in-memory tag mutations (the scheduler's
- * debounce hadn't fired yet), those are already on the next-save path
- * and will overwrite the external edit when the debounce lands; a
- * tag-rewrite sweep mid-flight is protected by the rewrite sentinel
- * which routes through `tagRewriteSentinel`.
+ * Pending in-memory tag mutations (the scheduler's debounce hadn't fired
+ * yet) are 3-way merged with the external copy (`applyExternalReload`), and
+ * the debounced save itself re-reads + merges before writing (Audit-19
+ * EXT-8), so neither side's registrations are lost; a tag-rewrite sweep
+ * mid-flight is protected by the rewrite sentinel (`tagRewriteSentinel`).
  */
 async function reconcileTagsJsonChange(event: ExternalChangeEvent): Promise<void> {
-  if (isRecentSelfWrite(event.filename)) return;
+  // Audit-19 EXT-8 — inside the self-write window, drop the event only when the
+  // disk copy is exactly what we last saved (our echo). Another machine's
+  // tags.json landing in the window falls through and is merged below.
+  const inSelfWriteWindow = isRecentSelfWrite(event.filename);
   // Audit-6 H3 — capture identity before the async `tags:load`. A vault swap
   // landing during the read would otherwise make the `applyExternalReload`
   // below (which `scheduleSave`s unconditionally) persist vault A's tag
@@ -303,6 +306,7 @@ async function reconcileTagsJsonChange(event: ExternalChangeEvent): Promise<void
     // from-future tags.json flips the store read-only (preventing a
     // downgrade re-save) instead of being parsed + persisted blindly.
     const loaded = loadTagsFile(raw);
+    if (inSelfWriteWindow && fileTagsStore.isLastSavedState(loaded.file)) return;
     // Audit-17 0.2 — `applyExternalReload` returns false when the disk copy
     // deep-equals our in-memory registry (a self-write echo surfacing in the
     // 30 s reconcile pass). Skip the toast AND the re-save in that case so an

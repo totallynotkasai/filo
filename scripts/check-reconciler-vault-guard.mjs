@@ -482,6 +482,11 @@ const PART3_TARGETS = [
   // release) both take a CAPTURED identity param, so Part 1 can't see them.
   { file: 'src/renderer/stores/boardDiscovery.ts', names: ['adoptOnce', 'adoptAndFindBoard'] },
   { file: 'src/renderer/stores/boardProvisionalMissing.ts', names: ['recheckProvisionalBoard'] },
+  // Audit-19 EXT-8 — the debounced tags save now awaits a pre-write `tags:load`
+  // and merges it into the live registry. It reads the module's `activeVaultRoot`
+  // (not a Part 1 trigger), so pin it by name: a swap during that read must bail
+  // before the merge/write, or vault A's registry lands in vault B's tags.json.
+  { file: 'src/renderer/stores/fileTags.svelte.ts', names: ['scheduleSave'] },
 ];
 for (const { file, names } of PART3_TARGETS) {
   let raw;

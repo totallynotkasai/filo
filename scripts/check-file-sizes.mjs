@@ -366,7 +366,9 @@ const ALLOWLIST = {
   // editor's next save would silently revert it (keep-baseline-on-drift, DI-14).
   // +49 LOC of helper + per-site capture/gating + comments (net of trimming).
   // New snapshot: 1252 LOC. The queued cascade-orchestrator split will reclaim it.
-  'src/renderer/stores/fileTags.svelte.ts': 1252,
+  // Audit-19 EXT-8: the tags.json 3-way merge moved to lib/vault/tagsFileMerge.ts
+  // (-48) to make room for the pre-write merge; ceiling lowered to 1236.
+  'src/renderer/stores/fileTags.svelte.ts': 1236,
   // Per-board file cache + persist* CRUD + deleteBoard.
   // AUDIT18_REMEDIATION_PLAN_2026-06-12 Phase 3 3.11 — `deleteBoard` marks the
   // board path "deleting" before the `board:delete` IPC (so an IN-FLIGHT

@@ -86,7 +86,9 @@ describe('A9-L7 — a concurrent external reload is not clobbered by an in-fligh
 
     // Fire the save WITHOUT awaiting — it suspends inside tags:save.
     const flushP = fileTagsStore.flush();
-    expect(releaseSave).not.toBeNull(); // confirm we are mid-save
+    // Audit-19 EXT-8 — the save awaits a pre-write `tags:load` first, so the
+    // suspended `tags:save` starts a few microtasks later.
+    await vi.waitFor(() => expect(releaseSave).not.toBeNull()); // confirm we are mid-save
 
     // An external reload lands DURING the in-flight save: a.png already matches
     // ours, and b.png is a NEW external entry we never touched.

@@ -88,6 +88,7 @@ import { assertIpcOk } from '../lib/utils/ipcEnvelope';
 import { reportError } from '../lib/utils/errorBus';
 import { uiStore } from './ui.svelte';
 import { onVaultSwap, vaultSwapResettable } from '../core/vaultLifecycle';
+import { cloneTagsFile, sameJson, mergeTagsThreeWay } from '../lib/vault/tagsFileMerge';
 
 let file = $state<TagsFile>(emptyTagsFile());
 let isHydrated = $state(false);
@@ -110,14 +111,6 @@ let lastSavedFile: TagsFile = emptyTagsFile();
  */
 let mergeBaseGeneration = 0;
 
-function cloneTagsFile(f: TagsFile): TagsFile {
-  return JSON.parse(JSON.stringify(f)) as TagsFile;
-}
-
-function sameJson(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
 /**
  * A8-M6 / A9-L7 — assigns the 3-way merge base and bumps the guard token.
  * Every base re-set from OUTSIDE the debounced save closure (hydrate,
@@ -128,47 +121,6 @@ function sameJson(a: unknown, b: unknown): boolean {
 function setMergeBase(next: TagsFile): void {
   lastSavedFile = next;
   mergeBaseGeneration += 1;
-}
-
-/**
- * A8-M6 — re-applies OUR un-flushed delta (`ours` vs `base`) on top of `merged`
- * (a clone of the external `theirs`): our adds/changes overwrite, our removals
- * delete. Entries neither side of our delta touched keep the external value, so
- * a genuine external edit survives while a pending in-app mutation isn't lost.
- * A true same-key conflict resolves to OUR value (the user's in-app intent).
- */
-function reapplyTagDelta(
-  base: Record<string, unknown>,
-  ours: Record<string, unknown>,
-  merged: Record<string, unknown>,
-): void {
-  for (const key of Object.keys(ours)) {
-    if (!sameJson(ours[key], base[key])) merged[key] = ours[key];
-  }
-  for (const key of Object.keys(base)) {
-    if (!(key in ours)) delete merged[key];
-  }
-}
-
-/**
- * A8-M6 — 3-way merge of `.filo/tags.json`. `base` = last persisted/loaded
- * state, `ours` = live in-memory (`base` + un-flushed mutations), `theirs` =
- * the external disk copy. Preserves un-flushed tag adds/removes (attachment
- * tags have no other home) instead of the prior wholesale overwrite.
- */
-function mergeTagsThreeWay(base: TagsFile, ours: TagsFile, theirs: TagsFile): TagsFile {
-  const merged = cloneTagsFile(theirs);
-  reapplyTagDelta(
-    base.tags as Record<string, unknown>,
-    ours.tags as Record<string, unknown>,
-    merged.tags as Record<string, unknown>,
-  );
-  reapplyTagDelta(
-    base.fileTags as Record<string, unknown>,
-    ours.fileTags as Record<string, unknown>,
-    merged.fileTags as Record<string, unknown>,
-  );
-  return merged;
 }
 
 // F6 / Audit-18 H2 — true when the loaded `.filo/tags.json` must NOT be re-saved:
@@ -188,7 +140,8 @@ function scheduleSave(): void {
   scheduleMiscWrite(TAGS_WRITE_KEY, () => {
     const root = activeVaultRoot;
     if (!root) return null;
-    const snapshot = JSON.stringify(file, null, 2);
+    const identity = captureVaultIdentity();
+    let snapshot = JSON.stringify(file, null, 2);
     // A9-L7 — capture the merge-base token at fire time (alongside the
     // snapshot). The trailing assignment below only lands if no reload/reset
     // advanced it during the await.
@@ -197,6 +150,32 @@ function scheduleSave(): void {
       vaultRoot: root,
       path: TAGS_PATH,
       write: async () => {
+        // Audit-19 EXT-8 — merge on write. Another machine's tags.json can land
+        // inside the self-write window (main suppresses its watcher event, the
+        // reconciler drops it as our echo), so a blind save would overwrite its
+        // registrations. Re-read disk first; if it moved off our merge base,
+        // 3-way merge (A8-M6 semantics: a same-key conflict goes to ours).
+        const raw: unknown = assertIpcOk(await window.filo.invoke('tags:load', root), 'tags:load');
+        if (!isStillSameVault(identity)) return;
+        // A reload/reset re-set the base during the read: it merged our
+        // snapshot's delta into memory and re-armed its own save.
+        if (mergeBaseGeneration !== baseGenAtFire) return;
+        // DECISION: an absent file (null) is written as-is, not merged — a
+        // sync hiccup that briefly removes tags.json must not read as "the
+        // other side deleted every tag".
+        if (typeof raw === 'string') {
+          const disk = loadTagsFile(raw);
+          if (disk.fromFuture || disk.noMigrationPath || disk.corrupt) {
+            readOnlyTags = true; // F6 / Audit-18 H2 — never overwrite it.
+            throw Object.assign(new Error('.filo/tags.json on disk is unreadable or from a newer Filo'), {
+              code: 'CONFIG_CORRUPT',
+            });
+          }
+          if (!sameJson(disk.file, lastSavedFile)) {
+            file = mergeTagsThreeWay(lastSavedFile, file, disk.file);
+            snapshot = JSON.stringify(mergeTagsThreeWay(lastSavedFile, JSON.parse(snapshot) as TagsFile, disk.file), null, 2);
+          }
+        }
         // Audit-14 4.4 — tags:save resolves `{ ok:false }` on failure now;
         // assertIpcOk re-throws so the miscScheduler's catch still records it
         // (dirty-flag + retry), exactly as the old raw rejection did.
@@ -689,6 +668,11 @@ export const fileTagsStore = {
    * skips the toast) when disk deep-equals our in-memory registry: a self-write
    * echo in the 30 s reconcile pass, not an external edit.
    */
+  /** Audit-19 EXT-8 — true when `disk` is exactly what Filo last loaded/saved (our own echo). */
+  isLastSavedState(disk: TagsFile): boolean {
+    return sameJson(disk, lastSavedFile);
+  },
+
   applyExternalReload(loaded: LoadTagsFileResult): boolean {
     const diskDiffersFromMemory = !sameJson(loaded.file, file);
     // A8-M6 — 3-way merge, not wholesale overwrite: a tag add/remove still in the

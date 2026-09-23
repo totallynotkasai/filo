@@ -66,6 +66,7 @@ const ENVELOPE_CHANNELS = new Set([
   'vault:stat',
   'vault:set-open-on-launch',
   'vault:sweep-orphan-tmp',
+  'board:load',
   'media:save-audio',
   'media:read-file',
   'media:open-external',

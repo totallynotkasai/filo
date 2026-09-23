@@ -210,8 +210,12 @@ export interface IpcChannelMap {
   };
   'board:load': {
     args: [vaultRoot: string, relPath: string];
-    /** Audit-19 ERR-1 — the parsed board object (legacy double-encoded files are unwrapped main-side), or null. */
-    result: unknown;
+    /**
+     * Audit-19 ERR-1 — `data` is the parsed board object (legacy double-encoded
+     * files are unwrapped main-side). Audit-19 ERR-4 — failures carry a typed
+     * `code`: ENOENT / LOCKED / OFFLINE / TOO_LARGE / PARSE / IO / NO_ACTIVE_VAULT.
+     */
+    result: IpcSuccess<{ data: unknown }>;
   };
   'board:save': {
     args: [vaultRoot: string, relPath: string, data: unknown];

@@ -1,5 +1,7 @@
 import { ipcMain } from 'electron';
-import { LOCK_AWARE_SUPPRESS_MS } from '../vault/filenameUtils';
+import { LOCK_AWARE_SUPPRESS_MS, retryOnWindowsLock, lockRetryBudgetMs } from '../vault/filenameUtils';
+import { BoardTooLargeError, classifyBoardLoadError } from '../vault/boardLoadErrors';
+
 import {
   loadBoardFile,
   saveBoardFile,
@@ -46,6 +48,9 @@ import {
   PAYLOAD_LIMITS,
   PayloadTooLargeError,
 } from '../utils/payloadLimits';
+
+/** Audit-19 ERR-4 — lock-retry budget for ONE board read at vault open. */
+const BOARD_LOAD_LOCK_BUDGET_MS = 1500;
 
 /**
  * Returns a `code` field for an IPC error response. `NO_ACTIVE_VAULT` /
@@ -156,8 +161,9 @@ export function registerBoardHandlers(): void {
   });
 
   /**
-   * Loads a .board.json file. Returns raw parsed JSON.
-   * Caller validates with Zod in the renderer.
+   * Loads a .board.json file. Returns `{ success: true, data }` (the parsed
+   * board; the caller validates with Zod) or a typed failure code (Audit-19
+   * ERR-4: ENOENT / LOCKED / OFFLINE / TOO_LARGE / PARSE / IO).
    *
    * Phase 31 A5.4 — pre-flight stat caps the file at the same size limit
    * the writer uses (PAYLOAD_LIMITS.BOARD = 50 MB). A larger `.board.json`
@@ -171,24 +177,25 @@ export function registerBoardHandlers(): void {
       assertSafeRelativePath(relativePath);
       const fullPath = resolveBoardPath(vaultRoot, relativePath);
       assertWithinVault(vaultRoot, fullPath);
+      // Audit-19 ERR-4 — retry a transient Windows lock (OneDrive / antivirus)
+      // with a SHORT budget: one board mustn't stall the vault open for 5 s.
+      const budgetMs = Math.min(BOARD_LOAD_LOCK_BUDGET_MS, lockRetryBudgetMs());
+      const { promises: fs } = await import('fs');
       // A5.4 — refuse to load `.board.json` files larger than PAYLOAD_LIMITS.BOARD.
-      try {
-        const { promises: fs } = await import('fs');
-        const stat = await fs.stat(fullPath);
-        if (stat.size > PAYLOAD_LIMITS.BOARD) {
-          logMainError(`board:load ${relativePath}`, new Error(`File too large: ${stat.size} > ${PAYLOAD_LIMITS.BOARD}`));
-          return null;
-        }
-      } catch (statErr) {
-        const sCode = (statErr as NodeJS.ErrnoException)?.code;
-        if (sCode !== 'ENOENT') {
-          logMainError(`board:load:stat ${relativePath}`, statErr);
-        }
-      }
-      return await loadBoardFile(fullPath);
+      const stat = await retryOnWindowsLock(() => fs.stat(fullPath), { budgetMs });
+      if (stat.size > PAYLOAD_LIMITS.BOARD) throw new BoardTooLargeError(stat.size, PAYLOAD_LIMITS.BOARD);
+      const data = await retryOnWindowsLock(() => loadBoardFile(fullPath), { budgetMs });
+      return { success: true, data };
     } catch (err) {
-      logMainError(`board:load ${relativePath}`, err);
-      return null;
+      // Audit-19 ERR-4 — a typed code instead of a bare `null`: a lock or an
+      // offline cloud placeholder must not read as "not-found" (the board would
+      // be gone for the whole session with no way back but reopening the vault).
+      if (err instanceof NoActiveVaultError) {
+        return { success: false, code: 'NO_ACTIVE_VAULT', error: String(err) };
+      }
+      const code = classifyBoardLoadError(err);
+      if (code !== 'ENOENT') logMainError(`board:load ${relativePath}`, err);
+      return { success: false, code, error: String(err) };
     }
   });
 

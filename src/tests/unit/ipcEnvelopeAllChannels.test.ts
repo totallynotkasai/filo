@@ -70,6 +70,7 @@ const SUCCESS_DISCRIMINATED: readonly string[] = [
   'vault:stat',
   'vault:set-open-on-launch',
   'vault:sweep-orphan-tmp',
+  'board:load',
   'media:save-audio',
   'media:read-file',
   'media:open-external',

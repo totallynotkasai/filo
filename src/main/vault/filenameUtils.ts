@@ -155,7 +155,9 @@ export async function pathExists(filePath: string): Promise<boolean> {
  * racy — antivirus, the recursive `fs.watch` handle, or a concurrent
  * atomic-write may own a transient lock and return EPERM/EBUSY. Retries
  * recover from those short-lived locks without forcing callers to
- * serialise themselves around every save. ≤320ms total worst case.
+ * serialise themselves around every save. Audit-19 EXT-5: the backoff is
+ * TIME-bounded (`retryOnWindowsLock`, ~5 s on win32) because sync clients hold
+ * such locks for seconds, not milliseconds.
  *
  * Nonce-suffixed tmp filename: two concurrent atomic writes to the same
  * destination (the body and frontmatter schedulers can both target the
@@ -372,7 +374,7 @@ export const LOCK_AWARE_SUPPRESS_MS = WIN_LOCK_BUDGET_MS + 2000;
 const LOCK_BACKOFF_MS = [10, 20, 40, 80, 160, 320, 640];
 const LOCK_BACKOFF_CAP_MS = 1000;
 
-function defaultLockBudgetMs(): number {
+export function lockRetryBudgetMs(): number {
   // Read at call time (not the module-load constant) so tests can emulate a
   // platform. `FILO_LOCK_RETRY_BUDGET_MS` is a diagnostic / test override (the
   // unit-test setup pins it to the legacy 310 ms so suites that force a
@@ -395,7 +397,7 @@ export async function retryOnWindowsLock<T>(
   op: () => Promise<T>,
   opts: { budgetMs?: number; beforeAttempt?: () => Promise<void> } = {},
 ): Promise<T> {
-  const budgetMs = opts.budgetMs ?? defaultLockBudgetMs();
+  const budgetMs = opts.budgetMs ?? lockRetryBudgetMs();
   const start = Date.now();
   for (let attempt = 0; ; attempt++) {
     try {

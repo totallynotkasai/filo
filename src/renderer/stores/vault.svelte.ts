@@ -358,7 +358,7 @@ function commitVaultCandidate(
   // post-commit so a candidate that ultimately FAILS doesn't leave the
   // user staring at warning toasts for a vault they never opened.
   for (const w of candidate.warnings) {
-    uiStore.pushToast({ text: w.text, type: w.type, duration: w.duration });
+    uiStore.pushToast(w); // Audit-19 ERR-4 — may carry sticky + actions (board Retry)
   }
 
   // ── The actual atomic-looking swap ──

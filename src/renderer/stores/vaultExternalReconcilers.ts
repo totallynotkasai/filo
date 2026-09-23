@@ -174,10 +174,17 @@ async function reloadBoardFromDisk(
   // outgoing vault and `boardStore.cache` is now the new vault's.
   if (!isStillSameVault(captured)) return;
   if (!result.ok) {
+    // Audit-19 ERR-4 — name the reason (a lock / offline placeholder is not a
+    // corrupt file) and say what happens next.
+    const reason =
+      result.error === 'locked' ? 'the file is locked by another program'
+        : result.error === 'offline' ? 'the file is online-only and could not be downloaded'
+          : result.error === 'not-found' ? 'the file is missing'
+            : `load failed: ${result.error}`;
     reportError(
       'externalChange.board',
       new Error(`${result.error}: ${result.message}`),
-      `External change to "${rel}" couldn't be applied (load failed). Filo's in-memory copy is unchanged.`,
+      `External change to "${rel}" couldn't be applied (${reason}). Filo's copy is unchanged; it will try again on the next change.`,
     );
     return;
   }

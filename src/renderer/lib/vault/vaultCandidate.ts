@@ -47,7 +47,8 @@ import {
   DocumentDefaultsSchema,
 } from '../../schema/settings';
 import { ProjectSchema } from '../../schema/project';
-import { loadAllBoards } from '../boards/boardLoader';
+import { loadAllBoards, isTransientBoardLoadError } from '../boards/boardLoader';
+import { boardLoadRetryToast } from '../boards/boardLoadRetryPrompt';
 import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError, assertIpcOk } from '@shared/ipcEnvelope';
 import { reportError } from '../utils/errorBus';
@@ -63,6 +64,21 @@ import { noteBaseline } from './fileBaselineRegistry';
 import { stashRecoveryStatusBeforeCommit } from './dirtyFlagRecovery';
 
 /**
+ * Audit-19 ERR-4 — failed-board kinds whose on-disk bytes are readable but
+ * unusable, so a copy in .filo/recovery/ is worth taking. (`not-found`,
+ * `too-large`, `snapshot-failed` and the transient kinds are not.)
+ */
+// allow-module-state: immutable lookup table
+const SNAPSHOT_FAILED_BOARD_KINDS: ReadonlySet<string> = new Set([
+  'parse-error',
+  'schema-invalid',
+  'from-future',
+  'no-migration-path',
+  'duplicate-board-id',
+  'sync-conflict-copy',
+]);
+
+/**
  * Toast specs buffered during load and drained during commit. Keeping
  * them out of `uiStore` until commit means a load that ultimately
  * throws doesn't leave the user with orphan warning toasts for a vault
@@ -72,6 +88,10 @@ export interface VaultCandidateWarning {
   text: string;
   type: 'info' | 'warning' | 'error';
   duration: number;
+  /** Audit-19 ERR-4 — an actionable notice (e.g. a locked board's Retry). */
+  sticky?: boolean;
+  dedupeKey?: string;
+  actions?: Array<{ label: string; handler: () => void | Promise<void> }>;
 }
 
 /**
@@ -296,6 +316,15 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
   // that lets them recover the file content even if they edit + save
   // adjacent boards before realising one didn't load.
   for (const failed of failedBoards) {
+    // Audit-19 ERR-4 — a locked / offline / transient-IO board is NOT
+    // snapshotted (the snapshot would fail, or hydrate an online-only
+    // placeholder); it gets a sticky Retry notice instead. Only kinds whose
+    // bytes are readable but unusable are worth preserving.
+    if (isTransientBoardLoadError(failed.errorKind)) {
+      warnings.push(boardLoadRetryToast(newVaultPath, failed.path, failed.message));
+      continue;
+    }
+    if (!SNAPSHOT_FAILED_BOARD_KINDS.has(failed.errorKind)) continue;
     try {
       await invokeOk('recovery:snapshot', newVaultPath, failed.path);
     } catch (snapshotErr) {

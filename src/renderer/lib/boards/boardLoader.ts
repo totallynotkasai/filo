@@ -352,8 +352,44 @@ export interface LoadBoardError {
     // `recovery:snapshot` IPC failed, so we have nowhere to preserve the
     // original bytes. We refuse to load (and therefore can't subsequently
     // overwrite the disk file with the pruned shape).
-    | 'snapshot-failed';
+    | 'snapshot-failed'
+    // Audit-19 ERR-4 — transient / size failures main now reports explicitly
+    // instead of collapsing everything into "not-found".
+    | 'locked'
+    | 'offline'
+    | 'too-large';
   message: string;
+}
+
+/**
+ * Audit-19 ERR-4 — failure kinds worth a Retry (the file is there, just not
+ * readable right now). They are NOT snapshotted to .filo/recovery/ (a snapshot
+ * of a locked / online-only file fails or hydrates the placeholder).
+ */
+export function isTransientBoardLoadError(kind: string): boolean {
+  return kind === 'locked' || kind === 'offline' || kind === 'io-error';
+}
+
+/** Maps a `board:load` failure code to the loader's error kind. */
+function boardLoadErrorKind(code: string | undefined): LoadBoardError['error'] {
+  switch (code) {
+    case 'ENOENT': return 'not-found';
+    case 'LOCKED': return 'locked';
+    case 'OFFLINE': return 'offline';
+    case 'TOO_LARGE': return 'too-large';
+    case 'PARSE': return 'parse-error';
+    default: return 'io-error';
+  }
+}
+
+function boardLoadErrorMessage(kind: LoadBoardError['error'], relPath: string, detail: string): string {
+  switch (kind) {
+    case 'locked': return `"${relPath}" is locked by another program (OneDrive, antivirus).`;
+    case 'offline': return `"${relPath}" is online-only and this PC can't download it right now.`;
+    case 'too-large': return `"${relPath}" is larger than the 50 MB board limit.`;
+    case 'not-found': return `No board at ${relPath}`;
+    default: return `Filo couldn't read "${relPath}" (${detail}).`;
+  }
 }
 
 /**
@@ -399,11 +435,16 @@ export async function loadBoard(
   // Audit-19 ERR-1 — main now returns the parsed board OBJECT (it unwraps a
   // legacy double-encoded file itself); a string still parses below, for older
   // mains / test stubs that return `JSON.stringify(board)`.
+  // Audit-19 ERR-4 — an envelope with a typed failure code. A bare payload (an
+  // older main / a test stub returning the board directly, or `null`) is still
+  // accepted.
   let raw: unknown;
   try {
-    raw = await window.filo.invoke('board:load', vaultRoot, relPath);
+    const res: unknown = await invokeOk('board:load', vaultRoot, relPath);
+    raw = res !== null && typeof res === 'object' && 'success' in res ? (res as { data?: unknown }).data : res;
   } catch (err) {
-    return { ok: false, error: 'io-error', message: `${err}` };
+    const kind = boardLoadErrorKind(err instanceof IpcEnvelopeError ? err.code : undefined);
+    return { ok: false, error: kind, message: boardLoadErrorMessage(kind, relPath, `${err}`) };
   }
   if (raw == null) {
     return { ok: false, error: 'not-found', message: `No board at ${relPath}` };
@@ -739,6 +780,10 @@ export async function loadAllBoards(
     const result = await loadBoard(vaultRoot, relPath);
     if (!result.ok) {
       failedBoards.push({ path: relPath, errorKind: result.error, message: result.message });
+      // Audit-19 ERR-4 — a transient failure (lock / offline / IO) gets an
+      // actionable sticky Retry toast from vaultCandidate after the open, not a
+      // one-shot error here.
+      if (isTransientBoardLoadError(result.error)) continue;
       // Phase 23 / M14 — the from-future case has a user-facing message
       // already; route it through verbatim instead of wrapping it in a
       // generic prefix that obscures the cause. Phase B / B.3 — the
@@ -749,7 +794,8 @@ export async function loadAllBoards(
       const hasUserFacingMessage =
         result.error === 'from-future' ||
         result.error === 'snapshot-failed' ||
-        result.error === 'no-migration-path';
+        result.error === 'no-migration-path' ||
+        result.error === 'too-large';
       const userMessage = hasUserFacingMessage
         ? `${relPath}: ${result.message}`
         : `Filo couldn't load ${relPath}: ${result.error}`;

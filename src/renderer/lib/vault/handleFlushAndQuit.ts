@@ -11,9 +11,10 @@ import { uiStore } from '../../stores/ui.svelte';
  * This handler keeps the happy path (save succeeded and the save-state
  * store reports no lingering error) on the fast track: send
  * `app:ready-to-quit` immediately, no UI. On a failure, surface a Confirm
- * dialog with "Quit anyway" / "Stay open and retry". The latter sends
- * `app:cancel-quit` so main can rewind `isFlushingForQuit` and the user
- * keeps editing.
+ * dialog with "Retry now" / "Quit anyway" / "Stay open". Retry now
+ * (Audit-19 EXT-5) re-fires the retained failed writes and drains again;
+ * Stay open sends `app:cancel-quit` so main can rewind `isFlushingForQuit`
+ * and the user keeps editing.
  *
  * Dependencies are injected so the unit test can drive every branch
  * without mocking the whole renderer.
@@ -38,6 +39,11 @@ export interface QuitFlushDeps {
    * `flushDirtyFlagSentinel`.
    */
   flushSentinel?: () => Promise<void>;
+  /**
+   * Audit-19 EXT-5 — re-fires every retained failed write (all five schedulers)
+   * before the "Retry now" drain. Production wires `retryAllFailedWrites`.
+   */
+  retryFailed?: () => Promise<unknown>;
 }
 
 /**
@@ -147,67 +153,91 @@ async function drainAndQuit(deps: QuitFlushDeps): Promise<void> {
   // cleared the moment `save()` settles OR the absolute deadline elapses — the
   // failure branch's open-ended confirm is then bounded by
   // `app:quit-awaiting-user`, not the heartbeat.
+  //
+  // Audit-19 EXT-5 — "Retry now" loops back here: it re-fires every retained
+  // failed write (`retryFailed`) and drains again under a fresh heartbeat.
+  let retrying = false;
+  for (;;) {
+    const failed = await runDrain(deps, retrying);
+    if (!failed && deps.saveStateState() !== 'error') {
+      // Audit-6 M5 — let the queued markClean reach disk (bounded — QC-3) before
+      // main destroys us, or `.filo/.dirty` survives a clean quit → phantom
+      // recovery next launch.
+      await flushSentinelBounded(deps);
+      deps.send('app:ready-to-quit');
+      return;
+    }
+    // Save failed (or the save-state store still carries an unresolved error
+    // from an earlier debounced write). Block the quit until the user
+    // explicitly chooses: Retry now, Quit anyway (accept data loss; the user
+    // can recover .tmp files from disk) or Stay open.
+    //
+    // Audit-4 DI-04 — heartbeat BEFORE the confirm. The dialog below is
+    // open-ended (no timeout), but main destroys the window after a 5 s flush
+    // ceiling. A human reading a "Save failed" dialog routinely takes longer
+    // than 5 s, so the timer would fire first, vanish the dialog, and discard
+    // the choice (and the edits). Tell main a human is now in the loop so it
+    // clears that auto-destroy timer; the ready/cancel reply below then drives
+    // the real quit on the user's schedule.
+    deps.send('app:quit-awaiting-user');
+    const choice = await new Promise<'quit' | 'stay' | 'retry'>((resolve) => {
+      uiStore.openConfirm({
+        title: 'Save failed',
+        body:
+          "Filo couldn't write your latest changes to disk (another program, such as " +
+          'OneDrive or antivirus, may be holding the file). Quitting now will lose ' +
+          'those edits — Filo preserved emergency .tmp files in the vault that you ' +
+          'can recover manually if you do. Pick "Retry now" to try again, or ' +
+          '"Stay open" to keep editing.',
+        confirmLabel: 'Quit anyway',
+        cancelLabel: 'Stay open',
+        secondaryAction: { label: 'Retry now', onClick: () => resolve('retry') },
+        danger: true,
+        onConfirm: () => resolve('quit'),
+        onCancel: () => resolve('stay'),
+      });
+    });
+    if (choice === 'retry') {
+      retrying = true;
+      continue;
+    }
+    if (choice === 'quit') {
+      // Audit-6 M5 — on "Quit anyway" the sentinel is (correctly) DIRTY: failed
+      // writes enqueued a markDirty. Flush it (bounded — QC-3) so the next launch's
+      // recovery prompt accurately names the lost paths instead of racing the
+      // renderer's destroy.
+      await flushSentinelBounded(deps);
+      deps.send('app:ready-to-quit');
+    } else {
+      deps.send('app:cancel-quit');
+    }
+    return;
+  }
+}
+
+/**
+ * One bounded drain under the heartbeat. Returns true when it FAILED. On a
+ * retry pass (Audit-19 EXT-5) the retained failed writes are re-fired first;
+ * `save()` then drains everything else.
+ */
+async function runDrain(deps: QuitFlushDeps, retryFirst: boolean): Promise<boolean> {
   deps.send('app:drain-heartbeat');
   const heartbeat = setInterval(() => deps.send('app:drain-heartbeat'), DRAIN_HEARTBEAT_MS);
-
-  let failed = false;
   try {
     // Audit-11 WC-1 (half 2) — bound the drain. A wedged write the per-scheduler
     // `writeTimeoutMs` didn't catch (or any unbounded await) must not keep the
     // heartbeat re-arming main's destroy timer forever; on the deadline treat it
-    // as a failure and fall through to the user confirm below.
-    const outcome = await raceDrainDeadline(deps.save(), QUIT_DRAIN_DEADLINE_MS);
-    if (outcome === DRAIN_TIMED_OUT || outcome === false) failed = true;
+    // as a failure and fall through to the user confirm.
+    const op = (async (): Promise<boolean> => {
+      if (retryFirst && deps.retryFailed) await deps.retryFailed();
+      return deps.save();
+    })();
+    const outcome = await raceDrainDeadline(op, QUIT_DRAIN_DEADLINE_MS);
+    return outcome === DRAIN_TIMED_OUT || outcome === false;
   } catch (err) {
     deps.reportError('App', err, 'flush-and-quit failed');
-    failed = true;
+    return true;
   } finally {
     clearInterval(heartbeat);
-  }
-  if (!failed && deps.saveStateState() !== 'error') {
-    // Audit-6 M5 — let the queued markClean reach disk (bounded — QC-3) before
-    // main destroys us, or `.filo/.dirty` survives a clean quit → phantom
-    // recovery next launch.
-    await flushSentinelBounded(deps);
-    deps.send('app:ready-to-quit');
-    return;
-  }
-  // Save failed (or the save-state store still carries an unresolved
-  // error from an earlier debounced write). Block the quit until the
-  // user explicitly chooses: Quit anyway (accept data loss; the user
-  // can recover .tmp files from disk) or Stay open and retry.
-  //
-  // Audit-4 DI-04 — heartbeat BEFORE the confirm. The dialog below is
-  // open-ended (no timeout), but main destroys the window after a 5 s flush
-  // ceiling. A human reading a "Save failed" dialog routinely takes longer
-  // than 5 s, so the timer would fire first, vanish the dialog, and discard
-  // the choice (and the edits). Tell main a human is now in the loop so it
-  // clears that auto-destroy timer; the ready/cancel reply below then drives
-  // the real quit on the user's schedule.
-  deps.send('app:quit-awaiting-user');
-  const quitAnyway = await new Promise<boolean>((resolve) => {
-    uiStore.openConfirm({
-      title: 'Save failed',
-      body:
-        "Filo couldn't write your latest changes to disk. Quitting now " +
-        'will lose those edits — Filo preserved emergency .tmp files in ' +
-        "the vault that you can recover manually if you do. Pick " +
-        '"Stay open and retry" to keep editing.',
-      confirmLabel: 'Quit anyway',
-      cancelLabel: 'Stay open and retry',
-      danger: true,
-      onConfirm: () => resolve(true),
-      onCancel: () => resolve(false),
-    });
-  });
-  if (quitAnyway) {
-    // Audit-6 M5 — on "Quit anyway" the sentinel is (correctly) DIRTY: failed
-    // writes enqueued a markDirty. Flush it (bounded — QC-3) so the next launch's
-    // recovery prompt accurately names the lost paths instead of racing the
-    // renderer's destroy.
-    await flushSentinelBounded(deps);
-    deps.send('app:ready-to-quit');
-  } else {
-    deps.send('app:cancel-quit');
   }
 }

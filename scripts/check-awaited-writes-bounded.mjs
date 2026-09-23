@@ -204,6 +204,83 @@ for (const check of checks) {
   }
 }
 
+// ── Audit-19 EXT-5 arm — the Windows lock backoff is TIME-bounded and shared ──
+// OneDrive / Dropbox / antivirus hold rename-blocking handles for seconds; the
+// old count-based ~310 ms loop turned every such hold into "Save failed" plus a
+// stray `.tmp` in the synced folder. `retryOnWindowsLock` must compare ELAPSED
+// time against `budgetMs`, and the two rename sites must route through it.
+/** Brace-matched body of `function <name>(` in comment-stripped code, or null. */
+function functionBody(code, name) {
+  const decl = new RegExp(`function\\s+${name}\\s*[<(]`).exec(code);
+  if (!decl) return null;
+  let depth = 0;
+  let i = decl.index + decl[0].length - 1;
+  // Skip the parameter list (may hold `{}` option types).
+  for (; i < code.length; i++) {
+    if (code[i] === '(') depth++;
+    else if (code[i] === ')' && --depth === 0) break;
+  }
+  let open = code.indexOf('{', i);
+  // Step over a return-type literal `Promise<{ … }>` (its `{` follows `<`/`:`).
+  while (open >= 0 && /[<:,|&(]\s*$/.test(code.slice(i, open))) {
+    let d = 0;
+    let j = open;
+    for (; j < code.length; j++) {
+      if (code[j] === '{') d++;
+      else if (code[j] === '}' && --d === 0) break;
+    }
+    i = j + 1;
+    open = code.indexOf('{', i);
+  }
+  if (open < 0) return null;
+  depth = 0;
+  for (let k = open; k < code.length; k++) {
+    if (code[k] === '{') depth++;
+    else if (code[k] === '}' && --depth === 0) return code.slice(open, k + 1);
+  }
+  return null;
+}
+const LOCK_ARM = [
+  {
+    file: 'src/main/vault/filenameUtils.ts',
+    fn: 'retryOnWindowsLock',
+    required: [
+      { token: /Date\.now\(\)|performance\.now\(\)/, why: 'measures elapsed time' },
+      { token: /elapsed\s*>=?\s*budgetMs|budgetMs\s*<=?\s*elapsed/, why: 'stops on an ELAPSED-time budget, not an attempt count' },
+    ],
+  },
+  {
+    file: 'src/main/vault/filenameUtils.ts',
+    fn: 'atomicWriteFile',
+    required: [{ token: /retryOnWindowsLock\s*\(\s*\(\)\s*=>\s*fs\.rename\(\s*tmpPath\s*,\s*filePath\s*\)/, why: 'the tmp→target rename uses the shared time-bounded lock retry' }],
+    forbidden: [{ token: /\bRETRY_DELAYS_MS\s*=\s*\[/, why: 'a count-based RETRY_DELAYS_MS table re-introduces the ~310 ms lock budget' }],
+  },
+  {
+    file: 'src/main/vault/fileOps.ts',
+    fn: 'renameItem',
+    required: [{ token: /retryOnWindowsLock\s*\(\s*\(\)\s*=>\s*fs\.rename\(\s*oldPath\s*,\s*newPath\s*\)/, why: 'a folder/file rename retries a transient Windows lock (EPERM on a held child handle)' }],
+  },
+];
+for (const arm of LOCK_ARM) {
+  let body = null;
+  try {
+    body = functionBody(stripComments(readFileSync(join(ROOT, arm.file), 'utf8')), arm.fn);
+  } catch (err) {
+    failures.push(`${arm.file} — could not read: ${err.message}`);
+    continue;
+  }
+  if (body === null) {
+    failures.push(`${arm.file} — function ${arm.fn}() not found (Audit-19 EXT-5 lock-retry arm)`);
+    continue;
+  }
+  for (const { token, why } of arm.required) {
+    if (!token.test(body)) failures.push(`${arm.file} — ${arm.fn}() missing /${token.source}/ (${why}) — Audit-19 EXT-5`);
+  }
+  for (const { token, why } of arm.forbidden ?? []) {
+    if (token.test(body)) failures.push(`${arm.file} — ${arm.fn}() has forbidden /${token.source}/ (${why}) — Audit-19 EXT-5`);
+  }
+}
+
 if (failures.length > 0) {
   console.error('[check-awaited-writes-bounded] FAILED — Audit5 R3 (#1) bounded-write invariant regressed:');
   for (const f of failures) console.error(`  ${f}`);

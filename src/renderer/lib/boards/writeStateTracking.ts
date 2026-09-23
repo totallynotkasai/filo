@@ -751,3 +751,7 @@ export async function trackComponentWrite<T>(
     throw err;
   }
 }
+
+// Audit-19 EXT-5 — Retry fan-out across all five schedulers (board, markdown
+// gateway, frontmatter, config, misc); implemented next to the failure ledger.
+export { retryAllFailedWrites } from './writeSchedulerFailures';

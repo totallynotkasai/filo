@@ -291,6 +291,11 @@ export interface Scheduler<TArgs> {
    */
   flushAll(): Promise<FlushAllResult>;
   /**
+   * Audit-19 EXT-5 — re-fires the retained failed writes (all, or `key`'s) with
+   * fresh args and awaits them. `flushAll` also re-fires them once per call.
+   */
+  retryFailed(key?: string): Promise<{ failed: string[] }>;
+  /**
    * Vault-swap nuclear option — clears pending timers, in-flight tracker
    * entries, and failure attribution Set. Late `.then`/`.catch` callbacks
    * against cleared entries no-op via the `trackerIsCurrent` guard.

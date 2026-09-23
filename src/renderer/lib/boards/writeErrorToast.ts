@@ -85,6 +85,12 @@ export interface WriteErrorToastSpec {
    * Undefined for the common no-preserve case, so those still coalesce by kind.
    */
   coalesceKey?: string;
+  /**
+   * Audit-19 EXT-5 — the failure is transient-shaped and the scheduler retained
+   * the write, so the toast offers Retry (re-fires every retained failed write).
+   * False for a deliberate skip (CONFIG_CORRUPT) that retrying can't fix.
+   */
+  retryable: boolean;
 }
 
 /**
@@ -107,6 +113,7 @@ export function buildWriteErrorToast(info: WriteErrorInfo): WriteErrorToastSpec 
         `Filo isn't saving changes${where} — its on-disk copy is unreadable, so it's left untouched to avoid clobbering it. ` +
         'Your edits stay in memory but won\'t persist. Fix or replace the file (or choose "Use defaults"), then reopen the vault.',
       coalesceKey: `config-corrupt::${info.path ?? ''}`,
+      retryable: false,
     };
   }
   const context =
@@ -123,5 +130,5 @@ export function buildWriteErrorToast(info: WriteErrorInfo): WriteErrorToastSpec 
   // burst of preserve-failures doesn't collapse to a single toast that names
   // only the last recovery path.
   const coalesceKey = preserved ? `${context}::${preserved}` : undefined;
-  return { context, message, coalesceKey };
+  return { context, message, coalesceKey, retryable: true };
 }

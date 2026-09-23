@@ -48,6 +48,7 @@ import type {
   Scheduler,
   SchedulerSentinelInfo,
 } from './writeSchedulerTypes';
+import { createFailureLedger, isRetainableWriteError, registerRetryHook } from './writeSchedulerFailures';
 
 /**
  * Audit5 R3 — sentinel a `performWrite` race resolves to when it outruns the
@@ -119,22 +120,9 @@ export function createScheduler<TArgs>(
     for (const set of parked.values()) if (set.size > 0) return true;
     return false;
   };
-  /**
-   * Per-failure-id Set populated by `fireWrite` on rejection / partial failure.
-   * `flush(key)` / `flushAll()` consume entries matching the in-flight failureId(s)
-   * they awaited, so attribution stays scoped to writes the caller waited on (not
-   * unrelated failures from earlier fire-and-forget timer fires).
-   */
-  const failures = new Set<string>();
-  /**
-   * Audit-16 4.7 — failure ids recorded per KEY by past failed fires. A
-   * partial-failure writer (config bundle) attributes PER-TARGET ids that differ
-   * from the key's primary failureId; the success-path prune deleted only the
-   * primary, so fire-and-forget partial failures leaked in `failures` until
-   * reset(). Each failed fire records its id list under its key; the key's next
-   * SUCCESS prunes exactly those ids. Cleared on reset().
-   */
-  const failureIdsByKey = new Map<string, Set<string>>();
+  // Failure attribution (per-id Set + Audit-16 4.7 per-key record) and Audit-19
+  // EXT-5 RETENTION of failed fires' args live in writeSchedulerFailures.ts.
+  const ledger = createFailureLedger<TArgs>();
   /**
    * Audit-13 M3 — per-path write generation: the value last minted for a
    * path when a write FIRED for it (in `fireWrite`), captured at fire time. A
@@ -220,9 +208,10 @@ export function createScheduler<TArgs>(
    * return value; awaiting callers (`flush`, `flushAll`) treat
    * `failureList.length === 0` as success.
    */
-  function fireWrite(key: string, args: TArgs): Promise<string[]> {
+  function fireWrite(key: string, args: TArgs, retainGetArgs?: () => TArgs | null): Promise<string[]> {
     const sentinel = opts.getSentinelInfo(args);
     const failureId = failureIdFor(args);
+    let failError: unknown; // Audit-19 EXT-5 — decides retention of a failed fire
 
     if (opts.shouldSkipWrite?.(args)) {
       safeEndWrite(sentinel, true);
@@ -258,7 +247,8 @@ export function createScheduler<TArgs>(
               writePathKey === undefined || writeGenByPath.get(writePathKey) === writeGen,
           });
           return result?.failed ?? [];
-        } catch {
+        } catch (err) {
+          failError = err;
           return [failureId];
         }
       })();
@@ -282,6 +272,7 @@ export function createScheduler<TArgs>(
           // `safeEndWrite(false)` below would otherwise just drop the pending
           // path and let `syncSentinelIfIdle` mark clean — losing the recovery
           // flag for a write that never landed). Then attribute the failure.
+          failError = { code: 'WRITE_TIMEOUT' };
           if (sentinel.path) {
             markPathFailed(sentinel.vaultRoot, sentinel.path);
             // Audit-12 M2 — the underlying write keeps running; we only STOPPED
@@ -368,24 +359,11 @@ export function createScheduler<TArgs>(
       const success = failureList.length === 0;
       safeEndWrite(sentinel, success);
       if (success) {
-        // Audit-7 L12 — a fire-and-forget write that FAILS adds its failureId
-        // to `failures`; if it settles before any flush snapshots the bucket,
-        // no flush ever drains that id and it leaked until `reset()` (vault
-        // swap). A LATER successful write to the same id means that id is no
-        // longer in a failed state, so prune it here — bounding `failures`
-        // growth within a session, not just at swap. Crash recovery is
-        // unaffected: the `.filo/.dirty` sentinel + `failedVaultPaths` are
-        // owned by `endWrite`/`markPathFailed`, not this attribution Set.
-        failures.delete(failureId);
-        // Audit-16 4.7 — prune every failure id THIS key's prior failed fires
-        // recorded. A partial-failure writer attributes per-target ids that
-        // differ from the primary failureId; deleting only the primary leaked
-        // them in `failures` until reset().
-        const recordedIds = failureIdsByKey.get(key);
-        if (recordedIds) {
-          for (const f of recordedIds) failures.delete(f);
-          failureIdsByKey.delete(key);
-        }
+        // Audit-7 L12 / Audit-16 4.7 — prune this key's attributed ids (and any
+        // retained re-fire) so the ledger can't grow for the whole session.
+        // Crash recovery is unaffected: `.filo/.dirty` + `failedVaultPaths` are
+        // owned by `endWrite`/`markPathFailed`, not this attribution ledger.
+        ledger.recordSuccess(key, failureId);
         // Audit-14 1.6 — prune this path's write-generation entry on a still-
         // newest, now-clean success (checked AFTER `safeEndWrite` cleared this
         // write from the pending/failed sets), bounding `writeGenByPath` growth
@@ -400,17 +378,12 @@ export function createScheduler<TArgs>(
           writeGenByPath.delete(writePathKey);
         }
       } else {
-        // Audit-16 4.7 — record the attributed ids under this key so the
-        // key's next success can prune them from the shared Set.
-        let recordedIds = failureIdsByKey.get(key);
-        if (!recordedIds) {
-          recordedIds = new Set<string>();
-          failureIdsByKey.set(key, recordedIds);
-        }
-        for (const f of failureList) {
-          failures.add(f);
-          recordedIds.add(f);
-        }
+        ledger.recordFailed(key, failureList);
+        // Audit-19 EXT-5 — keep a transient failure's args getter so the next
+        // flushAll (Ctrl+S, quit drain, Retry) re-fires it instead of the edit
+        // living only in memory. User-deferred / validation failures carry no
+        // RETAINABLE code and are not re-fired (they would re-prompt).
+        if (retainGetArgs && isRetainableWriteError(failError)) ledger.retain(key, retainGetArgs);
       }
       return failureList;
     });
@@ -443,6 +416,7 @@ export function createScheduler<TArgs>(
     getArgs: () => TArgs | null,
     delayOverride?: number,
   ): void {
+    ledger.release(key); // Audit-19 EXT-5 — newer args supersede a retained failed fire
     const existing = pending.get(key);
     const probe = getArgs();
     const nextSentinel: SchedulerSentinelInfo = probe
@@ -499,9 +473,9 @@ export function createScheduler<TArgs>(
       // Snapshot at fire time (Phase C/C.5 for board scheduler). Other
       // schedulers omit `snapshotArgs` — they pass args straight through.
       const snapshotted = opts.snapshotArgs ? opts.snapshotArgs(args) : args;
-      // Fire-and-forget. Failure attribution lives on `failures` Set;
-      // `flushAll` consumes from there when it awaits in-flight writes.
-      void fireWrite(key, snapshotted);
+      // Fire-and-forget. Failure attribution lives on the ledger; `flushAll`
+      // consumes from there when it awaits in-flight writes.
+      void fireWrite(key, snapshotted, getArgs);
     };
     const timer = setTimeout(() => {
       pending.delete(key);
@@ -651,8 +625,8 @@ export function createScheduler<TArgs>(
       const captured = entry.capturedFailures;
       if (captured && captured.length > 0) {
         success = false;
-        for (const f of captured) failures.delete(f);
-      } else if (captured === null && failures.delete(entry.failureId)) {
+        for (const f of captured) ledger.consume(f);
+      } else if (captured === null && ledger.consume(entry.failureId)) {
         success = false;
       }
     };
@@ -697,11 +671,11 @@ export function createScheduler<TArgs>(
         success = false;
       } else {
         const snapshotted = opts.snapshotArgs ? opts.snapshotArgs(args) : args;
-        const failureList = await fireWrite(key, snapshotted);
+        const failureList = await fireWrite(key, snapshotted, argsGetter);
         if (failureList.length > 0) success = false;
         // Drain attributed failures from the shared Set so a later flushAll
         // doesn't double-report them.
-        for (const f of failureList) failures.delete(f);
+        for (const f of failureList) ledger.consume(f);
       }
     }
 
@@ -739,7 +713,9 @@ export function createScheduler<TArgs>(
       args: TArgs | null;
       scheduleVaultRoot: string | undefined;
       schedulePath: string | undefined;
+      getArgs: () => TArgs | null;
     }
+    drainRetained(); // Audit-19 EXT-5 — re-fire every retained failed write once
 
     // Capture pending entries' args AND snapshot synchronously upfront.
     // Phase 25 L12 / C/C.5 — without this, a propagateRename mutation that
@@ -760,6 +736,7 @@ export function createScheduler<TArgs>(
         args,
         scheduleVaultRoot: entry.scheduleVaultRoot,
         schedulePath: entry.schedulePath,
+        getArgs: entry.getArgs,
       });
     }
     pending.clear();
@@ -820,9 +797,9 @@ export function createScheduler<TArgs>(
       if (prior && prior.size > 0) await drainPriorInFlight(entry.key);
       const sentinel = opts.getSentinelInfo(entry.args);
       if (sentinel.vaultRoot) trackedVault = sentinel.vaultRoot;
-      const failureList = await fireWrite(entry.key, entry.args);
+      const failureList = await fireWrite(entry.key, entry.args, entry.getArgs);
       for (const f of failureList) {
-        failures.delete(f);
+        ledger.consume(f);
         if (!failed.includes(f)) failed.push(f);
       }
     }
@@ -837,10 +814,10 @@ export function createScheduler<TArgs>(
           // carries the exact id list `performWrite` reported, which may
           // differ from the primary failureId for bundle writers.
           for (const f of captured) {
-            failures.delete(f);
+            ledger.consume(f);
             if (!failed.includes(f)) failed.push(f);
           }
-        } else if (captured === null && failures.delete(e.entry.failureId)) {
+        } else if (captured === null && ledger.consume(e.entry.failureId)) {
           // Legacy throw-attribution path — entry was cleared by reset()
           // mid-IPC so capturedFailures stayed null; consult the global
           // failures Set for any matching primary failureId.
@@ -873,7 +850,7 @@ export function createScheduler<TArgs>(
           const captured = entry.capturedFailures;
           if (captured && captured.length > 0) {
             for (const f of captured) {
-              failures.delete(f);
+              ledger.consume(f);
               if (!failed.includes(f)) failed.push(f);
             }
           }
@@ -922,15 +899,35 @@ export function createScheduler<TArgs>(
     // missing-source branch never reaches `fireWrite`).
     parked.clear();
     schedulerGeneration += 1;
-    failures.clear();
-    // Audit-16 4.7 — the recorded-per-key failure ids are attribution-local
-    // state for the failures Set just cleared; drop them with it.
-    failureIdsByKey.clear();
+    ledger.clear(); // attribution ids, per-key records AND retained re-fires (outgoing vault)
     // Audit-13 M3 — drop the per-path generations so the new vault's first write
     // to a same-named path starts at generation 1 (a stale late-success
     // continuation from the outgoing vault no longer matches and can't heal).
     writeGenByPath.clear();
   }
+
+  /**
+   * Audit-19 EXT-5 — moves retained failed fires back into `pending` (delay 0)
+   * so the caller's drain re-fires them with FRESH args. A key already pending
+   * is superseded by its newer args; a source that vanished (null args) is
+   * dropped silently (its failed mark + sentinel stay — no false toast).
+   */
+  function drainRetained(key?: string): void {
+    for (const [k, getArgs] of ledger.takeRetained(key)) {
+      if (!pending.has(k) && getArgs()) schedule(k, getArgs, 0);
+    }
+  }
+
+  /** Audit-19 EXT-5 — Retry: re-fire retained failed writes and await them. */
+  async function retryFailed(key?: string): Promise<{ failed: string[] }> {
+    if (!ledger.hasRetained(key)) return { failed: [] };
+    if (key !== undefined) {
+      drainRetained(key);
+      return { failed: (await flush(key)).ok ? [] : [key] };
+    }
+    return { failed: (await flushAll()).failed };
+  }
+  registerRetryHook(() => retryFailed());
 
   function hasPendingTimer(predicate: (args: TArgs) => boolean): boolean {
     for (const entry of pending.values()) {
@@ -955,7 +952,7 @@ export function createScheduler<TArgs>(
   }
 
   function __failuresSizeForTests(): number {
-    return failures.size;
+    return ledger.size();
   }
 
   function __writeGenSizeForTests(): number {
@@ -990,6 +987,7 @@ export function createScheduler<TArgs>(
     cancelAll,
     flush,
     flushAll,
+    retryFailed,
     reset,
     hasPendingTimer,
     hasParked,

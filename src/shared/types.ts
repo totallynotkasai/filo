@@ -64,6 +64,8 @@ export type IpcChannel =
   | 'recovery:snapshot'
   // Recovery snapshot listing (surfaced to the user on vault open)
   | 'recovery:list'
+  // Audit-19 EXT-5 - move orphaned atomic-write temps into .filo/recovery/orphan-tmp
+  | 'vault:sweep-orphan-tmp'
   // Config operations (.filo/ directory)
   | 'config:load'
   | 'config:save'

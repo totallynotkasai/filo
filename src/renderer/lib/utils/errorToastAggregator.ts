@@ -34,6 +34,8 @@ export interface AggregatedReport extends ReportedError {
    * The DISPLAY prefix always remains `context`.
    */
   coalesceKey?: string;
+  /** Audit-19 EXT-5 — action buttons for a freshly pushed toast (e.g. Retry). */
+  actions?: Array<{ label: string; handler: () => void | Promise<void> }>;
 }
 
 export interface AggregatorToastApi {
@@ -47,6 +49,7 @@ export interface AggregatorToastApi {
     type: 'error';
     duration: 0;
     onDismiss: () => void;
+    actions?: Array<{ label: string; handler: () => void | Promise<void> }>;
   }): string;
   /**
    * Updates the text of an existing toast. Returns true if the toast was
@@ -74,7 +77,7 @@ export function createErrorToastAggregator(
   const windowMs = options.windowMs ?? 1000;
   const recent = new Map<string, AggregatedToast>();
 
-  return ({ context, message, error, coalesceKey }) => {
+  return ({ context, message, error, coalesceKey, actions }) => {
     // A9-L10 — coalesce by `coalesceKey` when supplied, else by `context`. The
     // display prefix below always stays `context`, so the count badge reads per
     // write KIND while distinct recovery locations keep separate toasts.
@@ -102,6 +105,7 @@ export function createErrorToastAggregator(
       text: `${context}: ${detail}`,
       type: 'error',
       duration: 0,
+      ...(actions && actions.length > 0 ? { actions } : {}),
       onDismiss: () => {
         const entry = recent.get(key);
         if (entry?.toastId === toastId) {

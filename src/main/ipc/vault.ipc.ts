@@ -13,7 +13,7 @@ import {
   VaultTreeTooLargeError,
   CaseRenameStrandedError,
 } from '../vault/fileOps';
-import { atomicWriteFile, uniqueFolderPath } from '../vault/filenameUtils';
+import { atomicWriteFile, uniqueFolderPath, LOCK_AWARE_SUPPRESS_MS } from '../vault/filenameUtils';
 import { FileWatcher } from '../services/fileWatcher';
 import {
   assertWithinVault,
@@ -251,7 +251,7 @@ export function registerVaultHandlers(): void {
           if (oldIsDirectory) {
             activeWatcher!.suppressTree(rel, 5000);
           } else {
-            activeWatcher!.suppress(rel, 2000);
+            activeWatcher!.suppress(rel, LOCK_AWARE_SUPPRESS_MS);
           }
         };
         suppressFn(oldRel);
@@ -269,7 +269,7 @@ export function registerVaultHandlers(): void {
           if (oldIsDirectory) {
             activeWatcher!.suppressTree(rel, 5000);
           } else {
-            activeWatcher!.suppress(rel, 2000);
+            activeWatcher!.suppress(rel, LOCK_AWARE_SUPPRESS_MS);
           }
         };
         suppressFn(oldRel);
@@ -347,7 +347,7 @@ export function registerVaultHandlers(): void {
         if (isDirectory) {
           activeWatcher.suppressTree(rel, 5000);
         } else {
-          activeWatcher.suppress(rel, 2000);
+          activeWatcher.suppress(rel, LOCK_AWARE_SUPPRESS_MS);
         }
       }
       await deleteItem(itemPath);
@@ -688,7 +688,7 @@ export function registerVaultHandlers(): void {
         const fullPath = join(vaultRoot, relativePath);
         assertWithinVault(vaultRoot, fullPath);
         await fsPromises.mkdir(dirname(fullPath), { recursive: true });
-        activeWatcher?.suppress(relativePath, 2000);
+        activeWatcher?.suppress(relativePath, LOCK_AWARE_SUPPRESS_MS);
         await atomicWriteFile(fullPath, content);
         activeWatcher?.suppress(relativePath, 1000);
         return { success: true, path: fullPath };
@@ -733,7 +733,7 @@ export function registerVaultHandlers(): void {
           }
           throw openErr;
         }
-        activeWatcher?.suppress(relativePath, 2000);
+        activeWatcher?.suppress(relativePath, LOCK_AWARE_SUPPRESS_MS);
         try {
           await atomicWriteFile(fullPath, content);
         } catch (writeErr) {
@@ -786,7 +786,7 @@ export function registerVaultHandlers(): void {
           }
           throw statErr;
         }
-        activeWatcher?.suppress(relativePath, 2000);
+        activeWatcher?.suppress(relativePath, LOCK_AWARE_SUPPRESS_MS);
         // Audit-7 L7 — `expectExisting` re-verifies the destination right
         // before the rename so a delete landing in the stat-precheck→rename
         // gap aborts (ENOENT) instead of resurrecting the file with stale
@@ -831,7 +831,7 @@ export function registerVaultHandlers(): void {
         const fullPath = join(vaultRoot, relativePath);
         assertWithinVault(vaultRoot, fullPath);
         await fsPromises.mkdir(dirname(fullPath), { recursive: true });
-        activeWatcher?.suppress(relativePath, 2000);
+        activeWatcher?.suppress(relativePath, LOCK_AWARE_SUPPRESS_MS);
         await atomicWriteFile(fullPath, buffer);
         activeWatcher?.suppress(relativePath, 1000);
         return { success: true, path: fullPath };

@@ -230,37 +230,32 @@ export async function atomicWriteFile(
     throw err;
   }
 
-  const RETRY_DELAYS_MS = [10, 20, 40, 80, 160]; // ~310ms worst case
+  // Audit-19 EXT-5 — a time-bounded lock backoff (~5 s on win32) instead of the
+  // old ~310 ms count-based loop: OneDrive / Dropbox / antivirus routinely hold
+  // a rename-blocking handle for a second or two, and every exhausted retry
+  // used to surface "Save failed" plus a stray `.tmp` inside the synced folder.
   let lastErr: unknown;
   let renamed = false;
-  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
-    try {
+  try {
+    await retryOnWindowsLock(() => fs.rename(tmpPath, filePath), {
       // Audit-7 L7 — when the caller asserts the destination must already
-      // exist, re-verify right before the rename. `fs.rename` creates `dest`
-      // unconditionally, so a delete that landed since the handler's stat
-      // pre-check would otherwise resurrect the file with stale editor bytes.
-      // Re-checked each attempt so a delete during the retry backoff is caught
-      // too. The check→rename gap itself is the irreducible OS-level residual.
-      if (opts?.expectExisting && !(await pathExists(filePath))) {
-        const gone: NodeJS.ErrnoException = new Error(
-          `atomicWriteFile: "${filePath}" no longer exists; refusing to recreate it`,
-        );
-        gone.code = 'ENOENT';
-        throw gone;
-      }
-      await fs.rename(tmpPath, filePath);
-      renamed = true;
-      break;
-    } catch (err) {
-      lastErr = err;
-      const code = (err as NodeJS.ErrnoException)?.code;
-      // Only retry transient Windows locking errors. ENOENT (missing src, or
-      // the expectExisting abort above) and other codes mean the rename will
-      // never succeed, so fail fast.
-      if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES') break;
-      if (attempt === RETRY_DELAYS_MS.length) break;
-      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
-    }
+      // exist, re-verify right before EVERY rename attempt. `fs.rename` creates
+      // `dest` unconditionally, so a delete that landed since the handler's stat
+      // pre-check (or during the backoff) would otherwise resurrect the file
+      // with stale editor bytes. The check→rename gap is the OS-level residual.
+      beforeAttempt: async () => {
+        if (opts?.expectExisting && !(await pathExists(filePath))) {
+          const gone: NodeJS.ErrnoException = new Error(
+            `atomicWriteFile: "${filePath}" no longer exists; refusing to recreate it`,
+          );
+          gone.code = 'ENOENT';
+          throw gone;
+        }
+      },
+    });
+    renamed = true;
+  } catch (err) {
+    lastErr = err;
   }
 
   if (!renamed) {
@@ -350,6 +345,70 @@ export async function atomicWriteFile(
       }
       if (attempt === DIR_FSYNC_RETRY_DELAYS_MS.length) break;
       await new Promise((resolve) => setTimeout(resolve, DIR_FSYNC_RETRY_DELAYS_MS[attempt]));
+    }
+  }
+}
+
+/**
+ * Audit-19 EXT-5 (plan D6) — the error codes Windows returns while another
+ * process (OneDrive, Dropbox, Explorer, antivirus) holds a handle that blocks
+ * a rename / replace.
+ */
+export const WIN_LOCK_CODES: ReadonlySet<string> = new Set(['EPERM', 'EBUSY', 'EACCES']);
+
+/**
+ * Lock-retry budget. win32 only gets the long budget: on POSIX an `EACCES` is a
+ * real permission error, and stalling 5 s on it would just delay the failure.
+ */
+export const WIN_LOCK_BUDGET_MS = process.platform === 'win32' ? 5000 : 310;
+
+/**
+ * Watcher self-write suppression to apply BEFORE an atomic write: the rename
+ * can now land up to `WIN_LOCK_BUDGET_MS` late, and its echo must still fall
+ * inside the window (the post-write re-suppress is unchanged).
+ */
+export const LOCK_AWARE_SUPPRESS_MS = WIN_LOCK_BUDGET_MS + 2000;
+
+const LOCK_BACKOFF_MS = [10, 20, 40, 80, 160, 320, 640];
+const LOCK_BACKOFF_CAP_MS = 1000;
+
+function defaultLockBudgetMs(): number {
+  // Read at call time (not the module-load constant) so tests can emulate a
+  // platform. `FILO_LOCK_RETRY_BUDGET_MS` is a diagnostic / test override (the
+  // unit-test setup pins it to the legacy 310 ms so suites that force a
+  // permanent lock don't each stall for 5 s).
+  const override = Number(process.env.FILO_LOCK_RETRY_BUDGET_MS);
+  if (process.env.FILO_LOCK_RETRY_BUDGET_MS !== undefined && Number.isFinite(override) && override >= 0) {
+    return override;
+  }
+  return process.platform === 'win32' ? 5000 : 310;
+}
+
+/**
+ * Runs `op`, retrying while it fails with a Windows lock code until the
+ * ELAPSED time reaches `budgetMs` (time-bounded, not count-bounded). Backoff:
+ * 10, 20, 40, …, 640 ms, then 1000 ms capped. `beforeAttempt` runs before
+ * EVERY attempt (its own throw is not retried unless it is a lock code). Any
+ * non-lock error, or the budget running out, rethrows the last error.
+ */
+export async function retryOnWindowsLock<T>(
+  op: () => Promise<T>,
+  opts: { budgetMs?: number; beforeAttempt?: () => Promise<void> } = {},
+): Promise<T> {
+  const budgetMs = opts.budgetMs ?? defaultLockBudgetMs();
+  const start = Date.now();
+  for (let attempt = 0; ; attempt++) {
+    try {
+      if (opts.beforeAttempt) await opts.beforeAttempt();
+      return await op();
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException | null)?.code;
+      if (typeof code !== 'string' || !WIN_LOCK_CODES.has(code)) throw err;
+      const elapsed = Date.now() - start;
+      if (elapsed >= budgetMs) throw err;
+      const step = LOCK_BACKOFF_MS[attempt] ?? LOCK_BACKOFF_CAP_MS;
+      const delay = Math.max(1, Math.min(step, LOCK_BACKOFF_CAP_MS, budgetMs - elapsed));
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
 }

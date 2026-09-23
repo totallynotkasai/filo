@@ -2,6 +2,7 @@ import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { uiStore } from '../../stores/ui.svelte';
 import { vaultSwapResettable } from '../../core/vaultLifecycle';
+import { normalizePath, toPosix } from '../utils/path';
 
 /**
  * Audit-19 UX-6 (plan D7) — "Keep local" ALWAYS backs up the external bytes
@@ -40,8 +41,8 @@ function displayName(rel: string): string {
 
 /** Absolute snapshot path → vault-relative, forward slashes (for the toast). */
 function toVaultRelative(vaultRoot: string, abs: string): string {
-  const a = abs.replace(/\\/g, '/');
-  const root = vaultRoot.replace(/\\/g, '/').replace(/\/+$/, '');
+  const a = toPosix(abs);
+  const root = normalizePath(vaultRoot);
   return a.toLowerCase().startsWith(root.toLowerCase() + '/') ? a.slice(root.length + 1) : a;
 }
 

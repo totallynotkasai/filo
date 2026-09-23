@@ -25,6 +25,11 @@ import '../renderer/lib/boards/boardScopeFactory';
 import { beforeEach } from 'vitest';
 import { installFiloDefault } from './helpers/filoBridge';
 
+// Audit-19 EXT-5 — main's Windows lock retry is time-bounded (~5 s on win32).
+// Pin the legacy ~310 ms budget so suites that force a PERMANENT lock don't each
+// stall for 5 s; tests of the long budget set/clear this themselves.
+process.env.FILO_LOCK_RETRY_BUDGET_MS = '310';
+
 if (typeof globalThis.PointerEvent === 'undefined') {
   class JsDomPointerEvent extends MouseEvent {
     pointerId: number;

@@ -78,6 +78,12 @@
     c?.onConfirm(checked);
   }
 
+  function secondary() {
+    const c = config;
+    uiStore.closeConfirm();
+    c?.secondaryAction?.onClick();
+  }
+
   function cancel() {
     const c = config;
     uiStore.closeConfirm();
@@ -139,6 +145,11 @@
         <button class="confirm-btn cancel" bind:this={cancelBtn} onclick={cancel}>
           {config.cancelLabel ?? 'Cancel'}
         </button>
+        {#if config.secondaryAction}
+          <button class="confirm-btn secondary" onclick={secondary}>
+            {config.secondaryAction.label}
+          </button>
+        {/if}
         <button
           class="confirm-btn"
           class:danger={config.danger}

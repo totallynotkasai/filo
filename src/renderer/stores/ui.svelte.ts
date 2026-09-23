@@ -63,6 +63,12 @@ export interface ConfirmDialogConfig {
   };
   onConfirm: (extraOptionChecked: boolean) => void;
   onCancel?: () => void;
+  /**
+   * Audit-19 EXT-5 — an optional third, non-destructive button rendered between
+   * Cancel and Confirm (the quit dialog's "Retry now"). Clicking it closes the
+   * dialog and calls `onClick` — neither onConfirm nor onCancel fires.
+   */
+  secondaryAction?: { label: string; onClick: () => void };
 }
 
 let confirmDialog = $state<ConfirmDialogConfig | null>(null);

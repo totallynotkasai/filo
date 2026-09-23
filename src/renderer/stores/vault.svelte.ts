@@ -19,7 +19,7 @@ import { normalizePath, toPosix } from '../lib/utils/path';
 // which shadows the constructor name otherwise.
 import { vaultPath as brandVaultPath, type VaultPath } from '../../shared/vaultPath';
 import { checkRecovery, markClean } from '../lib/vault/dirtyFlagRecovery';
-import { readQuitFailureBreadcrumb, clearQuitFailureBreadcrumb } from '../lib/vault/quitFailureRecovery';
+import { readQuitFailureBreadcrumb, clearQuitFailureBreadcrumb, sweepOrphanTempFiles } from '../lib/vault/quitFailureRecovery';
 import {
   readPendingRewrite,
   clearPendingRewrite,
@@ -716,12 +716,11 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
       });
     }
   } catch (err) {
-    reportError(
-      'vault.quit-failure-check',
-      err,
-      'Failed to surface the quit-failure breadcrumb',
-    );
+    reportError('vault.quit-failure-check', err, 'Failed to surface the quit-failure breadcrumb');
   }
+  // Audit-19 EXT-5 — AFTER the breadcrumb: move orphaned save temps out of the synced vault.
+  await sweepOrphanTempFiles(newVaultPath, captured);
+  if (!isStillSameVault(captured)) return;
 
   // ── 1. `.filo/.dirty` — unflushed-files modal ───────────────────
   try {

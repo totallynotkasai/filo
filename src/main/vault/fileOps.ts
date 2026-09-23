@@ -8,6 +8,7 @@ import {
   clearPreservedEmergencyFilesForTarget,
 } from '../services/emergencyFileRegistry';
 import type { FileTreeNode } from '../../shared/types';
+import { retryOnWindowsLock } from './filenameUtils';
 
 // `extname()` only returns the final segment, so `foo.board.json` → `.json`.
 // Treat `.board.json` as a compound extension so the sidebar can strip it
@@ -275,14 +276,6 @@ export class CaseRenameStrandedError extends Error {
   }
 }
 
-/**
- * IMPL_PLAN_2026-05-26 / Item 2 — exponential backoff delays for retrying
- * the (tmp → newPath) leg of a Windows case-only rename. Mirrors the
- * `atomicWriteFile` retry table so behaviour is consistent across
- * write-path operations that hit transient Windows file-lock codes
- * (antivirus hold, indexer scan, EBUSY from a sibling handle).
- */
-const CASE_RENAME_RETRY_DELAYS = [40, 80, 160, 320, 640] as const;
 
 /**
  * Renames a file or folder.
@@ -333,27 +326,17 @@ export async function renameItem(oldPath: string, newPath: string): Promise<void
 
   if (isCaseOnlyRenameOnWindows) {
     const tmp = `${oldPath}.case-rename-${Date.now()}`;
-    await fs.rename(oldPath, tmp);
-    // IMPL_PLAN_2026-05-26 / Item 2 — retry the (tmp → newPath) leg on
-    // transient Windows file-lock codes (EBUSY/EPERM/EACCES) before
-    // falling back to the rescue restore. Without this, an antivirus
-    // hold or indexer scan that briefly grips the file between step 1
-    // and step 2 strands the rename even though a few-hundred-ms wait
-    // would have cleared it. Other error codes (ENOENT, EXDEV, etc.)
-    // skip the retry — they will not clear by waiting.
+    await retryOnWindowsLock(() => fs.rename(oldPath, tmp));
+    // IMPL_PLAN_2026-05-26 / Item 2 + Audit-19 EXT-5 — retry the (tmp → newPath)
+    // leg on transient Windows lock codes with the shared time-bounded backoff
+    // before falling back to the rescue restore. An antivirus / sync-client
+    // hold between step 1 and step 2 would otherwise strand the rename.
     let lastErr: unknown = null;
-    for (let attempt = 0; attempt <= CASE_RENAME_RETRY_DELAYS.length; attempt++) {
-      try {
-        await fs.rename(tmp, newPath);
-        return;
-      } catch (err) {
-        lastErr = err;
-        const errCode = (err as NodeJS.ErrnoException | null)?.code;
-        if (errCode !== 'EBUSY' && errCode !== 'EPERM' && errCode !== 'EACCES') break;
-        if (attempt < CASE_RENAME_RETRY_DELAYS.length) {
-          await new Promise((r) => setTimeout(r, CASE_RENAME_RETRY_DELAYS[attempt]));
-        }
-      }
+    try {
+      await retryOnWindowsLock(() => fs.rename(tmp, newPath));
+      return;
+    } catch (err) {
+      lastErr = err;
     }
     // Step 2 still failing — restore the file at its original path so
     // the rename is a complete no-op from the user's perspective. If
@@ -368,7 +351,10 @@ export async function renameItem(oldPath: string, newPath: string): Promise<void
     throw lastErr;
   }
   try {
-    await fs.rename(oldPath, newPath);
+    // Audit-19 EXT-5 — Windows returns EPERM for a directory rename while
+    // OneDrive / Explorer holds a child handle; retry that before failing. The
+    // EXDEV branch below runs only after the lock retry, on its own code.
+    await retryOnWindowsLock(() => fs.rename(oldPath, newPath));
   } catch (err) {
     if ((err as NodeJS.ErrnoException | null)?.code === 'EXDEV') {
       const stat = await fs.stat(oldPath);
@@ -451,10 +437,6 @@ export class TargetNameExhaustedError extends Error {
 
 const MAX_CANDIDATE_ATTEMPTS = 1000;
 const COPY_CHUNK_BYTES = 64 * 1024;
-// L10 (Audit-13) — backoff for the staging-temp → final-name rename on transient
-// Windows lock codes (antivirus / the recursive watch handle / a sync client
-// briefly gripping the destination), mirroring atomicWriteFile's retry schedule.
-const COPY_RENAME_RETRY_DELAYS = [10, 20, 40, 80, 160];
 
 /**
  * Audit-14 4.3 — opens a copy SOURCE while defeating a regular-file→SYMLINK swap
@@ -653,19 +635,12 @@ export async function copyFileToVault(
   // still can't land, the intact temp is preserved for recovery.
   let renamed = false;
   let renameErr: unknown = null;
-  for (let attempt = 0; attempt <= COPY_RENAME_RETRY_DELAYS.length; attempt++) {
-    try {
-      await fs.rename(tmpPath, destPath);
-      renamed = true;
-      break;
-    } catch (err) {
-      renameErr = err;
-      const code = (err as NodeJS.ErrnoException | null)?.code;
-      if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES') break;
-      if (attempt < COPY_RENAME_RETRY_DELAYS.length) {
-        await new Promise((r) => setTimeout(r, COPY_RENAME_RETRY_DELAYS[attempt]));
-      }
-    }
+  try {
+    // Audit-19 EXT-5 — the shared time-bounded Windows lock backoff.
+    await retryOnWindowsLock(() => fs.rename(tmpPath, destPath));
+    renamed = true;
+  } catch (err) {
+    renameErr = err;
   }
   if (!renamed) {
     await fs.unlink(destPath).catch(() => undefined);

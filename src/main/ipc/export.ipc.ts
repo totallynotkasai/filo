@@ -1,4 +1,5 @@
 import { ipcMain, dialog } from 'electron';
+import { LOCK_AWARE_SUPPRESS_MS } from '../vault/filenameUtils';
 import * as fs from 'fs';
 import * as path from 'path';
 import { logMainError } from '../utils/mainLogger';
@@ -121,7 +122,7 @@ export function registerExportHandlers(): void {
       }
 
       try {
-        if (relForSuppress) watcher?.suppress(relForSuppress, 2000);
+        if (relForSuppress) watcher?.suppress(relForSuppress, LOCK_AWARE_SUPPRESS_MS);
         if (format === 'png' || format === 'pdf') {
           // Binary data comes as base64
           const buffer = Buffer.from(data, 'base64');

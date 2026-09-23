@@ -5,7 +5,7 @@ import { assertWithinVault, assertSafeFilename } from '../utils/pathSecurity';
 import { assertActiveVault, NoActiveVaultError } from '../utils/activeVaultCheck';
 import { logMainError } from '../utils/mainLogger';
 import { getActiveWatcher } from './vault.ipc';
-import { atomicWriteFile } from '../vault/filenameUtils';
+import { atomicWriteFile, LOCK_AWARE_SUPPRESS_MS } from '../vault/filenameUtils';
 import {
   assertPayloadByteSize,
   jsonPayloadByteSize,
@@ -117,7 +117,7 @@ export function registerTemplateHandlers(): void {
         assertWithinVault(vaultRoot, full);
         const relPath = `.filo/templates/${filename}`;
         const watcher = getActiveWatcher();
-        watcher?.suppress(relPath, 2000);
+        watcher?.suppress(relPath, LOCK_AWARE_SUPPRESS_MS);
         // Phase 4 / 4.3 — atomicWriteFile: open → fsync → rename → fsync(dir).
         // A crash mid-write would otherwise leave the template file as
         // half-written JSON that fails to parse on next load.
@@ -162,8 +162,8 @@ export function registerTemplateHandlers(): void {
         assertWithinVault(vaultRoot, oldFull);
         assertWithinVault(vaultRoot, newFull);
         const watcher = getActiveWatcher();
-        watcher?.suppress(`.filo/templates/${oldFilename}`, 2000);
-        watcher?.suppress(`.filo/templates/${newFilename}`, 2000);
+        watcher?.suppress(`.filo/templates/${oldFilename}`, LOCK_AWARE_SUPPRESS_MS);
+        watcher?.suppress(`.filo/templates/${newFilename}`, LOCK_AWARE_SUPPRESS_MS);
         await fs.promises.rename(oldFull, newFull);
         watcher?.suppress(`.filo/templates/${oldFilename}`, 1000);
         watcher?.suppress(`.filo/templates/${newFilename}`, 1000);
@@ -193,7 +193,7 @@ export function registerTemplateHandlers(): void {
         assertWithinVault(vaultRoot, full);
         const relPath = `.filo/templates/${filename}`;
         const watcher = getActiveWatcher();
-        watcher?.suppress(relPath, 2000);
+        watcher?.suppress(relPath, LOCK_AWARE_SUPPRESS_MS);
         await fs.promises.unlink(full);
         watcher?.suppress(relPath, 1000);
         return { success: true };

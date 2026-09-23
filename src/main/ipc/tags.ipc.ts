@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import { promises as fs } from 'fs';
 import { join } from 'path';
-import { atomicWriteFile, ensureDir } from '../vault/filenameUtils';
+import { atomicWriteFile, ensureDir, LOCK_AWARE_SUPPRESS_MS } from '../vault/filenameUtils';
 import { assertWithinVault } from '../utils/pathSecurity';
 import { assertActiveVault, NoActiveVaultError } from '../utils/activeVaultCheck';
 import { logMainError } from '../utils/mainLogger';
@@ -98,7 +98,7 @@ export function registerTagsHandlers(): void {
         // Without suppression the watcher would flag the self-write as a tree
         // change and trigger an unnecessary full sidebar refresh on every tag mutation.
         const watcher = getActiveWatcher();
-        watcher?.suppress(TAGS_REL_PATH, 2000);
+        watcher?.suppress(TAGS_REL_PATH, LOCK_AWARE_SUPPRESS_MS);
         await atomicWriteFile(filePath, json);
         watcher?.suppress(TAGS_REL_PATH, 1000);
       } catch (err) {

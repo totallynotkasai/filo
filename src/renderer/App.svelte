@@ -11,6 +11,7 @@
   import { onError, reportError } from './lib/utils/errorBus';
   import { createErrorToastAggregator } from './lib/utils/errorToastAggregator';
   import { buildWriteErrorToast } from './lib/boards/writeErrorToast';
+  import { retryAllFailedWrites } from './lib/boards/writeSchedulerFailures';
   import { handleFlushAndQuit } from './lib/vault/handleFlushAndQuit';
   import { flushDirtyFlagSentinel } from './lib/vault/dirtyFlagRecovery';
   import { historyStore } from './stores/history.svelte';
@@ -49,11 +50,18 @@
     updateToastText: (id, text) => uiStore.updateToastText(id, text),
   });
   setBoardWriteErrorListener((info) => {
-    const { context, message, coalesceKey } = buildWriteErrorToast(info);
+    const { context, message, coalesceKey, retryable } = buildWriteErrorToast(info);
     // A9-L10 — thread the per-preserved-path coalesceKey so two same-kind
     // failures with DIFFERENT preserved-tmp locations each keep their own
-    // toast (the display prefix stays `context`).
-    writeErrorAggregator({ context, error: info.error, message, coalesceKey });
+    // toast (the display prefix stays `context`). Audit-19 EXT-5 — Retry
+    // re-fires every retained failed write (all five schedulers).
+    const actions = retryable
+      ? [{ label: 'Retry', handler: async () => {
+          const { failed } = await retryAllFailedWrites();
+          if (failed.length > 0) uiStore.toast('Save still failing. Filo will try again on the next save and at quit.', 'error', 6000);
+        } }]
+      : undefined;
+    writeErrorAggregator({ context, error: info.error, message, coalesceKey, actions });
   });
 
   // Feed boardSaver's begin/end counts into the save-state store so the
@@ -87,8 +95,8 @@
   // Main blocks shutdown until we send `app:ready-to-quit` (or its 5s
   // timeout fires), so a graceful quit always gets a flush attempt.
   // 6.2.H4 — on a save failure, the handler surfaces a Confirm dialog
-  // ("Quit anyway" / "Stay open and retry") instead of sleeping 200 ms
-  // and unconditionally exiting. "Stay open and retry" sends the new
+  // ("Retry now" / "Quit anyway" / "Stay open") instead of sleeping 200 ms
+  // and unconditionally exiting. "Stay open" sends the new
   // `app:cancel-quit` signal so main rewinds `isFlushingForQuit`.
   window.filo.on('app:flush-and-quit', () => {
     void handleFlushAndQuit({
@@ -100,6 +108,8 @@
       // queued by save() lands before main destroys the renderer (else a
       // clean quit leaves `.filo/.dirty` → phantom recovery next launch).
       flushSentinel: () => flushDirtyFlagSentinel(),
+      // Audit-19 EXT-5 — "Retry now" re-fires every retained failed write.
+      retryFailed: () => retryAllFailedWrites(),
     });
   });
 

@@ -114,7 +114,7 @@ const MAX_SNAPSHOT_BYTES = 25 * 1024 * 1024;
  * near-identical deep paths, which then share a prune bucket (bounded loss,
  * no crash).
  */
-function flattenSnapshotName(relativePath: string): string {
+export function flattenSnapshotName(relativePath: string): string {
   const flat = relativePath
     .split(/[\\/]+/)
     .filter(Boolean)

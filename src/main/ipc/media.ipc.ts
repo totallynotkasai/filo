@@ -10,7 +10,7 @@ import { logMainError } from '../utils/mainLogger';
 import { toPosix, relativePosix } from '../utils/pathHelpers';
 import { getVaultRoot, getActiveWatcher } from './vault.ipc';
 import { assertPayloadByteSize, PAYLOAD_LIMITS } from '../utils/payloadLimits';
-import { atomicWriteFile } from '../vault/filenameUtils';
+import { atomicWriteFile, LOCK_AWARE_SUPPRESS_MS } from '../vault/filenameUtils';
 import { launcherExtension } from '../../shared/untrusted';
 
 /**
@@ -180,7 +180,7 @@ export function registerMediaHandlers(): void {
       // full sidebar refresh while the renderer is still wiring up the
       // new audio tile.
       const watcher = getActiveWatcher();
-      watcher?.suppress(relPath, 2000);
+      watcher?.suppress(relPath, LOCK_AWARE_SUPPRESS_MS);
       // Phase 31 B1.1 — atomicWriteFile gives the audio write the same
       // crash-safety contract as text/board writes: a power loss mid-write
       // leaves the destination either fully old (here: missing) or fully

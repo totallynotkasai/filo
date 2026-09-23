@@ -64,7 +64,8 @@ describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
     expect(uiStore.confirmDialog).not.toBeNull();
     expect(uiStore.confirmDialog?.title).toBe('Save failed');
     expect(uiStore.confirmDialog?.confirmLabel).toBe('Quit anyway');
-    expect(uiStore.confirmDialog?.cancelLabel).toBe('Stay open and retry');
+    expect(uiStore.confirmDialog?.cancelLabel).toBe('Stay open');
+    expect(uiStore.confirmDialog?.secondaryAction?.label).toBe('Retry now');
 
     // Audit5 2.1 — a drain heartbeat fired (so main re-armed its destroy
     // timer). Beyond that, awaiting-user has fired but no TERMINAL quit signal
@@ -77,6 +78,51 @@ describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
     uiStore.closeConfirm();
     await promise;
     expect(handshakeOf(sent)).toEqual(['app:quit-awaiting-user', 'app:ready-to-quit']);
+  });
+
+  it('Audit-19 EXT-5: Retry now → retryFailed → save ok → ready-to-quit', async () => {
+    const sent: string[] = [];
+    let saves = 0;
+    const retryFailed = vi.fn(async () => ({ failed: [] }));
+    const promise = handleFlushAndQuit({
+      saveStateState: () => 'idle',
+      save: async () => ++saves > 1, // first drain fails (locked), the retry succeeds
+      send: (c) => { sent.push(c); },
+      reportError: () => {},
+      retryFailed,
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    const dialog = uiStore.confirmDialog!;
+    expect(dialog.secondaryAction?.label).toBe('Retry now');
+    uiStore.closeConfirm();
+    dialog.secondaryAction!.onClick();
+    await promise;
+    expect(retryFailed).toHaveBeenCalledTimes(1);
+    expect(saves).toBe(2);
+    expect(handshakeOf(sent)).toEqual(['app:quit-awaiting-user', 'app:ready-to-quit']);
+    expect(uiStore.confirmDialog).toBeNull();
+  });
+
+  it('Audit-19 EXT-5: Retry now that fails again re-shows the confirm; Stay open cancels', async () => {
+    const sent: string[] = [];
+    const promise = handleFlushAndQuit({
+      saveStateState: () => 'idle',
+      save: async () => false,
+      send: (c) => { sent.push(c); },
+      reportError: () => {},
+      retryFailed: async () => ({ failed: ['Note.md'] }),
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    let dialog = uiStore.confirmDialog!;
+    uiStore.closeConfirm();
+    dialog.secondaryAction!.onClick();
+    await new Promise((r) => setTimeout(r, 10));
+    dialog = uiStore.confirmDialog!;
+    expect(dialog).not.toBeNull();
+    uiStore.closeConfirm();
+    dialog.onCancel?.();
+    await promise;
+    expect(handshakeOf(sent)).toEqual(['app:quit-awaiting-user', 'app:quit-awaiting-user', 'app:cancel-quit']);
   });
 
   it('DI-04: emits app:quit-awaiting-user BEFORE opening the confirm on a save failure', async () => {

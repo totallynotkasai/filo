@@ -23,6 +23,8 @@
 import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { reportError } from '../utils/errorBus';
+import { uiStore } from '../../stores/ui.svelte';
+import { isStillSameVault, type VaultIdentity } from './vaultIdentity';
 
 const QUIT_FAILURE_PATH = '.filo/quit-failure.json';
 
@@ -110,5 +112,28 @@ export async function clearQuitFailureBreadcrumb(vaultRoot: string): Promise<voi
         'Could not clear the quit-failure breadcrumb — the recovery notice may reappear next open',
       );
     }
+  }
+}
+
+/**
+ * Audit-19 EXT-5 (plan D6, step 6) — asks main to MOVE orphaned atomic-write
+ * temps (`*.<12hex>.tmp` / `*.case-rename-*`, older than 10 min, not listed by
+ * any quit-failure breadcrumb) out of the synced vault into
+ * `.filo/recovery/orphan-tmp/`. Called on vault open AFTER the breadcrumb has
+ * been surfaced, so a listed partial is never moved from under the notice.
+ * Best-effort: a failure is logged, never blocks the open.
+ */
+export async function sweepOrphanTempFiles(vaultRoot: string, captured: VaultIdentity): Promise<void> {
+  if (!vaultRoot) return;
+  try {
+    const { moved } = await invokeOk('vault:sweep-orphan-tmp', vaultRoot);
+    if (!isStillSameVault(captured) || moved.length === 0) return;
+    uiStore.pushToast({
+      text: `Filo moved ${moved.length} leftover temporary save file${moved.length === 1 ? '' : 's'} into .filo/recovery/orphan-tmp/. They may hold unsaved edits from an earlier failed save.`,
+      type: 'info',
+      duration: 10000,
+    });
+  } catch (err) {
+    reportError('quitFailure.orphanSweep', err, "Couldn't tidy leftover temporary save files");
   }
 }

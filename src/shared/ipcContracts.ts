@@ -240,6 +240,12 @@ export interface IpcChannelMap {
     args: [vaultRoot: string];
     result: Array<{ relPath: string; basename: string; timestamp: string }>;
   };
+  // Audit-19 EXT-5 — moves orphaned `*.<12hex>.tmp` / `.case-rename-*` files
+  // older than 10 min into `.filo/recovery/orphan-tmp/` (never deletes).
+  'vault:sweep-orphan-tmp': {
+    args: [vaultRoot: string];
+    result: IpcSuccess<{ moved: Array<{ from: string; to: string }> }>;
+  };
 
   // ── Config ───────────────────────────────────────────────────────
   'config:load': {

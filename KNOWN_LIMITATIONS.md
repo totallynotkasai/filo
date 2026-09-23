@@ -158,6 +158,15 @@ quitting indefinitely. Five seconds is generous for a normal flush.
 This is exactly the case the `.filo/.dirty` sentinel detects — recovery is
 offered on next launch.
 
+**Audit-19 EXT-5 — the 5 s bounds inter-beat SILENCE, not the drain:** the
+renderer beats `app:drain-heartbeat` every ~2 s while it drains, and each beat
+re-arms main's timer. Since each atomic write may now wait up to ~5 s for a
+Windows file lock (OneDrive / antivirus) before failing, a drain of N serialised
+locked writes can take up to about N × 5 s; the absolute
+`QUIT_DRAIN_DEADLINE_MS` (60 s) still bounds it, after which the "Save failed"
+dialog offers **Retry now** (re-fires every retained failed write), **Quit
+anyway** or **Stay open**.
+
 ---
 
 ## 5. Self-write suppression window can misfire on a very slow disk
@@ -191,6 +200,13 @@ self-write's OS echo can arrive *after* the recent-self-write window has expired
 external edit — surfacing a spurious "Reload / Keep local" toast. This is a UX
 annoyance, **not** data loss (and, per M4 above, never a *dropped* external
 edit). Monitor; widen the window only if it bites in practice.
+
+**Audit-19 EXT-5 — slower renames:** a write whose rename waits out a Windows
+file lock can land up to ~5 s late. Main's pre-write suppression now covers that
+(`LOCK_AWARE_SUPPRESS_MS` = the lock budget + 2 s), but the renderer's
+recent-self-write TTL can still expire first; the baseline-divergence tie-break
+(Audit-13 M4 for `.md`, Audit-15 P2.4 for boards) then drops the echo because
+the disk stat matches what Filo wrote.
 
 ---
 

@@ -79,3 +79,60 @@ describe('uiStore — sticky error toasts (1.6)', () => {
     expect(uiStore.toasts.find((t) => t.id === id)).toBeFalsy();
   });
 });
+
+/**
+ * Audit-19 UX-6 — non-promise decision toasts may be `sticky` (no lifetime
+ * timer) and carry a `dedupeKey` (a newer toast for the same subject replaces
+ * the older one). A promise-backed toast (onDismiss set) refuses `sticky` and
+ * keeps the Audit5-R3 15s cap so its write can never strand.
+ */
+describe('uiStore — sticky + deduped decision toasts (Audit-19 UX-6)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    for (const toast of [...uiStore.toasts]) uiStore.dismissToast(toast.id, { silent: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    for (const toast of [...uiStore.toasts]) uiStore.dismissToast(toast.id, { silent: true });
+  });
+
+  it('a sticky toast survives 60 s of fake time', () => {
+    const id = uiStore.pushToast({
+      text: 'decide', type: 'warning', duration: 0, sticky: true,
+      actions: [{ label: 'Reload', handler: () => {} }],
+    });
+    vi.advanceTimersByTime(60_000);
+    expect(uiStore.toasts.some((t) => t.id === id)).toBe(true);
+  });
+
+  it('sticky + onDismiss is refused: still auto-dismisses at 15 s and resolves via onDismiss', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const onDismiss = vi.fn();
+    const id = uiStore.pushToast({ text: 'drift', type: 'warning', duration: 0, sticky: true, onDismiss });
+    vi.advanceTimersByTime(15_000);
+    expect(uiStore.toasts.some((t) => t.id === id)).toBe(false);
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('the same dedupeKey replaces the older toast', () => {
+    const a = uiStore.pushToast({ text: 'first', type: 'warning', sticky: true, dedupeKey: 'ext-mod:A.md' });
+    const b = uiStore.pushToast({ text: 'second', type: 'warning', sticky: true, dedupeKey: 'ext-mod:A.md' });
+    const other = uiStore.pushToast({ text: 'other', type: 'warning', sticky: true, dedupeKey: 'ext-mod:B.md' });
+    const ids = uiStore.toasts.map((t) => t.id);
+    expect(ids).not.toContain(a);
+    expect(ids).toContain(b);
+    expect(ids).toContain(other);
+    uiStore.dismissToastsByKey('ext-mod:B.md', { silent: true });
+    expect(uiStore.toasts.map((t) => t.id)).not.toContain(other);
+  });
+
+  it('the 8-toast cap evicts disposable toasts before sticky ones', () => {
+    const sticky = uiStore.pushToast({ text: 'sticky', type: 'warning', sticky: true });
+    for (let i = 0; i < 7; i++) uiStore.pushToast({ text: `plain ${i}`, type: 'info' });
+    uiStore.pushToast({ text: 'overflow', type: 'info' });
+    expect(uiStore.toasts).toHaveLength(8);
+    expect(uiStore.toasts.some((t) => t.id === sticky)).toBe(true);
+    expect(uiStore.toasts.some((t) => t.text === 'plain 0')).toBe(false);
+  });
+});

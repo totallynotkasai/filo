@@ -80,8 +80,8 @@ registerPathRenamable('vaultExternalChanges.inFlightDriftPrompts', (oldRel, newR
  *
  * Modelled on `promptModifiedFile` above but Promise-based because the
  * sync caller needs to branch on the outcome before deciding whether to
- * write. Persistent toast (duration: 0) — user MUST choose; the sync
- * stays in-flight until they do.
+ * write. Promise-backed toast: it keeps the Audit5-R3 15s cap (never sticky)
+ * and a timeout/dismiss resolves 'defer', so the write can never strand.
  *
  * Audit2 5.2 — per-path dedupe: every concurrent caller for the same
  * `path` awaits the same Promise so a typing storm against an externally-
@@ -148,6 +148,7 @@ export function promptExternalEditOnSync(args: {
         },
         {
           label: 'Keep local',
+          // allow-keep-local-no-backup: resolves 'keep-local' to the markdown drift gate, which backs up (preWriteDriftGate)
           handler: () => {
             uiStore.pushToast({
               text: `External edit to "${editorDoc?.title || path}" overwritten with local changes.`,
@@ -288,8 +289,8 @@ export async function recreateDeletedFile(
  *                disk survives; the dirty board cache is left intact so
  *                the next debounced write re-prompts.
  *
- * Persistent toast (duration: 0) — user MUST choose; the write stays
- * paused until they do.
+ * Promise-backed toast: 15s cap (Audit5 R3, never sticky); a timeout or
+ * dismiss resolves 'defer' so the paused write aborts instead of stranding.
  */
 export function promptBoardExternalEdit(args: {
   path: string;
@@ -326,6 +327,7 @@ export function promptBoardExternalEdit(args: {
         },
         {
           label: 'Keep local',
+          // allow-keep-local-no-backup: resolves 'keep-local' to the board writer, which backs up (boardWriteScheduler)
           handler: () => {
             uiStore.pushToast({
               text: `External edit to "${path}" will be overwritten on the next save.`,

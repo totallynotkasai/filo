@@ -470,7 +470,10 @@ export function registerBoardHandlers(): void {
       return { ok: true, path: destAbs };
     } catch (err) {
       logMainError(`recovery:snapshot ${relativePath}`, err);
-      const code = classifyError(err);
+      // Audit-19 UX-6 — pass the errno through (ENOENT = nothing to back up;
+      // EBUSY / RECOVERY_SNAPSHOT_TOO_LARGE = the keep-local backup failed).
+      const errno = (err as NodeJS.ErrnoException | null)?.code;
+      const code = classifyError(err) ?? (typeof errno === 'string' ? errno : undefined);
       return { ok: false, ...(code ? { code } : {}), error: String(err) };
     }
   });

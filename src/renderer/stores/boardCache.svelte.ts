@@ -25,7 +25,7 @@ import {
   setViewport,
   removeViewport,
 } from '../lib/boards/boardSaver';
-import { flushAllScheduledBoards, markBoardPathDeleting, clearBoardPathDeleting } from '../lib/boards/boardWriteScheduler';
+import { flushAllScheduledBoards, markBoardPathDeleting, clearBoardPathDeleting, backupExternalVersion } from '../lib/boards/boardWriteScheduler';
 import { loadBoard } from '../lib/boards/boardLoader';
 import { fileNameSafe } from '../lib/vault/conventionPaths';
 import { reportError } from '../lib/utils/errorBus';
@@ -967,7 +967,7 @@ async function syncTileMarkdown(
           skippedReason: 'external-edit-reload',
         };
       }
-      // 'keep-local' — fall through and proceed with the write.
+      if (!(await backupExternalVersion(vaultRoot, filename))) return { wrote: false, skippedReason: 'keep-local-backup-declined' }; // Audit-19 UX-6
     }
   }
 

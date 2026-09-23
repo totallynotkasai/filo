@@ -215,7 +215,8 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
     // re-stats to confirm no SECOND drift landed while the modal was open;
     // that recheck returns 2000 (stable) so the write proceeds. Post-write
     // stat returns 2100 (our overwrite landed).
-    const invokes = installFiloStub({ statMtimes: [2000, 2000, 2100] });
+    // Audit-19 UX-6 — the keep-local backup adds one more stable stat (2000).
+    const invokes = installFiloStub({ statMtimes: [2000, 2000, 2000, 2100] });
     const relPath = 'Notes/keeplocal.md';
     markHydrated(relPath, false, 1000, 100);
 

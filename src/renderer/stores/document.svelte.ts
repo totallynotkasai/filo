@@ -10,6 +10,7 @@ import {
 import { noteBaseline } from '../lib/vault/fileBaselineRegistry';
 import { flushAllPendingFrontmatterWrites } from '../lib/boards/frontmatterWriteScheduler';
 import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
+import { backupExternalVersion } from '../lib/vault/keepLocalBackup';
 import { onVaultSwap } from '../core/vaultLifecycle';
 
 /**
@@ -806,6 +807,10 @@ export const documentStore = {
       text: `"${doc.title}" was modified externally (${formatBodyDelta(doc.body, newBody)}). Reload from disk, or keep your local edits?`,
       type: 'warning',
       duration: 0,
+      // Audit-19 UX-6 — stays until answered; same key as vaultExternalPrompts'
+      // promptModifiedFile so the two never double up for one file.
+      sticky: true,
+      dedupeKey: `ext-mod:${doc.filename}`,
       actions: [
         {
           label: 'Reload',
@@ -823,7 +828,12 @@ export const documentStore = {
           // stayed in memory and the external edit on disk persisted. We mark
           // dirty first so a concurrent reactive-reload `$effect` can't undo
           // the editor body before the write lands.
-          handler: () => {
+          // Audit-19 UX-6 — back up the external version to .filo/recovery/
+          // first; a declined un-backed-up overwrite leaves both sides as-is.
+          handler: async () => {
+            const vaultRoot = getActiveVaultPath();
+            if (!vaultRoot || !(await backupExternalVersion(vaultRoot, doc.filename))) return;
+            if (getActiveVaultPath() !== vaultRoot || !openDocuments.has(docId)) return;
             this.markDirty(docId);
             void forceWriteForDocument(docId);
           },

@@ -2,6 +2,7 @@ import { invokeOk } from '../utils/invokeOk';
 import { markPathFailed } from '../boards/writeStateTracking';
 import { getBaseline, hasBaselineDrifted } from './fileBaselineRegistry';
 import { getExternalEditPromptHandler } from './externalEditPrompt';
+import { backupExternalVersion } from './keepLocalBackup';
 
 /**
  * Phase R6 / 6.4.M13 / Audit-16 5.2 — the markdown gateway's PRE-WRITE drift
@@ -103,6 +104,15 @@ export async function runPreWriteDriftGate(
       recheckStat === undefined ||
       (recheckStat.mtimeMs === shownStat.mtimeMs && recheckStat.size === shownStat.size)
     ) {
+      // Audit-19 UX-6 — the external bytes go to .filo/recovery/ before the
+      // clobber. A failed backup the user declined to overwrite without →
+      // defer (loud, same as a dismissed prompt).
+      if (!(await backupExternalVersion(vaultRoot, relPath))) {
+        markPathFailed(vaultRoot, relPath);
+        throw new Error(
+          `markdownFileWriter: write to "${relPath}" deferred — the external version could not be backed up; not overwritten`,
+        );
+      }
       // 5.2 — the approval re-anchors the verify stat: the user agreed to
       // overwrite the bytes recheckStat observed. A failed re-stat keeps the
       // legacy proceed-without-confirmation decision — no anchor.

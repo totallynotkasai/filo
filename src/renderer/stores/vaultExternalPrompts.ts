@@ -51,6 +51,8 @@ import type { VaultContext } from './vaultStoreTypes';
 // Audit-15 P5.1 — `recreateDeletedFile` (the Keep-local recovery write) lives in
 // the drift-prompt sibling; the bulk + single deleted-file toasts here invoke it.
 import { recreateDeletedFile } from './vaultExternalDriftPrompts';
+import { backupExternalVersion } from '../lib/vault/keepLocalBackup';
+import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
 
 /**
  * Phase 2 / 2.1 — toast for an external delete of an attachment file
@@ -165,6 +167,8 @@ export function promptBulkExternalChanges(prompts: PendingPrompt[], ctx: VaultCo
     text: `${summary} Reload all (lose local), Keep all (overwrite disk), or Review individually?`,
     type: 'warning',
     duration: 0,
+    sticky: true, // Audit-19 UX-6
+    dedupeKey: 'ext-bulk',
     actions: [
       {
         label: 'Reload all',
@@ -229,9 +233,15 @@ export function promptBulkExternalChanges(prompts: PendingPrompt[], ctx: VaultCo
       },
       {
         label: 'Keep all',
-        handler: () => {
+        handler: async () => {
+          const identity = captureVaultIdentity();
+          const vaultRoot = ctx.getVaultPath();
           for (const p of prompts) {
             if (p.kind === 'modified') {
+              // Audit-19 UX-6 — back up each external version first; a file
+              // whose backup the user declined to skip is left untouched.
+              if (!vaultRoot || !(await backupExternalVersion(vaultRoot, p.rel))) continue;
+              if (!isStillSameVault(identity)) return;
               // H3 (Audit-7) — mirror the single-file Keep-local path
               // (promptModifiedFile). The previous `flushAllMarkdownWrites` drains
               // only armed timers — never `forceWriters` — so a doc whose 300ms
@@ -508,6 +518,8 @@ export function promptModifiedFile(
     text: `"${editorDoc.title || rel}" was modified externally. Reload from disk, or keep your local edits?`,
     type: 'warning',
     duration: 0,
+    sticky: true, // Audit-19 UX-6
+    dedupeKey: `ext-mod:${rel}`,
     actions: [
       {
         label: 'Reload',
@@ -557,7 +569,13 @@ export function promptModifiedFile(
       },
       {
         label: 'Keep local',
-        handler: () => {
+        handler: async () => {
+          // Audit-19 UX-6 — back up the external version to .filo/recovery/
+          // before the overwrite; a declined un-backed-up overwrite is a no-op.
+          const identity = captureVaultIdentity();
+          const vaultRoot = getActiveVaultPath();
+          if (!vaultRoot || !(await backupExternalVersion(vaultRoot, rel))) return;
+          if (!isStillSameVault(identity)) return;
           // Mark dirty first so a concurrent reactive-reload $effect
           // can't undo the editor body before the write lands. Then
           // force the registered writer (TextTile or DocumentEditor) to
@@ -594,6 +612,8 @@ export function promptMarkdownPendingWriteConflict(
     text: `"${label}" was modified externally while you have an unsaved change to it. Reload from disk (discard your change), or keep your change (overwrite on next save)?`,
     type: 'warning',
     duration: 0,
+    sticky: true, // Audit-19 UX-6
+    dedupeKey: `ext-mod:${rel}`,
     actions: [
       {
         label: 'Reload',
@@ -676,7 +696,11 @@ export function promptMarkdownPendingWriteConflict(
       },
       {
         label: 'Keep local',
-        handler: () => {
+        handler: async () => {
+          // Audit-19 UX-6 — back up the external version before the pending
+          // write overwrites it (the drift gate's own backup call dedupes).
+          const vaultRoot = getActiveVaultPath();
+          if (!vaultRoot || !(await backupExternalVersion(vaultRoot, rel))) return;
           uiStore.pushToast({
             text: `Your unsaved change to "${label}" will overwrite the external edit on the next save.`,
             type: 'info',
@@ -724,6 +748,8 @@ export function promptPropertiesPopupModified(
     text: `Properties of "${filename}" were modified externally while your Properties popup has unsaved edits. Reload from disk (discard popup edits) or keep your local edits?`,
     type: 'warning',
     duration: 0,
+    sticky: true, // Audit-19 UX-6
+    dedupeKey: `ext-mod:${rel}`,
     actions: [
       {
         label: 'Reload',
@@ -781,7 +807,10 @@ export function promptPropertiesPopupModified(
       },
       {
         label: 'Keep local',
-        handler: () => {
+        handler: async () => {
+          // Audit-19 UX-6 — back up the external version first.
+          const vaultRoot = getActiveVaultPath();
+          if (!vaultRoot || !(await backupExternalVersion(vaultRoot, rel))) return;
           // No state mutation — the popup's debounced gateway write
           // will fire shortly with the user's rows-as-frontmatter,
           // overwriting the external edit. We surface a follow-up
@@ -827,6 +856,8 @@ export function promptDeletedFile(
     text: `"${editorDoc.title || rel}" was deleted externally. Reload (drop in-memory copy), or keep your local edits and re-create the file?`,
     type: 'warning',
     duration: 0,
+    sticky: true, // Audit-19 UX-6
+    dedupeKey: `ext-deleted:${rel}`,
     actions: [
       {
         label: 'Reload',
@@ -846,6 +877,7 @@ export function promptDeletedFile(
       },
       {
         label: 'Keep local',
+        // allow-keep-local-no-backup: recreateDeletedFile creates exclusively (Audit-19 EXT-3) and never overwrites; a reappeared file routes to promptModifiedFile, which backs up
         handler: async () => {
           await recreateDeletedFile(rel, editorDoc, ctx, {
             fmSnapshot,

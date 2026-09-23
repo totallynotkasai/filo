@@ -61,6 +61,7 @@ import { isRecentSelfWrite, isPathPending, isPathQueuedOrInFlight } from '../lib
 import { loadBoard } from '../lib/boards/boardLoader';
 import { loadTagsFile } from '../lib/vault/tagsStorage';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
+import { backupExternalVersion } from '../lib/vault/keepLocalBackup';
 import { samePath } from '../lib/utils/path';
 import { selfWriteDivergedFromBaseline } from './vaultExternalChanges';
 
@@ -210,6 +211,8 @@ function promptBoardChangedExternally(rel: string, boardId: string): void {
     text: `Board file "${rel}" was modified externally while you had unsaved changes. Reload from disk (discard your edits), or keep your edits and overwrite on next save?`,
     type: 'warning',
     duration: 0,
+    sticky: true, // Audit-19 UX-6
+    dedupeKey: `board-mod:${rel}`,
     actions: [
       {
         label: 'Reload',
@@ -221,7 +224,13 @@ function promptBoardChangedExternally(rel: string, boardId: string): void {
       },
       {
         label: 'Keep your edits',
-        handler: () => {
+        handler: async () => {
+          // Audit-19 UX-6 — back up the external board version first (the
+          // board writer's keep-local branch dedupes against this snapshot).
+          const identity = captureVaultIdentity();
+          const vaultRoot = vaultStore.path;
+          if (!vaultRoot || !(await backupExternalVersion(vaultRoot, rel))) return;
+          if (!isStillSameVault(identity)) return;
           // No-op — the next debounced write will overwrite the disk
           // copy. The board writer's pre-write mtime check will catch
           // the drift again at that point and surface its own

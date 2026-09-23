@@ -9,6 +9,7 @@ import { scheduleFrontmatterWrite } from '@renderer/lib/boards/frontmatterWriteS
 import { hasPendingWrite, __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
 import type { VaultContext } from '@renderer/stores/vaultStoreTypes';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { setActiveVaultPath } from '@renderer/lib/vault/activeVaultPath';
 
 /**
  * F4 (2026-05-28) — pending-local-write guard on the markdown classifier.
@@ -165,7 +166,10 @@ describe('vaultExternalChanges — pending-write guard (F4)', () => {
     const toast = uiStore.toasts.find((t) => t.text.includes('modified externally'));
     expect(toast).toBeDefined();
 
-    toast!.actions![1].handler(); // Keep local
+    // Audit-19 UX-6 — Keep local now backs up the external version first (async).
+    setActiveVaultPath('/vault');
+    await toast!.actions![1].handler(); // Keep local
+    setActiveVaultPath('');
 
     // Pending write still armed → the local toggle wins on the next flush.
     expect(hasPendingWrite('Card.md')).toBe(true);

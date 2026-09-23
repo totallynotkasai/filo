@@ -135,6 +135,14 @@ export interface ToastMessage {
    * breadcrumb — it survives to re-surface next launch instead.
    */
   acknowledgeOnly?: boolean;
+  /**
+   * Audit-19 UX-6 — a decision toast that stays until the user acts on it (no
+   * lifetime timer). Refused when `onDismiss` is set: a promise-backed toast
+   * keeps the Audit5-R3 15s cap so it can never strand its write.
+   */
+  sticky?: boolean;
+  /** Audit-19 UX-6 — a newer toast with the same key silently replaces this one. */
+  dedupeKey?: string;
 }
 
 let toasts = $state<ToastMessage[]>([]);
@@ -148,9 +156,11 @@ const toastTimers = new SvelteMap<string, ReturnType<typeof setTimeout>>();
  * the non-destructive default: the lossy "Reload / discard" choice always
  * requires an explicit click, so a toast timing out only ever keeps the
  * user's in-memory state (the two write-blocking promise toasts resolve
- * to 'keep-local' on dismiss — see vaultExternalChanges.ts). Capping the
- * persistent toasts here stops a re-firing conflict prompt from blanketing
- * the screen indefinitely.
+ * to 'defer' on dismiss — see vaultExternalDriftPrompts.ts). Capping the
+ * promise-backed toasts here stops a re-firing conflict prompt from
+ * blanketing the screen indefinitely. Audit-19 UX-6: a NON-promise decision
+ * toast may opt into `sticky` (no timer) together with a `dedupeKey`, which
+ * replaces any older toast for the same file so it still can't stack.
  */
 const TOAST_MAX_LIFETIME_MS = 15000;
 
@@ -352,7 +362,24 @@ export const uiStore = {
     actions?: ToastAction[];
     onDismiss?: () => void;
     acknowledgeOnly?: boolean;
+    sticky?: boolean;
+    dedupeKey?: string;
   }): string {
+    // Audit-19 UX-6 — a dedupeKey replaces the older toast for the same
+    // subject. Silent unless the old one is promise-backed (its onDismiss
+    // must still resolve → 'defer', never strand).
+    if (opts.dedupeKey) {
+      for (const t of toasts.filter((x) => x.dedupeKey === opts.dedupeKey)) {
+        this.dismissToast(t.id, { silent: !t.onDismiss || t.acknowledgeOnly === true });
+      }
+    }
+    let sticky = opts.sticky === true;
+    if (sticky && opts.onDismiss) {
+      if (import.meta.env.DEV) {
+        console.warn('[Toast] sticky ignored on a promise-backed toast (onDismiss set); the Audit5 R3 cap applies.');
+      }
+      sticky = false;
+    }
     // E.4 — cap the visible queue at 8 so an error storm (e.g. a tag-rename
     // sweep hitting an EPERM directory) can't paint the entire viewport.
     // Prefer dropping the oldest non-error first so error breadcrumbs stay
@@ -369,7 +396,7 @@ export const uiStore = {
     // re-prompt on the next write) so its promise resolves instead of stranding.
     const TOAST_CAP = 8;
     const isDisposable = (t: ToastMessage): boolean =>
-      !t.onDismiss && (!t.actions || t.actions.length === 0);
+      !t.sticky && !t.onDismiss && (!t.actions || t.actions.length === 0);
     while (toasts.length >= TOAST_CAP) {
       const disposable = toasts.filter(isDisposable);
       const victim =
@@ -399,6 +426,8 @@ export const uiStore = {
       actions: opts.actions,
       onDismiss: opts.onDismiss,
       acknowledgeOnly: opts.acknowledgeOnly,
+      sticky,
+      dedupeKey: opts.dedupeKey,
     };
     toasts = [...toasts, toast];
 
@@ -415,7 +444,7 @@ export const uiStore = {
     // with an explicit positive duration (e.g. a 6s delete failure) still
     // honours that duration.
     const isStickyError = toast.type === 'error' && !(toast.duration && toast.duration > 0);
-    if (!isStickyError) {
+    if (!isStickyError && !sticky) {
       // A positive duration is honoured (capped at the max lifetime); `0`/unset
       // — the old "persistent" sentinel — maps to the 15s cap.
       const lifetime =
@@ -470,6 +499,12 @@ export const uiStore = {
     toasts = toasts.filter((t) => t.id !== id);
     if (!options.silent && toast?.onDismiss) {
       try { toast.onDismiss(); } catch (err) { console.error('[Toast] onDismiss failed:', err); }
+    }
+  },
+  /** Audit-19 UX-6 — dismisses every toast registered under `dedupeKey`. */
+  dismissToastsByKey(dedupeKey: string, options: { silent?: boolean } = {}) {
+    for (const t of toasts.filter((x) => x.dedupeKey === dedupeKey)) {
+      this.dismissToast(t.id, options);
     }
   },
   /**

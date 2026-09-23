@@ -36,6 +36,9 @@ import {
 } from './writeStateTracking';
 import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
+import { backupExternalVersion } from '../vault/keepLocalBackup';
+// Audit-19 UX-6 — re-exported so boardCache (at its LOC ceiling) reuses an existing import line.
+export { backupExternalVersion };
 import { createScheduler } from './writeScheduler';
 import { getBaseline, noteBaseline, hasBaselineDrifted, refreshBaselineAfterWrite } from '../vault/fileBaselineRegistry';
 
@@ -373,7 +376,17 @@ export async function writeBoardFile(
         notifyWriteError({ kind: 'board', path: boardPath, error: externalEditError });
         throw externalEditError;
       }
-      // 'keep-local' — fall through and overwrite the external edit.
+      // 'keep-local' — back up the external version (Audit-19 UX-6), then
+      // fall through and overwrite it. A declined un-backed-up overwrite
+      // aborts exactly like 'defer'.
+      if (!(await backupExternalVersion(vaultRoot, boardPath))) {
+        const declined = Object.assign(
+          new Error(`Board "${boardPath}" was modified externally; backup failed and overwrite declined.`),
+          { code: 'EXTERNAL_EDIT' },
+        );
+        notifyWriteError({ kind: 'board', path: boardPath, error: declined });
+        throw declined;
+      }
     }
   }
 

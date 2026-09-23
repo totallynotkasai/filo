@@ -30,6 +30,22 @@ import type { TextTile as TextTileDef } from '@renderer/schema/index';
 
 export const VAULT = '/vault';
 
+// jsdom has no layout. ProseMirror's focus / scrollIntoView path asks for client
+// rects; answer with empty geometry so editor commands run headless.
+function emptyRects(): DOMRectList {
+  const list = [] as unknown as DOMRectList & DOMRect[];
+  (list as unknown as { item: (i: number) => DOMRect | null }).item = () => null;
+  return list;
+}
+const zeroRect = (): DOMRect => ({ x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, toJSON: () => ({}) }) as DOMRect;
+for (const proto of [Element.prototype, Range.prototype] as Array<{ getClientRects?: unknown; getBoundingClientRect?: unknown }>) {
+  if (typeof proto.getClientRects !== 'function') proto.getClientRects = emptyRects;
+  if (typeof proto.getBoundingClientRect !== 'function') proto.getBoundingClientRect = zeroRect;
+}
+if (typeof document.elementFromPoint !== 'function') {
+  (document as { elementFromPoint: (x: number, y: number) => Element | null }).elementFromPoint = () => null;
+}
+
 export interface RecordedWrite {
   channel: string;
   relPath: string;

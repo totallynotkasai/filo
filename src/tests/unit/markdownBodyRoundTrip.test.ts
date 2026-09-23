@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Editor } from '@tiptap/core';
+import { undoDepth, closeHistory } from '@tiptap/pm/history';
 import { createTiptapEditor } from '../../renderer/lib/editor/createEditor';
 import {
   editorMarkdown,
@@ -155,5 +156,50 @@ describe('markdown body round-trip — golden corpus', () => {
       loadMarkdownIntoEditor(ed, toCrlf(fx.body), { preserveSelection: true });
       expect(updates).toBe(0);
     });
+
+    // Audit-19 MD-1 — a load is not an undoable edit. Pre-fix, Ctrl+Z right
+    // after opening a note emptied it ("\n", 1 update) and autosave wrote that.
+    it(`${fx.name}: load → undo is a no-op`, () => {
+      let updates = 0;
+      const ed = makeEditor(() => {
+        updates++;
+      });
+      loadMarkdownIntoEditor(ed, fx.body);
+      const before = editorMarkdown(ed);
+      expect(ed.commands.undo()).toBe(false);
+      expect(editorMarkdown(ed)).toBe(before);
+      expect(updates).toBe(0);
+      expect(undoDepth(ed.state)).toBe(0);
+    });
+
+    it(`${fx.name}: reload → undo cannot cross the reload`, () => {
+      let updates = 0;
+      const ed = makeEditor(() => {
+        updates++;
+      });
+      loadMarkdownIntoEditor(ed, 'Body A\n');
+      ed.commands.focus('end');
+      ed.commands.insertContent('!');
+      ed.view.dispatch(closeHistory(ed.state.tr));
+      updates = 0;
+      loadMarkdownIntoEditor(ed, fx.body, { preserveSelection: true });
+      // The reload is a history boundary: the pre-reload `!` must not survive
+      // (with `addToHistory:false` alone it lingers as a remapped step).
+      expect(undoDepth(ed.state)).toBe(0);
+      const afterReload = editorMarkdown(ed);
+      ed.commands.undo();
+      expect(editorMarkdown(ed)).toBe(afterReload);
+      expect(updates).toBe(0);
+    });
   }
+
+  it('positive control: typing after a load is still undoable', () => {
+    const ed = makeEditor();
+    loadMarkdownIntoEditor(ed, 'Hello\n');
+    ed.commands.focus('end');
+    ed.commands.insertContent('X');
+    expect(editorMarkdown(ed)).toContain('HelloX');
+    expect(ed.commands.undo()).toBe(true);
+    expect(editorMarkdown(ed)).not.toContain('HelloX');
+  });
 });

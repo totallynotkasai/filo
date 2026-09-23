@@ -1,5 +1,6 @@
 import { parseDocument, Document } from 'yaml';
 import type { Editor } from '@tiptap/core';
+import { resetEditorHistory } from './editorHistory';
 import {
   encodeEmptyParagraphs,
   stripEmptyParagraphSentinels,
@@ -198,7 +199,21 @@ export function loadMarkdownIntoEditor(
   // TRUE. The TipTap 2 boolean form (`setContent(x, false)`) no longer means
   // "don't emit" — it would fire onUpdate on every load → a phantom write of a
   // file the user never edited. Pinned by markdownBodyRoundTrip.test.ts.
-  editor.commands.setContent(contentToLoad, { emitUpdate: emit });
+  //
+  // Audit-19 MD-1 — a load is NOT an undoable edit. Core `setContent` never sets
+  // `addToHistory`, so Ctrl+Z right after opening a note emptied it (and the
+  // empty body was autosaved). The chain shares ONE transaction, so the meta
+  // covers the replace step; `resetEditorHistory` below then drops any earlier
+  // history so undo can't cross a hydrate or reload. This is the ONLY
+  // `setContent` in src/renderer (pinned by ci:editor-body-discipline).
+  editor
+    .chain()
+    .command(({ tr }) => {
+      tr.setMeta('addToHistory', false);
+      return true;
+    })
+    .setContent(contentToLoad, { emitUpdate: emit })
+    .run();
   // Turn the reconstructed sentinel paragraphs into genuinely empty ones. Must
   // run before the selection restore below so positions are clamped against the
   // final (post-strip) document size.
@@ -211,6 +226,9 @@ export function loadMarkdownIntoEditor(
     editor.commands.setTextSelection({ from: clampedFrom, to: clampedTo });
     if (snapshot.hadFocus) editor.commands.focus(undefined, { scrollIntoView: false });
   }
+
+  // Audit-19 MD-1 — a full-document load is a history boundary (see editorHistory.ts).
+  resetEditorHistory(editor);
 
   // Round-trip check — read the editor's serialised markdown back and
   // compare against a normalised input. If they diverge, tiptap-markdown

@@ -48,6 +48,8 @@ const REQUIRED_TOKENS = [
   { token: /\beditorMarkdown\s*\(/, why: 'uses the production serialise path' },
   { token: /\bisLossyMarkdownRoundTrip\s*\(/, why: 'checks the lossy (read-only) verdict' },
   { token: /emits no update/, why: 'asserts loading a file does not fire onUpdate (phantom write)' },
+  // Audit-19 MD-1 — a load is not an undoable step (Ctrl+Z after open emptied the note).
+  { token: /load → undo is a no-op/, why: 'asserts Ctrl+Z right after a load changes nothing (MD-1)' },
   { token: /\\r\\n/, why: 'exercises CRLF bodies' },
 ];
 

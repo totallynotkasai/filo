@@ -374,6 +374,23 @@ function makeStubEditor(opts: {
     },
     calls,
   };
+  // Audit-19 MD-1 — the load is a chained, non-history transaction
+  // (`chain().command(setMeta addToHistory false).setContent(...).run()`).
+  // Route the chained setContent to the same recorder.
+  (stub as unknown as { chain: () => unknown }).chain = () => {
+    const builder = {
+      command: (fn: (p: { tr: { setMeta: () => void } }) => boolean) => {
+        fn({ tr: { setMeta: () => undefined } });
+        return builder;
+      },
+      setContent: (body: string, options: { emitUpdate?: boolean }) => {
+        stub.commands.setContent(body, options);
+        return builder;
+      },
+      run: () => true,
+    };
+    return builder;
+  };
   return stub;
 }
 

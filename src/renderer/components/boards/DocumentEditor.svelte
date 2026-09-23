@@ -108,6 +108,8 @@
   // unexpectedly-blank editor can't truncate the real (unread) file. A banner
   // offers a retry; a later successful read clears the flag and resumes editing.
   let hydrateReadFailed = $state(false);
+  // Audit-19 MD-4 — reactive IME-composition flag (see onMount / reload effect).
+  let isComposing = $state(false);
 
   // ── Vault-file drop ──
   //
@@ -285,6 +287,11 @@
         if (isUpdatingFromStore) return;
         if (!editor) return;
         const md = editorMarkdown(editor);
+        // Audit-19 MD-4 — record our OWN body so the reload `$effect` treats it
+        // as a no-op once the gateway markCleans this writer. Without it every
+        // successful autosave reloaded the editor's own content (wiping redo,
+        // breaking IME composition). Mirrors TextTile's onUpdate.
+        lastLoadedBody = md;
         if (docId) {
           documentStore.updateContent(docId, html, md, callerId);
         }
@@ -307,6 +314,13 @@
     });
 
     tiptapToolbar.setActiveEditor(editor);
+
+    // Audit-19 MD-4 — bridge prosemirror's composition state into a reactive
+    // flag so the reload `$effect` defers mid-composition (TextTile's B21 twin).
+    // Anchored on the editor DOM, so editor.destroy() removes them.
+    const composeEl = editor.view.dom;
+    composeEl.addEventListener('compositionstart', () => { isComposing = true; });
+    composeEl.addEventListener('compositionend', () => { isComposing = false; });
 
     callerId = `document-editor:${docId}`;
     void hydrateFromDisk();
@@ -451,6 +465,9 @@
     // clean DocumentEditor still reloads a sibling TextTile's latest body
     // instead of diverging and clobbering it on the next debounce flush.
     if (documentStore.isWriterDirty(docState.docId, callerId)) return;
+    // Audit-19 MD-4 — never reload mid-IME-composition; the effect re-runs on
+    // compositionend and picks up whatever landed meanwhile.
+    if (isComposing) return;
     // The live cache is refreshed elsewhere — applyReloadFromDisk on external
     // edits, or another writer's setFrontmatter on hydrate. Strip any leading
     // frontmatter defensively in case body carries it.

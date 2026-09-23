@@ -48,6 +48,15 @@ describe('conventionPaths', () => {
       expect(fileNameSafe('   ')).toBe('Untitled');
       expect(fileNameSafe('///')).toBe('Untitled');
     });
+
+    // Audit-19 ERR-2 — a trailing dot/space would build `Call Bob..md`
+    // (rejected by main, stripped by Windows).
+    it('strips trailing dots and spaces', () => {
+      expect(fileNameSafe('Call Bob.')).toBe('Call Bob');
+      expect(fileNameSafe('...')).toBe('Untitled');
+      expect(fileNameSafe('a. ')).toBe('a');
+      expect(fileNameSafe('Ideas... later')).toBe('Ideas... later');
+    });
   });
 
   describe('nextUniqueMdPath', () => {

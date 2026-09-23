@@ -169,7 +169,10 @@ const isWin32 = (): boolean => process.platform === 'win32';
  * Throws if fileName is unsafe to use as a bare filename inside the vault.
  * Rejects:
  *   - empty / non-string input
- *   - path separators or `..` segments (use a path joiner for those)
+ *   - path separators, or a name that is exactly `.` / `..` (a dot segment).
+ *     `..` INSIDE a name (`Call Bob..md`, `Ideas... later.md`) is legal —
+ *     traversal only ever arrives here as a bare `..` segment, because
+ *     `assertSafeRelativePath` splits on `/` and `` first (Audit-19 ERR-2).
  *   - length > 255 (Windows MAX_PATH segment + POSIX NAME_MAX)
  *   - trailing dot or trailing space (silently stripped by Win32 → name collision)
  *   - control characters (\x00..\x1F, \x7F) including embedded NUL
@@ -190,8 +193,13 @@ export function assertSafeFilename(
   // `\` is checked explicitly: on POSIX `path.basename` treats it as an
   // ordinary character, so `foo\bar.json` would otherwise pass on Linux/macOS
   // yet resolve to a nested path once the vault is opened on Windows.
-  if (path.basename(fileName) !== fileName || fileName.includes('\\') || fileName.includes('..')) {
-    throw new Error('Unsafe filename rejected — contains path separators');
+  if (
+    fileName === '.' ||
+    fileName === '..' ||
+    path.basename(fileName) !== fileName ||
+    fileName.includes('\\')
+  ) {
+    throw new Error('Unsafe filename rejected — contains path separators or is a dot segment');
   }
   // 6.3.P1 — Win-illegal chars are platform-gated. Always enforce at
   // creation; on POSIX read/delete/rename-OLD pass through so a file
@@ -244,7 +252,7 @@ export const MAX_VAULT_PATH_DEPTH = 10;
  *   1. Depth ≤ `MAX_VAULT_PATH_DEPTH` — a path the renderer should never need
  *      legitimately at depth >10. Bounds the parse surface for any subsequent
  *      callers.
- *   2. Each segment passes `assertSafeFilename` — no separators, no `..`,
+ *   2. Each segment passes `assertSafeFilename` — no separators, no `.`/`..` segments,
  *      no embedded directory components. Catches mixed-encoding bypass
  *      attempts like `foo/..\..\..\evil`.
  *

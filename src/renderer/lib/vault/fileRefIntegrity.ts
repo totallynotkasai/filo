@@ -36,7 +36,9 @@ function sanitizeForFilename(name: string): string {
        
       .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
       .replace(/\s+/g, ' ')
-      .trim() || 'Untitled'
+      .trim()
+      // Audit-19 ERR-2 — lockstep with `fileNameSafe`: strip trailing dots/spaces.
+      .replace(/[. ]+$/, '') || 'Untitled'
   );
 }
 

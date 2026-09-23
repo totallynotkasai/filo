@@ -23,7 +23,10 @@ export function fileNameSafe(name: string): string {
     name
       .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
       .replace(/\s+/g, ' ')
-      .trim() || 'Untitled'
+      .trim()
+      // Audit-19 ERR-2 — Windows strips a trailing dot/space and main rejects
+      // one (`assertSafeFilename`), so "Call Bob." becomes `Call Bob`.
+      .replace(/[. ]+$/, '') || 'Untitled'
   );
 }
 

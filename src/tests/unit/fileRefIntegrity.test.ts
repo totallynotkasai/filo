@@ -838,6 +838,10 @@ describe('fileRefIntegrity.getConventionFolderForBoardType', () => {
     expect(getConventionFolderForBoardType('kanban', 'My Board')).toBe('Kanban/My Board');
   });
 
+  it('strips a trailing dot from the kanban board folder (Audit-19 ERR-2)', () => {
+    expect(getConventionFolderForBoardType('kanban', 'Q3.')).toBe('Kanban/Q3');
+  });
+
   it('sanitises filesystem-unsafe characters in kanban board name', () => {
     expect(getConventionFolderForBoardType('kanban', 'Foo:/Bar*?')).toBe('Kanban/FooBar');
   });

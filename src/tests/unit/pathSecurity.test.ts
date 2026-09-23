@@ -297,6 +297,20 @@ describe('assertSafeRelativePath', () => {
     expect(() => assertSafeRelativePath('../etc/passwd')).toThrow();
   });
 
+  // Audit-19 ERR-2 — `..` INSIDE a name is not traversal. Reverting the
+  // substring `includes('..')` test turns this red.
+  it('accepts ellipses and double dots inside a name', () => {
+    for (const p of ['Call Bob..md', 'Ideas... later.md', 'v1..2.md', 'notes/Wait... what.md']) {
+      expect(() => assertSafeRelativePath(p, { forCreation: true })).not.toThrow();
+    }
+  });
+
+  it('still rejects bare dot segments', () => {
+    expect(() => assertSafeRelativePath('.')).toThrow();
+    expect(() => assertSafeRelativePath('a/./b.md')).toThrow();
+    expect(() => assertSafeRelativePath('..')).toThrow();
+  });
+
   it('rejects backslash traversal mixed with forward slashes', () => {
     expect(() => assertSafeRelativePath('notes\\..\\..\\evil.md')).toThrow();
   });

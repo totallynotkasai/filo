@@ -266,6 +266,24 @@ const TASK_CREATION = 'src/renderer/lib/tasklist/taskCreation.ts';
   }
 }
 
+// ── Arm F (UX-1) ─────────────────────────────────────────────────────────
+const TOOLBAR = 'src/renderer/lib/editor/toolbarConfig.ts';
+{
+  for (const rel of [TEXT_TILE, DOC_EDITOR]) {
+    const f = load(rel);
+    if (!f) continue;
+    const eff = arrowBodies(f, '$effect(').find((s) => /closeDrainGate\.draining/.test(slice(f, s)));
+    if (!eff) failures.push(`[F] ${rel}: the editability $effect (closeDrainGate.draining) not found`);
+    else if (!/\breadOnly\b/.test(slice(f, eff))) {
+      failures.push(`[F] ${rel}: the editability $effect must also freeze on readOnly — a lossy note must be non-editable (UX-1)`);
+    }
+  }
+  const t = load(TOOLBAR);
+  if (t && !/\bisEditable\b/.test(t.code)) {
+    failures.push(`[F] ${TOOLBAR}: toolbar commands must refuse a non-editable editor (isEditable) (UX-1)`);
+  }
+}
+
 if (failures.length > 0) {
   process.stderr.write(`\n[ci:editor-body-discipline] ${failures.length} violation(s):\n\n`);
   for (const x of failures) process.stderr.write(`  ${x}\n`);

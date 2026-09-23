@@ -562,14 +562,16 @@
   let readOnly = $derived(tile.contentId ? documentStore.isReadOnly(tile.contentId) : false);
 
   // Audit-17 5.7 — freeze the tile's editor while a tab-close drain is in flight
-  // so a keystroke can't re-arm a debounce the unmount would destroy. Lossy
-  // read-only disables SAVING (buildWriteArgs), not editing, so the only reason
-  // to toggle TipTap editability here is the close drain.
+  // so a keystroke can't re-arm a debounce the unmount would destroy.
+  // Audit-19 UX-1 — AND while the note is lossy read-only: read-only used to
+  // disable only SAVING (buildWriteArgs), so typed text was silently discarded.
+  // `readOnly` is reactive (documentStore readOnlyVersion), so Take ownership
+  // re-enables editing automatically.
   // Audit-18 H3 — never re-enable while a hydrate read failed: that path holds
   // the editor non-writable for its own reason (a keystroke would otherwise
   // overwrite the unread file). Mirrors DocumentEditor's M1 close-drain gate.
   $effect(() => {
-    const frozen = closeDrainGate.draining;
+    const frozen = closeDrainGate.draining || readOnly;
     if (!hydrateReadFailed) {
       // Non-emitting + untracked: see setEditorEditable (the §0.2 effect loop).
       untrack(() => setEditorEditable(editor, !frozen));
@@ -588,7 +590,7 @@
     const cid = tile.contentId;
     uiStore.openConfirm({
       title: 'Take ownership of this file?',
-      body: 'Filo will overwrite the file with what its editor can read. Syntax it cannot preserve (callouts, math blocks, highlights, etc.) will be lost. Continue?',
+      body: "Filo will be able to edit and save this file, but formatting it can't preserve (for example hard-wrapped lines, callouts, wiki links, comments) will be rewritten or removed on the next save. Continue?",
       confirmLabel: 'Take ownership',
       cancelLabel: 'Cancel',
       danger: true,
@@ -608,7 +610,7 @@
   {/if}
   {#if readOnly}
     <div class="readonly-banner" role="status">
-      <span class="readonly-text">Filo couldn't preserve some syntax in this file. Saving is disabled.</span>
+      <span class="readonly-text">Filo can't save this file without changing formatting it doesn't support, so it's open read-only.</span>
       <button class="readonly-action" onclick={takeOwnership}>Take ownership</button>
     </div>
   {/if}

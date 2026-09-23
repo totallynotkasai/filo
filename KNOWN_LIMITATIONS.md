@@ -526,3 +526,44 @@ swap. There is no real-world session large enough for this to matter.
 opened this session, fully released on vault swap. No code change unless a real
 memory complaint surfaces — at which point an LRU-with-floor (keep the last N
 high-water marks) would close it without re-opening the 1.1 class.
+
+## 17. Lossy notes open read-only (and bare URLs are plain text)
+
+**What:** When Filo's editor can't reproduce a note's Markdown byte-for-byte
+(`isLossyMarkdownRoundTrip`), the note opens **read-only**: the editor is
+non-editable and toolbar commands are refused (Audit-19 UX-1 — read-only used to
+block only *saving*, so typed text was silently discarded). A banner offers one
+action, **Take ownership**, which re-enables editing; the next save then rewrites
+the formatting Filo can't preserve.
+
+Formats that still trigger read-only (each is a real byte or semantic change the
+serializer can't preserve cheaply):
+
+- hard-wrapped paragraphs (soft line breaks are joined onto one line);
+- multi-line blockquotes (joined);
+- `<` / `&` written raw (re-emitted as entities);
+- tab characters;
+- `[[wiki links]]` (brackets escaped);
+- HTML comments and block HTML (`<div>`), Obsidian callouts;
+- GFM tables whose columns carry **alignment** (`:--`, `--:`) — alignment is dropped.
+
+No longer read-only after Audit-19: filenames, bare domains, emails and bare URLs
+(DEP-2 — linkify is off), `filo://` internal links (UX-2), tight checklists
+(UX-7), GFM table **padding** differences and the `1)` ordered-list delimiter.
+
+**Where:** `normaliseForRoundTripCompare` in
+[src/renderer/lib/editor/markdownSync.ts](src/renderer/lib/editor/markdownSync.ts);
+the editability `$effect` in `TextTile.svelte` / `DocumentEditor.svelte`;
+`chainIfEditable` in `lib/editor/toolbarConfig.ts`. Pinned by
+`ci:editor-body-discipline` Arm F.
+
+**Why accepted:** Editing a note Filo would rewrite is the silent-loss class the
+open-format principle forbids; making it honest (non-editable) is the safe
+default, and Take ownership is an explicit, confirmed opt-in. Users with many
+hard-wrapped notes will see more read-only banners than before — that is the
+behaviour being honest, not a regression.
+
+**Bare URLs:** with linkify off, a bare `https://…` already on disk round-trips as
+plain text and is no longer rendered as a clickable link; wrap it as `<url>` or
+`[text](url)` to make it a link. Typing next to a bare URL can still autolink it
+once whitespace follows (an explicit scheme is present).

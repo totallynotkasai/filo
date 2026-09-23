@@ -492,8 +492,10 @@
   // debounce the unmount would then destroy. Keyed on the reactive gate flag +
   // `hydrateReadFailed` (which the hydrate path owns); we never re-enable while
   // a read failed (that path holds it non-editable for its own reason).
+  // Audit-19 UX-1 — a lossy note is truly NON-editable (read-only used to block
+  // only saving, so typed text was silently discarded); Take ownership clears it.
   $effect(() => {
-    const frozen = closeDrainGate.draining;
+    const frozen = closeDrainGate.draining || readOnly;
     if (!hydrateReadFailed) {
       // Non-emitting + untracked: see setEditorEditable (the §0.2 effect loop).
       untrack(() => setEditorEditable(editor, !frozen));
@@ -512,7 +514,7 @@
     const cid = docState.docId;
     uiStore.openConfirm({
       title: 'Take ownership of this file?',
-      body: 'Filo will overwrite the file with what its editor can read. Syntax it cannot preserve (callouts, math blocks, highlights, etc.) will be lost. Continue?',
+      body: "Filo will be able to edit and save this file, but formatting it can't preserve (for example hard-wrapped lines, callouts, wiki links, comments) will be rewritten or removed on the next save. Continue?",
       confirmLabel: 'Take ownership',
       cancelLabel: 'Cancel',
       danger: true,
@@ -545,7 +547,7 @@
       {/if}
       {#if readOnly}
         <div class="readonly-banner" role="status">
-          <span class="readonly-text">Filo couldn't preserve some syntax in this file. Saving is disabled.</span>
+          <span class="readonly-text">Filo can't save this file without changing formatting it doesn't support, so it's open read-only.</span>
           <button class="readonly-action" onclick={takeOwnership}>Take ownership</button>
         </div>
       {/if}

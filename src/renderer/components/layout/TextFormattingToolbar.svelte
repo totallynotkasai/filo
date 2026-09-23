@@ -100,7 +100,8 @@
 
   function applyLink(url: string) {
     const editor = linkSavedEditor;
-    if (!editor) return;
+    // Audit-19 UX-1 — a non-editable (read-only / frozen) editor refuses edits.
+    if (!editor || !editor.isEditable) return;
     const ok = editor
       .chain()
       .focus()
@@ -114,7 +115,7 @@
 
   function removeLink() {
     const editor = linkSavedEditor;
-    if (!editor) return;
+    if (!editor || !editor.isEditable) return;
     editor
       .chain()
       .focus()

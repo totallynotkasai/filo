@@ -23,6 +23,17 @@ let blurTimeout: ReturnType<typeof setTimeout> | null = null;
 let openInsertLinkPopupImpl: ((anchor: { x: number; y: number }) => void) | null = null;
 
 /**
+ * Audit-19 UX-1 — every MUTATING toolbar command routes through here. A
+ * non-editable editor (lossy read-only note, close-drain freeze, failed disk
+ * read) still accepts TipTap commands programmatically, so a Bold / heading /
+ * list button used to change a read-only note's text anyway.
+ */
+function chainIfEditable(): ReturnType<Editor['chain']> | null {
+  if (!activeEditor || !activeEditor.isEditable) return null;
+  return activeEditor.chain();
+}
+
+/**
  * Reads the current formatting state from this editor and pushes it to toolbarStore.
  *
  * The mutation is deferred via queueMicrotask so it never lands during a
@@ -114,45 +125,45 @@ export const tiptapToolbar = {
 
   toggleBold() {
     this.keepActiveEditor();
-    activeEditor?.chain().focus().toggleBold().run();
+    chainIfEditable()?.focus().toggleBold().run();
   },
 
   toggleItalic() {
     this.keepActiveEditor();
-    activeEditor?.chain().focus().toggleItalic().run();
+    chainIfEditable()?.focus().toggleItalic().run();
   },
 
   toggleUnderline() {
     this.keepActiveEditor();
-    activeEditor?.chain().focus().toggleUnderline().run();
+    chainIfEditable()?.focus().toggleUnderline().run();
   },
 
   setTextColor(color: string) {
     this.keepActiveEditor();
     if (!color) {
-      activeEditor?.chain().focus().unsetColor().run();
+      chainIfEditable()?.focus().unsetColor().run();
     } else {
-      activeEditor?.chain().focus().setColor(color).run();
+      chainIfEditable()?.focus().setColor(color).run();
     }
   },
 
   setHighlightColor(color: string) {
     this.keepActiveEditor();
     if (!color || color === 'transparent') {
-      activeEditor?.chain().focus().unsetHighlight().run();
+      chainIfEditable()?.focus().unsetHighlight().run();
     } else {
-      activeEditor?.chain().focus().setHighlight({ color }).run();
+      chainIfEditable()?.focus().setHighlight({ color }).run();
     }
   },
 
   setFontFamily(font: string) {
     this.keepActiveEditor();
-    activeEditor?.chain().focus().setFontFamily(font).run();
+    chainIfEditable()?.focus().setFontFamily(font).run();
   },
 
   setFontSize(size: number) {
     this.keepActiveEditor();
-    activeEditor?.chain().focus().setMark('textStyle', { fontSize: `${size}px` }).run();
+    chainIfEditable()?.focus().setMark('textStyle', { fontSize: `${size}px` }).run();
   },
 
   increaseFontSize() {
@@ -167,40 +178,40 @@ export const tiptapToolbar = {
 
   setTextAlign(align: 'left' | 'center' | 'right' | 'justify') {
     this.keepActiveEditor();
-    activeEditor?.chain().focus().setTextAlign(align).run();
+    chainIfEditable()?.focus().setTextAlign(align).run();
   },
 
   setHeading(level: 0 | 1 | 2 | 3 | 4 | 5 | 6) {
     this.keepActiveEditor();
     if (level === 0) {
-      activeEditor?.chain().focus().setParagraph().run();
+      chainIfEditable()?.focus().setParagraph().run();
     } else {
-      activeEditor?.chain().focus().setHeading({ level: level as 1 | 2 | 3 | 4 | 5 | 6 }).run();
+      chainIfEditable()?.focus().setHeading({ level: level as 1 | 2 | 3 | 4 | 5 | 6 }).run();
     }
   },
 
   toggleBulletList() {
     this.keepActiveEditor();
-    activeEditor?.chain().focus().toggleBulletList().run();
+    chainIfEditable()?.focus().toggleBulletList().run();
   },
 
   toggleOrderedList() {
     this.keepActiveEditor();
-    activeEditor?.chain().focus().toggleOrderedList().run();
+    chainIfEditable()?.focus().toggleOrderedList().run();
   },
 
   toggleTaskList() {
     this.keepActiveEditor();
-    activeEditor?.chain().focus().toggleTaskList().run();
+    chainIfEditable()?.focus().toggleTaskList().run();
   },
 
   increaseIndent() {
     this.keepActiveEditor();
     if (!activeEditor) return;
     if (activeEditor.isActive('listItem') || activeEditor.isActive('taskItem')) {
-      activeEditor.chain().focus().sinkListItem('listItem').run();
+      chainIfEditable()?.focus().sinkListItem('listItem').run();
     } else {
-      activeEditor.chain().focus().increaseIndent().run();
+      chainIfEditable()?.focus().increaseIndent().run();
     }
   },
 
@@ -208,25 +219,25 @@ export const tiptapToolbar = {
     this.keepActiveEditor();
     if (!activeEditor) return;
     if (activeEditor.isActive('listItem') || activeEditor.isActive('taskItem')) {
-      activeEditor.chain().focus().liftListItem('listItem').run();
+      chainIfEditable()?.focus().liftListItem('listItem').run();
     } else {
-      activeEditor.chain().focus().decreaseIndent().run();
+      chainIfEditable()?.focus().decreaseIndent().run();
     }
   },
 
   clearFormatting() {
     this.keepActiveEditor();
-    activeEditor?.chain().focus().clearNodes().unsetAllMarks().run();
+    chainIfEditable()?.focus().clearNodes().unsetAllMarks().run();
   },
 
   setLink(url: string) {
     if (url) {
       // Audit-19 UX-2 — setLink returns false when Link's URI allowlist refuses
       // the href; that used to fail silently.
-      const ok = activeEditor?.chain().focus().setLink({ href: url }).run();
-      if (activeEditor && !ok) uiStore.toast(LINK_REFUSED_MESSAGE, 'error');
+      const ok = chainIfEditable()?.focus().setLink({ href: url }).run();
+      if (activeEditor?.isEditable && !ok) uiStore.toast(LINK_REFUSED_MESSAGE, 'error');
     } else {
-      activeEditor?.chain().focus().unsetLink().run();
+      chainIfEditable()?.focus().unsetLink().run();
     }
   },
 
@@ -261,12 +272,12 @@ export const tiptapToolbar = {
   },
 
   insertTable() {
-    activeEditor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
+    chainIfEditable()?.focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
   },
 
   toggleCodeBlock() {
     this.keepActiveEditor();
-    activeEditor?.chain().focus().toggleCodeBlock().run();
+    chainIfEditable()?.focus().toggleCodeBlock().run();
   },
 
   setLineSpacing(value: number) {

@@ -471,6 +471,21 @@ describe('markdownSync — loadMarkdownIntoEditor caret preservation', () => {
  * that survives normalisation and still differs is real syntax that
  * tiptap-markdown couldn't preserve and a write would silently drop.
  */
+describe('markdownSync — isLossyMarkdownRoundTrip (Audit-19 UX-1 step 5)', () => {
+  it('table padding differences are not lossy', () => {
+    expect(isLossyMarkdownRoundTrip('|a|b|\n|---|---|\n|1|2|', '| a | b |\n| --- | --- |\n| 1 | 2 |')).toBe(false);
+  });
+  it('a dropped column alignment is still lossy', () => {
+    expect(isLossyMarkdownRoundTrip('|a|\n|:-|\n|1|', '| a |\n| --- |\n| 1 |')).toBe(true);
+  });
+  it('the ordered-list delimiter 1) vs 1. is not lossy', () => {
+    expect(isLossyMarkdownRoundTrip('1) a\n2) b', '1. a\n2. b')).toBe(false);
+  });
+  it('a joined soft wrap is still lossy', () => {
+    expect(isLossyMarkdownRoundTrip('one\ntwo', 'one two')).toBe(true);
+  });
+});
+
 describe('markdownSync — isLossyMarkdownRoundTrip', () => {
   it('returns false for identical strings', () => {
     expect(isLossyMarkdownRoundTrip('# hello', '# hello')).toBe(false);

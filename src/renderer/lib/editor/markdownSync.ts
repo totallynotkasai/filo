@@ -317,6 +317,21 @@ function normaliseForRoundTripCompare(s: string): string {
     // boundary the italic pass requires and are left untouched.
     .replace(/__([^_\n]+)__/g, '**$1**')
     .replace(/\b_([^_\n]+)_\b/g, '*$1*')
+    // Audit-19 UX-1 5e — the ordered-list delimiter `1)` is serialised as `1.`;
+    // cosmetic (the start number survives), so compare them as equal.
+    .replace(/^(\s*\d+)\)(?=\s)/gm, '$1.')
+    // Audit-19 UX-1 5d — GFM table SPACING only: strip the padding around `|`
+    // and collapse a delimiter cell's dash run to `---`, KEEPING its colons.
+    // tiptap drops column alignment (`:--` → `---`), so an aligned table still
+    // compares different (stays lossy) — only padding differences are masked.
+    .replace(/^[ \t]*\|.*$/gm, (line) =>
+      line
+        .trim()
+        .split('|')
+        .map((cell) => cell.trim())
+        .map((cell) => (/^:?-+:?$/.test(cell) ? cell.replace(/-+/, '---') : cell))
+        .join('|'),
+    )
     // Strip leading/trailing whitespace on the whole file
     .trim();
 }

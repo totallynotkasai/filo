@@ -278,6 +278,16 @@ describe('Audit-19 BL-1 — seed writes are create-exclusive', () => {
     expect(isRecentSelfWrite('Groceries (2).md')).toBe(true);
   });
 
+  it('(MD-3) a new task seeds the store with a body-only "" body, not the full FM file', async () => {
+    installVault({});
+    const { tl } = hydrateBoards();
+    await taskCreator(tl).addTaskFromQuickAdd(quickAdd('Buy milk'));
+    const [def] = textDefs('tl');
+    const docId = (def as { contentId?: string }).contentId ?? '';
+    expect(files.get('Buy milk.md')).toContain('completed: false');
+    expect(documentStore.getDocument(docId)?.body).toBe('');
+  });
+
   it('(8) a non-EEXIST failure rolls the task back and does not add a Kanban card', async () => {
     installVault({});
     createFailure = 'EACCES';

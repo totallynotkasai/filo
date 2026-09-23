@@ -40,8 +40,9 @@ describe('Audit-12 L5(a) — TextTile adopt-sibling sniffs eol from the body', (
 
   it('both !isHydrated adopt branches thread a sniffed eol into markHydrated', () => {
     // Two adopt branches (findByFilename + in-memory body): each sniffs CRLF
-    // from `parsed.body` and threads it as the 5th markHydrated arg.
-    const sniffs = src.match(/parsed\.body\.includes\('\\r\\n'\) \? '\\r\\n' : undefined/g) ?? [];
+    // from the body-only `body` and threads it as the 5th markHydrated arg.
+    // (Audit-19 MD-3 — the body is loaded verbatim now, no `parsed.body`.)
+    const sniffs = src.match(/\bbody\.includes\('\\r\\n'\) \? '\\r\\n' : undefined/g) ?? [];
     expect(sniffs.length).toBe(2);
     const threaded =
       src.match(/markHydrated\(relPath, false, undefined, undefined, adoptEol\)/g) ?? [];

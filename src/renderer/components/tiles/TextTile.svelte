@@ -161,6 +161,12 @@
       content: '',
       onUpdate: () => {
         if (isUpdatingFromStore) return;
+        // Audit-19 MD-5 — while the disk read failed the editor is frozen; a
+        // programmatic edit (toolbar command) must neither reach the store nor
+        // set `lastLoadedBody`, which would defeat buildWriteArgs'
+        // `hydrateReadFailed && !lastLoadedBody` refusal and write over the
+        // unread file.
+        if (hydrateReadFailed) return;
         const md = editorMarkdown(ed);
         const html = ed.getHTML();
         // Track our own write so the reactive $effect below treats it as a
@@ -248,43 +254,51 @@
       // same .md file under a different docId, adopt its docId so the stores
       // collapse to a single DocumentState. Without this, two tiles for the
       // same file get keyed independently and never share edits.
+      // Audit-19 MD-5 — the docId this hydrate targets. Adoption rebinds the
+      // tile to a sibling's docId; the `tile` prop may not have re-derived yet,
+      // so thread the id locally instead of re-reading `tile.contentId`.
+      let docId: string | undefined = tile.contentId;
       if (relPath) {
         const existing = documentStore.findByFilename(relPath);
         if (existing && existing.docId !== tile.contentId) {
           boardStore.updateTile(tile.id, { contentId: existing.docId });
-          const parsed = parseMarkdownFile(existing.body ?? '');
-          // audit2 2.2 — do NOT re-seed frontmatter from `existing.body`: the
-          // store body is body-only by contract, so parseMarkdownFile yields
-          // {}, and seeding that would clobber the real FM the view that first
-          // opened `existing` already seeded from disk (a later body-only save
-          // would then erase the file's frontmatter block). The cache is
-          // authoritative once seeded; leave it untouched.
-          lastLoadedBody = parsed.body;
-          isUpdatingFromStore = true;
-          applyLoadResult(loadMarkdownIntoEditor(editor, parsed.body), existing.docId);
-          isUpdatingFromStore = false;
-          // Phase 6.1.R5 — inherit the sibling's hadBom from the existing
-          // `fileState` entry; do NOT re-sniff from `parsed.hadBom`, which
-          // is computed from the body-only `existing.body` (always false
-          // because the body is stripped). When isHydrated is false the
-          // sibling hadn't done its own disk read yet, so fall back to false.
-          // L5 (Audit-12) — but the body retains its line endings (unlike the
-          // BOM), so sniff CRLF from it: without an eol a single-line-CRLF FM
-          // file would emit LF fences on the first gateway write (the A8-M1
-          // hole on the adopt path). Pin only CRLF; leave LF/unknown to
-          // write-time detection so we never force a wrong LF.
-          if (!isHydrated(relPath)) {
-            const adoptEol = parsed.body.includes('\r\n') ? '\r\n' : undefined;
-            markHydrated(relPath, false, undefined, undefined, adoptEol);
-          }
+          docId = existing.docId;
           // Re-register the force-writer with the adopted docId so Keep-local
           // matches against the new identity.
           registerForceWriter(callerId, existing.docId, buildWriteArgs);
-          return;
+          // Audit-19 MD-5 — adopt the sibling's BODY only when the sibling really
+          // read disk: FM seeded AND a non-empty body. A placeholder DocumentState
+          // (body '', e.g. from a DocumentEditor whose read failed, or a Kanban
+          // `openTileAsDocument` whose FM a field edit seeded) must never load
+          // into a writable editor — fall through to the authoritative disk read.
+          if (existing.body && documentStore.hasFrontmatter(existing.docId)) {
+            // audit2 2.2 — do NOT re-seed frontmatter from `existing.body`: the
+            // cache the sibling seeded from disk is authoritative. Audit-19 MD-3 —
+            // and load the body-only body VERBATIM (no re-parse).
+            const body = existing.body;
+            lastLoadedBody = body;
+            isUpdatingFromStore = true;
+            applyLoadResult(loadMarkdownIntoEditor(editor, body), existing.docId);
+            isUpdatingFromStore = false;
+            // Phase 6.1.R5 — inherit the sibling's hadBom from the existing
+            // `fileState` entry (the body-only body carries no BOM). When
+            // isHydrated is false the sibling hadn't done its own disk read yet,
+            // so fall back to false.
+            // L5 (Audit-12) — but the body retains its line endings (unlike the
+            // BOM), so sniff CRLF from it: without an eol a single-line-CRLF FM
+            // file would emit LF fences on the first gateway write (the A8-M1
+            // hole on the adopt path). Pin only CRLF; leave LF/unknown to
+            // write-time detection so we never force a wrong LF.
+            if (!isHydrated(relPath)) {
+              const adoptEol = body.includes('\r\n') ? '\r\n' : undefined;
+              markHydrated(relPath, false, undefined, undefined, adoptEol);
+            }
+            return;
+          }
         }
       }
 
-      const docState = tile.contentId ? documentStore.getDocument(tile.contentId) : null;
+      const docState = docId ? documentStore.getDocument(docId) : null;
       // audit2 2.2 — only adopt the in-memory (body-only) body as a hydrate
       // source when this doc's frontmatter is already seeded (a sibling view
       // read it from disk). Re-parsing FM from the body-only store body yields
@@ -292,21 +306,23 @@
       // body-only save erases the file's frontmatter block. When unseeded,
       // fall through to the authoritative disk read below, which seeds FM
       // correctly (and never erases).
-      if (docState?.body && tile.contentId && documentStore.hasFrontmatter(tile.contentId)) {
-        const parsed = parseMarkdownFile(docState.body);
-        lastLoadedBody = parsed.body;
+      if (docState?.body && docId && documentStore.hasFrontmatter(docId)) {
+        // Audit-19 MD-3 — load the store body VERBATIM. It is body-only by
+        // contract; re-parsing it stripped a leading `---…---` horizontal-rule
+        // pair as "frontmatter", and the truncated body was written back.
+        const body = docState.body;
+        lastLoadedBody = body;
         isUpdatingFromStore = true;
-        applyLoadResult(loadMarkdownIntoEditor(editor, parsed.body));
+        applyLoadResult(loadMarkdownIntoEditor(editor, body), docId);
         isUpdatingFromStore = false;
-        // Phase 6.1.R5 — `docState.body` is the body-only field, so
-        // `parsed.hadBom` is always false (BOM was stripped before the
-        // store cached the body). Inherit the existing `fileState`
-        // entry's hadBom when it exists; only mark with false as a
-        // fresh fallback for a doc that has no prior hydrate.
+        // Phase 6.1.R5 — the body-only field carries no BOM (stripped before the
+        // store cached it). Inherit the existing `fileState` entry's hadBom when
+        // it exists; only mark with false as a fresh fallback for a doc that has
+        // no prior hydrate.
         // L5 (Audit-12) — sniff CRLF from the body-only body so an adopt of a
         // single-line-CRLF FM file doesn't emit LF fences on the first write.
         if (relPath && !isHydrated(relPath)) {
-          const adoptEol = parsed.body.includes('\r\n') ? '\r\n' : undefined;
+          const adoptEol = body.includes('\r\n') ? '\r\n' : undefined;
           markHydrated(relPath, false, undefined, undefined, adoptEol);
         }
         return;
@@ -315,10 +331,10 @@
       if (!vaultRoot || !relPath) {
         const seed = (tile.content as string) ?? '';
         const parsed = parseMarkdownFile(seed);
-        if (tile.contentId) documentStore.setFrontmatter(tile.contentId, parsed.frontmatter);
+        if (docId) documentStore.setFrontmatter(docId, parsed.frontmatter);
         lastLoadedBody = parsed.body;
         isUpdatingFromStore = true;
-        applyLoadResult(loadMarkdownIntoEditor(editor, parsed.body));
+        applyLoadResult(loadMarkdownIntoEditor(editor, parsed.body), docId);
         isUpdatingFromStore = false;
         if (relPath) markHydrated(relPath, parsed.hadBom);
         return;
@@ -339,20 +355,25 @@
         }
         // 1.2 — seed the verbatim frontmatter bytes so a later body-only save
         // emits them untouched (comments / key order / line endings preserved).
-        if (tile.contentId) documentStore.setFrontmatter(tile.contentId, frontmatter, rawFrontmatter);
+        if (docId) documentStore.setFrontmatter(docId, frontmatter, rawFrontmatter);
         lastLoadedBody = body;
         isUpdatingFromStore = true;
-        applyLoadResult(loadMarkdownIntoEditor(editor, body));
+        applyLoadResult(loadMarkdownIntoEditor(editor, body), docId);
         isUpdatingFromStore = false;
-        if (tile.contentId) {
+        if (docId) {
           documentStore.loadDocument({
-            docId: tile.contentId,
+            docId,
             filename: relPath,
             title: tile.title || 'Untitled',
             body,
             htmlContent: editor.getHTML(),
             richText: [],
           });
+          // Audit-19 MD-5 — loadDocument is a no-op for an EXISTING entry, so an
+          // unhydrated placeholder (body '') would keep '' while the editor shows
+          // the disk body — and a later reactive reload would load '' back in.
+          // Upgrade the placeholder to what we actually read.
+          documentStore.adoptDiskBodyIfPlaceholder(docId, body, editor.getHTML());
         }
         return;
       } catch (err) {
@@ -402,10 +423,10 @@
       // branch returns above so a stale seed never lands over an unread file.
       const seed = (tile.content as string) ?? '';
       const parsed = parseMarkdownFile(seed);
-      if (tile.contentId) documentStore.setFrontmatter(tile.contentId, parsed.frontmatter);
+      if (docId) documentStore.setFrontmatter(docId, parsed.frontmatter);
       lastLoadedBody = parsed.body;
       isUpdatingFromStore = true;
-      applyLoadResult(loadMarkdownIntoEditor(editor, parsed.body));
+      applyLoadResult(loadMarkdownIntoEditor(editor, parsed.body), docId);
       isUpdatingFromStore = false;
       if (relPath) markHydrated(relPath, parsed.hadBom);
     } finally {
@@ -438,16 +459,16 @@
     // settles, picking up any sibling-writer body that landed in the
     // meantime.
     if (isComposing) return;
-    // Body may still carry frontmatter if a sibling writer round-tripped it
-    // into documentStore.updateContent — strip defensively. The live cache
-    // is refreshed elsewhere (applyReloadFromDisk on external edits, or the
+    // Audit-19 MD-3 — `docState.body` is body-only by contract; load it
+    // VERBATIM (a defensive re-parse stripped a leading `---…---` rule pair as
+    // frontmatter and wrote the truncated body back). The live FM cache is
+    // refreshed elsewhere (applyReloadFromDisk on external edits, or the
     // sibling writer's own setFrontmatter on hydrate); we don't re-seed it
     // here. `preserveSelection` keeps the caret in place when an external
     // edit replaces the body underneath an open editor.
-    const parsed = parseMarkdownFile(body ?? '');
-    lastLoadedBody = parsed.body;
+    lastLoadedBody = body ?? '';
     isUpdatingFromStore = true;
-    applyLoadResult(loadMarkdownIntoEditor(editor, parsed.body, { preserveSelection: true }));
+    applyLoadResult(loadMarkdownIntoEditor(editor, body ?? '', { preserveSelection: true }));
     isUpdatingFromStore = false;
   });
 

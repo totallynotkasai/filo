@@ -212,6 +212,42 @@ const TEXT_TILE = 'src/renderer/components/tiles/TextTile.svelte';
   }
 }
 
+// ── Arm C (MD-3) ─────────────────────────────────────────────────────────
+const TASK_CREATION = 'src/renderer/lib/tasklist/taskCreation.ts';
+{
+  for (const abs of walk(join(ROOT, 'src/renderer'))) {
+    const rel = relative(ROOT, abs).split(sep).join('/');
+    const g = load(rel);
+    if (!g) continue;
+    const re = /\bparseMarkdownFile\s*\(\s*(?:existing|docState|body)\b/g;
+    let m;
+    while ((m = re.exec(g.code)) !== null) {
+      if (escaped(g.raw, m.index, 'allow-body-reparse:')) continue;
+      failures.push(`[C] ${rel}:${lineOf(g.raw, m.index)}: re-parses a body-only store body — load it verbatim (MD-3)`);
+    }
+  }
+  const t = load(TASK_CREATION);
+  if (t && /\bbody\s*:\s*seedBody\b/.test(t.code)) {
+    failures.push(`[C] ${TASK_CREATION}: seeds documentStore with the full seed FILE as its body — DocumentState.body is body-only (MD-3)`);
+  }
+}
+
+// ── Arm D (MD-5) ─────────────────────────────────────────────────────────
+{
+  const f = load(TEXT_TILE);
+  if (f) {
+    const at = f.code.indexOf('findByFilename(');
+    const ret = at < 0 ? -1 : f.code.indexOf('return;', at);
+    const block = at < 0 || ret < 0 ? '' : f.text.slice(at, ret);
+    if (!/hasFrontmatter\(\s*existing\.docId\s*\)/.test(block)) {
+      failures.push(`[D] ${TEXT_TILE}: the sibling-adopt block must require hasFrontmatter(existing.docId) before adopting a body (MD-5)`);
+    }
+    if (!/\badoptDiskBodyIfPlaceholder\s*\(/.test(f.code)) {
+      failures.push(`[D] ${TEXT_TILE}: must upgrade an unhydrated placeholder via documentStore.adoptDiskBodyIfPlaceholder( (MD-5)`);
+    }
+  }
+}
+
 if (failures.length > 0) {
   process.stderr.write(`\n[ci:editor-body-discipline] ${failures.length} violation(s):\n\n`);
   for (const x of failures) process.stderr.write(`  ${x}\n`);

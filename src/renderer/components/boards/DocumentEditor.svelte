@@ -18,7 +18,6 @@
   import { closeDrainGate } from '../../lib/editor/closeDrainGate.svelte';
   import { setEditorEditable } from '../../lib/editor/setEditorEditable';
   import {
-    parseMarkdownFile,
     loadMarkdownIntoEditor,
     editorMarkdown,
   } from '../../lib/editor/markdownSync';
@@ -286,6 +285,10 @@
       onUpdate: (html) => {
         if (isUpdatingFromStore) return;
         if (!editor) return;
+        // Audit-19 — while the disk read failed the editor is frozen; ignore a
+        // programmatic edit so it can't set `lastLoadedBody` (below) and defeat
+        // buildWriteArgs' `hydrateReadFailed && !lastLoadedBody` refusal.
+        if (hydrateReadFailed) return;
         const md = editorMarkdown(editor);
         // Audit-19 MD-4 — record our OWN body so the reload `$effect` treats it
         // as a no-op once the gateway markCleans this writer. Without it every
@@ -342,14 +345,17 @@
       // cached FM → a later body-only save erases the file's frontmatter block.
       // When unseeded, fall through to the authoritative disk read below.
       if (docState?.body && documentStore.hasFrontmatter(docState.docId)) {
-        const parsed = parseMarkdownFile(docState.body);
+        // Audit-19 MD-3 — load the body-only store body VERBATIM. Re-parsing it
+        // stripped a leading `---…---` rule pair as frontmatter while
+        // `lastLoadedBody` held the raw value, so the reload effect never
+        // corrected the editor and the first keystroke saved the truncated body.
         lastLoadedBody = docState.body;
         isUpdatingFromStore = true;
-        const result = loadMarkdownIntoEditor(editor, parsed.body);
+        const result = loadMarkdownIntoEditor(editor, docState.body);
         documentStore.setReadOnly(docState.docId, result.lossy);
         isUpdatingFromStore = false;
         // Phase 6.1.R5 (follow-up) — `docState.body` is body-only by contract,
-        // so `parsed.hadBom` is ALWAYS false (the BOM was stripped before the
+        // so a BOM sniff of it is ALWAYS false (the BOM was stripped before the
         // store cached the body). Marking unconditionally would clobber the
         // hadBom a sibling view (e.g. the backing TextTile) already read from
         // disk → the file's BOM is dropped on the next save. Inherit the
@@ -469,12 +475,11 @@
     // compositionend and picks up whatever landed meanwhile.
     if (isComposing) return;
     // The live cache is refreshed elsewhere — applyReloadFromDisk on external
-    // edits, or another writer's setFrontmatter on hydrate. Strip any leading
-    // frontmatter defensively in case body carries it.
-    const parsed = parseMarkdownFile(body ?? '');
+    // edits, or another writer's setFrontmatter on hydrate. Audit-19 MD-3 — the
+    // body is body-only by contract: load it VERBATIM (no defensive re-parse).
     lastLoadedBody = body;
     isUpdatingFromStore = true;
-    const result = loadMarkdownIntoEditor(editor, parsed.body, { preserveSelection: true });
+    const result = loadMarkdownIntoEditor(editor, body ?? '', { preserveSelection: true });
     documentStore.setReadOnly(docState.docId, result.lossy);
     isUpdatingFromStore = false;
   });

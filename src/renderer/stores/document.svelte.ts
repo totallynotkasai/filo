@@ -833,6 +833,23 @@ export const documentStore = {
   },
 
   /**
+   * Audit-19 MD-5 — upgrade an UNHYDRATED placeholder (body `''`) to the body a
+   * view just read from disk. `loadDocument` returns an existing entry untouched,
+   * so a placeholder created by a DocumentEditor whose read failed (or by
+   * `openTileAsDocument`) kept `''` while the editor showed the real body — and a
+   * later reactive reload loaded `''` back into the editor. Only a clean, empty
+   * doc with no dirty writers is touched; unlike `applyReloadFromDisk` this does
+   * NOT cancel writes or bump mutation versions (a read is not a user mutation).
+   */
+  adoptDiskBodyIfPlaceholder(docId: string, body: string, htmlContent: string): void {
+    const doc = openDocuments.get(docId);
+    if (!doc || doc.body !== '' || doc.isDirty) return;
+    if ((dirtyWriters.get(docId)?.size ?? 0) > 0) return;
+    if (body === '') return;
+    openDocuments.set(docId, { ...doc, body, htmlContent });
+  },
+
+  /**
    * Overwrites the in-memory document with the newly-read disk content.
    * Called after the user confirms a reload or the editor was clean.
    * If newFrontmatter is provided, the live cache is updated too so the next

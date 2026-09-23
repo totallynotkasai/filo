@@ -41,6 +41,8 @@ const REQUIRED_FIXTURES = [
   'blank-line-paragraphs.md',
   'code-blocks.md',
   'links-underline.md',
+  // Audit-19 MD-3 — a body that OPENS with a horizontal-rule pair (behind real FM).
+  'hr-leading-body.md',
 ];
 const REQUIRED_TOKENS = [
   { token: /\bcreateTiptapEditor\s*\(/, why: 'drives the REAL editor factory, not a stub' },

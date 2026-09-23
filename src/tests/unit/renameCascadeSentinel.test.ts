@@ -2,7 +2,7 @@
  * Sprint 35.3 — rename-cascade recovery sentinel.
  *
  * Verifies the read/write/clear/mark-failed contracts on
- * `.filo/rename-cascade-pending.json`, plus the mutex-serialised behaviour
+ * `.filo/rename-cascade-pending.a1b2c3d4e5f6.json`, plus the mutex-serialised behaviour
  * that prevents concurrent appends from losing entries.
  */
 
@@ -15,7 +15,7 @@ import {
   __resetRenameCascadeSentinelForTests,
 } from '@renderer/lib/vault/renameCascadeSentinel';
 
-const SENTINEL_PATH = '.filo/rename-cascade-pending.json';
+const SENTINEL_PATH = '.filo/rename-cascade-pending.a1b2c3d4e5f6.json';
 
 type InvokeHandler = (...args: unknown[]) => unknown | Promise<unknown>;
 

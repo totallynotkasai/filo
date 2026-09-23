@@ -9,7 +9,7 @@ import {
 } from '@renderer/lib/vault/tagRewriteSentinel';
 
 /**
- * Sprint B / B3: the `.filo/tag-rewrite-pending.json` sentinel records the
+ * Sprint B / B3: the `.filo/tag-rewrite-pending.a1b2c3d4e5f6.json` sentinel records the
  * rename intent BEFORE Phase-2 writes start so a crash mid-rewrite leaves
  * a resume breadcrumb. These tests pin the round-trip semantics — write,
  * read back exactly, clear, read returns the steady-state empty result.
@@ -132,7 +132,7 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
   });
 
   it('read on a malformed sentinel returns unreadable', async () => {
-    fs.files.set('/vault::.filo/tag-rewrite-pending.json', '{ this is not valid json');
+    fs.files.set('/vault::.filo/tag-rewrite-pending.a1b2c3d4e5f6.json', '{ this is not valid json');
     const result = await readPendingRewrite('/vault');
     expect(result.payload).toBeUndefined();
     expect(result.unreadable).toBe(true);
@@ -142,7 +142,7 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
     // The read SUCCEEDS (the key exists) but content is empty — a crash that
     // created the sentinel without filling it. Must surface as unreadable, not
     // the clean "no sentinel" steady state (which is ENOENT → key absent).
-    fs.files.set('/vault::.filo/tag-rewrite-pending.json', '');
+    fs.files.set('/vault::.filo/tag-rewrite-pending.a1b2c3d4e5f6.json', '');
     const result = await readPendingRewrite('/vault');
     expect(result.payload).toBeUndefined();
     expect(result.unreadable).toBe(true);
@@ -150,7 +150,7 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
 
   it('read on a sentinel missing required fields returns unreadable', async () => {
     fs.files.set(
-      '/vault::.filo/tag-rewrite-pending.json',
+      '/vault::.filo/tag-rewrite-pending.a1b2c3d4e5f6.json',
       JSON.stringify({ timestamp: 1, oldName: 'a' }), // no newName, no plan
     );
     const result = await readPendingRewrite('/vault');
@@ -159,7 +159,7 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
 
   it('read on a sentinel with non-string plan entries returns unreadable', async () => {
     fs.files.set(
-      '/vault::.filo/tag-rewrite-pending.json',
+      '/vault::.filo/tag-rewrite-pending.a1b2c3d4e5f6.json',
       JSON.stringify({ timestamp: 1, oldName: 'a', newName: 'b', plan: [42] }),
     );
     const result = await readPendingRewrite('/vault');
@@ -255,7 +255,7 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
     // Forward-compat: a sentinel written by an app version before Phase 7.3
     // lacks the field. It must still recover (defaulted to []).
     fs.files.set(
-      '/vault::.filo/tag-rewrite-pending.json',
+      '/vault::.filo/tag-rewrite-pending.a1b2c3d4e5f6.json',
       JSON.stringify({ timestamp: 1, oldName: 'a', newName: 'b', plan: ['x.md'] }),
     );
     const result = await readPendingRewrite('/vault');
@@ -265,7 +265,7 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
 
   it('read on a sentinel with non-string preexistingNewNamePaths returns unreadable', async () => {
     fs.files.set(
-      '/vault::.filo/tag-rewrite-pending.json',
+      '/vault::.filo/tag-rewrite-pending.a1b2c3d4e5f6.json',
       JSON.stringify({
         timestamp: 1,
         oldName: 'a',
@@ -283,7 +283,7 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
     // must still recover, defaulted to [] (which reads as "no partial
     // removal" — the conservative, pre-6.3 behaviour).
     fs.files.set(
-      '/vault::.filo/tag-rewrite-pending.json',
+      '/vault::.filo/tag-rewrite-pending.a1b2c3d4e5f6.json',
       JSON.stringify({ timestamp: 1, oldName: 'a', newName: null, plan: ['x.md'] }),
     );
     const result = await readPendingRewrite('/vault');
@@ -293,7 +293,7 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
 
   it('read on a sentinel with non-string committedPaths returns unreadable (6.3)', async () => {
     fs.files.set(
-      '/vault::.filo/tag-rewrite-pending.json',
+      '/vault::.filo/tag-rewrite-pending.a1b2c3d4e5f6.json',
       JSON.stringify({
         timestamp: 1,
         oldName: 'a',

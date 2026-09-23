@@ -189,7 +189,7 @@ describe('rename cascade — synchronous tags.json flush (F3)', () => {
       if (channel === 'vault:read-file-text') return { success: false, code: 'ENOENT' };
       if (
         channel === 'vault:write-file-text' &&
-        String(args[1]).includes('rename-cascade-pending.json')
+        String(args[1]).includes('rename-cascade-pending.')
       ) {
         sentinelWrites.push(String(args[2]));
         return { success: true };
@@ -233,7 +233,7 @@ describe('rename cascade — synchronous tags.json flush (F3)', () => {
       if (channel === 'vault:read-file-text') return { success: false, code: 'ENOENT' };
       if (
         channel === 'vault:write-file-text' &&
-        String(args[1]).includes('rename-cascade-pending.json')
+        String(args[1]).includes('rename-cascade-pending.')
       ) {
         sentinelWrites.push(String(args[2]));
         return { success: true };

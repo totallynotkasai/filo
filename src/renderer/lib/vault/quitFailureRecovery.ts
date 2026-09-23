@@ -24,9 +24,10 @@ import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { reportError } from '../utils/errorBus';
 import { uiStore } from '../../stores/ui.svelte';
+import { surveyForeignSentinels } from '../../stores/foreignSentinels.svelte';
 import { isStillSameVault, type VaultIdentity } from './vaultIdentity';
+import { readOwnOrLegacySentinel, clearOwnSentinel } from './machineSentinels';
 
-const QUIT_FAILURE_PATH = '.filo/quit-failure.json';
 
 export interface QuitFailureFile {
   preservedPath: string;
@@ -58,7 +59,9 @@ export async function readQuitFailureBreadcrumb(
 
   let content: string;
   try {
-    const result = await invokeOk('vault:read-file-text', vaultRoot, QUIT_FAILURE_PATH);
+    // Audit-19 EXT-6 — THIS machine's breadcrumb (its absolute paths only make
+    // sense here), else the legacy shared one; another machine's is listed only.
+    const result = await readOwnOrLegacySentinel(vaultRoot, 'quit-failure');
     content = result.content;
   } catch (err) {
     // ENOENT — the common case (no failed-write quit last session). Any other
@@ -96,22 +99,16 @@ export async function readQuitFailureBreadcrumb(
  */
 export async function clearQuitFailureBreadcrumb(vaultRoot: string): Promise<void> {
   if (!vaultRoot) return;
-  // Build the absolute path the same way `dirtyFlagRecovery.markClean` does.
-  const fullPath = `${vaultRoot}/${QUIT_FAILURE_PATH}`
-    .replace(/\\/g, '/') // allow-inline-normalize: absolute breadcrumb path for vault:delete
-    .replace(/\/+/g, '/');
   try {
-    // allow-disk-shape-ipc: clearing the `.filo/quit-failure.json` recovery
-    // breadcrumb — internal state, not user content (peer of the sentinels).
-    await invokeOk('vault:delete', vaultRoot, fullPath);
+    // Audit-19 EXT-6 — this machine's breadcrumb plus the legacy shared one
+    // (migration). Another machine's is never cleared (main refuses it).
+    await clearOwnSentinel(vaultRoot, 'quit-failure');
   } catch (err) {
-    if (!(err instanceof IpcEnvelopeError && err.code === 'ENOENT')) {
-      reportError(
-        'quitFailure.clear',
-        err,
-        'Could not clear the quit-failure breadcrumb — the recovery notice may reappear next open',
-      );
-    }
+    reportError(
+      'quitFailure.clear',
+      err,
+      'Could not clear the quit-failure breadcrumb — the recovery notice may reappear next open',
+    );
   }
 }
 
@@ -136,4 +133,15 @@ export async function sweepOrphanTempFiles(vaultRoot: string, captured: VaultIde
   } catch (err) {
     reportError('quitFailure.orphanSweep', err, "Couldn't tidy leftover temporary save files");
   }
+}
+
+/**
+ * Audit-19 — the vault-open checks that run right AFTER the quit-failure
+ * breadcrumb was surfaced: move orphaned save temps out of the synced vault
+ * (EXT-5), then list other machines' crash sentinels (EXT-6, informational).
+ */
+export async function runPostBreadcrumbChecks(vaultRoot: string, captured: VaultIdentity): Promise<void> {
+  await sweepOrphanTempFiles(vaultRoot, captured);
+  if (!isStillSameVault(captured)) return;
+  await surveyForeignSentinels(vaultRoot, captured);
 }

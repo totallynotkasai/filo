@@ -253,6 +253,39 @@ if (sweptReadChannels < MIN_SWEPT) {
   }
 }
 
+// ── Audit-19 EXT-6 named anchor — sentinel OWNERSHIP is enforced main-side ──
+// The crash-recovery sentinels in a synced `.filo/` are per machine
+// (`.filo/.dirty.<machineId>` …). A generic write/delete may only target THIS
+// machine's own sentinel: `isPermittedSentinel` must compare the path's machine
+// id against `getMachineIdentity().machineId` on the write arm, and
+// `assertNotInFiloDir` must route through it with the caller's access mode.
+{
+  const file = 'src/main/utils/pathSecurity.ts';
+  let raw = null;
+  try {
+    raw = readFileSync(join(ROOT, file), 'utf8');
+  } catch (err) {
+    failures.push(`${file} — cannot read: ${err.message}`);
+  }
+  if (raw !== null) {
+    const code = blankStringsAndComments(raw);
+    const permitted = extractNamedFnBody(code, 'isPermittedSentinel');
+    const guard = extractNamedFnBody(code, 'assertNotInFiloDir');
+    if (permitted === null || guard === null) {
+      failures.push(`${file} — could not find isPermittedSentinel / assertNotInFiloDir (moved/renamed?)`);
+    } else {
+      if (!/\baccess\s*===/.test(permitted) || !/getMachineIdentity\s*\(\s*\)\s*\.\s*machineId/.test(permitted)) {
+        failures.push(
+          `${file} → isPermittedSentinel — the write arm must compare against getMachineIdentity().machineId (Audit-19 EXT-6: a machine may only write/delete its OWN sentinel)`,
+        );
+      }
+      if (!/isPermittedSentinel\s*\([^)]*\baccess\b/.test(guard)) {
+        failures.push(`${file} → assertNotInFiloDir — must route \`.filo/\` sentinels through isPermittedSentinel(…, access) (Audit-19 EXT-6)`);
+      }
+    }
+  }
+}
+
 if (failures.length > 0) {
   console.error('[check-filo-read-guard] FAILED — a content-read path can reach into `.filo/`:');
   for (const f of failures) console.error(`  ${f}`);

@@ -19,7 +19,7 @@ import { normalizePath, toPosix } from '../lib/utils/path';
 // which shadows the constructor name otherwise.
 import { vaultPath as brandVaultPath, type VaultPath } from '../../shared/vaultPath';
 import { checkRecovery, markClean } from '../lib/vault/dirtyFlagRecovery';
-import { readQuitFailureBreadcrumb, clearQuitFailureBreadcrumb, sweepOrphanTempFiles } from '../lib/vault/quitFailureRecovery';
+import { readQuitFailureBreadcrumb, clearQuitFailureBreadcrumb, runPostBreadcrumbChecks } from '../lib/vault/quitFailureRecovery';
 import {
   readPendingRewrite,
   clearPendingRewrite,
@@ -720,8 +720,8 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
   } catch (err) {
     reportError('vault.quit-failure-check', err, 'Failed to surface the quit-failure breadcrumb');
   }
-  // Audit-19 EXT-5 — AFTER the breadcrumb: move orphaned save temps out of the synced vault.
-  await sweepOrphanTempFiles(newVaultPath, captured);
+  // Audit-19 EXT-5/EXT-6 — AFTER the breadcrumb: sweep orphaned save temps; list foreign sentinels.
+  await runPostBreadcrumbChecks(newVaultPath, captured);
   if (!isStillSameVault(captured)) return;
 
   // ── 1. `.filo/.dirty` — unflushed-files modal ───────────────────
@@ -740,7 +740,7 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
         if (!isStillSameVault(captured)) return;
       } else {
         uiStore.pushToast({
-          text: "Filo detected an incomplete write but couldn't identify the unflushed file. Check `.filo/.dirty` manually if recent edits are missing.",
+          text: "Filo detected an incomplete write but couldn't identify the unflushed file. Check this machine's `.filo/.dirty.*` file manually if recent edits are missing.",
           type: 'error',
           duration: 0,
           // M1 (Audit-18) — see above: acknowledge-only so a swap/cap can't
@@ -851,7 +851,7 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
       });
     } else if (res.unreadable) {
       uiStore.pushToast({
-        text: "Filo found a tag-rewrite breadcrumb but couldn't read it. Check `.filo/tag-rewrite-pending.json` manually if a previous tag rename looks incomplete.",
+        text: "Filo found a tag-rewrite breadcrumb but couldn't read it. Check this machine's `.filo/tag-rewrite-pending.*.json` manually if a previous tag rename looks incomplete.",
         type: 'warning',
         duration: 0,
       });
@@ -911,7 +911,7 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
       });
     } else if (res.unreadable) {
       uiStore.pushToast({
-        text: "Filo found a rename-cascade breadcrumb but couldn't read it. Check `.filo/rename-cascade-pending.json` manually if a previous rename looks incomplete.",
+        text: "Filo found a rename-cascade breadcrumb but couldn't read it. Check this machine's `.filo/rename-cascade-pending.*.json` manually if a previous rename looks incomplete.",
         type: 'warning',
         duration: 0,
       });

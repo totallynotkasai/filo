@@ -73,6 +73,11 @@ export function snippetsDirPath(vaultRoot: string): string {
  */
 export async function initVaultConfig(vaultRoot: string): Promise<void> {
   const configDir = configDirPath(vaultRoot);
+  // Audit-19 ERR-8 — was `.filo/` already there (created by ANOTHER machine,
+  // arriving through sync)? Then a missing config file is most likely still
+  // syncing down; seeding a default now makes the sync client keep both and
+  // produce a conflict copy of `app.json` etc. Only a brand-new vault seeds.
+  const filoExisted = await pathExists(configDir);
   await ensureDir(configDir);
   await ensureDir(themesDirPath(vaultRoot));
   await ensureDir(fontsDirPath(vaultRoot));
@@ -153,6 +158,10 @@ export async function initVaultConfig(vaultRoot: string): Promise<void> {
     'sidebar-order.json': {},
   };
 
+  // Existing `.filo/`: leave missing files alone — the renderer's `config:load`
+  // fallback supplies the defaults in memory and the first real save creates
+  // the file. The ordering vs the candidate load (openVault swap memo) is unchanged.
+  if (filoExisted) return;
   for (const [file, defaultData] of Object.entries(defaults)) {
     const filePath = configFilePath(vaultRoot, file as ConfigFile);
     if (!(await pathExists(filePath))) {

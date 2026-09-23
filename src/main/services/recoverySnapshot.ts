@@ -17,6 +17,7 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 import { assertWithinVault } from '../utils/pathSecurity';
 import { atomicWriteFile, ensureDir } from '../vault/filenameUtils';
+import { parseSentinelBasename } from '../../shared/sentinelPaths';
 import { logMainError } from '../utils/mainLogger';
 
 const RECOVERY_DIR = join('.filo', 'recovery');
@@ -30,12 +31,9 @@ const RECOVERY_DIR = join('.filo', 'recovery');
  * sentinel). Kept in sync with the sentinel paths in `dirtyFlagRecovery.ts`,
  * `tagRewriteSentinel.ts`, `renameCascadeSentinel.ts`, `quitFailureRecovery.ts`.
  */
-const SENTINEL_BASENAMES = new Set<string>([
-  '.dirty',
-  'tag-rewrite-pending.json',
-  'rename-cascade-pending.json',
-  'quit-failure.json',
-]);
+// Audit-19 EXT-6 — per-machine forms (`.dirty.<id>`, `quit-failure.<id>.json` …)
+// as well as the legacy bare names: one matcher in src/shared/sentinelPaths.ts.
+const isSentinelBasename = (name: string): boolean => parseSentinelBasename(name) !== null;
 
 /**
  * Audit-17 3.8 — sentinel snapshots are now stored under their FLATTENED rel
@@ -46,9 +44,9 @@ const SENTINEL_BASENAMES = new Set<string>([
  * so the suffix check doesn't widen the (deliberate) exclusion.
  */
 function isSentinelSnapshotName(name: string): boolean {
-  if (SENTINEL_BASENAMES.has(name)) return true;
+  if (isSentinelBasename(name)) return true;
   const lastSegment = name.split('__').pop();
-  return lastSegment !== undefined && SENTINEL_BASENAMES.has(lastSegment);
+  return lastSegment !== undefined && isSentinelBasename(lastSegment);
 }
 
 /**

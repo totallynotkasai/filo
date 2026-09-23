@@ -55,6 +55,9 @@ const ALLOWLIST = new Set([
   // 6.2.H4 (follow-up) — clears `.filo/quit-failure.json`, the quit-time
   // emergency-file breadcrumb. Internal recovery state, not user content.
   'src/renderer/lib/vault/quitFailureRecovery.ts',
+  // Audit-19 EXT-6 — the shared per-machine sentinel delete helper (every
+  // sentinel module above now routes its `.filo/` breadcrumb delete through it).
+  'src/renderer/lib/vault/machineSentinels.ts',
 ]);
 
 /**

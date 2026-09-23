@@ -20,8 +20,17 @@ import { invokeOk } from '../utils/invokeOk';
 import { onVaultSwap } from '../../core/vaultLifecycle';
 import { createId } from '../utils/ids';
 import { currentVaultGeneration } from './vaultIdentity';
+import { getMachineIdentity, ownSentinelPath } from './machineIdentity';
+import { readOwnOrLegacySentinel, clearOwnSentinel, retireConsumedLegacySentinel } from './machineSentinels';
 
-const DIRTY_SENTINEL_PATH = '.filo/.dirty';
+/**
+ * Audit-19 EXT-6 — the sentinel is PER MACHINE (`.filo/.dirty.<machineId>`):
+ * `.filo/` syncs, and with one shared name machine B's clean shutdown deleted
+ * machine A's crash breadcrumb (and B prompted for A's unflushed files). The
+ * legacy shared `.filo/.dirty` is read and consumed once, never written.
+ */
+const ownDirtyPath = (): string => ownSentinelPath('dirty');
+
 
 /**
  * Audit-14 1.3 — per-launch session id, minted ONCE for the lifetime of this
@@ -150,6 +159,9 @@ interface SentinelPayload {
    * legacy sentinels (prompt, as before).
    */
   vaultGeneration?: number;
+  /** Audit-19 EXT-6 — the writing machine (labels a foreign sentinel). */
+  machineId?: string;
+  hostname?: string;
 }
 
 /**
@@ -175,6 +187,8 @@ export function markDirty(
     dirtyAt: Date.now(),
     launchId: LAUNCH_ID,
     vaultGeneration: currentVaultGeneration(),
+    machineId: getMachineIdentity().machineId,
+    hostname: getMachineIdentity().hostname,
   };
   if (pendingPaths && pendingPaths.length > 0) {
     payload.pendingPaths = [...pendingPaths];
@@ -191,7 +205,7 @@ export function markDirty(
       await invokeOk(
         'vault:write-file-text',
         vaultRoot,
-        DIRTY_SENTINEL_PATH,
+        ownDirtyPath(),
         JSON.stringify(payload),
       );
     } catch (err) {
@@ -213,21 +227,11 @@ export function markClean(vaultRoot: string): Promise<void> {
   if (!vaultRoot) return Promise.resolve();
   return withSentinelLock(async () => {
     try {
-      const { join } = await pathJoin();
-      const fullPath = join(vaultRoot, DIRTY_SENTINEL_PATH);
-      // Phase 31 A1.6 — invokeOk surfaces { ok:false } as a thrown
-      // IpcEnvelopeError; we swallow ENOENT (sentinel already gone)
-      // but escalate EACCES/EBUSY/etc so the user knows their "clean"
-      // state didn't actually land on disk.
-      try {
-        await invokeOk('vault:delete', vaultRoot, fullPath);
-      } catch (err) {
-        if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
-          // Already gone — that's the desired terminal state.
-          return;
-        }
-        throw err;
-      }
+      // Phase 31 A1.6 — ENOENT (already gone) is the desired terminal state;
+      // EACCES/EBUSY/etc escalate so the user knows "clean" didn't land.
+      // Audit-19 EXT-6 — only THIS machine's sentinel (main refuses others),
+      // plus the legacy shared one once it was surfaced this session.
+      await clearOwnSentinel(vaultRoot, 'dirty');
     } catch (err) {
       // Treat the thrown form of ENOENT the same way (some main-side
       // handlers historically threw rather than returning an envelope).
@@ -327,16 +331,16 @@ async function readRecoveryStatus(
 ): Promise<RecoveryStatus> {
   if (!vaultRoot) return { needsRecovery: false };
   let content: string;
+  let source: 'own' | 'legacy' = 'own';
   try {
-    // Phase 37 / 37.6 — canonical two-arg form. `pathJoin` no longer needed
-    // here because the IPC handler resolves the relative path against the
-    // active vaultRoot.
-    // Phase 1 (CONSOLIDATION_PLAN) — invokeOk; ENOENT means the previous
-    // session shut down cleanly (no pending writes). Any other failure
-    // means we couldn't prove cleanliness — surface it and snapshot the
-    // (unreadable) sentinel for forensic recovery.
-    const result = await invokeOk('vault:read-file-text', vaultRoot, DIRTY_SENTINEL_PATH);
+    // Phase 1 (CONSOLIDATION_PLAN) — ENOENT means the previous session shut
+    // down cleanly (no pending writes). Any other failure means we couldn't
+    // prove cleanliness — surface it and snapshot the (unreadable) sentinel.
+    // Audit-19 EXT-6 — THIS machine's sentinel, else the legacy shared one;
+    // another machine's is never prompted for (its data isn't here).
+    const result = await readOwnOrLegacySentinel(vaultRoot, 'dirty');
     content = result.content;
+    source = result.source;
   } catch (err) {
     if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
       return { needsRecovery: false };
@@ -359,11 +363,14 @@ async function readRecoveryStatus(
       // allow-envelope-bare: defensive best-effort snapshot — the user already
       // got an explicit toast (`dirtyFlag.check` reportError above); if the
       // snapshot ALSO fails we don't want to escalate.
-      void window.filo.invoke('recovery:snapshot', vaultRoot, DIRTY_SENTINEL_PATH)
+      void window.filo.invoke('recovery:snapshot', vaultRoot, ownDirtyPath())
         .catch(() => { /* best-effort; user already saw the toast above */ });
     }
     return { needsRecovery: true, reason: 'sentinel-unreadable' };
   }
+  // Audit-19 EXT-6 — a legacy shared sentinel is consumed once: the next
+  // markClean for this vault (the user's Dismiss / first clean cycle) deletes
+  // it (`clearOwnSentinel` retires a legacy file that was read).
   if (!content) {
     // 6.4.M5 — a zero-byte `.filo/.dirty` is evidence of a crash that
     // interrupted `markDirty` between the create-empty-file step and the
@@ -395,6 +402,12 @@ async function readRecoveryStatus(
   }
   try {
     const parsed = JSON.parse(content) as SentinelPayload;
+    if (source === 'legacy' && parsed.launchId === LAUNCH_ID) {
+      // This very process wrote it (cannot happen with the new build, which
+      // never writes a legacy name — defensive): delete now, no prompt.
+      await retireConsumedLegacySentinel(vaultRoot, 'dirty').catch(() => undefined);
+      return { needsRecovery: false };
+    }
     // Audit-14 1.3 — a sentinel stamped with THIS launch's id was written by
     // the current process (e.g. a migration-repair write during the open that
     // is about to call us), not a prior crash. Suppress the prompt. A prior
@@ -438,23 +451,6 @@ async function readRecoveryStatus(
  */
 export function __getLaunchIdForTests(): string {
   return LAUNCH_ID;
-}
-
-/**
- * Lightweight `path.join` shim for the renderer. We can't `import { join }`
- * from 'path' directly (Node-only), but every platform we ship on uses `/`
- * as a valid separator inside sub-paths, and the vault root already ends
- * without a trailing separator.
- */
-async function pathJoin(): Promise<{ join: (...parts: string[]) => string }> {
-  return {
-    join: (...parts: string[]) =>
-      parts
-        .filter(Boolean)
-        .join('/')
-        .replace(/\\/g, '/') // allow-inline-normalize: paired with /\/+/g collapse below
-        .replace(/\/+/g, '/'),
-  };
 }
 
 // Phase 3 (IMPL_PLAN 2026-05-25) — vault-swap reset. The mutex chain

@@ -93,7 +93,7 @@ describe('recovery — D.9 resolver vault identity', () => {
     const sentinelDelete = writes.find(
       (w) =>
         w.channel === 'vault:delete' &&
-        String(w.args[1]).endsWith('.filo/.dirty'),
+        String(w.args[1]).endsWith('.filo/.dirty.a1b2c3d4e5f6'),
     );
     expect(sentinelDelete).toBeDefined();
     expect(String(sentinelDelete?.args[0])).toBe('/vault-B');

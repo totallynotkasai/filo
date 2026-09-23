@@ -307,7 +307,7 @@ describe('rewriteTagInAllMarkdown — sweep mutex (polish phase 4.3)', () => {
     // The sentinel must survive (failed > 0 ⇒ not cleared) AND carry the
     // path that was actually stripped, so reopen-side detection can see the
     // removal got half-done.
-    const sentinelRaw = fs.files.get('.filo/tag-rewrite-pending.json');
+    const sentinelRaw = fs.files.get('.filo/tag-rewrite-pending.a1b2c3d4e5f6.json');
     expect(sentinelRaw, 'removal sentinel should survive a partial sweep').toBeDefined();
     const sentinel = JSON.parse(sentinelRaw as string) as {
       newName: string | null;

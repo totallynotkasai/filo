@@ -55,13 +55,13 @@ describe('dirtyFlagRecovery', () => {
     restoreFiloDefault();
   });
 
-  it('markDirty writes a JSON sentinel to .filo/.dirty', async () => {
+  it('markDirty writes a JSON sentinel to .filo/.dirty.a1b2c3d4e5f6', async () => {
     const stub = installIpcStub();
     await markDirty('/vault');
     const write = stub.writes.find((w) => w.channel === 'vault:write-file-text');
     expect(write).toBeDefined();
     expect(write?.args[0]).toBe('/vault');
-    expect(write?.args[1]).toBe('.filo/.dirty');
+    expect(write?.args[1]).toBe('.filo/.dirty.a1b2c3d4e5f6');
     const body = JSON.parse(write?.args[2] as string);
     expect(typeof body.dirtyAt).toBe('number');
   });
@@ -79,7 +79,7 @@ describe('dirtyFlagRecovery', () => {
     expect(del).toBeDefined();
     // Phase 25 L6 — vault:delete now takes (vaultRoot, itemPath).
     expect(del?.args[0]).toBe('/vault');
-    expect(del?.args[1]).toBe('/vault/.filo/.dirty');
+    expect(del?.args[1]).toBe('/vault/.filo/.dirty.a1b2c3d4e5f6');
   });
 
   it('markClean swallows ENOENT errors (sentinel may not exist)', async () => {
@@ -420,12 +420,12 @@ describe('dirtyFlagRecovery', () => {
     const snap = stub.writes.find((w) => w.channel === 'recovery:snapshot');
     expect(snap).toBeDefined();
     expect(snap?.args[0]).toBe('/vault');
-    expect(snap?.args[1]).toBe('.filo/.dirty');
+    expect(snap?.args[1]).toBe('.filo/.dirty.a1b2c3d4e5f6');
     // The errorBus toast still fires so the user knows manual recovery may be needed.
     expect(errors).toHaveLength(1);
   });
 
-  // 6.4.M5 — a zero-byte `.filo/.dirty` is evidence of a crash mid-flush
+  // 6.4.M5 — a zero-byte `.filo/.dirty.a1b2c3d4e5f6` is evidence of a crash mid-flush
   // (markDirty created the file but the JSON payload write didn't land).
   // The legacy code treated zero-byte as "cleanly absent", silently hiding
   // the crash from the user. Treat it as dirty with the sentinel-unreadable

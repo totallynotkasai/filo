@@ -41,7 +41,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
  *      and the failure-path `vault:close` fired only `if (outgoingVaultPath)`
  *      — null on a first open — so every OTHER vault failed init-config's
  *      "different vault already active" guard until restart.
- *  3.2 Open-time repair writes REPLACE a genuine prior-crash `.filo/.dirty`
+ *  3.2 Open-time repair writes REPLACE a genuine prior-crash `.filo/.dirty.a1b2c3d4e5f6`
  *      payload (beginWrite → refreshSentinel → markDirty) before the recovery
  *      sequencer reads it; the Audit-16 3.3 self-write suppression then hid
  *      the crash entirely. Fix: the candidate phase reads + stashes the
@@ -110,7 +110,7 @@ function dismissAllToasts(): void {
 // ── 3.2 — pre-commit sentinel stash ──────────────────────────────────
 
 describe('Audit-17 3.2 — pre-commit stash preserves the prior-crash sentinel payload', () => {
-  /** Simulated `.filo/.dirty` bytes on disk; markDirty replaces them. */
+  /** Simulated `.filo/.dirty.a1b2c3d4e5f6` bytes on disk; markDirty replaces them. */
   let dirtyContent: string | null;
 
   beforeEach(() => {
@@ -120,14 +120,14 @@ describe('Audit-17 3.2 — pre-commit stash preserves the prior-crash sentinel p
     installFiloMock({
       'vault:read-file-text': async (...args: unknown[]) => {
         const rel = String(args[1]);
-        if (rel === '.filo/.dirty') {
+        if (rel === '.filo/.dirty.a1b2c3d4e5f6') {
           if (dirtyContent === null) return { success: false, code: 'ENOENT', error: 'ENOENT' };
           return { success: true, content: dirtyContent };
         }
         return { success: false, code: 'ENOENT', error: 'ENOENT' };
       },
       'vault:write-file-text': async (...args: unknown[]) => {
-        if (String(args[1]) === '.filo/.dirty') dirtyContent = String(args[2]);
+        if (String(args[1]) === '.filo/.dirty.a1b2c3d4e5f6') dirtyContent = String(args[2]);
         return { success: true };
       },
     });
@@ -304,7 +304,7 @@ describe('Audit-17 3.4 — concurrent withDrainedWrites siblings queue behind th
 // ── 3.7 — unreadable rename-cascade sentinel is preserved ─────────────
 
 describe('Audit-17 3.7 — writePendingRenameCascade refuses to clobber an unreadable sentinel', () => {
-  const SENTINEL_REL = '.filo/rename-cascade-pending.json';
+  const SENTINEL_REL = '.filo/rename-cascade-pending.a1b2c3d4e5f6.json';
   let sentinelWrites: string[];
   let sentinelContent: string | null;
   let errSpy: ReturnType<typeof vi.spyOn>;
@@ -377,7 +377,7 @@ describe('Audit-17 3.7 — writePendingRenameCascade refuses to clobber an unrea
 // ── 3.6 — drain failure during an external rename lays a breadcrumb ──
 
 describe('Audit-17 3.6 — external rename drain failure writes the rename-cascade sentinel', () => {
-  const SENTINEL_REL = '.filo/rename-cascade-pending.json';
+  const SENTINEL_REL = '.filo/rename-cascade-pending.a1b2c3d4e5f6.json';
 
   function ctxFor(): VaultContext {
     return {
@@ -658,7 +658,7 @@ describe('Audit-17 3.3 — every Recovery modal close path un-parks the sequence
     // `beforeClose`; without this hook they bypass the recovery sequencer
     // resolver and it parks forever (steps 2–4 never run). Audit-18 4.1
     // NARROWED A17-3.3: a bypassed close un-parks the sequencer via
-    // `bypassRecoveryModalClose()` (which preserves the `.filo/.dirty`
+    // `bypassRecoveryModalClose()` (which preserves the `.filo/.dirty.a1b2c3d4e5f6`
     // sentinel) rather than `acknowledgeRecovery()` (which destroys it) —
     // only the explicit Dismiss button acknowledges.
     const block = src.slice(idx, idx + 600);

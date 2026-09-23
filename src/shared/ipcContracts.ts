@@ -249,6 +249,25 @@ export interface IpcChannelMap {
     args: [vaultRoot: string];
     result: Array<{ relPath: string; basename: string; timestamp: string }>;
   };
+  // Audit-19 EXT-6 — per-machine sentinels in `.filo/` (own, foreign, legacy).
+  'recovery:list-sentinels': {
+    args: [vaultRoot: string];
+    result: IpcSuccess<{
+      entries: Array<{
+        kind: 'dirty' | 'rename-cascade' | 'tag-rewrite' | 'quit-failure';
+        machineId: string | null;
+        /** From `.filo/machines/<machineId>.json` when registered. */
+        hostname?: string;
+        relPath: string;
+        mtimeMs: number;
+      }>;
+    }>;
+  };
+  // Audit-19 EXT-6 — this machine (userData/machine-id.json) + hostname. Bare.
+  'app:machine-identity': {
+    args: [];
+    result: { machineId: string; hostname: string };
+  };
   // Audit-19 EXT-5 — moves orphaned `*.<12hex>.tmp` / `.case-rename-*` files
   // older than 10 min into `.filo/recovery/orphan-tmp/` (never deletes).
   'vault:sweep-orphan-tmp': {

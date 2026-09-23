@@ -10,7 +10,7 @@ import {
 } from '@renderer/lib/boards/writeStateTracking';
 
 /**
- * Phase 2.3 — the `.filo/.dirty` sentinel must survive a Recovery-modal
+ * Phase 2.3 — the `.filo/.dirty.a1b2c3d4e5f6` sentinel must survive a Recovery-modal
  * close that wasn't an explicit acknowledgement. Only `acknowledgeRecovery`
  * (the Dismiss button) is allowed to clear the on-disk sentinel; closing
  * via Esc / X / backdrop must leave it so the next vault open re-surfaces
@@ -80,7 +80,7 @@ describe('vaultRecovery slice', () => {
     // Phase 25 L6 — vault:delete now takes (vaultRoot, itemPath); sentinel
     // path lives in args[1].
     const sentinelDelete = writes.find(
-      (w) => w.channel === 'vault:delete' && String(w.args[1]).endsWith('.filo/.dirty'),
+      (w) => w.channel === 'vault:delete' && String(w.args[1]).endsWith('.filo/.dirty.a1b2c3d4e5f6'),
     );
     expect(sentinelDelete).toBeDefined();
   });
@@ -112,7 +112,7 @@ describe('vaultRecovery slice', () => {
     await slice.acknowledgeRecovery();
     expect(
       writes.find(
-        (w) => w.channel === 'vault:delete' && String(w.args[1]).endsWith('.filo/.dirty'),
+        (w) => w.channel === 'vault:delete' && String(w.args[1]).endsWith('.filo/.dirty.a1b2c3d4e5f6'),
       ),
     ).toBeDefined();
     __resetDirtyTrackingForTests();
@@ -129,7 +129,7 @@ describe('vaultRecovery slice', () => {
     // Not cleared — re-marked dirty with the still-failed path.
     expect(writes.find((w) => w.channel === 'vault:delete')).toBeUndefined();
     const dirty = writes.find(
-      (w) => w.channel === 'vault:write-file-text' && String(w.args[1]).endsWith('.filo/.dirty'),
+      (w) => w.channel === 'vault:write-file-text' && String(w.args[1]).endsWith('.filo/.dirty.a1b2c3d4e5f6'),
     );
     expect(dirty).toBeDefined();
     const body = JSON.parse(dirty?.args[2] as string);

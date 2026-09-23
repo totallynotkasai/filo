@@ -1,6 +1,8 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { toPosix } from './pathHelpers';
+import { parseSentinelPath } from '../../shared/sentinelPaths';
+import { getMachineIdentity } from '../services/machineIdentity';
 
 /**
  * Throws if targetPath resolves to a location outside vaultRoot. Protects
@@ -316,28 +318,27 @@ export class FiloDirForbiddenError extends Error {
 }
 
 /**
- * Vault-relative paths the renderer is permitted to read/write through
- * the generic `vault:*` channels even though they live under `.filo/`.
+ * `.filo/` files the renderer may touch through the generic `vault:*`
+ * channels: strictly the crash-recovery sentinels. Every other `.filo/` file
+ * (themes, configs, tags, templates) is owned by a dedicated IPC channel.
  *
- * Strictly the crash-recovery sentinels — every other `.filo/` file
- * (themes, configs, tags, templates, snippets) is owned by a dedicated
- * IPC channel that bypasses `assertNotInFiloDir` entirely.
- *
- * If you're adding a new `.filo/` file, prefer a dedicated channel over
- * widening this list. The narrower the allowlist, the smaller the
- * blast-radius for a buggy renderer accidentally clobbering `.filo/`
- * state through a stale generic-channel call.
+ * Audit-19 EXT-6 (plan D5) — the sentinels are PER MACHINE
+ * (`.filo/.dirty.<machineId>` …, see `src/shared/sentinelPaths.ts`) because
+ * `.filo/` syncs to every machine. Ownership is enforced HERE, main-side, so
+ * "a machine only ever clears its own" is structural rather than a renderer
+ * convention:
+ *   - `access: 'write'` (default; writes / deletes / renames): only THIS
+ *     machine's id, plus the legacy bare names (read + deleted once to migrate);
+ *   - `access: 'read'`: any machine's id (foreign sentinels are listed,
+ *     never acted on) and the legacy names.
  */
-const RENDERER_PERMITTED_FILO_PATHS = new Set<string>([
-  '.filo/.dirty',
-  '.filo/rename-cascade-pending.json',
-  '.filo/tag-rewrite-pending.json',
-  // 6.2.H4 (follow-up) — quit-failure breadcrumb. Written by the main-side
-  // quit drain; read by the renderer's `readQuitFailureBreadcrumb` and deleted
-  // by `clearQuitFailureBreadcrumb` once the user acknowledges (Audit-8 L4 split
-  // the consume-on-read into read + clear), same channels as `.filo/.dirty`.
-  '.filo/quit-failure.json',
-]);
+function isPermittedSentinel(normalised: string, access: 'read' | 'write'): boolean {
+  const parsed = parseSentinelPath(normalised);
+  if (!parsed) return false;
+  if (parsed.machineId === null) return true; // legacy bare name — migration read + delete
+  if (access === 'write') return parsed.machineId === getMachineIdentity().machineId;
+  return true;
+}
 
 /**
  * Phase 1 / 1.2 — rejects any vault-relative path whose first segment
@@ -353,18 +354,24 @@ const RENDERER_PERMITTED_FILO_PATHS = new Set<string>([
  * (`assertSafeRelativePath`, `assertWithinVault`) already reject those with
  * a more specific error. This helper is strictly the `.filo/` guard.
  *
- * Recognised sentinel paths in `RENDERER_PERMITTED_FILO_PATHS` are
- * allowed through.
+ * Crash-recovery sentinels are allowed through per `isPermittedSentinel`
+ * (Audit-19 EXT-6: a WRITE may only target this machine's own sentinel).
  */
-export function assertNotInFiloDir(relativePath: string): void {
+export function assertNotInFiloDir(
+  relativePath: string,
+  opts: { access?: 'read' | 'write' } = {},
+): void {
   if (typeof relativePath !== 'string' || relativePath.length === 0) return;
   const segments = toPosix(relativePath).split('/').filter(Boolean);
   if (segments.length === 0) return;
   if (segments[0]?.toLowerCase() !== '.filo') return;
   const normalised = segments.join('/');
-  if (RENDERER_PERMITTED_FILO_PATHS.has(normalised)) return;
+  const access = opts.access ?? 'write';
+  if (isPermittedSentinel(normalised, access)) return;
   throw new FiloDirForbiddenError(
-    `FORBIDDEN: generic vault channel cannot touch ${normalised} — use the dedicated config/tags/templates/theme/font channels`,
+    access === 'write' && parseSentinelPath(normalised)
+      ? `FORBIDDEN: ${normalised} is another machine's crash-recovery sentinel — only its owner may write or delete it`
+      : `FORBIDDEN: generic vault channel cannot touch ${normalised} — use the dedicated config/tags/templates/theme/font channels`,
   );
 }
 

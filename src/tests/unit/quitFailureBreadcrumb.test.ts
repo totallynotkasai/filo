@@ -9,7 +9,7 @@ import {
 } from '../../main/services/emergencyFileRegistry';
 import {
   writeQuitFailureBreadcrumb,
-  QUIT_FAILURE_REL_PATH,
+  quitFailureRelPath,
 } from '../../main/services/quitFailureBreadcrumb';
 
 /**
@@ -54,7 +54,7 @@ describe('6.2.H4 (follow-up) — emergency-file registry + quit-failure breadcru
 
     await writeQuitFailureBreadcrumb(dir);
 
-    const raw = await fs.readFile(join(dir, QUIT_FAILURE_REL_PATH), 'utf-8');
+    const raw = await fs.readFile(join(dir, quitFailureRelPath()), 'utf-8');
     const parsed = JSON.parse(raw);
     expect(parsed.version).toBe(1);
     expect(typeof parsed.savedAt).toBe('string');
@@ -65,13 +65,13 @@ describe('6.2.H4 (follow-up) — emergency-file registry + quit-failure breadcru
 
   it('no-ops when the registry is empty (no breadcrumb file created)', async () => {
     await writeQuitFailureBreadcrumb(dir);
-    await expect(fs.access(join(dir, QUIT_FAILURE_REL_PATH))).rejects.toThrow();
+    await expect(fs.access(join(dir, quitFailureRelPath()))).rejects.toThrow();
   });
 
   it('no-ops for a null vault root', async () => {
     recordPreservedEmergencyFile({ preservedPath: join(dir, 'x.md') });
     await writeQuitFailureBreadcrumb(null);
-    await expect(fs.access(join(dir, QUIT_FAILURE_REL_PATH))).rejects.toThrow();
+    await expect(fs.access(join(dir, quitFailureRelPath()))).rejects.toThrow();
   });
 
   it('filters out preserved files outside the target vault (cross-vault swap)', async () => {
@@ -81,7 +81,7 @@ describe('6.2.H4 (follow-up) — emergency-file registry + quit-failure breadcru
       // write for `dir` (don't leak another vault's path into this breadcrumb).
       recordPreservedEmergencyFile({ preservedPath: join(otherVault, 'Stray.md'), code: 'EIO' });
       await writeQuitFailureBreadcrumb(dir);
-      await expect(fs.access(join(dir, QUIT_FAILURE_REL_PATH))).rejects.toThrow();
+      await expect(fs.access(join(dir, quitFailureRelPath()))).rejects.toThrow();
     } finally {
       await fs.rm(otherVault, { recursive: true, force: true });
     }

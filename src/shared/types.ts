@@ -68,6 +68,10 @@ export type IpcChannel =
   | 'recovery:snapshot'
   // Recovery snapshot listing (surfaced to the user on vault open)
   | 'recovery:list'
+  // Audit-19 EXT-6 - per-machine crash sentinels in .filo (this machine, others, legacy)
+  | 'recovery:list-sentinels'
+  // Audit-19 EXT-6 - this machine id (userData) and hostname
+  | 'app:machine-identity'
   // Audit-19 EXT-5 - move orphaned atomic-write temps into .filo/recovery/orphan-tmp
   | 'vault:sweep-orphan-tmp'
   // Config operations (.filo/ directory)

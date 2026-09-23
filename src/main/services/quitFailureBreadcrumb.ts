@@ -19,9 +19,17 @@ import { assertWithinVault } from '../utils/pathSecurity';
 import { atomicWriteFile, ensureDir } from '../vault/filenameUtils';
 import { logMainError } from '../utils/mainLogger';
 import { listPreservedEmergencyFiles } from './emergencyFileRegistry';
+import { getMachineIdentity } from './machineIdentity';
+import { machineSentinelPath } from '../../shared/sentinelPaths';
 
-/** Vault-relative path of the breadcrumb. Permitted in RENDERER_PERMITTED_FILO_PATHS. */
-export const QUIT_FAILURE_REL_PATH = '.filo/quit-failure.json';
+/**
+ * Vault-relative path of THIS machine's breadcrumb (Audit-19 EXT-6: per
+ * machine — the absolute `preservedPath`s only make sense on the machine
+ * that wrote them, and another machine must never clear it).
+ */
+export function quitFailureRelPath(): string {
+  return machineSentinelPath('quit-failure', getMachineIdentity().machineId);
+}
 export const QUIT_FAILURE_VERSION = 1;
 
 /** True when `p` resolves inside `root` (pure path check, no fs access). */
@@ -44,12 +52,14 @@ export async function writeQuitFailureBreadcrumb(vaultRoot: string | null): Prom
   const files = listPreservedEmergencyFiles().filter((f) => isWithin(vaultRoot, f.preservedPath));
   if (files.length === 0) return;
   try {
-    const destAbs = join(vaultRoot, QUIT_FAILURE_REL_PATH);
+    const destAbs = join(vaultRoot, quitFailureRelPath());
     assertWithinVault(vaultRoot, destAbs);
     await ensureDir(join(vaultRoot, '.filo'));
     const payload = {
       version: QUIT_FAILURE_VERSION,
       savedAt: new Date().toISOString(),
+      machineId: getMachineIdentity().machineId,
+      hostname: getMachineIdentity().hostname,
       files: files.map((f) => ({
         preservedPath: f.preservedPath,
         targetPath: f.targetPath,

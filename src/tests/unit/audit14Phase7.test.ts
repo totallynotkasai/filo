@@ -19,7 +19,7 @@ import type { TaskListBoard, TileDefinition } from '@renderer/schema/index';
  *
  * 7.1 — quit-with-pending-write + crash-recovery (the highest-consequence flow):
  *       an edit arms a write, the app is killed before it lands, and on relaunch
- *       the `.filo/.dirty` recovery sentinel must still name the unsaved path.
+ *       the `.filo/.dirty.a1b2c3d4e5f6` recovery sentinel must still name the unsaved path.
  *       This is the cadence-independent integration counterpart to the
  *       (nightly-only) kill+relaunch E2E.
  *
@@ -145,7 +145,7 @@ describe('Audit-14 7.3 — DeleteTaskCommand.undo reconciles open editors', () =
 
 /**
  * Ties the REAL write lifecycle (`trackComponentWrite` → `beginWrite` →
- * `markDirty`) to the REAL recovery read (`checkRecovery`) through a `.filo/.dirty`
+ * `markDirty`) to the REAL recovery read (`checkRecovery`) through a `.filo/.dirty.a1b2c3d4e5f6`
  * sentinel persisted on a mock "disk", so a hard quit mid-write leaves a
  * breadcrumb naming the unsaved path rather than losing the edit silently. This
  * is the unit/integration version the plan asks for explicitly because the full
@@ -153,24 +153,26 @@ describe('Audit-14 7.3 — DeleteTaskCommand.undo reconciles open editors', () =
  */
 describe('Audit-14 7.1 — quit-with-pending-write recovery breadcrumb', () => {
   function installSentinelDisk(): { sentinel: string | null } {
-    // A mock disk that persists ONLY the `.filo/.dirty` sentinel across the
+    // A mock disk that persists ONLY the `.filo/.dirty.a1b2c3d4e5f6` sentinel across the
     // "relaunch" (write captures it, read serves it, delete clears it).
     const disk: { sentinel: string | null } = { sentinel: null };
     installFiloMock((channel: string, ...args: unknown[]) => {
       const rel = String(args[1] ?? '');
-      if (channel === 'vault:write-file-text' && rel === '.filo/.dirty') {
+      if (channel === 'vault:write-file-text' && rel === '.filo/.dirty.a1b2c3d4e5f6') {
         disk.sentinel = args[2] as string;
         return { success: true };
       }
-      if (channel === 'vault:read-file-text' && rel.endsWith('.filo/.dirty')) {
+      if (channel === 'vault:read-file-text' && rel.endsWith('.filo/.dirty.a1b2c3d4e5f6')) {
         return disk.sentinel === null
           ? { success: false, code: 'ENOENT' }
           : { success: true, content: disk.sentinel };
       }
-      if (channel === 'vault:delete' && rel.endsWith('.filo/.dirty')) {
+      if (channel === 'vault:delete' && rel.endsWith('.filo/.dirty.a1b2c3d4e5f6')) {
         disk.sentinel = null;
         return { success: true };
       }
+      // Any other read (e.g. the Audit-19 legacy `.filo/.dirty` fallback) is absent.
+      if (channel === 'vault:read-file-text') return { success: false, code: 'ENOENT' };
       return { success: true };
     });
     return disk;

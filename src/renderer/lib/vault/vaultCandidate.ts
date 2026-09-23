@@ -63,6 +63,7 @@ import { loadTagsFile } from './tagsStorage';
 import { normalizePath, toPosix } from '../utils/path';
 import { noteBaseline } from './fileBaselineRegistry';
 import { stashRecoveryStatusBeforeCommit } from './dirtyFlagRecovery';
+import { loadMachineIdentity } from './machineIdentity';
 
 /**
  * Audit-19 ERR-4 — failed-board kinds whose on-disk bytes are readable but
@@ -208,6 +209,9 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
   const warnings: VaultCandidateWarning[] = [];
   const corruptionTargets: CorruptionTarget[] = [];
 
+  // Audit-19 EXT-6 — every crash sentinel this session names is built from
+  // this machine's id; load it before the first sentinel read below.
+  await loadMachineIdentity();
   await invokeOk('vault:init-config', newVaultPath);
 
   // Audit-17 3.2 — read + stash the prior session's `.filo/.dirty` payload

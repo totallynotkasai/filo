@@ -9,6 +9,7 @@ import { registerShellHandlers } from './shell.ipc';
 import { registerTagsHandlers } from './tags.ipc';
 import { registerTemplateHandlers } from './templates.ipc';
 import { registerSidebarHandlers } from './sidebar.ipc';
+import { registerMachineHandlers } from './machine.ipc';
 
 /**
  * Registers all IPC handlers for the main process.
@@ -26,4 +27,5 @@ export function registerAllHandlers(): void {
   registerTagsHandlers();
   registerTemplateHandlers();
   registerSidebarHandlers();
+  registerMachineHandlers();
 }

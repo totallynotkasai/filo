@@ -137,7 +137,7 @@ describe('DeleteTilesCommand — snapshot/restore (P0-18)', () => {
     // Phase 3 / 3.2 — IPC dispatch is queued behind prior in-flight work.
     await cmd.lastExecuteCompletion;
     // Phase R2 — `deleteVaultPath` drains pending writers before the
-    // IPC, which can trigger `markClean` to delete `.filo/.dirty` as a
+    // IPC, which can trigger `markClean` to delete `.filo/.dirty.a1b2c3d4e5f6` as a
     // side effect of the drain. Filter sentinel deletes out so we count
     // only user-file deletes for the assertion.
     const deletes = calls.filter(
@@ -178,10 +178,10 @@ describe('DeleteTilesCommand — snapshot/restore (P0-18)', () => {
     await cmd.lastUndoCompletion;
 
     expect(boardStore.getTile('t1')).toBeDefined();
-    // Filter out the `.filo/.dirty` sentinel writes that the
+    // Filter out the `.filo/.dirty.a1b2c3d4e5f6` sentinel writes that the
     // writeStateTracking pipeline emits as a side-effect.
     const writes = calls.filter(
-      (c) => c.channel === 'vault:write-file-text' && c.args[1] !== '.filo/.dirty',
+      (c) => c.channel === 'vault:write-file-text' && c.args[1] !== '.filo/.dirty.a1b2c3d4e5f6',
     );
     expect(writes.length).toBe(1);
     expect(writes[0].args).toEqual(['/vault', 'Foo.md', 'hello world']);
@@ -226,7 +226,7 @@ describe('DeleteTilesCommand — snapshot/restore (P0-18)', () => {
     expect(boardStore.getTile('t2')).toBeDefined();
     expect(boardStore.getTile('t3')).toBeDefined();
     const writes = calls.filter(
-      (c) => c.channel === 'vault:write-file-text' && c.args[1] !== '.filo/.dirty',
+      (c) => c.channel === 'vault:write-file-text' && c.args[1] !== '.filo/.dirty.a1b2c3d4e5f6',
     );
     expect(writes.length).toBe(3);
     const payloads = writes.map((w) => ({ rel: w.args[1], content: w.args[2] }));
@@ -244,9 +244,9 @@ describe('DeleteTilesCommand — snapshot/restore (P0-18)', () => {
       'vault:delete': async () => ({ success: true }),
       'vault:write-file-text': (_vaultRoot, relPath) => {
         // Only fail for the actual snapshot write; let the sentinel write
-        // (`.filo/.dirty`) succeed so it doesn't get incorrectly counted as
+        // (`.filo/.dirty.a1b2c3d4e5f6`) succeed so it doesn't get incorrectly counted as
         // a tracked failure.
-        if (relPath === '.filo/.dirty') return { success: true };
+        if (relPath === '.filo/.dirty.a1b2c3d4e5f6') return { success: true };
         return { success: false, error: 'disk full' };
       },
       'vault:file-exists': async () => false,
@@ -287,7 +287,7 @@ describe('DeleteTilesCommand — snapshot/restore (P0-18)', () => {
     installFiloStub({
       'vault:delete': async () => ({ success: true }),
       'vault:write-file-text': (_vaultRoot, relPath) => {
-        if (relPath === '.filo/.dirty') return { success: true };
+        if (relPath === '.filo/.dirty.a1b2c3d4e5f6') return { success: true };
         return { success: false, error: 'EACCES' };
       },
       // Audit-19 BL-1 — the re-added tile's empty seed now goes through the
@@ -417,15 +417,15 @@ describe('DeleteTilesCommand — snapshot/restore (P0-18)', () => {
     // Phase 3 / 3.2 — IPC dispatch is queued; await before asserting IPC calls.
     await cmd.lastExecuteCompletion;
     // Execute should only DELETE, not WRITE. The sentinel writes (path
-    // `.filo/.dirty`) emitted by the write-tracking pipeline are unrelated
+    // `.filo/.dirty.a1b2c3d4e5f6`) emitted by the write-tracking pipeline are unrelated
     // to the command's intended writes — exclude those.
     const writePayload = calls.find(
-      (c) => c.channel === 'vault:write-file-text' && c.args[1] !== '.filo/.dirty',
+      (c) => c.channel === 'vault:write-file-text' && c.args[1] !== '.filo/.dirty.a1b2c3d4e5f6',
     );
     expect(writePayload).toBeUndefined();
     // Phase R2 — same `.filo/` sentinel-delete filter as the basic
     // execute test; the drain inside `deleteVaultPath` can cleanup
-    // `.filo/.dirty` after the board flush.
+    // `.filo/.dirty.a1b2c3d4e5f6` after the board flush.
     const deletes = calls.filter(
       (c) => c.channel === 'vault:delete' && !((c.args[1] as string) ?? '').includes('.filo/'),
     );

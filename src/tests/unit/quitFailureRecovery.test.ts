@@ -6,7 +6,7 @@ import {
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * 6.2.H4 (follow-up) — renderer read/clear of `.filo/quit-failure.json`.
+ * 6.2.H4 (follow-up) — renderer read/clear of `.filo/quit-failure.a1b2c3d4e5f6.json`.
  *
  * Audit-8 L4 — the read and the clear are SEPARATE: `readQuitFailureBreadcrumb`
  * parses but NEVER deletes (so a second crash before the user acknowledges
@@ -53,7 +53,7 @@ describe('Audit-8 L4 — quit-failure breadcrumb read/clear split', () => {
 
   it('reads + parses the breadcrumb WITHOUT deleting it (survives a second crash)', async () => {
     diskFiles.set(
-      '.filo/quit-failure.json',
+      '.filo/quit-failure.a1b2c3d4e5f6.json',
       JSON.stringify({
         version: 1,
         savedAt: '2026-06-01T00:00:00.000',
@@ -68,25 +68,25 @@ describe('Audit-8 L4 — quit-failure breadcrumb read/clear split', () => {
     expect(res!.files[0].preservedPath).toBe('/vault/Notes.md');
     // Read must NOT consume the breadcrumb.
     expect(deletes).toHaveLength(0);
-    expect(diskFiles.has('.filo/quit-failure.json')).toBe(true);
+    expect(diskFiles.has('.filo/quit-failure.a1b2c3d4e5f6.json')).toBe(true);
   });
 
   it('returns null on malformed JSON without deleting', async () => {
-    diskFiles.set('.filo/quit-failure.json', 'not json {');
+    diskFiles.set('.filo/quit-failure.a1b2c3d4e5f6.json', 'not json {');
     const res = await readQuitFailureBreadcrumb('/vault');
     expect(res).toBeNull();
     expect(deletes).toHaveLength(0);
   });
 
   it('returns null when the files array is empty', async () => {
-    diskFiles.set('.filo/quit-failure.json', JSON.stringify({ version: 1, files: [] }));
+    diskFiles.set('.filo/quit-failure.a1b2c3d4e5f6.json', JSON.stringify({ version: 1, files: [] }));
     const res = await readQuitFailureBreadcrumb('/vault');
     expect(res).toBeNull();
   });
 
   it('drops malformed file entries but keeps well-formed ones', async () => {
     diskFiles.set(
-      '.filo/quit-failure.json',
+      '.filo/quit-failure.a1b2c3d4e5f6.json',
       JSON.stringify({
         version: 1,
         files: [{ nonsense: true }, { preservedPath: '/vault/Good.md' }],
@@ -106,11 +106,11 @@ describe('Audit-8 L4 — quit-failure breadcrumb read/clear split', () => {
   // ── clearQuitFailureBreadcrumb — deletes only ──────────────────────────────
 
   it('deletes the breadcrumb at the absolute path', async () => {
-    diskFiles.set('.filo/quit-failure.json', JSON.stringify({ version: 1, files: [{ preservedPath: '/vault/x.md' }] }));
+    diskFiles.set('.filo/quit-failure.a1b2c3d4e5f6.json', JSON.stringify({ version: 1, files: [{ preservedPath: '/vault/x.md' }] }));
     await clearQuitFailureBreadcrumb('/vault');
     expect(deletes).toHaveLength(1);
-    expect(deletes[0]).toContain('.filo/quit-failure.json');
-    expect(diskFiles.has('.filo/quit-failure.json')).toBe(false);
+    expect(deletes[0]).toContain('.filo/quit-failure.a1b2c3d4e5f6.json');
+    expect(diskFiles.has('.filo/quit-failure.a1b2c3d4e5f6.json')).toBe(false);
   });
 
   it('is a no-op for an empty vault root', async () => {
@@ -130,15 +130,15 @@ describe('Audit-8 L4 — quit-failure breadcrumb read/clear split', () => {
 
   it('read surfaces the payload, a later clear consumes it', async () => {
     diskFiles.set(
-      '.filo/quit-failure.json',
+      '.filo/quit-failure.a1b2c3d4e5f6.json',
       JSON.stringify({ version: 1, files: [{ preservedPath: '/vault/Notes.md' }] }),
     );
     const res = await readQuitFailureBreadcrumb('/vault');
     expect(res).not.toBeNull();
-    expect(diskFiles.has('.filo/quit-failure.json')).toBe(true); // still there after read
+    expect(diskFiles.has('.filo/quit-failure.a1b2c3d4e5f6.json')).toBe(true); // still there after read
 
     await clearQuitFailureBreadcrumb('/vault'); // user dismissed the toast
-    expect(diskFiles.has('.filo/quit-failure.json')).toBe(false);
+    expect(diskFiles.has('.filo/quit-failure.a1b2c3d4e5f6.json')).toBe(false);
     // A second open now finds nothing to surface.
     expect(await readQuitFailureBreadcrumb('/vault')).toBeNull();
   });

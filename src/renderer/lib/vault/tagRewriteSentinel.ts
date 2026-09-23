@@ -28,8 +28,16 @@ import { reportError } from '../utils/errorBus';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { invokeOk } from '../utils/invokeOk';
 import { onVaultSwap } from '../../core/vaultLifecycle';
+import { ownSentinelPath } from './machineIdentity';
+import { readOwnOrLegacySentinel, clearOwnSentinel } from './machineSentinels';
 
-const TAG_REWRITE_SENTINEL_PATH = '.filo/tag-rewrite-pending.json';
+/**
+ * Audit-19 EXT-6 — PER MACHINE (`.filo/tag-rewrite-pending.<machineId>.json`):
+ * another machine must never "Resume" this machine's half-finished tag rename
+ * (it would rewrite the same files concurrently) nor clear it. The legacy
+ * shared file is read once and deleted by the next clear.
+ */
+const ownTagRewritePath = (): string => ownSentinelPath('tag-rewrite');
 
 /**
  * Mutex — serialises every read/write against the sentinel. Without this,
@@ -127,7 +135,7 @@ export function writePendingRewrite(
     await invokeOk(
       'vault:write-file-text',
       vaultRoot,
-      TAG_REWRITE_SENTINEL_PATH,
+      ownTagRewritePath(),
       JSON.stringify(payload),
     );
   });
@@ -143,17 +151,10 @@ export function clearPendingRewrite(vaultRoot: string): Promise<void> {
   return withMutex(async () => {
     if (!vaultRoot) return;
     try {
-      const fullPath = `${vaultRoot.replace(/[\\/]$/, '')}/${TAG_REWRITE_SENTINEL_PATH}`;
-      // Phase 31 A1.6 — invokeOk surfaces { ok:false } as a thrown
-      // IpcEnvelopeError so EACCES/EBUSY paths reach reportError;
-      // ENOENT (sentinel already absent) is the desired terminal
-      // state, so we swallow it.
-      try {
-        await invokeOk('vault:delete', vaultRoot, fullPath);
-      } catch (err) {
-        if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') return;
-        throw err;
-      }
+      // Phase 31 A1.6 — EACCES/EBUSY reach reportError; ENOENT (already
+      // absent) is the desired terminal state. Audit-19 EXT-6 — this
+      // machine's file plus the legacy shared one (migration).
+      await clearOwnSentinel(vaultRoot, 'tag-rewrite');
     } catch (err) {
       if (err && typeof err === 'object' && 'code' in err && (err as { code?: string }).code === 'ENOENT') {
         return;
@@ -182,7 +183,7 @@ export function readPendingRewrite(vaultRoot: string): Promise<ReadResult> {
       // `{ success: false }`; ENOENT is the steady-state "no sentinel"
       // case and resolves to `{}`. Any other failure resolves to
       // `{ unreadable: true }` so the recovery UI still surfaces.
-      const result = await invokeOk('vault:read-file-text', vaultRoot, TAG_REWRITE_SENTINEL_PATH);
+      const result = await readOwnOrLegacySentinel(vaultRoot, 'tag-rewrite');
       content = result.content;
     } catch (err) {
       if (err instanceof IpcEnvelopeError) {

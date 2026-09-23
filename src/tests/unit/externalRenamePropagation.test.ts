@@ -226,7 +226,7 @@ describe('vaultExternalChanges — external rename propagation (Phase 2.2)', () 
           : { success: true, content: fakeDisk.content };
       }
       if (channel === 'vault:write-file-text') {
-        if (args[1] === '.filo/rename-cascade-pending.json') {
+        if (args[1] === '.filo/rename-cascade-pending.a1b2c3d4e5f6.json') {
           writeCalls.push({ args });
           fakeDisk.content = String(args[2]);
         }
@@ -235,7 +235,7 @@ describe('vaultExternalChanges — external rename propagation (Phase 2.2)', () 
       if (channel === 'vault:delete') {
         if (
           typeof args[1] === 'string' &&
-          args[1].endsWith('.filo/rename-cascade-pending.json')
+          args[1].endsWith('.filo/rename-cascade-pending.a1b2c3d4e5f6.json')
         ) {
           deleteCalls.push({ args });
           fakeDisk.content = null;
@@ -270,7 +270,7 @@ describe('vaultExternalChanges — external rename propagation (Phase 2.2)', () 
         return { success: false, code: 'ENOENT' };
       }
       if (channel === 'vault:write-file-text') {
-        if (args[1] === '.filo/rename-cascade-pending.json') {
+        if (args[1] === '.filo/rename-cascade-pending.a1b2c3d4e5f6.json') {
           writeCalls.push({ args });
         }
         return { success: true };
@@ -278,7 +278,7 @@ describe('vaultExternalChanges — external rename propagation (Phase 2.2)', () 
       if (channel === 'vault:delete') {
         if (
           typeof args[1] === 'string' &&
-          args[1].endsWith('.filo/rename-cascade-pending.json')
+          args[1].endsWith('.filo/rename-cascade-pending.a1b2c3d4e5f6.json')
         ) {
           deleteCalls.push({ args });
         }
@@ -313,7 +313,7 @@ describe('vaultExternalChanges — external rename propagation (Phase 2.2)', () 
 
     installFiloMock((channel: string, ...args: unknown[]) => {
       if (channel === 'vault:read-file-text') {
-        if (args[1] === '.filo/rename-cascade-pending.json') {
+        if (args[1] === '.filo/rename-cascade-pending.a1b2c3d4e5f6.json') {
           if (fakeSentinel.content === null) {
             return { success: false, code: 'ENOENT' };
           }
@@ -322,7 +322,7 @@ describe('vaultExternalChanges — external rename propagation (Phase 2.2)', () 
         return { success: false, code: 'ENOENT' };
       }
       if (channel === 'vault:write-file-text') {
-        if (args[1] === '.filo/rename-cascade-pending.json') {
+        if (args[1] === '.filo/rename-cascade-pending.a1b2c3d4e5f6.json') {
           sentinelWrites.push({ payload: String(args[2]) });
           fakeSentinel.content = String(args[2]);
           return { success: true };
@@ -332,7 +332,7 @@ describe('vaultExternalChanges — external rename propagation (Phase 2.2)', () 
       if (channel === 'vault:delete') {
         if (
           typeof args[1] === 'string' &&
-          args[1].endsWith('.filo/rename-cascade-pending.json')
+          args[1].endsWith('.filo/rename-cascade-pending.a1b2c3d4e5f6.json')
         ) {
           fakeSentinel.content = null;
         }

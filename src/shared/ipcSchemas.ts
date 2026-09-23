@@ -116,6 +116,8 @@ export const IPC_PAYLOAD_SCHEMAS = {
   // ── Recovery snapshot ─────────────────────────────────────────────────
   'recovery:snapshot': z.tuple([nonEmptyString, nonEmptyString]),
   'recovery:list': z.tuple([nonEmptyString]),
+  'recovery:list-sentinels': z.tuple([nonEmptyString]),
+  'app:machine-identity': z.tuple([]),
   'vault:sweep-orphan-tmp': z.tuple([nonEmptyString]),
 
   // ── Config (.filo/) ───────────────────────────────────────────────────

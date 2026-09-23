@@ -628,3 +628,24 @@ keeps tiles by default and offers a relink). See also #7 for the size-based
 relink limits.
 
 **Impact:** After such a rename the old tiles show as missing until relinked.
+
+---
+
+## 20. Run the same Filo version on every machine that opens a synced vault
+
+**What:** Since Audit-19 the crash-recovery sentinels in `.filo/` are per machine
+(`.filo/.dirty.<machineId>`, `rename-cascade-pending.<machineId>.json`,
+`tag-rewrite-pending.<machineId>.json`, `quit-failure.<machineId>.json`), so two
+machines syncing one vault never clear, prompt for or resume each other's
+recovery state. The legacy shared names are read and consumed once on the first
+launch of the new build, never written.
+
+**Where:** [src/shared/sentinelPaths.ts](src/shared/sentinelPaths.ts),
+`assertNotInFiloDir` in [src/main/utils/pathSecurity.ts](src/main/utils/pathSecurity.ts).
+
+**Why accepted:** An OLDER build on another machine still writes and deletes the
+bare `.filo/.dirty` (etc.), so it can still trample the legacy file. The new build
+never deletes a per-machine file it doesn't own, but it can't stop an old build.
+
+**Impact:** Update every machine before relying on crash recovery in a synced
+vault (the ERR-1 board-format change already requires this).

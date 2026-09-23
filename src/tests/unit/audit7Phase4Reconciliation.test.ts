@@ -309,7 +309,7 @@ describe('Audit-7 L17 — rename-cascade sentinel laid before the tag-flush bail
       if (channel === 'vault:read-file-text') return { success: false, code: 'ENOENT' };
       if (
         channel === 'vault:write-file-text' &&
-        String(args[1]).includes('rename-cascade-pending.json')
+        String(args[1]).includes('rename-cascade-pending.')
       ) {
         sentinelWrites.push(String(args[2]));
         return { success: true };

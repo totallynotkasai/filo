@@ -31,8 +31,16 @@ import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { invokeOk } from '../utils/invokeOk';
 import { createId } from '../utils/ids';
 import { onVaultSwap } from '../../core/vaultLifecycle';
+import { ownSentinelPath } from './machineIdentity';
+import { readOwnOrLegacySentinel, clearOwnSentinel, retireConsumedLegacySentinel } from './machineSentinels';
 
-const RENAME_CASCADE_SENTINEL_PATH = '.filo/rename-cascade-pending.json';
+/**
+ * Audit-19 EXT-6 — PER MACHINE (`.filo/rename-cascade-pending.<machineId>.json`):
+ * another machine must never replay (or clear) this machine's half-finished
+ * rename cascade. The legacy shared file is read once, then migrated: the next
+ * write lands in this machine's file and the legacy one is deleted.
+ */
+const ownRenameCascadePath = (): string => ownSentinelPath('rename-cascade');
 
 export interface RenameCascadeEntry {
   /** Stable nanoid for this rename intent — used as the dedupe key. */
@@ -117,7 +125,7 @@ async function readSentinelInternal(vaultRoot: string): Promise<ReadResult> {
     // Phase 1 (CONSOLIDATION_PLAN) — ENOENT is the steady-state "no
     // sentinel" case and resolves to `{}`; any other failure resolves
     // to `{ unreadable: true }` so recovery UI still surfaces.
-    const result = await invokeOk('vault:read-file-text', vaultRoot, RENAME_CASCADE_SENTINEL_PATH);
+    const result = await readOwnOrLegacySentinel(vaultRoot, 'rename-cascade');
     content = result.content;
   } catch (err) {
     if (err instanceof IpcEnvelopeError) {
@@ -180,13 +188,8 @@ async function writeSentinelInternal(vaultRoot: string, entries: RenameCascadeEn
     // Delete the sentinel file entirely when empty so the steady state
     // is "no sentinel on disk" rather than "sentinel with empty array".
     try {
-      const fullPath = `${vaultRoot.replace(/[\\/]$/, '')}/${RENAME_CASCADE_SENTINEL_PATH}`;
-      try {
-        await invokeOk('vault:delete', vaultRoot, fullPath);
-      } catch (err) {
-        if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') return;
-        throw err;
-      }
+      // Audit-19 EXT-6 — this machine's file (+ a consumed legacy one).
+      await clearOwnSentinel(vaultRoot, 'rename-cascade');
     } catch (err) {
       if (err && typeof err === 'object' && 'code' in err && (err as { code?: string }).code === 'ENOENT') {
         return;
@@ -200,14 +203,17 @@ async function writeSentinelInternal(vaultRoot: string, entries: RenameCascadeEn
     return;
   }
   const payload: SentinelFile = { entries };
-  // allow-direct-write: `.filo/rename-cascade-pending.json` is a one-shot
-  // crash-recovery sentinel — not a `.md` file, no editor hydrates from it.
+  // allow-direct-write: the per-machine rename-cascade sentinel is a one-shot
+  // crash-recovery file — not a `.md` file, no editor hydrates from it.
   await invokeOk(
     'vault:write-file-text',
     vaultRoot,
-    RENAME_CASCADE_SENTINEL_PATH,
+    ownRenameCascadePath(),
     JSON.stringify(payload),
   );
+  // Audit-19 EXT-6 — entries read from a legacy shared file now live in this
+  // machine's file; retire the legacy one (once; best-effort).
+  await retireConsumedLegacySentinel(vaultRoot, 'rename-cascade').catch(() => undefined);
 }
 
 /**
@@ -255,7 +261,7 @@ export function writePendingRenameCascade(
       reportError(
         'renameCascadeSentinel.append',
         err,
-        "Couldn't record the rename in `.filo/rename-cascade-pending.json` — the existing file is unreadable and was preserved. Check it manually if a previous rename looks incomplete.",
+        "Couldn't record the rename in this machine's `.filo/rename-cascade-pending.*.json` — the existing file is unreadable and was preserved. Check it manually if a previous rename looks incomplete.",
       );
       throw err;
     }

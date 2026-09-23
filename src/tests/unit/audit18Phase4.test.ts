@@ -99,7 +99,7 @@ describe('Audit-18 4.1 — bypassed Recovery-modal close preserves the sentinel'
     expect(recoveryPaths).toEqual(['Notes.md', 'plans/q3.md']);
     // No on-disk sentinel destruction.
     const sentinelDelete = writes.find(
-      (w) => w.channel === 'vault:delete' && String(w.args[1]).endsWith('.filo/.dirty'),
+      (w) => w.channel === 'vault:delete' && String(w.args[1]).endsWith('.filo/.dirty.a1b2c3d4e5f6'),
     );
     expect(sentinelDelete).toBeUndefined();
   });
@@ -109,7 +109,7 @@ describe('Audit-18 4.1 — bypassed Recovery-modal close preserves the sentinel'
     expect(resolveCount).toBe(1);
     expect(recoveryPaths).toEqual([]);
     const sentinelDelete = writes.find(
-      (w) => w.channel === 'vault:delete' && String(w.args[1]).endsWith('.filo/.dirty'),
+      (w) => w.channel === 'vault:delete' && String(w.args[1]).endsWith('.filo/.dirty.a1b2c3d4e5f6'),
     );
     expect(sentinelDelete).toBeDefined();
   });

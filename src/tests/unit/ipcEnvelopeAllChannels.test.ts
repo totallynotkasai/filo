@@ -72,6 +72,7 @@ const SUCCESS_DISCRIMINATED: readonly string[] = [
   'vault:sweep-orphan-tmp',
   'board:load',
   'board:list-conflicts',
+  'recovery:list-sentinels',
   'media:save-audio',
   'media:read-file',
   'media:open-external',

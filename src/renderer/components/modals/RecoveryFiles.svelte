@@ -1,8 +1,18 @@
 <script lang="ts">
   import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
+  import { foreignSentinelsStore, machineLabel } from '../../stores/foreignSentinels.svelte';
 
   let paths = $derived(vaultStore.recoveryPendingPaths);
+  // Audit-19 EXT-6 — other machines' unclean-shutdown markers / quit-failure
+  // breadcrumbs in the synced `.filo/`: listed read-only (their data is on
+  // that machine; Filo never prompts for, resumes or clears them).
+  let foreign = $derived(
+    foreignSentinelsStore.list.filter((s) => s.kind === 'dirty' || s.kind === 'quit-failure'),
+  );
+  function since(ms: number): string {
+    return new Date(ms).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  }
 
   // Acknowledgement — drops the pending-paths list, clears the on-disk
   // `.filo/.dirty` sentinel (if the write tracker is idle), and un-parks the
@@ -32,6 +42,18 @@
   <p class="recovery-hint">
     Open each file, verify the content matches your intent, and save again if needed.
   </p>
+
+  {#if foreign.length > 0}
+    <p class="recovery-intro">Other machines that sync this vault:</p>
+    <ul class="recovery-list">
+      {#each foreign as f (f.relPath)}
+        <li class="recovery-item">
+          {machineLabel(f)}: {f.kind === 'dirty' ? 'unclean-shutdown marker' : 'unsaved bytes preserved after a failed save'}
+          since {since(f.mtimeMs)}. Open the vault on that machine to recover.
+        </li>
+      {/each}
+    </ul>
+  {/if}
 
   <div class="recovery-actions">
     <button type="button" class="recovery-dismiss" onclick={dismiss}>Dismiss</button>

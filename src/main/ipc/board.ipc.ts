@@ -12,6 +12,7 @@ import {
   scanBoardConflicts,
 } from '../vault/boardFileOps';
 import { loadKnownHosts } from '../services/syncConflictNotifier';
+import { registerMachineInVault } from '../services/machineIdentity';
 import {
   initVaultConfig,
   loadConfig,
@@ -129,6 +130,9 @@ export function registerBoardHandlers(): void {
       vaultRegistry.setCurrentVault(vaultRoot);
       try {
         await initVaultConfig(vaultRoot);
+        // Audit-19 EXT-6 — this machine in `.filo/machines/` (labels foreign
+        // sentinels + feeds the conflict-copy host list). Best-effort.
+        await registerMachineInVault(vaultRoot);
       } catch (initErr) {
         // Audit 5.8 — roll the registry back so a failed `.filo/` init (EACCES
         // on a read-only mount, ENOSPC, a flaky network share) doesn't leave a

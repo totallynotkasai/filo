@@ -33,7 +33,7 @@ describe('empty paragraphs — full editor round-trip', () => {
 
   // doc -> markdown(on disk) -> fresh editor -> html + markdown(stable)
   function roundTrip(doc: unknown): { disk: string; html: string; disk2: string } {
-    editor.commands.setContent(doc as never, false);
+    editor.commands.setContent(doc as never, { emitUpdate: false });
     const disk = editorMarkdown(editor);
 
     const ed2 = makeEditor();

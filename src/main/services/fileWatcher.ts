@@ -2,7 +2,7 @@ import { watch, type FSWatcher, statSync, promises as fsPromises } from 'fs';
 import { BrowserWindow } from 'electron';
 import { join } from 'path';
 import { correlateRenames } from './renameCorrelation';
-import { announceSyncConflicts, loadKnownHosts } from './syncConflictNotifier';
+import { announceSyncConflicts, loadKnownHosts, knownHostsFor } from './syncConflictNotifier';
 import {
   WATCHER_HASH_MAX_BYTES,
   fnv1a32,
@@ -940,7 +940,7 @@ export class FileWatcher {
         return cached ?? null;
       }
     };
-    const { filtered, renames } = await correlateRenames(unique, exists, sizeOf, hashAsync);
+    const { filtered, renames, conflicts } = await correlateRenames(unique, exists, sizeOf, hashAsync, undefined, knownHostsFor(this.vaultPath));
     // Audit-16 3.1 — re-check after the ONLY await in this function. The
     // hash probes above can take hundreds of ms on a slow volume; a vault
     // swap completing inside that window (vault:close → stop() → candidate
@@ -949,7 +949,7 @@ export class FileWatcher {
     // captures vault identity at ARRIVAL time, so a late send would drive
     // the rename cascade against the NEW vault's same-named files.
     if (this.aborted) return;
-    announceSyncConflicts(this.vaultPath, unique, exists); // Audit-19 ERR-3/EXT-2 — sync conflict forks
+    announceSyncConflicts(this.vaultPath, unique, exists, conflicts); // Audit-19 ERR-3/EXT-2 — sync conflict forks
     // Move cached sizes + hashes onto the new path so a future delete of
     // the new path can still resolve, and drop the old-path entries.
     for (const r of renames) {

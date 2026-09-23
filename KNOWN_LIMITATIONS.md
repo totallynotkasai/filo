@@ -256,6 +256,8 @@ a workaround. No data risk; rendering throughput only. Revisit alongside the
 
 ## 7. External rename of a very large / very small attachment doesn't auto-relink tiles
 
+(See also #19: a rename to a sync-conflict-shaped name is never auto-relinked.)
+
 **What:** When a file is renamed *outside* Filo, the watcher emits a `delete` +
 a `create`; `renameCorrelation` pairs them back into a rename so tile references
 follow the new name. To avoid pairing two genuinely-unrelated files by
@@ -583,3 +585,46 @@ behaviour being honest, not a regression.
 plain text and is no longer rendered as a clickable link; wrap it as `<url>` or
 `[text](url)` to make it a link. Typing next to a bare URL can still autolink it
 once whitespace follows (an explicit scheme is present).
+
+---
+
+## 18. Sync conflict copies: only the documented English names are recognised
+
+**What:** Filo recognises the conflict names OneDrive (`Note-<DEVICE>.md`, for a
+device that has opened the vault or a Windows default `DESKTOP-XXXXXXX` /
+`LAPTOP-XXXXXXX` name), Dropbox / Nextcloud (`(… conflicted copy …)`,
+`(Case Conflict)`, `(Selective Sync Conflict)`), Syncthing
+(`.sync-conflict-…`), Google Drive (` (1)`) and iCloud (` 2`) give the second
+copy of a file. Weak shapes (` (1)`, ` 2`) only count when the original sits
+alongside.
+
+**Where:** [src/shared/conflictCopy.ts](src/shared/conflictCopy.ts).
+
+**Why accepted:** Localised client strings (e.g. Dropbox's German
+"Kopie mit Konflikt") and arbitrary `-WORD` suffixes are not matched, because
+matching them would misread names users pick themselves (`Meeting-Notes.md`,
+`Report (2).md`). An unrecognised copy is simply an ordinary file (the pre-Audit-19
+behaviour).
+
+**Impact:** A conflict copy with a localised name is not flagged, and could win a
+duplicate-board-id tie-break on freshness.
+
+---
+
+## 19. Renames that look like sync-conflict names are not auto-relinked
+
+**What:** When a file disappears and a same-content file appears whose name is a
+conflict copy of the missing one (`Note.md` → `Note-<your device>.md`,
+`Note (1).md`), the rename correlator refuses to pair them (Audit-19 EXT-2): that
+is exactly how OneDrive resolves a conflict, and pairing them would rebind every
+tile to the losing copy.
+
+**Where:** `correlateRenames` in
+[src/main/services/renameCorrelation.ts](src/main/services/renameCorrelation.ts).
+
+**Why accepted:** A user genuinely renaming a note to such a name is rare; it
+degrades to delete + create, which is non-destructive (the missing-file prompt
+keeps tiles by default and offers a relink). See also #7 for the size-based
+relink limits.
+
+**Impact:** After such a rename the old tiles show as missing until relinked.

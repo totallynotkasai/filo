@@ -39,6 +39,7 @@ import {
   wasRecentlyRenamed,
   clearRecentRenames,
   ATTACHMENT_DELETE_GRACE_MS,
+  reappearanceWindowRemaining,
 } from '../lib/vault/externalChangeWindows';
 // Audit-15 P5.1 — the user-facing prompt builders moved to sibling modules to
 // keep this dispatcher under the file-size ceiling. The dispatcher calls the
@@ -119,6 +120,30 @@ export async function selfWriteDivergedFromBaseline(root: string, rel: string): 
   } catch {
     return false;
   }
+}
+
+/**
+ * Audit-19 EXT-2 — while a sync conflict's original is expected to reappear
+ * (`noteExpectedReappearance`, set by the `vault:sync-conflict` notice), a
+ * "deleted externally" prompt for it is postponed to the end of the window and
+ * shown only if the file is STILL missing then. Returns true when deferred.
+ */
+function deferWhileReappearing(rel: string, identity: VaultIdentity, prompt: () => void): boolean {
+  const wait = reappearanceWindowRemaining(rel);
+  if (wait <= 0) return false;
+  const promptIfStillMissing = async (): Promise<void> => {
+    if (!isStillSameVault(identity)) return;
+    let back = false;
+    try {
+      back = (await window.filo.invoke('vault:file-exists', identity.path, rel)) === true;
+    } catch {
+      back = false;
+    }
+    if (isStillSameVault(identity) && !back) prompt();
+  };
+  // A one-shot re-check, not a debounced write (no scheduler involvement).
+  setTimeout(promptIfStillMissing, wait + 250);
+  return true;
 }
 
 export function makeExternalChangesSlice(ctx: VaultContext) {
@@ -398,6 +423,9 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
               // the delete would resurrect the file (mitigated by Phase 1's
               // `vault:write-existing-file-text` ENOENT short-circuit, but
               // the user still needs to choose).
+              // Audit-19 EXT-2 — a sync conflict just renamed this file away
+              // and its other version is about to be downloaded here: wait.
+              if (deferWhileReappearing(rel, identity, () => promptDeletedFile(rel, editorDoc, ctx))) break;
               pendingPrompts.push({ kind: 'deleted', rel, editorDoc });
             }
             break;
@@ -473,7 +501,9 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
               const targets = boardCacheStore.findCascadeDeleteTargets(rel);
               if (targets.tileIds.length > 0) {
                 // Phase 1 / 1.3 — capture root at toast-creation time.
-                promptClosedBoardFileMissing(rel, targets.tileIds.length, ctx.getVaultPath());
+                const root = ctx.getVaultPath();
+                const prompt = (): void => promptClosedBoardFileMissing(rel, targets.tileIds.length, root);
+                if (!deferWhileReappearing(rel, identity, prompt)) prompt(); // Audit-19 EXT-2
               }
             } else if (decision.reason === 'no-editor-open' && next) {
               // L5 (Audit-13) — a closed-file body-only edit the index already

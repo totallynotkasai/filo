@@ -1,5 +1,6 @@
 import { basename, extname } from 'path';
 import type { FileChangeEvent } from './fileWatcherTypes';
+import { detectConflictCopyPath } from '../../shared/conflictCopy';
 
 /**
  * Phase 31 B2.4 — case-only rename support. Windows and macOS are
@@ -224,11 +225,32 @@ export async function correlateRenames(
    * partition branches on any host CI runner.
    */
   caseInsensitiveFs: boolean = DEFAULT_CASE_INSENSITIVE_FS,
+  /**
+   * Audit-19 EXT-2 — OneDrive device names seen for this vault (C0's host
+   * rule). The watcher passes `os.hostname()` + the `.filo/machines` registry.
+   */
+  knownHosts: readonly string[] = [],
 ): Promise<{
   filtered: FileChangeEvent[];
   renames: Array<{ oldPath: string; newPath: string }>;
+  /** Audit-19 EXT-2 — pairs REFUSED because the present file is a sync conflict copy of the missing one. */
+  conflicts: Array<{ copyPath: string; canonicalPath: string; client: string }>;
 }> {
   const renames: Array<{ oldPath: string; newPath: string }> = [];
+  const conflicts: Array<{ copyPath: string; canonicalPath: string; client: string }> = [];
+  // Audit-19 EXT-2 — OneDrive keeps both sides of a conflict by RENAMING the
+  // local file to `Note-<DEVICE>.md` (same bytes) and downloading the other
+  // version as `Note.md`. If the download lands after this batch closes, the
+  // batch holds a missing `Note.md` + a present `Note-<DEVICE>.md` with equal
+  // hashes, and pairing them rebinds every tile, editor and tag to the LOSING
+  // copy. Refuse exactly that shape — the present file's canonical name IS the
+  // missing path — and report it instead. Any other pair still correlates.
+  const samePathFold = (a: string, b: string): boolean =>
+    caseInsensitiveFs ? a.toLowerCase() === b.toLowerCase() : a === b;
+  const conflictCopyOf = (present: string, missing: string): { client: string } | null => {
+    const hit = detectConflictCopyPath(present, { knownHosts, exists: (c) => samePathFold(c, missing) });
+    return hit && samePathFold(hit.canonicalName, missing) ? { client: hit.client } : null;
+  };
   const suppressedKeys = new Set<string>();
   const byBase: Map<string, FileChangeEvent[]> = new Map();
   const correlatable: FileChangeEvent[] = [];
@@ -266,7 +288,10 @@ export async function correlateRenames(
       // The length checks above guarantee both index-0 reads are defined;
       // narrow for the type-checker (the guard can't fail at runtime).
       if (miss !== undefined && pres !== undefined) {
-        if (await sameBasenameBytesPreserved(miss, pres, relPathSize, relPathHash)) {
+        const cc = conflictCopyOf(pres.filename, miss.filename);
+        if (cc) {
+          conflicts.push({ copyPath: pres.filename, canonicalPath: miss.filename, client: cc.client });
+        } else if (await sameBasenameBytesPreserved(miss, pres, relPathSize, relPathHash)) {
           renames.push({ oldPath: miss.filename, newPath: pres.filename });
           suppressedKeys.add(`${miss.type}:${miss.filename}`);
           suppressedKeys.add(`${pres.type}:${pres.filename}`);
@@ -391,6 +416,13 @@ export async function correlateRenames(
         // that range, matching the pre-existing test contract.
         continue;
       }
+      const cc = conflictCopyOf(p.filename, m.filename);
+      if (cc) {
+        // Both events flow on as delete + create (EXT-4 made the delete
+        // prompt non-destructive by default); the renderer gets a notice.
+        conflicts.push({ copyPath: p.filename, canonicalPath: m.filename, client: cc.client });
+        continue;
+      }
       renames.push({ oldPath: m.filename, newPath: p.filename });
       suppressedKeys.add(`${m.type}:${m.filename}`);
       suppressedKeys.add(`${p.type}:${p.filename}`);
@@ -398,5 +430,5 @@ export async function correlateRenames(
   }
 
   const filtered = events.filter(c => !suppressedKeys.has(`${c.type}:${c.filename}`));
-  return { filtered, renames };
+  return { filtered, renames, conflicts };
 }

@@ -200,6 +200,42 @@ for (const file of walk(RENDERER_DIR)) {
   }
 }
 
+// ── Audit-19 EXT-3 arm — the deleted-file "Keep local" re-create is EXCLUSIVE ──
+// A sync client replaces a file as delete-then-create; the deleted-externally
+// toast stays clickable while the other machine's version lands. Re-creating
+// through the create-OR-OVERWRITE channel (`create: true`) destroyed that
+// version. `recreateDeletedFile` must pass `create: 'exclusive'` (O_EXCL) and
+// must not contain `create: true`. Function-scoped on a comment-blanked copy
+// (strings kept — the `'exclusive'` literal must be visible).
+{
+  const REL = 'src/renderer/stores/vaultExternalDriftPrompts.ts';
+  let src = '';
+  try {
+    src = readFileSync(join(ROOT, REL), 'utf8');
+  } catch {
+    violations.push({ rel: `${REL} (missing — update the Audit-19 EXT-3 arm if it moved)`, lineNo: 0 });
+  }
+  const noComments = src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' ')).replace(/\/\/[^\n]*/g, '');
+  const start = noComments.search(/async\s+function\s+recreateDeletedFile\s*\(/);
+  let body = '';
+  if (start >= 0) {
+    const open = noComments.indexOf('{', noComments.indexOf(')', noComments.indexOf('onReappeared', start)));
+    let depth = 0;
+    for (let k = open; k < noComments.length; k++) {
+      if (noComments[k] === '{') depth++;
+      else if (noComments[k] === '}' && --depth === 0) { body = noComments.slice(open, k + 1); break; }
+    }
+  }
+  if (src && !body) {
+    violations.push({ rel: `${REL} → recreateDeletedFile() not found (Audit-19 EXT-3 arm)`, lineNo: 0 });
+  } else if (body && (!/create\s*:\s*['"]exclusive['"]/.test(body) || /create\s*:\s*true\b/.test(body))) {
+    violations.push({
+      rel: `${REL} → recreateDeletedFile() must re-create with create: 'exclusive' (never create: true — it would overwrite a file sync re-created; Audit-19 EXT-3)`,
+      lineNo: lineNumberAt(src, start),
+    });
+  }
+}
+
 if (violations.length > 0) {
   console.error('Direct `.md` write call site(s) outside the coupled write+reconcile helper:');
   for (const v of violations) console.error(`  ${v.rel}:${v.lineNo}`);

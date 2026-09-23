@@ -32,7 +32,8 @@ import { markHydrated, setExternalEditPromptHandler } from '../lib/vault/markdow
 import { setBoardExternalEditHandler } from '../lib/boards/boardWriteScheduler';
 import { writeMarkdownAndReconcile } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
 import { registerPathRenamable } from '../lib/vault/renamePathKeys';
-import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
+import { captureVaultIdentity, isStillSameVault, type VaultIdentity } from '../lib/vault/vaultIdentity';
+import type { FileMetadata } from '../lib/vault/vaultIndex';
 import type { VaultContext } from './vaultStoreTypes';
 import { vaultSwapResettable } from '../core/vaultLifecycle';
 
@@ -191,6 +192,20 @@ export function __inFlightDriftPromptsForTests(): {
   };
 }
 
+/**
+ * Keep local on a "deleted externally" prompt: re-create the file from the
+ * editor's (or the snapshot's) content.
+ *
+ * Audit-19 EXT-3 — a sync client replaces a file as delete, then create, in
+ * separate batches; the deleted-toast stays clickable while the other
+ * machine's version lands. This used to write through the create-OR-OVERWRITE
+ * channel with a full YAML re-dump, destroying that version with no drift
+ * check or backup. The write is now CREATE-EXCLUSIVE (`vault:create-file-text`):
+ * if anything is at `rel` by then — probed at click time AND enforced by the
+ * O_EXCL open (no probe→write TOCTOU) — nothing is written and
+ * `onReappeared(fresh)` routes the user to the modified-file prompt, whose
+ * Keep local backs the other version up first (UX-6).
+ */
 export async function recreateDeletedFile(
   rel: string,
   editorDoc: { docId: string; body: string },
@@ -199,9 +214,23 @@ export async function recreateDeletedFile(
     fmSnapshot: Record<string, unknown>;
     bodySnapshot: string;
   },
+  onReappeared?: (fresh: FileMetadata) => void,
 ): Promise<void> {
   const vaultRoot = ctx.getVaultPath();
   if (!vaultRoot) return;
+  const identity = captureVaultIdentity();
+  // Cheap first check (the common case shows the right prompt without a failed IPC).
+  let alreadyBack = false;
+  try {
+    alreadyBack = (await window.filo.invoke('vault:file-exists', vaultRoot, rel)) === true;
+  } catch {
+    alreadyBack = false;
+  }
+  if (!isStillSameVault(identity)) return;
+  if (alreadyBack) {
+    await routeReappearedFile(rel, identity, onReappeared);
+    return;
+  }
 
   // Phase B / B.5 — prefer LIVE state when the doc still exists in the
   // store (so user edits between toast-open and Keep-local click are
@@ -252,13 +281,17 @@ export async function recreateDeletedFile(
     // pre-recovery body and would otherwise fire ~300 ms later, silently
     // reverting the recreation (applyReloadFromDisk self-cancels, 6.0.C2). The
     // reconcile is keyed to the SAME path we write.
-    await writeMarkdownAndReconcile({
+    const outcome = await writeMarkdownAndReconcile({
       vaultRoot,
       path: rel,
       content: fileText,
       mode: 'full',
-      create: true,
+      create: 'exclusive', // Audit-19 EXT-3 — never overwrite a file that is back
     });
+    if (outcome === 'exists') {
+      await routeReappearedFile(rel, identity, onReappeared);
+      return;
+    }
     // Orphan-fm semantics: file just created on disk via the file-creating
     // channel. Mark hydrated so subsequent gateway writes (e.g. the user
     // making further edits in a still-open editor) can proceed without
@@ -273,6 +306,30 @@ export async function recreateDeletedFile(
       `Failed to re-create "${rel}" on disk. Local edits remain in memory but are not yet on disk.`,
     );
   }
+}
+
+/**
+ * Audit-19 EXT-3 — the "deleted" file is back on disk (sync re-created it with
+ * the other machine's version): re-read it and hand it to the caller's
+ * modified-file flow instead of writing over it.
+ */
+async function routeReappearedFile(
+  rel: string,
+  identity: VaultIdentity,
+  onReappeared?: (fresh: FileMetadata) => void,
+): Promise<void> {
+  await vaultIndexStore.applyChanges([rel]);
+  if (!isStillSameVault(identity)) return;
+  const fresh = vaultIndexStore.getMetadata(rel);
+  if (fresh && onReappeared) {
+    onReappeared(fresh);
+    return;
+  }
+  uiStore.pushToast({
+    text: `"${rel}" reappeared on disk (probably from another device), so Filo didn't overwrite it.`,
+    type: 'warning',
+    duration: 8000,
+  });
 }
 
 /**

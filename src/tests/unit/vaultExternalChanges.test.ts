@@ -163,7 +163,8 @@ describe('vaultExternalChanges — external delete + dirty editor', () => {
     const recreationWrite = writes.find(
       (w) =>
         w.channel === 'vault:write-file-text' ||
-        w.channel === 'vault:write-existing-file-text',
+        w.channel === 'vault:write-existing-file-text' ||
+        w.channel === 'vault:create-file-text',
     );
     expect(recreationWrite).toBeUndefined();
   });
@@ -188,14 +189,14 @@ describe('vaultExternalChanges — external delete + dirty editor', () => {
     expect(documentStore.getDocument('doc_A')).toBeUndefined();
   });
 
-  it('Keep local action writes the file via vault:write-file-text with cached frontmatter + body', async () => {
+  it('Keep local action writes the file via vault:create-file-text (exclusive — Audit-19 EXT-3) with cached frontmatter + body', async () => {
     await primeIndexWith('Notes.md', '# Notes\nbody');
     loadDirtyEditor({ docId: 'doc_A', filename: 'Notes.md', body: 'local body', title: 'Notes' });
     documentStore.setFrontmatter('doc_A', { tags: ['local-tag'] });
 
     installRecordingMock({
       'vault:read-file-text': () => ({ success: false }),
-      'vault:write-file-text': () => ({ success: true }),
+      'vault:create-file-text': () => ({ success: true }),
     });
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
@@ -208,7 +209,7 @@ describe('vaultExternalChanges — external delete + dirty editor', () => {
     // Filter for the file recreation specifically — `trackComponentWrite`
     // also fires `vault:write-file-text` for the `.filo/.dirty` sentinel.
     const write = writes.find(
-      (w) => w.channel === 'vault:write-file-text' && w.args[1] === 'Notes.md',
+      (w) => w.channel === 'vault:create-file-text' && w.args[1] === 'Notes.md',
     );
     expect(write).toBeDefined();
     expect(write?.args[0]).toBe('/vault');
@@ -233,7 +234,7 @@ describe('vaultExternalChanges — external delete + dirty editor', () => {
       // Only fail the file recreation, not the sentinel write — the sentinel
       // path is wrapped in a try/catch that swallows errors silently and
       // would obscure the failure surface under test.
-      if (channel === 'vault:write-file-text' && args[1] === 'Notes.md') {
+      if (channel === 'vault:create-file-text' && args[1] === 'Notes.md') {
         return { success: false, error: 'EROFS' };
       }
       return { success: true };

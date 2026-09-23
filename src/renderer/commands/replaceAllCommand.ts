@@ -284,15 +284,15 @@ export class ReplaceAllCommand extends Command {
         // editor's ARMED writer; the chain covers the already-in-flight one the
         // cancel can't reach. `runSerializedMarkdownWrite` is ordering-only (no
         // debounce), so it doesn't reintroduce the gateway race noted above.
-        await runSerializedMarkdownWrite(item.path, () =>
-          writeMarkdownAndReconcile({
+        await runSerializedMarkdownWrite(item.path, async () => {
+          await writeMarkdownAndReconcile({
             vaultRoot: this.vaultRoot,
             path: item.path,
             content: item.content,
             mode: 'full',
             track: { notifyOnError: false },
-          }),
-        );
+          });
+        });
       } catch (err) {
         reportError('replaceAll.write', err, `Failed to write ${item.path}`);
         failed.push(item.path);

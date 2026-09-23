@@ -50,6 +50,7 @@
 import { documentStore } from '../../stores/document.svelte';
 import { parseMarkdownFile } from '../editor/markdownSync';
 import { invokeOk } from '../utils/invokeOk';
+import { createMdFileExclusive } from './createMdExclusive';
 import {
   trackComponentWrite,
   type TrackComponentWriteOptions,
@@ -165,17 +166,26 @@ export interface WriteMarkdownAndReconcileOptions {
   content: string;
   /** `'full'` = body + frontmatter reload; `'frontmatter'` = FM-only, body-preserving. */
   mode: 'full' | 'frontmatter';
-  /** `true` = create channel (mkdir -p); `false`/omitted = write-existing channel. */
-  create?: boolean;
+  /**
+   * `true` = create-or-overwrite channel (mkdir -p); `false`/omitted = write-
+   * existing channel. Audit-19 EXT-3 — `'exclusive'` = create ONLY if nothing
+   * is there (`vault:create-file-text`, O_EXCL): resolves `'exists'` without
+   * writing or reconciling when the path is occupied.
+   */
+  create?: boolean | 'exclusive';
   /** Forwarded to {@link trackComponentWrite} (e.g. `{ notifyOnError: false }` for bulk loops). */
   track?: TrackComponentWriteOptions;
 }
 
 export async function writeMarkdownAndReconcile(
   options: WriteMarkdownAndReconcileOptions,
-): Promise<void> {
+): Promise<'written' | 'exists'> {
   const { vaultRoot, path, content, mode, create = false, track } = options;
-  await trackComponentWrite(
+  if (create === 'exclusive') {
+    // Path-less tracking (createMdExclusive): a LOSING attempt targets a file
+    // someone else just created, whose marks must stay untouched.
+    if ((await createMdFileExclusive(vaultRoot, path, content)) === 'exists') return 'exists';
+  } else await trackComponentWrite(
     vaultRoot,
     path,
     create
@@ -193,4 +203,5 @@ export async function writeMarkdownAndReconcile(
   } else {
     syncOpenEditorsAfterDiskMutation([{ path, content }]);
   }
+  return 'written';
 }

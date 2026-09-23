@@ -133,7 +133,7 @@ describe('recreateDeletedFile — frontmatter race (Phase B.5)', () => {
 
     installRecordingMock({
       'vault:read-file-text': () => ({ success: false }),
-      'vault:write-file-text': () => ({ success: true }),
+      'vault:create-file-text': () => ({ success: true }),
     });
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
@@ -146,7 +146,7 @@ describe('recreateDeletedFile — frontmatter race (Phase B.5)', () => {
     await toast?.actions?.[1].handler();
 
     const write = writes.find(
-      (w) => w.channel === 'vault:write-file-text' && w.args[1] === 'Notes.md',
+      (w) => w.channel === 'vault:create-file-text' && w.args[1] === 'Notes.md',
     );
     expect(write).toBeDefined();
     const body = write?.args[2] as string;
@@ -161,7 +161,7 @@ describe('recreateDeletedFile — frontmatter race (Phase B.5)', () => {
 
     installRecordingMock({
       'vault:read-file-text': () => ({ success: false }),
-      'vault:write-file-text': () => ({ success: true }),
+      'vault:create-file-text': () => ({ success: true }),
     });
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
@@ -179,7 +179,7 @@ describe('recreateDeletedFile — frontmatter race (Phase B.5)', () => {
     // getFrontmatter('doc_A') is undefined and the fallback to `{}`
     // strips the tag. With B.5, the snapshot keeps the tag alive.
     const write = writes.find(
-      (w) => w.channel === 'vault:write-file-text' && w.args[1] === 'Notes.md',
+      (w) => w.channel === 'vault:create-file-text' && w.args[1] === 'Notes.md',
     );
     expect(write).toBeDefined();
     const body = write?.args[2] as string;
@@ -194,7 +194,7 @@ describe('recreateDeletedFile — frontmatter race (Phase B.5)', () => {
 
     installRecordingMock({
       'vault:read-file-text': () => ({ success: false }),
-      'vault:write-file-text': () => ({ success: true }),
+      'vault:create-file-text': () => ({ success: true }),
     });
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
@@ -209,7 +209,7 @@ describe('recreateDeletedFile — frontmatter race (Phase B.5)', () => {
     await toast?.actions?.[1].handler();
 
     const write = writes.find(
-      (w) => w.channel === 'vault:write-file-text' && w.args[1] === 'Notes.md',
+      (w) => w.channel === 'vault:create-file-text' && w.args[1] === 'Notes.md',
     );
     expect(write).toBeDefined();
     const body = write?.args[2] as string;

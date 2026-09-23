@@ -247,7 +247,10 @@ export function promptBulkExternalChanges(prompts: PendingPrompt[], ctx: VaultCo
               // Phase B / B.5 — pass the snapshot captured at toast-open
               // so a parallel unload between then and now doesn't drop
               // the doc's frontmatter on the floor.
-              void recreateDeletedFile(p.rel, p.editorDoc, ctx, deletedSnapshots.get(p.editorDoc.docId));
+              void recreateDeletedFile(p.rel, p.editorDoc, ctx, deletedSnapshots.get(p.editorDoc.docId), (fresh) => {
+                const live = documentStore.getDocument(p.editorDoc.docId);
+                if (live) promptModifiedFile(p.rel, fresh, live); // Audit-19 EXT-3 — it is back
+              });
             }
           }
         },
@@ -504,6 +507,26 @@ export function promptClosedBoardFileMissing(
  * dirty popup over an OPEN dirty editor re-applied the discarded keys after
  * Reload (M3 + its M6 sibling). One helper, called unconditionally, closes both.
  */
+/**
+ * Audit-19 EXT-3 — apply a freshly re-read disk version to an open editor and
+ * its sinks (tile caches, tags, armed field deltas) — the promptModifiedFile
+ * Reload trio, for a file that came back after a "deleted externally" prompt.
+ */
+function applyFreshDiskVersion(rel: string, fresh: FileMetadata, doc: DocumentState): void {
+  cancelDirtyGatewayWritersForPath(rel);
+  boardStore.applyFrontmatterToBackedTiles(rel, fresh);
+  fileTagsStore.setFileTags(rel, normalizeTags(fresh.frontmatter.tags));
+  dropPendingDelta(rel);
+  documentStore.applyReloadFromDisk(
+    doc.docId,
+    fresh.content,
+    doc.richText,
+    fresh.frontmatter,
+    fresh.rawFrontmatter,
+    { mtimeMs: fresh.lastModified, size: fresh.rawByteSize },
+  );
+}
+
 function cancelDirtyGatewayWritersForPath(rel: string): void {
   for (const callerId of getDirtyInstancesForPath(rel)) {
     cancelMarkdownWrite(callerId);
@@ -882,7 +905,27 @@ export function promptDeletedFile(
     actions: [
       {
         label: 'Reload',
-        handler: () => {
+        handler: async () => {
+          // Audit-19 EXT-3 — probe first: a sync client may have re-created
+          // the file since the toast appeared. Then "Reload" means load THAT
+          // version — dropping the doc and its tags.json membership for a
+          // live file (the old behaviour) lost its tags.
+          const identity = captureVaultIdentity();
+          let back = false;
+          try {
+            back = (await window.filo.invoke('vault:file-exists', ctx.getVaultPath(), rel)) === true;
+          } catch {
+            back = false;
+          }
+          if (!isStillSameVault(identity)) return;
+          if (back) {
+            await vaultIndexStore.applyChanges([rel]);
+            if (!isStillSameVault(identity)) return;
+            const fresh = vaultIndexStore.getMetadata(rel);
+            const live = documentStore.getDocument(editorDoc.docId);
+            if (fresh && live) applyFreshDiskVersion(rel, fresh, live);
+            return;
+          }
           // Drop the in-memory doc — the file is gone, the user wants the
           // delete to win. Pending writers in TextTile / DocumentEditor are
           // self-disarming on ENOENT via `vault:write-existing-file-text`
@@ -900,9 +943,10 @@ export function promptDeletedFile(
         label: 'Keep local',
         // allow-keep-local-no-backup: recreateDeletedFile creates exclusively (Audit-19 EXT-3) and never overwrites; a reappeared file routes to promptModifiedFile, which backs up
         handler: async () => {
-          await recreateDeletedFile(rel, editorDoc, ctx, {
-            fmSnapshot,
-            bodySnapshot,
+          await recreateDeletedFile(rel, editorDoc, ctx, { fmSnapshot, bodySnapshot }, (fresh) => {
+            // Audit-19 EXT-3 — the file is back: offer the modified-file choice.
+            const live = documentStore.getDocument(editorDoc.docId);
+            if (live) promptModifiedFile(rel, fresh, live);
           });
         },
       },

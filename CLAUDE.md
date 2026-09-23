@@ -54,7 +54,7 @@ The guards are small `scripts/check-*.mjs` ratchets (48 of them, not enumerated 
 - **`ci:markdown-body-roundtrip`** ([scripts/check-markdown-body-roundtrip.mjs](scripts/check-markdown-body-roundtrip.mjs)) — TipTap 3 pre-work: pins the golden-corpus BODY round-trip test [src/tests/unit/markdownBodyRoundTrip.test.ts](src/tests/unit/markdownBodyRoundTrip.test.ts) + its fixtures (`src/tests/unit/fixtures/markdown-body-roundtrip/`). The test loads each fixture (LF + CRLF) through the REAL `createTiptapEditor` + `loadMarkdownIntoEditor` and asserts `editorMarkdown` output is byte-identical to the fixture body or its recorded `<name>.expected.md` baseline (the output an editor-library version already produced), that loading emits no `onUpdate` (phantom write), and that the `isLossyMarkdownRoundTrip` read-only verdict matches the baseline. `ci:frontmatter-invariant` covers frontmatter only; this is the body-byte net. The gate fails if the test / required fixtures (incl. docs ENDING in a heading / list / table / code block) go missing or the corpus shrinks below 15. Re-baselining an `.expected.md` needs a byte-by-byte justification.
 - **`test:unit:strict`** ([scripts/test-unit-strict.mjs](scripts/test-unit-strict.mjs)) — runs vitest and fails on the Phase 4 stderr-noise patterns (missing `window.filo` mock).
 
-a11y axe-core scan runs on every push (after `verify`); full Electron E2E runs only on `main` pushes and a nightly cron.
+The a11y axe-core scan and full Electron E2E are manual-only (Actions tab → CI → Run workflow); the nightly cron was removed until those suites are green again.
 
 ---
 

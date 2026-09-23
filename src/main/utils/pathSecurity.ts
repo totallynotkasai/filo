@@ -187,7 +187,10 @@ export function assertSafeFilename(
   if (typeof fileName !== 'string' || fileName.length === 0) {
     throw new Error('Unsafe filename rejected — empty');
   }
-  if (path.basename(fileName) !== fileName || fileName.includes('..')) {
+  // `\` is checked explicitly: on POSIX `path.basename` treats it as an
+  // ordinary character, so `foo\bar.json` would otherwise pass on Linux/macOS
+  // yet resolve to a nested path once the vault is opened on Windows.
+  if (path.basename(fileName) !== fileName || fileName.includes('\\') || fileName.includes('..')) {
     throw new Error('Unsafe filename rejected — contains path separators');
   }
   // 6.3.P1 — Win-illegal chars are platform-gated. Always enforce at

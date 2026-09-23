@@ -194,7 +194,11 @@ export function loadMarkdownIntoEditor(
     ? encodeEmptyParagraphs(originalBody, tokenizer)
     : originalBody;
 
-  editor.commands.setContent(contentToLoad, emit);
+  // TipTap 3: the 2nd arg is an OPTIONS object whose `emitUpdate` defaults to
+  // TRUE. The TipTap 2 boolean form (`setContent(x, false)`) no longer means
+  // "don't emit" — it would fire onUpdate on every load → a phantom write of a
+  // file the user never edited. Pinned by markdownBodyRoundTrip.test.ts.
+  editor.commands.setContent(contentToLoad, { emitUpdate: emit });
   // Turn the reconstructed sentinel paragraphs into genuinely empty ones. Must
   // run before the selection restore below so positions are clamped against the
   // final (post-strip) document size.

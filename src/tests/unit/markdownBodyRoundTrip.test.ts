@@ -73,12 +73,23 @@ const corpus = loadCorpus();
  *  - links-underline:   `<u>…[link](…)</u>` re-nests; bare URL gains `<…>`.
  *  - mixed-prose:       a two-line blockquote is joined onto one line.
  *  - task-lists:        a TIGHT task list is serialised loose (blank lines).
+ *  - link-schemes:      `filo://` link marks are dropped (Link's URI allowlist)
+ *                       and `[[wiki]]` brackets are escaped.
+ *  - misc-syntax:       HTML comment / block `<div>` dropped, callout joined.
+ *
+ * TipTap 3 difference (the ONE place v3 output ≠ v2 output, deliberately
+ * accepted): `relative-links` — TipTap 2's Link dropped the mark on a relative
+ * `[note](Notes/Other.md)` (so that file opened read-only); TipTap 3's Link
+ * keeps it, so the body now round-trips byte-identically and opens editable.
+ * Its baseline is the fixture itself (no `.expected.md`).
  */
 const LOSSY_ON_TIPTAP2: ReadonlySet<string> = new Set([
   'inline-html-spans',
   'links-underline',
   'mixed-prose',
   'task-lists',
+  'link-schemes',
+  'misc-syntax',
 ]);
 const editors: Editor[] = [];
 

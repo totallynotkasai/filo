@@ -1,0 +1,1 @@
+Mail [me](mailto:someone@example.com), relative [note](Notes/Other.md) and [anchor](#section).

@@ -339,7 +339,7 @@ interface StubEditor {
     doc: { content: { size: number } };
   };
   commands: {
-    setContent: (body: string, emit: boolean) => void;
+    setContent: (body: string, options: { emitUpdate?: boolean }) => void;
     setTextSelection: (sel: { from: number; to: number }) => void;
     focus: (pos?: unknown, options?: { scrollIntoView?: boolean }) => void;
   };
@@ -360,8 +360,8 @@ function makeStubEditor(opts: {
       doc: { content: { size: 9999 } }, // any size before setContent
     },
     commands: {
-      setContent: (body, emit) => {
-        calls.push(['setContent', { body, emit }]);
+      setContent: (body, options) => {
+        calls.push(['setContent', { body, options }]);
         stub.state.doc.content.size = opts.newDocSize;
       },
       setTextSelection: (sel) => {
@@ -383,6 +383,22 @@ describe('markdownSync — loadMarkdownIntoEditor caret preservation', () => {
     loadMarkdownIntoEditor(stub as unknown as Editor, 'new body');
     const kinds = stub.calls.map((c) => c[0]);
     expect(kinds).toEqual(['setContent']);
+  });
+
+  // TipTap 3 — `setContent`'s 2nd arg is an OPTIONS object whose `emitUpdate`
+  // defaults to TRUE. A bare boolean (the TipTap 2 form) would no longer
+  // suppress onUpdate → every file load would fire a phantom write. Assert the
+  // exact options object, not just the call.
+  it('passes setContent a TipTap 3 options object with emitUpdate:false by default', () => {
+    const stub = makeStubEditor({ initialFrom: 0, initialTo: 0, newDocSize: 5 });
+    loadMarkdownIntoEditor(stub as unknown as Editor, 'body');
+    expect(stub.calls[0]).toEqual(['setContent', { body: 'body', options: { emitUpdate: false } }]);
+  });
+
+  it('forwards an explicit emitUpdate:true in the options object', () => {
+    const stub = makeStubEditor({ initialFrom: 0, initialTo: 0, newDocSize: 5 });
+    loadMarkdownIntoEditor(stub as unknown as Editor, 'body', { emitUpdate: true });
+    expect(stub.calls[0]).toEqual(['setContent', { body: 'body', options: { emitUpdate: true } }]);
   });
 
   it('restores selection in place when both ends still fit the new doc', () => {

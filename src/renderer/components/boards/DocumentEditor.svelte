@@ -6,7 +6,7 @@
    * + vault-file drop ergonomics that the old V2 DocumentBoard provided,
    * but persists via the disk-backed document store.
    */
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import { tabStore } from '../../stores/tabs.svelte';
   import { documentStore } from '../../stores/document.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
@@ -16,6 +16,7 @@
   import { tiptapToolbar } from '../../lib/editor/toolbarConfig';
   import { createTiptapEditor } from '../../lib/editor/createEditor';
   import { closeDrainGate } from '../../lib/editor/closeDrainGate.svelte';
+  import { setEditorEditable } from '../../lib/editor/setEditorEditable';
   import {
     parseMarkdownFile,
     loadMarkdownIntoEditor,
@@ -386,14 +387,14 @@
           // hydrateFromDisk. We deliberately skip the loadMarkdownIntoEditor +
           // applyReloadFromDisk below so the unread file's content isn't
           // replaced in-memory by an empty body. `finally` still sets `hydrated`.
-          editor.setEditable(false);
+          setEditorEditable(editor, false);
           return;
         }
         // Read succeeded — clear any prior failed state and re-enable editing
         // (the retry path lands here once the file becomes readable again).
         if (hydrateReadFailed) {
           hydrateReadFailed = false;
-          editor.setEditable(true);
+          setEditorEditable(editor, true);
         }
         lastLoadedBody = body;
         isUpdatingFromStore = true;
@@ -471,8 +472,9 @@
   // a read failed (that path holds it non-editable for its own reason).
   $effect(() => {
     const frozen = closeDrainGate.draining;
-    if (editor && !editor.isDestroyed && !hydrateReadFailed) {
-      editor.setEditable(!frozen);
+    if (!hydrateReadFailed) {
+      // Non-emitting + untracked: see setEditorEditable (the §0.2 effect loop).
+      untrack(() => setEditorEditable(editor, !frozen));
     }
   });
 

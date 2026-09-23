@@ -1,9 +1,10 @@
 <script lang="ts">
   import type { TextTile } from '../../schema/index';
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import type { Editor } from '@tiptap/core';
   import { createTiptapEditor } from '../../lib/editor/createEditor';
   import { closeDrainGate } from '../../lib/editor/closeDrainGate.svelte';
+  import { setEditorEditable } from '../../lib/editor/setEditorEditable';
   import { tiptapToolbar } from '../../lib/editor/toolbarConfig';
   import {
     parseMarkdownFile,
@@ -334,7 +335,7 @@
         // immediately). Mirrors DocumentEditor's M1 resume path.
         if (hydrateReadFailed) {
           hydrateReadFailed = false;
-          if (editor && !editor.isDestroyed) editor.setEditable(true);
+          setEditorEditable(editor, true);
         }
         // 1.2 — seed the verbatim frontmatter bytes so a later body-only save
         // emits them untouched (comments / key order / line endings preserved).
@@ -391,7 +392,7 @@
           console.warn('[TextTile] Failed to read markdown file; holding non-writable until retry:', err);
           hydrateReadFailed = true;
           if (relPath) markHydrated(relPath, false);
-          if (editor && !editor.isDestroyed) editor.setEditable(false);
+          setEditorEditable(editor, false);
           return;
         }
       }
@@ -533,8 +534,9 @@
   // overwrite the unread file). Mirrors DocumentEditor's M1 close-drain gate.
   $effect(() => {
     const frozen = closeDrainGate.draining;
-    if (editor && !editor.isDestroyed && !hydrateReadFailed) {
-      editor.setEditable(!frozen);
+    if (!hydrateReadFailed) {
+      // Non-emitting + untracked: see setEditorEditable (the §0.2 effect loop).
+      untrack(() => setEditorEditable(editor, !frozen));
     }
   });
 

@@ -128,7 +128,7 @@
     "prettier": "^3.8.3",
     "prettier-plugin-svelte": "^4.1.1",
     "sharp": "^0.35.4",
-    "svelte": "5.57.0",
+    "svelte": "^5.57.1",
     "svelte-check": "^4.6.0",
     "svelte-eslint-parser": "^1.6.1",
     "typescript": "~6.0.3",

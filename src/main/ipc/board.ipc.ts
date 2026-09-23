@@ -9,7 +9,9 @@ import {
   deleteBoardFile,
   scanBoardFiles,
   resolveBoardPath,
+  scanBoardConflicts,
 } from '../vault/boardFileOps';
+import { loadKnownHosts } from '../services/syncConflictNotifier';
 import {
   initVaultConfig,
   loadConfig,
@@ -157,6 +159,23 @@ export function registerBoardHandlers(): void {
     } catch (err) {
       logMainError('board:list', err);
       return [];
+    }
+  });
+
+  /**
+   * Audit-19 ERR-3 / EXT-7 — lists sync-client conflict forks of boards
+   * (`Plan.board-HOST.json` …) whose canonical `*.board.json` exists. Kept
+   * separate from `board:list` so its bare `string[]` contract is unchanged.
+   */
+  ipcMain.handle('board:list-conflicts', async (_event, vaultRoot: string) => {
+    try {
+      assertActiveVault(vaultRoot);
+      const hosts = await loadKnownHosts(vaultRoot);
+      return { success: true, copies: await scanBoardConflicts(vaultRoot, hosts) };
+    } catch (err) {
+      logMainError('board:list-conflicts', err);
+      const code = classifyError(err);
+      return { success: false, ...(code ? { code } : {}), error: String(err) };
     }
   });
 

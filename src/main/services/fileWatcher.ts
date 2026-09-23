@@ -2,6 +2,7 @@ import { watch, type FSWatcher, statSync, promises as fsPromises } from 'fs';
 import { BrowserWindow } from 'electron';
 import { join } from 'path';
 import { correlateRenames } from './renameCorrelation';
+import { announceSyncConflicts, loadKnownHosts } from './syncConflictNotifier';
 import {
   WATCHER_HASH_MAX_BYTES,
   fnv1a32,
@@ -360,6 +361,7 @@ export class FileWatcher {
     if (this.aborted) return;
 
     this.openLiveWatcher();
+    void loadKnownHosts(this.vaultPath); // Audit-19 C0 — OneDrive device names for conflict detection
 
     // Phase 19 S2 — seed the reconciliation snapshot in the background. The
     // very first pass treats every file as "newly seen" so we don't fire a
@@ -947,6 +949,7 @@ export class FileWatcher {
     // captures vault identity at ARRIVAL time, so a late send would drive
     // the rename cascade against the NEW vault's same-named files.
     if (this.aborted) return;
+    announceSyncConflicts(this.vaultPath, unique, exists); // Audit-19 ERR-3/EXT-2 — sync conflict forks
     // Move cached sizes + hashes onto the new path so a future delete of
     // the new path can still resolve, and drop the old-path entries.
     for (const r of renames) {

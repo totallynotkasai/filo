@@ -49,6 +49,7 @@ import {
 import { ProjectSchema } from '../../schema/project';
 import { loadAllBoards, isTransientBoardLoadError } from '../boards/boardLoader';
 import { boardLoadRetryToast } from '../boards/boardLoadRetryPrompt';
+import { syncConflictToast, groupByCanonical } from './syncConflictNotices';
 import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError, assertIpcOk } from '@shared/ipcEnvelope';
 import { reportError } from '../utils/errorBus';
@@ -334,6 +335,17 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
         `Failed to snapshot unloadable board ${failed.path} into .filo/recovery/`,
       );
     }
+  }
+
+  // Audit-19 ERR-3 / EXT-7 — board files a sync client forked
+  // (`Plan.board-HOST.json`) never appear in `board:list`; surface them once,
+  // after the open commits (buffered), instead of leaving the other machine's
+  // edits invisible. Best-effort: a failed scan just skips the notice.
+  try {
+    const { copies } = await invokeOk('board:list-conflicts', newVaultPath);
+    for (const group of groupByCanonical(copies)) warnings.push(syncConflictToast(newVaultPath, group));
+  } catch {
+    // no notice — the live watcher still announces forks as they arrive
   }
 
   // ── 3. Parse settings slices (per-slice fallback) ────────────────

@@ -111,6 +111,7 @@ export const IPC_PAYLOAD_SCHEMAS = {
   'board:save': z.tuple([nonEmptyString, nonEmptyString, unknownArg]),
   'board:create': z.tuple([nonEmptyString, nonEmptyString, unknownArg]).rest(optionalString),
   'board:delete': z.tuple([nonEmptyString, nonEmptyString]),
+  'board:list-conflicts': z.tuple([nonEmptyString]),
 
   // ── Recovery snapshot ─────────────────────────────────────────────────
   'recovery:snapshot': z.tuple([nonEmptyString, nonEmptyString]),

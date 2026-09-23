@@ -132,7 +132,17 @@ function extractBody(code, fnName) {
       else if (code[i] === ')') { depth--; if (depth === 0) { i++; break; } }
     }
     // Skip whitespace + an optional return-type annotation to the body's `{`.
-    while (i < code.length && code[i] !== '{' && code[i] !== ';') i++;
+    // Audit-19 — a `Promise<{ … }>` return type holds a type-literal `{` (it
+    // follows `<` / `:` / `,` / `|` / `&` / `(`): step over it to the body.
+    for (;;) {
+      while (i < code.length && code[i] !== '{' && code[i] !== ';') i++;
+      if (code[i] !== '{' || !/[<:,|&(]\s*$/.test(code.slice(0, i))) break;
+      let tdepth = 0;
+      for (; i < code.length; i++) {
+        if (code[i] === '{') tdepth++;
+        else if (code[i] === '}' && --tdepth === 0) { i++; break; }
+      }
+    }
     if (code[i] !== '{') continue; // a call / forward-decl, not a definition
     const start = i;
     let bdepth = 0;
@@ -220,6 +230,29 @@ const TARGETS = [
     // (`normalizePath(old) === normalizePath(new)`) lives OUTSIDE the loop and is
     // intentionally case-SENSITIVE, so it is never examined.
     loopFold: true,
+  },
+  // Audit-19 ERR-3 — duplicate board ids are resolved by NAME and FRESHNESS, not
+  // by scan order: code-unit order sorts ' ' / '-' before '.', so the old
+  // first-wins guard let `Plan (1).board.json` / `Plan - Copy.board.json`
+  // hijack the canonical `Plan.board.json`.
+  {
+    file: 'src/renderer/lib/boards/boardLoader.ts',
+    fn: 'loadAllBoards',
+    required: [
+      { token: /\bdetectConflictCopy\w*\s*\(/, why: 'ranks a sync conflict copy below the canonical file (C0 detector)' },
+      { token: /\bcompareDuplicateBoards\s*\(/, why: 'duplicate ids go through the name/mtime ranking' },
+    ],
+    forbidden: [
+      {
+        token: /hasOwnProperty\s*\.\s*call\s*\(\s*cache\s*,\s*data\s*\.\s*board\s*\.\s*id\s*\)/,
+        why: 'the pre-Audit-19 first-file-wins duplicate guard (scan order decides the winner)',
+      },
+    ],
+  },
+  {
+    file: 'src/renderer/lib/boards/boardLoader.ts',
+    fn: 'compareDuplicateBoards',
+    required: [{ token: /\bmtimeMs\b/, why: 'the newest file wins among non-conflict, equally-named candidates' }],
   },
 ];
 

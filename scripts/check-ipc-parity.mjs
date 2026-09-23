@@ -39,6 +39,8 @@ const MAIN_TO_RENDERER_EVENTS = new Set([
   // renderer can show a "reconnecting" banner during transient errors.
   'vault:watcher-state',
   'vault:tree-too-large',
+  // Audit-19 ERR-3 / EXT-2 — sync-client conflict copy notices.
+  'vault:sync-conflict',
   'app:flush-and-quit',
 ]);
 

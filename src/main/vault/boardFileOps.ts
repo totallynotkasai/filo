@@ -2,6 +2,7 @@ import { promises as fs } from 'fs';
 import { join, dirname } from 'path';
 import { atomicWriteFile, ensureDir, pathExists, sanitizeFilename } from './filenameUtils';
 import { relativePosix } from '../utils/pathHelpers';
+import { detectConflictCopyPath } from '../../shared/conflictCopy';
 
 /**
  * Board file operations for the vault-centric architecture.
@@ -110,10 +111,42 @@ export async function scanBoardFiles(vaultRoot: string): Promise<string[]> {
   return results;
 }
 
+/**
+ * Audit-19 ERR-3 / EXT-7 — sync-client conflict copies of a board.
+ *
+ * OneDrive, Dropbox and iCloud put their suffix before the LAST extension, so a
+ * fork of `Plan.board.json` is `Plan.board-DESKTOP-1A2B3C4.json` /
+ * `Plan.board (… conflicted copy …).json` / `Plan.board 2.json` — names
+ * `board:list` never sees. The diverged edits sat on disk with no warning.
+ * Returns each such copy whose canonical `*.board.json` exists alongside
+ * (the C0 detector; weak ` (n)` / ` n` shapes only count with the sibling).
+ */
+export async function scanBoardConflicts(
+  vaultRoot: string,
+  knownHosts: readonly string[],
+): Promise<Array<{ copyPath: string; canonicalPath: string; client: string }>> {
+  const boards: string[] = [];
+  const others: string[] = [];
+  await scanDir(vaultRoot, vaultRoot, boards, others);
+  const canonical = new Set(boards.map((b) => b.toLowerCase()));
+  const out: Array<{ copyPath: string; canonicalPath: string; client: string }> = [];
+  for (const rel of others) {
+    const hit = detectConflictCopyPath(rel, { knownHosts, exists: (c) => canonical.has(c.toLowerCase()) });
+    if (!hit || !hit.canonicalName.toLowerCase().endsWith(BOARD_EXTENSION)) continue;
+    if (!canonical.has(hit.canonicalName.toLowerCase())) continue;
+    out.push({ copyPath: rel, canonicalPath: hit.canonicalName, client: hit.client });
+  }
+  out.sort((a, b) => (a.copyPath < b.copyPath ? -1 : 1));
+  return out;
+}
+
 async function scanDir(
   dir: string,
   vaultRoot: string,
   results: string[],
+  // Audit-19 ERR-3 — optional sink for `*.board<suffix>.json` names (possible
+  // sync conflict forks) that `board:list` deliberately excludes.
+  others?: string[],
 ): Promise<void> {
   let entries;
   try {
@@ -128,7 +161,9 @@ async function scanDir(
     if (entry.isDirectory()) {
       // Skip hidden directories (.filo, .git, etc.) and node_modules
       if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
-      await scanDir(fullPath, vaultRoot, results);
+      await scanDir(fullPath, vaultRoot, results, others);
+    } else if (others && /\.board.+\.json$/i.test(entry.name) && !entry.name.toLowerCase().endsWith(BOARD_EXTENSION)) {
+      others.push(relativePosix(vaultRoot, fullPath));
     } else if (entry.name.toLowerCase().endsWith(BOARD_EXTENSION)) {
       // Audit-15 P1.3 — case-fold the extension match (siblings `fileOps`/the
       // watcher already do). Filo only ever CREATES lowercase `.board.json`, so

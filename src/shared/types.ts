@@ -54,12 +54,16 @@ export type IpcChannel =
   // string when transitioning to reconnecting. Renderer surfaces a toast.
   | 'vault:watcher-state'
   | 'vault:tree-too-large'
+  // Audit-19 ERR-3 / EXT-2 - a sync-client conflict copy appeared (main -> renderer)
+  | 'vault:sync-conflict'
   // Board operations
   | 'board:list'
   | 'board:load'
   | 'board:save'
   | 'board:create'
   | 'board:delete'
+  // Audit-19 ERR-3 / EXT-7 - board files forked by a sync client (Plan.board-HOST.json)
+  | 'board:list-conflicts'
   // Recovery snapshot (defensive backup of vault files before overwrite)
   | 'recovery:snapshot'
   // Recovery snapshot listing (surfaced to the user on vault open)
@@ -168,6 +172,7 @@ export const RECEIVE_CHANNELS: readonly IpcChannel[] = [
   'vault:watcher-failed',
   'vault:watcher-state',
   'vault:tree-too-large',
+  'vault:sync-conflict',
   'app:flush-and-quit',
 ];
 

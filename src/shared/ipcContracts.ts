@@ -231,6 +231,11 @@ export interface IpcChannelMap {
     args: [vaultRoot: string, relPath: string];
     result: IpcOk;
   };
+  // Audit-19 ERR-3 / EXT-7 — sync-client forks of a board (never in board:list).
+  'board:list-conflicts': {
+    args: [vaultRoot: string];
+    result: IpcSuccess<{ copies: Array<{ copyPath: string; canonicalPath: string; client: string }> }>;
+  };
 
   // ── Recovery snapshot ────────────────────────────────────────────
   'recovery:snapshot': {

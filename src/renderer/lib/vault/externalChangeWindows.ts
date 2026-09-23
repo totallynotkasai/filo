@@ -193,6 +193,29 @@ export function wasRecentlyRenamed(oldRel: string): boolean {
  */
 export function clearRecentRenames(): void {
   recentRenamedOldPaths.clear();
+  expectedReappearance.clear();
+}
+
+/**
+ * Audit-19 EXT-2 — a sync conflict (OneDrive renames the local copy to
+ * `Note-DEVICE.md`, then downloads the other version as `Note.md`) leaves the
+ * canonical path missing for a moment. For that window its "deleted
+ * externally" prompt is deferred — the file is expected to reappear.
+ */
+// allow-module-state: reset via clearRecentRenames (vault swap) — deadline-bounded anyway
+const expectedReappearance = new Map<VaultPath, number>(); // allow-no-rename-transfer: short deadline keyed by the path that is about to reappear
+
+export function noteExpectedReappearance(rel: string, ms: number): void {
+  expectedReappearance.set(vaultPath(rel), Date.now() + ms);
+}
+
+/** Remaining ms of the reappearance window for `rel` (0 when none). */
+export function reappearanceWindowRemaining(rel: string): number {
+  const deadline = expectedReappearance.get(vaultPath(rel));
+  if (deadline === undefined) return 0;
+  const left = deadline - Date.now();
+  if (left <= 0) expectedReappearance.delete(vaultPath(rel));
+  return Math.max(0, left);
 }
 
 /**
@@ -202,4 +225,5 @@ export function clearRecentRenames(): void {
  */
 export function _resetAttachmentDeleteGraceForTests(): void {
   recentRenamedOldPaths.clear();
+  expectedReappearance.clear();
 }

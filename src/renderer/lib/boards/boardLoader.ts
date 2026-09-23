@@ -17,6 +17,7 @@ import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { noteBaseline } from '../vault/fileBaselineRegistry';
 import { loadVersionedFile } from '../vault/loadVersionedFile';
+import { detectConflictCopyPath } from '@shared/conflictCopy';
 
 // allow-module-state: immutable lookup table derived from a build-time constant
 const TILE_TYPE_SET: ReadonlySet<string> = new Set(TILE_TYPES);
@@ -333,6 +334,12 @@ export interface LoadBoardResult {
    * the corrected values land on disk (mirrors `groupsBackfilled`).
    */
   boardIdsNormalized: boolean;
+  /**
+   * Audit-19 ERR-3 — the file's mtime from the bracketing pre-read stat, used
+   * to rank two files that declare the same board id. Undefined when the stat
+   * failed.
+   */
+  mtimeMs?: number;
 }
 
 export interface LoadBoardError {
@@ -405,7 +412,9 @@ export interface FailedBoardEntry {
   // aggregate level in `loadAllBoards` when two files declare the same
   // `board.id` (Audit 1.2). Widening here (rather than in `LoadBoardError`)
   // keeps `loadBoard`'s own return type honest.
-  errorKind: LoadBoardError['error'] | 'duplicate-board-id';
+  // Audit-19 ERR-3 — 'sync-conflict-copy': a duplicate-id loser whose name is a
+  // sync-client conflict copy of another board file.
+  errorKind: LoadBoardError['error'] | 'duplicate-board-id' | 'sync-conflict-copy';
   message: string;
 }
 
@@ -664,7 +673,67 @@ export async function loadBoard(
     groupsBackfilled,
     orphansPruned: orphanReportHasFindings(orphanReport),
     boardIdsNormalized: orphanReport.normalizedBoardIdRefs.length > 0,
+    mtimeMs: preStat?.mtimeMs,
   };
+}
+
+/** Audit-19 ERR-3 — one successful load, kept for the duplicate-id ranking. */
+interface LoadedBoardEntry {
+  relPath: string;
+  /** Position in `board:list` (code-unit) order — the final tie-break. */
+  index: number;
+  result: LoadBoardResult;
+}
+
+/** The file stem Filo would give a board named `name` (mirrors main's sanitizeFilename). */
+function boardFileStem(name: string): string {
+  // `\x22` is `"` — spelled as an escape so the CI gates' naive string blanker isn't derailed.
+  const stem = name.replace(/[<>:\x22/\\|?*\x00-\x1f]/g, '').replace(/\s+/g, ' ').trim().replace(/[. ]+$/, '');
+  return (stem || 'Untitled').toLowerCase();
+}
+
+function baseName(rel: string): string {
+  const i = rel.lastIndexOf('/');
+  return i >= 0 ? rel.slice(i + 1) : rel;
+}
+
+/**
+ * Audit-19 ERR-3 — ranks two files declaring the same board id (negative →
+ * `a` wins): not a sync conflict copy, then named after the board, then the
+ * newest mtime, then the `board:list` order.
+ */
+function compareDuplicateBoards(
+  a: LoadedBoardEntry,
+  b: LoadedBoardEntry,
+  isConflictCopy: (rel: string) => boolean,
+): number {
+  const conflict = Number(isConflictCopy(a.relPath)) - Number(isConflictCopy(b.relPath));
+  if (conflict !== 0) return conflict;
+  const named = (e: LoadedBoardEntry): number =>
+    baseName(e.relPath).toLowerCase() === `${boardFileStem(e.result.data.board.name)}.board.json` ? 0 : 1;
+  const byName = named(a) - named(b);
+  if (byName !== 0) return byName;
+  const byMtime = (b.result.mtimeMs ?? -Infinity) - (a.result.mtimeMs ?? -Infinity);
+  if (byMtime !== 0 && Number.isFinite(byMtime)) return byMtime;
+  return a.index - b.index;
+}
+
+function editedAt(mtimeMs: number | undefined): string {
+  if (mtimeMs === undefined) return '';
+  return `, edited ${new Date(mtimeMs).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`;
+}
+
+/**
+ * Audit-19 ERR-3 — neutral copy: never "remove the copy", never calls either
+ * file the duplicate. Both files are untouched; the loser is snapshotted.
+ */
+function duplicateBoardMessage(winner: LoadedBoardEntry, loser: LoadedBoardEntry): string {
+  return (
+    `Two board files use the same id: "${winner.relPath}" (loaded${editedAt(winner.result.mtimeMs)}) and ` +
+    `"${loser.relPath}" (not loaded${editedAt(loser.result.mtimeMs)}). Both files are unchanged on disk; a copy of ` +
+    'the unloaded one is in .filo/recovery/. To keep the other version, open it in a text editor, or rename it ' +
+    'and give it a new "id".'
+  );
 }
 
 /**
@@ -775,6 +844,7 @@ export async function loadAllBoards(
   const backfilledBoardIds: string[] = [];
   const prunedBoardIds: string[] = [];
   const normalizedBoardIds: string[] = [];
+  const loaded: LoadedBoardEntry[] = [];
 
   for (const relPath of relList) {
     const result = await loadBoard(vaultRoot, relPath);
@@ -802,28 +872,48 @@ export async function loadAllBoards(
       reportError('board-load', result.message, userMessage);
       continue;
     }
-    const { data } = result;
-    // Audit 1.2 — two .board.json files declaring the same board.id must not
-    // collapse. The first file loaded wins and stays reachable; route the
-    // collider into failedBoards (vaultCandidate snapshots it to
-    // .filo/recovery/) and skip merging its connections/frames so the
-    // survivor isn't polluted. Without this guard cache[id] / paths[id]
-    // silently overwrote — the first board became unreachable and its future
-    // saves hijacked the survivor's file — and the loser's connections/frames
-    // merged unconditionally under the survivor's id. Trivially produced by
-    // copying a .board.json in the OS file manager or restoring one from
-    // backup into the same vault.
-    if (Object.prototype.hasOwnProperty.call(cache, data.board.id)) {
-      const existingPath = paths[data.board.id];
-      const message = `Duplicate board id "${data.board.id}": ${relPath} collides with ${existingPath}`;
-      failedBoards.push({ path: relPath, errorKind: 'duplicate-board-id', message });
-      reportError(
-        'board-load',
+    loaded.push({ relPath, index: loaded.length, result });
+  }
+
+  // Audit 1.2 + Audit-19 ERR-3 — two `.board.json` files declaring the same
+  // board.id must not collapse (cache[id] / paths[id] would silently overwrite
+  // and the loser's connections/frames would pollute the survivor). Before
+  // Audit-19 the FIRST file in code-unit order won — and ' ' / '-' sort before
+  // '.', so `Plan (1).board.json` / `Plan - Copy.board.json` hijacked the
+  // canonical `Plan.board.json` (every save then went into the copy). Rank each
+  // id group instead: a non-conflict-copy name first (C0 detector), then the
+  // name matching the board's own name, then the newest mtimeMs, then the old
+  // code-unit order. Only the winner's connections/frames are merged.
+  const relSet = new Set(relList.map((r) => r.toLowerCase()));
+  const isConflictCopy = (rel: string): boolean =>
+    detectConflictCopyPath(rel, { exists: (c) => relSet.has(c.toLowerCase()) }) !== null;
+  const byId = new Map<string, LoadedBoardEntry[]>();
+  for (const entry of loaded) {
+    const id = entry.result.data.board.id;
+    byId.set(id, [...(byId.get(id) ?? []), entry]);
+  }
+  const winners = new Set<LoadedBoardEntry>();
+  for (const group of byId.values()) {
+    const ranked = [...group].sort((a, b) => compareDuplicateBoards(a, b, isConflictCopy));
+    const [winner, ...losers] = ranked;
+    if (!winner) continue;
+    winners.add(winner);
+    for (const loser of losers) {
+      const conflict = isConflictCopy(loser.relPath);
+      const message = duplicateBoardMessage(winner, loser);
+      failedBoards.push({
+        path: loser.relPath,
+        errorKind: conflict ? 'sync-conflict-copy' : 'duplicate-board-id',
         message,
-        `Filo couldn't load ${relPath}: another board (${existingPath}) already uses id "${data.board.id}". The duplicate was left unloaded and snapshotted to .filo/recovery/ — give it a new id or remove the copy, then reopen the vault.`,
-      );
-      continue;
+      });
+      reportError('board-load', `Duplicate board id "${winner.result.data.board.id}": ${loser.relPath} vs ${winner.relPath}`, message);
     }
+  }
+
+  for (const entry of loaded) {
+    if (!winners.has(entry)) continue;
+    const { relPath, result } = entry;
+    const { data } = result;
     boards.push(data.board);
     cache[data.board.id] = data;
     paths[data.board.id] = relPath;

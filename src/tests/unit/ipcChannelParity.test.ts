@@ -97,6 +97,7 @@ describe('IPC channel parity', () => {
       // Phase 3 / 3.1 — supervisor state machine, see fileWatcher.ts.
       'vault:watcher-state',
       'vault:tree-too-large',
+      'vault:sync-conflict', // Audit-19 ERR-3 / EXT-2
       'app:flush-and-quit',
       'app:ready-to-quit',
       // 6.2.H4 — renderer → main one-way cancel signal; main listens

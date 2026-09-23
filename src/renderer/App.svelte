@@ -12,6 +12,7 @@
   import { createErrorToastAggregator } from './lib/utils/errorToastAggregator';
   import { buildWriteErrorToast } from './lib/boards/writeErrorToast';
   import { retryAllFailedWrites } from './lib/boards/writeSchedulerFailures';
+  import { listenForSyncConflicts } from './lib/vault/syncConflictNotices';
   import { handleFlushAndQuit } from './lib/vault/handleFlushAndQuit';
   import { flushDirtyFlagSentinel } from './lib/vault/dirtyFlagRecovery';
   import { historyStore } from './stores/history.svelte';
@@ -148,6 +149,13 @@
   $effect(() => {
     if (vaultStore.isOpen) {
       return vaultStore.listenForChanges();
+    }
+  });
+  // Audit-19 ERR-3 / EXT-2 — live sync-conflict notices (a board fork / a
+  // refused conflict-copy rename). Same app-lifetime ownership as above.
+  $effect(() => {
+    if (vaultStore.isOpen) {
+      return listenForSyncConflicts(() => vaultStore.path ?? '');
     }
   });
 

@@ -73,6 +73,8 @@ const RECONCILE_EXEMPT = new Map([
   ['src/renderer/lib/kanban/kanbanTileCreation.ts', 'creates a new Kanban card backing .md'],
   ['src/renderer/lib/tasklist/taskCreation.ts', 'creates a new task backing .md'],
   ['src/renderer/lib/tasklist/fileDropHandler.ts', 'writes a freshly OS-dropped file into the vault'],
+  // Audit-19 BL-1 — the create-exclusive seed helper every creation module routes through.
+  ['src/renderer/lib/vault/createMdExclusive.ts', 'creates a brand-new .md (EEXIST otherwise — never targets an open editor)'],
   // Audit-14 7.3 — `tileCommands.ts` + `taskCommands.ts` were REMOVED from this
   // list. Their file-level exemption ("editor mounts afterward") was false for
   // the delete-UNDO snapshot-restore writes (DeleteTilesCommand.undo /
@@ -92,7 +94,7 @@ const RECONCILE_EXEMPT = new Map([
 
 // Same channel matcher as check-markdown-write-gateway.mjs (real call sites
 // only, not comments / docstrings referencing the channel name).
-const channelRe = /\binvoke(?:Ok)?\s*\(\s*['"`]vault:write-(?:existing-)?file-text['"`]/gs;
+const channelRe = /\binvoke(?:Ok)?\s*\(\s*['"`]vault:(?:write-(?:existing-)?|create-)file-text['"`]/gs;
 
 /** Per-write-site escape when the reconcile genuinely lives elsewhere. */
 const ESCAPE_RE = /\/\/ reconcile-elsewhere:/;

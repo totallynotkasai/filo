@@ -700,6 +700,57 @@ export function registerVaultHandlers(): void {
   );
 
   /**
+   * Audit-19 BL-1 — CREATE-EXCLUSIVE text write for brand-new `.md` seeds
+   * (Kanban card / task / Task-List OS drop). Reserves the name with an
+   * `O_EXCL` open (`'wx'`, case-insensitive on NTFS/APFS) and returns a typed
+   * `EEXIST` instead of overwriting a user's existing file; the renderer bumps
+   * to ` (n)` and retries. Watcher suppression runs only AFTER the name is ours,
+   * so a losing attempt never masks a real external edit of the existing file.
+   * Mirrors `copyFileToVault`'s reserve-then-replace.
+   */
+  ipcMain.handle(
+    'vault:create-file-text',
+    async (_event, vaultRoot: string, relativePath: string, content: string) => {
+      try {
+        assertActiveVault(vaultRoot);
+        assertSafeRelativePath(relativePath, { forCreation: true });
+        assertNotInFiloDir(relativePath);
+        assertPayloadByteSize(
+          Buffer.byteLength(content, 'utf-8'),
+          PAYLOAD_LIMITS.MARKDOWN,
+          'vault:create-file-text',
+        );
+        const fullPath = join(vaultRoot, relativePath);
+        assertWithinVault(vaultRoot, fullPath);
+        await fsPromises.mkdir(dirname(fullPath), { recursive: true });
+        try {
+          const placeholder = await fsPromises.open(fullPath, 'wx');
+          await placeholder.close();
+        } catch (openErr) {
+          if ((openErr as NodeJS.ErrnoException).code === 'EEXIST') {
+            // Expected outcome (the renderer bumps the name) — not an error log.
+            return { success: false, code: 'EEXIST', error: 'file already exists' };
+          }
+          throw openErr;
+        }
+        activeWatcher?.suppress(relativePath, 2000);
+        try {
+          await atomicWriteFile(fullPath, content);
+        } catch (writeErr) {
+          // Drop only OUR 0-byte placeholder so a retry can reuse the name.
+          await fsPromises.unlink(fullPath).catch(() => undefined);
+          throw writeErr;
+        }
+        activeWatcher?.suppress(relativePath, 1000);
+        return { success: true, path: fullPath };
+      } catch (err) {
+        logMainError('vault:create-file-text', err);
+        return { success: false, code: ipcErrorCode(err), error: String(err) };
+      }
+    },
+  );
+
+  /**
    * Writes text content to an EXISTING file in the vault. Fails with ENOENT
    * if the target file does not exist (does NOT create parent directories,
    * does NOT seed a new file).

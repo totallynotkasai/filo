@@ -41,7 +41,7 @@ export class PayloadTooLargeError extends Error {
 const MB = 1024 * 1024;
 
 export const PAYLOAD_LIMITS = {
-  /** `vault:write-file-text` / `vault:write-existing-file-text` — Markdown text. */
+  /** `vault:write-file-text` / `vault:write-existing-file-text` / `vault:create-file-text` — Markdown text. */
   MARKDOWN: 25 * MB,
   /** `board:save` / `board:create` — board JSON. */
   BOARD: 50 * MB,

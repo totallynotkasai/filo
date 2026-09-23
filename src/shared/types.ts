@@ -26,6 +26,8 @@ export type IpcChannel =
   | 'vault:read-file-text'
   | 'vault:write-file-text'
   | 'vault:write-existing-file-text'
+  // Audit-19 BL-1 — create-exclusive new-file seed (O_EXCL), typed EEXIST on a clash.
+  | 'vault:create-file-text'
   // Phase 2 / 2.5 — used by CascadeDeleteCommand.undo to restore captured
   // media bodies (base64-encoded). Atomic + size-capped at the handler.
   | 'vault:write-file-binary'

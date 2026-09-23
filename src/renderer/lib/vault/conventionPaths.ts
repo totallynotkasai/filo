@@ -12,7 +12,8 @@
 import type { V7BoardFileData } from '../boards/boardSaver';
 import type { Board } from '../../schema/index';
 import { vaultStore } from '../../stores/vault.svelte';
-import { normalizePath, stripLeadingSlash } from '../utils/path';
+import { normalizePath, normalizeVaultRelative, stripLeadingSlash } from '../utils/path';
+import { flattenTreePaths } from './vaultTreeSort';
 
 /**
  * Strips OS-illegal filename characters and collapses whitespace. Returns
@@ -36,28 +37,52 @@ export function fileNameSafe(name: string): string {
  * Folder may be empty (vault root). Collisions get `" (N)"` suffixes; the
  * lowest free integer ≥ 2 wins.
  *
- * The cache covers loaded boards only — files that exist on disk but
- * aren't surfaced as tiles can still collide. Callers that care about
- * disk-level collisions should re-check after vault:write returns.
+ * Audit-19 BL-1 — `taken` is case-folded (NTFS/APFS treat `Groceries.md` and
+ * `groceries.md` as one file), prefers a def's explicit `filePath`, and folds
+ * in `extraTaken` (the on-disk tree, via `nextFreeMdPath`). This is only the
+ * PRE-PICK: the create-exclusive `vault:create-file-text` channel is the
+ * authority, and `createUniqueMdFile` bumps again on EEXIST.
  */
 export function nextUniqueMdPath(
   cache: Record<string, V7BoardFileData>,
   folder: string,
   baseName: string,
+  extraTaken: Iterable<string> = [],
 ): string {
   const prefix = folder ? `${folder}/` : '';
   const taken = new Set<string>();
   for (const data of Object.values(cache)) {
     for (const def of Object.values(data.tileDefs ?? {})) {
       const d = def as Record<string, unknown>;
-      if (d.type === 'text' && d.title) taken.add(`${prefix}${d.title}.md`);
+      if (d.type !== 'text') continue;
+      if (typeof d.filePath === 'string' && d.filePath) taken.add(normalizeVaultRelative(d.filePath));
+      else if (d.title) taken.add(normalizeVaultRelative(`${prefix}${d.title}.md`));
     }
   }
+  for (const p of extraTaken) taken.add(normalizeVaultRelative(p));
+  const isTaken = (p: string): boolean => taken.has(normalizeVaultRelative(p));
   const candidate = `${prefix}${baseName}.md`;
-  if (!taken.has(candidate)) return candidate;
+  if (!isTaken(candidate)) return candidate;
   let n = 2;
-  while (taken.has(`${prefix}${baseName} (${n}).md`)) n++;
+  while (isTaken(`${prefix}${baseName} (${n}).md`)) n++;
   return `${prefix}${baseName} (${n}).md`;
+}
+
+/**
+ * Audit-19 BL-1 — disk-aware pre-pick: `nextUniqueMdPath` over the board cache
+ * PLUS every file in the live vault tree, so a file that exists on disk but is
+ * on no board is not picked. The cache is a parameter (callers pass
+ * `boardCacheStore.cache`) to keep this module free of a boardCache import
+ * cycle. `createUniqueMdFile` still re-checks exclusively.
+ */
+export function nextFreeMdPath(
+  cache: Record<string, V7BoardFileData>,
+  folder: string,
+  baseName: string,
+): string {
+  const root = vaultStore.path;
+  const onDisk = root ? flattenTreePaths(vaultStore.rawTree ?? [], root) : [];
+  return nextUniqueMdPath(cache, folder, baseName, onDisk);
 }
 
 /**

@@ -10,9 +10,8 @@ import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import { vaultStore } from '../../stores/vault.svelte';
 import { fileTagsStore } from '../../stores/fileTags.svelte';
 import { AddTaskCommand } from '../../commands/index';
-import { trackComponentWrite } from '../boards/boardSaver';
+import { createUniqueMdFile } from '../vault/createMdExclusive';
 import { reportError } from '../utils/errorBus';
-import { invokeOk } from '../utils/invokeOk';
 import { buildTextTileDefFromMarkdownFile } from '../canvas/markdownTileSeed';
 import { vaultRelativeFromAbsolute } from '../canvas/vaultPath';
 import { createId } from '../utils/ids';
@@ -20,7 +19,7 @@ import { isMarkdownExtension } from '../vault/extension';
 import {
   fileNameSafe,
   getActiveContentFolder,
-  nextUniqueMdPath as nextUniqueMdPathLib,
+  nextFreeMdPath as nextFreeMdPathLib,
 } from '../vault/conventionPaths';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 
@@ -42,7 +41,7 @@ import { boardCacheStore } from '../../stores/boardCache.svelte';
  */
 
 function nextUniqueMdPath(folder: string, baseName: string): string {
-  return nextUniqueMdPathLib(boardCacheStore.cache, folder, baseName);
+  return nextFreeMdPathLib(boardCacheStore.cache, folder, baseName);
 }
 
 export interface FileDropDeps {
@@ -133,8 +132,9 @@ export function makeFileDropHandler(deps: FileDropDeps): FileDropHandler {
   /**
    * Import a Markdown file dragged from the OS file manager into a Task
    * List section. The file's contents are written into the active content
-   * folder (collision-checked) then added as a task placement just like
-   * the vault-sidebar drop path.
+   * folder CREATE-EXCLUSIVELY (Audit-19 BL-1 — an existing vault file with the
+   * same name is never overwritten; the import bumps to ` (n)`), then added as a
+   * task placement just like the vault-sidebar drop path.
    */
   async function importOsMarkdownFile(
     file: File,
@@ -149,15 +149,18 @@ export function makeFileDropHandler(deps: FileDropDeps): FileDropHandler {
     const rawContent = await file.text();
     const baseName = file.name.replace(/\.(md|markdown)$/i, '');
     const folder = getActiveContentFolder(board);
-    const relPath = nextUniqueMdPath(folder, fileNameSafe(baseName));
+    const safeBase = fileNameSafe(baseName);
+    let relPath = nextUniqueMdPath(folder, safeBase);
 
     try {
-      await trackComponentWrite(vaultRoot, relPath, async () => {
-        // allow-direct-write: one-shot OS-file-drop import — the file is
-        // brand-new in the vault, mkdir -p required, and the task placement
-        // re-hydrates the gateway on its next edit.
-        await invokeOk('vault:write-file-text', vaultRoot, relPath, rawContent);
+      const created = await createUniqueMdFile({
+        vaultRoot,
+        folder,
+        baseName: safeBase,
+        firstCandidate: relPath,
+        buildContent: () => rawContent,
       });
+      relPath = created.relPath;
     } catch (err) {
       reportError(
         'tasklist.import-md',

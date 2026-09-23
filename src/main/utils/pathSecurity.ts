@@ -262,7 +262,7 @@ export const MAX_VAULT_PATH_DEPTH = 10;
  *
  * 6.3.P1 / 6.3.P2 — `options.forCreation` forwards to per-segment
  * `assertSafeFilename`. Pass `{ forCreation: true }` from creation channels
- * (write-file-text, create-folder, rename target, etc.) so cross-platform
+ * (write-file-text, create-file-text, create-folder, rename target, etc.) so cross-platform
  * portability rules apply on every platform; omit to platform-gate the
  * Windows-only checks to win32.
  */
@@ -342,7 +342,8 @@ const RENDERER_PERMITTED_FILO_PATHS = new Set<string>([
 /**
  * Phase 1 / 1.2 — rejects any vault-relative path whose first segment
  * normalises to `.filo`. Applied at the entry of every generic
- * `vault:write-file-text` / `vault:write-existing-file-text` / `vault:delete`
+ * `vault:write-file-text` / `vault:write-existing-file-text` /
+ * `vault:create-file-text` / `vault:delete`
  * / `vault:rename` / `vault:copy-file` / `vault:create-folder` handler so
  * a buggy renderer can't end-run the dedicated `config:save` / `tags:save` /
  * `templates:write` / `theme:save` channels and clobber `.filo/` state with

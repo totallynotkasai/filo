@@ -61,6 +61,7 @@ const ENVELOPE_CHANNELS = new Set([
   'vault:read-file-text',
   'vault:write-file-text',
   'vault:write-existing-file-text',
+  'vault:create-file-text',
   'vault:write-file-binary',
   'vault:stat',
   'vault:set-open-on-launch',

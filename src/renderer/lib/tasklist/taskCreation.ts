@@ -13,18 +13,18 @@ import { uiStore } from '../../stores/ui.svelte';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import { vaultStore } from '../../stores/vault.svelte';
 import { AddTaskCommand } from '../../commands/index';
+import type { SeededFile } from '../../commands/taskCommands';
 import { createId } from '../utils/ids';
 import { assembleMarkdownFile } from '../editor/markdownSync';
-import { trackComponentWrite } from '../boards/boardSaver';
 import { markHydrated } from '../vault/markdownFileWriter';
+import { createUniqueMdFile } from '../vault/createMdExclusive';
 import { reportError } from '../utils/errorBus';
-import { invokeOk } from '../utils/invokeOk';
 import { sectionIdForPlacementIndex } from './sectionMath';
 import { getTaskDepth } from './blockMove';
 import {
   fileNameSafe,
   getActiveContentFolder,
-  nextUniqueMdPath as nextUniqueMdPathLib,
+  nextFreeMdPath as nextFreeMdPathLib,
 } from '../vault/conventionPaths';
 import type { QuickAddParsed } from '../tasks/quickAddParser';
 import type { TaskRow } from '../tasks/taskListModel';
@@ -40,7 +40,7 @@ import type { TaskRow } from '../tasks/taskListModel';
 
 /** Wrapper around the lib helper so callers don't pass the board cache. */
 export function nextUniqueMdPath(folder: string, baseName: string): string {
-  return nextUniqueMdPathLib(boardCacheStore.cache, folder, baseName);
+  return nextFreeMdPathLib(boardCacheStore.cache, folder, baseName);
 }
 
 function buildBaseTileStyle() {
@@ -80,6 +80,7 @@ interface SeedFileArgs {
   contentId: string;
   relPath: string;
   finalTitle: string;
+  folder: string;
   fm: Record<string, unknown> | null;
 }
 
@@ -148,23 +149,28 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
 
   // Shared seed routine: writes the `.md`, hydrates the documentStore, and
   // (for non-null `fm`) caches the frontmatter so the row builder doesn't
-  // lag the watcher. Returns silently with a toast on failure.
-  async function seedMdFile(args: SeedFileArgs, kindForError: string): Promise<void> {
+  // lag the watcher. Resolves the path + title it ACTUALLY created (Audit-19
+  // BL-1 — the create-exclusive helper bumps to ` (n)` if the pre-pick exists).
+  async function seedMdFile(args: SeedFileArgs, kindForError: string): Promise<SeededFile | void> {
     const vaultRoot = vaultStore.path;
     if (!vaultRoot) return;
-    const { contentId, relPath, finalTitle, fm } = args;
-    const seedBody = fm ? assembleMarkdownFile(fm, '') : '---\ncompleted: false\n---\n';
+    const { contentId, fm, folder } = args;
+    const seedFile = fm ? assembleMarkdownFile(fm, '') : '---\ncompleted: false\n---\n';
     // A9-M3 (Audit-9) — the backing `.md` write is CRITICAL: let a failure
     // PROPAGATE so the chained `AddTaskCommand.execute()` rolls its placement
-    // back (no orphan board row referencing a missing file). `trackComponentWrite`
-    // still routes the failure through the save-error pipeline (toast +
-    // `.filo/.dirty` sentinel + recent-self-write release) before rethrowing.
-    await trackComponentWrite(vaultRoot, relPath, async () => {
-      // allow-direct-write: seeds a NEW task .md file; mkdir -p required
-      // and `markHydrated(relPath, false)` below makes subsequent gateway
-      // writes route normally.
-      await invokeOk('vault:write-file-text', vaultRoot, relPath, seedBody);
+    // back (no orphan board row referencing a missing file). The helper routes
+    // the failure through the save-error pipeline (toast + `.filo/.dirty`
+    // sentinel) before rethrowing. Audit-19 BL-1 — create-EXCLUSIVE: an existing
+    // off-board file with the same name is never overwritten.
+    const created = await createUniqueMdFile({
+      vaultRoot,
+      folder,
+      baseName: args.finalTitle,
+      firstCandidate: args.relPath,
+      buildContent: () => seedFile,
     });
+    const relPath = created.relPath;
+    const finalTitle = created.finalTitle;
     // Post-write hydration is best-effort — the file IS on disk now, so the row
     // is valid; a lagging index / doc-load just hydrates lazily on the next edit.
     // A failure here must NOT roll the placement back (hence its own try/catch).
@@ -177,11 +183,13 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
       // (pre-clone). Stamping it here was a no-op for persistence: AddTaskCommand
       // had already deep-cloned the def before this runs, so it mutated an object
       // the cache never sees. seedMdFile no longer needs `def` at all.
+      // Audit-19 MD-3 — `DocumentState.body` is body-only; the seed is a
+      // frontmatter-only FILE with an empty body, so the store body is ''.
       documentStore.loadDocument({
         docId: contentId,
         filename: relPath,
         title: finalTitle,
-        body: seedBody,
+        body: '',
         htmlContent: '',
         richText: [],
       });
@@ -196,6 +204,7 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
         `Backing file for "${finalTitle}" (${kindForError}) was created, but post-write setup lagged — it should recover on the next edit`,
       );
     }
+    return { relPath, title: finalTitle };
   }
 
   function buildTaskDef(args: {
@@ -267,16 +276,13 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     // Pre-fix the `.catch(() => {})` swallow announced "Task added" even when
     // the seed write failed and execute() rolled the placement back. The
     // failure announcement gives SR users parity with the visual error toast
-    // the seed's trackComponentWrite pipeline already raised.
-    const ok = await historyStore
-      .execute(
-        new AddTaskCommand(board.id, def, insertPos, undefined, targetSectionId ?? undefined, () =>
-          seedMdFile({ contentId, relPath, finalTitle, fm: null }, 'new task'),
-        ),
-      )
-      .then(() => true, () => false);
+    // the seed's create-exclusive helper already raised.
+    const cmd = new AddTaskCommand(board.id, def, insertPos, undefined, targetSectionId ?? undefined, () =>
+      seedMdFile({ contentId, relPath, finalTitle, folder, fm: null }, 'new task'),
+    );
+    const ok = await historyStore.execute(cmd).then(() => true, () => false);
     tickAndPersist();
-    if (ok) announce(`Task added: ${finalTitle}`);
+    if (ok) announce(`Task added: ${cmd.currentTitle}`);
     else announce(`Adding task failed: ${finalTitle} — see the error notification`);
   }
 
@@ -362,16 +368,13 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     }
 
     // Audit-16 6.2 — success announcement gated on the chain resolving (see addTask).
-    const ok = await historyStore
-      .execute(
-        new AddTaskCommand(board.id, def, insertPos, undefined, resolvedTargetId ?? undefined, () =>
-          seedMdFile({ contentId, relPath, finalTitle, fm },'quick-add task'),
-        ),
-      )
-      .then(() => true, () => false);
+    const cmd = new AddTaskCommand(board.id, def, insertPos, undefined, resolvedTargetId ?? undefined, () =>
+      seedMdFile({ contentId, relPath, finalTitle, folder, fm }, 'quick-add task'),
+    );
+    const ok = await historyStore.execute(cmd).then(() => true, () => false);
     tickAndPersist();
     if (resolvedTargetId) setLastTargetedSectionId(resolvedTargetId);
-    if (ok) announce(`Task added from quick add: ${finalTitle}`);
+    if (ok) announce(`Task added from quick add: ${cmd.currentTitle}`);
     else announce(`Adding task failed: ${finalTitle} — see the error notification`);
   }
 
@@ -408,13 +411,10 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     const insertAt = parentIdx >= 0 ? parentIdx + 1 : placementsNow.length;
     const parentSection = parentIdx >= 0 ? sectionIdForPlacementIndex(sectionsNow, parentIdx) : null;
     // Audit-16 6.2 — success announcement gated on the chain resolving (see addTask).
-    const ok = await historyStore
-      .execute(
-        new AddTaskCommand(board.id, def, insertAt, undefined, parentSection ?? undefined, () =>
-          seedMdFile({ contentId, relPath, finalTitle, fm },'subtask'),
-        ),
-      )
-      .then(() => true, () => false);
+    const cmd = new AddTaskCommand(board.id, def, insertAt, undefined, parentSection ?? undefined, () =>
+      seedMdFile({ contentId, relPath, finalTitle, folder, fm }, 'subtask'),
+    );
+    const ok = await historyStore.execute(cmd).then(() => true, () => false);
 
     if (collapsedSubtasks.has(parentTileId)) {
       const next = new Set(collapsedSubtasks);
@@ -425,7 +425,7 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     if (parentSection) setLastTargetedSectionId(parentSection);
 
     tickAndPersist();
-    if (ok) announce(`Subtask added: ${finalTitle}`);
+    if (ok) announce(`Subtask added: ${cmd.currentTitle}`);
     else announce(`Adding subtask failed: ${finalTitle} — see the error notification`);
   }
 

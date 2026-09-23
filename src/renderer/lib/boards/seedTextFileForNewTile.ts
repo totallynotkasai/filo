@@ -1,11 +1,10 @@
 import type { Tile } from '../../schema/index';
 import { assembleMarkdownFile } from '../editor/markdownSync';
 import { resolveTextTileVaultPath } from './textTilePath';
-import { trackComponentWrite } from './boardSaver';
+import { createMdFileExclusive } from '../vault/createMdExclusive';
 import { documentStore } from '../../stores/document.svelte';
 import { vaultStore } from '../../stores/vault.svelte';
 import { reportError } from '../utils/errorBus';
-import { invokeOk } from '../utils/invokeOk';
 
 /**
  * Phase 2 (CONSOLIDATION_PLAN_2026-05-25) — extracted from
@@ -67,23 +66,20 @@ export async function seedTextFileForNewTile(
   const filename = stampTextTileSeedPath(tile, resolvedBoardId) ?? `${title}.md`;
 
   try {
-    const exists = await window.filo.invoke('vault:file-exists', vaultRoot, filename);
-    if (!exists) {
-      // Phase B / B.2 — cascade-delete undo passes `skipEmptySeed: true`
-      // because the file was already gone before the cascade ran. Writing
-      // an empty `.md` here would resurrect the user's deleted file as a
-      // blank document, silently destroying any out-of-band recovery
-      // attempt (e.g. restoring from trash). With the flag set we leave
-      // the placement pointing at a missing file; the broken-ref badge
-      // tells the user what happened.
-      if (!options?.skipEmptySeed) {
-        const fileText = assembleMarkdownFile({}, initialBody);
-        await trackComponentWrite(vaultRoot, filename, async () => {
-          // allow-direct-write: seeds a NEW .md file for a brand-new text
-          // tile; the TextTile mounts + hydrates the gateway on its first
-          // render so subsequent debounced writes route normally.
-          await invokeOk('vault:write-file-text', vaultRoot, filename, fileText);
-        });
+    // Phase B / B.2 — cascade-delete undo passes `skipEmptySeed: true`
+    // because the file was already gone before the cascade ran. Writing
+    // an empty `.md` here would resurrect the user's deleted file as a
+    // blank document, silently destroying any out-of-band recovery
+    // attempt (e.g. restoring from trash). With the flag set we leave
+    // the placement pointing at a missing file; the broken-ref badge
+    // tells the user what happened.
+    if (!options?.skipEmptySeed) {
+      // Audit-19 BL-1 — ONE create-exclusive call replaces the old
+      // exists-probe → write pair (a TOCTOU window). `'exists'` is the
+      // same "adopt the existing file" outcome the probe produced.
+      const fileText = assembleMarkdownFile({}, initialBody);
+      const outcome = await createMdFileExclusive(vaultRoot, filename, fileText);
+      if (outcome === 'created') {
         // Refresh the file tree so the newly-written path joins
         // `knownVaultPaths` BEFORE broken-ref recompute runs. The main
         // process suppresses the watcher event for renderer-initiated

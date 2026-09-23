@@ -87,6 +87,8 @@ export const IPC_PAYLOAD_SCHEMAS = {
   // Third arg `content` stays plain z.string(): empty Markdown is legal.
   'vault:write-file-text': z.tuple([nonEmptyString, nonEmptyString, z.string()]),
   'vault:write-existing-file-text': z.tuple([nonEmptyString, nonEmptyString, z.string()]),
+  // Audit-19 BL-1 — create-exclusive seed; same shape as write-file-text.
+  'vault:create-file-text': z.tuple([nonEmptyString, nonEmptyString, z.string()]),
   // Phase 2 / 2.5 — `(vaultRoot, relativePath, base64Data)`. The base64
   // string can be empty for an empty file, so the third arg is plain
   // `z.string()` and the handler enforces the decoded byte cap.

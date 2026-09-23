@@ -13,10 +13,9 @@ import { vaultStore } from '../../stores/vault.svelte';
 import { AddCardCommand } from '../../commands/index';
 import { createId } from '../utils/ids';
 import { assembleMarkdownFile } from '../editor/markdownSync';
-import { trackComponentWrite } from '../boards/boardSaver';
 import { markHydrated } from '../vault/markdownFileWriter';
+import { createUniqueMdFile } from '../vault/createMdExclusive';
 import { reportError } from '../utils/errorBus';
-import { invokeOk } from '../utils/invokeOk';
 import {
   interpolate,
   type TemplateContent,
@@ -25,7 +24,7 @@ import {
 import {
   fileNameSafe,
   getActiveContentFolder,
-  nextUniqueMdPath as nextUniqueMdPathLib,
+  nextFreeMdPath as nextFreeMdPathLib,
   titleFromRelPath as titleFromRelPathLib,
 } from '../vault/conventionPaths';
 
@@ -37,7 +36,7 @@ export type KanbanNewTileType = 'text' | 'audio' | 'link' | 'template';
  * unique-filename guarantee (e.g. the saved-views picker on rename).
  */
 export function nextUniqueMdPath(folder: string, baseName: string): string {
-  return nextUniqueMdPathLib(boardCacheStore.cache, folder, baseName);
+  return nextFreeMdPathLib(boardCacheStore.cache, folder, baseName);
 }
 
 export function titleFromRelPath(relPath: string, folder: string): string {
@@ -138,8 +137,8 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
       const vaultRoot = vaultStore.path;
       const folder = newCardFolder(board);
       const baseName = fileNameSafe(tileTitle);
-      const relPath = nextUniqueMdPath(folder, baseName);
-      const finalTitle = titleFromRelPath(relPath, folder);
+      let relPath = nextUniqueMdPath(folder, baseName);
+      let finalTitle = titleFromRelPath(relPath, folder);
       const contentId = createId();
       let filePath: string | undefined;
       // No collision toast here: `tileTitle` is always a system default
@@ -148,12 +147,17 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
       // default is just noise — the user expects the suffix bump.
       if (vaultRoot) {
         try {
-          await trackComponentWrite(vaultRoot, relPath, async () => {
-            // allow-direct-write: seeds an empty .md for a new kanban
-            // card. `markHydrated(relPath, false)` below registers the
-            // file with the gateway so subsequent writes route normally.
-            await invokeOk('vault:write-file-text', vaultRoot, relPath, '');
+          // Audit-19 BL-1 — create-EXCLUSIVE: an existing off-board file with
+          // the same name is never overwritten; the helper bumps to ` (n)`.
+          const created = await createUniqueMdFile({
+            vaultRoot,
+            folder,
+            baseName,
+            firstCandidate: relPath,
+            buildContent: () => '',
           });
+          relPath = created.relPath;
+          finalTitle = created.finalTitle;
           // Orphan-fm semantics: the file was just created with an empty body
           // and no frontmatter. Mark hydrated so the next gateway write (via
           // a TextTile that hasn't run its own hydrate yet, or a PropertiesPopup
@@ -169,11 +173,11 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
             richText: [],
           });
         } catch (err) {
-          reportError(
-            'kanban.seed-md',
-            err,
-            `Failed to create backing file for "${finalTitle}" — the card may not persist correctly`,
-          );
+          // Audit-19 BL-1 — no backing file means no card: a card with no
+          // `filePath` would later resolve a convention path onto some other
+          // file. The helper already surfaced the write failure.
+          reportError('kanban.seed-md', err, `Failed to create a file for "${finalTitle}" — the card was not added`);
+          return;
         }
       }
       def = {
@@ -234,29 +238,36 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
       ? content.frontmatter.title
       : undefined;
     const baseName = fileNameSafe(fmTitle ?? ref.name);
-    const relPath = nextUniqueMdPath(folder, baseName);
-    const finalTitle = titleFromRelPath(relPath, folder);
+    let relPath = nextUniqueMdPath(folder, baseName);
+    let finalTitle = titleFromRelPath(relPath, folder);
 
     // Interpolate `{{title}}` / `{{date}}` / `{{time}}` against the resolved
     // filename so the new card's body reflects its destination, not the
     // template's original placeholder. Frontmatter is forwarded verbatim
     // (minus `boardType`, which is a picker hint, not user content).
-    const interpolatedBody = interpolate(content.bodyWithoutBoardBlock, { title: finalTitle });
+    let interpolatedBody = interpolate(content.bodyWithoutBoardBlock, { title: finalTitle });
     const { boardType: _bt, ...fmWithoutBoardType } = content.frontmatter as Record<string, unknown> & {
       boardType?: unknown;
     };
     void _bt;
     const contentId = createId();
     const fmWithDocId = { ...fmWithoutBoardType, id: contentId };
-    const fileText = assembleMarkdownFile(fmWithDocId, interpolatedBody);
 
     try {
-      await trackComponentWrite(vaultRoot, relPath, async () => {
-        // allow-direct-write: seeds a template-derived .md for a new
-        // kanban card; `markHydrated(relPath, false)` below makes
-        // subsequent gateway writes route normally.
-        await invokeOk('vault:write-file-text', vaultRoot, relPath, fileText);
+      // Audit-19 BL-1 — create-EXCLUSIVE; a bumped name re-interpolates
+      // `{{title}}` so the body names the file it actually lives in.
+      const created = await createUniqueMdFile({
+        vaultRoot,
+        folder,
+        baseName,
+        firstCandidate: relPath,
+        buildContent: (t) => {
+          interpolatedBody = interpolate(content.bodyWithoutBoardBlock, { title: t });
+          return assembleMarkdownFile(fmWithDocId, interpolatedBody);
+        },
       });
+      relPath = created.relPath;
+      finalTitle = created.finalTitle;
       // Orphan-fm semantics: file just created on disk via the file-creating
       // channel. Subsequent edits flow through the gateway, which requires
       // hydration. Mark false since templates don't carry a BOM.

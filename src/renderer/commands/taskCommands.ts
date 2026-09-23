@@ -85,6 +85,12 @@ export function restoreTaskListSlice(
   );
 }
 
+/** Audit-19 BL-1 — what a create-exclusive seed actually created. */
+export interface SeededFile {
+  relPath: string;
+  title: string;
+}
+
 export class AddTaskCommand extends Command {
   description: string;
   readonly targetBoardId: string;
@@ -98,7 +104,9 @@ export class AddTaskCommand extends Command {
   // doc) folded INTO the command so it runs on the history chain. Awaited on the
   // first execute only; absent for callers (e.g. file-drop) whose `.md` already
   // exists or is created elsewhere.
-  private seedBackingFile?: () => Promise<void>;
+  // Audit-19 BL-1 — the seed may resolve the FINAL path it created (the
+  // create-exclusive helper bumps to ` (n)` when the pre-picked name exists).
+  private seedBackingFile?: () => Promise<SeededFile | void>;
   private hasExecuted = false;
 
   constructor(
@@ -107,7 +115,7 @@ export class AddTaskCommand extends Command {
     position: number,
     style?: PartialTaskStyle,
     targetSectionId?: string,
-    seedBackingFile?: () => Promise<void>,
+    seedBackingFile?: () => Promise<SeededFile | void>,
   ) {
     super();
     this.targetBoardId = boardId;
@@ -152,13 +160,27 @@ export class AddTaskCommand extends Command {
     // roll the placement back so we don't leave an orphan row referencing a
     // missing file (historyStore's catch then removes the command from the stack).
     if (isFirst && this.seedBackingFile) {
+      let seeded: SeededFile | void;
       try {
-        await this.seedBackingFile();
+        seeded = await this.seedBackingFile();
       } catch (err) {
         this.removePlacement();
         throw err;
       }
+      // Audit-19 BL-1 — the def was cloned (and its placement persisted) BEFORE
+      // the seed ran, so a bumped name must re-stamp the cached def; redo then
+      // re-adds the bumped path, which is where the file actually lives.
+      const current = (this.def as { filePath?: string }).filePath;
+      if (seeded && seeded.relPath !== current) {
+        this.def = { ...this.def, filePath: seeded.relPath, title: seeded.title } as TileDefinition;
+        boardCacheStore.persistUpdateTile(this.def.id, { filePath: seeded.relPath, title: seeded.title }, this.boardId);
+      }
     }
+  }
+
+  /** Title of the task as created (reflects an Audit-19 BL-1 name bump). */
+  get currentTitle(): string {
+    return this.def.title ?? '';
   }
 
   undo() {

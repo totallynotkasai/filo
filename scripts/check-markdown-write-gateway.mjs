@@ -60,14 +60,15 @@ function walk(dir) {
 
 const violations = [];
 
-// 6.3.P5 — match either write channel. The leading identifier filter
+// 6.3.P5 — match every markdown write channel (Audit-19 BL-1 adds the
+// create-exclusive `vault:create-file-text`). The leading identifier filter
 // (`\binvoke(?:Ok)?\s*\(`) ensures we only match real call sites, not
 // comments / docstrings / type aliases referencing the channel name. The
 // `\s*` permits newlines between `invokeOk(` and the channel literal, so a
 // multi-line invocation (the common shape in svelte components) doesn't
 // slip through.
 const channelRe =
-  /\binvoke(?:Ok)?\s*\(\s*['"`]vault:write-(?:existing-)?file-text['"`]/gs;
+  /\binvoke(?:Ok)?\s*\(\s*['"`]vault:(?:write-(?:existing-)?|create-)file-text['"`]/gs;
 
 for (const file of walk(RENDERER_DIR)) {
   // Only scan TS / Svelte source.

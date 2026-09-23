@@ -149,6 +149,11 @@ export interface IpcChannelMap {
     args: [vaultRoot: string, relPath: string, content: string];
     result: IpcSuccess<{ path: string }>;
   };
+  /** Audit-19 BL-1 — create-exclusive; fails with code 'EEXIST' instead of overwriting. */
+  'vault:create-file-text': {
+    args: [vaultRoot: string, relPath: string, content: string];
+    result: IpcSuccess<{ path: string }>;
+  };
   'vault:write-file-binary': {
     args: [vaultRoot: string, relPath: string, base64Data: string];
     result: IpcSuccess<{ path: string }>;

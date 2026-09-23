@@ -290,6 +290,9 @@ describe('DeleteTilesCommand — snapshot/restore (P0-18)', () => {
         if (relPath === '.filo/.dirty') return { success: true };
         return { success: false, error: 'EACCES' };
       },
+      // Audit-19 BL-1 — the re-added tile's empty seed now goes through the
+      // create-exclusive channel; let it land so only the RESTORE failure reports.
+      'vault:create-file-text': async () => ({ success: true }),
       'vault:file-exists': async () => false,
       'vault:read-tree': async () => ({ ok: true, tree: [] }),
     });

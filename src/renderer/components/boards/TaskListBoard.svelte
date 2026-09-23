@@ -68,7 +68,7 @@
   } from '../../lib/styles/effectiveStyle';
   import {
     fileNameSafe,
-    nextUniqueMdPath as nextUniqueMdPathLib,
+    nextFreeMdPath as nextFreeMdPathLib,
     getActiveContentFolder,
   } from '../../lib/vault/conventionPaths';
   import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
@@ -256,7 +256,7 @@
   // Shared with KanbanBoard via `lib/vault/conventionPaths.ts`; the local
   // wrapper keeps the existing call sites' two-arg signature.
   function nextUniqueMdPath(folder: string, baseName: string): string {
-    return nextUniqueMdPathLib(boardCacheStore.cache, folder, baseName);
+    return nextFreeMdPathLib(boardCacheStore.cache, folder, baseName);
   }
 
   function vaultPathForTile(tile: Tile): string {

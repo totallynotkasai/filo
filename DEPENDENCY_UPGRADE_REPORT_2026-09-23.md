@@ -1,8 +1,177 @@
 # Dependency Upgrade Report — 2026-09-23
 
-Branch: `chore/electron-42` (base commit `e35c170`). **All changes below are UNCOMMITTED** and sit in the
-working tree alongside the pre-existing, also-uncommitted Audit-18 work (~78 files). Commit the dependency
-changes separately if you want a clean, reviewable diff.
+Branch: `chore/electron-42`. Sections 1–5 describe the **first pass** (now committed as `0e61d97`).
+**Section 0 (below) is the second pass**: a regression it found and fixed, three more upgrades, and the
+refined migration plan for the remaining majors. Where §0 disagrees with a later section, §0 is correct.
+
+---
+
+## 0. Second pass (same day) — results and plan
+
+### 0.1 Commits on `chore/electron-42` (local, not pushed)
+
+| Commit | Content |
+|---|---|
+| `0e61d97` | First-pass dependency refresh (§2) — Electron 44, vitest 4, jspdf 4, focus-trap 8, jsdom 29, … |
+| `6ea4998` | Audit-18 remediation + Filo logo/icon (unrelated to deps; split out so the dep diff stays reviewable) |
+| `6fd57b1` | **`svelte` pinned to exactly `5.57.0`** — fixes a regression the first pass introduced (§0.2) |
+| `2479391` | TypeScript 5.9 → **6.0.3** (`~6.0.3`) + `declare module '*.css'` in `src/renderer/shims.d.ts` |
+| `58f7613` | Vite 6 → **7.3.6**, @sveltejs/vite-plugin-svelte 5 → **6.2.4**; dropped dead `svelte({ hot })` option in `vitest.config.mts` |
+| `54ecf43` | vitest + @vitest/coverage-v8 4 → **5.0.1** (no test/config changes needed) |
+
+### 0.2 REGRESSION FOUND AND FIXED — Svelte 5.57.1 phantom write on document open
+
+Found by a real-app Electron smoke test, which `ci:verify` cannot catch. A CRLF note
+(`---\r\ntitle: Notes\r\n…---\r\n# Hello\r\n\r\nSome **bold** text.\r\n`) was **rewritten on disk just by
+opening it** in a Document tab, with its body flipped to LF (`# Hello\n\nSome **bold** text.\r\n`). The
+renderer also logged 16–20 `effect_update_depth_exceeded` errors.
+
+- Bisected per version in the built app: **5.55.7 … 5.57.0 leave the file byte-identical; 5.57.1 rewrites it.**
+  The first pass had raised the floor to `^5.57.1` for advisories that are all fixed in 5.55.7.
+- Fix: `"svelte": "5.57.0"` (exact). All four svelte advisories stay cleared.
+- **Still open (pre-existing, every version):** 2 × `effect_update_depth_exceeded` on document open —
+  an effect cycle in Filo's own code (DocumentEditor / hydrate path). On 5.57.0 it causes no disk
+  write, but it is what 5.57.1 amplified into data loss. **Fix the cycle before relaxing the pin** (a
+  follow-up task has been queued). Do not let Renovate/`npm update` bump svelte past 5.57.0 until then.
+- Lesson: add a permanent E2E spec "CRLF doc opens → bytes unchanged, zero effect_update_depth errors".
+  The unit suite can't see this; only the built Electron app can.
+
+### 0.3 Verification done in this pass
+
+- `ci:verify` green after each step (4711 unit + 1 skipped, 349 guard tests, 47 gates). Lint is **24**
+  warnings (not 48 — §1 counted from an older commit), unchanged by every upgrade.
+- **Electron 44 real-app smoke** (Playwright, built app, stubbed folder dialog): Electron 44.4.5 / Node
+  24.21 / Chrome 152; vault opens; `filo://media/…` image renders; HTTP Range → `206` +
+  `Content-Range: bytes 0-7/70`; `filo://media/.filo/…` → `403`; context isolation intact (`require`
+  undefined, `window.filo` present); Document editor renders the Markdown.
+- **E2E suite** (`--workers=1`): **8 passed / 34 failed / 4 skipped — identical to the Audit-15
+  baseline.** 28 of the 34 are the known harness gap (`import('/src/renderer/…')` needs a Vite dev server);
+  the rest are stale selectors (e.g. "Open Project" text) and axe↔Electron `Target.createTarget`.
+  **Run E2E serially:** with default parallel workers the instances fight over the shared
+  `%APPDATA%\Electron` userData + single-instance lock and ~30 tests "fail" at launch.
+- **Coverage** (`test:unit:coverage`): branches **67.26% < 80% threshold — already failing on vitest 4**
+  (§3.7 never ran it). Not caused by any upgrade; retune or add tests (thresholds are documented as
+  ratchet-up only, so that's your call).
+- Load-sensitive flakes: `recoverySnapshot*`, `fileWatcherStop`, `audit17Phase3` hit the 5 s timeout when
+  several `ci:verify` runs share the machine; pass alone. Consider a larger `testTimeout` for them.
+
+### 0.4 Still NOT verified (needs a human, or a later session)
+
+- `npm run dev` (Vite 7 + plugin-svelte 6 dev server + HMR inside the Electron window).
+- `npm run package` → NSIS installer install + launch (electron-builder 26 × Electron 44).
+- Native dialogs by hand, OS drag-and-drop of a file onto a Mind Map, spellcheck, `mailto:`/`https:`
+  links, quit-with-pending-edits drain, PDF export output (jspdf 4), keyboard-only modal focus return
+  (focus-trap 8), Kanban/Task drag (svelte-dnd-action 0.9.79). Checklist in §3.1/§3.3/§3.5/§3.6.
+- §3.2 dialog `defaultPath` — confirmed real (Electron 44 typings: no `defaultPath` → Downloads). Left as a
+  product decision. Suggested: attachment picker → vault root (`vaultRegistry.currentVaultPath`), vault
+  picker + export → Documents. Note: `dialog.ipc.ts`/`export.ipc.ts` are unit-tested with an `electron`
+  mock that has no `app`, so use `vaultRegistry`/`os` or extend those mocks.
+
+### 0.5 Remaining upgrades — what's left and why
+
+| Package | Now | Latest | Verdict |
+|---|---|---|---|
+| svelte | 5.57.0 (pinned) | 5.57.1 | **Blocked** on the effect-cycle fix (§0.2) |
+| TipTap + tiptap-markdown | 2.27.3 / 0.8.10 | 3.31.3 / 0.9.0 | Planned migration (§0.6) — clears the last 37 advisories |
+| zod | 3.25.76 | 4.6.5 | Planned migration (§0.7) |
+| vite / vite-plugin-svelte | 7.3.6 / 6.2.4 | 8.3 / 7.3 | Wait: needs electron-vite 6 (beta only) + Rolldown config rewrite |
+| typescript | 6.0.3 | 7.0.2 | Wait: typescript-eslint caps `<6.1.0`; svelte-check `^5‖^6` |
+| jsdom / js-yaml / nanoid | 29 / 4.3 / 5.1 | 30 / 5 / 6 | Skip — no benefit (§4.4) |
+
+### 0.6 TipTap 2 → 3 migration plan (≈1.5–2 days) — supersedes §4.2 where they differ
+
+**Pre-work on v2 (write these first, they are the safety net):**
+1. Golden-corpus body round-trip test: `.md` fixtures covering tables, task lists, nested lists, inline
+   HTML spans, `#tags`, blank-line paragraphs, CRLF, and docs **ending in a heading / list / table / code
+   block**; assert load → `getMarkdown()` is byte-identical. *No existing gate checks body bytes —
+   `ci:frontmatter-invariant` covers frontmatter only.* Add a CI gate that pins this test's existence.
+2. "Loading a file does not emit an update" test using the real `createTiptapEditor` (not a mock).
+3. Assert `isLossyMarkdownRoundTrip` flags no corpus file.
+4. The §0.2 E2E (CRLF doc open → bytes unchanged).
+
+**Breaking changes that apply (verified against code):**
+- **`setContent(content, false)` → phantom write (silent data loss).** v3's 2nd arg is an options object
+  with `emitUpdate` defaulting to **true**. Fix `markdownSync.ts:197` → `setContent(x, { emitUpdate: emit })`.
+  `npm run check` catches the production site, but **`src/tests` is excluded from `tsconfig.json`**, and
+  `markdownSync.test.ts:342-364` mocks `setContent(body, emit: boolean)` — it would keep passing after a
+  wrong fix. Update the mock to assert `{ emitUpdate: false }`.
+- **StarterKit now bundles TrailingNode, Link, Underline, ListKeymap.** TrailingNode appends an empty
+  paragraph after a trailing heading/list/table/code block, which `ParagraphWithBlankLines` serialises
+  as an extra `\n` → **every such file gains a blank line on next save.** Set `trailingNode: false`,
+  `link: false`, `underline: false` in **both** StarterKit configs (`createEditor.ts:181` main editor and
+  `:289` label editor — otherwise labels start auto-linking URLs).
+- **TextStyle `mergeNestedSpanStyles` defaults to true** — with `html: true`, nested `<span style>` in a
+  `.md` gets merged on parse (inline-HTML byte drift). Set `false` on the `FontSize`/TextStyle extension.
+- Named exports only (`import { TextStyle } …`); `@tiptap/extension-text-style@3` has no default export.
+  Old package names (`extension-placeholder`, `-table-*`, `-task-*`) still publish at 3.31.3 — moving to
+  `@tiptap/extension-list` / `@tiptap/extensions` is optional.
+- Undeclared deps: `@tiptap/extension-paragraph` (`createEditor.ts:3`) and `@tiptap/pm` are imported but
+  not in `package.json` — add both explicitly when bumping.
+- Custom `Tag` mark (`tagExtension.ts`) uses `mergeAttributes` — the function patched by
+  GHSA-cp6q-959q-f8rh; re-run its tests.
+
+**tiptap-markdown risk:** 0.9.0 (Sep 2025) is the **last release**; its README says it is unmaintained and
+points to the official `@tiptap/markdown`. Filo reads its internals (`storage.markdown.parser.md`,
+`getMarkdown`, extension-storage `serialize` hooks). Options, in order of preference:
+(a) move to 0.9.0 and verify those internals still work (not yet confirmed); (b) **vendor/fork** it
+(~1k lines over markdown-it + prosemirror-markdown) to keep the current serializer under our control;
+(c) port to `@tiptap/markdown` — different serializer, requires rewriting `ParagraphWithBlankLines`, the
+Tag serializer and HTML mode. Not recommended now.
+
+**Sequence:** pre-work tests → bump all `@tiptap/*` + tiptap-markdown together → imports → `setContent`
++ test mock → StarterKit flags + `mergeNestedSpanStyles` → corpus diff + `markdownSync*` /
+`markdownHtmlMode` / `emptyParagraphs` / `documentEditor*` tests → `ci:verify` → real-app smoke
+(DocumentEditor + TextTile, CRLF + LF files, bytes unchanged on open).
+
+### 0.7 Zod 3 → 4 migration plan (≈1 day) — supersedes §4.1 where they differ
+
+**Inventory (verified):** 16 source files import bare `'zod'`. 274 `.default(` calls, almost all scalar
+(unaffected). **25 object `.default({})` sites over schemas with inner defaults**
+(`board.ts:413,494,536,558`; `connection.ts:85`; `frame.ts:76`; `layoutTemplate.ts:73`;
+`project.ts:51,56`; `settings.ts:161-164,171,172,179,180,187,216,230,306-310`). The 7 `z.record().default({})`
+sites and 23 `.default([])` are fine semantically. `.passthrough()` ×89, `.strict()` ×4, `ZodTypeAny` ×5,
+`ZodIssueCode.custom` ×5, `preprocess` ×2, `discriminatedUnion` ×3, `superRefine` ×2. None of:
+`.format/.flatten/errorMap`, single-arg `z.record`, `.email/.url`, `nativeEnum`, `.merge`, `deepPartial`.
+
+**Breaking changes that apply:**
+- `.default({})` no longer applies inner defaults (confirmed: v3 `{s:{a:1,b:true}}` vs v4 `{s:{}}`).
+  **Correction to §4.1:** it's not silent — v4 types `.default()` as the full output type, so all 25 sites
+  fail `npm run check` (and `ci:type-casts` blocks cast-silencing). Fix: `.prefault({})`.
+- **Missed in §4.1 — shared default objects.** In core 4.0 two `parse({})` calls return the *same* array
+  for `.default([])` (mutation leaks between boards/settings). Upstream now shallow-clones; confirm on
+  4.6.5, and use getter defaults `.default(() => [])` for mutable values regardless (the clone is shallow —
+  `project.ts:56` nests arrays).
+- Error wording changes, and a bad discriminator loses its "expected one of …" detail;
+  `boardLoader.ts:536` shows `issues[].message` to users → recovery toast gets vaguer. Optionally rebuild
+  a friendly message there. No test asserts built-in Zod text (custom `superRefine` messages survive).
+- Compile-only: `ZodTypeAny` → `z.ZodType`; `ZodIssueCode.custom` → `'custom'`; make `optionalNumber`
+  generic (`<T extends z.ZodType>(inner: T)`) or 7 call sites widen to `unknown`.
+- Number semantics (±Infinity rejected, `.int()` safe-ints only) — already guarded by 95 `.finite()` calls.
+- **Correction to §4.1:** "passthrough gains an index signature" — v3 already has it.
+
+**Incremental `zod/v4` subpath migration is NOT viable:** the subpath in 3.25.76 is core 4.0.0 (no clone
+fix), v3 schemas can't be nested in v4 ones, and `schemaUtils → settings → board → boardFile/project/tile`
+all import each other, so the renderer `schema/` folder must move in one step. Install `zod@4.6.5`
+directly and keep bare `'zod'` imports.
+
+**Sequence:** on v3 first — snapshot `parse({})` for `ProjectSettingsSchema` + every board-type settings
+schema; assert every mutable default is a fresh object per parse; snapshot a representative
+`V7BoardFileDataSchema` parse → bump → `npm run check` enumerates the 25 sites → `.prefault` + getter
+defaults → type fixes → `ci:verify` (esp. `boardRoundTrip.property`, `randomOpsNoOrphans.property`,
+`settingsRoundTrip`) → snapshots must be unchanged.
+
+### 0.8 Recommended order from here
+
+1. **Before 2026-10-20 (Electron 42 EOL — only relevant if you ship 42 builds):** do the §0.4 manual
+   checks and a `npm run package` install test on Windows.
+2. Fix the effect cycle (§0.2), add the CRLF-open E2E, then relax the svelte pin.
+3. TipTap 3 (§0.6) — security + unmaintained-dependency pressure; highest value.
+4. Zod 4 (§0.7) — lower urgency, no advisories.
+5. Revisit Vite 8 / TS 7 when electron-vite 6 and typescript-eslint support land.
+
+---
+
+*(First-pass report follows, unchanged.)*
 
 This document records (1) what was upgraded and how it was verified, (2) what still needs **external
 re-verification** (things automated checks here could not prove), and (3) the remaining deferred upgrades

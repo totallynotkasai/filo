@@ -192,6 +192,13 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
         const editor = editorDoc
           ? { path: rel, isDirty: editorDoc.isDirty }
           : null;
+        // Audit-19 EXT-3/EXT-4 — the file is back on disk (sync re-created it,
+        // a move landed, trash restore): a still-visible "missing" / "deleted
+        // externally" toast for it is stale and must not stay clickable.
+        if (next) {
+          uiStore.dismissToastsByKey(`missing:${rel}`, { silent: true });
+          uiStore.dismissToastsByKey(`ext-deleted:${rel}`, { silent: true });
+        }
 
         const decision = classifyExternalChange({
           path: rel,
@@ -458,7 +465,7 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
             // because there's nothing the body-sync pipeline can do, but
             // silent isn't right either — the tiles on every board now
             // dangle. Surface a warning toast that names the file and
-            // offers "Mark broken refs" / "Dismiss". We don't auto-clean
+            // offers "Keep tiles" / "Remove tiles…" (Audit-19 EXT-4: removal only behind a confirm). We don't auto-clean
             // because the user might be moving the file (the rename
             // correlator may still pair it on the next event in the
             // batch); waiting for an explicit choice is safer.

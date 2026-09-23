@@ -32,6 +32,8 @@ import { vaultIndexStore } from './vaultIndex.svelte';
 import { documentStore } from './document.svelte';
 import { fileTagsStore } from './fileTags.svelte';
 import { boardStore } from './board.svelte';
+import { boardCacheStore } from './boardCache.svelte';
+import { reportError } from '../lib/utils/errorBus';
 import { uiStore } from './ui.svelte';
 import { normalizeTags } from '../lib/vault/frontmatterSync';
 import { cancelFrontmatterWrite, dropPendingDelta } from '../lib/boards/frontmatterWriteScheduler';
@@ -78,27 +80,17 @@ export function promptExternalAttachmentDeleted(
     text: `"${filename}" was deleted externally — ${tileCount} reference${tileCount === 1 ? '' : 's'} (tiles, cover images, frame backgrounds) on existing boards now point at a missing file.`,
     type: 'warning',
     duration: 0,
+    sticky: true, // Audit-19 UX-6 / EXT-4
+    dedupeKey: `missing:${rel}`,
     actions: [
       {
         label: 'Remove references',
-        handler: async () => {
-          // 3.8 (Audit-18) — re-probe at click time. The attachment-delete grace
-          // window can't suppress a RECONCILE-synthesised rename (a cross-folder
-          // MOVE the live correlator missed lands after the window), and the user
-          // can restore the file from trash before clicking. If the file is back
-          // on disk this isn't a deletion — skip the cascade so a merely-moved /
-          // restored file doesn't lose its placements. (A move whose rename
-          // already rebound the refs makes `cascadeDeleteByVaultPath` a no-op
-          // anyway; the probe additionally covers same-path restore.)
-          try {
-            const exists = await window.filo.invoke('vault:file-exists', vaultRoot, rel);
-            if (exists) return;
-          } catch {
-            // Probe failure → treat as still-missing; fall through to the cascade
-            // (better to surface the removal than swallow a real delete).
-          }
-          boardStore.cascadeDeleteByVaultPath(rel, {}, vaultRoot);
-        },
+        // Audit-19 EXT-4 — behind a danger confirm listing the boards. The
+        // confirm path keeps the 3.8 (Audit-18) click-time re-probe: a
+        // reconcile-synthesised rename or a trash restore can bring the file
+        // back, and then this isn't a deletion. Attachments keep their tags
+        // (fileTags drop is the .md path's concern).
+        handler: () => confirmRemoveTilesForMissingFile(rel, vaultRoot, false),
       },
       {
         label: 'Dismiss',
@@ -411,12 +403,60 @@ export function promptPartialReadExhausted(rel: string): void {
 }
 
 /**
- * Phase 31 B2.5 — toast for an external delete of a file referenced by
- * tile(s) on at least one board, with NO open editor for it. The "Mark
- * broken refs" action runs the existing cascade-delete walk so every
- * referencing tile gets removed (with undo, via the existing command);
- * "Dismiss" leaves the broken refs in place so the user can attempt a
- * restore (e.g. recover from trash) without losing their tile layout.
+ * Audit-19 EXT-4 — what a vault-wide "remove the tiles for a missing file"
+ * cascade would touch, computed at toast / confirm time so the copy names the
+ * real scope (it spans EVERY board, open ones included — not "closed boards").
+ */
+function describeMissingFileScope(rel: string): { tiles: number; boardNames: string[] } {
+  const targets = boardCacheStore.findCascadeDeleteTargets(rel);
+  const boardNames = Object.entries(targets.byBoard)
+    .filter(([, ids]) => ids.length > 0)
+    .map(([boardId]) => boardCacheStore.cache[boardId]?.board.name || boardId);
+  return { tiles: targets.tileIds.length, boardNames };
+}
+
+const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/**
+ * Audit-19 EXT-4 — the cascade is destructive and vault-wide, and its undo lands
+ * on whichever board is active, so it only ever runs behind an explicit danger
+ * confirm that lists the boards. The click-time re-probe (Audit-18 3.8) still
+ * skips it when the file is back on disk (a synced move / trash restore).
+ */
+function confirmRemoveTilesForMissingFile(rel: string, vaultRoot: string, dropTags: boolean): void {
+  const { tiles, boardNames } = describeMissingFileScope(rel);
+  if (tiles === 0) return;
+  uiStore.openConfirm({
+    title: 'Remove tiles for a missing file?',
+    body: `This removes ${plural(tiles, 'tile')} and their connections from ${plural(boardNames.length, 'board')}: ${boardNames.join(', ')}. The file itself is already missing. Undo is available on the board that is active when you confirm.`,
+    confirmLabel: 'Remove tiles',
+    danger: true,
+    onConfirm: () => {
+      void (async () => {
+        try {
+          const exists = await window.filo.invoke('vault:file-exists', vaultRoot, rel);
+          if (exists) return;
+        } catch {
+          // Probe failure → treat as still-missing; fall through.
+        }
+        // The existing undoable cascade (fileSnapshots empty: the file is gone).
+        boardStore.cascadeDeleteByVaultPath(rel, {}, vaultRoot);
+        // Phase 4.2 — the user confirmed the file is gone; drop its tags.json
+        // membership so the orphan entry doesn't linger.
+        if (dropTags) fileTagsStore.dropFile(rel);
+      })().catch((err) => reportError('missingFile.removeTiles', err, 'Removing the tiles failed.'));
+    },
+  });
+}
+
+/**
+ * Phase 31 B2.5 / Audit-19 EXT-4 — toast for an external delete of a `.md`
+ * referenced by tiles, with NO open editor for it. On a synced vault this fires
+ * for moves and delete-then-recreate too, so the DEFAULT does nothing: "Keep
+ * tiles" leaves them showing as missing (the boardRefIntegrity badge is the
+ * signal). "Remove N tiles from boards…" opens a danger confirm that lists the
+ * boards; only then does the vault-wide cascade run. Sticky + keyed per file,
+ * and dismissed when the file reappears (vaultExternalChanges).
  */
 export function promptClosedBoardFileMissing(
   rel: string,
@@ -425,42 +465,23 @@ export function promptClosedBoardFileMissing(
   vaultRoot: string,
 ): void {
   const filename = rel.split('/').pop() || rel;
+  const { boardNames } = describeMissingFileScope(rel);
   uiStore.pushToast({
-    text: `"${filename}" was deleted externally — ${tileCount} tile${tileCount === 1 ? '' : 's'} on closed boards now reference a missing file.`,
+    text: `"${filename}" is missing from the vault (deleted or moved outside Filo). ${plural(tileCount, 'tile')} on ${plural(boardNames.length, 'board')} now show as missing.`,
     type: 'warning',
     duration: 0,
+    sticky: true,
+    dedupeKey: `missing:${rel}`,
     actions: [
       {
-        label: 'Mark broken refs',
-        handler: async () => {
-          // 3.8 (Audit-18) — re-probe at click time (see
-          // `promptExternalAttachmentDeleted`). A document-backed file gets NO
-          // grace window before this prompt, so a reconcile-synthesised rename
-          // (cross-folder MOVE) or a trash-restore can make the file present
-          // again by the time the user clicks. If it's back on disk, this isn't a
-          // deletion — skip the cascade + the tags drop.
-          try {
-            const exists = await window.filo.invoke('vault:file-exists', vaultRoot, rel);
-            if (exists) return;
-          } catch {
-            // Probe failure → treat as still-missing; fall through.
-          }
-          // Routes through the existing undoable cascade so the user can
-          // Ctrl+Z if they made a mistake. fileSnapshots empty because the
-          // file is already gone — undo restores tiles but not bodies.
-          boardStore.cascadeDeleteByVaultPath(rel, {}, vaultRoot);
-          // Phase 4.2 (2026-05-30) — the user confirmed the file is gone
-          // (no open editor case); drop its tags.json membership so the
-          // orphan entry doesn't linger until the next vault open. "Dismiss"
-          // leaves it intact in case the user restores the file from trash.
-          fileTagsStore.dropFile(rel);
+        label: 'Keep tiles (show as missing)',
+        handler: () => {
+          // No-op by design (Audit-19 EXT-4): the tiles keep their broken-ref badge.
         },
       },
       {
-        label: 'Dismiss',
-        handler: () => {
-          // No-op — toast auto-dismisses via the action click.
-        },
+        label: `Remove ${plural(tileCount, 'tile')} from boards…`,
+        handler: () => confirmRemoveTilesForMissingFile(rel, vaultRoot, true),
       },
     ],
   });

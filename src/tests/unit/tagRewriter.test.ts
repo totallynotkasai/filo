@@ -570,7 +570,9 @@ describe('emitTagScalar — quoting-oracle parity with the pre-6.4 js-yaml oracl
   //  - "'apos":      double-quoted vs the old doubled-single-quote form
   //  - "=":          bare (a valid plain scalar) vs the old defensive single-quote
   //  - "tab\tinside": bare (a valid plain scalar) vs the old double-quoted escape
-  const ALLOWED_DIVERGENCES = new Set(["'apos", '=', 'tab\tinside']);
+  //  - "1_000":     quoted (1.1-conservative) vs bare — js-yaml >=4.3 stopped
+  //                 resolving `1_000` as an int, so the ORACLE now emits it bare
+  const ALLOWED_DIVERGENCES = new Set(["'apos", '=', 'tab\tinside', '1_000']);
 
   it('every hostile tag round-trips, and byte-matches the old oracle except a known-safe allowlist', () => {
     const unexpected: string[] = [];

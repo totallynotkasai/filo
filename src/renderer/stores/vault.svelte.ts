@@ -47,6 +47,8 @@ import {
   isStillSameVault,
 } from '../lib/vault/vaultIdentity';
 import { isRenameInFlight } from '../lib/vault/renameInFlight';
+import { markBoardProvisionallyMissing } from './boardProvisionalMissing';
+import { adoptUntrackedTreeBoards } from './boardDiscovery';
 import {
   scheduleConfigWrite,
   scheduleMiscWrite,
@@ -1525,11 +1527,8 @@ export const vaultStore = {
    * alongside `handleExternalRename`, and so unit tests can drive it
    * directly. The watcher `vault:tree-updated` listener funnels every
    * event through this method via the shared queue, which serialises
-   * concurrent tree reconciles with in-flight external renames. Without
-   * the queue, a `git mv board.board.json Sub/board.board.json` could
-   * fire both events in the same tick; the tree reconcile would run
-   * first, observe the rebind not yet applied, and call
-   * `cleanupMissingBoard` on the old path — evicting the renamed board.
+   * concurrent tree reconciles with in-flight external renames (else a
+   * `git mv` could evict the renamed board before its rebind applied).
    */
   async refreshTreeAndCleanup(): Promise<void> {
     const refreshed = await this.refreshTree();
@@ -1606,10 +1605,12 @@ export const vaultStore = {
           // a rename is in flight, or the path was rebound since we sampled it
           // (the rename queue / next reconcile re-checks once it settles).
           if (confirmedMissing && !isRenameInFlight() && boardStore.paths[boardId] === relPath) {
-            boardStore.cleanupMissingBoard(boardId);
+            // Audit-19 EXT-1 — hold + re-check (an external folder rename emits no child events).
+            markBoardProvisionallyMissing(boardId, relPath, captured, (task) => this.enqueueRenameQueueWork(task));
           }
         }
       }
+      void adoptUntrackedTreeBoards(flat, captured); // Audit-19 EXT-1 — a .board.json that appeared mid-session
     }
   },
 

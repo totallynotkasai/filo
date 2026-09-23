@@ -62,6 +62,7 @@ import { loadBoard } from '../lib/boards/boardLoader';
 import { loadTagsFile } from '../lib/vault/tagsStorage';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { backupExternalVersion } from '../lib/vault/keepLocalBackup';
+import { adoptBoardAtRuntime } from './boardDiscovery';
 import { samePath } from '../lib/utils/path';
 import { selfWriteDivergedFromBaseline } from './vaultExternalChanges';
 
@@ -75,8 +76,8 @@ import { selfWriteDivergedFromBaseline } from './vaultExternalChanges';
  * editing.
  *
  * Three flavours:
- *  - Board not in cache (untracked) — silent. The next time the user
- *    opens it, `loadBoard` will pick up the new bytes naturally.
+ *  - Board not in cache (untracked) — Audit-19 EXT-1: adopted into the
+ *    running session (`adoptBoardAtRuntime`) when the file really exists.
  *  - Board in cache but clean (no pending writes) — reload silently.
  *    Mirrors the `reload-silently` branch of the `.md` classifier.
  *  - Board in cache AND has a pending debounced write — surface a
@@ -115,11 +116,25 @@ async function reconcileBoardJsonChange(event: ExternalChangeEvent): Promise<voi
     if (isPathQueuedOrInFlight(rel)) return;
   }
 
-  // Look up boardId for this path. Reconciler is a no-op when no board
-  // in the active project points at this path — a side `.board.json`
-  // sitting on disk we never loaded is not our problem to react to.
+  // Look up boardId for this path. Audit-19 EXT-1 — an untracked
+  // `.board.json` (a sync client delivered another machine's board, a copy,
+  // a folder moved in) is ADOPTED into the session when it really exists,
+  // instead of staying invisible until the vault is reopened.
   const boardId = findBoardIdForPath(rel);
-  if (!boardId) return;
+  if (!boardId) {
+    const captured = captureVaultIdentity();
+    const root = vaultStore.path;
+    if (!root) return;
+    let exists = false;
+    try {
+      exists = (await window.filo.invoke('vault:file-exists', root, rel)) === true;
+    } catch {
+      exists = false;
+    }
+    if (!isStillSameVault(captured) || !exists) return;
+    await adoptBoardAtRuntime(rel, captured);
+    return;
+  }
 
   // E3 — `isPathPending` is the single pending-write authority shared with
   // the `.md` classifier in `vaultExternalChanges`. A pending/in-flight

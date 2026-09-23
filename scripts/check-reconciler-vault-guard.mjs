@@ -461,6 +461,7 @@ for (const target of GUARD_TARGETS) {
 // step-2 handlers are anonymous arrows anyway. So pin the containing function by
 // name (the VS-1 pattern): its body — nested closures included — must reference
 // `isStillSameVault`.
+// (Audit-19 EXT-1 targets are documented inline below.)
 // Audit-17 1.3 — the rebased field-patch helper (`applyFrontmatterPatchRebased`,
 // frontmatterRebase.ts). Its "Apply anyway" conflict-toast handlers are anonymous
 // arrows that can fire long after a vault swap, and the `commit` they invoke
@@ -476,6 +477,11 @@ const PART3_TARGETS = [
   { file: 'src/renderer/lib/vault/renameCascadeRepair.ts', names: ['repairRenameCascade'] },
   { file: 'src/renderer/stores/vault.svelte.ts', names: ['runRecoverySequencer'] },
   { file: 'src/renderer/commands/frontmatterRebase.ts', names: ['applyFrontmatterPatchRebased'] },
+  // Audit-19 EXT-1 — runtime board adoption (a load await, then cache/path/project
+  // injection) and the provisional-missing re-check (a probe await, then evict /
+  // release) both take a CAPTURED identity param, so Part 1 can't see them.
+  { file: 'src/renderer/stores/boardDiscovery.ts', names: ['adoptOnce', 'adoptAndFindBoard'] },
+  { file: 'src/renderer/stores/boardProvisionalMissing.ts', names: ['recheckProvisionalBoard'] },
 ];
 for (const { file, names } of PART3_TARGETS) {
   let raw;

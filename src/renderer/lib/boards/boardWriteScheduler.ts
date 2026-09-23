@@ -40,6 +40,7 @@ import { backupExternalVersion } from '../vault/keepLocalBackup';
 // Audit-19 UX-6 — re-exported so boardCache (at its LOC ceiling) reuses an existing import line.
 export { backupExternalVersion };
 import { createScheduler } from './writeScheduler';
+import { vaultPath, type VaultPath } from '../../../shared/vaultPath';
 import { getBaseline, noteBaseline, hasBaselineDrifted, refreshBaselineAfterWrite } from '../vault/fileBaselineRegistry';
 
 /**
@@ -103,6 +104,49 @@ export function clearBoardPathDeleting(boardPath: string): void {
 
 function isBoardPathDeleting(boardPath: string): boolean {
   return boardsBeingDeleted.has(boardPath);
+}
+
+/**
+ * Audit-19 EXT-1 — board paths whose file vanished from disk while the board is
+ * open (an external folder rename, a synced move). Until the re-check decides
+ * (rebound by the reconcile rename / back on disk / really gone), a write to a
+ * held path must NOT run: `board:save` is a creating channel and would
+ * resurrect the old folder. Unlike `boardsBeingDeleted` (a clean no-op), a held
+ * write THROWS `BoardPathHeldError` so the scheduler records it failed (the
+ * crash sentinel stays dirty) and RETAINS its args; the re-check re-fires it to
+ * the new path. `VaultPath` keys (case-folded). Cleared on vault swap.
+ */
+// allow-module-state: reset via the boardScheduler reset callback (vault swap)
+const heldBoardPaths = new Set<VaultPath>(); // allow-no-rename-transfer: the hold is on the OLD path by design; the renamed-to path must stay writable
+
+export class BoardPathHeldError extends Error {
+  readonly code = 'BOARD_PATH_HELD';
+  constructor(boardPath: string) {
+    super(`Board "${boardPath}" is missing on disk; its write is held until Filo finds where it went.`);
+    this.name = 'BoardPathHeldError';
+  }
+}
+
+export function holdBoardPath(boardPath: string): void {
+  if (boardPath) heldBoardPaths.add(vaultPath(boardPath));
+}
+
+export function releaseBoardPath(boardPath: string): void {
+  heldBoardPaths.delete(vaultPath(boardPath));
+}
+
+export function isBoardPathHeld(boardPath: string): boolean {
+  return heldBoardPaths.has(vaultPath(boardPath));
+}
+
+/** Audit-19 EXT-1 — true when the board has an unsaved (pending / in-flight / retained) write. */
+export function boardHasUnsavedWrite(boardId: string): boolean {
+  return boardScheduler.hasWork(boardId);
+}
+
+/** Audit-19 EXT-1 — re-fires the board's retained failed write (e.g. after a hold is released). */
+export function retryFailedBoardWrite(boardId: string): Promise<{ failed: string[] }> {
+  return boardScheduler.retryFailed(boardId);
 }
 
 export interface BoardWriteArgs {
@@ -223,6 +267,9 @@ export async function writeBoardFile(
   // (Re-checked again right before `board:save` below to cover a write that was
   // suspended on the drift prompt across the delete.)
   if (isBoardPathDeleting(boardPath)) return;
+  // Audit-19 EXT-1 — held (missing on disk, re-check pending): fail loudly and
+  // let the scheduler retain the write rather than recreate the old path.
+  if (isBoardPathHeld(boardPath)) throw new BoardPathHeldError(boardPath);
   const fileData = cached;
   // Stamp the envelope version on every write so files round-trip with a
   // version field even if they were loaded from a legacy (pre-version)
@@ -546,8 +593,10 @@ registerResetCallback(() => {
   boardScheduler.reset();
   // Audit-18 3.11 — a deleting-mark must not leak across vaults.
   boardsBeingDeleted.clear();
+  heldBoardPaths.clear(); // Audit-19 EXT-1
 });
 registerTestResetCallback(() => {
   boardScheduler.reset();
   boardsBeingDeleted.clear();
+  heldBoardPaths.clear();
 });

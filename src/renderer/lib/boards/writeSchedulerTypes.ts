@@ -295,6 +295,8 @@ export interface Scheduler<TArgs> {
    * fresh args and awaits them. `flushAll` also re-fires them once per call.
    */
   retryFailed(key?: string): Promise<{ failed: string[] }>;
+  /** Audit-19 EXT-1 — true while `key` has a pending, parked, in-flight or retained write. */
+  hasWork(key: string): boolean;
   /**
    * Vault-swap nuclear option — clears pending timers, in-flight tracker
    * entries, and failure attribution Set. Late `.then`/`.catch` callbacks

@@ -19,12 +19,15 @@
  * `ci:reconciler-vault-guard` Part 3.
  */
 import { loadBoard, isTransientBoardLoadError } from '../lib/boards/boardLoader';
-import { isStillSameVault, type VaultIdentity } from '../lib/vault/vaultIdentity';
+import { captureVaultIdentity, isStillSameVault, type VaultIdentity } from '../lib/vault/vaultIdentity';
+import { promptBoardLoadRetry } from '../lib/boards/boardLoadRetryPrompt';
+import type { Board } from '../schema/index';
 import { samePath } from '../lib/utils/path';
 import { reportError } from '../lib/utils/errorBus';
 import { boardCacheStore } from './boardCache.svelte';
 import { vaultStore } from './vault.svelte';
 import { uiStore } from './ui.svelte';
+import { vaultSwapResettable } from '../core/vaultLifecycle';
 
 export type AdoptOutcome = 'adopted' | 'already' | 'duplicate' | 'failed';
 
@@ -48,16 +51,29 @@ export function lastAdoptFailure(relPath: string): { message: string; transient:
   return lastFailure.get(relPath.toLowerCase());
 }
 
-export function adoptBoardAtRuntime(relPath: string, captured: VaultIdentity): Promise<AdoptOutcome> {
+export interface AdoptOptions {
+  /**
+   * Don't surface a load failure or a duplicate id (the background tree scan:
+   * a board that failed at vault open was already reported there, and the
+   * watcher-driven adoption of a NEW file is not quiet).
+   */
+  quiet?: boolean;
+}
+
+export function adoptBoardAtRuntime(
+  relPath: string,
+  captured: VaultIdentity,
+  opts: AdoptOptions = {},
+): Promise<AdoptOutcome> {
   const key = `${captured.generation}|${relPath.toLowerCase()}`;
   const existing = inFlight.get(key);
   if (existing) return existing;
-  const p = adoptOnce(relPath, captured).finally(() => inFlight.delete(key));
+  const p = adoptOnce(relPath, captured, opts).finally(() => inFlight.delete(key));
   inFlight.set(key, p);
   return p;
 }
 
-async function adoptOnce(relPath: string, captured: VaultIdentity): Promise<AdoptOutcome> {
+async function adoptOnce(relPath: string, captured: VaultIdentity, opts: AdoptOptions): Promise<AdoptOutcome> {
   const vaultRoot = captured.path;
   if (!vaultRoot || !isStillSameVault(captured)) return 'failed';
   if (findLoadedBoardIdForPath(relPath)) return 'already';
@@ -69,7 +85,7 @@ async function adoptOnce(relPath: string, captured: VaultIdentity): Promise<Adop
     lastFailure.set(relPath.toLowerCase(), { message: result.message, transient });
     // A transient failure is re-offered by the caller's Retry prompt; anything
     // else (parse / schema / version) is surfaced once here.
-    if (!transient) {
+    if (!transient && !opts.quiet) {
       reportError('boardDiscovery', new Error(`${result.error}: ${result.message}`), `Filo couldn't load "${relPath}": ${result.message}`);
     }
     return 'failed';
@@ -82,6 +98,7 @@ async function adoptOnce(relPath: string, captured: VaultIdentity): Promise<Adop
   const id = data.board.id;
   const existingPath = boardCacheStore.paths[id];
   if (existingPath !== undefined) {
+    if (opts.quiet) return 'duplicate'; // the background scan: the watcher / open paths notify
     // Same id already loaded from another file (a copy, or a sync conflict
     // fork that keeps the compound suffix). Never adopt over it and never
     // tell the user which one to delete — both files stay untouched.
@@ -111,4 +128,64 @@ async function adoptOnce(relPath: string, captured: VaultIdentity): Promise<Adop
   }
   vaultStore.recomputeBrokenRefsNow();
   return 'adopted';
+}
+
+// allow-module-state: per-session record of untracked paths already tried (cleared on vault swap below)
+const scanned = new Set<string>(); // allow-no-rename-transfer: a renamed file is simply a new untracked path
+let scanInFlight: Promise<void> | null = null;
+
+vaultSwapResettable('boardDiscovery', () => {
+  scanned.clear();
+  lastFailure.clear();
+  scanInFlight = null;
+});
+
+/**
+ * Audit-19 EXT-1 — runtime discovery from the tree refresh: adopt every
+ * `.board.json` in the tree that no loaded board points at. Each such path is
+ * tried ONCE per session (a board that failed at open was already reported;
+ * the explicit Retry / sidebar paths call `adoptBoardAtRuntime` directly), and
+ * at most one scan runs at a time.
+ */
+export function adoptUntrackedTreeBoards(treePaths: Iterable<string>, captured: VaultIdentity): Promise<void> {
+  if (scanInFlight) return scanInFlight;
+  const candidates: string[] = [];
+  for (const p of treePaths) {
+    const lower = p.toLowerCase();
+    if (!lower.endsWith('.board.json') || scanned.has(lower)) continue;
+    if (findLoadedBoardIdForPath(p)) continue;
+    scanned.add(lower);
+    candidates.push(p);
+  }
+  if (candidates.length === 0) return Promise.resolve();
+  scanInFlight = (async () => {
+    try {
+      for (const rel of candidates) {
+        if (!isStillSameVault(captured)) return;
+        await adoptBoardAtRuntime(rel, captured, { quiet: true });
+      }
+    } finally {
+      scanInFlight = null;
+    }
+  })();
+  return scanInFlight;
+}
+
+/**
+ * Audit-19 EXT-1 — the sidebar double-click on a board the session doesn't
+ * know (appeared mid-session, or failed to load at open): adopt it, then hand
+ * back the board to open. A transient failure re-offers the Retry notice; any
+ * other failure / duplicate was already surfaced by the adoption.
+ */
+export async function adoptAndFindBoard(relPath: string): Promise<Board | undefined> {
+  const captured = captureVaultIdentity();
+  const outcome = await adoptBoardAtRuntime(relPath, captured);
+  if (!isStillSameVault(captured)) return undefined;
+  const boardId = findLoadedBoardIdForPath(relPath);
+  const board = boardId ? vaultStore.getProject()?.boards.find((b) => b.id === boardId) : undefined;
+  if (!board && outcome === 'failed') {
+    const reason = lastAdoptFailure(relPath);
+    if (reason?.transient) promptBoardLoadRetry(captured.path, relPath, reason.message);
+  }
+  return board;
 }

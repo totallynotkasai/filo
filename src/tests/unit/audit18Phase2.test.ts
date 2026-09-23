@@ -166,8 +166,11 @@ describe('Audit-18 M2 — rename-in-flight defers board eviction', () => {
     expect(isRenameInFlight()).toBe(false);
     await vaultStore.refreshTreeAndCleanup();
 
-    expect('a' in boardCacheStore.cache).toBe(false);
-  });
+    // Audit-19 EXT-1 — eviction now follows the provisional-missing re-check
+    // (a reconcile walk + a ~2 s grace), not the tree refresh itself.
+    expect('a' in boardCacheStore.cache).toBe(true);
+    await vi.waitFor(() => expect('a' in boardCacheStore.cache).toBe(false), { timeout: 5000, interval: 50 });
+  }, 10_000);
 
   it('does NOT evict when the cached path is rebound DURING the existence probe', async () => {
     boardCacheStore.hydrate({ a: makeBoard('a') as never }, { a: 'Old.board.json' });

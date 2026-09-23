@@ -20,10 +20,8 @@
  *    OUTGOING vault can't mutate the new one (the `trackerIsCurrent` guard in
  *    `fireWrite` also covers that race).
  *
- * Failure attribution: `performWrite` resolves (success), resolves `{ failed }`
- * (per-target partial failure — config bundle), or throws (whole-write → one
- * failureId). Failures aggregate into a shared Set, drained per-key by
- * `flush()` / `flushAll()` so the Ctrl+S aggregate boolean stays honest.
+ * Failure attribution: `performWrite` resolves, resolves `{ failed }` (config
+ * bundle), or throws (one failureId) — see the ledger in writeSchedulerFailures.ts.
  */
 
 import {
@@ -58,8 +56,7 @@ import { createFailureLedger, isRetainableWriteError, registerRetryHook } from '
  */
 const WRITE_TIMEOUT: unique symbol = Symbol('write-timeout');
 
-// Public type surface — moved to writeSchedulerTypes.ts (Audit-16 Phase 4
-// ci:file-sizes split); re-exported so existing importers are unchanged.
+// Public types live in writeSchedulerTypes.ts (Audit-16 P4 split); re-exported unchanged.
 export type {
   CreateSchedulerOptions,
   FlushAllResult,
@@ -929,6 +926,10 @@ export function createScheduler<TArgs>(
   }
   registerRetryHook(() => retryFailed());
 
+  // Audit-19 EXT-1 — any unsaved work for `key`: pending / parked / in flight / retained.
+  const hasWork = (key: string): boolean =>
+    pending.has(key) || !!inFlight.get(key)?.size || !!parked.get(key)?.size || ledger.hasRetained(key);
+
   function hasPendingTimer(predicate: (args: TArgs) => boolean): boolean {
     for (const entry of pending.values()) {
       const args = entry.getArgs();
@@ -991,6 +992,7 @@ export function createScheduler<TArgs>(
     reset,
     hasPendingTimer,
     hasParked,
+    hasWork,
     __failuresSizeForTests,
     __writeGenSizeForTests,
     __parkForTests,

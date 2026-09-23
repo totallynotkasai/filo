@@ -41,6 +41,7 @@ import { flushAllMarkdownWriters } from './markdownFileWriter';
 import { flushAllPendingFrontmatterWrites } from '../boards/frontmatterWriteScheduler';
 import { flushAllMisc } from '../boards/miscWriteScheduler';
 import { flushScheduledConfig } from '../boards/configWriteScheduler';
+import { isBoardPathHeld } from '../boards/boardWriteScheduler';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { currentVaultGeneration } from './vaultIdentity';
@@ -221,7 +222,7 @@ export async function withDrainedWrites<T>(op: () => Promise<T>): Promise<T> {
     // scheduler captures args at schedule time. We pass `() => null` so the
     // signature stays satisfied without coupling this module to the project
     // store's `getConfigWriteArgs`.
-    const [mdResult, fmResult, boardResult, miscResult, configResult] =
+    const [mdResult, fmResult, boardDrain, miscResult, configResult] =
       await Promise.all([
         flushAllMarkdownWriters(),
         flushAllPendingFrontmatterWrites(),
@@ -230,6 +231,12 @@ export async function withDrainedWrites<T>(op: () => Promise<T>): Promise<T> {
         flushScheduledConfig(() => null),
       ]);
 
+    // Audit-19 EXT-1 — a HELD board write (its file vanished on disk, e.g. an
+    // external folder rename, and the re-check is pending) fails by design.
+    // It must not block the disk-shape op: the external-rename cascade that
+    // REBINDS that very board runs inside this drain, and aborting it would
+    // strand the board at its old path. The write stays retained + failed.
+    const boardResult = { ...boardDrain, failed: boardDrain.failed.filter((p) => !isBoardPathHeld(p)) };
     const detail: PendingWritesFailedDetail = {
       md: mdResult,
       fm: fmResult,

@@ -14,6 +14,7 @@
   import { fileTagsStore } from '../../stores/fileTags.svelte';
   import { reportError } from '../../lib/utils/errorBus';
   import { copyFileIntoVault } from '../../lib/vault/vaultOperations';
+  import { adoptAndFindBoard } from '../../stores/boardDiscovery';
   import {
     basenameOf,
     describeMoveIntoFolderFailure,
@@ -344,11 +345,9 @@
       const board = boardId
         ? vaultStore.project?.boards?.find((b) => b.id === boardId)
         : undefined;
-      if (board) {
-        tabStore.open(board.id, board.name, board.type as BoardType, board.emoji ?? '');
-      } else {
-        uiStore.toast('Board not loaded yet — reopen the vault to load it', 'warning', 2500);
-      }
+      // Audit-19 EXT-1 — an untracked board (appeared mid-session / failed at open) is adopted, then opened.
+      if (board) tabStore.open(board.id, board.name, board.type as BoardType, board.emoji ?? '');
+      else void adoptAndFindBoard(relPath).then((b) => b && tabStore.open(b.id, b.name, b.type as BoardType, b.emoji ?? ''));
       return;
     }
 

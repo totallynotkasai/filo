@@ -53,3 +53,10 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+/**
+ * Global stylesheets are imported for their side effect (`import '../css/style.css'`
+ * in main.ts). TypeScript 6 enables `noUncheckedSideEffectImports` by default, which
+ * requires a declaration for side-effect imports; Vite handles the actual CSS.
+ */
+declare module '*.css';

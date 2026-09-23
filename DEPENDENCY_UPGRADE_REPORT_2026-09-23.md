@@ -6,6 +6,83 @@ refined migration plan for the remaining majors. Where §0 disagrees with a late
 
 ---
 
+## 00. Third pass (same day) — svelte unpinned, Zod 4, TipTap 3 — ALL DONE
+
+`chore/electron-42` was fast-forwarded into local `main` (not pushed); this pass is on
+**`chore/dependency-majors`** (branched from `main`, not pushed). Where this section disagrees with
+§0.2 / §0.5–§0.8, this section is correct.
+
+| Commit | Content |
+|---|---|
+| `90e4092` | **Effect-loop fix + svelte `5.57.0` → `^5.57.1`** (§00.1) |
+| `7acebc8` / `7e5ee29` | Zod default-tree snapshot tests (on v3) → **zod 3.25.76 → 4.6.5** (§00.2) |
+| `63b20e8` / `efb682d` | Markdown body round-trip corpus + `ci:markdown-body-roundtrip` gate (on v2) → **TipTap 2.27 → 3.31.3, tiptap-markdown 0.8.10 → 0.9.0** (§00.3) |
+
+**Result:** `npm audit` **0 vulnerabilities** (was 37 moderate). `ci:verify` exit 0 — 4862 unit + 1
+skipped, 349 guard tests, **48 gates**, lint 0 errors / 24 warnings (baseline). Real-app E2E on the
+production build: `documentOpenNoWrite` (new) + `recoveryRelaunch` 4/4 pass. Full E2E suite (`--workers=1`): 10 pass / 34 fail / 4 skip — the
+same 34 failures as the Audit-15 baseline (identical test list), +2 passes from the new spec.
+
+### 00.1 Root cause of the §0.2 effect loop (fixed)
+
+TipTap's `editor.setEditable(x, emitUpdate = true)` emits `update` by default. The Audit-17 5.7
+close-drain `$effect` in `DocumentEditor.svelte` / `TextTile.svelte` called it on mount, so `onUpdate`
+→ `documentStore.updateContent` (a `SvelteMap` read + write) ran *inside* the effect →
+`effect_update_depth_exceeded`. svelte 5.57.1's batching re-ran the loop after hydrate, so the emitted
+update scheduled a real write (CRLF body → LF). Fix: new `lib/editor/setEditorEditable.ts` calls
+`setEditable(x, false)` (no-op when unchanged); all 6 call sites use it (effects also wrap it in
+`untrack`). This also closes a latent twin: the hydrate-*retry* path's `setEditable(true)` emitted an
+update while the editor was still empty. Guards: `editorSetEditableDiscipline.test.ts` (real editor,
+bite-verified; bans raw `.setEditable(` in `src/renderer`) and **new E2E
+`src/tests/e2e/documentOpenNoWrite.test.ts`** (CRLF + LF doc open → bytes identical, zero loop errors —
+red before the fix, green after, on 5.57.1). The E2E is not part of `ci:verify` (needs a build + real
+Electron; run `npx playwright test src/tests/e2e/documentOpenNoWrite.test.ts --workers=1` after
+`npm run build` whenever svelte or TipTap moves).
+
+### 00.2 Zod 4 — what changed
+
+25 object `.default({})` → `.prefault({})`; every array/record default → getter form
+(`.default(() => [])`) so no two parses share a mutable object. `ZodTypeAny` → `z.ZodType`,
+`ZodIssueCode.custom` → `'custom'`, generic `optionalNumber`. `zodDefaultsSnapshot.test.ts` (recorded on
+v3, 24 cases incl. fresh-object checks) passes unchanged on v4 — it failed 10 cases on v4 before the
+schema fixes. `boardLoader.ts` now prefixes each issue with its field path (v4 wording is more generic).
+`exportService.ts` got an explicit `?? 0` for `shadowIntensity` (runtime-identical). **Optional
+follow-up:** `.passthrough()` ×89 is deprecated in v4 (use `.loose()`); still works.
+
+### 00.3 TipTap 3 — what changed
+
+`setContent(x, { emitUpdate })`; StarterKit `trailingNode/link/underline: false` (label editor also
+`listKeymap: false`); TextStyle `mergeNestedSpanStyles: false`; named-export imports;
+`@tiptap/extension-paragraph` + `@tiptap/pm` declared. **tiptap-markdown 0.9.0 works as-is — not
+vendored** (`storage.markdown.parser.md`, `getMarkdown`, custom `serialize` hooks and HTML mode all
+verified). The new 20-fixture × LF/CRLF corpus (`markdownBodyRoundTrip.test.ts`, gate
+`ci:markdown-body-roundtrip`) is byte-identical v2 → v3; each of the three fixes was bite-verified
+against it. **One intended difference:** relative links like `[note](Notes/Other.md)` were dropped by
+v2 (file opened read-only); v3 keeps them byte-exact (file now editable).
+
+Pre-existing v2 behaviours recorded as baseline (NOT caused by the upgrade; candidates for later work):
+files with `filo://` links or `[[wiki]]` links, tight task lists, nested `<span style>`, multi-line
+blockquotes, HTML comments / `<div>` blocks are flagged lossy → opened read-only (never written); an
+edited-and-saved body drops its final newline and saves a CRLF body as LF.
+
+### 00.4 Still needs a human (manual smoke)
+
+- TipTap 3 UI not covered by jsdom: toolbar link / font size / family / colour / highlight, tables
+  (incl. column resize), task-item checkboxes (CSS vs v3 HTML), placeholder, paste/copy.
+- **ListKeymap is now ON in the main editor** — Backspace/Delete inside lists behaves differently
+  (UX only, no byte effect). Connection labels must NOT auto-link URLs.
+- Open a CRLF and an LF note as a **Text tile on a Mind Map** (the E2E covers only the Document tab) —
+  file must stay byte-identical.
+- Everything in §0.4 (dev server, `npm run package` install test, dialogs, drag-drop, PDF export,
+  focus return) is still outstanding.
+
+### 00.5 What remains outdated
+
+Only upstream-blocked or no-benefit majors: vite 8 / vite-plugin-svelte 7 (electron-vite 6 still beta),
+TypeScript 7 (typescript-eslint `<6.1.0`, svelte-check `^5||^6`), jsdom 30, js-yaml 5, nanoid 6 (§4.4).
+
+---
+
 ## 0. Second pass (same day) — results and plan
 
 ### 0.1 Commits on `chore/electron-42` (local, not pushed)

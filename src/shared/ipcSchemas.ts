@@ -183,7 +183,7 @@ export const IPC_PAYLOAD_SCHEMAS = {
   // ── Sidebar geometry ──────────────────────────────────────────────────
   'sidebar:get-state': z.tuple([]),
   'sidebar:set-state': z.tuple([unknownArg]),
-} as const satisfies Partial<Record<IpcChannel, z.ZodTypeAny>>;
+} as const satisfies Partial<Record<IpcChannel, z.ZodType>>;
 
 export type ValidationResult =
   | { ok: true }
@@ -201,7 +201,7 @@ export function validateIpcPayload(
   channel: string,
   args: readonly unknown[],
 ): ValidationResult {
-  const schema = (IPC_PAYLOAD_SCHEMAS as Record<string, z.ZodTypeAny | undefined>)[channel];
+  const schema = (IPC_PAYLOAD_SCHEMAS as Record<string, z.ZodType | undefined>)[channel];
   if (!schema) return { ok: true };
   const parsed = schema.safeParse(args);
   if (parsed.success) return { ok: true };

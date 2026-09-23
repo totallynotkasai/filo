@@ -423,9 +423,10 @@ function renderCanvasTile(tile: Tile, offsetX: number, offsetY: number): string 
 
   const style = tile.style;
   const radius = style.shape === 'rounded' ? 8 : 0;
+  const shadowIntensity = style.shadowIntensity ?? 0;
   const shadow =
-    style.shadowIntensity > 0
-      ? `box-shadow: 0 ${Math.round(style.shadowIntensity * 12)}px ${Math.round(style.shadowIntensity * 24)}px rgba(0,0,0,${(style.shadowIntensity * 0.4).toFixed(2)});`
+    shadowIntensity > 0
+      ? `box-shadow: 0 ${Math.round(shadowIntensity * 12)}px ${Math.round(shadowIntensity * 24)}px rgba(0,0,0,${(shadowIntensity * 0.4).toFixed(2)});`
       : '';
 
   const tileStyle = [

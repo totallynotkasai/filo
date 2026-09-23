@@ -149,7 +149,7 @@ export const InlineTileSchema = z.object({
   height: coerceToNumber(160).pipe(z.number().finite().min(60)),
   locked: z.boolean().default(false),
   faded: z.boolean().default(false),
-  tags: z.array(z.string()).default([]),
+  tags: z.array(z.string()).default(() => []),
   // Phase 31 A6.6 — .finite() rejects NaN / ±Infinity from hand-edited files.
   createdAt: z.number().finite(),
   updatedAt: z.number().finite(),

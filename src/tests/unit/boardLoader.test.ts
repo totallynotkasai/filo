@@ -140,6 +140,22 @@ describe('boardLoader', () => {
       if (!result.ok) expect(result.error).toBe('schema-invalid');
     });
 
+    it('schema-invalid message names the offending field path', async () => {
+      const bad = {
+        board: { type: 'mindmap', name: 'no id', createdAt: 1, updatedAt: 1 },
+        tileDefs: {},
+        connections: {},
+        frames: [],
+      };
+      installFiloStub({ 'board:load': () => JSON.stringify(bad) });
+      const result = await loadBoard('/vault', 'bad.board.json');
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toBe('schema-invalid');
+        expect(result.message).toContain('board.id: ');
+      }
+    });
+
     it('returns io-error when the IPC throws', async () => {
       installFiloStub({
         'board:load': () => {

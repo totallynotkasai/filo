@@ -9,10 +9,32 @@ export default defineConfig({
   plugins: [svelte()],
   test: {
     environment: 'jsdom',
-    include: ['src/tests/unit/**/*.test.ts'],
     exclude: ['src/tests/e2e/**'],
     globals: true,
     setupFiles: ['src/tests/setup.ts'],
+    // Audit-19 0.1 (T0): two projects. `unit` is the historical config,
+    // unchanged. `component` mounts real `.svelte` components in jsdom, which
+    // needs the `browser` export condition (the bare `svelte` import otherwise
+    // resolves to the server entry and `mount()` throws
+    // `lifecycle_outside_component`). The condition is scoped to the
+    // component project so the unit suite keeps its resolution.
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'unit',
+          include: ['src/tests/unit/**/*.test.ts'],
+        },
+      },
+      {
+        extends: true,
+        resolve: { conditions: ['browser'] },
+        test: {
+          name: 'component',
+          include: ['src/tests/component/**/*.test.ts'],
+        },
+      },
+    ],
     coverage: {
       // Ratchet-style coverage gate for `src/renderer/lib/**` — the pure
       // logic surface that should always be unit-testable. Components and

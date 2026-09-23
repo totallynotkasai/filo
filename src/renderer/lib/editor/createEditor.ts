@@ -35,6 +35,8 @@ import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight';
 import { Markdown } from 'tiptap-markdown';
 import { common, createLowlight } from 'lowlight';
 import { Tag } from './tagExtension';
+import { FiloTaskListTight } from './taskListTight';
+import { isFiloLink } from '../../schema/link';
 
 const lowlight = createLowlight(common);
 
@@ -213,6 +215,17 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
       Link.configure({
         openOnClick: false,
         HTMLAttributes: { class: 'tiptap-link' },
+        // Audit-19 DEP-2 — only an explicit-scheme URL autolinks while typing.
+        // Link's default accepts ANY dotted hostname, so typing ` Notes.md ` or
+        // `example.com` saved a bogus `[Notes.md](http://Notes.md)`.
+        shouldAutoLink: (url: string) => /^[a-z][a-z0-9+.-]*:\/\//i.test(url),
+        // Audit-19 UX-2 — allow `filo://` internal links (setLink silently
+        // returned false and notes containing one opened read-only). A custom
+        // `isAllowedUri`, NOT `protocols: ['filo']`: `protocols` registers with
+        // linkifyjs globally and Link's onDestroy `reset()`s linkifyjs, so every
+        // TextTile unmount would wipe it for all other editors. `javascript:` etc.
+        // are still refused by the default validator.
+        isAllowedUri: (url, ctx) => isFiloLink(url) || ctx.defaultValidate(url),
       }),
       Image.configure({
         inline: true,
@@ -229,6 +242,7 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
       TableHeader,
       TableCell,
       TaskList,
+      FiloTaskListTight,
       TaskItem.configure({
         nested: true,
       }),
@@ -251,7 +265,10 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
         // `markdownHtmlMode.test.ts`.
         html: true,
         tightLists: true,
-        linkify: true,
+        // Audit-19 DEP-2 — `linkify: true` turned filenames, bare domains and
+        // emails in ordinary notes into links, so those notes round-tripped
+        // lossy and opened read-only. Bare text stays text (KNOWN_LIMITATIONS #17).
+        linkify: false,
         breaks: false,
         transformPastedText: true,
         transformCopiedText: true,

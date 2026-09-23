@@ -43,6 +43,10 @@ const REQUIRED_FIXTURES = [
   'links-underline.md',
   // Audit-19 MD-3 — a body that OPENS with a horizontal-rule pair (behind real FM).
   'hr-leading-body.md',
+  // Audit-19 DEP-2 / UX-2 — plain filenames/domains/emails and filo:// links
+  // must round-trip byte-exact AND open editable (not lossy).
+  'bare-names-and-domains.md',
+  'filo-links.md',
 ];
 const REQUIRED_TOKENS = [
   { token: /\bcreateTiptapEditor\s*\(/, why: 'drives the REAL editor factory, not a stub' },

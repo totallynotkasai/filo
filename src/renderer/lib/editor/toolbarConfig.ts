@@ -1,5 +1,9 @@
 import type { Editor } from '@tiptap/core';
 import { toolbarStore } from '../../stores/toolbar.svelte';
+import { uiStore } from '../../stores/ui.svelte';
+
+/** Audit-19 UX-2 — shown when TipTap's Link URI allowlist refuses a link. */
+export const LINK_REFUSED_MESSAGE = "That link couldn't be added. Use https://, mailto: or a filo:// link.";
 
 /**
  * Tiptap ↔ GlobalToolbar bridge.
@@ -217,7 +221,10 @@ export const tiptapToolbar = {
 
   setLink(url: string) {
     if (url) {
-      activeEditor?.chain().focus().setLink({ href: url }).run();
+      // Audit-19 UX-2 — setLink returns false when Link's URI allowlist refuses
+      // the href; that used to fail silently.
+      const ok = activeEditor?.chain().focus().setLink({ href: url }).run();
+      if (activeEditor && !ok) uiStore.toast(LINK_REFUSED_MESSAGE, 'error');
     } else {
       activeEditor?.chain().focus().unsetLink().run();
     }

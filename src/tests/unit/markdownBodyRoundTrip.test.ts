@@ -71,12 +71,15 @@ const corpus = loadCorpus();
  * can neither start locking editable files nor silently unlock one it would
  * rewrite. Every other fixture must stay editable (not lossy).
  *  - inline-html-spans: nested `<span style>` collapses to the inner span.
- *  - links-underline:   `<u>…[link](…)</u>` re-nests; bare URL gains `<…>`.
+ *  - links-underline:   `<u>…[link](…)</u>` re-nests. (Audit-19 DEP-2 — with
+ *                       linkify off the bare URL is now emitted verbatim, no
+ *                       `<…>` wrap; the fixture stays lossy for the `<u>` only.)
  *  - mixed-prose:       a two-line blockquote is joined onto one line.
- *  - task-lists:        a TIGHT task list is serialised loose (blank lines).
- *  - link-schemes:      `filo://` link marks are dropped (Link's URI allowlist)
- *                       and `[[wiki]]` brackets are escaped.
+ *  - link-schemes:      `[[wiki]]` brackets are escaped. (Audit-19 UX-2 — the
+ *                       `filo://` link marks now SURVIVE via Link's isAllowedUri.)
  *  - misc-syntax:       HTML comment / block `<div>` dropped, callout joined.
+ * Audit-19 UX-7 — `task-lists` LEFT this set: a tight task list now serialises
+ * tight (FiloTaskListTight), byte-identical to its source bar the final newline.
  *
  * TipTap 3 difference (the ONE place v3 output ≠ v2 output, deliberately
  * accepted): `relative-links` — TipTap 2's Link dropped the mark on a relative
@@ -88,7 +91,6 @@ const LOSSY_ON_TIPTAP2: ReadonlySet<string> = new Set([
   'inline-html-spans',
   'links-underline',
   'mixed-prose',
-  'task-lists',
   'link-schemes',
   'misc-syntax',
 ]);
@@ -192,6 +194,35 @@ describe('markdown body round-trip — golden corpus', () => {
       expect(updates).toBe(0);
     });
   }
+
+  // Audit-19 DEP-2 — Link's default shouldAutoLink accepted any dotted hostname.
+  it('typing a filename does not autolink', () => {
+    const ed = makeEditor();
+    loadMarkdownIntoEditor(ed, 'Start\n');
+    ed.commands.focus('end');
+    ed.commands.insertContent(' see Notes.md ');
+    expect(editorMarkdown(ed)).not.toContain('](http');
+  });
+
+  it('typing an explicit https URL still autolinks', () => {
+    const ed = makeEditor();
+    loadMarkdownIntoEditor(ed, 'Start\n');
+    ed.commands.focus('end');
+    ed.commands.insertContent(' https://example.com ');
+    expect(editorMarkdown(ed)).toContain('https://example.com');
+    expect(ed.getHTML()).toContain('href="https://example.com"');
+  });
+
+  // Audit-19 UX-7 — checklists Filo creates are tight (no blank lines).
+  it('a new checklist created in the editor serialises tight', () => {
+    const ed = makeEditor();
+    loadMarkdownIntoEditor(ed, 'milk\n');
+    ed.commands.focus('end');
+    ed.commands.toggleTaskList();
+    ed.commands.splitListItem('taskItem');
+    ed.commands.insertContent('eggs');
+    expect(editorMarkdown(ed)).toBe('- [ ] milk\n- [ ] eggs');
+  });
 
   it('positive control: typing after a load is still undoable', () => {
     const ed = makeEditor();

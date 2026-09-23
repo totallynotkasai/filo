@@ -2,7 +2,7 @@
   import { vaultStore } from '../../stores/vault.svelte';
   import { toolbarStore } from '../../stores/toolbar.svelte';
   import { uiStore } from '../../stores/ui.svelte';
-  import { tiptapToolbar } from '../../lib/editor/toolbarConfig';
+  import { tiptapToolbar, LINK_REFUSED_MESSAGE } from '../../lib/editor/toolbarConfig';
   import type { Editor } from '@tiptap/core';
   import IconButton from '../shared/IconButton.svelte';
   import ColorPicker from '../shared/ColorPicker.svelte';
@@ -101,13 +101,15 @@
   function applyLink(url: string) {
     const editor = linkSavedEditor;
     if (!editor) return;
-    editor
+    const ok = editor
       .chain()
       .focus()
       .setTextSelection({ from: linkSavedFrom, to: linkSavedTo })
       .extendMarkRange('link')
       .setLink({ href: url })
       .run();
+    // Audit-19 UX-2 — surface a refused href (it used to fail silently).
+    if (!ok) uiStore.toast(LINK_REFUSED_MESSAGE, 'error');
   }
 
   function removeLink() {

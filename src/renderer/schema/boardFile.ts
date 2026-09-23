@@ -58,9 +58,9 @@ export const V7BoardFileDataSchema = z.object({
   // otherwise pass through `.passthrough()` and either shadow a real
   // entry on save or crash downstream `Object.keys(...).split(...)`
   // helpers that assume id-like strings.
-  tileDefs: z.record(idString, TileDefinitionSchema).default({}),
-  connections: z.record(idString, ConnectionSchema).default({}),
-  frames: z.array(FrameSchema).default([]).refine(...uniqueBy('id', 'frames')),
+  tileDefs: z.record(idString, TileDefinitionSchema).default(() => ({})),
+  connections: z.record(idString, ConnectionSchema).default(() => ({})),
+  frames: z.array(FrameSchema).default(() => []).refine(...uniqueBy('id', 'frames')),
 // Sprint A / A12 — `.passthrough()` so envelope-level fields written by a
 // future Filo (e.g. a `version: 8` migration introducing a new top-level
 // key) survive the load → cache → save round-trip in this build.
@@ -83,14 +83,14 @@ export const V7BoardFileDataSchema = z.object({
   for (const [connId, conn] of Object.entries(envelope.connections)) {
     if (!validIds.has(conn.fromTileId)) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: `Connection ${connId} references missing tile ${conn.fromTileId} (fromTileId)`,
         path: ['connections', connId, 'fromTileId'],
       });
     }
     if (!validIds.has(conn.toTileId)) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: `Connection ${connId} references missing tile ${conn.toTileId} (toTileId)`,
         path: ['connections', connId, 'toTileId'],
       });
@@ -102,7 +102,7 @@ export const V7BoardFileDataSchema = z.object({
       const tileId = frame.tileIds[i];
       if (tileId !== undefined && !validIds.has(tileId)) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           message: `Frame ${frame.id} references missing tile ${tileId}`,
           path: ['frames', frame.id, 'tileIds', i],
         });

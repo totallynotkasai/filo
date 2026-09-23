@@ -68,8 +68,8 @@ const numericCoerce = (v: unknown): unknown => {
  * undefined / null / '' stay undefined so the resolver can fall through to
  * the next layer. The downstream `z.number()` chain validates min/max.
  */
-export const optionalNumber = (
-  inner: z.ZodTypeAny = z.number().optional(),
+export const optionalNumber = <T extends z.ZodType>(
+  inner: T,
 ) => z.preprocess(numericCoerce, inner);
 
 /**

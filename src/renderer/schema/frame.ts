@@ -73,12 +73,12 @@ export const FrameSchema = z.object({
     width: z.number().finite().min(0),
     height: z.number().finite().min(0),
   }).passthrough(),
-  style: FrameStyleSchema.default({}),
+  style: FrameStyleSchema.prefault({}),
   collapsed: z.boolean().default(false),
   // Sprint A / A14 — `.min(1)` + uniqueness. A duplicate tileId would
   // double-include a tile in the frame's render set and confuse selection
   // (clicking the tile selects the frame twice via different paths).
-  tileIds: z.array(z.string().min(1)).default([]).refine(...uniqueStrings('Frame.tileIds')),
+  tileIds: z.array(z.string().min(1)).default(() => []).refine(...uniqueStrings('Frame.tileIds')),
   // Phase 31 A6.6 — .finite() rejects NaN / ±Infinity from hand-edited files.
   createdAt: z.number().finite(),
   updatedAt: z.number().finite(),

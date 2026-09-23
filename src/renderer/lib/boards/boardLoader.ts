@@ -533,7 +533,12 @@ export async function loadBoard(
     return {
       ok: false,
       error: 'schema-invalid',
-      message: loaded.error.issues.map((i) => i.message).join('; '),
+      // Prefix each issue with its path: Zod 4 messages are generic
+      // ("Invalid input: expected number, received undefined"), so without
+      // the path the recovery toast can't point at the broken field.
+      message: loaded.error.issues
+        .map((i) => (i.path.length > 0 ? `${i.path.join('.')}: ${i.message}` : i.message))
+        .join('; '),
     };
   }
 

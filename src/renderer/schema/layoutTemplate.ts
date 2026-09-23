@@ -70,7 +70,7 @@ export const LayoutTemplateConnectionSchema = z.object({
   labelVisibility: z
     .enum(['visible', 'visible-locked', 'hidden', 'hidden-locked'])
     .default('visible'),
-  label: ConnectionLabelSchema.default({}),
+  label: ConnectionLabelSchema.prefault({}),
 }).passthrough();
 
 /**

@@ -34,8 +34,8 @@ export const TagsFileSchema = z.object({
   // pre-current shapes; this schema accepts whatever the migrator
   // stamps on the way through.
   version: z.number().int().default(CURRENT_TAGS_FILE_VERSION),
-  tags: z.record(z.string(), TagDefinitionSchema).default({}),
-  fileTags: z.record(z.string(), z.array(z.string()).default([])).default({}),
+  tags: z.record(z.string(), TagDefinitionSchema).default(() => ({})),
+  fileTags: z.record(z.string(), z.array(z.string()).default(() => [])).default(() => ({})),
 }).passthrough();
 
 export type TagsFile = z.infer<typeof TagsFileSchema>;

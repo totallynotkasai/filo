@@ -6,7 +6,7 @@
 
 **Findings source:** [AUDIT19_REPORT_AND_REMEDIATION_PLAN_2026-09-23.md](AUDIT19_REPORT_AND_REMEDIATION_PLAN_2026-09-23.md).
 
-**Status:** Phase 1 done on 2026-09-24 (commits `512adfa`..`65683eb` on `chore/dependency-majors`; see "Phase 1 — status and deviations"). Phases 2–7 not started. **Base:** `main`, once `chore/dependency-majors` is merged.
+**Status:** Phase 1 done on 2026-09-24 (commits `512adfa`..`65683eb` on `chore/dependency-majors`; see "Phase 1 — status and deviations"). Phase 2 done on 2026-09-24 (commits `f6d01ae`..`02c14f7` on `master-plan/phase-2`, branched from `main` after the merge; see "Phase 2 — status and deviations"). Phases 3–7 not started. **Base:** `main`; nothing is pushed yet.
 
 **Goal:** make the `.md` file the only copy of a note's title, tags and content. The board files keep only what is visual. There is one in-memory model per file and one writer per file. The audit fixes that still matter land along the way.
 
@@ -426,6 +426,83 @@ The full per-line specs are in the archived Audit-19 plan, in the section with t
 
 **2.4 Scratch vault.** Create a fresh test vault for Phases 3–7: a few boards of every type, notes with and without `title:`, CRLF and BOM notes, media with tags, and a Document board. Under D9, the existing Book Vault's *notes* stay fine, but its *boards* will be refused from Phase 3 on and must be rebuilt.
 
+#### Phase 2 — status and deviations (2026-09-24)
+
+**Done.** `ci:verify` is green after the last commit: lint, check, typecheck:main, 535 test files (5,369 passed, 1 skipped) under `test:unit:strict` with clean output, build, and 55/55 gates.
+
+| Item | Commit(s) |
+|---|---|
+| 2.1 Merge | `main` fast-forwarded to `57fbbab`, plus the no-op merge `84d7c76` (see below). Phase 2 is on `master-plan/phase-2`. |
+| 2.2 Suite | `a555c46` (suite, harness, gate), `02c14f7` (title-edit spec) |
+| 2.2 DEP-5 | `d58169d` |
+| 2.2 Bugs the suite found | `f6d01ae`, `a275b3d`, `cdfa2fa`, `d0282b9` |
+| 2.3 Decisions | Nothing to do. |
+| 2.4 Scratch vault | `d44c0a5`. The vault is at `C:\Users\andre\My Files\Filo Scratch Vault`. |
+
+**Deviations from the plan:**
+
+- **2.1 merge.**
+  - `origin/main` held GitHub's merge commit for PR #1 (`b6715b5`). Its tree is identical to `28d3063`, which is already on the branch.
+  - After the fast-forward, `main` merged `origin/main` (`84d7c76`, no file changes), so a later push is a fast-forward.
+  - Nothing is pushed. `main` is 41 commits ahead of `origin/main`, and `master-plan/phase-2` is 8 more on top.
+  - The Windows CI job from Phase 1 still hasn't run.
+  - The owner merges `master-plan/phase-2` into `main` and pushes.
+
+- **2.2 How the suite is built.**
+  - It is a new vitest project, `characterisation` (`src/tests/characterisation/`). It is not a set of component tests: it mounts the whole `App.svelte` in jsdom against a real temp vault.
+  - `window.filo` goes to the **real main-process IPC handlers**. Payload validation and structured cloning work as in the preload. Only the Electron shell is faked (`harness/electronFake.ts`), including `webContents.send` back to the renderer, so the real file watcher delivers external edits.
+  - Specs call only the `harness/` adapter (`app.ts`, `actions.ts`).
+  - **The rule "the suite isn't edited in Phases 3–6" is enforced as:** the spec files keep their assertions, and the adapter may change when internals move.
+  - A new gate, `characterisation-suite` (codebase group), keeps the specs present and un-skipped, with a minimum number of cases each, and imports limited to `vitest`, `yaml`, `node:` and `./harness/`. It also checks that the loop breaker is installed and the vitest project is wired. Every arm was bite-verified in a temp copy.
+  - The suite runs in `test:unit:strict`. Its four files take 40–70 s each, run in parallel with the other projects; the whole strict run took about 105 s.
+
+- **2.2 Scope as built.** 22 specs.
+  - **Covered as listed:** tile, Document tab and split panes; Kanban card and Task List row show title, tags, due date and priority; ticking a task; tagging a card, seen on a second board (a mind-map tile of the same note); sidebar rename, including across a relaunch; external edits while clean, while dirty ("keep mine" and "reload") and frontmatter-only; delete tile and file, then undo (Kanban and mind map); vault-wide tag rename; opening notes and boards never writes; panning.
+  - **Also covered:** due date and priority on a card; ticking a task keeps unknown keys and comments byte-for-byte; a card title edit (the Phase 3 expected change needs a current behaviour to change from); a clean close leaves nothing to recover.
+  - **"Open and pan a board → 0 bytes written"** is asserted for notes and board files. `.filo/viewports.json` records the camera by design, so it is excluded.
+  - **Not covered:**
+    - A frontmatter-only disk change *while a body edit is unsaved* (the frontmatter-only spec runs with the note clean). Today's behaviour there wasn't checked; C.5 defines the target (take the disk frontmatter, keep the body, no prompt), and Phase 5 adds the spec.
+    - The Task List's "Delete Task & File" (context-menu path).
+    - Rows show due date and priority, but Task List tags live in the collapsed notes panel and aren't asserted.
+  - **Title edit on a card.** The file is renamed and the text follows, but the *other board's* tile keeps the old title. That's the duplicated-copy bug Phase 3 removes. No guard is added (A.7); Phase 3's expected change adds that assertion (noted in 3.7).
+  - **Disk-conflict prompt label.** The adapter accepts "Keep local" (today) or "Keep mine" (C.5), so the rename is an adapter change, not a spec change.
+
+- **2.2 Bugs the suite found, fixed here** (each red then green):
+  - `f6d01ae`: after a vault swap, the first global-facade read inside a `$derived` lazily built the default board scope by writing `$state`. Svelte threw `state_unsafe_mutation` and the first mind map after opening a vault failed to render.
+  - `a275b3d`: the Reload / Keep-local drift prompts were registered from a module-load microtask behind `typeof` guards. When a store import cycle left a setter unbound, which is what vitest's async evaluation does, no prompt was registered and the writer silently kept the local version (after a backup).
+    - Now `App.svelte` calls `registerDriftPromptHandlers()` at startup. This is Audit-14 6.2's deferred option (b).
+    - The production bundle evaluates synchronously, so it very likely worked there, but only by import order.
+  - `cdfa2fa`: the tile header's Delete on a Kanban card (with or without the file), then Ctrl+Z, brought the file back but not the card. `DeleteTilesCommand` restored only the def.
+    - It now restores through `DeleteCardCommand` snapshots.
+    - `persistAddKanbanPlacement` also refreshes the board identity, like its siblings do.
+  - `d0282b9`: a normal Save-and-close left `.filo/.dirty.<machine>`, so the next open showed "Recovered from unflushed changes". The teardown's tab and workspace resets were persisted as user changes.
+    - `vaultLifecycle.isVaultTearingDown()` now gates `markMetaDirty`.
+  - None of these is a duplicated-copy bug, so A.7 doesn't apply.
+
+- **DEP-5 (Audit-19 5.3).**
+  - **The bite:** the pre-`90e4092` close-drain effect (a raw, tracked `editor.setEditable`) was restored in DocumentEditor on svelte 5.57.1.
+  - **Result:** `documentEditorOpen.test.ts` **hung**. The editor ↔ effect loop re-queues itself through microtasks, so neither Svelte's depth guard nor the test timeout fires. The TextTile twin timed out case by case.
+  - **So jsdom does reproduce it, and svelte keeps its caret range (D11).**
+  - To make the regression a clean failure, `src/tests/helpers/editorLoopBreaker.ts` throws after 500 editor `update` events in one test. With it the same bite gives three red cases, and the characterisation byte specs go red too.
+  - `ci:markdown-body-roundtrip`'s EDITOR_SUITE arm now pins the breaker in `mountEditor.ts`. The characterisation gate pins it in the suite's setup.
+  - The E2E `documentOpenNoWrite` docstring now points at its jsdom twins.
+  - **Correction to the plan:** the tokens asked for in "Extend `ci:markdown-body-roundtrip` with their tokens" were already there since Audit-19 0.2.
+
+- **2.4 Scratch vault.**
+  - **Built by the app, not by hand:** `npm run scratch-vault` (own config, `vitest.scratch-vault.config.mts`; `FILO_SCRATCH_VAULT` names an empty target) drives the real app through the harness.
+  - **Why:** its v7 boards are refused in Phase 3 like any others, and re-running the builder after 3.1 gives v8 boards.
+  - **Contents:**
+    - notes with and without `title:`, one whose title differs from its filename, and CRLF, BOM and odd-YAML notes;
+    - a subfolder and a tagged PNG;
+    - a mind map, a two-column Kanban (placed notes plus a new card with due date, priority and tag) and a Task List (quick-added tasks, one done);
+    - an open Document tab (the "Document board").
+  - The builder fails if an expected element doesn't appear or a crash marker is left, and it drops the test machine's `.filo/machines/` record.
+
+**Still open (needs the owner):**
+- Merge `master-plan/phase-2` into `main` and push. The Windows CI job (Phase 1) runs on that push.
+- **A.6 dogfood:** open the scratch vault in the real app and use it. The builder checks the files, not the running app.
+- The Phase 1 manual checks on the packaged build are still open.
+
 ---
 
 ### Phase 3 — Boards stop copying notes; title and tags from the note; legacy removed
@@ -519,7 +596,7 @@ Delete the tests that only exercise legacy formats. Record each removal in the c
 - Tags:
   - A tag on a card appears only in the frontmatter, and shows on a second board.
   - A media tag appears only in `tags.json`.
-- The characterisation suite still passes, apart from the listed title-rename change.
+- The characterisation suite still passes, apart from the listed title-rename change. In `metadataEdits.test.ts` ("editing a card title…"), that change is: the file keeps its name and frontmatter `title:` changes. Also add an assertion that the other board's tile shows the new title. Today it keeps the old one; see "Phase 2 — status and deviations".
 
 **Exit:** `grep` finds no `title`/`tags`/`content`/`contentId` on any note-backed def in the scratch vault's board files. `frontmatterSync.ts` is gone. The UI looks the same.
 

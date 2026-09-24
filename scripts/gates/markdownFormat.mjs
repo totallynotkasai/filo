@@ -82,6 +82,14 @@ const EDITOR_SUITE = [
     ],
   },
   {
+    // Without it an editor ↔ effect loop (the svelte ^5.57.1 open-path write)
+    // hangs the run instead of failing it.
+    file: 'src/tests/component/helpers/mountEditor.ts',
+    required: [
+      { token: /\binstallEditorLoopBreaker\s*\(/, why: 'turns a runaway editor update loop into a failure' },
+    ],
+  },
+  {
     file: 'src/tests/unit/boardFileEncodingRoundTrip.test.ts',
     required: [
       { token: /\bsaveBoardFile\s*\(/, why: 'uses the real main-side saveBoardFile' },

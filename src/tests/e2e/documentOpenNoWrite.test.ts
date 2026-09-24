@@ -8,9 +8,12 @@ import os from 'os';
  *
  * Svelte 5.57.1 turned a pre-existing `effect_update_depth_exceeded` loop in the
  * Document editor's open path into a PHANTOM WRITE: merely opening a CRLF note
- * rewrote it on disk with its body flipped to LF. `ci:verify` cannot see this —
- * only the built renderer running in a real Electron window reproduces it — so
- * this spec opens a CRLF (and an LF) note in a Document tab and asserts:
+ * rewrote it on disk with its body flipped to LF. `ci:verify` guards it in jsdom
+ * with the real Svelte client runtime and TipTap:
+ * `component/editorIntegration/documentEditorOpen.test.ts` and
+ * `characterisation/bytesOnDisk.test.ts` both fail against the pre-fix code.
+ * This spec is the real-Electron check on the built app: it opens a CRLF (and
+ * an LF) note in a Document tab and asserts:
  *   1. the file's bytes are unchanged, and
  *   2. the renderer logged zero `effect_update_depth_exceeded` errors.
  *

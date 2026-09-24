@@ -26,6 +26,7 @@ import {
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { __resetBaselinesForTests } from '@renderer/lib/vault/fileBaselineRegistry';
 import { installFiloMock, restoreFiloDefault } from '../../helpers/filoBridge';
+import { installEditorLoopBreaker, resetEditorLoopBreaker } from '../../helpers/editorLoopBreaker';
 import type { TextTile as TextTileDef } from '@renderer/schema/index';
 
 export const VAULT = '/vault';
@@ -45,6 +46,8 @@ for (const proto of [Element.prototype, Range.prototype] as Array<{ getClientRec
 if (typeof document.elementFromPoint !== 'function') {
   (document as { elementFromPoint: (x: number, y: number) => Element | null }).elementFromPoint = () => null;
 }
+
+installEditorLoopBreaker();
 
 export interface RecordedWrite {
   channel: string;
@@ -159,6 +162,7 @@ export async function drainDebounce(): Promise<void> {
 }
 
 export function resetEditorHarness(): void {
+  resetEditorLoopBreaker();
   cancelAllMarkdownWrites();
   __resetMarkdownFileWriterForTests();
   __resetDirtyTrackingForTests();

@@ -7,7 +7,8 @@ export function readInDerived<T>(fn: () => T): T {
   let out: T | undefined;
   const cleanup = $effect.root(() => {
     const value = $derived.by(fn);
-    out = value;
+    const read = (): T => value;
+    out = read();
   });
   cleanup();
   return out as T;

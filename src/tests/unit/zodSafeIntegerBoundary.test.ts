@@ -73,7 +73,7 @@ describe('a board with a position of 1e20 is refused, not loaded or crashed', ()
   it('loadAllBoards routes it to failedBoards as schema-invalid', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const file = {
-      version: 7,
+      version: 8,
       board: kanbanBoard({ tilePlacements: [{ tileId: 't1', position: 1e20 }] }),
       tileDefs: {},
       connections: {},
@@ -81,7 +81,7 @@ describe('a board with a position of 1e20 is refused, not loaded or crashed', ()
     };
     const invoke = vi.fn(async (channel: string) => {
       if (channel === 'board:list') return ['Huge.board.json'];
-      if (channel === 'board:load') return JSON.stringify(file);
+      if (channel === 'board:load') return JSON.parse(JSON.stringify(file)) as unknown;
       return { ok: true };
     });
     (window as unknown as { filo: unknown }).filo = { invoke, on: () => () => {}, send: () => {} };

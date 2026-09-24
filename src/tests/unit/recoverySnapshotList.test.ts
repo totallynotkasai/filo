@@ -61,10 +61,10 @@ describe('listRecoverySnapshots (#11)', () => {
     const ts = '2026-06-02T10-00-00.000';
     const dir = join(vaultRoot, '.filo', 'recovery', ts);
     await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(join(dir, '.dirty'), '{}', 'utf-8');
-    await fs.writeFile(join(dir, 'tag-rewrite-pending.json'), '{}', 'utf-8');
-    await fs.writeFile(join(dir, 'rename-cascade-pending.json'), '{}', 'utf-8');
-    await fs.writeFile(join(dir, 'quit-failure.json'), '{}', 'utf-8');
+    await fs.writeFile(join(dir, '.dirty.aaaaaaaaaaaa'), '{}', 'utf-8');
+    await fs.writeFile(join(dir, 'tag-rewrite-pending.aaaaaaaaaaaa.json'), '{}', 'utf-8');
+    await fs.writeFile(join(dir, 'rename-cascade-pending.aaaaaaaaaaaa.json'), '{}', 'utf-8');
+    await fs.writeFile(join(dir, 'quit-failure.aaaaaaaaaaaa.json'), '{}', 'utf-8');
     await fs.writeFile(join(dir, 'Notes.board.json'), '{ broken', 'utf-8');
 
     const list = await listRecoverySnapshots(vaultRoot);

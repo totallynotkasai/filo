@@ -51,11 +51,8 @@ function makeKanbanWithCard(): V7BoardFileData {
       t1: {
         id: 't1',
         type: 'text',
-        title: 'Card A',
-        style: { headerColor: '', bodyColor: '', borderColor: '' } as never,
-        tags: ['original'],
-        contentId: 'doc_t1',
-        content: '',
+        filePath: 'Card A.md',
+        style: { headerColor: '#111111', bodyColor: '', borderColor: '' } as never,
         createdAt: 0,
         updatedAt: 0,
       } as unknown as TileDefinition,
@@ -80,20 +77,20 @@ describe('DeleteCardCommand — deep-clone snapshot (P1.5)', () => {
     historyStore.clear();
   });
 
-  it('snapshot is isolated from the original def — mutating original tags before execute does not corrupt the restore', () => {
+  it('snapshot is isolated from the original def — mutating the def style before execute does not corrupt the restore', () => {
     const fixture = makeKanbanWithCard();
     boardCacheStore.hydrate({ kb: fixture }, { kb: 'k.board.json' });
 
     const cmd = new DeleteCardCommand('kb', 't1');
 
-    // BEFORE execute, mutate the original cached def's tags array — this is
-    // the race the deep-clone defends against (a tag-rewrite sweep landing
-    // between command construction and execute, or a TileHeader edit on the
-    // same tile). With a shallow clone the snapshot would alias this array
-    // and the restored card would inherit the mutation.
+    // BEFORE execute, mutate the original cached def's nested style object —
+    // this is the race the deep-clone defends against (a style edit on the
+    // same tile landing between command construction and execute). With a
+    // shallow clone the snapshot would alias this object and the restored
+    // card would inherit the mutation.
     const cached = boardCacheStore.cache.kb!;
-    const liveDef = cached.tileDefs.t1 as { tags: string[] };
-    liveDef.tags.push('hijacked');
+    const liveDef = cached.tileDefs.t1 as { style: { headerColor: string } };
+    liveDef.style.headerColor = '#hijacked';
 
     // Also mutate the placement's style object.
     const livePlacement = (cached.board as KanbanBoard).columns[0].tilePlacements[0] as {
@@ -105,14 +102,14 @@ describe('DeleteCardCommand — deep-clone snapshot (P1.5)', () => {
     cmd.undo();
 
     const restoredKb = boardCacheStore.cache.kb!.board as KanbanBoard;
-    const restoredDef = boardCacheStore.cache.kb!.tileDefs.t1 as { tags: string[] };
+    const restoredDef = boardCacheStore.cache.kb!.tileDefs.t1 as { style: { headerColor: string } };
     const restoredPlacement = restoredKb.columns[0].tilePlacements[0] as {
       style?: { headerColor?: string };
     };
 
-    // The snapshot's tags and style must reflect the delete-time state
-    // (`['original']`, `'#aaaaaa'`), not the post-mutation state.
-    expect(restoredDef.tags).toEqual(['original']);
+    // The snapshot's def and placement styles must reflect the delete-time
+    // state (`'#111111'`, `'#aaaaaa'`), not the post-mutation state.
+    expect(restoredDef.style.headerColor).toBe('#111111');
     expect(restoredPlacement.style?.headerColor).toBe('#aaaaaa');
   });
 });

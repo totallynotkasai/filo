@@ -6,9 +6,7 @@
   import { uiStore } from '../../stores/ui.svelte';
   import { workspaceStore } from '../../stores/workspace.svelte';
   import { boardStore } from '../../stores/board.svelte';
-  import { boardCacheStore } from '../../stores/boardCache.svelte';
   import { createId } from '../../lib/utils/ids';
-  import { freezeLegacyKanbanFolder } from '../../lib/vault/kanbanFolderFreeze';
   import { computeKeyboardReorder } from '../../lib/boards/boardReorder';
   import type { BoardType } from '../../../shared/types';
   import type { Board } from '../../schema/index';
@@ -199,15 +197,6 @@
     }
     const board = vaultStore.project.boards.find(b => b.id === renamingBoardId);
     if (board) {
-      // Legacy Kanban kanbanFolder freeze at rename time.
-      // Persist BEFORE mutating board.name so a crash between stamp +
-      // rename can't leave the board renamed with no kanbanFolder field
-      // (the new name would then derive a different `Kanban/<newname>/`
-      // convention folder, orphaning every existing card).
-      if (freezeLegacyKanbanFolder(board)) {
-        boardCacheStore.markDirty(board.id);
-        await boardCacheStore.flushDirty(board.id);
-      }
       board.name = renameValue;
       vaultStore.markMetaDirty();
       // Update any open tab for this board

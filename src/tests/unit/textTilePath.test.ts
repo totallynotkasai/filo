@@ -1,15 +1,13 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import {
-  resolveTextTileVaultPath,
-  replaceTitleInVaultPath,
-} from '@renderer/lib/boards/textTilePath';
+import { resolveTextTileVaultPath } from '@renderer/lib/boards/textTilePath';
 import { documentStore } from '@renderer/stores/document.svelte';
 import type { TextTile, Tile } from '@renderer/schema/index';
 
-function tile(overrides: Partial<TextTile> & Pick<TextTile, 'id' | 'title'>): Tile {
+function tile(overrides: Partial<TextTile> & Pick<TextTile, 'id'>): Tile {
   return {
     boardId: '',
     type: overrides.type ?? 'text',
+    title: '',
     position: { x: 0, y: 0 },
     size: { width: 200, height: 100 },
     style: {} as never,
@@ -29,7 +27,6 @@ describe('textTilePath.resolveTextTileVaultPath', () => {
     // documentStore is module-singleton — drop any docs we loaded so cases
     // don't bleed into each other.
     documentStore.unloadDocument('doc-A');
-    documentStore.unloadDocument('doc-B');
   });
 
   it('returns null for non-text tiles', () => {
@@ -37,7 +34,7 @@ describe('textTilePath.resolveTextTileVaultPath', () => {
     expect(resolveTextTileVaultPath(t)).toBeNull();
   });
 
-  it('priority 1: explicit filePath wins over title and docState', () => {
+  it('returns the filePath, even when an open doc names a different file', () => {
     documentStore.loadDocument({
       docId: 'doc-A', filename: 'FromDoc.md', title: 'X',
       body: '', htmlContent: '', richText: [],
@@ -46,40 +43,19 @@ describe('textTilePath.resolveTextTileVaultPath', () => {
     expect(resolveTextTileVaultPath(t)).toBe('Sub/Explicit.md');
   });
 
-  it('priority 2: docState.filename wins over title convention', () => {
+  // The path is the note's only identity: no title-derived guess exists, so
+  // an unplaced tile has no path rather than a wrong one.
+  it('returns null for a text tile without a filePath, whatever its title or doc', () => {
     documentStore.loadDocument({
-      docId: 'doc-A', filename: 'Notes/Real.md', title: 'X',
+      docId: 'doc-A', filename: 'Notes/Real.md', title: 'Hello',
       body: '', htmlContent: '', richText: [],
     });
-    const t = tile({ id: 't1', title: 'X', contentId: 'doc-A' });
-    expect(resolveTextTileVaultPath(t)).toBe('Notes/Real.md');
+    expect(resolveTextTileVaultPath(tile({ id: 't1', title: 'Hello', contentId: 'doc-A' }))).toBeNull();
+    expect(resolveTextTileVaultPath(tile({ id: 't2', title: '' }))).toBeNull();
   });
 
-  it('priority 3: convention fallback when no filePath / docState', () => {
-    const t = tile({ id: 't1', title: 'Hello' });
-    expect(resolveTextTileVaultPath(t)).toBe('Hello.md');
-  });
-
-  it('convention uses Untitled when title is empty', () => {
-    const t = tile({ id: 't1', title: '' });
-    expect(resolveTextTileVaultPath(t)).toBe('Untitled.md');
-  });
-});
-
-describe('textTilePath.replaceTitleInVaultPath', () => {
-  it('replaces basename at root', () => {
-    expect(replaceTitleInVaultPath('Old.md', 'New')).toBe('New.md');
-  });
-
-  it('preserves the folder portion', () => {
-    expect(replaceTitleInVaultPath('Notes/Sub/Old.md', 'New')).toBe('Notes/Sub/New.md');
-  });
-
-  it('normalises Windows separators', () => {
-    expect(replaceTitleInVaultPath('Notes\\Sub\\Old.md', 'New')).toBe('Notes/Sub/New.md');
-  });
-
-  it('strips leading slashes', () => {
-    expect(replaceTitleInVaultPath('/Notes/Old.md', 'New')).toBe('Notes/New.md');
+  it('returns null for an empty filePath', () => {
+    const t = tile({ id: 't1', title: 'Hello', filePath: '' } as never);
+    expect(resolveTextTileVaultPath(t)).toBeNull();
   });
 });

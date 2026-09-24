@@ -394,6 +394,36 @@ export async function renameInSidebar(app: CharApp, rel: string, newName: string
   await quiesce(1200);
 }
 
+/**
+ * Sidebar: right-click a file → Rename → type `newName`, then press Enter.
+ * Returns the inline message shown beside the input (`null` when none), and
+ * leaves the rename abandoned (Escape) so the next step starts clean.
+ */
+export async function sidebarRenameMessage(app: CharApp, rel: string, newName: string): Promise<string | null> {
+  contextMenu(await revealInSidebar(app, rel));
+  await settle();
+  await chooseMenuItem(app, 'Rename');
+  await waitFor(() => app.el.querySelector('input.rename-input') !== null, 'rename input');
+  const input = $(app.el, 'input.rename-input') as HTMLInputElement;
+  typeInto(input, newName);
+  await settle();
+  key(input, 'Enter');
+  await settle(100);
+  const message = (app.el.querySelector('.rename-problem')?.textContent ?? '').trim() || null;
+  const still = app.el.querySelector('input.rename-input');
+  if (still) key(still, 'Escape');
+  await quiesce(400);
+  return message;
+}
+
+/** Sidebar: right-click a note → "Rename file to match title". */
+export async function renameFileToMatchTitle(app: CharApp, rel: string): Promise<void> {
+  contextMenu(await revealInSidebar(app, rel));
+  await settle();
+  await chooseMenuItem(app, 'Rename file to match title');
+  await quiesce(1200);
+}
+
 // ── Deleting and undo ────────────────────────────────────────────────────────
 
 /** Answer the open confirm dialog, optionally ticking its extra checkbox first. */

@@ -20,7 +20,6 @@ import { boardStore } from './board.svelte';
 import { boardCacheStore } from './boardCache.svelte';
 import { reportError } from '../lib/utils/errorBus';
 import { uiStore } from './ui.svelte';
-import { normalizeTags } from '../lib/vault/frontmatterSync';
 import { cancelFrontmatterWrite, dropPendingDelta } from '../lib/boards/frontmatterWriteScheduler';
 import { forceWriteForDocument, cancelMarkdownWrite } from '../lib/vault/markdownFileWriter';
 import {
@@ -158,8 +157,6 @@ export function promptBulkExternalChanges(prompts: PendingPrompt[], ctx: VaultCo
               const fresh = vaultIndexStore.getMetadata(p.rel) ?? p.next;
               // Apply frontmatter + tags atomically with the body reload so
               // reload-all lands in a consistent state.
-              boardStore.applyFrontmatterToBackedTiles(p.rel, fresh);
-              fileTagsStore.setFileTags(p.rel, normalizeTags(fresh.frontmatter.tags));
               // Discard any armed field delta BEFORE the reload,
               // else applyReloadFromDisk's flushAllPendingFrontmatterWrites would
               // re-apply the discarded edit to fresh disk and revert this reload.
@@ -327,8 +324,6 @@ export function promptPartialReadExhausted(rel: string): void {
           if (!isStillSameVault(identity)) return;
           const next = vaultIndexStore.getMetadata(rel);
           if (!next) return;
-          boardStore.applyFrontmatterToBackedTiles(rel, next);
-          fileTagsStore.setFileTags(rel, normalizeTags(next.frontmatter.tags));
           if (editorDoc) {
             // The user just clicked Reload, so apply unconditionally (no
             // dirty-editor prompt). `applyReloadFromDisk` clears `isDirty`, so
@@ -451,8 +446,6 @@ export function promptClosedBoardFileMissing(
  */
 function applyFreshDiskVersion(rel: string, fresh: FileMetadata, doc: DocumentState): void {
   cancelDirtyGatewayWritersForPath(rel);
-  boardStore.applyFrontmatterToBackedTiles(rel, fresh);
-  fileTagsStore.setFileTags(rel, normalizeTags(fresh.frontmatter.tags));
   dropPendingDelta(rel);
   documentStore.applyReloadFromDisk(
     doc.docId,
@@ -530,8 +523,6 @@ export function promptModifiedFile(
           // its armed write before the applies re-anchor the drift baseline.
           cancelDirtyGatewayWritersForPath(rel);
           // Atomic trio — match the bulk Reload-all branch.
-          boardStore.applyFrontmatterToBackedTiles(rel, fresh);
-          fileTagsStore.setFileTags(rel, normalizeTags(fresh.frontmatter.tags));
           // Drop the armed field delta so the reload's
           // flushAllPendingFrontmatterWrites can't re-clobber disk with the
           // edit the user just discarded.
@@ -622,8 +613,6 @@ export function promptMarkdownPendingWriteConflict(
           const reread = vaultIndexStore.getMetadata(rel);
           if (!reread && wasIndexed) return;
           const fresh = reread ?? next;
-          boardStore.applyFrontmatterToBackedTiles(rel, fresh);
-          fileTagsStore.setFileTags(rel, normalizeTags(fresh.frontmatter.tags));
           if (editorDoc) {
             documentStore.applyReloadFromDisk(
               editorDoc.docId,
@@ -729,8 +718,6 @@ export function promptPropertiesPopupModified(
           // (sync-frontmatter precondition), so applyReloadFromDisk is overkill —
           // setFrontmatter (with rawFrontmatter) refreshes the editor's FM
           // cache AND originalFrontmatterCache.
-          boardStore.applyFrontmatterToBackedTiles(rel, fresh);
-          fileTagsStore.setFileTags(rel, normalizeTags(fresh.frontmatter.tags));
           // With no open editor there is no FM cache to refresh; the tile-def +
           // tag applies above already carry the external change.
           if (editorDoc) {

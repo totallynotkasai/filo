@@ -53,7 +53,6 @@ export function makeRootFolderSlice(ctx: VaultContext) {
       if (current === deletedRel || current.startsWith(deletedRel + '/')) {
         project.settings.general.activeRootFolder = '';
         ctx.markMetaDirty();
-        boardStore.recomputeBrokenRefs(flattenTreePaths(ctx.getFileTree(), vaultPath));
       }
     },
 
@@ -76,17 +75,12 @@ export function makeRootFolderSlice(ctx: VaultContext) {
       if (!project.settings.general) return;
       project.settings.general.activeRootFolder = next;
       ctx.markMetaDirty();
-      // The convention-fallback branch of broken-ref detection reads
-      // activeRootFolder. Without an explicit recompute, badge state stays
-      // bound to the previous toggle value until the next refreshTree().
-      boardStore.recomputeBrokenRefs(flattenTreePaths(ctx.getFileTree(), vaultPath));
     },
 
     /**
-     * Triggers an immediate broken-ref recompute against the current file tree.
-     * Used by `boardStore.setBoardDefaultFolder` (and any other caller that
-     * mutates a folder-pin without going through delete/rename) so the badge
-     * UI matches the new cascade output without waiting for a refreshTree.
+     * Triggers an immediate broken-ref recompute against the current file tree,
+     * for a caller that learned of a change before the next refreshTree (a
+     * note found missing on read, a board adopted mid-session).
      */
     recomputeBrokenRefsNow(): void {
       const vaultPath = ctx.getVaultPath();

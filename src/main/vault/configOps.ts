@@ -216,10 +216,8 @@ export function isCorruptConfig(value: unknown): value is CorruptConfig {
  *     as corrupt, so a brief AV lock doesn't disable the writer for the
  *     whole session.
  *
- * Legacy unwrap: older builds wrote configs double-stringified. A first
- * parse on those files yields a string, so we JSON.parse a second time so
- * existing vaults keep loading. If the inner parse fails, that's a true
- * corruption — surface it rather than silently dropping to the fallback.
+ * Every config is a JSON object; anything else parses as corrupt rather than
+ * silently dropping to the fallback.
  */
 const TRANSIENT_READ_RETRY_MS = 500;
 const TRANSIENT_READ_CODES = new Set(['EACCES', 'EPERM', 'EBUSY']);
@@ -306,12 +304,9 @@ export async function loadConfig<T>(
   }
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (typeof parsed === 'string') {
-      try {
-        return JSON.parse(parsed) as T;
-      } catch (innerErr) {
-        return { __corrupt: true, raw, error: String(innerErr) };
-      }
+    // Every config is a JSON object; a bare string or number isn't one of ours.
+    if (parsed === null || typeof parsed !== 'object') {
+      return { __corrupt: true, raw, error: 'config is not a JSON object' };
     }
     return parsed as T;
   } catch (parseErr) {

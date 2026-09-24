@@ -1,9 +1,8 @@
 /**
- * tileDefBuilder — pure builders for V7 board file payloads.
+ * tileDefBuilder — pure builders for board file payloads.
  *
  * Extracts vault-storable tile definitions from full runtime Tiles and
- * defines the constants the write pipeline uses to keep board JSON clean
- * (inline-tile-type set, task-metadata strip list).
+ * defines the inline-tile-type set the write pipeline uses.
  */
 
 import type {
@@ -14,13 +13,12 @@ import type {
   Connection,
   Frame,
 } from '../../schema/index';
-import { TASK_METADATA_FIELDS } from '../../schema/tile';
 
 // ── V7 Board File Data ──
 
 export interface V7BoardFileData {
   /**
-   * Envelope version stamped at write time. Narrowed to the literal `7` so
+   * Envelope version stamped at write time. Narrowed to the literal `8` so
    * accidental writes of a stale or future version are caught at the type
    * level — `CURRENT_BOARD_FILE_VERSION` is the only sanctioned writer
    * (`boardWriteScheduler.writeBoardFile`). Optional on the in-memory type
@@ -28,7 +26,7 @@ export interface V7BoardFileData {
    * fills it in before serialise. Consumers should not branch on this
    * field; see `schema/boardFile.ts` note for the contract.
    */
-  version?: 7;
+  version?: 8;
   board: Board;
   tileDefs: Record<string, TileDefinition>;
   connections: Record<string, Connection>;
@@ -48,61 +46,67 @@ export function isInlineTileType(type: string): boolean {
 
 /**
  * Extracts the vault-storable tile definition from a full runtime Tile.
- * Strips placement fields (position, size, locked, faded, boardId).
+ * Strips placement fields (position, size, locked, faded, boardId) and every
+ * field the board doesn't own: a text tile's title, tags and body live in its
+ * note, and a media file's tags live in `.filo/tags.json`.
  *
  * Per-type fields are emitted via a discriminated switch over `tile.type`
- * so TypeScript narrows each branch to the matching schema variant —
- * a renamed field can no longer slip through a stringly-typed accessor.
+ * so TypeScript narrows each branch to the matching schema variant.
+ *
+ * Throws for a text tile with no `filePath`: every creation site stamps the
+ * note's path before the def is built (`stampTextTileSeedPath`), and a def
+ * without one would name no note at all.
  */
 export function buildTileDefinition(tile: Tile): TileDefinition {
   const base = {
     id: tile.id,
-    type: tile.type,
-    title: tile.title,
     style: tile.style,
-    tags: tile.tags,
     createdAt: tile.createdAt,
     updatedAt: tile.updatedAt,
+    ...(tile.titleHtml !== undefined ? { titleHtml: tile.titleHtml } : {}),
   };
+  const meta = (tile as { metadata?: Record<string, unknown> }).metadata;
+  const metadata = meta !== undefined ? { metadata: meta } : {};
   switch (tile.type) {
     case 'text': {
-      const def: Record<string, unknown> = {
-        ...base,
-        contentId: tile.contentId,
-        content: '',
-      };
-      if (tile.filePath !== undefined) def.filePath = tile.filePath;
-      return def as TileDefinition;
+      if (!tile.filePath) {
+        throw new Error(`[buildTileDefinition] text tile "${tile.id}" has no filePath`);
+      }
+      return { ...base, type: 'text', filePath: tile.filePath };
     }
-    case 'image':
-      return { ...base, src: tile.src } as TileDefinition;
+    case 'image': {
+      const alt = tile.alt !== undefined ? { alt: tile.alt } : {};
+      return { ...base, ...metadata, type: 'image', title: tile.title, src: tile.src, ...alt };
+    }
     case 'video':
-      return { ...base, src: tile.src, isPlaying: tile.isPlaying } as TileDefinition;
+      return { ...base, ...metadata, type: 'video', title: tile.title, src: tile.src, isPlaying: tile.isPlaying };
     case 'audio':
       return {
         ...base,
+        ...metadata,
+        type: 'audio',
+        title: tile.title,
         src: tile.src,
         isPlaying: tile.isPlaying,
         isRecording: tile.isRecording,
-      } as TileDefinition;
+      };
     case 'file':
-      return {
-        ...base,
-        filePath: tile.filePath,
-        fileName: tile.fileName,
-        fileExtension: tile.fileExtension,
-      } as TileDefinition;
+      return { ...base, ...metadata, type: 'file', title: tile.title, filePath: tile.filePath };
     case 'link':
     case 'iframe':
-      return { ...base, url: tile.url } as TileDefinition;
+      return { ...base, ...metadata, type: tile.type, title: tile.title, tags: tile.tags, url: tile.url };
     case 'timer':
       return {
         ...base,
+        ...metadata,
+        type: 'timer',
+        title: tile.title,
+        tags: tile.tags,
         duration: tile.duration,
         remaining: tile.remaining,
         mode: tile.mode,
         isRunning: tile.isRunning,
-      } as TileDefinition;
+      };
   }
 }
 
@@ -128,6 +132,9 @@ export function buildInlineTileFromTile(tile: Tile): InlineTile {
     faded: tile.faded,
     createdAt: tile.createdAt,
     updatedAt: tile.updatedAt,
+    ...((tile as { metadata?: Record<string, unknown> }).metadata !== undefined
+      ? { metadata: (tile as { metadata?: Record<string, unknown> }).metadata }
+      : {}),
   };
   switch (tile.type) {
     case 'link':
@@ -151,11 +158,31 @@ export function buildInlineTileFromTile(tile: Tile): InlineTile {
 }
 
 /**
- * Task / Kanban-card metadata fields that belong in `.md` YAML frontmatter,
- * never in board JSON tile defs. Wraps the canonical `TASK_METADATA_FIELDS`
- * list from `schema/tile.ts` as a Set for the write pipeline. Stripped on
- * write so the disk file stays clean even if an in-memory def somehow
- * carries them — defense in depth against future regressions in
- * `buildTileDefinition` or stale data restored from undo.
+ * The fields a board file stores on each tile-def variant (besides `id`,
+ * `type` and the timestamps). A tile update keeps only these on the def; the
+ * rest of a `Partial<Tile>` is placement data or a projection of the note.
  */
-export const TASK_METADATA_FIELDS_ON_WRITE = new Set<string>(TASK_METADATA_FIELDS);
+// allow-module-state: immutable lookup table
+const DEF_FIELDS: Record<TileDefinition['type'], ReadonlySet<string>> = {
+  text: new Set(['titleHtml', 'style', 'filePath']),
+  image: new Set(['title', 'titleHtml', 'style', 'metadata', 'src', 'alt']),
+  video: new Set(['title', 'titleHtml', 'style', 'metadata', 'src', 'isPlaying']),
+  audio: new Set(['title', 'titleHtml', 'style', 'metadata', 'src', 'isPlaying', 'isRecording']),
+  file: new Set(['title', 'titleHtml', 'style', 'metadata', 'filePath']),
+  link: new Set(['title', 'titleHtml', 'style', 'metadata', 'tags', 'url']),
+  iframe: new Set(['title', 'titleHtml', 'style', 'metadata', 'tags', 'url']),
+  timer: new Set(['title', 'titleHtml', 'style', 'metadata', 'tags', 'duration', 'remaining', 'mode', 'isRunning']),
+};
+
+/**
+ * The part of `updates` that belongs on a def of `def.type`. Empty when the
+ * update touched nothing the board file stores for this tile.
+ */
+export function defPatchFor(def: TileDefinition, updates: Partial<Tile>): Record<string, unknown> {
+  const allowed = DEF_FIELDS[def.type];
+  const patch: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(updates)) {
+    if (allowed.has(k)) patch[k] = v;
+  }
+  return patch;
+}

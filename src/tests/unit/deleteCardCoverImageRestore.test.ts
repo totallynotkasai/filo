@@ -46,11 +46,8 @@ function makeKanban(coverImage: string): V7BoardFileData {
       t1: {
         id: 't1',
         type: 'text',
-        title: 'Card A',
+        filePath: 'Card A.md',
         style: { headerColor: '', bodyColor: '', borderColor: '' } as never,
-        tags: [],
-        contentId: 'doc_t1',
-        content: '',
         createdAt: 0,
         updatedAt: 0,
       } as unknown as V7BoardFileData['tileDefs'][string],

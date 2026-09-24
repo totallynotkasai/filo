@@ -4,9 +4,8 @@
  * Property: for every Board of every type produced by the schema factories,
  * the full V7 envelope serialised with `JSON.stringify` and re-parsed through
  * `V7BoardFileDataSchema` round-trips to a structurally equivalent envelope.
- * Equivalence ignores `version` (the schema applies a `.default(7)` when the
- * field is absent) and explicit `.passthrough()` defaults the schema fills
- * for nested optionals.
+ * The envelope's `version` is required (no default), and a tile def keeps only
+ * the fields the board owns.
  *
  * Mitigates the parity-risk from CONSOLIDATION_PLAN_2026-05-25.md Phase 0:
  * the factories below mirror `boardRegistry[type].createDefault(...)` in
@@ -104,8 +103,7 @@ function makeDocument(id: string, name: string): Board {
     createdAt: now,
     updatedAt: now,
     settings: {},
-    contentId: createId(),
-    content: '',
+    filePath: `${createId()}.md`,
   });
 }
 
@@ -163,25 +161,24 @@ describe('Phase 0 characterization — board round-trip parity', () => {
     }
   });
 
-  describe('envelope without explicit `version` field gets default-stamped to CURRENT_BOARD_FILE_VERSION', () => {
+  describe('an envelope without a `version` field is rejected (no default)', () => {
     for (const type of BOARD_TYPES) {
-      it(`${type} — schema fills in version=${CURRENT_BOARD_FILE_VERSION}`, () => {
+      it(`${type} — schema refuses a versionless envelope`, () => {
         const before = makeDefaultEnvelope(type);
         delete (before as { version?: number }).version;
-        const after = roundTrip(before);
-        expect(after.version).toBe(CURRENT_BOARD_FILE_VERSION);
+        expect(() => roundTrip(before)).toThrow(/version/);
       });
     }
   });
 
-  describe('forward-compatibility — unknown fields survive via passthrough', () => {
-    // The schemas are `.passthrough()`; the saver round-trips via
-    // JSON.parse(JSON.stringify(...)). A future Filo's extra board fields
-    // must reach this build's parse output untouched. This invariant is
-    // what allows the entire vault to be opened safely by any Filo build
-    // without losing data.
+  describe('forward-compatibility — unknown board / frame fields survive via passthrough', () => {
+    // The board and frame schemas are `.passthrough()`; the saver round-trips
+    // via JSON.parse(JSON.stringify(...)). A future Filo's extra board fields
+    // must reach this build's parse output untouched. Tile defs are the
+    // exception: a def keeps only what the board owns, so a stale copy of a
+    // note's title / tags / body can never survive a load and save.
     for (const type of BOARD_TYPES) {
-      it(`${type} — extra fields on board, tileDef, frame are preserved`, () => {
+      it(`${type} — extra fields on board and frame are preserved, a tileDef's are dropped`, () => {
         const env = makeDefaultEnvelope(type);
         (env.board as unknown as Record<string, unknown>).__future_field__ = 'preserved';
         if (type === 'mindmap') {
@@ -189,14 +186,11 @@ describe('Phase 0 characterization — board round-trip parity', () => {
             tile_x: {
               id: 'tile_x',
               type: 'text',
-              title: 'X',
-              tags: [],
+              filePath: 'X.md',
               style: { headerColor: '#fff', bodyColor: '#fff', borderColor: '' },
               createdAt: 0,
               updatedAt: 0,
-              contentId: 'content_x',
-              content: '',
-              __future_field__: 'preserved-on-def',
+              __future_field__: 'dropped-on-def',
             } as unknown as V7BoardFileData['tileDefs'][string],
           };
         }
@@ -218,7 +212,8 @@ describe('Phase 0 characterization — board round-trip parity', () => {
         expect((after.board as unknown as Record<string, unknown>).__future_field__).toBe('preserved');
         if (type === 'mindmap') {
           const def = (after.tileDefs as Record<string, Record<string, unknown>>).tile_x;
-          expect(def.__future_field__).toBe('preserved-on-def');
+          expect(def.__future_field__).toBeUndefined();
+          expect(def.filePath).toBe('X.md');
         }
         const frame = (after.frames[0] as unknown as Record<string, unknown>);
         expect(frame.__future_field__).toBe('preserved-on-frame');

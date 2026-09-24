@@ -9,6 +9,7 @@ import type {
 type PartialColumnStyle = Record<string, unknown>;
 import { TileDefinitionSchema } from '../schema/index';
 import type { CacheContext } from './boardCacheTypes';
+import { projectDef } from '../core/boardTileOps/projectTile';
 
 /**
  * Cache slice — Kanban board mutations (columns, placements, cover images,
@@ -69,7 +70,7 @@ export function makeKanbanSlice(ctx: CacheContext) {
           const defLocked = (def as Partial<Tile>).locked === true;
           const defFaded = (def as Partial<Tile>).faded === true;
           result[p.tileId] = {
-            ...def,
+            ...projectDef(def),
             position: { x: 0, y: 0 },
             size: { width: 240, height: 160 },
             locked: defLocked,

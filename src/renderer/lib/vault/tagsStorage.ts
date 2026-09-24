@@ -531,10 +531,12 @@ export function dropFolderInTags(file: TagsFile, prefix: string): TagsFile {
 
 /**
  * Drops every `fileTags` entry whose vault-relative path is
- * NOT in `knownPaths`. Used to prune stale entries left behind by external
- * file deletions / moves that the watcher missed (e.g. the app was closed
- * while an attachment was deleted from the OS file explorer). The lookup
- * is case-insensitive to match `flattenTreePaths`'s producer convention.
+ * NOT in `knownPaths`, and every entry for a Markdown note. Used to prune
+ * stale entries left behind by external file deletions / moves that the
+ * watcher missed (e.g. the app was closed while an attachment was deleted
+ * from the OS file explorer). A note's tags live in its own frontmatter, so
+ * a `.md` key here is never a tag's home. The lookup is case-insensitive to
+ * match `flattenTreePaths`'s producer convention.
  *
  * Returns `{ file, droppedPaths }`. `file === input` when nothing changed
  * so callers can skip a scheduleSave.
@@ -550,7 +552,7 @@ export function pruneFileTagsAgainstKnownPaths(
   const nextFileTags: Record<string, string[]> = {};
   for (const [key, tagArr] of Object.entries(file.fileTags)) {
     const norm = normalisePath(key).toLowerCase();
-    if (knownLower.has(norm)) {
+    if (knownLower.has(norm) && !/\.(md|markdown)$/.test(norm)) {
       nextFileTags[key] = tagArr;
       continue;
     }

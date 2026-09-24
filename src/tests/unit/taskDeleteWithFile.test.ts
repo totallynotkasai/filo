@@ -46,11 +46,8 @@ function mkDef(id: string): TileDefinition {
   return {
     id,
     type: 'text',
-    title: 'Task',
-    contentId: `doc-${id}`,
-    content: '',
+    filePath: REL,
     style: { headerColor: '#000', bodyColor: '#fff', borderColor: '' } as never,
-    tags: [],
     createdAt: 0,
     updatedAt: 0,
   } as unknown as TileDefinition;

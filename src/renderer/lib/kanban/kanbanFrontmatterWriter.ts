@@ -2,7 +2,6 @@ import type { KanbanBoard as KanbanBoardType, Tile } from '../../schema/index';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { documentStore } from '../../stores/document.svelte';
 import { historyStore } from '../../stores/history.svelte';
-import { tabStore } from '../../stores/tabs.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import { vaultStore } from '../../stores/vault.svelte';
@@ -13,19 +12,11 @@ import {
 } from '../../commands/index';
 import { copyFileIntoVault } from '../vault/vaultOperations';
 import { resolveTextTileVaultPath } from '../boards/textTilePath';
+import { openNoteInDocumentTab } from '../notes/openNote';
 
 export type KanbanPriority = 'none' | 'low' | 'medium' | 'high' | 'urgent';
 
-/**
- * Returns the vault-relative path for a text tile's backing `.md` file, or
- * `null` for non-text tiles.
- *
- * Delegates to the canonical `resolveTextTileVaultPath`, which consults the
- * def's explicit `filePath` FIRST (`filePath → documentStore.filename → folder
- * cascade`). After a restart the document cache is empty, so a `${title}.md`
- * fallback alone would resolve a subfolder card to the vault ROOT and lose the
- * edit or corrupt an unrelated same-named file.
- */
+/** The note path of a text card, or `null` for non-text cards. */
 export function vaultPathForTile(tile: Tile): string | null {
   return resolveTextTileVaultPath(tile);
 }
@@ -67,10 +58,7 @@ export function makeKanbanFrontmatterWriter(
   const { getBoard, getAllTilesById, bumpCacheVersion, tickAndPersist } = deps;
 
   function vaultPathForTileSafe(tile: Tile): string {
-    // Thread the owning board so the cascade fallback anchors to
-    // the card's home board's `defaultFolder` rather than whichever board is
-    // active. `filePath`/`documentStore.filename` still win when present.
-    return resolveTextTileVaultPath(tile, getBoard()?.id) ?? `${tile.title || 'Untitled'}.md`;
+    return resolveTextTileVaultPath(tile) ?? '';
   }
 
   function ensureSeededFm(tile: Tile): string | null {
@@ -132,19 +120,7 @@ export function makeKanbanFrontmatterWriter(
   function openTileAsDocument(tileId: string): void {
     const tile = getAllTilesById()[tileId];
     if (!tile || tile.type !== 'text') return;
-    const t = tile as Tile & { contentId?: string; content?: string };
-    const docId = t.contentId || tile.id;
-    const filename = vaultPathForTileSafe(tile);
-    documentStore.loadDocument({
-      docId,
-      filename,
-      title: tile.title || 'Untitled',
-      body: '',
-      htmlContent: t.content || '',
-      richText: [],
-    });
-    documentStore.openDocumentTab(docId);
-    tabStore.open(docId, tile.title || 'Document', 'document');
+    openNoteInDocumentTab(vaultPathForTileSafe(tile));
   }
 
   /**

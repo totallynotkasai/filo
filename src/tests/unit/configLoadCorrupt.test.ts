@@ -58,20 +58,15 @@ describe('loadConfig', () => {
     }
   });
 
-  it('returns the inner value for a legacy double-stringified payload', async () => {
-    // Earlier shipped builds wrote configs double-stringified; loadConfig
-    // detects a top-level string parse and parses again so existing vaults
-    // keep loading without the user noticing.
-    await fs.writeFile(
-      join(vaultRoot, '.filo', 'app.json'),
-      JSON.stringify(JSON.stringify({ globalFont: 'Legacy' })),
-      'utf-8',
-    );
+  it('treats a double-stringified payload as corrupt (a config is a JSON object)', async () => {
+    const raw = JSON.stringify(JSON.stringify({ globalFont: 'Legacy' }));
+    await fs.writeFile(join(vaultRoot, '.filo', 'app.json'), raw, 'utf-8');
     const result = await loadConfig(vaultRoot, 'app.json', {});
-    expect(result).toEqual({ globalFont: 'Legacy' });
+    expect(isCorruptConfig(result)).toBe(true);
+    if (isCorruptConfig(result)) expect(result.raw).toBe(raw);
   });
 
-  it('treats a legacy file whose inner string fails to parse as corrupt', async () => {
+  it('treats a bare JSON string as corrupt', async () => {
     await fs.writeFile(
       join(vaultRoot, '.filo', 'app.json'),
       JSON.stringify('not valid JSON content'),

@@ -150,6 +150,8 @@ export const InlineTileSchema = z.object({
   locked: z.boolean().default(false),
   faded: z.boolean().default(false),
   tags: z.array(z.string()).default(() => []),
+  // Properties set in the Properties panel (the tile has no file to hold them).
+  metadata: z.record(z.string(), z.unknown()).optional(),
   // .finite() rejects NaN / ±Infinity from hand-edited files.
   createdAt: z.number().finite(),
   updatedAt: z.number().finite(),

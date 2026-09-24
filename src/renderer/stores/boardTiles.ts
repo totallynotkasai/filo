@@ -1,32 +1,9 @@
 import type { Tile } from '../schema/index';
 import { TileSchema } from '../schema/index';
 import { boardCacheStore } from './boardCache.svelte';
-import { vaultStore } from './vault.svelte';
-import { documentStore } from './document.svelte';
 import { uiStore } from './ui.svelte';
 import { isGeometryOnlyUpdate } from '../lib/utils/tileUpdateFastPath';
-import { normalizePath } from '../lib/utils/path';
-import { resolveTextTileVaultPath, replaceTitleInVaultPath } from '../lib/boards/textTilePath';
-import { renameAllPathKeys } from '../lib/vault/renamePathKeys';
 import type { BoardContext } from './boardStoreTypes';
-
-/**
- * Return shape of `renameTextTileBackingFile`. When the
- * rename touched the backing `.md` file, `oldPath` and `newPath` are set
- * so the caller can push a `RenameTitleCommand` that knows how to reverse
- * the disk-side rename. For no-file-rename branches (no vault open, no
- * resolvable path, identical newRel) the success flag is true but the
- * path fields stay undefined — the title-only update is already applied.
- */
-export interface RenameTextTileResult {
-  success: boolean;
-  oldTitle?: string;
-  newTitle?: string;
-  oldTitleHtml?: string | undefined;
-  newTitleHtml?: string | undefined;
-  oldPath?: string;
-  newPath?: string;
-}
 
 /**
  * Board slice — tile CRUD for the active board. Every mutation is forwarded
@@ -130,118 +107,6 @@ export function makeTilesSlice(ctx: BoardContext) {
 
     persistUpdateTile(tileId: string, updates: Partial<Tile>, boardId?: string): void {
       boardCacheStore.persistUpdateTile(tileId, updates, boardId);
-    },
-
-    async renameTextTileBackingFile(
-      tileId: string,
-      newTitle: string,
-      newTitleHtml: string | undefined,
-      homeBoardId?: string,
-    ): Promise<RenameTextTileResult> {
-      // Resolve from the active scope first, falling back to
-      // the home board's cache when given. The fallback serves the unmount-
-      // time blur-commit (TileHeader's teardown): clicking another tab both
-      // blurs AND unmounts, so by the time the commit runs the pane's scope
-      // already points at the switched-in board and the active lookup misses.
-      const activeTile = ctx.getTiles()[tileId];
-      const tile = activeTile
-        ?? (homeBoardId
-          ? boardCacheStore.getFullTilesForBoard(homeBoardId)[tileId]
-          : undefined);
-      if (!tile || tile.type !== 'text') return { success: false };
-
-      // Dual-route tile updates for the same reason: the scope writer (Zod +
-      // spatial sync) while the tile is still in the active board, the cache
-      // writer keyed by the tile's home board once it isn't.
-      const applyTileUpdate = (updates: Partial<Tile>): void => {
-        if (ctx.getTiles()[tileId]) ctx.updateTile(tileId, updates);
-        else boardCacheStore.persistUpdateTile(tileId, updates, tile.boardId);
-      };
-
-      const oldTitle = tile.title;
-      const oldTitleHtml = tile.titleHtml;
-      const titleChanged = newTitle !== oldTitle;
-      const titleHtmlChanged = (tile.titleHtml ?? '') !== (newTitleHtml ?? '');
-
-      if (!titleChanged && !titleHtmlChanged) {
-        return { success: true, oldTitle, newTitle, oldTitleHtml, newTitleHtml };
-      }
-      if (!titleChanged) {
-        applyTileUpdate({ titleHtml: newTitleHtml });
-        return { success: true, oldTitle, newTitle, oldTitleHtml, newTitleHtml };
-      }
-
-      const vaultRoot = vaultStore.path;
-      if (!vaultRoot) {
-        applyTileUpdate({ title: newTitle, titleHtml: newTitleHtml });
-        return { success: true, oldTitle, newTitle, oldTitleHtml, newTitleHtml };
-      }
-
-      // Pin the resolver to the tile's home board so the cascade fallback
-      // (when filePath / docState aren't set) reads THIS tile's per-board
-      // defaultFolder, not whichever board happens to be active.
-      const oldRel = resolveTextTileVaultPath(tile, tile.boardId);
-      if (!oldRel) {
-        applyTileUpdate({ title: newTitle, titleHtml: newTitleHtml });
-        return { success: true, oldTitle, newTitle, oldTitleHtml, newTitleHtml };
-      }
-
-      const newRel = replaceTitleInVaultPath(oldRel, newTitle);
-      if (oldRel === newRel) {
-        applyTileUpdate({ title: newTitle, titleHtml: newTitleHtml });
-        return { success: true, oldTitle, newTitle, oldTitleHtml, newTitleHtml };
-      }
-
-      // `vaultStore.rename` wraps the sequence in `withDrainedWrites`, which
-      // drains every markdown writer before issuing the IPC rename, so no
-      // per-tile markdown flush is needed here.
-
-      const docId = (tile as Tile & { contentId?: string }).contentId;
-      const existingDoc = documentStore.findByFilename(newRel);
-      if (existingDoc && existingDoc.docId !== docId) {
-        uiStore.toast(`A file named '${newRel}' already exists`, 'warning', 3500);
-        return { success: false };
-      }
-      if (!existingDoc) {
-        try {
-          const exists = await window.filo.invoke('vault:file-exists', vaultRoot, newRel);
-          if (exists) {
-            uiStore.toast(`A file named '${newRel}' already exists`, 'warning', 3500);
-            return { success: false };
-          }
-        } catch (err) {
-          console.warn('[boardStore.renameTextTileBackingFile] file-exists probe failed:', err);
-        }
-      }
-
-      const root = normalizePath(vaultRoot);
-      const oldAbs = `${root}/${oldRel}`;
-      const newAbs = `${root}/${newRel}`;
-
-      const renameResult = await vaultStore.rename(oldAbs, newAbs);
-      if (!renameResult.success) {
-        const msg = renameResult.code === 'ENOENT'
-          ? `Backing file '${oldRel}' is no longer on disk`
-          : 'Failed to rename file';
-        uiStore.toast(msg, renameResult.code === 'ENOENT' ? 'warning' : 'error', 3500);
-        return { success: false };
-      }
-
-      // `vaultStore.rename` already runs `renameAllPathKeys` via the
-      // `vaultFolderOps` cascade. This extra call is defense-in-depth for a
-      // code path that renames the backing file without the full cascade.
-      renameAllPathKeys(oldRel, newRel);
-
-      applyTileUpdate({ title: newTitle, titleHtml: newTitleHtml });
-      return {
-        success: true,
-        oldTitle,
-        newTitle,
-        oldTitleHtml,
-        newTitleHtml,
-        oldPath: oldRel,
-        newPath: newRel,
-      };
     },
 
     getTile(tileId: string): Tile | undefined {

@@ -1,17 +1,20 @@
 /**
- * Tag cascade helpers for fileTags.svelte.ts. They only mutate `boardStore` /
+ * Tag cascade helpers for fileTags.svelte.ts. They only mutate
  * `boardCacheStore` state (never the TagsFile state) and only run during
  * cascade operations, so they live here to keep fileTags.svelte.ts focused.
+ *
+ * Boards hold tags only on board-only tiles (link / iframe / timer); a note's
+ * tags are in its frontmatter (rewritten by the `.md` sweep) and a media
+ * file's in tags.json (rewritten by the registry rename/delete).
  *
  * Helpers that call back into the store take it through the minimal
  * `TagCascadeStore` interface to avoid a circular import.
  */
 
 import { SvelteSet } from 'svelte/reactivity';
-import { boardStore } from './board.svelte';
 import { boardCacheStore } from './boardCache.svelte';
-import { vaultStore } from './vault.svelte';
 import { vaultIndexStore } from './vaultIndex.svelte';
+import { isInlineTileType } from '../lib/boards/tileDefBuilder';
 import { uiStore } from './ui.svelte';
 import {
   rewriteTagInAllMarkdown,
@@ -33,24 +36,25 @@ export interface TagCascadeStore {
   flushPendingSave(): Promise<{ ok: boolean }>;
 }
 
-/**
- * Iterates every inline tile (link / iframe / timer) across every board in
- * the active project. Mirrors the read pattern used by `getTilesWithTag` so
- * sweeps like `renameTagEverywhere` / `removeTagEverywhere` reach inline
- * tiles on non-active boards — those tiles aren't in `boardStore.tiles`
- * (active-board only) and aren't in `boardStore.allTileDefs` (defs only).
- */
-export function* iterateInlineTiles(): Generator<{ id: string; tags?: string[] }> {
-  const project = vaultStore.project;
-  if (!project) return;
-  for (const board of project.boards) {
-    const inlineTiles = (board as { inlineTiles?: Record<string, unknown> }).inlineTiles ?? {};
-    for (const tile of Object.values(inlineTiles)) {
-      const t = tile as { id?: string; tags?: string[] };
-      if (typeof t.id !== 'string') continue;
-      yield { id: t.id, tags: t.tags };
+/** Every board-only tile (link / iframe / timer) on every loaded board. */
+export function* iterateBoardOnlyTiles(): Generator<{ boardId: string; id: string; tags: string[] }> {
+  for (const [boardId, data] of Object.entries(boardCacheStore.cache)) {
+    for (const def of Object.values(data.tileDefs ?? {})) {
+      if (isInlineTileType(def.type)) yield { boardId, id: def.id, tags: (def as { tags?: string[] }).tags ?? [] };
     }
+    const inline = (data.board as { inlineTiles?: Record<string, { tags?: string[] }> }).inlineTiles ?? {};
+    for (const [id, t] of Object.entries(inline)) yield { boardId, id, tags: t.tags ?? [] };
   }
+}
+
+/** Rewrites the tags of every board-only tile that `map` changes. */
+function rewriteBoardOnlyTileTags(map: (tags: string[]) => string[] | null): void {
+  const updates: Array<{ boardId: string; id: string; tags: string[] }> = [];
+  for (const t of iterateBoardOnlyTiles()) {
+    const next = map(t.tags);
+    if (next) updates.push({ boardId: t.boardId, id: t.id, tags: next });
+  }
+  for (const u of updates) boardCacheStore.persistUpdateTile(u.id, { tags: u.tags }, u.boardId);
 }
 
 /**
@@ -163,7 +167,7 @@ export function pushTagRewriteFailureToast(opts: {
  *
  * The `.md` sweep already runs before the in-memory commit, so by this
  * point the markdown side has succeeded. A board write failure here means
- * the registry + tile-defs got updated in memory but one or more
+ * the registry + board-only tiles got updated in memory but one or more
  * `.board.json` files couldn't be written. We don't roll back the in-memory
  * state — the failed paths are already in `failedVaultPaths` via
  * `endWrite(..., false)` and the recovery sentinel reflects that.
@@ -185,11 +189,9 @@ export async function flushTagRewriteBoardWrites(verb: string): Promise<void> {
 
 /**
  * Commits the in-memory tag-rename cascade once the corresponding `.md`
- * file rewrites have succeeded. Updates the registry, ensures the new tag
- * has a definition entry, walks active-board tiles, off-board tile defs,
- * inline tiles, and saved-view / lastView filter chips. The split exists
- * so the retry path can fire the same commit without duplicating the
- * loop bodies.
+ * file rewrites have succeeded: the registry (definition + media fileTags),
+ * board-only tiles, and saved-view / lastView filter chips. The split exists
+ * so the retry path can fire the same commit without duplicating the loops.
  */
 export function commitTagRenameInMemory(
   store: TagCascadeStore,
@@ -198,25 +200,9 @@ export function commitTagRenameInMemory(
 ): void {
   store.renameTag(oldName, newName);
   store.ensureTag(newName);
-
-  for (const tile of Object.values(boardStore.tiles)) {
-    if (!tile.tags.includes(oldName)) continue;
-    const next = Array.from(new SvelteSet(tile.tags.map((t) => (t === oldName ? newName : t))));
-    boardStore.updateTile(tile.id, { tags: next });
-  }
-  for (const def of Object.values(boardStore.allTileDefs)) {
-    if (!def.tags?.includes(oldName)) continue;
-    if (boardStore.getTile(def.id)) continue;
-    const next = Array.from(new SvelteSet(def.tags.map((t) => (t === oldName ? newName : t))));
-    boardStore.persistUpdateTile(def.id, { tags: next });
-  }
-  for (const inline of iterateInlineTiles()) {
-    if (!Array.isArray(inline.tags) || !inline.tags.includes(oldName)) continue;
-    if (boardStore.getTile(inline.id)) continue;
-    const next = Array.from(new SvelteSet(inline.tags.map((t) => (t === oldName ? newName : t))));
-    boardStore.persistUpdateTile(inline.id, { tags: next });
-  }
-
+  rewriteBoardOnlyTileTags((tags) =>
+    tags.includes(oldName) ? Array.from(new SvelteSet(tags.map((t) => (t === oldName ? newName : t)))) : null,
+  );
   cascadeTagToBoardSettings(oldName, newName);
 }
 
@@ -230,22 +216,7 @@ export function commitTagRemovalInMemory(
   tagName: string,
 ): void {
   store.deleteTag(tagName);
-
-  for (const tile of Object.values(boardStore.tiles)) {
-    if (!tile.tags.includes(tagName)) continue;
-    boardStore.updateTile(tile.id, { tags: tile.tags.filter((t) => t !== tagName) });
-  }
-  for (const def of Object.values(boardStore.allTileDefs)) {
-    if (!def.tags?.includes(tagName)) continue;
-    if (boardStore.getTile(def.id)) continue;
-    boardStore.persistUpdateTile(def.id, { tags: def.tags.filter((t) => t !== tagName) });
-  }
-  for (const inline of iterateInlineTiles()) {
-    if (!Array.isArray(inline.tags) || !inline.tags.includes(tagName)) continue;
-    if (boardStore.getTile(inline.id)) continue;
-    boardStore.persistUpdateTile(inline.id, { tags: inline.tags.filter((t) => t !== tagName) });
-  }
-
+  rewriteBoardOnlyTileTags((tags) => (tags.includes(tagName) ? tags.filter((t) => t !== tagName) : null));
   cascadeTagToBoardSettings(tagName, null);
 }
 

@@ -25,7 +25,7 @@ import { restoreFiloDefault } from '../helpers/filoBridge';
 function board(name = 'Alpha'): V7BoardFileData {
   const now = 1_700_000_000_000;
   return {
-    version: 7,
+    version: 8,
     board: {
       id: 'mindmap-1',
       name,
@@ -69,11 +69,11 @@ describe('board file encoding (real fs)', () => {
     expect((await fs.stat(p)).size).toBe(writtenByteLength(payload));
   });
 
-  it('(b) a legacy double-encoded file still loads as an object', async () => {
+  it('(b) a double-encoded file is parsed once: main hands back the string, not a board', async () => {
     const data = board();
     const p = join(root, 'Legacy.board.json');
     await fs.writeFile(p, JSON.stringify(JSON.stringify(data, null, 2), null, 2), 'utf-8');
-    expect(await loadBoardFile(p)).toEqual(data);
+    expect(await loadBoardFile(p)).toBe(JSON.stringify(data, null, 2));
   });
 
   it('(c) a hand-written plain-JSON board loads', async () => {
@@ -97,10 +97,11 @@ describe('board file encoding (real fs)', () => {
     await expect(saveBoardFile(join(root, 'Bad.board.json'), '"oops"')).rejects.toThrow(/not a JSON object/);
   });
 
-  it('(e) renderer load → save → save on a legacy board: no external-edit prompt, baseline tracks disk', async () => {
-    const rel = 'Legacy.board.json';
+  it('(e) renderer load → save → save: no external-edit prompt, baseline tracks disk', async () => {
+    const rel = 'Plain.board.json';
     const abs = join(root, rel);
-    await fs.writeFile(abs, JSON.stringify(JSON.stringify(board(), null, 2), null, 2), 'utf-8');
+    // Compact JSON on disk, so save #1 (pretty-printed) changes the size.
+    await fs.writeFile(abs, JSON.stringify(board()), 'utf-8');
 
     const stat = async (r: string) => {
       const s = await fs.stat(join(root, r));
@@ -127,7 +128,7 @@ describe('board file encoding (real fs)', () => {
     if (!loaded.ok) return;
     const data = loaded.data;
 
-    // Save #1 — the migration. mtime resolution can be coarse; nudge time.
+    // Save #1 — reformats the file. mtime resolution can be coarse; nudge time.
     data.board.name = 'Edit 1';
     await writeBoardFile(root, rel, structuredClone(data));
     expect(typeof JSON.parse(await fs.readFile(abs, 'utf-8'))).toBe('object');
@@ -145,5 +146,34 @@ describe('board file encoding (real fs)', () => {
     expect(handler).not.toHaveBeenCalled();
     const final = JSON.parse(await fs.readFile(abs, 'utf-8')) as V7BoardFileData;
     expect(final.board.name).toBe('Edit 3');
+  });
+
+  it.each([
+    ['a double-encoded file', (d: V7BoardFileData) => JSON.stringify(JSON.stringify(d, null, 2), null, 2)],
+    ['a version 7 file', (d: V7BoardFileData) => JSON.stringify({ ...d, version: 7 }, null, 2)],
+  ])('(f) %s is refused by the renderer and never written', async (_label, encode) => {
+    const rel = 'Old.board.json';
+    const abs = join(root, rel);
+    const bytes = encode(board());
+    await fs.writeFile(abs, bytes, 'utf-8');
+    const channels: string[] = [];
+    (window as unknown as { filo: unknown }).filo = {
+      invoke: async (channel: string, _root: string, r: string) => {
+        channels.push(channel);
+        if (channel === 'vault:stat') {
+          const s = await fs.stat(join(root, r));
+          return { success: true, ok: true, mtimeMs: s.mtimeMs, size: s.size };
+        }
+        if (channel === 'board:load') return loadBoardFile(join(root, r));
+        return { success: true, ok: true };
+      },
+      on: () => () => undefined,
+      send: () => undefined,
+    };
+
+    const loaded = await loadBoard(root, rel);
+    expect(loaded).toMatchObject({ ok: false, error: 'no-migration-path' });
+    expect(channels).not.toContain('board:save');
+    expect(await fs.readFile(abs, 'utf-8')).toBe(bytes);
   });
 });

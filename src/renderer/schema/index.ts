@@ -1,5 +1,5 @@
 export { TileSchema, TileDefinitionSchema, TileStyleSchema, TextTileSchema, ImageTileSchema, VideoTileSchema, FileTileSchema, AudioTileSchema, LinkTileSchema, IframeTileSchema, TimerTileSchema, TextTileDefSchema, ImageTileDefSchema, VideoTileDefSchema, FileTileDefSchema, AudioTileDefSchema, LinkTileDefSchema, IframeTileDefSchema, TimerTileDefSchema } from './tile';
-export type { Tile, TileDefinition, TileStyle, TextTile, ImageTile, VideoTile, FileTile, AudioTile, LinkTile, IframeTile, TimerTile } from './tile';
+export type { Tile, TileDefinition, TileStyle, TextTile, ImageTile, VideoTile, FileTile, AudioTile, LinkTile, IframeTile, TimerTile, TextTileDef } from './tile';
 
 export {
   TilePlacementSchema,

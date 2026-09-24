@@ -2,12 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   rewriteRenameInBoard,
   propagateRenameAcrossBoards,
-  propagateMarkdownRenameToTextTiles,
   findTilesToCascadeDelete,
   collectFileRefs,
   detectBrokenRefs,
-  getConventionFolderForBoardType,
-  joinConventionPath,
 } from '@renderer/lib/vault/fileRefIntegrity';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 
@@ -93,45 +90,6 @@ describe('fileRefIntegrity.propagateRenameAcrossBoards', () => {
   });
 });
 
-describe('fileRefIntegrity.propagateMarkdownRenameToTextTiles', () => {
-  it('rewrites text-tile titles when their convention-backed .md is renamed', () => {
-    const boards: Record<string, V7BoardFileData> = {
-      b1: makeBoard({
-        t1: { id: 't1', type: 'text', title: 'Notes', tags: [] },
-        t2: { id: 't2', type: 'text', title: 'Other', tags: [] },
-      }),
-      b2: makeBoard({
-        t3: { id: 't3', type: 'text', title: 'Notes', tags: [] },
-      }),
-    };
-    const r = propagateMarkdownRenameToTextTiles(boards, 'Notes.md', 'Renamed.md');
-    expect(r.updatedCount).toBe(2);
-    expect(r.changedBoardIds.sort()).toEqual(['b1', 'b2']);
-    expect((boards.b1.tileDefs as any).t1.title).toBe('Renamed');
-    expect((boards.b1.tileDefs as any).t2.title).toBe('Other');
-    expect((boards.b2.tileDefs as any).t3.title).toBe('Renamed');
-  });
-
-  it('skips text tiles that already use an explicit file field', () => {
-    const boards: Record<string, V7BoardFileData> = {
-      b1: makeBoard({
-        t1: { id: 't1', type: 'text', title: 'Notes', file: 'sub/Notes.md' },
-      }),
-    };
-    const r = propagateMarkdownRenameToTextTiles(boards, 'Notes.md', 'Renamed.md');
-    expect(r.updatedCount).toBe(0);
-    expect((boards.b1.tileDefs as any).t1.title).toBe('Notes');
-  });
-
-  it('returns no-op when either path is not .md', () => {
-    const boards: Record<string, V7BoardFileData> = {
-      b1: makeBoard({ t1: { id: 't1', type: 'text', title: 'Notes' } }),
-    };
-    expect(propagateMarkdownRenameToTextTiles(boards, 'Notes.md', 'Renamed.txt').updatedCount).toBe(0);
-    expect(propagateMarkdownRenameToTextTiles(boards, 'image.png', 'image2.png').updatedCount).toBe(0);
-  });
-});
-
 describe('fileRefIntegrity.findTilesToCascadeDelete', () => {
   it('flags tiles by file-ref field exact match', () => {
     const boards: Record<string, V7BoardFileData> = {
@@ -157,21 +115,21 @@ describe('fileRefIntegrity.findTilesToCascadeDelete', () => {
     expect(r.byBoard.b1.sort()).toEqual(['t1', 't2']);
   });
 
-  it('flags root-level text tiles by ${title}.md convention', () => {
+  it('flags a text tile by its filePath', () => {
     const boards: Record<string, V7BoardFileData> = {
       b1: makeBoard({
-        t1: { id: 't1', type: 'text', title: 'Notes' },
-        t2: { id: 't2', type: 'text', title: 'Other' },
+        t1: { id: 't1', type: 'text', filePath: 'Notes.md' },
+        t2: { id: 't2', type: 'text', filePath: 'Other.md' },
       }),
     };
     const r = findTilesToCascadeDelete(boards, 'Notes.md');
     expect(r.byBoard).toEqual({ b1: ['t1'] });
   });
 
-  it('skips text tiles with explicit file fields when matching by title', () => {
+  it('a text tile is matched by its path, not by a file named after it elsewhere', () => {
     const boards: Record<string, V7BoardFileData> = {
       b1: makeBoard({
-        t1: { id: 't1', type: 'text', title: 'Notes', file: 'sub/Notes.md' },
+        t1: { id: 't1', type: 'text', filePath: 'sub/Notes.md' },
       }),
     };
     expect(findTilesToCascadeDelete(boards, 'Notes.md').totalCount).toBe(0);
@@ -183,7 +141,7 @@ describe('fileRefIntegrity.collectFileRefs', () => {
     const board = makeBoard({
       t1: { id: 't1', type: 'image', src: 'a.png' },
       t2: { id: 't2', type: 'file', filePath: 'b.pdf' },
-      t3: { id: 't3', type: 'text' },
+      t3: { id: 't3', type: 'link', url: 'https://example.com' },
     });
     const refs = collectFileRefs(board);
     expect(refs).toHaveLength(2);
@@ -192,6 +150,15 @@ describe('fileRefIntegrity.collectFileRefs', () => {
       field: 'filePath',
       path: 'b.pdf',
     });
+  });
+
+  it("includes a text tile's filePath", () => {
+    const board = makeBoard({
+      t1: { id: 't1', type: 'text', filePath: 'Notes/A.md' },
+    });
+    expect(collectFileRefs(board)).toEqual([
+      { tileId: 't1', field: 'filePath', path: 'Notes/A.md' },
+    ]);
   });
 });
 
@@ -217,10 +184,9 @@ describe('fileRefIntegrity.detectBrokenRefs', () => {
   });
 
   it('ignores data: blob: and file: refs (non-vault sources)', () => {
-    // Regression: previously the URL-skip predicate required `://`, so
-    // `data:` URLs (which have no `//`) were treated as vault-relative
-    // paths and flagged as broken. After dragging a small image with no
-    // `webUtils` path, the resulting data-URL tile got a phantom badge.
+    // `data:` URLs have no `//`, so a `://`-only skip predicate would treat
+    // them as vault-relative paths and give a data-URL image tile a phantom
+    // broken badge.
     const board = makeBoard({
       t1: { id: 't1', type: 'image', src: 'data:image/png;base64,iVBORw0KGgo=' },
       t2: { id: 't2', type: 'image', src: 'blob:http://localhost/abc-123' },
@@ -238,8 +204,6 @@ describe('fileRefIntegrity.detectBrokenRefs', () => {
     expect(detectBrokenRefs(board, [])).toHaveLength(1);
   });
 });
-
-// ── V7 placement-aware integrity (Phase G) ──
 
 function makeKanbanBoard(opts: {
   name?: string;
@@ -311,178 +275,136 @@ function makeMindMapBoardWithPlacements(opts: {
   };
 }
 
-describe('fileRefIntegrity.propagateMarkdownRenameToTextTiles — V7 conventions', () => {
-  it('rewrites Tasks/<title>.md text tiles when the board pins Tasks/ as its default folder', () => {
+function makeDocumentBoard(filePath: string): V7BoardFileData {
+  return {
+    board: {
+      id: 'd1',
+      type: 'document',
+      name: 'Doc',
+      emoji: '',
+      createdAt: 0,
+      updatedAt: 0,
+      settings: {},
+      filePath,
+    } as any,
+    tileDefs: {},
+    connections: {},
+    frames: [],
+  };
+}
+
+describe('fileRefIntegrity — note renames rewrite filePath on every board type', () => {
+  it('rewrites a Task List text tile when its note is renamed, leaving other notes alone', () => {
     const boards: Record<string, V7BoardFileData> = {
       tl1: makeTaskListBoard({
         defs: {
-          t1: { id: 't1', type: 'text', title: 'Buy milk', tags: [] },
-          t2: { id: 't2', type: 'text', title: 'Other', tags: [] },
+          t1: { id: 't1', type: 'text', filePath: 'Tasks/Buy milk.md' },
+          t2: { id: 't2', type: 'text', filePath: 'Tasks/Other.md' },
         },
         tasks: [{ tileId: 't1' }, { tileId: 't2' }],
       }),
     };
-    // After dropping the hardcoded 'Tasks' convention, the tasklist board only
-    // resolves into Tasks/ when the per-board defaultFolder pin is set there.
-    const r = propagateMarkdownRenameToTextTiles(
-      boards,
-      'Tasks/Buy milk.md',
-      'Tasks/Buy bread.md',
-      { boardDefaultFolders: { tl1: 'Tasks' } },
-    );
+    const r = propagateRenameAcrossBoards(boards, 'Tasks/Buy milk.md', 'Tasks/Buy bread.md');
     expect(r.updatedCount).toBe(1);
-    expect((boards.tl1.tileDefs as any).t1.title).toBe('Buy bread');
-    expect((boards.tl1.tileDefs as any).t2.title).toBe('Other');
+    expect((boards.tl1.tileDefs as any).t1.filePath).toBe('Tasks/Buy bread.md');
+    expect((boards.tl1.tileDefs as any).t2.filePath).toBe('Tasks/Other.md');
   });
 
-  it('rewrites root-level <title>.md text tiles on a tasklist board with no pin', () => {
-    // Without a pin, the cascade resolves to vault root — so Buy milk.md (not
-    // Tasks/Buy milk.md) is the convention path for the tile.
-    const boards: Record<string, V7BoardFileData> = {
-      tl1: makeTaskListBoard({
-        defs: { t1: { id: 't1', type: 'text', title: 'Buy milk', tags: [] } },
-        tasks: [{ tileId: 't1' }],
-      }),
-    };
-    const r = propagateMarkdownRenameToTextTiles(boards, 'Buy milk.md', 'Buy bread.md');
-    expect(r.updatedCount).toBe(1);
-    expect((boards.tl1.tileDefs as any).t1.title).toBe('Buy bread');
-  });
-
-  it('rewrites Kanban/<board>/<title>.md tiles, sanitizing the board name', () => {
+  it('rewrites the same note on several boards (Kanban card and Mind Map tile)', () => {
     const boards: Record<string, V7BoardFileData> = {
       k1: makeKanbanBoard({
-        name: 'My: Board',
-        defs: { t1: { id: 't1', type: 'text', title: 'Spec', tags: [] } },
+        defs: { t1: { id: 't1', type: 'text', filePath: 'Kanban/Spec.md' } },
+        columns: [{ id: 'c1', tilePlacements: [{ tileId: 't1' }] }],
+      }),
+      mm1: makeMindMapBoardWithPlacements({
+        defs: { t2: { id: 't2', type: 'text', filePath: 'Kanban/Spec.md' } },
       }),
     };
-    // Board name "My: Board" sanitizes to "My Board" (colon stripped).
-    const r = propagateMarkdownRenameToTextTiles(boards, 'Kanban/My Board/Spec.md', 'Kanban/My Board/Design.md');
-    expect(r.updatedCount).toBe(1);
-    expect((boards.k1.tileDefs as any).t1.title).toBe('Design');
+    const r = propagateRenameAcrossBoards(boards, 'Kanban/Spec.md', 'Kanban/Design.md');
+    expect(r.changedBoardIds.sort()).toEqual(['k1', 'mm1']);
+    expect((boards.k1.tileDefs as any).t1.filePath).toBe('Kanban/Design.md');
+    expect((boards.mm1.tileDefs as any).t2.filePath).toBe('Kanban/Design.md');
   });
 
-  it('matches a root-level rename against an unpinned TaskList tile (cascade=vault root)', () => {
-    // After the per-board-default plan, an unpinned TaskList board's tiles
-    // resolve to the vault root convention. A root-level Notes.md → Renamed.md
-    // rename DOES propagate to the tile title, the inverse of the previous
-    // hardcoded-Tasks/ behaviour.
+  it('follows a folder move for every note inside it', () => {
     const boards: Record<string, V7BoardFileData> = {
       tl1: makeTaskListBoard({
-        defs: { t1: { id: 't1', type: 'text', title: 'Notes', tags: [] } },
-        tasks: [{ tileId: 't1' }],
+        defs: {
+          t1: { id: 't1', type: 'text', filePath: 'Tasks/A.md' },
+          t2: { id: 't2', type: 'text', filePath: 'Tasks/sub/B.md' },
+          t3: { id: 't3', type: 'text', filePath: 'Other/C.md' },
+        },
+        tasks: [{ tileId: 't1' }, { tileId: 't2' }, { tileId: 't3' }],
       }),
     };
-    const r = propagateMarkdownRenameToTextTiles(boards, 'Notes.md', 'Renamed.md');
-    expect(r.updatedCount).toBe(1);
-    expect((boards.tl1.tileDefs as any).t1.title).toBe('Renamed');
+    const r = propagateRenameAcrossBoards(boards, 'Tasks', 'Archive/Tasks');
+    expect(r.updatedCount).toBe(2);
+    expect((boards.tl1.tileDefs as any).t1.filePath).toBe('Archive/Tasks/A.md');
+    expect((boards.tl1.tileDefs as any).t2.filePath).toBe('Archive/Tasks/sub/B.md');
+    expect((boards.tl1.tileDefs as any).t3.filePath).toBe('Other/C.md');
   });
 
-  it('does NOT match a Tasks/ rename against a mindmap text tile', () => {
+  // The title lives in the note's frontmatter, so a rename only moves the
+  // path: nothing title-shaped is written onto the board.
+  it('a rename writes only filePath on the def', () => {
     const boards: Record<string, V7BoardFileData> = {
       mm1: makeMindMapBoardWithPlacements({
-        defs: { t1: { id: 't1', type: 'text', title: 'Foo', tags: [] } },
+        defs: { t1: { id: 't1', type: 'text', filePath: 'Notes.md' } },
       }),
     };
-    const r = propagateMarkdownRenameToTextTiles(boards, 'Tasks/Foo.md', 'Tasks/Bar.md');
-    expect(r.updatedCount).toBe(0);
-    expect((boards.mm1.tileDefs as any).t1.title).toBe('Foo');
+    propagateRenameAcrossBoards(boards, 'Notes.md', 'Sub/Notes.md');
+    expect((boards.mm1.tileDefs as any).t1).toEqual({ id: 't1', type: 'text', filePath: 'Sub/Notes.md' });
   });
 
-  it('stamps an explicit filePath when a file moves out of the convention folder', () => {
-    const boards: Record<string, V7BoardFileData> = {
-      tl1: makeTaskListBoard({
-        defs: { t1: { id: 't1', type: 'text', title: 'Notes', tags: [] } },
-        tasks: [{ tileId: 't1' }],
-      }),
-    };
-    // Tasks/Notes.md → Notes.md, with the board pinning Tasks/ as its default.
-    // The title stays the same — the tile gets an explicit filePath so the next
-    // save lands at the new location instead of recreating Tasks/Notes.md.
-    const r = propagateMarkdownRenameToTextTiles(
-      boards,
-      'Tasks/Notes.md',
-      'Notes.md',
-      { boardDefaultFolders: { tl1: 'Tasks' } },
-    );
-    expect(r.updatedCount).toBe(1);
-    expect((boards.tl1.tileDefs as any).t1.title).toBe('Notes');
-    expect((boards.tl1.tileDefs as any).t1.filePath).toBe('Notes.md');
-  });
-
-  it('stamps an explicit filePath when a mindmap text tile moves into a subfolder', () => {
-    const boards: Record<string, V7BoardFileData> = {
-      mm1: makeMindMapBoardWithPlacements({
-        defs: { t1: { id: 't1', type: 'text', title: 'Notes', tags: [] } },
-      }),
-    };
-    // Root → Sub/ for a mindmap tile (mindmap convention folder = root).
-    // Without this stamp, TextTile.writeMarkdownToDisk would fall back to
-    // ${title}.md at the root and recreate the file there (the duplicate
-    // bug the user reported).
-    const r = propagateMarkdownRenameToTextTiles(boards, 'Notes.md', 'Sub/Notes.md');
-    expect(r.updatedCount).toBe(1);
-    expect((boards.mm1.tileDefs as any).t1.title).toBe('Notes');
-    expect((boards.mm1.tileDefs as any).t1.filePath).toBe('Sub/Notes.md');
+  it("rewrites a Document board's filePath", () => {
+    const boards: Record<string, V7BoardFileData> = { d1: makeDocumentBoard('Docs/Plan.md') };
+    const r = propagateRenameAcrossBoards(boards, 'Docs/Plan.md', 'Docs/Roadmap.md');
+    expect(r.changedBoardIds).toEqual(['d1']);
+    expect((boards.d1.board as any).filePath).toBe('Docs/Roadmap.md');
   });
 });
 
-describe('fileRefIntegrity.findTilesToCascadeDelete — V7 conventions', () => {
-  it('flags a Tasks tile when its convention .md is deleted (with per-board pin to Tasks/)', () => {
+describe('fileRefIntegrity.findTilesToCascadeDelete — text tiles and covers', () => {
+  it('flags a Task List tile when its note is deleted', () => {
     const boards: Record<string, V7BoardFileData> = {
       tl1: makeTaskListBoard({
         defs: {
-          t1: { id: 't1', type: 'text', title: 'Buy milk' },
-          t2: { id: 't2', type: 'text', title: 'Other' },
+          t1: { id: 't1', type: 'text', filePath: 'Tasks/Buy milk.md' },
+          t2: { id: 't2', type: 'text', filePath: 'Tasks/Other.md' },
         },
         tasks: [{ tileId: 't1' }, { tileId: 't2' }],
       }),
     };
-    const r = findTilesToCascadeDelete(boards, 'Tasks/Buy milk.md', {
-      boardDefaultFolders: { tl1: 'Tasks' },
-    });
+    const r = findTilesToCascadeDelete(boards, 'Tasks/Buy milk.md');
     expect(r.byBoard).toEqual({ tl1: ['t1'] });
   });
 
-  it('flags every Tasks tile when the entire Tasks/ folder is deleted (with per-board pin)', () => {
+  it('flags every tile whose note sits under a deleted folder, on every board', () => {
     const boards: Record<string, V7BoardFileData> = {
       tl1: makeTaskListBoard({
         defs: {
-          t1: { id: 't1', type: 'text', title: 'A' },
-          t2: { id: 't2', type: 'text', title: 'B' },
+          t1: { id: 't1', type: 'text', filePath: 'Tasks/A.md' },
+          t2: { id: 't2', type: 'text', filePath: 'Tasks/B.md' },
         },
         tasks: [{ tileId: 't1' }, { tileId: 't2' }],
       }),
       mm1: makeMindMapBoardWithPlacements({
-        defs: { t3: { id: 't3', type: 'text', title: 'A' } },
+        defs: {
+          t3: { id: 't3', type: 'text', filePath: 'A.md' },
+          t4: { id: 't4', type: 'text', filePath: 'Tasks/B.md' },
+        },
       }),
     };
-    const r = findTilesToCascadeDelete(boards, 'Tasks', {
-      boardDefaultFolders: { tl1: 'Tasks' },
-    });
+    const r = findTilesToCascadeDelete(boards, 'Tasks');
     expect(r.byBoard.tl1.sort()).toEqual(['t1', 't2']);
-    expect(r.byBoard.mm1).toBeUndefined();
+    expect(r.byBoard.mm1).toEqual(['t4']);
   });
 
-  it('cross-cascades root-level delete to TaskList tile with no pin (now lives at root)', () => {
-    // After the per-board-default plan, an unpinned TaskList tile titled
-    // 'Notes' resolves to root-level 'Notes.md' — so deleting Notes.md DOES
-    // cascade to its tile (the inverse of the previous Tasks/-only behaviour).
-    const boards: Record<string, V7BoardFileData> = {
-      tl1: makeTaskListBoard({
-        defs: { t1: { id: 't1', type: 'text', title: 'Notes' } },
-        tasks: [{ tileId: 't1' }],
-      }),
-    };
-    const r = findTilesToCascadeDelete(boards, 'Notes.md');
-    expect(r.byBoard).toEqual({ tl1: ['t1'] });
-  });
-
-  it('flags Kanban tile when Kanban/<board>/<title>.md is deleted', () => {
+  it('flags a Kanban card when its note is deleted', () => {
     const boards: Record<string, V7BoardFileData> = {
       k1: makeKanbanBoard({
         name: 'Project',
-        defs: { t1: { id: 't1', type: 'text', title: 'Spec' } },
+        defs: { t1: { id: 't1', type: 'text', filePath: 'Kanban/Project/Spec.md' } },
         columns: [{ id: 'c1', tilePlacements: [{ tileId: 't1' }] }],
       }),
     };
@@ -495,8 +417,8 @@ describe('fileRefIntegrity.findTilesToCascadeDelete — V7 conventions', () => {
       k1: makeKanbanBoard({
         name: 'Project',
         defs: {
-          t1: { id: 't1', type: 'text', title: 'CardA' },
-          t2: { id: 't2', type: 'text', title: 'CardB' },
+          t1: { id: 't1', type: 'text', filePath: 'CardA.md' },
+          t2: { id: 't2', type: 'text', filePath: 'CardB.md' },
         },
         columns: [
           {
@@ -521,8 +443,8 @@ describe('fileRefIntegrity.findTilesToCascadeDelete — V7 conventions', () => {
     const boards: Record<string, V7BoardFileData> = {
       k1: makeKanbanBoard({
         defs: {
-          t1: { id: 't1', type: 'text', title: 'A' },
-          t2: { id: 't2', type: 'text', title: 'B' },
+          t1: { id: 't1', type: 'text', filePath: 'A.md' },
+          t2: { id: 't2', type: 'text', filePath: 'B.md' },
         },
         columns: [
           {
@@ -564,7 +486,7 @@ describe('fileRefIntegrity.findTilesToCascadeDelete — V7 conventions', () => {
   it('leaves unrelated cover images untouched', () => {
     const boards: Record<string, V7BoardFileData> = {
       k1: makeKanbanBoard({
-        defs: { t1: { id: 't1', type: 'text', title: 'A' } },
+        defs: { t1: { id: 't1', type: 'text', filePath: 'A.md' } },
         columns: [
           {
             id: 'c1',
@@ -578,59 +500,31 @@ describe('fileRefIntegrity.findTilesToCascadeDelete — V7 conventions', () => {
   });
 });
 
-describe('fileRefIntegrity.detectBrokenRefs — V7 conventions', () => {
-  it('flags a Tasks placement whose convention .md is missing (with per-board pin to Tasks/)', () => {
+describe('fileRefIntegrity.detectBrokenRefs — text tiles', () => {
+  it('flags a Task List tile whose note is missing', () => {
     const board = makeTaskListBoard({
-      defs: { t1: { id: 't1', type: 'text', title: 'Missing' } },
-      tasks: [{ tileId: 't1' }],
-    });
-    const broken = detectBrokenRefs(board, new Set<string>(), {
-      boardDefaultFolder: 'Tasks',
-    });
-    expect(broken).toHaveLength(1);
-    expect(broken[0]).toMatchObject({
-      tileId: 't1',
-      field: 'title',
-      missingPath: 'Tasks/Missing.md',
-    });
-  });
-
-  it('does NOT flag tasks whose convention .md exists (with per-board pin)', () => {
-    const board = makeTaskListBoard({
-      defs: { t1: { id: 't1', type: 'text', title: 'Present' } },
-      tasks: [{ tileId: 't1' }],
-    });
-    expect(
-      detectBrokenRefs(board, ['Tasks/Present.md'], { boardDefaultFolder: 'Tasks' }),
-    ).toEqual([]);
-  });
-
-  it('flags an unpinned TaskList tile against the root-level .md path', () => {
-    // Without any pin, the cascade resolves the convention path to root-level
-    // <title>.md — matching the new TaskList default placement behaviour.
-    const board = makeTaskListBoard({
-      defs: { t1: { id: 't1', type: 'text', title: 'Buy milk' } },
+      defs: { t1: { id: 't1', type: 'text', filePath: 'Tasks/Missing.md' } },
       tasks: [{ tileId: 't1' }],
     });
     const broken = detectBrokenRefs(board, new Set<string>());
-    expect(broken).toHaveLength(1);
-    expect(broken[0].missingPath).toBe('Buy milk.md');
+    expect(broken).toEqual([
+      { tileId: 't1', field: 'filePath', missingPath: 'Tasks/Missing.md' },
+    ]);
   });
 
-  it('does NOT flag orphaned tileDefs that have no placement on the board', () => {
-    // tileDef exists but no placement references it — it is invisible to the
-    // user, so a broken-ref badge would be a phantom.
+  it('does NOT flag a tile whose note exists (case-insensitive, either separator)', () => {
     const board = makeTaskListBoard({
-      defs: { t1: { id: 't1', type: 'text', title: 'Orphan' } },
-      tasks: [],
+      defs: { t1: { id: 't1', type: 'text', filePath: 'Tasks/Present.md' } },
+      tasks: [{ tileId: 't1' }],
     });
-    expect(detectBrokenRefs(board, new Set<string>())).toEqual([]);
+    expect(detectBrokenRefs(board, ['Tasks/Present.md'])).toEqual([]);
+    expect(detectBrokenRefs(board, ['tasks\\present.md'])).toEqual([]);
   });
 
-  it('flags Kanban placement whose convention .md is missing', () => {
+  it('flags a Kanban card whose note is missing', () => {
     const board = makeKanbanBoard({
       name: 'Project',
-      defs: { t1: { id: 't1', type: 'text', title: 'Spec' } },
+      defs: { t1: { id: 't1', type: 'text', filePath: 'Kanban/Project/Spec.md' } },
       columns: [{ id: 'c1', tilePlacements: [{ tileId: 't1' }] }],
     });
     const broken = detectBrokenRefs(board, new Set<string>());
@@ -638,9 +532,9 @@ describe('fileRefIntegrity.detectBrokenRefs — V7 conventions', () => {
     expect(broken[0].missingPath).toBe('Kanban/Project/Spec.md');
   });
 
-  it('flags MindMap placement whose root <title>.md is missing', () => {
+  it('flags a Mind Map tile whose note is missing', () => {
     const board = makeMindMapBoardWithPlacements({
-      defs: { t1: { id: 't1', type: 'text', title: 'Notes' } },
+      defs: { t1: { id: 't1', type: 'text', filePath: 'Notes.md' } },
       placements: { t1: { x: 0, y: 0, w: 240, h: 160, locked: false, faded: false } },
     });
     const broken = detectBrokenRefs(board, new Set<string>());
@@ -648,109 +542,22 @@ describe('fileRefIntegrity.detectBrokenRefs — V7 conventions', () => {
     expect(broken[0].missingPath).toBe('Notes.md');
   });
 
-  it('skips text tiles with explicit file/filePath fields (defer to field check)', () => {
-    const board = makeTaskListBoard({
-      defs: { t1: { id: 't1', type: 'text', title: 'X', file: 'custom/path.md' } },
-      tasks: [{ tileId: 't1' }],
+  // The path is the tile's identity, so a same-named note in another folder
+  // (e.g. under a pinned root folder) must not satisfy it.
+  it('a same-named note in another folder does not satisfy the reference', () => {
+    const board = makeMindMapBoardWithPlacements({
+      defs: { t1: { id: 't1', type: 'text', filePath: 'Foo.md' } },
+      placements: { t1: { x: 0, y: 0, w: 240, h: 160, locked: false, faded: false } },
     });
-    const broken = detectBrokenRefs(board, new Set<string>());
-    // Only the field-based "file" check applies here; convention check is
-    // suppressed by `d.file` presence. Field check finds 'custom/path.md'
-    // missing, but `file` isn't in FILE_REF_FIELDS so it's not flagged.
-    // (FILE_REF_FIELDS = file/src/filePath — `file` IS in there.)
+    const broken = detectBrokenRefs(board, new Set(['Notes/Foo.md']));
     expect(broken).toHaveLength(1);
-    expect(broken[0]).toMatchObject({ field: 'file', missingPath: 'custom/path.md' });
+    expect(broken[0].missingPath).toBe('Foo.md');
   });
 
-  it('honours activeRootFolder option for convention-backed text tiles', () => {
-    // Mirrors resolveTextTileVaultPath: when the user pins a Root Directory
-    // in the vault sidebar, new tiles' .md files land inside that folder.
-    // The broken-ref check must look there too, otherwise the tile
-    // false-flags immediately after creation.
-    const board = makeMindMapBoardWithPlacements({
-      defs: { t1: { id: 't1', type: 'text', title: 'Foo' } },
-      placements: { t1: { x: 0, y: 0, w: 240, h: 160, locked: false, faded: false } },
-    });
-    const paths = new Set(['Notes/Foo.md']);
-    // Without the option, the detector looks at vault root and flags it.
-    const flagged = detectBrokenRefs(board, paths);
-    expect(flagged).toHaveLength(1);
-    expect(flagged[0].missingPath).toBe('Foo.md');
-    // With activeRootFolder set, the detector resolves to Notes/Foo.md and clears.
-    expect(detectBrokenRefs(board, paths, { activeRootFolder: 'Notes' })).toEqual([]);
-  });
-
-  it('normalises backslashes and trailing slashes in activeRootFolder', () => {
-    const board = makeMindMapBoardWithPlacements({
-      defs: { t1: { id: 't1', type: 'text', title: 'Foo' } },
-      placements: { t1: { x: 0, y: 0, w: 240, h: 160, locked: false, faded: false } },
-    });
-    const paths = new Set(['Notes/Sub/Foo.md']);
-    expect(detectBrokenRefs(board, paths, { activeRootFolder: 'Notes\\Sub\\' })).toEqual([]);
-  });
-
-  it('does NOT apply activeRootFolder to Kanban boards (hardcoded convention folder wins)', () => {
-    // Regression: previously, pinning a "Root Directory" rewrote the convention
-    // path for EVERY board type, false-flagging Kanban text cards whose .md
-    // lives in Kanban/<board>/ rather than the pinned root.
-    const board = makeKanbanBoard({
-      name: 'Project',
-      defs: { t1: { id: 't1', type: 'text', title: 'Spec' } },
-      columns: [{ id: 'c1', tilePlacements: [{ tileId: 't1' }] }],
-    });
-    const paths = new Set(['Kanban/Project/Spec.md']);
-    expect(detectBrokenRefs(board, paths, { activeRootFolder: 'Notes' })).toEqual([]);
-  });
-
-  it('applies activeRootFolder to TaskList boards (cascade now covers TaskList)', () => {
-    // After the per-board-default plan, TaskList boards participate in the
-    // root-folder cascade like Mind Map. activeRootFolder='Notes' resolves
-    // the convention path to Notes/Buy milk.md (not Tasks/Buy milk.md).
-    const board = makeTaskListBoard({
-      defs: { t1: { id: 't1', type: 'text', title: 'Buy milk' } },
-      tasks: [{ tileId: 't1' }],
-    });
-    expect(
-      detectBrokenRefs(board, new Set(['Notes/Buy milk.md']), { activeRootFolder: 'Notes' }),
-    ).toEqual([]);
-    // And the unpinned default lands at vault root, not Tasks/.
-    expect(detectBrokenRefs(board, new Set(['Buy milk.md']))).toEqual([]);
-  });
-
-  it('vault-wide pin overrides per-board pin in the cascade', () => {
-    const board = makeTaskListBoard({
-      defs: { t1: { id: 't1', type: 'text', title: 'Foo' } },
-      tasks: [{ tileId: 't1' }],
-    });
-    // Per-board pin says 'Inbox', vault-wide pin says 'Notes' — vault wins.
-    expect(
-      detectBrokenRefs(board, new Set(['Notes/Foo.md']), {
-        activeRootFolder: 'Notes',
-        boardDefaultFolder: 'Inbox',
-      }),
-    ).toEqual([]);
-    // Per-board pin alone applies when no vault pin is set.
-    expect(
-      detectBrokenRefs(board, new Set(['Inbox/Foo.md']), {
-        boardDefaultFolder: 'Inbox',
-      }),
-    ).toEqual([]);
-  });
-
-  it('skips text tiles with explicit filePath regardless of activeRootFolder', () => {
-    // After the fix, every newly-created text tile gets `filePath` stamped on
-    // it at write time. The convention branch must defer to the explicit-field
-    // check so toggling the Root Directory does not shift the tile's identity.
-    const board = makeMindMapBoardWithPlacements({
-      defs: {
-        t1: { id: 't1', type: 'text', title: 'Foo', filePath: 'Notes/Foo.md' },
-      },
-      placements: { t1: { x: 0, y: 0, w: 240, h: 160, locked: false, faded: false } },
-    });
-    const paths = new Set(['Notes/Foo.md']);
-    for (const root of [undefined, '', 'Notes', 'Other']) {
-      expect(detectBrokenRefs(board, paths, { activeRootFolder: root })).toEqual([]);
-    }
+  it("flags a Document board whose note is missing", () => {
+    const broken = detectBrokenRefs(makeDocumentBoard('Docs/Plan.md'), new Set<string>());
+    expect(broken).toEqual([{ tileId: 'd1', field: 'filePath', missingPath: 'Docs/Plan.md' }]);
+    expect(detectBrokenRefs(makeDocumentBoard('Docs/Plan.md'), ['Docs/Plan.md'])).toEqual([]);
   });
 });
 
@@ -758,7 +565,7 @@ describe('fileRefIntegrity — Kanban placement coverImage (H7)', () => {
   it('rewrites a coverImage path on exact match', () => {
     const board = makeKanbanBoard({
       name: 'Project',
-      defs: { t1: { id: 't1', type: 'text', title: 'Spec' } },
+      defs: { t1: { id: 't1', type: 'text', filePath: 'Spec.md' } },
       columns: [
         {
           id: 'c1',
@@ -781,7 +588,7 @@ describe('fileRefIntegrity — Kanban placement coverImage (H7)', () => {
   it('rewrites coverImage when its parent folder is renamed', () => {
     const board = makeKanbanBoard({
       name: 'Project',
-      defs: { t1: { id: 't1', type: 'text', title: 'Spec' } },
+      defs: { t1: { id: 't1', type: 'text', filePath: 'Spec.md' } },
       columns: [
         {
           id: 'c1',
@@ -808,7 +615,7 @@ describe('fileRefIntegrity — Kanban placement coverImage (H7)', () => {
   it('flags a placement coverImage as broken when its file is missing', () => {
     const board = makeKanbanBoard({
       name: 'Project',
-      defs: { t1: { id: 't1', type: 'text', title: 'Spec' } },
+      defs: { t1: { id: 't1', type: 'text', filePath: 'Kanban/Project/Spec.md' } },
       columns: [
         {
           id: 'c1',
@@ -820,51 +627,9 @@ describe('fileRefIntegrity — Kanban placement coverImage (H7)', () => {
         },
       ],
     });
-    // Convention title path is present, so the only broken ref should be the
-    // coverImage. Provide the convention .md so it doesn't false-flag.
+    // The card's note is present, so the only broken ref is the cover image.
     const broken = detectBrokenRefs(board, new Set(['Kanban/Project/Spec.md']));
-    const coverBroken = broken.find((b) => b.field === 'coverImage');
-    expect(coverBroken).toBeDefined();
-    expect(coverBroken?.missingPath).toBe('media/missing.png');
-  });
-});
-
-describe('fileRefIntegrity.getConventionFolderForBoardType', () => {
-  it('returns vault root for mindmap', () => {
-    expect(getConventionFolderForBoardType('mindmap', undefined)).toBe('');
-  });
-
-  it('returns Kanban/<sanitized name> for kanban', () => {
-    expect(getConventionFolderForBoardType('kanban', 'My Board')).toBe('Kanban/My Board');
-  });
-
-  it('strips a trailing dot from the kanban board folder (Audit-19 ERR-2)', () => {
-    expect(getConventionFolderForBoardType('kanban', 'Q3.')).toBe('Kanban/Q3');
-  });
-
-  it('sanitises filesystem-unsafe characters in kanban board name', () => {
-    expect(getConventionFolderForBoardType('kanban', 'Foo:/Bar*?')).toBe('Kanban/FooBar');
-  });
-
-  it('returns empty string for tasklist (cascade-resolved at runtime)', () => {
-    // After the per-board-default plan, TaskList no longer pins to a fixed
-    // 'Tasks' folder; '' signals "resolve via getActiveContentFolder cascade".
-    expect(getConventionFolderForBoardType('tasklist', 'whatever')).toBe('');
-  });
-
-  it('returns null for board types without a convention folder', () => {
-    expect(getConventionFolderForBoardType('document', undefined)).toBeNull();
-    expect(getConventionFolderForBoardType('unknown', undefined)).toBeNull();
-  });
-});
-
-describe('fileRefIntegrity.joinConventionPath', () => {
-  it('joins folder and title with .md extension', () => {
-    expect(joinConventionPath('Notes', 'Foo')).toBe('Notes/Foo.md');
-    expect(joinConventionPath('Kanban/My Board', 'Card')).toBe('Kanban/My Board/Card.md');
-  });
-
-  it('produces a root-level path when folder is empty', () => {
-    expect(joinConventionPath('', 'Foo')).toBe('Foo.md');
+    expect(broken).toHaveLength(1);
+    expect(broken[0]).toMatchObject({ field: 'coverImage', missingPath: 'media/missing.png' });
   });
 });

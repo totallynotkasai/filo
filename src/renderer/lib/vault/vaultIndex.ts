@@ -4,7 +4,7 @@ import remarkParse from 'remark-parse';
 import remarkFrontmatter from 'remark-frontmatter';
 import type { Root, RootContent, Heading, Link, Text, Yaml } from 'mdast';
 import type { FileTreeNode } from '../../../shared/types';
-import { normalizeTags } from './frontmatterSync';
+import { normalizeTagsField } from '../utils/normalizeTagsField';
 import { splitFrontmatterSource, parseFrontmatterObject } from './frontmatterRead';
 import { isMarkdownExtension } from './extension';
 import { normalizePath, stripLeadingSlash, toPosix } from '../utils/path';
@@ -299,17 +299,15 @@ export function parseMarkdown(
   // and tolerates a trailing space on the fence, exactly as `parseMarkdownFile`.
   const { rawFrontmatter } = splitFrontmatterSource(rawContent);
 
-  // Routed through `normalizeTags` so the equality contract used by
-  // frontmatterSync (deduped + sorted, leading `#` stripped) stays in lockstep
-  // with the index. Body `#tag` runs are decorative and ignored here — see
+  // Canonical (deduped + sorted, leading `#` stripped) for search and tag
+  // counts. Body `#tag` runs are decorative and ignored here — see
   // `lib/editor/tagExtension.ts` for the design note.
-  const tags = normalizeTags(frontmatter.tags);
+  const tags = normalizeTagsField(frontmatter.tags);
 
+  // A note's title is its frontmatter `title:`; without one, its filename stem.
   const fmTitle = typeof frontmatter.title === 'string' ? (frontmatter.title as string).trim() : '';
-  const firstHeading = headings[0]?.text ?? '';
   const filename = relativePath.split('/').pop() ?? relativePath;
-  const fallbackTitle = filename.replace(/\.md$/i, '');
-  const title = fmTitle || firstHeading || fallbackTitle;
+  const title = fmTitle || filename.replace(/\.(md|markdown)$/i, '');
 
   return {
     path: toPosix(relativePath),

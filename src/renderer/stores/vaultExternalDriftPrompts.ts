@@ -17,10 +17,7 @@
  */
 import { vaultIndexStore } from './vaultIndex.svelte';
 import { documentStore } from './document.svelte';
-import { fileTagsStore } from './fileTags.svelte';
-import { boardStore } from './board.svelte';
 import { uiStore } from './ui.svelte';
-import { normalizeTags } from '../lib/vault/frontmatterSync';
 import { assembleMarkdownFile } from '../lib/editor/markdownSync';
 import { reportError } from '../lib/utils/errorBus';
 import { dropPendingDelta } from '../lib/boards/frontmatterWriteScheduler';
@@ -114,8 +111,6 @@ export function promptExternalEditOnSync(args: {
                 resolve('keep-local');
                 return;
               }
-              boardStore.applyFrontmatterToBackedTiles(path, next);
-              fileTagsStore.setFileTags(path, normalizeTags(next.frontmatter.tags));
               // Drop the armed field delta on this discard-reload.
               dropPendingDelta(path);
               if (editorDoc) {

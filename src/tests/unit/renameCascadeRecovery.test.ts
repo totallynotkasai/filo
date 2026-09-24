@@ -8,6 +8,7 @@ import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
 import { __resetRenameCascadeSentinelForTests } from '@renderer/lib/vault/renameCascadeSentinel';
+import { ownSentinelPath } from '@renderer/lib/vault/machineIdentity';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
@@ -27,7 +28,8 @@ import type { MindMapBoard } from '@renderer/schema/index';
  * sentinel reads return ENOENT), straight to step 3 (rename-cascade).
  */
 
-const SENTINEL = '.filo/rename-cascade-pending.json';
+// This machine's own sentinel (the test setup pins the machine id).
+const sentinel = (): string => ownSentinelPath('rename-cascade');
 
 function sentinelJson(oldPath: string, newPath: string): string {
   return JSON.stringify({
@@ -80,7 +82,6 @@ function boardWithFileRef(boardId: string, filePath: string): V7BoardFileData {
         type: 'file',
         title: 'F',
         filePath,
-        tags: [],
         style: {},
         createdAt: 0,
         updatedAt: 0,
@@ -110,7 +111,7 @@ describe('rename-cascade recovery — Retry repoints open documents (Phase 4.4)'
     installFiloMock((channel: string, ...args: unknown[]) => {
       if (channel === 'vault:read-file-text') {
         const p = String(args[1]);
-        if (p === SENTINEL) {
+        if (p === sentinel()) {
           return { success: true, content: sentinelJson('Notes/old.md', 'Notes/new.md') };
         }
         return { success: false, code: 'ENOENT' };
@@ -192,7 +193,7 @@ describe('rename-cascade recovery — Retry repoints open documents (Phase 4.4)'
  * two recoveries mutating `boardCacheStore.cache` / `flushAllDirty` at once.
  */
 describe('recovery sequencer — 6.2.H2: awaitConfirm awaits onConfirm', () => {
-  const TAG_SENTINEL = '.filo/tag-rewrite-pending.json';
+  const tagSentinel = (): string => ownSentinelPath('tag-rewrite');
 
   beforeEach(() => {
     resetAll();
@@ -200,7 +201,7 @@ describe('recovery sequencer — 6.2.H2: awaitConfirm awaits onConfirm', () => {
     installFiloMock((channel: string, ...args: unknown[]) => {
       if (channel === 'vault:read-file-text') {
         const p = String(args[1]);
-        if (p === TAG_SENTINEL) {
+        if (p === tagSentinel()) {
           return {
             success: true,
             content: JSON.stringify({
@@ -266,7 +267,7 @@ describe('recovery sequencer — 6.2.H2: awaitConfirm awaits onConfirm', () => {
  * users then discarding what was actually a half-committed rename.
  */
 describe('recovery sequencer — 6.2.H3: awaits vaultIndex rebuild before metadata sample', () => {
-  const TAG_SENTINEL = '.filo/tag-rewrite-pending.json';
+  const tagSentinel = (): string => ownSentinelPath('tag-rewrite');
 
   beforeEach(() => {
     resetAll();
@@ -274,7 +275,7 @@ describe('recovery sequencer — 6.2.H3: awaits vaultIndex rebuild before metada
     installFiloMock((channel: string, ...args: unknown[]) => {
       if (channel === 'vault:read-file-text') {
         const p = String(args[1]);
-        if (p === TAG_SENTINEL) {
+        if (p === tagSentinel()) {
           return {
             success: true,
             content: JSON.stringify({

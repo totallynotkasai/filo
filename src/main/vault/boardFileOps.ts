@@ -17,17 +17,11 @@ const BOARD_EXTENSION = '.board.json';
 
 /**
  * Loads and returns the parsed board object of a .board.json file.
- * Caller is responsible for Zod validation.
- *
- * Older builds JSON-encoded the renderer's already-serialised payload a second
- * time, so legacy files hold a JSON STRING literal. Unwrap one level (as
- * configOps does); a plain-JSON file loads as-is. Each legacy file migrates to
- * plain JSON on its next save.
+ * Caller is responsible for version and Zod validation.
  */
 export async function loadBoardFile(filePath: string): Promise<unknown> {
   const raw = await fs.readFile(filePath, 'utf-8');
-  const parsed: unknown = JSON.parse(raw);
-  return typeof parsed === 'string' ? JSON.parse(parsed) : parsed;
+  return JSON.parse(raw) as unknown;
 }
 
 /**

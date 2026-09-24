@@ -12,6 +12,7 @@ import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { historyStore } from '@renderer/stores/history.svelte';
+import { noteIdFor } from '@renderer/stores/noteIds';
 import { makeTaskCreator } from '@renderer/lib/tasklist/taskCreation';
 import { makeKanbanTileCreator } from '@renderer/lib/kanban/kanbanTileCreation';
 import { makeFileDropHandler } from '@renderer/lib/tasklist/fileDropHandler';
@@ -204,10 +205,12 @@ describe('Audit-19 BL-1 — seed writes are create-exclusive', () => {
     expect(files.get('New Card.md')).toBe('mine\n');
     const [def] = textDefs('kb');
     expect(def.filePath).toBe('New Card (2).md');
-    expect(def.title).toBe('New Card (2)');
+    // Only the filename is bumped: the note keeps the exact title the user
+    // asked for.
+    expect(files.get('New Card (2).md')).toMatch(/^---\ntitle: New Card\n/);
   });
 
-  it('(3) a template card re-interpolates {{title}} with the bumped name', async () => {
+  it('(3) a template card lands at the bumped name; {{title}} keeps the exact title', async () => {
     installVault({ 'Meeting.md': 'old\n' }, { tree: [] });
     const { kb } = hydrateBoards();
     await kanbanCreator(kb).createTileFromTemplate(
@@ -216,7 +219,7 @@ describe('Audit-19 BL-1 — seed writes are create-exclusive', () => {
       '',
     );
     expect(files.get('Meeting.md')).toBe('old\n');
-    expect(files.get('Meeting (2).md')).toContain('# Meeting (2)');
+    expect(files.get('Meeting (2).md')).toBe('---\ntitle: Meeting\n---\n# Meeting\n');
   });
 
   it('(4) quick-add "Groceries" with Groceries.md in the vault → Groceries (2).md', async () => {
@@ -235,8 +238,7 @@ describe('Audit-19 BL-1 — seed writes are create-exclusive', () => {
     expect(files.get('Groceries.md')).toBe('milk\n');
     const [def] = textDefs('tl');
     expect(def.filePath).toBe('groceries (2).md');
-    expect(def.title).toBe('groceries (2)');
-    expect(files.has('groceries (2).md')).toBe(true);
+    expect(files.get('groceries (2).md')).toMatch(/^---\ntitle: groceries\n/);
   });
 
   it('(5b) quick-add "Email the landlord." creates a legal name (Audit-19 ERR-2)', async () => {
@@ -283,7 +285,7 @@ describe('Audit-19 BL-1 — seed writes are create-exclusive', () => {
     const { tl } = hydrateBoards();
     await taskCreator(tl).addTaskFromQuickAdd(quickAdd('Buy milk'));
     const [def] = textDefs('tl');
-    const docId = (def as { contentId?: string }).contentId ?? '';
+    const docId = noteIdFor(def.filePath ?? '');
     expect(files.get('Buy milk.md')).toContain('completed: false');
     expect(documentStore.getDocument(docId)?.body).toBe('');
   });

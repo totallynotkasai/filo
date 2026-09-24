@@ -148,10 +148,11 @@ describe('Reactive BoardScope — split-pane parity', () => {
     setActiveScope(paneA);
     await paneA.board.addTile(makeTextTile('t1', 100, 100));
 
-    paneA.board.updateTile('t1', { title: 'edited' });
+    // A text tile's title belongs to its note; titleHtml is a board-owned field.
+    paneA.board.updateTile('t1', { titleHtml: '<p><strong>edited</strong></p>' });
 
-    expect(paneA.board.tiles.t1?.title).toBe('edited');
-    expect(paneB.board.tiles.t1?.title).toBe('edited');
+    expect(paneA.board.tiles.t1?.titleHtml).toBe('<p><strong>edited</strong></p>');
+    expect(paneB.board.tiles.t1?.titleHtml).toBe('<p><strong>edited</strong></p>');
   });
 
   it('pane A removeTile is reactively visible in pane B', async () => {

@@ -121,8 +121,7 @@ function makeDocument(): V7BoardFileData {
       createdAt: now,
       updatedAt: now,
       settings: {},
-      contentId: createId(),
-      content: '',
+      filePath: `doc_${createId()}.md`,
     }),
     tileDefs: {},
     connections: {},
@@ -155,11 +154,8 @@ function mkDef(id: string): V7BoardFileData['tileDefs'][string] {
   return {
     id,
     type: 'text',
-    title: `tile ${id}`,
-    tags: [],
+    filePath: `tile ${id}.md`,
     style: { headerColor: '#fff', bodyColor: '#fff', borderColor: '' },
-    contentId: `content_${id}`,
-    content: '',
     createdAt: 0,
     updatedAt: 0,
   } as V7BoardFileData['tileDefs'][string];

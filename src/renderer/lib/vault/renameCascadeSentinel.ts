@@ -32,13 +32,12 @@ import { invokeOk } from '../utils/invokeOk';
 import { createId } from '../utils/ids';
 import { onVaultSwap } from '../../core/vaultLifecycle';
 import { ownSentinelPath } from './machineIdentity';
-import { readOwnOrLegacySentinel, clearOwnSentinel, retireConsumedLegacySentinel } from './machineSentinels';
+import { readOwnSentinel, clearOwnSentinel } from './machineSentinels';
 
 /**
  * PER MACHINE (`.filo/rename-cascade-pending.<machineId>.json`):
  * another machine must never replay (or clear) this machine's half-finished
- * rename cascade. The legacy shared file is read once, then migrated: the next
- * write lands in this machine's file and the legacy one is deleted.
+ * rename cascade.
  */
 const ownRenameCascadePath = (): string => ownSentinelPath('rename-cascade');
 
@@ -120,7 +119,7 @@ async function readSentinelInternal(vaultRoot: string): Promise<ReadResult> {
     // ENOENT is the steady-state "no sentinel" case and resolves to `{}`;
     // any other failure resolves to `{ unreadable: true }` so recovery UI
     // still surfaces.
-    const result = await readOwnOrLegacySentinel(vaultRoot, 'rename-cascade');
+    const result = await readOwnSentinel(vaultRoot, 'rename-cascade');
     content = result.content;
   } catch (err) {
     if (err instanceof IpcEnvelopeError) {
@@ -180,7 +179,6 @@ async function writeSentinelInternal(vaultRoot: string, entries: RenameCascadeEn
     // Delete the sentinel file entirely when empty so the steady state
     // is "no sentinel on disk" rather than "sentinel with empty array".
     try {
-      // This machine's file (+ a consumed legacy one).
       await clearOwnSentinel(vaultRoot, 'rename-cascade');
     } catch (err) {
       if (err && typeof err === 'object' && 'code' in err && (err as { code?: string }).code === 'ENOENT') {
@@ -203,9 +201,6 @@ async function writeSentinelInternal(vaultRoot: string, entries: RenameCascadeEn
     ownRenameCascadePath(),
     JSON.stringify(payload),
   );
-  // Entries read from a legacy shared file now live in this
-  // machine's file; retire the legacy one (once; best-effort).
-  await retireConsumedLegacySentinel(vaultRoot, 'rename-cascade').catch(() => undefined);
 }
 
 /**

@@ -1,16 +1,17 @@
 /**
  * fileTagsStore — reactive Svelte 5 wrapper around `.filo/tags.json`.
  *
- * The single canonical tag store:
- *   - tag definitions (name → colour) — the only place colours live.
- *   - file-tag assignments (vault-relative path → tag-name array) — covers
- *     `.md`, attachments, and `.board.json` files alike.
- *   - tile-aware action helpers — addTagToTile / removeTagFromTile /
- *     renameTagEverywhere / removeTagEverywhere — coordinate tile.tags arrays
- *     on board files with frontmatter mirrors for text-backed tiles.
+ * Where a tag lives depends on what carries it, and each has one copy:
+ *   - a note's tags: its frontmatter `tags:` (never here);
+ *   - a media or other non-Markdown file's tags: `fileTags[path]` here;
+ *   - a board-only tile's tags (link / iframe / timer): the tile on its board.
  *
- * Tag identity is the tag NAME (not an ID). `tile.tags: string[]` carries
- * names directly.
+ * This store also owns the tag definitions (name → colour), the only place
+ * colours live, and the actions that edit tags wherever they live —
+ * addTagToTile / addTagToPath (and removals), renameTagEverywhere /
+ * removeTagEverywhere.
+ *
+ * Tag identity is the tag NAME (not an ID).
  *
  * The store debounces writes to disk so a rapid UI interaction (e.g. adding
  * three tags through the popup) coalesces into one save.
@@ -47,12 +48,10 @@ import {
   pruneFileTagsAgainstKnownPaths,
   isValidTagName,
 } from '../lib/vault/tagsStorage';
-import {
-  addTagToMarkdown,
-  removeTagFromMarkdown,
-} from '../lib/vault/tagRewriter';
-import { tileBacksMarkdownPath } from '../lib/vault/frontmatterSync';
 import { normalizeVaultRelative } from '../lib/utils/path';
+import { isMarkdownExtension } from '../lib/vault/extension';
+import { noteTags, noteTitle, registerMediaTagsReader } from './noteMeta';
+import { writeTagChangeToMarkdownPath } from '../lib/tags/noteTagWriter';
 import { vaultPath, type VaultPath } from '../../shared/vaultPath';
 import {
   commitTagRenameInMemory,
@@ -61,13 +60,11 @@ import {
   flushTagRewriteBoardWrites,
   runTagRewriteSweep,
   rewriteAndCommitRetry,
+  iterateBoardOnlyTiles,
 } from './fileTagsCascade.svelte';
-import type { TileDefinition } from '../schema/index';
 import { boardStore } from './board.svelte';
 import { boardCacheStore } from './boardCache.svelte';
-import { vaultStore } from './vault.svelte';
 import { vaultIndexStore } from './vaultIndex.svelte';
-import { documentStore } from './document.svelte';
 import { historyStore } from './history.svelte';
 import {
   ToggleTagFadeCommand,
@@ -76,18 +73,14 @@ import {
   AddPathTagCommand,
   RemovePathTagCommand,
 } from '../commands/index';
-import { scheduleMiscWrite, flushAllMisc, flushMiscWrite, markPathFailed } from '../lib/boards/boardSaver';
-import { flushAllMarkdownWriters, runSerializedMarkdownWrite } from '../lib/vault/markdownFileWriter';
-import { refreshBaselineAfterWrite, getBaseline, hasBaselineDrifted } from '../lib/vault/fileBaselineRegistry';
-import { writeMarkdownAndReconcile } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
-import { resolveTextTileVaultPath } from '../lib/boards/textTilePath';
+import { scheduleMiscWrite, flushAllMisc, flushMiscWrite } from '../lib/boards/boardSaver';
+import { flushAllMarkdownWriters } from '../lib/vault/markdownFileWriter';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { flushAllPendingFrontmatterWrites } from '../lib/boards/frontmatterWriteScheduler';
-import { invokeOk } from '../lib/utils/invokeOk';
 import { assertIpcOk } from '../lib/utils/ipcEnvelope';
 import { reportError } from '../lib/utils/errorBus';
 import { uiStore } from './ui.svelte';
-import { onVaultSwap, vaultSwapResettable } from '../core/vaultLifecycle';
+import { onVaultSwap } from '../core/vaultLifecycle';
 import { cloneTagsFile, sameJson, mergeTagsThreeWay } from '../lib/vault/tagsFileMerge';
 
 let file = $state<TagsFile>(emptyTagsFile());
@@ -213,313 +206,28 @@ function resolveTileMediaPath(tile: Tile): string | null {
   }
 }
 
-/**
- * True when the bytes the single-tag fast path just READ had already drifted
- * from the pre-write baseline (an undetected external edit). The stat comes
- * from the same `vault:read-file-text`, so no extra IPC. Gates the post-write
- * `refreshBaselineAfterWrite`: stamping on drift would launder the external
- * edit into the baseline and the open editor's next save would silently revert
- * it. Conservative: no prior baseline → false; read withheld its stat (a write
- * raced the read) → treat as drifted.
- */
-function baselineDriftedAtRead(
-  relPath: string,
-  readMtimeMs: number | undefined,
-  readSize: number | undefined,
-): boolean {
-  const baseline = getBaseline(relPath);
-  if (baseline === undefined) return false;
-  if (readMtimeMs === undefined || readSize === undefined) return true;
-  return hasBaselineDrifted(baseline, { mtimeMs: readMtimeMs, size: readSize });
+/** True for a path whose tags live in its own frontmatter. */
+function isNotePath(path: string): boolean {
+  const dot = path.lastIndexOf('.');
+  return dot >= 0 && isMarkdownExtension(path.slice(dot));
 }
 
 /**
- * Writes a single tag membership change into the tile's backing `.md` file
- * frontmatter. Routed through `trackComponentWrite` so a failed write
- * surfaces through the same toast + sentinel pipeline as the rest of the
- * per-component writers.
+ * The runtime tile for `tileId`, whichever board holds it: the active board's
+ * tile when it's there, else the tile derived from its board's cache. Either
+ * way its `tags` / `title` are read from where they live.
  */
-async function writeTagChangeToTileMarkdown(
-  tile: Tile,
-  tagName: string,
-  operation: 'add' | 'remove',
-): Promise<void> {
-  // Capture identity before the live-path read so the post-await guards below
-  // bail on a vault swap instead of applying this vault's tag-write bookkeeping
-  // (markPathFailed / baseline / index) to the new one.
-  const identity = captureVaultIdentity();
-  const vaultRoot = vaultStore.path;
-  // Canonical resolver (filePath → docState → folder cascade); a `${title}.md`
-  // root fallback would write a subfolder tile's tag to an unrelated root note.
-  const relPath = resolveTextTileVaultPath(tile, (tile as { boardId?: string }).boardId);
-  if (!vaultRoot || !relPath) return;
-
-  try {
-    let wrote = false;
-    // Run the whole read-modify-write serialised behind any in-flight gateway
-    // write to this path. The read happens INSIDE the chain so it observes a
-    // prior body write's bytes, and the IPC write can't interleave with a
-    // concurrent editor write.
-    await runSerializedMarkdownWrite(relPath, async () => {
-      let raw: string | null = null;
-      // Capture the read's own stat (no extra IPC) so the post-write baseline
-      // stamp below can be suppressed on pre-write drift.
-      let readMtimeMs: number | undefined;
-      let readSize: number | undefined;
-      try {
-        const readResult = await invokeOk('vault:read-file-text', vaultRoot, relPath);
-        raw = readResult.content;
-        readMtimeMs = readResult.mtimeMs;
-        readSize = readResult.size;
-      } catch {
-        // Read failed (likely envelope-failure or transient I/O). Falls
-        // through to the file-exists check below.
-      }
-      if (raw === null) {
-        // Distinguish "file is gone" (a deletion the user expects) from "file
-        // exists but we still couldn't read it" (a real I/O failure the user
-        // needs to see). Only the second case keeps the sentinel dirty +
-        // surfaces a toast — the first is a benign no-op so a delete + queued
-        // tag write doesn't resurrect a deleted file's sentinel state.
-        const exists = await window.filo.invoke('vault:file-exists', vaultRoot, relPath);
-        if (!isStillSameVault(identity)) return; // swap during read/exists
-        if (exists) {
-          markPathFailed(vaultRoot, relPath);
-          reportError(
-            'fileTags.writeTileFrontmatter',
-            null,
-            `Could not read ${relPath} to update frontmatter — your tag change is not on disk.`,
-          );
-        }
-        return;
-      }
-      // Pre-write drift? (gates the post-write baseline stamp; see helper)
-      const driftedBeforeWrite = baselineDriftedAtRead(relPath, readMtimeMs, readSize);
-      const next = operation === 'add'
-        ? addTagToMarkdown(raw, tagName)
-        : removeTagFromMarkdown(raw, tagName);
-      if (next === raw) return;
-      // Coupled write+reconcile (frontmatter-only). Writes the existing .md
-      // (write-existing so a delete race surfaces as ENOENT, not a resurrection)
-      // AND refreshes any open editor's FM cache for the same path so its next
-      // body save keeps the tag. Body-preserving.
-      await writeMarkdownAndReconcile({
-        vaultRoot,
-        path: relPath,
-        content: next,
-        mode: 'frontmatter',
-      });
-      // Refresh the gateway's pre-write drift baseline to the bytes we just
-      // wrote: this path writes the .md directly (not via the gateway), so
-      // without it the next editor write sees the mtime+size change as an
-      // external edit and shows a false "modified externally" prompt.
-      // The baseline is keyed by relPath alone, so bail on a vault swap before
-      // stamping. Keep the prior baseline when disk had drifted before this
-      // write, so the open editor's next save re-detects + prompts.
-      if (driftedBeforeWrite) {
-        if (!isStillSameVault(identity)) return;
-        refreshBaselineAfterWrite(relPath, undefined, undefined);
-      } else {
-        try {
-          const postStat = await invokeOk('vault:stat', vaultRoot, relPath);
-          if (!isStillSameVault(identity)) return;
-          refreshBaselineAfterWrite(relPath, postStat.mtimeMs, postStat.size);
-        } catch {
-          if (!isStillSameVault(identity)) return;
-          refreshBaselineAfterWrite(relPath, undefined, undefined);
-        }
-      }
-      wrote = true;
-    });
-    if (!wrote) return;
-    // A swap during the serialized write must not re-index relPath into the
-    // new vault or fire its read-only toast against it.
-    if (!isStillSameVault(identity)) return;
-    await vaultIndexStore.applyChanges([relPath]);
-    // The tag landed, but if the editor is held read-only (body can't
-    // round-trip) its body edits are NOT being written — tell the user.
-    surfaceReadOnlyTagToastIfNeeded(relPath);
-  } catch (err) {
-    // trackComponentWrite already surfaced the failure via the save-error
-    // listener. Local catch keeps fire-and-forget callers from raising
-    // unhandled rejections.
-    reportError('fileTagsStore', err, `Failed to write tag change to ${relPath}`);
-  }
+function findTile(tileId: string): Tile | undefined {
+  const live = boardStore.getTile(tileId);
+  if (live) return live;
+  const boardId = boardCacheStore.findTileBoardId(tileId);
+  return boardId ? boardCacheStore.getFullTilesForBoard(boardId)[tileId] : undefined;
 }
 
-/**
- * Fires the read-only tag toast when the file backing the
- * tag write has an open editor that's currently held read-only by the
- * lossy-round-trip sentinel. Deduped by `readOnlyTagToastShown` so a
- * batch of N tag operations against the same file doesn't push N toasts.
- *
- * Idempotent: re-entering after the toast has been shown does nothing
- * until the read-only flag is cleared (via the editor banner's "Take
- * ownership"). The dedupe Set is keyed by docId so the toast can re-fire
- * for the same path if the user reopens it under a fresh docId.
- *
- * Reset on vault swap so a stale docId entry can't
- * suppress a legitimate toast in the new vault.
- */
-const readOnlyTagToastShown = new SvelteSet<string>();
-vaultSwapResettable('fileTags.readOnlyTagToastShown', () => readOnlyTagToastShown.clear());
-
-function surfaceReadOnlyTagToastIfNeeded(relPath: string): void {
-  const editorDoc = documentStore.findByFilename(relPath);
-  if (!editorDoc) return;
-  if (!documentStore.isReadOnly(editorDoc.docId)) {
-    // Doc isn't read-only — drop any stale dedupe entry so a future
-    // read-only flip surfaces the toast again.
-    readOnlyTagToastShown.delete(editorDoc.docId);
-    return;
-  }
-  if (readOnlyTagToastShown.has(editorDoc.docId)) return;
-  readOnlyTagToastShown.add(editorDoc.docId);
-  uiStore.toast(
-    "Tag updated. Body changes were not saved because this file's Markdown isn't safe to round-trip.",
-    'warning',
-    6000,
-  );
-}
-
-/**
- * Mirrors a single-tag add/remove to every OTHER text-tile def backed by
- * the same `.md` path. The originator tile has already had its `tags`
- * updated by the caller; this propagates the change to sibling tiles
- * (duplicates of the same file on this or another board) so the badge
- * footer matches across all views immediately. Without this, only the
- * originator updated reactively and siblings stayed visually stale until
- * the file watcher fired (or never, since renderer self-writes don't
- * always re-enter `handleExternalMarkdownChanges`).
- *
- * Uses `boardStore.updateTile` for active-board tiles (reactive UI path)
- * and `boardStore.persistUpdateTile` for tile defs on other boards — same
- * split used by `renameTagEverywhere` / `removeTagEverywhere`.
- *
- * Pass `originatorTileId = null` to update every tile backed by the path
- * (used by file-path mutations that originate outside any specific tile).
- */
-function propagateTileTagChangeToSiblings(
-  relPath: string,
-  tagName: string,
-  operation: 'add' | 'remove',
-  originatorTileId: string | null,
-): void {
-  if (!relPath || !tagName) return;
-  for (const def of Object.values(boardStore.allTileDefs)) {
-    if (originatorTileId !== null && def.id === originatorTileId) continue;
-    if (def.type !== 'text') continue;
-    if (!tileBacksMarkdownPath(def as TileDefinition, relPath)) continue;
-    const tags = def.tags ?? [];
-    let nextTags: string[];
-    if (operation === 'add') {
-      if (tags.includes(tagName)) continue;
-      nextTags = [...tags, tagName];
-    } else {
-      if (!tags.includes(tagName)) continue;
-      nextTags = tags.filter((t) => t !== tagName);
-    }
-    if (boardStore.getTile(def.id)) {
-      boardStore.updateTile(def.id, { tags: nextTags });
-    } else {
-      boardStore.persistUpdateTile(def.id, { tags: nextTags });
-    }
-  }
-}
-
-/**
- * File-path variant of `writeTagChangeToTileMarkdown`. Same three-sink
- * write — reads the backing `.md`, calls the pure rewriter, writes back
- * via IPC, then re-indexes — but driven by a vault-relative path rather
- * than a tile. Used by the Document board's tag strip and the sidebar
- * file editor, where the editing surface isn't a tile.
- */
-async function writeTagChangeToMarkdownPath(
-  relPath: string,
-  tagName: string,
-  operation: 'add' | 'remove',
-): Promise<void> {
-  // See writeTagChangeToTileMarkdown: capture identity before the live-path
-  // read so the guards below bail on a vault swap.
-  const identity = captureVaultIdentity();
-  const vaultRoot = vaultStore.path;
-  if (!vaultRoot || !relPath) return;
-  try {
-    let wrote = false;
-    // See writeTagChangeToTileMarkdown: serialise the read-modify-write on the
-    // per-path chain and reconcile the open editor's frontmatter cache afterward.
-    await runSerializedMarkdownWrite(relPath, async () => {
-      let raw: string | null = null;
-      // Capture the read's own stat (see writeTagChangeToTileMarkdown).
-      let readMtimeMs: number | undefined;
-      let readSize: number | undefined;
-      try {
-        const readResult = await invokeOk('vault:read-file-text', vaultRoot, relPath);
-        raw = readResult.content;
-        readMtimeMs = readResult.mtimeMs;
-        readSize = readResult.size;
-      } catch {
-        // Read failed (likely envelope-failure or transient I/O). Falls
-        // through to the file-exists check below.
-      }
-      if (raw === null) {
-        // See writeTagChangeToTileMarkdown above: distinguish a real I/O
-        // failure from a benign no-op when the file is gone. Keep the
-        // sentinel dirty + surface a toast only when the file is still on
-        // disk and the read failed for some other reason (permissions, etc.).
-        const exists = await window.filo.invoke('vault:file-exists', vaultRoot, relPath);
-        if (!isStillSameVault(identity)) return; // swap during read/exists
-        if (exists) {
-          markPathFailed(vaultRoot, relPath);
-          reportError(
-            'fileTags.writePathFrontmatter',
-            null,
-            `Could not read ${relPath} to update frontmatter — your tag change is not on disk.`,
-          );
-        }
-        return;
-      }
-      // Keep-baseline-on-pre-write-drift (see writeTagChangeToTileMarkdown).
-      const driftedBeforeWrite = baselineDriftedAtRead(relPath, readMtimeMs, readSize);
-      const next = operation === 'add'
-        ? addTagToMarkdown(raw, tagName)
-        : removeTagFromMarkdown(raw, tagName);
-      if (next === raw) return;
-      // Coupled write+reconcile (frontmatter-only); see writeTagChangeToTileMarkdown.
-      await writeMarkdownAndReconcile({
-        vaultRoot,
-        path: relPath,
-        content: next,
-        mode: 'frontmatter',
-      });
-      // Refresh the drift baseline to the bytes we just wrote, bailing on a
-      // vault swap and keeping the prior baseline on pre-write drift (see
-      // writeTagChangeToTileMarkdown).
-      if (driftedBeforeWrite) {
-        if (!isStillSameVault(identity)) return;
-        refreshBaselineAfterWrite(relPath, undefined, undefined);
-      } else {
-        try {
-          const postStat = await invokeOk('vault:stat', vaultRoot, relPath);
-          if (!isStillSameVault(identity)) return;
-          refreshBaselineAfterWrite(relPath, postStat.mtimeMs, postStat.size);
-        } catch {
-          if (!isStillSameVault(identity)) return;
-          refreshBaselineAfterWrite(relPath, undefined, undefined);
-        }
-      }
-      wrote = true;
-    });
-    if (!wrote) return;
-    // A swap during the serialized write must not re-index relPath into the
-    // new vault or fire its read-only toast against it.
-    if (!isStillSameVault(identity)) return;
-    await vaultIndexStore.applyChanges([relPath]);
-    // Same read-only doc toast as writeTagChangeToTileMarkdown.
-    surfaceReadOnlyTagToastIfNeeded(relPath);
-  } catch (err) {
-    reportError('fileTagsStore', err, `Failed to write tag change to ${relPath}`);
-  }
+/** The file that carries a tile's tags, or `null` for a board-only tile. */
+function tagFileOfTile(tile: Tile): string | null {
+  if (tile.type === 'text') return tile.filePath || null;
+  return resolveTileMediaPath(tile);
 }
 
 export const fileTagsStore = {
@@ -595,20 +303,19 @@ export const fileTagsStore = {
    * drifted apart — typically because a rename/delete sweep failed partway,
    * or the user edited `.filo/tags.json` by hand.
    *
-   * Returns `tile` (references on tile defs across every loaded board) and
-   * `file` (references inside `fileTags[*]`). Read-only — does not mutate.
-   * Called once on vault open; the resulting count drives a one-shot toast.
+   * Returns `tile` (references on board-only tiles across every loaded
+   * board) and `file` (references inside `fileTags[*]`). A note's frontmatter
+   * tags are the user's own content and aren't counted. Read-only — does not
+   * mutate. Called once on vault open; the count drives a one-shot toast.
    */
   detectOrphans(): { tile: number; file: number } {
     const knownLower = new SvelteSet<string>();
     for (const name of Object.keys(file.tags)) knownLower.add(name.toLowerCase());
 
     let tile = 0;
-    for (const def of Object.values(boardCacheStore.allTileDefs)) {
-      const tags = (def as { tags?: string[] }).tags;
-      if (!Array.isArray(tags)) continue;
-      for (const t of tags) {
-        if (!knownLower.has(t.toLowerCase())) tile++;
+    for (const t of iterateBoardOnlyTiles()) {
+      for (const tag of t.tags) {
+        if (!knownLower.has(tag.toLowerCase())) tile++;
       }
     }
 
@@ -669,12 +376,18 @@ export const fileTagsStore = {
 
   // ── Read-side ──────────────────────────────────────────────────────────────
 
+  /** A file's tags: a note's from its frontmatter, anything else's from tags.json. */
   tagsForFile(path: string): string[] {
+    if (isNotePath(path)) return noteTags(path);
     return pureTagsForFile(file, path);
   },
 
+  /** Files carrying `tagName`: notes (by frontmatter) and tagged media files. */
   filesForTag(tagName: string): string[] {
-    return pureFilesForTag(file, tagName);
+    const notes = vaultIndexStore.allMetadata()
+      .filter((m) => noteTags(m.path).includes(tagName))
+      .map((m) => m.path);
+    return [...notes, ...pureFilesForTag(file, tagName).filter((p) => !isNotePath(p))];
   },
 
   allTagNames(): string[] {
@@ -686,39 +399,25 @@ export const fileTagsStore = {
   },
 
   /**
-   * Returns every tile across the project that carries the given tag name.
-   * Scans vault-backed tile definitions and inline tiles (link / iframe /
-   * timer) embedded in `project.boards[*].inlineTiles`.
+   * Returns every tile on every loaded board that carries the given tag name,
+   * read from wherever the tile's tags live.
    */
-  getTilesWithTag(tagName: string): Array<{ id: string; type: string; title: string; tags: string[] }> {
-    const results: Array<{ id: string; type: string; title: string; tags: string[] }> = [];
-
-    for (const def of Object.values(boardStore.allTileDefs)) {
-      if (def.tags?.includes(tagName)) {
-        results.push({ id: def.id, type: def.type, title: def.title, tags: def.tags });
-      }
-    }
-
-    const project = vaultStore.project;
-    if (project) {
-      for (const board of project.boards) {
-        const inlineTiles = (board as { inlineTiles?: Record<string, unknown> }).inlineTiles ?? {};
-        for (const tile of Object.values(inlineTiles)) {
-          const t = tile as { id: string; type: string; title?: string; tags?: string[] };
-          if (Array.isArray(t.tags) && t.tags.includes(tagName)) {
-            results.push({ id: t.id, type: t.type, title: t.title ?? '', tags: t.tags });
-          }
+  getTilesWithTag(tagName: string): Array<{ id: string; type: string; title: string; tags: string[]; path: string | null }> {
+    const results: Array<{ id: string; type: string; title: string; tags: string[]; path: string | null }> = [];
+    for (const boardId of Object.keys(boardCacheStore.cache)) {
+      for (const tile of Object.values(boardCacheStore.getFullTilesForBoard(boardId))) {
+        if (tile.tags.includes(tagName)) {
+          results.push({ id: tile.id, type: tile.type, title: tile.title, tags: tile.tags, path: tagFileOfTile(tile) });
         }
       }
     }
-
     return results;
   },
 
   /**
-   * Returns vault files carrying the given tag name (from `.filo/tags.json`)
-   * minus any path already represented in a placed text tile (those are
-   * already shown in the tiles section of the Tag popup).
+   * Returns vault files carrying the given tag name, minus any path already
+   * represented by a placed tile (those are shown in the tiles section of the
+   * Tag popup).
    */
   getFilesWithTag(
     tagName: string,
@@ -730,33 +429,20 @@ export const fileTagsStore = {
     );
     const out: Array<{ path: string; title: string; tags: string[] }> = [];
     for (const path of this.filesForTag(tagName)) {
-      const normPath = normalizeVaultRelative(path);
-      if (normExcluded.has(normPath)) continue;
-      const meta = vaultIndexStore.getMetadata(path);
-      const title = meta?.title ?? (path.split('/').pop()?.replace(/\.md$/i, '') ?? path);
-      out.push({ path, title, tags: meta?.tags ?? [tagName] });
+      if (normExcluded.has(normalizeVaultRelative(path))) continue;
+      const title = isNotePath(path) ? noteTitle(path) : (path.split('/').pop() ?? path);
+      out.push({ path, title, tags: this.tagsForFile(path) });
     }
     return out;
   },
 
   getTagUsageCount(tagName: string): number {
-    const tiles = this.getTilesWithTag(tagName).length;
-    // Dedup files-section against placed tile paths so a tile and its backing
-    // file aren't double-counted. Attachment tiles also register their media
-    // path in `fileTags`, so include those alongside text tiles.
+    const tiles = this.getTilesWithTag(tagName);
+    // Dedup the files section against placed tiles' files so a tile and its
+    // file aren't double-counted.
     const placedPaths = new SvelteSet<VaultPath>();
-    for (const def of Object.values(boardStore.allTileDefs)) {
-      if (!def.tags?.includes(tagName)) continue;
-      const tile = def as Tile;
-      // Canonical resolver so dedup keys by the same subfolder-aware path the
-      // write path uses (else a subfolder tile double-counts vs its file).
-      const textPath = resolveTextTileVaultPath(tile, (tile as { boardId?: string }).boardId);
-      if (textPath) placedPaths.add(vaultPath(textPath));
-      const mediaPath = resolveTileMediaPath(tile);
-      if (mediaPath) placedPaths.add(vaultPath(mediaPath));
-    }
-    const files = this.getFilesWithTag(tagName, placedPaths).length;
-    return tiles + files;
+    for (const { path } of tiles) if (path) placedPaths.add(vaultPath(path));
+    return tiles.length + this.getFilesWithTag(tagName, placedPaths).length;
   },
 
   // ── File-tag mutations ────────────────────────────────────────────────────
@@ -889,16 +575,19 @@ export const fileTagsStore = {
 
   // ── Tile-aware mutations ──────────────────────────────────────────────────
 
+  /** The tile with `tileId` on any loaded board, with its tags read from where they live. */
+  findTile(tileId: string): Tile | undefined {
+    return findTile(tileId);
+  },
+
   /**
-   * Adds a tag to a tile by name. Updates the tile's `tags` array on the
-   * board file and (for text tiles backed by a `.md` file) mirrors the tag
-   * into the file's YAML frontmatter and into `.filo/tags.json:fileTags`.
-   * Idempotent — adding a tag a tile already carries is a no-op.
+   * Adds a tag to a tile by name, where the tile's tags live: its note's
+   * frontmatter, its media file's tags.json entry, or (board-only tile) the
+   * tile itself. Idempotent — adding a tag a tile already carries is a no-op.
    */
   addTagToTile(tileId: string, tagName: string): void {
     // Validate and canonicalise upfront so a no-op never reaches history.
-    const liveTile = boardStore.getTile(tileId);
-    const tile = liveTile ?? (boardStore.allTileDefs[tileId] as Tile | undefined);
+    const tile = findTile(tileId);
     if (!tile || !tagName) return;
     const trimmed = canonicaliseTagName(file, tagName);
     if (!trimmed || tile.tags.includes(trimmed)) return;
@@ -908,13 +597,9 @@ export const fileTagsStore = {
     historyStore.execute(new AddTileTagCommand(tileId, trimmed));
   },
 
-  /**
-   * Removes a tag from a tile. For text-backed tiles, also strips the tag
-   * from the file's frontmatter and from `.filo/tags.json:fileTags[path]`.
-   */
+  /** Removes a tag from a tile, where the tile's tags live. */
   removeTagFromTile(tileId: string, tagName: string): void {
-    const liveTile = boardStore.getTile(tileId);
-    const tile = liveTile ?? (boardStore.allTileDefs[tileId] as Tile | undefined);
+    const tile = findTile(tileId);
     if (!tile || !tile.tags.includes(tagName)) return;
     historyStore.execute(new RemoveTileTagCommand(tileId, tagName));
   },
@@ -922,71 +607,34 @@ export const fileTagsStore = {
   /**
    * Internal impl of `addTagToTile` — no history push. Called by
    * `AddTileTagCommand.execute()` and `RemoveTileTagCommand.undo()`.
-   * Includes the live-tile / tile-def cache fallback for Kanban Card / Task
-   * surfaces.
    */
   _applyAddTagToTile(tileId: string, tagName: string): void {
-    const liveTile = boardStore.getTile(tileId);
-    const tile = liveTile ?? (boardStore.allTileDefs[tileId] as Tile | undefined);
+    const tile = findTile(tileId);
     if (!tile || tile.tags.includes(tagName)) return;
-    if (liveTile) {
-      boardStore.updateTile(tileId, { tags: [...tile.tags, tagName] });
-    } else {
-      boardStore.persistUpdateTile(tileId, { tags: [...tile.tags, tagName] });
+    const path = tagFileOfTile(tile);
+    if (path) {
+      this._applyAddTagToPath(path, tagName);
+      return;
     }
     this.ensureTag(tagName);
-    if (tile.type === 'text') {
-      // Same canonical resolver as the .md write, so the tags.json key + sibling
-      // propagation can't drift to root while the .md is in a subfolder.
-      const path = resolveTextTileVaultPath(tile, (tile as { boardId?: string }).boardId);
-      if (path) {
-        this.addTagToFile(path, tagName);
-        propagateTileTagChangeToSiblings(path, tagName, 'add', tile.id);
-      }
-      void writeTagChangeToTileMarkdown(tile, tagName, 'add');
-      return;
-    }
-    const mediaPath = resolveTileMediaPath(tile);
-    if (mediaPath) {
-      this.addTagToFile(mediaPath, tagName);
-    }
+    boardCacheStore.persistUpdateTile(tileId, { tags: [...tile.tags, tagName] }, tile.boardId);
   },
 
-  /**
-   * Internal impl of `removeTagFromTile` — no history push.
-   */
+  /** Internal impl of `removeTagFromTile` — no history push. */
   _applyRemoveTagFromTile(tileId: string, tagName: string): void {
-    const liveTile = boardStore.getTile(tileId);
-    const tile = liveTile ?? (boardStore.allTileDefs[tileId] as Tile | undefined);
+    const tile = findTile(tileId);
     if (!tile || !tile.tags.includes(tagName)) return;
-    const nextTags = tile.tags.filter((t) => t !== tagName);
-    if (liveTile) {
-      boardStore.updateTile(tileId, { tags: nextTags });
-    } else {
-      boardStore.persistUpdateTile(tileId, { tags: nextTags });
-    }
-    if (tile.type === 'text') {
-      // Same canonical resolver as the .md write, so the tags.json key + sibling
-      // propagation can't drift to root while the .md is in a subfolder.
-      const path = resolveTextTileVaultPath(tile, (tile as { boardId?: string }).boardId);
-      if (path) {
-        this.removeTagFromFile(path, tagName);
-        propagateTileTagChangeToSiblings(path, tagName, 'remove', tile.id);
-      }
-      void writeTagChangeToTileMarkdown(tile, tagName, 'remove');
+    const path = tagFileOfTile(tile);
+    if (path) {
+      this._applyRemoveTagFromPath(path, tagName);
       return;
     }
-    const mediaPath = resolveTileMediaPath(tile);
-    if (mediaPath) {
-      this.removeTagFromFile(mediaPath, tagName);
-    }
+    boardCacheStore.persistUpdateTile(tileId, { tags: tile.tags.filter((t) => t !== tagName) }, tile.boardId);
   },
 
   /**
-   * File-path counterpart of `addTagToTile` — same three sinks, but the
-   * editing surface is a `.md` file (Document board, sidebar) rather than
-   * a specific tile. Updates `.filo/tags.json:fileTags`, every text-tile
-   * def backed by that path, and the file's frontmatter. Idempotent.
+   * File-path counterpart of `addTagToTile`, for editing surfaces that aren't
+   * a tile (Document board, sidebar). Idempotent.
    */
   addTagToPath(path: string, tagName: string): void {
     if (!path) return;
@@ -997,10 +645,7 @@ export const fileTagsStore = {
     historyStore.execute(new AddPathTagCommand(path, trimmed));
   },
 
-  /**
-   * File-path counterpart of `removeTagFromTile`. Strips the tag from the
-   * three sinks. Idempotent.
-   */
+  /** File-path counterpart of `removeTagFromTile`. Idempotent. */
   removeTagFromPath(path: string, tagName: string): void {
     if (!path || !tagName) return;
     if (!this.tagsForFile(path).includes(tagName)) return;
@@ -1008,9 +653,8 @@ export const fileTagsStore = {
   },
 
   /**
-   * Internal impl of `addTagToPath` — no history push. Called by
-   * `AddPathTagCommand.execute()` and `RemovePathTagCommand.undo()`.
-   * Mirrors `_applyAddTagToTile`.
+   * Internal impl of `addTagToPath` — no history push. A note gets the tag
+   * in its frontmatter; any other file gets it in tags.json.
    */
   _applyAddTagToPath(path: string, tagName: string): void {
     if (!path) return;
@@ -1018,26 +662,22 @@ export const fileTagsStore = {
     if (!trimmed) return;
     if (this.tagsForFile(path).includes(trimmed)) return;
     this.ensureTag(trimmed);
-    this.addTagToFile(path, trimmed);
-    propagateTileTagChangeToSiblings(path, trimmed, 'add', null);
-    void writeTagChangeToMarkdownPath(path, trimmed, 'add');
+    if (isNotePath(path)) void writeTagChangeToMarkdownPath(path, trimmed, 'add');
+    else this.addTagToFile(path, trimmed);
   },
 
-  /**
-   * Internal impl of `removeTagFromPath` — no history push.
-   */
+  /** Internal impl of `removeTagFromPath` — no history push. */
   _applyRemoveTagFromPath(path: string, tagName: string): void {
     if (!path || !tagName) return;
     if (!this.tagsForFile(path).includes(tagName)) return;
-    this.removeTagFromFile(path, tagName);
-    propagateTileTagChangeToSiblings(path, tagName, 'remove', null);
-    void writeTagChangeToMarkdownPath(path, tagName, 'remove');
+    if (isNotePath(path)) void writeTagChangeToMarkdownPath(path, tagName, 'remove');
+    else this.removeTagFromFile(path, tagName);
   },
 
   /**
-   * Renames a tag everywhere: `.filo/tags.json` (definition + fileTags),
-   * tile entries on every board, saved-view + lastView filter chips, and
-   * `.md` frontmatter. Used by the Tag Browser's rename button.
+   * Renames a tag everywhere: `.md` frontmatter, `.filo/tags.json`
+   * (definition + media fileTags), board-only tiles on every board, and
+   * saved-view + lastView filter chips. Used by the Tag Browser's rename button.
    *
    * Awaits `boardCacheStore.ensureAllLoaded()` so the cascade reaches
    * every `.board.json` in the vault, not just those currently hydrated.
@@ -1045,7 +685,7 @@ export const fileTagsStore = {
    * the await is effectively free.
    *
    * Atomicity: `.md` frontmatter rewrites run *first*. The
-   * registry, tile-def, inline-tile, and board-settings rewrites only
+   * registry, board-only-tile, and board-settings rewrites only
    * commit if every `.md` write succeeded. On partial failure the
    * in-memory state stays at the old name and the toast offers a retry
    * scoped to the unwritten files — re-running with the same arguments
@@ -1107,8 +747,8 @@ export const fileTagsStore = {
   },
 
   /**
-   * Removes a tag everywhere: definition + file assignments + tile entries
-   * + saved-view + lastView filter chips + `.md` frontmatter.
+   * Removes a tag everywhere: `.md` frontmatter + definition + media file
+   * assignments + board-only tiles + saved-view + lastView filter chips.
    *
    * See {@link renameTagEverywhere} for the atomicity rationale — same
    * shape applies here.
@@ -1175,6 +815,9 @@ export const fileTagsStore = {
   },
 
 };
+
+// Tile derivation reads media tags through `noteMeta` (no import cycle here).
+registerMediaTagsReader((path) => pureTagsForFile(file, path));
 
 // Vault-swap reset: drop the tag registry + file-tag assignments so the new
 // vault's `.filo/tags.json` doesn't merge with stale entries from the prior vault.

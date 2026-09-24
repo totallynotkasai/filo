@@ -10,9 +10,8 @@
   const canvasStore = scope.canvas;
   const selectionStore = scope.selection;
   import { vaultStore } from '../../stores/vault.svelte';
-  import { documentStore } from '../../stores/document.svelte';
-  import { createId } from '../../lib/utils/ids';
-  import { parseMarkdownFile } from '../../lib/editor/markdownSync';
+  import { openNoteInDocumentTab } from '../../lib/notes/openNote';
+  import { isMarkdownExtension } from '../../lib/vault/extension';
 
   import TagBadge from './TagBadge.svelte';
 
@@ -23,12 +22,7 @@
 
   let placedPaths = $derived.by(() => {
     const out = new SvelteSet<string>();
-    for (const t of tiles) {
-      if (t.type !== 'text') continue;
-      const filePath = (t as { filePath?: string }).filePath;
-      if (filePath) out.add(filePath);
-      else if (t.title) out.add(`${t.title}.md`);
-    }
+    for (const t of tiles) if (t.path) out.add(t.path);
     return out;
   });
   let files = $derived(fileTagsStore.getFilesWithTag(tagName, placedPaths));
@@ -66,40 +60,10 @@
     onClose();
   }
 
-  async function navigateToFile(path: string, title: string) {
-    const vaultRoot = vaultStore.path;
-    if (!vaultRoot) return;
-
-    let docId: string;
-    const existing = documentStore.findByFilename(path);
-    if (existing) {
-      docId = existing.docId;
-    } else {
-      docId = createId();
-      try {
-        const result = (await window.filo.invoke(
-          'vault:read-file-text',
-          vaultRoot,
-          path,
-        )) as { success?: boolean; content?: string };
-        const raw = result?.success && typeof result.content === 'string' ? result.content : '';
-        const parsed = parseMarkdownFile(raw);
-        documentStore.loadDocument({
-          docId,
-          filename: path,
-          title,
-          body: parsed.body,
-          htmlContent: '',
-          richText: [],
-        });
-      } catch (err) {
-        console.warn('[TagsPopupMenu] Failed to read orphan file:', err);
-        return;
-      }
-    }
-
-    documentStore.openDocumentTab(docId);
-    tabStore.open(docId, title || 'Document', 'document');
+  function navigateToFile(path: string) {
+    const dot = path.lastIndexOf('.');
+    // Only a note opens as a document; a tagged media file has no document view.
+    if (dot >= 0 && isMarkdownExtension(path.slice(dot))) openNoteInDocumentTab(path);
     onClose();
   }
 </script>
@@ -153,7 +117,7 @@
       <div class="section-header">Files</div>
     {/if}
     {#each files as file (file.path)}
-      <button class="tile-item" onclick={() => navigateToFile(file.path, file.title)}>
+      <button class="tile-item" onclick={() => navigateToFile(file.path)}>
         <span class="tile-icon" aria-hidden="true">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
         </span>

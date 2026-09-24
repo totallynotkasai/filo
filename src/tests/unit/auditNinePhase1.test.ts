@@ -307,11 +307,8 @@ describe('A9-M3 — backing-.md seed runs inside the chained AddTaskCommand', ()
     return {
       id,
       type: 'text',
-      title: id,
+      filePath: `${id}.md`,
       style: { headerColor: '', bodyColor: '' },
-      tags: [],
-      contentId: `doc_${id}`,
-      content: '',
       createdAt: 0,
       updatedAt: 0,
     } as unknown as TileDefinition;

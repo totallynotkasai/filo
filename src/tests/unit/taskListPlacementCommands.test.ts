@@ -38,9 +38,9 @@ function installFiloStub(routes: Record<string, InvokeHandler> = {}): void {
 
 function makeFixture(): V7BoardFileData {
   const defs: Record<string, TileDefinition> = {
-    t1: { id: 't1', type: 'text', title: 'One', contentId: 'doc_t1' } as unknown as TileDefinition,
-    t2: { id: 't2', type: 'text', title: 'Two', contentId: 'doc_t2' } as unknown as TileDefinition,
-    t3: { id: 't3', type: 'text', title: 'Three', contentId: 'doc_t3' } as unknown as TileDefinition,
+    t1: { id: 't1', type: 'text', filePath: 'One.md' } as unknown as TileDefinition,
+    t2: { id: 't2', type: 'text', filePath: 'Two.md' } as unknown as TileDefinition,
+    t3: { id: 't3', type: 'text', filePath: 'Three.md' } as unknown as TileDefinition,
   };
   const tasks: TaskPlacement[] = [
     { tileId: 't1', position: 0 },
@@ -176,9 +176,9 @@ describe('AddTaskCommand targetSectionId disambiguation', () => {
 
   function makeMultiSectionFixture(): V7BoardFileData {
     const defs: Record<string, TileDefinition> = {
-      t1: { id: 't1', type: 'text', title: 'One', contentId: 'doc_t1' } as unknown as TileDefinition,
-      t2: { id: 't2', type: 'text', title: 'Two', contentId: 'doc_t2' } as unknown as TileDefinition,
-      t3: { id: 't3', type: 'text', title: 'Three', contentId: 'doc_t3' } as unknown as TileDefinition,
+      t1: { id: 't1', type: 'text', filePath: 'One.md' } as unknown as TileDefinition,
+      t2: { id: 't2', type: 'text', filePath: 'Two.md' } as unknown as TileDefinition,
+      t3: { id: 't3', type: 'text', filePath: 'Three.md' } as unknown as TileDefinition,
     };
     const tasks: TaskPlacement[] = [
       { tileId: 't1', position: 0 },
@@ -225,11 +225,8 @@ describe('AddTaskCommand targetSectionId disambiguation', () => {
     return {
       id,
       type: 'text',
-      title,
+      filePath: `${title}.md`,
       style: { headerColor: '', bodyColor: '' },
-      tags: [],
-      contentId: `doc_${id}`,
-      content: '',
       createdAt: 0,
       updatedAt: 0,
     } as unknown as TileDefinition;

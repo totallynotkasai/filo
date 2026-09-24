@@ -1,7 +1,6 @@
 import { SvelteSet } from 'svelte/reactivity';
 import { detectBrokenRefs } from '../lib/vault/fileRefIntegrity';
 import { boardCacheStore } from './boardCache.svelte';
-import { vaultStore } from './vault.svelte';
 import { onVaultSwap } from '../core/vaultLifecycle';
 
 /**
@@ -35,14 +34,8 @@ export const boardRefIntegrityStore = {
    */
   recompute(knownVaultPaths: ReadonlySet<string>): void {
     const next: Record<string, Set<string>> = {};
-    const activeRootFolder = vaultStore.activeRootFolder;
     for (const [boardId, data] of Object.entries(boardCacheStore.cache)) {
-      const boardDefaultFolder = (data.board as { settings?: { defaultFolder?: string } })
-        .settings?.defaultFolder ?? '';
-      const broken = detectBrokenRefs(data, knownVaultPaths, {
-        activeRootFolder,
-        boardDefaultFolder,
-      });
+      const broken = detectBrokenRefs(data, knownVaultPaths);
       if (broken.length === 0) continue;
       next[boardId] = new SvelteSet(broken.map((b) => b.tileId));
     }

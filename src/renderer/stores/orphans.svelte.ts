@@ -30,12 +30,9 @@ const DEFAULT_CLUSTER_DISTANCE = 600;
 function resolveTextBody(tile: Tile): string | undefined {
   if (tile.type !== 'text') return undefined;
   // `tile` is narrowed to the text variant by the guard above.
-  const contentId = tile.contentId;
-  if (contentId) {
-    const doc = documentStore.getDocument(contentId);
-    if (doc) return doc.body;
-  }
-  const path = resolveTextTileVaultPath(tile, tile.boardId);
+  const doc = documentStore.getDocument(tile.contentId);
+  if (doc) return doc.body;
+  const path = resolveTextTileVaultPath(tile);
   if (path) {
     const md = vaultIndexStore.getMetadata(path);
     if (md) return md.content;

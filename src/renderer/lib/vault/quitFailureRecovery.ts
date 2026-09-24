@@ -25,7 +25,7 @@ import { reportError } from '../utils/errorBus';
 import { uiStore } from '../../stores/ui.svelte';
 import { surveyForeignSentinels } from '../../stores/foreignSentinels.svelte';
 import { isStillSameVault, type VaultIdentity } from './vaultIdentity';
-import { readOwnOrLegacySentinel, clearOwnSentinel } from './machineSentinels';
+import { readOwnSentinel, clearOwnSentinel } from './machineSentinels';
 
 
 export interface QuitFailureFile {
@@ -58,9 +58,9 @@ export async function readQuitFailureBreadcrumb(
 
   let content: string;
   try {
-    // THIS machine's breadcrumb (its absolute paths only make
-    // sense here), else the legacy shared one; another machine's is listed only.
-    const result = await readOwnOrLegacySentinel(vaultRoot, 'quit-failure');
+    // THIS machine's breadcrumb (its absolute paths only make sense here);
+    // another machine's is listed only.
+    const result = await readOwnSentinel(vaultRoot, 'quit-failure');
     content = result.content;
   } catch (err) {
     // ENOENT — the common case (no failed-write quit last session). Any other
@@ -99,8 +99,8 @@ export async function readQuitFailureBreadcrumb(
 export async function clearQuitFailureBreadcrumb(vaultRoot: string): Promise<void> {
   if (!vaultRoot) return;
   try {
-    // This machine's breadcrumb plus the legacy shared one
-    // (migration). Another machine's is never cleared (main refuses it).
+    // This machine's breadcrumb only. Another machine's is never cleared
+    // (main refuses it).
     await clearOwnSentinel(vaultRoot, 'quit-failure');
   } catch (err) {
     reportError(

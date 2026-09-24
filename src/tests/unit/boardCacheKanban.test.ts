@@ -47,15 +47,14 @@ function makeKanbanFixture(): V7BoardFileData {
   };
 }
 
-function defOf(id: string, title: string, type = 'text'): TileDefinition {
-  // R5 — `TileDefinitionSchema` is a discriminated union; each variant
-  // requires its own type-specific fields. Seed the minimum payload for
-  // text (the only `type` callers use here) so `persistAddKanbanPlacement`'s
-  // safeParse doesn't drop the def for a missing `contentId`.
-  const base = {
+function defOf(id: string, title: string): TileDefinition {
+  // `persistAddKanbanPlacement` safeParses the def, so it must carry the
+  // text variant's required `filePath`. The note has no frontmatter, so the
+  // card's title is the filename stem: `title`.
+  return {
     id,
-    type,
-    title,
+    type: 'text',
+    filePath: `${title}.md`,
     style: {
       headerColor: '#000',
       bodyColor: '#fff',
@@ -65,14 +64,9 @@ function defOf(id: string, title: string, type = 'text'): TileDefinition {
       borderWidth: 1,
       shadowIntensity: 0.3,
     } as never,
-    tags: [],
     createdAt: 0,
     updatedAt: 0,
   };
-  if (type === 'text') {
-    return { ...base, contentId: `doc_${id}`, content: '' } as TileDefinition;
-  }
-  return base as TileDefinition;
 }
 
 describe('boardCache — Kanban CRUD', () => {

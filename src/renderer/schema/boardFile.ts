@@ -3,9 +3,9 @@
  *
  * Sits one level above `BoardSchema`: a board file contains the discriminated
  * `board` plus the side-bag records `tileDefs` / `connections` / `frames` that
- * the V7 architecture stores alongside the board (rather than nested inside
- * it). The `version` literal pins the on-disk shape; a future revision (V8)
- * would bump the literal and add a migration branch in `migrations.ts`.
+ * the board format stores alongside the board (rather than nested inside it).
+ * The `version` literal pins the on-disk shape: the loader accepts exactly
+ * this version and refuses every other (`migrations.ts`).
  *
  * Kept in `schema/` (not inline in `boardLoader.ts`) so the same envelope can
  * be reused by tests, migrations, and any future tooling that wants to
@@ -20,25 +20,21 @@ import { TileDefinitionSchema } from './tile';
 import { uniqueBy, idString } from './schemaUtils';
 
 /**
- * Current envelope version. Bump when the on-disk file shape changes in a
- * way that requires a structural migration; add a matching branch in
- * `migrateBoardFile`.
+ * Current envelope version. v8: a board file holds only visuals; notes are
+ * referenced by `filePath` and their title, tags and body live in the note.
  */
-export const CURRENT_BOARD_FILE_VERSION = 7;
+export const CURRENT_BOARD_FILE_VERSION = 8;
 
 /**
- * Whole-envelope schema for a V7 `.board.json` file. The inner `board`
+ * Whole-envelope schema for a `.board.json` file. The inner `board`
  * is validated against `BoardSchema`; `tileDefs` / `connections` /
  * `frames` are validated against their per-element schemas so a corrupt
  * envelope is rejected at load time rather than crashing the renderer
  * deep in the tile-render path.
  *
- * `version` is pinned to the literal 7. `migrateBoardFile` is the only
- * sanctioned producer of inputs to this schema — it stamps the version on
- * legacy files (missing field) and translates older shapes before this
- * parse runs. A `.board.json` with a higher version must fail to load
- * loudly rather than be misinterpreted by code that doesn't know the new
- * shape.
+ * `version` is required and pinned to the current literal. `migrateBoardFile`
+ * runs first and refuses any other version, so a file from an older or newer
+ * Filo never reaches this parse and is never re-saved in this build's shape.
  *
  * The `.superRefine` cross-checks that every
  * `connection.fromTileId`/`toTileId` and every `frame.tileIds[]` entry
@@ -51,7 +47,7 @@ export const CURRENT_BOARD_FILE_VERSION = 7;
  * hand-built JSON) and asks Zod to validate it.
  */
 export const V7BoardFileDataSchema = z.object({
-  version: z.literal(CURRENT_BOARD_FILE_VERSION).default(CURRENT_BOARD_FILE_VERSION),
+  version: z.literal(CURRENT_BOARD_FILE_VERSION),
   board: BoardSchema,
   // Record keys are validated against the nanoid pattern
   // via `idString`. Empty / whitespace / special-character keys would
@@ -61,17 +57,14 @@ export const V7BoardFileDataSchema = z.object({
   tileDefs: z.record(idString, TileDefinitionSchema).default(() => ({})),
   connections: z.record(idString, ConnectionSchema).default(() => ({})),
   frames: z.array(FrameSchema).default(() => []).refine(...uniqueBy('id', 'frames')),
-// `.passthrough()` so envelope-level fields written by a
-// future Filo (e.g. a `version: 8` migration introducing a new top-level
-// key) survive the load → cache → save round-trip in this build.
-// Mirrors the nested `BoardSchema.passthrough()` contract; without it every
-// load + save in an older Filo would silently strip unknown top-level keys.
+// `.passthrough()` mirrors the nested `BoardSchema.passthrough()` contract:
+// an unknown top-level key a user or tool added survives a load and save.
 }).passthrough().superRefine((envelope, ctx) => {
   const validIds = new Set<string>(Object.keys(envelope.tileDefs));
   if (envelope.board.type === 'mindmap') {
     // Inline tiles (Link / Iframe / Timer) live on the board itself rather
     // than `tileDefs` but are still valid connection / frame targets — see
-    // `mergeBoardTiles` in `boardLoader.ts`. Include them in the validity
+    // the board's derived tiles (`getFullTiles`). Include them in the validity
     // set so a legitimate connection to an inline tile isn't flagged.
     const mindMap = envelope.board as { inlineTiles?: Record<string, unknown> };
     for (const id of Object.keys(mindMap.inlineTiles ?? {})) {
@@ -147,9 +140,6 @@ export const V7BoardFileDataSchema = z.object({
 });
 
 // Note: the runtime `V7BoardFileData` type lives in `lib/boards/tileDefBuilder.ts`
-// and carries `version?: 7` as the literal type so the saver can stamp it
-// before serialise. In-memory consumers never need to read
-// `version` — every loaded envelope is V7 because the loader rejects newer
-// shapes (`boardLoader.ts` from-future branch) and migrates older ones. If a
-// future consumer is tempted to branch on `cache.version`, add a comment
-// explaining why and bump `CURRENT_BOARD_FILE_VERSION` instead.
+// and carries `version?: 8` as the literal type so the saver can stamp it
+// before serialise. In-memory consumers never need to read `version`: every
+// loaded envelope is current because the loader refuses every other version.

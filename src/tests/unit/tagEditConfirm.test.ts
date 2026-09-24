@@ -22,7 +22,7 @@ describe('Tags browser confirms', () => {
     rename = vi.spyOn(fileTagsStore, 'renameTagEverywhere').mockResolvedValue(undefined);
     vi.spyOn(fileTagsStore, 'filesForTag').mockReturnValue(['a.md', 'b.md', 'c.png']);
     vi.spyOn(fileTagsStore, 'getTilesWithTag').mockReturnValue([
-      { id: 't1', type: 'link', title: 'x', tags: ['work'] },
+      { id: 't1', type: 'link', title: 'x', tags: ['work'], path: null },
     ]);
     vi.spyOn(fileTagsStore, 'allTagNames').mockReturnValue(['work', 'home', 'project', 'project/active']);
   });

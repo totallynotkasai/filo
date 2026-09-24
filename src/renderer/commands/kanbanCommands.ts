@@ -4,6 +4,7 @@ import { boardCacheStore } from '../stores/boardCache.svelte';
 import { documentStore } from '../stores/document.svelte';
 import { uiStore } from '../stores/ui.svelte';
 import { vaultIndexStore } from '../stores/vaultIndex.svelte';
+import { defTitle } from '../stores/noteMeta';
 import { vaultStore } from '../stores/vault.svelte';
 import type { TileDefinition, KanbanBoard } from '../schema/index';
 import type {
@@ -73,7 +74,7 @@ export class AddCardCommand extends Command {
     this.def = this.snapshot(def);
     this.position = position;
     this.style = style ? this.snapshot(style) : style;
-    this.description = `Add card "${def.title ?? ''}"`;
+    this.description = `Add card "${defTitle(def)}"`;
   }
 
   execute() {

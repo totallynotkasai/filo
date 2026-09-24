@@ -56,11 +56,11 @@ function validDef(id: string): TileDefinition {
   return {
     id,
     type: 'text',
-    title: id,
+    filePath: `${id}.md`,
     // TileStyleSchema requires headerColor/bodyColor (no defaults). The
     // other fields default via Zod, but these two have to be present for
-    // `persistAddKanbanPlacement`'s safeParse to accept the def. R5 also
-    // requires `contentId` on the text variant.
+    // `persistAddKanbanPlacement`'s safeParse to accept the def, as does the
+    // text variant's `filePath`.
     style: {
       headerColor: '#000',
       bodyColor: '#fff',
@@ -70,9 +70,6 @@ function validDef(id: string): TileDefinition {
       borderWidth: 1,
       shadowIntensity: 0.3,
     } as never,
-    tags: [],
-    contentId: `doc_${id}`,
-    content: '',
     createdAt: 0,
     updatedAt: 0,
   } as TileDefinition;
@@ -147,10 +144,12 @@ describe('boardCache — Kanban guards', () => {
   // ── H3: locked / faded preservation ──
 
   it('getFullTilesForKanbanBoard preserves the def-level locked / faded flags', () => {
-    const def = validDef('t1');
-    (def as Record<string, unknown>).locked = true;
-    (def as Record<string, unknown>).faded = true;
-    boardCacheStore.persistAddKanbanPlacement('kb', 'c1', def, 0);
+    boardCacheStore.persistAddKanbanPlacement('kb', 'c1', validDef('t1'), 0);
+    // The def schema strips keys it doesn't define, so stamp the flags on the
+    // cached def, as an in-memory lock / fade toggle would.
+    const defs = boardCacheStore.cache.kb.tileDefs as Record<string, Record<string, unknown>>;
+    defs.t1.locked = true;
+    defs.t1.faded = true;
     const tiles = boardCacheStore.getFullTilesForKanbanBoard('kb');
     expect(tiles.t1.locked).toBe(true);
     expect(tiles.t1.faded).toBe(true);

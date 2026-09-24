@@ -25,8 +25,4 @@ export interface CacheContext {
   updateProjectConnectionsFrames(
     mutator: (project: { connections: Record<string, Connection>; frames: Frame[] }) => void,
   ): void;
-  collectFolderPinOptions(): {
-    activeRootFolder: string;
-    boardDefaultFolders: Record<string, string | undefined>;
-  };
 }

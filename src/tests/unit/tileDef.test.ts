@@ -2,17 +2,17 @@ import { describe, it, expect } from 'vitest';
 import { TileDefinitionSchema } from '@renderer/schema/tile';
 
 /**
- * Phase R5 — `TileDefinitionSchema` is a Zod discriminated union with per-type
- * required fields. The validations below close the "hostile URL via
- * hand-edited tileDef" hole that `.passthrough()` on the previous flat base
- * left wide open.
+ * `TileDefinitionSchema` is a Zod discriminated union with per-type required
+ * fields, and no variant passes unknown keys through:
  *
- *   - Acceptance criteria 2: `javascript:` URL on a link def fails parse.
- *   - Acceptance criteria 3: an image def missing `src` fails parse.
- *   - Acceptance criteria 4: a forward-compat field on a link def survives
- *     round-trip — passthrough still applies inside each variant.
+ *   - a `javascript:` URL on a link def fails parse (hostile URL via a
+ *     hand-edited tileDef);
+ *   - an image def missing `src` / a text def missing `filePath` fails parse;
+ *   - a key the board doesn't own (a text def's title / tags / body, a leaked
+ *     task field, an unknown key) is dropped on parse, so it can't survive a
+ *     load and save.
  */
-describe('Phase R5 — discriminated TileDefinitionSchema', () => {
+describe('discriminated TileDefinitionSchema', () => {
   const baseFields = {
     id: 't1',
     title: 'T',
@@ -127,17 +127,26 @@ describe('Phase R5 — discriminated TileDefinitionSchema', () => {
       expect(r.success).toBe(false);
     });
 
-    it('rejects a text def missing `contentId`', () => {
+    it('rejects a text def missing `filePath`', () => {
       const r = TileDefinitionSchema.safeParse({
         ...baseFields,
         type: 'text',
       });
       expect(r.success).toBe(false);
     });
+
+    it('rejects a text def with an empty `filePath`', () => {
+      const r = TileDefinitionSchema.safeParse({
+        ...baseFields,
+        type: 'text',
+        filePath: '',
+      });
+      expect(r.success).toBe(false);
+    });
   });
 
-  describe('forward-compat passthrough survives round-trip', () => {
-    it('preserves a future field on a link def', () => {
+  describe('unknown keys are dropped on parse', () => {
+    it('drops a future field on a link def', () => {
       const r = TileDefinitionSchema.safeParse({
         ...baseFields,
         type: 'link',
@@ -146,25 +155,41 @@ describe('Phase R5 — discriminated TileDefinitionSchema', () => {
       });
       expect(r.success).toBe(true);
       if (r.success) {
-        // Cast through unknown because passthrough fields are typed
-        // `unknown` and invisible to the schema-typed `TileDefinition`
-        // view (CLAUDE.md / `schema/tile.ts` passthrough contract).
         const widened = r.data as unknown as Record<string, unknown>;
-        expect(widened.futureField).toBe('y');
+        expect(widened.futureField).toBeUndefined();
+        expect(widened.title).toBe('T');
       }
     });
 
-    it('preserves a future field on a text def', () => {
+    it('keeps only the note path on a text def (title, tags and body live in the note)', () => {
       const r = TileDefinitionSchema.safeParse({
         ...baseFields,
         type: 'text',
+        filePath: 'Notes/T.md',
+        tags: ['a'],
+        content: '<p>body</p>',
         contentId: 'doc_1',
         newFutureField: { sub: 'value' },
       });
       expect(r.success).toBe(true);
       if (r.success) {
+        expect(Object.keys(r.data).sort()).toEqual(['createdAt', 'filePath', 'id', 'style', 'type', 'updatedAt']);
+        expect(r.data).toMatchObject({ type: 'text', filePath: 'Notes/T.md' });
+      }
+    });
+
+    it("drops tags from a media def (a media file's tags live in tags.json)", () => {
+      const r = TileDefinitionSchema.safeParse({
+        ...baseFields,
+        type: 'image',
+        src: 'a.png',
+        tags: ['a'],
+      });
+      expect(r.success).toBe(true);
+      if (r.success) {
         const widened = r.data as unknown as Record<string, unknown>;
-        expect(widened.newFutureField).toEqual({ sub: 'value' });
+        expect(widened.tags).toBeUndefined();
+        expect(widened.title).toBe('T');
       }
     });
   });
@@ -194,12 +219,12 @@ describe('Phase R5 — discriminated TileDefinitionSchema', () => {
     });
   });
 
-  describe('task-metadata strip preprocess survives the union', () => {
-    it('strips `completed` / `dueDate` from a text def before discriminator parse', () => {
+  describe('task metadata never survives on a def', () => {
+    it('drops `completed` / `dueDate` from a text def', () => {
       const r = TileDefinitionSchema.safeParse({
         ...baseFields,
         type: 'text',
-        contentId: 'doc_1',
+        filePath: 'T.md',
         completed: true,
         dueDate: '2026-01-01',
       });

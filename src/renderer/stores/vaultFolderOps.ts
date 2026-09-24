@@ -858,25 +858,22 @@ async function performDelete(ctx: VaultContext, itemPath: string): Promise<boole
           // visible tab whose backing file just vanished.
           //
           // Also clear the dangling
-          // `contentId` on the cached entry and flush the cleared value
+          // `filePath` on the cached entry and flush the cleared value
           // to disk BEFORE `cleanupMissingBoardAsync` wipes the cache.
           // Without the pre-flush, the .board.json on disk would retain
-          // the dangling contentId; reopening the board would then crash
-          // the editor on the missing pointer instead of rendering the
-          // "no backing file" empty state. The flush is sequenced inside
+          // the dangling path; reopening the board would then point the
+          // editor at a missing note instead of rendering the "no backing
+          // file" empty state. The flush is sequenced inside
           // the cleanupPromise so the outer `Promise.allSettled` waits
           // for the on-disk write to complete before the cascade
           // continues to `flushAllDirty`.
           for (const [boardId, cached] of Object.entries(boardCacheStore.cache)) {
             const b = cached.board;
             if (b.type !== 'document') continue;
-            const contentId = (b as { contentId?: string }).contentId;
-            if (!contentId) continue;
-            const doc = documentStore.getDocument(contentId);
-            if (!doc?.filename) continue;
-            const docPathLower = toPosix(doc.filename).toLowerCase();
+            if (!b.filePath) continue;
+            const docPathLower = toPosix(b.filePath).toLowerCase();
             if (docPathLower === relLower || docPathLower.startsWith(relPrefix)) {
-              (b as { contentId?: string }).contentId = '';
+              b.filePath = '';
               boardCacheStore.markDirty(boardId);
               cleanupPromises.push(
                 boardCacheStore

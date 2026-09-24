@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import { toPosix } from './pathHelpers';
 import { parseSentinelPath } from '../../shared/sentinelPaths';
 import { getMachineIdentity } from '../services/machineIdentity';
+import { RESERVED_WINDOWS_NAMES } from '../../shared/fileNames';
 
 /**
  * Throws if targetPath resolves to a location outside vaultRoot. Protects
@@ -107,22 +108,8 @@ export function assertWithinVault(vaultRoot: string, targetPath: string): void {
   }
 }
 
-/**
- * Windows reserves these legacy DOS device names regardless of extension.
- * Creating `CON.md` or `LPT1.txt` succeeds on POSIX but on Windows opens a
- * device handle instead of a real file — the write either silently no-ops
- * (CON.txt → console) or hangs the IPC handler waiting for hardware. We
- * reject them up-front for cross-platform parity.
- *
- * `CONIN$` / `CONOUT$` / `CLOCK$` carry a literal `$`, which is otherwise a
- * legal filename character, so only the exact reserved stem is rejected
- * (`money$.md` stays fine).
- */
-export const RESERVED_WINDOWS_NAMES = new Set([
-  'CON', 'PRN', 'AUX', 'NUL', 'CONIN$', 'CONOUT$', 'CLOCK$',
-  'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
-  'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
-]);
+// Windows DOS device names; see src/shared/fileNames.ts.
+export { RESERVED_WINDOWS_NAMES };
 
 /**
  * Windows-illegal characters that aren't path separators
@@ -325,14 +312,13 @@ export class FiloDirForbiddenError extends Error {
  * "a machine only ever clears its own" is structural rather than a renderer
  * convention:
  *   - `access: 'write'` (default; writes / deletes / renames): only THIS
- *     machine's id, plus the legacy bare names (read + deleted once to migrate);
+ *     machine's id;
  *   - `access: 'read'`: any machine's id (foreign sentinels are listed,
- *     never acted on) and the legacy names.
+ *     never acted on).
  */
 function isPermittedSentinel(normalised: string, access: 'read' | 'write'): boolean {
   const parsed = parseSentinelPath(normalised);
   if (!parsed) return false;
-  if (parsed.machineId === null) return true; // legacy bare name — migration read + delete
   if (access === 'write') return parsed.machineId === getMachineIdentity().machineId;
   return true;
 }

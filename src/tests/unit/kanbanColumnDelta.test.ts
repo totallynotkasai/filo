@@ -24,13 +24,10 @@ function textDef(id: string, title: string): TileDefinition {
   return {
     id,
     type: 'text',
-    title,
+    filePath: `${title}.md`,
     // headerColor + bodyColor are required by TileStyleSchema (persistAddKanban-
     // Placement validates the def), so an empty-object style would be rejected.
     style: { headerColor: '', bodyColor: '', borderColor: '' } as never,
-    tags: [],
-    contentId: `doc_${id}`,
-    content: '',
     createdAt: 0,
     updatedAt: 0,
   } as unknown as TileDefinition;

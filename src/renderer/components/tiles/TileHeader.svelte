@@ -8,7 +8,6 @@
   import { getContext } from 'svelte';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { boardCacheStore } from '../../stores/boardCache.svelte';
-  import { tabStore } from '../../stores/tabs.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
   import { documentStore } from '../../stores/document.svelte';
   import { uiStore } from '../../stores/ui.svelte';
@@ -19,9 +18,10 @@
   import { sanitizeInlineHtml } from '../../lib/utils/sanitizeHtml';
   import { getAnchorBelow } from '../../lib/utils/popupAnchor';
   import { buildDeleteSnapshots, TILE_DELETE_SNAPSHOT_MAX_BYTES } from '../../lib/canvas/deleteTileSnapshots';
-  import { resolveTitleCommitValues, type ResolvedTitleCommit } from '../../lib/editor/titleCommit';
+  import { resolveTitleCommitValues, visibleTitleHtml, type ResolvedTitleCommit } from '../../lib/editor/titleCommit';
   import { historyStore } from '../../stores/history.svelte';
-  import { RenameTitleCommand, ToggleFramelessCommand } from '../../commands/index';
+  import { openNoteInDocumentTab } from '../../lib/notes/openNote';
+  import { UpdateTitleCommand, ToggleFramelessCommand } from '../../commands/index';
   import {
     PendingWritesFailedError,
     withDrainedWrites,
@@ -65,18 +65,16 @@
   let blurCommitTimer: ReturnType<typeof setTimeout> | null = null;
 
   // The rendered title falls back to plain text when no rich-text version
-  // has been authored yet. titleHtml comes from the TipTap inline editor;
-  // it is sanitized through DOMPurify before {@html} renders it to defend
-  // against tampered board files.
-  let titleDisplay = $derived.by(() => {
-    if (!tile.titleHtml || tile.titleHtml.trim().length === 0) return null;
-    return sanitizeInlineHtml(tile.titleHtml);
-  });
+  // has been authored, or when the stored formatting no longer spells the
+  // current title (it was changed elsewhere). titleHtml comes from the TipTap
+  // inline editor; it is sanitized through DOMPurify before {@html} renders it
+  // to defend against tampered board files.
+  let visibleHtml = $derived(visibleTitleHtml(tile.titleHtml, tile.title));
+  let titleDisplay = $derived(visibleHtml ? sanitizeInlineHtml(visibleHtml) : null);
 
-  // Whether this text tile has an associated vault .md file. In V7 every text
-  // tile creates a `${title}.md` on add, so contentId presence is the signal.
+  // Whether this text tile names a note in the vault.
   let hasVaultFile = $derived(
-    tile.type === 'text' && !!(tile as TextTile).contentId
+    tile.type === 'text' && !!(tile as TextTile).filePath
   );
 
   // Media tiles support the "frameless" (media-only) display toggle — hides
@@ -128,75 +126,35 @@
   }
 
   /**
-   * Applies a resolved title commit to the tile. `fromTeardown` marks the
-   * unmount-time commit: by then the pane's scope may already
-   * point at the switched-in board (the very switch that unmounted us), so
-   * the write resolves through the tile's home board (`tile.boardId`).
+   * Applies a resolved title commit to the tile. A text tile's title is its
+   * note's frontmatter `title:` (the file is never renamed); any other tile
+   * owns its title on the board. `titleHtml` stays on the board either way.
    *
-   * A text-tile teardown commit pushes `RenameTitleCommand` onto the tile's
-   * HOME board's undo stack (via `pushWithoutExecuteOnBoard`, keyed by
-   * `tile.boardId`) so the `.md` rename is undoable — the GLOBAL active
-   * board's stack can't be trusted mid-swap, but the home board's can.
-   * The non-text teardown path stays a cache write (no file rename to reverse).
+   * `fromTeardown` marks the unmount-time commit: by then the pane's scope may
+   * already point at the switched-in board (the very switch that unmounted
+   * us), so the command is filed on the tile's HOME board's undo stack (keyed
+   * by `tile.boardId`) instead of the globally active one.
    */
   async function applyTitleCommit(snap: ResolvedTitleCommit, fromTeardown: boolean): Promise<void> {
     const { plain, titleHtml: newTitleHtml } = snap;
+    const oldTitleHtml = visibleHtml ?? undefined;
     const titleChanged = plain !== tile.title;
-    const titleHtmlChanged = (tile.titleHtml ?? '') !== (newTitleHtml ?? '');
+    const titleHtmlChanged = (oldTitleHtml ?? '') !== (newTitleHtml ?? '');
     if (!titleChanged && !titleHtmlChanged) return;
-    const oldTitle = tile.title;
-    const oldTitleHtml = tile.titleHtml;
-    if (tile.type === 'text') {
-      // Route through the rename helper so the backing .md file moves in
-      // lockstep with the title. On collision the helper toasts + returns
-      // success: false; we leave the existing tile.title in place so the UI
-      // snaps back automatically (the editor is already destroyed).
-      // `tile.boardId` lets the helper fall back to the home board's cache
-      // when the active scope no longer has the tile (teardown commit).
-      //
-      // Push RenameTitleCommand on success so Ctrl+Z
-      // reverses both the filename rename and the title update.
-      const result = await boardStore.renameTextTileBackingFile(
-        tile.id, plain, newTitleHtml, tile.boardId,
-      );
-      if (result.success) {
-        const paths = { oldPath: result.oldPath ?? null, newPath: result.newPath ?? null };
-        if (fromTeardown) {
-          // File the rename onto the HOME board's stack (keyed by
-          // tile.boardId) so it's undoable. Thread
-          // `boardId` so the command's targetBoardId is the home board (a later
-          // cross-board Ctrl+Z auto-switches) and undo can fall back to the
-          // cache when the tile isn't on the active canvas.
-          historyStore.pushWithoutExecuteOnBoard(
-            new RenameTitleCommand(
-              tile.id, oldTitle, plain, oldTitleHtml, newTitleHtml, paths,
-              { boardId: tile.boardId },
-            ),
-            tile.boardId,
-          );
-        } else {
-          historyStore.pushWithoutExecute(
-            new RenameTitleCommand(
-              tile.id, oldTitle, plain, oldTitleHtml, newTitleHtml, paths,
-            ),
-          );
-        }
-      }
-    } else if (!fromTeardown) {
-      // Non-text tile: no backing file, just the title. RenameTitleCommand
-      // with null paths skips the IPC dance and only touches updateTile.
-      boardStore.updateTile(tile.id, { title: plain, titleHtml: newTitleHtml } as Partial<Tile>);
-      historyStore.pushWithoutExecute(
-        new RenameTitleCommand(tile.id, oldTitle, plain, oldTitleHtml, newTitleHtml),
-      );
+    const cmd = new UpdateTitleCommand({
+      tileId: tile.id,
+      boardId: tile.boardId,
+      notePath: tile.type === 'text' ? ((tile as TextTile).filePath ?? null) : null,
+      oldTitle: tile.title,
+      newTitle: plain,
+      oldTitleHtml,
+      newTitleHtml,
+    });
+    if (fromTeardown) {
+      await cmd.execute();
+      historyStore.pushWithoutExecuteOnBoard(cmd, tile.boardId);
     } else {
-      // Teardown commit for a non-text tile: cache write keyed by the home
-      // board — resolves whether or not that board is still the active one.
-      boardCacheStore.persistUpdateTile(
-        tile.id,
-        { title: plain, titleHtml: newTitleHtml } as Partial<Tile>,
-        tile.boardId,
-      );
+      await historyStore.execute(cmd).catch(() => {});
     }
   }
 
@@ -218,9 +176,7 @@
   // Mount the inline TipTap editor once the host div binds.
   $effect(() => {
     if (isEditing && titleEditorElement && !titleEditor) {
-      const initial = tile.titleHtml && tile.titleHtml.trim().length > 0
-        ? tile.titleHtml
-        : `<p>${escapeForInitial(tile.title)}</p>`;
+      const initial = visibleHtml ?? `<p>${escapeForInitial(tile.title)}</p>`;
       titleEditor = createLabelEditor({
         element: titleEditorElement,
         content: initial,
@@ -455,8 +411,7 @@
         let fileSnapshots: { rel: string; content: string }[] | undefined;
         let vaultRoot: string | undefined;
         if (deleteWithFile && hasVaultFile) {
-          const textTile = tileRef as TextTile;
-          const docId = textTile.contentId || tileId;
+          const docId = (tileRef as TextTile).contentId;
           vaultRoot = normalizePath(vaultStore.path);
           // Same flow as AppShell's multi-tile delete: pre-read the backing .md
           // so DeleteTilesCommand.undo() can rewrite it. The command itself
@@ -486,30 +441,8 @@
 
   function expandToDocument() {
     if (tile.type !== 'text') return;
-    const textTile = tile as TextTile;
-
-    const docId = textTile.contentId || tile.id;
-    const filename = `${tile.title || 'Untitled'}.md`;
-
-    // Only register a placeholder DocumentState when no existing state holds
-    // the doc — never seed with body='', which would overwrite a real body
-    // already loaded by a TextTile mount and risk wiping the .md file when
-    // the editor writes back. DocumentEditor.hydrateFromDisk reads disk on
-    // mount if body is missing, so the absent-body case is safe.
-    const existing = documentStore.getDocument(docId);
-    if (!existing) {
-      documentStore.loadDocument({
-        docId,
-        filename,
-        title: tile.title || 'Untitled',
-        body: '',
-        htmlContent: textTile.content || '',
-        richText: [],
-      });
-    }
-
-    documentStore.openDocumentTab(docId);
-    tabStore.open(docId, tile.title || 'Document', 'document');
+    const path = (tile as TextTile).filePath;
+    if (path) openNoteInDocumentTab(path);
   }
 
   // E.13 — header buttons stop propagation on `onclick` only so the

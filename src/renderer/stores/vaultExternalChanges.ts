@@ -7,7 +7,6 @@ import { boardStore } from './board.svelte';
 import { boardCacheStore } from './boardCache.svelte';
 import { uiStore } from './ui.svelte';
 import { classifyExternalChange } from '../lib/vault/conflictResolver';
-import { normalizeTags } from '../lib/vault/frontmatterSync';
 import { reportError } from '../lib/utils/errorBus';
 import { isPathPending, isRecentSelfWrite } from '../lib/boards/boardSaver';
 import { noteBaseline, getBaseline, hasBaselineDrifted } from '../lib/vault/fileBaselineRegistry';
@@ -242,8 +241,6 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
             // between classify and apply); the prompt-user branch handles
             // the deleted-file flow.
             if (!next) break;
-            boardStore.applyFrontmatterToBackedTiles(rel, next);
-            fileTagsStore.setFileTags(rel, normalizeTags(next.frontmatter.tags));
             // Refresh the live cache so the next writer assembles from the
             // disk-canonical frontmatter, not the stale in-memory snapshot.
             // Thread the post-sync `rawFrontmatter` so the source-preserving FM
@@ -270,8 +267,6 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
             // copy with disk. Requires `next` so we have the new body and
             // frontmatter to apply.
             if (!next) break;
-            boardStore.applyFrontmatterToBackedTiles(rel, next);
-            fileTagsStore.setFileTags(rel, normalizeTags(next.frontmatter.tags));
             if (editorDoc) {
               // Snapshot the pre-reload editor state before clobbering it. The
               // editor is clean, but a partial read that slipped past the

@@ -157,7 +157,7 @@ describe('Kanban field edit seeds FM from disk, not the stale index (Audit-6 M4)
   });
 
   function makeWriter() {
-    const tile = { id: 't1', type: 'text', contentId: 'doc1', title: 'Card', tags: [] } as unknown as Tile;
+    const tile = { id: 't1', type: 'text', contentId: 'doc1', title: 'Card', tags: [], filePath: 'Card.md' } as unknown as Tile;
     return makeKanbanFrontmatterWriter({
       getBoard: () => ({ id: 'kb', type: 'kanban', columns: [] }) as unknown as KanbanBoardType,
       getAllTilesById: () => ({ t1: tile }),
@@ -296,7 +296,7 @@ describe('Kanban field edit — whenChainSettled covers the in-flight seed (Audi
   });
 
   function makeWriter() {
-    const tile = { id: 't1', type: 'text', contentId: 'doc1', title: 'Card', tags: [] } as unknown as Tile;
+    const tile = { id: 't1', type: 'text', contentId: 'doc1', title: 'Card', tags: [], filePath: 'Card.md' } as unknown as Tile;
     return makeKanbanFrontmatterWriter({
       getBoard: () => ({ id: 'kb', type: 'kanban', columns: [] }) as unknown as KanbanBoardType,
       getAllTilesById: () => ({ t1: tile }),
@@ -402,7 +402,7 @@ describe('Audit-8 B1 — un-opened Kanban card field edit reaches disk (no docSt
   });
 
   function makeWriter() {
-    const tile = { id: 't1', type: 'text', contentId: 'doc1', title: 'Card', tags: [] } as unknown as Tile;
+    const tile = { id: 't1', type: 'text', contentId: 'doc1', title: 'Card', tags: [], filePath: 'Card.md' } as unknown as Tile;
     return makeKanbanFrontmatterWriter({
       getBoard: () => ({ id: 'kb', type: 'kanban', columns: [] }) as unknown as KanbanBoardType,
       getAllTilesById: () => ({ t1: tile }),

@@ -105,7 +105,7 @@ describe('A6 — canvas transform mutators reject non-finite inputs', () => {
 describe('A12 — V7BoardFileDataSchema preserves forward-compat envelope fields', () => {
   it('round-trips an unknown top-level field', () => {
     const envelope = {
-      version: 7 as const,
+      version: 8 as const,
       board: mindMapBoard,
       tileDefs: {},
       connections: {},

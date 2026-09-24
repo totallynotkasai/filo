@@ -1,6 +1,7 @@
 import type { TaskListBoard, TaskListSection, TaskPlacement, PartialTaskStyle, Tile, TileDefinition } from '../schema/index';
 import { TileDefinitionSchema } from '../schema/index';
 import type { CacheContext } from './boardCacheTypes';
+import { projectDef } from '../core/boardTileOps/projectTile';
 
 type PartialTaskSectionStyle = Record<string, unknown>;
 
@@ -48,7 +49,7 @@ export function makeTaskListSlice(ctx: CacheContext) {
         const def = defs[p.tileId];
         if (!def) continue;
         result[p.tileId] = {
-          ...def,
+          ...projectDef(def),
           position: { x: 0, y: 0 },
           size: { width: 240, height: 160 },
           locked: p.locked === true,

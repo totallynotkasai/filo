@@ -39,43 +39,7 @@ describe('boardSaver.writeBoardFile', () => {
   });
   afterEach(() => restoreFiloDefault());
 
-  it('strips text-tile .content so body text only lives in .md files', async () => {
-    installFiloMock({ 'board:save': captureBoardSave() });
-
-    const cached: V7BoardFileData = {
-      board: {
-        id: 'kb',
-        type: 'kanban',
-        name: 'K',
-        emoji: '',
-        createdAt: 0,
-        updatedAt: 0,
-        settings: {},
-        columns: [{ id: 'c1', title: 'A', position: 0, collapsed: false, tilePlacements: [{ tileId: 't1', position: 0 }] }],
-      } as unknown as V7BoardFileData['board'],
-      tileDefs: {
-        t1: {
-          id: 't1',
-          type: 'text',
-          title: 'Plan',
-          style: {} as never,
-          tags: [],
-          createdAt: 0,
-          updatedAt: 0,
-          content: 'leaked body text',
-        } as unknown as V7BoardFileData['tileDefs'][string],
-      },
-      connections: {},
-      frames: [],
-    };
-
-    await writeBoardFile('/vault', 'k.board.json', cached);
-    expect(lastBoardSavePayload).not.toBeNull();
-    const out = JSON.parse(lastBoardSavePayload!);
-    expect(out.tileDefs.t1.content).toBe('');
-  });
-
-  it('preserves tile tags on non-text tile defs (image)', async () => {
+  it('writes a media tile def verbatim (caption title, src)', async () => {
     installFiloMock({ 'board:save': captureBoardSave() });
 
     const cached: V7BoardFileData = {
@@ -101,7 +65,6 @@ describe('boardSaver.writeBoardFile', () => {
           title: 'Photo',
           src: 'attachments/i1/photo.jpg',
           style: {} as never,
-          tags: ['holiday', 'family'],
           createdAt: 0,
           updatedAt: 0,
         } as unknown as V7BoardFileData['tileDefs'][string],
@@ -112,7 +75,7 @@ describe('boardSaver.writeBoardFile', () => {
 
     await writeBoardFile('/vault', 'mm.board.json', cached);
     const out = JSON.parse(lastBoardSavePayload!);
-    expect(out.tileDefs.i1.tags).toEqual(['holiday', 'family']);
+    expect(out.tileDefs.i1).toMatchObject({ type: 'image', title: 'Photo', src: 'attachments/i1/photo.jpg' });
   });
 
   it('writes mind-map boards intact (placements, inlineTiles)', async () => {

@@ -157,7 +157,6 @@ function makeKanbanWithTextTile(): V7BoardFileData {
   const def: TileDefinition = {
     id: 't1',
     type: 'text',
-    title: 'Note',
     style: {
       headerColor: '#000',
       bodyColor: '#fff',
@@ -167,12 +166,12 @@ function makeKanbanWithTextTile(): V7BoardFileData {
       borderWidth: 1,
       shadowIntensity: 0.3,
     } as never,
-    tags: [],
     createdAt: 0,
     updatedAt: 0,
-    file: 'note.md',
-  } as TileDefinition;
+    filePath: 'note.md',
+  };
   return {
+    version: 8,
     board: {
       id: 'kb',
       type: 'kanban',

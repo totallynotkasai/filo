@@ -3,13 +3,12 @@ import { getTileTypeFromMime, getTileTypeFromExtension, createTile } from '../..
 import { vaultStore } from '../../stores/vault.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { framesStore } from '../../stores/frames.svelte';
-import { fileTagsStore } from '../../stores/fileTags.svelte';
 import { reportError } from '../utils/errorBus';
 import { isInsideVault, vaultRelativeFromAbsolute } from './vaultPath';
-import { buildTextTileDefFromMarkdownFile } from './markdownTileSeed';
+import { buildTextTileDefForNote } from './markdownTileSeed';
 import { copyFileIntoVault } from '../vault/vaultOperations';
 import type { TextTile, Tile } from '../../schema/index';
-import { getActiveContentFolder, getActiveContentFolderAbs } from '../vault/conventionPaths';
+import { getActiveContentFolderAbs } from '../vault/conventionPaths';
 import { historyStore } from '../../stores/history.svelte';
 import { AddTilesCommand } from '../../commands/index';
 // Pane-scoped, NOT the global board/canvas facades. A `drop` carries no
@@ -304,20 +303,12 @@ export function dragDropAction(node: HTMLElement, scope: BoardScope) {
 }
 
 /**
- * Creates a text tile from a .md file already in the vault.
- * The tile wraps the .md file — like Obsidian, the file is the source of truth.
- * If the .md has Filo frontmatter with an existing docId, it reuses that ID
- * so the new tile shares editor state with any other tile of the same file.
+ * Creates a text tile from a .md file already in the vault. The tile names the
+ * note by path; its title, tags and body stay in the file (like Obsidian, the
+ * file is the source of truth).
  *
- * On re-drop of a file that already has a representing tile on this board,
- * a non-blocking "Duplicate tile on Board" toast is emitted. The duplicate
- * is still created (intentional feature — `documentStore` syncs content via
- * `contentId`); the toast simply tells the user another tile already exists.
- *
- * The new tile receives an explicit `filePath` whenever the dropped file is
- * NOT at the board's convention path for the derived title. Without this
- * stamp, the next save would fall back to `${title}.md` at the convention
- * folder (vault root for mindmap) and recreate the file there.
+ * A re-drop of a file that already has a tile on this board still creates a
+ * tile (intentional — every view of one path shares one document).
  */
 async function createTextTileFromFile(
   boardScope: BoardScopeBoard,
@@ -333,51 +324,16 @@ async function createTextTileFromFile(
     return null;
   }
 
-  // Canonical two-arg form. Resolve to vault-relative
-  // first; the IPC handler joins it back onto the active vault root.
   const relPath = vaultRelativeFromAbsolute(filePath, vaultDir) || filePath;
-  const readResult = await window.filo.invoke('vault:read-file-text', vaultDir, relPath);
-  if (!readResult.success) {
-    uiStore.toast('Failed to read markdown file', 'error', 2000);
-    return null;
-  }
-
-  const rawContent = readResult.content;
-
-  const { def, tagFileKey } = buildTextTileDefFromMarkdownFile({
-    rawContent,
+  const { def } = buildTextTileDefForNote({
     vaultRelPath: relPath,
-    boardType: board?.type ?? null,
-    boardName: (board as { name?: string } | null)?.name,
-    kanbanFolder: (board as { kanbanFolder?: string } | null)?.kanbanFolder,
     existingTiles: Object.values(boardScope.tiles) as Array<TextTile>,
-    conventionFolderOverride: getActiveContentFolder(board),
   });
-
-  const overrides: Record<string, unknown> = {
-    contentId: (def as { contentId?: string }).contentId,
-    content: (def as { content?: string }).content,
-    title: def.title,
-  };
-  const explicitFilePath = (def as { filePath?: string }).filePath;
-  if (explicitFilePath) {
-    overrides.filePath = explicitFilePath;
-  }
-  if (def.tags.length > 0) {
-    overrides.tags = def.tags;
-  }
+  const overrides: Partial<Tile> = { filePath: def.filePath };
 
   const tile = createTile('text', position, boardId, overrides);
   boardScope.addTile(tile);
   framesStore.syncTileMembership(tile.id);
-
-  // Register the file's frontmatter tags in `.filo/tags.json` so the Tag
-  // Browser and TagBadge colour resolver are consistent with the new tile's
-  // badges. The key mirrors `resolveTextTileFilePath` (fileTags.svelte.ts)
-  // so subsequent TagEditor edits operate on the same entry.
-  if (def.tags.length > 0) {
-    fileTagsStore.setFileTags(tagFileKey, def.tags);
-  }
   return tile;
 }
 

@@ -8,6 +8,7 @@
    */
   import { onMount, onDestroy, untrack } from 'svelte';
   import { tabStore } from '../../stores/tabs.svelte';
+  import { openNoteInDocumentTab } from '../../lib/notes/openNote';
   import { documentStore } from '../../stores/document.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
   import { isNonUtf8 } from '../../lib/vault/nonUtf8Paths.svelte';
@@ -35,7 +36,6 @@
   } from '../../lib/vault/markdownFileWriter';
   import { reportError } from '../../lib/utils/errorBus';
   import { IpcEnvelopeError } from '@shared/ipcEnvelope';
-  import { createId } from '../../lib/utils/ids';
   import { effectiveDocumentStyle } from '../../lib/styles/effectiveStyle';
   import { vaultRelativeFromAbsolute } from '../../lib/canvas/vaultPath';
   import { portal } from '../../lib/utils/portal';
@@ -45,7 +45,6 @@
   import TagBadge from '../tags/TagBadge.svelte';
   import TagEditor from '../tags/TagEditor.svelte';
   import TagsPopupMenu from '../tags/TagsPopupMenu.svelte';
-  import type { BoardType } from '../../../shared/types';
   import type { DocumentBoard } from '../../schema/index';
   import type { Editor } from '@tiptap/core';
 
@@ -160,24 +159,7 @@
       const vaultDir = vaultStore.path;
       if (!vaultDir) return;
       const relPath = vaultRelativeFromAbsolute(payload.path, vaultDir) || payload.path;
-      const title = (payload.name ?? '').replace(/\.(md|markdown)$/i, '');
-      const existing = documentStore.findByFilename(relPath);
-      let newDocId: string;
-      if (existing) {
-        newDocId = existing.docId;
-      } else {
-        newDocId = createId();
-        documentStore.loadDocument({
-          docId: newDocId,
-          filename: relPath,
-          title,
-          body: '',
-          htmlContent: '',
-          richText: [],
-        });
-      }
-      documentStore.openDocumentTab(newDocId);
-      tabStore.open(newDocId, title, 'document' as BoardType);
+      openNoteInDocumentTab(relPath);
     } catch (err) {
       reportError('DocumentEditor.drop', err, 'Failed to open the dropped file');
     }
@@ -187,9 +169,9 @@
   //
   // A Document board edits a `.md` file. Its frontmatter `tags:` list is
   // canonical, but the editor doesn't surface those tags anywhere — surface
-  // a chip strip above the editor backed by `fileTagsStore.tagsForFile`;
-  // the file-path mode of TagEditor handles add/remove with the proper
-  // three-sink writes (frontmatter + .filo/tags.json + tile-defs).
+  // a chip strip above the editor backed by `fileTagsStore.tagsForFile`
+  // (the note's frontmatter); the file-path mode of TagEditor adds/removes
+  // tags in that frontmatter.
   let documentTags = $derived.by<string[]>(() => {
     const path = docState?.filename;
     if (!path) return [];

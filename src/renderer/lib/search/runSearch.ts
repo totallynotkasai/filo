@@ -32,6 +32,7 @@ import type { FileMetadata } from '../vault/vaultIndex';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { vaultStore } from '../../stores/vault.svelte';
+import { defTitle, mediaTags, noteTags } from '../../stores/noteMeta';
 
 /** Single match record surfaced to the Search panel + ReplaceAll command. */
 export interface SearchMatch {
@@ -112,30 +113,27 @@ function snippetAround(body: string, start: number, end: number): string {
 }
 
 /**
- * Resolves the backing `.md` file path for a tile def. Mirrors the helper
- * inside `tileCommands.getTileFileRef` but accepts a TileDefinition (board
- * cache shape) and a tile title (since `BoardSchema` carries the rest of
- * the placement). For text tiles, falls back to `${title}.md` when the
- * tile def lacks an explicit `filePath`.
+ * The file a tile def shows (its note, or its media file), or `null` for a
+ * board-only tile or an external URL.
  */
 function getDefFilePath(def: TileDefinition): string | null {
-  const d = def as TileDefinition & Record<string, unknown>;
-  if (def.type === 'text') {
-    const explicit = d.filePath as string | undefined;
-    if (explicit && explicit.length > 0) return explicit;
-    return def.title ? `${def.title}.md` : null;
-  }
-  if (def.type === 'file') {
-    const fp = d.filePath as string | undefined;
-    return fp && fp.length > 0 ? fp : null;
-  }
+  if (def.type === 'text' || def.type === 'file') return def.filePath || null;
   if (def.type === 'image' || def.type === 'video' || def.type === 'audio') {
-    const src = d.src as string | undefined;
+    const src = def.src;
     if (!src) return null;
     if (/^https?:\/\//i.test(src) || /^data:/i.test(src)) return null;
     return src;
   }
   return null;
+}
+
+/** A def's tags, read from where they live (note, tags.json, or the tile). */
+function getDefTags(def: TileDefinition, filePath: string | null): string[] {
+  if (def.type === 'text') return filePath ? noteTags(filePath) : [];
+  if (def.type === 'image' || def.type === 'video' || def.type === 'audio' || def.type === 'file') {
+    return filePath ? mediaTags(filePath) : [];
+  }
+  return def.tags ?? [];
 }
 
 /**
@@ -159,6 +157,9 @@ interface TileEnumeration {
   boardName: string;
   tileId: string;
   def: TileDefinition;
+  /** The tile's title and tags, read from where they live. */
+  title: string;
+  tags: string[];
   filePath: string | null;
   /** Pre-cached frontmatter for `property:` matching. */
   metadata: FileMetadata | null;
@@ -183,7 +184,7 @@ function enumerateTiles(): TileEnumeration[] {
     for (const [tileId, def] of Object.entries(data.tileDefs ?? {})) {
       const filePath = getDefFilePath(def);
       const metadata = filePath ? vaultIndexStore.getMetadata(filePath) : null;
-      out.push({ boardId, boardName, tileId, def, filePath, metadata });
+      out.push({ boardId, boardName, tileId, def, title: defTitle(def), tags: getDefTags(def, filePath), filePath, metadata });
     }
     // Inline tiles (link / iframe / timer) live on the mind-map board
     // itself, not in tileDefs. No backing file but they still need to be
@@ -191,7 +192,7 @@ function enumerateTiles(): TileEnumeration[] {
     if (data.board.type === 'mindmap') {
       const mm = data.board as { inlineTiles?: Record<string, TileDefinition> };
       for (const [tileId, def] of Object.entries(mm.inlineTiles ?? {})) {
-        out.push({ boardId, boardName, tileId, def, filePath: null, metadata: null });
+        out.push({ boardId, boardName, tileId, def, title: defTitle(def), tags: getDefTags(def, null), filePath: null, metadata: null });
       }
     }
   }
@@ -207,7 +208,7 @@ function enumerateTiles(): TileEnumeration[] {
 function tilePassesOperator(tile: TileEnumeration, op: OperatorFilter): boolean {
   switch (op.kind) {
     case 'tag': {
-      const tags = tile.metadata?.tags ?? tile.def.tags ?? [];
+      const tags = tile.tags;
       const needle = op.value.toLowerCase();
       return tags.some((t) => t.toLowerCase() === needle);
     }
@@ -331,22 +332,22 @@ export function runVaultSearch(query: ParsedQuery): { matches: SearchMatch[]; tr
     if (truncated) break;
 
     // 1) Title matches — every tile's title is independently searchable.
-    if (titleRegex && t.def.title) {
-      for (const off of matchOffsets(titleRegex, t.def.title)) {
+    if (titleRegex && t.title) {
+      for (const off of matchOffsets(titleRegex, t.title)) {
         if (matches.length >= MAX_MATCHES) { truncated = true; break; }
         matches.push({
           boardId: t.boardId,
           boardName: t.boardName,
           tileId: t.tileId,
-          tileTitle: t.def.title,
+          tileTitle: t.title,
           tileType: t.def.type,
           filePath: t.filePath,
           matchStart: off.start,
           matchEnd: off.end,
           matchText: off.text,
           matchKind: 'title',
-          snippet: snippetAround(t.def.title, off.start, off.end),
-          tags: t.metadata?.tags ?? t.def.tags ?? [],
+          snippet: snippetAround(t.title, off.start, off.end),
+          tags: t.tags,
         });
       }
     }
@@ -372,7 +373,7 @@ export function runVaultSearch(query: ParsedQuery): { matches: SearchMatch[]; tr
         boardId: t.boardId,
         boardName: t.boardName,
         tileId: t.tileId,
-        tileTitle: t.def.title,
+        tileTitle: t.title,
         tileType: t.def.type,
         filePath: t.filePath,
         matchStart: off.start,
@@ -380,7 +381,7 @@ export function runVaultSearch(query: ParsedQuery): { matches: SearchMatch[]; tr
         matchText: off.text,
         matchKind: 'body',
         snippet: snippetAround(t.metadata.content, off.start, off.end),
-        tags: t.metadata.tags,
+        tags: t.tags,
       });
     }
   }
@@ -394,14 +395,14 @@ function toTitleMatch(t: TileEnumeration, start: number, end: number, text: stri
     boardId: t.boardId,
     boardName: t.boardName,
     tileId: t.tileId,
-    tileTitle: t.def.title,
+    tileTitle: t.title,
     tileType: t.def.type,
     filePath: t.filePath,
     matchStart: start,
     matchEnd: end,
     matchText: text,
     matchKind: 'title',
-    snippet: t.def.title,
-    tags: t.metadata?.tags ?? t.def.tags ?? [],
+    snippet: t.title,
+    tags: t.tags,
   };
 }

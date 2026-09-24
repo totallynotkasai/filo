@@ -58,14 +58,35 @@ function makeTile(overrides: Partial<Tile> & { type?: string }): Tile {
     boardId: overrides.boardId ?? 'b1',
     createdAt: 1,
     updatedAt: 1,
-    contentId: (overrides as { contentId?: string }).contentId ?? 'c1',
+    filePath: (overrides as { filePath?: string }).filePath ?? `Notes/${overrides.id ?? 'tile-1'}.md`,
     content: (overrides as { content?: string }).content ?? '<p>private</p>',
     ...overrides,
   } as Tile;
 }
 
+/** Hands out `<title>.md`, bumping to ` (n)` like the real allocator. */
+function makeAllocator(): { allocateNotePath: (title: string) => string; calls: string[] } {
+  const calls: string[] = [];
+  const taken = new Set<string>();
+  return {
+    calls,
+    allocateNotePath: (title: string): string => {
+      calls.push(title);
+      let path = `${title}.md`;
+      for (let n = 2; taken.has(path); n++) path = `${title} (${n}).md`;
+      taken.add(path);
+      return path;
+    },
+  };
+}
+
 function emptyContext() {
-  return { anchor: { x: 0, y: 0 }, boardId: 'b', existingTitles: [] as string[] };
+  return {
+    anchor: { x: 0, y: 0 },
+    boardId: 'b',
+    existingTitles: [] as string[],
+    allocateNotePath: makeAllocator().allocateNotePath,
+  };
 }
 
 describe('captureLayoutTemplate', () => {
@@ -236,27 +257,33 @@ describe('instantiateLayoutTemplate', () => {
     expect((captured?.style as TileStyle).headerColor).toBe(baseStyle.headerColor);
   });
 
-  it('produces fresh ids for every tile across instantiations', () => {
+  it('produces fresh ids and asks for a new note path on every instantiation', () => {
     const tile = makeTile({ position: { x: 0, y: 0 } });
     const template = captureLayoutTemplate([tile], [], 'Once');
     const factory = makeFactory();
-    const first = instantiateLayoutTemplate(template, { ...emptyContext(), createTile: factory });
-    const second = instantiateLayoutTemplate(template, { ...emptyContext(), createTile: factory });
+    const alloc = makeAllocator();
+    const ctx = { ...emptyContext(), allocateNotePath: alloc.allocateNotePath, createTile: factory };
+    const first = instantiateLayoutTemplate(template, ctx);
+    const second = instantiateLayoutTemplate(template, ctx);
     expect(first.tiles[0].id).not.toBe(second.tiles[0].id);
-    const firstContent = first.tiles[0] as unknown as { contentId?: string };
-    const secondContent = second.tiles[0] as unknown as { contentId?: string };
-    expect(firstContent.contentId).not.toBe(secondContent.contentId);
+    expect(alloc.calls).toHaveLength(2);
+    const firstPath = (first.tiles[0] as unknown as { filePath?: string }).filePath;
+    const secondPath = (second.tiles[0] as unknown as { filePath?: string }).filePath;
+    expect(firstPath).toBeTypeOf('string');
+    expect(firstPath).not.toBe(secondPath);
   });
 
-  it('assigns distinct titles and distinct contentIds when source tiles had distinct contentIds', () => {
+  it('assigns distinct titles and distinct note paths when source tiles showed distinct notes', () => {
     const tiles: Tile[] = [
-      makeTile({ id: 'a', contentId: 'doc-a', position: { x: 0, y: 0 } }),
-      makeTile({ id: 'b', contentId: 'doc-b', position: { x: 100, y: 0 } }),
+      makeTile({ id: 'a', filePath: 'doc-a.md', position: { x: 0, y: 0 } } as Partial<Tile>),
+      makeTile({ id: 'b', filePath: 'doc-b.md', position: { x: 100, y: 0 } } as Partial<Tile>),
     ];
     const template = captureLayoutTemplate(tiles, [], 'TwoFiles');
     const captured: Array<Record<string, unknown>> = [];
+    const alloc = makeAllocator();
     instantiateLayoutTemplate(template, {
       ...emptyContext(),
+      allocateNotePath: alloc.allocateNotePath,
       createTile: (_t, _p, _b, overrides) => {
         captured.push(overrides ?? {});
         return makeFactory()(_t, _p, _b, overrides);
@@ -264,21 +291,23 @@ describe('instantiateLayoutTemplate', () => {
     });
     expect(captured[0].title).toBe('New Tile');
     expect(captured[1].title).toBe('New Tile 2');
-    expect(captured[0].contentId).toBeTypeOf('string');
-    expect(captured[1].contentId).toBeTypeOf('string');
-    expect(captured[0].contentId).not.toBe(captured[1].contentId);
+    expect(alloc.calls).toEqual(['New Tile', 'New Tile 2']);
+    expect(captured[0].filePath).toBe('New Tile.md');
+    expect(captured[1].filePath).toBe('New Tile 2.md');
   });
 
-  it('shares one fresh title and one fresh contentId when source tiles shared a contentId', () => {
+  it('shares one fresh title and one fresh note path when source tiles showed the same note', () => {
     const tiles: Tile[] = [
-      makeTile({ id: 'a', contentId: 'doc-shared', position: { x: 0, y: 0 } }),
-      makeTile({ id: 'b', contentId: 'doc-shared', position: { x: 100, y: 0 } }),
-      makeTile({ id: 'c', contentId: 'doc-shared', position: { x: 200, y: 0 } }),
+      makeTile({ id: 'a', filePath: 'doc-shared.md', position: { x: 0, y: 0 } } as Partial<Tile>),
+      makeTile({ id: 'b', filePath: 'doc-shared.md', position: { x: 100, y: 0 } } as Partial<Tile>),
+      makeTile({ id: 'c', filePath: 'doc-shared.md', position: { x: 200, y: 0 } } as Partial<Tile>),
     ];
     const template = captureLayoutTemplate(tiles, [], 'OneFile');
     const captured: Array<Record<string, unknown>> = [];
+    const alloc = makeAllocator();
     instantiateLayoutTemplate(template, {
       ...emptyContext(),
+      allocateNotePath: alloc.allocateNotePath,
       createTile: (_t, _p, _b, overrides) => {
         captured.push(overrides ?? {});
         return makeFactory()(_t, _p, _b, overrides);
@@ -287,14 +316,38 @@ describe('instantiateLayoutTemplate', () => {
     expect(captured[0].title).toBe('New Tile');
     expect(captured[1].title).toBe('New Tile');
     expect(captured[2].title).toBe('New Tile');
-    expect(captured[0].contentId).toBe(captured[1].contentId);
-    expect(captured[1].contentId).toBe(captured[2].contentId);
+    expect(alloc.calls).toEqual(['New Tile']);
+    expect(captured[0].filePath).toBe('New Tile.md');
+    expect(captured[1].filePath).toBe(captured[0].filePath);
+    expect(captured[2].filePath).toBe(captured[0].filePath);
+  });
+
+  it('never allocates a note path for a non-text tile', () => {
+    const timer = {
+      ...makeTile({ id: 'tm', position: { x: 0, y: 0 } }),
+      type: 'timer',
+      duration: 60,
+      mode: 'ms',
+    } as Tile;
+    const template = captureLayoutTemplate([timer], [], 'Tm');
+    const captured: Array<Record<string, unknown>> = [];
+    const alloc = makeAllocator();
+    instantiateLayoutTemplate(template, {
+      ...emptyContext(),
+      allocateNotePath: alloc.allocateNotePath,
+      createTile: (_t, _p, _b, overrides) => {
+        captured.push(overrides ?? {});
+        return makeFactory()(_t, _p, _b, overrides);
+      },
+    });
+    expect(alloc.calls).toEqual([]);
+    expect(captured[0].filePath).toBeUndefined();
   });
 
   it('numbers new titles past the highest existing "New Tile N" on the target board', () => {
     const tiles: Tile[] = [
-      makeTile({ id: 'a', contentId: 'doc-a', position: { x: 0, y: 0 } }),
-      makeTile({ id: 'b', contentId: 'doc-b', position: { x: 100, y: 0 } }),
+      makeTile({ id: 'a', filePath: 'doc-a.md', position: { x: 0, y: 0 } } as Partial<Tile>),
+      makeTile({ id: 'b', filePath: 'doc-b.md', position: { x: 100, y: 0 } } as Partial<Tile>),
     ];
     const template = captureLayoutTemplate(tiles, [], 'WithGaps');
     const captured: Array<Record<string, unknown>> = [];
@@ -302,6 +355,7 @@ describe('instantiateLayoutTemplate', () => {
       anchor: { x: 0, y: 0 },
       boardId: 'b',
       existingTitles: ['New Tile', 'New Tile 3', 'Other'],
+      allocateNotePath: makeAllocator().allocateNotePath,
       createTile: (_t, _p, _b, overrides) => {
         captured.push(overrides ?? {});
         return makeFactory()(_t, _p, _b, overrides);
@@ -311,16 +365,26 @@ describe('instantiateLayoutTemplate', () => {
     expect(captured[1].title).toBe('New Tile 5');
   });
 
-  it('records distinct contentGroup keys for distinct source contentIds (and a shared key when shared)', () => {
+  it('records distinct contentGroup keys for distinct source notes (and a shared key when shared)', () => {
     const tiles: Tile[] = [
-      makeTile({ id: 'a', contentId: 'doc-1', position: { x: 0, y: 0 } }),
-      makeTile({ id: 'b', contentId: 'doc-2', position: { x: 50, y: 0 } }),
-      makeTile({ id: 'c', contentId: 'doc-1', position: { x: 100, y: 0 } }),
+      makeTile({ id: 'a', filePath: 'Notes/doc-1.md', position: { x: 0, y: 0 } } as Partial<Tile>),
+      makeTile({ id: 'b', filePath: 'Notes/doc-2.md', position: { x: 50, y: 0 } } as Partial<Tile>),
+      makeTile({ id: 'c', filePath: 'Notes/doc-1.md', position: { x: 100, y: 0 } } as Partial<Tile>),
     ];
     const template = captureLayoutTemplate(tiles, [], 'Mixed');
     expect(template.tiles[0].contentGroup).toBeTypeOf('string');
     expect(template.tiles[0].contentGroup).toBe(template.tiles[2].contentGroup);
     expect(template.tiles[0].contentGroup).not.toBe(template.tiles[1].contentGroup);
+  });
+
+  it('leaves a text tile without a note, and non-text tiles, ungrouped', () => {
+    const tiles: Tile[] = [
+      makeTile({ id: 'a', filePath: '', position: { x: 0, y: 0 } } as Partial<Tile>),
+      { ...makeTile({ id: 'i', position: { x: 50, y: 0 } }), type: 'image', src: 'x.png' } as Tile,
+    ];
+    const template = captureLayoutTemplate(tiles, [], 'Ungrouped');
+    expect(template.tiles[0].contentGroup).toBeUndefined();
+    expect(template.tiles[1].contentGroup).toBeUndefined();
   });
 });
 
@@ -431,6 +495,7 @@ describe('captureLayoutTemplate — connections', () => {
       anchor: { x: 50, y: 50 },
       boardId: 'newBoard',
       existingTitles: [],
+      allocateNotePath: makeAllocator().allocateNotePath,
       createTile: makeFactory(),
     });
     expect(result.connections).toHaveLength(1);
@@ -452,6 +517,7 @@ describe('captureLayoutTemplate — connections', () => {
       anchor: { x: 0, y: 0 },
       boardId: 'b',
       existingTitles: [],
+      allocateNotePath: makeAllocator().allocateNotePath,
       createTile: makeFactory(),
     });
     expect(result.tiles).toHaveLength(1);

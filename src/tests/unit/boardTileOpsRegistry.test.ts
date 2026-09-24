@@ -37,9 +37,8 @@ function mkDef(id: string, title = id): TileDefinition {
   return {
     id,
     type: 'text',
-    title,
+    filePath: `${title}.md`,
     style: { headerColor: '#000', bodyColor: '#fff', borderColor: '' } as never,
-    tags: [],
     createdAt: 0,
     updatedAt: 0,
   } as unknown as TileDefinition;
@@ -141,8 +140,7 @@ function documentEnv(): V7BoardFileData {
       createdAt: 0,
       updatedAt: 0,
       settings: {},
-      contentId: 'doc-content',
-      content: '',
+      filePath: 'D.md',
     } as unknown as DocumentBoard,
     tileDefs: {},
     connections: {},
@@ -196,15 +194,19 @@ describe('boardTileOpsRegistry — exhaustive coverage', () => {
 
       boardCacheStore.persistUpdateTile('tile_a', {
         title: 'Renamed',
+        titleHtml: '<strong>Renamed</strong>',
         tags: ['urgent'],
         position: { x: 999, y: 999 },
       });
 
-      const def = boardCacheStore.cache.kb.tileDefs.tile_a as TileDefinition;
-      expect(def.title).toBe('Renamed');
-      expect(def.tags).toEqual(['urgent']);
+      const def = boardCacheStore.cache.kb.tileDefs.tile_a as unknown as Record<string, unknown>;
+      // The formatted title is board-owned; a text card's title and tags
+      // live in its note, so the def never stores them.
+      expect(def.titleHtml).toBe('<strong>Renamed</strong>');
+      expect(def.title).toBeUndefined();
+      expect(def.tags).toBeUndefined();
       // Position is a MindMap-only field; Kanban def shouldn't carry it.
-      expect((def as unknown as { position?: unknown }).position).toBeUndefined();
+      expect(def.position).toBeUndefined();
     });
 
     it('getFullTiles fuses defs with column placements', () => {
@@ -247,12 +249,15 @@ describe('boardTileOpsRegistry — exhaustive coverage', () => {
 
       boardCacheStore.persistUpdateTile('tile_a', {
         title: 'Renamed task',
+        titleHtml: '<em>Renamed task</em>',
         size: { width: 9999, height: 9999 },
       });
 
-      const def = boardCacheStore.cache.tl.tileDefs.tile_a as TileDefinition;
-      expect(def.title).toBe('Renamed task');
-      expect((def as unknown as { size?: unknown }).size).toBeUndefined();
+      const def = boardCacheStore.cache.tl.tileDefs.tile_a as unknown as Record<string, unknown>;
+      expect(def.titleHtml).toBe('<em>Renamed task</em>');
+      // A task's title lives in its note, never on the def.
+      expect(def.title).toBeUndefined();
+      expect(def.size).toBeUndefined();
     });
 
     it('getFullTiles fuses defs with task placements', () => {

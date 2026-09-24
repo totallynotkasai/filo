@@ -35,6 +35,7 @@ function makeTile(id: string): TextTile {
     tags: [],
     locked: false,
     faded: false,
+    filePath: `Notes/Tile ${id}.md`,
     contentId: `doc-${id}`,
     content: '',
     createdAt: 0,
@@ -50,10 +51,8 @@ function activate(tiles: TextTile[]): void {
     tileDefs[t.id] = {
       id: t.id,
       type: t.type,
-      title: t.title,
+      filePath: t.filePath,
       style: t.style,
-      tags: t.tags,
-      contentId: (t as TextTile).contentId,
       createdAt: 0,
       updatedAt: 0,
     };

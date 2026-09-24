@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   cascadeTagToBoardSettings,
-  iterateInlineTiles,
+  iterateBoardOnlyTiles,
   pushTagRewriteFailureToast,
 } from '@renderer/stores/fileTagsCascade.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
@@ -9,7 +9,7 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
-import type { KanbanBoard, Project } from '@renderer/schema/index';
+import type { KanbanBoard, MindMapBoard } from '@renderer/schema/index';
 
 /**
  * Audit-14 7.7 — focused DIRECT-unit coverage of the exports in
@@ -21,6 +21,7 @@ import type { KanbanBoard, Project } from '@renderer/schema/index';
 
 function makeKanbanWithViews(boardId: string, filterTags: string[]): V7BoardFileData {
   return {
+    version: 8,
     board: {
       id: boardId,
       type: 'kanban',
@@ -97,27 +98,50 @@ describe('fileTagsCascade.cascadeTagToBoardSettings (direct)', () => {
   });
 });
 
-describe('fileTagsCascade.iterateInlineTiles (direct)', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
+describe('fileTagsCascade.iterateBoardOnlyTiles (direct)', () => {
+  const STYLE = { headerColor: '', bodyColor: '', borderColor: '' };
+  beforeEach(() => boardCacheStore.clear());
+  afterEach(() => boardCacheStore.clear());
+
+  it('yields every board-only tile (link / iframe / timer defs and mind-map inline tiles) across every loaded board', () => {
+    const mindMap: V7BoardFileData = {
+      version: 8,
+      board: {
+        id: 'b1',
+        type: 'mindmap',
+        name: 'M',
+        emoji: '',
+        createdAt: 0,
+        updatedAt: 0,
+        settings: {},
+        placements: {},
+        inlineTiles: { i1: { id: 'i1', tags: ['x'] } },
+        waypoints: [],
+      } as unknown as MindMapBoard,
+      tileDefs: {
+        l1: { id: 'l1', type: 'link', title: 'L', tags: ['y'], url: 'https://e.x', style: STYLE, createdAt: 0, updatedAt: 0 },
+        // A note's tags live in its frontmatter, so a text tile is not board-only.
+        t1: { id: 't1', type: 'text', filePath: 'Note.md', style: STYLE, createdAt: 0, updatedAt: 0 },
+      } as unknown as V7BoardFileData['tileDefs'],
+      connections: {},
+      frames: [],
+    };
+    const kanban = makeKanbanWithViews('b2', []);
+    kanban.tileDefs = {
+      tm: { id: 'tm', type: 'timer', title: 'T', style: STYLE, createdAt: 0, updatedAt: 0 },
+    } as unknown as V7BoardFileData['tileDefs'];
+    boardCacheStore.hydrate({ b1: mindMap, b2: kanban }, { b1: 'm.board.json', b2: 'k.board.json' });
+
+    const yielded = [...iterateBoardOnlyTiles()].sort((a, b) => a.id.localeCompare(b.id));
+    expect(yielded).toEqual([
+      { boardId: 'b1', id: 'i1', tags: ['x'] },
+      { boardId: 'b1', id: 'l1', tags: ['y'] },
+      { boardId: 'b2', id: 'tm', tags: [] },
+    ]);
   });
 
-  it('yields every inline tile across every board in the project', () => {
-    // `iterateInlineTiles` reads `vaultStore.project` (a getter); stub it.
-    vi.spyOn(vaultStore, 'project', 'get').mockReturnValue({
-      boards: [
-        { id: 'b1', name: 'B', type: 'mindmap', emoji: '', inlineTiles: { i1: { id: 'i1', tags: ['x'] } } },
-        { id: 'b2', name: 'B2', type: 'mindmap', emoji: '', inlineTiles: { i2: { id: 'i2' } } },
-      ],
-    } as unknown as Project);
-
-    const ids = [...iterateInlineTiles()].map((t) => t.id);
-    expect(ids).toEqual(['i1', 'i2']);
-  });
-
-  it('yields nothing when there is no project', () => {
-    vi.spyOn(vaultStore, 'project', 'get').mockReturnValue(null);
-    expect([...iterateInlineTiles()]).toEqual([]);
+  it('yields nothing when no board is loaded', () => {
+    expect([...iterateBoardOnlyTiles()]).toEqual([]);
   });
 });
 

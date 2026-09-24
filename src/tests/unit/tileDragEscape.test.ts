@@ -11,7 +11,7 @@ import { tileDragAction } from '@renderer/lib/canvas/tileDrag';
 // it keeps the action operating on the same active scope.
 import { getActiveScope } from '@renderer/lib/boards/boardScope.svelte';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
-import type { MindMapBoard, Tile } from '@renderer/schema/index';
+import type { MindMapBoard, Tile, TileDefinition } from '@renderer/schema/index';
 
 /**
  * Phase 27 / A2 — Escape mid-drag cancels the move. Without this fix, a
@@ -50,18 +50,16 @@ function makeMindMapWithTile(): V7BoardFileData {
       t1: {
         id: 't1',
         type: 'text',
-        title: 'T',
-        contentId: 'doc_t1',
+        filePath: 'T.md',
         style: { headerColor: '', bodyColor: '', borderColor: '' },
         boardId: 'mm',
         position: { x: 100, y: 100 },
         size: { width: 200, height: 150 },
-        tags: [],
         createdAt: 0,
         updatedAt: 0,
         locked: false,
         faded: false,
-      } as unknown as Tile,
+      } as unknown as TileDefinition,
     },
     connections: {},
     frames: [],
@@ -230,6 +228,7 @@ describe('tileDragAction — Escape cancels in-flight drag', () => {
       type: 'text',
       title: 'T2',
       contentId: 'doc_t2',
+      filePath: 'T2.md',
       style: { headerColor: '', bodyColor: '', borderColor: '' },
       boardId: 'mm',
       position: { x: 300, y: 300 },

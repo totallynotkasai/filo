@@ -361,10 +361,9 @@ function commitVaultCandidate(
   // ── Hydrate dependent stores (each method accepts data directly) ──
   boardStore.hydrateCache(candidate.boardCache, candidate.boardPaths);
   // Mark every board the loader repaired on the way in dirty (markDirty is
-  // idempotent): displayIndex backfill, orphan/dup prune (bytes snapshotted to
-  // `.filo/recovery/`), boardId normalisation.
+  // idempotent): orphan/dup prune (bytes snapshotted to `.filo/recovery/`),
+  // boardId normalisation.
   const repairedBoardIds = [
-    ...candidate.backfilledBoardIds,
     ...candidate.prunedBoardIds,
     ...candidate.normalizedBoardIds,
   ];
@@ -467,21 +466,8 @@ function runPostCommitTasks(
   })();
 
   // ── 2. Vault-index rebuild + tags self-seed / orphan prune ───────
-  void vaultIndexStore.rebuild(fileTree).then(async () => {
-    // Reconcile every board's cached tile metadata (completed / priority /
-    // date) against the canonical frontmatter the index was just rebuilt
-    // from; the live event path only covers mid-session edits, so on-load
-    // drift would otherwise persist until the file is touched.
-    //
-    // Batched: one terminal setCache, no `updatedAt` stamp, microtask yields,
-    // and an mtime gate. The captured identity is threaded in so the batch
-    // bails before its own setCache if a swap lands mid-reconcile (the guard
-    // below runs too late for that).
-    await boardCacheStore.applyFrontmatterToBackedTilesBatch(
-      vaultIndexStore.allMetadata(),
-      identity,
-    );
-    // Vault-identity guard. The await above yields, so an A→B swap can leave
+  void vaultIndexStore.rebuild(fileTree).then(() => {
+    // Vault-identity guard. The rebuild yields, so an A→B swap can leave
     // `fileTree` pointing at B while `newVaultPath` is still A — pruning B's
     // tags against A's prefix would drop every entry and save them into B's
     // tags.json (`assertActiveVault` can't help: B is legitimately active).
@@ -512,8 +498,8 @@ function runPostCommitTasks(
       }
       return;
     }
-    // tags.json was empty — seed it from .md frontmatter discovered
-    // during the index rebuild.
+    // tags.json was empty — seed the tag registry from the frontmatter tags
+    // the index rebuild found. A note's tags themselves stay in its file.
     const seed = emptyTagsFile();
     let mutated = false;
     for (const md of vaultIndexStore.allMetadata()) {
@@ -522,7 +508,6 @@ function runPostCommitTasks(
         md.tags.map((t) => t.replace(/^#/, '').trim()).filter(Boolean),
       ));
       if (unique.length === 0) continue;
-      seed.fileTags[md.path] = unique;
       for (const t of unique) {
         if (!seed.tags[t]) seed.tags[t] = { color: '#3a86ff', createdAt: Date.now() };
       }

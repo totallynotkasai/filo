@@ -31,6 +31,7 @@ function uninstallFiloStub(): void {
 function validBoardFile(boardId = 'mindmap-1'): V7BoardFileData {
   const now = Date.now();
   return {
+    version: 8,
     board: {
       id: boardId,
       name: 'Alpha',
@@ -48,11 +49,8 @@ function validBoardFile(boardId = 'mindmap-1'): V7BoardFileData {
       tile_a: {
         id: 'tile_a',
         type: 'text',
-        title: 'Note',
-        tags: [],
+        filePath: 'notes/alpha.md',
         style: { headerColor: '#fff', bodyColor: '#fff', borderColor: '' },
-        contentId: 'doc_1',
-        src: 'notes/alpha.md',
         createdAt: now,
         updatedAt: now,
       } as V7BoardFileData['tileDefs'][string],
@@ -233,7 +231,7 @@ describe('Phase 17 — schema type safety', () => {
       const file = validBoardFile('m-nan');
       const board = file.board as unknown as { placements: Record<string, { x: number }> };
       board.placements.tile_a.x = NaN as unknown as number;
-      installFiloStub({ 'board:load': () => JSON.stringify(file) });
+      installFiloStub({ 'board:load': () => JSON.parse(JSON.stringify(file)) });
 
       const result = await loadBoard('/vault', 'nan.board.json');
       expect(result.ok).toBe(false);
@@ -249,7 +247,7 @@ describe('Phase 17 — schema type safety', () => {
       installFiloStub({
         'board:list': () => ['ok.board.json', 'bad.board.json'],
         'board:load': (_root: unknown, rel: unknown) =>
-          rel === 'ok.board.json' ? JSON.stringify(goodFile) : JSON.stringify(badFile),
+          rel === 'ok.board.json' ? JSON.parse(JSON.stringify(goodFile)) : JSON.parse(JSON.stringify(badFile)),
       });
 
       const result = await loadAllBoards('/vault');
@@ -264,13 +262,12 @@ describe('Phase 17 — schema type safety', () => {
   describe('H10 — unknown tile-def types are filtered with a toast', () => {
     it('TileDefinitionSchema parses every live type in TILE_TYPES', () => {
       const now = Date.now();
-      // Phase R5 — `TileDefinitionSchema` is now a discriminated union with
-      // per-variant required fields (e.g. text needs `contentId`, image
-      // needs `src`). Provide the minimum per-type payload so the parse
+      // `TileDefinitionSchema` is a discriminated union with per-variant
+      // required fields (e.g. text needs `filePath`, image needs `src`). Provide the minimum per-type payload so the parse
       // exercises the discriminator without spuriously failing on a
       // missing required field.
       const requiredFieldsByType: Record<typeof TILE_TYPES[number], Record<string, unknown>> = {
-        text: { contentId: 'doc_1' },
+        text: { filePath: 'T.md' },
         image: { src: '' },
         video: { src: '' },
         audio: { src: '' },
@@ -326,7 +323,7 @@ describe('Phase 17 — schema type safety', () => {
       // Envelope contract — `src/main/ipc/board.ipc.ts:360-371` returns
       // `{ ok: true, path }` / `{ ok: false, code?, error }`.
       installFiloStub({
-        'board:load': () => JSON.stringify(file),
+        'board:load': () => JSON.parse(JSON.stringify(file)),
         'recovery:snapshot': () => ({ ok: true, path: '.filo/recovery/cal.board.json' }),
       });
 
@@ -386,7 +383,7 @@ describe('Phase 17 — schema type safety', () => {
       // Stub a successful snapshot so the load proceeds to the prune.
       // Envelope contract — see `board.ipc.ts:360-371`.
       installFiloStub({
-        'board:load': () => JSON.stringify(file),
+        'board:load': () => JSON.parse(JSON.stringify(file)),
         'recovery:snapshot': () => ({ ok: true, path: '.filo/recovery/dup.board.json' }),
       });
 
@@ -400,7 +397,7 @@ describe('Phase 17 — schema type safety', () => {
 
     it('loadBoard reports droppedTileTypes: [] when every def is known', async () => {
       const file = validBoardFile('m-clean');
-      installFiloStub({ 'board:load': () => JSON.stringify(file) });
+      installFiloStub({ 'board:load': () => JSON.parse(JSON.stringify(file)) });
       const result = await loadBoard('/vault', 'clean.board.json');
       expect(result.ok).toBe(true);
       if (result.ok) {

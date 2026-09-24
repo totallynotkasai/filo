@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   fileNameSafe,
   nextUniqueMdPath,
-  titleFromRelPath,
   normalizeRootFolder,
   getActiveContentFolder,
   getActiveContentFolderAbs,
@@ -10,15 +9,14 @@ import {
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { Board } from '@renderer/schema/index';
 
-function cacheWithTitles(titles: string[], _folder = ''): Record<string, V7BoardFileData> {
+function cacheWithPaths(paths: string[]): Record<string, V7BoardFileData> {
   const tileDefs: Record<string, Record<string, unknown>> = {};
-  titles.forEach((t, i) => {
+  paths.forEach((filePath, i) => {
     tileDefs[`t${i}`] = {
       id: `t${i}`,
       type: 'text',
-      title: t,
+      filePath,
       style: {},
-      tags: [],
       createdAt: 0,
       updatedAt: 0,
     };
@@ -35,22 +33,27 @@ function cacheWithTitles(titles: string[], _folder = ''): Record<string, V7Board
 
 describe('conventionPaths', () => {
   describe('fileNameSafe', () => {
-    it('strips illegal filename characters', () => {
-      expect(fileNameSafe('a<b>c:d|e?f*g')).toBe('abcdefg');
+    it('replaces illegal filename characters with "-"', () => {
+      expect(fileNameSafe('a<b>c:d|e?f*g')).toBe('a-b-c-d-e-f-g');
+      expect(fileNameSafe('What? / Why')).toBe('What- - Why');
+      expect(fileNameSafe('///')).toBe('---');
+    });
+
+    it('replaces control characters (tab, newline) with "-"', () => {
+      expect(fileNameSafe('a\tb\nc')).toBe('a-b-c');
     });
 
     it('collapses whitespace runs into single spaces', () => {
-      expect(fileNameSafe('  hello\t  world  \n')).toBe('hello world');
+      expect(fileNameSafe('  hello    world  ')).toBe('hello world');
     });
 
     it('returns "Untitled" for empty inputs', () => {
       expect(fileNameSafe('')).toBe('Untitled');
       expect(fileNameSafe('   ')).toBe('Untitled');
-      expect(fileNameSafe('///')).toBe('Untitled');
     });
 
-    // Audit-19 ERR-2 — a trailing dot/space would build `Call Bob..md`
-    // (rejected by main, stripped by Windows).
+    // A trailing dot/space would build `Call Bob..md` (rejected by main,
+    // stripped by Windows).
     it('strips trailing dots and spaces', () => {
       expect(fileNameSafe('Call Bob.')).toBe('Call Bob');
       expect(fileNameSafe('...')).toBe('Untitled');
@@ -61,38 +64,38 @@ describe('conventionPaths', () => {
 
   describe('nextUniqueMdPath', () => {
     it('returns the base path when no collision exists', () => {
-      const cache = cacheWithTitles([]);
+      const cache = cacheWithPaths([]);
       expect(nextUniqueMdPath(cache, '', 'Note')).toBe('Note.md');
     });
 
     it('appends "(2)" on first collision', () => {
-      const cache = cacheWithTitles(['Note']);
+      const cache = cacheWithPaths(['Note.md']);
       expect(nextUniqueMdPath(cache, '', 'Note')).toBe('Note (2).md');
     });
 
     it('finds the lowest available "(N)" suffix', () => {
-      const cache = cacheWithTitles(['Note', 'Note (2)', 'Note (4)']);
+      const cache = cacheWithPaths(['Note.md', 'Note (2).md', 'Note (4).md']);
       expect(nextUniqueMdPath(cache, '', 'Note')).toBe('Note (3).md');
     });
 
     it('honours the folder prefix', () => {
-      const cache = cacheWithTitles(['Note']);
+      const cache = cacheWithPaths(['Kanban/Tasks/Note.md']);
       expect(nextUniqueMdPath(cache, 'Kanban/Tasks', 'Note')).toBe('Kanban/Tasks/Note (2).md');
     });
 
+    it('a same-named note in another folder is not a collision', () => {
+      const cache = cacheWithPaths(['Note.md']);
+      expect(nextUniqueMdPath(cache, 'Kanban/Tasks', 'Note')).toBe('Kanban/Tasks/Note.md');
+    });
+
     it('treats empty folder as vault root', () => {
-      const cache = cacheWithTitles(['Note']);
+      const cache = cacheWithPaths(['Note.md']);
       expect(nextUniqueMdPath(cache, '', 'Note (2)')).toBe('Note (2).md');
     });
-  });
 
-  describe('titleFromRelPath', () => {
-    it('strips the folder prefix and .md suffix', () => {
-      expect(titleFromRelPath('Tasks/Buy milk.md', 'Tasks')).toBe('Buy milk');
-    });
-
-    it('handles empty folder', () => {
-      expect(titleFromRelPath('Note.md', '')).toBe('Note');
+    it('compares case-insensitively and folds in extra taken paths', () => {
+      const cache = cacheWithPaths(['note.md']);
+      expect(nextUniqueMdPath(cache, '', 'Note', ['Note (2).md'])).toBe('Note (3).md');
     });
   });
 
@@ -138,9 +141,6 @@ describe('conventionPaths', () => {
     }
 
     // No vault open in any test here, so vaultStore.activeRootFolder returns ''.
-    // Vault-wide vs per-board precedence is covered separately in
-    // fileRefIntegrity.test.ts (the cascade logic is exercised end-to-end via
-    // detectBrokenRefs there).
 
     it('returns empty string when no board is provided', () => {
       expect(getActiveContentFolder(null)).toBe('');

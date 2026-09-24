@@ -166,17 +166,7 @@
 
   let contentId = $derived((tile as Tile & { contentId?: string }).contentId ?? '');
 
-  let backingPath = $derived.by(() => {
-    void documentStore.frontmatterVersion;
-    const t = tile as Tile & { contentId?: string; filePath?: string; file?: string };
-    if (t.contentId) {
-      const doc = documentStore.getDocument(t.contentId);
-      if (doc?.filename) return doc.filename;
-    }
-    if (t.filePath) return t.filePath;
-    if (t.file) return t.file;
-    return resolveTextTileVaultPath(tile, tile.boardId) ?? `${tile.title || 'Untitled'}.md`;
-  });
+  let backingPath = $derived(resolveTextTileVaultPath(tile) ?? '');
 
   let rawBody = $derived.by(() => {
     void documentStore.frontmatterVersion;

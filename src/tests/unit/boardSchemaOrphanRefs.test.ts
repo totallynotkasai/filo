@@ -17,7 +17,7 @@ import { V7BoardFileDataSchema } from '@renderer/schema/index';
 
 function mindmapEnvelope() {
   return {
-    version: 7,
+    version: 8,
     board: {
       id: 'mm',
       type: 'mindmap' as const,
@@ -53,10 +53,8 @@ function mindmapEnvelope() {
       tile_a: {
         id: 'tile_a',
         type: 'text' as const,
-        title: 'A',
-        tags: [],
+        filePath: 'A.md',
         style: { headerColor: '#fff', bodyColor: '#fff' },
-        contentId: 'doc_a',
         createdAt: 0,
         updatedAt: 0,
       },
@@ -175,7 +173,7 @@ describe('V7BoardFileDataSchema — orphan-ref cross-check (P1.6)', () => {
     // `board.type === 'mindmap'`. A Kanban board's tileDefs is the only
     // validity source, so an inline-shaped tile ID is an orphan.
     const env = {
-      version: 7,
+      version: 8,
       board: {
         id: 'kb',
         type: 'kanban' as const,
@@ -198,10 +196,8 @@ describe('V7BoardFileDataSchema — orphan-ref cross-check (P1.6)', () => {
         tile_a: {
           id: 'tile_a',
           type: 'text' as const,
-          title: 'A',
-          tags: [],
+          filePath: 'A.md',
           style: { headerColor: '#fff', bodyColor: '#fff' },
-          contentId: 'doc_a',
           createdAt: 0,
           updatedAt: 0,
         },

@@ -510,7 +510,7 @@ describe('Audit-16 4.8 — a self-write echo diverging under a newer queued writ
     noteBaseline(REL, 1, 10);
     installFiloMock({
       'vault:stat': () => ({ ok: true, success: true, mtimeMs: 2, size: 11 }),
-      'board:load': () => JSON.stringify(makeBoard('from-disk')),
+      'board:load': () => ({ version: 8, ...makeBoard('from-disk') }),
     });
   });
 

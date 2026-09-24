@@ -98,9 +98,7 @@
     return out;
   }
 
-  // Delegate to the canonical resolver so a subfolder tile's explicit
-  // `filePath` wins over the `${title}.md` root fallback — otherwise the edit
-  // targets the wrong root path (ENOENT, or an unrelated same-named root file).
+  // The tile's note path (its `filePath`), or null for a non-text tile.
   function vaultRelativePath(t: Tile): string | null {
     return resolveTextTileVaultPath(t);
   }
@@ -113,7 +111,7 @@
       //   1. documentStore live cache — set by whichever writer last touched
       //      the file (TextTile / DocumentEditor / TaskListBoard).
       //   2. vaultIndexStore — the disk-canonical snapshot from the watcher.
-      //   3. Empty — legacy tiles with no backing file.
+      //   3. Empty — a note that isn't on disk (yet).
       // The popup is then the canonical authority during its open session;
       // its writes overwrite the cache, so the user's view is always what
       // gets persisted.

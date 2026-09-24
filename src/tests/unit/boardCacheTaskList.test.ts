@@ -47,11 +47,10 @@ function defOf(id: string, title: string): TileDefinition {
   return {
     id,
     type: 'text',
-    title,
-    // TileStyleSchema requires the full style block — used to be `{}` here
-    // because Zod validation wasn't applied to placement adds. After the
-    // H2-parity audit, `persistAddTaskPlacement` rejects invalid defs. R5
-    // additionally requires `contentId` on the text variant.
+    // No frontmatter behind it, so the task's title is the filename stem.
+    filePath: `${title}.md`,
+    // `persistAddTaskPlacement` safeParses the def, so it needs the style
+    // block's required colours and the text variant's `filePath`.
     style: {
       headerColor: '#000',
       bodyColor: '#fff',
@@ -61,9 +60,6 @@ function defOf(id: string, title: string): TileDefinition {
       borderWidth: 1,
       shadowIntensity: 0.3,
     } as never,
-    tags: [],
-    contentId: `doc_${id}`,
-    content: '',
     createdAt: 0,
     updatedAt: 0,
   } as TileDefinition;

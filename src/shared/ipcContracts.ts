@@ -208,8 +208,8 @@ export interface IpcChannelMap {
   'board:load': {
     args: [vaultRoot: string, relPath: string];
     /**
-     * `data` is the parsed board object (legacy double-encoded files are
-     * unwrapped main-side). Failures carry a typed `code`: ENOENT / LOCKED / OFFLINE / TOO_LARGE / PARSE / IO / NO_ACTIVE_VAULT.
+     * `data` is the parsed board JSON (version and shape are checked by the
+     * renderer). Failures carry a typed `code`: ENOENT / LOCKED / OFFLINE / TOO_LARGE / PARSE / IO / NO_ACTIVE_VAULT.
      */
     result: IpcSuccess<{ data: unknown }>;
   };
@@ -245,7 +245,7 @@ export interface IpcChannelMap {
     args: [vaultRoot: string];
     result: Array<{ relPath: string; basename: string; timestamp: string }>;
   };
-  // Per-machine sentinels in `.filo/` (own, foreign, legacy).
+  // Per-machine sentinels in `.filo/` (own and foreign).
   'recovery:list-sentinels': {
     args: [vaultRoot: string];
     result: IpcSuccess<{

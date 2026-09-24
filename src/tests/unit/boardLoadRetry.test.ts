@@ -14,7 +14,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
  */
 
 const board = {
-  version: 7,
+  version: 8,
   board: {
     id: 'b1', type: 'mindmap', name: 'Plan', emoji: '', createdAt: 0, updatedAt: 0,
     settings: {}, placements: {}, inlineTiles: {}, waypoints: [],

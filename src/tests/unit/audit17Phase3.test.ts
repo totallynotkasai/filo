@@ -636,10 +636,10 @@ describe('Audit-17 3.8 — recovery snapshots flatten the rel path into the file
   it('sentinel snapshots stay filtered from the listing under flattened names', async () => {
     const subdir = join(vaultRoot, '.filo', 'recovery', '2026-03-01T00-00-00.000');
     await fs.mkdir(subdir, { recursive: true });
-    // A flattened sentinel snapshot (post-fix shape), a legacy bare one, and
-    // a genuine user-file snapshot.
-    await fs.writeFile(join(subdir, '.filo__.dirty'), '{}', 'utf-8');
-    await fs.writeFile(join(subdir, '.dirty'), '{}', 'utf-8');
+    // A flattened sentinel snapshot, a bare-basename one, and a genuine
+    // user-file snapshot.
+    await fs.writeFile(join(subdir, '.filo__.dirty.aaaaaaaaaaaa'), '{}', 'utf-8');
+    await fs.writeFile(join(subdir, '.dirty.aaaaaaaaaaaa'), '{}', 'utf-8');
     await fs.writeFile(join(subdir, 'folderA__Notes.md'), 'user bytes', 'utf-8');
 
     const listed = await listRecoverySnapshots(vaultRoot);

@@ -481,18 +481,6 @@ export const KanbanBoardSchema = BaseBoardSchema.extend({
   type: z.literal('kanban'),
   settings: KanbanSettingsSchema.prefault({}),
   columns: z.array(KanbanColumnSchema).default(() => []).refine(...uniqueBy('id', 'columns')),
-  /**
-   * Frozen on-disk folder name where this Kanban board's
-   * cards live. Set once at board create-time to the sanitised board name;
-   * renaming the board afterwards leaves this untouched, so the existing
-   * `Kanban/<original-name>/<card>.md` files stay resolvable.
-   *
-   * Legacy boards (field absent on disk) fall back to the name-derived
-   * `Kanban/<sanitize(name)>` convention via `getConventionFolderForBoardType`'s
-   * fallback branch. Migration is opportunistic — the field gets seeded by
-   * the next board save once the user touches the board.
-   */
-  kanbanFolder: z.string().optional(),
 }).passthrough();
 
 /**
@@ -544,8 +532,8 @@ export const TaskListBoardSchema = BaseBoardSchema.extend({
 export const DocumentBoardSchema = BaseBoardSchema.extend({
   type: z.literal('document'),
   settings: DocumentSettingsSchema.prefault({}),
-  contentId: z.string(), // shared content ID (links to text tile content)
-  content: z.string().default(''),
+  // Vault-relative path of the note this board shows. The body lives there.
+  filePath: z.string(),
 }).passthrough();
 
 /**

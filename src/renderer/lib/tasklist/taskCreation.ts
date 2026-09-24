@@ -18,6 +18,8 @@ import { createId } from '../utils/ids';
 import { assembleMarkdownFile } from '../editor/markdownSync';
 import { markHydrated } from '../vault/markdownFileWriter';
 import { createUniqueMdFile } from '../vault/createMdExclusive';
+import { noteIdFor } from '../../stores/noteIds';
+import { noteTitle } from '../../stores/noteMeta';
 import { reportError } from '../utils/errorBus';
 import { sectionIdForPlacementIndex } from './sectionMath';
 import { getTaskDepth } from './blockMove';
@@ -37,11 +39,6 @@ import type { TaskRow } from '../tasks/taskListModel';
  * see the live board / sections / rows state without capturing stale
  * snapshots. Mirrors `kanbanTileCreation.ts`.
  */
-
-/** Wrapper around the lib helper so callers don't pass the board cache. */
-export function nextUniqueMdPath(folder: string, baseName: string): string {
-  return nextFreeMdPathLib(boardCacheStore.cache, folder, baseName);
-}
 
 function buildBaseTileStyle() {
   const fs = defaultTaskFontSizes();
@@ -77,9 +74,8 @@ export interface TaskCreator {
 }
 
 interface SeedFileArgs {
-  contentId: string;
   relPath: string;
-  finalTitle: string;
+  title: string;
   folder: string;
   fm: Record<string, unknown> | null;
 }
@@ -104,8 +100,7 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     const taken = new Set<string>();
     for (const data of Object.values(boardCacheStore.cache)) {
       for (const def of Object.values(data.tileDefs)) {
-        const d = def as Record<string, unknown>;
-        if (d.type === 'text' && typeof d.title === 'string') taken.add(d.title);
+        if (def.type === 'text') taken.add(noteTitle(def.filePath));
       }
     }
     return taken;
@@ -147,15 +142,16 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     return sortedLive[idx + 1]?.position ?? placements.length;
   }
 
-  // Shared seed routine: writes the `.md`, hydrates the documentStore, and
-  // (for non-null `fm`) caches the frontmatter so the row builder doesn't
-  // lag the watcher. Resolves the path + title it ACTUALLY created (the
-  // create-exclusive helper bumps to ` (n)` if the pre-pick exists).
+  // Shared seed routine: writes the `.md` (with `title:` first), hydrates the
+  // documentStore, and caches the frontmatter so the row builder doesn't lag
+  // the watcher. Resolves the path it ACTUALLY created (the create-exclusive
+  // helper bumps to ` (n)` if the pre-pick exists).
   async function seedMdFile(args: SeedFileArgs, kindForError: string): Promise<SeededFile | void> {
     const vaultRoot = vaultStore.path;
     if (!vaultRoot) return;
-    const { contentId, fm, folder } = args;
-    const seedFile = fm ? assembleMarkdownFile(fm, '') : '---\ncompleted: false\n---\n';
+    const { title, folder } = args;
+    const fm: Record<string, unknown> = { title, ...(args.fm ?? { completed: false }) };
+    const seedFile = assembleMarkdownFile(fm, '');
     // The backing `.md` write is CRITICAL: let a failure PROPAGATE so the
     // chained `AddTaskCommand.execute()` rolls its placement back (no orphan
     // board row referencing a missing file). The helper routes the failure
@@ -164,12 +160,11 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     const created = await createUniqueMdFile({
       vaultRoot,
       folder,
-      baseName: args.finalTitle,
+      baseName: fileNameSafe(title),
       firstCandidate: args.relPath,
       buildContent: () => seedFile,
     });
     const relPath = created.relPath;
-    const finalTitle = created.finalTitle;
     // Post-write hydration is best-effort — the file IS on disk now, so the row
     // is valid; a lagging index / doc-load just hydrates lazily on the next edit.
     // A failure here must NOT roll the placement back (hence its own try/catch).
@@ -178,18 +173,18 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
       // gateway accepts subsequent writes (from TextTile, PropertiesPopup,
       // etc.) without throwing — the file existed before the next edit.
       markHydrated(relPath, false);
-      // `def.filePath` is stamped in buildTaskDef (pre-clone), not here.
-      // `DocumentState.body` is body-only; the seed is a
-      // frontmatter-only FILE with an empty body, so the store body is ''.
+      // `DocumentState.body` is body-only; the seed is a frontmatter-only FILE
+      // with an empty body, so the store body is ''.
+      const docId = noteIdFor(relPath);
       documentStore.loadDocument({
-        docId: contentId,
+        docId,
         filename: relPath,
-        title: finalTitle,
+        title,
         body: '',
         htmlContent: '',
         richText: [],
       });
-      if (fm) documentStore.setFrontmatter(contentId, fm);
+      documentStore.setFrontmatter(docId, fm);
       // Pre-warm the vault index so the row builder (which sources fields
       // via vaultIndexStore) doesn't lag behind the watcher debounce.
       await vaultIndexStore.applyChanges([relPath]);
@@ -197,43 +192,30 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
       reportError(
         'tasklist.seed-md',
         err,
-        `Backing file for "${finalTitle}" (${kindForError}) was created, but post-write setup lagged — it should recover on the next edit`,
+        `Backing file for "${title}" (${kindForError}) was created, but post-write setup lagged — it should recover on the next edit`,
       );
     }
-    return { relPath, title: finalTitle };
+    return { relPath, title };
   }
 
   function buildTaskDef(args: {
     title: string;
     folder: string;
-    extraFm: Record<string, unknown> | null;
-    tags?: string[];
-  }): { def: TileDefinition; contentId: string; relPath: string; finalTitle: string } {
+  }): { def: TileDefinition; relPath: string; title: string } {
     const now = Date.now();
-    const tileId = createId();
-    const contentId = createId();
-    const baseSafe = fileNameSafe(args.title);
-    const relPath = nextUniqueMdPath(args.folder, baseSafe);
-    const finalTitle = relPath
-      .slice(args.folder ? args.folder.length + 1 : 0)
-      .replace(/\.md$/, '');
-    const def: TileDefinition = {
-      id: tileId,
-      type: 'text',
-      title: finalTitle,
-      style: buildBaseTileStyle(),
-      tags: args.tags ?? [],
-      createdAt: now,
-      updatedAt: now,
-    } as TileDefinition;
-    (def as Record<string, unknown>).contentId = contentId;
-    (def as Record<string, unknown>).content = '';
     // Bake `filePath` into the def HERE, before AddTaskCommand's ctor
     // deep-clones it — stamping later would mutate an object the cache never
-    // sees, so the persisted row would lack `filePath` and a cold-load field/tag
-    // write for a subfolder task would hit the wrong file.
-    (def as Record<string, unknown>).filePath = relPath;
-    return { def, contentId, relPath, finalTitle };
+    // sees. The seed may still bump the name; the command re-stamps then.
+    const relPath = nextFreeMdPathLib(boardCacheStore.cache, args.folder, fileNameSafe(args.title));
+    const def: TileDefinition = {
+      id: createId(),
+      type: 'text',
+      style: buildBaseTileStyle(),
+      createdAt: now,
+      updatedAt: now,
+      filePath: relPath,
+    };
+    return { def, relPath, title: args.title };
   }
 
   // Carries the stable target section id across the async seed window;
@@ -247,11 +229,7 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     const board = getBoard();
     if (!board) return;
     const folder = getActiveContentFolder(board);
-    const { def, contentId, relPath, finalTitle } = buildTaskDef({
-      title: nextDefaultTitle(),
-      folder,
-      extraFm: null,
-    });
+    const { def, relPath, title } = buildTaskDef({ title: nextDefaultTitle(), folder });
     // The `.md` seed is folded INTO AddTaskCommand.execute() (its last
     // argument), which persists the placement synchronously FIRST and then
     // awaits the seed — all on the history chain, so save()/quit cover the seed
@@ -263,12 +241,12 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     // rolls the placement back). The failure announcement gives SR users parity
     // with the visual error toast.
     const cmd = new AddTaskCommand(board.id, def, insertPos, undefined, targetSectionId ?? undefined, () =>
-      seedMdFile({ contentId, relPath, finalTitle, folder, fm: null }, 'new task'),
+      seedMdFile({ relPath, title, folder, fm: null }, 'new task'),
     );
     const ok = await historyStore.execute(cmd).then(() => true, () => false);
     tickAndPersist();
     if (ok) announce(`Task added: ${cmd.currentTitle}`);
-    else announce(`Adding task failed: ${finalTitle} — see the error notification`);
+    else announce(`Adding task failed: ${title} — see the error notification`);
   }
 
   async function addTaskToSection(sectionId: string | null): Promise<void> {
@@ -308,12 +286,7 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     if (!title) return;
 
     const folder = getActiveContentFolder(board);
-    const { def, contentId, relPath, finalTitle } = buildTaskDef({
-      title,
-      folder,
-      extraFm: null,
-      tags: parsed.tags.length > 0 ? [...parsed.tags] : [],
-    });
+    const { def, relPath } = buildTaskDef({ title, folder });
 
     const fm: Record<string, unknown> = { completed: false };
     if (parsed.priority) fm.priority = parsed.priority;
@@ -349,13 +322,13 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
 
     // Success announcement gated on the chain resolving (see createTaskInSection).
     const cmd = new AddTaskCommand(board.id, def, insertPos, undefined, resolvedTargetId ?? undefined, () =>
-      seedMdFile({ contentId, relPath, finalTitle, folder, fm }, 'quick-add task'),
+      seedMdFile({ relPath, title, folder, fm }, 'quick-add task'),
     );
     const ok = await historyStore.execute(cmd).then(() => true, () => false);
     tickAndPersist();
     if (resolvedTargetId) setLastTargetedSectionId(resolvedTargetId);
     if (ok) announce(`Task added from quick add: ${cmd.currentTitle}`);
-    else announce(`Adding task failed: ${finalTitle} — see the error notification`);
+    else announce(`Adding task failed: ${title} — see the error notification`);
   }
 
   async function addSubtaskFor(parentTileId: string): Promise<void> {
@@ -369,11 +342,7 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
       return;
     }
     const folder = getActiveContentFolder(board);
-    const { def, contentId, relPath, finalTitle } = buildTaskDef({
-      title: nextSubtaskTitle(parentTileId),
-      folder,
-      extraFm: null,
-    });
+    const { def, relPath, title } = buildTaskDef({ title: nextSubtaskTitle(parentTileId), folder });
 
     const fm: Record<string, unknown> = { completed: false, parent: parentTileId };
 
@@ -389,7 +358,7 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     const parentSection = parentIdx >= 0 ? sectionIdForPlacementIndex(sectionsNow, parentIdx) : null;
     // Success announcement gated on the chain resolving (see createTaskInSection).
     const cmd = new AddTaskCommand(board.id, def, insertAt, undefined, parentSection ?? undefined, () =>
-      seedMdFile({ contentId, relPath, finalTitle, folder, fm }, 'subtask'),
+      seedMdFile({ relPath, title, folder, fm }, 'subtask'),
     );
     const ok = await historyStore.execute(cmd).then(() => true, () => false);
 
@@ -403,7 +372,7 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
 
     tickAndPersist();
     if (ok) announce(`Subtask added: ${cmd.currentTitle}`);
-    else announce(`Adding subtask failed: ${finalTitle} — see the error notification`);
+    else announce(`Adding subtask failed: ${title} — see the error notification`);
   }
 
   return {

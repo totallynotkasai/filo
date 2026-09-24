@@ -67,7 +67,7 @@ function minimalBoards(): Record<string, unknown>[] {
     { id: 'mm1', type: 'mindmap', createdAt: T, updatedAt: T },
     { id: 'kb1', type: 'kanban', createdAt: T, updatedAt: T },
     { id: 'tl1', type: 'tasklist', createdAt: T, updatedAt: T },
-    { id: 'doc1', type: 'document', contentId: 'c1', createdAt: T, updatedAt: T },
+    { id: 'doc1', type: 'document', filePath: 'c1.md', createdAt: T, updatedAt: T },
   ];
 }
 
@@ -101,12 +101,13 @@ function partialBoards(): Record<string, unknown>[] {
       tasks: [{ tileId: 't1' }],
       sections: [{ id: 's1', title: 'S', position: 0 }],
     },
-    { id: 'doc2', type: 'document', contentId: 'c2', createdAt: T, updatedAt: T, settings: {} },
+    { id: 'doc2', type: 'document', filePath: 'c2.md', createdAt: T, updatedAt: T, settings: {} },
   ];
 }
 
 function boardFileInput(): Record<string, unknown> {
   return {
+    version: 8,
     board: {
       id: 'board1',
       type: 'mindmap',
@@ -120,7 +121,7 @@ function boardFileInput(): Record<string, unknown> {
       t1: {
         id: 't1',
         type: 'text',
-        contentId: 'doc-a',
+        filePath: 'a.md',
         style: { headerColor: '', bodyColor: '' },
         createdAt: T,
         updatedAt: T,
@@ -555,10 +556,9 @@ describe('zod default trees (pinned on v3 before the v4 migration)', () => {
           "updatedAt": 1700000000000,
         },
         {
-          "content": "",
-          "contentId": "c1",
           "createdAt": 1700000000000,
           "emoji": "",
+          "filePath": "c1.md",
           "id": "doc1",
           "name": "Untitled Board",
           "settings": {
@@ -720,10 +720,9 @@ describe('zod default trees (pinned on v3 before the v4 migration)', () => {
           "updatedAt": 1700000000000,
         },
         {
-          "content": "",
-          "contentId": "c2",
           "createdAt": 1700000000000,
           "emoji": "",
+          "filePath": "c2.md",
           "id": "doc2",
           "name": "Untitled Board",
           "settings": {
@@ -1094,17 +1093,14 @@ describe('zod default trees (pinned on v3 before the v4 migration)', () => {
         ],
         "tileDefs": {
           "t1": {
-            "content": "",
-            "contentId": "doc-a",
             "createdAt": 1700000000000,
+            "filePath": "a.md",
             "id": "t1",
             "style": {
               "bodyColor": "",
               "borderColor": "",
               "headerColor": "",
             },
-            "tags": [],
-            "title": "New Tile",
             "type": "text",
             "updatedAt": 1700000000000,
           },
@@ -1121,12 +1117,12 @@ describe('zod default trees (pinned on v3 before the v4 migration)', () => {
               "headerColor": "",
             },
             "tags": [],
-            "title": "New Tile",
+            "title": "",
             "type": "timer",
             "updatedAt": 1700000000000,
           },
         },
-        "version": 7,
+        "version": 8,
       }
     `);
   });

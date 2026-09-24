@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { loadBoard, loadAllBoards } from '@renderer/lib/boards/boardLoader';
+import { loadBoard } from '@renderer/lib/boards/boardLoader';
 import { historyStore } from '@renderer/stores/history.svelte';
 import type { Command } from '@renderer/stores/history.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
@@ -17,8 +17,6 @@ import { __resetErrorBusForTests, onError, type ReportedError } from '@renderer/
  *         is below the recommended 200×150.
  *  - M23: `historyStore.setMaxHistory` truncates existing stacks immediately.
  *  - M25: external-edit reconciliation surfaces a one-shot stale-undo toast.
- *  - M26: `loadAllBoards` reports `backfilledBoardIds` so callers can
- *         markDirty the touched boards.
  *  - M24 is exercised end-to-end via the existing DeleteFrame/Connection
  *         command tests — the deep-clone change is behavioural and is best
  *         caught by the broader command suites rather than a re-export.
@@ -45,6 +43,7 @@ function uninstallFiloStub(): void {
 function validBoardFile(boardId = 'mindmap-1'): V7BoardFileData {
   const now = Date.now();
   return {
+    version: 8,
     board: {
       id: boardId,
       name: 'Alpha',
@@ -62,10 +61,8 @@ function validBoardFile(boardId = 'mindmap-1'): V7BoardFileData {
       tile_a: {
         id: 'tile_a',
         type: 'text',
-        title: 'Note',
-        tags: [],
+        filePath: 'Note.md',
         style: { headerColor: '#fff', bodyColor: '#fff', borderColor: '' },
-        contentId: 'doc_1',
         createdAt: now,
         updatedAt: now,
       } as V7BoardFileData['tileDefs'][string],
@@ -131,7 +128,7 @@ describe('Phase 24 — schema polish & history', () => {
       const r = TileDefinitionSchema.safeParse({
         id: '',
         type: 'text',
-        title: 'T',
+        filePath: 'T.md',
         style: { headerColor: '', bodyColor: '', borderColor: '' },
         createdAt: 1,
         updatedAt: 1,
@@ -211,7 +208,7 @@ describe('Phase 24 — schema polish & history', () => {
           updatedAt: now,
         } as V7BoardFileData['frames'][number],
       ];
-      installFiloStub({ 'board:load': () => JSON.stringify(file) });
+      installFiloStub({ 'board:load': () => structuredClone(file) });
 
       const reported: ReportedError[] = [];
       const off = onError((err) => reported.push(err));
@@ -310,39 +307,6 @@ describe('Phase 24 — schema polish & history', () => {
       } finally {
         spy.mockRestore();
       }
-    });
-  });
-
-  // ── M26 ────────────────────────────────────────────────────────────────
-
-  describe('M26 — loadAllBoards.backfilledBoardIds', () => {
-    it('reports the board ids whose tile groups were backfilled', async () => {
-      const file = validBoardFile('m-bf');
-      const now = Date.now();
-      const board = file.board as V7BoardFileData['board'] & { groups?: unknown[] };
-      // Two legacy groups without displayIndex; loadBoard backfills both.
-      board.groups = [
-        { id: 'g1', tileIds: [], boardId: 'm-bf' },
-        { id: 'g2', tileIds: [], boardId: 'm-bf' },
-      ];
-
-      installFiloStub({
-        'board:list': () => ['bf.board.json'],
-        'board:load': () => JSON.stringify(file),
-      });
-
-      const result = await loadAllBoards('/vault');
-      expect(result.backfilledBoardIds).toEqual(['m-bf']);
-    });
-
-    it('reports an empty list when no boards need backfill', async () => {
-      const file = validBoardFile('m-clean');
-      installFiloStub({
-        'board:list': () => ['clean.board.json'],
-        'board:load': () => JSON.stringify(file),
-      });
-      const result = await loadAllBoards('/vault');
-      expect(result.backfilledBoardIds).toEqual([]);
     });
   });
 });

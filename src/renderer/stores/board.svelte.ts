@@ -451,7 +451,6 @@ export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
       const current = (currentBoard.settings as { defaultFolder?: string }).defaultFolder ?? '';
       const next = rel === current ? '' : rel;
       store.updateSettings({ defaultFolder: next });
-      vaultStore.recomputeBrokenRefsNow();
     },
 
     /**

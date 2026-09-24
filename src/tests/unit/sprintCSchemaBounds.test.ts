@@ -225,7 +225,7 @@ describe('Sprint C / C6 — min(1) titles + filter keys', () => {
 
 describe('Sprint C / C7 — record keys must match nanoid pattern', () => {
   const makeEnvelope = (overrides: Record<string, unknown> = {}) => ({
-    version: 7 as const,
+    version: 8 as const,
     board: {
       id: 'b1',
       name: 'B',
@@ -249,9 +249,7 @@ describe('Sprint C / C7 — record keys must match nanoid pattern', () => {
           '': {
             id: 'x',
             type: 'text',
-            title: 'X',
-            contentId: 'c',
-            tags: [],
+            filePath: 'X.md',
             style: { headerColor: '', bodyColor: '', borderColor: '' },
             createdAt: 1,
             updatedAt: 1,
@@ -292,7 +290,7 @@ describe('Sprint C / C8 — boardId cross-check in V7BoardFileDataSchema', () =>
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const r = V7BoardFileDataSchema.safeParse({
-        version: 7 as const,
+        version: 8 as const,
         board: {
           id: 'b1',
           name: 'B',
@@ -310,9 +308,7 @@ describe('Sprint C / C8 — boardId cross-check in V7BoardFileDataSchema', () =>
           tile_aaaaaaaa: {
             id: 'tile_aaaaaaaa',
             type: 'text',
-            title: 'A',
-            contentId: 'c',
-            tags: [],
+            filePath: 'A.md',
             style: { headerColor: '', bodyColor: '', borderColor: '' },
             createdAt: 1,
             updatedAt: 1,
@@ -320,9 +316,7 @@ describe('Sprint C / C8 — boardId cross-check in V7BoardFileDataSchema', () =>
           tile_bbbbbbbb: {
             id: 'tile_bbbbbbbb',
             type: 'text',
-            title: 'B',
-            contentId: 'c',
-            tags: [],
+            filePath: 'B.md',
             style: { headerColor: '', bodyColor: '', borderColor: '' },
             createdAt: 1,
             updatedAt: 1,
@@ -389,8 +383,8 @@ describe('Sprint C / C4 — ProjectSchema.version and tags dropped', () => {
 
 describe('Sprint C / C9 + C10 — migration error kinds', () => {
   it('C9 — missing-step path yields error: no-migration-path (not fromFuture)', () => {
-    // version: 3, no MIGRATION_STEPS[3] entry → distinct no-migration-path
-    // error rather than reusing the from-future flag.
+    // An old version gets its own no-migration-path error rather than
+    // reusing the from-future flag.
     const result = migrateBoardFile({ version: 3, board: {} });
     expect(result.fromFuture).toBe(false);
     expect(result.noMigrationPath).toBe(true);
@@ -402,7 +396,7 @@ describe('Sprint C / C9 + C10 — migration error kinds', () => {
   });
 
   it('C10 — integer current version still passes through cleanly', () => {
-    const result = migrateBoardFile({ version: 7, board: {} });
+    const result = migrateBoardFile({ version: 8, board: {} });
     expect(result.fromFuture).toBe(false);
     expect(result.noMigrationPath).toBe(false);
   });
@@ -412,7 +406,7 @@ describe('Sprint C / C23 — KanbanColumn.coverImage cascade-delete', () => {
   it('column-level coverImage is added to the cascade-delete result', async () => {
     const { findTilesToCascadeDelete } = await import('@renderer/lib/vault/fileRefIntegrity');
     const board = {
-      version: 7 as const,
+      version: 8 as const,
       board: {
         id: 'b1',
         name: 'B',

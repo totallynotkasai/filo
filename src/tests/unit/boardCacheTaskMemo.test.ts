@@ -43,7 +43,7 @@ function defOf(id: string, title: string): TileDefinition {
   return {
     id,
     type: 'text',
-    title,
+    filePath: `${title}.md`,
     style: {
       headerColor: '#000',
       bodyColor: '#fff',
@@ -53,9 +53,6 @@ function defOf(id: string, title: string): TileDefinition {
       borderWidth: 1,
       shadowIntensity: 0.3,
     } as never,
-    tags: [],
-    contentId: `doc_${id}`,
-    content: '',
     createdAt: 0,
     updatedAt: 0,
   } as TileDefinition;

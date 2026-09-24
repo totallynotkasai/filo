@@ -1,8 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   assertNotInFiloDir,
   FiloDirForbiddenError,
 } from '../../main/utils/pathSecurity';
+import { __setMachineIdentityForTests } from '../../main/services/machineIdentity';
 
 /**
  * Phase 1 / 1.2 — every generic `vault:*` IPC handler that mutates the
@@ -13,7 +14,7 @@ import {
  * and clobber `.filo/` state with arbitrary text.
  *
  * The 8 cases below mirror the 6 IPC handlers (rename + copy-file each
- * check both endpoints, hence 8). Recovery sentinels remain allowlisted
+ * check both endpoints, hence 8). This machine's own recovery sentinels stay allowlisted
  * inside the helper because `dirtyFlagRecovery` / `renameCascadeSentinel`
  * / `tagRewriteSentinel` legitimately go through `vault:write-file-text`.
  */
@@ -85,21 +86,33 @@ describe('vault IPC `.filo/` guard — assertNotInFiloDir', () => {
   });
 
   // ── Recovery sentinel allowlist ─────────────────────────────────────
+  // Only this machine's own per-machine sentinels pass; a bare shared name
+  // names no machine, so it is ordinary `.filo/` state and stays refused.
   describe('recovery sentinels remain permitted (allowlist)', () => {
-    it('permits .filo/.dirty (dirty-flag sentinel)', () => {
-      expect(() => assertNotInFiloDir('.filo/.dirty')).not.toThrow();
+    const ME = 'aaaaaaaaaaaa';
+    beforeEach(() => __setMachineIdentityForTests({ machineId: ME, hostname: 'A' }));
+    afterEach(() => __setMachineIdentityForTests(null));
+
+    it('permits .filo/.dirty.<id> (dirty-flag sentinel)', () => {
+      expect(() => assertNotInFiloDir(`.filo/.dirty.${ME}`)).not.toThrow();
     });
 
-    it('permits .filo/rename-cascade-pending.json (rename sentinel)', () => {
-      expect(() => assertNotInFiloDir('.filo/rename-cascade-pending.json')).not.toThrow();
+    it('permits .filo/rename-cascade-pending.<id>.json (rename sentinel)', () => {
+      expect(() => assertNotInFiloDir(`.filo/rename-cascade-pending.${ME}.json`)).not.toThrow();
     });
 
-    it('permits .filo/tag-rewrite-pending.json (tag-rewrite sentinel)', () => {
-      expect(() => assertNotInFiloDir('.filo/tag-rewrite-pending.json')).not.toThrow();
+    it('permits .filo/tag-rewrite-pending.<id>.json (tag-rewrite sentinel)', () => {
+      expect(() => assertNotInFiloDir(`.filo/tag-rewrite-pending.${ME}.json`)).not.toThrow();
     });
 
-    it('permits .filo/quit-failure.json (6.2.H4 quit-failure breadcrumb)', () => {
-      expect(() => assertNotInFiloDir('.filo/quit-failure.json')).not.toThrow();
+    it('permits .filo/quit-failure.<id>.json (quit-failure breadcrumb)', () => {
+      expect(() => assertNotInFiloDir(`.filo/quit-failure.${ME}.json`)).not.toThrow();
+    });
+
+    it('refuses the bare shared names', () => {
+      for (const bare of ['.filo/.dirty', '.filo/rename-cascade-pending.json', '.filo/tag-rewrite-pending.json', '.filo/quit-failure.json']) {
+        expect(() => assertNotInFiloDir(bare)).toThrow(FiloDirForbiddenError);
+      }
     });
   });
 

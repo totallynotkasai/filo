@@ -52,11 +52,8 @@ function cardDef(id: string, title: string): TileDefinition {
   return {
     id,
     type: 'text',
-    title,
+    filePath: `${title}.md`,
     style: { headerColor: '', bodyColor: '', borderColor: '' } as never,
-    tags: [],
-    contentId: `doc_${id}`,
-    content: '',
     createdAt: 0,
     updatedAt: 0,
   } as unknown as TileDefinition;

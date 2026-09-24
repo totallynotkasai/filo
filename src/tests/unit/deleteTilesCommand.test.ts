@@ -85,6 +85,7 @@ function makeTextTile(id: string, title: string): TextTile {
     tags: [],
     locked: false,
     faded: false,
+    filePath: `${title}.md`,
     contentId: `doc-${id}`,
     content: '',
     createdAt: 0,

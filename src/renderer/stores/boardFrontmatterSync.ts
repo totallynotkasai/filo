@@ -1,12 +1,12 @@
 import type { Tile, Connection } from '../schema/index';
 import { boardCacheStore } from './boardCache.svelte';
-import type { FileMetadata } from '../lib/vault/vaultIndex';
 import type { BoardContext } from './boardStoreTypes';
 import { historyStore } from './history.svelte';
 import { CascadeDeleteCommand } from '../commands/index';
 
 /**
- * Board slice — external-edit reconciliation entry points.
+ * Board slice — file-reference changes from outside the board (renames and
+ * cascade deletes).
  *
  * The cache slice (`boardCacheFrontmatter`) handles persistence and is the
  * single source of truth: the active-pane `tiles` map is `$derived` from
@@ -22,10 +22,6 @@ export function makeFrontmatterSyncSlice(_ctx: BoardContext) {
   void _ctx;
 
   return {
-    applyFrontmatterToBackedTiles(relPath: string, metadata: FileMetadata): string[] {
-      return boardCacheStore.applyFrontmatterToBackedTiles(relPath, metadata);
-    },
-
     propagateRename(oldRelPath: string, newRelPath: string): string[] {
       return boardCacheStore.propagateRename(oldRelPath, newRelPath);
     },

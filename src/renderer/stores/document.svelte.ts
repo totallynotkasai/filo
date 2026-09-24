@@ -8,6 +8,7 @@ import {
   forceWriteForDocument,
 } from '../lib/vault/markdownFileWriter';
 import { noteBaseline } from '../lib/vault/fileBaselineRegistry';
+import { bindNoteId } from './noteIds';
 import { flushAllPendingFrontmatterWrites } from '../lib/boards/frontmatterWriteScheduler';
 import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
 import { backupExternalVersion } from '../lib/vault/keepLocalBackup';
@@ -413,6 +414,9 @@ export const documentStore = {
     if (boundVault === null) boundVault = live;
 
     openDocuments.set(doc.docId, state);
+    // A document opened under an id of its own becomes the id later views of
+    // this path use, so they share this document.
+    bindNoteId(doc.filename, doc.docId);
     return state;
   },
 

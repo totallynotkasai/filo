@@ -52,7 +52,7 @@ import {
 import { __resetMarkdownFileWriterForTests } from '@renderer/lib/vault/markdownFileWriter';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
-import type { MindMapBoard, Tile } from '@renderer/schema/index';
+import type { MindMapBoard, TileDefinition } from '@renderer/schema/index';
 
 const ROOT = process.cwd();
 
@@ -78,18 +78,16 @@ function makeMindMapWithTile(): V7BoardFileData {
       t1: {
         id: 't1',
         type: 'text',
-        title: 'T',
-        contentId: 'doc_t1',
+        filePath: 'T.md',
         style: { headerColor: '', bodyColor: '', borderColor: '' },
         boardId: 'mm',
         position: { x: 100, y: 100 },
         size: { width: 200, height: 150 },
-        tags: [],
         createdAt: 0,
         updatedAt: 0,
         locked: false,
         faded: false,
-      } as unknown as Tile,
+      } as unknown as TileDefinition,
     },
     connections: {},
     frames: [],

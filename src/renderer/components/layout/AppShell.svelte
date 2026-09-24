@@ -91,14 +91,13 @@
 
   // ── Multi-tile delete confirmation ──
   //
-  // True if any selected tile has an associated vault file. In V7 every text
-  // tile creates a backing `${title}.md`, so contentId presence is the signal.
+  // True if any selected tile names a note in the vault.
   function selectionHasVaultFiles(): boolean {
     if (vaultStore.project === null) return false;
     for (const id of selectionStore.selectedIds) {
       const tile = boardStore.getTile(id);
       if (!tile || tile.type !== 'text') continue;
-      if ((tile as TextTile).contentId) return true;
+      if ((tile as TextTile).filePath) return true;
     }
     return false;
   }
@@ -176,9 +175,7 @@
             .filter((t): t is NonNullable<typeof t> => !!t);
           for (const tile of tilesToRead) {
             if (tile.type === 'text') {
-              const textTile = tile as TextTile;
-              const docId = textTile.contentId || tile.id;
-              documentStore.unloadDocument(docId);
+              documentStore.unloadDocument((tile as TextTile).contentId);
             }
           }
           const result = await buildDeleteSnapshots(tilesToRead, vaultRoot);

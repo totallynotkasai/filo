@@ -41,6 +41,7 @@ function uninstallFiloStub(): void {
 function makeBoardWithOrphanRef(): V7BoardFileData {
   const now = 0;
   return {
+    version: 8,
     board: {
       id: 'mm-orphan',
       name: 'OrphanMap',
@@ -58,10 +59,8 @@ function makeBoardWithOrphanRef(): V7BoardFileData {
       tile_a: {
         id: 'tile_a',
         type: 'text',
-        title: 'A',
-        tags: [],
+        filePath: 'A.md',
         style: { headerColor: '#fff', bodyColor: '#fff' },
-        contentId: 'doc_a',
         createdAt: now,
         updatedAt: now,
       } as V7BoardFileData['tileDefs'][string],
@@ -85,6 +84,7 @@ function makeBoardWithOrphanRef(): V7BoardFileData {
 function makeCleanBoard(): V7BoardFileData {
   const now = 0;
   return {
+    version: 8,
     board: {
       id: 'mm-clean',
       name: 'CleanMap',
@@ -102,10 +102,8 @@ function makeCleanBoard(): V7BoardFileData {
       tile_a: {
         id: 'tile_a',
         type: 'text',
-        title: 'A',
-        tags: [],
+        filePath: 'A.md',
         style: { headerColor: '#fff', bodyColor: '#fff' },
-        contentId: 'doc_a',
         createdAt: now,
         updatedAt: now,
       } as V7BoardFileData['tileDefs'][string],
@@ -135,7 +133,7 @@ describe('loadBoard — snapshot-failure abort (Phase B.3)', () => {
     // this test still passes — but the assertion does not look at the
     // snapshotPath, only at the load outcome.
     installFiloStub({
-      'board:load': () => JSON.stringify(file),
+      'board:load': () => structuredClone(file),
       'recovery:snapshot': () => ({ ok: true, path: '.filo/recovery/orphan.board.json' }),
     });
 
@@ -155,7 +153,7 @@ describe('loadBoard — snapshot-failure abort (Phase B.3)', () => {
     // failure when there's nothing to prune.
     const file = makeCleanBoard();
     installFiloStub({
-      'board:load': () => JSON.stringify(file),
+      'board:load': () => structuredClone(file),
       // Real IPC contract — handler returns `{ ok: false, ... }` on
       // failure rather than throwing. The renderer's IPC bridge does
       // NOT translate `{ ok: false }` into a throw.
@@ -178,7 +176,7 @@ describe('loadBoard — snapshot-failure abort (Phase B.3)', () => {
   it('(iii) snapshot fails + prune needed → board routes to snapshot-failed (does NOT load)', async () => {
     const file = makeBoardWithOrphanRef();
     installFiloStub({
-      'board:load': () => JSON.stringify(file),
+      'board:load': () => structuredClone(file),
       // Real IPC envelope — `{ ok: false }`, not throw.
       'recovery:snapshot': () => ({ ok: false, error: 'EACCES recovery dir read-only' }),
     });
@@ -201,7 +199,7 @@ describe('loadBoard — snapshot-failure abort (Phase B.3)', () => {
     const file = makeBoardWithOrphanRef();
     installFiloStub({
       'board:list': () => ['orphan.board.json'],
-      'board:load': () => JSON.stringify(file),
+      'board:load': () => structuredClone(file),
       // Real IPC envelope — `{ ok: false }`, not throw.
       'recovery:snapshot': () => ({ ok: false, error: 'EACCES recovery dir read-only' }),
     });

@@ -8,18 +8,16 @@ import { historyStore } from '../../stores/history.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import { vaultStore } from '../../stores/vault.svelte';
-import { fileTagsStore } from '../../stores/fileTags.svelte';
 import { AddTaskCommand } from '../../commands/index';
 import { createUniqueMdFile } from '../vault/createMdExclusive';
 import { reportError } from '../utils/errorBus';
-import { buildTextTileDefFromMarkdownFile } from '../canvas/markdownTileSeed';
+import { buildTextTileDefForNote } from '../canvas/markdownTileSeed';
 import { vaultRelativeFromAbsolute } from '../canvas/vaultPath';
-import { createId } from '../utils/ids';
 import { isMarkdownExtension } from '../vault/extension';
 import {
   fileNameSafe,
   getActiveContentFolder,
-  nextFreeMdPath as nextFreeMdPathLib,
+  nextFreeMdPath,
 } from '../vault/conventionPaths';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 
@@ -39,10 +37,6 @@ import { boardCacheStore } from '../../stores/boardCache.svelte';
  * Factory closes over accessors so the handler always sees the live board /
  * sections / placements state from the caller.
  */
-
-function nextUniqueMdPath(folder: string, baseName: string): string {
-  return nextFreeMdPathLib(boardCacheStore.cache, folder, baseName);
-}
 
 export interface FileDropDeps {
   getBoard: () => TaskListBoardType | null;
@@ -150,7 +144,7 @@ export function makeFileDropHandler(deps: FileDropDeps): FileDropHandler {
     const baseName = file.name.replace(/\.(md|markdown)$/i, '');
     const folder = getActiveContentFolder(board);
     const safeBase = fileNameSafe(baseName);
-    let relPath = nextUniqueMdPath(folder, safeBase);
+    let relPath = nextFreeMdPath(boardCacheStore.cache, folder, safeBase);
 
     try {
       const created = await createUniqueMdFile({
@@ -171,34 +165,10 @@ export function makeFileDropHandler(deps: FileDropDeps): FileDropHandler {
     }
 
     const realTargetId = resolveTargetId(sectionId);
-    const tilesById = getTilesById();
-    const existing = Object.values(tilesById) as Array<{
-      type: string; title?: string; contentId?: string; filePath?: string;
-    }>;
-    const { def, tagFileKey } = buildTextTileDefFromMarkdownFile({
-      rawContent,
+    const { def } = buildTextTileDefForNote({
       vaultRelPath: relPath,
-      boardType: board.type,
-      boardName: board.name,
-      existingTiles: existing,
-      conventionFolderOverride: folder,
+      existingTiles: Object.values(getTilesById()),
     });
-
-    // Pin the explicit `filePath` onto the def before
-    // AddTaskCommand deep-clones it. buildTextTileDefFromMarkdownFile only stamps
-    // filePath when the drop sits OUTSIDE the board's convention folder; an
-    // at-convention drop is left to the cascade fallback, which a later
-    // default-folder/vault-root change can diverge. `relPath` is the file we just
-    // wrote, so stamp it unconditionally (a no-op when the helper already set it).
-    (def as Record<string, unknown>).filePath = relPath;
-    // The OS import COPIES the file to a brand-new vault path. If the
-    // source `.md` carried a frontmatter `id:`, `buildTextTileDefFromMarkdownFile`
-    // reused it as the contentId (docId); importing the same source twice — or one
-    // whose `id:` collides with an in-vault file — would then back TWO distinct
-    // files with ONE docId, sharing a frontmatter cache so a field edit on one row
-    // silently rewrites the other. A freshly created file gets a fresh identity:
-    // mint a new contentId so one file == one docId.
-    (def as Record<string, unknown>).contentId = createId();
     // Thread the resolved target section into the command so
     // persistAddTaskPlacement pins it (parity with createTaskInSection). Without
     // it the placement lands by raw numeric position only, misrouting a drop onto
@@ -207,9 +177,6 @@ export function makeFileDropHandler(deps: FileDropDeps): FileDropHandler {
     historyStore.execute(
       new AddTaskCommand(board.id, def, insertPos, undefined, realTargetId ?? undefined),
     );
-    if (def.tags && def.tags.length > 0) {
-      fileTagsStore.setFileTags(tagFileKey, def.tags);
-    }
     await vaultStore.refreshTree();
     await vaultIndexStore.applyChanges([relPath]);
     tickAndPersist();
@@ -285,43 +252,16 @@ export function makeFileDropHandler(deps: FileDropDeps): FileDropHandler {
     // (vaultRoot, relativePath) only; compute the relative form first
     // and let the handler do the join.
     const relPath = vaultRelativeFromAbsolute(parsed.path, vaultRoot) || parsed.path;
-    let rawContent = '';
-    try {
-      const readResult = await window.filo.invoke('vault:read-file-text', vaultRoot, relPath);
-      if (readResult.success) rawContent = readResult.content;
-    } catch {
-      // Best-effort read — empty content falls through to default seed.
-    }
-
-    const tilesById = getTilesById();
-    const existing = Object.values(tilesById) as Array<{
-      type: string; title?: string; contentId?: string; filePath?: string;
-    }>;
-    const { def, tagFileKey } = buildTextTileDefFromMarkdownFile({
-      rawContent,
+    const { def } = buildTextTileDefForNote({
       vaultRelPath: relPath,
-      boardType: board.type,
-      boardName: board.name,
-      existingTiles: existing,
-      conventionFolderOverride: getActiveContentFolder(board),
+      existingTiles: Object.values(getTilesById()),
     });
-
-    // See importOsMarkdownFile: pin the explicit filePath
-    // onto the def pre-clone so a cold field/tag edit on this subfolder task
-    // resolves to the real file even if the folder cascade later diverges.
-    (def as Record<string, unknown>).filePath = relPath;
     // Thread the resolved target section (see importOsMarkdownFile).
-    // The vault-sidebar drop references the file in place (same path), so unlike
-    // the OS import it keeps any reused contentId — that is the legitimate
-    // "same file referenced again" case, deduped at bulk-edit time.
     const insertPos = computeInsertPos(realTargetId, e.clientY);
 
     historyStore.execute(
       new AddTaskCommand(board.id, def, insertPos, undefined, realTargetId ?? undefined),
     );
-    if (def.tags && def.tags.length > 0) {
-      fileTagsStore.setFileTags(tagFileKey, def.tags);
-    }
     await vaultStore.refreshTree();
     // refreshTree() walks the directory; it does not re-read frontmatter.
     // applyChanges does — without it the sidebar's tag chips lag.

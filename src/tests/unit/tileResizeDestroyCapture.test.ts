@@ -5,7 +5,7 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import { canvasStore } from '@renderer/stores/canvas.svelte';
 import { tileResizeAction } from '@renderer/lib/canvas/tileResize';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
-import type { MindMapBoard, Tile } from '@renderer/schema/index';
+import type { MindMapBoard, TileDefinition } from '@renderer/schema/index';
 
 /**
  * Audit 3.4 — `tileResizeAction.destroy()` must release the captured pointer.
@@ -46,18 +46,16 @@ function makeMindMapWithTile(): V7BoardFileData {
       t1: {
         id: 't1',
         type: 'text',
-        title: 'T',
-        contentId: 'doc_t1',
+        filePath: 'T.md',
         style: { headerColor: '', bodyColor: '', borderColor: '' },
         boardId: 'mm',
         position: { x: 100, y: 100 },
         size: { width: 200, height: 150 },
-        tags: [],
         createdAt: 0,
         updatedAt: 0,
         locked: false,
         faded: false,
-      } as unknown as Tile,
+      } as unknown as TileDefinition,
     },
     connections: {},
     frames: [],

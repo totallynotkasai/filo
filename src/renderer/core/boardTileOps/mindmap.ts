@@ -8,6 +8,7 @@ import type {
 import {
   isInlineTileType,
   buildTileDefinition,
+  defPatchFor,
   buildInlineTileFromTile,
 } from '../../lib/boards/tileDefBuilder';
 import {
@@ -15,6 +16,7 @@ import {
   stampTextTileSeedPath,
 } from '../../lib/boards/seedTextFileForNewTile';
 import type { CacheContext, V7BoardFileData } from '../../stores/boardCacheTypes';
+import { projectDef } from './projectTile';
 import type { AddTileOpts, BoardTileOps } from '../boardTileOps';
 
 /**
@@ -161,6 +163,7 @@ export const mindmapTileOps: BoardTileOps<MindMapBoard> = {
       if (t.remaining !== undefined) patch.remaining = t.remaining;
       if (t.mode !== undefined) patch.mode = t.mode;
       if (t.isRunning !== undefined) patch.isRunning = t.isRunning;
+      if (t.metadata !== undefined) patch.metadata = t.metadata;
       (cached.board as { inlineTiles: Record<string, Record<string, unknown>> }).inlineTiles[tileId] = {
         ...inlineTile,
         ...patch,
@@ -170,20 +173,11 @@ export const mindmapTileOps: BoardTileOps<MindMapBoard> = {
       return;
     }
 
-    const DEFINITION_KEYS = new Set([
-      'title', 'titleHtml', 'style', 'tags', 'contentId', 'content', 'src',
-      'isPlaying', 'isRecording', 'filePath', 'fileName', 'fileExtension',
-      'metadata',
-    ]);
-
     const def = cached.tileDefs[tileId];
     const placement = (mm.placements ?? {})[tileId];
     if (!def && !placement) return;
 
-    const defPatch: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(updates)) {
-      if (DEFINITION_KEYS.has(k)) defPatch[k] = v;
-    }
+    const defPatch = def ? defPatchFor(def, updates) : {};
     if (Object.keys(defPatch).length > 0 && def) {
       cached.tileDefs = {
         ...cached.tileDefs,
@@ -223,7 +217,7 @@ export const mindmapTileOps: BoardTileOps<MindMapBoard> = {
       const def = defs[tileId];
       if (!def) continue;
       result[tileId] = {
-        ...def,
+        ...projectDef(def),
         position: { x: placement.x, y: placement.y },
         size: { width: placement.width, height: placement.height },
         locked: placement.locked,

@@ -28,19 +28,12 @@ export interface DeletedFileSnapshot {
 
 /**
  * Returns the vault-relative file path a tile is backed by, if any.
- * Text tiles use `filePath` (with `${title}.md` fallback); image / video /
- * audio tiles use `src`; file tiles use `filePath`.
+ * Text and file tiles use `filePath`; image / video / audio tiles use `src`.
  */
 function getTileFileRef(tile: Tile): string | null {
   const t = tile as Tile & Record<string, unknown>;
-  if (tile.type === 'text') {
-    const explicit = t.filePath as string | undefined;
-    if (explicit && explicit.length > 0) return explicit;
-    return tile.title ? `${tile.title}.md` : null;
-  }
-  if (tile.type === 'file') {
-    const fp = t.filePath as string | undefined;
-    return fp && fp.length > 0 ? fp : null;
+  if (tile.type === 'text' || tile.type === 'file') {
+    return tile.filePath && tile.filePath.length > 0 ? tile.filePath : null;
   }
   if (tile.type === 'image' || tile.type === 'video' || tile.type === 'audio') {
     const src = t.src as string | undefined;

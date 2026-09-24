@@ -16,6 +16,7 @@ import TextTile from '@renderer/components/tiles/TextTile.svelte';
 import DocumentEditor from '@renderer/components/boards/DocumentEditor.svelte';
 import { BOARD_SCOPE_KEY, getActiveScope } from '@renderer/lib/boards/boardScope.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
+import { noteIdFor } from '@renderer/stores/noteIds';
 import { documentStore } from '@renderer/stores/document.svelte';
 import { tabStore } from '@renderer/stores/tabs.svelte';
 import { tiptapToolbar } from '@renderer/lib/editor/toolbarConfig';
@@ -212,15 +213,21 @@ function wrap(target: HTMLElement, component: Record<string, unknown>): Mounted 
 }
 
 export async function mountTextTile(opts: {
-  tile: Partial<TextTileDef> & { id: string; contentId?: string };
+  tile: Partial<TextTileDef> & { id: string; contentId?: string; title?: string };
 }): Promise<Mounted> {
   vaultStore.setPath(VAULT);
+  // A board derives these from the def's note path (see projectTile); a test
+  // that names only a title gets the note `<title>.md` and its session id.
+  const title = opts.tile.title ?? 'Note';
+  const filePath = opts.tile.filePath ?? `${title}.md`;
   const tile = {
     type: 'text',
-    title: 'Note',
+    title,
     content: '',
     tags: [],
     ...opts.tile,
+    filePath,
+    contentId: opts.tile.contentId ?? noteIdFor(filePath),
   } as unknown as TextTileDef;
   const target = document.createElement('div');
   document.body.appendChild(target);

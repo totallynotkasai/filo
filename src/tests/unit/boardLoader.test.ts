@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { loadBoard, loadAllBoards, mergeBoardTiles } from '@renderer/lib/boards/boardLoader';
+import { loadBoard, loadAllBoards } from '@renderer/lib/boards/boardLoader';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { __resetErrorBusForTests } from '@renderer/lib/utils/errorBus';
 
@@ -21,9 +21,13 @@ function uninstallFiloStub(): void {
   delete (window as unknown as Record<string, unknown>).filo;
 }
 
+/** Main's `board:load` failure envelope for a file whose JSON doesn't parse. */
+const PARSE_FAILURE = { success: false, code: 'PARSE', error: 'SyntaxError: Unexpected end of JSON input' };
+
 function validBoardFile(boardId = 'mindmap-1'): V7BoardFileData {
   const now = Date.now();
   return {
+    version: 8,
     board: {
       id: boardId,
       name: 'Alpha',
@@ -56,11 +60,8 @@ function validBoardFile(boardId = 'mindmap-1'): V7BoardFileData {
       tile_a: {
         id: 'tile_a',
         type: 'text',
-        title: 'Note',
-        tags: [],
+        filePath: 'notes/alpha.md',
         style: { headerColor: '#fff', bodyColor: '#fff' },
-        contentId: 'doc_1',
-        src: 'notes/alpha.md',
         createdAt: now,
         updatedAt: now,
       } as V7BoardFileData['tileDefs'][string],
@@ -83,39 +84,39 @@ describe('boardLoader', () => {
   describe('loadBoard', () => {
     it('returns ok with parsed data for a valid .board.json', async () => {
       const file = validBoardFile();
-      installFiloStub({
-        'board:load': () => JSON.stringify(file),
-      });
+      installFiloStub({ 'board:load': () => structuredClone(file) });
 
       const result = await loadBoard('/vault', 'alpha.board.json');
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.data.board.id).toBe('mindmap-1');
+        expect(result.data.tileDefs.tile_a).toMatchObject({ type: 'text', filePath: 'notes/alpha.md' });
       }
     });
 
-    // Audit-19 ERR-1 — main now returns the parsed OBJECT (it unwraps legacy
-    // double-encoded files itself); string stubs above still load too.
-    it('loads when board:load returns an object', async () => {
+    // Main hands the renderer the parsed board object. A JSON string payload
+    // (a double-encoded file) is not a board envelope, so the version gate
+    // refuses it rather than the renderer parsing it a second time.
+    it('refuses a string payload as no-migration-path', async () => {
       const file = validBoardFile();
-      installFiloStub({ 'board:load': () => structuredClone(file) });
+      installFiloStub({ 'board:load': () => JSON.stringify(file) });
 
       const result = await loadBoard('/vault', 'alpha.board.json');
-      expect(result.ok).toBe(true);
-      if (result.ok) expect(result.data.board.id).toBe('mindmap-1');
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toBe('no-migration-path');
     });
 
     it('preserves unknown top-level envelope keys on load (DI-11 passthrough)', async () => {
-      // A forward-compat top-level key a future Filo (e.g. a V8 migration)
-      // wrote. `V7BoardFileDataSchema.passthrough()` keeps it through the parse;
-      // DI-11's `...data` spread keeps it through the loader's normalised
-      // reconstruction so it survives load → cache → save.
+      // A forward-compat top-level key a future Filo wrote.
+      // `V7BoardFileDataSchema.passthrough()` keeps it through the parse and
+      // the loader's normalised reconstruction spreads it back in, so it
+      // survives load → cache → save.
       const file = validBoardFile();
       const withExtra = {
         ...file,
         futureFeature: { enabled: true, note: 'keep me' },
       };
-      installFiloStub({ 'board:load': () => JSON.stringify(withExtra) });
+      installFiloStub({ 'board:load': () => structuredClone(withExtra) });
 
       const result = await loadBoard('/vault', 'alpha.board.json');
       expect(result.ok).toBe(true);
@@ -137,15 +138,15 @@ describe('boardLoader', () => {
     });
 
     it('returns parse-error on malformed JSON', async () => {
-      installFiloStub({ 'board:load': () => '{"not json' });
+      installFiloStub({ 'board:load': () => PARSE_FAILURE });
       const result = await loadBoard('/vault', 'broken.board.json');
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toBe('parse-error');
     });
 
     it('returns schema-invalid when board.id is missing', async () => {
-      const bad = { board: { name: 'no id' }, tileDefs: {}, connections: {}, frames: [] };
-      installFiloStub({ 'board:load': () => JSON.stringify(bad) });
+      const bad = { version: 8, board: { name: 'no id' }, tileDefs: {}, connections: {}, frames: [] };
+      installFiloStub({ 'board:load': () => structuredClone(bad) });
       const result = await loadBoard('/vault', 'bad.board.json');
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toBe('schema-invalid');
@@ -153,12 +154,13 @@ describe('boardLoader', () => {
 
     it('schema-invalid message names the offending field path', async () => {
       const bad = {
+        version: 8,
         board: { type: 'mindmap', name: 'no id', createdAt: 1, updatedAt: 1 },
         tileDefs: {},
         connections: {},
         frames: [],
       };
-      installFiloStub({ 'board:load': () => JSON.stringify(bad) });
+      installFiloStub({ 'board:load': () => structuredClone(bad) });
       const result = await loadBoard('/vault', 'bad.board.json');
       expect(result.ok).toBe(false);
       if (!result.ok) {
@@ -178,25 +180,21 @@ describe('boardLoader', () => {
       if (!result.ok) expect(result.error).toBe('io-error');
     });
 
-    it('backfills missing displayIndex on tile groups in legacy mind-map boards', async () => {
+    it('loads tile groups exactly as stored (no displayIndex is invented)', async () => {
       const file = validBoardFile('m-grp');
       const board = file.board as unknown as Record<string, unknown>;
       board.groups = [
-        { id: 'g1', tileIds: ['t1'], boardId: 'm-grp' },           // no displayIndex
-        { id: 'g2', tileIds: ['t2'], boardId: 'm-grp', displayIndex: 5 }, // pre-filled
-        { id: 'g3', tileIds: ['t3'], boardId: 'm-grp' },           // no displayIndex
+        { id: 'g1', tileIds: ['t1'], boardId: 'm-grp' },
+        { id: 'g2', tileIds: ['t2'], boardId: 'm-grp', displayIndex: 5 },
       ];
-      installFiloStub({ 'board:load': () => JSON.stringify(file) });
+      installFiloStub({ 'board:load': () => structuredClone(file) });
       const result = await loadBoard('/vault', 'g.board.json');
       expect(result.ok).toBe(true);
       if (result.ok) {
-        const groups = (result.data.board as unknown as { groups: Array<{ id: string; displayIndex: number }> }).groups;
-        // Existing displayIndex (5) preserved; missing ones filled with the
-        // smallest unused positive integers (1 and 2).
+        const groups = (result.data.board as unknown as { groups: Array<{ id: string; displayIndex?: number }> }).groups;
         const byId = new Map(groups.map(g => [g.id, g.displayIndex]));
         expect(byId.get('g2')).toBe(5);
-        expect(byId.get('g1')).toBe(1);
-        expect(byId.get('g3')).toBe(2);
+        expect(byId.get('g1')).toBeUndefined();
       }
     });
 
@@ -236,13 +234,10 @@ describe('boardLoader', () => {
           updatedAt: 0,
         } as never,
       ];
-      // snapshot stub returns the real IPC envelope (see
-      // `src/main/ipc/board.ipc.ts:360-371`). Pre-Phase-1, the renderer
-      // casts the result as `string`, so this envelope object is what
-      // production actually receives; only the shape of the stub
-      // matters for parity with disk behavior.
+      // The snapshot stub returns the real IPC envelope shape (see
+      // `src/main/ipc/board.ipc.ts`).
       installFiloStub({
-        'board:load': () => JSON.stringify(file),
+        'board:load': () => structuredClone(file),
         'recovery:snapshot': () => ({ ok: true, path: '.filo/recovery/2026-05-23/orig.board.json' }),
       });
 
@@ -257,15 +252,11 @@ describe('boardLoader', () => {
       }
     });
 
-    // ── Audit 2.1 regression ────────────────────────────────────────────────
     // A nested connection / frame / mindmap-group `boardId` that disagrees with
     // the envelope's `board.id` must be normalized to `board.id` at load time
-    // and the board flagged so the repair reaches disk. Pre-fix, the schema
-    // superRefine only console.warn'd and `pruneOrphanRefsAndDuplicates` never
-    // touched `boardId`, so a stale / foreign `boardId` round-tripped to disk
-    // unchanged — and the superRefine's comment claimed a normalization pass
-    // that did not exist. Trivially produced by copying one board's connections
-    // into another file, or a third-party tool writing a stale `boardId`.
+    // and the board flagged so the repair reaches disk. Trivially produced by
+    // copying one board's connections into another file, or a third-party tool
+    // writing a stale `boardId`.
     it('Audit 2.1 — normalizes a mismatched connection/frame/group boardId to board.id', async () => {
       const file = validBoardFile('home-board');
       file.connections = {
@@ -293,8 +284,6 @@ describe('boardLoader', () => {
         } as never,
       ];
       const board = file.board as unknown as Record<string, unknown>;
-      // displayIndex pre-filled so the group backfill stays quiet and this test
-      // isolates the boardId normalization signal.
       board.groups = [
         { id: 'g1', tileIds: ['tile_a'], boardId: 'stale-foreign-id', displayIndex: 1 },
       ];
@@ -303,7 +292,7 @@ describe('boardLoader', () => {
       // benign, deterministic self-heal (no data loss), so it must NOT trip the
       // orphan-prune snapshot / refuse-to-load path. If it did, the missing
       // stub would throw "No stub for channel".
-      installFiloStub({ 'board:load': () => JSON.stringify(file) });
+      installFiloStub({ 'board:load': () => structuredClone(file) });
 
       const result = await loadBoard('/vault', 'home.board.json');
       expect(result.ok).toBe(true);
@@ -319,6 +308,7 @@ describe('boardLoader', () => {
     it('Phase 2.4 — deduplicates Kanban placements within a column without rejecting the board', async () => {
       const now = Date.now();
       const file = {
+        version: 8,
         board: {
           id: 'kb-dup',
           name: 'Dup',
@@ -342,15 +332,14 @@ describe('boardLoader', () => {
           ],
         },
         tileDefs: {
-          tile_a: { id: 'tile_a', type: 'text', title: 'A', tags: [], style: { headerColor: '#fff', bodyColor: '#fff' }, contentId: 'doc_a', createdAt: now, updatedAt: now },
-          tile_b: { id: 'tile_b', type: 'text', title: 'B', tags: [], style: { headerColor: '#fff', bodyColor: '#fff' }, contentId: 'doc_b', createdAt: now, updatedAt: now },
+          tile_a: { id: 'tile_a', type: 'text', filePath: 'A.md', style: { headerColor: '#fff', bodyColor: '#fff' }, createdAt: now, updatedAt: now },
+          tile_b: { id: 'tile_b', type: 'text', filePath: 'B.md', style: { headerColor: '#fff', bodyColor: '#fff' }, createdAt: now, updatedAt: now },
         },
         connections: {},
         frames: [],
       };
       installFiloStub({
-        'board:load': () => JSON.stringify(file),
-        // Envelope contract — see boardLoader.ts test comment above.
+        'board:load': () => structuredClone(file),
         'recovery:snapshot': () => ({ ok: true, path: '.filo/recovery/dup.board.json' }),
       });
 
@@ -361,7 +350,7 @@ describe('boardLoader', () => {
       expect(cols[0].tilePlacements.map((p) => p.tileId)).toEqual(['tile_a', 'tile_b']);
     });
 
-    it('rejects legacy V6 Kanban shape with cardData[] as schema-invalid', async () => {
+    it('refuses a versionless V6 Kanban shape (cardData[]) as no-migration-path', async () => {
       const legacy = {
         board: {
           id: 'kb1',
@@ -378,13 +367,10 @@ describe('boardLoader', () => {
         connections: {},
         frames: [],
       };
-      installFiloStub({ 'board:load': () => JSON.stringify(legacy) });
+      installFiloStub({ 'board:load': () => structuredClone(legacy) });
       const result = await loadBoard('/vault', 'legacy.board.json');
-      // With the V7 migrator removed, legacy shape parses through passthrough
-      // (cardData isn't rejected; it's just ignored). The renderer treats it
-      // as an empty Kanban. This is the documented "fails to load cleanly"
-      // outcome — boards open with no cards rather than silently migrating.
-      expect(result.ok).toBe(true);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toBe('no-migration-path');
     });
   });
 
@@ -392,10 +378,8 @@ describe('boardLoader', () => {
     it('aggregates boards, cache, paths, connections, frames', async () => {
       const fileA = validBoardFile('m-a');
       const fileB = validBoardFile('m-b');
-      // Connection points at the seeded tile_a in fileB's tileDefs so the
-      // Phase 2.4 orphan-ref prune leaves it intact. (Hooking c1 onto a
-      // ghost tile id was the original test setup; after Phase 2.4 that
-      // would be pruned as orphaned.)
+      // The connection points at the seeded tile_a so the orphan-ref prune
+      // leaves it intact.
       fileB.connections = {
         c1: {
           id: 'c1',
@@ -412,7 +396,7 @@ describe('boardLoader', () => {
       installFiloStub({
         'board:list': () => ['a.board.json', 'b.board.json'],
         'board:load': (_root: unknown, rel: unknown) =>
-          rel === 'a.board.json' ? JSON.stringify(fileA) : JSON.stringify(fileB),
+          rel === 'a.board.json' ? structuredClone(fileA) : structuredClone(fileB),
       });
 
       const result = await loadAllBoards('/vault');
@@ -427,7 +411,7 @@ describe('boardLoader', () => {
       installFiloStub({
         'board:list': () => ['ok.board.json', 'missing.board.json'],
         'board:load': (_root: unknown, rel: unknown) =>
-          rel === 'ok.board.json' ? JSON.stringify(validBoardFile('ok')) : null,
+          rel === 'ok.board.json' ? validBoardFile('ok') : null,
       });
 
       const result = await loadAllBoards('/vault');
@@ -439,7 +423,7 @@ describe('boardLoader', () => {
       installFiloStub({
         'board:list': () => ['ok.board.json', 'broken.board.json'],
         'board:load': (_root: unknown, rel: unknown) =>
-          rel === 'ok.board.json' ? JSON.stringify(validBoardFile('ok')) : '{not json',
+          rel === 'ok.board.json' ? validBoardFile('ok') : PARSE_FAILURE,
       });
 
       const result = await loadAllBoards('/vault');
@@ -449,13 +433,11 @@ describe('boardLoader', () => {
       expect(result.failedBoards[0].errorKind).toBe('parse-error');
     });
 
-    // ── Audit 1.2 regression ───────────────────────────────────────────────
     // Two .board.json files sharing the same board.id must not silently
-    // collapse. Pre-fix, the second overwrote cache[id] + paths[id] (the first
-    // board became unreachable and its future saves targeted the survivor's
-    // file) and its connections/frames merged unconditionally into the
-    // survivor. Trivially produced by copying a .board.json in the OS file
-    // manager or restoring one from backup into the same vault.
+    // collapse: the second would overwrite cache[id] + paths[id] (the first
+    // board unreachable, its saves targeting the survivor's file) and merge its
+    // connections/frames into the survivor. Trivially produced by copying a
+    // .board.json in the OS file manager or restoring one from backup.
     it('routes a second board with a duplicate board.id into failedBoards and keeps the first reachable', async () => {
       const first = validBoardFile('dup-id');
       const second = validBoardFile('dup-id');
@@ -477,7 +459,7 @@ describe('boardLoader', () => {
       installFiloStub({
         'board:list': () => ['first.board.json', 'second.board.json'],
         'board:load': (_root: unknown, rel: unknown) =>
-          rel === 'first.board.json' ? JSON.stringify(first) : JSON.stringify(second),
+          rel === 'first.board.json' ? structuredClone(first) : structuredClone(second),
       });
 
       const result = await loadAllBoards('/vault');
@@ -487,30 +469,13 @@ describe('boardLoader', () => {
       expect(result.boards[0].id).toBe('dup-id');
       expect(result.paths['dup-id']).toBe('first.board.json');
 
-      // The colliding second file is rejected with the new errorKind.
+      // The colliding second file is rejected with its own errorKind.
       expect(result.failedBoards).toHaveLength(1);
       expect(result.failedBoards[0].path).toBe('second.board.json');
       expect(result.failedBoards[0].errorKind).toBe('duplicate-board-id');
 
       // The loser's connections must NOT have polluted the survivor.
       expect(result.connections.intruder).toBeUndefined();
-    });
-  });
-
-  describe('mergeBoardTiles', () => {
-    it('applies placements and inline tiles into a runtime merge map', () => {
-      const file = validBoardFile();
-      const merged = mergeBoardTiles(file);
-      expect(merged.tile_a.position).toEqual({ x: 10, y: 20 });
-      expect(merged.tile_a.size).toEqual({ width: 200, height: 100 });
-      expect(merged.tile_inline.position).toEqual({ x: 0, y: 0 });
-      expect(merged.tile_inline.size).toEqual({ width: 200, height: 80 });
-    });
-
-    it('returns an empty map for non-mindmap boards', () => {
-      const file = validBoardFile();
-      (file.board as unknown as Record<string, unknown>).type = 'kanban';
-      expect(mergeBoardTiles(file)).toEqual({});
     });
   });
 });

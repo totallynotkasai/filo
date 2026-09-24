@@ -9,6 +9,7 @@ import type {
 } from '../../schema/index';
 import type { TileType } from '../../../shared/types';
 import { createId } from '../utils/ids';
+import { vaultPath, type VaultPath } from '@shared/vaultPath';
 
 /**
  * Layout Templates capture the *structure* of a tile selection — type, size,
@@ -20,20 +21,18 @@ import { createId } from '../utils/ids';
  * of the selection, so an instantiation can drop the whole layout at any
  * canvas point without distortion.
  *
- * **Content groups.** When two captured text tiles referenced the same
- * backing `.md` file (same `contentId`), they are tagged with the same
- * anonymous `contentGroup` key. On instantiation each unique group is
- * assigned exactly one fresh `contentId` and one shared title, so the
- * resulting tiles back to a single new `.md` file — preserving the
- * many-tiles-to-one-file relationship the user authored. Tiles in distinct
- * groups each get their own file. Untagged text tiles (e.g. from older
- * templates without `contentGroup`) are treated as singletons.
+ * **Content groups.** When two captured text tiles showed the same note
+ * (same `filePath`), they are tagged with the same anonymous `contentGroup`
+ * key. On instantiation each unique group is assigned exactly one new note
+ * path and one title, so the resulting tiles show a single new `.md` file —
+ * preserving the many-tiles-to-one-file relationship the user authored.
+ * Tiles in distinct groups each get their own note. An untagged text tile
+ * is a singleton.
  *
  * Inserting a template re-creates each tile through the normal `createTile`
- * factory, which provides fresh ids. Title and `contentId` are computed
- * here and passed as overrides so the per-group sharing is honoured and
- * titles are unique enough to drive distinct filename creation in
- * `boardCache.persistAddTile`.
+ * factory, which provides fresh ids. The title and note path are computed
+ * here and passed as overrides so the per-group sharing is honoured; the
+ * note itself is created (with `title:`) when the tile is added.
  */
 
 interface NormalizedSelection {
@@ -100,10 +99,10 @@ export function captureLayoutTemplate(
     throw new Error('Cannot create a Layout Template from an empty selection.');
   }
 
-  // Build a stable mapping from original contentId → anonymous group key.
-  // Tiles sharing a contentId become part of the same group on capture, so
-  // they re-share a single .md file when the template is instantiated.
-  const contentIdToGroup = new Map<string, string>();
+  // Build a stable mapping from original note path → anonymous group key.
+  // Tiles sharing a note become part of the same group on capture, so they
+  // re-share a single .md file when the template is instantiated.
+  const pathToGroup = new Map<VaultPath, string>();
   let nextGroupIdx = 0;
 
   const now = Date.now();
@@ -119,16 +118,14 @@ export function captureLayoutTemplate(
     };
     const config = captureTypeConfig(t);
     if (config) captured.config = config;
-    if (t.type === 'text') {
-      const cid = (t as Tile & { contentId?: string }).contentId;
-      if (cid) {
-        let group = contentIdToGroup.get(cid);
-        if (!group) {
-          group = `g${nextGroupIdx++}`;
-          contentIdToGroup.set(cid, group);
-        }
-        captured.contentGroup = group;
+    if (t.type === 'text' && t.filePath) {
+      const key = vaultPath(t.filePath);
+      let group = pathToGroup.get(key);
+      if (!group) {
+        group = `g${nextGroupIdx++}`;
+        pathToGroup.set(key, group);
       }
+      captured.contentGroup = group;
     }
     return captured;
   });
@@ -204,6 +201,11 @@ export interface InstantiateContext {
    * `Object.values(boardStore.tiles).map(t => t.title)`.
    */
   existingTitles: string[];
+  /**
+   * Picks the path of the new note for a text tile titled `title` (a free
+   * name in the board's content folder). Called once per content group.
+   */
+  allocateNotePath: (title: string) => string;
 }
 
 const BASE_TITLE = 'New Tile';
@@ -238,9 +240,9 @@ export function instantiateLayoutTemplate(
   ctx: InstantiateContext,
 ): InstantiateResult {
   const nextTitle = buildTitleAllocator(ctx.existingTitles);
-  // Per-instantiation map: group key → { title, contentId } resolved once
+  // Per-instantiation map: group key → { title, filePath } resolved once
   // and reused for every template tile in that group.
-  const groupResolution = new Map<string, { title: string; contentId: string }>();
+  const groupResolution = new Map<string, { title: string; filePath: string }>();
 
   const tiles: Tile[] = [];
   for (const t of template.tiles) {
@@ -252,23 +254,17 @@ export function instantiateLayoutTemplate(
 
     let title: string;
     if (t.type === 'text' && t.contentGroup) {
-      const existing = groupResolution.get(t.contentGroup);
-      if (existing) {
-        title = existing.title;
-        overrides.contentId = existing.contentId;
-      } else {
-        title = nextTitle();
-        const newContentId = createId();
-        groupResolution.set(t.contentGroup, { title, contentId: newContentId });
-        overrides.contentId = newContentId;
+      let group = groupResolution.get(t.contentGroup);
+      if (!group) {
+        const groupTitle = nextTitle();
+        group = { title: groupTitle, filePath: ctx.allocateNotePath(groupTitle) };
+        groupResolution.set(t.contentGroup, group);
       }
+      title = group.title;
+      overrides.filePath = group.filePath;
     } else {
       title = nextTitle();
-      if (t.type === 'text') {
-        // Untagged text tile (e.g. legacy template) — give it its own fresh
-        // contentId so it gets its own .md file.
-        overrides.contentId = createId();
-      }
+      if (t.type === 'text') overrides.filePath = ctx.allocateNotePath(title);
     }
     overrides.title = title;
 

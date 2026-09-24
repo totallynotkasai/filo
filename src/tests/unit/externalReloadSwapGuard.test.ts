@@ -1,10 +1,10 @@
 /**
  * Audit-13 L17 — the async external-edit "Reload" toast handlers re-read disk via
  * `vaultIndexStore.applyChanges([rel])` and then synchronously mutate stores
- * (board cache, tag store, editor body) keyed by the relative path. A vault swap
- * landing on that `await` would apply the OUTGOING vault's disk content to the
- * NEW vault's same-named file. The fix captures `captureVaultIdentity()` at the
- * top of each handler and bails via `isStillSameVault` after the re-read.
+ * (the open editor's body + frontmatter) keyed by the relative path. A vault
+ * swap landing on that `await` would apply the OUTGOING vault's disk content to
+ * the NEW vault's same-named file. The fix captures `captureVaultIdentity()` at
+ * the top of each handler and bails via `isStillSameVault` after the re-read.
  *
  * `promptExternalEditOnSync` is the exported representative of the four sibling
  * handlers (the others — `promptBulkExternalChanges` "Reload all",
@@ -17,8 +17,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { promptExternalEditOnSync } from '@renderer/stores/vaultExternalChanges';
 import { uiStore } from '@renderer/stores/ui.svelte';
-import { boardStore } from '@renderer/stores/board.svelte';
-import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { documentStore } from '@renderer/stores/document.svelte';
 import {
@@ -62,6 +60,20 @@ function freshMetadata(path: string): FileMetadata {
   };
 }
 
+/** Opens an editor on `path` so the Reload handler has a document to refresh. */
+function openEditor(path: string): string {
+  const docId = `doc:${path}`;
+  documentStore.loadDocument({
+    docId,
+    filename: path,
+    title: path,
+    body: 'local body',
+    htmlContent: '',
+    richText: [],
+  });
+  return docId;
+}
+
 describe('Audit-13 L17 — external-reload handlers bail on a mid-applyChanges vault swap', () => {
   beforeEach(() => {
     __resetVaultIdentityForTests();
@@ -78,13 +90,9 @@ describe('Audit-13 L17 — external-reload handlers bail on a mid-applyChanges v
 
   it('Reload defers (no store mutation) when the vault swaps during applyChanges', async () => {
     beginVaultGeneration('/vault-A');
+    const docId = openEditor('l17-swap.md');
     const getReload = captureReloadAction();
-    const applySpy = vi
-      .spyOn(boardStore, 'applyFrontmatterToBackedTiles')
-      .mockImplementation(() => {});
-    const tagsSpy = vi
-      .spyOn(fileTagsStore, 'setFileTags')
-      .mockImplementation(() => {});
+    const reloadSpy = vi.spyOn(documentStore, 'applyReloadFromDisk');
     // applyChanges resolves AFTER bumping the vault generation — i.e. the vault
     // swapped to B while the re-read was in flight.
     vi.spyOn(vaultIndexStore, 'applyChanges').mockImplementation(async () => {
@@ -95,20 +103,18 @@ describe('Audit-13 L17 — external-reload handlers bail on a mid-applyChanges v
     getReload().handler();
     const result = await settled;
 
-    // Guard fired: defer the writer, and neither sink ran with the outgoing
-    // vault's content.
+    // Guard fired: defer the writer, and the editor was not refreshed with the
+    // outgoing vault's content.
     expect(result).toBe('defer');
-    expect(applySpy).not.toHaveBeenCalled();
-    expect(tagsSpy).not.toHaveBeenCalled();
+    expect(reloadSpy).not.toHaveBeenCalled();
+    expect(documentStore.getDocument(docId)?.body).toBe('local body');
   });
 
   it('control: Reload applies disk content + resolves "reload" when no swap occurs', async () => {
     beginVaultGeneration('/vault-A');
+    const docId = openEditor('l17-control.md');
     const getReload = captureReloadAction();
-    const applySpy = vi
-      .spyOn(boardStore, 'applyFrontmatterToBackedTiles')
-      .mockImplementation(() => {});
-    vi.spyOn(fileTagsStore, 'setFileTags').mockImplementation(() => {});
+    const reloadSpy = vi.spyOn(documentStore, 'applyReloadFromDisk');
     vi.spyOn(vaultIndexStore, 'applyChanges').mockResolvedValue(undefined);
     vi.spyOn(vaultIndexStore, 'getMetadata').mockReturnValue(
       freshMetadata('l17-control.md'),
@@ -119,6 +125,13 @@ describe('Audit-13 L17 — external-reload handlers bail on a mid-applyChanges v
     const result = await settled;
 
     expect(result).toBe('reload');
-    expect(applySpy).toHaveBeenCalledWith('l17-control.md', expect.anything());
+    expect(reloadSpy).toHaveBeenCalledWith(
+      docId,
+      'disk body',
+      expect.anything(),
+      { tags: [] },
+      '',
+      { mtimeMs: 42, size: 9 },
+    );
   });
 });

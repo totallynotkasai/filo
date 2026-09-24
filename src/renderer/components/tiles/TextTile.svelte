@@ -12,11 +12,8 @@
     editorMarkdown,
   } from '../../lib/editor/markdownSync';
   import { getContext } from 'svelte';
-  import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
 
-  const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
-  const boardStore = scope.board;
   import { boardRefIntegrityStore } from '../../stores/boardRefIntegrity.svelte';
   import { documentStore } from '../../stores/document.svelte';
   import { uiStore } from '../../stores/ui.svelte';
@@ -77,7 +74,7 @@
   // or a transient EACCES/EBUSY from AV / OneDrive). While true the editor is
   // non-writable and `buildWriteArgs` refuses to write, so a keystroke into the
   // blank tile can't overwrite the real (unread) file with the stale board-JSON
-  // seed. ENOENT stays on the embedded-fallback path. A successful retry clears it.
+  // seed. ENOENT starts the editor empty instead. A successful retry clears it.
   let hydrateReadFailed = $state(false);
   // `tile.id` is reactive in Svelte 5; reading it inside `$derived` captures
   // the live value so a tile-id rebind (rare but possible during cache
@@ -92,21 +89,11 @@
   // onDestroy writes only when this view actually changed something.
   let userEdited = false;
 
+  // The note this tile shows. `filePath` is its only identity; the rename
+  // cascade rewrites it on the board when the file moves.
   function vaultRelativePath(): string | null {
-    const vaultRoot = vaultStore.path;
-    if (!vaultRoot) return null;
-    // Priority order:
-    //   1. Explicit `filePath` on the tile def — set by fileRefIntegrity when
-    //      the backing .md moves out of its board-type convention folder.
-    //      Persisted, so it survives restarts.
-    //   2. Live DocumentState filename — in-memory canonical for the docId;
-    //      kept in sync by vaultStore.rename's updateFilename hook.
-    //   3. Convention fallback — `${title}.md` at the convention folder,
-    //      used only before hydrate has loaded a DocumentState.
-    const explicit = (tile as { filePath?: string }).filePath;
-    if (typeof explicit === 'string' && explicit.length > 0) return explicit;
-    const docState = tile.contentId ? documentStore.getDocument(tile.contentId) : null;
-    return docState?.filename || `${tile.title || 'Untitled'}.md`;
+    if (!vaultStore.path) return null;
+    return tile.filePath || null;
   }
 
   /**
@@ -123,7 +110,7 @@
     if (!editor || backingFileMissing || !hydrated) return null;
     // The on-mount disk read failed and no real body is loaded, so the editor
     // is blank for reasons unrelated to the file. Never write that emptiness /
-    // the stale embedded seed over the file we couldn't read.
+    // an empty editor over the file we couldn't read.
     if (hydrateReadFailed && !lastLoadedBody) return null;
     if (tile.contentId && documentStore.isReadOnly(tile.contentId)) return null;
     const vaultRoot = vaultStore.path;
@@ -169,7 +156,6 @@
         // no-op (otherwise the editor would reload itself on every keystroke
         // and the cursor selection would be destroyed).
         lastLoadedBody = md;
-        boardStore.updateTile(tile.id, { content: html });
 
         if (tile.contentId) {
           documentStore.updateContent(tile.contentId, html, md, callerId);
@@ -234,7 +220,7 @@
     if (!editor) return;
     // Wrap the whole body so every early-return path
     // (sibling-docId adoption, cached body, missing-vault fallback, IPC
-    // read failure, embedded-seed fallback) ends with `hydrated = true`.
+    // read failure, empty-editor fallback) ends with `hydrated = true`.
     // Without the try/finally the failure paths could leave a stale
     // `false` and silently lock writes for the lifetime of the tile.
     try {
@@ -252,7 +238,6 @@
       if (relPath) {
         const existing = documentStore.findByFilename(relPath);
         if (existing && existing.docId !== tile.contentId) {
-          boardStore.updateTile(tile.id, { contentId: existing.docId });
           docId = existing.docId;
           // Re-register the force-writer with the adopted docId so Keep-local
           // matches against the new identity.
@@ -313,8 +298,7 @@
       }
 
       if (!vaultRoot || !relPath) {
-        const seed = (tile.content as string) ?? '';
-        const parsed = parseMarkdownFile(seed);
+        const parsed = parseMarkdownFile('');
         if (docId) documentStore.setFrontmatter(docId, parsed.frontmatter);
         lastLoadedBody = parsed.body;
         isUpdatingFromStore = true;
@@ -362,7 +346,7 @@
       } catch (err) {
         // A genuinely-missing backing file (ENOENT) is an expected, already-
         // surfaced state: `boardRefIntegrity` flags the placement with a
-        // "backing file missing" badge on load, and the embedded-content
+        // "backing file missing" badge on load, and the empty-editor
         // fallback below is the designed behaviour. Genuine, unexpected read
         // failures (permissions, decode errors, a directory in the path) warn.
         if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
@@ -379,14 +363,14 @@
           // Debug breadcrumb rather than a full suppress — a silently-swallowed
           // ENOENT is invisible when diagnosing a vanished backing file. The
           // main process already skips its own stack trace for ENOENT reads.
-          console.debug('[TextTile] backing markdown missing (ENOENT); using embedded fallback:', relPath);
+          console.debug('[TextTile] backing markdown missing (ENOENT); starting empty:', relPath);
         } else {
           // A NON-ENOENT failure is NOT a missing file: the bytes exist but
           // couldn't be read (FILE_TOO_LARGE, transient EACCES/EBUSY). Falling
-          // through to the embedded seed would let the next keystroke silently
-          // write the stale creation-time seed over the real file. Instead flag
+          // through to the empty editor would let the next keystroke silently
+          // write that emptiness over the real file. Instead flag
           // the failure (buildWriteArgs refuses to write), hold the editor
-          // non-writable, and skip the seed. A retry re-reads disk.
+          // non-writable. A retry re-reads disk.
           console.warn('[TextTile] Failed to read markdown file; holding non-writable until retry:', err);
           hydrateReadFailed = true;
           if (relPath) markHydrated(relPath, false);
@@ -395,12 +379,13 @@
         }
       }
 
-      // No backing file (legacy tile or fresh tile) — fall back to embedded
-      // content. Reached only on the ENOENT path; the non-ENOENT failure
-      // branch returns above so a stale seed never lands over an unread file.
-      const seed = (tile.content as string) ?? '';
-      const parsed = parseMarkdownFile(seed);
-      if (docId) documentStore.setFrontmatter(docId, parsed.frontmatter);
+      // No backing file yet (or it went missing): start empty. Reached only on
+      // the ENOENT path; the non-ENOENT failure branch returns above so an
+      // empty editor never lands over an unread file. A brand-new note may be
+      // created while this read was in flight: its seed has already recorded
+      // the note's frontmatter (`title:`), which an empty one must not replace.
+      const parsed = parseMarkdownFile('');
+      if (docId && !documentStore.hasFrontmatter(docId)) documentStore.setFrontmatter(docId, parsed.frontmatter);
       lastLoadedBody = parsed.body;
       isUpdatingFromStore = true;
       applyLoadResult(loadMarkdownIntoEditor(editor, parsed.body), docId);
@@ -568,7 +553,7 @@
 <div class="text-tile">
   {#if hydrateReadFailed}
     <!-- Read failed; editing is paused so a keystroke can't
-         overwrite the real (unread) file with the embedded seed. Retry re-reads disk. -->
+         overwrite the real (unread) file with an empty editor. Retry re-reads disk. -->
     <div class="readonly-banner" role="alert">
       <span class="readonly-text">Filo couldn't read this file. Editing is paused so your changes can't overwrite it — retry once the file is readable.</span>
       <button class="readonly-action" onclick={retryHydrate}>Retry</button>

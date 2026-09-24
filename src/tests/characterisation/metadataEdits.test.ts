@@ -93,16 +93,17 @@ describe('Kanban', () => {
 
     await renameTileTitle(kanbanCards(app)[0].el, 'Weekly errand');
     expect(kanbanCards(app)[0].title).toBe('Weekly errand');
-    // Expected change in Phase 3 (D1, D1a): the title goes to frontmatter
-    // `title:` and the file keeps its name. Until then a title edit renames
-    // the file to match. Phase 3 also adds: the other board's tile shows the
-    // new title (today each board keeps its own copy, so it doesn't).
-    await waitFor(() => app.exists('Weekly errand.md'), 'the note under its new name');
-    expect(app.exists('Errand.md')).toBe(false);
-    expect(body(app, 'Weekly errand.md')).toBe('Post office, then bank\n');
+    // The title is the note's frontmatter `title:`; the file keeps its name.
+    await waitFor(() => frontmatter(app, 'Errand.md').title === 'Weekly errand', 'the new title in the note');
+    await quiesce();
+    expect(app.exists('Errand.md')).toBe(true);
+    expect(app.exists('Weekly errand.md')).toBe(false);
+    expect(body(app, 'Errand.md')).toBe('Post office, then bank\n');
 
+    // The other board shows the same note, so it shows the new title too.
     await showBoard(app, 'mindmap');
     await quiesce();
+    expect(mindMapTiles(app).map((t) => t.title)).toEqual(['Weekly errand']);
     expect(mindMapTiles(app).map((t) => t.text)).toEqual(['Post office, then bank']);
   });
 

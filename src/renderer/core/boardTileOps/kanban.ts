@@ -5,12 +5,13 @@ import type {
   Tile,
   TileDefinition,
 } from '../../schema/index';
-import { buildTileDefinition } from '../../lib/boards/tileDefBuilder';
+import { buildTileDefinition, defPatchFor } from '../../lib/boards/tileDefBuilder';
 import {
   seedTextFileForNewTile,
   stampTextTileSeedPath,
 } from '../../lib/boards/seedTextFileForNewTile';
 import type { CacheContext, V7BoardFileData } from '../../stores/boardCacheTypes';
+import { projectDef } from './projectTile';
 import type { AddTileOpts, BoardTileOps } from '../boardTileOps';
 
 /**
@@ -111,19 +112,10 @@ export const kanbanTileOps: BoardTileOps<KanbanBoard> = {
     tileId: string,
     updates: Partial<Tile>,
   ): void {
-    const DEFINITION_KEYS = new Set([
-      'title', 'titleHtml', 'style', 'tags', 'contentId', 'content', 'src',
-      'isPlaying', 'isRecording', 'filePath', 'fileName', 'fileExtension',
-      'metadata',
-    ]);
-
     const def = cached.tileDefs[tileId];
     if (!def) return;
 
-    const defPatch: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(updates)) {
-      if (DEFINITION_KEYS.has(k)) defPatch[k] = v;
-    }
+    const defPatch = defPatchFor(def, updates);
     if (Object.keys(defPatch).length === 0) {
       ctx.markDirty(boardId);
       return;
@@ -154,7 +146,7 @@ export const kanbanTileOps: BoardTileOps<KanbanBoard> = {
         const defLocked = (def as Partial<Tile>).locked === true;
         const defFaded = (def as Partial<Tile>).faded === true;
         result[p.tileId] = {
-          ...def,
+          ...projectDef(def),
           position: { x: 0, y: 0 },
           size: { width: 240, height: 160 },
           locked: defLocked,

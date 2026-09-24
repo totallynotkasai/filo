@@ -27,7 +27,6 @@ import type {
   KanbanBoard,
   MindMapBoard,
   Tile,
-  TextTile,
   TileDefinition,
 } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
@@ -62,24 +61,9 @@ describe('historyStore.clear (H6 — vault swap)', () => {
 
 // ── H2: AddTileTagCommand / RemoveTileTagCommand ──
 
-function makeMindMapWithTextTile(tags: string[] = []): V7BoardFileData {
-  const tile = {
-    id: 't1',
-    boardId: 'mm',
-    type: 'text',
-    title: 'A',
-    titleHtml: '',
-    position: { x: 0, y: 0 },
-    size: { width: 200, height: 100 },
-    style: { headerColor: '', bodyColor: '', borderColor: '' } as never,
-    locked: false,
-    faded: false,
-    tags,
-    contentId: 'doc-1',
-    content: '',
-    createdAt: 0,
-    updatedAt: 0,
-  } as unknown as TextTile;
+/** A link tile owns its tags on the board def, so its tag edits are pure
+ *  cache writes (a note's tags live in its frontmatter instead). */
+function makeMindMapWithLinkTile(tags: string[] = []): V7BoardFileData {
   return {
     board: {
       id: 'mm',
@@ -101,12 +85,11 @@ function makeMindMapWithTextTile(tags: string[] = []): V7BoardFileData {
     tileDefs: {
       t1: {
         id: 't1',
-        type: 'text',
+        type: 'link',
         title: 'A',
+        url: 'https://example.com',
         style: { headerColor: '', bodyColor: '', borderColor: '' } as never,
         tags,
-        contentId: 'doc-1',
-        content: '',
         createdAt: 0,
         updatedAt: 0,
       } as unknown as TileDefinition,
@@ -114,6 +97,12 @@ function makeMindMapWithTextTile(tags: string[] = []): V7BoardFileData {
     connections: {},
     frames: [],
   };
+}
+
+/** The link tile's tags as stored on its board def. */
+function linkTags(): string[] {
+  const def = boardCacheStore.cache.mm?.tileDefs.t1;
+  return def?.type === 'link' ? def.tags : [];
 }
 
 describe('AddTileTagCommand / RemoveTileTagCommand (H2)', () => {
@@ -133,31 +122,30 @@ describe('AddTileTagCommand / RemoveTileTagCommand (H2)', () => {
   });
 
   it('AddTileTagCommand round-trip via cache (tile-def fallback path)', async () => {
-    // Hydrate the cache but skip setBoard — fileTags._applyAddTagToTile
-    // falls back to `boardStore.allTileDefs[tileId]` and routes through
-    // `persistUpdateTile`. This exercises the same code path that Kanban
-    // Card and Task surfaces use (their tiles aren't in `boardStore.tiles`).
-    const fixture = makeMindMapWithTextTile([]);
+    // Hydrate the cache but skip setBoard: the tile is found through the
+    // loaded boards' cache (not `boardStore.tiles`) and written with
+    // `persistUpdateTile` on its home board.
+    const fixture = makeMindMapWithLinkTile([]);
     boardCacheStore.hydrate({ mm: fixture }, { mm: 'm.board.json' });
 
     const cmd = new AddTileTagCommand('t1', 'project');
     cmd.execute();
-    expect((boardCacheStore.cache.mm?.tileDefs.t1?.tags ?? [])).toContain('project');
+    expect(linkTags()).toContain('project');
 
     cmd.undo();
-    expect((boardCacheStore.cache.mm?.tileDefs.t1?.tags ?? [])).not.toContain('project');
+    expect(linkTags()).not.toContain('project');
   });
 
   it('RemoveTileTagCommand round-trip via cache', async () => {
-    const fixture = makeMindMapWithTextTile(['holiday']);
+    const fixture = makeMindMapWithLinkTile(['holiday']);
     boardCacheStore.hydrate({ mm: fixture }, { mm: 'm.board.json' });
 
     const cmd = new RemoveTileTagCommand('t1', 'holiday');
     cmd.execute();
-    expect((boardCacheStore.cache.mm?.tileDefs.t1?.tags ?? [])).not.toContain('holiday');
+    expect(linkTags()).not.toContain('holiday');
 
     cmd.undo();
-    expect((boardCacheStore.cache.mm?.tileDefs.t1?.tags ?? [])).toContain('holiday');
+    expect(linkTags()).toContain('holiday');
   });
 });
 
@@ -186,11 +174,8 @@ function makeMindMapWithFrame(): V7BoardFileData {
       t1: {
         id: 't1',
         type: 'text',
-        title: 'A',
+        filePath: 'A.md',
         style: { headerColor: '', bodyColor: '', borderColor: '' } as never,
-        tags: [],
-        contentId: 'doc-1',
-        content: '',
         createdAt: 0,
         updatedAt: 0,
       } as unknown as TileDefinition,
@@ -269,6 +254,7 @@ describe('UpdateFrameCommand / MoveFrameCommand (H4)', () => {
         faded: false,
         tags: [],
         contentId: 'doc-1',
+        filePath: 'A.md',
         content: '',
         createdAt: 0,
         updatedAt: 0,
@@ -313,8 +299,8 @@ function makeKanbanWithCards(): V7BoardFileData {
       ],
     } as unknown as KanbanBoard,
     tileDefs: {
-      t1: { id: 't1', type: 'text', title: 'A', style: { headerColor: '', bodyColor: '', borderColor: '' } as never, tags: [], contentId: 'doc-t1', content: '', createdAt: 0, updatedAt: 0 } as unknown as TileDefinition,
-      t2: { id: 't2', type: 'text', title: 'B', style: { headerColor: '', bodyColor: '', borderColor: '' } as never, tags: [], contentId: 'doc-t2', content: '', createdAt: 0, updatedAt: 0 } as unknown as TileDefinition,
+      t1: { id: 't1', type: 'text', filePath: 'A.md', style: { headerColor: '', bodyColor: '', borderColor: '' } as never, createdAt: 0, updatedAt: 0 } as unknown as TileDefinition,
+      t2: { id: 't2', type: 'text', filePath: 'B.md', style: { headerColor: '', bodyColor: '', borderColor: '' } as never, createdAt: 0, updatedAt: 0 } as unknown as TileDefinition,
     },
     connections: {},
     frames: [],

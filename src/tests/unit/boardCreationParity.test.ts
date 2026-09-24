@@ -66,19 +66,6 @@ function structural(board: Board): Record<string, unknown> {
       sections: tl.sections.map((s) => ({ ...s, id: '<id>' })),
     };
   }
-  if (rest.type === 'document') {
-    return { ...rest, contentId: '<id>' };
-  }
-  if (rest.type === 'kanban') {
-    // `kanbanFolder` is stamped by `persistNewBoard` at create-time, not by
-    // the factory — strip it so a direct-factory output and a
-    // persisted-via-cache output remain comparable.
-    const { kanbanFolder: _kf, ...kRest } = rest as Record<string, unknown> & {
-      kanbanFolder?: string;
-    };
-    void _kf;
-    return kRest;
-  }
   return rest;
 }
 
@@ -139,11 +126,10 @@ describe('Phase 5 — board-creation parity', () => {
       expect(board.collapsedSubtasks).toEqual([]);
     });
 
-    it('document — fresh contentId + empty content', () => {
+    it('document — not yet bound to a note (empty filePath)', () => {
       const board = boardDefaults.document('doc', 'D') as DocumentBoard;
       expect(board.type).toBe('document');
-      expect(board.content).toBe('');
-      expect(board.contentId).toMatch(/.+/); // any non-empty nanoid
+      expect(board.filePath).toBe('');
     });
   });
 

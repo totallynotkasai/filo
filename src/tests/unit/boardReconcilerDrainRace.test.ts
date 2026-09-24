@@ -19,7 +19,6 @@ import {
   _resetRegistrationGuardForTests,
 } from '@renderer/stores/vaultExternalReconcilers';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
-import { boardStore } from '@renderer/stores/board.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import {
   registerPendingProbe,
@@ -38,6 +37,7 @@ const REL = 'k.board.json';
 
 function makeBoard(name: string): V7BoardFileData {
   return {
+    version: 8,
     board: {
       id: 'kb',
       type: 'kanban',
@@ -102,7 +102,7 @@ describe('board reconciler — silent reload guards a write that lands during th
       'board:load': () => {
         // A local edit lands during the async read → pending flips true.
         pendingDuringRead = true;
-        return JSON.stringify(makeBoard('from-disk'));
+        return makeBoard('from-disk');
       },
       'vault:stat': () => ({ ok: true, mtimeMs: 1, size: 1 }),
     });
@@ -119,7 +119,7 @@ describe('board reconciler — silent reload guards a write that lands during th
     __clearRecentSelfWritesForTests();
 
     installRoutes({
-      'board:load': () => JSON.stringify(makeBoard('from-disk')), // pending stays false
+      'board:load': () => makeBoard('from-disk'), // pending stays false
       'vault:stat': () => ({ ok: true, mtimeMs: 1, size: 1 }),
     });
 
@@ -166,7 +166,7 @@ describe('board reconciler — P2.4 self-write divergence tiebreak', () => {
     markRecentSelfWrite(REL);
 
     installRoutes({
-      'board:load': () => JSON.stringify(makeBoard('from-disk')),
+      'board:load': () => makeBoard('from-disk'),
       // Fresh stat DIVERGES from the baseline {1,100} → a 2nd writer touched it.
       'vault:stat': () => ({ success: true, mtimeMs: 2, size: 200 }),
     });
@@ -185,7 +185,7 @@ describe('board reconciler — P2.4 self-write divergence tiebreak', () => {
     markRecentSelfWrite(REL);
 
     installRoutes({
-      'board:load': () => JSON.stringify(makeBoard('from-disk')),
+      'board:load': () => makeBoard('from-disk'),
       // Fresh stat MATCHES the baseline {1,100} → it's our own write echoing back.
       'vault:stat': () => ({ success: true, mtimeMs: 1, size: 100 }),
     });

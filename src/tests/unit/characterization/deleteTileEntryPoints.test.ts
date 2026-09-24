@@ -35,13 +35,12 @@ import { findOrphans } from './randomOpsNoOrphans.property.test';
 
 // ── Fixture factories ──────────────────────────────────────────────────
 
-function mkDef(id: string, title = id): TileDefinition {
+function mkDef(id: string): TileDefinition {
   return {
     id,
     type: 'text',
-    title,
+    filePath: `${id}.md`,
     style: { headerColor: '#000', bodyColor: '#fff', borderColor: '' } as never,
-    tags: [],
     createdAt: 0,
     updatedAt: 0,
   } as unknown as TileDefinition;

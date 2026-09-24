@@ -1,18 +1,15 @@
 /**
- * Audit-12 H2 — the single-tag add/remove path must resolve a text tile's backing
- * `.md` through the canonical `resolveTextTileVaultPath` (filePath → docState →
- * folder cascade), NOT the deleted local helper whose fallback ended at
- * `${title}.md` at the vault ROOT.
+ * Audit-12 H2 — the single-tag add/remove path must write a text tile's tag to
+ * the note its `filePath` names, NOT a same-named note at the vault ROOT.
  *
- * The bug: on a cold-loaded subfolder text tile / Task row (no docState, and —
- * per H1 — possibly no `filePath`), the old helper wrote the tag and the
- * `.filo/tags.json` key to a ROOT file, corrupting an unrelated same-named root
- * note or creating a ghost.
+ * The bug: on a cold-loaded subfolder Task row (not on the active board, no
+ * docState), a root-fallback path resolution wrote the tag to a ROOT file,
+ * corrupting an unrelated same-named root note or creating a ghost.
  *
- * These tests drive `fileTagsStore.addTagToTile` for a cold tile (not on the
- * active board, no docState) and assert BOTH the synchronous `tags.json` key AND
- * the fire-and-forget `.md` write land in the subfolder. Bite-verify: restore the
- * old root-fallback helper → the key/path collapse to `a.md` / `A.md`.
+ * This drives `fileTagsStore.addTagToTile` for a cold tile and asserts the
+ * fire-and-forget `.md` frontmatter write lands in the subfolder, and that no
+ * `.filo/tags.json` entry is made for the note (a note's tags live only in its
+ * frontmatter).
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -31,8 +28,8 @@ function emptyTagsFile(): string {
 }
 
 async function drainFireAndForget(): Promise<void> {
-  // writeTagChangeToTileMarkdown is fire-and-forget — let the read +
-  // serialized write + reconcile chain settle.
+  // The note tag write is fire-and-forget — let the read + serialized write +
+  // reconcile chain settle.
   for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
 }
 
@@ -78,22 +75,11 @@ describe('Audit-12 H2 — fileTags tag write honors subfolders', () => {
     __resetDirtyTrackingForTests();
   });
 
-  function hydrateColdTextTile(opts: { folder?: string; filePath?: string }): void {
-    const tileDef: Record<string, unknown> = {
-      id: 't1',
-      type: 'text',
-      title: 'A',
-      boardId: 'k1',
-      contentId: 'c1',
-      style: {},
-      tags: [],
-      createdAt: 0,
-      updatedAt: 0,
-    };
-    if (opts.filePath) tileDef.filePath = opts.filePath;
+  function hydrateColdTextTile(filePath: string): void {
     boardCacheStore.hydrate(
       {
         k1: {
+          version: 8,
           board: {
             id: 'k1',
             type: 'tasklist',
@@ -101,11 +87,20 @@ describe('Audit-12 H2 — fileTags tag write honors subfolders', () => {
             emoji: '',
             createdAt: 0,
             updatedAt: 0,
-            settings: opts.folder ? { defaultFolder: opts.folder } : {},
+            settings: {},
             sections: [],
-            tasks: [],
+            tasks: [{ tileId: 't1', position: 0 }],
           } as unknown as TaskListBoardType,
-          tileDefs: { t1: tileDef as never },
+          tileDefs: {
+            t1: {
+              id: 't1',
+              type: 'text',
+              filePath,
+              style: { headerColor: '', bodyColor: '', borderColor: '' },
+              createdAt: 0,
+              updatedAt: 0,
+            },
+          },
           connections: {},
           frames: [],
         },
@@ -114,31 +109,18 @@ describe('Audit-12 H2 — fileTags tag write honors subfolders', () => {
     );
   }
 
-  it('no filePath + a board content-folder → resolves the tag write to the subfolder (NOT root)', async () => {
-    hydrateColdTextTile({ folder: 'Notes' });
+  it('explicit subfolder filePath → resolves the tag write to that path', async () => {
+    hydrateColdTextTile('Sub/B.md');
     // Cold: not on the active board, no live docState.
     expect(boardStore.getTile('t1')).toBeUndefined();
-    expect(documentStore.getDocument('c1')).toBeUndefined();
 
     fileTagsStore.addTagToTile('t1', 'newtag');
 
-    // tags.json key (synchronous) — subfolder, NOT root. Keys are canonical lowercase.
-    expect(fileTagsStore.file.fileTags['notes/a.md']).toContain('newtag');
-    expect(fileTagsStore.file.fileTags['a.md']).toBeUndefined();
-
-    // Fire-and-forget .md write targets the subfolder file (case preserved).
-    await drainFireAndForget();
-    expect(mdWrites).toContain('Notes/A.md');
-    expect(mdWrites).not.toContain('A.md');
-  });
-
-  it('explicit subfolder filePath → resolves the tag write to that path', async () => {
-    hydrateColdTextTile({ filePath: 'Sub/B.md' });
-
-    fileTagsStore.addTagToTile('t1', 'newtag');
-
-    expect(fileTagsStore.file.fileTags['sub/b.md']).toContain('newtag');
     await drainFireAndForget();
     expect(mdWrites).toContain('Sub/B.md');
+    expect(mdWrites).not.toContain('B.md');
+    // The note's tags live in its frontmatter only.
+    expect(fileTagsStore.file.fileTags['sub/b.md']).toBeUndefined();
+    expect(fileTagsStore.file.fileTags['b.md']).toBeUndefined();
   });
 });

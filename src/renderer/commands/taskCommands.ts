@@ -4,6 +4,7 @@ import { documentStore } from '../stores/document.svelte';
 import { uiStore } from '../stores/ui.svelte';
 import { vaultStore } from '../stores/vault.svelte';
 import { vaultIndexStore } from '../stores/vaultIndex.svelte';
+import { defTitle } from '../stores/noteMeta';
 import type {
   TaskListBoard,
   TaskListSection,
@@ -122,7 +123,7 @@ export class AddTaskCommand extends Command {
     this.style = style ? this.snapshot(style) : style;
     this.targetSectionId = targetSectionId;
     this.seedBackingFile = seedBackingFile;
-    this.description = `Add task "${def.title ?? ''}"`;
+    this.description = `Add task "${defTitle(def)}"`;
     const snap = snapshotTaskListSlice(boardId);
     this.sectionsBefore = snap ? snap.sections : null;
   }
@@ -158,15 +159,15 @@ export class AddTaskCommand extends Command {
       // re-adds the bumped path, which is where the file actually lives.
       const current = (this.def as { filePath?: string }).filePath;
       if (seeded && seeded.relPath !== current) {
-        this.def = { ...this.def, filePath: seeded.relPath, title: seeded.title } as TileDefinition;
-        boardCacheStore.persistUpdateTile(this.def.id, { filePath: seeded.relPath, title: seeded.title }, this.boardId);
+        this.def = { ...this.def, filePath: seeded.relPath } as TileDefinition;
+        boardCacheStore.persistUpdateTile(this.def.id, { filePath: seeded.relPath }, this.boardId);
       }
     }
   }
 
-  /** Title of the task as created (reflects any ` (n)` name bump). */
+  /** Title of the task as created. */
   get currentTitle(): string {
-    return this.def.title ?? '';
+    return defTitle(this.def);
   }
 
   undo() {

@@ -15,7 +15,7 @@
    * pipeline as `ImageTile`.
    */
   import { documentStore } from '../../stores/document.svelte';
-  import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
+  import { noteFrontmatter } from '../../stores/noteMeta';
   import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { toMediaUrl } from '../../lib/utils/mediaUrl';
@@ -142,35 +142,15 @@
   const isText = $derived(tile.type === 'text');
   const contentId = $derived((tile as Tile & { contentId?: string }).contentId ?? null);
 
-  // Vault-relative path for vaultIndex lookups. Mirrors the TextTile / Task List
-  // resolution order: explicit filePath > documentStore.filename > convention.
-  function vaultPathForTile(): string | null {
-    if (!isText) return null;
-    const explicit = (tile as Tile & { filePath?: string }).filePath;
-    if (typeof explicit === 'string' && explicit.length > 0) return explicit;
-    if (contentId) {
-      const doc = documentStore.getDocument(contentId);
-      if (doc?.filename) return doc.filename;
-    }
-    return `${tile.title || 'Untitled'}.md`;
-  }
+  // The card's note path; `null` for a non-text card.
+  let notePath = $derived(isText ? ((tile as Tile & { filePath?: string }).filePath ?? null) : null);
 
   // ── Frontmatter-derived state (priority, dueDate) ──
-  // Re-runs on vault-index updates so external edits to the .md file reflect
-  // in the badge live.
-  let frontmatter = $derived.by(() => {
-    void vaultIndexStore.version;
-    void documentStore.frontmatterVersion;
-    if (!isText) return {} as Record<string, unknown>;
-    const path = vaultPathForTile();
-    if (!path) return {} as Record<string, unknown>;
-    // The live cache wins when present (covers in-flight optimistic edits).
-    if (contentId) {
-      const cached = documentStore.getFrontmatter(contentId);
-      if (cached) return cached;
-    }
-    return (vaultIndexStore.getMetadata(path)?.frontmatter ?? {}) as Record<string, unknown>;
-  });
+  // The live cache wins when present (covers in-flight optimistic edits);
+  // otherwise the vault index, so external edits reflect in the badge live.
+  let frontmatter = $derived(
+    notePath ? (noteFrontmatter(notePath) as Record<string, unknown>) : ({} as Record<string, unknown>),
+  );
 
   let priority = $derived<Priority>(FIELD_READERS.priority(frontmatter));
   let dueDate = $derived<string>(FIELD_READERS.dueDate(frontmatter));

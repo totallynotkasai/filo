@@ -1,8 +1,8 @@
 /**
- * Convention-path helpers shared by board components (Kanban, TaskList,
- * future board types). The deduplication / normalisation primitives below
- * (`fileNameSafe`, `nextUniqueMdPath`, `normalizeRootFolder`,
- * `titleFromRelPath`) are pure — no IPC, no Svelte.
+ * Where a new note lands and what its file is called. A note's path is picked
+ * once, at creation, from its title; after that the path is its identity and
+ * is never re-derived. The naming primitives below (`fileNameSafe`,
+ * `nextUniqueMdPath`, `normalizeRootFolder`) are pure — no IPC, no Svelte.
  *
  * `getActiveContentFolder` / `getActiveContentFolderAbs` resolve the cascade
  * for "where does a new file land": vault-wide pin → per-board pin → vault
@@ -14,21 +14,16 @@ import type { Board } from '../../schema/index';
 import { vaultStore } from '../../stores/vault.svelte';
 import { normalizePath, normalizeVaultRelative, stripLeadingSlash } from '../utils/path';
 import { flattenTreePaths } from './vaultTreeSort';
+import { fileStemFromTitle } from '@shared/fileNames';
 
 /**
- * Strips OS-illegal filename characters and collapses whitespace. Returns
- * `'Untitled'` for inputs that reduce to an empty string.
+ * The file stem for a note titled `name`: illegal characters become `-`,
+ * reserved device names are prefixed, empty becomes `Untitled` (see
+ * `fileStemFromTitle`). Only the filename is restricted; the title itself is
+ * stored verbatim in frontmatter.
  */
 export function fileNameSafe(name: string): string {
-  return (
-    name
-      .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      // Windows strips a trailing dot/space and main rejects
-      // one (`assertSafeFilename`), so "Call Bob." becomes `Call Bob`.
-      .replace(/[. ]+$/, '') || 'Untitled'
-  );
+  return fileStemFromTitle(name);
 }
 
 /**
@@ -38,7 +33,7 @@ export function fileNameSafe(name: string): string {
  * lowest free integer ≥ 2 wins.
  *
  * `taken` is case-folded (NTFS/APFS treat `Groceries.md` and
- * `groceries.md` as one file), prefers a def's explicit `filePath`, and folds
+ * `groceries.md` as one file), holds every text def's `filePath`, and folds
  * in `extraTaken` (the on-disk tree, via `nextFreeMdPath`). This is only the
  * PRE-PICK: the create-exclusive `vault:create-file-text` channel is the
  * authority, and `createUniqueMdFile` bumps again on EEXIST.
@@ -53,10 +48,7 @@ export function nextUniqueMdPath(
   const taken = new Set<string>();
   for (const data of Object.values(cache)) {
     for (const def of Object.values(data.tileDefs ?? {})) {
-      const d = def as Record<string, unknown>;
-      if (d.type !== 'text') continue;
-      if (typeof d.filePath === 'string' && d.filePath) taken.add(normalizeVaultRelative(d.filePath));
-      else if (d.title) taken.add(normalizeVaultRelative(`${prefix}${d.title}.md`));
+      if (def.type === 'text') taken.add(normalizeVaultRelative(def.filePath));
     }
   }
   for (const p of extraTaken) taken.add(normalizeVaultRelative(p));
@@ -83,16 +75,6 @@ export function nextFreeMdPath(
   const root = vaultStore.path;
   const onDisk = root ? flattenTreePaths(vaultStore.rawTree ?? [], root) : [];
   return nextUniqueMdPath(cache, folder, baseName, onDisk);
-}
-
-/**
- * Inverse of `nextUniqueMdPath` for display purposes: strips the leading
- * folder prefix and the trailing `.md` extension to recover the title that
- * was used to build the path.
- */
-export function titleFromRelPath(relPath: string, folder: string): string {
-  const prefix = folder ? `${folder}/` : '';
-  return relPath.replace(prefix, '').replace(/\.md$/, '');
 }
 
 /**

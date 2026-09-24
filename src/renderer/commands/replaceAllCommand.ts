@@ -14,10 +14,8 @@
  *   the failed paths so the user can retry.
  *
  * Scope: replaces body matches only. Title matches (matchKind: 'title')
- * are surfaced via the find/find-all UI but skipped by Replace — the
- * semantics of renaming a tile title also need to consider whether the
- * backing file should rename, and that's a different code path
- * (`renameTitleCommand`).
+ * are surfaced via the find/find-all UI but skipped by Replace — a title
+ * edit is its own undoable command (`UpdateTitleCommand`).
  *
  * Undo: restores every file's pre-replace snapshot. Snapshots live on the
  * command instance, so dropping the command off the history stack drops the

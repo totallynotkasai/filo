@@ -31,8 +31,8 @@ const RECOVERY_DIR = join('.filo', 'recovery');
  * sentinel). Kept in sync with the sentinel paths in `dirtyFlagRecovery.ts`,
  * `tagRewriteSentinel.ts`, `renameCascadeSentinel.ts`, `quitFailureRecovery.ts`.
  */
-// Per-machine forms (`.dirty.<id>`, `quit-failure.<id>.json` …) as well as the
-// legacy bare names: one matcher in src/shared/sentinelPaths.ts.
+// Per-machine forms (`.dirty.<id>`, `quit-failure.<id>.json` …): one matcher
+// in src/shared/sentinelPaths.ts.
 const isSentinelBasename = (name: string): boolean => parseSentinelBasename(name) !== null;
 
 /**
@@ -100,34 +100,6 @@ export function flattenSnapshotName(relativePath: string): string {
 }
 
 /**
- * The bare basename older (pre-flattening) snapshots of `relativePath` were
- * stored under (e.g. `folderA/Notes.md` → `Notes.md`). Derived from the
- * ORIGINAL rel path's last segment so a basename containing `__` isn't
- * mis-split.
- *
- * The pruner counts both this and the flattened name toward the cap, so
- * old-format snapshots don't accumulate outside retention. (Old-format
- * snapshots of same-named files in different folders share a bucket — they
- * were stored under the same name anyway.)
- */
-function legacyBasename(relativePath: string): string {
-  const segments = relativePath.split(/[\\/]+/).filter(Boolean);
-  return segments[segments.length - 1] ?? relativePath;
-}
-
-/**
- * The distinct snapshot filenames that all denote `relativePath`: the
- * flattened name plus the legacy bare basename (deduped — a
- * root-level file's flattened name IS its bare name). Used by the per-basename
- * pruner so both naming generations count toward the same retention cap.
- */
-function snapshotNameCandidates(relativePath: string): string[] {
-  const flattened = flattenSnapshotName(relativePath);
-  const legacy = legacyBasename(relativePath);
-  return flattened === legacy ? [flattened] : [flattened, legacy];
-}
-
-/**
  * Copies `<vault>/<relativePath>` into
  * `<vault>/.filo/recovery/<ts>/<flattened-rel-path>`.
  *
@@ -178,7 +150,7 @@ export async function snapshotForRecovery(
 
   // Prune older snapshots of the same file. Best-effort, but logged so an
   // iffy-permissions vault doesn't accumulate snapshots invisibly.
-  await pruneOldSnapshotsForBasename(vaultRoot, snapshotNameCandidates(relativePath)).catch((err) => {
+  await pruneOldSnapshotsForBasename(vaultRoot, flattenSnapshotName(relativePath)).catch((err) => {
     logMainError('recovery:snapshot:prune', err);
   });
 
@@ -195,11 +167,9 @@ export async function snapshotForRecovery(
 }
 
 /**
- * Walks `.filo/recovery/*` looking for snapshots whose filename matches any of
- * `targetNames` (the flattened rel path plus the legacy bare basename — see
- * `snapshotNameCandidates`), sorts them by mtime ascending
- * (oldest first), and deletes everything past the most recent
- * `MAX_SNAPSHOTS_PER_BASENAME`.
+ * Walks `.filo/recovery/*` looking for snapshots named `targetName` (the
+ * flattened rel path), sorts them by mtime ascending (oldest first), and
+ * deletes everything past the most recent `MAX_SNAPSHOTS_PER_BASENAME`.
  * Empty timestamp subdirectories are removed after their last file goes.
  *
  * Defensive: every fs operation that could plausibly fail is wrapped so a
@@ -209,7 +179,7 @@ export async function snapshotForRecovery(
  */
 async function pruneOldSnapshotsForBasename(
   vaultRoot: string,
-  targetNames: string[],
+  targetName: string,
 ): Promise<void> {
   const recoveryRoot = join(vaultRoot, RECOVERY_DIR);
   let entries: Array<{ name: string; isDirectory: boolean }>;
@@ -230,17 +200,13 @@ async function pruneOldSnapshotsForBasename(
   for (const entry of entries) {
     if (!entry.isDirectory) continue;
     const subdirPath = join(recoveryRoot, entry.name);
-    // A subdir can hold both the flattened name AND the legacy
-    // bare name (distinct files, distinct paths); count each that exists.
-    for (const candidate of targetNames) {
-      const filePath = join(subdirPath, candidate);
-      try {
-        const stat = await fs.stat(filePath);
-        if (!stat.isFile()) continue;
-        matches.push({ filePath, subdirPath, mtime: stat.mtimeMs });
-      } catch {
-        // No matching file in this subdir, or stat failed — skip.
-      }
+    const filePath = join(subdirPath, targetName);
+    try {
+      const stat = await fs.stat(filePath);
+      if (!stat.isFile()) continue;
+      matches.push({ filePath, subdirPath, mtime: stat.mtimeMs });
+    } catch {
+      // No matching file in this subdir, or stat failed — skip.
     }
   }
   if (matches.length <= MAX_SNAPSHOTS_PER_BASENAME) return;

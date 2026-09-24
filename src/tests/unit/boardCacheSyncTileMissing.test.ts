@@ -34,7 +34,7 @@ function makeKanbanFixtureWithTextTile(): V7BoardFileData {
   const def: TileDefinition = {
     id: 't1',
     type: 'text',
-    title: 'Note',
+    filePath: 'note.md',
     style: {
       headerColor: '#000',
       bodyColor: '#fff',
@@ -44,10 +44,8 @@ function makeKanbanFixtureWithTextTile(): V7BoardFileData {
       borderWidth: 1,
       shadowIntensity: 0.3,
     } as never,
-    tags: [],
     createdAt: 0,
     updatedAt: 0,
-    file: 'note.md',
   } as TileDefinition;
 
   return {

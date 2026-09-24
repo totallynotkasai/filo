@@ -136,8 +136,6 @@ describe('Audit-12 H1 — Task List creation persists filePath', () => {
     const persisted = {
       id: created!.id,
       type: 'text',
-      title: created!.title,
-      contentId: (created as { contentId?: string }).contentId,
       filePath: created!.filePath,
     } as unknown as Tile & { filePath?: string };
 
@@ -149,9 +147,9 @@ describe('Audit-12 H1 — Task List creation persists filePath', () => {
     // The persisted explicit filePath wins → resolves to the REAL subfolder path.
     expect(resolveTextTileVaultPath(persisted, 'tl')).toBe('Tasks/New Task.md');
 
-    // Negative control — the SAME tile WITHOUT the persisted filePath (the pre-H1
-    // state) falls through to the now-diverged cascade: the exact wrong-file bug.
+    // Negative control: the path comes only from filePath. A tile without one
+    // names no note, so nothing is guessed from the board's (diverged) folder.
     const withoutFilePath = { ...persisted, filePath: undefined } as unknown as Tile;
-    expect(resolveTextTileVaultPath(withoutFilePath, 'tl')).toBe('Archive/New Task.md');
+    expect(resolveTextTileVaultPath(withoutFilePath, 'tl')).toBeNull();
   });
 });

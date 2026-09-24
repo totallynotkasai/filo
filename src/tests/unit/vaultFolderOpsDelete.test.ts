@@ -51,15 +51,14 @@ function uninstallFiloStub(): void {
   delete (window as unknown as Record<string, unknown>).filo;
 }
 
-function makeDocumentBoardFixture(boardPath: string, contentId: string): V7BoardFileData {
+function makeDocumentBoardFixture(boardPath: string, filePath: string): V7BoardFileData {
   return {
     board: {
       id: boardPath.replace(/[^a-z0-9]/gi, '_'),
       type: 'document',
       name: boardPath.split('/').pop() ?? 'Doc',
       emoji: '',
-      contentId,
-      content: '',
+      filePath,
       createdAt: 0,
       updatedAt: 0,
       settings: {},
@@ -210,12 +209,12 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
 
   it('bails before the in-memory cascade when the vault swaps during the tags-drop flush (Audit-12 L4)', async () => {
     // L4 adds two more bails AFTER the M2 flushAllDirty bail: one after the
-    // `fileTagsStore.flushPendingSave()` await (before the B4 contentId-clear
+    // `fileTagsStore.flushPendingSave()` await (before the B4 filePath-clear
     // loop) and one after the `Promise.allSettled` await (before the doc-unload
     // loop). We swap the vault during the tags-drop flush — the window the first
     // new bail protects — and assert the B4 loop (cache mutation) AND the
     // doc-unload loop were both skipped, leaving the outgoing vault's state
-    // untouched. Bite: remove both L4 bails → the board's contentId is cleared
+    // untouched. Bite: remove both L4 bails → the board's filePath is cleared
     // and doc-foo is unloaded against the swapped-in vault.
     installFiloStub({
       'vault:delete': async () => ({ success: true }),
@@ -231,9 +230,9 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
       htmlContent: '<p>stale</p>',
       richText: [],
     });
-    // A Document Board OUTSIDE the deleted tree whose contentId points at the
-    // deleted .md → the B4 loop would clear its contentId (the guard-1 window).
-    const fixture = makeDocumentBoardFixture('Boards/Daily.board.json', 'doc-foo');
+    // A Document Board OUTSIDE the deleted tree whose filePath points at the
+    // deleted .md → the B4 loop would clear its filePath (the guard-1 window).
+    const fixture = makeDocumentBoardFixture('Boards/Daily.board.json', 'Notes/2026/foo.md');
     boardCacheStore.hydrate({ daily: fixture }, { daily: 'Boards/Daily.board.json' });
 
     // Swap during the single awaited fileTagsStore.flushPendingSave().
@@ -253,9 +252,9 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
 
       expect(ok).toBe(true); // disk delete landed → success
       expect(swapped).toBe(true);
-      // guard-1: the B4 contentId-clear loop was skipped — board untouched.
-      expect((boardCacheStore.cache.daily?.board as { contentId?: string }).contentId).toBe(
-        'doc-foo',
+      // guard-1: the B4 filePath-clear loop was skipped — board untouched.
+      expect((boardCacheStore.cache.daily?.board as { filePath?: string }).filePath).toBe(
+        'Notes/2026/foo.md',
       );
       // guards: the doc-unload loop was skipped — outgoing vault's doc untouched.
       expect(documentStore.getDocument('doc-foo')).toBeDefined();
@@ -265,7 +264,7 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
     }
   });
 
-  it('closes Document Board tabs whose contentId points at a .md under the deleted folder, even when the .board.json lives outside the tree', async () => {
+  it('closes Document Board tabs whose filePath points at a .md under the deleted folder, even when the .board.json lives outside the tree', async () => {
     installFiloStub({
       'vault:delete': async () => ({ success: true }),
       'vault:read-tree': async () => ({ ok: true, tree: [] }),
@@ -281,7 +280,7 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
       richText: [],
     });
 
-    const fixture = makeDocumentBoardFixture('Boards/Daily.board.json', 'doc-foo');
+    const fixture = makeDocumentBoardFixture('Boards/Daily.board.json', 'Notes/2026/foo.md');
     boardCacheStore.hydrate({ daily: fixture }, { daily: 'Boards/Daily.board.json' });
     tabStore.open('daily', 'Daily', 'document', '');
 
@@ -351,26 +350,26 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
 
   /**
    * Polish phase 4.1 (2026-05-25) — when a folder delete removes the
-   * .md that a Document Board's `contentId` points at, the cached board
-   * entry must have its contentId cleared and the cleared value must
+   * .md that a Document Board's `filePath` points at, the cached board
+   * entry must have its filePath cleared and the cleared value must
    * be flushed to disk BEFORE the cleanup wipes the cache. Otherwise
-   * the .board.json on disk retains the dangling contentId; reopening
+   * the .board.json on disk retains the dangling path; reopening
    * the board crashes the editor on the missing pointer.
    */
-  it('clears the Document Board contentId and persists the cleared value to disk', async () => {
-    const boardSavePayloads: Array<{ relPath: string; contentId: string }> = [];
+  it('clears the Document Board filePath and persists the cleared value to disk', async () => {
+    const boardSavePayloads: Array<{ relPath: string; filePath: string }> = [];
     installFiloStub({
       'vault:delete': async () => ({ success: true }),
       'vault:read-tree': async () => ({ ok: true, tree: [] }),
       'board:save': async (_vaultRoot: unknown, relPath: unknown, jsonStr: unknown) => {
         try {
-          const parsed = JSON.parse(jsonStr as string) as { board?: { contentId?: string } };
+          const parsed = JSON.parse(jsonStr as string) as { board?: { filePath?: string } };
           boardSavePayloads.push({
             relPath: relPath as string,
-            contentId: parsed.board?.contentId ?? '<missing>',
+            filePath: parsed.board?.filePath ?? '<missing>',
           });
         } catch {
-          boardSavePayloads.push({ relPath: relPath as string, contentId: '<parse-error>' });
+          boardSavePayloads.push({ relPath: relPath as string, filePath: '<parse-error>' });
         }
         return { success: true };
       },
@@ -385,9 +384,9 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
       richText: [],
     });
 
-    // Document Board lives OUTSIDE the deleted folder but its contentId
-    // points to a doc whose filename is INSIDE.
-    const fixture = makeDocumentBoardFixture('Boards/Daily.board.json', 'doc-foo');
+    // Document Board lives OUTSIDE the deleted folder but its filePath
+    // points to a note INSIDE.
+    const fixture = makeDocumentBoardFixture('Boards/Daily.board.json', 'Notes/2026/foo.md');
     boardCacheStore.hydrate({ daily: fixture }, { daily: 'Boards/Daily.board.json' });
 
     const pending = vaultStore.delete('/vault/Notes/2026');
@@ -396,14 +395,14 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
     expect(ok).toBe(true);
 
     // The Document Board's `.board.json` on disk was rewritten with
-    // contentId cleared. If the cleanup had wiped the cache before the
+    // filePath cleared. If the cleanup had wiped the cache before the
     // flush ran, the write would have been a no-op and this assertion
     // would fail.
     const dailyWrites = boardSavePayloads.filter(
       (w) => w.relPath === 'Boards/Daily.board.json',
     );
     expect(dailyWrites.length).toBeGreaterThanOrEqual(1);
-    // At least one of the writes carried the cleared contentId.
-    expect(dailyWrites.some((w) => w.contentId === '')).toBe(true);
+    // At least one of the writes carried the cleared filePath.
+    expect(dailyWrites.some((w) => w.filePath === '')).toBe(true);
   });
 });

@@ -19,9 +19,9 @@ export function registerMachineHandlers(): void {
   ipcMain.handle('app:machine-identity', () => getMachineIdentity());
 
   /**
-   * Every crash-recovery sentinel in `.filo/` — this machine's, other
-   * machines', and legacy bare ones — so the renderer can list foreign state
-   * without a directory-read channel. Read-only.
+   * Every crash-recovery sentinel in `.filo/` — this machine's and other
+   * machines' — so the renderer can list foreign state without a
+   * directory-read channel. Read-only.
    */
   ipcMain.handle('recovery:list-sentinels', async (_event, vaultRoot: string) => {
     try {
@@ -58,7 +58,7 @@ export function registerMachineHandlers(): void {
         try {
           const st = await fs.stat(join(dir, name));
           if (!st.isFile()) continue;
-          const hostname = parsed.machineId ? await hostnameOf(parsed.machineId) : undefined;
+          const hostname = await hostnameOf(parsed.machineId);
           entries.push({ ...parsed, ...(hostname ? { hostname } : {}), relPath: `.filo/${name}`, mtimeMs: st.mtimeMs });
         } catch {
           // vanished between readdir and stat

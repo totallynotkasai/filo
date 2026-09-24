@@ -70,7 +70,7 @@ describe('vaultPathForTile — honors the def filePath (Audit-10 B2)', () => {
     expect(vaultPathForTile(tile)).toBeNull();
   });
 
-  it('falls back to documentStore.filename when no filePath is set', () => {
+  it('does not guess a path from an open document when no filePath is set', () => {
     documentStore.loadDocument({
       docId: 'doc3',
       filename: 'Notes/Real.md',
@@ -86,13 +86,14 @@ describe('vaultPathForTile — honors the def filePath (Audit-10 B2)', () => {
       contentId: 'doc3',
       tags: [],
     } as unknown as Tile;
-    expect(vaultPathForTile(tile)).toBe('Notes/Real.md');
+    // A card's note is named only by its filePath; without one it has no note.
+    expect(vaultPathForTile(tile)).toBeNull();
     documentStore.unloadDocument('doc3');
   });
 
-  it('falls back to ${title}.md at root when neither filePath nor a document exists', () => {
+  it('does not guess ${title}.md at root when neither filePath nor a document exists', () => {
     const tile = { id: 't4', type: 'text', title: 'Loose', tags: [] } as unknown as Tile;
-    expect(vaultPathForTile(tile)).toBe('Loose.md');
+    expect(vaultPathForTile(tile)).toBeNull();
   });
 });
 

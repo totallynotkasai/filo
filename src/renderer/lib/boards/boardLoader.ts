@@ -8,7 +8,7 @@
  * shipping a `fileExists` callback into every caller.
  */
 
-import type { Board, Connection, Frame, MindMapBoard } from '../../schema/index';
+import type { Board, Connection, Frame } from '../../schema/index';
 import { V7BoardFileDataSchema, migrateBoardFile, CURRENT_BOARD_FILE_VERSION } from '../../schema/index';
 import { TILE_TYPES } from '../../schema/tile';
 import type { V7BoardFileData } from './boardSaver';
@@ -23,9 +23,9 @@ import { detectConflictCopyPath } from '@shared/conflictCopy';
 const TILE_TYPE_SET: ReadonlySet<string> = new Set(TILE_TYPES);
 
 /**
- * Strips tile-def entries whose `type` isn't in the live `TILE_TYPES` union.
- * The classic case is the calendar board removal which left behind
- * `{ type: 'calendar', ... }` entries with no migration. Returns the
+ * Strips tile-def entries whose `type` isn't in the live `TILE_TYPES` union
+ * (a hand-edited or foreign def), so one unknown def doesn't fail the whole
+ * board. Returns the
  * dropped types (deduplicated) so the caller can surface a single toast
  * per board.
  *
@@ -112,7 +112,7 @@ function orphanReportHasFindings(r: OrphanPruneReport): boolean {
  * - All board types: `tileDefs` keys are valid (vault-backed tiles).
  * - Mind Map only: `board.inlineTiles` keys are ALSO valid. Inline tiles
  *   (Link / Iframe / Timer) live on the board itself rather than tileDefs
- *   but participate in `mergeBoardTiles` and can be connection / frame
+ *   but are tiles on the canvas and can be connection / frame
  *   members.
  */
 function collectValidTileIds(envelope: {
@@ -296,24 +296,16 @@ export interface LoadBoardResult {
   ok: true;
   data: V7BoardFileData;
   /**
-   * When a legacy / mis-versioned file was migrated, the version number on
-   * the raw input before translation. `null` for already-current files —
-   * lets callers emit a one-shot telemetry / toast only when migration ran.
+   * The version on the raw input when a migration step ran, else `null`.
+   * Always `null` today: only the current format loads.
    */
   migratedFrom: number | null;
   /**
-   * Unknown tile-def types stripped before schema validation (e.g. legacy
-   * `calendar` entries left behind by the removed board type). Empty when
-   * every def passed the live `TILE_TYPES` allowlist.
+   * Unknown tile-def types stripped before schema validation (a hand-edited
+   * or foreign def). Empty when every def passed the live `TILE_TYPES`
+   * allowlist.
    */
   droppedTileTypes: string[];
-  /**
-   * True when `backfillGroupDisplayIndices` assigned indices to one or more
-   * legacy groups. The caller markDirty's the board so the freshly
-   * assigned indices land on disk — otherwise the backfill re-runs on every
-   * reopen and the indices can drift if the user reorders groups in between.
-   */
-  groupsBackfilled: boolean;
   /**
    * True when `pruneOrphanRefsAndDuplicates` removed at least one orphan
    * connection / orphan frame ref / duplicate placement. The caller marks
@@ -327,7 +319,7 @@ export interface LoadBoardResult {
    * nested connection / frame / mindmap-group `boardId` to match
    * `board.id`. Benign self-heal: unlike `orphansPruned` it takes no recovery
    * snapshot and never refuses the load. The caller marks the board dirty so
-   * the corrected values land on disk (mirrors `groupsBackfilled`).
+   * the corrected values land on disk.
    */
   boardIdsNormalized: boolean;
   /**
@@ -346,10 +338,8 @@ export interface LoadBoardError {
     | 'schema-invalid'
     | 'io-error'
     | 'from-future'
-    // Input version is below
-    // `CURRENT_BOARD_FILE_VERSION` but no `MIGRATION_STEPS` entry covers
-    // the gap (or the version is fractional). Surfaces a different
-    // toast than `from-future`.
+    // Made by an older Filo (or no/fractional version). Refused, never
+    // migrated or written. Surfaces a different toast than `from-future`.
     | 'no-migration-path'
     // Board needed orphan-ref / duplicate prune but the
     // `recovery:snapshot` IPC failed, so we have nowhere to preserve the
@@ -435,9 +425,8 @@ export async function loadBoard(
     preStat = null;
   }
 
-  // Main returns the parsed board OBJECT (it unwraps a legacy double-encoded
-  // file itself) inside an envelope with a typed failure code; a string still
-  // parses below and a bare payload (or `null`) is accepted, for test stubs.
+  // Main returns the parsed board inside an envelope with a typed failure code;
+  // a bare payload (or `null`) is accepted, for test stubs.
   let raw: unknown;
   try {
     const res: unknown = await invokeOk('board:load', vaultRoot, relPath);
@@ -467,12 +456,9 @@ export async function loadBoard(
     // Non-fatal — no baseline, no pre-write drift check for this board.
   }
 
-  let rawJson: unknown;
-  try {
-    rawJson = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  } catch (err) {
-    return { ok: false, error: 'parse-error', message: `${err}` };
-  }
+  // Anything that isn't the current format (including a non-object) is
+  // classified by the version gate in `migrateBoardFile` below.
+  const rawJson: unknown = raw;
 
   // Route migrate → prune → validate through the shared versioned-load helper
   // (`loadVersionedFile`) so the migrate-before-parse ordering and the
@@ -480,8 +466,7 @@ export async function loadBoard(
   // config loader. The `transform` slot runs the board-specific prune:
   //
   //  - strip tile-def entries whose `type` isn't in the live `TILE_TYPES`
-  //    union (e.g. `calendar` entries left over from the removed board
-  //    type), which the schema's discriminated union would otherwise reject
+  //    union, which the schema's discriminated union would otherwise reject
   //    outright — routing the whole board to `failedBoards`;
   //  - prune orphan connection / frame refs + duplicate Kanban / Task
   //    placements so one bad ref doesn't fail the entire board.
@@ -500,7 +485,7 @@ export async function loadBoard(
       droppedTileTypes = preFilterUnknownTileTypes(data);
       // Orphan / duplicate prune runs AFTER the unknown-type strip so
       // connection/frame refs are validated against the trimmed tileDefs (a
-      // connection pointing at a stripped-away calendar tile is ALSO an
+      // connection pointing at a stripped-away tile is ALSO an
       // orphan and should be pruned in the same pass).
       orphanReport = pruneOrphanRefsAndDuplicates(data);
       return data;
@@ -523,16 +508,13 @@ export async function loadBoard(
     };
   }
 
-  // Distinct surface for files we *understand the age of* but can't migrate:
-  // either pre-v6 (no MIGRATION_STEPS entry) or a fractional version
-  // (structurally suspect). The from-future message would misstate the cause.
+  // A board from an older Filo format. Refused, and never written, so the file
+  // stays exactly as it was.
   if (loaded.status === 'no-migration-path') {
     return {
       ok: false,
       error: 'no-migration-path',
-      message:
-        `This board's file version (${loaded.migratedFrom}) is older than this build's earliest migration. ` +
-        'Open an older Filo build to migrate it forward, or restore an earlier copy from your backup.',
+      message: 'This board was made by an older Filo and is not supported. The file was left unchanged.',
     };
   }
 
@@ -580,7 +562,6 @@ export async function loadBoard(
   }
 
   const data = loaded.data;
-  const groupsBackfilled = backfillGroupDisplayIndices(data.board);
 
   if (droppedTileTypes.length > 0) {
     const boardName = data.board.name || relPath;
@@ -641,17 +622,15 @@ export async function loadBoard(
     frames: data.frames,
   };
 
-  // Viewports are no longer carried inside the board file — they live in
+  // Viewports aren't carried inside the board file — they live in
   // `.filo/viewports.json` keyed by boardId, hydrated separately by the
-  // vault store on open. Any inline `viewport` field on legacy board JSON
-  // is silently ignored here and stripped on the next save.
+  // vault store on open.
 
   return {
     ok: true,
     data: normalised,
     migratedFrom: loaded.migratedFrom,
     droppedTileTypes,
-    groupsBackfilled,
     orphansPruned: orphanReportHasFindings(orphanReport),
     boardIdsNormalized: orphanReport.normalizedBoardIdRefs.length > 0,
     mtimeMs: preStat?.mtimeMs,
@@ -742,37 +721,6 @@ function warnUndersizedFrames(frames: readonly Frame[], boardName: string): void
 }
 
 /**
- * Backfills `displayIndex` on Mind Map tile groups loaded from older
- * `.board.json` files that predate the field. Indices are assigned in
- * array order starting at 1, skipping any positions already filled, so a
- * partially-migrated file keeps its existing numbers stable.
- *
- * Returns `true` when at least one index was assigned, so the caller can
- * mark the board dirty — otherwise the backfill re-runs on every
- * reopen and can drift if the user reorders groups between loads.
- */
-function backfillGroupDisplayIndices(board: Board): boolean {
-  if (board.type !== 'mindmap') return false;
-  const mm = board as MindMapBoard;
-  const groups = mm.groups ?? [];
-  if (groups.length === 0) return false;
-  const used = new Set<number>();
-  for (const g of groups) {
-    if (typeof g.displayIndex === 'number') used.add(g.displayIndex);
-  }
-  let next = 1;
-  let mutated = false;
-  for (const g of groups) {
-    if (typeof g.displayIndex === 'number') continue;
-    while (used.has(next)) next += 1;
-    g.displayIndex = next;
-    used.add(next);
-    mutated = true;
-  }
-  return mutated;
-}
-
-/**
  * Loads every .board.json file under a vault. Returns a map of boardId →
  * file data plus a map of boardId → vault-relative path for persistence.
  *
@@ -793,12 +741,6 @@ export async function loadAllBoards(
   frames: Frame[];
   failedBoards: FailedBoardEntry[];
   /**
-   * Board IDs whose tile-group `displayIndex` field was backfilled on load
-   * The caller must `boardCacheStore.markDirty(id)` for each so the
-   * freshly assigned indices reach disk on the next debounced save.
-   */
-  backfilledBoardIds: string[];
-  /**
    * Board IDs that had orphan refs / duplicate placements
    * pruned during load. The caller marks each dirty so the pruned shape
    * lands on disk and the orphans don't re-surface on every reopen. The
@@ -809,8 +751,8 @@ export async function loadAllBoards(
   /**
    * Board IDs whose nested connection / frame / mindmap-group
    * `boardId` was normalized to `board.id` on load. The caller marks each
-   * dirty so the corrected values reach disk (mirrors `backfilledBoardIds`;
-   * no recovery snapshot is involved).
+   * dirty so the corrected values reach disk (no recovery snapshot is
+   * involved).
    */
   normalizedBoardIds: string[];
 }> {
@@ -822,7 +764,6 @@ export async function loadAllBoards(
   const connections: Record<string, Connection> = {};
   const frames: Frame[] = [];
   const failedBoards: FailedBoardEntry[] = [];
-  const backfilledBoardIds: string[] = [];
   const prunedBoardIds: string[] = [];
   const normalizedBoardIds: string[] = [];
   const loaded: LoadedBoardEntry[] = [];
@@ -893,7 +834,6 @@ export async function loadAllBoards(
     paths[data.board.id] = relPath;
     Object.assign(connections, data.connections);
     frames.push(...data.frames);
-    if (result.groupsBackfilled) backfilledBoardIds.push(data.board.id);
     if (result.orphansPruned) prunedBoardIds.push(data.board.id);
     if (result.boardIdsNormalized) normalizedBoardIds.push(data.board.id);
   }
@@ -905,49 +845,7 @@ export async function loadAllBoards(
     connections,
     frames,
     failedBoards,
-    backfilledBoardIds,
     prunedBoardIds,
     normalizedBoardIds,
   };
-}
-
-/**
- * Produces the merged-tile view for a mind-map board: applies placements
- * to tile definitions and overlays inline tiles. Pure helper, no side effects.
- */
-export function mergeBoardTiles(
-  data: V7BoardFileData,
-): Record<string, Record<string, unknown>> {
-  const board = data.board;
-  if (board.type !== 'mindmap') return {};
-
-  const mm = board as MindMapBoard;
-  const defs = data.tileDefs ?? {};
-  const result: Record<string, Record<string, unknown>> = {};
-
-  for (const [tileId, placement] of Object.entries(mm.placements ?? {})) {
-    const def = defs[tileId];
-    if (!def) continue;
-    result[tileId] = {
-      ...def,
-      position: { x: placement.x, y: placement.y },
-      size: { width: placement.width, height: placement.height },
-      locked: placement.locked,
-      faded: placement.faded,
-      frameless: placement.frameless,
-      boardId: board.id,
-    };
-  }
-
-  for (const [id, it] of Object.entries(mm.inlineTiles ?? {})) {
-    const anyIt = it as Record<string, unknown>;
-    result[id] = {
-      ...anyIt,
-      position: { x: anyIt.x as number, y: anyIt.y as number },
-      size: { width: anyIt.width as number, height: anyIt.height as number },
-      boardId: board.id,
-    };
-  }
-
-  return result;
 }

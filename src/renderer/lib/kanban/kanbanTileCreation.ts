@@ -5,43 +5,24 @@ import type {
 } from '../../schema/index';
 import { defaultTileStyleSnapshot } from '../../constants/defaults';
 import { defaultKanbanCardFontSizes } from '../styles/defaultFontSizes';
-import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { documentStore } from '../../stores/document.svelte';
 import { historyStore } from '../../stores/history.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { vaultStore } from '../../stores/vault.svelte';
 import { AddCardCommand } from '../../commands/index';
 import { createId } from '../utils/ids';
-import { assembleMarkdownFile } from '../editor/markdownSync';
 import { markHydrated } from '../vault/markdownFileWriter';
-import { createUniqueMdFile } from '../vault/createMdExclusive';
+import { createNoteFile } from '../notes/createNote';
+import { noteIdFor } from '../../stores/noteIds';
 import { reportError } from '../utils/errorBus';
 import {
   interpolate,
   type TemplateContent,
   type TemplateRef,
 } from '../templates/templateService';
-import {
-  fileNameSafe,
-  getActiveContentFolder,
-  nextFreeMdPath as nextFreeMdPathLib,
-  titleFromRelPath as titleFromRelPathLib,
-} from '../vault/conventionPaths';
+import { getActiveContentFolder } from '../vault/conventionPaths';
 
 export type KanbanNewTileType = 'text' | 'audio' | 'link' | 'template';
-
-/**
- * Thin wrapper around the lib helper so callers don't pass the board cache
- * each time. Exported for reuse by Kanban-side tooling that needs the same
- * unique-filename guarantee (e.g. the saved-views picker on rename).
- */
-export function nextUniqueMdPath(folder: string, baseName: string): string {
-  return nextFreeMdPathLib(boardCacheStore.cache, folder, baseName);
-}
-
-export function titleFromRelPath(relPath: string, folder: string): string {
-  return titleFromRelPathLib(relPath, folder);
-}
 
 export function newCardFolder(board: KanbanBoardType | null): string {
   return getActiveContentFolder(board);
@@ -121,86 +102,50 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
     // `TileDefinition` is a discriminated union, so each branch constructs its
     // own variant directly rather than mutating a partial object through casts
     // (which would bypass type-checking of the per-type required fields).
-    const baseDefFields = {
-      id: tileId,
-      title: tileTitle,
-      style: buildBaseTileStyle(),
-      tags: [],
-      createdAt: now,
-      updatedAt: now,
-    };
+    const baseDefFields = { id: tileId, style: buildBaseTileStyle(), createdAt: now, updatedAt: now };
     let def: TileDefinition;
 
     if (type === 'text') {
       const vaultRoot = vaultStore.path;
+      // No backing file means no card: a text def must name its note.
+      if (!vaultRoot) return;
       const folder = newCardFolder(board);
-      const baseName = fileNameSafe(tileTitle);
-      let relPath = nextUniqueMdPath(folder, baseName);
-      let finalTitle = titleFromRelPath(relPath, folder);
-      const contentId = createId();
-      let filePath: string | undefined;
-      // No collision toast here: `tileTitle` is always a system default
-      // ('New Card' / 'New Recording' / 'New Link') in this path, and a
-      // "renamed because already exists" warning for an auto-generated
-      // default is just noise — the user expects the suffix bump.
-      if (vaultRoot) {
-        try {
-          // Create-EXCLUSIVE: an existing off-board file with
-          // the same name is never overwritten; the helper bumps to ` (n)`.
-          const created = await createUniqueMdFile({
-            vaultRoot,
-            folder,
-            baseName,
-            firstCandidate: relPath,
-            buildContent: () => '',
-          });
-          relPath = created.relPath;
-          finalTitle = created.finalTitle;
-          // Orphan-fm semantics: the file was just created with an empty body
-          // and no frontmatter. Mark hydrated so the next gateway write (via
-          // a TextTile that hasn't run its own hydrate yet, or a PropertiesPopup
-          // opened on this card) can proceed without throwing.
-          markHydrated(relPath, false);
-          filePath = relPath;
-          documentStore.loadDocument({
-            docId: contentId,
-            filename: relPath,
-            title: finalTitle,
-            body: '',
-            htmlContent: '',
-            richText: [],
-          });
-        } catch (err) {
-          // No backing file means no card: a card with no
-          // `filePath` would later resolve a convention path onto some other
-          // file. The helper already surfaced the write failure.
-          reportError('kanban.seed-md', err, `Failed to create a file for "${finalTitle}" — the card was not added`);
-          return;
-        }
+      let relPath: string;
+      try {
+        // Create-EXCLUSIVE: an existing off-board file with the same name is
+        // never overwritten; the helper bumps to ` (n)`. The title stays the
+        // one the user sees ('New Card'); only the filename is bumped, so no
+        // "renamed because it exists" toast.
+        ({ relPath } = await createNoteFile({ vaultRoot, folder, title: tileTitle }));
+      } catch (err) {
+        reportError('kanban.seed-md', err, `Failed to create a file for "${tileTitle}" — the card was not added`);
+        return;
       }
-      def = {
-        ...baseDefFields,
-        title: finalTitle,
-        type: 'text',
-        contentId,
-        content: '',
-        filePath,
-      };
+      // The file was just created by the create channel. Mark hydrated so the
+      // next gateway write (a TextTile that hasn't run its own hydrate yet, or
+      // a PropertiesPopup opened on this card) can proceed.
+      markHydrated(relPath, false);
+      documentStore.loadDocument({
+        docId: noteIdFor(relPath),
+        filename: relPath,
+        title: tileTitle,
+        body: '',
+        htmlContent: '',
+        richText: [],
+      });
+      def = { ...baseDefFields, type: 'text', filePath: relPath };
     } else if (type === 'audio') {
       def = {
         ...baseDefFields,
         type: 'audio',
+        title: tileTitle,
         src: '',
         isRecording: false,
         isPlaying: false,
       };
     } else {
       // type === 'link'
-      def = {
-        ...baseDefFields,
-        type: 'link',
-        url: '',
-      };
+      def = { ...baseDefFields, type: 'link', title: tileTitle, tags: [], url: '' };
     }
 
     const columns = board.columns;
@@ -232,43 +177,23 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
     }
 
     const folder = newCardFolder(board);
-    const fmTitle = typeof content.frontmatter.title === 'string'
+    // The card's title is the template's `title:` when it has one, else the
+    // template's name. Frontmatter is forwarded verbatim (minus `boardType`,
+    // a picker hint, not user content); `{{title}}` interpolates the title.
+    const title = typeof content.frontmatter.title === 'string' && content.frontmatter.title.trim()
       ? content.frontmatter.title
-      : undefined;
-    const baseName = fileNameSafe(fmTitle ?? ref.name);
-    let relPath = nextUniqueMdPath(folder, baseName);
-    let finalTitle = titleFromRelPath(relPath, folder);
-
-    // Interpolate `{{title}}` / `{{date}}` / `{{time}}` against the resolved
-    // filename so the new card's body reflects its destination, not the
-    // template's original placeholder. Frontmatter is forwarded verbatim
-    // (minus `boardType`, which is a picker hint, not user content).
-    let interpolatedBody = interpolate(content.bodyWithoutBoardBlock, { title: finalTitle });
-    const { boardType: _bt, ...fmWithoutBoardType } = content.frontmatter as Record<string, unknown> & {
+      : ref.name;
+    const { boardType: _bt, ...templateFm } = content.frontmatter as Record<string, unknown> & {
       boardType?: unknown;
     };
     void _bt;
-    const contentId = createId();
-    const fmWithDocId = { ...fmWithoutBoardType, id: contentId };
+    const body = interpolate(content.bodyWithoutBoardBlock, { title });
 
+    let relPath: string;
     try {
-      // Create-EXCLUSIVE; a bumped name re-interpolates
-      // `{{title}}` so the body names the file it actually lives in.
-      const created = await createUniqueMdFile({
-        vaultRoot,
-        folder,
-        baseName,
-        firstCandidate: relPath,
-        buildContent: (t) => {
-          interpolatedBody = interpolate(content.bodyWithoutBoardBlock, { title: t });
-          return assembleMarkdownFile(fmWithDocId, interpolatedBody);
-        },
-      });
-      relPath = created.relPath;
-      finalTitle = created.finalTitle;
-      // Orphan-fm semantics: file just created on disk via the file-creating
-      // channel. Subsequent edits flow through the gateway, which requires
-      // hydration. Mark false since templates don't carry a BOM.
+      ({ relPath } = await createNoteFile({ vaultRoot, folder, title, frontmatter: templateFm, body }));
+      // The file was just created by the create channel; subsequent edits flow
+      // through the gateway, which requires hydration. Templates carry no BOM.
       markHydrated(relPath, false);
       await vaultStore.refreshTree();
     } catch (err) {
@@ -280,29 +205,22 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
       return;
     }
 
-    const tileId = createId();
     const now = Date.now();
-    // Construct the typed text-tile def directly so `contentId` (required for
-    // text variants) is type-checked rather than bypassed through casts.
     const def: TileDefinition = {
-      id: tileId,
+      id: createId(),
       type: 'text',
-      title: finalTitle,
       style: buildBaseTileStyle(),
-      tags: [],
       createdAt: now,
       updatedAt: now,
-      contentId,
-      content: interpolatedBody,
       filePath: relPath,
     };
 
     documentStore.loadDocument({
-      docId: contentId,
+      docId: noteIdFor(relPath),
       filename: relPath,
-      title: finalTitle,
-      body: interpolatedBody,
-      htmlContent: interpolatedBody,
+      title,
+      body,
+      htmlContent: body,
       richText: [],
     });
 

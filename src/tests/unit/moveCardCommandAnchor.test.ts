@@ -21,11 +21,8 @@ function def(id: string): TileDefinition {
   return {
     id,
     type: 'text',
-    title: id,
+    filePath: `${id}.md`,
     style: { headerColor: '', bodyColor: '', borderColor: '' } as never,
-    tags: [],
-    contentId: `doc_${id}`,
-    content: '',
     createdAt: 0,
     updatedAt: 0,
   } as unknown as TileDefinition;

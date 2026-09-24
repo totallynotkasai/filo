@@ -45,9 +45,9 @@ function makeMindMapFixture(): V7BoardFileData {
       groups: [],
     } as unknown as MindMapBoard,
     tileDefs: {
-      a: { id: 'a', type: 'text', title: 'A', contentId: 'doc_a', style: { headerColor: '', bodyColor: '', borderColor: '' }, boardId: 'mm', position: { x: 0, y: 0 }, size: { width: 100, height: 100 }, tags: [], createdAt: 0, updatedAt: 0, locked: false, faded: false },
-      b: { id: 'b', type: 'text', title: 'B', contentId: 'doc_b', style: { headerColor: '', bodyColor: '', borderColor: '' }, boardId: 'mm', position: { x: 0, y: 0 }, size: { width: 100, height: 100 }, tags: [], createdAt: 0, updatedAt: 0, locked: false, faded: false },
-      c: { id: 'c', type: 'text', title: 'C', contentId: 'doc_c', style: { headerColor: '', bodyColor: '', borderColor: '' }, boardId: 'mm', position: { x: 0, y: 0 }, size: { width: 100, height: 100 }, tags: [], createdAt: 0, updatedAt: 0, locked: true, faded: false },
+      a: { id: 'a', type: 'text', filePath: 'A.md', style: { headerColor: '', bodyColor: '', borderColor: '' }, boardId: 'mm', position: { x: 0, y: 0 }, size: { width: 100, height: 100 }, createdAt: 0, updatedAt: 0, locked: false, faded: false },
+      b: { id: 'b', type: 'text', filePath: 'B.md', style: { headerColor: '', bodyColor: '', borderColor: '' }, boardId: 'mm', position: { x: 0, y: 0 }, size: { width: 100, height: 100 }, createdAt: 0, updatedAt: 0, locked: false, faded: false },
+      c: { id: 'c', type: 'text', filePath: 'C.md', style: { headerColor: '', bodyColor: '', borderColor: '' }, boardId: 'mm', position: { x: 0, y: 0 }, size: { width: 100, height: 100 }, createdAt: 0, updatedAt: 0, locked: true, faded: false },
     },
     connections: {},
     frames: [],

@@ -473,7 +473,6 @@
           name,
           extension,
           vaultRoot,
-          board,
           allTilesById,
         });
         if (def) {
@@ -515,9 +514,7 @@
           tileId,
           sourcePath,
           fileName: file.name,
-          fileExt,
           vaultRoot,
-          board,
           allTilesById,
           refreshTree: async () => { await vaultStore.refreshTree(); },
         });

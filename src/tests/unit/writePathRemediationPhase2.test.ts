@@ -10,6 +10,7 @@ import { flushAllPendingFrontmatterWrites } from '@renderer/lib/boards/frontmatt
 import { cancelAllMarkdownWrites } from '@renderer/lib/vault/markdownFileWriter';
 import { __resetDirtyTrackingForTests, __clearRecentSelfWritesForTests } from '@renderer/lib/boards/writeStateTracking';
 import { UpdatePropertiesCommand } from '@renderer/commands/index';
+import { noteIdFor } from '@renderer/stores/noteIds';
 import type { VaultContext } from '@renderer/stores/vaultStoreTypes';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard as KanbanBoardType, Tile } from '@renderer/schema/index';
@@ -49,28 +50,13 @@ function lastWrite(captured: Captured[]): string | undefined {
 }
 
 /**
- * Hydrates the board cache with one Kanban board carrying a single text tile
- * def backed by `${title}.md` (the `tileBacksMarkdownPath` title convention),
- * so `dropStaleSeededFrontmatterCache` can resolve `relPath → contentId`.
+ * Hydrates the board cache with one Kanban board carrying a single card backed
+ * by `Card.md`, and returns the card's runtime tile (keyed by the note's
+ * session doc id, as every view of that note is).
  */
-function hydrateBoardWithTextTile(
-  boardId: string,
-  defs: Array<{ tileId: string; contentId: string; title: string }>,
-): void {
-  const tileDefs: Record<string, unknown> = {};
-  for (const d of defs) {
-    tileDefs[d.tileId] = {
-      id: d.tileId,
-      type: 'text',
-      title: d.title,
-      contentId: d.contentId,
-      style: {},
-      tags: [],
-      createdAt: 0,
-      updatedAt: 0,
-    };
-  }
-  const data = {
+function hydrateBoardWithCard(boardId: string): Tile {
+  const data: V7BoardFileData = {
+    version: 8,
     board: {
       id: boardId,
       type: 'kanban',
@@ -80,12 +66,22 @@ function hydrateBoardWithTextTile(
       updatedAt: 0,
       settings: {},
       columns: [],
+    } as unknown as KanbanBoardType,
+    tileDefs: {
+      t1: {
+        id: 't1',
+        type: 'text',
+        filePath: 'Card.md',
+        style: { headerColor: '', bodyColor: '', borderColor: '' },
+        createdAt: 0,
+        updatedAt: 0,
+      },
     },
-    tileDefs: tileDefs as V7BoardFileData['tileDefs'],
     connections: {},
     frames: [],
-  } as unknown as V7BoardFileData;
+  };
   boardCacheStore.hydrate({ [boardId]: data }, { [boardId]: `${boardId}.board.json` });
+  return { id: 't1', type: 'text', filePath: 'Card.md', contentId: noteIdFor('Card.md'), title: 'Card', tags: [] } as unknown as Tile;
 }
 
 function makeCtx(): VaultContext {
@@ -126,16 +122,15 @@ describe('Phase 2 / 2.1 — dropStaleSeededFrontmatterCache', () => {
   });
 
   it('clears a seeded-but-not-open doc backed by the path', () => {
-    hydrateBoardWithTextTile('kb', [{ tileId: 't1', contentId: 'doc-closed', title: 'Closed' }]);
-    documentStore.setFrontmatter('doc-closed', { priority: 'high' });
+    const docId = noteIdFor('Closed.md');
+    documentStore.setFrontmatter(docId, { priority: 'high' });
 
     dropStaleSeededFrontmatterCache('Closed.md');
 
-    expect(documentStore.hasFrontmatter('doc-closed')).toBe(false);
+    expect(documentStore.hasFrontmatter(docId)).toBe(false);
   });
 
   it('PRESERVES an OPEN editor’s cache (the reconciler keeps it fresh)', () => {
-    hydrateBoardWithTextTile('kb', [{ tileId: 't1', contentId: 'doc-open', title: 'Open' }]);
     documentStore.loadDocument({
       docId: 'doc-open',
       filename: 'Open.md',
@@ -152,17 +147,15 @@ describe('Phase 2 / 2.1 — dropStaleSeededFrontmatterCache', () => {
   });
 
   it('leaves an unrelated path’s cache untouched', () => {
-    hydrateBoardWithTextTile('kb', [
-      { tileId: 't1', contentId: 'doc-a', title: 'A' },
-      { tileId: 't2', contentId: 'doc-b', title: 'B' },
-    ]);
-    documentStore.setFrontmatter('doc-a', { x: 1 });
-    documentStore.setFrontmatter('doc-b', { y: 2 });
+    const docA = noteIdFor('A.md');
+    const docB = noteIdFor('B.md');
+    documentStore.setFrontmatter(docA, { x: 1 });
+    documentStore.setFrontmatter(docB, { y: 2 });
 
     dropStaleSeededFrontmatterCache('A.md');
 
-    expect(documentStore.hasFrontmatter('doc-a')).toBe(false);
-    expect(documentStore.getFrontmatter('doc-b')).toEqual({ y: 2 });
+    expect(documentStore.hasFrontmatter(docA)).toBe(false);
+    expect(documentStore.getFrontmatter(docB)).toEqual({ y: 2 });
   });
 });
 
@@ -200,7 +193,7 @@ describe('Phase 2 / 2.1 — external edit to a not-open card is not reverted', (
   const EXTERNAL = '---\ncompleted: false\nstatus: blocked\n---\ncard body';
 
   it('drops the stale seeded cache so the next field edit re-reads fresh disk', async () => {
-    hydrateBoardWithTextTile('kb', [{ tileId: 't1', contentId: 'doc1', title: 'Card' }]);
+    const doc1 = (hydrateBoardWithCard('kb') as Tile & { contentId: string }).contentId;
 
     // Prime the index from the INITIAL bytes (no status) so the handler sees a
     // real previous entry and the classifier returns frontmatter-only.
@@ -212,8 +205,8 @@ describe('Phase 2 / 2.1 — external edit to a not-open card is not reverted', (
 
     // The card was field-edited once: its FM cache is SEEDED (no status) but it
     // is NOT open as a Document tab.
-    documentStore.setFrontmatter('doc1', { completed: false });
-    expect(documentStore.getDocument('doc1')).toBeUndefined();
+    documentStore.setFrontmatter(doc1, { completed: false });
+    expect(documentStore.getDocument(doc1)).toBeUndefined();
 
     // An external editor adds `status: blocked`. Drive the watcher handler.
     installFiloMock((channel: string, ...args: unknown[]) => {
@@ -226,18 +219,19 @@ describe('Phase 2 / 2.1 — external edit to a not-open card is not reverted', (
     // 2.1: the not-open seeded cache was dropped (so the next seed re-reads disk).
     // Pre-fix it survived stale (no status) and the field write below dropped the
     // external key.
-    expect(documentStore.hasFrontmatter('doc1')).toBe(false);
+    expect(documentStore.hasFrontmatter(doc1)).toBe(false);
   });
 
   it('end-to-end: the next field edit preserves the externally-added key on disk', async () => {
-    hydrateBoardWithTextTile('kb', [{ tileId: 't1', contentId: 'doc1', title: 'Card' }]);
+    const tile = hydrateBoardWithCard('kb');
+    const doc1 = (tile as Tile & { contentId: string }).contentId;
 
     installFiloMock((channel: string) => {
       if (channel === 'vault:read-file-text') return { success: true, content: INITIAL };
       return { success: true };
     });
     await vaultIndexStore.applyChanges(['Card.md']);
-    documentStore.setFrontmatter('doc1', { completed: false });
+    documentStore.setFrontmatter(doc1, { completed: false });
 
     // External add + watcher handler.
     installFiloMock((channel: string, ...args: unknown[]) => {
@@ -250,7 +244,6 @@ describe('Phase 2 / 2.1 — external edit to a not-open card is not reverted', (
     await slice.handleExternalMarkdownChanges(['Card.md']);
 
     // Now the user toggles `completed` on the (still not-open) card.
-    const tile = { id: 't1', type: 'text', contentId: 'doc1', title: 'Card', tags: [] } as unknown as Tile;
     const writer = makeKanbanFrontmatterWriter({
       getBoard: () => ({ id: 'kb', type: 'kanban', columns: [] }) as unknown as KanbanBoardType,
       getAllTilesById: () => ({ t1: tile }),

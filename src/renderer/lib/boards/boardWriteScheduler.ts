@@ -18,13 +18,9 @@
  *    (e.g. rename happened between two `scheduleBoardWrite` calls).
  */
 
-import {
-  TASK_METADATA_FIELDS_ON_WRITE,
-  type V7BoardFileData,
-} from './tileDefBuilder';
+import type { V7BoardFileData } from './tileDefBuilder';
 import { CURRENT_BOARD_FILE_VERSION } from '../../schema/boardFile';
 import { BOARD_WRITE_DEBOUNCE_MS, WRITE_TIMEOUT_MS, ENOENT_RESTAT_DELAY_MS, writtenByteLength } from './boardWriteDebounce';
-import { getViewportFromCache, setViewport } from './viewportCache';
 import {
   notifyWriteError,
   noteAdditionalPendingPath,
@@ -40,7 +36,7 @@ import { backupExternalVersion } from '../vault/keepLocalBackup';
 export { backupExternalVersion };
 import { createScheduler } from './writeScheduler';
 import { vaultPath, type VaultPath } from '../../../shared/vaultPath';
-import { getBaseline, noteBaseline, hasBaselineDrifted, refreshBaselineAfterWrite } from '../vault/fileBaselineRegistry';
+import { getBaseline, hasBaselineDrifted, refreshBaselineAfterWrite } from '../vault/fileBaselineRegistry';
 
 /**
  * Listener slot for the "board file changed externally" notification. Drift
@@ -210,14 +206,6 @@ export function scheduleBoardWrite(
 /**
  * Writes a single board's data to its .board.json file via IPC.
  *
- * Strips fields that are persisted out-of-band:
- *   - `tileDefs[*].content` — text-tile content lives in `.md`.
- *   - `tileDefs[*]` task metadata — belongs in `.md` YAML frontmatter.
- *   - `mindmap.viewport`    — camera state lives in `.filo/viewports.json`,
- *                             keyed by boardId. A pre-V8 board JSON that
- *                             still carries an inline viewport is silently
- *                             dropped on the next save.
- *
  * NOTE: This function MUTATES `cached` in place — callers must pass an
  * isolated snapshot, never a live store reference. `scheduleBoardWrite`
  * already deep-clones at fire time, so the production pipeline is safe
@@ -240,69 +228,10 @@ export async function writeBoardFile(
   // let the scheduler retain the write rather than recreate the old path.
   if (isBoardPathHeld(boardPath)) throw new BoardPathHeldError(boardPath);
   const fileData = cached;
-  // Stamp the envelope version on every write so files round-trip with a
-  // version field even if they were loaded from a legacy (pre-version)
-  // shape. Matches `CURRENT_BOARD_FILE_VERSION` in
-  // `src/renderer/schema/boardFile.ts`; bump both together when introducing
-  // a structural migration.
+  // Stamp the envelope version on every write. The cache holds only the
+  // current shape (defs are built by `buildTileDefinition`), so nothing else
+  // needs cleaning on the way to disk.
   fileData.version = CURRENT_BOARD_FILE_VERSION;
-  // Strip .content from text tiles and any task-metadata that leaked into the
-  // def. Task metadata's source of truth is the backing `.md`'s frontmatter.
-  for (const [id, rawDef] of Object.entries(fileData.tileDefs as Record<string, Record<string, unknown>>)) {
-    const def = rawDef as Record<string, unknown>;
-    let leaked: string[] | null = null;
-    const cleaned: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(def)) {
-      if (TASK_METADATA_FIELDS_ON_WRITE.has(k)) {
-        (leaked ??= []).push(k);
-        continue;
-      }
-      cleaned[k] = v;
-    }
-    if (leaked) {
-      // Debug level: task metadata in a tile def is expected on every save
-      // (the boardCache mirrors frontmatter for reactive reads, then the saver
-      // strips it on the way to disk).
-      console.debug(`[boardSaver] Stripped task-metadata fields from tile def "${id}" on write:`, leaked);
-    }
-    if (def.type === 'text') cleaned.content = '';
-    (fileData.tileDefs as Record<string, Record<string, unknown>>)[id] = cleaned;
-  }
-  // Strip any leftover inline mind-map viewport — viewport state now lives
-  // exclusively in `.filo/viewports.json` keyed by boardId. Before the
-  // strip lands on disk, snapshot the legacy value into the V7 viewports
-  // cache so a V6 → V7 migration doesn't silently lose the user's last
-  // camera position. We only seed when nothing's there yet (avoid
-  // clobbering an already-recorded V7 viewport with a stale legacy one);
-  // setViewport stages a debounced write to `.filo/viewports.json` so the
-  // restored value persists across the next vault open.
-  const board = fileData.board as Record<string, unknown> | undefined;
-  if (board && board.type === 'mindmap' && 'viewport' in board) {
-    const legacy = (board as { viewport?: unknown }).viewport;
-    const boardId = typeof (board as { id?: unknown }).id === 'string'
-      ? ((board as { id: string }).id)
-      : '';
-    if (
-      boardId &&
-      legacy &&
-      typeof legacy === 'object'
-    ) {
-      const vp = legacy as { x?: unknown; y?: unknown; scale?: unknown };
-      if (
-        typeof vp.x === 'number' &&
-        typeof vp.y === 'number' &&
-        typeof vp.scale === 'number' &&
-        Number.isFinite(vp.x) &&
-        Number.isFinite(vp.y) &&
-        Number.isFinite(vp.scale) &&
-        // Don't overwrite a freshly-set V7 viewport with a stale legacy one.
-        getViewportFromCache(boardId) === null
-      ) {
-        setViewport(boardId, { x: vp.x, y: vp.y, scale: vp.scale });
-      }
-    }
-    delete (board as { viewport?: unknown }).viewport;
-  }
 
   // Pre-write drift check. If the on-disk mtime no longer
   // matches the baseline captured at load (or after the last successful

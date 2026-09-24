@@ -21,13 +21,12 @@ import { onVaultSwap } from '../../core/vaultLifecycle';
 import { createId } from '../utils/ids';
 import { currentVaultGeneration } from './vaultIdentity';
 import { getMachineIdentity, ownSentinelPath } from './machineIdentity';
-import { readOwnOrLegacySentinel, clearOwnSentinel, retireConsumedLegacySentinel } from './machineSentinels';
+import { readOwnSentinel, clearOwnSentinel } from './machineSentinels';
 
 /**
  * The sentinel is PER MACHINE (`.filo/.dirty.<machineId>`): `.filo/` syncs,
  * and a shared name would let machine B's clean shutdown delete machine A's
- * crash breadcrumb. The legacy shared `.filo/.dirty` is read and consumed
- * once, never written.
+ * crash breadcrumb.
  */
 const ownDirtyPath = (): string => ownSentinelPath('dirty');
 
@@ -122,8 +121,8 @@ interface SentinelPayload {
   dirtyAt: number;
   pendingPaths?: string[];
   /**
-   * The {@link LAUNCH_ID} of the process that wrote this sentinel. Absent on
-   * legacy sentinels (treated as a prior session, so they still prompt).
+   * The {@link LAUNCH_ID} of the process that wrote this sentinel. When
+   * absent, the sentinel is treated as a prior session's, so it prompts.
    */
   launchId?: string;
   /**
@@ -199,8 +198,7 @@ export function markClean(vaultRoot: string): Promise<void> {
     try {
       // ENOENT (already gone) is the desired terminal state; EACCES/EBUSY/etc
       // escalate so the user knows "clean" didn't land. Clears only THIS
-      // machine's sentinel (main refuses others), plus the legacy shared one
-      // once it was surfaced this session.
+      // machine's sentinel (main refuses others).
       await clearOwnSentinel(vaultRoot, 'dirty');
     } catch (err) {
       // Treat a thrown ENOENT the same way.
@@ -284,15 +282,13 @@ async function readRecoveryStatus(
 ): Promise<RecoveryStatus> {
   if (!vaultRoot) return { needsRecovery: false };
   let content: string;
-  let source: 'own' | 'legacy' = 'own';
   try {
     // ENOENT means the previous session shut down cleanly. Any other failure
     // means we couldn't prove cleanliness — surface it and snapshot the
-    // sentinel. Reads THIS machine's sentinel, else the legacy shared one;
-    // another machine's is never prompted for (its data isn't here).
-    const result = await readOwnOrLegacySentinel(vaultRoot, 'dirty');
+    // sentinel. Reads THIS machine's sentinel only; another machine's is never
+    // prompted for (its data isn't here).
+    const result = await readOwnSentinel(vaultRoot, 'dirty');
     content = result.content;
-    source = result.source;
   } catch (err) {
     if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
       return { needsRecovery: false };
@@ -318,8 +314,6 @@ async function readRecoveryStatus(
     }
     return { needsRecovery: true, reason: 'sentinel-unreadable' };
   }
-  // A legacy shared sentinel is consumed once: the next markClean for this
-  // vault deletes it (`clearOwnSentinel` retires a legacy file that was read).
   if (!content) {
     // A zero-byte sentinel means a crash interrupted `markDirty` between
     // creating the file and writing the payload. Treat as dirty with the
@@ -337,12 +331,6 @@ async function readRecoveryStatus(
   }
   try {
     const parsed = JSON.parse(content) as SentinelPayload;
-    if (source === 'legacy' && parsed.launchId === LAUNCH_ID) {
-      // This very process wrote it (cannot happen with the new build, which
-      // never writes a legacy name — defensive): delete now, no prompt.
-      await retireConsumedLegacySentinel(vaultRoot, 'dirty').catch(() => undefined);
-      return { needsRecovery: false };
-    }
     // A sentinel stamped with THIS launch's id AND the current open's vault
     // generation was written during this very open (e.g. a migration-repair
     // write), not a prior crash — suppress. One from an earlier open of the

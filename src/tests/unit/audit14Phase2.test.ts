@@ -13,7 +13,7 @@ import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTra
 import { ACCENT_COLOR } from '@renderer/constants/defaults';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
-import type { MindMapBoard, TextTile, TileDefinition } from '@renderer/schema/index';
+import type { MindMapBoard, TileDefinition } from '@renderer/schema/index';
 
 /**
  * Audit-14 Phase 2 — undo/redo & command-pattern correctness.
@@ -275,7 +275,8 @@ describe('Audit-14 2.3 — DeleteTilesCommand.undo reconciles open editors', () 
 
 // ── 2.5 — tag-remove undo preserves the global tag colour ─────────────────────
 
-function makeMindMapTextTileWithTags(tags: string[]): V7BoardFileData {
+/** A link tile owns its tags on the board def, so the tag edit is a cache write. */
+function makeMindMapLinkTileWithTags(tags: string[]): V7BoardFileData {
   return {
     board: {
       id: 'mm',
@@ -292,12 +293,11 @@ function makeMindMapTextTileWithTags(tags: string[]): V7BoardFileData {
     tileDefs: {
       t1: {
         id: 't1',
-        type: 'text',
+        type: 'link',
         title: 'A',
         style: { headerColor: '', bodyColor: '', borderColor: '' } as never,
         tags,
-        contentId: 'doc-1',
-        content: '',
+        url: 'https://example.com',
         createdAt: 0,
         updatedAt: 0,
       } as unknown as TileDefinition,
@@ -305,6 +305,12 @@ function makeMindMapTextTileWithTags(tags: string[]): V7BoardFileData {
     connections: {},
     frames: [],
   } as unknown as V7BoardFileData;
+}
+
+/** The link tile's tags as stored on its board def. */
+function linkTags(): string[] {
+  const def = boardCacheStore.cache.mm?.tileDefs.t1;
+  return def?.type === 'link' ? def.tags : [];
 }
 
 describe('Audit-14 2.5 — RemoveTileTagCommand.undo preserves the tag colour', () => {
@@ -333,7 +339,7 @@ describe('Audit-14 2.5 — RemoveTileTagCommand.undo preserves the tag colour', 
   });
 
   it('resurrects a tag definition deleted between execute and undo with its ORIGINAL colour', () => {
-    const fixture = makeMindMapTextTileWithTags(['audit14tag']);
+    const fixture = makeMindMapLinkTileWithTags(['audit14tag']);
     boardCacheStore.hydrate({ mm: fixture }, { mm: 'm.board.json' });
     // Give the tag a distinctive global colour.
     fileTagsStore.ensureTag('audit14tag', '#ff0000');
@@ -341,7 +347,7 @@ describe('Audit-14 2.5 — RemoveTileTagCommand.undo preserves the tag colour', 
 
     const cmd = new RemoveTileTagCommand('t1', 'audit14tag'); // snapshots colour #ff0000
     cmd.execute();
-    expect(boardCacheStore.cache.mm?.tileDefs.t1?.tags ?? []).not.toContain('audit14tag');
+    expect(linkTags()).not.toContain('audit14tag');
 
     // An interleaved GLOBAL tag delete wipes the definition + its colour.
     fileTagsStore.deleteTag('audit14tag');
@@ -352,6 +358,6 @@ describe('Audit-14 2.5 — RemoveTileTagCommand.undo preserves the tag colour', 
 
     // 2.5 — the original colour is restored, not the ensureTag fallback default.
     expect(fileTagsStore.getDefinition('audit14tag').color).toBe('#ff0000');
-    expect(boardCacheStore.cache.mm?.tileDefs.t1?.tags ?? []).toContain('audit14tag');
+    expect(linkTags()).toContain('audit14tag');
   });
 });

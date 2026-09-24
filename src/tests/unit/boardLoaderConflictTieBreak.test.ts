@@ -17,7 +17,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 function envelope(id: string, name: string, frameId?: string) {
   return {
-    version: 7,
+    version: 8,
     board: {
       id, type: 'mindmap', name, emoji: '', createdAt: 0, updatedAt: 0, settings: {},
       placements: {}, inlineTiles: {}, waypoints: [],

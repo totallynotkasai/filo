@@ -51,15 +51,14 @@ function hydrateBoardWithTextTile(
     tileDefs[d.tileId] = {
       id: d.tileId,
       type: 'text',
-      title: d.title,
-      contentId: d.contentId,
+      filePath: `${d.title}.md`,
       style: {},
-      tags: [],
       createdAt: 0,
       updatedAt: 0,
     };
   }
   const data = {
+    version: 8,
     board: {
       id: boardId,
       type: 'kanban',
@@ -146,7 +145,7 @@ describe('Phase 4 — field edit applies a delta to FRESH disk (stale cache, no 
     // Disk has an external `status: blocked` the cache never learned.
     installDisk('---\ncompleted: false\nstatus: blocked\n---\ncard body\n');
 
-    const tile = { id: 't1', type: 'text', contentId: 'doc1', title: 'Card', tags: [] } as unknown as Tile;
+    const tile = { id: 't1', type: 'text', filePath: 'Card.md', contentId: 'doc1', title: 'Card', tags: [] } as unknown as Tile;
     await fieldEditAndFlush(tile, { completed: true });
 
     const written = lastWrite(captured)!;
@@ -161,7 +160,7 @@ describe('Phase 4 — field edit applies a delta to FRESH disk (stale cache, no 
     // `aliases:` parses to null; the cache never carried it.
     installDisk('---\naliases:\ncompleted: false\n---\nbody\n');
 
-    const tile = { id: 't1', type: 'text', contentId: 'doc2', title: 'Note', tags: [] } as unknown as Tile;
+    const tile = { id: 't1', type: 'text', filePath: 'Note.md', contentId: 'doc2', title: 'Note', tags: [] } as unknown as Tile;
     await fieldEditAndFlush(tile, { priority: 'high' });
 
     const written = lastWrite(captured)!;
@@ -175,7 +174,7 @@ describe('Phase 4 — field edit applies a delta to FRESH disk (stale cache, no 
     documentStore.setFrontmatter('doc3', { completed: false });
     installDisk('---\ncreated: 2025-01-15T10:30:00Z\ncompleted: false\n---\nbody\n');
 
-    const tile = { id: 't1', type: 'text', contentId: 'doc3', title: 'Event', tags: [] } as unknown as Tile;
+    const tile = { id: 't1', type: 'text', filePath: 'Event.md', contentId: 'doc3', title: 'Event', tags: [] } as unknown as Tile;
     await fieldEditAndFlush(tile, { completed: true });
 
     const written = lastWrite(captured)!;
@@ -188,7 +187,7 @@ describe('Phase 4 — field edit applies a delta to FRESH disk (stale cache, no 
     documentStore.setFrontmatter('doc4', { completed: false });
     installDisk('---\n# important note\nzeta: 1\ncompleted: false\nalpha: 2\n---\nbody\n');
 
-    const tile = { id: 't1', type: 'text', contentId: 'doc4', title: 'Doc', tags: [] } as unknown as Tile;
+    const tile = { id: 't1', type: 'text', filePath: 'Doc.md', contentId: 'doc4', title: 'Doc', tags: [] } as unknown as Tile;
     await fieldEditAndFlush(tile, { completed: true });
 
     const written = lastWrite(captured)!;
@@ -205,7 +204,7 @@ describe('Phase 4 — field edit applies a delta to FRESH disk (stale cache, no 
     // Tab indentation + duplicate keys → the YAML parser refuses it.
     installDisk('---\n\tbad: yaml\n  dup: 1\n  dup: 2\n---\nbody\n');
 
-    const tile = { id: 't1', type: 'text', contentId: 'doc5', title: 'Bad', tags: [] } as unknown as Tile;
+    const tile = { id: 't1', type: 'text', filePath: 'Bad.md', contentId: 'doc5', title: 'Bad', tags: [] } as unknown as Tile;
     // Not fieldEditAndFlush: that waits for a write IPC, which the refused edit
     // may legitimately never issue (Audit-19 MD-2 identical-bytes skip).
     await makeWriter(tile).updateTileFrontmatter(tile.id, { priority: 'high' });

@@ -63,16 +63,16 @@ function makeMindMapWithTiles(tiles: Tile[]): V7BoardFileData {
     tileDefs[t.id] = {
       id: t.id,
       type: t.type,
-      title: t.title,
+      ...(t.type === 'text' ? { filePath: (t as TextTile).filePath } : { title: t.title }),
+      ...(t.type === 'image' ? { src: (t as ImageTile).src } : {}),
       style: t.style ?? {},
-      tags: t.tags ?? [],
       createdAt: 0,
       updatedAt: 0,
-      ...(t.type === 'text' ? { contentId: (t as TextTile).contentId } : {}),
       metadata: (t as Tile & { metadata?: Record<string, unknown> }).metadata,
     };
   }
   return {
+    version: 8,
     board: {
       id: 'mm',
       type: 'mindmap',

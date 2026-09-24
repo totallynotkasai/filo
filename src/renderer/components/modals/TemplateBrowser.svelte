@@ -9,6 +9,8 @@
   import { templatesStore } from '../../stores/templates.svelte';
   import { createTile } from '../../stores/tiles.svelte';
   import { instantiateLayoutTemplate } from '../../lib/templates/layoutCapture';
+  import { fileNameSafe, getActiveContentFolder, nextFreeMdPath } from '../../lib/vault/conventionPaths';
+  import { boardCacheStore } from '../../stores/boardCache.svelte';
   import {
     collectTemplateRefs,
     defaultTemplatesFolder,
@@ -94,11 +96,13 @@
     }
     const anchor = computeAnchor(record.template);
     const existingTitles = Object.values(boardStore.tiles).map((t) => t.title);
+    const folder = getActiveContentFolder(board);
     const { tiles, connections } = instantiateLayoutTemplate(record.template, {
       anchor,
       boardId: board.id,
       createTile,
       existingTitles,
+      allocateNotePath: (title) => nextFreeMdPath(boardCacheStore.cache, folder, fileNameSafe(title)),
     });
     boardStore.addTilesAndConnectionsWithHistory(
       tiles,

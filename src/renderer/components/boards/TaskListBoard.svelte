@@ -18,8 +18,6 @@
   import { boardCacheStore } from '../../stores/boardCache.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
   import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
-  import { documentStore } from '../../stores/document.svelte';
-  import { tabStore } from '../../stores/tabs.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { ACCENT_COLOR } from '../../constants/defaults';
   import type {
@@ -66,12 +64,9 @@
     effectiveTaskSectionStyle,
     type ResolvedTaskStyle,
   } from '../../lib/styles/effectiveStyle';
-  import {
-    fileNameSafe,
-    nextFreeMdPath as nextFreeMdPathLib,
-    getActiveContentFolder,
-  } from '../../lib/vault/conventionPaths';
   import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
+  import { openNoteInDocumentTab } from '../../lib/notes/openNote';
+  import { noteFrontmatter } from '../../stores/noteMeta';
   import { flushLastViewForBoard } from '../../lib/boards/lastViewFlush';
   import { onMount, onDestroy, untrack } from 'svelte';
   import { createAriaAnnouncer } from '../../lib/utils/ariaAnnouncer.svelte';
@@ -96,7 +91,7 @@
     ToggleSubtaskCollapsedCommand,
     TogglePlacementLockCommand,
     UpdateBoardSettingsCommand,
-    RenameTitleCommand,
+    UpdateTitleCommand,
   } from '../../commands/index';
   import { makeTaskCreator } from '../../lib/tasklist/taskCreation';
   import { makeTaskDeleter } from '../../lib/tasklist/taskDeletion';
@@ -246,43 +241,19 @@
     announcer.announce(message);
   }
 
-  // ── Filename utilities ──
-  // Shared with KanbanBoard via `lib/vault/conventionPaths.ts`; the local
-  // wrapper keeps the existing call sites' two-arg signature.
-  function nextUniqueMdPath(folder: string, baseName: string): string {
-    return nextFreeMdPathLib(boardCacheStore.cache, folder, baseName);
-  }
-
   function vaultPathForTile(tile: Tile): string {
-    const t = tile as Tile & { contentId?: string };
-    if (t.contentId) {
-      const doc = documentStore.getDocument(t.contentId);
-      if (doc?.filename) return doc.filename;
-    }
-    // Thread the task's home board through the resolver so the cascade
-    // fallback reads THIS board's `defaultFolder` even when a different
-    // board is active (e.g. cross-board rename, background sync).
-    return resolveTextTileVaultPath(tile, board?.id) ?? `${tile.title || 'Untitled'}.md`;
+    return resolveTextTileVaultPath(tile) ?? '';
   }
 
   // ── Frontmatter readers (canonical fields) ──
   // Per-field readers live in `lib/tasks/frontmatterReaders.ts` and are
   // shared with KanbanCard so both list-style boards agree on field
-  // interpretation. Prefer `documentStore.getFrontmatter(contentId)` —
-  // writers (toggleCompleted, setDueDate, etc.) merge into that cache
-  // synchronously, so reading from it lets the row reflect a click without
-  // waiting on the 300 ms debounce → disk write → fs.watch → vaultIndex
-  // round-trip. Fall back to vaultIndexStore for tiles whose docId hasn't
-  // been seeded yet.
+  // interpretation. `noteFrontmatter` prefers the live document cache —
+  // writers (toggleCompleted, setDueDate, etc.) merge into it synchronously,
+  // so a row reflects a click without waiting on the debounced write — and
+  // falls back to the vault index.
   function readFrontmatter(tile: Tile): Record<string, unknown> {
-    void documentStore.frontmatterVersion;
-    const t = tile as Tile & { contentId?: string };
-    if (t.contentId) {
-      const fm = documentStore.getFrontmatter(t.contentId);
-      if (fm) return fm;
-    }
-    const path = vaultPathForTile(tile);
-    return (vaultIndexStore.getMetadata(path)?.frontmatter ?? {}) as Record<string, unknown>;
+    return noteFrontmatter(vaultPathForTile(tile)) as Record<string, unknown>;
   }
 
   // ── Derived row / group / section pipeline ──
@@ -717,19 +688,7 @@
   const onSectionBodyDrop = fileDropHandler.onSectionBodyDrop;
 
   function openTaskAsDocument(tile: Tile) {
-    const t = tile as Tile & { contentId?: string; content?: string };
-    const docId = t.contentId || tile.id;
-    const filename = vaultPathForTile(tile);
-    documentStore.loadDocument({
-      docId,
-      filename,
-      title: tile.title || 'Untitled',
-      body: '',
-      htmlContent: t.content || '',
-      richText: [],
-    });
-    documentStore.openDocumentTab(docId);
-    tabStore.open(docId, tile.title || 'Document', 'document');
+    openNoteInDocumentTab(vaultPathForTile(tile));
   }
 
   // Frontmatter writers (debounced per-task) are owned by the slice
@@ -739,97 +698,23 @@
   // optimistic re-render. See the slice's header comment for the full
   // architecture rationale.
 
-  // ── Title rename (writes the .md filename + tileDef title) ──
+  // ── Title edit (the note's frontmatter `title:`; the file keeps its name) ──
 
   async function renameTask(row: TaskRow, newTitle: string) {
     if (!board) return;
     const trimmed = newTitle.trim();
     if (!trimmed || trimmed === row.tile.title) return;
-
-    const vaultRoot = vaultStore.path;
-    const oldRel = vaultPathForTile(row.tile);
-    // Preserve the in-folder rename invariant: a file in `SubA/` renames
-    // inside `SubA/`. Only fall back to the cascade resolver when the
-    // old path has no folder component (rare — usually means the file
-    // already lived at the vault root).
-    const folder = oldRel.includes('/')
-      ? oldRel.slice(0, oldRel.lastIndexOf('/'))
-      : getActiveContentFolder(board);
-    const desiredSafe = fileNameSafe(trimmed);
-    const newRel = nextUniqueMdPath(folder, desiredSafe);
-    const finalTitle = newRel
-      .slice(folder ? folder.length + 1 : 0)
-      .replace(/\.md$/, '');
-
-    if (finalTitle !== desiredSafe) {
-      uiStore.toast(
-        `A task named "${desiredSafe}" already exists — saved as "${finalTitle}" instead.`,
-        'info',
-        3500,
-      );
-    } else if (desiredSafe !== trimmed) {
-      // Sanitization changed the title (illegal/reserved), e.g. "???"→"Untitled".
-      uiStore.toast(`"${trimmed}" isn't a valid file name — saved as "${finalTitle}".`, 'info', 3500);
-    }
-
-    // Route through RenameTitleCommand so Ctrl+Z reverses
-    // both the disk rename and the in-board title update in one step. The
-    // command's `applyRename` handles the vault.rename + cache write +
-    // documentStore filename/title sync symmetrically.
-    const t = row.tile as Tile & { contentId?: string };
-    const oldTitle = row.tile.title;
-    if (vaultRoot && oldRel !== newRel) {
-      // Pre-check disk rename success so the command construction reflects
-      // the actual disk state. If the rename fails we surface the toast and
-      // bail before pushing history.
-      const root = vaultRoot.replace(/[\\/]+$/, '');
-      const renameResult = await vaultStore.rename(`${root}/${oldRel}`, `${root}/${newRel}`);
-      if (!renameResult.success) {
-        const code = renameResult.code;
-        // Surface a real-disk collision (the IPC refuses to clobber)
-        // distinctly from a missing source or a generic failure.
-        const msg = code === 'ENOENT' ? `Task file '${oldRel}' is no longer on disk`
-          : code === 'TARGET_EXISTS' ? `A file named '${newRel}' already exists on disk`
-          : 'Failed to rename task file';
-        uiStore.toast(msg, code === 'ENOENT' || code === 'TARGET_EXISTS' ? 'warning' : 'error', 2500);
-        return;
-      }
-      // Disk rename succeeded; push the command with pushWithoutExecute so
-      // undo/redo reverse the rename without re-running the forward IPC
-      // (which would race against the disk state we already established).
-      historyStore.pushWithoutExecute(
-        new RenameTitleCommand(
-          row.tile.id,
-          oldTitle,
-          finalTitle,
-          undefined,
-          undefined,
-          { oldPath: oldRel, newPath: newRel },
-          { boardId: board.id, contentId: t.contentId ?? null },
-        ),
-      );
-    } else if (oldTitle !== finalTitle) {
-      // Pure title change without a file rename (no vault, or path computed
-      // to the same value). Still push an undoable so the toolbar undo
-      // reverses the in-board title.
-      historyStore.pushWithoutExecute(
-        new RenameTitleCommand(
-          row.tile.id,
-          oldTitle,
-          finalTitle,
-          undefined,
-          undefined,
-          { oldPath: null, newPath: null },
-          { boardId: board.id, contentId: t.contentId ?? null },
-        ),
-      );
-    }
-
-    boardCacheStore.persistUpdateTile(row.tile.id, { title: finalTitle }, board.id);
-    if (t.contentId) {
-      documentStore.updateFilename(t.contentId, newRel);
-      documentStore.updateTitle(t.contentId, finalTitle);
-    }
+    const path = vaultPathForTile(row.tile);
+    if (!path) return;
+    await historyStore.execute(new UpdateTitleCommand({
+      tileId: row.tile.id,
+      boardId: board.id,
+      notePath: path,
+      oldTitle: row.tile.title,
+      newTitle: trimmed,
+      oldTitleHtml: undefined,
+      newTitleHtml: undefined,
+    })).catch(() => {});
     tickAndPersist();
   }
 

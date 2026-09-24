@@ -5,10 +5,12 @@
   import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { tabStore } from '../../stores/tabs.svelte';
-  import { documentStore } from '../../stores/document.svelte';
+  import { openNoteInDocumentTab } from '../../lib/notes/openNote';
+  import { renameNoteFileToTitle } from '../../lib/notes/renameToTitle';
+  import { renameVaultEntry } from '../../lib/vault/renameVaultEntry';
+  import { fileNameProblem } from '@shared/fileNames';
   import { boardCacheStore } from '../../stores/boardCache.svelte';
   import { boardStore } from '../../stores/board.svelte';
-  import { createId } from '../../lib/utils/ids';
   import { normalizePath, pathsEqual, stripLeadingSlash, toPosix } from '../../lib/utils/path';
   import { getAnchorBelow } from '../../lib/utils/popupAnchor';
   import { fileTagsStore } from '../../stores/fileTags.svelte';
@@ -42,6 +44,10 @@
 
   let isRenaming = $state(false);
   let renameValue = $state('');
+  // Why the typed name can't be used (illegal character, reserved name),
+  // shown inline beside the input. The name is never silently changed.
+  let renameProblem = $derived(isRenaming ? fileNameProblem(renameValue.trim()) : null);
+  let isNoteFile = $derived(!node.isDirectory && /\.(md|markdown)$/i.test(node.name));
   let isDropTarget = $state(false);
   let autoExpandTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -351,28 +357,10 @@
       return;
     }
 
-    // .md / .markdown → open or focus a document tab. If the file is
-    // already loaded as a TextTile elsewhere, findByFilename returns its
-    // docId so both views share the same documentStore entry.
+    // .md / .markdown → open or focus a document tab. Every view of one path
+    // shares one document entry.
     if (ext === '.md' || ext === '.markdown') {
-      const title = node.name.replace(/\.(md|markdown)$/i, '');
-      const existing = documentStore.findByFilename(relPath);
-      let docId: string;
-      if (existing) {
-        docId = existing.docId;
-      } else {
-        docId = createId();
-        documentStore.loadDocument({
-          docId,
-          filename: relPath,
-          title,
-          body: '',
-          htmlContent: '',
-          richText: [],
-        });
-      }
-      documentStore.openDocumentTab(docId);
-      tabStore.open(docId, title, 'document' as BoardType);
+      openNoteInDocumentTab(relPath);
       return;
     }
 
@@ -398,83 +386,22 @@
 
   async function commitRename() {
     if (!isRenaming) return; // Escape set isRenaming=false, then the input's blur fired here — don't commit the rename the user aborted.
+    // An unusable name is never sent: the inline message already explains it,
+    // and a blur with it still showing abandons the rename.
+    if (renameProblem) {
+      isRenaming = false;
+      return;
+    }
     isRenaming = false;
     const draft = renameValue.trim();
     if (!draft) return;
-    // Reconstruct the full filename. When the sidebar is hiding extensions,
-    // `displayName` excluded `node.extension`, so the user's input is the
-    // bare stem and we re-attach the extension. The `endsWith` guard
-    // handles the show-extensions case (input already has it) and the
-    // user-typed-extension-anyway case.
-    const ext = node.isDirectory ? '' : node.extension ?? '';
-    const finalName = ext && !draft.endsWith(ext) ? draft + ext : draft;
-    if (finalName === node.name) return;
-    const parentPath = node.path.substring(0, node.path.lastIndexOf(node.name));
-    const newAbsPath = parentPath + finalName;
-
-    // Probe for overwrite before issuing the rename so the
-    // user can't silently destroy the destination file by renaming over it.
-    // The vault.rename pipeline itself runs `fs.rename` which on POSIX
-    // overwrites the target atomically (Windows surfaces EEXIST), so the
-    // renderer must intercept the collision before the IPC reaches the
-    // OS. Mirrors the pattern in boardTiles.renameTextTileBackingFile.
-    const vaultRoot = vaultStore.path;
-    if (vaultRoot) {
-      // Build the vault-relative path the IPC layer expects.
-      const root = normalizePath(vaultRoot);
-      const newAbsNorm = toPosix(newAbsPath);
-      const rootLower = root.toLowerCase();
-      const newRel = newAbsNorm.toLowerCase().startsWith(rootLower + '/')
-        ? newAbsNorm.slice(root.length + 1)
-        : newAbsNorm;
-      try {
-        const exists = await window.filo.invoke('vault:file-exists', vaultRoot, newRel);
-        if (exists) {
-          // Route the overwrite confirm through the in-app
-          // ConfirmDialog so it inherits focus management, reduced
-          // motion, and the unified Esc/Enter handling.
-          const ok = await uiStore.confirmAsync({
-            title: 'Overwrite file?',
-            body: `"${finalName}" already exists in this folder. The existing file will be replaced and cannot be recovered.`,
-            confirmLabel: 'Overwrite',
-            danger: true,
-          });
-          if (!ok) {
-            // User declined — preserve both files by aborting the rename.
-            return;
-          }
-        }
-      } catch (err) {
-        // Probe failure isn't fatal — the OS-level rename will surface
-        // EEXIST on Windows / overwrite on POSIX. Log and proceed.
-        console.warn('[VaultFileItem.commitRename] file-exists probe failed:', err);
-      }
-    }
-
-    const result = await vaultStore.rename(node.path, newAbsPath);
-    if (!result.success) {
-      if (result.code === 'ENOENT') {
-        // Source no longer on disk — silently drop the phantom tree entry.
-        await vaultStore.refreshTree();
-      } else if (result.strandedAt) {
-        // Windows case-only rename
-        // exhausted retries AND the rescue restore failed. Name the
-        // temp path so the user can recover the file via File Explorer
-        // rather than treating the failure as a data loss.
-        uiStore.pushToast({
-          text: `Rename failed and the file is currently saved as '${result.strandedAt}'. Recover it via File Explorer.`,
-          type: 'error',
-          duration: 0,
-        });
-        await vaultStore.refreshTree();
-      } else {
-        uiStore.toast(`Failed to rename '${node.name}'`, 'error', 3500);
-      }
-    }
+    await renameVaultEntry(node, draft);
   }
 
   function handleRenameKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter') {
+      // Keep editing while the name is unusable; the message says why.
+      if (renameProblem) return;
       commitRename();
     } else if (e.key === 'Escape') {
       isRenaming = false;
@@ -520,6 +447,13 @@
         label: 'Rename',
         action: () => startRename(),
       },
+      ...(isNoteFile
+        ? [{
+            id: 'rename-to-title',
+            label: 'Rename file to match title',
+            action: () => { void renameNoteFileToTitle(vaultRelativePath()); },
+          }]
+        : []),
       {
         id: 'reveal',
         label: 'Reveal in File Explorer',
@@ -621,7 +555,12 @@
         onblur={commitRename}
         onkeydown={handleRenameKeydown}
         aria-label="Rename {displayName}"
+        aria-invalid={renameProblem ? 'true' : undefined}
+        aria-describedby={renameProblem ? 'rename-problem-' + node.path : undefined}
       />
+      {#if renameProblem}
+        <span class="rename-problem" id={'rename-problem-' + node.path} role="alert">{renameProblem}</span>
+      {/if}
     {:else}
       <span class="file-name">{displayName}</span>
       {#if sidebarTagsVisible.length > 0}
@@ -900,6 +839,21 @@
 
   .rename-input:focus:not(:focus-visible) {
     outline: none;
+  }
+
+  .rename-input[aria-invalid='true'] {
+    border-color: var(--accent-danger);
+  }
+
+  .rename-problem {
+    flex-shrink: 0;
+    max-width: 55%;
+    padding: 0 4px;
+    color: var(--accent-danger);
+    font-size: var(--font-size-sm, 11px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   /*

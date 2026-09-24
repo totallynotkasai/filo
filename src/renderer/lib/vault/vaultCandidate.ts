@@ -112,7 +112,6 @@ export interface VaultCandidate {
   boardCache: Record<string, V7BoardFileData>;
   // allow-string-path-key: keys are boardId (nanoid), not vault-relative paths
   boardPaths: Record<string, string>;
-  backfilledBoardIds: string[];
   prunedBoardIds: string[];
   normalizedBoardIds: string[];
   viewports: Record<string, ViewportEntry>;
@@ -280,7 +279,6 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     connections,
     frames,
     failedBoards,
-    backfilledBoardIds,
     prunedBoardIds,
     normalizedBoardIds,
   } = await loadAllBoards(newVaultPath);
@@ -531,7 +529,6 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     manualOrder,
     boardCache,
     boardPaths,
-    backfilledBoardIds,
     prunedBoardIds,
     normalizedBoardIds,
     viewports: raw.viewports as Record<string, ViewportEntry>,

@@ -5,6 +5,9 @@
   import { uiStore } from '../../stores/ui.svelte';
   import EmojiPicker from '../shared/EmojiPicker.svelte';
   import { getContextMenuKeyPosition } from '../../lib/utils/contextMenuKey';
+  import { documentStore } from '../../stores/document.svelte';
+  import { noteTitle } from '../../stores/noteMeta';
+  import { setNoteTitle } from '../../lib/notes/setNoteTitle';
 
   interface Props {
     tab: TabData;
@@ -20,6 +23,13 @@
   let isDragOver = $state(false);
 
   const isActive = $derived(tabStore.activeTabId === tab.id);
+
+  // A Document tab shows its note, so its label is the note's title and
+  // follows it; renaming the tab edits that title.
+  const notePath = $derived(
+    tab.boardType === 'document' ? (documentStore.getDocument(tab.boardId)?.filename ?? null) : null,
+  );
+  const displayName = $derived(notePath ? noteTitle(notePath) : tab.name);
 
   function activate() {
     tabStore.setActive(tab.id);
@@ -60,7 +70,7 @@
 
   function startRename() {
     isRenaming = true;
-    renameValue = tab.name;
+    renameValue = displayName;
   }
 
   // Auto-focus + select-all when the rename input mounts,
@@ -80,9 +90,9 @@
     // the input auto-focuses, the Escape→blur path is reliably reachable.)
     if (!isRenaming) return;
     isRenaming = false;
-    if (renameValue && renameValue !== tab.name) {
-      tabStore.rename(tab.id, renameValue);
-    }
+    if (!renameValue || renameValue === displayName) return;
+    if (notePath) void setNoteTitle(notePath, renameValue, tab.boardId);
+    else tabStore.rename(tab.id, renameValue);
   }
 
   function handleRenameKeydown(e: KeyboardEvent) {
@@ -192,7 +202,7 @@
   ondragleave={() => isDragOver = false}
   ondrop={handleDrop}
   ondragend={() => isDragOver = false}
-  title="{tab.name} ({tab.boardType}) — Alt+Click to open in a split pane · Middle-click to close"
+  title="{displayName} ({tab.boardType}) — Alt+Click to open in a split pane · Middle-click to close"
   role="tab"
   id={"tab-" + tab.id}
   aria-controls={"tabpanel-" + tab.id}
@@ -214,10 +224,10 @@
       bind:value={renameValue}
       onblur={commitRename}
       onkeydown={handleRenameKeydown}
-      aria-label="Rename {tab.name}"
+      aria-label="Rename {displayName}"
     />
   {:else}
-    <span class="tab-name">{tab.name}</span>
+    <span class="tab-name">{displayName}</span>
   {/if}
 
   <button
@@ -225,7 +235,7 @@
     onclick={close}
     tabindex={isActive ? 0 : -1}
     title="Close tab"
-    aria-label="Close {tab.name}"
+    aria-label="Close {displayName}"
   >
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
       <line x1="18" y1="6" x2="6" y2="18"/>

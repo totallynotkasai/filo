@@ -8,7 +8,6 @@ import {
   __resetDirtyRecoveryDedupeForTests,
 } from '@renderer/lib/vault/dirtyFlagRecovery';
 import { __setMachineIdentityForTests } from '@renderer/lib/vault/machineIdentity';
-import { __resetLegacySentinelFlagsForTests } from '@renderer/lib/vault/machineSentinels';
 import { readPendingRewrite } from '@renderer/lib/vault/tagRewriteSentinel';
 import { surveyForeignSentinels, foreignSentinelsStore } from '@renderer/stores/foreignSentinels.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
@@ -68,7 +67,6 @@ describe('per-machine crash sentinels (Audit-19 EXT-6)', () => {
     calls = [];
     __resetRecoveryStashForTests();
     __resetDirtyRecoveryDedupeForTests();
-    __resetLegacySentinelFlagsForTests();
     for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
     installSharedFilo(files, calls);
   });
@@ -98,14 +96,8 @@ describe('per-machine crash sentinels (Audit-19 EXT-6)', () => {
     expect((await checkRecovery('/vault')).needsRecovery).toBe(false);
   });
 
-  it('a LEGACY shared sentinel prompts once, then is consumed by the next markClean', async () => {
+  it('a bare `.filo/.dirty` (no machine id) never prompts: it names no machine, so it is not ours', async () => {
     files.set('.filo/.dirty', JSON.stringify({ dirtyAt: 1, pendingPaths: ['Old.md'], launchId: 'old-build' }));
-    const first = await checkRecovery('/vault');
-    expect(first.needsRecovery).toBe(true);
-    expect(first.pendingPaths).toEqual(['Old.md']);
-    await markClean('/vault'); // the user's Dismiss
-    await flushDirtyFlagSentinel();
-    expect(files.has('.filo/.dirty')).toBe(false);
     expect((await checkRecovery('/vault')).needsRecovery).toBe(false);
   });
 

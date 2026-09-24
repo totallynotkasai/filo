@@ -123,56 +123,6 @@ describe('snapshotForRecovery', () => {
   });
 
   /**
-   * Audit-18 4.3 — snapshots taken BEFORE the Audit-17 3.8 flattening were
-   * stored under the bare basename (`Notes.md`), not the flattened rel path
-   * (`sub__Notes.md`). The flattened-name-only pruner could never match them,
-   * so legacy copies of a subfolder file accumulated outside the per-basename
-   * cap. The pruner now also matches the legacy bare basename, so a fresh
-   * snapshot of the same file prunes the legacy copies too.
-   */
-  it('prunes legacy bare-basename snapshots alongside the new flattened name', async () => {
-    const relPath = join('sub', 'Notes.md');
-    await fs.mkdir(join(vaultRoot, 'sub'), { recursive: true });
-    await fs.writeFile(join(vaultRoot, relPath), 'fresh-source', 'utf-8');
-
-    // Plant 25 LEGACY snapshots stored under the bare `Notes.md` (the pre-3.8
-    // scheme), with monotonically increasing mtimes.
-    const recoveryRoot = join(vaultRoot, '.filo', 'recovery');
-    await fs.mkdir(recoveryRoot, { recursive: true });
-    for (let i = 0; i < 25; i++) {
-      const subdir = join(recoveryRoot, `2026-01-01T00-00-${String(i).padStart(2, '0')}`);
-      await fs.mkdir(subdir, { recursive: true });
-      const file = join(subdir, 'Notes.md'); // legacy bare basename
-      await fs.writeFile(file, `legacy-${i}`, 'utf-8');
-      const mtime = new Date(2026, 0, 1, 0, 0, i);
-      await fs.utimes(file, mtime, mtime);
-    }
-
-    // Snapshot the file now → new flattened name `sub__Notes.md`, mtime "now"
-    // (the highest). Per-basename count = 25 legacy + 1 new = 26 → the 6 oldest
-    // legacy snapshots must be pruned, leaving 20 total.
-    const destAbs = await snapshotForRecovery(vaultRoot, relPath);
-    expect(destAbs.endsWith(`${'sub'}__Notes.md`)).toBe(true);
-
-    // The 6 oldest legacy subdirs (00..05) are gone (their lone file unlinked +
-    // empty dir tidied); 06..24 survive.
-    for (let i = 0; i < 6; i++) {
-      const subdir = join(recoveryRoot, `2026-01-01T00-00-${String(i).padStart(2, '0')}`);
-      await expect(fs.access(subdir)).rejects.toThrow();
-    }
-    for (let i = 6; i < 25; i++) {
-      const subdir = join(recoveryRoot, `2026-01-01T00-00-${String(i).padStart(2, '0')}`);
-      await fs.access(subdir);
-    }
-
-    // Exactly 20 snapshot files remain across the whole tree (19 legacy + 1 new).
-    const dirs = await fs.readdir(recoveryRoot);
-    let total = 0;
-    for (const d of dirs) total += (await fs.readdir(join(recoveryRoot, d))).length;
-    expect(total).toBe(20);
-  });
-
-  /**
    * C9 — when mtimes collide on the millisecond (filesystems with
    * second-level granularity, or simultaneous saves), the prune step
    * tiebreaks by subdirectory path lexicographically. The ISO-8601

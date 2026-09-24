@@ -5,6 +5,7 @@ import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { resolveTitleCommitValues } from '@renderer/lib/editor/titleCommit';
+import { UpdateTitleCommand } from '@renderer/commands/updateTitleCommand';
 import { revertFrameDragOnTeardown } from '@renderer/lib/frames/frameDragCancel';
 import { flushLastViewForBoard } from '@renderer/lib/boards/lastViewFlush';
 import {
@@ -168,40 +169,46 @@ describe('Audit-17 4.1 — resolveTitleCommitValues (shared blur-commit resoluti
   });
 });
 
-describe('Audit-17 4.1 — renameTextTileBackingFile resolves through the home board cache', () => {
-  it('renames a tile whose board is NO LONGER active when homeBoardId is passed', async () => {
+describe('Audit-17 4.1 — a teardown title commit resolves through the home board cache', () => {
+  function makeLinkTile(id: string, boardId: string, title: string): Tile {
+    return {
+      ...makeTextTile(id, boardId, title),
+      type: 'link',
+      url: 'https://example.com',
+      filePath: undefined,
+      contentId: undefined,
+    } as unknown as Tile;
+  }
+
+  function titleCommand(tileId: string, boardId: string): UpdateTitleCommand {
+    return new UpdateTitleCommand({
+      tileId,
+      boardId,
+      notePath: null,
+      oldTitle: 'Before',
+      newTitle: 'After',
+      oldTitleHtml: undefined,
+      newTitleHtml: undefined,
+    });
+  }
+
+  it('updates a tile whose board is NO LONGER active', async () => {
     activateTwoBoards('other');
-    boardStore.addTile(makeTextTile('t-h', 'other', 'Before'));
+    boardStore.addTile(makeLinkTile('t-h', 'other', 'Before'));
     // Simulate the tab switch that unmounts TileHeader: the pane's scope now
     // points at 'mm', so the active-tiles lookup misses 't-h'.
     const mm = boardCacheStore.cache['mm'] as unknown as { board: MindMapBoard };
     boardStore.setBoard(mm.board, {}, {}, []);
     expect(boardStore.getTile('t-h')).toBeUndefined();
 
-    // No vault root → the pure store-update branch (the detached write path
-    // under test; the file-rename legs are exercised by the existing
-    // renameTextTileBackingFile suites on the active path).
-    const result = await boardStore.renameTextTileBackingFile('t-h', 'After', undefined, 'other');
-    expect(result.success).toBe(true);
+    await titleCommand('t-h', 'other').execute();
     expect(boardCacheStore.getFullTilesForBoard('other')['t-h']?.title).toBe('After');
-  });
-
-  it('WITHOUT homeBoardId the detached rename still no-ops (the pre-fix shape)', async () => {
-    activateTwoBoards('other');
-    boardStore.addTile(makeTextTile('t-n', 'other', 'Before'));
-    const mm = boardCacheStore.cache['mm'] as unknown as { board: MindMapBoard };
-    boardStore.setBoard(mm.board, {}, {}, []);
-
-    const result = await boardStore.renameTextTileBackingFile('t-n', 'After', undefined);
-    expect(result.success).toBe(false);
-    expect(boardCacheStore.getFullTilesForBoard('other')['t-n']?.title).toBe('Before');
   });
 
   it('still routes through the active scope when the board is active', async () => {
     activateTwoBoards('other');
-    boardStore.addTile(makeTextTile('t-a', 'other', 'Before'));
-    const result = await boardStore.renameTextTileBackingFile('t-a', 'After', undefined, 'other');
-    expect(result.success).toBe(true);
+    boardStore.addTile(makeLinkTile('t-a', 'other', 'Before'));
+    await titleCommand('t-a', 'other').execute();
     expect(boardStore.getTile('t-a')?.title).toBe('After');
   });
 });
@@ -222,10 +229,14 @@ describe('Audit-17 4.1 — TileHeader teardown commits instead of cancelling (so
     expect(commitIdx).toBeGreaterThan(destroyIdx);
   });
 
-  it('the teardown commit threads the home board into the rename helper', () => {
-    expect(TILE_HEADER_SRC).toContain('tile.id, plain, newTitleHtml, tile.boardId');
-    // Non-text teardown commit writes through the cache keyed by the home board.
-    expect(TILE_HEADER_SRC).toContain('boardCacheStore.persistUpdateTile(');
+  it('the teardown commit threads the home board into the title command', () => {
+    // The command resolves a detached tile through its home board's cache
+    // (pinned behaviourally above), so it must be handed that board.
+    const idx = TILE_HEADER_SRC.indexOf('new UpdateTitleCommand({');
+    expect(idx).toBeGreaterThan(-1);
+    const region = TILE_HEADER_SRC.slice(idx, idx + 200);
+    expect(region).toContain('tileId: tile.id,');
+    expect(region).toContain('boardId: tile.boardId,');
   });
 });
 

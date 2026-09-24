@@ -1,12 +1,10 @@
-import type { Board, Tile, TileDefinition } from '../../schema/index';
+import type { Tile, TileDefinition } from '../../schema/index';
 import { defaultTileStyleSnapshot } from '../../constants/defaults';
 import { createId } from '../utils/ids';
-import { buildTextTileDefFromMarkdownFile } from '../canvas/markdownTileSeed';
+import { buildTextTileDefForNote } from '../canvas/markdownTileSeed';
 import { isMarkdownExtension, normalizeExtension } from '../vault/extension';
 import { vaultRelativeFromAbsolute } from '../canvas/vaultPath';
 import { toPosix } from '../utils/path';
-import { getActiveContentFolder } from '../vault/conventionPaths';
-import { fileTagsStore } from '../../stores/fileTags.svelte';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import { copyFileIntoVault } from '../vault/vaultOperations';
 
@@ -48,56 +46,50 @@ function baseTileStyle() {
 }
 
 /**
- * Builds a text-tile definition from a `.md` file already in the vault.
- * Mirrors the Mind Map's `createTextTileFromFile` path via the shared
- * `buildTextTileDefFromMarkdownFile` helper: reads the file, extracts the
- * frontmatter `docId` so re-drops share editor state, stamps an explicit
- * `filePath` when the source isn't at the board's convention path, and
- * registers any frontmatter tags in `.filo/tags.json`. Returns `null` if
- * the file cannot be read.
+ * Builds a text-tile definition for a `.md` file already in the vault: the
+ * def names the note by path (see `buildTextTileDefForNote`).
  */
-export async function buildTextTileDefForKanbanDrop(args: {
+async function buildTextTileDefForKanbanDrop(args: {
   vaultRelPath: string;
   tileId: string;
   now: number;
-  vaultRoot: string;
-  board: Board | null;
   allTilesById: Record<string, Tile>;
-}): Promise<TileDefinition | null> {
-  const { vaultRelPath, tileId, now, vaultRoot, board, allTilesById } = args;
-  if (!vaultRoot) return null;
-  // Canonical two-arg form.
-  let rawContent = '';
-  try {
-    const readResult = await window.filo.invoke('vault:read-file-text', vaultRoot, vaultRelPath);
-    if (readResult.success) rawContent = readResult.content;
-  } catch {
-    // Read failed — proceed with empty content. The buildTextTileDef
-    // helper handles the seed case for fresh tile creation.
-  }
-
-  const { def, tagFileKey } = buildTextTileDefFromMarkdownFile({
-    rawContent,
-    vaultRelPath,
-    boardType: board?.type ?? null,
-    boardName: board?.name,
-    kanbanFolder: (board as { kanbanFolder?: string } | null)?.kanbanFolder,
-    existingTiles: Object.values(allTilesById) as Array<{
-      type: string; title?: string; contentId?: string; filePath?: string;
-    }>,
-    conventionFolderOverride: getActiveContentFolder(board),
-    tileId,
-    now,
+}): Promise<TileDefinition> {
+  const { def } = buildTextTileDefForNote({
+    vaultRelPath: args.vaultRelPath,
+    existingTiles: Object.values(args.allTilesById),
+    tileId: args.tileId,
+    now: args.now,
   });
-
-  if (def.tags.length > 0) {
-    fileTagsStore.setFileTags(tagFileKey, def.tags);
-  }
-  // Re-index the dropped file's frontmatter so the sidebar's tag chips
-  // catch up to the cache write without waiting for a watcher event.
-  await vaultIndexStore.applyChanges([vaultRelPath]);
-
+  // Index the dropped note so its title and tags show without waiting for a
+  // watcher event.
+  await vaultIndexStore.applyChanges([args.vaultRelPath]);
   return def;
+}
+
+/** A media or generic-file def: the board stores a caption title and the path. */
+function mediaTileDef(
+  type: 'image' | 'audio' | 'file',
+  id: string,
+  title: string,
+  path: string,
+  now: number,
+): TileDefinition {
+  const base = { id, title, style: baseTileStyle(), createdAt: now, updatedAt: now };
+  switch (type) {
+    case 'image':
+      return { ...base, type: 'image', src: path };
+    case 'audio':
+      return { ...base, type: 'audio', src: path, isPlaying: false, isRecording: false };
+    case 'file':
+      return { ...base, type: 'file', filePath: path };
+  }
+}
+
+/** The display title for a dropped file: its name without the extension. */
+function titleFromFileName(name: string): string {
+  const dot = name.lastIndexOf('.');
+  return dot > 0 ? name.slice(0, dot) : name;
 }
 
 export async function buildTileDefForVaultFile(args: {
@@ -105,60 +97,18 @@ export async function buildTileDefForVaultFile(args: {
   name: string;
   extension: string;
   vaultRoot: string;
-  board: Board | null;
   allTilesById: Record<string, Tile>;
 }): Promise<TileDefinition | null> {
-  const { filePath, name, extension, vaultRoot, board, allTilesById } = args;
+  const { filePath, name, extension, vaultRoot, allTilesById } = args;
   const tileId = createId();
   const now = Date.now();
   const tileType = inferKanbanTileType('', extension) ?? 'file';
-
   const relPath = vaultRelativeFromAbsolute(filePath, vaultRoot) || toPosix(filePath);
 
   if (tileType === 'text') {
-    return await buildTextTileDefForKanbanDrop({
-      vaultRelPath: relPath,
-      tileId,
-      now,
-      vaultRoot,
-      board,
-      allTilesById,
-    });
+    return await buildTextTileDefForKanbanDrop({ vaultRelPath: relPath, tileId, now, allTilesById });
   }
-
-  // A discriminated switch (not a conditional-spread literal) because
-  // `TileDefinition` is a `z.discriminatedUnion`: a spread would widen
-  // `tileType` and TypeScript couldn't narrow each variant's required fields
-  // (image needs `src`, file needs `filePath` + `fileName` + `fileExtension`).
-  const titleFromName = name.replace(/\.[^.]+$/, '');
-  const baseDef = {
-    id: tileId,
-    title: titleFromName,
-    style: baseTileStyle(),
-    tags: [],
-    createdAt: now,
-    updatedAt: now,
-  };
-  switch (tileType) {
-    case 'image':
-      return { ...baseDef, type: 'image' as const, src: relPath };
-    case 'audio':
-      return {
-        ...baseDef,
-        type: 'audio' as const,
-        src: relPath,
-        isPlaying: false,
-        isRecording: false,
-      };
-    case 'file':
-      return {
-        ...baseDef,
-        type: 'file' as const,
-        filePath: relPath,
-        fileName: name,
-        fileExtension: extension,
-      };
-  }
+  return mediaTileDef(tileType, tileId, titleFromFileName(name), relPath, now);
 }
 
 export async function importKanbanFileTile(args: {
@@ -166,76 +116,30 @@ export async function importKanbanFileTile(args: {
   tileId: string;
   sourcePath: string;
   fileName: string;
-  fileExt: string;
   vaultRoot: string;
-  board: Board | null;
   allTilesById: Record<string, Tile>;
   refreshTree: () => Promise<void>;
 }): Promise<TileDefinition | null> {
-  const { type, tileId, sourcePath, fileName, fileExt, vaultRoot, board, allTilesById, refreshTree } = args;
+  const { type, tileId, sourcePath, fileName, vaultRoot, allTilesById, refreshTree } = args;
   const now = Date.now();
 
+  // Drain-before-IPC lives in copyFileIntoVault, so a debounced `.board.json`
+  // write can't race the new file's creation.
+  const res = await copyFileIntoVault(sourcePath, vaultRoot);
+  if (!res.success) return null;
+
   if (type === 'text') {
-    // Copy .md to vault root, then build a text tile def referencing it.
-    //
-    // Drain pending writers before the copy so a debounced
-    // `.board.json` write doesn't race the new file's creation.
-    const res = await copyFileIntoVault(sourcePath, vaultRoot);
-    if (!res.success) return null;
-    // The copy result returns either a vault-relative path (preferred) or
-    // an absolute path. Normalise to vault-relative so the helper's
-    // duplicate detection and convention-path comparison stay correct.
+    // The copy result returns either a vault-relative path (preferred) or an
+    // absolute path. Normalise to vault-relative for the def.
     const resolvedRel = (res.relativePath as string)
       || (res.path ? vaultRelativeFromAbsolute(res.path as string, vaultRoot) : '')
       || fileName;
     // Refresh the file tree so the newly copied file is in the
-    // `knownVaultPaths` snapshot before broken-ref detection runs on
-    // the new tile.
+    // `knownVaultPaths` snapshot before broken-ref detection runs on the tile.
     await refreshTree();
-    return await buildTextTileDefForKanbanDrop({
-      vaultRelPath: resolvedRel,
-      tileId,
-      now,
-      vaultRoot,
-      board,
-      allTilesById,
-    });
+    return await buildTextTileDefForKanbanDrop({ vaultRelPath: resolvedRel, tileId, now, allTilesById });
   }
 
-  // Same drain-before-IPC contract for media tile drops.
-  const res = await copyFileIntoVault(sourcePath, vaultRoot);
-  if (!res.success) return null;
   const stored: string = res.relativePath || res.path || '';
-  const baseTitle = fileName.replace(/\.[^.]+$/, '');
-  const baseDef = {
-    id: tileId,
-    title: baseTitle,
-    style: baseTileStyle(),
-    tags: [],
-    createdAt: now,
-    updatedAt: now,
-  };
-  // Same discriminated-switch shape as `buildTileDefForVaultFile` above —
-  // The discriminated `TileDefinition` requires per-variant required
-  // fields, which a conditional-spread literal couldn't satisfy.
-  switch (type) {
-    case 'image':
-      return { ...baseDef, type: 'image' as const, src: stored };
-    case 'audio':
-      return {
-        ...baseDef,
-        type: 'audio' as const,
-        src: stored,
-        isPlaying: false,
-        isRecording: false,
-      };
-    case 'file':
-      return {
-        ...baseDef,
-        type: 'file' as const,
-        filePath: stored,
-        fileName,
-        fileExtension: fileExt,
-      };
-  }
+  return mediaTileDef(type, tileId, titleFromFileName(fileName), stored, now);
 }

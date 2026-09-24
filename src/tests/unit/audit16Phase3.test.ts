@@ -18,6 +18,7 @@ import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
 import { __resetRenameCascadeSentinelForTests } from '@renderer/lib/vault/renameCascadeSentinel';
 import { __resetTagRewriteSentinelForTests } from '@renderer/lib/vault/tagRewriteSentinel';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { testSentinelPath } from '../helpers/testMachine';
 
 /**
  * Audit-16 Phase 3 — cross-vault contamination & lifecycle races
@@ -33,7 +34,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
  * Attachment tags are vault-local, so the loss is unrecoverable.
  */
 
-const TAG_SENTINEL = '.filo/tag-rewrite-pending.json';
+const TAG_SENTINEL = testSentinelPath('tag-rewrite');
 
 /** Removal-shaped sentinel with committed progress → partialDetected=true →
  *  onCancel runs convergeForward (removeTagEverywhere) before the prune. */

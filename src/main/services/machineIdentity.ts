@@ -7,7 +7,7 @@
  * userData — per machine, never synced — alongside window/sidebar geometry (see
  * CLAUDE.md "Persistence Boundary"). An unreadable / corrupt file is replaced
  * with a fresh id; that only orphans this machine's OLD sentinels, which the
- * legacy/foreign listing still shows.
+ * foreign-sentinel listing still shows.
  *
  * `registerMachineInVault` writes `.filo/machines/<id>.json` =
  * `{ hostname, firstSeen }` on vault open (only when missing or the hostname

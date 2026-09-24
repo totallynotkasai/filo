@@ -37,14 +37,9 @@
   let isMulti = $derived(effectiveIds.length > 1);
   let isFileMode = $derived(!!filePath && effectiveIds.length === 0);
 
-  // Kanban / Task board types leave `boardStore.tiles` empty (the
-  // `getFullTilesForBoard` mindmap guard, see fileTags.svelte.ts:639-644), so
-  // `getTile()` returns undefined for their cards. Fall back to `allTileDefs`
-  // so single-tile mode resolves on every board type.
-  let tile = $derived.by(() => {
-    if (!tileId || !boardStore) return undefined;
-    return boardStore.getTile(tileId) ?? boardStore.allTileDefs[tileId];
-  });
+  // Resolve through the tag store so a card on a Kanban / Task board (or a
+  // tile on another board) is found too, with its tags read from its note.
+  let tile = $derived(tileId && boardStore ? fileTagsStore.findTile(tileId) : undefined);
   let inputValue = $state('');
 
   // Autocomplete dropdown state.
@@ -62,7 +57,7 @@
     if (!boardStore) return [] as Array<[string, number]>;
     const counts = new SvelteMap<string, number>();
     for (const id of effectiveIds) {
-      const t = boardStore.getTile(id);
+      const t = fileTagsStore.findTile(id);
       if (!t) continue;
       for (const tag of t.tags) counts.set(tag, (counts.get(tag) ?? 0) + 1);
     }

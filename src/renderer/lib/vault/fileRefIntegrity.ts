@@ -1,6 +1,6 @@
 import type { V7BoardFileData } from '../boards/boardSaver';
 import type { Board } from '../../schema/index';
-import { normalizePath, normalizeVaultRelative, stripLeadingSlash, toPosix } from '../utils/path';
+import { normalizeVaultRelative, stripLeadingSlash, toPosix } from '../utils/path';
 
 /**
  * Field names on a tile-like object that may hold a vault-relative file
@@ -13,7 +13,7 @@ import { normalizePath, normalizeVaultRelative, stripLeadingSlash, toPosix } fro
  * Both go through `forEachTileLike` as synthetic tile-likes so the same
  * rename / broken-ref / cascade-delete scan covers them.
  */
-const FILE_REF_FIELDS = ['file', 'src', 'filePath', 'coverImage', 'backgroundImage'] as const;
+const FILE_REF_FIELDS = ['src', 'filePath', 'coverImage', 'backgroundImage'] as const;
 
 /** Synthetic-id prefix for a frame's style object in the file-ref scan. */
 const FRAME_SYNTHETIC_PREFIX = 'frame:';
@@ -24,92 +24,6 @@ const FRAME_SYNTHETIC_PREFIX = 'frame:';
 const KANBAN_COLUMN_SYNTHETIC_PREFIX = 'column:';
 /** Synthetic id for a board's `settings.defaults.frame` block in the scan. */
 const BOARD_FRAME_DEFAULTS_ID = 'board-settings:defaults.frame';
-
-/**
- * Mirrors `fileNameSafe` in board components — same illegal-char regex,
- * same whitespace collapse. Used to derive the on-disk folder for a Kanban
- * board whose name contains filesystem-unsafe characters.
- */
-function sanitizeForFilename(name: string): string {
-  return (
-    name
-       
-      .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      // Lockstep with `fileNameSafe`: strip trailing dots/spaces.
-      .replace(/[. ]+$/, '') || 'Untitled'
-  );
-}
-
-/**
- * Returns the vault-relative folder where a board's text-tile `.md` files
- * are placed, or `null` for board types that don't carry convention-backed
- * text tiles (e.g. document boards store content inline).
- *
- *   - mindmap  → '' (root, plus per-board / vault-wide pin via cascade)
- *   - kanban   → 'Kanban/<kanbanFolder>' (frozen at create-time) OR
- *                name-derived for legacy boards
- *   - tasklist → '' (root, plus per-board / vault-wide pin via cascade)
- *
- * MindMap and TaskList both defer to the runtime cascade
- * (`getActiveContentFolder`); the `''` return signals "no fixed convention,
- * resolve at the call site."
- */
-export function getConventionFolder(boardData: V7BoardFileData): string | null {
-  const b = boardData.board as
-    | { type?: string; name?: string; kanbanFolder?: string }
-    | undefined;
-  if (!b || typeof b.type !== 'string') return null;
-  return getConventionFolderForBoardType(b.type, b.name, b.kanbanFolder);
-}
-
-/**
- * Same as `getConventionFolder` but takes the raw type + name instead of a
- * loaded board file. Useful from contexts that only have the live Board
- * runtime (e.g. drag-drop on the active board).
- *
- * `kanbanFolder` is the frozen create-time folder name
- * stored on KanbanBoardSchema. Pass it through whenever you have it so a
- * renamed Kanban board still resolves its cards under the original folder.
- * When absent (legacy board, mind-map / tasklist call site), the function
- * falls back to the name-derived `Kanban/<sanitize(name)>` for kanban.
- *
- * When `kanbanFolder` contains a path separator (`/`) it is
- * treated as a full vault-relative folder path and the `Kanban/` prefix is
- * NOT applied. This branch is reached after a cross-folder move via
- * `propagateMarkdownRenameToTextTiles` (e.g. user moved `Kanban/Tasks/`
- * out to `Archive/Tasks/` — `kanbanFolder` is rewritten to `Archive/Tasks`).
- * Single-segment values keep the original semantics so existing board files
- * round-trip unchanged.
- */
-export function getConventionFolderForBoardType(
-  boardType: string,
-  boardName: string | undefined,
-  kanbanFolder?: string,
-): string | null {
-  switch (boardType) {
-    case 'mindmap': return '';
-    case 'kanban': {
-      const folder = kanbanFolder?.trim() || sanitizeForFilename(boardName ?? '');
-      if (folder.includes('/')) return folder;
-      return `Kanban/${folder}`;
-    }
-    case 'tasklist': return '';
-    default: return null;
-  }
-}
-
-export function joinConventionPath(folder: string, title: string): string {
-  return folder ? `${folder}/${title}.md` : `${title}.md`;
-}
-
-function splitPath(path: string): { folder: string; base: string } {
-  const norm = stripLeadingSlash(toPosix(path));
-  const idx = norm.lastIndexOf('/');
-  if (idx === -1) return { folder: '', base: norm };
-  return { folder: norm.slice(0, idx), base: norm.slice(idx + 1) };
-}
 
 export interface BrokenReference {
   /** Tile ID that holds the broken reference. */
@@ -228,8 +142,11 @@ function forEachTileLike(
       }
       return;
     }
-    case 'tasklist':
     case 'document':
+      // A Document board names its note by `filePath` on the board itself.
+      visit(b.id, b as unknown as Record<string, unknown>); // allow-cast: visit() takes Record<string, unknown>; DocumentBoard is a plain object whose file field the scan reads
+      return;
+    case 'tasklist':
       return;
   }
 }
@@ -280,170 +197,6 @@ export function propagateRenameAcrossBoards(
       total += n;
     }
   }
-  return { updatedCount: total, changedBoardIds };
-}
-
-function basenameWithoutMd(relPath: string): string | null {
-  const norm = toPosix(relPath);
-  const base = norm.split('/').pop() ?? '';
-  if (!/\.md$/i.test(base)) return null;
-  return base.slice(0, -3);
-}
-
-/**
- * Text tiles back to a `${title}.md` file by convention rather than via an
- * explicit `file:` field. When that file is renamed, we keep the tile in
- * sync so the next write lands on the correct path.
- *
- * Folder-aware. The convention folder per board type comes from
- * `getConventionFolder` (mindmap & tasklist → vault root, plus the
- * per-board / vault-wide pin cascade; kanban → `Kanban/<name>/`).
- * Three cases:
- *   - **Rename inside the convention folder**: update the tile title so the
- *     convention path still resolves. No explicit `filePath` needed.
- *   - **Move out of the convention folder** (e.g. `Notes.md` → `Sub/Notes.md`
- *     on a mindmap board, convention = root): the convention no longer
- *     points at the file, so we stamp an explicit `filePath` on the tile
- *     definition with the new path. Without this stamp, the next save would
- *     fall back to `${title}.md` at the convention folder and recreate the
- *     file at the old location, producing a duplicate.
- *   - **Move into the convention folder from elsewhere**: rare — the source
- *     wasn't convention-backed for this board, so there's nothing to
- *     rewrite. (Explicit-field tiles are already handled by
- *     `propagateRenameAcrossBoards`.)
- *
- * Tiles that already carry an explicit `file` / `filePath` field are left
- * to `propagateRenameAcrossBoards`.
- */
-/**
- * Handles the folder-move branch of
- * `propagateMarkdownRenameToTextTiles`. Updates `board.kanbanFolder` on
- * every kanban board whose convention folder matched the old folder
- * path, so the convention resolver (`getConventionFolderForBoardType`)
- * points at the new location for future card writes.
- *
- * Mutates `boards[boardId].board.kanbanFolder` in place, mirroring the
- * sibling-function mutation pattern. Returns the changed board IDs so
- * the caller can mark them dirty.
- */
-function propagateFolderMoveToKanbanFolder(
-  boards: Record<string, V7BoardFileData>,
-  oldPath: string,
-  newPath: string,
-): RenameResult {
-  // Preserve the user's casing on the stored kanbanFolder by stripping
-  // only separators + leading slash here. The case-folded values below
-  // (`*Lower`) are reserved for path-equality comparisons against
-  // `getConventionFolder`, which returns case-preserved values too.
-  const oldFolderPosix = stripLeadingSlash(toPosix(oldPath));
-  const newFolderPosix = stripLeadingSlash(toPosix(newPath));
-  if (!oldFolderPosix || !newFolderPosix || oldFolderPosix === newFolderPosix) {
-    return { updatedCount: 0, changedBoardIds: [] };
-  }
-  const oldFolderLower = normalizeVaultRelative(oldPath);
-
-  const changedBoardIds: string[] = [];
-  for (const [boardId, data] of Object.entries(boards)) {
-    if (data.board?.type !== 'kanban') continue;
-    const conventionFolder = getConventionFolder(data);
-    if (conventionFolder === null) continue;
-    if (normalizeVaultRelative(conventionFolder) !== oldFolderLower) continue;
-    // Stamp the new folder onto the board (legacy boards get freeze-then-
-    // update collapsed into a single assignment — the old value, if any,
-    // pointed at the OLD folder anyway).
-    (data.board as { kanbanFolder?: string }).kanbanFolder = newFolderPosix;
-    changedBoardIds.push(boardId);
-  }
-  return { updatedCount: changedBoardIds.length, changedBoardIds };
-}
-
-export function propagateMarkdownRenameToTextTiles(
-  boards: Record<string, V7BoardFileData>,
-  oldPath: string,
-  newPath: string,
-  options?: {
-    activeRootFolder?: string;
-    boardDefaultFolders?: Record<string, string | undefined>;
-  },
-): RenameResult {
-  const oldSplit = splitPath(oldPath);
-  const newSplit = splitPath(newPath);
-  const oldTitle = basenameWithoutMd(oldSplit.base);
-  const newTitle = basenameWithoutMd(newSplit.base);
-
-  // When neither path ends in `.md`, treat the rename as
-  // a FOLDER move and rewrite the convention abstraction. For each kanban
-  // board whose convention folder matched the old path, update
-  // `kanbanFolder` to the new full vault-relative path so subsequent card
-  // writes (and the `getConventionFolderForBoardType` resolver) land at
-  // the new location. Legacy boards (kanbanFolder absent) get frozen
-  // straight to the new path — same outcome as freeze-then-update.
-  //
-  // Cards that previously had explicit `file` / `filePath` refs are
-  // independently rewritten by `propagateRenameAcrossBoards` (folder
-  // prefix-match). Convention-backed cards (no explicit field) now
-  // resolve correctly under the new convention folder.
-  if (!oldTitle || !newTitle) {
-    return propagateFolderMoveToKanbanFolder(boards, oldPath, newPath);
-  }
-  const oldLower = oldTitle.toLowerCase();
-  const oldFolderNorm = normalizeVaultRelative(oldSplit.folder);
-  const newFolderNorm = normalizeVaultRelative(newSplit.folder);
-  const newPathForward = stripLeadingSlash(toPosix(newPath));
-  const rawVaultPin = options?.activeRootFolder?.trim() ?? '';
-  const norm = (s: string): string => normalizePath(s);
-
-  const changedBoardIds: string[] = [];
-  let total = 0;
-
-  for (const [boardId, data] of Object.entries(boards)) {
-    const baseFolder = getConventionFolder(data);
-    if (baseFolder === null) continue;
-    const rawBoardPin = options?.boardDefaultFolders?.[boardId]?.trim() ?? '';
-    const folder: string =
-      baseFolder === ''
-        ? rawVaultPin
-          ? norm(rawVaultPin)
-          : rawBoardPin
-            ? norm(rawBoardPin)
-            : ''
-        : baseFolder;
-    const folderNorm = normalizeVaultRelative(folder);
-    // The OLD path must sit in this board's convention folder for the tile
-    // to have been convention-backed in the first place. If not, the tile
-    // either had an explicit file ref (handled elsewhere) or it never
-    // pointed at the file being renamed.
-    if (oldFolderNorm !== folderNorm) continue;
-
-    const defs = data.tileDefs ?? {};
-    const updates: Record<string, unknown> = {};
-    const movesOutOfConvention = newFolderNorm !== folderNorm;
-
-    for (const [tileId, def] of Object.entries(defs)) {
-      const d = def as Record<string, unknown>;
-      if (d.type !== 'text') continue;
-      if (d.file || d.filePath) continue;
-      const t = d.title;
-      if (typeof t !== 'string') continue;
-      if (t.trim().toLowerCase() !== oldLower) continue;
-
-      if (movesOutOfConvention) {
-        // Stamp the new path so subsequent writes go to the moved location
-        // instead of recreating ${title}.md at the convention folder. Keep
-        // the title as-is so the tile header still reads sensibly.
-        updates[tileId] = { ...d, filePath: newPathForward, updatedAt: Date.now() };
-      } else {
-        // In-folder rename: just rename the convention key (the title).
-        updates[tileId] = { ...d, title: newTitle, updatedAt: Date.now() };
-      }
-      total++;
-    }
-    if (Object.keys(updates).length > 0) {
-      data.tileDefs = { ...defs, ...updates } as typeof data.tileDefs;
-      changedBoardIds.push(boardId);
-    }
-  }
-
   return { updatedCount: total, changedBoardIds };
 }
 
@@ -529,11 +282,7 @@ export interface DeleteCascadeResult {
  * each tile via its own undo-aware path.
  *
  * Matches:
- *   - `file` / `src` / `filePath` exact-or-prefix match (handles folder deletes).
- *   - Convention-backed text tiles: the tile's expected `<folder>/<title>.md`
- *     (per its host board's V7 convention) is exact-or-prefix match against
- *     `deletedPath`. Naturally covers folder deletes (e.g. removing `Tasks/`
- *     cascades to every tile in any tasklist board).
+ *   - `src` / `filePath` exact-or-prefix match (handles folder deletes).
  *   - Kanban placement `coverImage`: returned as a separate `coverImageClears`
  *     entry rather than a tile removal so the card itself survives — only the
  *     dead cover image reference is cleared.
@@ -541,11 +290,6 @@ export interface DeleteCascadeResult {
 export function findTilesToCascadeDelete(
   boards: Record<string, V7BoardFileData>,
   deletedPath: string,
-  options?: {
-    activeRootFolder?: string;
-    /** Map of boardId → that board's `settings.defaultFolder` (vault-relative). */
-    boardDefaultFolders?: Record<string, string | undefined>;
-  },
 ): DeleteCascadeResult {
   const byBoard: Record<string, string[]> = {};
   const coverImageClears: Record<string, CoverImageClear[]> = {};
@@ -553,29 +297,15 @@ export function findTilesToCascadeDelete(
   const frameBackgroundClears: Record<string, FrameBackgroundClear[]> = {};
   const boardSettingsClears: Record<string, BoardSettingsBackgroundClear[]> = {};
   let totalCount = 0;
-  const rawVaultPin = options?.activeRootFolder?.trim() ?? '';
-  const norm = (s: string): string => normalizePath(s);
 
   // Track field names that should NOT trigger tile-removal when matched on a
   // tile def. backgroundImage lands on tile defs only via passthrough leak —
   // there's no tile type that legitimately stores it — but if a future
   // version does, we don't want to nuke the whole tile because of a missing
   // background. The frame-bg scan below handles the legitimate carriers.
-  const REMOVE_TILE_ON_MATCH_FIELDS = ['file', 'src', 'filePath'] as const;
+  const REMOVE_TILE_ON_MATCH_FIELDS = ['src', 'filePath'] as const;
 
   for (const [boardId, data] of Object.entries(boards)) {
-    const baseFolder = getConventionFolder(data);
-    const rawBoardPin = options?.boardDefaultFolders?.[boardId]?.trim() ?? '';
-    // Cascade matches detectBrokenRefs: only override the base when it's the
-    // cascade-aware '' (mindmap, tasklist).
-    const conventionFolder: string | null =
-      baseFolder === ''
-        ? rawVaultPin
-          ? norm(rawVaultPin)
-          : rawBoardPin
-            ? norm(rawBoardPin)
-            : ''
-        : baseFolder;
     const tilesToRemove: string[] = [];
     for (const [tileId, def] of Object.entries(data.tileDefs ?? {})) {
       const d = def as Record<string, unknown>;
@@ -584,17 +314,6 @@ export function findTilesToCascadeDelete(
         const v = d[field];
         if (typeof v !== 'string' || !v) continue;
         if (pathStartsWith(v, deletedPath)) { matched = true; break; }
-      }
-      if (
-        !matched
-        && conventionFolder !== null
-        && d.type === 'text'
-        && !d.file
-        && !d.filePath
-        && typeof d.title === 'string'
-      ) {
-        const conventionPath = joinConventionPath(conventionFolder, d.title.trim());
-        if (pathStartsWith(conventionPath, deletedPath)) matched = true;
       }
       if (matched) tilesToRemove.push(tileId);
     }
@@ -696,17 +415,13 @@ export function collectFileRefs(
  * VaultIndex plus any attachments enumerated from the tree; the caller
  * decides what "known" means so this stays a pure function.
  *
- * Two passes:
- *   1. Explicit field refs (`file` / `src` / `filePath`) via `collectFileRefs`.
- *   2. Convention-backed text tiles: each text tile's expected
- *      `<folder>/<title>.md` (where folder is derived from the host board's
- *      type) must exist on disk. Catches Kanban / TaskList / MindMap text
- *      tiles whose backing `.md` was renamed or deleted externally.
+ * Every file field (`src` / `filePath` / covers / backgrounds) is checked via
+ * `collectFileRefs`; a text tile's `filePath` is its note, so a note renamed
+ * or deleted outside Filo is caught here too.
  */
 export function detectBrokenRefs(
   board: V7BoardFileData,
   knownPaths: ReadonlySet<string> | Iterable<string>,
-  options?: { activeRootFolder?: string; boardDefaultFolder?: string },
 ): BrokenReference[] {
   const known =
     knownPaths instanceof Set
@@ -716,7 +431,6 @@ export function detectBrokenRefs(
   for (const p of known) knownNormalized.add(normalizeVaultRelative(p));
 
   const broken: BrokenReference[] = [];
-  const flaggedTileIds = new Set<string>();
   for (const ref of collectFileRefs(board)) {
     // Skip anything that isn't a vault-relative path: URLs (including the
     // `://`-less `data:` and `blob:` schemes), `file:` URLs, and absolute
@@ -728,77 +442,8 @@ export function detectBrokenRefs(
 
     if (!knownNormalized.has(normalizeVaultRelative(ref.path))) {
       broken.push({ tileId: ref.tileId, field: ref.field, missingPath: ref.path });
-      flaggedTileIds.add(ref.tileId);
-    }
-  }
-
-  // Convention-backed text tiles: only flag tiles actually placed on the
-  // host board. An orphaned tileDef with no placement is not user-visible
-  // and doesn't warrant a broken-ref badge.
-  //
-  // Cascade priority for the convention folder:
-  //   1. vault-wide pin (`activeRootFolder`)
-  //   2. per-board pin (`boardDefaultFolder`)
-  //   3. base convention folder (mindmap='', tasklist='', kanban='Kanban/...')
-  // The cascade only applies when the base folder is the cascade-aware ''
-  // (mindmap, tasklist). Kanban's name-derived folder ignores both pins.
-  const baseFolder = getConventionFolder(board);
-  const rawVaultPin = options?.activeRootFolder?.trim() ?? '';
-  const rawBoardPin = options?.boardDefaultFolder?.trim() ?? '';
-  const norm = (s: string): string => normalizePath(s);
-  const conventionFolder =
-    baseFolder === ''
-      ? rawVaultPin
-        ? norm(rawVaultPin)
-        : rawBoardPin
-          ? norm(rawBoardPin)
-          : ''
-      : baseFolder;
-  if (conventionFolder !== null) {
-    const placedTileIds = collectPlacedTileIds(board);
-    for (const [tileId, def] of Object.entries(board.tileDefs ?? {})) {
-      if (flaggedTileIds.has(tileId)) continue;
-      if (!placedTileIds.has(tileId)) continue;
-      const d = def as Record<string, unknown>;
-      if (d.type !== 'text') continue;
-      if (d.file || d.filePath) continue;
-      if (typeof d.title !== 'string') continue;
-      const conventionPath = joinConventionPath(conventionFolder, d.title.trim());
-      if (!knownNormalized.has(normalizeVaultRelative(conventionPath))) {
-        broken.push({ tileId, field: 'title', missingPath: conventionPath });
-      }
     }
   }
 
   return broken;
-}
-
-/**
- * Returns the set of tileIds that appear in any of the host board's
- * placement collections. Used by broken-ref detection so that orphaned
- * `tileDefs` (an entry with no placement) don't produce phantom badges.
- */
-function collectPlacedTileIds(board: V7BoardFileData): Set<string> {
-  const ids = new Set<string>();
-  const b: Board | undefined = board.board;
-  if (!b) return ids;
-  switch (b.type) {
-    case 'mindmap':
-      for (const id of Object.keys(b.placements ?? {})) ids.add(id);
-      return ids;
-    case 'kanban':
-      for (const col of b.columns ?? []) {
-        for (const p of col.tilePlacements ?? []) {
-          if (typeof p.tileId === 'string') ids.add(p.tileId);
-        }
-      }
-      return ids;
-    case 'tasklist':
-      for (const p of b.tasks ?? []) {
-        if (typeof p.tileId === 'string') ids.add(p.tileId);
-      }
-      return ids;
-    case 'document':
-      return ids;
-  }
 }

@@ -120,8 +120,7 @@ export const boardDefaults: Record<BoardType, BoardDefaultFactory> = {
       createdAt: now,
       updatedAt: now,
       settings: snapshotSettings('document', settings),
-      contentId: createId(),
-      content: '',
+      filePath: '',
     });
   },
 };

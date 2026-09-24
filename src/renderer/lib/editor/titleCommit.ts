@@ -30,3 +30,20 @@ export function resolveTitleCommitValues(
   const isPlain = stripped === plain || stripped === '';
   return { plain, titleHtml: isPlain ? undefined : html };
 }
+
+/** The text a title's HTML renders as, trimmed. */
+export function titleHtmlText(html: string): string {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  return (doc.body.textContent ?? '').trim();
+}
+
+/**
+ * The formatted title to show, or `null` to show the plain title. Formatting
+ * is the board's, but the words are the note's: once the title changes
+ * anywhere (another board, the Properties panel, another app), the stored
+ * HTML no longer spells it and is ignored.
+ */
+export function visibleTitleHtml(titleHtml: string | undefined, title: string): string | null {
+  if (!titleHtml || titleHtml.trim().length === 0) return null;
+  return titleHtmlText(titleHtml) === title.trim() ? titleHtml : null;
+}

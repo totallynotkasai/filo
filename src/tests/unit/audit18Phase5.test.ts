@@ -259,12 +259,14 @@ describe('Audit-18 5.2 — teardown title commit pushes onto the HOME board stac
 
   it('source: the text-tile teardown commit routes through pushWithoutExecuteOnBoard with tile.boardId + threaded boardId', () => {
     expect(TILE_HEADER_SRC).toContain('historyStore.pushWithoutExecuteOnBoard(');
-    // The command threads { boardId: tile.boardId } so its targetBoardId
-    // resolves to the home board (a later cross-board Ctrl+Z auto-switches).
-    expect(TILE_HEADER_SRC).toContain('{ boardId: tile.boardId },');
+    // The command is built with the tile's home board so its targetBoardId
+    // resolves there (a later cross-board Ctrl+Z auto-switches).
+    const cmdIdx = TILE_HEADER_SRC.indexOf('new UpdateTitleCommand({');
+    expect(cmdIdx).toBeGreaterThan(-1);
+    expect(TILE_HEADER_SRC.slice(cmdIdx, cmdIdx + 200)).toContain('boardId: tile.boardId,');
     // and the push targets that same home board id (the 2nd arg).
     const pushIdx = TILE_HEADER_SRC.indexOf('historyStore.pushWithoutExecuteOnBoard(');
-    expect(TILE_HEADER_SRC.slice(pushIdx, pushIdx + 320)).toContain('tile.boardId,');
+    expect(TILE_HEADER_SRC.slice(pushIdx, pushIdx + 320)).toContain('tile.boardId)');
   });
 });
 

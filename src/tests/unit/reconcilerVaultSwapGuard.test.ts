@@ -47,6 +47,7 @@ function installRoutes(routes: Record<string, (...args: unknown[]) => unknown>):
 
 function makeBoard(name: string): V7BoardFileData {
   return {
+    version: 8,
     board: {
       id: 'kb',
       type: 'kanban',
@@ -96,7 +97,7 @@ describe('Audit-6 H3/H4/L27 — reconciler vault-identity guard', () => {
       'board:load': () => {
         // Vault swaps to B while we're reading A's board JSON.
         beginVaultGeneration('/vault-B');
-        return JSON.stringify(makeBoard('from-vault-A-disk'));
+        return makeBoard('from-vault-A-disk');
       },
       'vault:stat': () => ({ ok: true, mtimeMs: 1, size: 1 }),
     });
@@ -113,7 +114,7 @@ describe('Audit-6 H3/H4/L27 — reconciler vault-identity guard', () => {
     __clearRecentSelfWritesForTests();
 
     installRoutes({
-      'board:load': () => JSON.stringify(makeBoard('from-disk')),
+      'board:load': () => makeBoard('from-disk'),
       'vault:stat': () => ({ ok: true, mtimeMs: 1, size: 1 }),
     });
 

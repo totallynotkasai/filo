@@ -120,7 +120,7 @@ async function adoptOnce(relPath: string, captured: VaultIdentity, opts: AdoptOp
     project.frames.push(...data.frames);
   }
   // Mirror commitVaultCandidate: loader repairs are persisted on the next write.
-  if (result.groupsBackfilled || result.orphansPruned || result.boardIdsNormalized) {
+  if (result.orphansPruned || result.boardIdsNormalized) {
     boardCacheStore.markDirty(id);
   }
   vaultStore.recomputeBrokenRefsNow();

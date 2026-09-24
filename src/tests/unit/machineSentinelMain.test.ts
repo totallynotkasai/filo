@@ -67,10 +67,10 @@ describe('assertNotInFiloDir — per-machine sentinel ownership', () => {
     expect(() => assertNotInFiloDir('.filo/tag-rewrite-pending.bbbbbbbbbbbb.json')).toThrow(FiloDirForbiddenError);
   });
 
-  it("this machine's own sentinels and the legacy names are allowed", () => {
+  it("this machine's own sentinels are allowed; a bare name with no machine id is refused", () => {
     expect(() => assertNotInFiloDir('.filo/.dirty.aaaaaaaaaaaa')).not.toThrow();
     expect(() => assertNotInFiloDir('.filo/quit-failure.aaaaaaaaaaaa.json')).not.toThrow();
-    expect(() => assertNotInFiloDir('.filo/.dirty')).not.toThrow();
+    expect(() => assertNotInFiloDir('.filo/.dirty')).toThrow(FiloDirForbiddenError);
   });
 
   it('read access may name any machine; other .filo files stay forbidden', () => {

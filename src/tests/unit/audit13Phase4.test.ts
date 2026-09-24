@@ -299,6 +299,7 @@ describe('Audit-13 L5 — closed-file body-only edit re-anchors the baseline', (
 
 function makeBoard(name: string): V7BoardFileData {
   return {
+    version: 8,
     board: {
       id: 'kb',
       type: 'kanban',
@@ -347,7 +348,7 @@ describe('Audit-13 L14 — case-divergent board reload rebinds the stored path',
     __clearRecentSelfWritesForTests();
 
     installRoutes({
-      'board:load': () => JSON.stringify(makeBoard('from-disk')),
+      'board:load': () => makeBoard('from-disk'),
       'vault:stat': () => ({ ok: true, mtimeMs: 1, size: 1 }),
     });
 

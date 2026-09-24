@@ -27,7 +27,6 @@ import {
 } from '../lib/boards/boardSaver';
 import { flushAllScheduledBoards, markBoardPathDeleting, clearBoardPathDeleting, backupExternalVersion } from '../lib/boards/boardWriteScheduler';
 import { loadBoard } from '../lib/boards/boardLoader';
-import { fileNameSafe } from '../lib/vault/conventionPaths';
 import { reportError } from '../lib/utils/errorBus';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { invokeOk } from '../lib/utils/invokeOk';
@@ -40,6 +39,8 @@ import { makeTaskListSlice } from './boardCacheTaskList';
 import { makeKanbanSlice } from './boardCacheKanban';
 import { makeTilesSlice } from './boardCacheTiles';
 import { makeFrontmatterSlice } from './boardCacheFrontmatter';
+import { noteDocId } from './noteMeta';
+import { CURRENT_BOARD_FILE_VERSION } from '../schema/boardFile';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { boardDefaults } from '../core/boardDefaults';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
@@ -66,30 +67,6 @@ let boardPaths = $state<Record<string, string>>({});
  */
 let unresolvedWarnCount = 0;
 let unresolvedToastShown = false;
-
-/**
- * Builds the `{ activeRootFolder, boardDefaultFolders }` option bag that the
- * cascade-aware fileRefIntegrity helpers expect. Sourced fresh on every call
- * so the latest pin state on every cached board is reflected — pinning state
- * changes during a rename/delete are rare but cheap to handle this way.
- */
-function collectFolderPinOptions(): {
-  activeRootFolder: string;
-  boardDefaultFolders: Record<string, string | undefined>;
-} {
-  const boardDefaultFolders: Record<string, string | undefined> = {};
-  for (const [boardId, data] of Object.entries(boardCache)) {
-    const pin = (data.board as { settings?: { defaultFolder?: string } })
-      .settings?.defaultFolder;
-    if (typeof pin === 'string' && pin.length > 0) {
-      boardDefaultFolders[boardId] = pin;
-    }
-  }
-  return {
-    activeRootFolder: vaultStore.activeRootFolder,
-    boardDefaultFolders,
-  };
-}
 
 function warnUnresolved(kind: string, id: string): void {
   unresolvedWarnCount++;
@@ -325,7 +302,6 @@ const cacheCtx: CacheContext = {
   kanbanBoardOrWarn,
   tasklistBoardOrWarn,
   updateProjectConnectionsFrames,
-  collectFolderPinOptions,
 };
 
 const connectionsFramesSlice = makeConnectionsFramesSlice(cacheCtx);
@@ -612,19 +588,10 @@ export const boardCacheStore = {
     const vaultRoot = vaultStore.path;
     if (!vaultRoot) return false;
 
-    // Freeze the on-disk Kanban folder at create-time. The
-    // folder name is the sanitised board name and stays put on subsequent
-    // renames, so cards under `Kanban/<original-name>/*.md` keep resolving.
-    // Idempotent — leaves an explicitly-set `kanbanFolder` alone (e.g. when
-    // a template / migration seeded one already).
-    if (board.type === 'kanban') {
-      const b = board as { kanbanFolder?: string };
-      if (!b.kanbanFolder) {
-        b.kanbanFolder = fileNameSafe(board.name);
-      }
-    }
-
+    // Stamp the version on the very first write: the loader accepts only the
+    // current format, so a version-less file would be refused on reload.
     const fileData: V7BoardFileData = {
+      version: CURRENT_BOARD_FILE_VERSION,
       board,
       tileDefs: {},
       connections: {},
@@ -835,7 +802,7 @@ async function syncTileMarkdown(
   const vaultRoot = vaultStore.path;
   if (!vaultRoot) throw new Error('No vault open');
 
-  const docId = (def as TileDefinition & { contentId?: string }).contentId || def.id;
+  const docId = noteDocId(def.filePath);
   const doc = documentStore.getDocument(docId);
   if (!doc) return { wrote: false };
 

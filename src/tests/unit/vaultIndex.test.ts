@@ -39,7 +39,7 @@ See [[OtherDoc]] and [external link](https://example.com) and [local](./another.
     expect(meta.links).not.toContain('https://example.com');
   });
 
-  it('falls back to filename when no heading or frontmatter title', () => {
+  it('falls back to the filename stem when there is no frontmatter title', () => {
     const meta = parseMarkdown('inbox/Quick Note.md', 'Just some body text.');
     expect(meta.title).toBe('Quick Note');
   });
@@ -53,10 +53,10 @@ inline #should-not-appear in body.
     expect(meta.tags).toEqual([]);
   });
 
-  it('handles files with no frontmatter', () => {
+  it('handles files with no frontmatter (title is the filename stem, not the first heading)', () => {
     const meta = parseMarkdown('plain.md', '# Hello\n\nBody.');
     expect(meta.frontmatter).toEqual({});
-    expect(meta.title).toBe('Hello');
+    expect(meta.title).toBe('plain');
     expect(meta.tags).toEqual([]);
   });
 
@@ -182,7 +182,7 @@ describe('VaultIndex', () => {
 
   it('incrementally updates on upsert of the same path', () => {
     const idx = makeIndex();
-    idx.upsert(parseMarkdown('a.md', '---\ntags: [gamma]\n---\n# Renamed Title'));
+    idx.upsert(parseMarkdown('a.md', '---\ntitle: Renamed Title\ntags: [gamma]\n---\nBody'));
     expect(idx.size()).toBe(3);
     expect(idx.filesByTag('alpha')).toEqual(['nested/c.md']);
     expect(idx.filesByTag('gamma')).toEqual(['a.md']);
@@ -234,11 +234,11 @@ describe('VaultIndex — case-folded keys (Audit-13 M1)', () => {
 
   it('a case-divergent re-upsert replaces (no duplicate entry)', () => {
     const idx = new VaultIndex();
-    idx.upsert(parseMarkdown('Notes.md', '---\ntags: [old]\n---\n# Old'));
+    idx.upsert(parseMarkdown('Notes.md', '---\ntitle: Old\ntags: [old]\n---\nBody'));
     expect(idx.size()).toBe(1);
     // External tool reports the same file with different casing — must update
     // in place, not create a second entry.
-    idx.upsert(parseMarkdown('notes.md', '---\ntags: [new]\n---\n# New'));
+    idx.upsert(parseMarkdown('notes.md', '---\ntitle: New\ntags: [new]\n---\nBody'));
     expect(idx.size()).toBe(1);
     expect(idx.get('Notes.md')?.title).toBe('New');
     expect(idx.filesByTag('old')).toEqual([]);
@@ -383,12 +383,12 @@ describe('parseMarkdown — unified+remark pipeline', () => {
 describe('VaultIndex — incremental updates', () => {
   it('simulates a file-change event: re-parsing an existing path replaces content, tags, and title in one step', () => {
     const idx = new VaultIndex();
-    idx.upsert(parseMarkdown('journal.md', '---\ntags: [draft]\n---\n# Journal\n\nFirst pass.'));
+    idx.upsert(parseMarkdown('journal.md', '---\ntitle: Journal\ntags: [draft]\n---\nFirst pass.'));
     expect(idx.filesByTag('draft')).toEqual(['journal.md']);
     expect(idx.get('journal.md')?.title).toBe('Journal');
     expect(idx.query('first')[0]?.path).toBe('journal.md');
 
-    idx.upsert(parseMarkdown('journal.md', '---\ntags: [published]\n---\n# Journal v2\n\nRevised body.'));
+    idx.upsert(parseMarkdown('journal.md', '---\ntitle: Journal v2\ntags: [published]\n---\nRevised body.'));
 
     expect(idx.filesByTag('draft')).toEqual([]);
     expect(idx.filesByTag('published')).toEqual(['journal.md']);

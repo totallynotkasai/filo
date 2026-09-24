@@ -68,7 +68,7 @@ export type IpcChannel =
   | 'recovery:snapshot'
   // Recovery snapshot listing (surfaced to the user on vault open)
   | 'recovery:list'
-  // Per-machine crash sentinels in .filo (this machine, others, legacy)
+  // Per-machine crash sentinels in .filo (this machine and others)
   | 'recovery:list-sentinels'
   // This machine id (userData) and hostname
   | 'app:machine-identity'

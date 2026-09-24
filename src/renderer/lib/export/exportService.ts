@@ -3,6 +3,8 @@ import { jsPDF } from 'jspdf';
 import { boardStore } from '../../stores/board.svelte';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { canvasStore } from '../../stores/canvas.svelte';
+import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
+import { visibleTitleHtml } from '../editor/titleCommit';
 import type {
   Project,
   Tile,
@@ -510,14 +512,14 @@ function renderTaskList(board: TaskListBoard): string {
 }
 
 function renderDocument(board: DocumentBoard): string {
-  const content = board.content || '';
+  // The body lives in the note; the export shows its Markdown source.
+  const content = vaultIndexStore.getMetadata(board.filePath)?.content ?? '';
   if (!content.trim()) return '<p class="empty">Empty document.</p>';
-  return `<div class="document">${content}</div>`;
+  return `<div class="document" style="white-space: pre-wrap">${escapeHtml(content)}</div>`;
 }
 
 function renderTitle(tile: Tile): string {
-  if (tile.titleHtml && tile.titleHtml.trim()) return tile.titleHtml;
-  return escapeHtml(tile.title || '');
+  return visibleTitleHtml(tile.titleHtml, tile.title) ?? escapeHtml(tile.title || '');
 }
 
 function renderTileBody(tile: Tile): string {

@@ -3,6 +3,7 @@ import type { BoardType } from '../../shared/types';
 import { createId } from '../lib/utils/ids';
 import type { Board, WorkspaceState } from '../schema/index';
 import { boardCacheStore } from './boardCache.svelte';
+import { noteDocId } from './noteMeta';
 import { historyStore } from './history.svelte';
 import { uiStore } from './ui.svelte';
 import { flushAllMarkdownWriters } from '../lib/vault/markdownFileWriter';
@@ -47,8 +48,8 @@ function partitionMarkdownFailuresByBoard(
       closingTileIds.add(tileId);
     }
   }
-  const closingDocContentId = closing?.board?.type === 'document'
-    ? (closing.board as { contentId?: string }).contentId
+  const closingDocContentId = closing?.board?.type === 'document' && closing.board.filePath
+    ? noteDocId(closing.board.filePath)
     : undefined;
 
   // Build the global "tile id → owning boardId" and "docId → owning boardId"
@@ -62,8 +63,7 @@ function partitionMarkdownFailuresByBoard(
       tileToBoard.set(tileId, bid);
     }
     if (entry.board?.type === 'document') {
-      const cid = (entry.board as { contentId?: string }).contentId;
-      if (cid) docToBoard.set(cid, bid);
+      if (entry.board.filePath) docToBoard.set(noteDocId(entry.board.filePath), bid);
     }
   }
   /* eslint-enable svelte/prefer-svelte-reactivity */

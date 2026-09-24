@@ -253,8 +253,9 @@ describe('ReplaceAllCommand — atomicity', () => {
   });
 
   it('skips title-only matches and surfaces a "no body matches" toast', async () => {
+    // A text tile's title is its note's frontmatter `title`.
     const filesystem: FileMap = {
-      'a.md': '# A\njust a body',
+      'a.md': '---\ntitle: Castle\n---\n# A\njust a body',
     };
     const { writes } = installFiloStub(filesystem);
     vaultIndexStore.restoreMetadata('a.md', parseMarkdown('a.md', filesystem['a.md']));

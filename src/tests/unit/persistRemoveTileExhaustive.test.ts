@@ -79,6 +79,7 @@ function mkTextTile(id: string, boardId: string, title = id): TextTile {
     faded: false,
     contentId: `doc-${id}`,
     content: '',
+    filePath: `${title}.md`,
     createdAt: 0,
     updatedAt: 0,
   } as unknown as TextTile;
@@ -88,9 +89,8 @@ function mkDef(id: string, title = id): TileDefinition {
   return {
     id,
     type: 'text',
-    title,
+    filePath: `${title}.md`,
     style: { headerColor: '#000', bodyColor: '#fff', borderColor: '' } as never,
-    tags: [],
     createdAt: 0,
     updatedAt: 0,
   } as unknown as TileDefinition;
@@ -206,8 +206,7 @@ function documentEnv(): V7BoardFileData {
       createdAt: 0,
       updatedAt: 0,
       settings: {},
-      contentId: 'doc-content',
-      content: '',
+      filePath: 'D.md',
     } as unknown as DocumentBoard,
     tileDefs: {},
     connections: {},

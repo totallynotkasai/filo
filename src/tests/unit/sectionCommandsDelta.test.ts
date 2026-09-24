@@ -26,13 +26,10 @@ function textDef(id: string, title: string): TileDefinition {
   return {
     id,
     type: 'text',
-    title,
+    filePath: `${title}.md`,
     // headerColor + bodyColor are required by TileStyleSchema (persistAddTaskPlacement
     // validates), so an empty-object style would be rejected.
     style: { headerColor: '', bodyColor: '', borderColor: '' } as never,
-    tags: [],
-    contentId: `doc_${id}`,
-    content: '',
     createdAt: 0,
     updatedAt: 0,
   } as unknown as TileDefinition;
@@ -164,16 +161,16 @@ describe('Audit5 2.5 — DeleteSectionCommand (delta-aware)', () => {
     const cmd = new DeleteSectionCommand('tl', before, after, 'B');
 
     cmd.execute();
-    // Out-of-band content edit to a SIBLING task (t1, in the surviving section).
+    // Out-of-band def edit to a SIBLING task (t1, in the surviving section).
     boardCacheStore.updateEntry('tl', {
-      tileDefs: { ...defs(), t1: { ...defs().t1, title: 'Edited externally' } },
+      tileDefs: { ...defs(), t1: { ...defs().t1, titleHtml: '<b>Edited externally</b>' } },
     });
 
     cmd.undo();
-    // The deleted section's task came back AND the sibling edit was preserved —
-    // the pre-fix wholesale `tileDefs` replace reverted t1 to "Task 1".
+    // The deleted section's task came back AND the sibling edit was preserved:
+    // a wholesale `tileDefs` replace would revert t1 to its snapshot.
     expect(defs().t3).toBeTruthy();
-    expect(defs().t1.title).toBe('Edited externally');
+    expect(defs().t1.titleHtml).toBe('<b>Edited externally</b>');
   });
 });
 

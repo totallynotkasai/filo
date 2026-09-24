@@ -15,7 +15,7 @@ import {
 import { onError, __resetErrorBusForTests, type ReportedError } from '@renderer/lib/utils/errorBus';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import type { KanbanBoard, MindMapBoard } from '@renderer/schema/index';
-import type { FileMetadata } from '@renderer/lib/vault/vaultIndex';
+import { parseMarkdown, type FileMetadata } from '@renderer/lib/vault/vaultIndex';
 
 /**
  * Integration coverage for the three-sink tag cascade.
@@ -30,8 +30,16 @@ function emptyTagsFile(): string {
   return JSON.stringify({ version: 1, tags: {}, fileTags: {} });
 }
 
+const STYLE = { headerColor: '', bodyColor: '', borderColor: '' };
+
+/**
+ * `t1` is a board-only (link) tile, so its tags live on the board def. `n1` is
+ * a card backed by `Tasks/A.md`, whose tags live only in that note's
+ * frontmatter.
+ */
 function makeKanbanFixture(): V7BoardFileData {
   return {
+    version: 8,
     board: {
       id: 'k1',
       type: 'kanban',
@@ -46,14 +54,17 @@ function makeKanbanFixture(): V7BoardFileData {
         ],
         lastView: { sortBy: 'manual', filterTags: ['urgent'], filterProp: null },
       },
-      columns: [],
+      columns: [
+        { id: 'c1', title: 'Todo', position: 0, tilePlacements: [{ tileId: 't1', position: 0 }, { tileId: 'n1', position: 1 }] },
+      ],
     } as unknown as KanbanBoard,
     tileDefs: {
       t1: {
-        id: 't1', type: 'text', title: 'A',
-        style: {} as never, tags: ['urgent', 'work'],
+        id: 't1', type: 'link', title: 'A', url: 'https://a.example',
+        style: STYLE, tags: ['urgent', 'work'],
         createdAt: 0, updatedAt: 0,
-      } as never,
+      },
+      n1: { id: 'n1', type: 'text', filePath: 'Tasks/A.md', style: STYLE, createdAt: 0, updatedAt: 0 },
     },
     connections: {},
     frames: [],
@@ -62,6 +73,7 @@ function makeKanbanFixture(): V7BoardFileData {
 
 function makeMindMapWithInlineTile(): V7BoardFileData {
   return {
+    version: 8,
     board: {
       id: 'mm',
       type: 'mindmap',
@@ -104,9 +116,10 @@ describe('fileTagsStore — rename / delete cascade', () => {
     });
 
     await fileTagsStore.hydrate('/vault');
-    // Seed two tag definitions; cascade should rewrite both occurrences.
-    fileTagsStore.addTagToFile('Tasks/A.md', 'urgent');
-    fileTagsStore.addTagToFile('Tasks/A.md', 'someday');
+    // Seed two tag definitions on a media file (tags.json is where a media
+    // file's tags live); the cascade should rewrite both occurrences.
+    fileTagsStore.addTagToFile('Media/A.png', 'urgent');
+    fileTagsStore.addTagToFile('Media/A.png', 'someday');
   });
 
   afterEach(() => {
@@ -122,19 +135,15 @@ describe('fileTagsStore — rename / delete cascade', () => {
   });
 
   function hydrateCacheAndProject(): void {
-    const kb = makeKanbanFixture();
-    const mm = makeMindMapWithInlineTile();
     boardCacheStore.hydrate(
-      { k1: kb, mm },
+      { k1: makeKanbanFixture(), mm: makeMindMapWithInlineTile() },
       { k1: 'Backlog.board.json', mm: 'Map.board.json' },
     );
-    // Mirror the boards into vaultStore.project so iterateInlineTiles can
-    // see the inline link tile on the mindmap. vaultStore exposes `project`
-    // as a getter only; stub it for the duration of the test.
-    const project = { boards: [kb.board, mm.board] };
-    vi.spyOn(vaultStore, 'project', 'get').mockReturnValue(
-      project as unknown as ReturnType<typeof vaultStore.getProject>,
-    );
+  }
+
+  /** The card's board def never carries tags: they live in its note. */
+  function expectNoBoardTagsOnCard(): void {
+    expect((boardCacheStore.cache.k1.tileDefs.n1 as { tags?: unknown }).tags).toBeUndefined();
   }
 
   describe('renameTagEverywhere', () => {
@@ -160,15 +169,15 @@ describe('fileTagsStore — rename / delete cascade', () => {
         }
       ).inlineTiles.l1;
       expect(inline.tags).toEqual(['important']);
+      expectNoBoardTagsOnCard();
 
-      // .filo/tags.json mirror: definition renamed, file assignment renamed.
-      // Phase 1 / 1.5 — fileTags keys are stored in canonical lowercase form
-      // (via `normalizeVaultRelative`), so the test fixture's `Tasks/A.md`
-      // input is found under `tasks/a.md`.
+      // .filo/tags.json mirror: definition renamed, media file assignment
+      // renamed. fileTags keys are stored in canonical lowercase form (via
+      // `normalizeVaultRelative`), so `Media/A.png` is found under `media/a.png`.
       expect(fileTagsStore.file.tags.urgent).toBeUndefined();
       expect(fileTagsStore.file.tags.important).toBeDefined();
-      expect(fileTagsStore.file.fileTags['tasks/a.md']).toContain('important');
-      expect(fileTagsStore.file.fileTags['tasks/a.md']).not.toContain('urgent');
+      expect(fileTagsStore.file.fileTags['media/a.png']).toContain('important');
+      expect(fileTagsStore.file.fileTags['media/a.png']).not.toContain('urgent');
     });
 
     it('is a no-op when old === new', async () => {
@@ -216,10 +225,11 @@ describe('fileTagsStore — rename / delete cascade', () => {
         }
       ).inlineTiles.l1;
       expect(inline.tags).toEqual([]);
+      expectNoBoardTagsOnCard();
 
-      // Phase 1 / 1.5 — canonical lowercase key.
+      // Canonical lowercase key.
       expect(fileTagsStore.file.tags.urgent).toBeUndefined();
-      expect(fileTagsStore.file.fileTags['tasks/a.md']).not.toContain('urgent');
+      expect(fileTagsStore.file.fileTags['media/a.png']).not.toContain('urgent');
     });
 
     it('leaves unrelated tags alone on boards that never carried the deleted tag', async () => {
@@ -237,19 +247,15 @@ describe('fileTagsStore — rename / delete cascade', () => {
     });
   });
 
-  // Regression coverage for the Kanban-card / Task-tile tag persistence bug:
-  // `getFullTilesForBoard` returns `{}` for non-mindmap boards, so the live
-  // `boardStore.tiles` map is empty on Kanban / Task surfaces and
-  // `boardStore.getTile(id)` returns undefined. Before the fix, the
-  // early-return in `addTagToTile` / `removeTagFromTile` silently dropped
-  // the mutation, producing the observed "field clears but tag never saves"
-  // behaviour. The store must fall back to `allTileDefs` + `persistUpdateTile`.
+  // On Kanban / Task List surfaces the live `boardStore.tiles` map is empty,
+  // so `boardStore.getTile(id)` returns undefined. A tag edit must still find
+  // the tile on its board's cache and land where that tile's tags live;
+  // silently dropping it shows as "field clears but tag never saves".
   describe('addTagToTile / removeTagFromTile — Kanban / Task fallback', () => {
     it('persists the tag onto a tile def that is not on the active board', () => {
       hydrateCacheAndProject();
-      // No setBoard() call — `boardStore.tiles` stays empty. This mirrors
-      // the production state when the user is on a Kanban or Task List
-      // board (their getFullTilesForBoard returns {}).
+      // No setBoard() call — `boardStore.tiles` stays empty, as on a Kanban
+      // or Task List board.
       expect(boardStore.getTile('t1')).toBeUndefined();
 
       fileTagsStore.addTagToTile('t1', 'newtag');
@@ -277,6 +283,36 @@ describe('fileTagsStore — rename / delete cascade', () => {
 
       const after = (boardCacheStore.cache.k1.tileDefs.t1 as { tags: string[] }).tags;
       expect(after).toEqual(before);
+    });
+
+    it("routes a card's tag to its note's frontmatter, not the board def", async () => {
+      vi.useRealTimers();
+      hydrateCacheAndProject();
+      const original = '---\ntags: [work]\n---\nbody\n';
+      vaultIndexStore.restoreMetadata('Tasks/A.md', parseMarkdown('Tasks/A.md', original));
+      const writes: Array<{ path: string; content: string }> = [];
+      installFiloMock({
+        'tags:save': async () => null,
+        'board:save': async () => null,
+        'vault:read-file-text': async () => ({ success: true, content: original, mtimeMs: 1, size: original.length }),
+        'vault:write-existing-file-text': async (...args: unknown[]) => {
+          const path = String(args[1]);
+          if (!path.startsWith('.filo/')) writes.push({ path, content: String(args[2]) });
+          return { success: true };
+        },
+        'vault:write-file-text': async () => ({ success: true }),
+      });
+      expect(boardStore.getTile('n1')).toBeUndefined();
+      expect(fileTagsStore.findTile('n1')?.tags).toEqual(['work']);
+
+      fileTagsStore.addTagToTile('n1', 'newtag');
+      await vi.waitFor(() => expect(writes).toHaveLength(1));
+
+      expect(writes[0].path).toBe('Tasks/A.md');
+      expect(writes[0].content).toContain('newtag');
+      expect(writes[0].content).toContain('work');
+      expectNoBoardTagsOnCard();
+      vaultIndexStore.clear();
     });
   });
 
@@ -443,9 +479,9 @@ describe('fileTagsStore — rename / delete cascade', () => {
       await fileTagsStore.removeTagEverywhere('urgent');
 
       // Registry untouched — the deletion did NOT commit.
-      // Phase 1 / 1.5 — canonical lowercase key.
+      // Canonical lowercase key.
       expect(fileTagsStore.file.tags.urgent).toBeDefined();
-      expect(fileTagsStore.file.fileTags['tasks/a.md']).toContain('urgent');
+      expect(fileTagsStore.file.fileTags['media/a.png']).toContain('urgent');
       // Tile def still carries the tag.
       const def = boardCacheStore.cache.k1.tileDefs.t1 as { tags: string[] };
       expect(def.tags).toContain('urgent');

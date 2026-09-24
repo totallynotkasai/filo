@@ -17,7 +17,7 @@
  *  - styleCommands         — style-popup commands
  *  - propertiesCommands    — UpdatePropertiesCommand
  *  - attachmentSrcCommand  — Image/Video/Audio/File source swap
- *  - renameTitleCommand    — tile title rename (cache + doc + .md file)
+ *  - updateTitleCommand    — tile title edit (note frontmatter or board title)
  *  - savedViewsCommand     — UpdateSavedViewsCommand
  *
  * Not re-exported here: `Command.ts` (the base interface + abstract class) is
@@ -37,5 +37,5 @@ export * from './groupAndBoardCommands';
 export * from './styleCommands';
 export * from './propertiesCommands';
 export * from './attachmentSrcCommand';
-export * from './renameTitleCommand';
+export * from './updateTitleCommand';
 export * from './savedViewsCommand';

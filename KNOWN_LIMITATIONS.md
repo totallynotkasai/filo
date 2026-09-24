@@ -695,3 +695,27 @@ write shortens its base name to fit (`tmpSiblingPath` in
 
 **Impact:** none for normal vaults. A tree nested more than 64 levels deep
 shows in the sidebar but can't be opened from Filo.
+
+## 23. Integer fields above 2^53 − 1 make a board (or tags / template file) invalid
+
+Zod 4's `.int()` accepts only *safe* integers. A board, `.filo/tags.json` or
+layout template with an integer above `Number.MAX_SAFE_INTEGER` in one of these
+fields fails validation:
+
+- placement `position` (Kanban cards, Task List tasks), Kanban column
+  `position` and `wipLimit`, Task List section `position`, tile group
+  `displayIndex`;
+- the `version` of `.filo/tags.json` and of layout templates, and template
+  connection tile indexes.
+
+**Where:** the schemas in [src/renderer/schema/](src/renderer/schema/). Pinned by
+`src/tests/unit/zodSafeIntegerBoundary.test.ts`.
+
+**Why accepted:** such a value can't be represented exactly as a JavaScript
+number, so every reorder would silently corrupt it. Refusing is the honest
+outcome. Filo never writes such values; only a hand-edited or damaged file
+has them.
+
+**Impact:** the board is refused on load (`schema-invalid`): its bytes are copied
+into `.filo/recovery/` and a toast names the file, and Filo never writes to it.
+Fix the number in a text editor and reopen the vault.

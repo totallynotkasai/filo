@@ -49,6 +49,11 @@ schema fixes. `boardLoader.ts` now prefixes each issue with its field path (v4 w
 `exportService.ts` got an explicit `?? 0` for `shadowIntensity` (runtime-identical). **Optional
 follow-up:** `.passthrough()` ×89 is deprecated in v4 (use `.loose()`); still works.
 
+**Behaviour change, accepted (2026-09-24):** v4 `.int()` means a *safe* integer, so an unbounded integer
+field above 2^53 − 1 (a placement / column / section position, `wipLimit`, a tags or template `version`)
+now fails validation and the board is refused (`schema-invalid` → recovery snapshot) instead of loading.
+Pinned by `zodSafeIntegerBoundary.test.ts`; documented as KNOWN_LIMITATIONS #23.
+
 ### 00.3 TipTap 3 — what changed
 
 `setContent(x, { emitUpdate })`; StarterKit `trailingNode/link/underline: false` (label editor also

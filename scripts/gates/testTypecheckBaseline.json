@@ -44,7 +44,6 @@
   "src/tests/unit/historyTruncationToast.test.ts": 7,
   "src/tests/unit/kanbanDragController.test.ts": 1,
   "src/tests/unit/kanbanFrontmatterSeedFromDisk.test.ts": 4,
-  "src/tests/unit/kanbanNoDocIdUndo.test.ts": 1,
   "src/tests/unit/layout.test.ts": 4,
   "src/tests/unit/persistRemoveTileExhaustive.test.ts": 1,
   "src/tests/unit/phase16UndoSweep.test.ts": 1,

@@ -20,7 +20,7 @@ const FILE_SIZE_ALLOWLIST = {
   'src/renderer/components/boards/KanbanBoard.svelte': 1456,
   'src/renderer/components/boards/KanbanColumn.svelte': 1198,
   'src/renderer/stores/vault.svelte.ts': 1668,
-  'src/renderer/lib/vault/markdownFileWriter.ts': 1132,
+  'src/renderer/lib/vault/markdownFileWriter.ts': 1092,
 };
 
 // The refactor characterisation suite: user-visible behaviour the file-model
@@ -31,7 +31,7 @@ const CHARACTERISATION_SPECS = {
   'metadataEdits.test.ts': 5,
   'renamesAndDiskChanges.test.ts': 8,
   'bytesOnDisk.test.ts': 4,
-  'noteModel.test.ts': 11,
+  'noteModel.test.ts': 13,
 };
 
 // Board format v8: a def names its file and stores only visuals. These are
@@ -232,6 +232,29 @@ export const checks = [
       if (loader === null) out.push(fail(LOADER, undefined, 'file missing — re-point the check'));
       else if (/\bJSON\.parse\s*\(/.test(stripComments(loader))) {
         out.push(fail(LOADER, undefined, 're-parses a board payload (a string board is an older format, refused by the version gate)'));
+      }
+      return out;
+    },
+  },
+  {
+    // An opaque note id beside the path is the second copy of a note's identity
+    // that the path-keyed stores replaced; bringing one back re-opens the
+    // "two ids, one file" divergence those stores close.
+    id: 'no-content-id',
+    title: 'a note is named only by its vault path: no contentId / docId anywhere in src/',
+    hint:
+      'Key per-note state by the case-folded vault path (vaultPath()) and follow renames with ' +
+      'registerPathRenamable. Name the value notePath / filePath, never contentId or docId.',
+    run(ctx) {
+      const out = [];
+      // Any casing, as a whole name or a camelCase part (openDocId, docIds),
+      // but not a longer word that merely starts with it (docIdentity).
+      const BANNED = /(?:content|doc)Ids?(?![a-z])/gi;
+      for (const rel of ctx.files(['src'], { ext: ['.ts', '.mts', '.js', '.mjs', '.svelte', '.json'] })) {
+        const lines = ctx.read(rel).split('\n');
+        lines.forEach((line, i) => {
+          for (const m of line.matchAll(BANNED)) out.push(fail(rel, i + 1, `\`${m[0]}\``));
+        });
       }
       return out;
     },

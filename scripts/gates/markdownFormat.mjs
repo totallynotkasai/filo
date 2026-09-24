@@ -281,11 +281,12 @@ export const checks = [
 
       const tt = view(TEXT_TILE);
       if (tt) {
-        // D: adopt a sibling body only when it really read disk; upgrade placeholders.
-        const at = tt.code.indexOf('findByFilename(');
+        // D: load the shared in-memory body only when a view really read disk
+        // (its frontmatter is seeded); upgrade placeholders.
+        const at = tt.code.indexOf('documentStore.getDocument(notePath)');
         const ret = at < 0 ? -1 : tt.code.indexOf('return;', at);
         const block = at < 0 || ret < 0 ? '' : tt.text.slice(at, ret);
-        if (!/hasFrontmatter\(\s*existing\.docId\s*\)/.test(block)) out.push(fail(TEXT_TILE, undefined, 'sibling-adopt must require hasFrontmatter(existing.docId)'));
+        if (!/hasFrontmatter\(\s*notePath\s*\)/.test(block)) out.push(fail(TEXT_TILE, undefined, 'the in-memory body adopt must require hasFrontmatter(notePath)'));
         if (!/\badoptDiskBodyIfPlaceholder\s*\(/.test(tt.code)) out.push(fail(TEXT_TILE, undefined, 'must upgrade a placeholder via adoptDiskBodyIfPlaceholder('));
         // E: onDestroy writes only unsaved work.
         const destroy = arrowBodies(tt, 'onDestroy(')[0];

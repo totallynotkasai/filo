@@ -234,21 +234,23 @@ export function assertSafeFilename(
 }
 
 /**
- * Maximum number of path segments allowed in a vault-relative path. A
- * defence-in-depth bound on the depth of nesting the renderer can request —
- * 10 segments is comfortably deeper than any real-world vault structure but
- * tight enough to short-circuit pathological payloads.
+ * Maximum number of path segments in a vault-relative path, and its maximum
+ * total length. Only a bound on pathological payloads: the sidebar tree has
+ * no depth cap, so any real folder structure it can list must also pass here,
+ * or deep files would show but fail every read and write. Windows MAX_PATH
+ * (260) doesn't apply to Filo's own IO — Node uses `\\?\` paths on Windows.
  */
-export const MAX_VAULT_PATH_DEPTH = 10;
+export const MAX_VAULT_PATH_DEPTH = 64;
+export const MAX_VAULT_RELATIVE_PATH_LENGTH = 4096;
 
 /**
  * Validates a vault-relative path the renderer asked us to write to / read
  * from. Splits on `/` and `\`, drops empty segments (from leading slashes
  * etc.), then enforces:
  *
- *   1. Depth ≤ `MAX_VAULT_PATH_DEPTH` — a path the renderer should never need
- *      legitimately at depth >10. Bounds the parse surface for any subsequent
- *      callers.
+ *   1. Depth ≤ `MAX_VAULT_PATH_DEPTH` and total length ≤
+ *      `MAX_VAULT_RELATIVE_PATH_LENGTH`. Bounds the parse surface for any
+ *      subsequent callers.
  *   2. Each segment passes `assertSafeFilename` — no separators, no `.`/`..` segments,
  *      no embedded directory components. Catches mixed-encoding bypass
  *      attempts like `foo/..\..\..\evil`.
@@ -269,6 +271,11 @@ export function assertSafeRelativePath(
 ): void {
   if (typeof relativePath !== 'string' || relativePath.length === 0) {
     throw new Error('Relative path must be a non-empty string');
+  }
+  if (relativePath.length > MAX_VAULT_RELATIVE_PATH_LENGTH) {
+    throw new Error(
+      `Relative path exceeds length limit (${relativePath.length} > ${MAX_VAULT_RELATIVE_PATH_LENGTH})`,
+    );
   }
   // Reject empty segments anywhere in the path: `notes//Plan.md` is almost
   // certainly a buggy caller (path-join with an empty piece) or an attempt

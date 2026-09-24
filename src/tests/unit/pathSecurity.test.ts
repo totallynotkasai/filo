@@ -4,6 +4,7 @@ import {
   assertSafeRelativePath,
   isPrivateUrl,
   MAX_VAULT_PATH_DEPTH,
+  MAX_VAULT_RELATIVE_PATH_LENGTH,
 } from '../../main/utils/pathSecurity';
 
 /**
@@ -290,6 +291,26 @@ describe('assertSafeRelativePath', () => {
   it('accepts a path at exactly MAX_VAULT_PATH_DEPTH', () => {
     const atLimit = Array.from({ length: MAX_VAULT_PATH_DEPTH }, (_, i) => `seg${i}`).join('/');
     expect(() => assertSafeRelativePath(atLimit)).not.toThrow();
+  });
+
+  it('accepts real-world nesting of 11..64 segments; rejects 65', () => {
+    expect(MAX_VAULT_PATH_DEPTH).toBe(64);
+    for (const depth of [11, 20, 64]) {
+      const p = Array.from({ length: depth }, (_, i) => `d${i}`).join('/');
+      expect(() => assertSafeRelativePath(p)).not.toThrow();
+    }
+    const tooDeep = Array.from({ length: 65 }, (_, i) => `d${i}`).join('/');
+    expect(() => assertSafeRelativePath(tooDeep)).toThrow(/depth limit/);
+  });
+
+  it(`rejects a total length above MAX_VAULT_RELATIVE_PATH_LENGTH`, () => {
+    expect(MAX_VAULT_RELATIVE_PATH_LENGTH).toBe(4096);
+    // 17 × 240 characters + 16 separators = 4096.
+    const atLimit = Array.from({ length: 17 }, () => 'x'.repeat(240)).join('/');
+    expect(atLimit.length).toBe(4096);
+    expect(() => assertSafeRelativePath(atLimit)).not.toThrow();
+    const over = `${atLimit}z`;
+    expect(() => assertSafeRelativePath(over)).toThrow(/length limit/);
   });
 
   it('rejects `..` segments', () => {

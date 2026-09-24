@@ -9,7 +9,7 @@ import {
   clearPreservedEmergencyFilesForTarget,
 } from '../services/emergencyFileRegistry';
 import type { FileTreeNode } from '../../shared/types';
-import { retryOnWindowsLock } from './filenameUtils';
+import { retryOnWindowsLock, tmpSiblingPath } from './filenameUtils';
 
 // `extname()` only returns the final segment, so `foo.board.json` → `.json`.
 // Treat `.board.json` as a compound extension so the sidebar can strip it
@@ -339,7 +339,7 @@ export async function renameItem(oldPath: string, newPath: string): Promise<void
       // best-effort dir-fsync, THEN unlink the source, so a crash mid-copy
       // never leaves a torn file at `newPath` with the source gone.
       const nonce = randomBytes(6).toString('hex');
-      const tmpPath = `${newPath}.${nonce}.tmp`;
+      const tmpPath = tmpSiblingPath(newPath, nonce);
       try {
         await fs.copyFile(oldPath, tmpPath);
         const fh = await fs.open(tmpPath, 'r+');
@@ -509,7 +509,7 @@ export async function copyFileToVault(
   await dest.close().catch(() => undefined);
 
   const nonce = randomBytes(6).toString('hex');
-  const tmpPath = `${destPath}.${nonce}.tmp`;
+  const tmpPath = tmpSiblingPath(destPath, nonce);
   let writeErr: unknown = null;
   let tmp: FileHandle | null = null;
   try {

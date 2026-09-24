@@ -676,3 +676,22 @@ Latin-2, KOI8-R) will come out wrong, and UTF-16 is refused outright.
 **Impact:** For a non-1252 legacy note, re-save it as UTF-8 in another editor
 instead of converting. If a conversion comes out wrong, restore the backup from
 `.filo/recovery/`.
+
+## 22. Vault paths deeper than 64 folders or longer than 4096 characters are refused
+
+Every renderer-requested path is checked by `assertSafeRelativePath`: at most
+64 segments and 4096 characters in total. Deeper or longer paths are refused
+on every read, write and rename.
+
+**Where:** `MAX_VAULT_PATH_DEPTH` / `MAX_VAULT_RELATIVE_PATH_LENGTH` in
+[src/main/utils/pathSecurity.ts](src/main/utils/pathSecurity.ts).
+
+**Why accepted:** it is a bound on pathological payloads, set far beyond any
+real folder structure. Windows MAX_PATH (260) does not apply, because Node uses
+`\?\` paths for its own file IO. Separately, a single name is limited to 255
+characters: long names still save, because the temporary file of an atomic
+write shortens its base name to fit (`tmpSiblingPath` in
+[src/main/vault/filenameUtils.ts](src/main/vault/filenameUtils.ts)).
+
+**Impact:** none for normal vaults. A tree nested more than 64 levels deep
+shows in the sidebar but can't be opened from Filo.

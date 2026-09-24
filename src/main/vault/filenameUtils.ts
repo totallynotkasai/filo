@@ -17,6 +17,34 @@ const ILLEGAL_CHARS = /[<>:"/\\|?*\x00-\x1f]/g;
  */
 const MAX_NAME_LENGTH = 200;
 
+/** A path component may hold at most 255 UTF-16 units (NTFS) or 255 bytes (ext4/APFS). */
+const MAX_COMPONENT = 255;
+
+/**
+ * The sibling temp path `<dir>/<base>.<nonce>.tmp` for an atomic write to
+ * `finalPath`. The suffix adds `nonce.length + 5` characters, so a long but
+ * legal base name (≥ ~239 chars) would push the tmp component past the
+ * filesystem limit and the write would fail with ENAMETOOLONG. The base is
+ * truncated (whole code points only, never half a surrogate pair) until the
+ * component fits in both UTF-16 units and UTF-8 bytes. The suffix is never
+ * shortened: the tree, the watcher and the orphan sweep recognise tmps by it.
+ */
+export function tmpSiblingPath(finalPath: string, nonce: string): string {
+  const cut = Math.max(finalPath.lastIndexOf('/'), finalPath.lastIndexOf('\\')) + 1;
+  const dir = finalPath.slice(0, cut);
+  const suffix = `.${nonce}.tmp`;
+  const fits = (base: string): boolean =>
+    base.length + suffix.length <= MAX_COMPONENT &&
+    Buffer.byteLength(base + suffix, 'utf8') <= MAX_COMPONENT;
+  let base = finalPath.slice(cut);
+  if (!fits(base)) {
+    const points = Array.from(base);
+    while (points.length > 0 && !fits(points.join(''))) points.pop();
+    base = points.join('');
+  }
+  return `${dir}${base}${suffix}`;
+}
+
 /**
  * Sanitizes a string for use as a filename.
  * Strips illegal characters, collapses whitespace, truncates to max length,
@@ -179,7 +207,7 @@ export async function atomicWriteFile(
   opts?: { expectExisting?: boolean },
 ): Promise<void> {
   const nonce = randomBytes(6).toString('hex');
-  const tmpPath = `${filePath}.${nonce}.tmp`;
+  const tmpPath = tmpSiblingPath(filePath, nonce);
 
   // Write + fsync the temp file. Keeps the data on disk before rename,
   // so a power loss between rename and dir-fsync still produces an

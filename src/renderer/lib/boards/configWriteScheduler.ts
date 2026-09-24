@@ -94,6 +94,15 @@ const corruptConfigTargets = new Set<ConfigTarget>();
 // allow-module-state: reset via resetConfigWriteScheduler called from boardSaver's pre-swap handler
 const corruptSuppressToastShown = new Set<ConfigTarget>();
 
+/**
+ * True for `config:load`'s `{ __loadFailed }` marker: the file could not be
+ * read at all (lock, EPERM, inactive vault). Unlike `{}` it says nothing about
+ * what is on disk.
+ */
+export function isConfigLoadFailed(loaded: unknown): boolean {
+  return !!loaded && typeof loaded === 'object' && (loaded as { __loadFailed?: unknown }).__loadFailed === true;
+}
+
 export function markCorruptConfigTarget(target: ConfigTarget): void {
   corruptConfigTargets.add(target);
 }
@@ -340,7 +349,11 @@ export async function writeConfigs(
               let reappearedVerifiedOurs = false;
               try {
                 const loaded = await window.filo.invoke('config:load', vaultRoot, configFile);
-                if (loaded && typeof loaded === 'object' && '__corrupt' in loaded) {
+                if (isConfigLoadFailed(loaded)) {
+                  // Unreadable right now — same as the read-hiccup catch
+                  // below: permissive (not foreign) but unverified.
+                  reappearedIsForeign = false;
+                } else if (loaded && typeof loaded === 'object' && '__corrupt' in loaded) {
                   // Unparseable on disk — by definition not bytes Filo wrote.
                   reappearedIsForeign = true;
                 } else {
@@ -450,7 +463,7 @@ export async function writeConfigs(
           try {
             const configFile = target === 'config:save-workspace' ? 'workspace.json' : target;
             const loaded = await window.filo.invoke('config:load', vaultRoot, configFile);
-            if (loaded && typeof loaded === 'object' && !('__corrupt' in loaded)) {
+            if (loaded && typeof loaded === 'object' && !('__corrupt' in loaded) && !isConfigLoadFailed(loaded)) {
               confirmed = JSON.stringify(loaded, null, 2) === payload;
             }
           } catch {

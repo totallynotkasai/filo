@@ -171,7 +171,7 @@ const CONFIG_SENTINEL_PATHS = [
  * stays acceptable while still riding out the sub-second OneDrive/AV locks that
  * are the common cause.
  */
-const CONFIG_LOAD_RETRY_DELAYS_MS = [150, 400, 900] as const;
+export const CONFIG_LOAD_RETRY_DELAYS_MS = [150, 400, 900] as const;
 
 interface RawConfigs {
   app: Record<string, unknown>;

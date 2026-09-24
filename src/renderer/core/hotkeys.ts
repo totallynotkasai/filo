@@ -9,7 +9,10 @@
  * re-applies bindings to all currently registered shortcuts that share a
  * command id.
  */
-import { scheduleMiscWrite } from '../lib/boards/boardSaver';
+import { scheduleMiscWrite, markCorruptConfigTarget } from '../lib/boards/boardSaver';
+import { isConfigLoadFailed } from '../lib/boards/configWriteScheduler';
+import { CONFIG_LOAD_RETRY_DELAYS_MS } from '../lib/vault/vaultCandidate';
+import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { reportError } from '../lib/utils/errorBus';
 import { invokeOk } from '../lib/utils/invokeOk';
 
@@ -293,10 +296,35 @@ export function deserializeOverrides(config: HotkeysConfig): Record<string, Shor
  * to call before any shortcuts are registered — overrides are stored and
  * applied to shortcuts that register later.
  */
-export async function loadHotkeyOverrides(vaultRoot: string): Promise<void> {
+export async function loadHotkeyOverrides(
+  vaultRoot: string,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<void> {
+  const identity = captureVaultIdentity();
   try {
-    const config = (await window.filo.invoke('config:load', vaultRoot, 'hotkeys.json')) as HotkeysConfig;
-    setHotkeyOverrides(deserializeOverrides(config ?? {}));
+    // A transient lock (OneDrive, antivirus) usually clears within a second.
+    let loaded = await window.filo.invoke('config:load', vaultRoot, 'hotkeys.json');
+    for (const delay of CONFIG_LOAD_RETRY_DELAYS_MS) {
+      if (!isConfigLoadFailed(loaded)) break;
+      await sleep(delay);
+      if (!isStillSameVault(identity)) return;
+      loaded = await window.filo.invoke('config:load', vaultRoot, 'hotkeys.json');
+    }
+    if (!isStillSameVault(identity)) return;
+    const corrupt = !!loaded && typeof loaded === 'object' && '__corrupt' in loaded;
+    if (isConfigLoadFailed(loaded) || corrupt) {
+      // Installing empty overrides here would let the next rebind write a
+      // one-entry hotkeys.json over every other custom binding. Keep what is
+      // in memory and stop hotkey writes for this session instead.
+      markCorruptConfigTarget('hotkeys.json');
+      reportError(
+        'hotkeys.load-overrides',
+        null,
+        "Couldn't read .filo/hotkeys.json — shortcut changes won't be saved this session",
+      );
+      return;
+    }
+    setHotkeyOverrides(deserializeOverrides((loaded ?? {}) as HotkeysConfig));
   } catch (err) {
     reportError(
       'hotkeys.load-overrides',

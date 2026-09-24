@@ -304,7 +304,9 @@ export function registerBoardHandlers(): void {
 
   /**
    * Loads a config file from .filo/.
-   * Returns parsed JSON, or the fallback if the file doesn't exist.
+   * Returns parsed JSON, `{}` only if the file doesn't exist, the
+   * `{ __corrupt }` marker for an unparseable / oversized file, or
+   * `{ __loadFailed }` when it couldn't be read at all.
    */
   ipcMain.handle('config:load', async (_event, vaultRoot: string, file: string) => {
     try {
@@ -315,7 +317,9 @@ export function registerBoardHandlers(): void {
       return await loadConfig(vaultRoot, file, {});
     } catch (err) {
       logMainError(`config:load ${file}`, err);
-      return {};
+      // Never `{}`: that reads as "file absent", so a transient EBUSY/EPERM
+      // would install empty settings and the next save would wipe the file.
+      return { __loadFailed: true, error: String(err) };
     }
   });
 

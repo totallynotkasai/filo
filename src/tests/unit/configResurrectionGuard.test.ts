@@ -388,4 +388,20 @@ describe('configWriteScheduler — L11 foreign delete+recreate not clobbered', (
     expect(defaultsSaves).toHaveLength(1);
     expect(result.failed).not.toContain('defaults.json');
   });
+
+  it('an unreadable reappeared file ({ __loadFailed }) is not foreign: no EXTERNAL_EDIT abort', async () => {
+    seedConfigSnapshots(settingsWith({ x: 1 }), 'light', makeWorkspace());
+    noteBaseline('.filo/defaults.json', 1000, 50);
+
+    const calls: Array<{ channel: string; args: unknown[] }> = [];
+    installFiloMock(mockWith({ __loadFailed: true, error: 'EBUSY: resource busy' }, calls));
+
+    const result = await writeConfigs(VAULT_ROOT, settingsWith({ x: 2 }), 'light', makeWorkspace());
+
+    const defaultsSaves = calls.filter(
+      (c) => c.channel === 'config:save' && c.args[1] === 'defaults.json',
+    );
+    expect(defaultsSaves).toHaveLength(1);
+    expect(result.failed).not.toContain('defaults.json');
+  });
 });

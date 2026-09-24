@@ -277,6 +277,9 @@ export interface IpcChannelMap {
   };
 
   // ── Config ───────────────────────────────────────────────────────
+  // Parsed JSON; `{}` only when the file is absent. Two markers are never
+  // real config: `{ __corrupt: true, raw, error }` (unparseable or oversized)
+  // and `{ __loadFailed: true, error }` (unreadable: lock, EPERM, no vault).
   'config:load': {
     args: [vaultRoot: string, configName: string];
     result: unknown;

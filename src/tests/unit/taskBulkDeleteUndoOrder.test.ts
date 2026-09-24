@@ -118,7 +118,7 @@ function captureExecutes(): Command[] {
 
 function confirmImmediately(): void {
   vi.spyOn(uiStore, 'openConfirm').mockImplementation((cfg) => {
-    void cfg.onConfirm?.();
+    cfg.onConfirm(false);
   });
 }
 

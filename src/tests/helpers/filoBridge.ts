@@ -26,6 +26,8 @@
  */
 
 export type InvokeHandler = (...args: unknown[]) => unknown | Promise<unknown>;
+/** A catch-all handler: the channel name first, then the call arguments. */
+export type CatchallHandler = (channel: string, ...args: unknown[]) => unknown | Promise<unknown>;
 
 type FiloLike = {
   invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
@@ -55,7 +57,7 @@ function buildRoutedInvoke(
   };
 }
 
-function buildCatchallInvoke(handler: InvokeHandler): FiloLike['invoke'] {
+function buildCatchallInvoke(handler: CatchallHandler): FiloLike['invoke'] {
   return async (channel, ...args) => handler(channel, ...args);
 }
 
@@ -85,10 +87,10 @@ export function installFiloMock(
  * Catchall install. Single handler receives every channel call. Use when
  * the test needs a recorder that captures every invocation.
  */
-export function installFiloMock(catchall: InvokeHandler): () => void;
+export function installFiloMock(catchall: CatchallHandler): () => void;
 
 export function installFiloMock(
-  input: Record<string, InvokeHandler> | InvokeHandler,
+  input: Record<string, InvokeHandler> | CatchallHandler,
 ): () => void {
   const invoke =
     typeof input === 'function'

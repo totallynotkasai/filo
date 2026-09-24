@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noUncheckedIndexedAccess": false,
+    "types": ["svelte", "vitest/globals", "node"]
+  },
+  "include": [
+    "src/tests/unit/**/*.ts",
+    "src/tests/component/**/*.ts",
+    "src/tests/helpers/**/*.ts",
+    "src/tests/setup.ts",
+    "src/renderer/**/*.d.ts"
+  ],
+  "exclude": ["node_modules", "dist", "release", "src/tests/e2e"]
+}

@@ -12,7 +12,9 @@ Filo is a local-first, visual-first Personal Knowledge Management (PKM) desktop 
 
 ```
 Run dev:        npm run dev
-Type-check:     npm run check
+Type-check:     npm run check            (renderer + shared, svelte-check)
+                npm run typecheck:main   (main process)
+                npm run ci:test-typecheck (test sources, per-file ratchet)
 Unit tests:     npm run test:unit
 E2E tests:      npm run test:e2e
 Build:          npm run build
@@ -21,9 +23,9 @@ Package:        npm run package
 
 ### CI gates (`.github/workflows/ci.yml`)
 
-`npm run ci:verify` mirrors the GitHub Actions `verify` job: **lint → check (svelte-check) → test:unit:strict → build → ci:gates**.
+`npm run ci:verify` mirrors the GitHub Actions `verify` job: **lint → check (svelte-check) → typecheck:main → test:unit:strict → build → ci:gates**. A second job, `verify-windows`, runs `test:unit:strict` and `typecheck:main` on `windows-latest`.
 
-`ci:gates` runs `node scripts/gates/run.mjs`: ~53 small static checks that pin invariants which past data-loss bugs broke. They share one helper module ([scripts/gates/lib.mjs](scripts/gates/lib.mjs)) and are grouped by subsystem. `--list` shows every check, `--only <id,id>` / `--group <name>` narrow a run, and each failure prints `file:line` plus a fix hint.
+`ci:gates` runs `node scripts/gates/run.mjs`: ~54 small static checks that pin invariants which past data-loss bugs broke. They share one helper module ([scripts/gates/lib.mjs](scripts/gates/lib.mjs)) and are grouped by subsystem. `--list` shows every check, `--only <id,id>` / `--group <name>` narrow a run, and each failure prints `file:line` plus a fix hint.
 
 | Group | Protects |
 |---|---|
@@ -33,13 +35,13 @@ Package:        npm run package
 | `ipcSecurity` | Every `ipcMain` channel is in the `IpcChannel` union (and vice versa); envelope usage; untrusted values pass an `asSafe*` validator before a sink; `vault:copy-file` only copies approved sources; renderer reads can't reach `.filo/`; config loaders migrate before parsing. |
 | `commands` | Undo/redo: high-value mutations go through Commands, which snapshot their slice, carry a `targetBoardId`, and have an execute→undo round-trip test; Task List section positions are clamped. |
 | `components` | Component timers are cleared, `flush*` functions are actually called, no dead `$derived`, DocumentEditor / drag-drop are pane-scoped, pointer capture + spatial batches handle `pointercancel`, z-index tokens, and every `var(--x)` without a fallback is defined. |
-| `codebase` | No file in `src/main` / `src/renderer` over 1000 lines except the allowlisted ones, which may only shrink (**split an over-limit file, don't raise its ceiling**); no `as any` / `as unknown as`. |
+| `codebase` | No file in `src/main` / `src/renderer` over 1000 lines except the allowlisted ones, which may only shrink (**split an over-limit file, don't raise its ceiling**); no `as any` / `as unknown as`; test sources type-check under `tsconfig.tests.json`, with a per-file error baseline (`scripts/gates/testTypecheckBaseline.json`) that may only go down. |
 
 **Escape hatches** are same-line comments with a reason, e.g. `// allow-cast: <reason>`, `// reconcile-elsewhere: <reason>`, `// allow-module-state: <reason>`. Keep the marker text exact; the checks look for it.
 
 **Adding a check:** put it in the matching group module as `{ id, title, run(ctx) }` using the shared lib. Don't add a standalone `scripts/check-*.mjs`. Before relying on it, prove it bites: introduce the violation in real source, confirm the check fails, then revert.
 
-`test:unit:strict` ([scripts/test-unit-strict.mjs](scripts/test-unit-strict.mjs)) runs vitest and also fails on known stderr-noise patterns (e.g. a missing `window.filo` mock).
+`test:unit:strict` ([scripts/test-unit-strict.mjs](scripts/test-unit-strict.mjs)) runs vitest and also fails on known noise patterns in its output: a missing `window.filo` mock, a duplicate object key, the `yaml` collection-key warning, and Svelte effect-loop / unsafe-mutation warnings.
 
 The a11y axe-core scan and full Electron E2E are manual-only (Actions tab → CI → Run workflow).
 

@@ -1,5 +1,12 @@
 // Codebase-wide hygiene ratchets.
+import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
 import { fail } from './lib.mjs';
+
+// Per-file type-error counts for the test sources (tsconfig.tests.json) when
+// the ratchet was introduced. A file may only improve; a file not listed must
+// be clean.
+const TEST_TYPECHECK_BASELINE = 'scripts/gates/testTypecheckBaseline.json';
 
 const SRC_EXT = ['.svelte', '.svelte.ts', '.ts'];
 const LOC_LIMIT = 1000;
@@ -63,6 +70,42 @@ export const checks = [
           if (line.includes('// allow-cast:')) return;
           for (const [name, re] of patterns) if (re.test(line)) out.push(fail(rel, i + 1, `\`${name}\`: ${line.trim()}`));
         });
+      }
+      return out;
+    },
+  },
+  {
+    id: 'test-typecheck',
+    title: 'test sources type-check (per-file error ratchet)',
+    hint:
+      `Fix the type errors. A file missing from ${TEST_TYPECHECK_BASELINE} must be clean; a listed file may ` +
+      'only go down — lower (or delete) its entry when it improves. Run: npx tsc -p tsconfig.tests.json --noEmit',
+    run(ctx) {
+      const tsc = join(ctx.root, 'node_modules', 'typescript', 'bin', 'tsc');
+      const res = spawnSync(process.execPath, [tsc, '-p', 'tsconfig.tests.json', '--noEmit', '--pretty', 'false'], {
+        cwd: ctx.root,
+        encoding: 'utf8',
+        maxBuffer: 64 * 1024 * 1024,
+      });
+      if (res.error) return [fail('tsconfig.tests.json', undefined, `could not run tsc: ${res.error.message}`)];
+      const output = `${res.stdout}\n${res.stderr}`;
+      const counts = new Map();
+      for (const line of output.split(/\r?\n/)) {
+        const m = /^([^\s(][^(]*)\(\d+,\d+\): error TS\d+/.exec(line);
+        if (m) counts.set(m[1], (counts.get(m[1]) ?? 0) + 1);
+      }
+      if (res.status !== 0 && counts.size === 0) {
+        return [fail('tsconfig.tests.json', undefined, `tsc failed without per-file errors:\n${output.trim().slice(-2000)}`)];
+      }
+      const baseline = JSON.parse(ctx.read(TEST_TYPECHECK_BASELINE) ?? '{}');
+      const out = [];
+      for (const [file, n] of [...counts].sort()) {
+        const allowed = baseline[file] ?? 0;
+        if (n > allowed) out.push(fail(file, undefined, `${n} type error(s), baseline ${allowed}`));
+      }
+      for (const [file, allowed] of Object.entries(baseline)) {
+        const n = counts.get(file) ?? 0;
+        if (n < allowed) console.log(`      ratchet down: ${file} ${allowed} -> ${n} in ${TEST_TYPECHECK_BASELINE}`);
       }
       return out;
     },

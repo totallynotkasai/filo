@@ -1,11 +1,11 @@
 name: CI
 
-# Phase 7 regression-prevention workflow. Locks in the gains from
-# audit Phases 0–6: lint, type-check, unit tests + stderr-clean,
-# build smoke, file-size ratchet, type-cast ratchet, IPC channel
-# parity. The a11y axe scan and full Electron E2E are manual-only
-# (Actions tab -> CI -> Run workflow) until those suites are green
-# again; the nightly cron was removed because it failed every day.
+# `verify` runs the full `npm run ci:verify` chain (lint, svelte-check, main
+# type-check, strict unit tests, build, every gate) on Linux. `verify-windows`
+# runs the parts that behave differently on Windows: the unit tests (the
+# `itOnWindows` cases and case-insensitive path handling) and the main-process
+# type-check. The a11y axe scan and full Electron E2E are manual-only
+# (Actions tab -> CI -> Run workflow).
 
 on:
   push:
@@ -28,13 +28,24 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
-      # Phase 0.3 (audit 2026-05-30): run the FULL gate set. `npm run ci:verify`
-      # chains all 26 guards — lint -> check -> test:unit:strict -> build ->
-      # every ci:* script — in the correct order. The workflow previously ran
-      # only 11 of them, leaving 14 safety-critical guards unenforced (markdown
-      # read/write gateways, untrusted-sink discipline, direct-board-mutations,
-      # vault-scoped-state, command-snapshot discipline, versioned-config, etc.).
+      # The whole chain in one place, so CI and a local `npm run ci:verify`
+      # can't drift apart.
       - run: npm run ci:verify
+
+  verify-windows:
+    # Not the full chain: the gates and the build are platform-agnostic, so
+    # repeating them here would only double the runtime.
+    name: Verify on Windows (unit tests, main type-check)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run test:unit:strict
+      - run: npm run typecheck:main
 
   coverage:
     # PR-only because v8 coverage instrumentation roughly doubles the

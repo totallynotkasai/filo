@@ -6,7 +6,7 @@
 
 **Findings source:** [AUDIT19_REPORT_AND_REMEDIATION_PLAN_2026-09-23.md](AUDIT19_REPORT_AND_REMEDIATION_PLAN_2026-09-23.md).
 
-**Status:** not started. **Base:** `main`, once `chore/dependency-majors` is merged.
+**Status:** Phase 1 done on 2026-09-24 (commits `512adfa`..`65683eb` on `chore/dependency-majors`; see "Phase 1 — status and deviations"). Phases 2–7 not started. **Base:** `main`, once `chore/dependency-majors` is merged.
 
 **Goal:** make the `.md` file the only copy of a note's title, tags and content. The board files keep only what is visual. There is one in-memory model per file and one writer per file. The audit fixes that still matter land along the way.
 
@@ -331,6 +331,66 @@ The full per-line specs are in the archived Audit-19 plan, in the section with t
 - Every item above is merged with its bite test.
 - `ci:verify` includes the main and test type-checks.
 - The Windows CI job is green.
+
+#### Phase 1 — status and deviations (2026-09-24)
+
+**Done.** Each item is one commit with its bite test, on `chore/dependency-majors` (not pushed):
+
+| Item | Commit | Item | Commit |
+|---|---|---|---|
+| 1.1 DEP-3 | `512adfa` | 1.8 ERR-10 | `efa992c` |
+| 1.2 ERR-6 | `5491ab6` | 1.9 ERR-12 | `8d427ce` |
+| 1.3 MD-10 | `a48992a` | 1.10 ERR-11 | `eb70be1` |
+| 1.4 BL-2 | `5a6fc48` | 1.11 UX-5a | `5612962` |
+| 1.5 BL-9 | `3785629` | 1.12 CI-2 | `46b19a0` |
+| 1.6 BL-6 | `e8b3c4d` | 1.13 CI-1 | `f9d4237` |
+| 1.7 BL-8 | `a9b2c57` | 1.14 DEP-6 | `65683eb` |
+
+`ci:verify` is green after the last commit. It now runs `typecheck:main`, and the gates include `test-typecheck` (54 gates).
+
+**Deviations from the plan:**
+- **Baseline commit.** The working tree held a large uncommitted change set (the comment clean-up, the `scripts/gates/` consolidation, and plans moved to `docs/`). With the owner's OK it was committed first as `22c1a08`, so each Phase 1 commit holds only its own item.
+- **Extra commit `7274208`: file-size ceilings tightened.** The comment clean-up had already brought `kanbanCommands.ts`, `vaultFolderOps.ts` and `boardCache.svelte.ts` under 1000 lines. Per Part A.2 they left the allowlist, and the other eight ceilings were lowered to their current size. So 1.6 needed no docstring trim in `kanbanCommands.ts` (991 lines).
+- **Commit rhythm (A.1).** Each item ran its own tests, bite, lint and the relevant type-check or gates before its commit. The full `ci:verify` ran at checkpoints (after 1.2, after 1.10, and at the end), not before every single commit. All were green.
+- **Test file names.** New tests have descriptive names instead of the planned `audit19Phase4*.test.ts`: `openVaultFile`, `configLoadFailure`, `tagEditConfirm`, `rendererCrashHandler`, `tmpSiblingPath`, `yamlCollectionKeyQuiet`, `permissionPolicy`, `taskBulkDeleteUndoOrder`, `kanbanFiltersAndSort`, `dateOrder` and `zodSafeIntegerBoundary`.
+- **1.1.** The old deny-all test block in `audit15Phase1.test.ts` was replaced by `permissionPolicy.test.ts`.
+- **1.2.**
+  - The FileTile open logic moved to `lib/utils/openVaultFile.ts`, so it is unit-testable without mounting the component.
+  - Files with no extension and dotfiles (`README`, `.gitignore`) are now refused too, because they aren't on the allowlist. They get the "Show in folder" toast.
+- **1.3.** Two older A8-M1 test rows pinned the mixed-EOL output (a CRLF frontmatter block over an LF body). They now expect all-CRLF.
+- **1.6.** The one-time load-time orphan prune is not added (D9, as planned).
+- **1.7.**
+  - The argv parsing lives in `src/shared/systemLocale.ts` and validates the locale tag.
+  - `window.filo.systemLocale` is a required field on `FiloAPI`. The renderer still falls back to `navigator.language` when it is empty.
+- **1.8.**
+  - The hotkeys loader also treats a `__corrupt` file like `__loadFailed`: it keeps the in-memory overrides and blocks hotkey writes, where before it silently installed empty overrides.
+  - A vault swap during the retries drops the result.
+- **1.9.** The existence check on preserved files applies only to entries carried over from an earlier breadcrumb. This session's partials are always written.
+  - A renderer crash *during* a quit drain closes the window without the Reload/Quit dialog, because nothing is left to drain.
+  - `rendererAlive: false` wins over an in-flight drain in `decideWindowClose`.
+- **1.10.**
+  - `tmpSiblingPath` also keeps the tmp name within 255 UTF-8 *bytes*, for ext4 and APFS, not only 255 UTF-16 units.
+  - `machineIdentity.ts` keeps its inline tmp name. It writes a fixed, short `userData` file and can't import `filenameUtils` because that would be an import cycle. The source-scan test exempts it.
+  - Added as KNOWN_LIMITATIONS #22.
+- **1.11.**
+  - The delete confirm says "This can't be undone" rather than the Audit-19 copy "You can undo from the notification that follows". Undo (5b) only arrives in Phase 7, so Phase 7 must update this text.
+  - Besides `vaultFolderOps`, `confirmAsync` also replaced the identical wrapper in `VaultFileItem.svelte`, `keepLocalBackup.ts` and `vaultExternalDriftPrompts.ts`. `confirmDiscardSettings.ts` keeps its own wrapper, because its tests inject a `ui` double.
+  - The logic lives in `lib/tags/tagEditConfirm.ts`.
+- **1.12.**
+  - `logLevel: 'error'` was also added to the three *test* helpers that parse the hostile YAML corpus directly.
+  - The strict runner already scanned stdout and stderr; only its patterns were widened.
+- **1.13.**
+  - `test-typecheck` is a gate in the `codebase` group, with its baseline in `scripts/gates/testTypecheckBaseline.json`, not a standalone `check-*.mjs` (CLAUDE.md rule). `npm run ci:test-typecheck` runs just that gate.
+  - `tsconfig.tests.json` also includes `src/tests/component`.
+  - Before seeding the baseline, the catch-all `installFiloMock` handler type in `src/tests/helpers/filoBridge.ts` was fixed. That one type caused most of the TS2769 errors. The seeded baseline is **191 errors in 79 files**, against the 381 in 138 measured today (the plan's 373/131 predates later tests).
+- **1.14.** No code change was needed. The recovery snapshot of a refused board already happens in `vaultCandidate` (`schema-invalid` is in the snapshot kinds); the test pins it. Added as KNOWN_LIMITATIONS #23.
+
+**Still open (needs the owner or a push):**
+- **The Windows CI job has not run yet.** The branch isn't pushed. Locally on Windows 11, `test:unit:strict` and `typecheck:main` pass.
+- **Manual checks on the packaged build:**
+  - Audio tile recording works, and an Iframe tile to a mic-test page is denied (1.1).
+  - `window.filo.systemLocale` reads `en-GB`, and "Dentist 3/4" lands on 3 April (1.7).
+  - A killed renderer (Task Manager → end the GPU/renderer process) shows the Reload/Quit dialog (1.9).
 
 ---
 

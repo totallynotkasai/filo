@@ -6,7 +6,7 @@
 
 **Findings source:** [AUDIT19_REPORT_AND_REMEDIATION_PLAN_2026-09-23.md](AUDIT19_REPORT_AND_REMEDIATION_PLAN_2026-09-23.md).
 
-**Status:** Phase 1 done on 2026-09-24 (commits `512adfa`..`65683eb` on `chore/dependency-majors`; see "Phase 1 — status and deviations"). Phase 2 done on 2026-09-24 (commits `f6d01ae`..`02c14f7` on `master-plan/phase-2`, branched from `main` after the merge; see "Phase 2 — status and deviations"). Phase 3 done on 2026-09-24 (branch `master-plan/phase-3`; see "Phase 3 — status and deviations"). Phases 4–7 not started. **Base:** `main`; nothing is pushed yet.
+**Status:** Phase 1 done on 2026-09-24 (commits `512adfa`..`65683eb` on `chore/dependency-majors`; see "Phase 1 — status and deviations"). Phase 2 done on 2026-09-24 (commits `f6d01ae`..`02c14f7` on `master-plan/phase-2`, branched from `main` after the merge; see "Phase 2 — status and deviations"). Phase 3 done on 2026-09-24 (branch `master-plan/phase-3`; see "Phase 3 — status and deviations"). Phase 4 done on 2026-09-25 (branch `master-plan/phase-4`, on top of Phase 3; see "Phase 4 — status and deviations"). Phases 5–7 not started. **Base:** `main`; nothing is pushed yet.
 
 **Goal:** make the `.md` file the only copy of a note's title, tags and content. The board files keep only what is visual. There is one in-memory model per file and one writer per file. The audit fixes that still matter land along the way.
 
@@ -680,6 +680,50 @@ Delete the tests that only exercise legacy formats. Record each removal in the c
 7. **Gate:** add `no-content-id`, which bans the identifiers `contentId` and `docId` in `src/`.
 
 **Exit:** `grep -r contentId src/` is empty. A rename re-keys one map entry plus the path fields on the boards.
+
+#### Phase 4 — status and deviations (2026-09-25)
+
+**Done** on branch `master-plan/phase-4`, branched from `master-plan/phase-3` (see the first deviation); nothing is pushed. `ci:verify` is green: lint (0 errors), check, typecheck:main, 529 test files (5,300 tests passed, 1 skipped) under `test:unit:strict` with clean output, including the characterisation suite (5 files, 35 specs), build, and 56/56 gates. The test type-check baseline went from 175 errors in 70 files to 174 in 69.
+
+**Exit check.** `grep -rniE "(content|doc)Ids?\b" src/` finds nothing, in production code, tests and E2E specs alike, and the new `no-content-id` gate keeps it that way. A rename re-keys the document store's entries for that path (one entry per note) through the existing `renameAllPathKeys` sweep, and the rename cascade rewrites the boards' `filePath` fields as before.
+
+**How identity works now:**
+- `documentStore` keys every per-note map by the note's case-folded `VaultPath`: the open documents, per-writer dirty sets, the three frontmatter caches, the mutation counters and the read-only set. Every method takes the path in any spelling. `DocumentState` has no id; `filename` is the on-disk spelling.
+- **Renames.** A stable opaque id used to make renames free, so the path keys need rename handling that the ids didn't. The store's sweep (`registerPathRenamable('documentStore')`) moves every entry for the exact file or a folder's descendants. A case-only rename keeps the key and updates `filename`. The mutation counters move with the note and never go backwards. Three more pieces of per-note state follow renames the same way:
+  - the frontmatter scheduler's last-flushed marks. A mark left at the old path would make the first writes of a new note created there look stale, so they would be skipped;
+  - the force-writer registry, so Keep-local still reaches an editor whose note moved;
+  - open Document tabs.
+- `findByFilename` is a map lookup, and `propagateRename` is the sweep.
+- The runtime text tile has no `contentId`. Views key by `tile.filePath`, or `resolveTextTileVaultPath(tile)` for text-only call sites.
+- **Removed:** `stores/noteIds.ts`, `noteDocId`, `documentStore.updateFilename` / `updateTitle` / `updateTitleClean`, TextTile's sibling-id adoption, and the external-rename cascade's separate `updateFilename` call. That call covered only an exact file rename, not a folder's descendants; the sweep covers both.
+
+**Deviations from the plan:**
+- **Branch base.** Phase 3 isn't merged into `main` yet, so this branch starts from `master-plan/phase-3` (`bb4b97b`). Merge Phase 3 first, then this branch.
+- **Document tabs.** A Document tab's `boardId` was the session doc id. It is now an opaque id, and the note is a new `TabData.notePath` field opened with `tabStore.openNote(path, name)` and matched case-insensitively. Using the path as the `boardId` would have stranded the tab's undo stack, which is keyed by board id, on every rename. The rename sweep rewrites `notePath` only. Document tabs still aren't restored across a relaunch, as before.
+- **Write arguments keep a path field.** `WriteArgs.docId` became `WriteArgs.notePath`, not a boolean. It is the note's own path, or `null` for a cache-less write (orphan-card patch), so behaviour is unchanged. The same applies to the commands' and the scheduler's `docId` parameters. The field is redundant with `relPath` and goes away with the gateway in Phase 5.
+- **Plan item 5 (templates).** No change was needed. Phase 3 already captures text tiles grouped by note path and instantiates each group at a freshly allocated path; no id was involved.
+- **Plan item 4 (D6).** `markdownTileSeed.ts` and `kanbanTileCreation.ts` had already stopped reading or writing `id:` in Phase 3. What remained was `assembleMarkdownFile`'s opt-in `contentId` option, which no caller used; it is deleted. An `id:` already in a file is preserved (unit-tested).
+- **File size.** The rename sweep pushed `markdownFileWriter.ts` over its 1132-line ceiling. Per A.2 the force-writer registry moved to `lib/vault/markdownForceWriters.ts` (the gateway re-exports `registerForceWriter` / `unregisterForceWriter`). The ceiling is lowered to 1092.
+- **Gates.**
+  - **Added `no-content-id`** (codebase group). It bans `contentId` / `docId` in any casing, as a whole name or a camelCase part (`openDocId`), in every source, test and JSON file under `src/`, comments included, but not a longer word such as `docIdentity`. It was proven on a production renderer file, on `src/main`, and on the `docIdentity` false-positive case.
+  - **Changed `editor-body-discipline` rule D.** It pinned `hasFrontmatter(existing.docId)` on the deleted sibling-adopt branch. It now requires the in-memory body branch that remains to check `hasFrontmatter(notePath)`, and was proven by removing that check.
+  - `relpath-rename-transfer` no longer exempts `document.svelte.ts` or `frontmatterWriteScheduler.ts`, because both now register sweeps.
+  - The `characterisation-suite` minimum for `noteModel.test.ts` went from 11 to 13.
+- **Tests.**
+  - **New `notePathIdentity.test.ts` (11 cases):** one document per path in any spelling; the rename re-key (file, folder, case-only, counters); the scheduler mark following a rename; Keep-local after a rename; a Document tab following a rename; D6. Each of the four rename sweeps was switched off in turn, and each time its cases went red.
+  - **Two new characterisation specs** in `noteModel.test.ts`: a note open in a tile and a Document tab keeps saving to its new name after a sidebar rename, and a folder rename above an open note sends later edits to the moved file. These add coverage; no existing spec assertion changed.
+  - **Test migration.** About 145 test files moved to paths, done by five parallel agents under a shared brief with no production edits allowed, rather than one directory at a time (item 6). They found no production bugs. Two files were renamed: `frontmatterSchedulerDocIdKeying` became `frontmatterSchedulerPathKeying`, and `kanbanNoDocIdUndo` became `kanbanOrphanFrontmatterUndo`.
+  - **Cases deleted or rewritten** because they tested id machinery:
+    - "injects contentId as id" (deleted);
+    - the scheduler's two-ids-one-path aliasing case, which became "the mark carries across a rename";
+    - "shares the same docId" and "updateFilename retargets", which became path equivalents.
+  - **E2E.** The Kanban and Task List E2E specs called a `documentStore.createDocument` that no longer existed before this phase. They now seed the note on disk. They weren't run, because E2E is manual-only.
+- **Observed, not changed:** typing in a note without frontmatter drops the file's final newline (`Monday\n` becomes `Monday Tuesday`). This happens without any rename and predates this phase. The new folder-rename spec deliberately doesn't pin it either way.
+
+**Still open (needs the owner):**
+- Merge `master-plan/phase-3`, then `master-plan/phase-4`, into `main` and push. The Windows CI job runs on that push.
+- **A.6 dogfood:** open the scratch vault in the real app, and rename a note while it's open in a tile and a Document tab. The board format didn't change, so the Phase 3 scratch vault still loads.
+- The Phase 1 manual checks are still open.
 
 ---
 

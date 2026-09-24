@@ -19,6 +19,7 @@ import { writeQuitFailureBreadcrumb } from './services/quitFailureBreadcrumb';
 import { decideWindowClose } from './utils/windowCloseDecision';
 import { buildAppContentSecurityPolicy } from './utils/contentSecurityPolicy';
 import { installPermissionHandlers } from './utils/permissionPolicy';
+import { SYSTEM_LOCALE_ARG } from '../shared/systemLocale';
 
 // Must run before `app.whenReady`. Registers the `filo://` URL scheme as a
 // privileged standard scheme so the renderer can load vault-local media
@@ -169,6 +170,10 @@ async function createWindow(): Promise<void> {
       nodeIntegration: false,
       sandbox: true,
       spellcheck: true,
+      // The regional-format locale (e.g. en-GB) for date order. Chromium's own
+      // `navigator.language` follows the Windows DISPLAY language instead, so
+      // a UK region with a US display language would read as month-first.
+      additionalArguments: [`${SYSTEM_LOCALE_ARG}${app.getSystemLocale()}`],
     },
   });
 

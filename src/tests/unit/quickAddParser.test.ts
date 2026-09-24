@@ -419,3 +419,32 @@ describe('parseQuickAdd: next-weekday is one uniform rule (QA-6)', () => {
     expect(parseQuickAdd('x next fri', { now: NOW }).dueDate).toBe('2026-05-22');
   });
 });
+
+describe('parseQuickAdd: day-first d/m for day-first locales (BL-8)', () => {
+  const SEPT_23 = new Date(2026, 8, 23, 10, 0);
+
+  it('"Dentist 3/4" is 3 April (past this year → next year)', () => {
+    const r = parseQuickAdd('Dentist 3/4', { now: SEPT_23, dayFirst: true });
+    expect(r.dueDate).toBe('2027-04-03');
+    expect(r.title).toBe('Dentist');
+  });
+
+  it('"25/12" is 25 December', () => {
+    expect(parseQuickAdd('Party 25/12', { now: SEPT_23, dayFirst: true }).dueDate).toBe('2026-12-25');
+  });
+
+  it('"31/2" is rejected and stays in the title', () => {
+    const r = parseQuickAdd('Report 31/2', { now: SEPT_23, dayFirst: true });
+    expect(r.dueDate).toBeUndefined();
+    expect(r.title).toBe('Report 31/2');
+  });
+
+  it('^d/m sets the start date in day-first order too', () => {
+    expect(parseQuickAdd('Plan ^1/10', { now: SEPT_23, dayFirst: true }).startDate).toBe('2026-10-01');
+  });
+
+  it('dayFirst: false keeps month/day ("3/4" is 4 March)', () => {
+    expect(parseQuickAdd('Dentist 3/4', { now: SEPT_23, dayFirst: false }).dueDate).toBe('2027-03-04');
+    expect(parseQuickAdd('Dentist 3/4', { now: SEPT_23 }).dueDate).toBe('2027-03-04');
+  });
+});

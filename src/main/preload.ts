@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { IpcChannel, SendChannel } from '../shared/types';
 import { RECEIVE_CHANNELS } from '../shared/types';
 import { validateIpcPayload } from '../shared/ipcSchemas';
+import { systemLocaleFromArgv } from '../shared/systemLocale';
 
 /**
  * Exposes a safe, typed IPC API to the renderer process via contextBridge.
@@ -58,6 +59,8 @@ class BadChannelError extends Error {
 const RECEIVABLE_CHANNELS = new Set<string>(RECEIVE_CHANNELS);
 
 const api = {
+  // The OS regional-format locale from main (see shared/systemLocale.ts).
+  systemLocale: systemLocaleFromArgv(process.argv),
   invoke: (channel: IpcChannel, ...args: unknown[]) => {
     const validation = validateIpcPayload(channel, args);
     if (!validation.ok) {

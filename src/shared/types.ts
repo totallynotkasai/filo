@@ -323,6 +323,12 @@ export interface FiloAPI {
    * objects not backed by a real on-disk file.
    */
   getPathForFile: (file: File) => string;
+  /**
+   * The OS regional-format locale (`app.getSystemLocale()`, e.g. `en-GB`), or
+   * `''` when unavailable. Unlike `navigator.language` it follows the Windows
+   * region setting, not the display language.
+   */
+  systemLocale: string;
 }
 
 declare global {

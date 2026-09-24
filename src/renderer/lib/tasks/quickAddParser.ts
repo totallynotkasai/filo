@@ -10,7 +10,8 @@
  *   next mon | next tue | next wed | ...   → dueDate (next occurrence)
  *   in 3d | in 2w | in 1m                  → dueDate (relative offset)
  *   2026-05-20                             → dueDate (ISO)
- *   5/12                                   → dueDate (M/D, current or next year)
+ *   5/12                                   → dueDate (M/D, or D/M with `dayFirst`;
+ *                                            current or next year)
  *   ^<date>                                → startDate (defer until)
  *   @5pm | @17:30 | @9:00am                → dueTime (24h HH:MM)
  *   !low | !med | !medium | !high | !urgent → priority
@@ -121,7 +122,7 @@ function normalizePriority(word: string): QuickAddPriority {
 
 export function parseQuickAdd(
   input: string,
-  options: { now?: Date } = {},
+  options: { now?: Date; dayFirst?: boolean } = {},
 ): QuickAddParsed {
   const now = options.now ?? new Date();
   const today = startOfDay(now);
@@ -204,8 +205,9 @@ export function parseQuickAdd(
     {
       re: /\s\^?(\d{1,2})\/(\d{1,2})(?=\s)/,
       handler: (m) => {
-        const month = parseInt(m[1] ?? '', 10);
-        const day = parseInt(m[2] ?? '', 10);
+        const a = parseInt(m[1] ?? '', 10);
+        const b = parseInt(m[2] ?? '', 10);
+        const [month, day] = options.dayFirst ? [b, a] : [a, b];
         // Validate day-vs-month BEFORE the year-roll. Without the
         // round-trip check, `2/30` constructs Mar 2 (rolled over), which is
         // then < today so the +1-year branch silently shoves it to Mar 2 of

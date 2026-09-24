@@ -12,6 +12,7 @@
    */
   import { SvelteDate } from 'svelte/reactivity';
   import { parseQuickAdd, type QuickAddParsed } from '../../lib/tasks/quickAddParser';
+  import { localeIsDayFirst } from '../../lib/tasks/dateOrder';
 
   let {
     accentColor,
@@ -37,8 +38,11 @@
     inputRef = inputEl ?? null;
   });
 
+  // `5/12` follows the OS regional date order (day/month for en-GB).
+  const dayFirst = localeIsDayFirst(window.filo?.systemLocale || navigator.language);
+
   // Live parse of the current input. Recomputed every keystroke; cheap.
-  let parsed = $derived(parseQuickAdd(value));
+  let parsed = $derived(parseQuickAdd(value, { dayFirst }));
 
   let hasMeta = $derived(
     !!parsed.dueDate
@@ -185,7 +189,7 @@
         <code>next mon</code><span>next Monday (or any weekday)</span>
         <code>in 3d</code><span>3 days from today (d/w/m)</span>
         <code>2026-05-20</code><span>explicit ISO date</span>
-        <code>5/12</code><span>month/day (rolls forward if past)</span>
+        <code>5/12</code><span>{dayFirst ? 'day/month' : 'month/day'} (rolls forward if past)</span>
         <code>^next mon</code><span>start (defer) date — caret prefix</span>
         <code>@5pm</code><span>time-of-day (24h or am/pm)</span>
         <code>!high</code><span>priority (low/med/high/urgent)</span>

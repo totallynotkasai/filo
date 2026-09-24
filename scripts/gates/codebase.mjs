@@ -7,18 +7,15 @@ const LOC_LIMIT = 1000;
 // Files over LOC_LIMIT, each pinned at its current LOC. They may shrink, not
 // grow; the remedy for an over-limit file is to split it, not to raise its row.
 const FILE_SIZE_ALLOWLIST = {
-  'src/renderer/components/boards/TaskListBoard.svelte': 2209,
-  'src/renderer/components/boards/KanbanSideToolbar.svelte': 1504,
-  'src/renderer/components/boards/TaskItem.svelte': 1545,
-  'src/renderer/components/boards/KanbanBoard.svelte': 1471,
+  'src/renderer/components/boards/TaskListBoard.svelte': 2192,
+  'src/renderer/components/boards/KanbanSideToolbar.svelte': 1503,
+  'src/renderer/components/boards/TaskItem.svelte': 1543,
+  'src/renderer/components/boards/KanbanBoard.svelte': 1459,
   'src/renderer/components/boards/KanbanColumn.svelte': 1198,
-  'src/renderer/components/sidebar/VaultFileItem.svelte': 1009,
-  'src/renderer/stores/vault.svelte.ts': 1867,
-  'src/renderer/stores/vaultFolderOps.ts': 1018,
-  'src/renderer/stores/fileTags.svelte.ts': 1236,
-  'src/renderer/stores/boardCache.svelte.ts': 1009,
-  'src/renderer/lib/vault/markdownFileWriter.ts': 1352,
-  'src/renderer/commands/kanbanCommands.ts': 1093,
+  'src/renderer/components/sidebar/VaultFileItem.svelte': 1008,
+  'src/renderer/stores/vault.svelte.ts': 1683,
+  'src/renderer/stores/fileTags.svelte.ts': 1183,
+  'src/renderer/lib/vault/markdownFileWriter.ts': 1132,
 };
 
 function countLines(text) {

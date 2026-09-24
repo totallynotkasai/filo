@@ -57,8 +57,11 @@ describe('vault:init-config — input hardening', () => {
   });
 
   beforeEach(async () => {
-    vaultDir = await fs.mkdtemp(join(tmpdir(), 'filo-init-'));
-    otherDir = await fs.mkdtemp(join(tmpdir(), 'filo-init-other-'));
+    // The registry stores the canonical path, and on Windows tmpdir() can be a
+    // short 8.3 name (`RUNNER~1` on the CI runner), so compare against the
+    // resolved one.
+    vaultDir = await fs.realpath(await fs.mkdtemp(join(tmpdir(), 'filo-init-')));
+    otherDir = await fs.realpath(await fs.mkdtemp(join(tmpdir(), 'filo-init-other-')));
     vaultRegistry.setCurrentVault(null);
     errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });

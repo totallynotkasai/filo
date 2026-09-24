@@ -58,7 +58,10 @@ describe('vault:init-config — registry rollback on init failure (audit 5.8)', 
   });
 
   beforeEach(async () => {
-    vaultDir = await fs.mkdtemp(join(tmpdir(), 'filo-init-rollback-'));
+    // The registry stores the canonical path, and on Windows tmpdir() can be a
+    // short 8.3 name (`RUNNER~1` on the CI runner), so compare against the
+    // resolved one.
+    vaultDir = await fs.realpath(await fs.mkdtemp(join(tmpdir(), 'filo-init-rollback-')));
     vaultRegistry.setCurrentVault(null);
     errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });

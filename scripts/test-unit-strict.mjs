@@ -27,6 +27,9 @@ const NOISE_PATTERNS = [
   /\[svelte\] (?:state_unsafe_mutation|ownership_invalid_mutation)/,
 ];
 
+const ANSI = /\x1b\[[0-9;]*m/g;
+const RESULT_LINE = /^\s*[✓✗×↓]\s/u;
+
 const child = spawn('npx', ['vitest', 'run'], {
   stdio: ['inherit', 'pipe', 'pipe'],
   env: process.env,
@@ -59,6 +62,10 @@ child.on('exit', (code) => {
   const combined = stderrBuf.join('') + stdoutBuf.join('');
   const offending = [];
   for (const line of combined.split('\n')) {
+    // A vitest result line (`✓ <test title> 697ms`) is a test's name, not a
+    // warning: the editor-loop tests are named after the warning they guard
+    // against, and CI prints slow tests' names.
+    if (RESULT_LINE.test(line.replace(ANSI, ''))) continue;
     for (const pattern of NOISE_PATTERNS) {
       if (pattern.test(line)) {
         offending.push(line);

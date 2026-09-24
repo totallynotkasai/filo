@@ -18,6 +18,11 @@
   import { historyStore } from './stores/history.svelte';
   import { tabStore } from './stores/tabs.svelte';
   import { workspaceStore } from './stores/workspace.svelte';
+  import { registerDriftPromptHandlers } from './stores/vaultExternalDriftPrompts';
+
+  // The markdown and board writers ask before overwriting a file another
+  // program changed; without this they keep the local version silently.
+  registerDriftPromptHandlers();
 
   // Apply the default theme to the DOM on startup. Routing through
   // themeStore.setBuiltin keeps every theme switch on a single code path.

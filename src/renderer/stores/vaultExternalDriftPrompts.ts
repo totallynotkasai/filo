@@ -371,22 +371,15 @@ export function promptBoardExternalEdit(args: {
   return promise;
 }
 
-// Register the Reload / Keep-local prompts with the writers at module load.
-// `lib/` writers can't import `stores/` (circular), so wiring goes via setters,
-// wrapped in `queueMicrotask` so the existing eval cycles (markdownFileWriter ↔
-// documentStore; vaultIndexStore → vaultStore → vaultExternalChanges) publish
-// their exports first. The `typeof === 'function'` guards tolerate vitest's
-// module reset swapping a binding mid-microtask; the dev-only `else` fails LOUD
-// so import-graph drift can't silently drop the prompts.
-queueMicrotask(() => {
-  if (typeof setExternalEditPromptHandler === 'function') {
-    setExternalEditPromptHandler((path) => promptExternalEditOnSync({ path }));
-  } else if (import.meta.env.MODE === 'development') {
-    console.error('[vaultExternalChanges] setExternalEditPromptHandler not live at registration — external-edit drift prompts DISABLED (Audit-14 6.2 import-cycle regression).');
-  }
-  if (typeof setBoardExternalEditHandler === 'function') {
-    setBoardExternalEditHandler((path) => promptBoardExternalEdit({ path }));
-  } else if (import.meta.env.MODE === 'development') {
-    console.error('[vaultExternalChanges] setBoardExternalEditHandler not live at registration — board drift prompts DISABLED (Audit-14 6.2).');
-  }
-});
+/**
+ * Hands the Reload / Keep-local prompts to the writers. `lib/` writers can't
+ * import `stores/`, so they expose setters, and a writer with no handler keeps
+ * the local version without asking. App.svelte calls this at startup: by then
+ * every module has finished evaluating, so the setters are always live.
+ * Registering at module load instead would depend on evaluation order through
+ * the store import cycles, and a cycle could leave the writers with no prompt.
+ */
+export function registerDriftPromptHandlers(): void {
+  setExternalEditPromptHandler((path) => promptExternalEditOnSync({ path }));
+  setBoardExternalEditHandler((path) => promptBoardExternalEdit({ path }));
+}

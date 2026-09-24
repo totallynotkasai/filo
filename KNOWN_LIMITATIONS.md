@@ -380,6 +380,11 @@ feature for no real security gain given the sandbox.
 vault data (sandbox + opaque origin). Revisit only if Iframe tiles gain a
 same-origin capability, which would change this calculus.
 
+Iframes are denied every browser permission (camera, microphone, geolocation,
+notifications, clipboard, …). Only the app document itself may request
+microphone audio, for the Audio tile
+([src/main/utils/permissionPolicy.ts](src/main/utils/permissionPolicy.ts)).
+
 ## 11. Partial-read guard can refuse a save for a body that legitimately starts with `---`
 
 **What:** The delta-write gateway's truncation guard

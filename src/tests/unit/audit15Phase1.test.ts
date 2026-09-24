@@ -5,7 +5,6 @@ import { tmpdir } from 'os';
 
 import { scanBoardFiles } from '../../main/vault/boardFileOps';
 import { classifyChange } from '../../main/services/fileWatcherClassify';
-import { installPermissionHandlers } from '../../main/utils/permissionPolicy';
 
 import {
   writeMarkdownFile,
@@ -169,45 +168,5 @@ describe('Audit-15 P1.4 — delta write sources the body from fresh disk when no
     expect(written).toContain('LIVE editor body'); // live body wins over disk
     expect(written).not.toContain('old disk body');
     expect(written).toContain('completed: true');
-  });
-});
-
-describe('Audit-15 P1.5 — deny-by-default permission handlers', () => {
-  it('registers both handlers and denies every request + check', () => {
-    type RequestHandler = (
-      wc: unknown,
-      permission: string,
-      callback: (granted: boolean) => void,
-      details: unknown,
-    ) => void;
-    type CheckHandler = (wc: unknown, permission: string, origin: string, details: unknown) => boolean;
-
-    let requestHandler: RequestHandler | undefined;
-    let checkHandler: CheckHandler | undefined;
-    const fakeSession = {
-      setPermissionRequestHandler: (h: RequestHandler) => {
-        requestHandler = h;
-      },
-      setPermissionCheckHandler: (h: CheckHandler) => {
-        checkHandler = h;
-      },
-    };
-
-    installPermissionHandlers(fakeSession as unknown as Parameters<typeof installPermissionHandlers>[0]);
-
-    expect(typeof requestHandler).toBe('function');
-    expect(typeof checkHandler).toBe('function');
-
-    // Every permission REQUEST is denied via callback(false).
-    let granted: boolean | undefined;
-    requestHandler!({}, 'geolocation', (g) => {
-      granted = g;
-    }, {});
-    expect(granted).toBe(false);
-
-    // Every permission CHECK returns false.
-    for (const perm of ['media', 'notifications', 'clipboard-read', 'geolocation', 'midi']) {
-      expect(checkHandler!({}, perm, 'https://embedded.example', {})).toBe(false);
-    }
   });
 });

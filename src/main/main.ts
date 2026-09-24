@@ -50,6 +50,18 @@ function resolveWindowIcon(): string | undefined {
 let mainWindow: BrowserWindow | null = null;
 let windowStateSaveTimer: NodeJS.Timeout | null = null;
 
+// The permission handler grants microphone audio only to this webContents'
+// own main-frame document; see utils/permissionPolicy.ts.
+let appWebContentsId: number | null = null;
+
+/** The app document URL prefix (dev server origin, or the packaged index.html href). */
+function appDocumentUrlPrefix(): string {
+  if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
+    return new URL(process.env.ELECTRON_RENDERER_URL).origin + '/';
+  }
+  return pathToFileURL(join(__dirname, '../renderer/index.html')).href;
+}
+
 // Graceful-shutdown coordination. Both the window `close` handler and the
 // `before-quit` backstop below set this flag so they don't double-dispatch
 // the renderer flush IPC if both fire (e.g. menu-driven quit while a window
@@ -159,6 +171,8 @@ async function createWindow(): Promise<void> {
       spellcheck: true,
     },
   });
+
+  appWebContentsId = mainWindow.webContents.id;
 
   if (savedState.maximized) mainWindow.maximize();
 
@@ -280,6 +294,7 @@ async function createWindow(): Promise<void> {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+    appWebContentsId = null;
   });
 
   // Right-click spell check suggestions
@@ -380,11 +395,12 @@ app.whenReady().then(() => {
   }
 
   installContentSecurityPolicy();
-  // Deny-by-default permission handler on the shared session,
-  // so an embedded https iframe (CSP allows any origin) can't be granted
-  // geolocation / camera / mic / notifications / clipboard by a version-
-  // dependent Electron default. See utils/permissionPolicy.ts.
-  installPermissionHandlers(session.defaultSession);
+  // Deny-by-default permission handler on the shared session, so an embedded
+  // https iframe (CSP allows any origin) can't be granted geolocation /
+  // camera / mic / notifications / clipboard by a version-dependent Electron
+  // default. The app document alone may record audio (the Audio tile).
+  const appUrlPrefix = appDocumentUrlPrefix();
+  installPermissionHandlers(session.defaultSession, () => ({ appWebContentsId, appUrlPrefix }));
   registerAllHandlers();
   registerFiloProtocol();
   void createWindow();

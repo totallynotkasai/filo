@@ -6,7 +6,7 @@
 
 **Findings source:** [AUDIT19_REPORT_AND_REMEDIATION_PLAN_2026-09-23.md](AUDIT19_REPORT_AND_REMEDIATION_PLAN_2026-09-23.md).
 
-**Status:** Phase 1 done on 2026-09-24 (commits `512adfa`..`65683eb` on `chore/dependency-majors`; see "Phase 1 — status and deviations"). Phase 2 done on 2026-09-24 (commits `f6d01ae`..`02c14f7` on `master-plan/phase-2`, branched from `main` after the merge; see "Phase 2 — status and deviations"). Phases 3–7 not started. **Base:** `main`; nothing is pushed yet.
+**Status:** Phase 1 done on 2026-09-24 (commits `512adfa`..`65683eb` on `chore/dependency-majors`; see "Phase 1 — status and deviations"). Phase 2 done on 2026-09-24 (commits `f6d01ae`..`02c14f7` on `master-plan/phase-2`, branched from `main` after the merge; see "Phase 2 — status and deviations"). Phase 3 done on 2026-09-24 (branch `master-plan/phase-3`; see "Phase 3 — status and deviations"). Phases 4–7 not started. **Base:** `main`; nothing is pushed yet.
 
 **Goal:** make the `.md` file the only copy of a note's title, tags and content. The board files keep only what is visual. There is one in-memory model per file and one writer per file. The audit fixes that still matter land along the way.
 
@@ -599,6 +599,69 @@ Delete the tests that only exercise legacy formats. Record each removal in the c
 - The characterisation suite still passes, apart from the listed title-rename change. In `metadataEdits.test.ts` ("editing a card title…"), that change is: the file keeps its name and frontmatter `title:` changes. Also add an assertion that the other board's tile shows the new title. Today it keeps the old one; see "Phase 2 — status and deviations".
 
 **Exit:** `grep` finds no `title`/`tags`/`content`/`contentId` on any note-backed def in the scratch vault's board files. `frontmatterSync.ts` is gone. The UI looks the same.
+
+#### Phase 3 — status and deviations (2026-09-24)
+
+**Done** on branch `master-plan/phase-3` (off `main` at `5107b61`; nothing pushed). `ci:verify` is green: lint (0 errors), check, typecheck:main, 528 test files (5,287 tests) under `test:unit:strict`, including the characterisation suite (5 files, 33 specs), build, and 55/55 gates. The test type-check baseline went from 191 errors in 79 files to 175 in 70.
+
+**Exit check.** The scratch vault was rebuilt by `npm run scratch-vault` (with `FILO_SCRATCH_VAULT` set to `C:\Users\andre\My Files\Filo Scratch Vault`; the builder's default target is `~/Filo Scratch Vault`). All three board files are `version: 8` and no note-backed def carries `title`/`tags`/`content`/`contentId`/`file`; media defs carry no `tags`/`fileName`/`fileExtension`; `tags.json` holds only `attachments/diagram.png`. The Phase 2 vault is kept, renamed to `Filo Scratch Vault (v7, before Phase 3)`. `frontmatterSync.ts` is gone. Net production change is about −2,300 lines in `src/renderer`/`src/main`/`src/shared`.
+
+**How the model works in Phase 3 (the interim until Phases 4–5):**
+- The board file stores the v8 shape. The in-memory cache holds exactly that shape too (defs are built by `buildTileDefinition`; `defPatchFor` keeps only board-owned fields of a tile update, per type).
+- A board's runtime tiles are derived with `projectDef` (`core/boardTileOps/projectTile.ts`), used by `getFullTiles` and by the Kanban / Task List derivations: a text tile's `title`, `tags` and `contentId` come from its note, a media tile's `tags` from `tags.json`, a file tile's name/extension from its path. So every view that read `tile.title` / `tile.tags` now reads the note, reactively, without a board copy.
+- `noteTitle(path)` / `noteTags(path)` / `noteFrontmatter(path)` live in `stores/noteMeta.ts`: the document store's live frontmatter when seeded, else the vault index.
+- **`contentId` is runtime-only.** `stores/noteIds.ts` hands out one session id per vault path (case-folded, follows renames via `renameAllPathKeys`, reset on vault swap); every document is opened under it (`openNoteInDocumentTab`, creation sites, `loadDocument` binds a foreign id). This is the Phase 4 identity model in miniature; Phase 4 still removes the identifier itself.
+
+**Deviations from the plan:**
+- **3.1 Media titles.** Media and file defs keep `title` (a board caption), as C.2 says; only the *text* def loses it. The `board-schema-no-note-copies` gate therefore bans `title|tags|content|contentId|file` on the text def and `tags|content|contentId|file|fileName|fileExtension` on media/file defs, where 3.6's wording ("text and file tile schemas mustn't declare title…") could be read as banning a file tile's title too.
+- **3.1 Properties on media and board-only tiles.** Those defs gained an optional `metadata` record (and `InlineTileSchema` too): the Properties panel stores a non-note tile's properties there, and the strict v8 defs would otherwise drop them. (Inline mind-map tiles had silently dropped them before; now they keep them.)
+- **3.1 New boards are written with `version: 8`** at creation (`persistNewBoard`), not only on the first debounced save. Without it the watcher reloaded the just-created file and the version gate refused it.
+- **3.2 Extra legacy removals** found in the sweep:
+  - the mind-map inline `viewport` migration on save;
+  - the group `displayIndex` backfill on load (`groupsBackfilled`, `backfilledBoardIds`);
+  - the Kanban `kanbanFolder` field entirely (new cards already used the content folder; it only fed the convention resolver);
+  - the recovery-snapshot "legacy bare basename" pruning;
+  - the config double-encoded unwrap (a non-object config JSON is now `__corrupt`);
+  - `mergeBoardTiles` (dead code);
+  - the `.md` drop's legacy `<!-- Filo document metadata -->` header and frontmatter-`id:` reuse.
+  Kept as generic robustness, not legacy: the unknown-tile-type strip on load (comment reworded), and tag-key canonicalisation in `tags.json`.
+- **3.2 Loader migration steps** in the `tags.json`, template and config loaders: there were none (all were empty scaffolds), so nothing to delete.
+- **3.3 `noteTitle` and ids.** The selector lives in `stores/noteMeta.ts` (not `lib/`), because it reads two stores. `noteDocId` reads only the id registry, never the open-document map, so typing in a note doesn't re-derive every tile. Tiles do still re-derive when the vault index bumps (after each write); Phase 5's note model removes that.
+- **3.3 Title edits.** `UpdateTitleCommand` wraps `UpdateCardFieldCommand` for the frontmatter half (fresh-disk delta, inverse recaptured from disk on first execute, rebase on undo/redo) and updates `titleHtml` on the board. The teardown commit runs it and then files it on the home board's stack (`pushWithoutExecuteOnBoard`).
+- **3.3 Document tabs** show the note's title (they used to keep the name they opened with), and renaming a Document tab now edits the note's `title:` (`lib/notes/setNoteTitle.ts`). This goes slightly beyond "the UI looks the same", but it is what D1 implies for the Document header.
+- **3.3 Creation.**
+  - New mind-map tiles: a tile without `filePath` gets `fileNameSafe(title)` in the board's content folder, bumped past taken paths.
+  - Template layouts allocate one note path per content group (`allocateNotePath`), so grouped tiles still share one note.
+  - The Markdown-template insert keeps its body.
+  - A tile that names a missing path creates it with `title:` too (a note created by Filo always gets one).
+  - Quick-add tags go only to frontmatter.
+  - Filenames: `fileStemFromTitle` in `src/shared/fileNames.ts`, shared with main's `RESERVED_WINDOWS_NAMES`.
+  - The duplicate collision wrappers in Kanban, Task List, the Task List file drop and `TaskListBoard` are gone. Creation goes through `nextFreeMdPath` or the new `createNoteFile` (`lib/notes/createNote.ts`).
+- **3.3 Sidebar.** The rename validation message is `fileNameProblem` (shared). Enter is blocked while it shows; a blur abandons the rename. To stay under the 1000-line limit, the rename body moved to `lib/vault/renameVaultEntry.ts`, which took `VaultFileItem.svelte` off the allowlist (958 lines).
+- **3.4 Tag writes.** A tile/path tag change on a note uses the existing fresh-read add/remove rewriter (`writeTagChangeToMarkdownPath`, now in `lib/tags/noteTagWriter.ts`), not a `FrontmatterDelta`. The delta type has no list operations, and setting the whole `tags` array from a cached read could drop a concurrently added tag. The rewriter already applies the change to a fresh disk read.
+- **3.4 Split.** `fileTags.svelte.ts` went from 1,183 to 826 lines, so it left the allowlist (rather than getting a lower ceiling).
+- **3.4 Vault open.** When `tags.json` is empty, the self-seed now registers tag *definitions* only (no `.md` `fileTags` entries). `pruneOrphanFileTags` drops any `.md` key left in an existing `tags.json` (with its usual toast).
+- **3.5 `dropStaleSeededFrontmatterCache` is kept**, rewritten to be path-based, instead of removed. The views prefer a seeded frontmatter cache over the index, so without it an external edit to a once-field-edited card would keep showing stale values until Phase 5 replaces the cache.
+- **3.6 Gates.**
+  - `sentinel-machine-scoped` keeps its ban on the shared bare names, reworded from "legacy". Only the per-machine names exist now (`parseSentinelBasename` and main's `isPermittedSentinel` no longer accept bare names), so the ban still guards against re-introducing a shared name.
+  - `seed-writes-exclusive` accepts `createNoteFile` and pins `lib/notes/createNote.ts`.
+  - The characterisation gate requires the new `noteModel.test.ts` (11 cases).
+  - Both new gates were proven to bite on every arm: 4 arms for `board-schema-no-note-copies` (a title on the text def, `.passthrough()`, a lost inline `tags`, `fileName` on the file def) and 3 for `no-legacy-board-migration` (a step, main's double-decode, the renderer re-parse).
+  - File-size ceilings were lowered to current size: `TaskListBoard.svelte` 2077, `TaskItem.svelte` 1533, `KanbanBoard.svelte` 1456, `vault.svelte.ts` 1668.
+- **3.7 Tests.**
+  - The Phase 3 behaviours are pinned black-box in a new characterisation file, `noteModel.test.ts`. It uses two new harness actions: `sidebarRenameMessage` and `renameFileToMatchTitle`.
+  - Unit tests: `boardFormatV8`, `noteTitles` (including `titleHtml` hidden after a title change), `updateTitleCommand`, `updateTitleCommandActiveBoard` and `buildTextTileDefForNote`.
+  - `metadataEdits.test.ts` got exactly the listed expected change plus the cross-board title assertion. The component helper `mountTextTile` now defaults `filePath`/`contentId` the way tile derivation does.
+  - About 100 unit/component test files were moved to the v8 shape. Seven files were deleted because they only covered removed code: `frontmatterSync`, `boardCacheReconcileBatch`, `boardCacheReconcileOnLoad`, `onOpenReconcileSwapGuard`, `renameTitleCommand`, `renameTitleCommandCleanUndo`, `boardStoreRenameTextTile`. So were `kanbanFolder{LegacyFreeze,Move,Stability}`, `dragDropDedupe`, `dragDropTagSeed` and `buildTextTileDefFromMarkdownFile`; their still-valid intent moved to the new tests. Individual cases for removed behaviour were deleted too: convention paths, legacy sentinels, migration steps, the save-time strip and the viewport migration.
+- **Bugs found by the suites and fixed here:**
+  - Kanban cards and Task List rows lost their title/tags (they had their own def→tile derivations).
+  - New boards were refused on reload (no version).
+  - A new mind-map tile's note lost its `title:` on the first keystroke: its editor cached the empty frontmatter it read before the seed created the file. The seed now records the created frontmatter, and the editor's missing-file path no longer overwrites a cached one.
+
+**Still open (needs the owner):**
+- Merge `master-plan/phase-3` into `main` and push.
+- **A.6 dogfood:** open the rebuilt scratch vault in the real app. The Book Vault's boards are now refused (D9), so they have to be rebuilt.
+- The Phase 1 manual checks and the Windows CI job are still open.
 
 ---
 

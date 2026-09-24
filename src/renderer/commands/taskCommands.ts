@@ -198,6 +198,15 @@ export interface DeleteTaskFileOptions {
   vaultRoot?: string;
 }
 
+/**
+ * Removes one task placement (and optionally its backing file).
+ *
+ * The placement position and the section slices are snapshotted in the
+ * CONSTRUCTOR as absolute indices. Instances batched into one BatchCommand
+ * must therefore be ordered by DESCENDING position (`orderForBatchDelete`):
+ * the batch undoes in reverse, and only then does each re-insert land on the
+ * index it was taken from.
+ */
 export class DeleteTaskCommand extends Command {
   description: string;
   readonly targetBoardId: string;

@@ -3,6 +3,7 @@ import type {
   Tile,
 } from '../../schema/index';
 import { historyStore, type Command } from '../../stores/history.svelte';
+import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { documentStore } from '../../stores/document.svelte';
 import { vaultStore } from '../../stores/vault.svelte';
@@ -29,6 +30,19 @@ import type { TaskRow } from '../tasks/taskListModel';
  * because it's owned by the frontmatter writer slice and reused here for
  * the cascade's "keep subtasks" branch (clears `parent` on each child).
  */
+
+/**
+ * Orders tile ids for a batch of `DeleteTaskCommand`s: DESCENDING placement
+ * position. Each command snapshots its absolute position and the section
+ * slices when constructed, and BatchCommand undoes in reverse, so only a
+ * descending batch re-inserts the lowest position first and lands every row
+ * (and the section boundaries) exactly where it was.
+ */
+export function orderForBatchDelete(boardId: string, tileIds: readonly string[]): string[] {
+  const tasks = (boardCacheStore.cache[boardId]?.board as TaskListBoardType | undefined)?.tasks ?? [];
+  const pos = new Map(tasks.map((p) => [p.tileId, p.position] as const));
+  return [...tileIds].sort((a, b) => (pos.get(b) ?? -1) - (pos.get(a) ?? -1));
+}
 
 export interface TaskDeletionDeps {
   getBoard: () => TaskListBoardType | null;
@@ -119,10 +133,9 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
         action: () => {
           const b = getBoard();
           if (!b) return;
-          // Children first so the parent's snapshot of its child placements
-          // isn't already empty by the time we capture it. Bundle into one
+          // Descending position (see orderForBatchDelete), bundled into one
           // Command so Ctrl+Z reverses the whole cascade.
-          const ordered = [...descendants].reverse();
+          const ordered = orderForBatchDelete(b.id, descendants);
           const cmds = ordered.map((id) => new DeleteTaskCommand(b.id, id));
           historyStore.execute(new BatchCommand(`Delete task + ${childCount} subtasks`, cmds));
           tickAndPersist();
@@ -183,7 +196,7 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
         const b = getBoard();
         if (!b) return;
         // Bundle into a single Command so Ctrl+Z restores the whole batch.
-        const cmds: Command[] = completedTileIds.map(
+        const cmds: Command[] = orderForBatchDelete(b.id, completedTileIds).map(
           (id) => new DeleteTaskCommand(b.id, id),
         );
         historyStore.execute(new BatchCommand(`Delete ${cmds.length} completed tasks`, cmds));

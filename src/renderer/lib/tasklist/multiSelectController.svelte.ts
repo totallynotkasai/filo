@@ -38,6 +38,7 @@ import { moveTaskBlock } from '../tasks/taskMove';
 import { sectionIdForPlacementIndex } from './sectionMath';
 import { resolveDragBlockIds } from './blockMove';
 import { completionPatchForRow } from './frontmatterWriter';
+import { orderForBatchDelete } from './taskDeletion';
 
 export interface MultiSelectControllerDeps {
   getBoard: () => TaskListBoardType | null;
@@ -325,7 +326,8 @@ export class MultiSelectController {
         // Each placement removal is reversible via the per-tile snapshot in
         // DeleteTaskCommand; the BatchCommand wraps them so a single Ctrl+Z
         // restores every row at once.
-        const cmds: Command[] = sel.map((r) => new DeleteTaskCommand(board.id, r.tile.id));
+        const cmds: Command[] = orderForBatchDelete(board.id, sel.map((r) => r.tile.id))
+          .map((id) => new DeleteTaskCommand(board.id, id));
         if (cmds.length === 0) return;
         // Gate the "removed" toast on the chain resolving (and
         // catch the rejection so a failed delete doesn't unhandled-reject). The

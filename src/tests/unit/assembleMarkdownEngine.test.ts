@@ -422,7 +422,7 @@ describe('assembleMarkdownFile — single-line frontmatter eol (A8-M1)', () => {
     expect(isAllCrlf(out)).toBe(true);
   });
 
-  it('CRLF file + single-line FM + editor (LF) body + threaded eol → FM block CRLF, body LF', () => {
+  it('CRLF file + single-line FM + editor (LF) body + threaded eol → whole file CRLF', () => {
     // The editor body is LF and the one-line FM has no internal eol, so NOTHING
     // in the assemble inputs carries `\r\n`. Only the gateway-threaded eol
     // (FileState.eol, sniffed from the raw file at hydrate) recovers it.
@@ -431,9 +431,8 @@ describe('assembleMarkdownFile — single-line frontmatter eol (A8-M1)', () => {
       'First line.\nSecond line.\n',
       { originalFrontmatter: 'title: Note', frontmatterDirty: true, eol: '\r\n' },
     );
-    expect(out).toBe('---\r\ntitle: Renamed\r\n---\r\nFirst line.\nSecond line.\n');
-    const fmBlock = out.slice(0, out.indexOf('---\r\n', 4) + '---\r\n'.length);
-    expect(isAllCrlf(fmBlock)).toBe(true);
+    expect(out).toBe('---\r\ntitle: Renamed\r\n---\r\nFirst line.\r\nSecond line.\r\n');
+    expect(isAllCrlf(out)).toBe(true);
   });
 
   it('threaded eol wins over a body that disagrees (LF body, eol CRLF) on the clean path', () => {
@@ -442,7 +441,7 @@ describe('assembleMarkdownFile — single-line frontmatter eol (A8-M1)', () => {
       'Body.\n',
       { rawFrontmatter: 'title: Note', frontmatterDirty: false, eol: '\r\n' },
     );
-    expect(out).toBe('---\r\ntitle: Note\r\n---\r\nBody.\n');
+    expect(out).toBe('---\r\ntitle: Note\r\n---\r\nBody.\r\n');
   });
 
   it('single-line FM + LF body + NO eol → stays LF (no false CRLF signal to recover)', () => {
@@ -457,5 +456,60 @@ describe('assembleMarkdownFile — single-line frontmatter eol (A8-M1)', () => {
     );
     expect(out).toBe('---\ntitle: Renamed\n---\nBody.\n');
     expect(out.includes('\r')).toBe(false);
+  });
+});
+
+describe('assembleMarkdownFile — CRLF body (A19-MD10)', () => {
+  const hasBareLf = (s: string): boolean => /(^|[^\r])\n/.test(s);
+
+  it('clean frontmatter + LF editor body + eol CRLF → no bare \\n anywhere', () => {
+    const out = assembleMarkdownFile({ title: 'Note' }, 'a\n\nb\n', {
+      rawFrontmatter: 'title: Note',
+      frontmatterDirty: false,
+      eol: '\r\n',
+    });
+    expect(out).toBe('---\r\ntitle: Note\r\n---\r\na\r\n\r\nb\r\n');
+    expect(hasBareLf(out)).toBe(false);
+  });
+
+  it('dirty frontmatter branch → no bare \\n anywhere', () => {
+    const out = assembleMarkdownFile({ title: 'Renamed', tags: ['x'] }, 'a\n\nb\n', {
+      originalFrontmatter: 'title: Note\ntags:\n  - x',
+      frontmatterDirty: true,
+      eol: '\r\n',
+    });
+    expect(out).toContain('title: Renamed\r\n');
+    expect(out.endsWith('a\r\n\r\nb\r\n')).toBe(true);
+    expect(hasBareLf(out)).toBe(false);
+  });
+
+  it('no frontmatter + eol CRLF → whole file CRLF', () => {
+    const out = assembleMarkdownFile({}, '# Heading\n\nText\n', { eol: '\r\n' });
+    expect(out).toBe('# Heading\r\n\r\nText\r\n');
+  });
+
+  it('no eol supplied → body written verbatim (Properties diskBody path)', () => {
+    const mixed = 'line one\r\nline two\nline three\n';
+    const out = assembleMarkdownFile({}, mixed);
+    expect(out).toBe(mixed);
+  });
+
+  it('an already-CRLF body is not doubled (never \\r\\r\\n)', () => {
+    const out = assembleMarkdownFile({ title: 'Note' }, 'a\r\nb\r\n', {
+      rawFrontmatter: 'title: Note',
+      frontmatterDirty: false,
+      eol: '\r\n',
+    });
+    expect(out.includes('\r\r\n')).toBe(false);
+    expect(out).toBe('---\r\ntitle: Note\r\n---\r\na\r\nb\r\n');
+  });
+
+  it('eol LF leaves an LF body untouched', () => {
+    const out = assembleMarkdownFile({ title: 'Note' }, 'a\nb\n', {
+      rawFrontmatter: 'title: Note',
+      frontmatterDirty: false,
+      eol: '\n',
+    });
+    expect(out).toBe('---\ntitle: Note\n---\na\nb\n');
   });
 });

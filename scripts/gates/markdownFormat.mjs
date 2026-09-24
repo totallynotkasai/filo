@@ -23,6 +23,10 @@ const EOL_CHECKS = [
       { token: /function\s+detectFrontmatterEol\b/, why: 'the file-eol derivation helper exists' },
       { token: /const\s+eol\s*=\s*detectFrontmatterEol\s*\(/, why: 'the dirty-frontmatter branch derives the file eol' },
       { token: /\.replace\(\s*\/\\n\/g\s*,\s*eol\s*\)/, why: 'the FM block + fences re-apply the file eol (no hard-coded \\n)' },
+      {
+        token: /options\.eol\s*===\s*'\\r\\n'[\s\S]{0,120}\.replace\(\s*\/\\r\?\\n\/g/,
+        why: 'an explicit CRLF eol normalises the LF editor body too (else a CRLF note goes mixed-EOL)',
+      },
     ],
   },
   {
@@ -30,6 +34,7 @@ const EOL_CHECKS = [
     required: [
       { token: /single-line frontmatter eol \(A8-M1\)/, why: 'the single-line-frontmatter CRLF behavioural matrix exists' },
       { token: /eol:\s*'\\r\\n'/, why: 'a row drives the gateway-threaded CRLF eol' },
+      { token: /CRLF body \(A19-MD10\)/, why: 'the CRLF-body behavioural matrix exists' },
     ],
   },
   {

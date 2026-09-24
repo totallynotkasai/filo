@@ -394,6 +394,9 @@ export interface AssembleMarkdownOptions {
    * (`title: x`) carries no internal `\r\n`, so detection from the FM source
    * alone would flip a CRLF file's frontmatter to LF. When supplied it wins;
    * otherwise `detectFrontmatterEol` falls back to detection.
+   *
+   * `'\r\n'` also normalises the body to CRLF, so a deliberately mixed-EOL
+   * file becomes uniformly CRLF on its first edit.
    */
   eol?: '\r\n' | '\n';
   /**
@@ -451,9 +454,15 @@ function detectFrontmatterEol(options: AssembleMarkdownOptions, body: string): '
  */
 export function assembleMarkdownFile(
   frontmatter: Record<string, unknown>,
-  body: string,
+  editorBody: string,
   options: AssembleMarkdownOptions = {},
 ): string {
+  // The editor serialises LF. When the caller supplies the file's real eol as
+  // CRLF, the body follows it too; otherwise a CRLF note comes back with CRLF
+  // frontmatter over an LF body (or wholly LF when it has no frontmatter).
+  // Only an explicit `eol` triggers this, never the detection fallback, so a
+  // caller without a hydrate-sniffed eol writes its body verbatim.
+  const body = options.eol === '\r\n' ? editorBody.replace(/\r?\n/g, '\r\n') : editorBody;
   const fm = { ...frontmatter };
 
   // The set of top-level keys present in the disk-baseline source. Gates BOTH

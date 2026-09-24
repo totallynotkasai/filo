@@ -118,6 +118,33 @@ export function makeKanbanSlice(ctx: CacheContext) {
     },
 
     /**
+     * Removes a column AND the tile defs of its cards that no other column
+     * places, so a deleted column doesn't leave unreachable defs in the board
+     * file forever. Returns the removed defs for the caller's undo snapshot.
+     */
+    removeKanbanColumnWithDefs(boardId: string, columnId: string): Record<string, TileDefinition> {
+      const cached = ctx.getCache()[boardId];
+      const kb = ctx.kanbanBoardOrWarn(boardId, 'removeKanbanColumnWithDefs');
+      if (!cached || !kb) return {};
+      const cols = kb.columns ?? [];
+      const removedCol = cols.find((c) => c.id === columnId);
+      const survivors = cols.filter((c) => c.id !== columnId);
+      const stillPlaced = new Set(survivors.flatMap((c) => (c.tilePlacements ?? []).map((p) => p.tileId)));
+      const removedDefs: Record<string, TileDefinition> = {};
+      const keptDefs: Record<string, TileDefinition> = { ...cached.tileDefs };
+      for (const p of removedCol?.tilePlacements ?? []) {
+        const def = keptDefs[p.tileId];
+        if (!def || stillPlaced.has(p.tileId)) continue;
+        removedDefs[p.tileId] = def;
+        delete keptDefs[p.tileId];
+      }
+      (kb as Record<string, unknown>).columns = survivors;
+      ctx.updateEntry(boardId, { board: { ...kb }, tileDefs: keptDefs });
+      ctx.markDirty(boardId);
+      return removedDefs;
+    },
+
+    /**
      * Re-insert a previously-removed column as a DELTA against the LIVE
      * columns array (used by `DeleteColumnCommand.undo`).
      *
@@ -134,11 +161,15 @@ export function makeKanbanSlice(ctx: CacheContext) {
      * on-screen array order even if a sibling column was added/reordered in the
      * interval. Only the `position` scalar is rewritten; every content field on
      * sibling columns is left as-is.
+     *
+     * `defs` re-merges card defs that `removeKanbanColumnWithDefs` dropped; an
+     * id already present in `tileDefs` is left as it is.
      */
     insertKanbanColumnAt(
       boardId: string,
       column: KanbanBoard['columns'][number],
       index: number,
+      defs?: Record<string, TileDefinition>,
     ): void {
       const kb = ctx.kanbanBoardOrWarn(boardId, 'insertKanbanColumnAt');
       if (!kb) return;
@@ -149,6 +180,11 @@ export function makeKanbanSlice(ctx: CacheContext) {
       (kb as Record<string, unknown>).columns = cols.map((c, idx) =>
         c.position === idx ? c : { ...c, position: idx },
       );
+      const cached = ctx.getCache()[boardId];
+      const missing = Object.entries(defs ?? {}).filter(([id]) => !cached?.tileDefs[id]);
+      if (cached && missing.length > 0) {
+        ctx.updateEntry(boardId, { tileDefs: { ...cached.tileDefs, ...Object.fromEntries(missing) } });
+      }
       ctx.markDirty(boardId);
     },
 

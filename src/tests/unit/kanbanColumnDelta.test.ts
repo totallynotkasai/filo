@@ -138,3 +138,66 @@ describe('Audit5 Phase 4 — DeleteColumnCommand (delta-aware)', () => {
     expect(cardIds('col-C')).toEqual(['c3']);
   });
 });
+
+describe('DeleteColumnCommand drops the defs of the cards it removes', () => {
+  /** col-A holds c1 + c5; col-B holds c2 + c5 (c5 is placed in two columns). */
+  function boardWithSharedCard(): V7BoardFileData {
+    const data = makeBoard();
+    const kb = data.board as unknown as { columns: { id: string; tilePlacements: { tileId: string; position: number }[] }[] };
+    kb.columns[0]!.tilePlacements.push({ tileId: 'c5', position: 1 });
+    kb.columns[1]!.tilePlacements.push({ tileId: 'c5', position: 1 });
+    data.tileDefs.c5 = textDef('c5', 'Shared card');
+    return data;
+  }
+
+  function defIds(): string[] {
+    return Object.keys(boardCacheStore.cache.kb?.tileDefs ?? {}).sort();
+  }
+
+  beforeEach(() => {
+    installFiloMock(() => null);
+    vaultStore.setPath('/vault');
+    boardCacheStore.clear();
+    boardCacheStore.hydrate({ kb: boardWithSharedCard() }, { kb: 'kb.board.json' });
+  });
+  afterEach(() => {
+    restoreFiloDefault();
+    vaultStore.setPath('');
+    boardCacheStore.clear();
+  });
+
+  it('delete removes the column cards defs; a card also placed in another column keeps its def', () => {
+    const cmd = new DeleteColumnCommand('kb', 'col-A', 'A');
+    cmd.execute();
+    expect(defIds()).toEqual(['c2', 'c3', 'c5']);
+  });
+
+  it('undo restores the defs deep-equal alongside the column', () => {
+    const before = JSON.parse(JSON.stringify(boardCacheStore.cache.kb?.tileDefs.c1));
+    const cmd = new DeleteColumnCommand('kb', 'col-A', 'A');
+    cmd.execute();
+    cmd.undo();
+    expect(defIds()).toEqual(['c1', 'c2', 'c3', 'c5']);
+    expect(JSON.parse(JSON.stringify(boardCacheStore.cache.kb?.tileDefs.c1))).toEqual(before);
+    expect(cardIds('col-A')).toEqual(['c1', 'c5']);
+  });
+
+  it('a sibling edit between delete and undo survives, and the defs come back', () => {
+    const cmd = new DeleteColumnCommand('kb', 'col-A', 'A');
+    cmd.execute();
+    boardCacheStore.renameKanbanColumn('kb', 'col-B', 'B-renamed');
+    cmd.undo();
+    expect(column('col-B')?.title).toBe('B-renamed');
+    expect(defIds()).toEqual(['c1', 'c2', 'c3', 'c5']);
+  });
+
+  it('redo after undo drops the defs again', () => {
+    const cmd = new DeleteColumnCommand('kb', 'col-A', 'A');
+    cmd.execute();
+    cmd.undo();
+    cmd.execute();
+    expect(defIds()).toEqual(['c2', 'c3', 'c5']);
+    cmd.undo();
+    expect(defIds()).toEqual(['c1', 'c2', 'c3', 'c5']);
+  });
+});

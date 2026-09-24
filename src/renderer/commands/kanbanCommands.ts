@@ -425,6 +425,8 @@ export class DeleteColumnCommand extends Command {
    */
   private removedColumn: KanbanBoard['columns'][number] | null;
   private removedIndex: number;
+  /** Defs of the column's cards placed nowhere else, captured on the first execute. */
+  private removedDefs: Record<string, TileDefinition> | null = null;
 
   constructor(boardId: string, columnId: string, title: string) {
     super();
@@ -440,7 +442,8 @@ export class DeleteColumnCommand extends Command {
   }
 
   execute() {
-    boardCacheStore.removeKanbanColumn(this.boardId, this.columnId);
+    const removed = boardCacheStore.removeKanbanColumnWithDefs(this.boardId, this.columnId);
+    this.removedDefs ??= this.snapshot(removed);
   }
 
   undo() {
@@ -451,6 +454,7 @@ export class DeleteColumnCommand extends Command {
       this.boardId,
       cloneForSnapshot(this.removedColumn),
       this.removedIndex,
+      this.removedDefs ? cloneForSnapshot(this.removedDefs) : undefined,
     );
   }
 }

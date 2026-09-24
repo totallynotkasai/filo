@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { parseDocument } from 'yaml';
-import { startApp, stopApp, waitFor, type CharApp } from './harness/app';
+import { startApp, stopApp, waitFor, quiesce, type CharApp } from './harness/app';
 import {
   createBoard,
   addKanbanColumn,
@@ -23,6 +23,7 @@ import {
   addTag,
   toggleTask,
   showBoard,
+  renameTileTitle,
 } from './harness/actions';
 
 afterEach(async () => {
@@ -80,6 +81,29 @@ describe('Kanban', () => {
     expect(fm.priority).toBe('high');
     expect(kanbanCards(app)[0].priority).toBe('High');
     expect(kanbanCards(app)[0].due).toMatch(/5 Nov|Nov 5/);
+  });
+
+  it('editing a card title shows the new title and keeps the note text on every board', async () => {
+    const app = await startApp({ 'Errand.md': '---\ntitle: Errand\n---\nPost office, then bank\n' });
+    await createBoard(app, 'mindmap');
+    await placeNoteOnBoard(app, 'mindmap', 'Errand.md');
+    await createBoard(app, 'kanban');
+    await addKanbanColumn(app);
+    await placeNoteOnBoard(app, 'kanban', 'Errand.md');
+
+    await renameTileTitle(kanbanCards(app)[0].el, 'Weekly errand');
+    expect(kanbanCards(app)[0].title).toBe('Weekly errand');
+    // Expected change in Phase 3 (D1, D1a): the title goes to frontmatter
+    // `title:` and the file keeps its name. Until then a title edit renames
+    // the file to match. Phase 3 also adds: the other board's tile shows the
+    // new title (today each board keeps its own copy, so it doesn't).
+    await waitFor(() => app.exists('Weekly errand.md'), 'the note under its new name');
+    expect(app.exists('Errand.md')).toBe(false);
+    expect(body(app, 'Weekly errand.md')).toBe('Post office, then bank\n');
+
+    await showBoard(app, 'mindmap');
+    await quiesce();
+    expect(mindMapTiles(app).map((t) => t.text)).toEqual(['Post office, then bank']);
   });
 
   it('tagging a card writes the tag to its note, and a second board showing the note shows it', async () => {

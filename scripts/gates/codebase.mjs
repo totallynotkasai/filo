@@ -30,7 +30,7 @@ const FILE_SIZE_ALLOWLIST = {
 const CHARACTERISATION_DIR = 'src/tests/characterisation';
 const CHARACTERISATION_SPECS = {
   'editingAndViews.test.ts': 5,
-  'metadataEdits.test.ts': 4,
+  'metadataEdits.test.ts': 5,
   'renamesAndDiskChanges.test.ts': 8,
   'bytesOnDisk.test.ts': 4,
 };

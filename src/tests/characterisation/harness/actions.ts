@@ -324,6 +324,27 @@ export function mindMapTiles(app: CharApp): TileView[] {
 
 // ── Editing metadata ─────────────────────────────────────────────────────────
 
+/**
+ * Focus a tile's title, press F2 (its own hint: "Press F2 or Enter to edit"),
+ * replace the text in the inline editor, press Enter. (On a Kanban card a
+ * double-click on the title opens the card as a document instead.)
+ */
+export async function renameTileTitle(tileRoot: HTMLElement, title: string): Promise<void> {
+  const titleEl = $(tileRoot, '.tile-title');
+  titleEl.focus();
+  key(titleEl, 'F2');
+  // Only one title is edited at a time; the card may re-render around it.
+  await waitFor(() => document.querySelector('.tile-title-editor .ProseMirror') !== null, 'the title editor');
+  const host = document.querySelector('.tile-title-editor') as HTMLElement;
+  const [ed] = editors(host);
+  ed.commands.focus();
+  ed.commands.selectAll();
+  ed.commands.insertContent(title);
+  await settle();
+  key(host, 'Enter');
+  await quiesce(1200);
+}
+
 /** Card due-date button → date input. */
 export async function setCardDueDate(card: HTMLElement, isoDate: string): Promise<void> {
   click($(card, '.card-due, .card-due-btn'));

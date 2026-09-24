@@ -78,7 +78,7 @@ import { invokeOk } from '../lib/utils/invokeOk';
 import { createTrailingDebounce } from '../lib/utils/trailingDebounce';
 import { fileTagsStore } from './fileTags.svelte';
 import { emptyTagsFile } from '../lib/vault/tagsStorage';
-import { fireVaultSwap, onVaultSwap } from '../core/vaultLifecycle';
+import { fireVaultSwap, isVaultTearingDown, onVaultSwap } from '../core/vaultLifecycle';
 import type { VaultContext } from './vaultStoreTypes';
 import { makeTreeSlice } from './vaultTree';
 import { makeProjectSlice } from './vaultProject';
@@ -274,8 +274,9 @@ function scheduleSidebarOrderWrite(): void {
 // VaultFileItem's $derived (visible flicker).
 const treeView = $derived(sortTree(filterTree(fileTree, searchQuery), readSortConfig()));
 
+// A vault teardown's resets aren't user changes (see isVaultTearingDown).
 function markMetaDirty(): void {
-  scheduleConfigWrite(() => getConfigWriteArgs());
+  if (!isVaultTearingDown()) scheduleConfigWrite(() => getConfigWriteArgs());
 }
 
 const vaultCtx: VaultContext = {
@@ -1073,9 +1074,8 @@ export const vaultStore = {
         //     (choice === 0) clears the `.filo/.dirty` sentinel; the Don't
         //     Save branch (choice === 1) preserves it so reopening the
         //     outgoing vault surfaces the Recovery modal.
-        //   - history / vaultIndex / orphans / fileTags / theme / pending
-        //     settings / saveState / tabs / workspace / etc. drop their
-        //     local state so the new vault hydrates against a clean slate.
+        //   - history / vaultIndex / tabs / workspace / etc. drop their local
+        //     state so the new vault hydrates against a clean slate.
         await fireVaultSwap({
           phase: 'pre-swap',
           previousVault: vaultPath || null,

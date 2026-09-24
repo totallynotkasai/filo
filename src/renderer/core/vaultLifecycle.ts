@@ -201,17 +201,35 @@ export async function fireVaultSwap(event: VaultSwapEvent): Promise<void> {
   const phaseHandlers = handlers.filter((h) => h.phase === event.phase);
   if (phaseHandlers.length === 0) return;
   const ordered = topoSort(phaseHandlers);
-  for (const handler of ordered) {
-    try {
-      await handler.fn(event);
-    } catch (err) {
-      reportError(
-        `vaultLifecycle.${event.phase}.${handler.name}`,
-        err,
-        `Vault-swap handler "${handler.name}" failed during ${event.phase}; continuing to remaining handlers.`,
-      );
+  if (event.phase === 'pre-swap') tearingDown = true;
+  try {
+    for (const handler of ordered) {
+      try {
+        await handler.fn(event);
+      } catch (err) {
+        reportError(
+          `vaultLifecycle.${event.phase}.${handler.name}`,
+          err,
+          `Vault-swap handler "${handler.name}" failed during ${event.phase}; continuing to remaining handlers.`,
+        );
+      }
     }
+  } finally {
+    if (event.phase === 'pre-swap') tearingDown = false;
   }
+}
+
+let tearingDown = false;
+
+/**
+ * True while the pre-swap handlers run. Their resets (closing every tab,
+ * dropping the pane layout) notify the same listeners a user's change does;
+ * persisting them would write the outgoing vault's config after its final
+ * save, and re-mark it dirty after its crash sentinel was cleared, so the
+ * next open would offer to recover a clean close.
+ */
+export function isVaultTearingDown(): boolean {
+  return tearingDown;
 }
 
 /**

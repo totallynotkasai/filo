@@ -4,6 +4,7 @@ import {
   fireVaultSwap,
   __resetVaultLifecycleForTests,
   __getRegisteredHandlerNames,
+  isVaultTearingDown,
   type VaultSwapEvent,
 } from '@renderer/core/vaultLifecycle';
 
@@ -166,5 +167,28 @@ describe('vaultLifecycle — cycle detection', () => {
       errSpy.mockRestore();
     }
     expect(fired.sort()).toEqual(['a', 'b']);
+  });
+});
+
+describe('vaultLifecycle.isVaultTearingDown', () => {
+  it('is true only while the pre-swap handlers run, and resets after a throwing handler', async () => {
+    const seen: boolean[] = [];
+    onVaultSwap('pre-swap', 'a', () => {
+      seen.push(isVaultTearingDown());
+    });
+    onVaultSwap('pre-swap', 'b', async () => {
+      await Promise.resolve();
+      seen.push(isVaultTearingDown());
+      throw new Error('boom');
+    });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(isVaultTearingDown()).toBe(false);
+      await fireVaultSwap(makeEvent());
+    } finally {
+      errSpy.mockRestore();
+    }
+    expect(seen).toEqual([true, true]);
+    expect(isVaultTearingDown()).toBe(false);
   });
 });

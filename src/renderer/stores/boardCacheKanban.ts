@@ -425,7 +425,9 @@ export function makeKanbanSlice(ctx: CacheContext) {
         };
       });
 
-      ctx.updateEntry(resolvedBoardId, { tileDefs: updatedDefs });
+      // New board identity with the columns rewrite, so views derived from
+      // the cache see the added card (cache-identity convention).
+      ctx.updateEntry(resolvedBoardId, { board: { ...kb }, tileDefs: updatedDefs });
       ctx.markDirty(resolvedBoardId);
     },
 

@@ -8,6 +8,7 @@ import { uiStore } from '../stores/ui.svelte';
 import { framesStore } from '../stores/frames.svelte';
 import type { Tile, Connection } from '../schema/index';
 import { cloneTile } from '../lib/utils/cloneTile';
+import { DeleteCardCommand } from './kanbanCommands';
 import { reportError } from '../lib/utils/errorBus';
 import { writeMarkdownAndReconcile } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
 import { deleteVaultPath } from '../lib/vault/vaultOperations';
@@ -191,6 +192,12 @@ export class DeleteTilesCommand extends Command {
   private connections: Connection[] = [];
   private fileSnapshots: DeletedFileSnapshot[];
   private vaultRoot: string | undefined;
+  /**
+   * On a Kanban board, one card snapshot per tile (column, neighbour anchor,
+   * card style). Kanban's addTile restores only the definition, so undo goes
+   * through these to put each card back where it was.
+   */
+  private kanbanCards: DeleteCardCommand[] = [];
 
   constructor(tileIds: string[], options: DeleteTilesOptions = {}) {
     super();
@@ -204,6 +211,9 @@ export class DeleteTilesCommand extends Command {
     for (const id of tileIds) {
       const tile = boardStore.getTile(id);
       if (tile) this.tiles.push(cloneTile(tile));
+    }
+    if (boardCacheStore.cache[this.targetBoardId]?.board.type === 'kanban') {
+      this.kanbanCards = this.tiles.map((t) => new DeleteCardCommand(this.targetBoardId, t.id));
     }
     // Snapshot connections that reference any of these tiles, across EVERY
     // loaded board's cache — not just the active board. `this.snapshot(...)`
@@ -353,8 +363,14 @@ export class DeleteTilesCommand extends Command {
   }
 
   private restorePlacements(): void {
-    for (const tile of this.tiles) {
-      boardStore.addTile(tile);
+    if (this.kanbanCards.length > 0) {
+      // Last card first: each card's anchor is the sibling that followed it,
+      // which may itself be one of the deleted cards.
+      for (const card of [...this.kanbanCards].reverse()) card.undo();
+    } else {
+      for (const tile of this.tiles) {
+        boardStore.addTile(tile);
+      }
     }
     for (const conn of this.connections) {
       // Skip a restored connection whose endpoint tile no

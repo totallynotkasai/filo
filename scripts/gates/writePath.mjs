@@ -473,58 +473,10 @@ export const checks = [
     },
   },
   {
-    id: 'writer-path-honors-filepath',
-    title: 'field/popup write-path resolvers use resolveTextTileVaultPath',
-    hint: "A `${title}.md` root fallback ignores a subfolder card's filePath and writes the wrong file.",
-    run(ctx) {
-      const SITES = [
-        'src/renderer/lib/kanban/kanbanFrontmatterWriter.ts',
-        'src/renderer/components/tiles/PropertiesPopup.svelte',
-        'src/renderer/components/boards/TaskListBoard.svelte',
-        'src/renderer/components/boards/TaskItem.svelte',
-        'src/renderer/stores/fileTags.svelte.ts',
-      ];
-      const out = [];
-      for (const rel of SITES) {
-        const src = ctx.read(rel);
-        if (src === null) out.push(fail(rel, undefined, 'listed resolver site is missing — update the list'));
-        else if (!/\bresolveTextTileVaultPath\b/.test(src)) out.push(fail(rel, undefined, 'does not use resolveTextTileVaultPath'));
-      }
-      return out;
-    },
-  },
-  {
-    id: 'creation-persists-filepath',
-    title: 'text-tile creation stamps filePath onto the def before the command clones it',
-    hint: 'Add*Command deep-clones the def; a later stamp never reaches .board.json and a cold-load edit hits the wrong file.',
-    run(ctx) {
-      const SITES = [
-        { file: 'src/renderer/lib/tasklist/taskCreation.ts', fn: 'buildTaskDef', before: null },
-        { file: 'src/renderer/lib/kanban/kanbanTileCreation.ts', fn: 'createTile', before: 'new AddCardCommand(' },
-        { file: 'src/renderer/lib/boards/seedTextFileForNewTile.ts', fn: 'stampTextTileSeedPath', before: null },
-      ];
-      const out = [];
-      for (const s of SITES) {
-        const raw = ctx.read(s.file);
-        if (raw === null) { out.push(fail(s.file, undefined, 'file missing')); continue; }
-        const fn = functionBody(blank(raw), s.fn, { fnKeyword: true });
-        if (!fn) { out.push(fail(s.file, undefined, `${s.fn}() not found`)); continue; }
-        const assign = /\bfilePath\s*=(?!=)/.exec(fn.text);
-        if (!assign) { out.push(fail(s.file, undefined, `${s.fn}() never assigns filePath`)); continue; }
-        if (s.before) {
-          const at = fn.text.indexOf(s.before);
-          if (at < 0) out.push(fail(s.file, undefined, `${s.fn}(): marker \`${s.before}\` not found`));
-          else if (assign.index > at) out.push(fail(s.file, undefined, `${s.fn}() assigns filePath after \`${s.before}\``));
-        }
-      }
-      return out;
-    },
-  },
-  {
     id: 'seed-writes-exclusive',
     title: 'new-file seeds are create-exclusive (never overwrite an existing vault file)',
     hint:
-      'Seed through createUniqueMdFile / createMdFileExclusive (O_EXCL vault:create-file-text). The helper must not ' +
+      'Seed through createNoteFile / createUniqueMdFile / createMdFileExclusive (O_EXCL vault:create-file-text). The helper must not ' +
       "use trackComponentWrite: a losing EEXIST attempt targets the user's existing file.",
     run(ctx) {
       const out = [];
@@ -533,12 +485,13 @@ export const checks = [
         'src/renderer/lib/tasklist/taskCreation.ts',
         'src/renderer/lib/tasklist/fileDropHandler.ts',
         'src/renderer/lib/boards/seedTextFileForNewTile.ts',
+        'src/renderer/lib/notes/createNote.ts',
       ]) {
         const raw = ctx.read(rel);
         if (raw === null) { out.push(fail(rel, undefined, 'listed file is missing')); continue; }
         const src = stripCommentsStateful(raw);
         if (/\binvoke(?:Ok)?\s*\(\s*['"`]vault:write-file-text['"`]/.test(src)) out.push(fail(rel, undefined, "seeds via overwrite-capable 'vault:write-file-text'"));
-        if (!/\b(?:createUniqueMdFile|createMdFileExclusive)\s*\(/.test(src)) out.push(fail(rel, undefined, 'does not call createUniqueMdFile / createMdFileExclusive'));
+        if (!/\b(?:createUniqueMdFile|createMdFileExclusive|createNoteFile)\s*\(/.test(src)) out.push(fail(rel, undefined, 'does not call createNoteFile / createUniqueMdFile / createMdFileExclusive'));
       }
       const HELPER = 'src/renderer/lib/vault/createMdExclusive.ts';
       const raw = ctx.read(HELPER);

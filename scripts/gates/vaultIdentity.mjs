@@ -272,7 +272,7 @@ export const checks = [
       for (const rel of files) {
         stripCommentsStateful(ctx.read(rel)).split('\n').forEach((line, i) => {
           for (const lit of FORBIDDEN) {
-            for (const q of ["'", '"']) if (line.includes(`${q}${lit}${q}`)) out.push(fail(rel, i + 1, `legacy shared sentinel literal ${q}${lit}${q}`));
+            for (const q of ["'", '"']) if (line.includes(`${q}${lit}${q}`)) out.push(fail(rel, i + 1, `shared (not per-machine) sentinel literal ${q}${lit}${q}`));
           }
         });
       }

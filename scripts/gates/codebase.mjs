@@ -14,14 +14,12 @@ const LOC_LIMIT = 1000;
 // Files over LOC_LIMIT, each pinned at its current LOC. They may shrink, not
 // grow; the remedy for an over-limit file is to split it, not to raise its row.
 const FILE_SIZE_ALLOWLIST = {
-  'src/renderer/components/boards/TaskListBoard.svelte': 2192,
+  'src/renderer/components/boards/TaskListBoard.svelte': 2077,
   'src/renderer/components/boards/KanbanSideToolbar.svelte': 1503,
-  'src/renderer/components/boards/TaskItem.svelte': 1543,
-  'src/renderer/components/boards/KanbanBoard.svelte': 1459,
+  'src/renderer/components/boards/TaskItem.svelte': 1533,
+  'src/renderer/components/boards/KanbanBoard.svelte': 1456,
   'src/renderer/components/boards/KanbanColumn.svelte': 1198,
-  'src/renderer/components/sidebar/VaultFileItem.svelte': 1008,
-  'src/renderer/stores/vault.svelte.ts': 1683,
-  'src/renderer/stores/fileTags.svelte.ts': 1183,
+  'src/renderer/stores/vault.svelte.ts': 1668,
   'src/renderer/lib/vault/markdownFileWriter.ts': 1132,
 };
 
@@ -33,7 +31,70 @@ const CHARACTERISATION_SPECS = {
   'metadataEdits.test.ts': 5,
   'renamesAndDiskChanges.test.ts': 8,
   'bytesOnDisk.test.ts': 4,
+  'noteModel.test.ts': 11,
 };
+
+// Board format v8: a def names its file and stores only visuals. These are
+// the keys that would be a second copy of something the file owns.
+const TILE_SCHEMA = 'src/renderer/schema/tile.ts';
+const NOTE_COPY_KEYS = {
+  TextTileDefSchema: ['title', 'tags', 'content', 'contentId', 'file'],
+  ImageTileDefSchema: ['tags', 'content', 'contentId', 'file', 'fileName', 'fileExtension'],
+  VideoTileDefSchema: ['tags', 'content', 'contentId', 'file', 'fileName', 'fileExtension'],
+  AudioTileDefSchema: ['tags', 'content', 'contentId', 'file', 'fileName', 'fileExtension'],
+  FileTileDefSchema: ['tags', 'content', 'contentId', 'file', 'fileName', 'fileExtension'],
+};
+// Board-only tiles own their title and tags; they must keep declaring them.
+const INLINE_DEF_KEYS = {
+  LinkTileDefSchema: ['title', 'tags'],
+  IframeTileDefSchema: ['title', 'tags'],
+  TimerTileDefSchema: ['title', 'tags'],
+};
+
+/**
+ * Every `const Name = Base.extend({ … })` / `const Name = z.object({ … })`
+ * schema in `code`, with its base and the top-level keys it declares and
+ * whether the declaration ends in `.passthrough()`.
+ */
+function schemaDecls(code) {
+  const decls = new Map();
+  const re = /\bconst\s+(\w+)\s*=\s*(?:(\w+)\.extend|z\.object)\(\{/g;
+  for (const m of code.matchAll(re)) {
+    const open = m.index + m[0].length - 1;
+    let depth = 0;
+    let i = open;
+    for (; i < code.length; i++) {
+      if (code[i] === '{') depth++;
+      else if (code[i] === '}' && --depth === 0) break;
+    }
+    const body = code.slice(open + 1, i);
+    const keys = new Set();
+    let d = 0;
+    for (const line of body.split('\n')) {
+      if (d === 0) {
+        const k = /^\s*(\w+)\s*:/.exec(line);
+        if (k) keys.add(k[1]);
+      }
+      for (const ch of line) {
+        if (ch === '{' || ch === '(' || ch === '[') d++;
+        else if (ch === '}' || ch === ')' || ch === ']') d--;
+      }
+    }
+    const tail = code.slice(i, i + 40);
+    decls.set(m[1], { base: m[2] ?? null, keys, passthrough: /^\}\)\s*\.passthrough\(\)/.test(tail) });
+  }
+  return decls;
+}
+
+/** All keys a schema declares, including those inherited through `.extend`. */
+function allKeys(decls, name, seen = new Set()) {
+  const d = decls.get(name);
+  if (!d || seen.has(name)) return new Set();
+  seen.add(name);
+  const keys = new Set(d.keys);
+  if (d.base) for (const k of allKeys(decls, d.base, seen)) keys.add(k);
+  return keys;
+}
 
 function countLines(text) {
   if (text.length === 0) return 0;
@@ -116,6 +177,61 @@ export const checks = [
       for (const [file, allowed] of Object.entries(baseline)) {
         const n = counts.get(file) ?? 0;
         if (n < allowed) console.log(`      ratchet down: ${file} ${allowed} -> ${n} in ${TEST_TYPECHECK_BASELINE}`);
+      }
+      return out;
+    },
+  },
+  {
+    id: 'board-schema-no-note-copies',
+    title: "board tile defs don't store a copy of their file's title, tags or body",
+    hint:
+      "A note's title, tags and body live in the .md, a media file's tags in tags.json. A second copy on the " +
+      'board is what let two copies disagree. Board-only (link / iframe / timer) defs keep their own title and tags.',
+    run(ctx) {
+      const raw = ctx.read(TILE_SCHEMA);
+      if (raw === null) return [fail(TILE_SCHEMA, undefined, 'file missing — re-point the check')];
+      const decls = schemaDecls(stripComments(raw));
+      const out = [];
+      for (const [name, banned] of Object.entries(NOTE_COPY_KEYS)) {
+        if (!decls.has(name)) { out.push(fail(TILE_SCHEMA, undefined, `${name} not found — re-point the check`)); continue; }
+        const keys = allKeys(decls, name);
+        for (const k of banned) if (keys.has(k)) out.push(fail(TILE_SCHEMA, undefined, `${name} declares \`${k}\``));
+        if (!keys.has('filePath') && !keys.has('src')) out.push(fail(TILE_SCHEMA, undefined, `${name} names no file (filePath / src)`));
+        if (decls.get(name).passthrough) out.push(fail(TILE_SCHEMA, undefined, `${name} ends in .passthrough(), so a dropped key survives a load and save`));
+      }
+      for (const [name, required] of Object.entries(INLINE_DEF_KEYS)) {
+        if (!decls.has(name)) { out.push(fail(TILE_SCHEMA, undefined, `${name} not found — re-point the check`)); continue; }
+        const keys = allKeys(decls, name);
+        for (const k of required) if (!keys.has(k)) out.push(fail(TILE_SCHEMA, undefined, `${name} lost \`${k}\` (a board-only tile owns it)`));
+      }
+      return out;
+    },
+  },
+  {
+    id: 'no-legacy-board-migration',
+    title: 'the board loader accepts only the current format: no migration steps, no double-decode',
+    hint:
+      "Filo hasn't shipped, so an older board format is refused (failedBoards, never written), not migrated. " +
+      'A future format change adds its step deliberately together with this check.',
+    run(ctx) {
+      const out = [];
+      const MIG = 'src/renderer/schema/migrations.ts';
+      const mig = ctx.read(MIG);
+      if (mig === null) out.push(fail(MIG, undefined, 'file missing — re-point the check'));
+      else if (!/\bconst\s+MIGRATION_STEPS\b[^;]*?=\s*\{\s*\}\s*;/.test(stripComments(mig))) {
+        out.push(fail(MIG, undefined, 'MIGRATION_STEPS has a board migration step'));
+      }
+      const MAIN = 'src/main/vault/boardFileOps.ts';
+      const main = ctx.read(MAIN);
+      if (main === null) out.push(fail(MAIN, undefined, 'file missing — re-point the check'));
+      else if (/typeof\s+\w+\s*===\s*['"]string['"]\s*\?\s*JSON\.parse/.test(stripComments(main))) {
+        out.push(fail(MAIN, undefined, 'loadBoardFile unwraps a double-encoded board'));
+      }
+      const LOADER = 'src/renderer/lib/boards/boardLoader.ts';
+      const loader = ctx.read(LOADER);
+      if (loader === null) out.push(fail(LOADER, undefined, 'file missing — re-point the check'));
+      else if (/\bJSON\.parse\s*\(/.test(stripComments(loader))) {
+        out.push(fail(LOADER, undefined, 're-parses a board payload (a string board is an older format, refused by the version gate)'));
       }
       return out;
     },

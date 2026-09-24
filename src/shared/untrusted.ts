@@ -185,30 +185,38 @@ const OPEN_EXTERNAL_BLOCKED_PATTERNS: ReadonlyArray<RegExp> = [
 ];
 
 /**
- * File extensions whose default OS handler executes attacker-controlled
- * content. Includes the executable / scripting set PLUS the
- * HTML-renderable extensions (`.html` and friends): a vault attachment named `report.html` opened in the user's browser runs
- * whatever JS it carries from a trusted-origin frame and can exfiltrate
- * other vault contents via the same-origin policy.
+ * The only local file types `shell.openPath` may launch: documents, images,
+ * audio and video. An allowlist, because a blocklist can never be complete —
+ * Windows Script Host alone runs `.js` / `.jse` / `.wsf` on double-click, and
+ * new launcher types keep appearing.
  *
- * `.svg` is HTML-renderable too — the renderer's `filo://` protocol
- * sandbox uses `Content-Disposition: attachment + nosniff` to neutralise
- * it inside the app, but `shell.openPath('foo.svg')` hands it to the
- * user's browser without that header chain.
+ * Deliberately excluded:
+ *   - macro-enabled Office files (`.docm` / `.xlsm` / `.pptm`);
+ *   - archives and disk images (`.zip` / `.iso` / `.vhd` …), which Explorer
+ *     mounts or opens as folders;
+ *   - anything HTML-renderable (`.html` / `.svg` / `.xml` / `.mht` …): the OS
+ *     browser would run its JS against the local filesystem, without the
+ *     `Content-Disposition: attachment` defence of the `filo://` protocol.
+ *
+ * The one list for both the renderer pre-check (`asSafeOpenExternal`) and the
+ * main `media:open-external` handler, so the two can't drift apart.
  */
-const UNSAFE_LOCAL_FILE_EXTENSIONS = new Set([
-  // OS executables / scripting
-  '.exe', '.bat', '.cmd', '.com', '.scr', '.ps1', '.vbs', '.hta',
-  '.msi', '.jar', '.lnk', '.appref-ms', '.app', '.bin', '.sh', '.msc',
-  // HTML-renderable
-  '.html', '.htm', '.xhtml', '.svg', '.shtml', '.xml',
-  // OS launcher / shell-acted-on shortcuts (kept in sync with
-  // media.ipc.ts UNSAFE_FILE_EXTENSIONS). The shell acts on these even though
-  // they're not executables: `.url`/`.scf`/`.website` can point at a UNC share
-  // and leak NetNTLM creds; `.reg`/`.inf` import/run on activation; `.pif`
-  // executes; `.desktop` runs its `Exec=` line on Linux.
-  '.url', '.scf', '.website', '.pif', '.reg', '.inf', '.desktop',
+export const OPEN_PATH_ALLOWED_EXTENSIONS: ReadonlySet<string> = new Set([
+  // documents
+  '.pdf', '.txt', '.md', '.markdown', '.rtf', '.csv', '.tsv',
+  '.doc', '.docx', '.odt', '.xls', '.xlsx', '.ods', '.ppt', '.pptx', '.odp', '.epub',
+  // images
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tif', '.tiff', '.heic', '.avif',
+  // audio
+  '.mp3', '.wav', '.ogg', '.oga', '.opus', '.m4a', '.aac', '.flac',
+  // video
+  '.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi',
 ]);
+
+/** True when the OS may open this local path (see OPEN_PATH_ALLOWED_EXTENSIONS). */
+export function isOpenPathAllowed(rawPath: string): boolean {
+  return OPEN_PATH_ALLOWED_EXTENSIONS.has(launcherExtension(rawPath));
+}
 
 /**
  * Extract a file's launcher-relevant extension robustly,
@@ -223,8 +231,8 @@ const UNSAFE_LOCAL_FILE_EXTENSIONS = new Set([
  *                           file is `evil.exe`; `path.extname` sees
  *                           `'.exe::$DATA'`.
  *
- * None of those mangled values land in the blocklist, so the executable
- * slips through to `shell.openPath`. We mirror what the shell actually
+ * Reading the wrong extension would check a different type from the one the
+ * shell opens. We mirror what the shell actually
  * opens: take the basename, strip trailing dots/spaces, drop any
  * `:`-introduced ADS suffix, THEN read the final `.ext`. Pure string math
  * (identical on every platform), so it is the single source of truth for
@@ -255,8 +263,8 @@ export function launcherExtension(rawPath: string): string {
  * DNS-resolution checks to close SSRF — those live there because they
  * need the OS resolver.
  *
- * Local paths: extension is checked case-insensitively against the
- * `UNSAFE_LOCAL_FILE_EXTENSIONS` set. Containment within the vault is
+ * Local paths: extension is checked case-insensitively against
+ * `OPEN_PATH_ALLOWED_EXTENSIONS`. Containment within the vault is
  * enforced main-side via `assertWithinVault`; the renderer can't see
  * the vault root unambiguously from here.
  */
@@ -277,17 +285,10 @@ export function asSafeOpenExternal(raw: string | null | undefined): SanitisedUrl
     return trimmed as SanitisedUrl;
   }
 
-  // Local path branch — must not carry an unsafe extension. The robust
-  // extractor stops `evil.exe.` / `evil.exe::$DATA` smuggling an executable
-  // past the blocklist (see launcherExtension).
-  const ext = launcherExtension(trimmed);
-  if (UNSAFE_LOCAL_FILE_EXTENSIONS.has(ext)) return null;
+  // Local path branch — only allowlisted document/media types. The robust
+  // extractor stops `report.pdf.` / `evil.js::$DATA` reading as a different
+  // extension from the one the shell launches (see launcherExtension).
+  if (!isOpenPathAllowed(trimmed)) return null;
 
   return trimmed as SanitisedUrl;
 }
-
-/**
- * Test-only re-export — lets a unit test assert the unsafe extension set
- * stays in sync with `media.ipc.ts`'s server-side blocklist.
- */
-export const UNSAFE_LOCAL_FILE_EXTENSIONS_FOR_TESTS = UNSAFE_LOCAL_FILE_EXTENSIONS;

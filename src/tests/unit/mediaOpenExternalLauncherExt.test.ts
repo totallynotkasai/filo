@@ -170,11 +170,24 @@ describe('media:open-external — launcher-extension blocklist (Audit-10 B3)', (
     expect(openPathCalls).toEqual([target]);
   });
 
-  it('opens an extensionless file (README)', async () => {
-    const target = vaultPath('README');
-    const result = await callOpen(target);
-    expect(result.success).toBe(true);
-    expect(openPathCalls).toEqual([target]);
+  it('refuses an extensionless file (README): the allowlist has no entry for it', async () => {
+    const result = await callOpen(vaultPath('README'));
+    expect(result).toMatchObject({ success: false, code: 'EXTENSION_NOT_ALLOWED' });
+    expect(openPathCalls).toEqual([]);
+  });
+
+  it('refuses a Windows Script Host file (readme.js) with EXTENSION_NOT_ALLOWED', async () => {
+    const result = await callOpen(vaultPath('readme.js'));
+    expect(result).toMatchObject({ success: false, code: 'EXTENSION_NOT_ALLOWED' });
+    expect(openPathCalls).toEqual([]);
+  });
+
+  it('refuses the other script / disk-image types a blocklist missed', async () => {
+    for (const name of ['a.jse', 'a.wsf', 'a.vbe', 'a.cpl', 'a.chm', 'a.mhtml', 'a.iso', 'a.vhdx', 'a.docm']) {
+      const result = await callOpen(vaultPath(name));
+      expect(result.success).toBe(false);
+    }
+    expect(openPathCalls).toEqual([]);
   });
 
   // ── URL branch is unaffected — sanity that we only touched local paths ───
@@ -225,7 +238,7 @@ describe('media:open-external — launcher-extension blocklist (Audit-10 B3)', (
       openPathCalls.length = 0;
       const result = await callOpen(vaultPath(`shortcut${ext}`));
       expect(result.success, `${ext} should be refused`).toBe(false);
-      expect(result.error).toMatch(/extension not allowed/i);
+      expect(result).toMatchObject({ code: 'EXTENSION_NOT_ALLOWED' });
       expect(openPathCalls, `${ext} reached shell.openPath`).toEqual([]);
     }
   });

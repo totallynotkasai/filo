@@ -11,7 +11,7 @@ import { toPosix, relativePosix } from '../utils/pathHelpers';
 import { getVaultRoot, getActiveWatcher } from './vault.ipc';
 import { assertPayloadByteSize, PAYLOAD_LIMITS } from '../utils/payloadLimits';
 import { atomicWriteFile, LOCK_AWARE_SUPPRESS_MS } from '../vault/filenameUtils';
-import { launcherExtension } from '../../shared/untrusted';
+import { isOpenPathAllowed, launcherExtension } from '../../shared/untrusted';
 
 /**
  * DNS-based SSRF defence. Resolves a hostname to every A/AAAA
@@ -322,32 +322,6 @@ export function registerMediaHandlers(): void {
           return { success: false, error: 'No vault open' };
         }
         assertWithinVault(vaultRoot, target);
-        // Even inside the vault, refuse to hand executable extensions to
-        // `shell.openPath` — `report.pdf.exe` would run with the user's
-        // privileges. Match the TRUE final extension case-insensitively.
-        //
-        // Use `launcherExtension`, NOT `path.extname`: on Win32 a trailing
-        // dot / space (`evil.exe.`) is stripped before launch and an NTFS ADS
-        // suffix (`evil.exe::$DATA`) names the real `evil.exe`, but
-        // `path.extname` reads a non-blocklisted extension for both. This
-        // blocklist is the only line of defence here.
-        //
-        // HTML-renderable types are blocked too: the OS browser would run
-        // their JS against the local filesystem, and `shell.openPath` skips
-        // the filo:// protocol's `Content-Disposition: attachment` defence.
-        const UNSAFE_FILE_EXTENSIONS = new Set([
-          // OS executables / scripting
-          '.exe', '.bat', '.cmd', '.com', '.scr', '.ps1', '.vbs', '.hta',
-          '.msi', '.jar', '.lnk', '.appref-ms', '.app', '.bin', '.sh', '.msc',
-          // HTML-renderable
-          '.html', '.htm', '.xhtml', '.svg', '.shtml', '.xml',
-          // OS launcher / shell-acted-on shortcuts. These aren't
-          // executables, but the shell ACTS on them: a `.url`/`.scf`/`.website`
-          // can point at `\\attacker\share` and leak NetNTLM creds on open;
-          // `.reg`/`.inf` import/run on activation; `.pif` executes; `.desktop`
-          // runs its `Exec=` on Linux. Kept in sync with untrusted.ts.
-          '.url', '.scf', '.website', '.pif', '.reg', '.inf', '.desktop',
-        ]);
         // Defence in depth: refuse a basename Win32 would
         // normalise into a DIFFERENT file than the one we validated: a
         // trailing dot/space is silently stripped, and an embedded `:`
@@ -375,11 +349,15 @@ export function registerMediaHandlers(): void {
             error: 'Refusing to open file: unsafe filename (Windows reserved name or illegal character)',
           };
         }
-        const ext = launcherExtension(target);
-        if (UNSAFE_FILE_EXTENSIONS.has(ext)) {
+        // Only allowlisted document/media types reach the OS shell. Uses
+        // `launcherExtension` (via isOpenPathAllowed), not `path.extname`,
+        // so the checked extension is the one the shell launches.
+        if (!isOpenPathAllowed(target)) {
+          const ext = launcherExtension(target) || '(no extension)';
           return {
             success: false,
-            error: `Refusing to open file: ${ext} extension not allowed`,
+            code: 'EXTENSION_NOT_ALLOWED',
+            error: `Refusing to open file: ${ext} is not an allowed document/media type`,
           };
         }
         await shell.openPath(target);

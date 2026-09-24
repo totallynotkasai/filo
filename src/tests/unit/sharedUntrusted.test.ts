@@ -4,8 +4,11 @@ import {
   asSafeThemeValue,
   asSafeOpenExternal,
   launcherExtension,
-  UNSAFE_LOCAL_FILE_EXTENSIONS_FOR_TESTS,
+  isOpenPathAllowed,
+  OPEN_PATH_ALLOWED_EXTENSIONS,
 } from '@shared/untrusted';
+import fs from 'node:fs';
+import path from 'node:path';
 
 /**
  * Phase 5 — branded `SanitisedUrl` / `SanitisedColor` / `SanitisedSrc`
@@ -187,7 +190,7 @@ describe('asSafeOpenExternal — shell.openExternal allowlist + unsafe-extension
     expect(asSafeOpenExternal(undefined)).toBeNull();
   });
 
-  describe('local path branch — extension blocklist', () => {
+  describe('local path branch — extension allowlist', () => {
     it('rejects OS executables (.exe / .bat / .cmd / ...)', () => {
       const exts = [
         '.exe', '.bat', '.cmd', '.com', '.scr', '.ps1', '.vbs', '.hta',
@@ -255,14 +258,12 @@ describe('asSafeOpenExternal — shell.openExternal allowlist + unsafe-extension
       );
     });
 
-    it('accepts files without an extension', () => {
-      expect(asSafeOpenExternal('/vault/notes/README')).toBe('/vault/notes/README');
+    it('rejects files without an extension (not on the open-path allowlist)', () => {
+      expect(asSafeOpenExternal('/vault/notes/README')).toBeNull();
     });
 
-    it('accepts dotfiles without extension treatment', () => {
-      // `.gitignore` has no separator after `.`, so the extension extraction
-      // should treat the whole basename as having no extension (dotIdx <= 0).
-      expect(asSafeOpenExternal('/vault/.gitignore')).toBe('/vault/.gitignore');
+    it('rejects dotfiles: `.gitignore` has no extension, so it is not allowlisted', () => {
+      expect(asSafeOpenExternal('/vault/.gitignore')).toBeNull();
     });
   });
 });
@@ -305,32 +306,66 @@ describe('launcherExtension — robust Win32/NTFS extension extraction (Audit-10
   });
 });
 
-describe('UNSAFE_LOCAL_FILE_EXTENSIONS_FOR_TESTS — parity with main-side blocklist', () => {
-  it('contains every HTML-renderable extension added by Phase 5', () => {
-    // If main-side `media.ipc.ts:UNSAFE_FILE_EXTENSIONS` drops any of
-    // these, the renderer-side validator would still reject them,
-    // making the lists diverge. This assertion fixes the renderer side
-    // as the canonical set the unit test pins.
-    const required = ['.html', '.htm', '.xhtml', '.svg', '.shtml', '.xml'];
-    for (const ext of required) {
-      expect(UNSAFE_LOCAL_FILE_EXTENSIONS_FOR_TESTS.has(ext)).toBe(true);
-    }
-  });
-
-  it('contains every executable extension already in the legacy blocklist', () => {
-    const legacy = [
+describe('OPEN_PATH_ALLOWED_EXTENSIONS — only documents and media reach shell.openPath', () => {
+  it('every extension of the former blocklist is NOT allowed', () => {
+    const FORMER_BLOCKLIST = [
       '.exe', '.bat', '.cmd', '.com', '.scr', '.ps1', '.vbs', '.hta',
-      '.msi', '.jar', '.lnk', '.sh', '.msc',
+      '.msi', '.jar', '.lnk', '.appref-ms', '.app', '.bin', '.sh', '.msc',
+      '.html', '.htm', '.xhtml', '.svg', '.shtml', '.xml',
+      '.url', '.scf', '.website', '.pif', '.reg', '.inf', '.desktop',
     ];
-    for (const ext of legacy) {
-      expect(UNSAFE_LOCAL_FILE_EXTENSIONS_FOR_TESTS.has(ext)).toBe(true);
+    expect(FORMER_BLOCKLIST).toHaveLength(29);
+    for (const ext of FORMER_BLOCKLIST) {
+      expect(isOpenPathAllowed(`C:\\vault\\file${ext}`)).toBe(false);
     }
   });
 
-  it('contains every OS launcher / shell-shortcut extension added by Audit-13 M12', () => {
-    const launchers = ['.url', '.scf', '.website', '.pif', '.reg', '.inf', '.desktop'];
-    for (const ext of launchers) {
-      expect(UNSAFE_LOCAL_FILE_EXTENSIONS_FOR_TESTS.has(ext)).toBe(true);
+  it('script, macro, archive and disk-image types the blocklist missed are NOT allowed', () => {
+    const MISSED = [
+      'js', 'jse', 'wsf', 'wsh', 'vbe', 'cpl', 'msp', 'psm1', 'chm', 'mht', 'mhtml',
+      'iso', 'img', 'vhd', 'vhdx', 'docm', 'xlsm', 'pptm', 'zip', '7z', 'rar',
+      'appx', 'appxbundle', 'msix', 'settingcontent-ms', 'library-ms',
+    ];
+    for (const ext of MISSED) {
+      expect(isOpenPathAllowed(`/vault/readme.${ext}`)).toBe(false);
+      expect(asSafeOpenExternal(`/vault/readme.${ext}`)).toBeNull();
     }
+  });
+
+  it('common document and media types ARE allowed', () => {
+    for (const name of [
+      'report.pdf', 'notes.md', 'Budget.XLSX', 'deck.pptx', 'letter.docx', 'data.csv',
+      'photo.JPG', 'scan.tiff', 'clip.mp4', 'song.mp3', 'memo.m4a', 'book.epub',
+    ]) {
+      expect(isOpenPathAllowed(`/vault/${name}`)).toBe(true);
+      expect(asSafeOpenExternal(`/vault/${name}`)).not.toBeNull();
+    }
+    expect(OPEN_PATH_ALLOWED_EXTENSIONS.has('.pdf')).toBe(true);
+  });
+
+  it('trailing-dot / ADS forms resolve to the launched extension', () => {
+    expect(isOpenPathAllowed('/vault/report.pdf.')).toBe(true);
+    expect(isOpenPathAllowed('/vault/report.pdf:evil')).toBe(true);
+    expect(isOpenPathAllowed('/vault/evil.js.')).toBe(false);
+    expect(isOpenPathAllowed('/vault/evil.js::$DATA')).toBe(false);
+    expect(isOpenPathAllowed('/vault/report.pdf.js')).toBe(false);
+  });
+
+  it('an unknown extension, no extension, or a dotfile is NOT allowed', () => {
+    expect(isOpenPathAllowed('/vault/thing.xyz')).toBe(false);
+    expect(isOpenPathAllowed('/vault/README')).toBe(false);
+    expect(isOpenPathAllowed('/vault/.gitignore')).toBe(false);
+  });
+
+  it('media.ipc.ts uses the shared allowlist and keeps no extension set of its own', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '..', '..', 'main', 'ipc', 'media.ipc.ts'),
+      'utf8',
+    );
+    expect(src).not.toMatch(/new Set\(\[\s*(?:\/\/[^\n]*\n\s*)*'\.[a-z0-9]+'/);
+    const allowIdx = src.indexOf('isOpenPathAllowed(');
+    const openIdx = src.indexOf('shell.openPath(');
+    expect(allowIdx).toBeGreaterThan(-1);
+    expect(openIdx).toBeGreaterThan(allowIdx);
   });
 });

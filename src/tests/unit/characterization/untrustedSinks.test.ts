@@ -30,7 +30,7 @@ import {
   asSafeIframeSrc,
   asSafeThemeValue,
   asSafeOpenExternal,
-  UNSAFE_LOCAL_FILE_EXTENSIONS_FOR_TESTS,
+  isOpenPathAllowed,
 } from '@shared/untrusted';
 
 const ROOT = path.resolve(__dirname, '..', '..', '..', '..');
@@ -122,38 +122,20 @@ describe('Phase 5 contract — themeManager.ts routes setProperty through asSafe
   });
 });
 
-describe('Phase 5 contract — media:open-external blocklist extended with HTML-renderable extensions', () => {
-  it('main-side blocklist contains every HTML-renderable extension', () => {
-    const HTML_RENDERABLE_EXTS = ['.html', '.htm', '.xhtml', '.svg', '.shtml', '.xml'];
-    for (const ext of HTML_RENDERABLE_EXTS) {
-      expect(MEDIA_IPC_TEXT).toContain(`'${ext}'`);
-    }
+describe('media:open-external — main uses the shared open-path allowlist', () => {
+  it('main-side handler has no extension list of its own', () => {
+    expect(MEDIA_IPC_TEXT).not.toMatch(/UNSAFE_FILE_EXTENSIONS/);
+    expect(MEDIA_IPC_TEXT).toMatch(/isOpenPathAllowed\(/);
   });
 
-  it('main-side blocklist still contains every OS-executable extension', () => {
-    const EXEC_EXTS = [
-      '.exe', '.bat', '.cmd', '.com', '.scr', '.ps1', '.vbs', '.hta',
-      '.msi', '.jar', '.lnk',
+  it('HTML-renderable, executable and launcher types are all refused', () => {
+    const REFUSED = [
+      '.html', '.htm', '.xhtml', '.svg', '.shtml', '.xml',
+      '.exe', '.bat', '.cmd', '.com', '.scr', '.ps1', '.vbs', '.hta', '.msi', '.jar', '.lnk',
+      '.url', '.scf', '.website', '.pif', '.reg', '.inf', '.desktop',
     ];
-    for (const ext of EXEC_EXTS) {
-      expect(MEDIA_IPC_TEXT).toContain(`'${ext}'`);
-    }
-  });
-
-  it('main-side blocklist contains every OS launcher / shell-shortcut extension (Audit-13 M12)', () => {
-    const LAUNCHER_EXTS = ['.url', '.scf', '.website', '.pif', '.reg', '.inf', '.desktop'];
-    for (const ext of LAUNCHER_EXTS) {
-      expect(MEDIA_IPC_TEXT).toContain(`'${ext}'`);
-    }
-  });
-
-  it('renderer-side validator set matches main-side blocklist', () => {
-    // Parity check — the two blocklists must agree so a renderer-side
-    // pre-filter and the main-side defence-in-depth check don't drift.
-    const HTML_RENDERABLE_EXTS = ['.html', '.htm', '.xhtml', '.svg', '.shtml', '.xml'];
-    const LAUNCHER_EXTS = ['.url', '.scf', '.website', '.pif', '.reg', '.inf', '.desktop'];
-    for (const ext of [...HTML_RENDERABLE_EXTS, ...LAUNCHER_EXTS]) {
-      expect(UNSAFE_LOCAL_FILE_EXTENSIONS_FOR_TESTS.has(ext)).toBe(true);
+    for (const ext of REFUSED) {
+      expect(isOpenPathAllowed(`/vault/file${ext}`)).toBe(false);
     }
   });
 });

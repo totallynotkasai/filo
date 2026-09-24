@@ -4,9 +4,8 @@
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
   import { reportError } from '../../lib/utils/errorBus';
-  import { invokeOk } from '../../lib/utils/invokeOk';
   import { normalizePath, toPosix } from '../../lib/utils/path';
-  import { asSafeOpenExternal } from '../../../shared/untrusted';
+  import { openVaultFileExternally } from '../../lib/utils/openVaultFile';
   import { copyFileIntoVault } from '../../lib/vault/vaultOperations';
 
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
@@ -21,28 +20,14 @@
 
   async function handleOpen() {
     if (!tile.filePath) return;
-    try {
-      // filePath is stored as a vault-relative POSIX path; resolve to absolute
-      // before handing to the OS shell. The main process validates with
-      // assertWithinVault so this can't escape the vault.
-      const vaultRoot = vaultStore.path;
-      const abs = vaultRoot
-        ? `${normalizePath(vaultRoot)}/${tile.filePath}`
-        : tile.filePath;
-      // `asSafeOpenExternal` rejects local paths carrying an
-      // unsafe extension (.html, .svg, .exe etc.) before the IPC call.
-      // The main handler re-checks (defence-in-depth) — see
-      // `media.ipc.ts:UNSAFE_FILE_EXTENSIONS`.
-      const safe = asSafeOpenExternal(abs);
-      if (!safe) { reportError('FileTile.open', null, `Refusing to open ${tile.fileName || tile.filePath} — file extension not allowed.`); return; }
-      await invokeOk('media:open-external', safe);
-    } catch (err) {
-      reportError(
-        'FileTile.open',
-        err,
-        `Failed to open ${tile.fileName || tile.filePath} externally`,
-      );
-    }
+    // filePath is stored as a vault-relative POSIX path; resolve to absolute
+    // before handing to the OS shell. The main process validates with
+    // assertWithinVault so this can't escape the vault.
+    const vaultRoot = vaultStore.path;
+    const abs = vaultRoot
+      ? `${normalizePath(vaultRoot)}/${tile.filePath}`
+      : tile.filePath;
+    await openVaultFileExternally(abs, tile.fileName || tile.filePath);
   }
 
   /**

@@ -112,12 +112,22 @@ export class KanbanFiltersAndSort {
       if (sortBy === 'created') return (ta.createdAt ?? 0) - (tb.createdAt ?? 0);
       const fmA = (vaultIndexStore.getMetadata(vaultPathForTile(ta) ?? '')?.frontmatter ?? {}) as Record<string, unknown>;
       const fmB = (vaultIndexStore.getMetadata(vaultPathForTile(tb) ?? '')?.frontmatter ?? {}) as Record<string, unknown>;
+      // Cards without a value sort LAST; ties keep manual order because
+      // Array.prototype.sort is stable.
       if (sortBy === 'dueDate') {
-        return String(fmA.dueDate ?? '').localeCompare(String(fmB.dueDate ?? ''));
+        const da = typeof fmA.dueDate === 'string' ? fmA.dueDate : '';
+        const db = typeof fmB.dueDate === 'string' ? fmB.dueDate : '';
+        if (!da || !db) return (da ? 0 : 1) - (db ? 0 : 1);
+        // ISO dates: lexical order is chronological (no locale collation).
+        return da < db ? -1 : da > db ? 1 : 0;
       }
       if (sortBy === 'priority') {
         const order = ['urgent', 'high', 'medium', 'low', 'none', ''];
-        return order.indexOf(String(fmA.priority ?? '')) - order.indexOf(String(fmB.priority ?? ''));
+        const rank = (v: unknown): number => {
+          const i = order.indexOf(String(v ?? ''));
+          return i < 0 ? order.length : i;
+        };
+        return rank(fmA.priority) - rank(fmB.priority);
       }
       return 0;
     });

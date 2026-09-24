@@ -79,19 +79,28 @@ let activeScopeRef = $state<BoardScope | null>(null);
  */
 let activeScopeRaw: BoardScope | null = null;
 
+/**
+ * The lazily built default, used until a `PaneView` claims the active slot.
+ * Plain, not `$state`: the first facade read after a reset often runs inside a
+ * `$derived` or template expression, where writing `$state` throws
+ * `state_unsafe_mutation`. Readers still track `activeScopeRef`, so they
+ * re-run when a pane calls `setActiveScope`.
+ */
+let defaultScope: BoardScope | null = null;
+
 export function getActiveScope(): BoardScope {
-  if (activeScopeRef === null) {
+  if (activeScopeRef !== null) return activeScopeRef;
+  if (defaultScope === null) {
     if (!defaultScopeFactory) {
       throw new Error(
         '[boardScope] No default factory registered. ' +
         'Import `boardScopeFactory.ts` at app entry to install one.',
       );
     }
-    const created = defaultScopeFactory();
-    activeScopeRef = created;
-    activeScopeRaw = created;
+    defaultScope = defaultScopeFactory();
+    activeScopeRaw = defaultScope;
   }
-  return activeScopeRef;
+  return defaultScope;
 }
 
 export function setActiveScope(scope: BoardScope): void {
@@ -114,6 +123,7 @@ export function setActiveScope(scope: BoardScope): void {
 export function resetActiveScope(): void {
   activeScopeRef = null;
   activeScopeRaw = null;
+  defaultScope = null;
 }
 
 vaultSwapResettable('boardScope', () => {

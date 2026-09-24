@@ -10,7 +10,7 @@ import { decideWindowClose } from '../../main/utils/windowCloseDecision';
  */
 describe('decideWindowClose — re-entrancy guard (1.3)', () => {
   it('first close on a live window → preventDefault + start the drain', () => {
-    expect(decideWindowClose({ isFlushing: false, windowAlive: true })).toEqual({
+    expect(decideWindowClose({ isFlushing: false, windowAlive: true, rendererAlive: true })).toEqual({
       preventDefault: true,
       startDrain: true,
     });
@@ -19,18 +19,18 @@ describe('decideWindowClose — re-entrancy guard (1.3)', () => {
   it('second close while a drain is in flight → STILL preventDefault, no new drain', () => {
     // The regression: this is the branch that previously returned without
     // preventDefault, letting the destroy proceed mid-write.
-    expect(decideWindowClose({ isFlushing: true, windowAlive: true })).toEqual({
+    expect(decideWindowClose({ isFlushing: true, windowAlive: true, rendererAlive: true })).toEqual({
       preventDefault: true,
       startDrain: false,
     });
-    expect(decideWindowClose({ isFlushing: true, windowAlive: false })).toEqual({
+    expect(decideWindowClose({ isFlushing: true, windowAlive: false, rendererAlive: true })).toEqual({
       preventDefault: true,
       startDrain: false,
     });
   });
 
   it('close after the window is already gone → let it proceed (no preventDefault)', () => {
-    expect(decideWindowClose({ isFlushing: false, windowAlive: false })).toEqual({
+    expect(decideWindowClose({ isFlushing: false, windowAlive: false, rendererAlive: true })).toEqual({
       preventDefault: false,
       startDrain: false,
     });
@@ -38,12 +38,28 @@ describe('decideWindowClose — re-entrancy guard (1.3)', () => {
 
   it('two clicks in a row both block while flushing (the full repro)', () => {
     // Click 1 starts the drain.
-    const first = decideWindowClose({ isFlushing: false, windowAlive: true });
+    const first = decideWindowClose({ isFlushing: false, windowAlive: true, rendererAlive: true });
     expect(first.preventDefault).toBe(true);
     expect(first.startDrain).toBe(true);
     // The drain set isFlushingForQuit = true; click 2 must STILL block.
-    const second = decideWindowClose({ isFlushing: true, windowAlive: true });
+    const second = decideWindowClose({ isFlushing: true, windowAlive: true, rendererAlive: true });
     expect(second.preventDefault).toBe(true);
     expect(second.startDrain).toBe(false);
+  });
+});
+
+describe('decideWindowClose — crashed renderer', () => {
+  it('rendererAlive:false → the close proceeds without a drain', () => {
+    expect(decideWindowClose({ isFlushing: false, windowAlive: true, rendererAlive: false })).toEqual({
+      preventDefault: false,
+      startDrain: false,
+    });
+  });
+
+  it('rendererAlive:false wins over an in-flight drain (nothing left to drain)', () => {
+    expect(decideWindowClose({ isFlushing: true, windowAlive: true, rendererAlive: false })).toEqual({
+      preventDefault: false,
+      startDrain: false,
+    });
   });
 });

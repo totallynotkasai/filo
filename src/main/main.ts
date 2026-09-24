@@ -16,6 +16,7 @@ import { logMainError } from './utils/mainLogger';
 import { stopActiveWatcher } from './ipc/vault.ipc';
 import { vaultRegistry } from './services/vaultRegistry';
 import { writeQuitFailureBreadcrumb } from './services/quitFailureBreadcrumb';
+import { attachRendererCrashHandlers, isRendererGone } from './services/rendererCrashHandler';
 import { decideWindowClose } from './utils/windowCloseDecision';
 import { buildAppContentSecurityPolicy } from './utils/contentSecurityPolicy';
 import { installPermissionHandlers } from './utils/permissionPolicy';
@@ -179,6 +180,11 @@ async function createWindow(): Promise<void> {
 
   appWebContentsId = mainWindow.webContents.id;
 
+  attachRendererCrashHandlers(mainWindow, {
+    writeBreadcrumb: () => writeQuitFailureBreadcrumb(vaultRegistry.currentVaultPath),
+    isQuitting: () => isFlushingForQuit,
+  });
+
   if (savedState.maximized) mainWindow.maximize();
 
   Menu.setApplicationMenu(null);
@@ -209,6 +215,7 @@ async function createWindow(): Promise<void> {
     const decision = decideWindowClose({
       isFlushing: isFlushingForQuit,
       windowAlive: !!mainWindow && !mainWindow.webContents.isDestroyed(),
+      rendererAlive: !isRendererGone(),
     });
     if (decision.preventDefault) event.preventDefault();
     if (!decision.startDrain) return;
@@ -444,6 +451,8 @@ app.on('window-all-closed', () => {
  */
 app.on('before-quit', (event) => {
   if (isFlushingForQuit) return;
+  // A crashed renderer can't drain; its breadcrumb was written at crash time.
+  if (isRendererGone()) return;
   const win = BrowserWindow.getAllWindows()[0];
   if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
 

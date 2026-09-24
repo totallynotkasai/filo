@@ -87,3 +87,82 @@ describe('6.2.H4 (follow-up) — emergency-file registry + quit-failure breadcru
     }
   });
 });
+
+describe('quit-failure breadcrumb — an unacknowledged earlier breadcrumb is merged', () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    __resetEmergencyFilesForTests();
+    dir = await fs.mkdtemp(join(tmpdir(), 'filo-quitfail-merge-'));
+    await fs.mkdir(join(dir, '.filo'), { recursive: true });
+  });
+
+  afterEach(async () => {
+    __resetEmergencyFilesForTests();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  async function writePrior(files: Array<{ preservedPath: string; code?: string; at?: number }>): Promise<void> {
+    await fs.writeFile(
+      join(dir, quitFailureRelPath()),
+      JSON.stringify({ version: 1, savedAt: '2026-09-01T00:00:00.000Z', files }),
+    );
+  }
+
+  async function readFiles(): Promise<Array<{ preservedPath: string; code?: string; at?: number }>> {
+    return JSON.parse(await fs.readFile(join(dir, quitFailureRelPath()), 'utf-8')).files;
+  }
+
+  it('keeps a prior entry whose preserved file still exists, alongside this session', async () => {
+    const prior = join(dir, 'Old.md.partial');
+    await fs.writeFile(prior, 'partial bytes');
+    await writePrior([{ preservedPath: prior, code: 'EIO', at: 111 }]);
+
+    recordPreservedEmergencyFile({ preservedPath: join(dir, 'New.md'), code: 'ENOSPC' });
+    await writeQuitFailureBreadcrumb(dir);
+
+    const files = await readFiles();
+    expect(files.map((f) => f.preservedPath).sort()).toEqual([join(dir, 'New.md'), prior].sort());
+    // The prior entry keeps its own timestamp.
+    expect(files.find((f) => f.preservedPath === prior)?.at).toBe(111);
+  });
+
+  it('drops prior entries whose preserved file is gone', async () => {
+    await writePrior([{ preservedPath: join(dir, 'Recovered.md.partial'), code: 'EIO', at: 1 }]);
+    recordPreservedEmergencyFile({ preservedPath: join(dir, 'New.md'), code: 'ENOSPC' });
+    await writeQuitFailureBreadcrumb(dir);
+    expect((await readFiles()).map((f) => f.preservedPath)).toEqual([join(dir, 'New.md')]);
+  });
+
+  it('dedupes by preservedPath (this session wins)', async () => {
+    const same = join(dir, 'Same.md.partial');
+    await fs.writeFile(same, 'x');
+    await writePrior([{ preservedPath: same, code: 'EIO', at: 1 }]);
+    recordPreservedEmergencyFile({ preservedPath: same, code: 'ENOSPC' });
+    await writeQuitFailureBreadcrumb(dir);
+    const files = await readFiles();
+    expect(files).toHaveLength(1);
+    expect(files[0]?.code).toBe('ENOSPC');
+  });
+
+  it('a corrupt prior file is overwritten with this session only', async () => {
+    await fs.writeFile(join(dir, quitFailureRelPath()), '{ not json');
+    recordPreservedEmergencyFile({ preservedPath: join(dir, 'New.md'), code: 'ENOSPC' });
+    await writeQuitFailureBreadcrumb(dir);
+    expect((await readFiles()).map((f) => f.preservedPath)).toEqual([join(dir, 'New.md')]);
+  });
+
+  it('a prior entry pointing outside the vault is not carried forward', async () => {
+    const outside = await fs.mkdtemp(join(tmpdir(), 'filo-outside-'));
+    try {
+      const stray = join(outside, 'x.partial');
+      await fs.writeFile(stray, 'x');
+      await writePrior([{ preservedPath: stray, code: 'EIO', at: 1 }]);
+      recordPreservedEmergencyFile({ preservedPath: join(dir, 'New.md'), code: 'ENOSPC' });
+      await writeQuitFailureBreadcrumb(dir);
+      expect((await readFiles()).map((f) => f.preservedPath)).toEqual([join(dir, 'New.md')]);
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true });
+    }
+  });
+});

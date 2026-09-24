@@ -24,7 +24,15 @@ export function decideWindowClose(opts: {
   isFlushing: boolean;
   /** The window still exists and its webContents isn't destroyed. */
   windowAlive: boolean;
+  /**
+   * The renderer process is running. False after it crashed: its webContents
+   * still exists, but nothing can answer a flush request.
+   */
+  rendererAlive: boolean;
 }): WindowCloseDecision {
+  // A crashed renderer holds no unsaved writes and can't reply to a drain —
+  // close now instead of waiting out the drain timeout in a blank window.
+  if (!opts.rendererAlive) return { preventDefault: false, startDrain: false };
   // A drain is already running — keep blocking every further close so a second
   // X-click can't destroy the window mid-write. Don't start another drain.
   if (opts.isFlushing) return { preventDefault: true, startDrain: false };

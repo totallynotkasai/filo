@@ -13,6 +13,7 @@
  * failed breadcrumb write (e.g. the disk is STILL full — the very condition
  * that created the emergency files) is logged, not fatal.
  */
+import { promises as fs } from 'fs';
 import { join, relative, isAbsolute } from 'path';
 import { assertWithinVault } from '../utils/pathSecurity';
 import { atomicWriteFile, ensureDir } from '../vault/filenameUtils';
@@ -36,12 +37,57 @@ function isWithin(root: string, p: string): boolean {
   return rel.length > 0 && !rel.startsWith('..') && !isAbsolute(rel);
 }
 
+interface BreadcrumbEntry {
+  preservedPath: string;
+  targetPath?: string;
+  code?: string;
+  at?: number;
+}
+
+/**
+ * Entries of an earlier, still-unacknowledged breadcrumb whose preserved file
+ * still exists. Absent or corrupt → `[]`. An entry whose file is gone was
+ * already recovered or deleted by the user, so it isn't carried forward.
+ */
+async function readSurvivingPriorEntries(vaultRoot: string, destAbs: string): Promise<BreadcrumbEntry[]> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await fs.readFile(destAbs, 'utf-8'));
+  } catch {
+    return [];
+  }
+  const files = (parsed as { files?: unknown } | null)?.files;
+  if (!Array.isArray(files)) return [];
+  const out: BreadcrumbEntry[] = [];
+  for (const f of files) {
+    const p = (f as { preservedPath?: unknown } | null)?.preservedPath;
+    if (typeof p !== 'string' || !isWithin(vaultRoot, p)) continue;
+    try {
+      await fs.access(p);
+    } catch {
+      continue;
+    }
+    const e = f as Record<string, unknown>;
+    out.push({
+      preservedPath: p,
+      ...(typeof e.targetPath === 'string' ? { targetPath: e.targetPath } : {}),
+      ...(typeof e.code === 'string' ? { code: e.code } : {}),
+      ...(typeof e.at === 'number' ? { at: e.at } : {}),
+    });
+  }
+  return out;
+}
+
 /**
  * Writes `<vaultRoot>/.filo/quit-failure.json` if the session preserved any
  * emergency files that live inside `vaultRoot`. No-op when the registry is
  * empty, `vaultRoot` is null/empty, or no preserved file belongs to this
  * vault (e.g. the failure happened in a vault the user later swapped away
  * from — that vault's partials stay on disk but aren't recorded here).
+ *
+ * An earlier breadcrumb the user hasn't acknowledged yet is MERGED (union by
+ * `preservedPath`), never overwritten: two failed quits in a row must still
+ * point at both sets of partials.
  */
 export async function writeQuitFailureBreadcrumb(vaultRoot: string | null): Promise<void> {
   if (!vaultRoot) return;
@@ -53,17 +99,22 @@ export async function writeQuitFailureBreadcrumb(vaultRoot: string | null): Prom
     const destAbs = join(vaultRoot, quitFailureRelPath());
     assertWithinVault(vaultRoot, destAbs);
     await ensureDir(join(vaultRoot, '.filo'));
+    const merged = new Map<string, BreadcrumbEntry>();
+    for (const e of await readSurvivingPriorEntries(vaultRoot, destAbs)) merged.set(e.preservedPath, e);
+    for (const f of files) {
+      merged.set(f.preservedPath, {
+        preservedPath: f.preservedPath,
+        targetPath: f.targetPath,
+        code: f.code,
+        at: f.at,
+      });
+    }
     const payload = {
       version: QUIT_FAILURE_VERSION,
       savedAt: new Date().toISOString(),
       machineId: getMachineIdentity().machineId,
       hostname: getMachineIdentity().hostname,
-      files: files.map((f) => ({
-        preservedPath: f.preservedPath,
-        targetPath: f.targetPath,
-        code: f.code,
-        at: f.at,
-      })),
+      files: [...merged.values()],
     };
     await atomicWriteFile(destAbs, JSON.stringify(payload, null, 2));
   } catch (err) {

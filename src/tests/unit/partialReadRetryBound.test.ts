@@ -88,7 +88,6 @@ describe('vaultExternalChanges — partial-read retry is bounded (Phase 3 / 3.2)
     // to enter the partial-read-retry branch (dirty editors get
     // prompt-user; missing editors get ignore/sync-frontmatter).
     documentStore.loadDocument({
-      docId: 'doc_A',
       filename: 'Notes.md',
       title: 'Notes',
       body: bigBody,
@@ -187,7 +186,7 @@ describe('vaultExternalChanges — partial-read retry is bounded (Phase 3 / 3.2)
     // pre-shrink baseline.
     vi.useRealTimers();
     await toast?.actions?.[1].handler();
-    const doc = documentStore.getDocument('doc_A');
+    const doc = documentStore.getDocument('Notes.md');
     expect(doc?.body).toBe(bigBody);
     expect(doc?.isDirty).toBe(false);
   });
@@ -209,7 +208,7 @@ describe('vaultExternalChanges — partial-read retry is bounded (Phase 3 / 3.2)
 
     vi.useRealTimers();
     await toast?.actions?.[0].handler();
-    const doc = documentStore.getDocument('doc_A');
+    const doc = documentStore.getDocument('Notes.md');
     expect(doc?.body).toBe(tinyBody);
     expect(doc?.isDirty).toBe(false);
   });

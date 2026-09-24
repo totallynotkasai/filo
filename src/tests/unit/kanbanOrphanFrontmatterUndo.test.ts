@@ -1,11 +1,10 @@
 /**
- * Phase 5 / 5.5 — undo works for kanban cards without contentId.
+ * Undo works for a kanban card whose note has no open document.
  *
- * Before this phase the no-docId branch of `updateTileFrontmatter` called
- * `scheduleSharedFrontmatterWrite(path, null)` — a silent no-op because the
- * frontmatter scheduler reads from vaultIndexStore (not the patch) when
- * docId is null. The new `UpdateOrphanFrontmatterCommand` writes directly
- * via `vault:write-existing-file-text` and supports undo.
+ * The shared frontmatter scheduler builds its bytes from vaultIndexStore, not
+ * from a patch, so it cannot carry an edit for a note with no document state.
+ * `UpdateOrphanFrontmatterCommand` writes directly via
+ * `vault:write-existing-file-text` and supports undo.
  *
  * FILO-UR-1 (Audit-11) — the orphan write now threads a FrontmatterDelta, so the
  * gateway reads disk in-chain and applies only the changed keys (preserving
@@ -78,6 +77,7 @@ describe('UpdateOrphanFrontmatterCommand', () => {
       headings: [],
       tags: [],
       frontmatter: { priority: 'low' },
+      rawFrontmatter: 'priority: low',
       links: [],
       content: 'body content',
       lastModified: 0,

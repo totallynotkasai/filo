@@ -8,8 +8,8 @@
  * blindly restored the pre-edit value — silently clobbering the
  * external change. `UpdateTaskFieldCommand` / `UpdateCardFieldCommand`
  * already route through `applyFrontmatterPatchRebased` (Audit2 4.2)
- * which has the right shape; this finding is the "make it docId-less"
- * variant.
+ * which has the right shape; this is the variant for a note with no
+ * open document.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
@@ -104,7 +104,7 @@ describe('UpdateOrphanFrontmatterCommand — 6.2.H8 rebase on undo', () => {
   });
 
   it('A8-M5 — recomputes the inverse from disk so a stale index inverse cannot mis-restore', async () => {
-    // The card has NO contentId; the writer built its inverse from the vault
+    // The card has no open document; the writer built its inverse from the vault
     // index, which is STALE — an external editor added `priority: high` after the
     // last index rebuild, so the index (and thus the construction-time inverse)
     // has no priority. Simulate that with an empty-string inverse.

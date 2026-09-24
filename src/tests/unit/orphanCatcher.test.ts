@@ -21,7 +21,7 @@ function textTile(id: string, x: number, y: number, opts: { content?: string; ta
     boardId: 'board',
     createdAt: 0,
     updatedAt: 0,
-    contentId: id,
+    filePath: `${id}.md`,
     content: opts.content ?? 'hello',
   } as unknown as Tile;
 }

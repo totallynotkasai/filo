@@ -65,7 +65,7 @@ export function makeKanbanSlice(ctx: CacheContext) {
           if (!def) continue;
           // Preserve def-level locked/faded flags (set by TileHeader's lock
           // toggle / fade affordance) so the flow-layout card honours them;
-          // hardcoding false would erase the lock when the same contentId
+          // hardcoding false would erase the lock when the same note
           // surfaces on a Kanban board.
           const defLocked = (def as Partial<Tile>).locked === true;
           const defFaded = (def as Partial<Tile>).faded === true;

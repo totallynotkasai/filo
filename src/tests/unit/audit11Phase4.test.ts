@@ -1,5 +1,5 @@
 /**
- * Audit-11 FILO-UR-3 — disk-bytes undo round-trip for the docId-backed field
+ * Audit-11 FILO-UR-3 — disk-bytes undo round-trip for the note-backed field
  * commands (`UpdateCardFieldCommand` / `UpdateTaskFieldCommand`).
  *
  * The existing `frontmatterRebaseConflict.test.ts` asserts only the DISPLAY

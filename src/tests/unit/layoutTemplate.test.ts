@@ -114,7 +114,7 @@ describe('captureLayoutTemplate', () => {
     expect(template.tiles[1].relativePosition).toEqual({ x: 100, y: 100 });
   });
 
-  it('strips title, content, contentId, tags, lock, faded, and ids from each tile', () => {
+  it('strips title, content, filePath, tags, lock, faded, and ids from each tile', () => {
     const tiles: Tile[] = [
       makeTile({
         id: 'tile-secret',
@@ -129,7 +129,6 @@ describe('captureLayoutTemplate', () => {
     const captured = template.tiles[0] as unknown as Record<string, unknown>;
     expect(captured.title).toBeUndefined();
     expect(captured.content).toBeUndefined();
-    expect(captured.contentId).toBeUndefined();
     expect(captured.tags).toBeUndefined();
     expect(captured.locked).toBeUndefined();
     expect(captured.faded).toBeUndefined();
@@ -209,7 +208,6 @@ describe('instantiateLayoutTemplate', () => {
         boardId,
         createdAt: 2,
         updatedAt: 2,
-        contentId: `gen-content-${counter}`,
         content: '',
         ...(overrides ?? {}),
       } as Tile;
@@ -411,7 +409,6 @@ describe('captureLayoutTemplate — connections', () => {
         boardId,
         createdAt: 1,
         updatedAt: 1,
-        contentId: `c-${counter}`,
         content: '',
         ...(overrides ?? {}),
       } as Tile;

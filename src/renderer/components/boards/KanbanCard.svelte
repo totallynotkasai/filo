@@ -140,8 +140,6 @@
   );
 
   const isText = $derived(tile.type === 'text');
-  const contentId = $derived((tile as Tile & { contentId?: string }).contentId ?? null);
-
   // The card's note path; `null` for a non-text card.
   let notePath = $derived(isText ? ((tile as Tile & { filePath?: string }).filePath ?? null) : null);
 
@@ -160,8 +158,8 @@
   // the badge without a disk round-trip. Hides when total === 0.
   let checklistProgress = $derived.by<{ checked: number; total: number } | null>(() => {
     void documentStore.frontmatterVersion;
-    if (!isText || !contentId) return null;
-    const doc = documentStore.getDocument(contentId);
+    if (!notePath) return null;
+    const doc = documentStore.getDocument(notePath);
     if (!doc) return null;
     const body = doc.body ?? '';
     const checked = (body.match(/\[x\]/gi) ?? []).length;

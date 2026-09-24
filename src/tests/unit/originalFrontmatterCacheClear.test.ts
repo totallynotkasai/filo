@@ -15,38 +15,36 @@ describe('Audit-7 L6 — originalFrontmatterCache cleared on swap + unload', () 
   });
 
   it('clear(nextVault) drops the disk-baseline FM source for every doc', () => {
-    const docId = 'doc-l6-clear';
+    const notePath = 'A.md';
     documentStore.loadDocument({
-      docId,
-      filename: 'A.md',
+      filename: notePath,
       title: 'A',
       body: '',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter(docId, { title: 'A' }, 'title: A\ntags: [x]');
-    expect(documentStore.getOriginalFrontmatterSource(docId)).toBe('title: A\ntags: [x]');
+    documentStore.setFrontmatter(notePath, { title: 'A' }, 'title: A\ntags: [x]');
+    expect(documentStore.getOriginalFrontmatterSource(notePath)).toBe('title: A\ntags: [x]');
 
     documentStore.clear('/next-vault');
 
-    expect(documentStore.getOriginalFrontmatterSource(docId)).toBeUndefined();
+    expect(documentStore.getOriginalFrontmatterSource(notePath)).toBeUndefined();
   });
 
-  it('unloadDocument(docId) drops the disk-baseline FM source for that doc', () => {
-    const docId = 'doc-l6-unload';
+  it('unloadDocument(notePath) drops the disk-baseline FM source for that doc', () => {
+    const notePath = 'B.md';
     documentStore.loadDocument({
-      docId,
-      filename: 'B.md',
+      filename: notePath,
       title: 'B',
       body: '',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter(docId, { title: 'B' }, 'title: B');
-    expect(documentStore.getOriginalFrontmatterSource(docId)).toBe('title: B');
+    documentStore.setFrontmatter(notePath, { title: 'B' }, 'title: B');
+    expect(documentStore.getOriginalFrontmatterSource(notePath)).toBe('title: B');
 
-    documentStore.unloadDocument(docId);
+    documentStore.unloadDocument(notePath);
 
-    expect(documentStore.getOriginalFrontmatterSource(docId)).toBeUndefined();
+    expect(documentStore.getOriginalFrontmatterSource(notePath)).toBeUndefined();
   });
 });

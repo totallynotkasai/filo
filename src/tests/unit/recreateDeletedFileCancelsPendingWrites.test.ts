@@ -20,7 +20,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 /**
  * Phase 6.1.R1 — `recreateDeletedFile` routes through
  * `syncOpenEditorsAfterDiskMutation`, which cancels armed body writers for
- * the docId via `applyReloadFromDisk`'s 6.0.C2 self-cancel.
+ * the note via `applyReloadFromDisk`'s 6.0.C2 self-cancel.
  *
  * Mechanism: the user typed into a now-deleted file, the classifier surfaced
  * a "Keep local" toast, the debounced write timer is still armed against the
@@ -50,7 +50,6 @@ function lastWriteContent(captured: Captured[], rel: string): string | undefined
 }
 
 function makeArgs(
-  docId: string,
   relPath: string,
   fm: Record<string, unknown>,
   body: string,
@@ -60,8 +59,8 @@ function makeArgs(
     relPath,
     frontmatter: fm,
     body,
-    callerId: `text-tile:${docId}`,
-    docId,
+    callerId: `text-tile:${relPath}`,
+    notePath: relPath,
   };
 }
 
@@ -119,8 +118,7 @@ describe('recreateDeletedFile — cancels armed body writers (Phase 6.1.R1)', ()
 
   it('disarms the armed body writer so the post-recovery bytes are not reverted', async () => {
     const relPath = 'Notes.md';
-    const docId = 'doc_recover';
-    const callerId = `text-tile:${docId}`;
+    const callerId = `text-tile:${relPath}`;
 
     // Prime the index so the classifier can see the file exists, then
     // simulate the external delete via `applyChanges([rel])`.
@@ -136,20 +134,19 @@ describe('recreateDeletedFile — cancels armed body writers (Phase 6.1.R1)', ()
 
     // Editor mounted; user typed (dirty); local body diverges from disk.
     documentStore.loadDocument({
-      docId,
       filename: relPath,
       title: 'Notes',
       body: 'local typed body',
       htmlContent: '<p>local typed body</p>',
       richText: [],
     });
-    documentStore.setFrontmatter(docId, { title: 'Notes' }, '---\ntitle: Notes\n---');
-    documentStore.updateContent(docId, '<p>local typed body</p>', 'local typed body');
+    documentStore.setFrontmatter(relPath, { title: 'Notes' }, '---\ntitle: Notes\n---');
+    documentStore.updateContent(relPath, '<p>local typed body</p>', 'local typed body');
     markHydrated(relPath, false);
 
     // Armed body writer: a debounced keystroke captured the pre-Keep-local body.
-    registerForceWriter(callerId, docId, () => null);
-    scheduleMarkdownWrite(makeArgs(docId, relPath, { title: 'Notes' }, 'PRE-RECOVERY armed body'));
+    registerForceWriter(callerId, relPath, () => null);
+    scheduleMarkdownWrite(makeArgs(relPath, { title: 'Notes' }, 'PRE-RECOVERY armed body'));
 
     // Swap to a recording mock for the recovery write step so we can see what
     // hits disk.
@@ -181,7 +178,7 @@ describe('recreateDeletedFile — cancels armed body writers (Phase 6.1.R1)', ()
 
     // The doc itself is no longer dirty after the recovery (applyReloadFromDisk
     // resets isDirty to false alongside the cancel).
-    const doc = documentStore.getDocument(docId);
+    const doc = documentStore.getDocument(relPath);
     expect(doc?.isDirty).toBe(false);
   });
 });

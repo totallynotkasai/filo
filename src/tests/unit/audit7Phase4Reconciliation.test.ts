@@ -100,7 +100,6 @@ describe('Audit-7 L13/L16 — reload re-stamps the drift baseline', () => {
 
   it('applyReloadFromDisk stamps the baseline from diskIdentity (keyed by filename)', () => {
     documentStore.loadDocument({
-      docId: 'd1',
       filename: 'Notes.md',
       title: 'Notes',
       body: 'old',
@@ -109,7 +108,7 @@ describe('Audit-7 L13/L16 — reload re-stamps the drift baseline', () => {
     });
     expect(getBaseline('Notes.md')).toBeUndefined();
 
-    documentStore.applyReloadFromDisk('d1', 'new body', [], { tag: 'x' }, undefined, {
+    documentStore.applyReloadFromDisk('Notes.md', 'new body', [], { tag: 'x' }, undefined, {
       mtimeMs: 5000,
       size: 42,
     });
@@ -119,7 +118,6 @@ describe('Audit-7 L13/L16 — reload re-stamps the drift baseline', () => {
 
   it('applyReloadFromDisk WITHOUT diskIdentity leaves the prior baseline untouched', () => {
     documentStore.loadDocument({
-      docId: 'd1',
       filename: 'Notes.md',
       title: 'Notes',
       body: 'old',
@@ -128,7 +126,7 @@ describe('Audit-7 L13/L16 — reload re-stamps the drift baseline', () => {
     });
     noteBaseline('Notes.md', 1000, 10);
 
-    documentStore.applyReloadFromDisk('d1', 'new body', []);
+    documentStore.applyReloadFromDisk('Notes.md', 'new body', []);
 
     // Unchanged — in-memory reloads (no disk read) must not invent a baseline.
     expect(getBaseline('Notes.md')).toEqual({ mtimeMs: 1000, size: 10 });
@@ -144,7 +142,6 @@ describe('Audit-7 L13/L16 — reload re-stamps the drift baseline', () => {
     });
     await vaultIndexStore.applyChanges(['Notes.md']);
     documentStore.loadDocument({
-      docId: 'doc_A',
       filename: 'Notes.md',
       title: 'Notes',
       body: bigBody,
@@ -162,7 +159,7 @@ describe('Audit-7 L13/L16 — reload re-stamps the drift baseline', () => {
     await slice.handleExternalMarkdownChanges(['Notes.md']);
 
     // The clean editor absorbed the external body…
-    expect(documentStore.getDocument('doc_A')?.body).toBe(newBody);
+    expect(documentStore.getDocument('Notes.md')?.body).toBe(newBody);
     // …and the baseline now equals the just-read disk identity, so the next
     // keystroke's pre-write stat (mtime 2, that size) won't re-detect drift.
     expect(getBaseline('Notes.md')).toEqual({ mtimeMs: 2, size: byteLen(newBody) });
@@ -176,7 +173,6 @@ describe('Audit-7 L13/L16 — reload re-stamps the drift baseline', () => {
       return { success: true };
     });
     documentStore.loadDocument({
-      docId: 'doc_B',
       filename: 'Drift.md',
       title: 'Drift',
       body: 'local',

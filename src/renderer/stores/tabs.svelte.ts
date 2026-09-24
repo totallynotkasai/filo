@@ -1,9 +1,10 @@
 import { SvelteMap } from 'svelte/reactivity';
 import type { BoardType } from '../../shared/types';
 import { createId } from '../lib/utils/ids';
+import { vaultPath, type VaultPath } from '@shared/vaultPath';
+import { registerPathRenamable } from '../lib/vault/renamePathKeys';
 import type { Board, WorkspaceState } from '../schema/index';
 import { boardCacheStore } from './boardCache.svelte';
-import { noteDocId } from './noteMeta';
 import { historyStore } from './history.svelte';
 import { uiStore } from './ui.svelte';
 import { flushAllMarkdownWriters } from '../lib/vault/markdownFileWriter';
@@ -22,11 +23,10 @@ import { runWithCloseDrain } from '../lib/editor/closeDrainGate.svelte';
  *     board, or in no board at all (cache miss / not yet hydrated), treat
  *     as in-tab so the confirm still gates the close. Silently swallowing
  *     a failure is worse than surfacing a false positive.
- *   - `document-editor:${docId}` is in-tab when the closing board is a
- *     Document board whose `contentId === docId`. If the closing board is
- *     a different document board, walk the cache for a positive match
- *     against another board's contentId; only mark as other-tabs on a
- *     positive match elsewhere.
+ *   - `document-editor:${notePath}` is in-tab when the closing tab shows
+ *     that note (a Document tab's `notePath`, or a Document board's
+ *     `filePath`). Otherwise it is other-tabs only on a positive match
+ *     against another open Document tab or board.
  *   - Any unknown owner shape stays in-tab.
  */
 function partitionMarkdownFailuresByBoard(
@@ -48,23 +48,27 @@ function partitionMarkdownFailuresByBoard(
       closingTileIds.add(tileId);
     }
   }
-  const closingDocContentId = closing?.board?.type === 'document' && closing.board.filePath
-    ? noteDocId(closing.board.filePath)
-    : undefined;
+  const closingTabNote = tabs.find((t) => t.boardId === boardId && t.notePath)?.notePath;
+  const closingDocPath: VaultPath | undefined = closing?.board?.type === 'document' && closing.board.filePath
+    ? vaultPath(closing.board.filePath)
+    : closingTabNote ? vaultPath(closingTabNote) : undefined;
 
-  // Build the global "tile id → owning boardId" and "docId → owning boardId"
+  // Build the global "tile id → owning boardId" and "note path → owning boardId"
   // maps so we can positively attribute owners we don't see in the closing
   // board's cache. Iterates the cache once per partition call; the cache
   // size is bounded by the number of open boards (a few dozen at most).
   const tileToBoard = new Map<string, string>();
-  const docToBoard = new Map<string, string>();
+  const docToBoard = new Map<VaultPath, string>();
   for (const [bid, entry] of Object.entries(cache)) {
     for (const tileId of Object.keys(entry.tileDefs ?? {})) {
       tileToBoard.set(tileId, bid);
     }
     if (entry.board?.type === 'document') {
-      if (entry.board.filePath) docToBoard.set(noteDocId(entry.board.filePath), bid);
+      if (entry.board.filePath) docToBoard.set(vaultPath(entry.board.filePath), bid);
     }
+  }
+  for (const t of tabs) {
+    if (t.notePath) docToBoard.set(vaultPath(t.notePath), t.boardId);
   }
   /* eslint-enable svelte/prefer-svelte-reactivity */
 
@@ -82,9 +86,9 @@ function partitionMarkdownFailuresByBoard(
       continue;
     }
     if (f.ownerId.startsWith('document-editor:')) {
-      const docId = f.ownerId.slice('document-editor:'.length);
-      if (closingDocContentId && closingDocContentId === docId) { inTab.push(f); continue; }
-      const owningBoard = docToBoard.get(docId);
+      const notePath = vaultPath(f.ownerId.slice('document-editor:'.length));
+      if (closingDocPath && closingDocPath === notePath) { inTab.push(f); continue; }
+      const owningBoard = docToBoard.get(notePath);
       if (owningBoard && owningBoard !== boardId) { otherTabs.push(f); continue; }
       inTab.push(f);
       continue;
@@ -151,6 +155,11 @@ export interface TabData {
   name: string;
   boardType: BoardType;
   emoji: string;
+  /**
+   * A Document tab's note, by vault path. The tab's `boardId` is an opaque
+   * id (it keys the tab's undo stack), so a rename only rewrites this path.
+   */
+  notePath?: string;
 }
 
 /**
@@ -200,6 +209,27 @@ export const tabStore = {
     }
 
     const tab: TabData = { id: createId(), boardId, name, boardType, emoji };
+    tabs = [...tabs, tab];
+    activeTabId = tab.id;
+    notifyChange();
+    return tab;
+  },
+
+  /**
+   * Opens a Document tab for the note at `notePath`, or switches to the one
+   * already showing it (matched case-insensitively).
+   */
+  openNote(notePath: string, name: string): TabData {
+    const key = vaultPath(notePath);
+    const existing = tabs.find((t) => t.notePath !== undefined && vaultPath(t.notePath) === key);
+    if (existing) {
+      if (activeTabId !== existing.id) {
+        activeTabId = existing.id;
+        notifyChange();
+      }
+      return existing;
+    }
+    const tab: TabData = { id: createId(), boardId: createId(), name, boardType: 'document', emoji: '', notePath };
     tabs = [...tabs, tab];
     activeTabId = tab.id;
     notifyChange();
@@ -469,6 +499,29 @@ export const tabStore = {
     }
   },
 };
+
+/**
+ * A Document tab names its note by path, so a rename (of the note, or of a
+ * folder above it) rewrites the tab's `notePath` to the new path.
+ */
+function renameDocumentTabs(oldRel: string, newRel: string): void {
+  const oldKey = vaultPath(oldRel);
+  const oldPrefix = `${oldKey}/`;
+  let changed = false;
+  const next = tabs.map((t) => {
+    if (!t.notePath) return t;
+    const key = vaultPath(t.notePath);
+    let notePath: string | null = null;
+    if (key === oldKey) notePath = newRel;
+    else if (key.startsWith(oldPrefix)) notePath = newRel + t.notePath.slice(oldRel.length);
+    if (notePath === null || notePath === t.notePath) return t;
+    changed = true;
+    return { ...t, notePath };
+  });
+  if (changed) tabs = next;
+}
+
+registerPathRenamable('tabs.documentTabs', renameDocumentTabs);
 
 // Vault-swap reset: closes every open tab before the new vault hydrates so a tab pointing
 // at the prior vault's board id can't briefly render against the new

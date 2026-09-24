@@ -137,7 +137,6 @@ describe('Audit-10 B1 — popup edit → gateway write preserves nested map + nu
 
   it('a status edit keeps a nested map + numeric list byte-for-byte on disk', async () => {
     const relPath = 'Place.md';
-    const docId = 'doc-place';
     const disk =
       '---\ncoordinates:\n  lat: 5\n  lng: 6\nyears:\n  - 2024\n  - 2025\nstatus: todo\n---\nbody\n';
     installDisk(disk);
@@ -160,11 +159,11 @@ describe('Audit-10 B1 — popup edit → gateway write preserves nested map + nu
       relPath,
       frontmatter: after, // legacy fallback (ignored when a delta is present)
       body: 'body',
-      callerId: `properties-popup:${docId}`,
-      docId,
+      callerId: `properties-popup:${relPath}`,
+      notePath: relPath,
       frontmatterDelta: delta,
     });
-    await flushMarkdownWrite(`properties-popup:${docId}`);
+    await flushMarkdownWrite(`properties-popup:${relPath}`);
 
     const written = lastWrite(captured)!;
     expect(written).toContain('status: done'); // the edit landed
@@ -180,7 +179,6 @@ describe('Audit-10 B1 — popup edit → gateway write preserves nested map + nu
 
   it('adding a new scalar key preserves an untouched numeric array', async () => {
     const relPath = 'Nums.md';
-    const docId = 'doc-nums';
     installDisk('---\nyears:\n  - 2024\n  - 2025\n---\nbody\n');
     markHydrated(relPath, false);
 
@@ -196,11 +194,11 @@ describe('Audit-10 B1 — popup edit → gateway write preserves nested map + nu
       relPath,
       frontmatter: after,
       body: 'body',
-      callerId: `properties-popup:${docId}`,
-      docId,
+      callerId: `properties-popup:${relPath}`,
+      notePath: relPath,
       frontmatterDelta: delta,
     });
-    await flushMarkdownWrite(`properties-popup:${docId}`);
+    await flushMarkdownWrite(`properties-popup:${relPath}`);
 
     const written = lastWrite(captured)!;
     expect(written).toContain('reviewed: yes');

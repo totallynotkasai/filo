@@ -100,7 +100,6 @@ export const linksStore = {
       faded: false,
       tags: [],
       boardId: boardStore.current.id,
-      contentId: createId(),
       content: text,
       createdAt: now,
       updatedAt: now,

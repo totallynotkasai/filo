@@ -84,16 +84,15 @@ describe('vaultExternalChanges — dirty editor + external frontmatter (Phase 3 
     // Open a dirty editor with the editor frontmatter cache holding
     // the editor's view of tags.
     documentStore.loadDocument({
-      docId: 'doc_A',
       filename: 'Notes.md',
       title: 'Notes',
       body: 'local body',
       htmlContent: '<p>local body</p>',
       richText: [],
     });
-    documentStore.setFrontmatter('doc_A', { tags: ['mine'] });
+    documentStore.setFrontmatter('Notes.md', { tags: ['mine'] });
     // Flip to dirty by simulating a content edit.
-    documentStore.updateContent('doc_A', '<p>local body+</p>', 'local body+');
+    documentStore.updateContent('Notes.md', '<p>local body+</p>', 'local body+');
   });
 
   afterEach(() => {
@@ -142,7 +141,7 @@ describe('vaultExternalChanges — dirty editor + external frontmatter (Phase 3 
     await toast?.actions?.[0].handler(); // Reload
 
     expect(fileTagsStore.tagsForFile('Notes.md')).toEqual(['theirs']);
-    const doc = documentStore.getDocument('doc_A');
+    const doc = documentStore.getDocument('Notes.md');
     expect(doc?.body).toBe('externally rewritten body');
     expect(doc?.isDirty).toBe(false);
   });
@@ -170,7 +169,7 @@ describe('vaultExternalChanges — dirty editor + external frontmatter (Phase 3 
     expect(fileTagsStore.tagsForFile('Notes.md')).toEqual(['mine']);
 
     // The editor doc is still in memory with the editor's body.
-    const doc = documentStore.getDocument('doc_A');
+    const doc = documentStore.getDocument('Notes.md');
     expect(doc?.body).toBe('local body+');
   });
 });

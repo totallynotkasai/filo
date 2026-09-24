@@ -4,7 +4,7 @@
  *
  * Pre-fix race:
  *   1. Timer fires → `writeMarkdownFile(args1)` enters the IPC await.
- *   2. Before the IPC resolves, `forceWriteForDocument(docId)` runs,
+ *   2. Before the IPC resolves, `forceWriteForDocument(notePath)` runs,
  *      calls `cancelMarkdownWrite` (no-op — timer already fired) and
  *      starts `writeMarkdownFile(args2)`.
  *   3. Two writes race; the OS arbitrates the order; the loser's bytes
@@ -81,7 +81,7 @@ describe('forceWriteForDocument — 6.2.H10 in-flight race', () => {
       frontmatter: {},
       body: 'AAA-body',
       callerId: 'caller-X',
-      docId: 'doc-Z',
+      notePath: 'Notes.md',
     };
     const argsB: WriteArgs = {
       vaultRoot: '/vault',
@@ -89,11 +89,11 @@ describe('forceWriteForDocument — 6.2.H10 in-flight race', () => {
       frontmatter: {},
       body: 'BBB-body',
       callerId: 'caller-X',
-      docId: 'doc-Z',
+      notePath: 'Notes.md',
     };
 
     // Register a force writer that returns argsB at call time.
-    registerForceWriter('caller-X', 'doc-Z', () => argsB);
+    registerForceWriter('caller-X', 'Notes.md', () => argsB);
 
     try {
       // Fire write A via the public writeMarkdownFile (simulating a
@@ -103,9 +103,9 @@ describe('forceWriteForDocument — 6.2.H10 in-flight race', () => {
       // Give write A a microtask to populate inFlightWrites.
       await new Promise<void>((r) => setTimeout(r, 0));
 
-      // Start a force-write for the same docId; pre-fix it would arm
+      // Start a force-write for the same note; pre-fix it would arm
       // write B WITHOUT waiting for A's IPC to settle.
-      const forcePromise = forceWriteForDocument('doc-Z');
+      const forcePromise = forceWriteForDocument('Notes.md');
 
       // Give B a microtask to either start or wait.
       await new Promise<void>((r) => setTimeout(r, 0));

@@ -17,7 +17,7 @@
  * `DocumentState` by filename, parse the new bytes once, and call
  * `documentStore.applyReloadFromDisk(...)` with `frontmatter` AND
  * `rawFrontmatter`. `applyReloadFromDisk` itself cancels armed body writers
- * for the docId before replacing state, so no separate
+ * for the notePath before replacing state, so no separate
  * `cancelMarkdownWritesForDocument` call is needed (the CI gate
  * `scripts/gates:reload-cancels-writes` forbids pairing them manually).
  *
@@ -69,7 +69,7 @@ export function syncOpenEditorsAfterDiskMutation(
     if (!doc) continue;
     const parsed = parseMarkdownFile(item.content);
     documentStore.applyReloadFromDisk(
-      doc.docId,
+      doc.filename,
       parsed.body,
       doc.richText,
       parsed.frontmatter,
@@ -101,7 +101,7 @@ export function reconcileOpenEditorFrontmatter(
     const doc = documentStore.findByFilename(item.path);
     if (!doc) continue;
     const parsed = parseMarkdownFile(item.content);
-    documentStore.setFrontmatter(doc.docId, parsed.frontmatter, parsed.rawFrontmatter);
+    documentStore.setFrontmatter(doc.filename, parsed.frontmatter, parsed.rawFrontmatter);
   }
 }
 

@@ -115,7 +115,7 @@ export function promptExternalEditOnSync(args: {
               dropPendingDelta(path);
               if (editorDoc) {
                 documentStore.applyReloadFromDisk(
-                  editorDoc.docId,
+                  editorDoc.filename,
                   next.content,
                   editorDoc.richText,
                   next.frontmatter,
@@ -185,7 +185,7 @@ export function __inFlightDriftPromptsForTests(): {
  */
 export async function recreateDeletedFile(
   rel: string,
-  editorDoc: { docId: string; body: string },
+  editorDoc: { filename: string; body: string },
   ctx: VaultContext,
   snapshot?: {
     fmSnapshot: Record<string, unknown>;
@@ -212,8 +212,8 @@ export async function recreateDeletedFile(
   // Prefer LIVE state when the doc is still loaded (honours edits made between
   // toast-open and the Keep-local click); fall back to the snapshot when the
   // doc was unloaded mid-flow.
-  const stillLoaded = documentStore.getDocument(editorDoc.docId) !== undefined;
-  const liveFm = stillLoaded ? documentStore.getFrontmatter(editorDoc.docId) : undefined;
+  const stillLoaded = documentStore.getDocument(editorDoc.filename) !== undefined;
+  const liveFm = stillLoaded ? documentStore.getFrontmatter(editorDoc.filename) : undefined;
   let fm: Record<string, unknown> | null = null;
   let body: string | null = null;
   if (stillLoaded && liveFm) {

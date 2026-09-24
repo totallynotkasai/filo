@@ -7,7 +7,7 @@
  * OUTGOING vault is still semantically active (the committed vault path hasn't
  * flipped yet). If a stale tile `$effect` from the outgoing vault fires
  * loadDocument before it unmounts, it would re-insert the old vault's content
- * under a docId; a later debounced write then emits that old vault-relative
+ * under its path; a later debounced write then emits that old vault-relative
  * path into the NEW vault's root (cross-vault file write).
  *
  * The fix: bind the store to the incoming vault at clear() time and refuse any
@@ -24,9 +24,8 @@ import { documentStore } from '@renderer/stores/document.svelte';
 import { setActiveVaultPath } from '@renderer/lib/vault/activeVaultPath';
 import type { RichTextAnnotation } from '@renderer/schema/document';
 
-function makeDoc(docId: string, filename: string) {
+function makeDoc(filename: string) {
   return {
-    docId,
     filename,
     title: filename.replace(/\.md$/, ''),
     body: 'body',
@@ -44,46 +43,46 @@ describe('Audit 3.3 — loadDocument cross-vault guard', () => {
   it('refuses a stale load while the live vault differs from the bound (incoming) vault', () => {
     // Vault A is live; loading a doc binds the store to A.
     setActiveVaultPath('/vault/A');
-    documentStore.loadDocument(makeDoc('a1', 'a.md'));
-    expect(documentStore.getDocument('a1')).toBeDefined();
+    documentStore.loadDocument(makeDoc('a.md'));
+    expect(documentStore.getDocument('a.md')).toBeDefined();
 
     // Swap begins: clear() empties the map and binds to the incoming vault B.
     // The committed vault path is STILL A (pre-swap runs in the outgoing vault).
     documentStore.clear('/vault/B');
-    expect(documentStore.getDocument('a1')).toBeUndefined();
+    expect(documentStore.getDocument('a.md')).toBeUndefined();
 
     // A stale vault-A tile fires loadDocument before unmounting. Live path is
     // still A, bound vault is B → the insert must be refused (a no-op).
-    const returned = documentStore.loadDocument(makeDoc('a2', 'stale.md'));
+    const returned = documentStore.loadDocument(makeDoc('stale.md'));
     expect(returned).toBeDefined(); // returns a state object for the caller
-    expect(documentStore.getDocument('a2')).toBeUndefined(); // but NOT stored
+    expect(documentStore.getDocument('stale.md')).toBeUndefined(); // but NOT stored
 
     // Once the swap commits and the active vault path flips to B, loads work.
     setActiveVaultPath('/vault/B');
-    documentStore.loadDocument(makeDoc('b1', 'b.md'));
-    expect(documentStore.getDocument('b1')).toBeDefined();
+    documentStore.loadDocument(makeDoc('b.md'));
+    expect(documentStore.getDocument('b.md')).toBeDefined();
   });
 
   it('adopts the live vault on first load when unbound (no swap fired — first open)', () => {
     setActiveVaultPath('/vault/X');
-    documentStore.loadDocument(makeDoc('x1', 'x.md'));
-    expect(documentStore.getDocument('x1')).toBeDefined();
+    documentStore.loadDocument(makeDoc('x.md'));
+    expect(documentStore.getDocument('x.md')).toBeDefined();
   });
 
   it('allows loads after reopening the same vault (bound path === live path)', () => {
     setActiveVaultPath('/vault/A');
-    documentStore.loadDocument(makeDoc('a1', 'a.md'));
+    documentStore.loadDocument(makeDoc('a.md'));
     // Reopen the same vault: clear binds to A; live path stays A after commit.
     documentStore.clear('/vault/A');
-    documentStore.loadDocument(makeDoc('a2', 'a2.md'));
-    expect(documentStore.getDocument('a2')).toBeDefined();
+    documentStore.loadDocument(makeDoc('a2.md'));
+    expect(documentStore.getDocument('a2.md')).toBeDefined();
   });
 
-  it('returns the existing state on a repeat load of the same docId (idempotent)', () => {
+  it('returns the existing state on a repeat load of the same path (idempotent)', () => {
     setActiveVaultPath('/vault/A');
-    const first = documentStore.loadDocument(makeDoc('a1', 'a.md'));
-    const second = documentStore.loadDocument(makeDoc('a1', 'a.md'));
+    const first = documentStore.loadDocument(makeDoc('a.md'));
+    const second = documentStore.loadDocument(makeDoc('a.md'));
     expect(second).toBe(first); // same object — short-circuits before the guard
-    expect(documentStore.getDocument('a1')).toBeDefined();
+    expect(documentStore.getDocument('a.md')).toBeDefined();
   });
 });

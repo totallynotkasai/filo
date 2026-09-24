@@ -23,11 +23,11 @@ describe('an HR-leading body survives remounts (MD-3)', () => {
 
   it('TextTile: mount → unmount → remount still shows the intro', async () => {
     const fs = recordingFilo({ 'Note.md': FILE });
-    const first = await mountTextTile({ tile: { id: 't1', contentId: 'd1', title: 'Note' } });
+    const first = await mountTextTile({ tile: { id: 't1', title: 'Note' } });
     expect(first.proseMirror().textContent).toContain('Some intro');
     await first.unmount();
     await drainDebounce();
-    const second = await mountTextTile({ tile: { id: 't1', contentId: 'd1', title: 'Note' } });
+    const second = await mountTextTile({ tile: { id: 't1', title: 'Note' } });
     expect(second.proseMirror().textContent).toContain('Some intro');
     await second.unmount();
     await drainDebounce();
@@ -37,8 +37,8 @@ describe('an HR-leading body survives remounts (MD-3)', () => {
   it('DocumentEditor cached branch + one keystroke keeps the intro on disk', async () => {
     const fs = recordingFilo({ 'Note.md': FILE });
     // The TextTile reads disk, seeding the FM cache + body-only store body.
-    const tile = await mountTextTile({ tile: { id: 't1', contentId: 'd1', title: 'Note' } });
-    const doc = await mountDocumentEditor({ docId: 'd1', docPath: 'Note.md' });
+    const tile = await mountTextTile({ tile: { id: 't1', title: 'Note' } });
+    const doc = await mountDocumentEditor({ docPath: 'Note.md' });
     expect(doc.proseMirror().textContent).toContain('Some intro');
     const ed = doc.editor();
     ed.commands.focus('end');

@@ -580,16 +580,8 @@ async function runRename(
         // file-rename case; the folder-rename case rebinds every indexed
         // descendant whose key sits under the moved prefix.
         renameVaultIndexUnderPrefix(oldRel, newRel);
-        // Keep every open DocumentState's filename pointing at the moved
-        // file. Exact-match handles the file-rename case
-        // (`Notes.md` → `Bar.md`); the prefix walk handles the folder-rename
-        // case where the rename target is a *folder* and the open document
-        // is a descendant (`Notes/Daily.md` → `Archive/Daily.md` when
-        // `Notes` is renamed to `Archive`). Without the prefix walk,
-        // TextTile.writeMarkdownToDisk keeps writing to the old descendant
-        // path (recreating the old folder via mkdir-recursive) until the
-        // editor is reloaded. Shared with the rename-cascade recovery retry.
-        documentStore.propagateRename(oldRel, newRel);
+        // Open documents were re-keyed to the new path by the
+        // renameAllPathKeys sweep above.
 
         // Propagate the rename into `activeRootFolder` if it pointed at the
         // renamed folder (or lived inside it). Without this, the next
@@ -849,7 +841,7 @@ async function performDelete(ctx: VaultContext, itemPath: string): Promise<boole
           // in-memory cascade below (it mutates the ACTIVE stores, NOT
           // main-side gated); the disk delete already landed, so report success.
           if (!isStillSameVault(deleteIdentity)) return true;
-          // Clean up Document Boards whose `contentId` points at a
+          // Clean up Document Boards whose `filePath` points at a
           // .md under the deleted path, even when the Document Board's
           // own `.board.json` lives outside the deleted tree. The
           // path-based loop above only catches boards whose file lives
@@ -893,17 +885,17 @@ async function performDelete(ctx: VaultContext, itemPath: string): Promise<boole
           // Drop documentStore entries for every .md under the deleted
           // path. The cascade above removed tile placements, but the in-
           // memory DocumentState still holds a stale body — a future
-          // hydrate that adopts the docId via `findByFilename` would pick
-          // up that body instead of finding the file genuinely missing.
+          // hydrate of that path would pick up that body instead of
+          // finding the file genuinely missing.
           const docsToUnload: string[] = [];
           for (const doc of documentStore.documents.values()) {
             if (!doc.filename) continue;
             const docPathLower = toPosix(doc.filename).toLowerCase();
             if (docPathLower === relLower || docPathLower.startsWith(relPrefix)) {
-              docsToUnload.push(doc.docId);
+              docsToUnload.push(doc.filename);
             }
           }
-          for (const docId of docsToUnload) documentStore.unloadDocument(docId);
+          for (const notePath of docsToUnload) documentStore.unloadDocument(notePath);
           // Flush the cascade immediately — see `rename` for the rationale.
           const deleteCascadeFlush = await boardCacheStore.flushAllDirty();
           // Same toast as rename: surface partial-failure

@@ -102,13 +102,11 @@ describe('vaultExternalChanges — external delete + dirty editor', () => {
   }
 
   function loadDirtyEditor(opts: {
-    docId: string;
     filename: string;
     body: string;
     title: string;
   }): void {
     documentStore.loadDocument({
-      docId: opts.docId,
       filename: opts.filename,
       title: opts.title,
       body: opts.body,
@@ -116,7 +114,7 @@ describe('vaultExternalChanges — external delete + dirty editor', () => {
       richText: [],
     });
     // updateContent flips isDirty=true; load alone is clean.
-    documentStore.updateContent(opts.docId, `<p>${opts.body}</p>`, opts.body);
+    documentStore.updateContent(opts.filename, `<p>${opts.body}</p>`, opts.body);
   }
 
   function installRecordingMock(handlerByChannel: Record<string, (...args: unknown[]) => unknown>): void {
@@ -130,7 +128,7 @@ describe('vaultExternalChanges — external delete + dirty editor', () => {
 
   it('surfaces a persistent toast when the file is deleted externally and the editor is dirty', async () => {
     await primeIndexWith('Notes.md', '# Notes\nbody');
-    loadDirtyEditor({ docId: 'doc_A', filename: 'Notes.md', body: 'dirty', title: 'Notes' });
+    loadDirtyEditor({ filename: 'Notes.md', body: 'dirty', title: 'Notes' });
 
     // File is now missing.
     installRecordingMock({
@@ -150,7 +148,7 @@ describe('vaultExternalChanges — external delete + dirty editor', () => {
 
   it('does NOT silently re-create the deleted file (no write fires before user chooses)', async () => {
     await primeIndexWith('Notes.md', '# Notes\nbody');
-    loadDirtyEditor({ docId: 'doc_A', filename: 'Notes.md', body: 'dirty', title: 'Notes' });
+    loadDirtyEditor({ filename: 'Notes.md', body: 'dirty', title: 'Notes' });
 
     installRecordingMock({
       'vault:read-file-text': () => ({ success: false }),
@@ -171,7 +169,7 @@ describe('vaultExternalChanges — external delete + dirty editor', () => {
 
   it('Reload action drops the in-memory document', async () => {
     await primeIndexWith('Notes.md', '# Notes\nbody');
-    loadDirtyEditor({ docId: 'doc_A', filename: 'Notes.md', body: 'dirty', title: 'Notes' });
+    loadDirtyEditor({ filename: 'Notes.md', body: 'dirty', title: 'Notes' });
 
     installRecordingMock({
       'vault:read-file-text': () => ({ success: false }),
@@ -181,18 +179,18 @@ describe('vaultExternalChanges — external delete + dirty editor', () => {
 
     const toast = uiStore.toasts.find((t) => t.text.includes('deleted externally'));
     expect(toast).toBeDefined();
-    expect(documentStore.getDocument('doc_A')).toBeDefined();
+    expect(documentStore.getDocument('Notes.md')).toBeDefined();
 
     // Invoke Reload.
     await toast?.actions?.[0].handler();
 
-    expect(documentStore.getDocument('doc_A')).toBeUndefined();
+    expect(documentStore.getDocument('Notes.md')).toBeUndefined();
   });
 
   it('Keep local action writes the file via vault:create-file-text (exclusive — Audit-19 EXT-3) with cached frontmatter + body', async () => {
     await primeIndexWith('Notes.md', '# Notes\nbody');
-    loadDirtyEditor({ docId: 'doc_A', filename: 'Notes.md', body: 'local body', title: 'Notes' });
-    documentStore.setFrontmatter('doc_A', { tags: ['local-tag'] });
+    loadDirtyEditor({ filename: 'Notes.md', body: 'local body', title: 'Notes' });
+    documentStore.setFrontmatter('Notes.md', { tags: ['local-tag'] });
 
     installRecordingMock({
       'vault:read-file-text': () => ({ success: false }),
@@ -217,12 +215,12 @@ describe('vaultExternalChanges — external delete + dirty editor', () => {
     expect(body).toContain('local body');
     expect(body).toContain('local-tag');
 
-    expect(documentStore.getDocument('doc_A')?.isDirty).toBe(false);
+    expect(documentStore.getDocument('Notes.md')?.isDirty).toBe(false);
   });
 
   it('Keep local routes write failures through errorBus.reportError', async () => {
     await primeIndexWith('Notes.md', '# Notes\nbody');
-    loadDirtyEditor({ docId: 'doc_A', filename: 'Notes.md', body: 'local', title: 'Notes' });
+    loadDirtyEditor({ filename: 'Notes.md', body: 'local', title: 'Notes' });
 
     const reported: ReportedError[] = [];
     __resetErrorBusForTests();
@@ -253,7 +251,7 @@ describe('vaultExternalChanges — external delete + dirty editor', () => {
     expect(reportedFailure).toBeDefined();
     expect(reportedFailure?.context).toBe('vaultExternalChanges');
     // The doc remains dirty because the write didn't land.
-    expect(documentStore.getDocument('doc_A')?.isDirty).toBe(true);
+    expect(documentStore.getDocument('Notes.md')?.isDirty).toBe(true);
   });
 });
 
@@ -494,7 +492,6 @@ describe('vaultExternalChanges — 6.2.H1: sync-frontmatter refreshes originalFr
     // Seed the editor's frontmatter cache as a clean disk read would (the
     // hydrate path does this via setFrontmatter with rawFrontmatter).
     documentStore.loadDocument({
-      docId: 'doc_H1',
       filename: 'Note.md',
       title: 'Note',
       body: 'body',
@@ -502,12 +499,12 @@ describe('vaultExternalChanges — 6.2.H1: sync-frontmatter refreshes originalFr
       richText: [],
     });
     documentStore.setFrontmatter(
-      'doc_H1',
+      'Note.md',
       { title: 'Hello', priority: 'low' },
       'title: Hello\npriority: low   # inline note',
     );
 
-    expect(documentStore.getOriginalFrontmatterSource('doc_H1')).toBe(
+    expect(documentStore.getOriginalFrontmatterSource('Note.md')).toBe(
       'title: Hello\npriority: low   # inline note',
     );
 
@@ -524,7 +521,7 @@ describe('vaultExternalChanges — 6.2.H1: sync-frontmatter refreshes originalFr
     // the inline comment). Pre-fix: it stayed at the pre-sync bytes, so a
     // body-only save's diff would re-emit `priority: high` and lose the
     // comment because the source the engine diffs against still said `low`.
-    const baseline = documentStore.getOriginalFrontmatterSource('doc_H1');
+    const baseline = documentStore.getOriginalFrontmatterSource('Note.md');
     expect(baseline).toBeDefined();
     expect(baseline).toContain('priority: high');
     expect(baseline).toContain('# inline note');
@@ -535,7 +532,7 @@ describe('vaultExternalChanges — 6.2.H1: sync-frontmatter refreshes originalFr
  * Audit-15 P2.1 — the Properties-popup-modified Reload handler
  * (`promptPropertiesPopupModified`) must thread `next.rawFrontmatter` into
  * `setFrontmatter`, mirroring the 6 sibling reload sites (L1/L13). Pre-fix it
- * called `setFrontmatter(docId, next.frontmatter)` with NO raw bytes, so
+ * called `setFrontmatter(path, next.frontmatter)` with NO raw bytes, so
  * `originalFrontmatterCache` stayed at the pre-external-edit source: a later
  * body-only save would diff fresh FM against the stale baseline and could lose
  * an external key's inline comment / quoting.
@@ -593,7 +590,6 @@ describe('vaultExternalChanges — P2.1: Properties-popup Reload refreshes origi
     await vaultIndexStore.applyChanges(['Note.md']);
 
     documentStore.loadDocument({
-      docId: 'doc_P21',
       filename: 'Note.md',
       title: 'Note',
       body: 'body',
@@ -601,7 +597,7 @@ describe('vaultExternalChanges — P2.1: Properties-popup Reload refreshes origi
       richText: [],
     });
     documentStore.setFrontmatter(
-      'doc_P21',
+      'Note.md',
       { title: 'Hello', priority: 'low' },
       'title: Hello\npriority: low   # inline note',
     );
@@ -632,7 +628,7 @@ describe('vaultExternalChanges — P2.1: Properties-popup Reload refreshes origi
     // P2.1: the baseline now reflects the post-external raw bytes (still carrying
     // the inline comment). Bite: pre-fix setFrontmatter omitted rawFrontmatter,
     // so this stayed at the pre-edit `priority: low` source.
-    const baseline = documentStore.getOriginalFrontmatterSource('doc_P21');
+    const baseline = documentStore.getOriginalFrontmatterSource('Note.md');
     expect(baseline).toBeDefined();
     expect(baseline).toContain('priority: high');
     expect(baseline).toContain('# inline note');
@@ -731,7 +727,7 @@ describe('vaultExternalChanges — 5.8: popup-dirty over a never-loaded doc stil
  * registry. So a doc whose 300ms debounce already fired during the prompt
  * window had nothing armed and the drain was a no-op: disk kept the external
  * content after the user chose "keep mine". The fix mirrors the single-file
- * Keep-local path — `forceWriteForDocument(docId)` per modified doc, which
+ * Keep-local path — `forceWriteForDocument(path)` per modified doc, which
  * reads the live editor body and commits even with no armed debounce.
  */
 describe('vaultExternalChanges — bulk "Keep all" force-writes each modified doc (Audit-7 H3)', () => {
@@ -797,26 +793,24 @@ describe('vaultExternalChanges — bulk "Keep all" force-writes each modified do
     // debounce. The distinct `flush` / `forceWrite` capture lists let us assert
     // the Keep-all path used the force-write route, not the (pre-fix) flushAll.
     rels.forEach((rel, i) => {
-      const docId = `doc_${i}`;
       documentStore.loadDocument({
-        docId,
         filename: rel,
         title: rel,
         body: `local ${i}`,
         htmlContent: `<p>local ${i}</p>`,
         richText: [],
       });
-      documentStore.updateContent(docId, `<p>local ${i}</p>`, `local ${i}`); // isDirty=true
+      documentStore.updateContent(rel, `<p>local ${i}</p>`, `local ${i}`); // isDirty=true
       __testRegisterFlusher(
         `w_${i}`,
         async () => {
-          flushed.push(docId);
+          flushed.push(rel);
         },
         {
           forceWrite: async () => {
-            forceWritten.push(docId);
+            forceWritten.push(rel);
           },
-          getDocId: () => docId,
+          getNotePath: () => rel,
         },
       );
     });
@@ -845,7 +839,7 @@ describe('vaultExternalChanges — bulk "Keep all" force-writes each modified do
     // Every modified doc was force-written through its registered writer —
     // pre-fix `forceWritten` would be empty (flushAll uses `flush`, and no
     // debounce was armed).
-    expect([...forceWritten].sort()).toEqual(rels.map((_, i) => `doc_${i}`).sort());
+    expect([...forceWritten].sort()).toEqual([...rels].sort());
   });
 });
 
@@ -917,7 +911,6 @@ describe('vaultExternalChanges — A8-H2(a): vault swap during applyChanges bail
 
   function primeAndLoadCleanEditor(): void {
     documentStore.loadDocument({
-      docId: 'doc_A',
       filename: 'Notes.md',
       title: 'Notes',
       body: 'original body',
@@ -956,7 +949,7 @@ describe('vaultExternalChanges — A8-H2(a): vault swap during applyChanges bail
 
     // Guard bailed before the reload-silently sink: the clean editor still
     // shows the original body, not the other generation's external content.
-    expect(documentStore.getDocument('doc_A')?.body).toBe('original body');
+    expect(documentStore.getDocument('Notes.md')?.body).toBe('original body');
   });
 
   it('control: WITHOUT a swap, the same external change DOES reload the clean editor', async () => {
@@ -980,6 +973,6 @@ describe('vaultExternalChanges — A8-H2(a): vault swap during applyChanges bail
 
     // No swap → the guard passes → reload-silently applies the external body.
     // This proves the guard test above isn't passing vacuously.
-    expect(documentStore.getDocument('doc_A')?.body).toBe('EXTERNAL CLOBBER');
+    expect(documentStore.getDocument('Notes.md')?.body).toBe('EXTERNAL CLOBBER');
   });
 });

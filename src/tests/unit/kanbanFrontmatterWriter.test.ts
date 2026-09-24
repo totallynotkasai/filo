@@ -56,7 +56,6 @@ describe('vaultPathForTile — honors the def filePath (Audit-10 B2)', () => {
       id: 't1',
       type: 'text',
       title: 'Card',
-      contentId: 'doc1',
       filePath: 'Folder/Card.md',
       tags: [],
     } as unknown as Tile;
@@ -72,7 +71,6 @@ describe('vaultPathForTile — honors the def filePath (Audit-10 B2)', () => {
 
   it('does not guess a path from an open document when no filePath is set', () => {
     documentStore.loadDocument({
-      docId: 'doc3',
       filename: 'Notes/Real.md',
       title: 'X',
       body: '',
@@ -83,12 +81,11 @@ describe('vaultPathForTile — honors the def filePath (Audit-10 B2)', () => {
       id: 't3',
       type: 'text',
       title: 'X',
-      contentId: 'doc3',
       tags: [],
     } as unknown as Tile;
     // A card's note is named only by its filePath; without one it has no note.
     expect(vaultPathForTile(tile)).toBeNull();
-    documentStore.unloadDocument('doc3');
+    documentStore.unloadDocument('Notes/Real.md');
   });
 
   it('does not guess ${title}.md at root when neither filePath nor a document exists', () => {
@@ -144,7 +141,6 @@ describe('updateTileFrontmatter — writes to the subfolder path end-to-end (Aud
       id: 't1',
       type: 'text',
       title: 'Card',
-      contentId: 'doc1',
       filePath: 'Folder/Card.md',
       tags: [],
     } as unknown as Tile;

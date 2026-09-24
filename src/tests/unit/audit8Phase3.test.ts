@@ -140,7 +140,6 @@ describe('A8-M2 — sync-frontmatter reconcile re-stamps the drift baseline', ()
     });
     await vaultIndexStore.applyChanges(['Open.md']);
     documentStore.loadDocument({
-      docId: 'doc_open',
       filename: 'Open.md',
       title: 'Open',
       body: BODY,
@@ -155,7 +154,7 @@ describe('A8-M2 — sync-frontmatter reconcile re-stamps the drift baseline', ()
     await slice.handleExternalMarkdownChanges(['Open.md']);
 
     // Editor body untouched (FM-only change), and the baseline re-anchored.
-    expect(documentStore.getDocument('doc_open')?.body).toBe(BODY);
+    expect(documentStore.getDocument('Open.md')?.body).toBe(BODY);
     expect(getBaseline('Open.md')).toEqual({ mtimeMs: 20, size: byteLen(v2) });
   });
 });
@@ -221,7 +220,7 @@ describe('A8-M3(a) — setNotesBody arms the write BEFORE the disk-FM seed await
   function makeRow(): TaskRow {
     return {
       placement: { tileId: 'tn', position: 0 },
-      tile: { id: 'tn', type: 'text', contentId: 'doc_notes', title: 'Task', tags: [] } as unknown as Tile,
+      tile: { id: 'tn', type: 'text', filePath: 'Task.md', title: 'Task', tags: [] } as unknown as Tile,
       completed: false,
       priority: 'none',
       dueDate: '',
@@ -250,7 +249,7 @@ describe('A8-M3(a) — setNotesBody arms the write BEFORE the disk-FM seed await
     // await, so this was false and a quit dropped the notes with a clean sentinel.
     expect(isPathPending('Task.md')).toBe(true);
     // The new body is already live in the cache, so the armed write captures it.
-    expect(documentStore.getDocument('doc_notes')?.body).toBe('My typed notes');
+    expect(documentStore.getDocument('Task.md')?.body).toBe('My typed notes');
 
     releaseRead();
     await p;

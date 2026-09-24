@@ -1,6 +1,6 @@
 import { UpdateCardFieldCommand } from '../../commands/index';
 import { historyStore } from '../../stores/history.svelte';
-import { noteDocId, noteFrontmatter, noteTitle, titleFromFrontmatter } from '../../stores/noteMeta';
+import { noteFrontmatter, noteTitle, titleFromFrontmatter } from '../../stores/noteMeta';
 
 /**
  * Sets the title of the note at `path` from a surface that isn't a tile (a
@@ -12,6 +12,6 @@ export async function setNoteTitle(path: string, title: string, undoBoardId: str
   if (!path || !next || next === noteTitle(path)) return;
   const prior = titleFromFrontmatter(noteFrontmatter(path));
   await historyStore
-    .execute(new UpdateCardFieldCommand(undoBoardId, path, noteDocId(path), { title: next }, { title: prior ?? '' }, `Rename to "${next}"`))
+    .execute(new UpdateCardFieldCommand(undoBoardId, path, path, { title: next }, { title: prior ?? '' }, `Rename to "${next}"`))
     .catch(() => {});
 }

@@ -96,7 +96,7 @@ describe('Phase 6.1.R5 — BOM preservation across a hydrate + write cycle', () 
       frontmatter: { title: 'B', status: 'updated' },
       body: 'body\n',
       callerId: 'properties-popup:test',
-      docId: null,
+      notePath: null,
     });
 
     const final = diskFiles.get(relPath);
@@ -121,7 +121,7 @@ describe('Phase 6.1.R5 — BOM preservation across a hydrate + write cycle', () 
       frontmatter: { title: 'B' },
       body: 'body\n',
       callerId: 'properties-popup:legacy',
-      docId: null,
+      notePath: null,
     });
 
     // With the legacy false-flag hydrate the BOM is lost. The regression

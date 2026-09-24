@@ -98,7 +98,6 @@ function makeTextDef(id: string, title: string, filePath: string): Record<string
     style: { headerColor: '', bodyColor: '' },
     tags: [],
     filePath,
-    contentId: id,
     content: '',
     createdAt: 0,
     updatedAt: 0,
@@ -341,9 +340,8 @@ describe('ReplaceAllCommand — open-editor sync (audit 2.1)', () => {
   // mounted TextTile / DocumentEditor does. The replace path must keep this
   // in-memory copy in step with disk; otherwise the editor's next debounce
   // re-saves its stale body and silently reverts the replace (or its undo).
-  function openEditorDoc(docId: string, relPath: string, body: string): void {
+  function openEditorDoc(relPath: string, body: string): void {
     documentStore.loadDocument({
-      docId,
       filename: relPath,
       title: relPath.replace(/\.md$/, ''),
       body,
@@ -360,7 +358,7 @@ describe('ReplaceAllCommand — open-editor sync (audit 2.1)', () => {
       { mm: makeMindMap('Board', 'mm', { ta: makeTextDef('ta', 'A', 'a.md') }) },
       { mm: 'a.board.json' },
     );
-    openEditorDoc('doc-a', 'a.md', 'hello frodo');
+    openEditorDoc('a.md', 'hello frodo');
 
     searchStore.setQuery('frodo');
     searchStore.setReplaceText('sam');
@@ -370,15 +368,15 @@ describe('ReplaceAllCommand — open-editor sync (audit 2.1)', () => {
 
     // execute must sync the open in-memory document to the new disk content.
     expect(filesystem['a.md']).toBe('hello sam');
-    expect(documentStore.getDocument('doc-a')?.body).toBe('hello sam');
-    expect(documentStore.getDocument('doc-a')?.isDirty).toBe(false);
+    expect(documentStore.getDocument('a.md')?.body).toBe('hello sam');
+    expect(documentStore.getDocument('a.md')?.isDirty).toBe(false);
 
     await historyStore.undo();
 
     // undo restores disk AND the open editor symmetrically.
     expect(filesystem['a.md']).toBe('hello frodo');
-    expect(documentStore.getDocument('doc-a')?.body).toBe('hello frodo');
-    expect(documentStore.getDocument('doc-a')?.isDirty).toBe(false);
+    expect(documentStore.getDocument('a.md')?.body).toBe('hello frodo');
+    expect(documentStore.getDocument('a.md')?.isDirty).toBe(false);
   });
 
   it('cancels an armed editor write for an affected path so it cannot re-clobber', async () => {
@@ -389,21 +387,21 @@ describe('ReplaceAllCommand — open-editor sync (audit 2.1)', () => {
       { mm: makeMindMap('Board', 'mm', { ta: makeTextDef('ta', 'A', 'a.md') }) },
       { mm: 'a.board.json' },
     );
-    openEditorDoc('doc-a', 'a.md', 'hello frodo');
+    openEditorDoc('a.md', 'hello frodo');
 
     // The editor has a debounced write armed carrying its own (soon-to-be
     // stale) body, registered as a force-writer for the doc — exactly as a
     // mounted TextTile does.
-    const callerId = 'text-tile:doc-a';
+    const callerId = 'text-tile:a.md';
     const args: WriteArgs = {
       vaultRoot: '/test/vault',
       relPath: 'a.md',
       frontmatter: {},
       body: 'hello frodo',
       callerId,
-      docId: 'doc-a',
+      notePath: 'a.md',
     };
-    registerForceWriter(callerId, 'doc-a', () => args);
+    registerForceWriter(callerId, 'a.md', () => args);
     scheduleMarkdownWrite(args);
     expect(isPathPending('a.md')).toBe(true);
 
@@ -413,7 +411,7 @@ describe('ReplaceAllCommand — open-editor sync (audit 2.1)', () => {
 
     // The armed write would have fired 'hello frodo' back over 'hello sam'.
     expect(isPathPending('a.md')).toBe(false);
-    expect(documentStore.getDocument('doc-a')?.body).toBe('hello sam');
+    expect(documentStore.getDocument('a.md')?.body).toBe('hello sam');
   });
 });
 

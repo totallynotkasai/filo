@@ -192,7 +192,6 @@ describe('Audit-13 L1 — clean-editor reload refreshes originalFrontmatterCache
 
   it('handleExternalChange on a CLEAN editor stores the threaded rawFrontmatter', () => {
     documentStore.loadDocument({
-      docId: 'd1',
       filename: 'N.md',
       title: 'N',
       body: 'old',
@@ -201,7 +200,7 @@ describe('Audit-13 L1 — clean-editor reload refreshes originalFrontmatterCache
     });
     // Clean editor → reload branch. Thread the disk FM source bytes.
     documentStore.handleExternalChange(
-      'd1',
+      'N.md',
       'new body',
       [],
       { added: 'val' },
@@ -209,29 +208,28 @@ describe('Audit-13 L1 — clean-editor reload refreshes originalFrontmatterCache
       { mtimeMs: 5, size: 10 },
     );
 
-    expect(documentStore.getOriginalFrontmatterSource('d1')).toBe(
+    expect(documentStore.getOriginalFrontmatterSource('N.md')).toBe(
       'added: val # keep this comment',
     );
   });
 
   it('refreshes the stale baseline to the new disk bytes when an external key is added', () => {
     documentStore.loadDocument({
-      docId: 'd2',
       filename: 'M.md',
       title: 'M',
       body: 'old',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter('d2', { a: 1 }, 'a: 1');
-    expect(documentStore.getOriginalFrontmatterSource('d2')).toBe('a: 1');
+    documentStore.setFrontmatter('M.md', { a: 1 }, 'a: 1');
+    expect(documentStore.getOriginalFrontmatterSource('M.md')).toBe('a: 1');
 
     // An external editor adds a commented key. The reload threads the FRESH
     // disk source so the byte-preservation baseline advances past the pre-edit
     // bytes; the old (undefined-passing) path left it at `a: 1`, dropping the
     // new key's comment on the next body-only save.
     documentStore.handleExternalChange(
-      'd2',
+      'M.md',
       'new body',
       [],
       { a: 1, b: 2 },
@@ -239,7 +237,7 @@ describe('Audit-13 L1 — clean-editor reload refreshes originalFrontmatterCache
       { mtimeMs: 9, size: 20 },
     );
 
-    expect(documentStore.getOriginalFrontmatterSource('d2')).toBe(
+    expect(documentStore.getOriginalFrontmatterSource('M.md')).toBe(
       'a: 1\nb: 2 # added externally',
     );
   });
@@ -405,7 +403,6 @@ describe('Audit-13 L15 — partial-read retry routes through the rename queue', 
     });
     await vaultIndexStore.applyChanges(['Notes.md']);
     documentStore.loadDocument({
-      docId: 'doc_A',
       filename: 'Notes.md',
       title: 'Notes',
       body: bigBody,

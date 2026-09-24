@@ -21,7 +21,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
  * temp-reverted (the A8 discipline):
  *   - A9-L2: the orphan commit rethrows a failed write (no swallowed catch),
  *            so UpdateOrphanFrontmatterCommand.execute() rejects.
- *   - A9-L3: a docId-less Task field edit routes through UpdateOrphanFrontmatter-
+ *   - A9-L3: a note-path-less Task field edit routes through UpdateOrphanFrontmatter-
  *            Command (a direct, undoable disk write) instead of the silent
  *            scheduleFrontmatterWrite(path, null) no-op.
  */
@@ -111,8 +111,8 @@ describe('A9-L2 — UpdateOrphanFrontmatterCommand rejects when the markdown wri
   });
 });
 
-// ── A9-L3 — docId-less Task field edit persists (no silent !fm no-op) ──────────
-describe('A9-L3 — docId-less Task field edit routes through an undoable orphan command', () => {
+// ── A9-L3 — note-path-less Task field edit persists (no silent !fm no-op) ──────────
+describe('A9-L3 — note-path-less Task field edit routes through an undoable orphan command', () => {
   let calls: Captured[];
 
   function makeWriter() {
@@ -136,7 +136,7 @@ describe('A9-L3 — docId-less Task field edit routes through an undoable orphan
     });
   }
 
-  // A row whose backing tile has NO contentId — the legacy, pre-live-cache
+  // A row whose backing tile has NO filePath — the legacy, pre-live-cache
   // shape that buildTaskFieldCommand returns null for (forcing the fallback).
   function makeRow(): TaskRow {
     return {
@@ -197,12 +197,12 @@ describe('A9-L3 — docId-less Task field edit routes through an undoable orphan
     await writer.updateRowField(makeRow(), { completed: true });
     await flushAllPendingFrontmatterWrites();
 
-    // Pre-fix: NO write fired — the null-docId schedule no-op'd on the empty
+    // Pre-fix: NO write fired — the null-note-path schedule no-op'd on the empty
     // index. Post-fix: the orphan command wrote the patched FM to disk.
     const write = calls.find(
       (c) => c.channel === 'vault:write-existing-file-text' && c.args[1] === 'Orphan.md',
     );
-    expect(write, 'docId-less field edit must reach disk, not silently drop').toBeDefined();
+    expect(write, 'note-path-less field edit must reach disk, not silently drop').toBeDefined();
     expect(write?.args[2] as string).toContain('completed: true');
     expect(write?.args[2] as string).toContain('task body');
   });

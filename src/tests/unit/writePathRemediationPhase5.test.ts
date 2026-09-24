@@ -91,13 +91,12 @@ describe('Phase 5.1 — Properties apply → write round-trip (untouched keys su
    */
   async function applyPropertyEdit(
     relPath: string,
-    docId: string,
     beforeFm: Record<string, unknown>,
     afterFm: Record<string, unknown>,
   ): Promise<void> {
     const cmd = new UpdatePropertiesCommand(
-      { kind: 'frontmatter', relPath, docId, fm: beforeFm },
-      { kind: 'frontmatter', relPath, docId, fm: afterFm },
+      { kind: 'frontmatter', relPath, notePath: relPath, fm: beforeFm },
+      { kind: 'frontmatter', relPath, notePath: relPath, fm: afterFm },
     );
     await cmd.execute();
   }
@@ -130,7 +129,7 @@ describe('Phase 5.1 — Properties apply → write round-trip (untouched keys su
   it('preserves a present-but-empty disk key (aliases:) when a different property is edited', async () => {
     installDisk('---\naliases:\npriority: low\n---\nbody\n');
 
-    await applyPropertyEdit('Note.md', 'doc-a', { priority: 'low' }, { priority: 'high' });
+    await applyPropertyEdit('Note.md', { priority: 'low' }, { priority: 'high' });
 
     const written = lastWrite(captured)!;
     expect(written).toContain('priority: high'); // the edit landed
@@ -141,7 +140,7 @@ describe('Phase 5.1 — Properties apply → write round-trip (untouched keys su
   it('preserves a full datetime on an untouched key', async () => {
     installDisk('---\ncreated: 2025-01-15T10:30:00Z\npriority: low\n---\nbody\n');
 
-    await applyPropertyEdit('Event.md', 'doc-b', { priority: 'low' }, { priority: 'high' });
+    await applyPropertyEdit('Event.md', { priority: 'low' }, { priority: 'high' });
 
     const written = lastWrite(captured)!;
     expect(written).toContain('created: 2025-01-15T10:30:00Z'); // not truncated to date
@@ -151,7 +150,7 @@ describe('Phase 5.1 — Properties apply → write round-trip (untouched keys su
   it('preserves a comment + key order on untouched keys', async () => {
     installDisk('---\n# important note\nzeta: 1\npriority: low\nalpha: 2\n---\nbody\n');
 
-    await applyPropertyEdit('Doc.md', 'doc-c', { priority: 'low' }, { priority: 'high' });
+    await applyPropertyEdit('Doc.md', { priority: 'low' }, { priority: 'high' });
 
     const written = lastWrite(captured)!;
     expect(written).toContain('# important note'); // comment survived
@@ -166,7 +165,7 @@ describe('Phase 5.1 — Properties apply → write round-trip (untouched keys su
     // cache never learned it. The delta-on-fresh-disk write reads it back.
     installDisk('---\npriority: low\nreviewed: true\n---\nbody\n');
 
-    await applyPropertyEdit('Ext.md', 'doc-d', { priority: 'low' }, { priority: 'high' });
+    await applyPropertyEdit('Ext.md', { priority: 'low' }, { priority: 'high' });
 
     const written = lastWrite(captured)!;
     expect(written).toContain('priority: high'); // owned key changed
@@ -181,7 +180,7 @@ describe('Phase 5.1 — Properties apply → write round-trip (untouched keys su
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     installDisk('---\n\tbad: yaml\n  dup: 1\n  dup: 2\n---\nbody\n');
 
-    await applyPropertyEdit('Bad.md', 'doc-e', {}, { priority: 'high' });
+    await applyPropertyEdit('Bad.md', {}, { priority: 'high' });
 
     // Audit-19 MD-2 — the refused edit leaves the bytes identical to disk, so the
     // gateway may skip the write entirely; either way disk keeps the block.
@@ -234,13 +233,11 @@ describe('Phase 5.1 — body save → write round-trip (untouched keys survive b
   });
 
   it('a clean body-only save emits the FM block verbatim (empty + datetime + comment) and lands the new body', async () => {
-    const docId = 'doc-body-1';
     const relPath = 'Notes/Body.md';
     // Seed the live cache from disk WITH the verbatim FM source bytes (what a
     // hydrate does) — the clean signal that lets a body-only save passthrough.
     const rawFm = '# top comment\naliases:\ncreated: 2025-01-15T10:30:00Z\nstatus: draft';
     documentStore.loadDocument({
-      docId,
       filename: relPath,
       title: 'Body',
       body: 'old body',
@@ -248,7 +245,7 @@ describe('Phase 5.1 — body save → write round-trip (untouched keys survive b
       richText: [],
     });
     documentStore.setFrontmatter(
-      docId,
+      relPath,
       { aliases: null, created: '2025-01-15T10:30:00Z', status: 'draft' },
       rawFm,
     );
@@ -260,10 +257,10 @@ describe('Phase 5.1 — body save → write round-trip (untouched keys survive b
       relPath,
       frontmatter: { aliases: null, created: '2025-01-15T10:30:00Z', status: 'draft' },
       body: 'edited body text',
-      callerId: `text-tile:${docId}`,
-      docId,
+      callerId: `text-tile:${relPath}`,
+      notePath: relPath,
     });
-    await flushMarkdownWrite(`text-tile:${docId}`);
+    await flushMarkdownWrite(`text-tile:${relPath}`);
 
     const written = lastWrite(captured)!;
     expect(written).toContain('# top comment'); // comment preserved verbatim
@@ -275,11 +272,9 @@ describe('Phase 5.1 — body save → write round-trip (untouched keys survive b
   });
 
   it('a body save after one FM-cache edit preserves the OTHER untouched keys (source-preserving baseline)', async () => {
-    const docId = 'doc-body-2';
     const relPath = 'Notes/Mixed.md';
     const rawFm = '# keep me\naliases:\ncreated: 2025-01-15T10:30:00Z';
     documentStore.loadDocument({
-      docId,
       filename: relPath,
       title: 'Mixed',
       body: 'old body',
@@ -287,7 +282,7 @@ describe('Phase 5.1 — body save → write round-trip (untouched keys survive b
       richText: [],
     });
     documentStore.setFrontmatter(
-      docId,
+      relPath,
       { aliases: null, created: '2025-01-15T10:30:00Z' },
       rawFm,
     );
@@ -296,17 +291,17 @@ describe('Phase 5.1 — body save → write round-trip (untouched keys survive b
     // One field changes via the cache (e.g. a PropertiesPopup mutation), which
     // drops the verbatim-clean signal but KEEPS the disk baseline. The body
     // write then re-serialises source-preservingly against that baseline.
-    documentStore.mergeFrontmatter(docId, { status: 'done' });
+    documentStore.mergeFrontmatter(relPath, { status: 'done' });
 
     scheduleMarkdownWrite({
       vaultRoot: '/vault',
       relPath,
-      frontmatter: documentStore.getFrontmatter(docId) ?? {},
+      frontmatter: documentStore.getFrontmatter(relPath) ?? {},
       body: 'new body content',
-      callerId: `text-tile:${docId}`,
-      docId,
+      callerId: `text-tile:${relPath}`,
+      notePath: relPath,
     });
-    await flushMarkdownWrite(`text-tile:${docId}`);
+    await flushMarkdownWrite(`text-tile:${relPath}`);
 
     const written = lastWrite(captured)!;
     expect(written).toContain('status: done'); // the cache edit landed

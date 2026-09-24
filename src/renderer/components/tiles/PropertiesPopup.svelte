@@ -10,7 +10,7 @@
    * Mutations go through `boardStore.updateTile`.
    */
   import { onMount, onDestroy, getContext } from 'svelte';
-  import type { Tile, TextTile } from '../../schema/index';
+  import type { Tile } from '../../schema/index';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
 
@@ -105,7 +105,7 @@
 
   function loadFromBacking(): void {
     if (tile.type === 'text') {
-      const docId = (tile as TextTile).contentId;
+      const notePath = resolveTextTileVaultPath(tile);
       const relPath = vaultRelativePath(tile);
       // Source order:
       //   1. documentStore live cache — set by whichever writer last touched
@@ -116,12 +116,12 @@
       // its writes overwrite the cache, so the user's view is always what
       // gets persisted.
       let fm: Record<string, unknown> | undefined;
-      if (docId) fm = documentStore.getFrontmatter(docId);
+      if (notePath) fm = documentStore.getFrontmatter(notePath);
       if (!fm && relPath) {
         const indexed = vaultIndexStore.getMetadata(relPath)?.frontmatter;
         if (indexed) {
           fm = indexed;
-          if (docId) documentStore.setFrontmatter(docId, indexed);
+          if (notePath) documentStore.setFrontmatter(notePath, indexed);
         }
       }
       rows = rowsFromObject(fm ?? {});
@@ -129,7 +129,7 @@
         beforeSnapshot = {
           kind: 'frontmatter',
           relPath,
-          docId: docId ?? null,
+          notePath: notePath ?? null,
           fm: JSON.parse(JSON.stringify(fm ?? {})) as Record<string, unknown>,
         };
       }
@@ -155,18 +155,18 @@
     const vaultRoot = vaultStore.path;
     const relPath = vaultRelativePath(tile);
     if (!vaultRoot || !relPath) return null;
-    const docId = (tile as TextTile).contentId;
+    const notePath = resolveTextTileVaultPath(tile);
     const obj = rowsToObject(rows);
     // The popup is canonical during edit: overwrite the live cache so the
     // next TextTile / DocumentEditor write assembles the file with the
     // user's chosen properties rather than reverting to its own snapshot.
-    if (docId) documentStore.setFrontmatter(docId, obj);
+    if (notePath) documentStore.setFrontmatter(notePath, obj);
     // Body source: prefer the live in-memory body (an open TextTile or
     // DocumentEditor keeps it current with un-debounced keystrokes), and
     // fall back to the watcher-canonical disk content. Without this, a
     // popup write while the user is typing would emit a stale body and
     // truncate the last few keystrokes.
-    const docState = docId ? documentStore.getDocument(docId) : null;
+    const docState = notePath ? documentStore.getDocument(notePath) : null;
     const body = docState?.body ?? vaultIndexStore.getMetadata(relPath)?.content ?? '';
     // Hydration is seeded by the disk read fired from onMount, which records
     // the correct hadBom in `fileState` AND seeds the drift baseline (the
@@ -190,7 +190,7 @@
       frontmatter: obj,
       body,
       callerId: flusherId,
-      docId: docId ?? null,
+      notePath: notePath ?? null,
       frontmatterDelta: delta,
       // Fire-time body-source decision (`body` above prefers
       // the live `docState?.body`); the gateway must not re-derive it from
@@ -469,7 +469,7 @@
       return {
         kind: 'frontmatter',
         relPath: beforeSnapshot.relPath,
-        docId: beforeSnapshot.docId,
+        notePath: beforeSnapshot.notePath,
         fm: obj,
       };
     }

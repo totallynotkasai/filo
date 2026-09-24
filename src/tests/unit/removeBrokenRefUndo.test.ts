@@ -36,7 +36,6 @@ function makeTile(id: string): TextTile {
     locked: false,
     faded: false,
     filePath: `Notes/Tile ${id}.md`,
-    contentId: `doc-${id}`,
     content: '',
     createdAt: 0,
     updatedAt: 0,

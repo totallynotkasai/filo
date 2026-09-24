@@ -55,15 +55,17 @@
   // swapping content underneath and staling the captured callerId/force-writer.
   let { tabId }: { tabId: string } = $props();
   let tab = $derived(tabStore.tabs.find((t) => t.id === tabId));
-  let docId = $derived(tab?.boardId ?? '');
-  let docState = $derived(docId ? documentStore.getDocument(docId) : undefined);
+  // The note this tab shows, by vault path; the rename cascade rewrites it
+  // when the file moves (see tabs.svelte.ts).
+  let notePath = $derived(tab?.notePath ?? '');
+  let docState = $derived(notePath ? documentStore.getDocument(notePath) : undefined);
 
   // BoardRouter intentionally skips boardStore loading for document tabs
   // (DocumentEditor reads from documentStore, not boardStore). The per-board
   // styling cascade still needs the Board record, so we look it up from the
-  // board cache directly — docId == boardId for Document boards.
+  // board cache by the tab's board id.
   let board = $derived(
-    docId ? (boardCacheStore.cache[docId]?.board as DocumentBoard | undefined) : undefined,
+    tab?.boardId ? (boardCacheStore.cache[tab.boardId]?.board as DocumentBoard | undefined) : undefined,
   );
   let settings = $derived(
     board?.settings ?? {
@@ -210,17 +212,17 @@
     // content. Never write that emptiness over the file we couldn't read; a
     // successful retry (clears `hydrateReadFailed`) resumes writes.
     if (hydrateReadFailed && !lastLoadedBody) return null;
-    if (documentStore.isReadOnly(docState.docId)) return null;
+    if (documentStore.isReadOnly(docState.filename)) return null;
     const vaultRoot = vaultStore.path;
     if (!vaultRoot) return null;
-    const fm = documentStore.getFrontmatter(docState.docId) ?? {};
+    const fm = documentStore.getFrontmatter(docState.filename) ?? {};
     return {
       vaultRoot,
       relPath: docState.filename,
       frontmatter: fm,
       body: editorMarkdown(editor),
       callerId,
-      docId: docState.docId,
+      notePath: docState.filename,
     };
   }
 
@@ -236,7 +238,7 @@
     // so branch on the result — markClean only on success.
     const result = await flushMarkdownWrite(callerId);
     if (result.ok) {
-      if (docState && !backingFileMissing) documentStore.markClean(docState.docId, callerId);
+      if (docState && !backingFileMissing) documentStore.markClean(docState.filename, callerId);
       return;
     }
     const err = result.error;
@@ -253,7 +255,7 @@
     // No reportError here: the gateway already surfaced the failure through
     // trackComponentWrite's save-error pipeline (toast + sentinel), so a
     // second toast would double-report.
-    if (docState) documentStore.markDirty(docState.docId, callerId);
+    if (docState) documentStore.markDirty(docState.filename, callerId);
   }
 
   onMount(() => {
@@ -276,8 +278,8 @@
         // the gateway markCleans this writer. Without it every autosave would
         // reload the editor's own content (wiping redo, breaking IME composition).
         lastLoadedBody = md;
-        if (docId) {
-          documentStore.updateContent(docId, html, md, callerId);
+        if (notePath) {
+          documentStore.updateContent(notePath, html, md, callerId);
         }
         scheduleMarkdownWrite();
       },
@@ -306,9 +308,9 @@
     composeEl.addEventListener('compositionstart', () => { isComposing = true; });
     composeEl.addEventListener('compositionend', () => { isComposing = false; });
 
-    callerId = `document-editor:${docId}`;
+    callerId = `document-editor:${notePath}`;
     void hydrateFromDisk();
-    registerForceWriter(callerId, docId, buildWriteArgs);
+    registerForceWriter(callerId, notePath, buildWriteArgs);
   });
 
   // Loads the document body from the in-memory store when available, falling
@@ -325,14 +327,14 @@
       // body-only store body yields {}, and seeding that would clobber the real
       // cached FM → a later body-only save erases the file's frontmatter block.
       // When unseeded, fall through to the authoritative disk read below.
-      if (docState?.body && documentStore.hasFrontmatter(docState.docId)) {
+      if (docState?.body && documentStore.hasFrontmatter(docState.filename)) {
         // Load the body-only store body VERBATIM. Re-parsing it would strip a
         // leading `---…---` rule pair as frontmatter and the first keystroke
         // would save the truncated body.
         lastLoadedBody = docState.body;
         isUpdatingFromStore = true;
         const result = loadMarkdownIntoEditor(editor, docState.body);
-        documentStore.setReadOnly(docState.docId, result.lossy);
+        documentStore.setReadOnly(docState.filename, result.lossy);
         isUpdatingFromStore = false;
         // `docState.body` is body-only, so a BOM sniff of it is always false;
         // marking unconditionally would clobber the hadBom a sibling view read
@@ -394,14 +396,14 @@
         lastLoadedBody = body;
         isUpdatingFromStore = true;
         const loadResult = loadMarkdownIntoEditor(editor, body);
-        documentStore.setReadOnly(docState.docId, loadResult.lossy);
+        documentStore.setReadOnly(docState.filename, loadResult.lossy);
         isUpdatingFromStore = false;
         // Mirror the loaded body into the document store so other views (a sibling
         // TextTile on the canvas) reuse the same content without re-reading disk.
         // Pass the parsed body (without frontmatter) to match TextTile's load convention,
         // and seed the live frontmatter cache (+ the verbatim bytes) so the next
         // writer doesn't revert it and a body-only save preserves its formatting.
-        documentStore.applyReloadFromDisk(docState.docId, body, [], frontmatter, rawFrontmatter);
+        documentStore.applyReloadFromDisk(docState.filename, body, [], frontmatter, rawFrontmatter);
       } catch (err) {
         console.warn('[DocumentEditor] Failed to read markdown file:', err);
       }
@@ -419,9 +421,8 @@
     // so a concurrent flushAllMarkdownWrites() snapshot still includes this
     // writer. Editor teardown is chained off the flush promise so the
     // synchronous editorMarkdown() capture inside writeMarkdownFile doesn't
-    // race with TipTap destroy. The callerId binding is stable; docId is
-    // reactive but the force-writer's docId field was captured at
-    // registration time, which suffices for matching.
+    // race with TipTap destroy. The callerId binding is stable, and a rename
+    // carries the force-writer's registered path along with the note.
     const id = callerId;
     void flushPendingMarkdownWrite().finally(() => {
       if (id) unregisterForceWriter(id);
@@ -445,7 +446,7 @@
     // Gate on THIS view's own writer, not the shared isDirty, so a
     // clean DocumentEditor still reloads a sibling TextTile's latest body
     // instead of diverging and clobbering it on the next debounce flush.
-    if (documentStore.isWriterDirty(docState.docId, callerId)) return;
+    if (documentStore.isWriterDirty(docState.filename, callerId)) return;
     // Never reload mid-IME-composition; the effect re-runs on
     // compositionend and picks up whatever landed meanwhile.
     if (isComposing) return;
@@ -455,12 +456,12 @@
     lastLoadedBody = body;
     isUpdatingFromStore = true;
     const result = loadMarkdownIntoEditor(editor, body ?? '', { preserveSelection: true });
-    documentStore.setReadOnly(docState.docId, result.lossy);
+    documentStore.setReadOnly(docState.filename, result.lossy);
     isUpdatingFromStore = false;
   });
 
   // Read-only state for the banner.
-  let readOnly = $derived(docState ? documentStore.isReadOnly(docState.docId) : false);
+  let readOnly = $derived(docState ? documentStore.isReadOnly(docState.filename) : false);
   // A note whose bytes aren't UTF-8 is non-editable until converted.
   let nonUtf8 = $derived(isNonUtf8(docState?.filename));
 
@@ -491,7 +492,7 @@
 
   function takeOwnership(): void {
     if (!docState) return;
-    const cid = docState.docId;
+    const cid = docState.filename;
     uiStore.openConfirm({
       title: 'Take ownership of this file?',
       body: "Filo will be able to edit and save this file, but formatting it can't preserve (for example hard-wrapped lines, callouts, wiki links, comments) will be rewritten or removed on the next save. Continue?",

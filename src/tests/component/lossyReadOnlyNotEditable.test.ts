@@ -21,22 +21,22 @@ import {
  */
 const HARD_WRAPPED = 'A paragraph that is\nhard-wrapped across lines.\n';
 
-async function assertFrozenThenOwned(m: Mounted, docId: string, rel: string, fs: ReturnType<typeof recordingFilo>): Promise<void> {
+async function assertFrozenThenOwned(m: Mounted, rel: string, fs: ReturnType<typeof recordingFilo>): Promise<void> {
   const ed = m.editor();
-  expect(documentStore.isReadOnly(docId)).toBe(true);
+  expect(documentStore.isReadOnly(rel)).toBe(true);
   expect(ed.isEditable).toBe(false);
   expect(m.target.textContent).toContain('Take ownership');
 
   const before = editorMarkdown(ed);
-  const bodyBefore = documentStore.getDocument(docId)?.body;
+  const bodyBefore = documentStore.getDocument(rel)?.body;
   ed.commands.selectAll();
   tiptapToolbar.setActiveEditor(ed);
   tiptapToolbar.toggleBold();
   tiptapToolbar.setHeading(1);
   expect(editorMarkdown(ed)).toBe(before);
-  expect(documentStore.getDocument(docId)?.body).toBe(bodyBefore);
+  expect(documentStore.getDocument(rel)?.body).toBe(bodyBefore);
 
-  documentStore.takeOwnership(docId);
+  documentStore.takeOwnership(rel);
   await settle();
   expect(ed.isEditable).toBe(true);
   ed.commands.focus('end');
@@ -51,15 +51,15 @@ describe('a lossy note is truly non-editable (UX-1)', () => {
 
   it('TextTile', async () => {
     const fs = recordingFilo({ 'Wrapped.md': HARD_WRAPPED });
-    const m = await mountTextTile({ tile: { id: 't1', contentId: 'd1', title: 'Wrapped' } });
-    await assertFrozenThenOwned(m, 'd1', 'Wrapped.md', fs);
+    const m = await mountTextTile({ tile: { id: 't1', title: 'Wrapped' } });
+    await assertFrozenThenOwned(m, 'Wrapped.md', fs);
     await m.unmount();
   });
 
   it('DocumentEditor', async () => {
     const fs = recordingFilo({ 'Wrapped.md': HARD_WRAPPED });
-    const m = await mountDocumentEditor({ docId: 'd2', docPath: 'Wrapped.md' });
-    await assertFrozenThenOwned(m, 'd2', 'Wrapped.md', fs);
+    const m = await mountDocumentEditor({ docPath: 'Wrapped.md' });
+    await assertFrozenThenOwned(m, 'Wrapped.md', fs);
     await m.unmount();
   });
 });

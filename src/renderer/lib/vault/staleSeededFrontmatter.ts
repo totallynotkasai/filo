@@ -1,5 +1,4 @@
 import { documentStore } from '../../stores/document.svelte';
-import { noteDocId } from '../../stores/noteMeta';
 
 /**
  * Drop the `documentStore` frontmatter cache for the note at `relPath` when it
@@ -22,8 +21,7 @@ import { noteDocId } from '../../stores/noteMeta';
  * to the prompt path, so no scheduled write can read the just-cleared cache.
  */
 export function dropStaleSeededFrontmatterCache(relPath: string): void {
-  const docId = noteDocId(relPath);
-  if (documentStore.getDocument(docId)) return;
-  if (!documentStore.hasFrontmatter(docId)) return;
-  documentStore.clearFrontmatter(docId);
+  if (documentStore.getDocument(relPath)) return;
+  if (!documentStore.hasFrontmatter(relPath)) return;
+  documentStore.clearFrontmatter(relPath);
 }

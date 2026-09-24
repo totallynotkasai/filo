@@ -8,11 +8,10 @@ import { documentStore } from '@renderer/stores/document.svelte';
  * (frontmatter + body) into updateContent would double the frontmatter on the
  * next serialize. This dev-only tripwire surfaces that loudly in dev/tests.
  */
-function open(docId: string): void {
+function open(title: string): void {
   documentStore.loadDocument({
-    docId,
-    filename: `${docId}.md`,
-    title: docId,
+    filename: `${title}.md`,
+    title,
     body: '',
     htmlContent: '',
     richText: [],
@@ -26,7 +25,7 @@ describe('documentStore.updateContent body-only tripwire (Phase 7.6)', () => {
   it('logs an error in dev when markdownBody carries a frontmatter block', () => {
     open('d');
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    documentStore.updateContent('d', '<p>x</p>', '---\ntitle: X\n---\nbody', 'w');
+    documentStore.updateContent('d.md', '<p>x</p>', '---\ntitle: X\n---\nbody', 'w');
     expect(spy).toHaveBeenCalledOnce();
     expect(String(spy.mock.calls[0][0])).toContain('body-only');
   });
@@ -34,7 +33,7 @@ describe('documentStore.updateContent body-only tripwire (Phase 7.6)', () => {
   it('does not log for a normal body-only string', () => {
     open('d');
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    documentStore.updateContent('d', '<p>x</p>', 'just body text', 'w');
+    documentStore.updateContent('d.md', '<p>x</p>', 'just body text', 'w');
     expect(spy).not.toHaveBeenCalled();
   });
 
@@ -42,15 +41,15 @@ describe('documentStore.updateContent body-only tripwire (Phase 7.6)', () => {
     open('d');
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     // Leading horizontal rule with no closing fence → not a frontmatter block.
-    documentStore.updateContent('d', '<p>x</p>', '---\n\nReal content, no closing fence', 'w');
+    documentStore.updateContent('d.md', '<p>x</p>', '---\n\nReal content, no closing fence', 'w');
     expect(spy).not.toHaveBeenCalled();
   });
 
   it('still applies the content update (tripwire is non-fatal)', () => {
     open('d');
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    documentStore.updateContent('d', '<p>x</p>', '---\ntitle: X\n---\nbody', 'w');
+    documentStore.updateContent('d.md', '<p>x</p>', '---\ntitle: X\n---\nbody', 'w');
     // The (malformed) body is still stored — the guard warns, it doesn't block.
-    expect(documentStore.getDocument('d')?.htmlContent).toBe('<p>x</p>');
+    expect(documentStore.getDocument('d.md')?.htmlContent).toBe('<p>x</p>');
   });
 });

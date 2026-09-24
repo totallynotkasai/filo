@@ -8,6 +8,7 @@ import { documentStore } from '../../stores/document.svelte';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import { vaultPathForTile } from './kanbanFrontmatterWriter';
 
+import { resolveTextTileVaultPath } from '../boards/textTilePath';
 export type KanbanSortBy = 'manual' | 'title' | 'created' | 'dueDate' | 'priority';
 
 export interface KanbanFilterProp {
@@ -81,9 +82,9 @@ export class KanbanFiltersAndSort {
       const haystack: string[] = [];
       haystack.push((tile.title || '').toLowerCase());
       for (const t of tags) haystack.push(String(t).toLowerCase());
-      const cid = (tile as Tile & { contentId?: string }).contentId;
-      if (cid) {
-        const body = documentStore.getDocument(cid)?.body ?? '';
+      const notePath = resolveTextTileVaultPath(tile);
+      if (notePath) {
+        const body = documentStore.getDocument(notePath)?.body ?? '';
         if (body) haystack.push(body.toLowerCase());
       }
       const path = vaultPathForTile(tile);

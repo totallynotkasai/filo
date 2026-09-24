@@ -26,7 +26,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
  *         guard the delta branch has (Audit-14 3.3): a partial read (opening
  *         fence, no closing fence) parses as "no frontmatter"; pre-guard the
  *         assemble stripped the on-disk YAML block AND the bogus `{}` seed was
- *         CACHED, poisoning every later save for the docId.
+ *         CACHED, poisoning every later save for the note.
  *
  * (5.1 / 5.4 corpus rows live in frontmatterInvariant.test.ts; 5.5 lives in
  * tagRewriter.test.ts.)
@@ -101,7 +101,7 @@ describe('Audit-16 5.2 — delta write verifies the in-chain read against the dr
     frontmatter: {},
     body: 'body\n',
     callerId: 'a16-5-2',
-    docId: null,
+    notePath: null,
     frontmatterDelta: { set: { status: 'closed' }, unset: [] },
   };
 
@@ -179,7 +179,6 @@ describe('Audit-16 5.3 — empty-cache seed re-read refuses a torn read (and nev
 
   it('refuses the write and does NOT seed {} when the seed read is torn mid-frontmatter', async () => {
     const relPath = 'TornSeed.md';
-    const docId = 'doc-torn';
     // The index knows this file HAS a frontmatter block…
     vaultIndexStore.restoreMetadata(
       relPath,
@@ -188,47 +187,45 @@ describe('Audit-16 5.3 — empty-cache seed re-read refuses a torn read (and nev
     // …but the seed read returns TRUNCATED bytes: opening fence, no closing fence.
     installDisk('---\ntitle: rea');
     markHydrated(relPath, false);
-    expect(documentStore.hasFrontmatter(docId)).toBe(false); // adoption shape: never seeded
+    expect(documentStore.hasFrontmatter(relPath)).toBe(false); // adoption shape: never seeded
 
     await expect(
-      writeMarkdownFile({ ...BODY_ONLY_ARGS, relPath, docId }),
+      writeMarkdownFile({ ...BODY_ONLY_ARGS, relPath, notePath: relPath }),
     ).rejects.toThrow(/closing fence|partial read/i);
 
     // Never wrote (the on-disk YAML block is not stripped)…
     expect(wroteFile(captured)).toBe(false);
     // …the bogus {} was NOT cached (pre-fix it poisoned every later save)…
-    expect(documentStore.hasFrontmatter(docId)).toBe(false);
+    expect(documentStore.hasFrontmatter(relPath)).toBe(false);
     // …and the failure is attributed so `.filo/.dirty` stays set.
     expect(isPathPending(relPath)).toBe(true);
   });
 
   it('control — a complete seed read still seeds the cache and preserves the FM (Audit-10 H2)', async () => {
     const relPath = 'CleanSeed.md';
-    const docId = 'doc-clean';
     const disk = '---\ntitle: Keep\n---\nold body\n';
     vaultIndexStore.restoreMetadata(relPath, parseMarkdown(relPath, disk));
     installDisk(disk);
     markHydrated(relPath, false);
 
-    await writeMarkdownFile({ ...BODY_ONLY_ARGS, relPath, docId });
+    await writeMarkdownFile({ ...BODY_ONLY_ARGS, relPath, notePath: relPath });
 
     const written = lastWriteBytes(captured)!;
     expect(written).toContain('title: Keep'); // FM preserved via the seeded cache
     expect(written).toContain('new body');
-    expect(documentStore.hasFrontmatter(docId)).toBe(true);
+    expect(documentStore.hasFrontmatter(relPath)).toBe(true);
     expect(isPathPending(relPath)).toBe(false);
   });
 
   it('control — a genuinely frontmatter-less file is not misclassified (no false positive)', async () => {
     const relPath = 'PlainSeed.md';
-    const docId = 'doc-plain';
     // Index records NO frontmatter for this path (rawFrontmatter empty), so the
     // guard must not fire even though the parse reports hasFrontmatter:false.
     vaultIndexStore.restoreMetadata(relPath, parseMarkdown(relPath, 'just a body\n'));
     installDisk('just a body\n');
     markHydrated(relPath, false);
 
-    await writeMarkdownFile({ ...BODY_ONLY_ARGS, relPath, docId });
+    await writeMarkdownFile({ ...BODY_ONLY_ARGS, relPath, notePath: relPath });
 
     expect(wroteFile(captured)).toBe(true);
     expect(isPathPending(relPath)).toBe(false);

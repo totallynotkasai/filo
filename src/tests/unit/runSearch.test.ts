@@ -43,7 +43,6 @@ function makeTextDef(id: string, title: string, filePath?: string): Record<strin
     style: { headerColor: '', bodyColor: '' },
     tags: [],
     filePath,
-    contentId: id,
     content: '',
     createdAt: 0,
     updatedAt: 0,

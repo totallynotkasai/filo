@@ -29,7 +29,7 @@ function textDef(id: string, title: string): TileDefinition {
     title,
     style: { headerColor: '', bodyColor: '', borderColor: '' } as never,
     tags: [],
-    contentId: `doc_${id}`,
+    filePath: `${title}.md`,
     content: '',
     createdAt: 0,
     updatedAt: 0,

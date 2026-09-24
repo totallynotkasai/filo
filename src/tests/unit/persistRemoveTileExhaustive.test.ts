@@ -77,7 +77,6 @@ function mkTextTile(id: string, boardId: string, title = id): TextTile {
     tags: [],
     locked: false,
     faded: false,
-    contentId: `doc-${id}`,
     content: '',
     filePath: `${title}.md`,
     createdAt: 0,

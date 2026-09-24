@@ -33,7 +33,7 @@ function makeTile(style: Partial<Tile['style']> = {}): Tile {
     id: 't1',
     type: 'text',
     title: 'X',
-    contentId: 'c1',
+    filePath: 'X.md',
     content: '',
     boardId: 'b1',
     position: { x: 0, y: 0 },
@@ -351,7 +351,6 @@ describe('effectiveDocumentStyle cascade', () => {
         accentColor: '',
         defaults: { document: { bodyColor: '#111111' } },
       },
-      contentId: 'c',
       content: '',
     } as unknown as Board;
     const out = effectiveDocumentStyle(settings, board);

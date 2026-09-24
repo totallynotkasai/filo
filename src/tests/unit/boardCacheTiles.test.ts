@@ -199,7 +199,6 @@ describe('boardCache — persistAddTile stamps filePath on text tiles', () => {
       tags: [],
       locked: false,
       faded: false,
-      contentId: `doc-${id}`,
       content: '',
       createdAt: 0,
       updatedAt: 0,
@@ -212,9 +211,6 @@ describe('boardCache — persistAddTile stamps filePath on text tiles', () => {
       { mm: 'map.board.json' },
     );
 
-    // Unique id per test prevents documentStore.contentId collisions
-    // (resolveTextTileVaultPath priority 2 would otherwise return the
-    // filename from a prior test's loadDocument call).
     const tile = makeTextTile('t-foo', 'Foo');
     await boardCacheStore.persistAddTile(tile);
 

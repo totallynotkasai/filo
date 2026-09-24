@@ -230,14 +230,13 @@ describe('Phase 3 / 3.3 — syncTile guard compares mtime AND size', () => {
 
     boardCacheStore.hydrate({ kb: makeKanbanWithTextTile() }, { kb: 'tasks.board.json' });
     documentStore.loadDocument({
-      docId: 't1',
       filename: 'note.md',
       title: 'Note',
       body: 'Local body to write',
       htmlContent: '',
       richText: [],
     });
-    documentStore.markDirty('t1');
+    documentStore.markDirty('note.md');
 
     const syncPromise = boardCacheStore.syncTile('t1');
     for (let i = 0; i < 20; i++) await Promise.resolve();
@@ -312,14 +311,13 @@ describe('Phase 3 / 3.4 — external-edit Reload applies current disk, not the c
   it('Reload reads the LATEST disk content even when the file changed again after detection', async () => {
     await vaultIndexStore.applyChanges(['Notes.md']); // index v1
     documentStore.loadDocument({
-      docId: 'doc_A',
       filename: 'Notes.md',
       title: 'Notes',
       body: 'dirty local',
       htmlContent: '<p>dirty local</p>',
       richText: [],
     });
-    documentStore.updateContent('doc_A', '<p>dirty local</p>', 'dirty local'); // isDirty = true
+    documentStore.updateContent('Notes.md', '<p>dirty local</p>', 'dirty local'); // isDirty = true
 
     // External edit #1 → v2; the watcher fires, surfacing the prompt with the
     // v2 snapshot captured as `next`.
@@ -340,7 +338,7 @@ describe('Phase 3 / 3.4 — external-edit Reload applies current disk, not the c
 
     // Pre-fix the Reload replayed the captured v2 snapshot; the fix re-reads
     // disk and applies the current v3 body.
-    expect(documentStore.getDocument('doc_A')?.body).toBe('body3');
+    expect(documentStore.getDocument('Notes.md')?.body).toBe('body3');
   });
 });
 

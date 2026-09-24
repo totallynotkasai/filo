@@ -109,9 +109,7 @@ describe('tagRewriteSweep — syncs open editors (Phase 6.1.R1)', () => {
     const after = `---\ntags:\n  - review\n---\nA note tagged draft.\n`;
     fs.files.set(relPath, before);
 
-    const docId = 'doc-tag-sweep-sync';
     documentStore.loadDocument({
-      docId,
       filename: relPath,
       title: 'notes',
       body: 'A note tagged draft.\n',
@@ -119,7 +117,7 @@ describe('tagRewriteSweep — syncs open editors (Phase 6.1.R1)', () => {
       richText: [],
     });
     documentStore.setFrontmatter(
-      docId,
+      relPath,
       { tags: ['draft'] },
       '---\ntags:\n  - draft\n---',
     );
@@ -139,11 +137,11 @@ describe('tagRewriteSweep — syncs open editors (Phase 6.1.R1)', () => {
 
     // Phase 6.1.R1 — the sweep MUST have synced the open editor with the new
     // bytes. Frontmatter cache now carries the renamed tag; body is unchanged.
-    const fm = documentStore.getFrontmatter(docId);
+    const fm = documentStore.getFrontmatter(relPath);
     expect(fm).toEqual({ tags: ['review'] });
     // Body is unchanged on a tag rewrite (only frontmatter mutates), but the
     // doc state should still have been reloaded — assert via the parsed body.
-    expect(documentStore.getDocument(docId)?.body).toBe('A note tagged draft.\n');
+    expect(documentStore.getDocument(relPath)?.body).toBe('A note tagged draft.\n');
   });
 
   it('files without an open editor are still rewritten on disk (helper is a no-op there)', async () => {

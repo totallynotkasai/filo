@@ -25,7 +25,7 @@ function makeTile(id: string, x: number, y: number, w = 240, h = 160): Tile {
     boardId: 'b1',
     createdAt: 1,
     updatedAt: 1,
-    contentId: 'c1',
+    filePath: `${id}.md`,
     content: '',
   } as Tile;
 }

@@ -5,7 +5,6 @@ import { fileNameSafe, getActiveContentFolder, nextFreeMdPath } from '../vault/c
 import { documentStore } from '../../stores/document.svelte';
 import { vaultStore } from '../../stores/vault.svelte';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
-import { noteIdFor } from '../../stores/noteIds';
 import { reportError } from '../utils/errorBus';
 import { splitFrontmatterSource } from '../vault/frontmatterRead';
 
@@ -104,16 +103,14 @@ export async function seedTextFileForNewTile(
         await vaultStore.refreshTree();
       }
     }
-    const docId = noteIdFor(filename);
     if (created !== null) {
       // The tile's editor mounted with the tile and may have read the path
       // before this create landed (and found nothing). Record what was just
       // written so its first save keeps the new note's `title:`.
-      documentStore.setFrontmatter(docId, { title }, splitFrontmatterSource(created).rawFrontmatter);
+      documentStore.setFrontmatter(filename, { title }, splitFrontmatterSource(created).rawFrontmatter);
     }
-    if (!documentStore.getDocument(docId)) {
+    if (!documentStore.getDocument(filename)) {
       documentStore.loadDocument({
-        docId,
         filename,
         title,
         body,

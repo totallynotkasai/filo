@@ -1,11 +1,10 @@
-import type { BoardType } from '../../../shared/types';
 import { documentStore } from '../../stores/document.svelte';
 import { tabStore } from '../../stores/tabs.svelte';
-import { noteDocId, noteTitle } from '../../stores/noteMeta';
+import { noteTitle } from '../../stores/noteMeta';
 
 /**
  * Opens the note at `path` in a Document tab, or focuses the tab that already
- * shows it. Every view of one path shares one document (see `noteIds`).
+ * shows it. Every view of one path shares one document, keyed by that path.
  *
  * The placeholder `DocumentState` has no body; the editor reads the file on
  * mount. It is registered only when no view holds the note yet, so a loaded
@@ -13,11 +12,10 @@ import { noteDocId, noteTitle } from '../../stores/noteMeta';
  */
 export function openNoteInDocumentTab(path: string): void {
   if (!path) return;
-  const docId = noteDocId(path);
   const title = noteTitle(path);
-  if (!documentStore.getDocument(docId)) {
+  const existing = documentStore.getDocument(path);
+  if (!existing) {
     documentStore.loadDocument({
-      docId,
       filename: path,
       title,
       body: '',
@@ -25,6 +23,6 @@ export function openNoteInDocumentTab(path: string): void {
       richText: [],
     });
   }
-  documentStore.openDocumentTab(docId);
-  tabStore.open(docId, title || 'Document', 'document' as BoardType);
+  documentStore.openDocumentTab(path);
+  tabStore.openNote(existing?.filename ?? path, title || 'Document');
 }

@@ -24,7 +24,7 @@ function makeTextTile(content: string): Tile {
     boardId: 'b1',
     createdAt: 1,
     updatedAt: 1,
-    contentId: 'c1',
+    filePath: 'X.md',
     content,
   } as Tile;
 }

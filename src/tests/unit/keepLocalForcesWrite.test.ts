@@ -10,7 +10,7 @@
  * in memory while the external file content stayed on disk — silent loss.
  *
  * Fix: a parallel `forceWrite` callback per writer that bypasses the
- * writeTimer guard, looked up by docId via `forceWriteForDocument`.
+ * writeTimer guard, looked up by note path via `forceWriteForDocument`.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -28,7 +28,7 @@ describe('forceWriteForDocument (Sprint 35.1)', () => {
     __resetMarkdownFlushersForTests();
   });
 
-  it('calls the forceWrite callback for writers matching the docId, bypassing the flush short-circuit', async () => {
+  it('calls the forceWrite callback for writers matching the note path, bypassing the flush short-circuit', async () => {
     let flushCalls = 0;
     let forceCalls = 0;
 
@@ -41,10 +41,10 @@ describe('forceWriteForDocument (Sprint 35.1)', () => {
       forceWrite: async () => {
         forceCalls++;
       },
-      getDocId: () => 'doc-A',
+      getNotePath: () => 'Notes/A.md',
     });
 
-    const result = await forceWriteForDocument('doc-A');
+    const result = await forceWriteForDocument('Notes/A.md');
 
     expect(forceCalls).toBe(1);
     expect(flushCalls).toBe(0);
@@ -52,7 +52,7 @@ describe('forceWriteForDocument (Sprint 35.1)', () => {
     expect(result.failed).toEqual([]);
   });
 
-  it('skips writers whose docId does not match', async () => {
+  it('skips writers whose note path does not match', async () => {
     let forceCallsA = 0;
     let forceCallsB = 0;
 
@@ -60,16 +60,16 @@ describe('forceWriteForDocument (Sprint 35.1)', () => {
       forceWrite: async () => {
         forceCallsA++;
       },
-      getDocId: () => 'doc-A',
+      getNotePath: () => 'Notes/A.md',
     });
     registerMarkdownFlusher('text-tile:t2', async () => {}, {
       forceWrite: async () => {
         forceCallsB++;
       },
-      getDocId: () => 'doc-B',
+      getNotePath: () => 'Notes/B.md',
     });
 
-    await forceWriteForDocument('doc-A');
+    await forceWriteForDocument('Notes/A.md');
 
     expect(forceCallsA).toBe(1);
     expect(forceCallsB).toBe(0);
@@ -85,21 +85,36 @@ describe('forceWriteForDocument (Sprint 35.1)', () => {
     registerMarkdownFlusher('kanban:k1', async () => {
       flushCalls++;
     }, {
-      getDocId: () => 'doc-A',
+      getNotePath: () => 'Notes/A.md',
     });
 
-    await forceWriteForDocument('doc-A');
+    await forceWriteForDocument('Notes/A.md');
 
     expect(flushCalls).toBe(1);
+  });
+
+  it('matches the note path case-insensitively', async () => {
+    let forceCalls = 0;
+    registerMarkdownFlusher('text-tile:t1', async () => {}, {
+      forceWrite: async () => {
+        forceCalls++;
+      },
+      getNotePath: () => 'Notes/A.md',
+    });
+
+    const result = await forceWriteForDocument('notes/a.md');
+
+    expect(forceCalls).toBe(1);
+    expect(result.ok).toBe(1);
   });
 
   it('returns ok=0 and empty failed when no writers match', async () => {
     registerMarkdownFlusher('text-tile:t1', async () => {}, {
       forceWrite: async () => {},
-      getDocId: () => 'doc-A',
+      getNotePath: () => 'Notes/A.md',
     });
 
-    const result = await forceWriteForDocument('doc-other');
+    const result = await forceWriteForDocument('Notes/Other.md');
 
     expect(result.ok).toBe(0);
     expect(result.failed).toEqual([]);
@@ -112,16 +127,16 @@ describe('forceWriteForDocument (Sprint 35.1)', () => {
       forceWrite: async () => {
         calls.push('text-tile');
       },
-      getDocId: () => 'doc-A',
+      getNotePath: () => 'Notes/A.md',
     });
-    registerMarkdownFlusher('document-editor:doc-A', async () => {}, {
+    registerMarkdownFlusher('document-editor:Notes/A.md', async () => {}, {
       forceWrite: async () => {
         calls.push('document-editor');
       },
-      getDocId: () => 'doc-A',
+      getNotePath: () => 'Notes/A.md',
     });
 
-    const result = await forceWriteForDocument('doc-A');
+    const result = await forceWriteForDocument('Notes/A.md');
 
     expect(calls.sort()).toEqual(['document-editor', 'text-tile']);
     expect(result.ok).toBe(2);
@@ -134,14 +149,14 @@ describe('forceWriteForDocument (Sprint 35.1)', () => {
       forceWrite: async () => {
         throw errA;
       },
-      getDocId: () => 'doc-A',
+      getNotePath: () => 'Notes/A.md',
     });
     registerMarkdownFlusher('text-tile:t2', async () => {}, {
       forceWrite: async () => {},
-      getDocId: () => 'doc-A',
+      getNotePath: () => 'Notes/A.md',
     });
 
-    const result = await forceWriteForDocument('doc-A');
+    const result = await forceWriteForDocument('Notes/A.md');
 
     expect(result.ok).toBe(1);
     expect(result.failed).toHaveLength(1);
@@ -149,10 +164,10 @@ describe('forceWriteForDocument (Sprint 35.1)', () => {
     expect(result.failed[0].error).toBe(errA);
   });
 
-  it('handles empty docId gracefully', async () => {
+  it('handles an empty note path gracefully', async () => {
     registerMarkdownFlusher('text-tile:t1', async () => {}, {
       forceWrite: async () => {},
-      getDocId: () => 'doc-A',
+      getNotePath: () => 'Notes/A.md',
     });
 
     const result = await forceWriteForDocument('');

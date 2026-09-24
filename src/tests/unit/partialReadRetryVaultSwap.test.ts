@@ -82,7 +82,6 @@ describe('vaultExternalChanges — partial-read retry timer cleanup (Phase A.5)'
     await vaultIndexStore.applyChanges(['Notes.md']);
 
     documentStore.loadDocument({
-      docId: 'doc_A',
       filename: 'Notes.md',
       title: 'Notes',
       body: bigBody,

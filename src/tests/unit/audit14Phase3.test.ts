@@ -90,7 +90,7 @@ describe('AUDIT-14 Phase 3 — delta write EOL + truncation guard', () => {
       frontmatter: { completed: false },
       body: 'body line\r\n',
       callerId: 'eol-test',
-      docId: null,
+      notePath: null,
       frontmatterDelta: { set: { completed: true }, unset: [] },
     });
 
@@ -115,7 +115,7 @@ describe('AUDIT-14 Phase 3 — delta write EOL + truncation guard', () => {
       frontmatter: { priority: 'low' },
       body: 'body\n',
       callerId: 'eol-test-2',
-      docId: null,
+      notePath: null,
       frontmatterDelta: { set: { priority: 'high' }, unset: [] },
     });
 
@@ -144,7 +144,7 @@ describe('AUDIT-14 Phase 3 — delta write EOL + truncation guard', () => {
         frontmatter: {},
         body: 'body\n',
         callerId: 'trunc-test',
-        docId: null,
+        notePath: null,
         frontmatterDelta: { set: { status: 'closed' }, unset: [] },
       }),
     ).rejects.toThrow(/closing fence|partial read/i);
@@ -168,7 +168,7 @@ describe('AUDIT-14 Phase 3 — delta write EOL + truncation guard', () => {
       frontmatter: {},
       body: 'just a body, no fm\n',
       callerId: 'plain-test',
-      docId: null,
+      notePath: null,
       frontmatterDelta: { set: { status: 'closed' }, unset: [] },
     });
 
@@ -196,7 +196,7 @@ describe('AUDIT-14 Phase 3 — delta write EOL + truncation guard', () => {
       frontmatter: {},
       body: 'body with no frontmatter anymore\n',
       callerId: 'removed-test',
-      docId: null,
+      notePath: null,
       frontmatterDelta: { set: { status: 'closed' }, unset: [] },
     });
 

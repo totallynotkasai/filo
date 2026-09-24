@@ -18,6 +18,7 @@ import { withDrainedWrites, PendingWritesFailedError } from '../vault/vaultOpera
 import { normalizePath } from '../utils/path';
 import type { TaskRow } from '../tasks/taskListModel';
 
+import { resolveTextTileVaultPath } from '../boards/textTilePath';
 /**
  * Task-deletion slice for TaskListBoard. Owns single-row deletion (with the
  * subtask cascade context menu), the "delete all completed" bulk path, and
@@ -50,7 +51,7 @@ export interface TaskDeletionDeps {
   getTilesById: () => Record<string, Tile>;
   /**
    * Builds an UpdateTaskFieldCommand for the "keep subtasks" branch.
-   * Returns null when the tile has no docId (predates live-cache
+   * Returns null when the tile has no notePath (predates live-cache
    * architecture); callers fall back to the placement-only delete.
    */
   buildTaskFieldCommand: (
@@ -236,7 +237,7 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
 
   async function performTaskFileDelete(boardId: string, tileId: string, tile: Tile): Promise<void> {
     const vaultRoot = normalizePath(vaultStore.path);
-    const contentId = (tile as Tile & { contentId?: string }).contentId ?? tileId;
+    const notePath = resolveTextTileVaultPath(tile);
     try {
       // Drain pending editor writes BEFORE snapshotting so the captured body
       // reflects post-flush disk state (mirrors TileHeader's delete path).
@@ -256,7 +257,7 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
           await historyStore.execute(new DeleteTaskCommand(boardId, tileId));
         } else {
           // Unload the doc so an open editor can't rewrite the file we delete.
-          documentStore.unloadDocument(contentId);
+          if (notePath) documentStore.unloadDocument(notePath);
           await historyStore.execute(
             new DeleteTaskCommand(boardId, tileId, { fileSnapshot: snapshot, vaultRoot }),
           );

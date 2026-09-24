@@ -14,6 +14,7 @@ import {
   UpdateOrphanFrontmatterCommand,
 } from '../../commands/index';
 
+import { resolveTextTileVaultPath } from '../boards/textTilePath';
 export interface KanbanMultiSelectDeps {
   /** The pane's selection scope. Bulk actions and the click-toggle both
    * mutate THIS scope, so two panes opening the same Kanban board don't
@@ -198,8 +199,8 @@ export class KanbanMultiSelect {
       if (!tile) continue;
       const path = this.deps.vaultPathForTile(tile);
       if (!path) continue;
-      const docId = (tile as Tile & { contentId?: string }).contentId ?? null;
-      const fm = (docId ? documentStore.getFrontmatter(docId) : undefined)
+      const notePath = resolveTextTileVaultPath(tile);
+      const fm = (notePath ? documentStore.getFrontmatter(notePath) : undefined)
         ?? (vaultIndexStore.getMetadata(path)?.frontmatter ?? {});
       const existing = Array.isArray((fm as Record<string, unknown>).tags)
         ? ((fm as Record<string, unknown>).tags as unknown[]).map((t) => String(t).replace(/^#/, ''))
@@ -208,8 +209,8 @@ export class KanbanMultiSelect {
       const nextTags = [...existing, norm];
       const desc = `Add #${norm}`;
       commands.push(
-        docId
-          ? new UpdateCardFieldCommand(boardId, path, docId, { tags: nextTags }, { tags: existing }, desc)
+        notePath
+          ? new UpdateCardFieldCommand(boardId, path, notePath, { tags: nextTags }, { tags: existing }, desc)
           : new UpdateOrphanFrontmatterCommand(boardId, path, { tags: nextTags }, { tags: existing }, desc),
       );
     }

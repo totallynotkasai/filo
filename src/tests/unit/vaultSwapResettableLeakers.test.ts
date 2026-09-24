@@ -13,10 +13,9 @@ import { uiStore } from '@renderer/stores/ui.svelte';
  *     Reload/Keep-local promise dedup map. Without reset, an unresolved
  *     entry from the outgoing vault would block a fresh prompt for the
  *     same path in the new vault.
- *   - `fileTags.readOnlyTagToastShown`: docId-keyed Set that suppresses
+ *   - `fileTags.readOnlyTagToastShown`: note-keyed Set that suppresses
  *     duplicate "tag updated but body not saved" toasts. Without reset,
- *     a docId that coincides across vaults (id collision, in-memory
- *     reuse) would suppress a legitimate toast.
+ *     a note path that exists in both vaults would suppress a legitimate toast.
  *   - `markdownFileWriter.testFlushers`: the test-only flusher registry.
  *     Defense-in-depth for tests that fire `fireVaultSwap` between
  *     fixtures and rely on the gateway's own per-test reset NOT having

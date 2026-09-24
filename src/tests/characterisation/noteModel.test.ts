@@ -29,6 +29,8 @@ import {
   sidebarRenameMessage,
   addTag,
   undo,
+  openNoteFromSidebar,
+  showBoard,
   $$,
 } from './harness/actions';
 
@@ -228,5 +230,45 @@ describe('board files', () => {
     await reopenVault(app);
     await quiesce();
     expect(app.read('Old.board.json')).toBe(old);
+  });
+});
+
+describe('the path is the note\'s identity', () => {
+  it('a note open in a tile and a Document tab keeps saving to its new name after a rename', async () => {
+    const app = await startApp({ 'Plan.md': '---\ntitle: Plan\n---\nFirst\n' });
+    await createBoard(app, 'mindmap');
+    await placeNoteOnBoard(app, 'mindmap', 'Plan.md');
+    await openNoteFromSidebar(app, 'Plan.md');
+    const [docEditor] = editors($$(app.el, '.document-board')[0]);
+    await typeAtEnd(docEditor, ' second');
+    await quiesce();
+
+    await renameInSidebar(app, 'Plan.md', 'Renamed');
+    await waitFor(() => app.exists('Renamed.md'), 'the renamed file');
+    await typeAtEnd(docEditor, ' third');
+    await quiesce();
+
+    expect(app.exists('Plan.md')).toBe(false);
+    expect(app.read('Renamed.md')).toBe('---\ntitle: Plan\n---\nFirst second third\n');
+    await showBoard(app, 'mindmap');
+    await waitFor(() => mindMapTiles(app)[0]?.text === 'First second third', 'the tile to show every edit');
+    expect(mindMapTiles(app)[0].title).toBe('Plan');
+  });
+
+  it('renaming the folder above an open note moves it, and later edits land in the moved file', async () => {
+    const app = await startApp({ 'Notes/Daily.md': 'Monday\n' });
+    await createBoard(app, 'mindmap');
+    await placeNoteOnBoard(app, 'mindmap', 'Notes/Daily.md');
+    const [tileEditor] = editors($$(app.el, '.mindmap-board')[0]);
+
+    await renameInSidebar(app, 'Notes', 'Archive');
+    await waitFor(() => app.exists('Archive/Daily.md'), 'the moved note');
+    await typeAtEnd(tileEditor, ' Tuesday');
+    await quiesce();
+
+    expect(app.exists('Notes/Daily.md')).toBe(false);
+    // Whether the editor keeps a frontmatter-less note's final newline is not
+    // what this pins; where the bytes land is.
+    expect(app.read('Archive/Daily.md')).toMatch(/^Monday Tuesday\n?$/);
   });
 });

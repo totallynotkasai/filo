@@ -28,7 +28,7 @@ async function reloadConvertedNote(vaultRoot: string, relPath: string): Promise<
   if (!isStillSameVault(identity)) return;
   const doc = documentStore.findByFilename(relPath);
   if (doc) {
-    documentStore.applyReloadFromDisk(doc.docId, fresh.body, doc.richText, fresh.frontmatter, fresh.rawFrontmatter, {
+    documentStore.applyReloadFromDisk(doc.filename, fresh.body, doc.richText, fresh.frontmatter, fresh.rawFrontmatter, {
       mtimeMs: fresh.mtimeMs,
       size: fresh.size,
     });

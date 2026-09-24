@@ -164,15 +164,13 @@
   // round-trip the full file content into the cache. Strip on read so the
   // preview never shows frontmatter lines.
 
-  let contentId = $derived((tile as Tile & { contentId?: string }).contentId ?? '');
-
   let backingPath = $derived(resolveTextTileVaultPath(tile) ?? '');
 
   let rawBody = $derived.by(() => {
     void documentStore.frontmatterVersion;
     void vaultIndexStore.version;
-    if (contentId) {
-      const doc = documentStore.getDocument(contentId);
+    if (backingPath) {
+      const doc = documentStore.getDocument(backingPath);
       if (doc) return doc.body;
     }
     return vaultIndexStore.getMetadata(backingPath)?.content ?? '';

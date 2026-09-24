@@ -40,11 +40,11 @@ async function bootstrapKanbanBoardWithCard(): Promise<{
   tileId: string;
   filename: string;
 }> {
+  fs.writeFileSync(path.join(tempVault, 'KanbanCard E2E.md'), '---\n---\n', 'utf8');
   return await window.evaluate(async (vaultPath: string) => {
     const { vaultStore } = await import('/src/renderer/stores/vault.svelte.ts');
     const { boardStore } = await import('/src/renderer/stores/board.svelte.ts');
     const { boardCacheStore } = await import('/src/renderer/stores/boardCache.svelte.ts');
-    const { documentStore } = await import('/src/renderer/stores/document.svelte.ts');
     const { tabStore } = await import('/src/renderer/stores/tabs.svelte.ts');
     if (!vaultStore.project) {
       await vaultStore.openVault(vaultPath);
@@ -56,12 +56,13 @@ async function bootstrapKanbanBoardWithCard(): Promise<{
     // Seed a column + a text-tile placement.
     boardCacheStore.addKanbanColumn(board.id, { id: 'col_e2e', title: 'Todo' });
     const filename = 'KanbanCard E2E.md';
-    const contentId = await documentStore.createDocument(filename, '---\n---\n');
+    // The card's note is identified by its path; the file itself is seeded
+    // on disk before this block runs.
     const def = {
       id: 'tile_kb_e2e',
       type: 'text',
       title: 'KanbanCard E2E',
-      contentId,
+      filePath: filename,
     };
     boardCacheStore.persistAddKanbanPlacement(board.id, 'col_e2e', def as never, 0);
     return { boardId: board.id, tileId: def.id, filename };

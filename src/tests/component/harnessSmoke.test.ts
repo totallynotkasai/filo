@@ -16,16 +16,16 @@ describe('component harness smoke', () => {
 
   it('mounts a TextTile that hydrates the disk body into editor + store', async () => {
     recordingFilo({ 'Note.md': 'Hello **world**\n' });
-    const m = await mountTextTile({ tile: { id: 't1', contentId: 'd1', title: 'Note' } });
+    const m = await mountTextTile({ tile: { id: 't1', title: 'Note' } });
     expect(m.proseMirror().textContent).toContain('Hello world');
-    expect(documentStore.getDocument('d1')?.body).toBe('Hello **world**\n');
+    expect(documentStore.getDocument('Note.md')?.body).toBe('Hello **world**\n');
     expect(editorMarkdown(m.editor())).toContain('Hello **world**');
     await m.unmount();
   });
 
   it('mounts a DocumentEditor on a document tab', async () => {
     recordingFilo({ 'Doc.md': '---\na: 1\n---\nDoc body\n' });
-    const m = await mountDocumentEditor({ docId: 'doc1', docPath: 'Doc.md' });
+    const m = await mountDocumentEditor({ docPath: 'Doc.md' });
     expect(m.proseMirror().textContent).toContain('Doc body');
     await m.unmount();
   });

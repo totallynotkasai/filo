@@ -177,29 +177,27 @@ describe('UpdateTitleCommand — active mind-map board', () => {
   it("a clean open editor stays clean through execute and undo (the body isn't re-written)", async () => {
     installDisk('---\ntitle: Idea\n---\nBody\n');
     documentStore.loadDocument({
-      docId: 'doc-1',
       filename: 'Idea.md',
       title: 'Idea',
       body: 'Body',
       htmlContent: '',
       richText: [],
     });
-    expect(documentStore.getDocument('doc-1')?.isDirty).toBe(false);
+    expect(documentStore.getDocument('Idea.md')?.isDirty).toBe(false);
     const cmd = noteTitleEdit();
 
     await cmd.execute();
     await flushAllPendingFrontmatterWrites();
-    expect(documentStore.getDocument('doc-1')?.isDirty).toBe(false);
+    expect(documentStore.getDocument('Idea.md')?.isDirty).toBe(false);
 
     await cmd.undo();
     await flushAllPendingFrontmatterWrites();
-    expect(documentStore.getDocument('doc-1')?.isDirty).toBe(false);
+    expect(documentStore.getDocument('Idea.md')?.isDirty).toBe(false);
   });
 
   it('an already-dirty open editor keeps its pending body edit through undo', async () => {
     installDisk('---\ntitle: Idea\n---\nBody\n');
     documentStore.loadDocument({
-      docId: 'doc-1',
       filename: 'Idea.md',
       title: 'Idea',
       body: 'Body',
@@ -211,10 +209,10 @@ describe('UpdateTitleCommand — active mind-map board', () => {
     await flushAllPendingFrontmatterWrites();
 
     // An editor marks its unsaved body under its own writer id.
-    documentStore.markDirty('doc-1', 'document-editor:pane-1');
+    documentStore.markDirty('Idea.md', 'document-editor:pane-1');
     await cmd.undo();
     await flushAllPendingFrontmatterWrites();
-    expect(documentStore.getDocument('doc-1')?.isDirty).toBe(true);
+    expect(documentStore.getDocument('Idea.md')?.isDirty).toBe(true);
   });
 
   it("targets the tile's home board and describes the new title", () => {

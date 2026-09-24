@@ -3,11 +3,11 @@
  * the doc was unloaded between toast-open and click.
  *
  * Before this fix:
- *   - The toast captured `editorDoc = { docId, title, body }` into the
+ *   - The toast captured `editorDoc = { filename, title, body }` into the
  *     action closure.
  *   - The Keep-local handler called `recreateDeletedFile(rel, editorDoc,
  *     ctx)`, which read frontmatter via `documentStore.getFrontmatter
- *     (editorDoc.docId) ?? {}`.
+ *     (editorDoc.filename) ?? {}`.
  *   - If a parallel flow (vault swap, tab close) unloaded the doc
  *     between the toast appearing and the user clicking Keep local,
  *     `getFrontmatter` returned undefined → empty `{}` → the file was
@@ -99,20 +99,18 @@ describe('recreateDeletedFile — frontmatter race (Phase B.5)', () => {
   }
 
   function loadDirtyEditor(opts: {
-    docId: string;
     filename: string;
     body: string;
     title: string;
   }): void {
     documentStore.loadDocument({
-      docId: opts.docId,
       filename: opts.filename,
       title: opts.title,
       body: opts.body,
       htmlContent: `<p>${opts.body}</p>`,
       richText: [],
     });
-    documentStore.updateContent(opts.docId, `<p>${opts.body}</p>`, opts.body);
+    documentStore.updateContent(opts.filename, `<p>${opts.body}</p>`, opts.body);
   }
 
   function installRecordingMock(
@@ -128,8 +126,8 @@ describe('recreateDeletedFile — frontmatter race (Phase B.5)', () => {
 
   it('Keep local uses live state when doc is still loaded (regression guard)', async () => {
     await primeIndexWith('Notes.md', '# Notes\nbody');
-    loadDirtyEditor({ docId: 'doc_A', filename: 'Notes.md', body: 'local body', title: 'Notes' });
-    documentStore.setFrontmatter('doc_A', { tags: ['live-tag'] });
+    loadDirtyEditor({ filename: 'Notes.md', body: 'local body', title: 'Notes' });
+    documentStore.setFrontmatter('Notes.md', { tags: ['live-tag'] });
 
     installRecordingMock({
       'vault:read-file-text': () => ({ success: false }),
@@ -156,8 +154,8 @@ describe('recreateDeletedFile — frontmatter race (Phase B.5)', () => {
 
   it('Keep local falls back to snapshot when doc was unloaded between toast-open and click', async () => {
     await primeIndexWith('Notes.md', '# Notes\nbody');
-    loadDirtyEditor({ docId: 'doc_A', filename: 'Notes.md', body: 'snapshot body', title: 'Notes' });
-    documentStore.setFrontmatter('doc_A', { tags: ['snapshot-tag'] });
+    loadDirtyEditor({ filename: 'Notes.md', body: 'snapshot body', title: 'Notes' });
+    documentStore.setFrontmatter('Notes.md', { tags: ['snapshot-tag'] });
 
     installRecordingMock({
       'vault:read-file-text': () => ({ success: false }),
@@ -171,12 +169,12 @@ describe('recreateDeletedFile — frontmatter race (Phase B.5)', () => {
 
     // Simulate a parallel flow (e.g. tab close) that unloads the doc
     // between toast-open and Keep-local-click.
-    documentStore.unloadDocument('doc_A');
+    documentStore.unloadDocument('Notes.md');
 
     await toast?.actions?.[1].handler();
 
     // Without B.5, the write would land body-only because
-    // getFrontmatter('doc_A') is undefined and the fallback to `{}`
+    // getFrontmatter('Notes.md') is undefined and the fallback to `{}`
     // strips the tag. With B.5, the snapshot keeps the tag alive.
     const write = writes.find(
       (w) => w.channel === 'vault:create-file-text' && w.args[1] === 'Notes.md',
@@ -189,8 +187,8 @@ describe('recreateDeletedFile — frontmatter race (Phase B.5)', () => {
 
   it('Keep local prefers user edits made between toast-open and click (live wins over snapshot)', async () => {
     await primeIndexWith('Notes.md', '# Notes\nbody');
-    loadDirtyEditor({ docId: 'doc_A', filename: 'Notes.md', body: 'original', title: 'Notes' });
-    documentStore.setFrontmatter('doc_A', { tags: ['original-tag'] });
+    loadDirtyEditor({ filename: 'Notes.md', body: 'original', title: 'Notes' });
+    documentStore.setFrontmatter('Notes.md', { tags: ['original-tag'] });
 
     installRecordingMock({
       'vault:read-file-text': () => ({ success: false }),
@@ -204,7 +202,7 @@ describe('recreateDeletedFile — frontmatter race (Phase B.5)', () => {
 
     // User edits the doc AFTER the toast appeared but BEFORE clicking
     // Keep local. The live state should win.
-    documentStore.setFrontmatter('doc_A', { tags: ['edited-tag'] });
+    documentStore.setFrontmatter('Notes.md', { tags: ['edited-tag'] });
 
     await toast?.actions?.[1].handler();
 

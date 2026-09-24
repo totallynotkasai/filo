@@ -16,7 +16,6 @@ import TextTile from '@renderer/components/tiles/TextTile.svelte';
 import DocumentEditor from '@renderer/components/boards/DocumentEditor.svelte';
 import { BOARD_SCOPE_KEY, getActiveScope } from '@renderer/lib/boards/boardScope.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
-import { noteIdFor } from '@renderer/stores/noteIds';
 import { documentStore } from '@renderer/stores/document.svelte';
 import { tabStore } from '@renderer/stores/tabs.svelte';
 import { tiptapToolbar } from '@renderer/lib/editor/toolbarConfig';
@@ -213,11 +212,11 @@ function wrap(target: HTMLElement, component: Record<string, unknown>): Mounted 
 }
 
 export async function mountTextTile(opts: {
-  tile: Partial<TextTileDef> & { id: string; contentId?: string; title?: string };
+  tile: Partial<TextTileDef> & { id: string; title?: string };
 }): Promise<Mounted> {
   vaultStore.setPath(VAULT);
   // A board derives these from the def's note path (see projectTile); a test
-  // that names only a title gets the note `<title>.md` and its session id.
+  // that names only a title gets the note `<title>.md`.
   const title = opts.tile.title ?? 'Note';
   const filePath = opts.tile.filePath ?? `${title}.md`;
   const tile = {
@@ -227,7 +226,6 @@ export async function mountTextTile(opts: {
     tags: [],
     ...opts.tile,
     filePath,
-    contentId: opts.tile.contentId ?? noteIdFor(filePath),
   } as unknown as TextTileDef;
   const target = document.createElement('div');
   document.body.appendChild(target);
@@ -246,14 +244,12 @@ export async function mountTextTile(opts: {
  * tab, then lets the editor's own disk hydrate run.
  */
 export async function mountDocumentEditor(opts: {
-  docId: string;
   docPath: string;
   title?: string;
 }): Promise<Mounted> {
   vaultStore.setPath(VAULT);
-  if (!documentStore.getDocument(opts.docId)) {
+  if (!documentStore.getDocument(opts.docPath)) {
     documentStore.loadDocument({
-      docId: opts.docId,
       filename: opts.docPath,
       title: opts.title ?? 'Doc',
       body: '',
@@ -261,8 +257,7 @@ export async function mountDocumentEditor(opts: {
       richText: [],
     });
   }
-  tabStore.open(opts.docId, opts.title ?? 'Doc', 'document');
-  const tab = tabStore.tabs.find((t) => t.boardId === opts.docId);
+  const tab = tabStore.openNote(opts.docPath, opts.title ?? 'Doc');
   if (!tab) throw new Error('tab not opened');
   const target = document.createElement('div');
   document.body.appendChild(target);

@@ -62,16 +62,14 @@ function freshMetadata(path: string): FileMetadata {
 
 /** Opens an editor on `path` so the Reload handler has a document to refresh. */
 function openEditor(path: string): string {
-  const docId = `doc:${path}`;
   documentStore.loadDocument({
-    docId,
     filename: path,
     title: path,
     body: 'local body',
     htmlContent: '',
     richText: [],
   });
-  return docId;
+  return path;
 }
 
 describe('Audit-13 L17 — external-reload handlers bail on a mid-applyChanges vault swap', () => {
@@ -90,7 +88,7 @@ describe('Audit-13 L17 — external-reload handlers bail on a mid-applyChanges v
 
   it('Reload defers (no store mutation) when the vault swaps during applyChanges', async () => {
     beginVaultGeneration('/vault-A');
-    const docId = openEditor('l17-swap.md');
+    const notePath = openEditor('l17-swap.md');
     const getReload = captureReloadAction();
     const reloadSpy = vi.spyOn(documentStore, 'applyReloadFromDisk');
     // applyChanges resolves AFTER bumping the vault generation — i.e. the vault
@@ -107,12 +105,12 @@ describe('Audit-13 L17 — external-reload handlers bail on a mid-applyChanges v
     // outgoing vault's content.
     expect(result).toBe('defer');
     expect(reloadSpy).not.toHaveBeenCalled();
-    expect(documentStore.getDocument(docId)?.body).toBe('local body');
+    expect(documentStore.getDocument(notePath)?.body).toBe('local body');
   });
 
   it('control: Reload applies disk content + resolves "reload" when no swap occurs', async () => {
     beginVaultGeneration('/vault-A');
-    const docId = openEditor('l17-control.md');
+    const notePath = openEditor('l17-control.md');
     const getReload = captureReloadAction();
     const reloadSpy = vi.spyOn(documentStore, 'applyReloadFromDisk');
     vi.spyOn(vaultIndexStore, 'applyChanges').mockResolvedValue(undefined);
@@ -126,7 +124,7 @@ describe('Audit-13 L17 — external-reload handlers bail on a mid-applyChanges v
 
     expect(result).toBe('reload');
     expect(reloadSpy).toHaveBeenCalledWith(
-      docId,
+      notePath,
       'disk body',
       expect.anything(),
       { tags: [] },

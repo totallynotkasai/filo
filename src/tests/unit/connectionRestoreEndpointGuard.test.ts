@@ -55,7 +55,6 @@ function makeBoard(tileIds: string[], connections: Connection[]): V7BoardFileDat
       id,
       type: 'text',
       title: id,
-      contentId: `doc_${id}`,
       style: { headerColor: '', bodyColor: '', borderColor: '' },
       boardId: 'mm',
       position: { x: 0, y: 0 },

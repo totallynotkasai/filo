@@ -36,7 +36,6 @@ function makeMindMapWithFileTile(boardId: string, tileId: string, filePath: stri
         id: tileId,
         type: 'text',
         title: 'Notes',
-        contentId: `doc_${tileId}`,
         style: { headerColor: '', bodyColor: '', borderColor: '' } as never,
         boardId,
         position: { x: 0, y: 0 },

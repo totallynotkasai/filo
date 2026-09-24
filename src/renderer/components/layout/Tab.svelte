@@ -5,7 +5,6 @@
   import { uiStore } from '../../stores/ui.svelte';
   import EmojiPicker from '../shared/EmojiPicker.svelte';
   import { getContextMenuKeyPosition } from '../../lib/utils/contextMenuKey';
-  import { documentStore } from '../../stores/document.svelte';
   import { noteTitle } from '../../stores/noteMeta';
   import { setNoteTitle } from '../../lib/notes/setNoteTitle';
 
@@ -26,9 +25,7 @@
 
   // A Document tab shows its note, so its label is the note's title and
   // follows it; renaming the tab edits that title.
-  const notePath = $derived(
-    tab.boardType === 'document' ? (documentStore.getDocument(tab.boardId)?.filename ?? null) : null,
-  );
+  const notePath = $derived(tab.boardType === 'document' ? (tab.notePath ?? null) : null);
   const displayName = $derived(notePath ? noteTitle(notePath) : tab.name);
 
   function activate() {

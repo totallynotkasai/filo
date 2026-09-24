@@ -11,12 +11,12 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 /**
  * Audit-9 Phase 3 — source-preservation / silent formatting loss.
  *
- * A9-L5: an orphan-card frontmatter edit (no open editor, so `docId: null`)
+ * A9-L5: an orphan-card frontmatter edit (no open editor, so `notePath: null`)
  * used to take the lossy full-dump branch in `assembleMarkdownFile` — comments,
  * key order, and quoting were re-emitted away. The fix threads the disk FM
- * SOURCE (`hydrateResult.rawFrontmatter`) into the write as a docId-less
+ * SOURCE (`hydrateResult.rawFrontmatter`) into the write as a cache-less
  * `originalFrontmatter` option so `patchFrontmatterSourceCst` patches ONLY the
- * changed key source-preservingly, matching the docId path.
+ * changed key source-preservingly, matching the open-editor path.
  *
  * This test reds when the fix is temp-reverted (drop `originalFrontmatter` from
  * the orphan write, or revert the gateway's `: args.originalFrontmatter` back to

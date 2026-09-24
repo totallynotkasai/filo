@@ -26,7 +26,6 @@ function makeTile(id: string, faded: boolean): Tile {
     type: 'text',
     title: id,
     boardId: 'b',
-    contentId: `doc_${id}`,
     position: { x: 0, y: 0 },
     size: { width: 200, height: 100 },
     style: { headerColor: '', bodyColor: '', borderColor: '' },

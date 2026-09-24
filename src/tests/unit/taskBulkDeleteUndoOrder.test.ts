@@ -35,7 +35,6 @@ function mkDef(id: string): TileDefinition {
     type: 'text',
     title: id,
     filePath: `Tasks/${id}.md`,
-    contentId: `doc-${id}`,
     content: '',
     style: { headerColor: '#000', bodyColor: '#fff', borderColor: '' },
     tags: [],

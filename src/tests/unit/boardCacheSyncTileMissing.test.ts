@@ -98,7 +98,6 @@ describe('boardCacheStore.syncTile — deleted backing file', () => {
     );
 
     documentStore.loadDocument({
-      docId: 't1',
       filename: 'note.md',
       title: 'Note',
       body: 'Local body that should NOT resurrect the deleted file.',
@@ -134,7 +133,6 @@ describe('boardCacheStore.syncTile — deleted backing file', () => {
     );
 
     documentStore.loadDocument({
-      docId: 't1',
       filename: 'note.md',
       title: 'Note',
       body: 'New body content',

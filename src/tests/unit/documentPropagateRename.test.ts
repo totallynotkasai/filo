@@ -9,11 +9,11 @@ import { documentStore } from '@renderer/stores/document.svelte';
  * divergent exact-match-only snippet.
  */
 
-function load(docId: string, filename: string): void {
+/** Loads a document whose title marks it, so a test can follow it across a re-key. */
+function load(title: string, filename: string): void {
   documentStore.loadDocument({
-    docId,
     filename,
-    title: docId,
+    title,
     body: '',
     htmlContent: '',
     richText: [],
@@ -28,7 +28,7 @@ describe('documentStore.propagateRename (Phase 4.4)', () => {
     load('d', 'Notes/old.md');
     const n = documentStore.propagateRename('Notes/old.md', 'Notes/new.md');
     expect(n).toBe(1);
-    expect(documentStore.findByFilename('Notes/new.md')?.docId).toBe('d');
+    expect(documentStore.findByFilename('Notes/new.md')?.title).toBe('d');
     expect(documentStore.findByFilename('Notes/old.md')).toBeNull();
   });
 
@@ -36,7 +36,7 @@ describe('documentStore.propagateRename (Phase 4.4)', () => {
     load('d', 'Notes/2026/foo.md');
     const n = documentStore.propagateRename('Notes', 'Archive');
     expect(n).toBe(1);
-    expect(documentStore.findByFilename('Archive/2026/foo.md')?.docId).toBe('d');
+    expect(documentStore.findByFilename('Archive/2026/foo.md')?.title).toBe('d');
     expect(documentStore.findByFilename('Notes/2026/foo.md')).toBeNull();
   });
 
@@ -44,13 +44,14 @@ describe('documentStore.propagateRename (Phase 4.4)', () => {
     load('d', 'Other/bar.md');
     const n = documentStore.propagateRename('Notes', 'Archive');
     expect(n).toBe(0);
-    expect(documentStore.findByFilename('Other/bar.md')?.docId).toBe('d');
+    expect(documentStore.findByFilename('Other/bar.md')?.title).toBe('d');
   });
 
   it('matches case-insensitively and applies the new path as given', () => {
     load('d', 'Notes/Old.md');
     const n = documentStore.propagateRename('notes/old.md', 'notes/renamed.md');
     expect(n).toBe(1);
-    expect(documentStore.findByFilename('notes/renamed.md')?.docId).toBe('d');
+    expect(documentStore.findByFilename('notes/renamed.md')?.title).toBe('d');
+    expect(documentStore.findByFilename('notes/renamed.md')?.filename).toBe('notes/renamed.md');
   });
 });

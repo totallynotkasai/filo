@@ -277,8 +277,8 @@ describe('Audit-11 VS-2 — fileTags tag writers bail on a vault swap', () => {
 describe('Audit-11 FILO-UR-2 — UpdatePropertiesCommand bails on a vault swap', () => {
   let captured: Captured[];
 
-  const before: PropertiesSnapshot = { kind: 'frontmatter', relPath: 'Prop.md', docId: 'docP', fm: { priority: 'low' } };
-  const after: PropertiesSnapshot = { kind: 'frontmatter', relPath: 'Prop.md', docId: 'docP', fm: { priority: 'high' } };
+  const before: PropertiesSnapshot = { kind: 'frontmatter', relPath: 'Prop.md', notePath: 'Prop.md', fm: { priority: 'low' } };
+  const after: PropertiesSnapshot = { kind: 'frontmatter', relPath: 'Prop.md', notePath: 'Prop.md', fm: { priority: 'high' } };
 
   beforeEach(() => {
     __resetDirtyTrackingForTests();
@@ -324,7 +324,7 @@ describe('Audit-11 FILO-UR-2 — UpdatePropertiesCommand bails on a vault swap',
     // The captured-vaultRoot write never ran, and the new vault's doc cache was
     // NOT seeded with vaultA's disk frontmatter.
     expect(writesIn(captured)).not.toContain('Prop.md');
-    expect(documentStore.getFrontmatter('docP')).toBeUndefined();
+    expect(documentStore.getFrontmatter('Prop.md')).toBeUndefined();
   });
 
   it('control: with no swap, the Properties edit lands on disk (priority + external key)', async () => {

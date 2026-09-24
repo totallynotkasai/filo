@@ -66,16 +66,16 @@ test.describe('Filo E2E — Task List Board', () => {
   test('adds a task via the store, sees it render, then completes + undoes', async () => {
     const { boardId } = await bootstrapTaskListBoard();
 
+    // The task's note is named by its path; seed the file on disk, then place it.
+    fs.writeFileSync(path.join(tempVault, 'My Task.md'), '---\ncompleted: false\n---\n', 'utf8');
     const tileId = await window.evaluate(async (id: string) => {
       const { boardCacheStore } = await import('/src/renderer/stores/boardCache.svelte.ts');
-      const { documentStore } = await import('/src/renderer/stores/document.svelte.ts');
-      // Seed the .md file via the document store, then place it.
-      const contentId = await documentStore.createDocument('My Task.md', '---\ncompleted: false\n---\n');
+      const filePath = 'My Task.md';
       const def = {
         id: 'tile_e2e_a',
         type: 'text',
         title: 'My Task',
-        contentId,
+        filePath,
       };
       boardCacheStore.persistAddTaskPlacement(id, def as never, { tileId: def.id, position: 0 });
       return def.id;

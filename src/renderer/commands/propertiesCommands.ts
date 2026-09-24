@@ -36,7 +36,7 @@ import { type FrontmatterDelta } from '../lib/vault/frontmatterDelta';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 
 export type PropertiesSnapshot =
-  | { kind: 'frontmatter'; relPath: string; docId: string | null; fm: Record<string, unknown> }
+  | { kind: 'frontmatter'; relPath: string; notePath: string | null; fm: Record<string, unknown> }
   | { kind: 'metadata'; tileId: string; metadata: Record<string, unknown> };
 
 export class UpdatePropertiesCommand extends Command {
@@ -63,7 +63,7 @@ export class UpdatePropertiesCommand extends Command {
       return {
         kind: 'frontmatter',
         relPath: snap.relPath,
-        docId: snap.docId,
+        notePath: snap.notePath,
         // Detaches every nested key/value in the frontmatter map.
         fm: this.snapshot(snap.fm),
       };
@@ -145,7 +145,7 @@ async function applySnapshot(
   if (!vaultRoot) return;
   if (!isStillSameVault(identity)) return; // swap during the drain
 
-  const { relPath, docId } = target;
+  const { relPath, notePath } = target;
   const targetFm = target.fm;
   const otherFm = other.kind === 'frontmatter' ? other.fm : {};
 
@@ -162,9 +162,9 @@ async function applySnapshot(
   // keeps it fresh). A not-open doc's cache isn't refreshed, so rebasing onto
   // it would revert an externally-added key; re-read fresh disk instead (race-
   // free: pending writes were drained above). The index is the last resort.
-  const docState = docId ? documentStore.getDocument(docId) : null;
+  const docState = notePath ? documentStore.getDocument(notePath) : null;
   let base: Record<string, unknown> | null =
-    docState && docId ? documentStore.getFrontmatter(docId) ?? null : null;
+    docState && notePath ? documentStore.getFrontmatter(notePath) ?? null : null;
   let diskBody: string | undefined;
   // Track whether the hydrate read THREW so the no-baseline
   // branch below can tell "file genuinely has no FM" from "file unreadable".
@@ -181,8 +181,8 @@ async function applySnapshot(
         base = hydrate.frontmatter;
         // Seed the cache from disk so a sibling editor sees the disk truth +
         // this leg's edit, and the gateway can source-preserve untouched bytes.
-        if (docId) {
-          documentStore.setFrontmatter(docId, hydrate.frontmatter, hydrate.rawFrontmatter);
+        if (notePath) {
+          documentStore.setFrontmatter(notePath, hydrate.frontmatter, hydrate.rawFrontmatter);
         }
       }
     } catch {
@@ -268,7 +268,7 @@ async function applySnapshot(
       frontmatter: merged,
       body,
       callerId: `update-properties-command:${relPath}`,
-      docId,
+      notePath,
       frontmatterDelta: delta,
       // Fire-time body-source decision (`body` above prefers `docState?.body`);
       // the gateway must not re-derive it at write time.
@@ -286,7 +286,7 @@ async function applySnapshot(
   // clobber it). Stamped only AFTER a successful write, since history rollback
   // doesn't revert cache mutations. Identity-guarded so a swap during the write
   // can't re-create the outgoing doc's entry in the new vault.
-  if (docId && isStillSameVault(identity)) documentStore.setFrontmatter(docId, merged);
+  if (notePath && isStillSameVault(identity)) documentStore.setFrontmatter(notePath, merged);
 
   if (conflicts.length > 0) {
     uiStore.pushToast({
@@ -317,11 +317,11 @@ async function applySnapshot(
             // revert every editor save made since. With no live editor,
             // `bodyIsLive: false` makes the gateway source the body from its
             // fresh in-chain disk read.
-            const liveDoc = docId ? documentStore.getDocument(docId) : null;
+            const liveDoc = notePath ? documentStore.getDocument(notePath) : null;
             // Display cache — merge the forced keys onto the CURRENT cache,
             // not the conflict-time `merged` object (stale by click time).
-            if (docId) {
-              const liveBase = documentStore.getFrontmatter(docId);
+            if (notePath) {
+              const liveBase = documentStore.getFrontmatter(notePath);
               if (liveBase) {
                 const updated: Record<string, unknown> = { ...liveBase };
                 for (const k of conflicts) {
@@ -332,7 +332,7 @@ async function applySnapshot(
                     delete updated[k];
                   }
                 }
-                documentStore.setFrontmatter(docId, cleanFrontmatter(updated));
+                documentStore.setFrontmatter(notePath, cleanFrontmatter(updated));
               }
             }
             void writeMarkdownFile({
@@ -340,7 +340,7 @@ async function applySnapshot(
               relPath,
               body: liveDoc?.body ?? body,
               callerId: `update-properties-command:${relPath}`,
-              docId,
+              notePath,
               frontmatterDelta: forcedDelta,
               // Click-time liveness decision.
               bodyIsLive: liveDoc != null,

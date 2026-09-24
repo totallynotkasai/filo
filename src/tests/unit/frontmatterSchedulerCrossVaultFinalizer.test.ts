@@ -73,16 +73,15 @@ describe('frontmatterWriteScheduler — cross-vault finalizer (Phase B.2)', () =
     });
 
     documentStore.loadDocument({
-      docId: 'doc-A',
       filename: 'Notes.md',
       title: 'Notes',
       body: 'vault A body',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter('doc-A', { id: 'doc-A', title: 'Notes' });
+    documentStore.setFrontmatter('Notes.md', { vault: 'A', title: 'Notes' });
 
-    scheduleFrontmatterWrite('Notes.md', 'doc-A');
+    scheduleFrontmatterWrite('Notes.md', 'Notes.md');
     // Fire the debounce timer — write enters in-flight.
     vi.advanceTimersByTime(400);
     vi.useRealTimers();
@@ -113,17 +112,16 @@ describe('frontmatterWriteScheduler — cross-vault finalizer (Phase B.2)', () =
     });
 
     documentStore.loadDocument({
-      docId: 'doc-B',
       filename: 'Notes.md',
       title: 'Notes',
       body: 'vault B body',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter('doc-B', { id: 'doc-B', title: 'Notes' });
+    documentStore.setFrontmatter('Notes.md', { vault: 'B', title: 'Notes' });
 
     vi.useFakeTimers();
-    scheduleFrontmatterWrite('Notes.md', 'doc-B');
+    scheduleFrontmatterWrite('Notes.md', 'Notes.md');
     vi.advanceTimersByTime(400);
     vi.useRealTimers();
 
@@ -159,16 +157,15 @@ describe('frontmatterWriteScheduler — cross-vault finalizer (Phase B.2)', () =
     });
 
     documentStore.loadDocument({
-      docId: 'doc-A',
       filename: 'Notes.md',
       title: 'Notes',
       body: 'vault A body',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter('doc-A', { id: 'doc-A', title: 'Notes' });
+    documentStore.setFrontmatter('Notes.md', { vault: 'A', title: 'Notes' });
 
-    scheduleFrontmatterWrite('Notes.md', 'doc-A');
+    scheduleFrontmatterWrite('Notes.md', 'Notes.md');
     vi.advanceTimersByTime(400);
     vi.useRealTimers();
 
@@ -179,14 +176,13 @@ describe('frontmatterWriteScheduler — cross-vault finalizer (Phase B.2)', () =
     // Schedule a vault-B write at the same path — this re-arms the
     // pending/failed sentinel for vault B before the old IPC resolves.
     documentStore.loadDocument({
-      docId: 'doc-B',
       filename: 'Notes.md',
       title: 'Notes',
       body: 'vault B body',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter('doc-B', { id: 'doc-B', title: 'Notes' });
+    documentStore.setFrontmatter('Notes.md', { vault: 'B', title: 'Notes' });
 
     let resolveB!: (val: unknown) => void;
     const ipcB = new Promise((res) => {
@@ -201,7 +197,7 @@ describe('frontmatterWriteScheduler — cross-vault finalizer (Phase B.2)', () =
     });
 
     vi.useFakeTimers();
-    scheduleFrontmatterWrite('Notes.md', 'doc-B');
+    scheduleFrontmatterWrite('Notes.md', 'Notes.md');
     vi.advanceTimersByTime(400);
     vi.useRealTimers();
 
@@ -237,16 +233,15 @@ describe('frontmatterWriteScheduler — cross-vault finalizer (Phase B.2)', () =
     });
 
     documentStore.loadDocument({
-      docId: 'doc-A',
       filename: 'Notes.md',
       title: 'Notes',
       body: 'hello',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter('doc-A', { id: 'doc-A', title: 'Notes' });
+    documentStore.setFrontmatter('Notes.md', { vault: 'A', title: 'Notes' });
 
-    scheduleFrontmatterWrite('Notes.md', 'doc-A');
+    scheduleFrontmatterWrite('Notes.md', 'Notes.md');
     vi.advanceTimersByTime(400);
     vi.useRealTimers();
 

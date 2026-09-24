@@ -158,7 +158,6 @@
       faded: false,
       tags: [],
       boardId: boardStore.current.id,
-      contentId: createId(),
       content: '',
       createdAt: now,
       updatedAt: now,
@@ -295,8 +294,7 @@
           faded: false,
           tags: [],
           boardId: boardStore.current?.id ?? '',
-          contentId: createId(),
-          content: '',
+              content: '',
           createdAt: now,
           updatedAt: now,
         });
@@ -582,8 +580,7 @@
         faded: false,
         tags: [],
         boardId: boardStore.current?.id ?? '',
-        contentId: createId(),
-        content: '',
+          content: '',
         createdAt: now,
         updatedAt: now,
       });

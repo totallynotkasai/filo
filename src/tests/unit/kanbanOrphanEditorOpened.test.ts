@@ -84,26 +84,24 @@ describe('UpdateOrphanFrontmatterCommand — editor opened between execute and u
 
     // 2) The user now opens the card's file as a Document. A live session +
     //    force-writer appears, with the frontmatter cache mirroring disk.
-    const docId = 'doc-card';
     documentStore.loadDocument({
-      docId,
       filename: REL,
       title: 'Card',
       body: 'Body',
       htmlContent: '<p>Body</p>',
       richText: [],
     });
-    documentStore.setFrontmatter(docId, { title: 'Card', due: '2026-06-01' });
-    const callerId = 'document-editor:doc-card';
+    documentStore.setFrontmatter(REL, { title: 'Card', due: '2026-06-01' });
+    const callerId = `document-editor:${REL}`;
     const buildArgs = (): WriteArgs => ({
       vaultRoot: '/vault',
       relPath: REL,
-      frontmatter: documentStore.getFrontmatter(docId) ?? {},
+      frontmatter: documentStore.getFrontmatter(REL) ?? {},
       body: 'Body',
       callerId,
-      docId,
+      notePath: REL,
     });
-    registerForceWriter(callerId, docId, buildArgs);
+    registerForceWriter(callerId, REL, buildArgs);
 
     // 3) Undo. The fix must apply the inverse through the LIVE cache (so the
     //    open editor doesn't re-clobber it), not a blind disk write the
@@ -113,7 +111,7 @@ describe('UpdateOrphanFrontmatterCommand — editor opened between execute and u
     // The live frontmatter cache reflects the inverse (due removed). Without
     // the fix this still reads `due: 2026-06-01`, and the editor's next write
     // would re-add it — silently reverting the undo.
-    const fm = documentStore.getFrontmatter(docId) ?? {};
+    const fm = documentStore.getFrontmatter(REL) ?? {};
     expect(fm.due).toBeUndefined();
     // Disk is consistent with the editor's view too.
     expect(filesystem[REL]).not.toContain('2026-06-01');

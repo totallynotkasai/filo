@@ -62,7 +62,6 @@ describe('vaultExternalChanges — reload-silently recovery (M5)', () => {
     });
     await vaultIndexStore.applyChanges(['Notes.md']);
     documentStore.loadDocument({
-      docId: 'doc_A',
       filename: 'Notes.md',
       title: 'Notes',
       body: bigBody,
@@ -103,7 +102,7 @@ describe('vaultExternalChanges — reload-silently recovery (M5)', () => {
     await slice.handleExternalMarkdownChanges(['Notes.md']);
 
     // The silent reload landed the shrunk body…
-    expect(documentStore.getDocument('doc_A')?.body).toBe(shrunk);
+    expect(documentStore.getDocument('Notes.md')?.body).toBe(shrunk);
 
     // …and a recovery toast was surfaced.
     const toast = uiStore.toasts.find((t) => t.text.includes('shrank sharply'));
@@ -114,7 +113,7 @@ describe('vaultExternalChanges — reload-silently recovery (M5)', () => {
     // Undo restores the pre-reload body and marks the doc dirty so the
     // recovery is force-written back over the external truncation.
     await undo!.handler();
-    const doc = documentStore.getDocument('doc_A');
+    const doc = documentStore.getDocument('Notes.md');
     expect(doc?.body).toBe(bigBody);
     expect(doc?.isDirty).toBe(true);
   });
@@ -129,7 +128,7 @@ describe('vaultExternalChanges — reload-silently recovery (M5)', () => {
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
 
-    expect(documentStore.getDocument('doc_A')?.body).toBe(trimmed);
+    expect(documentStore.getDocument('Notes.md')?.body).toBe(trimmed);
     expect(uiStore.toasts.find((t) => t.text.includes('shrank sharply'))).toBeUndefined();
   });
 
@@ -142,7 +141,7 @@ describe('vaultExternalChanges — reload-silently recovery (M5)', () => {
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
 
-    expect(documentStore.getDocument('doc_A')?.body).toBe(grown);
+    expect(documentStore.getDocument('Notes.md')?.body).toBe(grown);
     expect(uiStore.toasts.find((t) => t.text.includes('shrank sharply'))).toBeUndefined();
   });
 });

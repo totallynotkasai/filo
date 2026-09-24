@@ -1,14 +1,15 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import type { RichTextAnnotation } from '../schema/document';
 import { uiStore } from './ui.svelte';
-import { samePath, normalizePath, stripLeadingSlash, toPosix } from '../lib/utils/path';
+import { normalizePath, stripLeadingSlash, toPosix } from '../lib/utils/path';
+import { vaultPath, type VaultPath } from '@shared/vaultPath';
 import {
   cancelMarkdownWritesForDocument,
   cancelAndAwaitMarkdownWritesForDocument,
   forceWriteForDocument,
 } from '../lib/vault/markdownFileWriter';
 import { noteBaseline } from '../lib/vault/fileBaselineRegistry';
-import { bindNoteId } from './noteIds';
+import { registerPathRenamable } from '../lib/vault/renamePathKeys';
 import { flushAllPendingFrontmatterWrites } from '../lib/boards/frontmatterWriteScheduler';
 import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
 import { backupExternalVersion } from '../lib/vault/keepLocalBackup';
@@ -22,11 +23,15 @@ import { onVaultSwap } from '../core/vaultLifecycle';
  * A document can be displayed simultaneously as a tile on a canvas
  * and as a full-screen editor tab. Edits in either view propagate
  * to the shared state here.
+ *
+ * A note's vault path is its only identity. Every method takes the path in
+ * any spelling and keys by its case-folded `VaultPath`, so every view of one
+ * file shares one entry. A rename re-keys every map (see
+ * `renameDocumentPaths`).
  */
 
 export interface DocumentState {
-  docId: string;
-  filename: string;       // relative path from vault root (e.g. "notes/Project Overview.md")
+  filename: string;       // relative path from vault root, on-disk case (e.g. "notes/Project Overview.md")
   title: string;          // display name (filename without .md)
   body: string;           // Markdown content
   htmlContent: string;    // Tiptap HTML (rendered from Markdown + richText)
@@ -40,18 +45,18 @@ export interface DocumentState {
  * When `loadMarkdownIntoEditor` detects that the body failed to round-trip
  * through tiptap-markdown (Obsidian callouts, math blocks, `==highlight==`,
  * etc.), the doc is added to this set so the debounced markdown writers
- * skip it. The user can flip it off via `takeOwnership(docId)` after a
+ * skip it. The user can flip it off via `takeOwnership(path)` after a
  * confirm dialog. Stored separately from `DocumentState` so docs not yet
  * registered via `loadDocument` (possible during the first hydrate) can
  * still be marked.
  */
-const readOnlyDocs = new SvelteSet<string>();
+const readOnlyDocs = new SvelteSet<VaultPath>();
 let readOnlyVersion = $state(0);
 
 // ── Reactive state ──
 
-const openDocuments = new SvelteMap<string, DocumentState>();
-let activeDocId = $state<string | null>(null);
+const openDocuments = new SvelteMap<VaultPath, DocumentState>();
+let activeDocPath = $state<VaultPath | null>(null);
 
 /**
  * The vault these documents belong to. Bound to the INCOMING vault when
@@ -68,25 +73,25 @@ let boundVault: string | null = null;
 
 /**
  * Per-writer dirty tracking. Each open editor on a file (a TextTile and/or a
- * DocumentEditor share one docId) adds its stable `callerId` here when it has
+ * DocumentEditor share one path) adds its stable `callerId` here when it has
  * unsaved content and removes it on a successful flush. `DocumentState.isDirty`
  * stays true while ANY writer is still dirty, so one editor flushing can't
  * clear the shared flag under a sibling that still has unsaved keystrokes.
  * Callers that pass no `writerId` get "clear everything" semantics.
  */
-const dirtyWriters = new SvelteMap<string, SvelteSet<string>>();
+const dirtyWriters = new SvelteMap<VaultPath, SvelteSet<string>>();
 
-function addDirtyWriter(docId: string, writerId: string): void {
-  let set = dirtyWriters.get(docId);
+function addDirtyWriter(path: string, writerId: string): void {
+  let set = dirtyWriters.get(vaultPath(path));
   if (!set) {
     set = new SvelteSet<string>();
-    dirtyWriters.set(docId, set);
+    dirtyWriters.set(vaultPath(path), set);
   }
   set.add(writerId);
 }
 
 /**
- * Shared frontmatter live-cache keyed by docId. The four disk writers
+ * Shared frontmatter live-cache keyed by path. The four disk writers
  * (TextTile, DocumentEditor, PropertiesPopup, TaskListBoard) all read and
  * mutate this cache instead of carrying their own per-component copies.
  * Without it, a write from one component would assemble its file from a
@@ -94,11 +99,11 @@ function addDirtyWriter(docId: string, writerId: string): void {
  * concurrent edit. The cache is the canonical in-memory frontmatter — last
  * debounce-wins is safe because every writer pulls from the same source.
  */
-const frontmatterCache = new SvelteMap<string, Record<string, unknown>>();
+const frontmatterCache = new SvelteMap<VaultPath, Record<string, unknown>>();
 let frontmatterVersionTick = $state(0);
 
 /**
- * Verbatim frontmatter source bytes per docId, captured when an authoritative
+ * Verbatim frontmatter source bytes per path, captured when an authoritative
  * disk read seeds the cache (`setFrontmatter` / `applyReloadFromDisk` with a
  * non-empty `rawFrontmatter`). Its PRESENCE is the "clean" signal: while an
  * entry exists, the on-disk frontmatter is byte-identical to what we parsed,
@@ -111,10 +116,10 @@ let frontmatterVersionTick = $state(0);
  * A body-only edit never touches the frontmatter, so the entry survives and the
  * common case keeps its formatting.
  */
-const rawFrontmatterCache = new SvelteMap<string, string>();
+const rawFrontmatterCache = new SvelteMap<VaultPath, string>();
 
 /**
- * The last frontmatter SOURCE bytes read from disk for a docId, retained
+ * The last frontmatter SOURCE bytes read from disk for a path, retained
  * ACROSS in-app mutations (unlike `rawFrontmatterCache`). On a dirty write the
  * source-preserving engine (`patchFrontmatterSourceCst`) diffs the live object
  * against THIS baseline and re-emits only the changed keys, so comments / key
@@ -122,28 +127,28 @@ const rawFrontmatterCache = new SvelteMap<string, string>();
  * every authoritative disk read; never cleared by a mutation. Data-safe even
  * when stale: the engine always emits the full live object.
  */
-const originalFrontmatterCache = new SvelteMap<string, string>();
+const originalFrontmatterCache = new SvelteMap<VaultPath, string>();
 
 /**
- * Stores `rawFrontmatter` as the clean-bytes entry for `docId` when it is a
+ * Stores `rawFrontmatter` as the clean-bytes entry for `path` when it is a
  * non-empty disk block, otherwise drops any existing entry. Centralises the
  * "presence == clean" rule so every seed / reload / mutation path agrees.
  */
-function noteRawFrontmatter(docId: string, rawFrontmatter: string | undefined): void {
+function noteRawFrontmatter(path: string, rawFrontmatter: string | undefined): void {
   if (rawFrontmatter !== undefined && rawFrontmatter.trim().length > 0) {
-    rawFrontmatterCache.set(docId, rawFrontmatter);
+    rawFrontmatterCache.set(vaultPath(path), rawFrontmatter);
     // Persist the disk baseline for source-preserving dirty writes. NOT
     // dropped in the else branch: a mutation clears the clean signal above, but
     // the engine still needs the original bytes to diff against.
-    originalFrontmatterCache.set(docId, rawFrontmatter);
+    originalFrontmatterCache.set(vaultPath(path), rawFrontmatter);
   } else {
-    rawFrontmatterCache.delete(docId);
+    rawFrontmatterCache.delete(vaultPath(path));
   }
 }
 
 /**
- * Per-docId monotonic mutation counter — the write-staleness TOKEN. Every
- * `mergeFrontmatter` / `setFrontmatter` call increments the docId's entry, and
+ * Per-path monotonic mutation counter — the write-staleness TOKEN. Every
+ * `mergeFrontmatter` / `setFrontmatter` call increments the path's entry, and
  * so does every body change via `updateContent` (a body mutation makes a
  * flushed snapshot stale just like an FM mutation). A writer that captures the
  * value at schedule time can later detect whether another writer has since
@@ -153,7 +158,7 @@ function noteRawFrontmatter(docId: string, rawFrontmatter: string | undefined): 
  *
  * NOT deleted on `clearFrontmatter` / `unloadDocument` (cleared only on the
  * whole-store `clear()`, matching the scheduler's `lastFlushedVersion`
- * lifecycle). docIds are stable, so an unload+reopen reuses the docId;
+ * lifecycle). a path keeps its counter, so an unload+reopen continues it;
  * resetting the counter would make early writes after a reopen compare against
  * the pre-unload high-water mark and be silently skipped.
  *
@@ -161,10 +166,10 @@ function noteRawFrontmatter(docId: string, rawFrontmatter: string | undefined): 
  * without rebuilding the cache Map (which Svelte tracks as a single
  * reactive reference).
  */
-const mutationVersions = new SvelteMap<string, number>();
+const mutationVersions = new SvelteMap<VaultPath, number>();
 
 /**
- * Per-docId count of BODY bumps folded into `mutationVersions` (bumped only by
+ * Per-path count of BODY bumps folded into `mutationVersions` (bumped only by
  * `updateContent`, in lockstep with the shared map). Lets
  * `getFrontmatterOnlyMutationVersion` recover the FM-only count (shared − body)
  * for consumers that must ignore body churn — e.g. the disk-FM refresh seed,
@@ -172,11 +177,11 @@ const mutationVersions = new SvelteMap<string, number>();
  * `mutationVersions` (SvelteMap for lint conventions, not reactivity).
  */
 // allow-module-state: cleared in clear() alongside mutationVersions (vault swap)
-const bodyMutationVersions = new SvelteMap<string, number>();
+const bodyMutationVersions = new SvelteMap<VaultPath, number>();
 
-function bumpMutationVersion(docId: string): number {
-  const next = (mutationVersions.get(docId) ?? 0) + 1;
-  mutationVersions.set(docId, next);
+function bumpMutationVersion(path: string): number {
+  const next = (mutationVersions.get(vaultPath(path)) ?? 0) + 1;
+  mutationVersions.set(vaultPath(path), next);
   return next;
 }
 
@@ -210,20 +215,20 @@ export const documentStore = {
   /** All currently open documents (tile content loaded into memory). */
   get documents() { return openDocuments; },
 
-  /** The currently focused document tab (null if no document tab is active). */
-  get activeDocId() { return activeDocId; },
+  /** The note of the focused document tab (null if no document tab is active). */
+  get activeDocPath() { return activeDocPath; },
 
   /** Reactive cursor — any $derived that reads it refreshes after a set/merge/clear. */
   get frontmatterVersion() { return frontmatterVersionTick; },
 
-  /** Get a specific document by its ID. */
-  getDocument(docId: string): DocumentState | undefined {
-    return openDocuments.get(docId);
+  /** The open document for the note at `path`, if any view holds it. */
+  getDocument(path: string): DocumentState | undefined {
+    return openDocuments.get(vaultPath(path));
   },
 
   /**
    * True while `writerId` (one editor view, keyed by its stable callerId)
-   * still holds unsaved content for `docId`. Each editor's reload `$effect`
+   * still holds unsaved content for `path`. Each editor's reload `$effect`
    * gates on its OWN writer here instead of the shared `isDirty` flag, which
    * would freeze every view's reload — two views editing inside one debounce
    * window would diverge and the last full-body flush would drop the other's
@@ -232,51 +237,45 @@ export const documentStore = {
    * Reactive — reads the SvelteMap/SvelteSet so a reading effect re-runs when
    * the writer's dirty state flips.
    */
-  isWriterDirty(docId: string, writerId: string): boolean {
-    return dirtyWriters.get(docId)?.has(writerId) ?? false;
+  isWriterDirty(path: string, writerId: string): boolean {
+    return dirtyWriters.get(vaultPath(path))?.has(writerId) ?? false;
   },
 
   /**
-   * Finds the loaded document whose backing filename matches the given
-   * vault-relative path (case-insensitive, slash-normalised). Returns
-   * `null` when no editor currently holds that file.
+   * The loaded document for a vault-relative path (case-insensitive,
+   * slash-normalised), or `null` when no editor currently holds that file.
    */
   findByFilename(relPath: string): DocumentState | null {
     if (!relPath) return null;
-    for (const doc of openDocuments.values()) {
-      if (samePath(doc.filename, relPath)) {
-        return doc;
-      }
-    }
-    return null;
+    return openDocuments.get(vaultPath(relPath)) ?? null;
   },
 
   /**
-   * Returns the cached frontmatter for a docId, or undefined if not seeded.
+   * Returns the cached frontmatter for a path, or undefined if not seeded.
    * Writers must treat a missing entry as "seed me first" — the cache is the
    * source of truth once seeded, so reading from elsewhere risks reverting
    * concurrent mutations from another writer.
    */
-  getFrontmatter(docId: string): Record<string, unknown> | undefined {
+  getFrontmatter(path: string): Record<string, unknown> | undefined {
     void frontmatterVersionTick;
-    return frontmatterCache.get(docId);
+    return frontmatterCache.get(vaultPath(path));
   },
 
   /**
-   * Whether the frontmatter live-cache already holds an entry for `docId`.
+   * Whether the frontmatter live-cache already holds an entry for `path`.
    * The cached-body / adoption hydrate branches consult this before trusting
    * the in-memory (body-only) `DocumentState.body` as a hydrate source:
    * re-parsing frontmatter from a body-only string yields `{}`, which would
    * clobber the real frontmatter and let a later body-only save erase the
    * file's frontmatter block. Reactive via the version tick.
    */
-  hasFrontmatter(docId: string): boolean {
+  hasFrontmatter(path: string): boolean {
     void frontmatterVersionTick;
-    return frontmatterCache.has(docId);
+    return frontmatterCache.has(vaultPath(path));
   },
 
   /**
-   * Replaces the cached frontmatter for a docId. Called on initial hydrate
+   * Replaces the cached frontmatter for a path. Called on initial hydrate
    * (when a TextTile / DocumentEditor / TaskListBoard parses the .md for
    * the first time) and on external-change reload.
    *
@@ -285,44 +284,44 @@ export const documentStore = {
    * it (or pass an empty block) for a mutation set — that drops any clean-bytes
    * entry so the next write re-dumps the object.
    */
-  setFrontmatter(docId: string, fm: Record<string, unknown>, rawFrontmatter?: string): void {
-    frontmatterCache.set(docId, { ...fm });
-    noteRawFrontmatter(docId, rawFrontmatter);
-    bumpMutationVersion(docId);
+  setFrontmatter(path: string, fm: Record<string, unknown>, rawFrontmatter?: string): void {
+    frontmatterCache.set(vaultPath(path), { ...fm });
+    noteRawFrontmatter(path, rawFrontmatter);
+    bumpMutationVersion(path);
     frontmatterVersionTick++;
   },
 
   /**
-   * The verbatim frontmatter source for `docId` while it is
+   * The verbatim frontmatter source for `path` while it is
    * still byte-identical to disk (a body-only save may emit it untouched), or
    * `undefined` once a mutation has invalidated it. The write gateway reads
    * this to decide between passthrough and a re-dump.
    */
-  getRawFrontmatter(docId: string): string | undefined {
+  getRawFrontmatter(path: string): string | undefined {
     void frontmatterVersionTick;
-    return rawFrontmatterCache.get(docId);
+    return rawFrontmatterCache.get(vaultPath(path));
   },
 
   /**
-   * The disk-baseline frontmatter source for `docId` (persists
+   * The disk-baseline frontmatter source for `path` (persists
    * across mutations; see `originalFrontmatterCache`). The write gateway passes
    * this to `assembleMarkdownFile` so a dirty (frontmatter-changed) save patches
    * the original bytes source-preservingly instead of re-dumping the object.
    */
-  getOriginalFrontmatterSource(docId: string): string | undefined {
+  getOriginalFrontmatterSource(path: string): string | undefined {
     void frontmatterVersionTick;
-    return originalFrontmatterCache.get(docId);
+    return originalFrontmatterCache.get(vaultPath(path));
   },
 
   /**
-   * Returns the docId's monotonic mutation counter — incremented on every
+   * Returns the path's monotonic mutation counter — incremented on every
    * `mergeFrontmatter` / `setFrontmatter` AND every body
    * change via `updateContent`. Writers capture this at schedule time and
    * compare against the last-flushed value to decide whether their flush is
    * still the freshest.
    */
-  getFrontmatterMutationVersion(docId: string): number {
-    return mutationVersions.get(docId) ?? 0;
+  getFrontmatterMutationVersion(path: string): number {
+    return mutationVersions.get(vaultPath(path)) ?? 0;
   },
 
   /**
@@ -331,8 +330,8 @@ export const documentStore = {
    * disk-FM refresh seed gates on "nothing mutated the FRONTMATTER since the
    * placeholder was seeded", which a racing notes keystroke must not block.
    */
-  getFrontmatterOnlyMutationVersion(docId: string): number {
-    return (mutationVersions.get(docId) ?? 0) - (bodyMutationVersions.get(docId) ?? 0);
+  getFrontmatterOnlyMutationVersion(path: string): number {
+    return (mutationVersions.get(vaultPath(path)) ?? 0) - (bodyMutationVersions.get(vaultPath(path)) ?? 0);
   },
 
   /**
@@ -340,8 +339,8 @@ export const documentStore = {
    * object so the caller can pass it on to the assembled write without a
    * second lookup. Empty / undefined / null values in `patch` are deleted.
    */
-  mergeFrontmatter(docId: string, patch: Record<string, unknown>): Record<string, unknown> {
-    const base = frontmatterCache.get(docId) ?? {};
+  mergeFrontmatter(path: string, patch: Record<string, unknown>): Record<string, unknown> {
+    const base = frontmatterCache.get(vaultPath(path)) ?? {};
     const merged: Record<string, unknown> = { ...base, ...patch };
     // Clean ONLY the keys set in this patch, never the whole merged object: a
     // present-but-empty disk key the user didn't touch (`aliases:`,
@@ -351,26 +350,26 @@ export const documentStore = {
       const v = merged[k];
       if (v === '' || v === undefined || v === null) delete merged[k];
     }
-    frontmatterCache.set(docId, merged);
+    frontmatterCache.set(vaultPath(path), merged);
     // The object changed, so the captured raw bytes are stale: drop them
     // and let the next write re-dump the merged object.
-    rawFrontmatterCache.delete(docId);
-    bumpMutationVersion(docId);
+    rawFrontmatterCache.delete(vaultPath(path));
+    bumpMutationVersion(path);
     frontmatterVersionTick++;
     return merged;
   },
 
   /**
-   * Drops the cached frontmatter for a docId. Called when the document is
+   * Drops the cached frontmatter for a path. Called when the document is
    * unloaded so a future reopen reads a fresh copy from disk.
    */
-  clearFrontmatter(docId: string): void {
-    if (!frontmatterCache.has(docId)) return;
-    frontmatterCache.delete(docId);
-    rawFrontmatterCache.delete(docId);
+  clearFrontmatter(path: string): void {
+    if (!frontmatterCache.has(vaultPath(path))) return;
+    frontmatterCache.delete(vaultPath(path));
+    rawFrontmatterCache.delete(vaultPath(path));
     // Drop the disk baseline on doc unload so a future reopen re-reads
     // fresh bytes rather than patching against a stale source.
-    originalFrontmatterCache.delete(docId);
+    originalFrontmatterCache.delete(vaultPath(path));
     // `mutationVersions` is deliberately KEPT (see its docstring); cleared
     // only on the whole-store `clear()`.
     frontmatterVersionTick++;
@@ -381,18 +380,17 @@ export const documentStore = {
    * If already loaded, returns the existing state.
    */
   loadDocument(doc: {
-    docId: string;
     filename: string;
     title: string;
     body: string;
     htmlContent: string;
     richText: RichTextAnnotation[];
   }): DocumentState {
-    const existing = openDocuments.get(doc.docId);
+    const key = vaultPath(doc.filename);
+    const existing = openDocuments.get(key);
     if (existing) return existing;
 
     const state: DocumentState = {
-      docId: doc.docId,
       filename: doc.filename,
       title: doc.title,
       body: doc.body,
@@ -413,10 +411,7 @@ export const documentStore = {
     }
     if (boundVault === null) boundVault = live;
 
-    openDocuments.set(doc.docId, state);
-    // A document opened under an id of its own becomes the id later views of
-    // this path use, so they share this document.
-    bindNoteId(doc.filename, doc.docId);
+    openDocuments.set(key, state);
     return state;
   },
 
@@ -425,9 +420,9 @@ export const documentStore = {
    * the doc is held read-only. Reactive — components reading this re-render
    * when `setReadOnly` / `takeOwnership` fires.
    */
-  isReadOnly(docId: string): boolean {
+  isReadOnly(path: string): boolean {
     void readOnlyVersion;
-    return readOnlyDocs.has(docId);
+    return readOnlyDocs.has(vaultPath(path));
   },
 
   /**
@@ -435,13 +430,13 @@ export const documentStore = {
    * round-trip check detects syntax tiptap-markdown can't preserve.
    * Idempotent — repeated calls don't bump the reactive version.
    */
-  setReadOnly(docId: string, value: boolean): void {
+  setReadOnly(path: string, value: boolean): void {
     if (value) {
-      if (readOnlyDocs.has(docId)) return;
-      readOnlyDocs.add(docId);
+      if (readOnlyDocs.has(vaultPath(path))) return;
+      readOnlyDocs.add(vaultPath(path));
     } else {
-      if (!readOnlyDocs.has(docId)) return;
-      readOnlyDocs.delete(docId);
+      if (!readOnlyDocs.has(vaultPath(path))) return;
+      readOnlyDocs.delete(vaultPath(path));
     }
     readOnlyVersion++;
   },
@@ -452,15 +447,15 @@ export const documentStore = {
    * ("this will overwrite the file with what Filo can read"); this method
    * is the no-prompt commit point.
    */
-  takeOwnership(docId: string): void {
-    this.setReadOnly(docId, false);
+  takeOwnership(path: string): void {
+    this.setReadOnly(path, false);
   },
 
   /**
    * Updates document content (called from either tile editor or doc tab editor).
    * Both views will reactively pick up the change.
    */
-  updateContent(docId: string, htmlContent: string, markdownBody?: string, writerId?: string) {
+  updateContent(path: string, htmlContent: string, markdownBody?: string, writerId?: string) {
     // Dev tripwire. `body` is body-only by contract; frontmatter lives in
     // frontmatterCache. A full file (frontmatter + body) here would double the
     // frontmatter on the next serialize. Requires BOTH fences so a body that
@@ -473,26 +468,26 @@ export const documentStore = {
     ) {
       console.error(
         `[documentStore] updateContent received what looks like a full file ` +
-          `(leading frontmatter block) as markdownBody for docId=${docId} — body ` +
+          `(leading frontmatter block) as markdownBody for path=${path} — body ` +
           `must be body-only; frontmatter lives in frontmatterCache. A full-file ` +
           `body would duplicate the frontmatter on save (Phase 7.6 regression?).`,
       );
     }
 
-    const doc = openDocuments.get(docId);
+    const doc = openDocuments.get(vaultPath(path));
     if (!doc) return;
 
     // Register the editing writer so a sibling editor's flush
     // can't clear `isDirty` while this writer still holds unsaved content.
-    if (writerId) addDirtyWriter(docId, writerId);
+    if (writerId) addDirtyWriter(path, writerId);
 
     // A body change makes any previously-flushed snapshot stale, so it must
     // bump the shared write-staleness token — otherwise a delta-less write
     // (Task notes) is skipped as stale, reported as success, and lost on quit.
     // Mirrored into `bodyMutationVersions` so FM-only consumers can subtract it.
     if (markdownBody !== undefined && markdownBody !== doc.body) {
-      bumpMutationVersion(docId);
-      bodyMutationVersions.set(docId, (bodyMutationVersions.get(docId) ?? 0) + 1);
+      bumpMutationVersion(path);
+      bodyMutationVersions.set(vaultPath(path), (bodyMutationVersions.get(vaultPath(path)) ?? 0) + 1);
     }
 
     const updated: DocumentState = {
@@ -502,129 +497,48 @@ export const documentStore = {
       isDirty: true,
     };
 
-    openDocuments.set(docId, updated);
+    openDocuments.set(vaultPath(path), updated);
   },
 
   /**
-   * Updates the document title (and triggers a file rename via IPC).
-   */
-  updateTitle(docId: string, newTitle: string) {
-    const doc = openDocuments.get(docId);
-    if (!doc) return;
-
-    const updated: DocumentState = {
-      ...doc,
-      title: newTitle,
-      isDirty: true,
-    };
-
-    openDocuments.set(docId, updated);
-  },
-
-  /**
-   * Variant of `updateTitle` that preserves the current
-   * `isDirty` flag instead of forcing it to true. Used by undo / redo of
-   * title-rename commands: the rename itself doesn't change the body, so
-   * flipping `isDirty` would queue the markdown scheduler to write the
-   * in-memory body (potentially stale after external edits while the
-   * rename was in place) back to the freshly-renamed-back file —
-   * silently overwriting external edits.
-   *
-   * Direct user-typed title edits stay on `updateTitle` (the title
-   * change IS a user edit, and the dirty flag drives the writer that
-   * persists it).
-   */
-  updateTitleClean(docId: string, newTitle: string) {
-    const doc = openDocuments.get(docId);
-    if (!doc) return;
-
-    const updated: DocumentState = {
-      ...doc,
-      title: newTitle,
-    };
-
-    openDocuments.set(docId, updated);
-  },
-
-  /**
-   * Updates the filename after a rename operation completes.
-   */
-  updateFilename(docId: string, newFilename: string) {
-    const doc = openDocuments.get(docId);
-    if (!doc) return;
-
-    const updated: DocumentState = {
-      ...doc,
-      filename: newFilename,
-    };
-
-    openDocuments.set(docId, updated);
-  },
-
-  /**
-   * Repoints every open document affected by a
-   * rename so its registered writer keeps targeting the moved path. Handles
-   * the exact-match file rename (`Notes/old.md` → `Notes/new.md`) and the
-   * folder-rename case where the open document is a *descendant* of the moved
-   * folder (`Notes/Daily.md` → `Archive/Daily.md` when `Notes` → `Archive`).
-   *
-   * Mirrors the board-side `boardStore.propagateRename`. Both the in-app
-   * rename path (vaultFolderOps) and the rename-cascade recovery retry
-   * (vault.svelte.ts) call this so the two can't drift. Returns the number of
-   * documents repointed.
+   * Re-keys every document affected by a rename, so each view finds its note
+   * under the new path. Handles the exact-match file rename
+   * (`Notes/old.md` → `Notes/new.md`) and the folder rename, where the note
+   * is a *descendant* of the moved folder (`Notes/Daily.md` →
+   * `Archive/Daily.md` when `Notes` → `Archive`). Registered as a rename
+   * sweep, so every rename cascade runs it. Returns the number of documents
+   * repointed.
    */
   propagateRename(oldRel: string, newRel: string): number {
-    const oldRelNorm = normalizePath(stripLeadingSlash(oldRel));
-    const newRelNorm = normalizePath(stripLeadingSlash(newRel));
-    if (!oldRelNorm || !newRelNorm) return 0;
-    const oldRelLower = oldRelNorm.toLowerCase();
-    const oldPrefixLower = `${oldRelLower}/`;
-    const updates: Array<{ docId: string; next: string }> = [];
-    for (const doc of openDocuments.values()) {
-      const docPath = stripLeadingSlash(toPosix(doc.filename));
-      const docLower = docPath.toLowerCase();
-      if (docLower === oldRelLower) {
-        // Exact-match file rename.
-        updates.push({ docId: doc.docId, next: newRelNorm });
-      } else if (docLower.startsWith(oldPrefixLower)) {
-        // Descendant of a renamed folder: rewrite the prefix, preserving the
-        // tail's on-disk case (slice off the matched prefix length).
-        updates.push({ docId: doc.docId, next: newRelNorm + docPath.slice(oldRelNorm.length) });
-      }
-    }
-    for (const { docId, next } of updates) {
-      const doc = openDocuments.get(docId);
-      if (doc) openDocuments.set(docId, { ...doc, filename: next });
-    }
-    return updates.length;
+    return renameDocumentPaths(oldRel, newRel);
   },
 
   /**
    * Opens a document in a dedicated editor tab.
    */
-  openDocumentTab(docId: string) {
-    activeDocId = docId;
+  openDocumentTab(path: string) {
+    activeDocPath = vaultPath(path);
   },
 
   /**
    * Marks a document as clean after a successful save.
    */
-  markClean(docId: string, writerId?: string) {
+  markClean(path: string, writerId?: string) {
     // Per-writer clear. Removing this writer leaves the doc dirty
     // if a sibling editor on the same file is still unsaved; only a fully
     // empty writer set (or a no-writerId call) flips `isDirty` off.
     if (writerId) {
-      const set = dirtyWriters.get(docId);
+      const set = dirtyWriters.get(vaultPath(path));
       if (set) {
         set.delete(writerId);
         if (set.size > 0) return;
-        dirtyWriters.delete(docId);
+        dirtyWriters.delete(vaultPath(path));
       }
     } else {
-      dirtyWriters.delete(docId);
+      dirtyWriters.delete(vaultPath(path));
     }
 
-    const doc = openDocuments.get(docId);
+    const doc = openDocuments.get(vaultPath(path));
     if (!doc) return;
 
     const updated: DocumentState = {
@@ -632,7 +546,7 @@ export const documentStore = {
       isDirty: false,
     };
 
-    openDocuments.set(docId, updated);
+    openDocuments.set(vaultPath(path), updated);
   },
 
   /**
@@ -647,15 +561,15 @@ export const documentStore = {
    * `markDirty` (e.g. a title edit) has no entry here, so this is a no-op and
    * leaves that flag untouched.
    */
-  dropDirtyWriter(docId: string, writerId: string): void {
-    const set = dirtyWriters.get(docId);
+  dropDirtyWriter(path: string, writerId: string): void {
+    const set = dirtyWriters.get(vaultPath(path));
     if (!set || !set.has(writerId)) return;
     set.delete(writerId);
     if (set.size > 0) return;
-    dirtyWriters.delete(docId);
-    const doc = openDocuments.get(docId);
+    dirtyWriters.delete(vaultPath(path));
+    const doc = openDocuments.get(vaultPath(path));
     if (!doc || !doc.isDirty) return;
-    openDocuments.set(docId, { ...doc, isDirty: false });
+    openDocuments.set(vaultPath(path), { ...doc, isDirty: false });
   },
 
   /**
@@ -666,42 +580,42 @@ export const documentStore = {
    * already there. Belt-and-braces against future refactors that might
    * accidentally call `markClean` ahead of a write that subsequently fails.
    */
-  markDirty(docId: string, writerId?: string) {
+  markDirty(path: string, writerId?: string) {
     // Record the writer before the dirty-flag short-circuit so a
     // second writer marking an already-dirty doc still registers (its later
     // clean must not clear the flag while the first writer is still dirty).
-    if (writerId) addDirtyWriter(docId, writerId);
-    const doc = openDocuments.get(docId);
+    if (writerId) addDirtyWriter(path, writerId);
+    const doc = openDocuments.get(vaultPath(path));
     if (!doc) return;
     if (doc.isDirty) return;
     const updated: DocumentState = {
       ...doc,
       isDirty: true,
     };
-    openDocuments.set(docId, updated);
+    openDocuments.set(vaultPath(path), updated);
   },
 
   /**
    * Unloads a document from memory (called when tile is removed
    * and no document tab is open for it).
    */
-  unloadDocument(docId: string) {
-    if (activeDocId === docId) {
-      activeDocId = null;
+  unloadDocument(path: string) {
+    if (activeDocPath === vaultPath(path)) {
+      activeDocPath = null;
     }
-    openDocuments.delete(docId);
-    dirtyWriters.delete(docId);
-    rawFrontmatterCache.delete(docId);
+    openDocuments.delete(vaultPath(path));
+    dirtyWriters.delete(vaultPath(path));
+    rawFrontmatterCache.delete(vaultPath(path));
     // Drop the disk-baseline FM source too (mirrors `clearFrontmatter`, which
     // this path doesn't route through) so the entry doesn't leak.
-    originalFrontmatterCache.delete(docId);
+    originalFrontmatterCache.delete(vaultPath(path));
     // `mutationVersions` deliberately survives unload (see its docstring).
-    if (frontmatterCache.has(docId)) {
-      frontmatterCache.delete(docId);
+    if (frontmatterCache.has(vaultPath(path))) {
+      frontmatterCache.delete(vaultPath(path));
       frontmatterVersionTick++;
     }
-    if (readOnlyDocs.has(docId)) {
-      readOnlyDocs.delete(docId);
+    if (readOnlyDocs.has(vaultPath(path))) {
+      readOnlyDocs.delete(vaultPath(path));
       readOnlyVersion++;
     }
   },
@@ -715,7 +629,7 @@ export const documentStore = {
    */
   clear(nextVault: string | null = null) {
     openDocuments.clear();
-    activeDocId = null;
+    activeDocPath = null;
     dirtyWriters.clear();
     frontmatterCache.clear();
     rawFrontmatterCache.clear();
@@ -743,7 +657,7 @@ export const documentStore = {
    * changes when the user is away from the screen.
    */
   handleExternalChange(
-    docId: string,
+    path: string,
     newBody: string,
     newRichText: RichTextAnnotation[],
     newFrontmatter?: Record<string, unknown>,
@@ -753,11 +667,11 @@ export const documentStore = {
     rawFrontmatter?: string,
     diskIdentity?: { mtimeMs?: number; size?: number },
   ) {
-    const doc = openDocuments.get(docId);
+    const doc = openDocuments.get(vaultPath(path));
     if (!doc) return;
 
     if (!doc.isDirty) {
-      this.applyReloadFromDisk(docId, newBody, newRichText, newFrontmatter, rawFrontmatter, diskIdentity);
+      this.applyReloadFromDisk(path, newBody, newRichText, newFrontmatter, rawFrontmatter, diskIdentity);
       return;
     }
 
@@ -773,7 +687,7 @@ export const documentStore = {
         {
           label: 'Reload',
           handler: () =>
-            this.applyReloadFromDisk(docId, newBody, newRichText, newFrontmatter, rawFrontmatter, diskIdentity),
+            this.applyReloadFromDisk(path, newBody, newRichText, newFrontmatter, rawFrontmatter, diskIdentity),
         },
         {
           label: 'Keep local',
@@ -787,9 +701,9 @@ export const documentStore = {
           handler: async () => {
             const vaultRoot = getActiveVaultPath();
             if (!vaultRoot || !(await backupExternalVersion(vaultRoot, doc.filename))) return;
-            if (getActiveVaultPath() !== vaultRoot || !openDocuments.has(docId)) return;
-            this.markDirty(docId);
-            void forceWriteForDocument(docId);
+            if (getActiveVaultPath() !== vaultRoot || !openDocuments.has(vaultPath(path))) return;
+            this.markDirty(path);
+            void forceWriteForDocument(path);
           },
         },
       ],
@@ -804,12 +718,12 @@ export const documentStore = {
    * doc with no dirty writers is touched; unlike `applyReloadFromDisk` this does
    * NOT cancel writes or bump mutation versions (a read is not a user mutation).
    */
-  adoptDiskBodyIfPlaceholder(docId: string, body: string, htmlContent: string): void {
-    const doc = openDocuments.get(docId);
+  adoptDiskBodyIfPlaceholder(path: string, body: string, htmlContent: string): void {
+    const doc = openDocuments.get(vaultPath(path));
     if (!doc || doc.body !== '' || doc.isDirty) return;
-    if ((dirtyWriters.get(docId)?.size ?? 0) > 0) return;
+    if ((dirtyWriters.get(vaultPath(path))?.size ?? 0) > 0) return;
     if (body === '') return;
-    openDocuments.set(docId, { ...doc, body, htmlContent });
+    openDocuments.set(vaultPath(path), { ...doc, body, htmlContent });
   },
 
   /**
@@ -828,29 +742,29 @@ export const documentStore = {
    * it the next keystroke re-detects the absorbed external edit and re-prompts.
    */
   applyReloadFromDisk(
-    docId: string,
+    path: string,
     newBody: string,
     newRichText: RichTextAnnotation[],
     newFrontmatter?: Record<string, unknown>,
     rawFrontmatter?: string,
     diskIdentity?: { mtimeMs?: number; size?: number },
   ) {
-    const doc = openDocuments.get(docId);
+    const doc = openDocuments.get(vaultPath(path));
     if (!doc) return;
     // Cancel any armed body writer for this doc FIRST: the gateway captured
     // `args.body` at schedule time, so a surviving timer would fire with the
     // pre-reload body and silently invert the reload. Synchronous so the
     // cancel-then-replace contract holds for non-awaiting callers.
-    cancelMarkdownWritesForDocument(docId);
+    cancelMarkdownWritesForDocument(path);
     // Disk is now authoritative, so every writer is clean.
-    dirtyWriters.delete(docId);
+    dirtyWriters.delete(vaultPath(path));
     const updated: DocumentState = {
       ...doc,
       body: newBody,
       richText: newRichText,
       isDirty: false,
     };
-    openDocuments.set(docId, updated);
+    openDocuments.set(vaultPath(path), updated);
     // Re-stamp the pre-write drift baseline to the disk identity just applied;
     // otherwise the next keystroke's drift check re-prompts for an edit the
     // user already accepted via Reload. Keyed by the doc's filename to match
@@ -858,9 +772,9 @@ export const documentStore = {
     // don't re-stamp.
     if (diskIdentity) noteBaseline(doc.filename, diskIdentity.mtimeMs, diskIdentity.size);
     if (newFrontmatter) {
-      frontmatterCache.set(docId, { ...newFrontmatter });
-      noteRawFrontmatter(docId, rawFrontmatter);
-      bumpMutationVersion(docId);
+      frontmatterCache.set(vaultPath(path), { ...newFrontmatter });
+      noteRawFrontmatter(path, rawFrontmatter);
+      bumpMutationVersion(path);
       frontmatterVersionTick++;
     }
     // Drain the frontmatter scheduler after the state swap. A delta-less entry
@@ -879,13 +793,91 @@ onVaultSwap('pre-swap', 'document', async (event) => {
   // Before discarding open-document state, AWAIT any markdown write still in
   // flight for each open doc (cancels armed timers and awaits in-flight IPC),
   // so a writer can't land bytes against the outgoing vault after its state is
-  // torn down. Bounded by each writer's `writeTimeoutMs`. Snapshot the ids
+  // torn down. Bounded by each writer's `writeTimeoutMs`. Snapshot the paths
   // first — `clear()` empties the map below.
-  const openDocIds = Array.from(openDocuments.keys());
+  const openDocPaths = Array.from(openDocuments.keys());
   await Promise.all(
-    openDocIds.map((docId) => cancelAndAwaitMarkdownWritesForDocument(docId)),
+    openDocPaths.map((path) => cancelAndAwaitMarkdownWritesForDocument(path)),
   );
   // Bind to the incoming vault so loadDocument refuses stale
   // outgoing-vault loads until vaultStore.path flips to it.
   documentStore.clear(event.nextVault);
 });
+
+/** Moves `map`'s entry from `from` to `to` (a no-op when `from` has none). */
+function moveEntry<V>(map: Map<VaultPath, V>, from: VaultPath, to: VaultPath): void {
+  if (!map.has(from)) return;
+  const value = map.get(from) as V;
+  map.delete(from);
+  map.set(to, value);
+}
+
+/**
+ * The rename sweep. Every piece of per-note state is keyed by the note's
+ * path, so a rename moves each entry to the new key; the open document also
+ * takes the new on-disk spelling as its `filename`. A case-only rename keeps
+ * its key and only updates `filename`.
+ *
+ * The mutation counters must move with the note, and must never go
+ * backwards: the frontmatter scheduler compares them against its own
+ * per-path "last flushed" mark, which follows the same rename.
+ */
+function renameDocumentPaths(oldRel: string, newRel: string): number {
+  const oldNorm = normalizePath(stripLeadingSlash(oldRel));
+  const newNorm = normalizePath(stripLeadingSlash(newRel));
+  if (!oldNorm || !newNorm) return 0;
+  const oldKey = vaultPath(oldNorm);
+  const oldPrefix = `${oldKey}/`;
+  const keys = new Set<VaultPath>([
+    ...openDocuments.keys(), ...dirtyWriters.keys(), ...frontmatterCache.keys(),
+    ...rawFrontmatterCache.keys(), ...originalFrontmatterCache.keys(),
+    ...mutationVersions.keys(), ...readOnlyDocs,
+  ]);
+  const moves: Array<{ from: VaultPath; to: VaultPath; tail: string }> = [];
+  for (const key of keys) {
+    if (key === oldKey) moves.push({ from: key, to: vaultPath(newNorm), tail: '' });
+    else if (key.startsWith(oldPrefix)) {
+      const tail = key.slice(oldKey.length);
+      moves.push({ from: key, to: vaultPath(newNorm + tail), tail });
+    }
+  }
+  let repointed = 0;
+  for (const { from, to, tail } of moves) {
+    const doc = openDocuments.get(from);
+    if (doc) {
+      // Keep the tail's on-disk case: slice the matched prefix off the
+      // document's own spelling rather than the case-folded key.
+      const docPath = stripLeadingSlash(toPosix(doc.filename));
+      const filename = tail ? newNorm + docPath.slice(oldNorm.length) : newNorm;
+      openDocuments.delete(from);
+      openDocuments.set(to, { ...doc, filename });
+      repointed++;
+    }
+    if (from === to) continue;
+    const fromVersion = mutationVersions.get(from) ?? 0;
+    const toVersion = mutationVersions.get(to) ?? 0;
+    const fromBody = bodyMutationVersions.get(from) ?? 0;
+    moveEntry(dirtyWriters, from, to);
+    moveEntry(frontmatterCache, from, to);
+    moveEntry(rawFrontmatterCache, from, to);
+    moveEntry(originalFrontmatterCache, from, to);
+    mutationVersions.delete(from);
+    bodyMutationVersions.delete(from);
+    if (fromVersion > 0 || toVersion > 0) {
+      // Never below what either key already counted; the jump is booked as
+      // body churn so the frontmatter-only count stays the moved note's own.
+      const version = Math.max(fromVersion, toVersion);
+      mutationVersions.set(to, version);
+      bodyMutationVersions.set(to, fromBody + (version - fromVersion));
+    }
+    if (readOnlyDocs.delete(from)) readOnlyDocs.add(to);
+    if (activeDocPath === from) activeDocPath = to;
+  }
+  if (moves.length > 0) {
+    frontmatterVersionTick++;
+    readOnlyVersion++;
+  }
+  return repointed;
+}
+
+registerPathRenamable('documentStore', renameDocumentPaths);

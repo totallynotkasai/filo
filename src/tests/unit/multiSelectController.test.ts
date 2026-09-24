@@ -33,9 +33,9 @@ function baseDeps(rows: TaskRow[]): MultiSelectControllerDeps {
   };
 }
 
-/** Row whose backing tile carries an explicit `contentId` (docId). */
-function rowWithDoc(id: string, contentId: string): TaskRow {
-  return mkRow({ id, tile: { id, type: 'text', title: id, contentId } as unknown as Tile });
+/** Row whose backing tile names its note by `filePath`. */
+function rowWithNote(id: string, filePath: string): TaskRow {
+  return mkRow({ id, tile: { id, type: 'text', title: id, filePath } as unknown as Tile });
 }
 
 /**
@@ -258,8 +258,8 @@ describe('MultiSelectController.handleRowSelect — shift-click with a lost anch
 describe('MultiSelectController.bulkApplyFieldPatch — dedups rows sharing a backing file (SHARE-1)', () => {
   beforeEach(() => installFiloStub());
 
-  it('builds ONE command for two selected rows backed by the same docId', () => {
-    const rows = [rowWithDoc('a', 'shared-doc'), rowWithDoc('b', 'shared-doc')];
+  it('builds ONE command for two selected rows backed by the same note path', () => {
+    const rows = [rowWithNote('a', 'Shared.md'), rowWithNote('b', 'Shared.md')];
     const seen: string[] = [];
     const deps: MultiSelectControllerDeps = {
       ...baseDeps(rows),
@@ -271,12 +271,12 @@ describe('MultiSelectController.bulkApplyFieldPatch — dedups rows sharing a ba
     const c = new MultiSelectController(deps);
     c.selectedTaskIds = new SvelteSet(['a', 'b']);
     c.bulkSetPriority('high');
-    // Both rows resolve to the same docId → only the first reaches the builder.
+    // Both rows resolve to the same note → only the first reaches the builder.
     expect(seen).toEqual(['a']);
   });
 
-  it('keeps rows with distinct docIds separate', () => {
-    const rows = [rowWithDoc('a', 'doc-a'), rowWithDoc('b', 'doc-b')];
+  it('keeps rows with distinct note paths separate', () => {
+    const rows = [rowWithNote('a', 'A.md'), rowWithNote('b', 'B.md')];
     const seen: string[] = [];
     const deps: MultiSelectControllerDeps = {
       ...baseDeps(rows),
@@ -291,8 +291,8 @@ describe('MultiSelectController.bulkApplyFieldPatch — dedups rows sharing a ba
     expect(seen).toEqual(['a', 'b']);
   });
 
-  it('does not dedup orphan rows that have no contentId', () => {
-    const rows = [mkRow({ id: 'a' }), mkRow({ id: 'b' })]; // no contentId on either
+  it('does not dedup orphan rows that have no filePath', () => {
+    const rows = [mkRow({ id: 'a' }), mkRow({ id: 'b' })]; // no filePath on either
     const seen: string[] = [];
     const deps: MultiSelectControllerDeps = {
       ...baseDeps(rows),

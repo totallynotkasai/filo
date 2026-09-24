@@ -15,7 +15,6 @@
  */
 import { documentStore } from './document.svelte';
 import { vaultIndexStore } from './vaultIndex.svelte';
-import { noteIdFor } from './noteIds';
 import { orderPreservingTagsField } from '../lib/utils/normalizeTagsField';
 
 const EMPTY: Readonly<Record<string, unknown>> = Object.freeze({});
@@ -26,20 +25,10 @@ export function noteStem(path: string): string {
   return base.replace(/\.(md|markdown)$/i, '');
 }
 
-/**
- * The session document id for the note at `path` (see `noteIds`). Read from
- * the id registry only, never by scanning the open documents, so deriving a
- * board's tiles doesn't re-run on every keystroke in an open note.
- */
-export function noteDocId(path: string): string {
-  if (!path) return '';
-  return noteIdFor(path);
-}
-
 /** The note's frontmatter: the live cache when seeded, else the vault index. */
 export function noteFrontmatter(path: string): Readonly<Record<string, unknown>> {
   if (!path) return EMPTY;
-  const live = documentStore.getFrontmatter(noteDocId(path));
+  const live = documentStore.getFrontmatter(path);
   if (live) return live;
   return (vaultIndexStore.getMetadata(path)?.frontmatter as Record<string, unknown> | undefined) ?? EMPTY;
 }

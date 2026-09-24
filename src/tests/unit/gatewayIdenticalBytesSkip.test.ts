@@ -46,19 +46,19 @@ function install(initial: string): void {
 
 async function hydrate(): Promise<void> {
   const r = await readMarkdownForHydrate(VAULT, REL);
-  documentStore.loadDocument({ docId: 'd1', filename: REL, title: 'Note', body: r.body, htmlContent: '', richText: [] });
-  documentStore.setFrontmatter('d1', r.frontmatter, r.rawFrontmatter);
+  documentStore.loadDocument({ filename: REL, title: 'Note', body: r.body, htmlContent: '', richText: [] });
+  documentStore.setFrontmatter(REL, r.frontmatter, r.rawFrontmatter);
 }
 
 function write(body: string): Promise<void> {
-  documentStore.markDirty('d1', 'c1');
+  documentStore.markDirty(REL, 'c1');
   return writeMarkdownFile({
     vaultRoot: VAULT,
     relPath: REL,
-    frontmatter: documentStore.getFrontmatter('d1') ?? {},
+    frontmatter: documentStore.getFrontmatter(REL) ?? {},
     body,
     callerId: 'c1',
-    docId: 'd1',
+    notePath: REL,
   });
 }
 
@@ -85,7 +85,7 @@ describe('gateway identical-bytes skip (Audit-19 MD-2)', () => {
     await hydrate();
     await write('Hello\n');
     expect(writes).toEqual([]);
-    expect(documentStore.isWriterDirty('d1', 'c1')).toBe(false);
+    expect(documentStore.isWriterDirty(REL, 'c1')).toBe(false);
   });
 
   it('a changed body still writes', async () => {
@@ -118,7 +118,7 @@ describe('gateway identical-bytes skip (Audit-19 MD-2)', () => {
   it('a baseline re-stamped by an external reload drops the text, so the write fires', async () => {
     install('---\na: 1\n---\nHello\n');
     await hydrate();
-    documentStore.applyReloadFromDisk('d1', 'Hello\n', [], { a: 1 }, 'a: 1', { mtimeMs: mtime, size: disk.length });
+    documentStore.applyReloadFromDisk(REL, 'Hello\n', [], { a: 1 }, 'a: 1', { mtimeMs: mtime, size: disk.length });
     expect(getBaseline(REL)?.text).toBeUndefined();
     await write('Hello\n');
     expect(writes.length).toBe(1);

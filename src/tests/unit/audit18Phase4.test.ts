@@ -167,7 +167,7 @@ class NoopCommand extends Command {
 function taskRow(id: string): TaskRow {
   return {
     placement: { tileId: id, position: 0 },
-    tile: { id, type: 'text', title: id } as unknown as Tile, // no contentId → no dedup
+    tile: { id, type: 'text', title: id } as unknown as Tile, // no filePath → no dedup
     completed: false,
     priority: 'none',
     dueDate: '',
@@ -246,7 +246,7 @@ describe('Audit-18 4.6 — Kanban bulk Add tag gates the success toast on the ch
 
   function makeMultiSelect() {
     const tiles: Record<string, Tile> = {
-      a: { id: 'a', type: 'text', title: 'A', tags: [] } as unknown as Tile, // orphan (no contentId)
+      a: { id: 'a', type: 'text', title: 'A', tags: [] } as unknown as Tile, // orphan (no filePath)
     };
     return new KanbanMultiSelect({
       selection: { selectedIds: new Set(['a']) } as unknown as SelectionScope,

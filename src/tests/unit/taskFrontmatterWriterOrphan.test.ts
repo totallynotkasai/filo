@@ -17,11 +17,11 @@ import type { TaskRow } from '@renderer/lib/tasks/taskListModel';
 import type { Tile, TaskListBoard } from '@renderer/schema/index';
 
 /**
- * P2.3 (Task List audit 2026-06-08) — the two docId-less ("orphan") task write
- * gaps. Every Filo-created task carries a contentId, so these paths only fire on
- * a hand-edited / legacy `.board.json`. Before the fix they SILENTLY dropped the
+ * P2.3 (Task List audit 2026-06-08) — the two note-less ("orphan") task write
+ * gaps: a text tile with no `filePath`. Every Filo-created task carries one,
+ * so these paths only fire on a hand-edited / legacy `.board.json`. Before the fix they SILENTLY dropped the
  * edit:
- *   WRITE-1 — markAllIncomplete skipped docId-less rows (stayed completed) AND
+ *   WRITE-1 — markAllIncomplete skipped note-less rows (stayed completed) AND
  *             over-counted the success toast.
  *   NOTES-1 — setNotesBody scheduled scheduleFrontmatterWrite(path, null), which
  *             re-emits the OLD disk body, discarding the typed note.
@@ -56,24 +56,24 @@ function makeWriter(): FrontmatterWriter {
   });
 }
 
-describe('WRITE-1 — markAllIncomplete routes docId-less rows through an orphan command', () => {
+describe('WRITE-1 — markAllIncomplete routes note-less rows through an orphan command', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('builds a command for the docId-less completed row AND counts it honestly', async () => {
+  it('builds a command for the note-less completed row AND counts it honestly', async () => {
     // Mock execute so the orphan command isn't actually run (no disk IO needed —
     // we only assert the routing decision + honest count).
     const executeSpy = vi.spyOn(historyStore, 'execute').mockResolvedValue(undefined);
     const toastSpy = vi.spyOn(uiStore, 'toast');
     const writer = makeWriter();
 
-    const docIdRow = mkRow({
+    const noteRow = mkRow({
       id: 'withDoc',
       completed: true,
-      tile: { id: 'withDoc', type: 'text', title: 'WithDoc', contentId: 'doc1' } as unknown as Tile,
+      tile: { id: 'withDoc', type: 'text', title: 'WithDoc', filePath: 'WithDoc.md' } as unknown as Tile,
     });
-    const orphanRow = mkRow({ id: 'orphan', completed: true }); // no contentId
+    const orphanRow = mkRow({ id: 'orphan', completed: true }); // no filePath
 
-    await writer.markAllIncomplete([docIdRow, orphanRow]);
+    await writer.markAllIncomplete([noteRow, orphanRow]);
 
     // Both rows produce a command → one batch executed; count = 2 (was 1 pre-fix,
     // because the orphan row used to be skipped while the toast still claimed it).
@@ -89,7 +89,7 @@ describe('WRITE-1 — markAllIncomplete routes docId-less rows through an orphan
   });
 });
 
-describe('NOTES-1 — setNotesBody writes a docId-less task body via the gateway', () => {
+describe('NOTES-1 — setNotesBody writes a note-less task body via the gateway', () => {
   let captured: Array<{ channel: string; args: unknown[] }>;
 
   beforeEach(() => {
@@ -127,7 +127,7 @@ describe('NOTES-1 — setNotesBody writes a docId-less task body via the gateway
     const writer = makeWriter();
     const orphanRow = mkRow({
       id: 'orphan',
-      tile: { id: 'orphan', type: 'text', title: 'Orphan' } as unknown as Tile, // no contentId
+      tile: { id: 'orphan', type: 'text', title: 'Orphan' } as unknown as Tile, // no filePath
     });
 
     await writer.setNotesBody(orphanRow, 'NEW NOTE BODY');
@@ -166,7 +166,7 @@ describe('DATE-3 — clearing a due date clears its time in ONE command', () => 
       id: 'r',
       dueDate: '2026-01-01',
       dueTime: '09:00',
-      tile: { id: 'r', type: 'text', title: 'R', contentId: 'doc1' } as unknown as Tile,
+      tile: { id: 'r', type: 'text', title: 'R', filePath: 'R.md' } as unknown as Tile,
     });
     await dateWriter().setDueDate(row, '');
     expect(executeSpy).toHaveBeenCalledTimes(1);
@@ -179,7 +179,7 @@ describe('DATE-3 — clearing a due date clears its time in ONE command', () => 
       id: 'r',
       dueDate: '2026-01-01',
       dueTime: '',
-      tile: { id: 'r', type: 'text', title: 'R', contentId: 'doc1' } as unknown as Tile,
+      tile: { id: 'r', type: 'text', title: 'R', filePath: 'R.md' } as unknown as Tile,
     });
     await dateWriter().setDueDate(row, '');
     expect(executeSpy).toHaveBeenCalledTimes(1);
@@ -192,7 +192,7 @@ describe('DATE-3 — clearing a due date clears its time in ONE command', () => 
       id: 'r',
       dueDate: '',
       dueTime: '09:00',
-      tile: { id: 'r', type: 'text', title: 'R', contentId: 'doc1' } as unknown as Tile,
+      tile: { id: 'r', type: 'text', title: 'R', filePath: 'R.md' } as unknown as Tile,
     });
     await dateWriter().setDueDate(row, '2026-02-02');
     expect(executeSpy).toHaveBeenCalledTimes(1);
@@ -220,7 +220,7 @@ describe('REC-3 — recurring roll-forward announces the new date', () => {
       recurrence: 'weekly',
       recurrenceMode: 'completion',
       dueDate: '2026-01-01',
-      tile: { id: 'r', type: 'text', title: 'R', contentId: 'doc1' } as unknown as Tile,
+      tile: { id: 'r', type: 'text', title: 'R', filePath: 'R.md' } as unknown as Tile,
     });
     await writer().toggleCompleted(row);
     expect(toastSpy).toHaveBeenCalledWith(expect.stringContaining('rescheduled'), 'info', 2500);
@@ -231,7 +231,7 @@ describe('REC-3 — recurring roll-forward announces the new date', () => {
     const toastSpy = vi.spyOn(uiStore, 'toast');
     const row = mkRow({
       id: 'r',
-      tile: { id: 'r', type: 'text', title: 'R', contentId: 'doc1' } as unknown as Tile,
+      tile: { id: 'r', type: 'text', title: 'R', filePath: 'R.md' } as unknown as Tile,
     });
     await writer().toggleCompleted(row);
     expect(toastSpy).not.toHaveBeenCalled();

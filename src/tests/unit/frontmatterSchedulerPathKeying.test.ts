@@ -1,15 +1,10 @@
 /**
- * M1 (2026-05-28) — the frontmatter scheduler's version-token guard is keyed
- * by `docId`, not `relPath`. The mutation versions come from a per-docId
- * counter; keying the last-flushed map by relPath meant that when two docs
- * transiently alias one relPath (the rename-in-flight window), the
- * higher-versioned doc's flush could suppress the other doc's lower-versioned
- * — but newer-for-that-doc — write via `scheduledVersion <= last`, silently
- * dropping the edit.
- *
- * This test drives two docId streams against a single relPath and asserts
- * both writes land. With the pre-M1 relPath keying the second write would be
- * suppressed (writeCount would stay 1).
+ * The frontmatter scheduler's version-token guard is keyed by the note's
+ * case-folded path, the same key as the document store's mutation counter.
+ * The recorded last-flushed version must be found under any spelling of the
+ * path and must move with the note on a rename: left behind, a renamed note's
+ * stale re-schedule would re-write old bytes, and a fresh key would compare a
+ * carried-over mutation version against nothing.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -20,13 +15,14 @@ import {
   resetFrontmatterScheduler,
 } from '@renderer/lib/boards/frontmatterWriteScheduler';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
+import { renameAllPathKeys } from '@renderer/lib/vault/renamePathKeys';
 import { documentStore } from '@renderer/stores/document.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { parseMarkdown } from '@renderer/lib/vault/vaultIndex';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
-describe('frontmatterWriteScheduler — docId-keyed version guard (M1)', () => {
+describe('frontmatterWriteScheduler — path-keyed version guard', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     resetFrontmatterScheduler();
@@ -42,7 +38,7 @@ describe('frontmatterWriteScheduler — docId-keyed version guard (M1)', () => {
     vaultStore.setPath('');
   });
 
-  it('does not let a high-version doc suppress a low-version doc that aliases the same relPath', async () => {
+  it('records the flushed version under any spelling and carries it across a rename', async () => {
     let writeCount = 0;
     installFiloMock({
       'vault:file-exists': () => true,
@@ -53,55 +49,50 @@ describe('frontmatterWriteScheduler — docId-keyed version guard (M1)', () => {
       },
     });
 
-    // doc-A — bump its frontmatter several times so its mutation version
-    // climbs well above 1, then flush it. lastFlushed[doc-A] lands high.
+    // Bump the note's frontmatter several times so its mutation version climbs
+    // well above 1, then flush it.
     documentStore.loadDocument({
-      docId: 'doc-A',
       filename: 'Notes.md',
       title: 'Notes',
       body: 'A body',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter('doc-A', { id: 'doc-A', title: 'Notes', tag: 'a1' });
-    documentStore.setFrontmatter('doc-A', { id: 'doc-A', title: 'Notes', tag: 'a2' });
-    documentStore.setFrontmatter('doc-A', { id: 'doc-A', title: 'Notes', tag: 'a3' });
+    documentStore.setFrontmatter('Notes.md', { title: 'Notes', tag: 'a1' });
+    documentStore.setFrontmatter('Notes.md', { title: 'Notes', tag: 'a2' });
+    documentStore.setFrontmatter('Notes.md', { title: 'Notes', tag: 'a3' });
 
-    scheduleFrontmatterWrite('Notes.md', 'doc-A');
+    scheduleFrontmatterWrite('Notes.md', 'Notes.md');
     await flushAllPendingFrontmatterWrites();
     expect(writeCount).toBe(1);
-    const versionA = getLastFlushedFrontmatterVersion('doc-A');
-    expect(versionA).toBeGreaterThan(1);
+    const flushed = getLastFlushedFrontmatterVersion('Notes.md');
+    expect(flushed).toBeGreaterThan(1);
+    expect(getLastFlushedFrontmatterVersion('notes.MD')).toBe(flushed);
 
-    // doc-B — a *different* doc that, mid-rename, points at the same relPath.
-    // Its mutation counter starts fresh (version 1 after one setFrontmatter),
-    // which is BELOW doc-A's recorded last-flushed version.
-    documentStore.loadDocument({
-      docId: 'doc-B',
-      filename: 'Notes.md',
-      title: 'Notes',
-      body: 'B body',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter('doc-B', { id: 'doc-B', title: 'Notes', tag: 'b1' });
+    renameAllPathKeys('Notes.md', 'Sub/Notes.md');
+    expect(getLastFlushedFrontmatterVersion('Sub/Notes.md')).toBe(flushed);
+    expect(getLastFlushedFrontmatterVersion('Notes.md')).toBe(0);
 
-    scheduleFrontmatterWrite('Notes.md', 'doc-B');
+    // A re-schedule with no new mutation is already on disk: the guard, now
+    // under the new path, suppresses it.
+    scheduleFrontmatterWrite('Sub/Notes.md', 'Sub/Notes.md');
     await flushAllPendingFrontmatterWrites();
+    expect(writeCount).toBe(1);
 
-    // docId keying gives doc-B its own version space, so its write is NOT
-    // suppressed by doc-A's higher recorded version. Pre-M1 (relPath keying)
-    // this would stay at 1.
+    // A real edit after the rename is newer than the carried version and lands.
+    documentStore.setFrontmatter('Sub/Notes.md', { title: 'Notes', tag: 'b1' });
+    scheduleFrontmatterWrite('Sub/Notes.md', 'Sub/Notes.md');
+    await flushAllPendingFrontmatterWrites();
     expect(writeCount).toBe(2);
-    expect(getLastFlushedFrontmatterVersion('doc-B')).toBeGreaterThan(0);
+    expect(getLastFlushedFrontmatterVersion('Sub/Notes.md')).toBeGreaterThan(flushed);
   });
 
-  // 6.4.L2 — a docId-null (orphan) write for a relPath that ALSO has an open
+  // 6.4.L2 — a null-path (orphan) write for a relPath that ALSO has an open
   // editor must use the editor's LIVE frontmatter, not the body-stripped,
   // possibly-stale vaultIndex copy. The scheduler coalesces by relPath, so a
-  // null schedule can fire over a docId-backed one; with the version guard
-  // inert for null docIds, the stale index FM used to clobber the editor's.
-  it('a docId-null write adopts an open editor and writes its live frontmatter', async () => {
+  // null schedule can fire over a cache-backed one; with the version guard
+  // inert for a null path, the stale index FM would clobber the editor's.
+  it('a null-path write adopts an open editor and writes its live frontmatter', async () => {
     let writtenContent = '';
     installFiloMock({
       'vault:file-exists': () => true,
@@ -120,23 +111,22 @@ describe('frontmatterWriteScheduler — docId-keyed version guard (M1)', () => {
 
     // Open editor for Notes.md with live frontmatter.
     documentStore.loadDocument({
-      docId: 'doc-A',
       filename: 'Notes.md',
       title: 'Notes',
       body: 'live body',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter('doc-A', { status: 'live' });
+    documentStore.setFrontmatter('Notes.md', { status: 'live' });
 
-    // A stale copy of the same file in the search index — the pre-fix FM source
-    // for a docId-null write.
+    // A stale copy of the same file in the search index — the FM source a
+    // null-path write would otherwise fall back to.
     vaultIndexStore.restoreMetadata(
       'Notes.md',
       parseMarkdown('Notes.md', '---\nstatus: stale\n---\nbody'),
     );
 
-    // Orphan (docId-null) frontmatter write scheduled for the SAME relPath.
+    // Orphan (null-path) frontmatter write scheduled for the SAME relPath.
     scheduleFrontmatterWrite('Notes.md', null);
     await flushAllPendingFrontmatterWrites();
 

@@ -18,7 +18,6 @@ import { createId } from '../utils/ids';
 import { assembleMarkdownFile } from '../editor/markdownSync';
 import { markHydrated } from '../vault/markdownFileWriter';
 import { createUniqueMdFile } from '../vault/createMdExclusive';
-import { noteIdFor } from '../../stores/noteIds';
 import { noteTitle } from '../../stores/noteMeta';
 import { reportError } from '../utils/errorBus';
 import { sectionIdForPlacementIndex } from './sectionMath';
@@ -175,16 +174,14 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
       markHydrated(relPath, false);
       // `DocumentState.body` is body-only; the seed is a frontmatter-only FILE
       // with an empty body, so the store body is ''.
-      const docId = noteIdFor(relPath);
       documentStore.loadDocument({
-        docId,
         filename: relPath,
         title,
         body: '',
         htmlContent: '',
         richText: [],
       });
-      documentStore.setFrontmatter(docId, fm);
+      documentStore.setFrontmatter(relPath, fm);
       // Pre-warm the vault index so the row builder (which sources fields
       // via vaultIndexStore) doesn't lag behind the watcher debounce.
       await vaultIndexStore.applyChanges([relPath]);

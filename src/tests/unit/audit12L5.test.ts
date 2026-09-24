@@ -4,8 +4,9 @@
  * reconciler, which this suite pins structurally — cf.
  * `characterization/externalEditReconciliation.test.ts`):
  *
- *   (a) Adopt-sibling hydrate: when a TextTile adopts a sibling view's docId
- *       WITHOUT a disk read (`!isHydrated`), it now sniffs the eol from the
+ *   (a) In-memory adopt hydrate: when a TextTile adopts the body a sibling
+ *       view of the same note already loaded, WITHOUT a disk read
+ *       (`!isHydrated`), it sniffs the eol from the
  *       body-only body so a single-line-CRLF FM file doesn't emit LF fences on
  *       the first gateway write (the A8-M1 hole on the adopt path). It pins
  *       only CRLF (leaves LF/unknown to write-time detection).
@@ -30,7 +31,7 @@ function blankComments(src: string): string {
     .replace(/<!--[\s\S]*?-->/g, '');
 }
 
-describe('Audit-12 L5(a) — TextTile adopt-sibling sniffs eol from the body', () => {
+describe('Audit-12 L5(a) — TextTile in-memory adopt sniffs eol from the body', () => {
   const src = blankComments(
     fs.readFileSync(
       path.join(ROOT, 'src', 'renderer', 'components', 'tiles', 'TextTile.svelte'),
@@ -38,19 +39,19 @@ describe('Audit-12 L5(a) — TextTile adopt-sibling sniffs eol from the body', (
     ),
   );
 
-  it('both !isHydrated adopt branches thread a sniffed eol into markHydrated', () => {
-    // Two adopt branches (findByFilename + in-memory body): each sniffs CRLF
-    // from the body-only `body` and threads it as the 5th markHydrated arg.
-    // (Audit-19 MD-3 — the body is loaded verbatim now, no `parsed.body`.)
+  it('the !isHydrated adopt branch threads a sniffed eol into markHydrated', () => {
+    // The in-memory adopt branch (sibling views share the note's path key, so
+    // there is one) sniffs CRLF from the body-only `body` and threads it as the
+    // 5th markHydrated arg. The body is loaded verbatim, no `parsed.body`.
     const sniffs = src.match(/\bbody\.includes\('\\r\\n'\) \? '\\r\\n' : undefined/g) ?? [];
-    expect(sniffs.length).toBe(2);
+    expect(sniffs.length).toBe(1);
     const threaded =
       src.match(/markHydrated\(relPath, false, undefined, undefined, adoptEol\)/g) ?? [];
-    expect(threaded.length).toBe(2);
+    expect(threaded.length).toBe(1);
   });
 
   it('the only bare markHydrated(relPath, false) is the Audit-18 H3 failed-read branch', () => {
-    // The old eol-less ADOPT call must not return — the two adopt branches use
+    // The old eol-less ADOPT call must not return — the adopt branch uses
     // the 5-arg eol form (asserted above). The disk-read / fallback paths use
     // `markHydrated(relPath, parsed.hadBom)`, which this regex does not match.
     //

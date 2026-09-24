@@ -81,7 +81,6 @@ function makeTextTile(id: string, x = 0, y = 0): Tile {
     faded: false,
     tags: [],
     filePath: `${id}.md`,
-    contentId: `${id}-doc`,
     content: '',
     createdAt: 0,
     updatedAt: 0,

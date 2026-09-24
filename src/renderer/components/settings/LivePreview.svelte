@@ -75,7 +75,6 @@
     id: 'preview-tile',
     type: 'text',
     title: 'Preview Tile',
-    contentId: 'preview',
     content: '',
     boardId: 'preview',
     position: { x: 0, y: 0 },

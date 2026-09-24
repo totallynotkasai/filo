@@ -476,7 +476,7 @@ describe('Audit-18 5.4 — post-write read-back is size-gated', () => {
       frontmatter: {},
       body: 'tiny body',
       callerId: 'small',
-      docId: null,
+      notePath: null,
     });
 
     expect(invokes.some((i) => i.channel === 'vault:write-existing-file-text')).toBe(true);
@@ -497,7 +497,7 @@ describe('Audit-18 5.4 — post-write read-back is size-gated', () => {
       frontmatter: {},
       body: 'x'.repeat(1_500_000), // > 1 MB
       callerId: 'large',
-      docId: null,
+      notePath: null,
     });
 
     expect(invokes.some((i) => i.channel === 'vault:write-existing-file-text')).toBe(true);
@@ -527,7 +527,7 @@ describe('Audit-18 5.4 — post-write read-back is size-gated', () => {
       frontmatter: {},
       body: 'mybody!!', // small → read-back runs
       callerId: 'foreign',
-      docId: null,
+      notePath: null,
     });
 
     expect(invokes.filter((i) => i.channel === 'vault:read-file-text').length).toBe(1);

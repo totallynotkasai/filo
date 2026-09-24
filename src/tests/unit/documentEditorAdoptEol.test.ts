@@ -69,7 +69,7 @@ describe('Audit-13 M8 — DocumentEditor adopt-path threads file eol (gateway co
       frontmatter: { title: 'Note' }, // single-line FM — no internal \r\n
       body: 'Edited body line', // LF/no-newline editor body (tiptap normalises to LF)
       callerId: `document-editor:${rel}`,
-      docId: null,
+      notePath: null,
     });
     const out = diskFiles.get(rel) ?? '';
     expect(out).toContain('\r\n');
@@ -90,7 +90,7 @@ describe('Audit-13 M8 — DocumentEditor adopt-path threads file eol (gateway co
       frontmatter: { title: 'Note' },
       body: 'Edited body line',
       callerId: `document-editor:${rel}`,
-      docId: null,
+      notePath: null,
     });
     const out = diskFiles.get(rel) ?? '';
     // A lone LF exists (the flip) — confirming the threaded eol is what prevents it.

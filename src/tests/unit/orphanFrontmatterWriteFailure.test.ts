@@ -61,7 +61,7 @@ describe('DI-13 — orphan frontmatter write to a deleted backing file', () => {
 
   it('marks the path failed (save indicator error) instead of silently dropping the edit', async () => {
     const relPath = 'Tasks/orphan.md';
-    // Orphan path: docId null, FM sourced from the index. The index still has
+    // Orphan path: note path null, FM sourced from the index. The index still has
     // the file's metadata (the edit scheduled this write), but the backing .md
     // was deleted out-of-band so the hydrate read ENOENTs.
     vaultIndexStore.restoreMetadata(

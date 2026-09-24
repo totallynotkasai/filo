@@ -22,14 +22,14 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
  * it covers every gateway-backed editor write (TextTile + DocumentEditor) in one
  * place.
  */
-function bodyWriteArgs(docId: string, relPath: string, body: string): WriteArgs {
+function bodyWriteArgs(relPath: string, body: string): WriteArgs {
   return {
     vaultRoot: '/vault',
     relPath,
-    frontmatter: documentStore.getFrontmatter(docId) ?? {},
+    frontmatter: documentStore.getFrontmatter(relPath) ?? {},
     body,
-    callerId: `text-tile:${docId}`,
-    docId,
+    callerId: `text-tile:${relPath}`,
+    notePath: relPath,
   };
 }
 
@@ -51,61 +51,57 @@ describe('Audit-7 M1 — gateway clears the writer on a successful write', () =>
   });
 
   it('a keystroke-then-flush leaves the writer clean and the doc not dirty', async () => {
-    const docId = 'doc-m1-a';
     const relPath = 'Notes/M1A.md';
-    const callerId = `text-tile:${docId}`;
+    const callerId = `text-tile:${relPath}`;
     documentStore.loadDocument({
-      docId,
       filename: relPath,
       title: 'M1A',
       body: 'orig',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter(docId, { title: 'M1A' }, 'title: M1A');
+    documentStore.setFrontmatter(relPath, { title: 'M1A' }, 'title: M1A');
     markHydrated(relPath, false);
 
     // Keystroke registers the writer as dirty.
-    documentStore.updateContent(docId, '<p>x</p>', 'edited body', callerId);
-    expect(documentStore.isWriterDirty(docId, callerId)).toBe(true);
-    expect(documentStore.getDocument(docId)?.isDirty).toBe(true);
+    documentStore.updateContent(relPath, '<p>x</p>', 'edited body', callerId);
+    expect(documentStore.isWriterDirty(relPath, callerId)).toBe(true);
+    expect(documentStore.getDocument(relPath)?.isDirty).toBe(true);
 
     // A normal debounced write lands.
-    scheduleMarkdownWrite(bodyWriteArgs(docId, relPath, 'edited body'));
+    scheduleMarkdownWrite(bodyWriteArgs(relPath, 'edited body'));
     await flushMarkdownWrite(callerId);
 
     // M1 — the gateway's success path cleared this writer; the doc is clean.
-    expect(documentStore.isWriterDirty(docId, callerId)).toBe(false);
-    expect(documentStore.getDocument(docId)?.isDirty).toBe(false);
+    expect(documentStore.isWriterDirty(relPath, callerId)).toBe(false);
+    expect(documentStore.getDocument(relPath)?.isDirty).toBe(false);
   });
 
   it('clears only the writer that wrote — a dirty sibling keeps the doc dirty', async () => {
-    const docId = 'doc-m1-b';
     const relPath = 'Notes/M1B.md';
-    const textTile = `text-tile:${docId}`;
-    const docEditor = `document-editor:${docId}`;
+    const textTile = `text-tile:${relPath}`;
+    const docEditor = `document-editor:${relPath}`;
     documentStore.loadDocument({
-      docId,
       filename: relPath,
       title: 'M1B',
       body: 'orig',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter(docId, { title: 'M1B' }, 'title: M1B');
+    documentStore.setFrontmatter(relPath, { title: 'M1B' }, 'title: M1B');
     markHydrated(relPath, false);
 
     // Both views are dirty; only the TextTile flushes.
-    documentStore.updateContent(docId, '<p>x</p>', 'edited body', textTile);
-    documentStore.markDirty(docId, docEditor);
-    expect(documentStore.getDocument(docId)?.isDirty).toBe(true);
+    documentStore.updateContent(relPath, '<p>x</p>', 'edited body', textTile);
+    documentStore.markDirty(relPath, docEditor);
+    expect(documentStore.getDocument(relPath)?.isDirty).toBe(true);
 
-    scheduleMarkdownWrite(bodyWriteArgs(docId, relPath, 'edited body'));
+    scheduleMarkdownWrite(bodyWriteArgs(relPath, 'edited body'));
     await flushMarkdownWrite(textTile);
 
     // The flushing writer went clean; the still-dirty sibling keeps the doc dirty.
-    expect(documentStore.isWriterDirty(docId, textTile)).toBe(false);
-    expect(documentStore.isWriterDirty(docId, docEditor)).toBe(true);
-    expect(documentStore.getDocument(docId)?.isDirty).toBe(true);
+    expect(documentStore.isWriterDirty(relPath, textTile)).toBe(false);
+    expect(documentStore.isWriterDirty(relPath, docEditor)).toBe(true);
+    expect(documentStore.getDocument(relPath)?.isDirty).toBe(true);
   });
 });

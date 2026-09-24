@@ -37,7 +37,7 @@ function makeArgs(callerId: string, relPath: string): WriteArgs {
     frontmatter: {},
     body: 'hello',
     callerId,
-    docId: callerId,
+    notePath: relPath,
   };
 }
 

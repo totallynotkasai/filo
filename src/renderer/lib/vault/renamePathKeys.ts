@@ -15,7 +15,7 @@
  * intentionally rename-blind caches).
  *
  * The older explicit peer calls in the cascades (`renameBoardPath`,
- * `propagateRename`, `renameFile`, `renameKey`, `updateFilename`) remain;
+ * `propagateRename`, `renameFile`, `renameKey`) remain;
  * the stores behind them are listed in the gate's EXEMPT_OWNERS. The gate
  * enforces that new path-keyed stores route through here.
  */

@@ -17,7 +17,7 @@ import { captureVaultIdentity, isStillSameVault } from '../vault/vaultIdentity';
  * Awaited BEFORE the synchronous `ensureSeededFm` so that, finding the cache
  * already populated, it skips the index seed. Deliberately conservative:
  *
- *  - No-op when the cache already holds an entry for `docId` — an open editor or
+ *  - No-op when the cache already holds an entry for `notePath` — an open editor or
  *    a prior in-app edit already seeded it from disk, and re-seeding would
  *    clobber unsaved mutations. (The `refreshSeedVersion` mode below is the one
  *    sanctioned exception — see its docstring.)
@@ -64,18 +64,18 @@ export interface SeedFrontmatterOptions {
 }
 
 export async function seedDocumentFrontmatterFromDisk(
-  docId: string | null,
+  notePath: string | null,
   vaultRoot: string | null | undefined,
   relPath: string,
   options?: SeedFrontmatterOptions,
 ): Promise<void> {
-  if (!docId || !vaultRoot || !relPath) return;
+  if (!notePath || !vaultRoot || !relPath) return;
   const refreshVersion = options?.refreshSeedVersion;
   // Default mode skips a present cache entry (don't clobber unsaved mutations).
   // Refresh mode skips this guard — the caller's placeholder IS the present
   // entry — and instead gates the overwrite on an unchanged mutation version
   // below, after the vault-identity re-check.
-  if (refreshVersion === undefined && documentStore.getFrontmatter(docId)) return;
+  if (refreshVersion === undefined && documentStore.getFrontmatter(notePath)) return;
   // Snapshot the active vault BEFORE the await; bail after if it swapped.
   const identity = captureVaultIdentity();
   try {
@@ -88,13 +88,13 @@ export async function seedDocumentFrontmatterFromDisk(
       // (a concurrent field edit bumps the version and must be preserved).
       // FM-only version, so a racing notes BODY keystroke
       // (which bumps the shared token) doesn't block the refresh.
-      if (documentStore.getFrontmatterOnlyMutationVersion(docId) === refreshVersion) {
-        documentStore.setFrontmatter(docId, hydrate.frontmatter, hydrate.rawFrontmatter);
+      if (documentStore.getFrontmatterOnlyMutationVersion(notePath) === refreshVersion) {
+        documentStore.setFrontmatter(notePath, hydrate.frontmatter, hydrate.rawFrontmatter);
       }
       return;
     }
-    if (!documentStore.getFrontmatter(docId)) {
-      documentStore.setFrontmatter(docId, hydrate.frontmatter, hydrate.rawFrontmatter);
+    if (!documentStore.getFrontmatter(notePath)) {
+      documentStore.setFrontmatter(notePath, hydrate.frontmatter, hydrate.rawFrontmatter);
     }
   } catch {
     // Leave the cache unseeded (or the placeholder intact); the caller's

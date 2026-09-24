@@ -1,7 +1,7 @@
 /**
  * Audit-11 Phase 1 — the two HIGH-severity fixes.
  *
- * FILO-UR-1 (silent data loss): an orphan card/task field edit (no contentId, no
+ * FILO-UR-1 (silent data loss): an orphan card/task field edit (no loaded note, no
  * open Document editor) used to build a CLEANED whole frontmatter object —
  * `{ ...baseFm, ...patch }` then a loop dropping every empty/null key — and hand
  * that to the write. A present-but-empty disk key (`aliases:` / `cssclasses:`,
@@ -32,7 +32,6 @@ import { tabStore } from '@renderer/stores/tabs.svelte';
 import { UpdateOrphanFrontmatterCommand } from '@renderer/commands/index';
 import { cancelAllMarkdownWrites } from '@renderer/lib/vault/markdownFileWriter';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
-import type { BoardType } from '@shared/types';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 // ── FILO-UR-1 ──────────────────────────────────────────────────────────────
@@ -164,7 +163,7 @@ describe('R1 — DocumentEditor is pane-scoped, not bound to the global active t
     'utf8',
   );
 
-  it('DocumentEditor derives docId from the pane tabId, never the global active tab', () => {
+  it('DocumentEditor derives its note from the pane tabId, never the global active tab', () => {
     // Declares the pane prop and derives its tab from `tabId`.
     expect(docEditorSrc).toMatch(/let\s*\{\s*tabId\s*\}\s*:/);
     expect(docEditorSrc).toMatch(/tabStore\.tabs\.find\(/);
@@ -176,25 +175,25 @@ describe('R1 — DocumentEditor is pane-scoped, not bound to the global active t
     expect(routerSrc).toMatch(/<ActiveBoardComponent\s+\{tabId\}/);
   });
 
-  it('two document panes resolve their OWN docId independent of which tab is active', () => {
+  it('two document panes resolve their OWN note independent of which tab is active', () => {
     tabStore.closeAll();
-    // Mirrors DocumentEditor's derivation: docId = tabs.find(id === tabId)?.boardId.
-    const paneDocId = (tabId: string): string =>
-      tabStore.tabs.find((t) => t.id === tabId)?.boardId ?? '';
+    // Mirrors DocumentEditor's derivation: notePath = tabs.find(id === tabId)?.notePath.
+    const paneNotePath = (tabId: string): string =>
+      tabStore.tabs.find((t) => t.id === tabId)?.notePath ?? '';
 
-    const tabA = tabStore.open('docA', 'Doc A', 'document' as BoardType);
-    const tabB = tabStore.open('docB', 'Doc B', 'document' as BoardType);
+    const tabA = tabStore.openNote('A.md', 'Doc A');
+    const tabB = tabStore.openNote('B.md', 'Doc B');
 
     // Opening B made it the global active tab.
-    expect(tabStore.activeTab?.boardId).toBe('docB');
-    // Each pane still resolves its OWN doc (pre-fix, pane A would read 'docB').
-    expect(paneDocId(tabA.id)).toBe('docA');
-    expect(paneDocId(tabB.id)).toBe('docB');
+    expect(tabStore.activeTab?.notePath).toBe('B.md');
+    // Each pane still resolves its OWN note (pane A must not read 'B.md').
+    expect(paneNotePath(tabA.id)).toBe('A.md');
+    expect(paneNotePath(tabB.id)).toBe('B.md');
 
     // Re-activating A must not change what pane B resolves.
-    tabStore.open('docA', 'Doc A', 'document' as BoardType);
-    expect(tabStore.activeTab?.boardId).toBe('docA');
-    expect(paneDocId(tabB.id)).toBe('docB');
+    tabStore.openNote('A.md', 'Doc A');
+    expect(tabStore.activeTab?.notePath).toBe('A.md');
+    expect(paneNotePath(tabB.id)).toBe('B.md');
 
     tabStore.closeAll();
   });

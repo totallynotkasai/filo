@@ -250,7 +250,6 @@ describe('Audit-18 H3 — TextTile failed-hydrate write guard (gateway contract)
       frontmatter: {},
       body: '',
       callerId: `text-tile:${rel}`,
-      docId: null,
     });
     expect(diskFiles.get(rel) ?? '').not.toContain('Heading');
   });
@@ -324,7 +323,7 @@ describe('Audit-18 M5 — config ENOENT re-stat grace delay', () => {
 describe('Audit-18 M7 — bulk Add tag uses the injected popup resolver', () => {
   function makeMultiSelect(promptValue: string | null) {
     const tiles: Record<string, Tile> = {
-      a: { id: 'a', type: 'text', contentId: 'docA', title: 'A', tags: [] } as unknown as Tile,
+      a: { id: 'a', type: 'text', filePath: 'A.md', title: 'A', tags: [] } as unknown as Tile,
     };
     return new KanbanMultiSelect({
       selection: { selectedIds: new Set(['a']) } as unknown as SelectionScope,

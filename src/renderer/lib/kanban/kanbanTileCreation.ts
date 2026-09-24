@@ -13,7 +13,6 @@ import { AddCardCommand } from '../../commands/index';
 import { createId } from '../utils/ids';
 import { markHydrated } from '../vault/markdownFileWriter';
 import { createNoteFile } from '../notes/createNote';
-import { noteIdFor } from '../../stores/noteIds';
 import { reportError } from '../utils/errorBus';
 import {
   interpolate,
@@ -126,7 +125,6 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
       // a PropertiesPopup opened on this card) can proceed.
       markHydrated(relPath, false);
       documentStore.loadDocument({
-        docId: noteIdFor(relPath),
         filename: relPath,
         title: tileTitle,
         body: '',
@@ -216,7 +214,6 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
     };
 
     documentStore.loadDocument({
-      docId: noteIdFor(relPath),
       filename: relPath,
       title,
       body,

@@ -99,9 +99,6 @@ const BaseTileSchema = z.object({
 
 export const TextTileSchema = BaseTileSchema.extend({
   type: z.literal('text'),
-  // Session-scoped note id that keys the open-document store. Derived from
-  // `filePath` when the board's tiles are built; never written to disk.
-  contentId: z.string(),
   content: z.string().default(''), // editor HTML, view-only
   /**
    * Vault-relative path of the backing .md file: the note's identity. Absent
@@ -242,7 +239,7 @@ export type TimerTile = z.infer<typeof TimerTileSchema>;
  * `InlineTile` on Mind Map boards.
  *
  * No `.passthrough()` on any variant: an unknown or removed key (an older
- * Filo's `title` / `tags` / `content` / `contentId`, a leaked task field) is
+ * Filo's `title` / `tags` / `content` / note id, a leaked task field) is
  * dropped on parse, so it can never survive a load and save.
  */
 const TileDefinitionBase = z.object({

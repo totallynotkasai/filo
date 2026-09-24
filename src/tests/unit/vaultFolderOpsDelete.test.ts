@@ -119,7 +119,6 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
     });
 
     documentStore.loadDocument({
-      docId: 'doc-foo',
       filename: 'Notes/2026/foo.md',
       title: 'foo',
       body: 'stale body',
@@ -128,7 +127,6 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
     });
     // Sibling document outside the deleted folder — must be preserved.
     documentStore.loadDocument({
-      docId: 'doc-bar',
       filename: 'Other/bar.md',
       title: 'bar',
       body: 'kept',
@@ -141,8 +139,8 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
     const ok = await pending;
     expect(ok).toBe(true);
 
-    expect(documentStore.getDocument('doc-foo')).toBeUndefined();
-    expect(documentStore.getDocument('doc-bar')).toBeDefined();
+    expect(documentStore.getDocument('Notes/2026/foo.md')).toBeUndefined();
+    expect(documentStore.getDocument('Other/bar.md')).toBeDefined();
   });
 
   it('bails before the in-memory cascade when the vault swaps during the post-delete flush (Audit-10 M2)', async () => {
@@ -159,7 +157,6 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
     });
 
     documentStore.loadDocument({
-      docId: 'doc-foo',
       filename: 'Notes/2026/foo.md',
       title: 'foo',
       body: 'stale body',
@@ -199,7 +196,7 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
       // The swap fired during the flush, so the bail skipped the in-memory
       // cascade + doc-unload: the outgoing vault's docStore entry is untouched.
       expect(swapped).toBe(true);
-      expect(documentStore.getDocument('doc-foo')).toBeDefined();
+      expect(documentStore.getDocument('Notes/2026/foo.md')).toBeDefined();
     } finally {
       ensureSpy.mockRestore();
       flushSpy.mockRestore();
@@ -215,7 +212,7 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
     // new bail protects — and assert the B4 loop (cache mutation) AND the
     // doc-unload loop were both skipped, leaving the outgoing vault's state
     // untouched. Bite: remove both L4 bails → the board's filePath is cleared
-    // and doc-foo is unloaded against the swapped-in vault.
+    // and foo.md is unloaded against the swapped-in vault.
     installFiloStub({
       'vault:delete': async () => ({ success: true }),
       'vault:read-tree': async () => ({ ok: true, tree: [] }),
@@ -223,7 +220,6 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
     });
 
     documentStore.loadDocument({
-      docId: 'doc-foo',
       filename: 'Notes/2026/foo.md',
       title: 'foo',
       body: 'stale body',
@@ -257,7 +253,7 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
         'Notes/2026/foo.md',
       );
       // guards: the doc-unload loop was skipped — outgoing vault's doc untouched.
-      expect(documentStore.getDocument('doc-foo')).toBeDefined();
+      expect(documentStore.getDocument('Notes/2026/foo.md')).toBeDefined();
     } finally {
       flushSpy.mockRestore();
       __resetVaultIdentityForTests();
@@ -272,7 +268,6 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
     });
 
     documentStore.loadDocument({
-      docId: 'doc-foo',
       filename: 'Notes/2026/foo.md',
       title: 'foo',
       body: '',
@@ -292,17 +287,16 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
     expect(ok).toBe(true);
 
     expect(tabStore.tabs.some((t) => t.boardId === 'daily')).toBe(false);
-    expect(documentStore.getDocument('doc-foo')).toBeUndefined();
+    expect(documentStore.getDocument('Notes/2026/foo.md')).toBeUndefined();
   });
 
-  it('exact-file delete unloads only the matching docId and leaves siblings intact', async () => {
+  it('exact-file delete unloads only the matching note and leaves siblings intact', async () => {
     installFiloStub({
       'vault:delete': async () => ({ success: true }),
       'vault:read-tree': async () => ({ ok: true, tree: [] }),
     });
 
     documentStore.loadDocument({
-      docId: 'doc-foo',
       filename: 'Notes/2026/foo.md',
       title: 'foo',
       body: '',
@@ -310,7 +304,6 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
       richText: [],
     });
     documentStore.loadDocument({
-      docId: 'doc-foo-sibling',
       filename: 'Notes/2026/bar.md',
       title: 'bar',
       body: '',
@@ -323,8 +316,8 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
     const ok = await pending;
     expect(ok).toBe(true);
 
-    expect(documentStore.getDocument('doc-foo')).toBeUndefined();
-    expect(documentStore.getDocument('doc-foo-sibling')).toBeDefined();
+    expect(documentStore.getDocument('Notes/2026/foo.md')).toBeUndefined();
+    expect(documentStore.getDocument('Notes/2026/bar.md')).toBeDefined();
   });
 
   it('Phase C / C.1 — cancel button returns false without invoking vault:delete', async () => {
@@ -376,7 +369,6 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
     });
 
     documentStore.loadDocument({
-      docId: 'doc-foo',
       filename: 'Notes/2026/foo.md',
       title: 'foo',
       body: '',

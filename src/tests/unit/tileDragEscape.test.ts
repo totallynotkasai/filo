@@ -227,7 +227,6 @@ describe('tileDragAction — Escape cancels in-flight drag', () => {
       id: 't2',
       type: 'text',
       title: 'T2',
-      contentId: 'doc_t2',
       filePath: 'T2.md',
       style: { headerColor: '', bodyColor: '', borderColor: '' },
       boardId: 'mm',

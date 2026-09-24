@@ -15,12 +15,12 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
  * Audit-10 H2 — a body-only editor save must never assemble against an EMPTY /
  * never-seeded FM cache.
  *
- * `TextTile.buildWriteArgs` sets `frontmatter: getFrontmatter(contentId) || {}`
+ * `TextTile.buildWriteArgs` sets `frontmatter: getFrontmatter(notePath) || {}`
  * and passes NO `frontmatterDelta`, so the gateway takes the cache-FM branch.
- * The TextTile "adopt sibling doc" branch flips hydrated=true WITHOUT seeding the
- * FM cache (re-parsing the body-only sibling body would yield {} and clobber the
- * real cache), so a docId reaches the gateway with no cache entry while the file
- * on disk still carries frontmatter. Pre-fix `fm` collapsed to `{}` and
+ * A path can be marked hydrated WITHOUT its FM cache being seeded (re-parsing a
+ * body-only store body would yield {} and clobber the real cache), so a notePath
+ * can reach the gateway with no cache entry while the file on disk still carries
+ * frontmatter. Pre-fix `fm` collapsed to `{}` and
  * `assembleMarkdownFile` emitted BODY ONLY — the on-disk YAML block was deleted.
  *
  * The fix re-reads disk IN-CHAIN when the cache is empty (`hasFrontmatter`
@@ -96,22 +96,22 @@ describe('Audit-10 H2 — body-only save with an empty FM cache re-reads disk', 
 
   it('preserves the on-disk YAML block (the adoption-branch wipe is closed)', async () => {
     const relPath = 'Adopted.md';
-    const docId = 'doc-adopt';
+    const notePath = relPath;
     // `emptyKey:` is a present-but-empty key — the kind a body-only wipe would
     // also silently destroy; assert it survives too.
     const disk = '---\ntitle: Keep\ntags:\n  - x\n  - y\nemptyKey:\n---\nold body\n';
     installDisk(disk);
     markHydrated(relPath, false);
     // Model the adoption branch: hydrated, but NO FM seeded into the cache.
-    expect(documentStore.hasFrontmatter(docId)).toBe(false);
+    expect(documentStore.hasFrontmatter(notePath)).toBe(false);
 
     await writeMarkdownFile({
       vaultRoot: '/vault',
       relPath,
       frontmatter: {}, // body-only editor path: getFrontmatter() || {} → {}
       body: 'new body\n',
-      callerId: `text-tile:${docId}`,
-      docId,
+      callerId: `text-tile:${notePath}`,
+      notePath,
       // no frontmatterDelta — exercises the cache-FM branch
     });
 
@@ -125,20 +125,20 @@ describe('Audit-10 H2 — body-only save with an empty FM cache re-reads disk', 
     // The cache-empty re-read fired exactly once.
     expect(readCount(captured)).toBe(1);
     // And it seeded the cache so later saves + the display see the real FM.
-    expect(documentStore.hasFrontmatter(docId)).toBe(true);
-    expect(documentStore.getFrontmatter(docId)?.title).toBe('Keep');
+    expect(documentStore.hasFrontmatter(notePath)).toBe(true);
+    expect(documentStore.getFrontmatter(notePath)?.title).toBe('Keep');
   });
 
   it('a seeded FM cache is trusted — no re-read, FM preserved from the cache', async () => {
     const relPath = 'Seeded.md';
-    const docId = 'doc-seeded';
+    const notePath = relPath;
     installDisk('---\ntitle: Seeded\ntags:\n  - a\n---\nbody\n');
     // A normally-hydrated doc: the cache holds the real FM, so buildWriteArgs
     // threads it (non-empty) — the H2 re-read must NOT engage. (Audit-15 P2.2
     // confirmed the body-only path keeps this verbatim passthrough with no
     // re-read: a clean cache is seeded together with a drift baseline, so the
     // pre-write drift check — not a re-read — owns external-change detection.)
-    documentStore.setFrontmatter(docId, { title: 'Seeded', tags: ['a'] }, 'title: Seeded\ntags:\n  - a');
+    documentStore.setFrontmatter(notePath, { title: 'Seeded', tags: ['a'] }, 'title: Seeded\ntags:\n  - a');
     markHydrated(relPath, false);
 
     await writeMarkdownFile({
@@ -146,8 +146,8 @@ describe('Audit-10 H2 — body-only save with an empty FM cache re-reads disk', 
       relPath,
       frontmatter: { title: 'Seeded', tags: ['a'] },
       body: 'new body\n',
-      callerId: `text-tile:${docId}`,
-      docId,
+      callerId: `text-tile:${notePath}`,
+      notePath,
     });
 
     const written = lastWrite(captured)!;
@@ -160,13 +160,13 @@ describe('Audit-10 H2 — body-only save with an empty FM cache re-reads disk', 
 
   it('a deliberate empty-FM seed is trusted — no re-read (never-seeded vs {} distinction)', async () => {
     const relPath = 'EmptySeed.md';
-    const docId = 'doc-empty-seed';
+    const notePath = relPath;
     installDisk('---\ntitle: OnDisk\n---\nbody\n');
     // Deliberate empty seed (the no-vault / embedded-content fallback parsed a
     // body with no FM). `hasFrontmatter` is true, so the guard trusts it and does
     // NOT re-read — locking the never-seeded-vs-deliberate-`{}` distinction.
-    documentStore.setFrontmatter(docId, {});
-    expect(documentStore.hasFrontmatter(docId)).toBe(true);
+    documentStore.setFrontmatter(notePath, {});
+    expect(documentStore.hasFrontmatter(notePath)).toBe(true);
     markHydrated(relPath, false);
 
     await writeMarkdownFile({
@@ -174,16 +174,16 @@ describe('Audit-10 H2 — body-only save with an empty FM cache re-reads disk', 
       relPath,
       frontmatter: {},
       body: 'new body\n',
-      callerId: `text-tile:${docId}`,
-      docId,
+      callerId: `text-tile:${notePath}`,
+      notePath,
     });
 
     expect(readCount(captured)).toBe(0); // guard skipped the re-read
     expect(lastWrite(captured)).toContain('new body');
   });
 
-  it('a docId-less legacy write is unaffected (no re-read, body-only)', async () => {
-    // The H2 guard is docId-gated; a docId-less write keeps its prior behaviour.
+  it('a cache-less (null notePath) write is unaffected (no re-read, body-only)', async () => {
+    // The H2 guard is notePath-gated; a null-notePath write keeps its body-only shape.
     const relPath = 'Legacy.md';
     installDisk('---\ntitle: Legacy\n---\nbody\n');
     markHydrated(relPath, false);
@@ -194,7 +194,7 @@ describe('Audit-10 H2 — body-only save with an empty FM cache re-reads disk', 
       frontmatter: {},
       body: 'new body\n',
       callerId: 'legacy-caller',
-      docId: null,
+      notePath: null,
     });
 
     expect(readCount(captured)).toBe(0);

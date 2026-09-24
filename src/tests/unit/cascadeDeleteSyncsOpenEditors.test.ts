@@ -45,7 +45,6 @@ function makeMindMap(boardId: string, tileId: string, filePath: string): V7Board
         id: tileId,
         type: 'text',
         title: 'T',
-        contentId: `doc_${tileId}`,
         style: { headerColor: '', bodyColor: '', borderColor: '' },
         boardId,
         position: { x: 0, y: 0 },
@@ -98,16 +97,14 @@ describe('CascadeDeleteCommand.undo — syncs open editors (Phase 6.1.R1)', () =
     boardStore.setBoard(boardData.board, tilesA, {}, []);
 
     // Editor is still mounted, holding stale pre-delete in-memory body.
-    const docId = 'doc-cascade-sync';
     documentStore.loadDocument({
-      docId,
       filename: relPath,
       title: 'Notes',
       body: 'stale pre-delete body',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter(docId, { title: 'Notes' }, '---\ntitle: Notes\n---');
+    documentStore.setFrontmatter(relPath, { title: 'Notes' }, '---\ntitle: Notes\n---');
     markHydrated(relPath, false);
 
     // Capture the cascade in mid-state then undo.
@@ -122,9 +119,9 @@ describe('CascadeDeleteCommand.undo — syncs open editors (Phase 6.1.R1)', () =
     await cmd.undo();
 
     // Phase 6.1.R1 — the editor MUST reflect the restored bytes.
-    const doc = documentStore.getDocument(docId);
+    const doc = documentStore.getDocument(relPath);
     expect(doc?.body).toBe('restored body\n');
-    const fm = documentStore.getFrontmatter(docId);
+    const fm = documentStore.getFrontmatter(relPath);
     expect(fm).toEqual({ title: 'Notes' });
   });
 

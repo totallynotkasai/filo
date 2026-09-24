@@ -92,7 +92,7 @@ describe('Audit-12 M1 — DocumentEditor failed-hydrate write guard (gateway con
       frontmatter: {},
       body: '',
       callerId: `document-editor:${rel}`,
-      docId: null,
+      notePath: null,
     });
     expect(diskFiles.get(rel) ?? '').not.toContain('Real heading');
   });

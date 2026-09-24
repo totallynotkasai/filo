@@ -130,7 +130,6 @@ describe('rename-cascade recovery — Retry repoints open documents (Phase 4.4)'
 
   it('updates an open document filename from old to new on Retry', async () => {
     documentStore.loadDocument({
-      docId: 'd',
       filename: 'Notes/old.md',
       title: 'old',
       body: '',
@@ -143,7 +142,7 @@ describe('rename-cascade recovery — Retry repoints open documents (Phase 4.4)'
     await seq;
     await waitFor(() => documentStore.findByFilename('Notes/new.md') !== null);
 
-    expect(documentStore.findByFilename('Notes/new.md')?.docId).toBe('d');
+    expect(documentStore.findByFilename('Notes/new.md')?.filename).toBe('Notes/new.md');
     expect(documentStore.findByFilename('Notes/old.md')).toBeNull();
   });
 
@@ -152,7 +151,6 @@ describe('rename-cascade recovery — Retry repoints open documents (Phase 4.4)'
   it('repairs board refs + open documents and confirms on Discard', async () => {
     boardCacheStore.hydrate({ b1: boardWithFileRef('b1', 'Notes/old.md') }, { b1: 'b1.board.json' });
     documentStore.loadDocument({
-      docId: 'd',
       filename: 'Notes/old.md',
       title: 'old',
       body: '',
@@ -169,7 +167,7 @@ describe('rename-cascade recovery — Retry repoints open documents (Phase 4.4)'
     await waitFor(() => uiStore.toasts.some((t) => /[Rr]epair/.test(t.text)));
 
     // Open document repointed (Discard ran the same repair as Retry).
-    expect(documentStore.findByFilename('Notes/new.md')?.docId).toBe('d');
+    expect(documentStore.findByFilename('Notes/new.md')?.filename).toBe('Notes/new.md');
     expect(documentStore.findByFilename('Notes/old.md')).toBeNull();
 
     // Board file-ref rewritten old → new.

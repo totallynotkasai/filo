@@ -79,7 +79,7 @@ describe('markdownFileWriter — Phase 4 delta write path', () => {
       frontmatter: { completed: false },
       body: 'card body\n',
       callerId: 'delta-test',
-      docId: null,
+      notePath: null,
       frontmatterDelta: { set: { completed: true }, unset: [] },
     });
 
@@ -101,7 +101,7 @@ describe('markdownFileWriter — Phase 4 delta write path', () => {
       frontmatter: { priority: 'low' }, // stale snapshot — ignored on the delta path
       body: 'body\n',
       callerId: 'delta-test-2',
-      docId: null,
+      notePath: null,
       frontmatterDelta: { set: { priority: 'high' }, unset: [] },
     });
 
@@ -123,7 +123,7 @@ describe('markdownFileWriter — Phase 4 delta write path', () => {
       frontmatter: {},
       body: 'x\n',
       callerId: 'delta-unset',
-      docId: null,
+      notePath: null,
       frontmatterDelta: { set: {}, unset: ['priority'] },
     });
 
@@ -143,7 +143,7 @@ describe('markdownFileWriter — Phase 4 delta write path', () => {
       vaultRoot: '/vault',
       relPath,
       frontmatter: {},
-      // Audit-15 P1.4 — with NO live editor for this (docId-less) write, the body
+      // Audit-15 P1.4 — with NO live editor for this (cache-less, null notePath) write, the body
       // is sourced from FRESH disk (`parsedFresh.body`), not the caller arg, so a
       // never-opened orphan/card whose snapshot went stale can't clobber disk. The
       // caller body here is deliberately different to prove disk wins. A live
@@ -151,7 +151,7 @@ describe('markdownFileWriter — Phase 4 delta write path', () => {
       // case in audit15Phase1.test.ts.
       body: 'caller body that must be ignored\n',
       callerId: 'delta-empty',
-      docId: null,
+      notePath: null,
       frontmatterDelta: { set: {}, unset: [] },
     });
 
@@ -185,7 +185,7 @@ describe('markdownFileWriter — Phase 4 delta write path', () => {
         frontmatter: {},
         body: 'x',
         callerId: 'delta-gone',
-        docId: null,
+        notePath: null,
         frontmatterDelta: { set: { a: 1 }, unset: [] },
       }),
     ).rejects.toThrow();

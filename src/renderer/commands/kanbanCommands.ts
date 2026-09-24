@@ -554,7 +554,7 @@ export class UpdateCardFieldCommand extends Command {
   readonly targetBoardId: string;
   private boardId: string;
   private relPath: string;
-  private docId: string;
+  private notePath: string;
   private patch: Record<string, unknown>;
   private inversePatch: Record<string, unknown>;
   // False on the user's initial Apply (apply directly), true once
@@ -564,24 +564,24 @@ export class UpdateCardFieldCommand extends Command {
   constructor(
     boardId: string,
     relPath: string,
-    docId: string | null,
+    notePath: string | null,
     patch: Record<string, unknown>,
     inversePatch: Record<string, unknown>,
     description?: string,
   ) {
     super();
-    // Refuse a null docId: without one the write re-emits unchanged FM, so Apply
-    // and Undo would be silent no-ops. Null-docId edits go through
+    // Refuse a null notePath: without one the write re-emits unchanged FM, so Apply
+    // and Undo would be silent no-ops. Null-notePath edits go through
     // UpdateOrphanFrontmatterCommand.
-    if (!docId) {
+    if (!notePath) {
       throw new Error(
-        'UpdateCardFieldCommand requires a non-null docId; route null-docId card edits through UpdateOrphanFrontmatterCommand instead',
+        'UpdateCardFieldCommand requires a non-null notePath; route null-notePath card edits through UpdateOrphanFrontmatterCommand instead',
       );
     }
     this.targetBoardId = boardId;
     this.boardId = boardId;
     this.relPath = relPath;
-    this.docId = docId;
+    this.notePath = notePath;
     // Deep-clone so nested values (e.g. `tags: [...]`) can't be mutated through
     // the caller's reference after the command is pushed.
     this.patch = this.snapshot(patch);
@@ -601,7 +601,7 @@ export class UpdateCardFieldCommand extends Command {
     this.hasExecuted = true;
     if (isRedo) {
       await applyFrontmatterPatchRebased({
-        docId: this.docId,
+        notePath: this.notePath,
         relPath: this.relPath,
         targetBoardId: this.targetBoardId,
         applying: this.patch,
@@ -618,26 +618,26 @@ export class UpdateCardFieldCommand extends Command {
     // so save()/quit (which await historyStore.whenChainSettled()) cover this
     // read — seeding before execute() let a quit in that window lose the edit.
     // No-op when the cache is already seeded or the disk read fails.
-    await seedDocumentFrontmatterFromDisk(this.docId, vaultStore.path, this.relPath);
+    await seedDocumentFrontmatterFromDisk(this.notePath, vaultStore.path, this.relPath);
     // Swap landed mid-seed: abandon before any index/merge/schedule/markDirty sink.
     if (!isStillSameVault(identity)) return;
-    if (!documentStore.getFrontmatter(this.docId)) {
+    if (!documentStore.getFrontmatter(this.notePath)) {
       // Disk read failed (ENOENT / transient) — fall back to the vault-index
       // snapshot so the merge has a full FM object.
       documentStore.setFrontmatter(
-        this.docId,
+        this.notePath,
         (vaultIndexStore.getMetadata(this.relPath)?.frontmatter ?? {}) as Record<string, unknown>,
       );
     }
     // Recapture the inverse from the just-seeded cache so undo restores the
     // TRUE prior value of each patched key — the writer computed it before
     // this seed ran, off a possibly-stale index / empty cache.
-    this.inversePatch = this.snapshot(captureInverseFromCache(this.docId, this.patch));
+    this.inversePatch = this.snapshot(captureInverseFromCache(this.notePath, this.patch));
     // mergeFrontmatter feeds the DISPLAY cache only; the delta is the write
     // SOURCE (applied to a fresh disk read in the gateway), so an untouched
     // external key is preserved instead of dropped from a stale cache.
-    documentStore.mergeFrontmatter(this.docId, this.patch);
-    scheduleFrontmatterWrite(this.relPath, this.docId, patchToFrontmatterDelta(this.patch));
+    documentStore.mergeFrontmatter(this.notePath, this.patch);
+    scheduleFrontmatterWrite(this.relPath, this.notePath, patchToFrontmatterDelta(this.patch));
     boardCacheStore.markDirty(this.targetBoardId);
   }
 
@@ -647,7 +647,7 @@ export class UpdateCardFieldCommand extends Command {
     // isn't silently clobbered (prompts to apply anyway). Awaited: the rebase
     // re-reads disk when no cache is seeded.
     await applyFrontmatterPatchRebased({
-      docId: this.docId,
+      notePath: this.notePath,
       relPath: this.relPath,
       targetBoardId: this.targetBoardId,
       applying: this.inversePatch,
@@ -658,8 +658,8 @@ export class UpdateCardFieldCommand extends Command {
 }
 
 /**
- * Undoable kanban frontmatter edit for cards whose backing tile lacks a
- * `contentId`. `UpdateCardFieldCommand` needs a docId to merge through the
+ * Undoable kanban frontmatter edit for cards that aren't a text tile with a
+ * note path. `UpdateCardFieldCommand` needs a notePath to merge through the
  * documentStore cache; without one the scheduler would read the watcher
  * snapshot and never see the patch. This command writes directly instead,
  * mirroring the PropertiesPopup disk path.
@@ -861,7 +861,7 @@ export class SetAllKanbanColumnsCollapsedCommand extends Command {
 }
 
 /**
- * docId-less rebased frontmatter patch for orphan cards (no open editor).
+ * cache-less rebased frontmatter patch for orphan cards (no open editor).
  * Mirrors `applyFrontmatterPatchRebased`: read disk fresh, compare each
  * applying key against `expectedCurrent`, commit only the non-conflicting keys,
  * and toast "Kept the external value" (with Apply anyway) for the rest, so an
@@ -882,20 +882,20 @@ async function applyOrphanPatchRebased(args: {
   if (!vaultRoot) return;
 
   // If a Document editor opened on this file between execute
-  // and undo, route through the docId-aware rebased helper (same conflict
+  // and undo, route through the notePath-aware rebased helper (same conflict
   // semantics as orphan path, but uses the live cache). Force-flush so
   // the rebase's write lands immediately instead of riding the debounce.
   const openDoc = documentStore.findByFilename(relPath);
   if (openDoc) {
     await applyFrontmatterPatchRebased({
-      docId: openDoc.docId,
+      notePath: openDoc.filename,
       relPath,
       targetBoardId,
       applying,
       expectedCurrent,
       label,
     });
-    const result = await forceWriteForDocument(openDoc.docId);
+    const result = await forceWriteForDocument(openDoc.filename);
     if (result.ok > 0) return;
     // No writer registered yet (editor mid-mount); fall through to the
     // direct orphan write path below.
@@ -940,7 +940,7 @@ async function applyOrphanPatchRebased(args: {
       frontmatterDelta: delta,
       body,
       callerId: `kanban-orphan-patch:${relPath}`,
-      docId: null,
+      notePath: null,
       // Delta baselines from its own fresh read; baseRawFm = no-delta fallback.
       originalFrontmatter: baseRawFm,
       bodyIsLive: false, // always a snapshot body, never a live editor's

@@ -83,13 +83,13 @@ export async function confirmPostWriteBaseline(
 export function finishWriteBookkeeping(opts: {
   relPath: string;
   fileText: string;
-  docId: string | null | undefined;
+  notePath: string | null | undefined;
   callerId: string;
   mutationVersionAtCapture?: number;
   /** True when a NEWER write for this caller is armed or parked. */
   hasNewerWriteFor: (callerId: string) => boolean;
 }): void {
-  const { relPath, fileText, docId, callerId } = opts;
+  const { relPath, fileText, notePath, callerId } = opts;
   // Refresh the vault index from the just-written bytes
   // so a late watcher echo past the renderer-side suppression TTL
   // (1.5 s idle / 5 s bulk) classifies as 'ignore' / 'noop-change' instead
@@ -102,11 +102,11 @@ export function finishWriteBookkeeping(opts: {
   } catch (err) {
     console.warn('[markdownFileWriter] post-write index refresh failed (best-effort):', err);
   }
-  if (docId) {
+  if (notePath) {
     // Record the CAPTURED version (what the assembled body/FM
     // correspond to), never the live post-IPC counter, which would mark a
     // mid-IPC mutation as flushed and let its follow-up write skip as stale.
-    noteFrontmatterFlushedVersion(docId, opts.mutationVersionAtCapture ?? 0);
+    noteFrontmatterFlushedVersion(notePath, opts.mutationVersionAtCapture ?? 0);
   }
   // A successful write clears THIS writer's dirty entry so a saved editor goes
   // clean (else spurious "modified externally" prompts). Skipped when a newer
@@ -114,7 +114,7 @@ export function finishWriteBookkeeping(opts: {
   // misread by an external-edit reconciler into a silent reload of unsaved
   // keystrokes. Deliberately NOT gated on a pending FM write for this path
   // (`conflictResolver` checks `isPathPending`); that would strand this callerId.
-  if (docId && !opts.hasNewerWriteFor(callerId)) {
-    documentStore.markClean(docId, callerId);
+  if (notePath && !opts.hasNewerWriteFor(callerId)) {
+    documentStore.markClean(notePath, callerId);
   }
 }

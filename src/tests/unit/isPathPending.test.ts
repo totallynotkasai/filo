@@ -22,7 +22,7 @@ function args(relPath: string, callerId: string) {
     frontmatter: {},
     body: 'body',
     callerId,
-    docId: null,
+    notePath: null,
   };
 }
 

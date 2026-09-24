@@ -3,6 +3,7 @@
    * TileHeader — header bar with title, tags, lock, style, expand, delete buttons.
    */
   import type { Tile, TextTile } from '../../schema/index';
+  import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
   import type { ResolvedTileStyle } from '../../lib/styles/effectiveStyle';
   import type { Editor } from '@tiptap/core';
   import { getContext } from 'svelte';
@@ -411,7 +412,7 @@
         let fileSnapshots: { rel: string; content: string }[] | undefined;
         let vaultRoot: string | undefined;
         if (deleteWithFile && hasVaultFile) {
-          const docId = (tileRef as TextTile).contentId;
+          const notePath = resolveTextTileVaultPath(tileRef);
           vaultRoot = normalizePath(vaultStore.path);
           // Same flow as AppShell's multi-tile delete: pre-read the backing .md
           // so DeleteTilesCommand.undo() can rewrite it. The command itself
@@ -425,7 +426,7 @@
               7000,
             );
           }
-          documentStore.unloadDocument(docId);
+          if (notePath) documentStore.unloadDocument(notePath);
         }
         selectionStore.deselect(tileId);
         boardStore.removeTilesWithHistory([tileId], { fileSnapshots, vaultRoot });

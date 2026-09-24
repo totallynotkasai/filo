@@ -174,8 +174,8 @@
             .map((id) => boardStore.getTile(id))
             .filter((t): t is NonNullable<typeof t> => !!t);
           for (const tile of tilesToRead) {
-            if (tile.type === 'text') {
-              documentStore.unloadDocument((tile as TextTile).contentId);
+            if (tile.type === 'text' && tile.filePath) {
+              documentStore.unloadDocument(tile.filePath);
             }
           }
           const result = await buildDeleteSnapshots(tilesToRead, vaultRoot);

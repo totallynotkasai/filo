@@ -217,16 +217,15 @@ describe('flushAllPendingFrontmatterWrites — envelope failure', () => {
 
     // Seed a document so writeFrontmatter has frontmatter to assemble.
     documentStore.loadDocument({
-      docId: 'doc-1',
       filename: 'Notes/foo.md',
       title: 'Foo',
       body: 'hello',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter('doc-1', { id: 'doc-1', title: 'Foo' });
+    documentStore.setFrontmatter('Notes/foo.md', { title: 'Foo' });
 
-    scheduleFrontmatterWrite('Notes/foo.md', 'doc-1');
+    scheduleFrontmatterWrite('Notes/foo.md', 'Notes/foo.md');
 
     // Capture the writeError surface for the assertion below.
     const observed: WriteErrorInfo[] = [];
@@ -257,19 +256,18 @@ describe('flushAllPendingFrontmatterWrites — envelope failure', () => {
     });
 
     documentStore.loadDocument({
-      docId: 'doc-2',
       filename: 'Notes/bar.md',
       title: 'Bar',
       body: 'world',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter('doc-2', { id: 'doc-2' });
+    documentStore.setFrontmatter('Notes/bar.md', { title: 'Bar' });
 
     const states: WriteStateInfo[] = [];
     setWriteStateListener((info) => states.push({ ...info }));
 
-    scheduleFrontmatterWrite('Notes/bar.md', 'doc-2');
+    scheduleFrontmatterWrite('Notes/bar.md', 'Notes/bar.md');
     const res = await flushAllPendingFrontmatterWrites();
     expect(res.failed).toEqual(['Notes/bar.md']);
 

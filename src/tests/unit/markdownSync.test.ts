@@ -233,35 +233,29 @@ describe('markdownSync — assembleMarkdownFile', () => {
     expect(r2.body.trimEnd()).toBe('# h\n\nbody');
   });
 
-  it('injects contentId as id when frontmatter has no id', () => {
-    const out = assembleMarkdownFile({}, 'body', { contentId: 'doc_abc123' });
-    const r = parseMarkdownFile(out);
-    expect(r.frontmatter.id).toBe('doc_abc123');
-    expect(r.body.trimEnd()).toBe('body');
-  });
-
   it('preserves an existing id in frontmatter (no overwrite)', () => {
-    const out = assembleMarkdownFile({ id: 'external_xyz' }, 'body', { contentId: 'doc_abc123' });
+    const out = assembleMarkdownFile({ id: 'external_xyz' }, 'body');
     const r = parseMarkdownFile(out);
     expect(r.frontmatter.id).toBe('external_xyz');
   });
 
-  it('does not inject id when no contentId provided', () => {
+  it('never injects an id key (the path is the note identity)', () => {
     const out = assembleMarkdownFile({ title: 'Foo' }, 'body');
     const r = parseMarkdownFile(out);
     expect(r.frontmatter.id).toBeUndefined();
     expect(r.frontmatter.title).toBe('Foo');
   });
 
-  it('round-trips an injected id through parse → assemble', () => {
-    const out = assembleMarkdownFile({ title: 'Foo' }, 'body', { contentId: 'doc_xyz' });
+  it('round-trips a user-authored id through parse → assemble untouched', () => {
+    const out = assembleMarkdownFile({ title: 'Foo', id: 'external_xyz' }, 'body');
     const r = parseMarkdownFile(out);
-    expect(r.frontmatter.id).toBe('doc_xyz');
+    expect(r.frontmatter.id).toBe('external_xyz');
     expect(r.frontmatter.title).toBe('Foo');
-    // Re-assembling without contentId should still keep the id (it's in the FM).
-    const out2 = assembleMarkdownFile(r.frontmatter, r.body);
+    const out2 = assembleMarkdownFile(r.frontmatter, r.body, {
+      originalFrontmatter: r.rawFrontmatter,
+    });
     const r2 = parseMarkdownFile(out2);
-    expect(r2.frontmatter.id).toBe('doc_xyz');
+    expect(r2.frontmatter.id).toBe('external_xyz');
   });
 
   // Regression: gray-matter.stringify uses Node's Buffer global, which is
@@ -273,14 +267,10 @@ describe('markdownSync — assembleMarkdownFile', () => {
     const original = (globalThis as { Buffer?: unknown }).Buffer;
     try {
       delete (globalThis as { Buffer?: unknown }).Buffer;
-      const out = assembleMarkdownFile(
-        { title: 'Foo', tags: ['a', 'b'] },
-        'body',
-        { contentId: 'doc_xyz' },
-      );
+      const out = assembleMarkdownFile({ title: 'Foo', tags: ['a', 'b'] }, 'body');
       expect(out).toMatch(/^---\n/);
       expect(out).toContain('title: Foo');
-      expect(out).toContain('id: doc_xyz');
+      expect(out).toContain('- a');
       expect(out).toContain('body');
     } finally {
       if (original !== undefined) (globalThis as { Buffer?: unknown }).Buffer = original;

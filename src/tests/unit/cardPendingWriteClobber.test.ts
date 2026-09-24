@@ -5,7 +5,6 @@ import { uiStore } from '@renderer/stores/ui.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
-import { noteIdFor } from '@renderer/stores/noteIds';
 import { scheduleFrontmatterWrite } from '@renderer/lib/boards/frontmatterWriteScheduler';
 import { hasPendingWrite, __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
 import type { VaultContext } from '@renderer/stores/vaultStoreTypes';
@@ -93,8 +92,8 @@ describe('vaultExternalChanges — pending-write guard (F4)', () => {
     // is mounted (no `loadDocument`), so `findByFilename` returns null.
     // The card's writer keys the note by its session id, so the live cache is
     // what every view of Card.md reads while the write is pending.
-    documentStore.setFrontmatter(noteIdFor('Card.md'), { completed: true });
-    scheduleFrontmatterWrite('Card.md', noteIdFor('Card.md'));
+    documentStore.setFrontmatter('Card.md', { completed: true });
+    scheduleFrontmatterWrite('Card.md', 'Card.md');
   });
 
   afterEach(() => {

@@ -40,6 +40,8 @@ import { resolveDragBlockIds } from './blockMove';
 import { completionPatchForRow } from './frontmatterWriter';
 import { orderForBatchDelete } from './taskDeletion';
 
+import { resolveTextTileVaultPath } from '../boards/textTilePath';
+import { vaultPath, type VaultPath } from '@shared/vaultPath';
 export interface MultiSelectControllerDeps {
   getBoard: () => TaskListBoardType | null;
   getRows: () => TaskRow[];
@@ -50,7 +52,7 @@ export interface MultiSelectControllerDeps {
   getSections: () => TaskListSection[];
   /**
    * Builds an UpdateTaskFieldCommand for one row. Returns null when the tile
-   * has no docId; bulk callers skip those rows so a missing docId never
+   * has no notePath; bulk callers skip those rows so a missing notePath never
    * aborts the whole batch.
    */
   buildTaskFieldCommand: (
@@ -187,20 +189,21 @@ export class MultiSelectController {
     // Plain object, not a Set: this is a non-reactive local dedup ledger, and the
     // `svelte/prefer-svelte-reactivity` lint rule forbids `new Set()` in
     // `.svelte.ts` (mirrors the same choice in history.svelte.ts).
-    const seenDocIds: Record<string, true> = {};
+    const seenNotePaths: Record<VaultPath, true> = {};
     for (const r of sel) {
       const patch = perRowPatch(r);
       if (!patch) continue;
       // Two selected rows can resolve to the SAME backing `.md` (the same vault
-      // file dropped twice). They share ONE frontmatter cache keyed by docId, so
+      // file dropped twice). They share ONE frontmatter cache keyed by notePath, so
       // a command per row would make the second capture its inverse from the
       // cache the first already mutated AND fold two deltas onto one path. Build
-      // ONE command per docId (a shared contentId always implies the same file).
-      // Rows with no contentId are orphan/distinct and aren't deduped.
-      const docId = (r.tile as { contentId?: string }).contentId;
-      if (docId) {
-        if (seenDocIds[docId]) continue;
-        seenDocIds[docId] = true;
+      // ONE command per note path. Rows without a note are orphan/distinct and
+      // aren't deduped.
+      const notePath = resolveTextTileVaultPath(r.tile);
+      if (notePath) {
+        const key = vaultPath(notePath);
+        if (seenNotePaths[key]) continue;
+        seenNotePaths[key] = true;
       }
       const cmd = this.deps.buildTaskFieldCommand(r, patch, description);
       if (cmd) cmds.push(cmd);

@@ -153,7 +153,7 @@ describe('A17-1.1 — undo/redo on a never-opened doc rebases against FRESH disk
     const cmd = new UpdateCardFieldCommand(
       'kb',
       'card.md',
-      'doc-n1',
+      'card.md',
       { priority: 'high' },
       { priority: 'normal' },
     );
@@ -164,8 +164,8 @@ describe('A17-1.1 — undo/redo on a never-opened doc rebases against FRESH disk
     // External editor changes the SAME field on disk; the classifier's
     // dropStaleSeededFrontmatterCache clears the not-open seeded entry.
     disk = '---\npriority: urgent\n---\nbody\n';
-    documentStore.clearFrontmatter('doc-n1');
-    expect(documentStore.getFrontmatter('doc-n1')).toBeUndefined();
+    documentStore.clearFrontmatter('card.md');
+    expect(documentStore.getFrontmatter('card.md')).toBeUndefined();
 
     const mark = captured.length;
     await cmd.undo();
@@ -174,7 +174,7 @@ describe('A17-1.1 — undo/redo on a never-opened doc rebases against FRESH disk
     // Pre-fix: the blind commit scheduled 'normal' over 'urgent' with no
     // conflict detection. Now the fresh disk read ('urgent' ≠ expected 'high')
     // keeps the external value and prompts.
-    expect(documentStore.getFrontmatter('doc-n1')?.priority).toBe('urgent');
+    expect(documentStore.getFrontmatter('card.md')?.priority).toBe('urgent');
     expect(disk).toContain('priority: urgent');
     for (const w of existingWritesAfter(captured, mark)) {
       expect(w).not.toContain('priority: normal');
@@ -188,7 +188,7 @@ describe('A17-1.1 — undo/redo on a never-opened doc rebases against FRESH disk
     const cmd = new UpdateTaskFieldCommand(
       'tl',
       'task.md',
-      'doc-n2',
+      'task.md',
       { priority: 'high' },
       { priority: 'normal' },
     );
@@ -199,13 +199,13 @@ describe('A17-1.1 — undo/redo on a never-opened doc rebases against FRESH disk
     expect(disk).toContain('priority: normal');
 
     disk = '---\npriority: urgent\n---\nbody\n';
-    documentStore.clearFrontmatter('doc-n2');
+    documentStore.clearFrontmatter('task.md');
 
     const mark = captured.length;
     await cmd.execute(); // isRedo leg
     await flushAllPendingFrontmatterWrites();
 
-    expect(documentStore.getFrontmatter('doc-n2')?.priority).toBe('urgent');
+    expect(documentStore.getFrontmatter('task.md')?.priority).toBe('urgent');
     expect(disk).toContain('priority: urgent');
     for (const w of existingWritesAfter(captured, mark)) {
       expect(w).not.toContain('priority: high');
@@ -217,7 +217,7 @@ describe('A17-1.1 — undo/redo on a never-opened doc rebases against FRESH disk
     const cmd = new UpdateCardFieldCommand(
       'kb',
       'card.md',
-      'doc-n3',
+      'card.md',
       { priority: 'high' },
       { priority: 'normal' },
     );
@@ -229,28 +229,28 @@ describe('A17-1.1 — undo/redo on a never-opened doc rebases against FRESH disk
 
     // A reload dropped the seeded cache, but disk holds exactly what the undo
     // wrote — the redo must apply cleanly, not phantom-conflict.
-    documentStore.clearFrontmatter('doc-n3');
+    documentStore.clearFrontmatter('card.md');
 
     await cmd.execute();
     await flushAllPendingFrontmatterWrites();
-    expect(documentStore.getFrontmatter('doc-n3')?.priority).toBe('high');
+    expect(documentStore.getFrontmatter('card.md')?.priority).toBe('high');
     expect(disk).toContain('priority: high');
     expect(conflictToast()).toBeFalsy();
   });
 
   it('nothing visible anywhere (unreadable file, empty index) preserves the legacy blind merge', async () => {
-    documentStore.setFrontmatter('doc-n4', { priority: 'normal' });
+    documentStore.setFrontmatter('task.md', { priority: 'normal' });
     const cmd = new UpdateTaskFieldCommand(
       'tl',
       'task.md',
-      'doc-n4',
+      'task.md',
       { priority: 'high' },
       { priority: 'normal' },
     );
     await cmd.execute();
     await flushAllPendingFrontmatterWrites();
 
-    documentStore.clearFrontmatter('doc-n4');
+    documentStore.clearFrontmatter('task.md');
     // File becomes unreadable AND it was never indexed — no baseline exists.
     installFiloMock((channel: string, ...args: unknown[]) => {
       captured.push({ channel, args });
@@ -261,7 +261,7 @@ describe('A17-1.1 — undo/redo on a never-opened doc rebases against FRESH disk
     await cmd.undo();
     // The narrow legacy corner: with no baseline obtainable the inverse still
     // applies (there is nothing visible to clobber) and no conflict prompt fires.
-    expect(documentStore.getFrontmatter('doc-n4')?.priority).toBe('normal');
+    expect(documentStore.getFrontmatter('task.md')?.priority).toBe('normal');
     expect(conflictToast()).toBeFalsy();
   });
 });
@@ -291,16 +291,16 @@ describe('A17-1.3 — "Apply anyway" clicked after a vault swap is a no-op', () 
   });
 
   it('per-key handler: no merge, no write after the swap', async () => {
-    documentStore.setFrontmatter('doc-s1', { priority: 'normal' });
+    documentStore.setFrontmatter('task.md', { priority: 'normal' });
     const cmd = new UpdateTaskFieldCommand(
       'tl',
       'task.md',
-      'doc-s1',
+      'task.md',
       { priority: 'high' },
       { priority: 'normal' },
     );
     await cmd.execute();
-    documentStore.setFrontmatter('doc-s1', { priority: 'urgent' }); // external edit
+    documentStore.setFrontmatter('task.md', { priority: 'urgent' }); // external edit
     await cmd.undo(); // conflict → toast armed against THIS vault generation
     const toast = conflictToast();
     expect(toast).toBeTruthy();
@@ -312,14 +312,14 @@ describe('A17-1.3 — "Apply anyway" clicked after a vault swap is a no-op', () 
 
     // Pre-fix the handler committed: cache merged 'normal' + a write scheduled
     // against the NEW vault's same-named file. Now it bails outright.
-    expect(documentStore.getFrontmatter('doc-s1')?.priority).toBe('urgent');
+    expect(documentStore.getFrontmatter('task.md')?.priority).toBe('urgent');
     expect(existingWritesAfter(captured, mark)).toEqual([]);
   });
 
   it('atomic handler: whole-patch force is also swallowed after the swap', async () => {
-    documentStore.setFrontmatter('doc-s2', { completed: true, dueDate: '2026-01-08' });
+    documentStore.setFrontmatter('recur.md', { completed: true, dueDate: '2026-01-08' });
     await applyFrontmatterPatchRebased({
-      docId: 'doc-s2',
+      notePath: 'recur.md',
       relPath: 'recur.md',
       targetBoardId: 'tl',
       applying: { completed: false, dueDate: '2026-01-15' },
@@ -335,7 +335,7 @@ describe('A17-1.3 — "Apply anyway" clicked after a vault swap is a no-op', () 
     uiStore.invokeToastAction(toast!.id, 0);
     await flushAllPendingFrontmatterWrites();
 
-    expect(documentStore.getFrontmatter('doc-s2')).toMatchObject({
+    expect(documentStore.getFrontmatter('recur.md')).toMatchObject({
       completed: true,
       dueDate: '2026-01-08',
     });
@@ -374,19 +374,18 @@ describe('A17-1.2 — Properties conflict toast writes the click-time body, not 
 
   /** Arms the conflict toast: the live cache holds an external value for the
    * owned key, so applySnapshot skips it and offers "Apply anyway". */
-  async function armConflict(docId: string, relPath: string): Promise<{ id: string }> {
+  async function armConflict(relPath: string): Promise<{ id: string }> {
     documentStore.loadDocument({
-      docId,
       filename: relPath,
       title: 'P',
       body: 'original body',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter(docId, { priority: 'external' });
+    documentStore.setFrontmatter(relPath, { priority: 'external' });
     const cmd = new UpdatePropertiesCommand(
-      { kind: 'frontmatter', relPath, docId, fm: { priority: 'low' } },
-      { kind: 'frontmatter', relPath, docId, fm: { priority: 'high' } },
+      { kind: 'frontmatter', relPath, notePath: relPath, fm: { priority: 'low' } },
+      { kind: 'frontmatter', relPath, notePath: relPath, fm: { priority: 'high' } },
       'mm',
     );
     await cmd.execute();
@@ -396,10 +395,10 @@ describe('A17-1.2 — Properties conflict toast writes the click-time body, not 
   }
 
   it('an editor body edited between conflict and click wins over the frozen body', async () => {
-    const toast = await armConflict('doc-p1', 'P.md');
+    const toast = await armConflict('P.md');
 
     // The user keeps typing after the conflict toast appeared.
-    documentStore.updateContent('doc-p1', '<p>x</p>', 'NEW EDITOR BODY');
+    documentStore.updateContent('P.md', '<p>x</p>', 'NEW EDITOR BODY');
 
     const mark = captured.length;
     uiStore.invokeToastAction(toast.id, 0);
@@ -416,10 +415,10 @@ describe('A17-1.2 — Properties conflict toast writes the click-time body, not 
   });
 
   it('an editor CLOSED between conflict and click defers to fresh disk for the body', async () => {
-    const toast = await armConflict('doc-p2', 'Q.md');
+    const toast = await armConflict('Q.md');
 
     // Editor closes; its (interim) saves landed on disk in the meantime.
-    documentStore.unloadDocument('doc-p2');
+    documentStore.unloadDocument('Q.md');
     disk = '---\npriority: external\n---\nDISK BODY AT CLICK\n';
 
     const mark = captured.length;
@@ -483,8 +482,8 @@ describe('A17-1.4 — UpdatePropertiesCommand surfaces a failed write to the his
 
   function makeCmd(): UpdatePropertiesCommand {
     return new UpdatePropertiesCommand(
-      { kind: 'frontmatter', relPath: 'F.md', docId: 'doc-f1', fm: { priority: 'low' } },
-      { kind: 'frontmatter', relPath: 'F.md', docId: 'doc-f1', fm: { priority: 'high' } },
+      { kind: 'frontmatter', relPath: 'F.md', notePath: 'F.md', fm: { priority: 'low' } },
+      { kind: 'frontmatter', relPath: 'F.md', notePath: 'F.md', fm: { priority: 'high' } },
       'mm',
     );
   }
@@ -497,7 +496,7 @@ describe('A17-1.4 — UpdatePropertiesCommand surfaces a failed write to the his
     // stack as "applied" and the pre-write setFrontmatter stamp left the display
     // cache showing 'high' while disk still said 'low'.
     expect(historyStore.canUndo).toBe(false);
-    expect(documentStore.getFrontmatter('doc-f1')?.priority).toBe('low');
+    expect(documentStore.getFrontmatter('F.md')?.priority).toBe('low');
   });
 
   it('failed undo: command restored to the undo stack, redo stack not corrupted', async () => {

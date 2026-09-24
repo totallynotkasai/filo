@@ -182,7 +182,6 @@ function makeMindMapWithTextTile(boardId: string, tileId: string, filePath: stri
         id: tileId,
         type: 'text',
         title: 'Notes',
-        contentId: `doc_${tileId}`,
         style: { headerColor: '', bodyColor: '', borderColor: '' } as never,
         boardId,
         position: { x: 0, y: 0 },
@@ -243,16 +242,14 @@ describe('Audit-14 2.3 — DeleteTilesCommand.undo reconciles open editors', () 
 
     // The SAME file is open as a Document on a second pane, holding a stale
     // pre-delete in-memory body + frontmatter.
-    const docId = 'doc-2-3';
     documentStore.loadDocument({
-      docId,
       filename: relPath,
       title: 'Notes',
       body: 'stale pre-delete body',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter(docId, { title: 'Old' }, '---\ntitle: Old\n---');
+    documentStore.setFrontmatter(relPath, { title: 'Old' }, '---\ntitle: Old\n---');
     markHydrated(relPath, false);
 
     const cmd = new DeleteTilesCommand(['t_1'], {
@@ -268,8 +265,8 @@ describe('Audit-14 2.3 — DeleteTilesCommand.undo reconciles open editors', () 
     // 2.3 — the open editor reflects the restored bytes (a raw write left it
     // pinned to the stale body, whose next debounced save would invert the
     // restore — the #4 class).
-    expect(documentStore.getDocument(docId)?.body).toBe('restored body\n');
-    expect(documentStore.getFrontmatter(docId)).toEqual({ title: 'Notes' });
+    expect(documentStore.getDocument(relPath)?.body).toBe('restored body\n');
+    expect(documentStore.getFrontmatter(relPath)).toEqual({ title: 'Notes' });
   });
 });
 

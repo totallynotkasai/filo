@@ -29,11 +29,11 @@ describe('REC-2 — recurrence roll-forward rebase is atomic', () => {
   const EXPECTED = { completed: false, dueDate: '2026-05-15' }; // inverse = pre-roll state
 
   it('atomic: an external completed-flip skips the WHOLE redo (no split)', () => {
-    const docId = 'doc-rec-atomic';
+    const notePath = 'T.md';
     // External editor marked it complete; dueDate still at the pre-roll value.
-    documentStore.setFrontmatter(docId, { completed: true, dueDate: '2026-05-15' });
+    documentStore.setFrontmatter(notePath, { completed: true, dueDate: '2026-05-15' });
     applyFrontmatterPatchRebased({
-      docId,
+      notePath,
       relPath: 'T.md',
       targetBoardId: 'b',
       applying: PATCH,
@@ -41,16 +41,16 @@ describe('REC-2 — recurrence roll-forward rebase is atomic', () => {
       label: 'T.md',
       atomic: true,
     });
-    const fm = documentStore.getFrontmatter(docId);
+    const fm = documentStore.getFrontmatter(notePath);
     expect(fm?.completed).toBe(true); // external value preserved
     expect(fm?.dueDate).toBe('2026-05-15'); // due NOT advanced — whole patch skipped
   });
 
   it('non-atomic (default) WOULD split into the invalid completed:true + advanced-due state', () => {
-    const docId = 'doc-rec-split';
-    documentStore.setFrontmatter(docId, { completed: true, dueDate: '2026-05-15' });
+    const notePath = 'T.md';
+    documentStore.setFrontmatter(notePath, { completed: true, dueDate: '2026-05-15' });
     applyFrontmatterPatchRebased({
-      docId,
+      notePath,
       relPath: 'T.md',
       targetBoardId: 'b',
       applying: PATCH,
@@ -58,17 +58,17 @@ describe('REC-2 — recurrence roll-forward rebase is atomic', () => {
       label: 'T.md',
       // atomic omitted → per-key (the pre-fix behaviour this test documents)
     });
-    const fm = documentStore.getFrontmatter(docId);
+    const fm = documentStore.getFrontmatter(notePath);
     expect(fm?.completed).toBe(true); // completed conflict kept external
     expect(fm?.dueDate).toBe('2026-05-22'); // dueDate split-applied — the bug atomic prevents
   });
 
   it('atomic with NO conflict applies the full patch normally', () => {
-    const docId = 'doc-rec-clean';
+    const notePath = 'T.md';
     // Cache matches the expected pre-roll state — no external edit.
-    documentStore.setFrontmatter(docId, { completed: false, dueDate: '2026-05-15' });
+    documentStore.setFrontmatter(notePath, { completed: false, dueDate: '2026-05-15' });
     applyFrontmatterPatchRebased({
-      docId,
+      notePath,
       relPath: 'T.md',
       targetBoardId: 'b',
       applying: PATCH,
@@ -76,7 +76,7 @@ describe('REC-2 — recurrence roll-forward rebase is atomic', () => {
       label: 'T.md',
       atomic: true,
     });
-    const fm = documentStore.getFrontmatter(docId);
+    const fm = documentStore.getFrontmatter(notePath);
     expect(fm?.completed).toBe(false);
     expect(fm?.dueDate).toBe('2026-05-22');
   });

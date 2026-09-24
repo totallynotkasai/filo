@@ -89,8 +89,10 @@
   // onDestroy writes only when this view actually changed something.
   let userEdited = false;
 
-  // The note this tile shows. `filePath` is its only identity; the rename
-  // cascade rewrites it on the board when the file moves.
+  // The note this tile shows. `filePath` is its only identity: it keys the
+  // document store, and the rename cascade rewrites it on the board (and
+  // re-keys the store) when the file moves.
+  let notePath = $derived(tile.filePath ?? '');
   function vaultRelativePath(): string | null {
     if (!vaultStore.path) return null;
     return tile.filePath || null;
@@ -112,18 +114,18 @@
     // is blank for reasons unrelated to the file. Never write that emptiness /
     // an empty editor over the file we couldn't read.
     if (hydrateReadFailed && !lastLoadedBody) return null;
-    if (tile.contentId && documentStore.isReadOnly(tile.contentId)) return null;
+    if (notePath && documentStore.isReadOnly(notePath)) return null;
     const vaultRoot = vaultStore.path;
     const relPath = vaultRelativePath();
     if (!vaultRoot || !relPath) return null;
-    const fm: Record<string, unknown> = (tile.contentId && documentStore.getFrontmatter(tile.contentId)) || {};
+    const fm: Record<string, unknown> = (notePath && documentStore.getFrontmatter(notePath)) || {};
     return {
       vaultRoot,
       relPath,
       frontmatter: fm,
       body: editorMarkdown(editor),
       callerId,
-      docId: tile.contentId ?? null,
+      notePath: notePath || null,
     };
   }
 
@@ -157,8 +159,8 @@
         // and the cursor selection would be destroyed).
         lastLoadedBody = md;
 
-        if (tile.contentId) {
-          documentStore.updateContent(tile.contentId, html, md, callerId);
+        if (notePath) {
+          documentStore.updateContent(notePath, html, md, callerId);
         }
 
         // `documentStore.updateContent` above is the canonical body sync (the
@@ -197,29 +199,21 @@
     void hydrateFromDisk();
     // Register a fresh-args build callback so `forceWriteForDocument`
     // (Keep-local in vaultExternalChanges) can flush THIS tile's live editor
-    // body even when no schedule is armed. The docId binding is dynamic —
-    // hydrateFromDisk may rebind tile.contentId to adopt a sibling view's
-    // docId — but the registerForceWriter call captures docId statically at
-    // call time. To keep matching working post-adoption, re-register inside
-    // hydrateFromDisk on adoption (see below).
-    registerForceWriter(callerId, tile.contentId ?? null, buildWriteArgs);
+    // body even when no schedule is armed. A rename carries the registered
+    // path along with the note.
+    registerForceWriter(callerId, notePath || null, buildWriteArgs);
   });
 
-  /**
-   * Applies the lossy-round-trip flag from a load result.
-   * `targetDocId` defaults to the tile's current contentId; pass an
-   * `existing.docId` explicitly when adopting a sibling view's docId so the
-   * read-only state lands on the right document.
-   */
-  function applyLoadResult(result: { lossy: boolean }, targetDocId: string | undefined = tile.contentId): void {
-    if (!targetDocId) return;
-    documentStore.setReadOnly(targetDocId, result.lossy);
+  /** Applies the lossy-round-trip flag from a load result to this tile's note. */
+  function applyLoadResult(result: { lossy: boolean }): void {
+    if (!notePath) return;
+    documentStore.setReadOnly(notePath, result.lossy);
   }
 
   async function hydrateFromDisk() {
     if (!editor) return;
     // Wrap the whole body so every early-return path
-    // (sibling-docId adoption, cached body, missing-vault fallback, IPC
+    // (cached body, missing-vault fallback, IPC
     // read failure, empty-editor fallback) ends with `hydrated = true`.
     // Without the try/finally the failure paths could leave a stale
     // `false` and silently lock writes for the lifetime of the tile.
@@ -227,50 +221,9 @@
       const vaultRoot = vaultStore.path;
       const relPath = vaultRelativePath();
 
-      // If another view (text tile / document editor) is already holding the
-      // same .md file under a different docId, adopt its docId so the stores
-      // collapse to a single DocumentState. Without this, two tiles for the
-      // same file get keyed independently and never share edits.
-      // The docId this hydrate targets. Adoption rebinds the
-      // tile to a sibling's docId; the `tile` prop may not have re-derived yet,
-      // so thread the id locally instead of re-reading `tile.contentId`.
-      let docId: string | undefined = tile.contentId;
-      if (relPath) {
-        const existing = documentStore.findByFilename(relPath);
-        if (existing && existing.docId !== tile.contentId) {
-          docId = existing.docId;
-          // Re-register the force-writer with the adopted docId so Keep-local
-          // matches against the new identity.
-          registerForceWriter(callerId, existing.docId, buildWriteArgs);
-          // Adopt the sibling's BODY only when the sibling really read disk: FM
-          // seeded AND a non-empty body. A placeholder DocumentState (body '')
-          // must never load into a writable editor — fall through to the
-          // authoritative disk read.
-          if (existing.body && documentStore.hasFrontmatter(existing.docId)) {
-            // Do NOT re-seed frontmatter from `existing.body`: the cache the
-            // sibling seeded from disk is authoritative. Load the body-only body
-            // VERBATIM (no re-parse).
-            const body = existing.body;
-            lastLoadedBody = body;
-            isUpdatingFromStore = true;
-            applyLoadResult(loadMarkdownIntoEditor(editor, body), existing.docId);
-            isUpdatingFromStore = false;
-            // Inherit the sibling's hadBom from the existing `fileState` entry
-            // (the body-only body carries no BOM); fall back to false when the
-            // sibling hasn't hydrated. The body does keep its line endings, so
-            // sniff CRLF from it — otherwise a single-line-CRLF FM file would
-            // emit LF fences on the first write. Pin only CRLF; leave LF/unknown
-            // to write-time detection so we never force a wrong LF.
-            if (!isHydrated(relPath)) {
-              const adoptEol = body.includes('\r\n') ? '\r\n' : undefined;
-              markHydrated(relPath, false, undefined, undefined, adoptEol);
-            }
-            return;
-          }
-        }
-      }
-
-      const docState = docId ? documentStore.getDocument(docId) : null;
+      // Every view of this path shares one document, so a sibling view that
+      // already read the note is found by the path alone.
+      const docState = notePath ? documentStore.getDocument(notePath) : null;
       // Only adopt the in-memory (body-only) body as a hydrate
       // source when this doc's frontmatter is already seeded (a sibling view
       // read it from disk). Re-parsing FM from the body-only store body yields
@@ -278,13 +231,13 @@
       // body-only save erases the file's frontmatter block. When unseeded,
       // fall through to the authoritative disk read below, which seeds FM
       // correctly (and never erases).
-      if (docState?.body && docId && documentStore.hasFrontmatter(docId)) {
+      if (docState?.body && notePath && documentStore.hasFrontmatter(notePath)) {
         // Load the store body VERBATIM. It is body-only by contract; re-parsing
         // would strip a leading `---…---` horizontal-rule pair as "frontmatter".
         const body = docState.body;
         lastLoadedBody = body;
         isUpdatingFromStore = true;
-        applyLoadResult(loadMarkdownIntoEditor(editor, body), docId);
+        applyLoadResult(loadMarkdownIntoEditor(editor, body));
         isUpdatingFromStore = false;
         // The body-only field carries no BOM. Inherit the existing `fileState`
         // entry's hadBom when it exists; only mark with false as a fresh
@@ -299,10 +252,10 @@
 
       if (!vaultRoot || !relPath) {
         const parsed = parseMarkdownFile('');
-        if (docId) documentStore.setFrontmatter(docId, parsed.frontmatter);
+        if (notePath) documentStore.setFrontmatter(notePath, parsed.frontmatter);
         lastLoadedBody = parsed.body;
         isUpdatingFromStore = true;
-        applyLoadResult(loadMarkdownIntoEditor(editor, parsed.body), docId);
+        applyLoadResult(loadMarkdownIntoEditor(editor, parsed.body));
         isUpdatingFromStore = false;
         if (relPath) markHydrated(relPath, parsed.hadBom);
         return;
@@ -322,14 +275,13 @@
         }
         // Seed the verbatim frontmatter bytes so a later body-only save
         // emits them untouched (comments / key order / line endings preserved).
-        if (docId) documentStore.setFrontmatter(docId, frontmatter, rawFrontmatter);
+        if (notePath) documentStore.setFrontmatter(notePath, frontmatter, rawFrontmatter);
         lastLoadedBody = body;
         isUpdatingFromStore = true;
-        applyLoadResult(loadMarkdownIntoEditor(editor, body), docId);
+        applyLoadResult(loadMarkdownIntoEditor(editor, body));
         isUpdatingFromStore = false;
-        if (docId) {
+        if (notePath) {
           documentStore.loadDocument({
-            docId,
             filename: relPath,
             title: tile.title || 'Untitled',
             body,
@@ -340,7 +292,7 @@
           // unhydrated placeholder (body '') would keep '' while the editor shows
           // the disk body — and a later reactive reload would load '' back in.
           // Upgrade the placeholder to what we actually read.
-          documentStore.adoptDiskBodyIfPlaceholder(docId, body, editor.getHTML());
+          documentStore.adoptDiskBodyIfPlaceholder(notePath, body, editor.getHTML());
         }
         return;
       } catch (err) {
@@ -385,10 +337,10 @@
       // created while this read was in flight: its seed has already recorded
       // the note's frontmatter (`title:`), which an empty one must not replace.
       const parsed = parseMarkdownFile('');
-      if (docId && !documentStore.hasFrontmatter(docId)) documentStore.setFrontmatter(docId, parsed.frontmatter);
+      if (notePath && !documentStore.hasFrontmatter(notePath)) documentStore.setFrontmatter(notePath, parsed.frontmatter);
       lastLoadedBody = parsed.body;
       isUpdatingFromStore = true;
-      applyLoadResult(loadMarkdownIntoEditor(editor, parsed.body), docId);
+      applyLoadResult(loadMarkdownIntoEditor(editor, parsed.body));
       isUpdatingFromStore = false;
       if (relPath) markHydrated(relPath, parsed.hadBom);
     } finally {
@@ -397,7 +349,7 @@
   }
 
   // Reactive reload — when another view (a sibling text tile or a document
-  // editor) writes to the same docId, documentStore.body changes. We watch it
+  // editor) writes to the same note, documentStore.body changes. We watch it
   // and refresh this tile's editor to keep the views in sync. Gated on
   // THIS view's own writer dirtiness so we don't reload mid-typing of OUR
   // editor, yet a still-clean view DOES pick up a sibling's edits immediately
@@ -406,11 +358,11 @@
   // Gated on `lastLoadedBody` so we don't echo our own writes.
   $effect(() => {
     if (!editor) return;
-    const docState = tile.contentId ? documentStore.getDocument(tile.contentId) : undefined;
+    const docState = notePath ? documentStore.getDocument(notePath) : undefined;
     if (!docState) return;
     const body = docState.body;
     if (body === lastLoadedBody) return;
-    if (tile.contentId && documentStore.isWriterDirty(tile.contentId, callerId)) return;
+    if (notePath && documentStore.isWriterDirty(notePath, callerId)) return;
     // Skip the reload while the user is mid-IME-composition
     // (CJK / dead-key flows). ProseMirror's `setContent` mid-composition
     // both interrupts the composition window AND can produce a broken
@@ -433,10 +385,10 @@
   });
 
   onDestroy(() => {
-    // Capture contentId synchronously up front: `tile.contentId` is reactive
-    // and could rebind during teardown; the dirty-writer drop and the final
-    // write must both target the id this tile actually held.
-    const contentId = tile.contentId;
+    // Capture the path synchronously up front: `tile.filePath` is reactive
+    // and could change during teardown; the dirty-writer drop and the final
+    // write must both target the note this tile actually held.
+    const heldPath = notePath;
     const relPath = vaultRelativePath();
 
     // Capture the latest write args SYNCHRONOUSLY from the live editor, then
@@ -450,7 +402,7 @@
     // gateway markCleans only on success), so destroy still retries it.
     const hasUnsaved =
       userEdited &&
-      (!contentId || documentStore.isWriterDirty(contentId, callerId) || hasPendingMarkdownWriteFor(callerId));
+      (!heldPath || documentStore.isWriterDirty(heldPath, callerId) || hasPendingMarkdownWriteFor(callerId));
     const finalArgs = hasUnsaved ? buildWriteArgs() : null;
     // Cancel any debounced timer for this caller so the snapshot we're
     // about to fire isn't shadowed by a slightly-older scheduled write
@@ -477,7 +429,7 @@
     // content, so a lingering writerId would pin `DocumentState.isDirty` true —
     // routing a later external edit to a spurious Reload prompt and freezing a
     // sibling's reload `$effect`.
-    if (contentId) documentStore.dropDirtyWriter(contentId, callerId);
+    if (heldPath) documentStore.dropDirtyWriter(heldPath, callerId);
 
     if (finalArgs) {
       // flushFinalWriteOnDestroy no-ops if the gateway was already
@@ -504,7 +456,7 @@
    * Read-only state surfaced for the banner. Reactive via
    * documentStore.isReadOnly which reads the SvelteSet under a version tick.
    */
-  let readOnly = $derived(tile.contentId ? documentStore.isReadOnly(tile.contentId) : false);
+  let readOnly = $derived(notePath ? documentStore.isReadOnly(notePath) : false);
   // A note whose bytes aren't UTF-8 is non-editable (a save would persist
   // U+FFFD for every non-ASCII byte) until converted.
   let nonUtf8 = $derived(isNonUtf8(vaultRelativePath()));
@@ -537,8 +489,8 @@
   }
 
   function takeOwnership(): void {
-    if (!tile.contentId) return;
-    const cid = tile.contentId;
+    if (!notePath) return;
+    const cid = notePath;
     uiStore.openConfirm({
       title: 'Take ownership of this file?',
       body: "Filo will be able to edit and save this file, but formatting it can't preserve (for example hard-wrapped lines, callouts, wiki links, comments) will be rewritten or removed on the next save. Continue?",

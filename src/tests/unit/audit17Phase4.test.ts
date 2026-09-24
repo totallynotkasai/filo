@@ -120,7 +120,6 @@ function makeTextTile(id: string, boardId: string, title: string): Tile {
     boardId,
     type: 'text',
     title,
-    contentId: `doc_${id}`,
     position: { x: 10, y: 10 },
     size: { width: 100, height: 100 },
     style: { headerColor: '', bodyColor: '', borderColor: '' },
@@ -176,7 +175,6 @@ describe('Audit-17 4.1 — a teardown title commit resolves through the home boa
       type: 'link',
       url: 'https://example.com',
       filePath: undefined,
-      contentId: undefined,
     } as unknown as Tile;
   }
 

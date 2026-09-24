@@ -253,7 +253,6 @@ describe('UpdateFrameCommand / MoveFrameCommand (H4)', () => {
         locked: false,
         faded: false,
         tags: [],
-        contentId: 'doc-1',
         filePath: 'A.md',
         content: '',
         createdAt: 0,

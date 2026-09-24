@@ -46,7 +46,6 @@ function lastWriteContent(captured: Captured[]): string | undefined {
 }
 
 function bodyWriteArgs(
-  docId: string,
   relPath: string,
   body: string,
 ): WriteArgs {
@@ -55,10 +54,10 @@ function bodyWriteArgs(
     relPath,
     // Editor body writers source frontmatter from the live cache; the gateway
     // re-reads the cache at fire time anyway, so this is only a fallback.
-    frontmatter: documentStore.getFrontmatter(docId) ?? {},
+    frontmatter: documentStore.getFrontmatter(relPath) ?? {},
     body,
-    callerId: `text-tile:${docId}`,
-    docId,
+    callerId: `text-tile:${relPath}`,
+    notePath: relPath,
   };
 }
 
@@ -85,20 +84,18 @@ describe('Audit5 R2 — reconcileOpenEditorFrontmatter (#4)', () => {
   });
 
   it('updates the frontmatter cache to the written bytes WITHOUT touching the editor body', () => {
-    const docId = 'doc-recon-1';
     const relPath = 'Notes/A.md';
     documentStore.loadDocument({
-      docId,
       filename: relPath,
       title: 'A',
       body: 'unsaved local edits the user is still typing',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter(docId, { title: 'A' }, 'title: A');
+    documentStore.setFrontmatter(relPath, { title: 'A' }, 'title: A');
     // Simulate an in-flight edit so the doc is dirty — a body reload here would
     // clobber it; the FM-only reconcile must not.
-    documentStore.updateContent(docId, '<p>x</p>', 'unsaved local edits the user is still typing', 'w1');
+    documentStore.updateContent(relPath, '<p>x</p>', 'unsaved local edits the user is still typing', 'w1');
 
     // The tag write landed `tags: [foo]` on disk; the bytes carry the OLD body
     // (disk lags the still-typing editor). Reconcile must take the FM only.
@@ -106,23 +103,21 @@ describe('Audit5 R2 — reconcileOpenEditorFrontmatter (#4)', () => {
     reconcileOpenEditorFrontmatter([{ path: relPath, content: onDisk }]);
 
     // Body preserved (the unsaved edits), frontmatter cache refreshed with the tag.
-    expect(documentStore.getDocument(docId)?.body).toBe('unsaved local edits the user is still typing');
-    expect(documentStore.getFrontmatter(docId)).toEqual({ title: 'A', tags: ['foo'] });
-    expect(documentStore.getRawFrontmatter(docId)).toBe('title: A\ntags:\n  - foo');
+    expect(documentStore.getDocument(relPath)?.body).toBe('unsaved local edits the user is still typing');
+    expect(documentStore.getFrontmatter(relPath)).toEqual({ title: 'A', tags: ['foo'] });
+    expect(documentStore.getRawFrontmatter(relPath)).toBe('title: A\ntags:\n  - foo');
   });
 
   it('lets the editor body save KEEP the reconciled tag (the #4 fix end-to-end)', async () => {
-    const docId = 'doc-recon-2';
     const relPath = 'Notes/B.md';
     documentStore.loadDocument({
-      docId,
       filename: relPath,
       title: 'B',
       body: 'original body',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter(docId, { title: 'B' }, 'title: B'); // clean, NO tag yet
+    documentStore.setFrontmatter(relPath, { title: 'B' }, 'title: B'); // clean, NO tag yet
     markHydrated(relPath, false);
 
     // Tag write lands `tags: [foo]` + reconciles the open editor's FM cache.
@@ -131,8 +126,8 @@ describe('Audit5 R2 — reconcileOpenEditorFrontmatter (#4)', () => {
     ]);
 
     // User keeps editing the body → debounced gateway save fires.
-    scheduleMarkdownWrite(bodyWriteArgs(docId, relPath, 'edited body'));
-    await flushMarkdownWrite(`text-tile:${docId}`);
+    scheduleMarkdownWrite(bodyWriteArgs(relPath, 'edited body'));
+    await flushMarkdownWrite(`text-tile:${relPath}`);
 
     const written = lastWriteContent(captured);
     expect(written, 'no write captured').toBeDefined();
@@ -143,10 +138,8 @@ describe('Audit5 R2 — reconcileOpenEditorFrontmatter (#4)', () => {
   });
 
   it('demonstrates the bug WITHOUT the reconcile: a body save drops the tag', async () => {
-    const docId = 'doc-recon-3';
     const relPath = 'Notes/C.md';
     documentStore.loadDocument({
-      docId,
       filename: relPath,
       title: 'C',
       body: 'original body',
@@ -154,11 +147,11 @@ describe('Audit5 R2 — reconcileOpenEditorFrontmatter (#4)', () => {
       richText: [],
     });
     // Editor's FM cache never learns about the tag (no reconcile).
-    documentStore.setFrontmatter(docId, { title: 'C' }, 'title: C');
+    documentStore.setFrontmatter(relPath, { title: 'C' }, 'title: C');
     markHydrated(relPath, false);
 
-    scheduleMarkdownWrite(bodyWriteArgs(docId, relPath, 'edited body'));
-    await flushMarkdownWrite(`text-tile:${docId}`);
+    scheduleMarkdownWrite(bodyWriteArgs(relPath, 'edited body'));
+    await flushMarkdownWrite(`text-tile:${relPath}`);
 
     const written = lastWriteContent(captured);
     expect(written).toBeDefined();

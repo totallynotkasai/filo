@@ -39,7 +39,6 @@ import { makeTaskListSlice } from './boardCacheTaskList';
 import { makeKanbanSlice } from './boardCacheKanban';
 import { makeTilesSlice } from './boardCacheTiles';
 import { makeFrontmatterSlice } from './boardCacheFrontmatter';
-import { noteDocId } from './noteMeta';
 import { CURRENT_BOARD_FILE_VERSION } from '../schema/boardFile';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { boardDefaults } from '../core/boardDefaults';
@@ -155,8 +154,8 @@ function resolveOwnerCached(
  *
  * V7 invariant: a `tile.id` is unique across all boards. When the same `.md`
  * file appears on multiple boards each placement creates a fresh tile def
- * with its own `tile.id`; cross-board sharing is via `contentId` (which
- * points at a shared `DocumentState`), never via a shared `tile.id`.
+ * with its own `tile.id`; cross-board sharing is via the note's path (which
+ * keys the shared `DocumentState`), never via a shared `tile.id`.
  * Returning the first hit is therefore correct and unambiguous.
  */
 function findBoardIdForTile(tileId: string): string | null {
@@ -802,8 +801,8 @@ async function syncTileMarkdown(
   const vaultRoot = vaultStore.path;
   if (!vaultRoot) throw new Error('No vault open');
 
-  const docId = noteDocId(def.filePath);
-  const doc = documentStore.getDocument(docId);
+  const notePath = def.filePath;
+  const doc = documentStore.getDocument(notePath);
   if (!doc) return { wrote: false };
 
   const filename = doc.filename;
@@ -907,15 +906,15 @@ async function syncTileMarkdown(
   // Reconcile the open editor's cached frontmatter + raw baseline with the
   // fresh disk read we're about to write FROM, so a later body-only save can't
   // emit a stale hydrate-time object and revert external YAML keys.
-  documentStore.setFrontmatter(docId, diskParsed.frontmatter, diskParsed.rawFrontmatter);
+  documentStore.setFrontmatter(notePath, diskParsed.frontmatter, diskParsed.rawFrontmatter);
   try {
     await writeMarkdownFile({
       vaultRoot,
       relPath: filename,
       frontmatter: diskParsed.frontmatter,
       body: liveBody,
-      callerId: `board-cache-sync-tile:${docId}`,
-      docId,
+      callerId: `board-cache-sync-tile:${notePath}`,
+      notePath,
     });
   } catch (err) {
     if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
@@ -928,6 +927,6 @@ async function syncTileMarkdown(
     }
     throw err;
   }
-  documentStore.markClean(docId);
+  documentStore.markClean(notePath);
   return { wrote: true };
 }

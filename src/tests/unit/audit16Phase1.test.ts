@@ -66,7 +66,7 @@ function makeWriter() {
 function makeRow(): TaskRow {
   return {
     placement: { tileId: 'tn', position: 0 },
-    tile: { id: 'tn', type: 'text', contentId: 'doc_notes', title: 'Task', tags: [] } as unknown as Tile,
+    tile: { id: 'tn', type: 'text', filePath: 'Task.md', title: 'Task', tags: [] } as unknown as Tile,
     completed: false,
     priority: 'none',
     dueDate: '',
@@ -142,10 +142,10 @@ describe('Audit-16 1.1 — body edits bump the write-staleness token', () => {
   it('a FIRST notes edit after a field edit already flushed at that version still lands', async () => {
     // Field edit on an un-opened task: seed the FM cache from disk, merge the
     // field, flush the delta write — lastFlushedVersion now records the
-    // current mutation version for this docId.
-    await seedDocumentFrontmatterFromDisk('doc_notes', '/vault', 'Task.md');
-    documentStore.mergeFrontmatter('doc_notes', { completed: true });
-    scheduleFrontmatterWrite('Task.md', 'doc_notes', patchToFrontmatterDelta({ completed: true }));
+    // current mutation version for this note.
+    await seedDocumentFrontmatterFromDisk('Task.md', '/vault', 'Task.md');
+    documentStore.mergeFrontmatter('Task.md', { completed: true });
+    scheduleFrontmatterWrite('Task.md', 'Task.md', patchToFrontmatterDelta({ completed: true }));
     const resField = await flushAllPendingFrontmatterWrites();
     expect(resField.failed).toEqual([]);
     const afterField = markdownWrites(captured).length;
@@ -169,10 +169,10 @@ describe('Audit-16 1.1 — body edits bump the write-staleness token', () => {
     await writer.setNotesBody(makeRow(), 'first note');
     const flushP = flushAllPendingFrontmatterWrites();
     // Edit again while the first flush is (possibly) mid-write.
-    documentStore.updateContent('doc_notes', '', 'edited during flight');
+    documentStore.updateContent('Task.md', '', 'edited during flight');
     await flushP;
 
-    scheduleFrontmatterWrite('Task.md', 'doc_notes');
+    scheduleFrontmatterWrite('Task.md', 'Task.md');
     const res = await flushAllPendingFrontmatterWrites();
     expect(res.failed).toEqual([]);
     const writes = markdownWrites(captured);
@@ -217,16 +217,15 @@ describe('Audit-16 4.3 — flushed-version records the capture-time version, not
     });
 
     documentStore.loadDocument({
-      docId: 'doc_v',
       filename: 'V.md',
       title: 'V',
       body: 'b1',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter('doc_v', { title: 'V' });
+    documentStore.setFrontmatter('V.md', { title: 'V' });
 
-    scheduleFrontmatterWrite('V.md', 'doc_v');
+    scheduleFrontmatterWrite('V.md', 'V.md');
     const flushP = flushAllPendingFrontmatterWrites();
     // Wait until the first write IPC is actually in flight (stalled on the gate).
     await vi.waitFor(() => expect(writeCalls).toBe(1), { timeout: 2000, interval: 5 });
@@ -236,11 +235,11 @@ describe('Audit-16 4.3 — flushed-version records the capture-time version, not
     // the CURRENT version after the await and recorded this mutation as
     // flushed — the follow-up scheduled write then skipped as "stale" and the
     // mutation never reached disk.
-    documentStore.mergeFrontmatter('doc_v', { status: 'fresh' });
+    documentStore.mergeFrontmatter('V.md', { status: 'fresh' });
     releaseWrite();
     await flushP;
 
-    scheduleFrontmatterWrite('V.md', 'doc_v');
+    scheduleFrontmatterWrite('V.md', 'V.md');
     const res = await flushAllPendingFrontmatterWrites();
     expect(res.failed).toEqual([]);
 
@@ -269,15 +268,14 @@ describe('Audit-16 1.2 — field edits on a read-only (lossy round-trip) doc', (
       return { success: true };
     });
     documentStore.loadDocument({
-      docId: 'doc_ro',
       filename: 'RO.md',
       title: 'RO',
       body: 'LOSSY ROUND-TRIPPED EDITOR BODY',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter('doc_ro', { title: 'RO' });
-    documentStore.setReadOnly('doc_ro', true);
+    documentStore.setFrontmatter('RO.md', { title: 'RO' });
+    documentStore.setReadOnly('RO.md', true);
   });
 
   afterEach(() => {
@@ -287,7 +285,7 @@ describe('Audit-16 1.2 — field edits on a read-only (lossy round-trip) doc', (
   });
 
   it('a pending DELTA proceeds, sourcing the body from disk (never the lossy editor body)', async () => {
-    scheduleFrontmatterWrite('RO.md', 'doc_ro', patchToFrontmatterDelta({ priority: 'high' }));
+    scheduleFrontmatterWrite('RO.md', 'RO.md', patchToFrontmatterDelta({ priority: 'high' }));
     const res = await flushAllPendingFrontmatterWrites();
     // Pre-1.2 the bare `isReadOnly → return` resolved as SUCCESS with no
     // write; the delta stayed orphaned in pendingDeltas forever.
@@ -310,7 +308,7 @@ describe('Audit-16 1.2 — field edits on a read-only (lossy round-trip) doc', (
     const unsubscribe = onError((e) => errors.push(e));
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
-      scheduleFrontmatterWrite('RO.md', 'doc_ro');
+      scheduleFrontmatterWrite('RO.md', 'RO.md');
       const res = await flushAllPendingFrontmatterWrites();
       // Pre-1.2 this resolved as SUCCESS (failed: []) and markClean wiped the
       // recovery sentinel while nothing reached disk.
@@ -344,7 +342,6 @@ describe('Audit-16 1.1 — disk-FM refresh seed tolerates racing BODY bumps (A9-
       return { success: true };
     });
     documentStore.loadDocument({
-      docId: 'doc_s',
       filename: 'S.md',
       title: 'S',
       body: 'old',
@@ -361,10 +358,10 @@ describe('Audit-16 1.1 — disk-FM refresh seed tolerates racing BODY bumps (A9-
   });
 
   it('a notes keystroke during the refresh read does NOT block the disk-FM refresh', async () => {
-    documentStore.setFrontmatter('doc_s', { title: 'T' }); // index placeholder
-    const placeholderVersion = documentStore.getFrontmatterOnlyMutationVersion('doc_s');
+    documentStore.setFrontmatter('S.md', { title: 'T' }); // index placeholder
+    const placeholderVersion = documentStore.getFrontmatterOnlyMutationVersion('S.md');
 
-    const seedP = seedDocumentFrontmatterFromDisk('doc_s', '/vault', 'S.md', {
+    const seedP = seedDocumentFrontmatterFromDisk('S.md', '/vault', 'S.md', {
       refreshSeedVersion: placeholderVersion,
     });
     await new Promise((r) => setTimeout(r, 0)); // let the seed reach the gated read
@@ -372,31 +369,31 @@ describe('Audit-16 1.1 — disk-FM refresh seed tolerates racing BODY bumps (A9-
     // Second rapid notes keystroke — bumps the shared write-staleness token
     // but must not be mistaken for an FM mutation (the refresh replaces only
     // the FM cache, never the body).
-    documentStore.updateContent('doc_s', '', 'typed note');
+    documentStore.updateContent('S.md', '', 'typed note');
     releaseRead();
     await seedP;
 
     // The refresh applied: the externally-added key + source baseline landed.
-    expect(documentStore.getFrontmatter('doc_s')).toHaveProperty('external', 'added-by-editor');
+    expect(documentStore.getFrontmatter('S.md')).toHaveProperty('external', 'added-by-editor');
     // The body bump was untouched by the refresh.
-    expect(documentStore.getDocument('doc_s')?.body).toBe('typed note');
+    expect(documentStore.getDocument('S.md')?.body).toBe('typed note');
   });
 
   it('a racing FIELD edit still blocks the refresh (A9-M2 semantics intact)', async () => {
-    documentStore.setFrontmatter('doc_s', { title: 'T' });
-    const placeholderVersion = documentStore.getFrontmatterOnlyMutationVersion('doc_s');
+    documentStore.setFrontmatter('S.md', { title: 'T' });
+    const placeholderVersion = documentStore.getFrontmatterOnlyMutationVersion('S.md');
 
-    const seedP = seedDocumentFrontmatterFromDisk('doc_s', '/vault', 'S.md', {
+    const seedP = seedDocumentFrontmatterFromDisk('S.md', '/vault', 'S.md', {
       refreshSeedVersion: placeholderVersion,
     });
     await new Promise((r) => setTimeout(r, 0));
 
-    documentStore.mergeFrontmatter('doc_s', { completed: true }); // FM mutation
+    documentStore.mergeFrontmatter('S.md', { completed: true }); // FM mutation
     releaseRead();
     await seedP;
 
     // The stale disk bytes must NOT clobber the racing field edit.
-    const fm = documentStore.getFrontmatter('doc_s');
+    const fm = documentStore.getFrontmatter('S.md');
     expect(fm).toHaveProperty('completed', true);
     expect(fm).not.toHaveProperty('external');
   });

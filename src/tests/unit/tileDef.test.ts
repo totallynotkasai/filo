@@ -168,7 +168,6 @@ describe('discriminated TileDefinitionSchema', () => {
         filePath: 'Notes/T.md',
         tags: ['a'],
         content: '<p>body</p>',
-        contentId: 'doc_1',
         newFutureField: { sub: 'value' },
       });
       expect(r.success).toBe(true);

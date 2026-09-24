@@ -63,7 +63,7 @@ function normalizeSelection(tiles: Tile[]): NormalizedSelection | null {
 /**
  * Returns the per-type config captured from a tile. Only Timer carries
  * non-content type-specific properties today; everything else (src, url,
- * filePath, contentId, content) is treated as content and excluded.
+ * filePath, content) is treated as content and excluded.
  */
 function captureTypeConfig(tile: Tile): Record<string, unknown> | undefined {
   if (tile.type === 'timer') {

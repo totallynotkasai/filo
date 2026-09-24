@@ -87,16 +87,15 @@ describe('flushAllPendingFrontmatterWrites — awaits in-flight writes', () => {
     });
 
     documentStore.loadDocument({
-      docId: 'doc-1',
       filename: 'Notes.md',
       title: 'Notes',
       body: 'hello',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter('doc-1', { id: 'doc-1', title: 'Notes' });
+    documentStore.setFrontmatter('Notes.md', { title: 'Notes' });
 
-    scheduleFrontmatterWrite('Notes.md', 'doc-1');
+    scheduleFrontmatterWrite('Notes.md', 'Notes.md');
 
     // Fire the timer — the write enters in-flight but does NOT resolve.
     vi.advanceTimersByTime(400);
@@ -129,16 +128,15 @@ describe('flushAllPendingFrontmatterWrites — awaits in-flight writes', () => {
     });
 
     documentStore.loadDocument({
-      docId: 'doc-1',
       filename: 'Notes.md',
       title: 'Notes',
       body: 'hello',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter('doc-1', { id: 'doc-1', title: 'Notes' });
+    documentStore.setFrontmatter('Notes.md', { title: 'Notes' });
 
-    scheduleFrontmatterWrite('Notes.md', 'doc-1');
+    scheduleFrontmatterWrite('Notes.md', 'Notes.md');
     vi.advanceTimersByTime(400);
     vi.useRealTimers();
 

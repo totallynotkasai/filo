@@ -10,9 +10,9 @@
  * Either fallback could clobber the disk file with an empty body.
  *
  * The fix:
- *   (a) docId set + docState undefined → abort the write (editor vanished;
+ *   (a) note path set + docState undefined → abort the write (editor vanished;
  *       preserving disk truth is safer than writing stale bytes).
- *   (b) docId null → hydrate from disk fresh and use that body (no eager
+ *   (b) note path null → hydrate from disk fresh and use that body (no eager
  *       stale-index fallback).
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -45,7 +45,7 @@ describe('frontmatterWriteScheduler — 6.2.H5 empty-body fall-through', () => {
     vaultStore.setPath('');
   });
 
-  it('aborts the write when docId is set but the doc was unloaded mid-debounce', async () => {
+  it('aborts the write when a note path is set but the doc was unloaded mid-debounce', async () => {
     // Set up: load a doc, set FM, schedule the write, then unload before
     // the timer fires. Pre-fix: the timer fires, docState is undefined, body
     // falls through to '' (or stale vaultIndex.content), and the file's body
@@ -61,20 +61,19 @@ describe('frontmatterWriteScheduler — 6.2.H5 empty-body fall-through', () => {
     });
 
     documentStore.loadDocument({
-      docId: 'doc_X',
       filename: 'Notes.md',
       title: 'Notes',
       body: 'live body',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter('doc_X', { title: 'T' });
+    documentStore.setFrontmatter('Notes.md', { title: 'T' });
 
-    scheduleFrontmatterWrite('Notes.md', 'doc_X');
+    scheduleFrontmatterWrite('Notes.md', 'Notes.md');
 
     // Editor unloads BEFORE the flush. The fixture unloadDocument simulates
     // tab close / vault swap mid-debounce.
-    documentStore.unloadDocument('doc_X');
+    documentStore.unloadDocument('Notes.md');
 
     await flushAllPendingFrontmatterWrites();
 
@@ -90,9 +89,9 @@ describe('frontmatterWriteScheduler — 6.2.H5 empty-body fall-through', () => {
     expect(mdWrite).toBeUndefined();
   });
 
-  it('docId null: writes the fresh disk body, not the stale index content', async () => {
+  it('null note path: writes the fresh disk body, not the stale index content', async () => {
     // Prime the index with OLD body, then flip the mock so subsequent reads
-    // return NEW body. With docId=null the scheduler used to fall through
+    // return NEW body. With a null note path the scheduler used to fall through
     // to `vaultIndex.content` (the OLD parsed body), silently clobbering
     // any external edit that landed between the index parse and the write.
     let lastWriteContent = '';
@@ -119,7 +118,7 @@ describe('frontmatterWriteScheduler — 6.2.H5 empty-body fall-through', () => {
     // body. The index hasn't caught up yet — vaultIndex.content is stale.
     diskContent = '---\ntitle: T\n---\nNEW body\n';
 
-    // Schedule the write with docId=null. Pre-fix the body would resolve
+    // Schedule the write with a null note path. Pre-fix the body would resolve
     // to `vaultIndex.content` = "OLD body"; post-fix we hydrate fresh
     // from disk and write the current "NEW body" so the external edit
     // survives.

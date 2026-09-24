@@ -99,8 +99,8 @@ describe('UpdateCardFieldCommand / UpdateTaskFieldCommand — patch deep-clone (
     const patch = { tags: ['old-tag'] };
     const inversePatch = { tags: ['restored'] };
 
-    const cardCmd = new UpdateCardFieldCommand('b1', 'a.md', 'doc-1', patch, inversePatch);
-    const taskCmd = new UpdateTaskFieldCommand('b1', 'a.md', 'doc-1', patch, inversePatch);
+    const cardCmd = new UpdateCardFieldCommand('b1', 'a.md', 'a.md', patch, inversePatch);
+    const taskCmd = new UpdateTaskFieldCommand('b1', 'a.md', 'a.md', patch, inversePatch);
 
     // Mutate the caller-side arrays AFTER construction. Pre-R3, the
     // commands held shallow `{ ...patch }` so the inner `tags` ref was
@@ -120,16 +120,16 @@ describe('UpdateCardFieldCommand / UpdateTaskFieldCommand — patch deep-clone (
     expect(taskSnapshot.inversePatch.tags).toEqual(['restored']);
   });
 
-  // 6.2.H7 — `UpdateTaskFieldCommand` with a null docId used to silently
-  // no-op both execute and undo: the documentStore merge was gated on
-  // `if (this.docId)`, the FM patch was never applied, and the scheduled
-  // write committed unchanged FM back to disk. The constructor now throws
-  // so a future caller can't re-introduce the silent-no-op.
-  it('UpdateTaskFieldCommand throws on null docId (6.2.H7)', async () => {
+  // 6.2.H7 — `UpdateTaskFieldCommand` with a null notePath would silently
+  // no-op both execute and undo: the documentStore merge has nothing to key
+  // on, the FM patch is never applied, and the scheduled write commits
+  // unchanged FM back to disk. The constructor throws so a caller can't
+  // introduce the silent no-op.
+  it('UpdateTaskFieldCommand throws on null notePath (6.2.H7)', async () => {
     const { UpdateTaskFieldCommand } = await import('@renderer/commands/taskCommands');
     expect(() => {
       new UpdateTaskFieldCommand('b1', 'a.md', null, { status: 'done' }, { status: 'todo' });
-    }).toThrow(/docId/);
+    }).toThrow(/notePath/);
   });
 });
 

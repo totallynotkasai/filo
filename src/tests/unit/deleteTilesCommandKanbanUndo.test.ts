@@ -22,7 +22,6 @@ function def(id: string): TileDefinition {
     type: 'text',
     title: id,
     filePath: `${id}.md`,
-    contentId: `doc-${id}`,
     content: '',
     tags: [],
     style: {

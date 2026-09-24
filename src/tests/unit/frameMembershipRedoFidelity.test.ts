@@ -85,7 +85,6 @@ function makeTile(id: string, x: number, y: number): Tile {
     boardId: 'mm',
     type: 'text',
     title: id,
-    contentId: `doc_${id}`,
     position: { x, y },
     size: { width: 100, height: 100 },
     style: { headerColor: '', bodyColor: '', borderColor: '' },

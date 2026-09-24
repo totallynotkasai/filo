@@ -4,7 +4,7 @@ import type { AddTileOpts, BoardTileOps } from '../boardTileOps';
 
 /**
  * Document board tile ops — exhaustive no-op. Document boards are a single
- * rich-text editor backed by `board.contentId` / `board.content`; they have
+ * rich-text editor on the note at `board.filePath`; they have
  * no `tileDefs`, no placements, and no per-tile delete surface. The ops
  * exist purely so the `BoardType`-keyed registry is exhaustive and the
  * dispatcher's `never`-fallback can't be reached at runtime for a known

@@ -35,7 +35,7 @@ describe('DocumentEditor open → close (editor integration)', () => {
   for (const [label, note] of [['CRLF', NOTE_CRLF], ['LF', NOTE_LF]] as const) {
     it(`(${label}) open → close: bytes unchanged, no effect_update_depth_exceeded`, async () => {
       const fs = recordingFilo({ 'Doc.md': note });
-      const m = await mountDocumentEditor({ docId: 'd1', docPath: 'Doc.md' });
+      const m = await mountDocumentEditor({ docPath: 'Doc.md' });
       expect(m.proseMirror().textContent).toContain('Title');
       await m.unmount();
       await drainDebounce();
@@ -47,7 +47,7 @@ describe('DocumentEditor open → close (editor integration)', () => {
 
   it('(c) load → Ctrl+Z leaves body and disk unchanged', async () => {
     const fs = recordingFilo({ 'Doc.md': NOTE_LF });
-    const m = await mountDocumentEditor({ docId: 'd1', docPath: 'Doc.md' });
+    const m = await mountDocumentEditor({ docPath: 'Doc.md' });
     pressUndo(m);
     await drainDebounce();
     expect(editorMarkdown(m.editor())).toContain('Title');

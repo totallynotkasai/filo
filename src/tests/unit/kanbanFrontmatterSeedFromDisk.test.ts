@@ -63,14 +63,14 @@ describe('seedDocumentFrontmatterFromDisk (Audit-6 M4)', () => {
       }
       return { success: true };
     });
-    await seedDocumentFrontmatterFromDisk('doc1', '/vault', 'Card.md');
-    expect(documentStore.getFrontmatter('doc1')).toEqual({ priority: 'high', title: 'Card' });
+    await seedDocumentFrontmatterFromDisk('Card.md', '/vault', 'Card.md');
+    expect(documentStore.getFrontmatter('Card.md')).toEqual({ priority: 'high', title: 'Card' });
     // rawFrontmatter seeded → the gateway gets a source baseline for preservation.
-    expect(documentStore.getOriginalFrontmatterSource('doc1')).toBe('priority: high\ntitle: Card');
+    expect(documentStore.getOriginalFrontmatterSource('Card.md')).toBe('priority: high\ntitle: Card');
   });
 
   it('is a no-op when the cache already holds an entry (no clobber, no disk read)', async () => {
-    documentStore.setFrontmatter('doc2', { priority: 'low' }, 'priority: low');
+    documentStore.setFrontmatter('Card.md', { priority: 'low' }, 'priority: low');
     let readAttempted = false;
     installFiloMock((channel: string) => {
       if (channel === 'vault:read-file-text') {
@@ -79,9 +79,9 @@ describe('seedDocumentFrontmatterFromDisk (Audit-6 M4)', () => {
       }
       return { success: true };
     });
-    await seedDocumentFrontmatterFromDisk('doc2', '/vault', 'Card.md');
+    await seedDocumentFrontmatterFromDisk('Card.md', '/vault', 'Card.md');
     expect(readAttempted).toBe(false);
-    expect(documentStore.getFrontmatter('doc2')).toEqual({ priority: 'low' });
+    expect(documentStore.getFrontmatter('Card.md')).toEqual({ priority: 'low' });
   });
 
   it('leaves the cache unseeded on a disk read failure (index-seed fallback runs)', async () => {
@@ -89,20 +89,20 @@ describe('seedDocumentFrontmatterFromDisk (Audit-6 M4)', () => {
       if (channel === 'vault:read-file-text') return { success: false, code: 'ENOENT' };
       return { success: true };
     });
-    await seedDocumentFrontmatterFromDisk('doc3', '/vault', 'Gone.md');
-    expect(documentStore.getFrontmatter('doc3')).toBeUndefined();
+    await seedDocumentFrontmatterFromDisk('Gone.md', '/vault', 'Gone.md');
+    expect(documentStore.getFrontmatter('Gone.md')).toBeUndefined();
   });
 
-  it('no-ops on a null docId or empty vault root', async () => {
+  it('no-ops on a null note path or empty vault root', async () => {
     let readAttempted = false;
     installFiloMock((channel: string) => {
       if (channel === 'vault:read-file-text') readAttempted = true;
       return { success: true };
     });
     await seedDocumentFrontmatterFromDisk(null, '/vault', 'Card.md');
-    await seedDocumentFrontmatterFromDisk('doc4', '', 'Card.md');
+    await seedDocumentFrontmatterFromDisk('Card.md', '', 'Card.md');
     expect(readAttempted).toBe(false);
-    expect(documentStore.getFrontmatter('doc4')).toBeUndefined();
+    expect(documentStore.getFrontmatter('Card.md')).toBeUndefined();
   });
 });
 
@@ -157,7 +157,7 @@ describe('Kanban field edit seeds FM from disk, not the stale index (Audit-6 M4)
   });
 
   function makeWriter() {
-    const tile = { id: 't1', type: 'text', contentId: 'doc1', title: 'Card', tags: [], filePath: 'Card.md' } as unknown as Tile;
+    const tile = { id: 't1', type: 'text', title: 'Card', tags: [], filePath: 'Card.md' } as unknown as Tile;
     return makeKanbanFrontmatterWriter({
       getBoard: () => ({ id: 'kb', type: 'kanban', columns: [] }) as unknown as KanbanBoardType,
       getAllTilesById: () => ({ t1: tile }),
@@ -174,7 +174,7 @@ describe('Kanban field edit seeds FM from disk, not the stale index (Audit-6 M4)
     // not the stale index (which lacks it). Audit-7 H1 moved the disk seed INTO
     // UpdateCardFieldCommand.execute(); awaiting updateTileFrontmatter awaits
     // that chained command, so the cache reflects the disk seed once it resolves.
-    const cached = documentStore.getFrontmatter('doc1');
+    const cached = documentStore.getFrontmatter('Card.md');
     expect(cached?.priority).toBe('high');
 
     // Contrast: the index this would otherwise have seeded from has NO priority,
@@ -186,11 +186,9 @@ describe('Kanban field edit seeds FM from disk, not the stale index (Audit-6 M4)
     // The card's document is loaded (a docState exists) but its FM cache is
     // still empty — the exact combination that previously seeded FM from the
     // stale index. Loading a docState exercises the LIVE-EDITOR body path
-    // specifically; Audit-8 B1 added the no-docState disk-read path (the writer
-    // no longer aborts when a docId has no open editor), covered by the
-    // dedicated B1 describe blocks below.
+    // specifically; the no-docState disk-read path (a note with no open editor)
+    // is covered by the dedicated B1 describe blocks below.
     documentStore.loadDocument({
-      docId: 'doc1',
       filename: 'Card.md',
       title: 'Card',
       body: 'card body',
@@ -263,7 +261,7 @@ describe('Kanban field edit — whenChainSettled covers the in-flight seed (Audi
       if (channel === 'vault:write-existing-file-text') return { success: true };
       return { success: true };
     });
-    // Stale index (no priority) + a loaded docState so the docId write path runs.
+    // Stale index (no priority) + a loaded docState so the live-document write path runs.
     vaultIndexStore.restoreMetadata('Card.md', {
       path: 'Card.md',
       title: 'Card',
@@ -275,7 +273,6 @@ describe('Kanban field edit — whenChainSettled covers the in-flight seed (Audi
       lastModified: 0,
     });
     documentStore.loadDocument({
-      docId: 'doc1',
       filename: 'Card.md',
       title: 'Card',
       body: 'card body',
@@ -296,7 +293,7 @@ describe('Kanban field edit — whenChainSettled covers the in-flight seed (Audi
   });
 
   function makeWriter() {
-    const tile = { id: 't1', type: 'text', contentId: 'doc1', title: 'Card', tags: [], filePath: 'Card.md' } as unknown as Tile;
+    const tile = { id: 't1', type: 'text', title: 'Card', tags: [], filePath: 'Card.md' } as unknown as Tile;
     return makeKanbanFrontmatterWriter({
       getBoard: () => ({ id: 'kb', type: 'kanban', columns: [] }) as unknown as KanbanBoardType,
       getAllTilesById: () => ({ t1: tile }),
@@ -336,9 +333,8 @@ describe('Kanban field edit — whenChainSettled covers the in-flight seed (Audi
 });
 
 /**
- * Audit-8 B1 — the BLOCKER this phase fixes. A Kanban card / Task row whose
- * backing doc HAS a docId (so the FM cache is keyed and the field patch is
- * merged into it) but was NEVER opened as a Document tab has no docState in
+ * Audit-8 B1 — a Kanban card / Task row whose note has an FM cache entry
+ * (the field patch is merged into it) but was NEVER opened as a Document tab has no docState in
  * `openDocuments`. The frontmatter writer's `if (!docState) return` then
  * resolved the write as SUCCESS without touching disk: `endWrite(true)` cleared
  * `.filo/.dirty`, `.board.json` stripped the derived field on its own write, and
@@ -348,9 +344,9 @@ describe('Kanban field edit — whenChainSettled covers the in-flight seed (Audi
  * that abort (see the "Loading a docState exercises the LIVE-EDITOR body path"
  * note above). These drive the REAL UI path — a field edit with NO loadDocument
  * — and assert the write actually lands (or fails loudly on a missing file,
- * never silently). The fix unifies body resolution: a docId with no live
- * docState falls through to the SAME fresh-disk-read the orphan (docId-null)
- * branch already used.
+ * never silently). Body resolution is unified: a note with no live
+ * docState falls through to the SAME fresh-disk-read the orphan (no note
+ * path) branch uses.
  */
 describe('Audit-8 B1 — un-opened Kanban card field edit reaches disk (no docState)', () => {
   let captured: Captured[];
@@ -402,7 +398,7 @@ describe('Audit-8 B1 — un-opened Kanban card field edit reaches disk (no docSt
   });
 
   function makeWriter() {
-    const tile = { id: 't1', type: 'text', contentId: 'doc1', title: 'Card', tags: [], filePath: 'Card.md' } as unknown as Tile;
+    const tile = { id: 't1', type: 'text', title: 'Card', tags: [], filePath: 'Card.md' } as unknown as Tile;
     return makeKanbanFrontmatterWriter({
       getBoard: () => ({ id: 'kb', type: 'kanban', columns: [] }) as unknown as KanbanBoardType,
       getAllTilesById: () => ({ t1: tile }),
@@ -414,7 +410,7 @@ describe('Audit-8 B1 — un-opened Kanban card field edit reaches disk (no docSt
   it('toggling completed writes the merged FM to disk even with no Document tab open', async () => {
     // Crucially: NO documentStore.loadDocument — exactly the real UI state for a
     // card the user never opened as a Document. Pre-fix this aborted silently.
-    expect(documentStore.getDocument('doc1')).toBeUndefined();
+    expect(documentStore.getDocument('Card.md')).toBeUndefined();
 
     const writer = makeWriter();
     await writer.updateTileFrontmatter('t1', { completed: true });
@@ -528,7 +524,7 @@ describe('Audit-8 B1 — un-opened Task row field edit reaches disk (no docState
   function makeRow(): TaskRow {
     return {
       placement: { tileId: 't2', position: 0 },
-      tile: { id: 't2', type: 'text', contentId: 'doc2', title: 'Task', tags: [] } as unknown as Tile,
+      tile: { id: 't2', type: 'text', filePath: 'Task.md', title: 'Task', tags: [] } as unknown as Tile,
       completed: false,
       priority: 'none',
       dueDate: '',
@@ -544,7 +540,7 @@ describe('Audit-8 B1 — un-opened Task row field edit reaches disk (no docState
   }
 
   it('toggling completed writes the merged FM to disk with no Document tab open', async () => {
-    expect(documentStore.getDocument('doc2')).toBeUndefined();
+    expect(documentStore.getDocument('Task.md')).toBeUndefined();
 
     const writer = makeWriter();
     await writer.toggleCompleted(makeRow());

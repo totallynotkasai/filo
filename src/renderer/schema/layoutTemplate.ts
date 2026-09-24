@@ -37,7 +37,7 @@ export const LayoutTemplateTileSchema = z.object({
    * `.md` file at capture time. Tiles with the same `contentGroup` share a
    * single fresh `.md` file on instantiation; tiles with distinct (or
    * absent) groups each get their own file. The key is local to the
-   * template — it does not leak the source `contentId`.
+   * template — it does not leak the source note's path.
    */
   contentGroup: z.string().optional(),
 }).passthrough();

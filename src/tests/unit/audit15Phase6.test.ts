@@ -115,7 +115,7 @@ describe('Audit-15 P6.1 — scheduler quiescence parity (flush early-return, flu
 /**
  * Audit-15 P6.5 — rawFrontmatter-threading coverage (backs P2.1).
  *
- * An external-edit RELOAD that calls `documentStore.setFrontmatter(docId, fm)`
+ * An external-edit RELOAD that calls `documentStore.setFrontmatter(path, fm)`
  * without the 3rd `rawFrontmatter` arg leaves `originalFrontmatterCache` at the
  * PRE-edit source (stale, not dropped — see `noteRawFrontmatter`). A later
  * body-only save then diffs the fresh FM against that stale baseline → an
@@ -183,20 +183,20 @@ function callArgCount(src: string, openParen: number): number {
 
 describe('Audit-15 P6.5 — rawFrontmatter threading refreshes originalFrontmatterCache; every reload site threads it', () => {
   it('threading rawFrontmatter REFRESHES the baseline; omitting it leaves a STALE one (the P2.1 reload bug)', () => {
-    const docId = 'doc_p65';
-    documentStore.setFrontmatter(docId, { title: 'A' }, 'title: A\n');
-    expect(documentStore.getOriginalFrontmatterSource(docId)).toBe('title: A\n');
+    const notePath = 'P65.md';
+    documentStore.setFrontmatter(notePath, { title: 'A' }, 'title: A\n');
+    expect(documentStore.getOriginalFrontmatterSource(notePath)).toBe('title: A\n');
 
     // A reload that omits the 3rd arg does NOT refresh the baseline — it silently
     // STAYS at the pre-external-edit source, so a later body-only save diffs the
     // fresh FM against stale bytes. This is precisely why every reload site must
     // thread `next.rawFrontmatter` (P2.1).
-    documentStore.setFrontmatter(docId, { title: 'B' });
-    expect(documentStore.getOriginalFrontmatterSource(docId)).toBe('title: A\n');
+    documentStore.setFrontmatter(notePath, { title: 'B' });
+    expect(documentStore.getOriginalFrontmatterSource(notePath)).toBe('title: A\n');
 
     // Threading the new disk bytes refreshes it.
-    documentStore.setFrontmatter(docId, { title: 'B' }, 'title: B\n');
-    expect(documentStore.getOriginalFrontmatterSource(docId)).toBe('title: B\n');
+    documentStore.setFrontmatter(notePath, { title: 'B' }, 'title: B\n');
+    expect(documentStore.getOriginalFrontmatterSource(notePath)).toBe('title: B\n');
   });
 
   it('every documentStore.setFrontmatter call in the external-reload files threads a rawFrontmatter (3rd) arg', () => {
@@ -216,7 +216,7 @@ describe('Audit-15 P6.5 — rawFrontmatter threading refreshes originalFrontmatt
           const line = src.slice(0, m.index).split('\n').length;
           offenders.push(
             `${file}:${line} — setFrontmatter(...) has ${args} arg(s); a reload must thread ` +
-              '(docId, frontmatter, rawFrontmatter) so originalFrontmatterCache refreshes (P2.1)',
+              '(notePath, frontmatter, rawFrontmatter) so originalFrontmatterCache refreshes (P2.1)',
           );
         }
       }

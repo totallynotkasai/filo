@@ -5,6 +5,7 @@
  * a re-index.
  */
 import { SvelteSet } from 'svelte/reactivity';
+import { vaultPath, type VaultPath } from '@shared/vaultPath';
 import { addTagToMarkdown, removeTagFromMarkdown } from '../vault/tagRewriter';
 import { dropStaleSeededFrontmatterCache } from '../vault/staleSeededFrontmatter';
 import { markPathFailed } from '../boards/boardSaver';
@@ -48,26 +49,27 @@ function baselineDriftedAtRead(
  *
  * Idempotent: re-entering after the toast has been shown does nothing
  * until the read-only flag is cleared (via the editor banner's "Take
- * ownership"). The dedupe Set is keyed by docId so the toast can re-fire
- * for the same path if the user reopens it under a fresh docId.
+ * ownership"). The dedupe Set is keyed by the note's path. A rename leaves
+ * the entry behind, which at worst shows the toast once more.
  *
- * Reset on vault swap so a stale docId entry can't
- * suppress a legitimate toast in the new vault.
+ * Reset on vault swap so a stale entry can't suppress a legitimate toast in
+ * the new vault.
  */
-const readOnlyTagToastShown = new SvelteSet<string>();
+const readOnlyTagToastShown = new SvelteSet<VaultPath>();
 vaultSwapResettable('fileTags.readOnlyTagToastShown', () => readOnlyTagToastShown.clear());
 
 function surfaceReadOnlyTagToastIfNeeded(relPath: string): void {
   const editorDoc = documentStore.findByFilename(relPath);
   if (!editorDoc) return;
-  if (!documentStore.isReadOnly(editorDoc.docId)) {
+  if (!documentStore.isReadOnly(editorDoc.filename)) {
     // Doc isn't read-only — drop any stale dedupe entry so a future
     // read-only flip surfaces the toast again.
-    readOnlyTagToastShown.delete(editorDoc.docId);
+    readOnlyTagToastShown.delete(vaultPath(editorDoc.filename));
     return;
   }
-  if (readOnlyTagToastShown.has(editorDoc.docId)) return;
-  readOnlyTagToastShown.add(editorDoc.docId);
+  const key = vaultPath(editorDoc.filename);
+  if (readOnlyTagToastShown.has(key)) return;
+  readOnlyTagToastShown.add(key);
   uiStore.toast(
     "Tag updated. Body changes were not saved because this file's Markdown isn't safe to round-trip.",
     'warning',

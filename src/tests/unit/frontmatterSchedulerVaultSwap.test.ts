@@ -4,10 +4,9 @@
  * across vaults; the reset clears it via the scheduler's registered callback
  * before the next vault opens.
  *
- * M1 (2026-05-28) — the map is now keyed by `docId` (not vault-relative
- * path), so `getLastFlushedFrontmatterVersion` takes a docId. docId keying
- * already prevents the original cross-vault same-`relPath` suppression; the
- * reset remains as growth-bounding / docId-reuse hygiene.
+ * The map is keyed by the note's case-folded vault path, so two vaults that
+ * each hold a `Notes.md` share a key: without the reset, vault A's recorded
+ * version would suppress vault B's first write to the same path.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -50,25 +49,24 @@ describe('frontmatterWriteScheduler — vault-swap reset (Sprint 35.4)', () => {
     // Seed a document and flush a frontmatter write so lastFlushedVersion
     // gets populated for 'Notes.md'.
     documentStore.loadDocument({
-      docId: 'doc-A',
       filename: 'Notes.md',
       title: 'Notes',
       body: 'hello',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter('doc-A', { id: 'doc-A', title: 'Notes' });
+    documentStore.setFrontmatter('Notes.md', { vault: 'A', title: 'Notes' });
 
-    scheduleFrontmatterWrite('Notes.md', 'doc-A');
+    scheduleFrontmatterWrite('Notes.md', 'Notes.md');
     const res1 = await flushAllPendingFrontmatterWrites();
     expect(res1.failed).toEqual([]);
-    expect(getLastFlushedFrontmatterVersion('doc-A')).toBeGreaterThan(0);
+    expect(getLastFlushedFrontmatterVersion('Notes.md')).toBeGreaterThan(0);
 
     // Vault swap — resetWriteTracking should fire the registered callback
     // that clears lastFlushedVersion.
     resetWriteTracking('/vault-A');
 
-    expect(getLastFlushedFrontmatterVersion('doc-A')).toBe(0);
+    expect(getLastFlushedFrontmatterVersion('Notes.md')).toBe(0);
   });
 
   it('after vault swap, a write to a same-named file in the new vault is not suppressed', async () => {
@@ -87,43 +85,43 @@ describe('frontmatterWriteScheduler — vault-swap reset (Sprint 35.4)', () => {
     });
 
     documentStore.loadDocument({
-      docId: 'doc-A',
       filename: 'Notes.md',
       title: 'Notes',
       body: 'vault A body',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter('doc-A', { id: 'doc-A', title: 'Notes' });
+    documentStore.setFrontmatter('Notes.md', { vault: 'A', title: 'Notes' });
     // Bump the FM mutation version a few times so lastFlushedVersion lands
     // at something > 0.
-    documentStore.setFrontmatter('doc-A', { id: 'doc-A', title: 'Notes', tag: 'a' });
-    documentStore.setFrontmatter('doc-A', { id: 'doc-A', title: 'Notes', tag: 'b' });
+    documentStore.setFrontmatter('Notes.md', { vault: 'A', title: 'Notes', tag: 'a' });
+    documentStore.setFrontmatter('Notes.md', { vault: 'A', title: 'Notes', tag: 'b' });
 
-    scheduleFrontmatterWrite('Notes.md', 'doc-A');
+    scheduleFrontmatterWrite('Notes.md', 'Notes.md');
     await flushAllPendingFrontmatterWrites();
     expect(writeCount).toBe(1);
-    const versionAfterA = getLastFlushedFrontmatterVersion('doc-A');
+    const versionAfterA = getLastFlushedFrontmatterVersion('Notes.md');
     expect(versionAfterA).toBeGreaterThan(0);
 
-    // Vault swap.
+    // Vault swap. The document store's pre-swap reset restarts the note's
+    // mutation version, as it does in the app.
     resetWriteTracking('/vault-A');
+    documentStore.clear();
     vaultStore.setPath('/vault-B');
 
     // Vault B: a fresh document also named 'Notes.md'. Its mutation version
     // starts at 0; without the reset, the version-token guard
     // (`scheduledVersion <= last`) would suppress this write.
     documentStore.loadDocument({
-      docId: 'doc-B',
       filename: 'Notes.md',
       title: 'Notes',
       body: 'vault B body',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter('doc-B', { id: 'doc-B', title: 'Notes' });
+    documentStore.setFrontmatter('Notes.md', { vault: 'B', title: 'Notes' });
 
-    scheduleFrontmatterWrite('Notes.md', 'doc-B');
+    scheduleFrontmatterWrite('Notes.md', 'Notes.md');
     await flushAllPendingFrontmatterWrites();
 
     // Without the vault-swap reset this would still be 1 (suppressed). After

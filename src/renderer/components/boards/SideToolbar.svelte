@@ -119,7 +119,7 @@
 
     switch (tileType) {
       case 'text':
-        tile = { ...baseTile, type: 'text', contentId: createId(), content: '' } as Tile;
+        tile = { ...baseTile, type: 'text', content: '' } as Tile;
         break;
       case 'image':
         tile = { ...baseTile, type: 'image', src: '' } as Tile;
@@ -143,7 +143,7 @@
         tile = { ...baseTile, type: 'timer', duration: 0, remaining: 0, mode: 'hms', isRunning: false } as Tile;
         break;
       default:
-        tile = { ...baseTile, type: 'text', contentId: createId(), content: '' } as Tile;
+        tile = { ...baseTile, type: 'text', content: '' } as Tile;
     }
 
     boardStore.addTileWithHistory(tile);

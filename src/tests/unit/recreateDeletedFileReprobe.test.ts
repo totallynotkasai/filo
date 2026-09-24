@@ -76,11 +76,11 @@ describe('deleted-externally prompt re-probes (Audit-19 EXT-3)', () => {
     });
     await vaultIndexStore.applyChanges(['Notes.md']);
     documentStore.loadDocument({
-      docId: 'doc_A', filename: 'Notes.md', title: 'Notes', body: 'local body',
+      filename: 'Notes.md', title: 'Notes', body: 'local body',
       htmlContent: '<p>local body</p>', richText: [],
     });
-    documentStore.setFrontmatter('doc_A', { tags: ['local-tag'] });
-    documentStore.markDirty('doc_A');
+    documentStore.setFrontmatter('Notes.md', { tags: ['local-tag'] });
+    documentStore.markDirty('Notes.md');
     // The file is deleted externally → the toast.
     diskContent = null;
     await slice.handleExternalMarkdownChanges(['Notes.md']);
@@ -141,7 +141,7 @@ describe('deleted-externally prompt re-probes (Audit-19 EXT-3)', () => {
     diskContent = '# Notes\nsynced back';
     await toast.actions!.find((a) => a.label === 'Reload')!.handler();
     expect(drop).not.toHaveBeenCalled();
-    expect(documentStore.getDocument('doc_A')?.body).toContain('synced back');
+    expect(documentStore.getDocument('Notes.md')?.body).toContain('synced back');
   });
 
   it('a vault swap during the re-probe → bail (nothing written or applied)', async () => {

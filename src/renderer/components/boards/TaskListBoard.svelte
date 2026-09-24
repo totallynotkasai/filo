@@ -802,7 +802,7 @@
       const row = viewModel.rows.find((r) => r.tile.id === tileId);
       if (!row || !board) return;
       // Auto-expand a collapsed new-parent on BOTH paths (command +
-      // docId-less fallback), else the indented child is swallowed under the
+      // note-less fallback), else the indented child is swallowed under the
       // collapsed parent until the chevron is clicked. The command path batches
       // the expand into the same undo unit; the rare fallback expands separately.
       const expandParent = collapsedSubtasks.has(newParent);

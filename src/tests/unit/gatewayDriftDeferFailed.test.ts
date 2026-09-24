@@ -85,7 +85,7 @@ describe('Audit-6 M1 — gateway drift defer/budget keeps the path failed', () =
         frontmatter: {},
         body: 'dirty body',
         callerId: 'text-tile:Dirty.md',
-        docId: null,
+        notePath: null,
       }),
     ).rejects.toThrow(/deferred/);
 
@@ -119,7 +119,7 @@ describe('Audit-6 M1 — gateway drift defer/budget keeps the path failed', () =
         frontmatter: {},
         body: 'churn body',
         callerId: 'text-tile:Churn.md',
-        docId: null,
+        notePath: null,
       }),
     ).rejects.toThrow(/churning|aborted/);
 
@@ -137,7 +137,7 @@ describe('Audit-6 M1 — gateway drift defer/budget keeps the path failed', () =
       frontmatter: {},
       body: 'scheduled body',
       callerId: 'text-tile:Sched.md',
-      docId: null,
+      notePath: null,
     });
 
     const result = await flushAllMarkdownWrites();
@@ -162,7 +162,7 @@ describe('Audit-6 M1 — gateway drift defer/budget keeps the path failed', () =
       frontmatter: {},
       body: 'ok body',
       callerId: 'text-tile:Ok.md',
-      docId: null,
+      notePath: null,
     });
 
     expect(isPathPending('Ok.md')).toBe(false);

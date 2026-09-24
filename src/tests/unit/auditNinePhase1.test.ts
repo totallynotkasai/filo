@@ -111,12 +111,12 @@ describe('A9-H1 — first-touch field edit + vault swap mid-seed never writes th
     vaultStore.setPath('');
   });
 
-  it('Kanban UpdateCardFieldCommand bails — no cross-vault write, no docA FM entry', async () => {
+  it('Kanban UpdateCardFieldCommand bails — no cross-vault write, no FM entry for the note', async () => {
     installGatedMock();
     const cmd = new UpdateCardFieldCommand(
       'kb',
       'Inbox.md',
-      'docA',
+      'Inbox.md',
       { completed: true },
       { completed: false },
     );
@@ -132,15 +132,15 @@ describe('A9-H1 — first-touch field edit + vault swap mid-seed never writes th
     await flushAllPendingFrontmatterWrites();
 
     expect(writesIn(captured)).toHaveLength(0);
-    expect(documentStore.getFrontmatter('docA')).toBeUndefined();
+    expect(documentStore.getFrontmatter('Inbox.md')).toBeUndefined();
   });
 
-  it('Task UpdateTaskFieldCommand bails — no cross-vault write, no docB FM entry', async () => {
+  it('Task UpdateTaskFieldCommand bails — no cross-vault write, no FM entry for the note', async () => {
     installGatedMock();
     const cmd = new UpdateTaskFieldCommand(
       'tl',
       'Inbox.md',
-      'docB',
+      'Inbox.md',
       { completed: true },
       { completed: false },
     );
@@ -153,7 +153,7 @@ describe('A9-H1 — first-touch field edit + vault swap mid-seed never writes th
     await flushAllPendingFrontmatterWrites();
 
     expect(writesIn(captured)).toHaveLength(0);
-    expect(documentStore.getFrontmatter('docB')).toBeUndefined();
+    expect(documentStore.getFrontmatter('Inbox.md')).toBeUndefined();
   });
 });
 
@@ -242,7 +242,7 @@ describe('A9-M2 — Task notes body is not lost when a quit flush lands during t
   function makeRow(): TaskRow {
     return {
       placement: { tileId: 't2', position: 0 },
-      tile: { id: 't2', type: 'text', contentId: 'doc2', title: 'Task', tags: [] } as unknown as Tile,
+      tile: { id: 't2', type: 'text', filePath: 'Task.md', title: 'Task', tags: [] } as unknown as Tile,
       completed: false,
       priority: 'none',
       dueDate: '',
@@ -419,8 +419,8 @@ describe('A9-L1 — Kanban bulk tag-add routes through an undoable, chained Batc
     promptValue: string | null = 'urgent',
   ) {
     const tiles: Record<string, Tile> = {
-      a: { id: 'a', type: 'text', contentId: 'docA', title: 'A', tags: [] } as unknown as Tile,
-      b: { id: 'b', type: 'text', contentId: 'docB', title: 'B', tags: [] } as unknown as Tile,
+      a: { id: 'a', type: 'text', filePath: 'a.md', title: 'A', tags: [] } as unknown as Tile,
+      b: { id: 'b', type: 'text', filePath: 'b.md', title: 'B', tags: [] } as unknown as Tile,
     };
     return new KanbanMultiSelect({
       selection,
@@ -463,8 +463,8 @@ describe('A9-L1 — Kanban bulk tag-add routes through an undoable, chained Batc
 
   it('does not dispatch a command (or toast success) when every card already has the tag', async () => {
     // Pre-seed both cards with the tag so the additive loop produces no commands.
-    documentStore.setFrontmatter('docA', { tags: ['urgent'] });
-    documentStore.setFrontmatter('docB', { tags: ['urgent'] });
+    documentStore.setFrontmatter('a.md', { tags: ['urgent'] });
+    documentStore.setFrontmatter('b.md', { tags: ['urgent'] });
     const selection = createSelectionScope();
     selection.addMultiple(['a', 'b']);
     const ms = makeMultiSelect(selection, 'urgent');

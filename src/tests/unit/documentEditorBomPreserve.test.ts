@@ -89,7 +89,7 @@ describe('Phase 6.1.R5 (follow-up) — DocumentEditor adopt preserves a sibling-
       frontmatter: { title: 'B', status: 'updated' },
       body: 'body\n',
       callerId: 'document-editor:test',
-      docId: null,
+      notePath: null,
     });
 
     const final = diskFiles.get(relPath);
@@ -116,7 +116,7 @@ describe('Phase 6.1.R5 (follow-up) — DocumentEditor adopt preserves a sibling-
       frontmatter: { title: 'B' },
       body: 'body\n',
       callerId: 'document-editor:legacy',
-      docId: null,
+      notePath: null,
     });
 
     // Inverted assertion: the legacy unconditional mark loses the BOM. Anyone

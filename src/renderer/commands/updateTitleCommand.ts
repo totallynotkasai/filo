@@ -15,7 +15,7 @@ import { Command } from './Command';
 import { UpdateCardFieldCommand } from './kanbanCommands';
 import { boardStore } from '../stores/board.svelte';
 import { boardCacheStore } from '../stores/boardCache.svelte';
-import { noteDocId, noteFrontmatter, titleFromFrontmatter } from '../stores/noteMeta';
+import { noteFrontmatter, titleFromFrontmatter } from '../stores/noteMeta';
 import type { Tile } from '../schema/index';
 
 export interface UpdateTitleArgs {
@@ -49,7 +49,7 @@ export class UpdateTitleCommand extends Command {
       this.field = new UpdateCardFieldCommand(
         args.boardId,
         args.notePath,
-        noteDocId(args.notePath),
+        args.notePath,
         { title: args.newTitle },
         { title: priorTitle ?? '' },
         this.description,

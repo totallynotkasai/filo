@@ -1,5 +1,4 @@
 import type { TileType } from '../../shared/types';
-import { createId } from '../lib/utils/ids';
 
 /**
  * Metadata entry for a tile type in the registry.
@@ -31,7 +30,7 @@ export const tileRegistry: Record<TileType, TileRegistryEntry> = {
     type: 'text',
     name: 'Text',
     selectable: true,
-    defaultOverrides: { contentId: () => createId(), content: '' },
+    defaultOverrides: { content: '' },
   },
   image: {
     type: 'image',

@@ -71,7 +71,7 @@ describe('Audit-19 UX-6 — Keep local backs up the external version first', () 
 
     await writeMarkdownFile({
       vaultRoot: '/vault', relPath: 'Note.md', frontmatter: {}, body: 'mine',
-      callerId: 'text-tile:Note.md', docId: null,
+      callerId: 'text-tile:Note.md', notePath: null,
     });
 
     const channels = calls.map((c) => c.channel);
@@ -97,7 +97,7 @@ describe('Audit-19 UX-6 — Keep local backs up the external version first', () 
 
     const pending = writeMarkdownFile({
       vaultRoot: '/vault', relPath: 'Locked.md', frontmatter: {}, body: 'mine',
-      callerId: 'text-tile:Locked.md', docId: null,
+      callerId: 'text-tile:Locked.md', notePath: null,
     });
     await vi_waitFor(() => uiStore.confirmDialog !== null);
     expect(uiStore.confirmDialog?.body).toMatch(/locked by another program/);

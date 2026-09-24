@@ -21,7 +21,7 @@ describe('Ctrl+Z right after a load does not empty the note (MD-1)', () => {
 
   it('TextTile: load → Ctrl+Z leaves body and disk unchanged', async () => {
     const fs = recordingFilo({ 'Note.md': 'Precious text\n' });
-    const m = await mountTextTile({ tile: { id: 't1', contentId: 'd1', title: 'Note' } });
+    const m = await mountTextTile({ tile: { id: 't1', title: 'Note' } });
     pressUndo(m);
     await drainDebounce();
     expect(editorMarkdown(m.editor())).toContain('Precious text');
@@ -31,7 +31,7 @@ describe('Ctrl+Z right after a load does not empty the note (MD-1)', () => {
 
   it('DocumentEditor: load → Ctrl+Z leaves body and disk unchanged', async () => {
     const fs = recordingFilo({ 'Doc.md': 'Precious text\n' });
-    const m = await mountDocumentEditor({ docId: 'd1', docPath: 'Doc.md' });
+    const m = await mountDocumentEditor({ docPath: 'Doc.md' });
     pressUndo(m);
     await drainDebounce();
     expect(editorMarkdown(m.editor())).toContain('Precious text');

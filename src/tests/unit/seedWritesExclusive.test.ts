@@ -12,7 +12,6 @@ import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { historyStore } from '@renderer/stores/history.svelte';
-import { noteIdFor } from '@renderer/stores/noteIds';
 import { makeTaskCreator } from '@renderer/lib/tasklist/taskCreation';
 import { makeKanbanTileCreator } from '@renderer/lib/kanban/kanbanTileCreation';
 import { makeFileDropHandler } from '@renderer/lib/tasklist/fileDropHandler';
@@ -285,9 +284,9 @@ describe('Audit-19 BL-1 — seed writes are create-exclusive', () => {
     const { tl } = hydrateBoards();
     await taskCreator(tl).addTaskFromQuickAdd(quickAdd('Buy milk'));
     const [def] = textDefs('tl');
-    const docId = noteIdFor(def.filePath ?? '');
+    const notePath = def.filePath ?? '';
     expect(files.get('Buy milk.md')).toContain('completed: false');
-    expect(documentStore.getDocument(docId)?.body).toBe('');
+    expect(documentStore.getDocument(notePath)?.body).toBe('');
   });
 
   it('(8) a non-EEXIST failure rolls the task back and does not add a Kanban card', async () => {

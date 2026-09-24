@@ -83,14 +83,13 @@ describe('bulk Reload-all re-reads current disk per file (Audit-12 L3)', () => {
     await vaultIndexStore.applyChanges(FILES); // index v1 for all
     FILES.forEach((rel, i) => {
       documentStore.loadDocument({
-        docId: `doc_${i}`,
         filename: rel,
         title: rel,
         body: 'dirty local',
         htmlContent: '<p>dirty local</p>',
         richText: [],
       });
-      documentStore.updateContent(`doc_${i}`, '<p>dirty local</p>', 'dirty local'); // isDirty
+      documentStore.updateContent(rel, '<p>dirty local</p>', 'dirty local'); // isDirty
     });
 
     // External edit #1 → v2 for every file; the batch surfaces the bulk toast
@@ -111,7 +110,7 @@ describe('bulk Reload-all re-reads current disk per file (Audit-12 L3)', () => {
 
     // Every doc reflects the CURRENT disk (v3), not the stale v2 snapshot.
     for (let i = 0; i < FILES.length; i++) {
-      expect(documentStore.getDocument(`doc_${i}`)?.body, `${FILES[i]} should reload v3`).toBe(
+      expect(documentStore.getDocument(FILES[i])?.body, `${FILES[i]} should reload v3`).toBe(
         'body3',
       );
     }

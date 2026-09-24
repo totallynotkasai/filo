@@ -14,7 +14,6 @@ import TextTile from '@renderer/components/tiles/TextTile.svelte';
 import { BOARD_SCOPE_KEY, getActiveScope } from '@renderer/lib/boards/boardScope.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { documentStore } from '@renderer/stores/document.svelte';
-import { noteIdFor } from '@renderer/stores/noteIds';
 import { editorMarkdown, parseMarkdownFile } from '@renderer/lib/editor/markdownSync';
 import type { TextTile as TextTileDef } from '@renderer/schema/index';
 import {
@@ -34,13 +33,11 @@ const corpus = readdirSync(CORPUS_DIR)
   .map((f) => ({ name: f.slice(0, -3), raw: readFileSync(join(CORPUS_DIR, f), 'utf8') }));
 const toCrlf = (s: string): string => s.replace(/\r?\n/g, '\r\n');
 
-/** A board projects a text tile's `contentId` from its note path, so the
- *  fixture does the same: the note `<title>.md` and its session id. */
+/** The tile's note is `<title>.md`; that path is also its document key. */
 async function mountTile(title = 'Note') {
   vaultStore.setPath(VAULT);
   const filePath = `${title}.md`;
-  const contentId = noteIdFor(filePath);
-  const tile = { id: 't1', type: 'text', title, filePath, contentId, content: '', tags: [] } as unknown as TextTileDef;
+  const tile = { id: 't1', type: 'text', title, filePath, content: '', tags: [] } as unknown as TextTileDef;
   const target = document.createElement('div');
   document.body.appendChild(target);
   const component = mount(TextTile, {
@@ -50,7 +47,7 @@ async function mountTile(title = 'Note') {
   });
   await settle();
   const pm = target.querySelector('.ProseMirror') as HTMLElement & { editor: Editor };
-  return { target, component, pm, editor: pm.editor, docId: contentId };
+  return { target, component, pm, editor: pm.editor, notePath: filePath };
 }
 
 function ctrlZ(pm: HTMLElement): void {
@@ -90,7 +87,7 @@ describe('TextTile lifecycle (editor integration)', () => {
     const fs = recordingFilo({ 'Note.md': 'Before reload\n' });
     const t = await mountTile();
     fs.setExternal('Note.md', 'After reload\n');
-    documentStore.applyReloadFromDisk(t.docId, 'After reload\n', [], {}, '', { mtimeMs: 2000, size: 13 });
+    documentStore.applyReloadFromDisk(t.notePath, 'After reload\n', [], {}, '', { mtimeMs: 2000, size: 13 });
     await settle();
     expect(t.pm.textContent).toContain('After reload');
     ctrlZ(t.pm);

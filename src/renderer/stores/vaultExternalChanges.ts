@@ -246,7 +246,7 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
             // Thread the post-sync `rawFrontmatter` so the source-preserving FM
             // engine's baseline refreshes too; otherwise the next body-only
             // save would re-emit the changed key and lose its inline comment.
-            if (editorDoc) documentStore.setFrontmatter(editorDoc.docId, next.frontmatter, next.rawFrontmatter);
+            if (editorDoc) documentStore.setFrontmatter(editorDoc.filename, next.frontmatter, next.rawFrontmatter);
             // The line above only refreshes an OPEN editor's FM cache; a
             // seeded-but-not-open Kanban card / Task row would keep a stale
             // cache and revert this edit on its next field write.
@@ -274,9 +274,9 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
               // snapshot makes that recoverable (promptReloadRecoveryIfSuspicious).
               const priorBody = editorDoc.body;
               const priorRichText = editorDoc.richText;
-              const priorFm = documentStore.getFrontmatter(editorDoc.docId);
+              const priorFm = documentStore.getFrontmatter(editorDoc.filename);
               documentStore.handleExternalChange(
-                editorDoc.docId,
+                editorDoc.filename,
                 next.content,
                 editorDoc.richText,
                 next.frontmatter,
@@ -288,7 +288,7 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
               );
               promptReloadRecoveryIfSuspicious(
                 rel,
-                editorDoc.docId,
+                editorDoc.filename,
                 priorBody,
                 priorRichText,
                 priorFm,
@@ -331,7 +331,7 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
                 // editor) still needs the conflict prompt, or its pending row
                 // edits are silently clobbered. Dispatch the popup-aware toast
                 // directly with a null editorDoc: it only needs `rel` +
-                // metadata, and its FM-cache refresh is docId-guarded.
+                // metadata, and its FM-cache refresh is notePath-guarded.
                 promptPropertiesPopupModified(rel, next, null);
               }
               // notePossiblyStale fires regardless — the undo stack's inverse
@@ -681,9 +681,6 @@ async function runExternalRenameCascade(
       vaultIndexStore.renameKey(path, newRel + path.slice(oldRel.length));
     }
   }
-  const openDoc = documentStore.findByFilename(oldRel);
-  if (openDoc) documentStore.updateFilename(openDoc.docId, newRel);
-
   const project = ctx.getProject();
   if (project?.settings.general) {
     const currentRoot = project.settings.general.activeRootFolder ?? '';

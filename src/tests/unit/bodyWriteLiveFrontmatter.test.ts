@@ -33,8 +33,8 @@ function lastWrite(captured: Captured[]): string | undefined {
   return undefined;
 }
 
-function makeArgs(docId: string, relPath: string, frontmatter: Record<string, unknown>): WriteArgs {
-  return { vaultRoot: '/vault', relPath, frontmatter, body: 'the body', callerId: `text-tile:${docId}`, docId };
+function makeArgs(relPath: string, frontmatter: Record<string, unknown>): WriteArgs {
+  return { vaultRoot: '/vault', relPath, frontmatter, body: 'the body', callerId: `text-tile:${relPath}`, notePath: relPath };
 }
 
 describe('markdownFileWriter — body write emits LIVE frontmatter at fire time (audit2 2.5)', () => {
@@ -56,26 +56,25 @@ describe('markdownFileWriter — body write emits LIVE frontmatter at fire time 
   });
 
   it('a frontmatter mutation after schedule survives the armed body write', async () => {
-    const docId = 'doc1';
     const relPath = 'Notes/A.md';
-    documentStore.loadDocument({ docId, filename: relPath, title: 'A', body: 'the body', htmlContent: '', richText: [] });
+    documentStore.loadDocument({ filename: relPath, title: 'A', body: 'the body', htmlContent: '', richText: [] });
     // Seed the live cache from disk (with verbatim raw bytes, as a hydrate
     // does). `rawFrontmatter` is the source BETWEEN the `---` fences — no fences,
     // exactly what `parseMarkdownFile` produces — so the baseline is parseable
     // (a fenced `---…---` string parses as a multi-document YAML).
-    documentStore.setFrontmatter(docId, { status: 'draft' }, 'status: draft');
+    documentStore.setFrontmatter(relPath, { status: 'draft' }, 'status: draft');
     markHydrated(relPath, false);
 
     // Body keystroke arms a write — args froze the OLD frontmatter snapshot.
-    scheduleMarkdownWrite(makeArgs(docId, relPath, { status: 'draft' }));
+    scheduleMarkdownWrite(makeArgs(relPath, { status: 'draft' }));
 
     // An external frontmatter-only edit is reconciled into the live cache
     // (documentStore.setFrontmatter — what vaultExternalChanges' sync path and
     // the reload handler do). No raw bytes → the verbatim passthrough is
     // invalidated, so the write must re-emit from the (live) object.
-    documentStore.setFrontmatter(docId, { status: 'published' });
+    documentStore.setFrontmatter(relPath, { status: 'published' });
 
-    await flushMarkdownWrite(`text-tile:${docId}`);
+    await flushMarkdownWrite(`text-tile:${relPath}`);
 
     const written = lastWrite(captured);
     expect(written).toBeDefined();

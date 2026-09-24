@@ -116,8 +116,8 @@ export function promptBulkExternalChanges(prompts: PendingPrompt[], ctx: VaultCo
   >();
   for (const p of prompts) {
     if (p.kind !== 'deleted') continue;
-    deletedSnapshots.set(p.editorDoc.docId, {
-      fmSnapshot: { ...(documentStore.getFrontmatter(p.editorDoc.docId) ?? {}) },
+    deletedSnapshots.set(p.editorDoc.filename, {
+      fmSnapshot: { ...(documentStore.getFrontmatter(p.editorDoc.filename) ?? {}) },
       bodySnapshot: p.editorDoc.body,
     });
   }
@@ -162,7 +162,7 @@ export function promptBulkExternalChanges(prompts: PendingPrompt[], ctx: VaultCo
               // re-apply the discarded edit to fresh disk and revert this reload.
               dropPendingDelta(p.rel);
               documentStore.applyReloadFromDisk(
-                p.editorDoc.docId,
+                p.editorDoc.filename,
                 fresh.content,
                 p.editorDoc.richText,
                 fresh.frontmatter,
@@ -179,7 +179,7 @@ export function promptBulkExternalChanges(prompts: PendingPrompt[], ctx: VaultCo
                 }
               }
             } else {
-              documentStore.unloadDocument(p.editorDoc.docId);
+              documentStore.unloadDocument(p.editorDoc.filename);
               // Reload-all accepted the deletion; drop its tags.json
               // membership. Keep-all re-creates the files, so it must not.
               fileTagsStore.dropFile(p.rel);
@@ -201,13 +201,13 @@ export function promptBulkExternalChanges(prompts: PendingPrompt[], ctx: VaultCo
               // markDirty first (so a concurrent reactive reload can't undo the
               // body), then force the write: a doc whose debounce already fired
               // has no armed timer, so a plain flush would write nothing.
-              documentStore.markDirty(p.editorDoc.docId);
-              void forceWriteForDocument(p.editorDoc.docId);
+              documentStore.markDirty(p.editorDoc.filename);
+              void forceWriteForDocument(p.editorDoc.filename);
             } else {
               // Pass the toast-open snapshot so a parallel unload since then
               // doesn't drop the doc's frontmatter.
-              void recreateDeletedFile(p.rel, p.editorDoc, ctx, deletedSnapshots.get(p.editorDoc.docId), (fresh) => {
-                const live = documentStore.getDocument(p.editorDoc.docId);
+              void recreateDeletedFile(p.rel, p.editorDoc, ctx, deletedSnapshots.get(p.editorDoc.filename), (fresh) => {
+                const live = documentStore.getDocument(p.editorDoc.filename);
                 if (live) promptModifiedFile(p.rel, fresh, live); // the file is back
               });
             }
@@ -252,7 +252,7 @@ const RELOAD_RECOVERY_SHRINK_RATIO = 0.5;
 
 export function promptReloadRecoveryIfSuspicious(
   rel: string,
-  docId: string,
+  notePath: string,
   priorBody: string,
   priorRichText: DocumentState['richText'],
   priorFm: Record<string, unknown> | undefined,
@@ -275,9 +275,9 @@ export function promptReloadRecoveryIfSuspicious(
           // so the recovered content lands back on disk over the external
           // truncation. `forceWriteForDocument` bypasses the per-writer
           // debounce guard, matching the dirty-editor "Keep local" path.
-          documentStore.applyReloadFromDisk(docId, priorBody, priorRichText, priorFm);
-          documentStore.markDirty(docId);
-          void forceWriteForDocument(docId);
+          documentStore.applyReloadFromDisk(notePath, priorBody, priorRichText, priorFm);
+          documentStore.markDirty(notePath);
+          void forceWriteForDocument(notePath);
         },
       },
       {
@@ -331,7 +331,7 @@ export function promptPartialReadExhausted(rel: string): void {
             // Also drop the FM field delta (a separate accumulator).
             dropPendingDelta(rel);
             documentStore.applyReloadFromDisk(
-              editorDoc.docId,
+              editorDoc.filename,
               next.content,
               editorDoc.richText,
               next.frontmatter,
@@ -448,7 +448,7 @@ function applyFreshDiskVersion(rel: string, fresh: FileMetadata, doc: DocumentSt
   cancelDirtyGatewayWritersForPath(rel);
   dropPendingDelta(rel);
   documentStore.applyReloadFromDisk(
-    doc.docId,
+    doc.filename,
     fresh.content,
     doc.richText,
     fresh.frontmatter,
@@ -528,7 +528,7 @@ export function promptModifiedFile(
           // edit the user just discarded.
           dropPendingDelta(rel);
           documentStore.applyReloadFromDisk(
-            editorDoc.docId,
+            editorDoc.filename,
             fresh.content,
             editorDoc.richText,
             fresh.frontmatter,
@@ -550,8 +550,8 @@ export function promptModifiedFile(
           // the editor body, then force the registered writer (TextTile or
           // DocumentEditor) to write IMMEDIATELY — if its debounce already
           // fired there is no armed timer and the external edit would persist.
-          documentStore.markDirty(editorDoc.docId);
-          void forceWriteForDocument(editorDoc.docId);
+          documentStore.markDirty(editorDoc.filename);
+          void forceWriteForDocument(editorDoc.filename);
         },
       },
     ],
@@ -615,7 +615,7 @@ export function promptMarkdownPendingWriteConflict(
           const fresh = reread ?? next;
           if (editorDoc) {
             documentStore.applyReloadFromDisk(
-              editorDoc.docId,
+              editorDoc.filename,
               fresh.content,
               editorDoc.richText,
               fresh.frontmatter,
@@ -721,7 +721,7 @@ export function promptPropertiesPopupModified(
           // With no open editor there is no FM cache to refresh; the tile-def +
           // tag applies above already carry the external change.
           if (editorDoc) {
-            documentStore.setFrontmatter(editorDoc.docId, fresh.frontmatter, fresh.rawFrontmatter);
+            documentStore.setFrontmatter(editorDoc.filename, fresh.frontmatter, fresh.rawFrontmatter);
           }
           // setFrontmatter (unlike applyReloadFromDisk) never re-stamps the
           // drift baseline, so re-anchor it to the accepted disk state and drop
@@ -762,13 +762,13 @@ export function promptPropertiesPopupModified(
  */
 export function promptDeletedFile(
   rel: string,
-  editorDoc: { docId: string; title: string; body: string },
+  editorDoc: { filename: string; title: string; body: string },
   ctx: VaultContext,
 ): void {
   // Snapshot frontmatter + body at toast-open time. If a vault swap or tab
   // close unloads the doc before the Keep-local click, the live cache is gone
   // and the recreated file would land body-only, losing tags / properties.
-  const fmSnapshot = { ...(documentStore.getFrontmatter(editorDoc.docId) ?? {}) };
+  const fmSnapshot = { ...(documentStore.getFrontmatter(editorDoc.filename) ?? {}) };
   const bodySnapshot = editorDoc.body;
   uiStore.pushToast({
     text: `"${editorDoc.title || rel}" was deleted externally. Reload (drop in-memory copy), or keep your local edits and re-create the file?`,
@@ -795,7 +795,7 @@ export function promptDeletedFile(
             await vaultIndexStore.applyChanges([rel]);
             if (!isStillSameVault(identity)) return;
             const fresh = vaultIndexStore.getMetadata(rel);
-            const live = documentStore.getDocument(editorDoc.docId);
+            const live = documentStore.getDocument(editorDoc.filename);
             if (fresh && live) applyFreshDiskVersion(rel, fresh, live);
             return;
           }
@@ -803,7 +803,7 @@ export function promptDeletedFile(
           // delete to win. Pending writers in TextTile / DocumentEditor are
           // self-disarming on ENOENT via `vault:write-existing-file-text`,
           // so we don't need to reach into their debounce timers from here.
-          documentStore.unloadDocument(editorDoc.docId);
+          documentStore.unloadDocument(editorDoc.filename);
           // The user accepted the deletion, so drop the file's
           // `.filo/tags.json` membership too; otherwise the orphan entry
           // lingers until the next vault-open prune. (Not on Keep local —
@@ -817,7 +817,7 @@ export function promptDeletedFile(
         handler: async () => {
           await recreateDeletedFile(rel, editorDoc, ctx, { fmSnapshot, bodySnapshot }, (fresh) => {
             // The file is back: offer the modified-file choice.
-            const live = documentStore.getDocument(editorDoc.docId);
+            const live = documentStore.getDocument(editorDoc.filename);
             if (live) promptModifiedFile(rel, fresh, live);
           });
         },

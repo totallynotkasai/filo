@@ -62,14 +62,14 @@ export function makeKanbanFrontmatterWriter(
   }
 
   function ensureSeededFm(tile: Tile): string | null {
-    const docId = (tile as Tile & { contentId?: string }).contentId ?? null;
-    if (!docId) return null;
-    if (!documentStore.getFrontmatter(docId)) {
+    const notePath = resolveTextTileVaultPath(tile);
+    if (!notePath) return null;
+    if (!documentStore.getFrontmatter(notePath)) {
       const path = vaultPathForTileSafe(tile);
       const fm = (vaultIndexStore.getMetadata(path)?.frontmatter ?? {}) as Record<string, unknown>;
-      documentStore.setFrontmatter(docId, fm);
+      documentStore.setFrontmatter(notePath, fm);
     }
-    return docId;
+    return notePath;
   }
 
   async function updateTileFrontmatter(tileId: string, patch: Record<string, unknown>): Promise<void> {
@@ -78,14 +78,14 @@ export function makeKanbanFrontmatterWriter(
     const tile = getAllTilesById()[tileId];
     if (!tile) return;
     const path = vaultPathForTileSafe(tile);
-    const docId = (tile as Tile & { contentId?: string }).contentId ?? null;
-    // Best-effort inverse from whatever's already in memory. The docId-backed
+    const notePath = resolveTextTileVaultPath(tile);
+    // Best-effort inverse from whatever's already in memory. The notePath-backed
     // UpdateCardFieldCommand recomputes the inverse from a FRESH disk read on
     // execute (the disk pre-seed runs inside the command so the read joins the
     // history chain that save()/quit await); the orphan path uses this inverse
     // directly. Prefer the live cache (an open editor's in-memory state) over
     // the durably-stale vault index.
-    const liveFm = docId ? documentStore.getFrontmatter(docId) : null;
+    const liveFm = notePath ? documentStore.getFrontmatter(notePath) : null;
     const fmBefore = (liveFm
       ?? vaultIndexStore.getMetadata(path)?.frontmatter
       ?? {}) as Record<string, unknown>;
@@ -93,11 +93,11 @@ export function makeKanbanFrontmatterWriter(
     for (const k of Object.keys(patch)) {
       inverse[k] = k in fmBefore ? fmBefore[k] : '';
     }
-    const command = docId
-      ? new UpdateCardFieldCommand(board.id, path, docId, patch, inverse)
-      // Orphan-fm path (tile has no contentId). `scheduleSharedFrontmatterWrite(
+    const command = notePath
+      ? new UpdateCardFieldCommand(board.id, path, notePath, patch, inverse)
+      // Orphan-fm path (not a text tile with a note path). `scheduleSharedFrontmatterWrite(
       // path, null)` would be a silent no-op (the scheduler reads frontmatter
-      // from vaultIndexStore when docId is null, so the patch never applies).
+      // from vaultIndexStore when notePath is null, so the patch never applies).
       // UpdateOrphanFrontmatterCommand writes directly via
       // vault:write-existing-file-text and supports undo.
       : new UpdateOrphanFrontmatterCommand(board.id, path, patch, inverse);

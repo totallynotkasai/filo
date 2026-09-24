@@ -17,7 +17,7 @@
  *     pipeline (toast + sentinel + saveStateStore).
  *
  * Version token: documentStore tracks a monotonic mutation counter per
- * docId (`documentStore.getFrontmatterMutationVersion`). Each schedule
+ * notePath (`documentStore.getFrontmatterMutationVersion`). Each schedule
  * call captures the counter at schedule time. At flush, the writer
  * checks the recorded `lastFlushedMutationVersion`; if another writer
  * already flushed a version >= the captured one, the flush is a no-op.
@@ -51,6 +51,7 @@ import {
 } from '../vault/frontmatterDelta';
 import { reportError } from '../utils/errorBus';
 import { registerPathRenamable } from '../vault/renamePathKeys';
+import { vaultPath, type VaultPath } from '@shared/vaultPath';
 
 /**
  * Per-relPath idle-debounce window for frontmatter writes.
@@ -66,24 +67,49 @@ export const FM_DEBOUNCE_MS = 300;
 
 interface FrontmatterWriteArgs {
   relPath: string;
-  docId: string | null;
+  notePath: string | null;
   scheduledVersion: number;
   vaultRoot: string;
 }
 
 /**
- * `docId -> highest mutation version successfully flushed to disk so far`.
+ * `note path -> highest mutation version successfully flushed to disk so far`.
  * The version-token guard reads from this map at flush time; concurrent
  * schedules that captured an older mutation version short-circuit instead
  * of overwriting newer content.
  *
- * Keyed by `docId` (stable identity), NOT `relPath`: the versions are a
- * per-docId counter, and during a rename two docs can transiently alias one
- * relPath — a relPath key would let one doc's higher version suppress the
- * other's write. Cleared on vault swap (see `resetFrontmatterScheduler`).
+ * Keyed by the same case-folded path as the document store's counters, and
+ * moved by the same rename (`renameFlushedVersionPath`): a mark left at the
+ * old path would suppress the writes of a new note created there, and one
+ * missing at the new path would let a stale write through. Cleared on vault
+ * swap (see `resetFrontmatterScheduler`).
  */
 // allow-module-state: reset via resetFrontmatterScheduler called from boardSaver's pre-swap handler
-const lastFlushedVersion = new Map<string, number>();
+const lastFlushedVersion = new Map<VaultPath, number>();
+
+/**
+ * Moves the flushed-version marks with a renamed note (and every note under a
+ * renamed folder). If the new path already has a mark, the higher one wins, as
+ * in the document store, so the pair never goes backwards.
+ */
+function renameFlushedVersionPath(oldRel: string, newRel: string): void {
+  const oldKey = vaultPath(oldRel);
+  const newKey = vaultPath(newRel);
+  if (!oldKey || !newKey || oldKey === newKey) return;
+  const oldPrefix = `${oldKey}/`;
+  const moves: Array<[VaultPath, VaultPath]> = [];
+  for (const key of lastFlushedVersion.keys()) {
+    if (key === oldKey) moves.push([key, newKey]);
+    else if (key.startsWith(oldPrefix)) moves.push([key, vaultPath(newKey + key.slice(oldKey.length))]);
+  }
+  for (const [from, to] of moves) {
+    const version = lastFlushedVersion.get(from) ?? 0;
+    lastFlushedVersion.delete(from);
+    lastFlushedVersion.set(to, Math.max(version, lastFlushedVersion.get(to) ?? 0));
+  }
+}
+
+registerPathRenamable('frontmatterWriteScheduler.lastFlushedVersion', renameFlushedVersionPath);
 
 /**
  * Per-relPath accumulated field delta, keyed by the SAME relPath the scheduler
@@ -145,7 +171,7 @@ const frontmatterScheduler = createScheduler<FrontmatterWriteArgs>({
 
 /**
  * Schedules a debounced frontmatter write for `relPath`. The optional
- * `docId` is forwarded to `writeFrontmatter` so the writer can pull the
+ * `notePath` is forwarded to `writeFrontmatter` so the writer can pull the
  * canonical FM from the documentStore live cache.
  *
  * Every newly armed timer calls `beginWrite` so the
@@ -156,7 +182,7 @@ const frontmatterScheduler = createScheduler<FrontmatterWriteArgs>({
  */
 export function scheduleFrontmatterWrite(
   relPath: string,
-  docId: string | null,
+  notePath: string | null,
   delta?: FrontmatterDelta,
 ): void {
   // Accumulate the explicit field delta so the eventual write applies it to
@@ -167,8 +193,8 @@ export function scheduleFrontmatterWrite(
   frontmatterScheduler.schedule(relPath, () => {
     const vaultRoot = vaultStore.path;
     if (!vaultRoot) return null;
-    const scheduledVersion = docId ? documentStore.getFrontmatterMutationVersion(docId) : 0;
-    return { relPath, docId, scheduledVersion, vaultRoot };
+    const scheduledVersion = notePath ? documentStore.getFrontmatterMutationVersion(notePath) : 0;
+    return { relPath, notePath, scheduledVersion, vaultRoot };
   });
 }
 
@@ -198,21 +224,21 @@ export async function flushFrontmatterWriteForPath(relPath: string): Promise<voi
 
 async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
   const { relPath, vaultRoot } = args;
-  let { docId, scheduledVersion } = args;
+  let { notePath, scheduledVersion } = args;
   if (!vaultRoot) return;
 
-  // A docId-null (orphan) write can be scheduled for a relPath that
-  // ALSO has an open editor: the scheduler coalesces by relPath, so a null
-  // schedule overwrites a docId-backed one. With docId null the version guard
-  // below is inert (scheduledVersion 0) and the FM source falls back to the
+  // A cache-less (orphan) write can be scheduled for a relPath that ALSO has
+  // an open editor: the scheduler coalesces by relPath, so a null schedule
+  // overwrites a cache-backed one. With notePath null the version guard below
+  // is inert (scheduledVersion 0) and the FM source falls back to the
   // body-stripped, possibly-stale vaultIndex copy — clobbering the editor's
-  // live frontmatter. Adopt the open editor's docId so the FM source, version
+  // live frontmatter. Use the open editor's document so the FM source, version
   // guard, and body all read from the live document cache instead.
-  if (!docId) {
-    const openDocId = documentStore.findByFilename(relPath)?.docId ?? null;
-    if (openDocId) {
-      docId = openDocId;
-      scheduledVersion = documentStore.getFrontmatterMutationVersion(openDocId);
+  if (!notePath) {
+    const openNotePath = documentStore.findByFilename(relPath)?.filename ?? null;
+    if (openNotePath) {
+      notePath = openNotePath;
+      scheduledVersion = documentStore.getFrontmatterMutationVersion(openNotePath);
     }
   }
 
@@ -231,14 +257,14 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
   // content from `documentStore.body` (which may itself be stale relative
   // to the editor's latest keystrokes).
   //
-  // Keyed by docId. A null docId (e.g. a frontmatter-only sync with no open
-  // editor) carries `scheduledVersion === 0`, so the guard is inert.
+  // Keyed by note path. A null notePath (e.g. a frontmatter-only sync with no
+  // open editor) carries `scheduledVersion === 0`, so the guard is inert.
   //
   // The token also covers BODY mutations (`documentStore.updateContent` bumps
   // the same counter); otherwise a delta-less notes write scheduled after a
   // flushed version would be mistaken for stale and silently skipped as
   // success, losing the note on quit.
-  const last = docId ? (lastFlushedVersion.get(docId) ?? 0) : 0;
+  const last = notePath ? (lastFlushedVersion.get(vaultPath(notePath)) ?? 0) : 0;
   if (!delta && scheduledVersion > 0 && scheduledVersion <= last) return;
 
   // Read-only docs (lossy tiptap round-trip detected at editor load). The flag
@@ -252,7 +278,7 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
   //    body would corrupt the file — but LOUDLY: toast + markPathFailed (the
   //    sentinel + indicator surface the unsaved edit) + throw (attributes
   //    relPath to flushAll().failed so save() returns false).
-  const readOnlyDoc = docId ? documentStore.isReadOnly(docId) : false;
+  const readOnlyDoc = notePath ? documentStore.isReadOnly(notePath) : false;
   if (readOnlyDoc && !delta) {
     reportError(
       'frontmatter.readOnly',
@@ -265,8 +291,8 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
     );
   }
 
-  const fm = docId
-    ? documentStore.getFrontmatter(docId)
+  const fm = notePath
+    ? documentStore.getFrontmatter(notePath)
     : vaultIndexStore.getMetadata(relPath)?.frontmatter;
   // Cache path only — a delta write sources its FM from a fresh in-chain
   // disk read in the gateway, so a missing cache FM must NOT abort it. The bare
@@ -276,9 +302,9 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
 
   // Body resolution must not silently clobber disk truth, and must not silently
   // DROP a field edit when no editor is open. A Kanban card / Task row often has
-  // a docId (FM cache keyed) but no live docState (never opened as a Document
+  // a notePath (FM cache keyed) but no live docState (never opened as a Document
   // tab) — returning early there would resolve as SUCCESS, clear `.filo/.dirty`,
-  // and lose the edit on relaunch. So both "no docId" and "docId but no live
+  // and lose the edit on relaunch. So both "no notePath" and "notePath but no live
   // docState" resolve the body the SAME way — a fresh disk read:
   // (a) docState present → use the editor's live body (the only place edits
   //     we'd lose by reading disk could live).
@@ -291,7 +317,7 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
   // round-trip (the very reason the flag exists), so a delta write must never
   // re-emit it; forcing the no-docState branch sources the body from a fresh
   // disk read instead, preserving the on-disk bytes the editor can't.
-  const docState = docId && !readOnlyDoc ? documentStore.getDocument(docId) : undefined;
+  const docState = notePath && !readOnlyDoc ? documentStore.getDocument(notePath) : undefined;
   if (docState) {
     body = docState.body;
     // Hydrate-if-needed so the gateway has the BOM + drift baseline.
@@ -337,12 +363,12 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
       frontmatter: fm ?? {},
       body,
       callerId: `frontmatter-scheduler:${relPath}`,
-      docId,
+      notePath,
       frontmatterDelta: delta,
       // The version this write's content corresponds to (fire time, when the
       // body/FM were read), so the gateway's flushed-version bump can't mark a
       // mid-IPC mutation as flushed.
-      mutationVersionAtCapture: docId ? scheduledVersion : undefined,
+      mutationVersionAtCapture: notePath ? scheduledVersion : undefined,
       // Fire-time body-source decision: `body` came from the live docState
       // exactly when one resolved (a read-only doc reads as NOT live). The
       // gateway must not re-derive this at write time — a doc unload during the
@@ -360,14 +386,14 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
     // Record the highest version this writer flushed so concurrent stale
     // flushes know not to clobber. The gateway also bumps this map on
     // success (via the threaded `mutationVersionAtCapture`); both bump to
-    // the same value so this is belt-and-braces. Only docId-backed writes have
+    // the same value so this is belt-and-braces. Only notePath-backed writes have
     // a version to track.
     //
     // Record the FIRE-time `scheduledVersion`, NOT the post-IPC current
     // version: a mutation landing during the write await would otherwise be
     // marked flushed, and its follow-up write would skip — never reaching disk.
-    if (docId) {
-      lastFlushedVersion.set(docId, Math.max(last, scheduledVersion));
+    if (notePath) {
+      lastFlushedVersion.set(vaultPath(notePath), Math.max(last, scheduledVersion));
     }
   } catch (err) {
     console.error('[frontmatterWriteScheduler] Failed to write frontmatter:', err);
@@ -392,7 +418,7 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
 
 /**
  * Returns the highest mutation-version that has been successfully flushed
- * to disk for `docId`. Body writers (TextTile) consult this so a stale
+ * to disk for `notePath`. Body writers (TextTile) consult this so a stale
  * in-memory frontmatter cache can't quietly clobber a fresher version that
  * landed on disk via a cross-board frontmatter flush in the interval
  * between the body writer's last fm-read and its IPC write.
@@ -400,15 +426,15 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
  * Returns `0` for docs that have never flushed (i.e. the cache is the
  * only source of truth, so no re-read is needed).
  *
- * Keyed by docId (not relPath) to stay in the same version space as
- * `documentStore.getFrontmatterMutationVersion(docId)`.
+ * Keyed by the note's path, in the same version space as
+ * `documentStore.getFrontmatterMutationVersion(notePath)`.
  */
-export function getLastFlushedFrontmatterVersion(docId: string): number {
-  return lastFlushedVersion.get(docId) ?? 0;
+export function getLastFlushedFrontmatterVersion(notePath: string): number {
+  return lastFlushedVersion.get(vaultPath(notePath)) ?? 0;
 }
 
 /**
- * Bumps the recorded "highest mutation-version flushed to disk for docId"
+ * Bumps the recorded "highest mutation-version flushed to disk for notePath"
  * to `version` (only if higher than what's recorded). Exposed for the
  * markdown-file-writer gateway so writes routed through it (TextTile body
  * writes, DocumentEditor saves, PropertiesPopup edits, orphan-fm sites) all
@@ -417,14 +443,15 @@ export function getLastFlushedFrontmatterVersion(docId: string): number {
  *
  * No-op when `version <= 0` or `version <= current`.
  *
- * Keyed by docId (not relPath); callers without a docId have no
- * version to track and simply don't call this.
+ * Callers without a note path (cache-less writes) have no version to track
+ * and simply don't call this.
  */
-export function noteFrontmatterFlushedVersion(docId: string, version: number): void {
-  if (!docId || version <= 0) return;
-  const current = lastFlushedVersion.get(docId) ?? 0;
+export function noteFrontmatterFlushedVersion(notePath: string, version: number): void {
+  if (!notePath || version <= 0) return;
+  const key = vaultPath(notePath);
+  const current = lastFlushedVersion.get(key) ?? 0;
   if (version <= current) return;
-  lastFlushedVersion.set(docId, version);
+  lastFlushedVersion.set(key, version);
 }
 
 /**
@@ -460,10 +487,10 @@ export function cancelFrontmatterWrite(relPath: string): void {
 }
 
 /**
- * Drops every pending timer and clears the per-docId version map.
+ * Drops every pending timer and clears the per-note version map.
  *
  * Clearing `lastFlushedVersion` on vault swap bounds the map's growth and
- * drops any docId that could be reused across vaults.
+ * drops any path that could be reused across vaults.
  *
  * Registered as both a production reset (vault swap) and a test reset.
  */

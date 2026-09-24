@@ -10,11 +10,10 @@ import { UpdateCardFieldCommand } from '@renderer/commands/kanbanCommands';
  * rebind) in `boardPathCaseFold.test.ts`.
  */
 describe('Audit-15 Phase 2 — data-path LOW parity', () => {
-  describe('P2.6 — UpdateCardFieldCommand requires a non-null docId', () => {
-    it('throws when constructed with a null docId (chokepoint mirrors UpdateTaskFieldCommand 6.2.H7)', () => {
-      // The old command carried a dead null-docId branch that scheduled a
-      // no-delta write → the gateway re-emitted the unchanged FM, so Apply AND
-      // Undo were silent no-ops. Both production callers route a null docId
+  describe('P2.6 — UpdateCardFieldCommand requires a non-null notePath', () => {
+    it('throws when constructed with a null notePath (chokepoint mirrors UpdateTaskFieldCommand 6.2.H7)', () => {
+      // A null-notePath branch would schedule a no-delta write → the gateway
+      // re-emits the unchanged FM, so Apply AND Undo would be silent no-ops. Both production callers route a null notePath
       // through UpdateOrphanFrontmatterCommand; this throw stops a new caller
       // from re-introducing the silent loss.
       expect(
@@ -26,16 +25,16 @@ describe('Audit-15 Phase 2 — data-path LOW parity', () => {
             { priority: 'high' },
             { priority: '' },
           ),
-      ).toThrow(/non-null docId/);
+      ).toThrow(/non-null notePath/);
     });
 
-    it('constructs normally with a non-null docId', () => {
+    it('constructs normally with a non-null notePath', () => {
       expect(
         () =>
           new UpdateCardFieldCommand(
             'board-1',
             'Card.md',
-            'doc-1',
+            'Card.md',
             { priority: 'high' },
             { priority: '' },
           ),

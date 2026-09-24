@@ -120,27 +120,26 @@ describe('A9-L7 — a concurrent external reload is not clobbered by an in-fligh
 // ── A9-L8 — gateway skips post-write bookkeeping when the vault swapped ──
 
 describe('A9-L8 — post-write index bookkeeping is skipped after a mid-write vault swap', () => {
-  function bodyWriteArgs(docId: string, relPath: string, body: string): WriteArgs {
+  function bodyWriteArgs(relPath: string, body: string): WriteArgs {
     return {
       vaultRoot: '/vault',
       relPath,
-      frontmatter: documentStore.getFrontmatter(docId) ?? {},
+      frontmatter: documentStore.getFrontmatter(relPath) ?? {},
       body,
-      callerId: `text-tile:${docId}`,
-      docId,
+      callerId: `text-tile:${relPath}`,
+      notePath: relPath,
     };
   }
 
-  function loadHydratedDoc(docId: string, relPath: string): void {
+  function loadHydratedDoc(relPath: string): void {
     documentStore.loadDocument({
-      docId,
       filename: relPath,
       title: 'L8',
       body: 'orig',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter(docId, { title: 'L8' }, 'title: L8');
+    documentStore.setFrontmatter(relPath, { title: 'L8' }, 'title: L8');
     markHydrated(relPath, false);
   }
 
@@ -163,10 +162,9 @@ describe('A9-L8 — post-write index bookkeeping is skipped after a mid-write va
   });
 
   it('does NOT restore the outgoing vault metadata into the new vault index', async () => {
-    const docId = 'doc-l8-swap';
     const relPath = 'Notes/L8.md';
-    const callerId = `text-tile:${docId}`;
-    loadHydratedDoc(docId, relPath);
+    const callerId = `text-tile:${relPath}`;
+    loadHydratedDoc(relPath);
     beginVaultGeneration('/vault'); // identity captured at write entry
 
     const restoreSpy = vi.spyOn(vaultIndexStore, 'restoreMetadata');
@@ -180,8 +178,8 @@ describe('A9-L8 — post-write index bookkeeping is skipped after a mid-write va
       return { ok: true, success: true };
     });
 
-    documentStore.updateContent(docId, '<p>x</p>', 'edited body', callerId);
-    scheduleMarkdownWrite(bodyWriteArgs(docId, relPath, 'edited body'));
+    documentStore.updateContent(relPath, '<p>x</p>', 'edited body', callerId);
+    scheduleMarkdownWrite(bodyWriteArgs(relPath, 'edited body'));
     await flushMarkdownWrite(callerId);
 
     // The disk write committed against whatever vault was active, but the
@@ -191,10 +189,9 @@ describe('A9-L8 — post-write index bookkeeping is skipped after a mid-write va
   });
 
   it('still restores metadata on the normal (no-swap) path', async () => {
-    const docId = 'doc-l8-noswap';
     const relPath = 'Notes/L8b.md';
-    const callerId = `text-tile:${docId}`;
-    loadHydratedDoc(docId, relPath);
+    const callerId = `text-tile:${relPath}`;
+    loadHydratedDoc(relPath);
     beginVaultGeneration('/vault');
 
     const restoreSpy = vi.spyOn(vaultIndexStore, 'restoreMetadata');
@@ -203,8 +200,8 @@ describe('A9-L8 — post-write index bookkeeping is skipped after a mid-write va
       return { ok: true, success: true };
     });
 
-    documentStore.updateContent(docId, '<p>x</p>', 'edited body', callerId);
-    scheduleMarkdownWrite(bodyWriteArgs(docId, relPath, 'edited body'));
+    documentStore.updateContent(relPath, '<p>x</p>', 'edited body', callerId);
+    scheduleMarkdownWrite(bodyWriteArgs(relPath, 'edited body'));
     await flushMarkdownWrite(callerId);
 
     expect(restoreSpy).toHaveBeenCalledWith(relPath, expect.anything());

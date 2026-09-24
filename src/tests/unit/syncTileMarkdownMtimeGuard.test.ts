@@ -70,14 +70,13 @@ function seedBoardAndDoc(body: string): void {
     { kb: 'tasks.board.json' },
   );
   documentStore.loadDocument({
-    docId: 't1',
     filename: 'note.md',
     title: 'Note',
     body,
     htmlContent: '',
     richText: [],
   });
-  documentStore.markDirty('t1');
+  documentStore.markDirty('note.md');
 }
 
 describe('boardCacheStore.syncTile — mtime guard (Phase A.3)', () => {

@@ -19,7 +19,7 @@
  *    outgoing vault don't fire after the new vault opens.
  *  - `registerForceWriter` lets editor-backed callers participate in
  *    Keep-local — `forceWriteForDocument` iterates registered writers for the
- *    affected docId and invokes their fresh-args callback so the live editor
+ *    affected note and invokes their fresh-args callback so the live editor
  *    body lands on disk even when no debounce is armed.
  */
 
@@ -43,6 +43,7 @@ import { onVaultSwap, vaultSwapResettable } from '../../core/vaultLifecycle';
 import { getBaseline, noteBaseline, resetAllBaselines, hasBaselineDrifted } from './fileBaselineRegistry';
 import { confirmPostWriteBaseline, finishWriteBookkeeping, MARKDOWN_READBACK_BYTE_THRESHOLD } from './markdownPostWrite';
 import { registerPathRenamable } from './renamePathKeys';
+import { clearForceWriters, forceWritersFor, sameNote } from './markdownForceWriters';
 import { captureVaultIdentity, isStillSameVault } from './vaultIdentity';
 import { freshReadLooksTornMidFrontmatter } from './tornFrontmatterRead';
 import { runPreWriteDriftGate } from './preWriteDriftGate';
@@ -86,13 +87,15 @@ export interface WriteArgs {
   /** Stable per-component identifier; scopes the debounce timer and dedupes flushes. */
   callerId: string;
   /**
-   * Optional document id. When provided, the gateway bumps the frontmatter
+   * The note whose document-store caches this write shares: the write's own
+   * path for an editor or field write, null or omitted for a cache-less write
+   * (orphan-card patch). When provided, the gateway bumps the frontmatter
    * scheduler's `lastFlushedVersion` after a successful write (to
    * `mutationVersionAtCapture` below, NOT the live post-IPC version).
    */
-  docId?: string | null;
+  notePath?: string | null;
   /**
-   * The docId's mutation version captured by the CALLER when it read the
+   * The note's mutation version captured by the CALLER when it read the
    * body/FM this write carries. Recorded as flushed on success instead of the
    * live post-IPC version — otherwise a mutation landing mid-IPC is marked
    * flushed and its follow-up write skips as "stale". Omitted → captured at
@@ -100,9 +103,9 @@ export interface WriteArgs {
    */
   mutationVersionAtCapture?: number;
   /**
-   * On-disk frontmatter SOURCE (raw bytes between the fences) for a docId-less
-   * caller (orphan-card patch). With a docId the gateway reads it from the
-   * document store; without it a docId-less write full-dumps (losing comments /
+   * On-disk frontmatter SOURCE (raw bytes between the fences) for a cache-less
+   * caller (orphan-card patch). With a `notePath` the gateway reads it from the
+   * document store; without it a cache-less write full-dumps (losing comments /
    * key order / quoting).
    */
   originalFrontmatter?: string;
@@ -119,7 +122,7 @@ export interface WriteArgs {
    * Whether `body` came from a live editor when the args were built. A live body
    * wins over the in-chain disk read (it holds un-debounced keystrokes); a snapshot
    * body loses to it (may be stale). Captured at fire time because the doc can
-   * load/unload during the write. Omitted → derived from `docId`.
+   * load/unload during the write. Omitted → derived from `notePath`.
    */
   bodyIsLive?: boolean;
 }
@@ -200,21 +203,6 @@ export function hasPendingMarkdownWriteFor(callerId: string): boolean {
   return hasNewerWriteForCaller(callerId) || inFlightWrites.has(callerId);
 }
 
-/**
- * callerId → fresh-args callback. Editor-backed writers (TextTile,
- * DocumentEditor) register a callback that returns the LATEST args (live
- * editor body + current frontmatter) so Keep-local flushes exactly what the
- * user sees, not a stale schedule snapshot.
- *
- * Non-editor callers (PropertiesPopup, orphan-fm sites) don't need to
- * register here — they always call `writeMarkdownFile` / `scheduleMarkdownWrite`
- * with fresh args inline.
- */
-interface ForceWriter {
-  docId: string | null;
-  build: () => WriteArgs | null;
-}
-const forceWriters = new Map<string, ForceWriter>();
 
 /**
  * In-flight write tracker keyed by `callerId`, populated for the lifetime of
@@ -436,7 +424,7 @@ export async function writeMarkdownFile(args: WriteArgs): Promise<void> {
   // point is newer than `args`, so the flushed-version bump must not cover it.
   const mutationVersionAtCapture =
     args.mutationVersionAtCapture ??
-    (args.docId ? documentStore.getFrontmatterMutationVersion(args.docId) : 0);
+    (args.notePath ? documentStore.getFrontmatterMutationVersion(args.notePath) : 0);
   const promise = runSerializedMarkdownWrite(args.relPath, () =>
     writeMarkdownFileImpl({ ...args, mutationVersionAtCapture }),
   );
@@ -504,7 +492,7 @@ export async function flushFinalWriteOnDestroy(args: WriteArgs): Promise<void> {
 }
 
 async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
-  const { vaultRoot, relPath, body, callerId, docId } = args;
+  const { vaultRoot, relPath, body, callerId, notePath } = args;
   if (!vaultRoot || !relPath) {
     throw new Error('markdownFileWriter: vaultRoot and relPath are required');
   }
@@ -620,10 +608,10 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
     // `body` is a watcher-index snapshot that a missed `fs.watch` event may have
     // left stale (and the drift baseline with it), so use the fresh disk body
     // instead of silently reverting an external edit. The decision is the
-    // caller's, made at fire time (`args.bodyIsLive`); the `getDocument(docId)`
+    // caller's, made at fire time (`args.bodyIsLive`); the `getDocument(notePath)`
     // derivation is only a fallback for a direct caller that omits it.
     const hasLiveEditorBody =
-      args.bodyIsLive ?? (docId ? documentStore.getDocument(docId) !== undefined : false);
+      args.bodyIsLive ?? (notePath ? documentStore.getDocument(notePath) !== undefined : false);
     const deltaBody = hasLiveEditorBody ? body : parsedFresh.body;
     fileText = assembleMarkdownFile(nextFm, deltaBody, {
       // BOM flag from THIS in-chain read (not the pre-write
@@ -647,16 +635,15 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
     // the 300 ms debounce (external FM edit, Properties / TaskList edit) would
     // otherwise be clobbered by the frozen snapshot. Fall back to the caller's
     // args only when the cache has no entry for this doc.
-    let fm = (docId ? documentStore.getFrontmatter(docId) : undefined) ?? args.frontmatter ?? {};
+    let fm = (notePath ? documentStore.getFrontmatter(notePath) : undefined) ?? args.frontmatter ?? {};
     // Never assemble a body-only write against a never-seeded FM cache: that
-    // strips the on-disk YAML block. (TextTile's "adopt sibling doc" branch flips
-    // hydrated=true without seeding FM.) `hasFrontmatter` distinguishes
+    // strips the on-disk YAML block. `hasFrontmatter` distinguishes
     // never-seeded (re-read disk) from a deliberate `{}` seed (trust it). Seeding
     // the cache then routes the assemble through the verbatim `rawFrontmatter`
     // path, preserving the block byte-for-byte.
-    const cacheHasFm = docId ? documentStore.hasFrontmatter(docId) : false;
+    const cacheHasFm = notePath ? documentStore.hasFrontmatter(notePath) : false;
     const argsFmEmpty = !args.frontmatter || Object.keys(args.frontmatter).length === 0;
-    if (docId && !cacheHasFm && argsFmEmpty) {
+    if (notePath && !cacheHasFm && argsFmEmpty) {
       let readResult: { content: string } | undefined;
       try {
         readResult = await invokeOk('vault:read-file-text', vaultRoot, relPath);
@@ -670,7 +657,7 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
         const parsed = parseMarkdownFile(readResult.content);
         // Same torn-read guard as the delta branch: a partial read parses as
         // "no frontmatter", which would strip the on-disk YAML block AND cache a
-        // bogus `{}` seed that poisons every later save for this docId. Thrown
+        // bogus `{}` seed that poisons every later save for this note. Thrown
         // OUTSIDE the try so the ENOENT swallow above can't eat it.
         if (!parsed.hasFrontmatter && freshReadLooksTornMidFrontmatter(relPath, readResult.content)) {
           markPathFailed(vaultRoot, relPath);
@@ -680,24 +667,24 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
             `an in-progress external write); not seeding {} or stripping the on-disk frontmatter`,
           );
         }
-        documentStore.setFrontmatter(docId, parsed.frontmatter, parsed.rawFrontmatter);
+        documentStore.setFrontmatter(notePath, parsed.frontmatter, parsed.rawFrontmatter);
         fm = parsed.frontmatter;
       }
     }
-    if (docId) {
+    if (notePath) {
       // Stale-cache re-read: if a newer FM version was flushed to disk than the
       // cache holds, re-read disk. Believed unreachable (`lastFlushed` is only
-      // bumped to a PAST value of the monotonic per-docId counter) but kept as
-      // cheap defense-in-depth, e.g. against docId reuse with a reset counter.
-      const lastFlushed = getLastFlushedFrontmatterVersion(docId);
-      const cacheVersion = documentStore.getFrontmatterMutationVersion(docId);
+      // bumped to a PAST value of the monotonic per-note counter) but kept as
+      // cheap defense-in-depth, e.g. against a counter reset by a vault swap.
+      const lastFlushed = getLastFlushedFrontmatterVersion(notePath);
+      const cacheVersion = documentStore.getFrontmatterMutationVersion(notePath);
       if (lastFlushed > 0 && lastFlushed > cacheVersion) {
         try {
           const readResult = await invokeOk('vault:read-file-text', vaultRoot, relPath);
           const parsed = parseMarkdownFile(readResult.content);
           // Re-seed the verbatim bytes too so this (body-only) write can
           // still emit the freshly-read frontmatter untouched.
-          documentStore.setFrontmatter(docId, parsed.frontmatter, parsed.rawFrontmatter);
+          documentStore.setFrontmatter(notePath, parsed.frontmatter, parsed.rawFrontmatter);
           fm = parsed.frontmatter;
         } catch (err) {
           console.warn('[markdownFileWriter] Stale-cache re-read failed; using caller args:', err);
@@ -708,12 +695,12 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
     // When the open document's frontmatter is still byte-identical to disk (no
     // mutation since hydrate), emit those bytes verbatim. `getRawFrontmatter`
     // returns undefined once a mutation invalidated them.
-    const rawFrontmatter = docId ? documentStore.getRawFrontmatter(docId) : undefined;
+    const rawFrontmatter = notePath ? documentStore.getRawFrontmatter(notePath) : undefined;
     // The disk-baseline source (survives mutations) lets a dirty write patch the
-    // original frontmatter bytes source-preservingly. A docId-less orphan patch
-    // threads it via `args.originalFrontmatter`; the cache source wins with a docId.
-    const originalFrontmatter = docId
-      ? documentStore.getOriginalFrontmatterSource(docId)
+    // original frontmatter bytes source-preservingly. A cache-less orphan patch
+    // threads it via `args.originalFrontmatter`; the cache source wins with a `notePath`.
+    const originalFrontmatter = notePath
+      ? documentStore.getOriginalFrontmatterSource(notePath)
       : args.originalFrontmatter;
     fileText = assembleMarkdownFile(fm, body, {
       bom: state.hadBom,
@@ -734,7 +721,7 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
   const bookkeeping = {
     relPath,
     fileText,
-    docId,
+    notePath,
     callerId,
     mutationVersionAtCapture: args.mutationVersionAtCapture,
     hasNewerWriteFor: hasNewerWriteForCaller,
@@ -830,7 +817,7 @@ type TestFlusher = () => Promise<void>;
 interface TestFlusherEntry {
   flush: TestFlusher;
   forceWrite?: TestFlusher;
-  getDocId?: () => string | null | undefined;
+  getNotePath?: () => string | null | undefined;
 }
 const testFlushers = new Map<string, TestFlusherEntry>();
 // Reset on vault swap too, so a test that fires `fireVaultSwap` without the
@@ -841,7 +828,7 @@ vaultSwapResettable('markdownFileWriter.testFlushers', () => {
 
 export interface __TestFlusherOptions {
   forceWrite?: TestFlusher;
-  getDocId?: () => string | null | undefined;
+  getNotePath?: () => string | null | undefined;
 }
 
 export function __testRegisterFlusher(
@@ -852,7 +839,7 @@ export function __testRegisterFlusher(
   testFlushers.set(ownerId, {
     flush,
     forceWrite: options.forceWrite,
-    getDocId: options.getDocId,
+    getNotePath: options.getNotePath,
   });
 }
 
@@ -946,7 +933,7 @@ export async function flushAllMarkdownWriters(): Promise<FlushAllResult> {
 export function cancelAllMarkdownWrites(): void {
   writerScheduler.reset();
   fileState.clear();
-  forceWriters.clear();
+  clearForceWriters();
   // Drop in-flight promise refs so a late-settling outgoing-vault write
   // doesn't block incoming-vault cancel/force awaits.
   inFlightWrites.clear();
@@ -959,51 +946,29 @@ export function cancelAllMarkdownWrites(): void {
 
 // ── Keep-local force-write API ──
 
-/**
- * Registers a fresh-args callback for `callerId`. The gateway calls `build()`
- * from `forceWriteForDocument(docId)` to obtain the live editor body + the
- * latest frontmatter, then writes via the canonical pipeline.
- *
- * Components register in onMount and unregister in onDestroy. The docId
- * may be null (e.g. a properties popup before its TextTile has hydrated);
- * `forceWriteForDocument` matches on the docId at call time, so a writer
- * that adopts a sibling's docId mid-life will be reachable as soon as the
- * adoption completes.
- */
-export function registerForceWriter(
-  callerId: string,
-  docId: string | null,
-  build: () => WriteArgs | null,
-): void {
-  forceWriters.set(callerId, { docId, build });
-}
-
-export function unregisterForceWriter(callerId: string): void {
-  forceWriters.delete(callerId);
-}
+// The registry lives in markdownForceWriters.ts; editors import it from here.
+export { registerForceWriter, unregisterForceWriter } from './markdownForceWriters';
 
 /**
  * Cancels every armed (debounced, not-yet-fired) markdown write
- * belonging to an open editor on `docId`. Used by vault-wide rewrites
+ * belonging to an open editor on the note at `notePath`. Used by vault-wide rewrites
  * (Replace All) that authoritatively rewrite a file on disk and then sync the
  * open editor: a write still armed against the doc carries the editor's
  * pre-rewrite body and would re-clobber the rewrite ~300ms later. Matches by
- * docId via the force-writer registry (the same identity `forceWriteForDocument`
+ * note path via the force-writer registry (the same identity `forceWriteForDocument`
  * uses), so only editor-backed writers (TextTile / DocumentEditor) are
  * affected — exactly the "open editor" case.
  */
-export function cancelMarkdownWritesForDocument(docId: string): void {
-  if (!docId) return;
-  for (const [callerId, entry] of forceWriters.entries()) {
-    if (entry.docId === docId) cancelMarkdownWrite(callerId);
-  }
+export function cancelMarkdownWritesForDocument(notePath: string): void {
+  if (!notePath) return;
+  for (const [callerId] of forceWritersFor(notePath)) cancelMarkdownWrite(callerId);
 }
 
 /**
  * Async sibling of `cancelMarkdownWritesForDocument`. Cancels the
  * armed timers (the synchronous part) AND awaits any in-flight write IPC
  * for matching callers. Use when the caller needs the guarantee that no
- * writer is still pumping bytes against `docId` before it proceeds
+ * writer is still pumping bytes against `notePath` before it proceeds
  * (vault swap, tab close, recovery sentinels). Returns once every in-
  * flight write for the matched callers has settled.
  *
@@ -1013,15 +978,13 @@ export function cancelMarkdownWritesForDocument(docId: string): void {
  * by the next debounce's correction).
  */
 export async function cancelAndAwaitMarkdownWritesForDocument(
-  docId: string,
+  notePath: string,
 ): Promise<void> {
-  if (!docId) return;
+  if (!notePath) return;
   const targets: string[] = [];
-  for (const [callerId, entry] of forceWriters.entries()) {
-    if (entry.docId === docId) {
-      cancelMarkdownWrite(callerId);
-      targets.push(callerId);
-    }
+  for (const [callerId] of forceWritersFor(notePath)) {
+    cancelMarkdownWrite(callerId);
+    targets.push(callerId);
   }
   await Promise.all(
     targets.map((id) => {
@@ -1032,10 +995,10 @@ export async function cancelAndAwaitMarkdownWritesForDocument(
 }
 
 /**
- * Forces every writer matching `docId` to commit its current in-memory body
+ * Forces every writer matching `notePath` to commit its current in-memory body
  * to disk (the Keep-local handler in `vaultExternalChanges`).
  *
- * Matching by docId (rather than draining everything) preserves intent:
+ * Matching by notePath (rather than draining everything) preserves intent:
  * the user only opted in for THIS document, so other open editors with
  * their own debounced writes aren't forced past their flush guard.
  */
@@ -1044,20 +1007,17 @@ export interface ForceWriteResult {
   failed: Array<{ ownerId: string; error: unknown }>;
 }
 
-export async function forceWriteForDocument(docId: string): Promise<ForceWriteResult> {
-  if (!docId) return { ok: 0, failed: [] };
-  // Test-registered flushers (none in production): match by getDocId, call
+export async function forceWriteForDocument(notePath: string): Promise<ForceWriteResult> {
+  if (!notePath) return { ok: 0, failed: [] };
+  // Test-registered flushers (none in production): match by getNotePath, call
   // forceWrite if present else flush.
   const testMatches: Array<[string, TestFlusher]> = [];
   for (const [ownerId, entry] of testFlushers.entries()) {
-    if (entry.getDocId?.() === docId) {
+    if (sameNote(entry.getNotePath?.(), notePath)) {
       testMatches.push([ownerId, entry.forceWrite ?? entry.flush]);
     }
   }
-  const targets: Array<[string, () => WriteArgs | null]> = [];
-  for (const [callerId, entry] of forceWriters.entries()) {
-    if (entry.docId === docId) targets.push([callerId, entry.build]);
-  }
+  const targets = forceWritersFor(notePath);
   if (targets.length === 0 && testMatches.length === 0) {
     return { ok: 0, failed: [] };
   }

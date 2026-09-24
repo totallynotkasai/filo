@@ -30,7 +30,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
  *         case-mangled board isn't silently dropped from the project / routed
  *         past the board reconciler.
  *   P1.4  the gateway delta write sources the body from FRESH disk when there is
- *         no live editor for the docId (orphan / card-only file), so a Properties
+ *         no live editor for the note (orphan / card-only file), so a Properties
  *         field save can't revert an external body edit `fs.watch` missed.
  *   P1.5  a deny-by-default permission handler is installable on the session.
  *
@@ -123,14 +123,14 @@ describe('Audit-15 P1.4 — delta write sources the body from fresh disk when no
     installDisk(fresh);
     // Baseline matches the current disk stat → no drift prompt fires.
     markHydrated('Card.md', false, 7, fresh.length);
-    // No documentStore.loadDocument → getDocument('doc1') is undefined → no live editor.
+    // No documentStore.loadDocument → getDocument('Card.md') is undefined → no live editor.
 
     await writeMarkdownFile({
       vaultRoot: '/vault',
       relPath: 'Card.md',
       body: 'STALE snapshot body', // what a Properties popup passes from the watcher index
       callerId: 'props-1',
-      docId: 'doc1',
+      notePath: 'Card.md',
       frontmatterDelta: patchToFrontmatterDelta({ completed: true }),
     });
 
@@ -141,12 +141,11 @@ describe('Audit-15 P1.4 — delta write sources the body from fresh disk when no
     expect(written).toContain('completed: true'); // the field delta still applied
   });
 
-  it('keeps the LIVE editor body when an editor IS open for the docId (N2 invariant)', async () => {
+  it('keeps the LIVE editor body when an editor IS open for the note (N2 invariant)', async () => {
     const disk = '---\ncompleted: false\n---\nold disk body\n';
     installDisk(disk);
     markHydrated('Open.md', false, 7, disk.length);
     documentStore.loadDocument({
-      docId: 'doc2',
       filename: 'Open.md',
       title: 'Open',
       body: 'LIVE editor body',
@@ -159,7 +158,7 @@ describe('Audit-15 P1.4 — delta write sources the body from fresh disk when no
       relPath: 'Open.md',
       body: 'LIVE editor body', // the live, un-debounced editor text the caller hands in
       callerId: 'props-2',
-      docId: 'doc2',
+      notePath: 'Open.md',
       frontmatterDelta: patchToFrontmatterDelta({ completed: true }),
     });
 

@@ -81,27 +81,26 @@ describe('Audit-17 2.1 — flushMarkdownWrite reports failure instead of resolvi
   /** Per-channel override for the next write IPC: null = succeed. */
   let writeFailureCode: string | null;
 
-  function bodyWriteArgs(docId: string, relPath: string, body: string): WriteArgs {
+  function bodyWriteArgs(relPath: string, body: string): WriteArgs {
     return {
       vaultRoot: '/vault',
       relPath,
-      frontmatter: documentStore.getFrontmatter(docId) ?? {},
+      frontmatter: documentStore.getFrontmatter(relPath) ?? {},
       body,
-      callerId: `text-tile:${docId}`,
-      docId,
+      callerId: `text-tile:${relPath}`,
+      notePath: relPath,
     };
   }
 
-  function loadDoc(docId: string, relPath: string): void {
+  function loadDoc(relPath: string): void {
     documentStore.loadDocument({
-      docId,
       filename: relPath,
       title: 'T',
       body: 'orig',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter(docId, { title: 'T' }, 'title: T');
+    documentStore.setFrontmatter(relPath, { title: 'T' }, 'title: T');
     markHydrated(relPath, false);
   }
 
@@ -136,18 +135,17 @@ describe('Audit-17 2.1 — flushMarkdownWrite reports failure instead of resolvi
   });
 
   it('a successful flush returns ok:true and the writer goes clean', async () => {
-    const docId = 'doc-a17-ok';
     const relPath = 'Notes/A17ok.md';
-    const callerId = `text-tile:${docId}`;
-    loadDoc(docId, relPath);
-    documentStore.updateContent(docId, '<p>x</p>', 'edited', callerId);
+    const callerId = `text-tile:${relPath}`;
+    loadDoc(relPath);
+    documentStore.updateContent(relPath, '<p>x</p>', 'edited', callerId);
 
-    scheduleMarkdownWrite(bodyWriteArgs(docId, relPath, 'edited'));
+    scheduleMarkdownWrite(bodyWriteArgs(relPath, 'edited'));
     const result = await flushMarkdownWrite(callerId);
 
     expect(result.ok).toBe(true);
-    expect(documentStore.isWriterDirty(docId, callerId)).toBe(false);
-    expect(documentStore.getDocument(docId)?.isDirty).toBe(false);
+    expect(documentStore.isWriterDirty(relPath, callerId)).toBe(false);
+    expect(documentStore.getDocument(relPath)?.isDirty).toBe(false);
   });
 
   it('a flush with nothing pending is ok:true (no-op contract preserved)', async () => {
@@ -157,14 +155,13 @@ describe('Audit-17 2.1 — flushMarkdownWrite reports failure instead of resolvi
   });
 
   it('a failed write IPC returns ok:false with the concrete error; the doc STAYS dirty', async () => {
-    const docId = 'doc-a17-fail';
     const relPath = 'Notes/A17fail.md';
-    const callerId = `text-tile:${docId}`;
-    loadDoc(docId, relPath);
-    documentStore.updateContent(docId, '<p>x</p>', 'edited', callerId);
+    const callerId = `text-tile:${relPath}`;
+    loadDoc(relPath);
+    documentStore.updateContent(relPath, '<p>x</p>', 'edited', callerId);
     writeFailureCode = 'EACCES';
 
-    scheduleMarkdownWrite(bodyWriteArgs(docId, relPath, 'edited'));
+    scheduleMarkdownWrite(bodyWriteArgs(relPath, 'edited'));
     const result = await flushMarkdownWrite(callerId);
 
     // Pre-fix this resolved as plain success and DocumentEditor markClean'd
@@ -173,19 +170,18 @@ describe('Audit-17 2.1 — flushMarkdownWrite reports failure instead of resolvi
     expect(result.error).toBeInstanceOf(IpcEnvelopeError);
     expect((result.error as IpcEnvelopeError).code).toBe('EACCES');
     // The gateway's success-path markClean never ran.
-    expect(documentStore.isWriterDirty(docId, callerId)).toBe(true);
-    expect(documentStore.getDocument(docId)?.isDirty).toBe(true);
+    expect(documentStore.isWriterDirty(relPath, callerId)).toBe(true);
+    expect(documentStore.getDocument(relPath)?.isDirty).toBe(true);
   });
 
   it('an ENOENT failure surfaces code ENOENT — the components’ degraded-mode trigger', async () => {
-    const docId = 'doc-a17-enoent';
     const relPath = 'Notes/A17gone.md';
-    const callerId = `text-tile:${docId}`;
-    loadDoc(docId, relPath);
-    documentStore.updateContent(docId, '<p>x</p>', 'edited', callerId);
+    const callerId = `text-tile:${relPath}`;
+    loadDoc(relPath);
+    documentStore.updateContent(relPath, '<p>x</p>', 'edited', callerId);
     writeFailureCode = 'ENOENT';
 
-    scheduleMarkdownWrite(bodyWriteArgs(docId, relPath, 'edited'));
+    scheduleMarkdownWrite(bodyWriteArgs(relPath, 'edited'));
     const result = await flushMarkdownWrite(callerId);
 
     // This is the exact branch DocumentEditor / PropertiesPopup use to flip
@@ -194,25 +190,24 @@ describe('Audit-17 2.1 — flushMarkdownWrite reports failure instead of resolvi
     expect(result.ok).toBe(false);
     expect(result.error).toBeInstanceOf(IpcEnvelopeError);
     expect((result.error as IpcEnvelopeError).code).toBe('ENOENT');
-    expect(documentStore.getDocument(docId)?.isDirty).toBe(true);
+    expect(documentStore.getDocument(relPath)?.isDirty).toBe(true);
   });
 
   it('a failure followed by a successful flush returns to ok:true (no sticky error)', async () => {
-    const docId = 'doc-a17-heal';
     const relPath = 'Notes/A17heal.md';
-    const callerId = `text-tile:${docId}`;
-    loadDoc(docId, relPath);
-    documentStore.updateContent(docId, '<p>x</p>', 'edited', callerId);
+    const callerId = `text-tile:${relPath}`;
+    loadDoc(relPath);
+    documentStore.updateContent(relPath, '<p>x</p>', 'edited', callerId);
 
     writeFailureCode = 'EACCES';
-    scheduleMarkdownWrite(bodyWriteArgs(docId, relPath, 'edited'));
+    scheduleMarkdownWrite(bodyWriteArgs(relPath, 'edited'));
     expect((await flushMarkdownWrite(callerId)).ok).toBe(false);
 
     writeFailureCode = null;
-    scheduleMarkdownWrite(bodyWriteArgs(docId, relPath, 'edited again'));
+    scheduleMarkdownWrite(bodyWriteArgs(relPath, 'edited again'));
     const result = await flushMarkdownWrite(callerId);
     expect(result.ok).toBe(true);
-    expect(documentStore.isWriterDirty(docId, callerId)).toBe(false);
+    expect(documentStore.isWriterDirty(relPath, callerId)).toBe(false);
   });
 });
 
@@ -527,9 +522,9 @@ describe('Audit-17 2.5 — 6.3 Reload handlers re-read FIRST (no destructive pre
   });
 
   it('pending-write-conflict Reload: failing re-read leaves the armed FM write intact', async () => {
-    // A docId-keyed field edit armed a frontmatter write (no open editor).
-    documentStore.setFrontmatter('doc_card', { completed: true });
-    scheduleFrontmatterWrite('Card.md', 'doc_card');
+    // A path-keyed field edit armed a frontmatter write (no open editor).
+    documentStore.setFrontmatter('Card.md', { completed: true });
+    scheduleFrontmatterWrite('Card.md', 'Card.md');
     expect(hasPendingWrite('Card.md')).toBe(true);
 
     promptMarkdownPendingWriteConflict('Card.md', nextMeta, null);
@@ -547,16 +542,14 @@ describe('Audit-17 2.5 — 6.3 Reload handlers re-read FIRST (no destructive pre
   });
 
   it('properties-popup Reload: failing re-read keeps the popup dirty tracking + armed write', async () => {
-    const docId = 'doc-popup';
     documentStore.loadDocument({
-      docId,
       filename: 'Card.md',
       title: 'Card',
       body: 'Body',
       htmlContent: '',
       richText: [],
     });
-    const editorDoc = documentStore.getDocument(docId)!;
+    const editorDoc = documentStore.getDocument('Card.md')!;
     const flusherId = 'properties-popup:tile-1';
     markPropertiesPopupDirty(flusherId, 'Card.md');
     expect(getDirtyInstancesForPath('Card.md')).toContain(flusherId);

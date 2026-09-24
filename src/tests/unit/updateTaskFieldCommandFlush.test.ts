@@ -51,18 +51,17 @@ describe('UpdateTaskFieldCommand — awaits flushAllPendingFrontmatterWrites', (
     );
     // Seed both the frontmatter cache AND the openDocuments entry. The
     // scheduler's writeFrontmatter step needs the docState (6.2.H5 —
-    // post-fix it aborts the write when docId is set but docState is
-    // undefined, since the editor has vanished and the previous fall-
-    // through to vaultIndex.content or '' would have clobbered disk).
+    // it aborts the write when a note path is set but docState is
+    // undefined, since the editor has vanished and falling through to
+    // vaultIndex.content or '' would clobber disk).
     documentStore.loadDocument({
-      docId: 'doc-1',
       filename: 'task.md',
       title: 'task',
       body: '',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter('doc-1', {});
+    documentStore.setFrontmatter('task.md', {});
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -84,8 +83,8 @@ describe('UpdateTaskFieldCommand — awaits flushAllPendingFrontmatterWrites', (
     });
 
     // Arm a debounced forward write for task.md.
-    documentStore.mergeFrontmatter('doc-1', { status: 'todo' });
-    scheduleFrontmatterWrite('task.md', 'doc-1');
+    documentStore.mergeFrontmatter('task.md', { status: 'todo' });
+    scheduleFrontmatterWrite('task.md', 'task.md');
     expect(calls.filter((c) => c.channel === 'vault:write-existing-file-text').length).toBe(0);
 
     // Construct a command and invoke execute. It must await the flush,
@@ -95,7 +94,7 @@ describe('UpdateTaskFieldCommand — awaits flushAllPendingFrontmatterWrites', (
     const cmd = new UpdateTaskFieldCommand(
       'tl',
       'task.md',
-      'doc-1',
+      'task.md',
       { status: 'done' },
       { status: 'todo' },
     );
@@ -116,7 +115,7 @@ describe('UpdateTaskFieldCommand — awaits flushAllPendingFrontmatterWrites', (
     const cmd = new UpdateTaskFieldCommand(
       'tl',
       'task.md',
-      'doc-1',
+      'task.md',
       { priority: 'high' },
       { priority: 'low' },
     );

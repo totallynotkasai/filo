@@ -344,17 +344,6 @@ export function editorMarkdown(editor: Editor): string {
 
 export interface AssembleMarkdownOptions {
   /**
-   * Stable document id (Filo's `contentId`) to persist as `id` in the
-   * frontmatter. Opt-in — autosave does NOT pass this so the user never
-   * sees a `id: tile_xxxx` line surfaced at the top of their .md file.
-   * Reserved for any future re-import flow that wants a durable identity
-   * for the file across external moves.
-   *
-   * Non-destructive — if the frontmatter already has an `id` it is left
-   * untouched (callers / external editors take priority).
-   */
-  contentId?: string;
-  /**
    * Re-emit a leading UTF-8 BOM (`﻿`) before the frontmatter / body.
    * Callers that want to preserve the user's original file encoding pass
    * `bom: parsed.hadBom`. Defaults to `false` (clean UTF-8).
@@ -486,10 +475,6 @@ export function assembleMarkdownFile(
     !baselineKeys?.has('tags')
   ) {
     delete fm.tags;
-  }
-
-  if (options.contentId && !fm.id) {
-    fm.id = options.contentId;
   }
 
   // Preserve a present-but-empty key that already exists on disk (`aliases:`,

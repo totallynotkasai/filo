@@ -107,7 +107,7 @@ describe('markdownFileWriter — gateway contract', () => {
       frontmatter: { tags: ['kept'] },
       body: 'Hello',
       callerId: 'test-bom',
-      docId: null,
+      notePath: null,
     });
 
     const write = invokes.find((i) => i.channel === 'vault:write-existing-file-text');
@@ -129,7 +129,7 @@ describe('markdownFileWriter — gateway contract', () => {
       frontmatter: { tags: ['kept'] },
       body: 'Hello',
       callerId: 'test-plain',
-      docId: null,
+      notePath: null,
     });
 
     const write = invokes.find((i) => i.channel === 'vault:write-existing-file-text');
@@ -146,7 +146,7 @@ describe('markdownFileWriter — gateway contract', () => {
         frontmatter: {},
         body: '',
         callerId: 'unhydrated',
-        docId: null,
+        notePath: null,
       }),
     ).rejects.toThrow(/not hydrated/);
     // And NO IPC was issued — the gate runs before any disk work.
@@ -363,7 +363,7 @@ describe('markdownFileWriter — gateway contract', () => {
     markHydrated(relPath, false);
 
     let calls = 0;
-    registerForceWriter('force-test', 'doc-A', (): WriteArgs => {
+    registerForceWriter('force-test', 'forced.md', (): WriteArgs => {
       calls++;
       return {
         vaultRoot: '/vault',
@@ -371,11 +371,11 @@ describe('markdownFileWriter — gateway contract', () => {
         frontmatter: { forced: true },
         body: 'live body',
         callerId: 'force-test',
-        docId: 'doc-A',
+        notePath: 'forced.md',
       };
     });
 
-    const result = await forceWriteForDocument('doc-A');
+    const result = await forceWriteForDocument('forced.md');
     expect(calls).toBe(1);
     expect(result.ok).toBe(1);
     expect(result.failed).toEqual([]);
@@ -387,18 +387,18 @@ describe('markdownFileWriter — gateway contract', () => {
     expect((writes[0].args[2] as string)).toContain('live body');
   });
 
-  it('forceWriteForDocument skips writers whose docId does not match', async () => {
+  it('forceWriteForDocument skips writers whose note path does not match', async () => {
     markHydrated('a.md', false);
-    registerForceWriter('writer-A', 'doc-A', () => ({
+    registerForceWriter('writer-A', 'a.md', () => ({
       vaultRoot: '/vault',
       relPath: 'a.md',
       frontmatter: {},
       body: 'a-body',
       callerId: 'writer-A',
-      docId: 'doc-A',
+      notePath: 'a.md',
     }));
 
-    const result = await forceWriteForDocument('doc-OTHER');
+    const result = await forceWriteForDocument('other.md');
     expect(result.ok).toBe(0);
     expect(result.failed).toEqual([]);
     expect(invokes.filter((i) => i.channel === 'vault:write-existing-file-text')).toHaveLength(0);
@@ -417,7 +417,7 @@ describe('markdownFileWriter — gateway contract', () => {
       frontmatter: { tags: ['after-write'], status: 'done' },
       body: 'Post-write body.',
       callerId: 'refresh-caller',
-      docId: null,
+      notePath: null,
     });
 
     // The index now reflects the just-written content. A late watcher echo
@@ -490,7 +490,7 @@ describe('markdownFileWriter — post-write baseline failures (DI-14, reverses M
       frontmatter: {},
       body: 'New body',
       callerId: 'baseline-throw',
-      docId: null,
+      notePath: null,
     });
 
     // DI-14: the post-write stat failed, so the baseline is KEPT at the
@@ -531,7 +531,7 @@ describe('markdownFileWriter — post-write baseline failures (DI-14, reverses M
       frontmatter: {},
       body: 'Body 2',
       callerId: 'baseline-missing',
-      docId: null,
+      notePath: null,
     });
 
     // DI-14: unusable post-write stat → baseline KEPT at the pre-write value.
@@ -602,7 +602,7 @@ describe('markdownFileWriter — re-validate drift across the async prompt (M13)
     const counters = installStatSequence(relPath, [200, 300, 300, 400]);
 
     await writeMarkdownFile({
-      vaultRoot: '/vault', relPath, frontmatter: {}, body: 'mine', callerId: 'm13a', docId: null,
+      vaultRoot: '/vault', relPath, frontmatter: {}, body: 'mine', callerId: 'm13a', notePath: null,
     });
 
     expect(prompts).toBe(2); // re-prompted on the second drift
@@ -628,7 +628,7 @@ describe('markdownFileWriter — re-validate drift across the async prompt (M13)
     // dirty edit never landed).
     await expect(
       writeMarkdownFile({
-        vaultRoot: '/vault', relPath, frontmatter: {}, body: 'mine', callerId: 'm13b', docId: null,
+        vaultRoot: '/vault', relPath, frontmatter: {}, body: 'mine', callerId: 'm13b', notePath: null,
       }),
     ).rejects.toThrow(/churning|aborted/);
 
@@ -653,7 +653,7 @@ describe('markdownFileWriter — re-validate drift across the async prompt (M13)
     const counters = installStatSequence(relPath, [200, 200, 250]);
 
     await writeMarkdownFile({
-      vaultRoot: '/vault', relPath, frontmatter: {}, body: 'mine', callerId: 'm13c', docId: null,
+      vaultRoot: '/vault', relPath, frontmatter: {}, body: 'mine', callerId: 'm13c', notePath: null,
     });
 
     expect(prompts).toBe(1);
@@ -703,7 +703,7 @@ describe('markdownFileWriter — flushFinalWriteOnDestroy respects the swap rese
     markHydrated(relPath, false);
     const counters = installWriteCounter();
     await flushFinalWriteOnDestroy({
-      vaultRoot: '/vault', relPath, frontmatter: {}, body: 'final', callerId: 'm17a', docId: null,
+      vaultRoot: '/vault', relPath, frontmatter: {}, body: 'final', callerId: 'm17a', notePath: null,
     });
     expect(counters.writes).toBe(1);
   });
@@ -718,7 +718,7 @@ describe('markdownFileWriter — flushFinalWriteOnDestroy respects the swap rese
     const counters = installWriteCounter();
     await expect(
       flushFinalWriteOnDestroy({
-        vaultRoot: '/vault', relPath, frontmatter: {}, body: 'final', callerId: 'm17b', docId: null,
+        vaultRoot: '/vault', relPath, frontmatter: {}, body: 'final', callerId: 'm17b', notePath: null,
       }),
     ).resolves.toBeUndefined();
     expect(counters.writes).toBe(0);

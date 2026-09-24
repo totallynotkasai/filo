@@ -262,10 +262,10 @@ describe('Audit-18 6.3 — Properties undo/redo refuses on read failure with no 
       'vault:write-existing-file-text': writeSpy,
     });
 
-    // No `docId` → no live docState → no live body to fall back on.
+    // No note path → no live docState → no live body to fall back on.
     const cmd = new UpdatePropertiesCommand(
-      { kind: 'frontmatter', relPath: 'Note.md', docId: null, fm: { status: 'todo' } },
-      { kind: 'frontmatter', relPath: 'Note.md', docId: null, fm: { status: 'done' } },
+      { kind: 'frontmatter', relPath: 'Note.md', notePath: null, fm: { status: 'todo' } },
+      { kind: 'frontmatter', relPath: 'Note.md', notePath: null, fm: { status: 'done' } },
       'b1',
     );
 

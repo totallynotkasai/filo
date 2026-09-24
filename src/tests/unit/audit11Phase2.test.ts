@@ -68,7 +68,7 @@ describe('Audit-11 WC-1 — frontmatter scheduler bounds a wedged write', () => 
     });
 
     vi.useFakeTimers();
-    // docId=null + a delta: the delta skips the legacy `!fm` early-abort, so the
+    // notePath=null + a delta: the delta skips the `!fm` early-abort, so the
     // write proceeds to the (wedged) hydrate read.
     scheduleFrontmatterWrite('Wedged.md', null, patchToFrontmatterDelta({ priority: 'high' }));
 

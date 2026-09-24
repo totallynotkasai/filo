@@ -24,6 +24,7 @@ import { nextDueDate } from '../tasks/recurrence';
 import type { Priority } from '../tasks/frontmatterReaders';
 import type { TaskRow } from '../tasks/taskListModel';
 
+import { resolveTextTileVaultPath } from '../boards/textTilePath';
 /**
  * Frontmatter-writer slice for TaskListBoard.
  *
@@ -79,7 +80,7 @@ export function completionPatchForRow(
 }
 
 /**
- * Write a docId-less task's notes body directly to disk, preserving
+ * Write the notes body of a task without a note path directly to disk, preserving
  * its frontmatter source byte-for-byte. Reads FM+body fresh (so an external FM
  * edit isn't clobbered), swaps the body for `body`, and routes through the
  * coupled write+reconcile gateway helper, which loud-fails on a write error
@@ -95,7 +96,7 @@ async function writeOrphanNotesBody(path: string, body: string): Promise<void> {
   let bom = false;
   let eol: '\r\n' | '\n' = '\n';
   try {
-    // Same canonical orphan-read the docId-less Kanban/Task FM path uses
+    // Same canonical orphan-read the note-less Kanban/Task FM path uses
     // (applyOrphanPatchRebased) — parses FM + body and seeds the drift baseline.
     const hydrate = await readMarkdownForHydrate(vaultRoot, path);
     frontmatter = hydrate.frontmatter;
@@ -136,7 +137,7 @@ export interface FrontmatterWriterDeps {
 
 export interface FrontmatterWriter {
   ensureSeededFm(tile: Tile): string | null;
-  scheduleFrontmatterWrite(relPath: string, docId: string | null): void;
+  scheduleFrontmatterWrite(relPath: string, notePath: string | null): void;
   buildTaskFieldCommand(
     row: TaskRow,
     patch: Record<string, unknown>,
@@ -156,24 +157,24 @@ export interface FrontmatterWriter {
 export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterWriter {
   const { getBoard, vaultPathForTile, readFrontmatter, bumpCacheVersion, announce } = deps;
 
-  /** Returns the tile's docId; seeds the FM cache from the vault index on first touch. */
+  /** Returns the tile's notePath; seeds the FM cache from the vault index on first touch. */
   function ensureSeededFm(tile: Tile): string | null {
-    const docId = (tile as Tile & { contentId?: string }).contentId ?? null;
-    if (docId && !documentStore.getFrontmatter(docId)) {
-      documentStore.setFrontmatter(docId, readFrontmatter(tile));
+    const notePath = resolveTextTileVaultPath(tile);
+    if (notePath && !documentStore.getFrontmatter(notePath)) {
+      documentStore.setFrontmatter(notePath, readFrontmatter(tile));
     }
-    return docId;
+    return notePath;
   }
 
-  function scheduleFrontmatterWrite(relPath: string, docId: string | null): void {
-    scheduleSharedFrontmatterWrite(relPath, docId);
+  function scheduleFrontmatterWrite(relPath: string, notePath: string | null): void {
+    scheduleSharedFrontmatterWrite(relPath, notePath);
   }
 
   /**
    * Builds a single UpdateTaskFieldCommand for a row's frontmatter patch.
    * Captures the inverse patch (previous values for each affected key) so
    * undo restores the exact prior state. Returns `null` when the tile has
-   * no docId — that case predates the live-cache architecture and is rare.
+   * no notePath — that case predates the live-cache architecture and is rare.
    */
   function buildTaskFieldCommand(
     row: TaskRow,
@@ -183,13 +184,13 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
     const board = getBoard();
     if (!board) return null;
     const path = vaultPathForTile(row.tile);
-    // Resolve the docId WITHOUT seeding: UpdateTaskFieldCommand.execute() seeds
+    // Resolve the notePath WITHOUT seeding: UpdateTaskFieldCommand.execute() seeds
     // from disk (then index fallback) on the history chain, and a sync
     // index-seed here would populate the cache first, making that a no-op.
-    const docId = (row.tile as Tile & { contentId?: string }).contentId ?? null;
-    // UpdateTaskFieldCommand throws on null docId. Short-circuit here so the
-    // caller's fallback branch (extremely rare, pre-live-cache tiles) takes over.
-    if (!docId) return null;
+    const notePath = resolveTextTileVaultPath(row.tile);
+    // UpdateTaskFieldCommand throws on null notePath. Short-circuit here so the
+    // caller's fallback branch (a row without a note) takes over.
+    if (!notePath) return null;
     // Best-effort inverse from the vault index; the command recomputes it from
     // the fresh disk read on execute so undo restores the TRUE prior value.
     const before = readFrontmatter(row.tile);
@@ -208,7 +209,7 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
     // This chokepoint serves both the single-row (toggleCompleted) and bulk
     // (bulkMarkComplete) paths, since both build commands through here.
     const atomic = 'completed' in patch && 'dueDate' in patch;
-    return new UpdateTaskFieldCommand(board.id, path, docId, patch, inverse, description, atomic);
+    return new UpdateTaskFieldCommand(board.id, path, notePath, patch, inverse, description, atomic);
   }
 
   async function updateRowField(row: TaskRow, patch: Record<string, unknown>): Promise<void> {
@@ -222,7 +223,7 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
       // own errors, so swallow the rejection on this fire-and-forget UI path.
       await historyStore.execute(cmd).catch(() => {});
     } else {
-      // DocId-less tile (predates the shared live cache; extremely rare).
+      // A row with no note path (not a text tile, or not placed yet).
       // `scheduleFrontmatterWrite(path, null)` would be a SILENT no-op when the
       // path is absent from the vault index, so route through the orphan
       // command (mirrors kanbanFrontmatterWriter): it reads body + FM fresh
@@ -307,9 +308,8 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
    */
   async function setNotesBody(row: TaskRow, body: string): Promise<void> {
     const path = vaultPathForTile(row.tile);
-    const t = row.tile as Tile & { contentId?: string };
-    const docId = t.contentId ?? null;
-    if (docId) {
+    const notePath = resolveTextTileVaultPath(row.tile);
+    if (notePath) {
       // Apply the NEW body into the live cache and ARM the write BEFORE
       // awaiting the disk-FM seed (an IPC read) — otherwise a quit in that
       // window finds no write scheduled and drops the typed notes. `loadDocument`
@@ -318,11 +318,10 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
       // (normally 300 ms later, long after the seed has refreshed FM), so the
       // armed timer captures the latest body regardless of how it interleaves
       // with the seed.
-      const existing = documentStore.getDocument(docId);
+      const existing = documentStore.getDocument(notePath);
       if (!existing) {
         const meta = vaultIndexStore.getMetadata(path);
         documentStore.loadDocument({
-          docId,
           filename: path,
           title: row.tile.title,
           body: meta?.content ?? '',
@@ -330,13 +329,13 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
           richText: [],
         });
       }
-      const after = documentStore.getDocument(docId);
+      const after = documentStore.getDocument(notePath);
       // Register a writerId so a sibling DocumentEditor's per-writer
       // markClean can't flip this doc's `isDirty` off while the typed note is
       // still unsaved. The id MATCHES the frontmatter scheduler's gateway
       // callerId (`frontmatter-scheduler:${path}`), so the notes write's OWN
-      // success (`markClean(docId, callerId)`) clears it — no pinned-dirty risk.
-      documentStore.updateContent(docId, after?.htmlContent ?? '', body, `frontmatter-scheduler:${path}`);
+      // success (`markClean(notePath, callerId)`) clears it — no pinned-dirty risk.
+      documentStore.updateContent(notePath, after?.htmlContent ?? '', body, `frontmatter-scheduler:${path}`);
       // Seed the FM cache SYNCHRONOUSLY (from the vault index) BEFORE the early
       // arm. A quit's flushAll can drain the early-armed write DURING the disk
       // read below; with an EMPTY FM cache writeFrontmatter's `if (!fm) return`
@@ -344,17 +343,17 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
       // `{}` (truthy). `setNotesBody` makes NO frontmatter mutation, so the disk
       // refresh below safely OVERWRITES this placeholder.
       let placeholderVersion: number | undefined;
-      if (!documentStore.getFrontmatter(docId)) {
+      if (!documentStore.getFrontmatter(notePath)) {
         documentStore.setFrontmatter(
-          docId,
+          notePath,
           (vaultIndexStore.getMetadata(path)?.frontmatter ?? {}) as Record<string, unknown>,
         );
         // FM-ONLY version (body keystrokes bump the shared
         // token; a second rapid notes edit during the seed read below must
         // not block the refresh — see SeedFrontmatterOptions).
-        placeholderVersion = documentStore.getFrontmatterOnlyMutationVersion(docId);
+        placeholderVersion = documentStore.getFrontmatterOnlyMutationVersion(notePath);
       }
-      scheduleFrontmatterWrite(path, docId);
+      scheduleFrontmatterWrite(path, notePath);
       // Refresh FM from a fresh disk read so the eventual write assembles over
       // the latest disk frontmatter (doesn't drop an externally-added key) AND
       // restores the source-preserving baseline the placeholder lacks. The disk
@@ -363,7 +362,7 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
       // the primitive. Awaited AFTER the schedule, so the pending path is already
       // in the flush/sentinel set when the await suspends.
       await seedDocumentFrontmatterFromDisk(
-        docId,
+        notePath,
         vaultStore.path,
         path,
         placeholderVersion !== undefined ? { refreshSeedVersion: placeholderVersion } : undefined,
@@ -377,11 +376,11 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
       // consume the timer, so without this second arm the body — already live in
       // the cache — would never get written once FM finally seeded.
       // (`scheduleFrontmatterWrite` reads body + FM live at fire.)
-      scheduleFrontmatterWrite(path, docId);
+      scheduleFrontmatterWrite(path, notePath);
       bumpCacheVersion();
       return;
     }
-    // DocId-less task (predates the live cache; very rare). There is no live
+    // A task with no note path (not a text tile, or not placed yet). There is no live
     // document to mutate, and `scheduleFrontmatterWrite(path, null)` would
     // re-emit the OLD disk body, discarding the typed note. Do an orphan body
     // write instead (read fresh, swap body, write via the loud-failing gateway
@@ -406,7 +405,7 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
         cmds.push(cmd);
         continue;
       }
-      // A docId-less completed task (very rare): buildTaskFieldCommand returns
+      // A completed task without a note path: buildTaskFieldCommand returns
       // null for it. Route it through the loud, undoable orphan command
       // (mirrors updateRowField's fallback) so the edit actually lands and the
       // reported count is honest.

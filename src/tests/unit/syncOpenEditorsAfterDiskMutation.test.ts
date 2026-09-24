@@ -22,7 +22,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
  * Verifies the contract three disk-mutation-then-restore sites depend on:
  *   - For each (path, content) in `items` that has an open editor, the
  *     editor's body + frontmatter are replaced with the parsed bytes.
- *   - Any armed body writer for that docId is cancelled (the bug class —
+ *   - Any armed body writer for that note is cancelled (the bug class —
  *     a still-armed timer would otherwise fire ~300 ms later carrying the
  *     pre-mutation body and silently revert the write). This guarantee is
  *     inherited from `applyReloadFromDisk`'s self-cancel (Phase 6.0.C2);
@@ -46,7 +46,6 @@ function lastWriteContent(captured: Captured[]): string | undefined {
 }
 
 function makeArgs(
-  docId: string,
   relPath: string,
   fm: Record<string, unknown>,
   body: string,
@@ -56,8 +55,8 @@ function makeArgs(
     relPath,
     frontmatter: fm,
     body,
-    callerId: `text-tile:${docId}`,
-    docId,
+    callerId: `text-tile:${relPath}`,
+    notePath: relPath,
   };
 }
 
@@ -84,51 +83,47 @@ describe('Phase 6.1.R1 — syncOpenEditorsAfterDiskMutation', () => {
   });
 
   it('replaces an open editor body with the mutated bytes', () => {
-    const docId = 'doc-helper-1';
     const relPath = 'Notes/A.md';
 
     documentStore.loadDocument({
-      docId,
       filename: relPath,
       title: 'A',
       body: 'pre-mutation body',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter(docId, { title: 'A' }, '---\ntitle: A\n---');
+    documentStore.setFrontmatter(relPath, { title: 'A' }, '---\ntitle: A\n---');
     markHydrated(relPath, false);
 
     const after = '---\ntitle: A\nstatus: updated\n---\npost-mutation body\n';
     syncOpenEditorsAfterDiskMutation([{ path: relPath, content: after }]);
 
-    const doc = documentStore.getDocument(docId);
+    const doc = documentStore.getDocument(relPath);
     expect(doc?.body).toBe('post-mutation body\n');
-    const fm = documentStore.getFrontmatter(docId);
+    const fm = documentStore.getFrontmatter(relPath);
     expect(fm).toEqual({ title: 'A', status: 'updated' });
   });
 
   it('cancels an armed body writer so the post-mutation bytes are not reverted', async () => {
-    const docId = 'doc-helper-cancel';
     const relPath = 'Notes/B.md';
-    const callerId = `text-tile:${docId}`;
+    const callerId = `text-tile:${relPath}`;
 
     documentStore.loadDocument({
-      docId,
       filename: relPath,
       title: 'B',
       body: 'old',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter(docId, { title: 'B' }, '---\ntitle: B\n---');
+    documentStore.setFrontmatter(relPath, { title: 'B' }, '---\ntitle: B\n---');
     markHydrated(relPath, false);
 
     // Editor-backed writer registers a force-writer; the cancel helper inside
     // applyReloadFromDisk matches against this registry to find writers to disarm.
-    registerForceWriter(callerId, docId, () => null);
+    registerForceWriter(callerId, relPath, () => null);
 
     // User typed → debounced body write armed with the PRE-mutation body.
-    scheduleMarkdownWrite(makeArgs(docId, relPath, { title: 'B' }, 'pre-mutation typed body'));
+    scheduleMarkdownWrite(makeArgs(relPath, { title: 'B' }, 'pre-mutation typed body'));
 
     // We just wrote disk authoritatively; sync the open editor.
     syncOpenEditorsAfterDiskMutation([
@@ -148,16 +143,14 @@ describe('Phase 6.1.R1 — syncOpenEditorsAfterDiskMutation', () => {
   });
 
   it('is a no-op for a path without an open editor', () => {
-    const otherDoc = 'doc-helper-other';
     documentStore.loadDocument({
-      docId: otherDoc,
       filename: 'Other.md',
       title: 'Other',
       body: 'untouched',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter(otherDoc, {}, '');
+    documentStore.setFrontmatter('Other.md', {}, '');
 
     // No editor for 'Missing.md' — helper must not throw and must not affect
     // unrelated documents.
@@ -165,37 +158,33 @@ describe('Phase 6.1.R1 — syncOpenEditorsAfterDiskMutation', () => {
       syncOpenEditorsAfterDiskMutation([{ path: 'Missing.md', content: '# anything\n' }]),
     ).not.toThrow();
 
-    expect(documentStore.getDocument(otherDoc)?.body).toBe('untouched');
+    expect(documentStore.getDocument('Other.md')?.body).toBe('untouched');
   });
 
   it('only syncs editors whose filename matches the item path', () => {
-    const docA = 'doc-helper-a';
-    const docB = 'doc-helper-b';
     documentStore.loadDocument({
-      docId: docA,
       filename: 'A.md',
       title: 'A',
       body: 'body-a',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter(docA, {}, '');
+    documentStore.setFrontmatter('A.md', {}, '');
     documentStore.loadDocument({
-      docId: docB,
       filename: 'B.md',
       title: 'B',
       body: 'body-b',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter(docB, {}, '');
+    documentStore.setFrontmatter('B.md', {}, '');
     markHydrated('A.md', false);
     markHydrated('B.md', false);
 
     syncOpenEditorsAfterDiskMutation([{ path: 'A.md', content: 'rewritten-a' }]);
 
-    expect(documentStore.getDocument(docA)?.body).toBe('rewritten-a');
-    expect(documentStore.getDocument(docB)?.body).toBe('body-b');
+    expect(documentStore.getDocument('A.md')?.body).toBe('rewritten-a');
+    expect(documentStore.getDocument('B.md')?.body).toBe('body-b');
   });
 });
 
@@ -233,17 +222,15 @@ describe('Phase 6.6 — writeMarkdownAndReconcile', () => {
   });
 
   it("writes via write-existing and reconciles the SAME path (mode: 'full')", async () => {
-    const docId = 'doc-couple-full';
     const relPath = 'Notes/Couple.md';
     documentStore.loadDocument({
-      docId,
       filename: relPath,
       title: 'Couple',
       body: 'old body',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter(docId, { title: 'Couple' }, '---\ntitle: Couple\n---');
+    documentStore.setFrontmatter(relPath, { title: 'Couple' }, '---\ntitle: Couple\n---');
     markHydrated(relPath, false);
 
     const after = '---\ntitle: Couple\nstatus: done\n---\nnew body\n';
@@ -254,22 +241,20 @@ describe('Phase 6.6 — writeMarkdownAndReconcile', () => {
     expect(write?.args[1]).toBe(relPath);
     expect(write?.args[2]).toBe(after);
     // The reconcile took the SAME path's bytes: body + frontmatter both refreshed.
-    expect(documentStore.getDocument(docId)?.body).toBe('new body\n');
-    expect(documentStore.getFrontmatter(docId)).toEqual({ title: 'Couple', status: 'done' });
+    expect(documentStore.getDocument(relPath)?.body).toBe('new body\n');
+    expect(documentStore.getFrontmatter(relPath)).toEqual({ title: 'Couple', status: 'done' });
   });
 
   it('uses the create channel (vault:write-file-text) when create:true', async () => {
-    const docId = 'doc-couple-create';
     const relPath = 'Notes/Created.md';
     documentStore.loadDocument({
-      docId,
       filename: relPath,
       title: 'Created',
       body: 'x',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter(docId, {}, '');
+    documentStore.setFrontmatter(relPath, {}, '');
     markHydrated(relPath, false);
 
     await writeMarkdownAndReconcile({
@@ -287,19 +272,17 @@ describe('Phase 6.6 — writeMarkdownAndReconcile', () => {
   });
 
   it("frontmatter mode refreshes the FM cache only and preserves the editor body", async () => {
-    const docId = 'doc-couple-fm';
     const relPath = 'Notes/FmOnly.md';
     documentStore.loadDocument({
-      docId,
       filename: relPath,
       title: 'FmOnly',
       body: 'unsaved edits',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter(docId, { title: 'FmOnly' }, 'title: FmOnly');
+    documentStore.setFrontmatter(relPath, { title: 'FmOnly' }, 'title: FmOnly');
     // Dirty in-memory edit — a full reload would clobber it; FM-only must not.
-    documentStore.updateContent(docId, '<p>x</p>', 'unsaved edits', 'w1');
+    documentStore.updateContent(relPath, '<p>x</p>', 'unsaved edits', 'w1');
     markHydrated(relPath, false);
 
     await writeMarkdownAndReconcile({
@@ -310,51 +293,47 @@ describe('Phase 6.6 — writeMarkdownAndReconcile', () => {
     });
 
     // Body preserved (the unsaved edits), frontmatter cache took the new tag.
-    expect(documentStore.getDocument(docId)?.body).toBe('unsaved edits');
-    expect(documentStore.getFrontmatter(docId)).toEqual({ title: 'FmOnly', tags: ['foo'] });
+    expect(documentStore.getDocument(relPath)?.body).toBe('unsaved edits');
+    expect(documentStore.getFrontmatter(relPath)).toEqual({ title: 'FmOnly', tags: ['foo'] });
   });
 
   it('reconciles only the editor on the written path, never a sibling', async () => {
     documentStore.loadDocument({
-      docId: 'A',
       filename: 'A.md',
       title: 'A',
       body: 'body-A',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter('A', {}, '');
+    documentStore.setFrontmatter('A.md', {}, '');
     documentStore.loadDocument({
-      docId: 'B',
       filename: 'B.md',
       title: 'B',
       body: 'body-B',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter('B', {}, '');
+    documentStore.setFrontmatter('B.md', {}, '');
     markHydrated('A.md', false);
     markHydrated('B.md', false);
 
     await writeMarkdownAndReconcile({ vaultRoot: '/vault', path: 'A.md', content: 'rewritten-A', mode: 'full' });
 
     // The reconcile is keyed to the SAME path the write targeted — B untouched.
-    expect(documentStore.getDocument('A')?.body).toBe('rewritten-A');
-    expect(documentStore.getDocument('B')?.body).toBe('body-B');
+    expect(documentStore.getDocument('A.md')?.body).toBe('rewritten-A');
+    expect(documentStore.getDocument('B.md')?.body).toBe('body-B');
   });
 
   it('does NOT reconcile when the write fails (no convergence on bytes that never landed)', async () => {
-    const docId = 'doc-couple-fail';
     const relPath = 'Notes/Fail.md';
     documentStore.loadDocument({
-      docId,
       filename: relPath,
       title: 'Fail',
       body: 'pre-fail body',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter(docId, { title: 'Fail' }, '---\ntitle: Fail\n---');
+    documentStore.setFrontmatter(relPath, { title: 'Fail' }, '---\ntitle: Fail\n---');
     markHydrated(relPath, false);
 
     // The write channel rejects → trackComponentWrite re-throws → the helper
@@ -373,6 +352,6 @@ describe('Phase 6.6 — writeMarkdownAndReconcile', () => {
     ).rejects.toThrow();
 
     // Editor untouched — it was never reconciled to bytes that didn't land.
-    expect(documentStore.getDocument(docId)?.body).toBe('pre-fail body');
+    expect(documentStore.getDocument(relPath)?.body).toBe('pre-fail body');
   });
 });

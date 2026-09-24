@@ -28,7 +28,7 @@ describe('TextTile unmount writes only unsaved work (MD-2)', () => {
 
   it('mount → unmount with no edit writes nothing', async () => {
     const fs = recordingFilo({ 'Note.md': NOTE });
-    const m = await mountTextTile({ tile: { id: 't1', contentId: 'd1', title: 'Note' } });
+    const m = await mountTextTile({ tile: { id: 't1', title: 'Note' } });
     await m.unmount();
     await drainDebounce();
     expect(fs.writesTo('Note.md')).toEqual([]);
@@ -37,7 +37,7 @@ describe('TextTile unmount writes only unsaved work (MD-2)', () => {
 
   it('an edit then an unmount inside the debounce writes exactly once, with the edit', async () => {
     const fs = recordingFilo({ 'Note.md': NOTE });
-    const m = await mountTextTile({ tile: { id: 't1', contentId: 'd1', title: 'Note' } });
+    const m = await mountTextTile({ tile: { id: 't1', title: 'Note' } });
     type(m, 'Z');
     await m.unmount();
     await drainDebounce();
@@ -48,7 +48,7 @@ describe('TextTile unmount writes only unsaved work (MD-2)', () => {
 
   it('an edit that already autosaved is not written again on unmount', async () => {
     const fs = recordingFilo({ 'Note.md': NOTE });
-    const m = await mountTextTile({ tile: { id: 't1', contentId: 'd1', title: 'Note' } });
+    const m = await mountTextTile({ tile: { id: 't1', title: 'Note' } });
     type(m, 'Z');
     await drainDebounce();
     expect(fs.writesTo('Note.md').length).toBe(1);
@@ -59,7 +59,7 @@ describe('TextTile unmount writes only unsaved work (MD-2)', () => {
 
   it('a failed autosave is retried on unmount', async () => {
     const fs = recordingFilo({ 'Note.md': NOTE });
-    const m = await mountTextTile({ tile: { id: 't1', contentId: 'd1', title: 'Note' } });
+    const m = await mountTextTile({ tile: { id: 't1', title: 'Note' } });
     fs.failWrites('Note.md', 'EBUSY');
     type(m, 'Z');
     await drainDebounce();

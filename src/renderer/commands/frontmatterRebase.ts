@@ -98,10 +98,10 @@ export function fmValueEqual(a: unknown, b: unknown): boolean {
  * caller wraps the result in `this.snapshot(...)` to avoid aliasing the cache.
  */
 export function captureInverseFromCache(
-  docId: string,
+  notePath: string,
   patch: Record<string, unknown>,
 ): Record<string, unknown> {
-  const before = (documentStore.getFrontmatter(docId) ?? {}) as Record<string, unknown>;
+  const before = (documentStore.getFrontmatter(notePath) ?? {}) as Record<string, unknown>;
   const inverse: Record<string, unknown> = {};
   for (const key of Object.keys(patch)) {
     inverse[key] = key in before ? before[key] : '';
@@ -110,7 +110,7 @@ export function captureInverseFromCache(
 }
 
 export interface RebaseFrontmatterArgs {
-  docId: string;
+  notePath: string;
   relPath: string;
   /**
    * Callers pass the command's `this.targetBoardId` verbatim (the
@@ -146,12 +146,12 @@ export interface RebaseFrontmatterArgs {
  * field an external edit changed out from under the command. Also schedules the
  * debounced write and marks the board dirty for whatever it actually applied.
  *
- * When no FM cache is seeded for `docId` (never-opened doc, or the seed was
+ * When no FM cache is seeded for `notePath` (never-opened doc, or the seed was
  * dropped after an external FM edit), the compare base is a FRESH disk read
  * (index fallback), never a blind commit. Async since that read; callers await.
  */
 export async function applyFrontmatterPatchRebased(args: RebaseFrontmatterArgs): Promise<void> {
-  const { docId, relPath, targetBoardId, applying, expectedCurrent, label, atomic } = args;
+  const { notePath, relPath, targetBoardId, applying, expectedCurrent, label, atomic } = args;
 
   // Captured ONCE and consulted by the "Apply anyway" toast handlers: a click
   // after a vault swap must not schedule this patch onto the NEW vault's
@@ -163,13 +163,13 @@ export async function applyFrontmatterPatchRebased(args: RebaseFrontmatterArgs):
     // mergeFrontmatter keeps the DISPLAY cache live (cards / rows render from
     // it); the write SOURCE is the explicit delta, applied to fresh disk in the
     // gateway so an untouched external key can't be dropped.
-    documentStore.mergeFrontmatter(docId, patch);
-    scheduleFrontmatterWrite(relPath, docId, patchToFrontmatterDelta(patch));
+    documentStore.mergeFrontmatter(notePath, patch);
+    scheduleFrontmatterWrite(relPath, notePath, patchToFrontmatterDelta(patch));
     // allow-non-target-markdirty: shared helper, callers pass this.targetBoardId per the CI gate
     boardCacheStore.markDirty(targetBoardId);
   };
 
-  let current = documentStore.getFrontmatter(docId);
+  let current = documentStore.getFrontmatter(notePath);
   if (current === undefined) {
     // No cache seeded: a blind commit would clobber an external same-field
     // edit. Re-read disk fresh as the compare base; the vault index is the
@@ -201,7 +201,7 @@ export async function applyFrontmatterPatchRebased(args: RebaseFrontmatterArgs):
     }
     // Seed the display cache from the base so the merge in `commit` lands on a
     // complete object (mirrors the execute legs' seedDocumentFrontmatterFromDisk).
-    documentStore.setFrontmatter(docId, base, rawFm);
+    documentStore.setFrontmatter(notePath, base, rawFm);
     current = base;
   }
 

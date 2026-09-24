@@ -93,7 +93,7 @@ describe('writeMarkdownFile — body-only frontmatter passthrough (Audit2 1.2)',
     const disk = ['---', '# pinned — keep this', 'zeta: 1', 'alpha: 2', '---', 'old body'].join('\n');
     const parsed = parseMarkdownFile(disk);
     markHydrated('passthrough-clean.md', false);
-    documentStore.setFrontmatter('doc-pass-clean', parsed.frontmatter, parsed.rawFrontmatter);
+    documentStore.setFrontmatter('passthrough-clean.md', parsed.frontmatter, parsed.rawFrontmatter);
 
     await writeMarkdownFile({
       vaultRoot: '/vault',
@@ -101,7 +101,7 @@ describe('writeMarkdownFile — body-only frontmatter passthrough (Audit2 1.2)',
       frontmatter: parsed.frontmatter,
       body: 'new body',
       callerId: 'c-clean',
-      docId: 'doc-pass-clean',
+      notePath: 'passthrough-clean.md',
     });
 
     expect(writtenText(invokes)).toBe(
@@ -113,8 +113,8 @@ describe('writeMarkdownFile — body-only frontmatter passthrough (Audit2 1.2)',
     const disk = ['---', '# pinned — keep this', 'zeta: 1', '---', 'old body'].join('\n');
     const parsed = parseMarkdownFile(disk);
     markHydrated('passthrough-dirty.md', false);
-    documentStore.setFrontmatter('doc-pass-dirty', parsed.frontmatter, parsed.rawFrontmatter);
-    const merged = documentStore.mergeFrontmatter('doc-pass-dirty', { status: 'done' });
+    documentStore.setFrontmatter('passthrough-dirty.md', parsed.frontmatter, parsed.rawFrontmatter);
+    const merged = documentStore.mergeFrontmatter('passthrough-dirty.md', { status: 'done' });
 
     await writeMarkdownFile({
       vaultRoot: '/vault',
@@ -122,7 +122,7 @@ describe('writeMarkdownFile — body-only frontmatter passthrough (Audit2 1.2)',
       frontmatter: merged,
       body: 'new body',
       callerId: 'c-dirty',
-      docId: 'doc-pass-dirty',
+      notePath: 'passthrough-dirty.md',
     });
 
     const written = writtenText(invokes);
@@ -140,7 +140,7 @@ describe('writeMarkdownFile — body-only frontmatter passthrough (Audit2 1.2)',
     const parsed = parseMarkdownFile(disk);
     expect(Object.keys(parsed.frontmatter)).toHaveLength(0); // YAML didn't parse to an object
     markHydrated('passthrough-unparseable.md', false);
-    documentStore.setFrontmatter('doc-pass-bad', parsed.frontmatter, parsed.rawFrontmatter);
+    documentStore.setFrontmatter('passthrough-unparseable.md', parsed.frontmatter, parsed.rawFrontmatter);
 
     await writeMarkdownFile({
       vaultRoot: '/vault',
@@ -148,7 +148,7 @@ describe('writeMarkdownFile — body-only frontmatter passthrough (Audit2 1.2)',
       frontmatter: parsed.frontmatter,
       body: 'new body',
       callerId: 'c-bad',
-      docId: 'doc-pass-bad',
+      notePath: 'passthrough-unparseable.md',
     });
 
     const written = writtenText(invokes);

@@ -69,7 +69,7 @@ describe('board format v8', () => {
   it('drops a copy of the note from a text def on parse, so it cannot survive a save', () => {
     const def = TileDefinitionSchema.parse({
       id: 't1', type: 'text', filePath: 'A.md', style: STYLE, createdAt: 1, updatedAt: 1,
-      title: 'A', tags: ['x'], content: '<p>body</p>', contentId: 'c1', file: 'A.md', completed: true,
+      title: 'A', tags: ['x'], content: '<p>body</p>', file: 'A.md', completed: true,
     });
     expect(Object.keys(def).sort()).toEqual(['createdAt', 'filePath', 'id', 'style', 'type', 'updatedAt']);
   });
@@ -95,7 +95,7 @@ describe('board format v8', () => {
 
   it('builds a text def from a runtime tile without its title, tags or body', () => {
     const tile = {
-      id: 't1', type: 'text', title: 'Plans', tags: ['a'], content: '<p>x</p>', contentId: 'c1', filePath: 'Plans.md',
+      id: 't1', type: 'text', title: 'Plans', tags: ['a'], content: '<p>x</p>', filePath: 'Plans.md',
       titleHtml: '<b>Plans</b>', style: STYLE, position: { x: 0, y: 0 }, size: { width: 240, height: 160 },
       locked: false, faded: false, boardId: 'b1', createdAt: 1, updatedAt: 2,
     } as Tile;

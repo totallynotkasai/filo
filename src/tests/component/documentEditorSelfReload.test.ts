@@ -24,7 +24,7 @@ describe('DocumentEditor does not reload its own autosave (MD-4)', () => {
 
   it('keeps undo history and redo across a successful autosave', async () => {
     const fs = recordingFilo({ 'Doc.md': '---\na: 1\n---\nHello\n' });
-    const m = await mountDocumentEditor({ docId: 'd1', docPath: 'Doc.md' });
+    const m = await mountDocumentEditor({ docPath: 'Doc.md' });
     const ed = m.editor();
     ed.commands.focus('end');
     ed.commands.insertContent('X');
@@ -44,10 +44,10 @@ describe('DocumentEditor does not reload its own autosave (MD-4)', () => {
 
   it('defers a sibling reload until the IME composition ends', async () => {
     recordingFilo({ 'Doc.md': '---\na: 1\n---\nHello\n' });
-    const m = await mountDocumentEditor({ docId: 'd1', docPath: 'Doc.md' });
+    const m = await mountDocumentEditor({ docPath: 'Doc.md' });
     m.proseMirror().dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
     await settle();
-    documentStore.updateContent('d1', '<p>Sibling</p>', 'Sibling\n', 'text-tile:other');
+    documentStore.updateContent('Doc.md', '<p>Sibling</p>', 'Sibling\n', 'text-tile:other');
     await settle();
     expect(m.proseMirror().textContent).toContain('Hello');
     expect(m.proseMirror().textContent).not.toContain('Sibling');

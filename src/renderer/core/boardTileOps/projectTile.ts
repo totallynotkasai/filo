@@ -1,12 +1,11 @@
 import type { Tile, TileDefinition } from '../../schema/index';
-import { mediaTags, noteDocId, noteTags, noteTitle } from '../../stores/noteMeta';
+import { mediaTags, noteTags, noteTitle } from '../../stores/noteMeta';
 
 /**
  * The fields a board def doesn't store but every view of the tile reads,
  * projected from where they live:
  *
- * - a text tile's `title` and `tags` from its note, plus the session
- *   `contentId` the document store keys it by;
+ * - a text tile's `title` and `tags` from its note;
  * - a media tile's `tags` from `.filo/tags.json`, and a file tile's name and
  *   extension from its path.
  *
@@ -18,7 +17,6 @@ export function projectDefFields(def: TileDefinition): Record<string, unknown> {
       return {
         title: noteTitle(def.filePath),
         tags: noteTags(def.filePath),
-        contentId: noteDocId(def.filePath),
         content: '',
       };
     case 'image':

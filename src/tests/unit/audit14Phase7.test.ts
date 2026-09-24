@@ -49,7 +49,6 @@ function makeTaskListWithTask(boardId: string, tileId: string, filePath: string)
         id: tileId,
         type: 'text',
         title: 'Buy milk',
-        contentId: `doc_${tileId}`,
         style: { headerColor: '', bodyColor: '', borderColor: '' } as never,
         boardId,
         position: { x: 0, y: 0 },
@@ -107,16 +106,14 @@ describe('Audit-14 7.3 — DeleteTaskCommand.undo reconciles open editors', () =
 
     // …and the SAME file is open as a Document on a second pane, holding a stale
     // pre-delete in-memory body + frontmatter.
-    const docId = 'doc-7-3';
     documentStore.loadDocument({
-      docId,
       filename: relPath,
       title: 'Buy milk',
       body: 'stale pre-delete body',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter(docId, { completed: true }, '---\ncompleted: true\n---');
+    documentStore.setFrontmatter(relPath, { completed: true }, '---\ncompleted: true\n---');
     markHydrated(relPath, false);
 
     const cmd = new DeleteTaskCommand('board-tl', 't_1', {
@@ -132,8 +129,8 @@ describe('Audit-14 7.3 — DeleteTaskCommand.undo reconciles open editors', () =
     // 7.3 — the open editor reflects the restored bytes. Under a raw write it
     // would stay pinned to the stale body, and its next debounced save would
     // invert the restore (#4).
-    expect(documentStore.getDocument(docId)?.body).toBe('buy milk\n');
-    expect(documentStore.getFrontmatter(docId)).toEqual({ completed: false, priority: 'high' });
+    expect(documentStore.getDocument(relPath)?.body).toBe('buy milk\n');
+    expect(documentStore.getFrontmatter(relPath)).toEqual({ completed: false, priority: 'high' });
 
     // The task placement was also restored (full undo round-trip).
     const tasks = (boardCacheStore.cache['board-tl']?.board as TaskListBoard).tasks ?? [];

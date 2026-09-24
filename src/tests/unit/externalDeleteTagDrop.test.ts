@@ -84,14 +84,13 @@ describe('vaultExternalChanges — external delete drops tags.json entry (Phase 
 
   function loadDirtyEditor(rel: string): void {
     documentStore.loadDocument({
-      docId: 'doc_A',
       filename: rel,
       title: 'Notes',
       body: 'dirty',
       htmlContent: '<p>dirty</p>',
       richText: [],
     });
-    documentStore.updateContent('doc_A', '<p>dirty</p>', 'dirty');
+    documentStore.updateContent(rel, '<p>dirty</p>', 'dirty');
   }
 
   function installFileGoneMock(): void {
@@ -121,7 +120,7 @@ describe('vaultExternalChanges — external delete drops tags.json entry (Phase 
 
   it('keeps the tags.json entry when the user picks Keep local (re-creates the file)', async () => {
     await primeTaggedFile('Notes.md');
-    documentStore.setFrontmatter('doc_A', { tags: ['mytag'] });
+    documentStore.setFrontmatter('Notes.md', { tags: ['mytag'] });
 
     loadDirtyEditor('Notes.md');
     installFileGoneMock();

@@ -78,7 +78,7 @@ function installFiloStub(opts: FiloStubOptions = {}): InvokeArgs[] {
   let lastWrittenBytes: number | null = null;
   // Audit-17 5.3 — the gateway's post-write baseline guard now reads the bytes
   // BACK (vault:read-file-text) and stamps only on a byte-exact self-write. These
-  // docId-less writes issue no PRE-write read, so the only read-file-text here is
+  // cache-less writes (no note path) issue no PRE-write read, so the only read-file-text here is
   // that post-write read-back; model it returning exactly what we wrote so a clean
   // self-write confirms (a `vault:stat` size match alone no longer stamps).
   let lastWrittenText: string | null = null;
@@ -167,7 +167,7 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
       frontmatter: {},
       body: 'fresh',
       callerId: 'happy',
-      docId: null,
+      notePath: null,
     });
 
     expect(promptCalled).toBe(0);
@@ -197,7 +197,7 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
       frontmatter: {},
       body: 'about to clobber external edit',
       callerId: 'drifted',
-      docId: null,
+      notePath: null,
     });
 
     expect(promptCalled).toBe(1);
@@ -228,7 +228,7 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
       frontmatter: {},
       body: 'overwriting external edit on purpose',
       callerId: 'keeplocal',
-      docId: null,
+      notePath: null,
     });
 
     // Write IPC fired (the user chose Keep-local).
@@ -265,7 +265,7 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
       frontmatter: {},
       body: 'overwriting a same-second external edit on purpose',
       callerId: 'same-second',
-      docId: null,
+      notePath: null,
     });
 
     expect(promptCalled).toBe(1);
@@ -294,7 +294,7 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
       frontmatter: {},
       body: 'no baseline = no drift check',
       callerId: 'no-baseline',
-      docId: null,
+      notePath: null,
     });
 
     // Drift check skipped entirely (no pre-write stat issued either).
@@ -326,7 +326,7 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
       frontmatter: {},
       body: 'write 1',
       callerId: 'multi',
-      docId: null,
+      notePath: null,
     });
     await writeMarkdownFile({
       vaultRoot: '/vault',
@@ -334,7 +334,7 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
       frontmatter: {},
       body: 'write 2',
       callerId: 'multi',
-      docId: null,
+      notePath: null,
     });
     await writeMarkdownFile({
       vaultRoot: '/vault',
@@ -342,7 +342,7 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
       frontmatter: {},
       body: 'write 3',
       callerId: 'multi',
-      docId: null,
+      notePath: null,
     });
 
     // No prompt fired across three writes — each write's post-write
@@ -377,7 +377,7 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
       frontmatter: {},
       body: 'write whose post-write stat fails',
       callerId: 'di14',
-      docId: null,
+      notePath: null,
     });
 
     // The write landed (post-write stat fires only after a successful write).
@@ -419,11 +419,11 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
 
     const pA = writeMarkdownFile({
       vaultRoot: '/vault', relPath, frontmatter: {}, body: 'AAA',
-      callerId: 'text-tile:1', docId: null,
+      callerId: 'text-tile:1', notePath: null,
     });
     const pB = writeMarkdownFile({
       vaultRoot: '/vault', relPath, frontmatter: {}, body: 'BBB',
-      callerId: 'document-editor:1', docId: null,
+      callerId: 'document-editor:1', notePath: null,
     });
 
     // Let A reach (and hang at) its write IPC. B must be queued behind A's
@@ -455,7 +455,7 @@ describe('fileBaselineRegistry — pre-write drift detection', () => {
       frontmatter: {},
       body: 'no handler',
       callerId: 'no-handler',
-      docId: null,
+      notePath: null,
     });
 
     // Write IPC fired — legacy behaviour preserved when no handler.
@@ -582,16 +582,15 @@ describe('F1 — read-driven hydrate seeds the drift baseline', () => {
     });
 
     documentStore.loadDocument({
-      docId: 'doc-fm',
       filename: relPath,
       title: 'Note',
       body: 'body',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter('doc-fm', { completed: true });
+    documentStore.setFrontmatter(relPath, { completed: true });
 
-    scheduleFrontmatterWrite(relPath, 'doc-fm');
+    scheduleFrontmatterWrite(relPath, relPath);
     await flushAllPendingFrontmatterWrites();
 
     expect(promptCalls).toBe(1);
@@ -634,16 +633,15 @@ describe('F1 — read-driven hydrate seeds the drift baseline', () => {
     });
 
     documentStore.loadDocument({
-      docId: 'doc-clean',
       filename: relPath,
       title: 'Note',
       body: 'body',
       htmlContent: '',
       richText: [],
     });
-    documentStore.setFrontmatter('doc-clean', { completed: true });
+    documentStore.setFrontmatter(relPath, { completed: true });
 
-    scheduleFrontmatterWrite(relPath, 'doc-clean');
+    scheduleFrontmatterWrite(relPath, relPath);
     await flushAllPendingFrontmatterWrites();
 
     expect(promptCalls).toBe(0);

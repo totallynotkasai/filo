@@ -21,7 +21,7 @@ function makeValidTile(over: Partial<Tile> = {}): Tile {
     boardId: 'board1',
     type: 'text',
     title: 'Note',
-    contentId: 'doc1',
+    filePath: 'Note.md',
     content: '',
     position: { x: 10, y: 20 },
     size: { width: 240, height: 160 },

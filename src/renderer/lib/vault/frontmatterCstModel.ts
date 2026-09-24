@@ -211,7 +211,7 @@ export function patchFrontmatterSourceCst(
   // GATE — refuse on fatal errors, non-map root, flow-map root.
   let doc;
   try {
-    doc = parseDocument(source, { uniqueKeys: true });
+    doc = parseDocument(source, { uniqueKeys: true, logLevel: 'error' });
   } catch {
     return null;
   }
@@ -369,7 +369,7 @@ export function patchFrontmatterSourceCst(
  */
 export function frontmatterSourceParses(source: string): boolean {
   try {
-    const doc = parseDocument(source.replace(/\r\n/g, '\n'), { uniqueKeys: true });
+    const doc = parseDocument(source.replace(/\r\n/g, '\n'), { uniqueKeys: true, logLevel: 'error' });
     if (doc.errors.length > 0) return false;
     // Resolve aliases/merges — throws on a dangling reference; the catch
     // below maps that to `false` so the assemble path keeps the raw bytes.
@@ -393,7 +393,7 @@ export function frontmatterSourceParses(source: string): boolean {
  */
 export function frontmatterSourceKeys(source: string): Set<string> {
   try {
-    const doc = parseDocument(source.replace(/\r\n/g, '\n'), { uniqueKeys: true });
+    const doc = parseDocument(source.replace(/\r\n/g, '\n'), { uniqueKeys: true, logLevel: 'error' });
     if (doc.errors.length === 0) {
       const obj = doc.toJS();
       if (obj !== null && typeof obj === 'object' && !Array.isArray(obj)) {

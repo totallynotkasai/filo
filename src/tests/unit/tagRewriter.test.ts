@@ -576,7 +576,7 @@ describe('emitTagScalar — quoting-oracle parity with the pre-6.4 js-yaml oracl
     const readers: Array<(doc: string) => unknown> = [
       (d) => yaml.load(d),
       (d) => yaml.load(d, { schema: yaml.CORE_SCHEMA }),
-      (d) => parseDocument(d).toJS(),
+      (d) => parseDocument(d, { logLevel: 'error' }).toJS(),
     ];
     const docs = [`[${scalar}]`, `tags:\n  - ${scalar}\n`];
     for (const read of readers) {

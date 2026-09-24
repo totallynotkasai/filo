@@ -117,7 +117,7 @@ function loadYamlObject(yamlSource: string): Record<string, unknown> | null {
     // duplicate mapping key a fatal error, so we refuse the write rather than
     // round-trip a block we can't model. The core schema resolves no timestamp
     // or merge tag, so an unquoted date stays a `string` and `<<` a literal key.
-    const doc = parseDocument(yamlSource, { uniqueKeys: true });
+    const doc = parseDocument(yamlSource, { uniqueKeys: true, logLevel: 'error' });
     if (doc.errors.length > 0) return null;
     loaded = doc.toJS();
   } catch {

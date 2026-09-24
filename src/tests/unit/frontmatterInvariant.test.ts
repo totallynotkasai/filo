@@ -61,7 +61,7 @@ function fmRegion(md: string): FmRegion {
  */
 function parseFm(raw: string): Record<string, unknown> | null {
   try {
-    const doc = parseDocument(raw);
+    const doc = parseDocument(raw, { logLevel: 'error' });
     if (doc.errors.length > 0) return null;
     const o = doc.toJS();
     return o && typeof o === 'object' && !Array.isArray(o) ? (o as Record<string, unknown>) : null;

@@ -109,7 +109,9 @@ export function parseMarkdownFile(raw: string): ParsedMarkdownDocument {
     // tag, so `2026-06-01` stays a string and `<<: *a` a literal `<<`. On ANY
     // error (or a non-object root) fail safe to `{}`; the raw block is still
     // threaded out below so the fence is kept.
-    const doc = parseDocument(fenced[1] ?? '');
+    // logLevel 'error': a collection key (`[a, b]: x`) is stringified by
+    // toJS() on purpose; the package's warning about it is noise.
+    const doc = parseDocument(fenced[1] ?? '', { logLevel: 'error' });
     if (doc.errors.length === 0) {
       const loaded = doc.toJS();
       if (loaded && typeof loaded === 'object' && !Array.isArray(loaded)) {

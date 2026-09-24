@@ -80,10 +80,8 @@ function makeTextTile(
   overrides: Partial<TextTile> & Pick<TextTile, 'id' | 'title'>,
 ): Tile {
   return {
-    id: overrides.id,
     boardId: 'mm',
     type: 'text',
-    title: overrides.title,
     position: { x: 0, y: 0 },
     size: { width: 200, height: 100 },
     style: {

@@ -8,10 +8,8 @@ import type { TextTile, Tile } from '@renderer/schema/index';
 
 function tile(overrides: Partial<TextTile> & Pick<TextTile, 'id' | 'title'>): Tile {
   return {
-    id: overrides.id,
     boardId: '',
     type: overrides.type ?? 'text',
-    title: overrides.title,
     position: { x: 0, y: 0 },
     size: { width: 200, height: 100 },
     style: {} as never,

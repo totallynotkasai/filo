@@ -31,7 +31,7 @@ import { patchFrontmatterSourceCst } from '@renderer/lib/vault/frontmatterCstMod
  */
 function parseFm(block: string): Record<string, unknown> | null {
   try {
-    const doc = parseDocument(block);
+    const doc = parseDocument(block, { logLevel: 'error' });
     if (doc.errors.length > 0) return null;
     const o = doc.toJS();
     return o && typeof o === 'object' && !Array.isArray(o) ? (o as Record<string, unknown>) : null;

@@ -30,8 +30,6 @@ function makeRow(overrides: Partial<TaskRow> = {}): TaskRow {
     position: overrides.placement?.position ?? 0,
   };
   return {
-    placement,
-    tile,
     completed: false,
     priority: 'none',
     dueDate: '',

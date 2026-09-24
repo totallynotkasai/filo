@@ -48,7 +48,8 @@ export function splitFrontmatterSource(rawContent: string): {
 export function parseFrontmatterObject(yamlSource: string): Record<string, unknown> {
   if (!yamlSource.trim()) return {};
   try {
-    const loaded = parseDocument(yamlSource).toJS();
+    // logLevel 'error': collection keys are stringified on purpose (see markdownSync).
+    const loaded = parseDocument(yamlSource, { logLevel: 'error' }).toJS();
     if (loaded && typeof loaded === 'object' && !Array.isArray(loaded)) {
       return loaded as Record<string, unknown>;
     }

@@ -34,6 +34,22 @@ export default defineConfig({
           include: ['src/tests/component/**/*.test.ts'],
         },
       },
+      {
+        // The refactor characterisation suite: the real app (renderer stores
+        // and components plus the real main-process IPC handlers) against a
+        // real temp vault. Same `browser` condition as `component`; its own
+        // setup swaps in the fake `electron` shell the main handlers import.
+        extends: true,
+        resolve: { conditions: ['browser'] },
+        test: {
+          name: 'characterisation',
+          include: ['src/tests/characterisation/**/*.test.ts'],
+          setupFiles: ['src/tests/setup.ts', 'src/tests/characterisation/setup.ts'],
+          // Each case opens a real vault and waits out real debounces.
+          testTimeout: 120000,
+          hookTimeout: 30000,
+        },
+      },
     ],
     coverage: {
       // Ratchet-style coverage gate for `src/renderer/lib/**` — the pure

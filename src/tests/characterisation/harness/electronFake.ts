@@ -1,0 +1,100 @@
+/**
+ * The `electron` module as the characterisation suite sees it.
+ *
+ * The suite runs the REAL main-process IPC handlers against a real temp vault,
+ * so the renderer under test talks to the same file operations the app does.
+ * Only the Electron shell is faked: handler registration is captured,
+ * `webContents.send` is routed back to the renderer's `window.filo.on`
+ * listeners, file pickers are cancelled, and a message box takes its first
+ * button (for "Save / Don't Save / Cancel" on a vault swap: Save).
+ */
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { TEST_MACHINE_IDENTITY } from '../../helpers/testMachine';
+
+export type MainHandler = (event: unknown, ...args: unknown[]) => unknown;
+type MainListener = (event: unknown, ...args: unknown[]) => void;
+
+export const mainHandlers = new Map<string, MainHandler>();
+export const mainListeners = new Map<string, MainListener[]>();
+
+/** Main → renderer pushes land here; the bridge fans them out to `window.filo.on`. */
+export const rendererSink: { send: (channel: string, ...args: unknown[]) => void } = {
+  send: () => {},
+};
+
+const userData = mkdtempSync(join(tmpdir(), 'filo-char-userdata-'));
+// This machine is the one the renderer-side test setup pins, so main and the
+// renderer agree on whose crash sentinel is whose.
+writeFileSync(join(userData, 'machine-id.json'), JSON.stringify({ id: TEST_MACHINE_IDENTITY.machineId }));
+
+const fakeWebContents = {
+  id: 1,
+  send: (channel: string, ...args: unknown[]) => rendererSink.send(channel, ...args),
+  isDestroyed: () => false,
+  on: () => {},
+  session: {},
+};
+
+const fakeWindow = {
+  webContents: fakeWebContents,
+  isDestroyed: () => false,
+  on: () => {},
+};
+
+export const electronFake = {
+  ipcMain: {
+    handle: (channel: string, handler: MainHandler) => {
+      mainHandlers.set(channel, handler);
+    },
+    on: (channel: string, listener: MainListener) => {
+      const list = mainListeners.get(channel) ?? [];
+      list.push(listener);
+      mainListeners.set(channel, list);
+    },
+    once: () => {},
+    removeHandler: (channel: string) => {
+      mainHandlers.delete(channel);
+    },
+    removeListener: () => {},
+  },
+  BrowserWindow: {
+    getAllWindows: () => [fakeWindow],
+    getFocusedWindow: () => fakeWindow,
+    fromWebContents: () => fakeWindow,
+  },
+  app: {
+    isPackaged: false,
+    getPath: () => userData,
+    getVersion: () => '0.0.0-characterisation',
+    getLocale: () => 'en-GB',
+    getSystemLocale: () => 'en-GB',
+    on: () => {},
+    whenReady: async () => {},
+    quit: () => {},
+    exit: () => {},
+  },
+  dialog: {
+    showOpenDialog: async () => ({ canceled: true, filePaths: [] }),
+    showSaveDialog: async () => ({ canceled: true }),
+    showMessageBox: async () => ({ response: 0 }),
+  },
+  shell: {
+    openExternal: async () => {},
+    openPath: async () => '',
+    showItemInFolder: () => {},
+    trashItem: async () => {},
+  },
+  screen: {
+    getDisplayMatching: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }),
+  },
+  protocol: {
+    handle: () => {},
+    registerSchemesAsPrivileged: () => {},
+  },
+  session: { defaultSession: {} },
+  webUtils: { getPathForFile: () => '' },
+};
+
+export default electronFake;

@@ -25,7 +25,7 @@ Package:        npm run package
 
 `npm run ci:verify` mirrors the GitHub Actions `verify` job: **lint → check (svelte-check) → typecheck:main → test:unit:strict → build → ci:gates**. A second job, `verify-windows`, runs `test:unit:strict` and `typecheck:main` on `windows-latest`.
 
-`ci:gates` runs `node scripts/gates/run.mjs`: ~54 small static checks that pin invariants which past data-loss bugs broke. They share one helper module ([scripts/gates/lib.mjs](scripts/gates/lib.mjs)) and are grouped by subsystem. `--list` shows every check, `--only <id,id>` / `--group <name>` narrow a run, and each failure prints `file:line` plus a fix hint.
+`ci:gates` runs `node scripts/gates/run.mjs`: ~55 small static checks that pin invariants which past data-loss bugs broke. They share one helper module ([scripts/gates/lib.mjs](scripts/gates/lib.mjs)) and are grouped by subsystem. `--list` shows every check, `--only <id,id>` / `--group <name>` narrow a run, and each failure prints `file:line` plus a fix hint.
 
 | Group | Protects |
 |---|---|
@@ -35,7 +35,7 @@ Package:        npm run package
 | `ipcSecurity` | Every `ipcMain` channel is in the `IpcChannel` union (and vice versa); envelope usage; untrusted values pass an `asSafe*` validator before a sink; `vault:copy-file` only copies approved sources; renderer reads can't reach `.filo/`; config loaders migrate before parsing. |
 | `commands` | Undo/redo: high-value mutations go through Commands, which snapshot their slice, carry a `targetBoardId`, and have an execute→undo round-trip test; Task List section positions are clamped. |
 | `components` | Component timers are cleared, `flush*` functions are actually called, no dead `$derived`, DocumentEditor / drag-drop are pane-scoped, pointer capture + spatial batches handle `pointercancel`, z-index tokens, and every `var(--x)` without a fallback is defined. |
-| `codebase` | No file in `src/main` / `src/renderer` over 1000 lines except the allowlisted ones, which may only shrink (**split an over-limit file, don't raise its ceiling**); no `as any` / `as unknown as`; test sources type-check under `tsconfig.tests.json`, with a per-file error baseline (`scripts/gates/testTypecheckBaseline.json`) that may only go down. |
+| `codebase` | No file in `src/main` / `src/renderer` over 1000 lines except the allowlisted ones, which may only shrink (**split an over-limit file, don't raise its ceiling**); no `as any` / `as unknown as`; test sources type-check under `tsconfig.tests.json`, with a per-file error baseline (`scripts/gates/testTypecheckBaseline.json`) that may only go down; the refactor characterisation suite stays whole, un-skipped and black-box. |
 
 **Escape hatches** are same-line comments with a reason, e.g. `// allow-cast: <reason>`, `// reconcile-elsewhere: <reason>`, `// allow-module-state: <reason>`. Keep the marker text exact; the checks look for it.
 
@@ -615,7 +615,8 @@ Themes overwrite Global Defaults. They are not a separate layer.
 ## Testing Strategy
 
 - **Unit tests (Vitest):** Cover all `lib/` modules. Stores should have unit tests for their logic. Target: every function in `lib/` has at least one test.
-- **Component tests (jsdom + Vitest):** `vitest.config.mts` has two projects: `unit` (`src/tests/unit/`) and `component` (`src/tests/component/`, resolved with the `browser` export condition so Svelte 5 client `mount()` works). Component tests mount the REAL components with [src/tests/component/helpers/mountEditor.ts](src/tests/component/helpers/mountEditor.ts) (`recordingFilo`, `mountTextTile`, `mountDocumentEditor`, `pressUndo`, `settle`, `drainDebounce`). Both projects run in `test:unit:strict`. Heavy interaction coverage still lives in Playwright E2E.
+- **Component tests (jsdom + Vitest):** `vitest.config.mts` has three projects: `unit` (`src/tests/unit/`), `component` (`src/tests/component/`, resolved with the `browser` export condition so Svelte 5 client `mount()` works) and `characterisation` (below). Component tests mount the REAL components with [src/tests/component/helpers/mountEditor.ts](src/tests/component/helpers/mountEditor.ts) (`recordingFilo`, `mountTextTile`, `mountDocumentEditor`, `pressUndo`, `settle`, `drainDebounce`). All three projects run in `test:unit:strict`. Heavy interaction coverage still lives in Playwright E2E.
+- **Characterisation suite:** `src/tests/characterisation/` mounts the whole `App.svelte` against a real temp vault, with the real main-process IPC handlers behind `window.filo` (only the Electron shell is faked). The specs pin what the user sees (views, frontmatter edits, renames, disk changes, delete + undo, bytes never written by looking) and call only the `harness/` adapter. When an internal API moves, update the harness, not the specs; the `characterisation-suite` gate enforces this. `npm run scratch-vault` uses the same harness to build the dogfooding vault.
 - **E2E tests (Playwright):** Cover critical user flows — create vault, create board, add tile, edit content, delete tile, switch tabs, undo/redo.
 - **Test file location:** Mirror `src/` structure under `tests/unit/`. E2E tests go in `tests/e2e/`.
 

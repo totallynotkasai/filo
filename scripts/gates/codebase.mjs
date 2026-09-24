@@ -1,7 +1,7 @@
 // Codebase-wide hygiene ratchets.
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import { fail } from './lib.mjs';
+import { fail, stripComments } from './lib.mjs';
 
 // Per-file type-error counts for the test sources (tsconfig.tests.json) when
 // the ratchet was introduced. A file may only improve; a file not listed must
@@ -23,6 +23,16 @@ const FILE_SIZE_ALLOWLIST = {
   'src/renderer/stores/vault.svelte.ts': 1683,
   'src/renderer/stores/fileTags.svelte.ts': 1183,
   'src/renderer/lib/vault/markdownFileWriter.ts': 1132,
+};
+
+// The refactor characterisation suite: user-visible behaviour the file-model
+// refactor must keep. Each spec file with its minimum case count.
+const CHARACTERISATION_DIR = 'src/tests/characterisation';
+const CHARACTERISATION_SPECS = {
+  'editingAndViews.test.ts': 5,
+  'metadataEdits.test.ts': 4,
+  'renamesAndDiskChanges.test.ts': 8,
+  'bytesOnDisk.test.ts': 4,
 };
 
 function countLines(text) {
@@ -106,6 +116,47 @@ export const checks = [
       for (const [file, allowed] of Object.entries(baseline)) {
         const n = counts.get(file) ?? 0;
         if (n < allowed) console.log(`      ratchet down: ${file} ${allowed} -> ${n} in ${TEST_TYPECHECK_BASELINE}`);
+      }
+      return out;
+    },
+  },
+  {
+    // The suite runs in test:unit:strict; this pins that it stays there, whole,
+    // and black-box (a spec that reaches into stores would break with the
+    // refactor it is meant to check).
+    id: 'characterisation-suite',
+    title: 'the refactor characterisation suite stays in place, un-skipped and black-box',
+    hint:
+      'Specs change only where the master plan lists an expected change. Drive the app through ' +
+      `${CHARACTERISATION_DIR}/harness/ (update the harness when internals move), never through @renderer imports.`,
+    run(ctx) {
+      const out = [];
+      for (const [name, min] of Object.entries(CHARACTERISATION_SPECS)) {
+        const rel = `${CHARACTERISATION_DIR}/${name}`;
+        const src = ctx.read(rel);
+        if (src === null) {
+          out.push(fail(rel, undefined, 'missing'));
+          continue;
+        }
+        const code = stripComments(src);
+        if (/\b(?:it|describe|test)\.(?:skip|only|todo)\b|\bit\.skipIf\b/.test(code)) {
+          out.push(fail(rel, undefined, 'contains a skipped / focused / todo test'));
+        }
+        const cases = (code.match(/\bit\s*\(/g) ?? []).length;
+        if (cases < min) out.push(fail(rel, undefined, `only ${cases} cases (expected >= ${min})`));
+        for (const m of code.matchAll(/\bfrom\s+['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]/g)) {
+          const spec = m[1] ?? m[2];
+          const allowed = spec === 'vitest' || spec === 'yaml' || spec.startsWith('node:') || spec.startsWith('./harness/');
+          if (!allowed) out.push(fail(rel, undefined, `imports '${spec}' (specs import only vitest, yaml, node: and ./harness/)`));
+        }
+      }
+      const setup = ctx.read(`${CHARACTERISATION_DIR}/setup.ts`);
+      if (setup === null || !/\binstallEditorLoopBreaker\s*\(/.test(stripComments(setup))) {
+        out.push(fail(`${CHARACTERISATION_DIR}/setup.ts`, undefined, 'must install the editor loop breaker (a runaway loop hangs instead of failing)'));
+      }
+      const config = ctx.read('vitest.config.mts');
+      if (config === null || !config.includes(`'${CHARACTERISATION_DIR}/**/*.test.ts'`)) {
+        out.push(fail('vitest.config.mts', undefined, 'no vitest project runs the characterisation suite'));
       }
       return out;
     },

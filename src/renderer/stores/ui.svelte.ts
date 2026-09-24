@@ -285,6 +285,17 @@ export const uiStore = {
     }
     confirmDialog = config;
   },
+  /**
+   * `openConfirm` as a promise: resolves `true` on Confirm, `false` on Cancel
+   * (including Esc, or being displaced by another confirm). The in-app
+   * replacement for the native `confirm()`, which blocks the renderer event
+   * loop — and every debounced write timer with it.
+   */
+  confirmAsync(config: Omit<ConfirmDialogConfig, 'onConfirm' | 'onCancel' | 'extraOption' | 'secondaryAction'>): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      this.openConfirm({ ...config, onConfirm: () => resolve(true), onCancel: () => resolve(false) });
+    });
+  },
   closeConfirm() { confirmDialog = null; },
 
   // Sidebar pending-rename signal.

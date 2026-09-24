@@ -688,17 +688,13 @@ async function performDelete(ctx: VaultContext, itemPath: string): Promise<boole
   const itemName = itemPath.split(/[\\/]/).pop() ?? itemPath;
   const node = findTreeNode(ctx.getFileTree(), ctx.getVaultPath(), toVaultRelative(itemPath, ctx.getVaultPath()) ?? '');
   const isFolder = node?.isDirectory ?? false;
-  const confirmed = await new Promise<boolean>((resolve) => {
-    uiStore.openConfirm({
-      title: isFolder ? 'Delete folder?' : 'Delete file?',
-      body: isFolder
-        ? `"${itemName}" and everything inside it will be deleted. Tile placements that reference the deleted files are removed from every board. The delete is undoable from the toolbar (subject to a snapshot cap).`
-        : `"${itemName}" will be deleted. Tile placements that reference it are removed from every board. The delete is undoable from the toolbar (subject to a snapshot cap).`,
-      confirmLabel: isFolder ? 'Delete folder' : 'Delete file',
-      danger: true,
-      onConfirm: () => resolve(true),
-      onCancel: () => resolve(false),
-    });
+  const confirmed = await uiStore.confirmAsync({
+    title: isFolder ? 'Delete folder?' : 'Delete file?',
+    body: isFolder
+      ? `"${itemName}" and everything inside it will be deleted. Tile placements that reference the deleted files are removed from every board. The delete is undoable from the toolbar (subject to a snapshot cap).`
+      : `"${itemName}" will be deleted. Tile placements that reference it are removed from every board. The delete is undoable from the toolbar (subject to a snapshot cap).`,
+    confirmLabel: isFolder ? 'Delete folder' : 'Delete file',
+    danger: true,
   });
   if (!confirmed) return false;
 

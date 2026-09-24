@@ -433,15 +433,11 @@
           // Route the overwrite confirm through the in-app
           // ConfirmDialog so it inherits focus management, reduced
           // motion, and the unified Esc/Enter handling.
-          const ok = await new Promise<boolean>((resolve) => {
-            uiStore.openConfirm({
-              title: 'Overwrite file?',
-              body: `"${finalName}" already exists in this folder. The existing file will be replaced and cannot be recovered.`,
-              confirmLabel: 'Overwrite',
-              danger: true,
-              onConfirm: () => resolve(true),
-              onCancel: () => resolve(false),
-            });
+          const ok = await uiStore.confirmAsync({
+            title: 'Overwrite file?',
+            body: `"${finalName}" already exists in this folder. The existing file will be replaced and cannot be recovered.`,
+            confirmLabel: 'Overwrite',
+            danger: true,
           });
           if (!ok) {
             // User declined — preserve both files by aborting the rename.

@@ -6,6 +6,7 @@
   import ColorPicker from '../shared/ColorPicker.svelte';
   import TagsPopupMenu from './TagsPopupMenu.svelte';
   import { isSafeNewTagName } from '../../lib/vault/tagsStorage';
+  import { deleteTagWithConfirm, renameTagWithConfirm } from '../../lib/tags/tagEditConfirm';
 
   let activeColorPicker = $state<string | null>(null);
   let editingTagName = $state<string | null>(null);
@@ -104,38 +105,17 @@
         );
         return;
       }
-      // Detect orphaned children — a rename of `project` does NOT cascade
-      // to `project/active` etc., so warn the user before they discover
-      // the gap. Falls through silently when no children exist.
-      const prefix = `${editingTagName}/`;
-      const children = fileTagsStore
-        .allTagNames()
-        .filter((n) => n.startsWith(prefix));
-      if (children.length > 0) {
-        const childList = children.slice(0, 5).map((n) => ` • ${n}`).join('\n');
-        const extra = children.length > 5 ? `\n …and ${children.length - 5} more` : '';
-        const ok = confirm(
-          `Rename "${editingTagName}" to "${trimmed}"?\n\n` +
-          `${children.length} child tag${children.length === 1 ? '' : 's'} won't be renamed ` +
-          `(nested tags don't cascade):\n${childList}${extra}\n\n` +
-          `They'll stay under "${editingTagName}/…" until you rename them individually.`,
-        );
-        if (!ok) {
-          editingTagName = null;
-          return;
-        }
-      }
-      void fileTagsStore.renameTagEverywhere(editingTagName, trimmed);
+      // Asks first only for a merge into an existing tag or when child tags
+      // won't follow the rename (see renameTagWithConfirm).
+      void renameTagWithConfirm(editingTagName, trimmed);
     }
     editingTagName = null;
   }
 
-  function deleteTagByName(name: string) {
-    if (confirm('Are you sure you want to delete this tag from all tiles and files?')) {
-      void fileTagsStore.removeTagEverywhere(name);
-      if (editingTagName === name) editingTagName = null;
-      if (activeColorPicker === name) activeColorPicker = null;
-    }
+  async function deleteTagByName(name: string) {
+    if (!(await deleteTagWithConfirm(name))) return;
+    if (editingTagName === name) editingTagName = null;
+    if (activeColorPicker === name) activeColorPicker = null;
   }
 
   function toggleColorPicker(name: string) {
@@ -247,7 +227,7 @@
             {#if editingTagName !== t.name}
               <IconButton title="Rename" onclick={() => startEditByName(t.name)}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg></IconButton>
             {/if}
-            <IconButton title="Delete tag" danger onclick={() => deleteTagByName(t.name)}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></IconButton>
+            <IconButton title="Delete tag" danger onclick={() => void deleteTagByName(t.name)}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></IconButton>
           </div>
         </div>
       {/each}

@@ -231,17 +231,13 @@ export async function recreateDeletedFile(
   if (fm === null || body === null) {
     // Neither live nor snapshot available. Rather than silently no-op or write
     // an empty file, confirm the body-only trade-off with the user.
-    const proceedBodyOnly = await new Promise<boolean>((resolve) => {
-      uiStore.openConfirm({
-        title: 'Recover without frontmatter?',
-        body:
-          `Frontmatter for "${rel}" couldn't be recovered (the editor closed before you clicked Keep local). ` +
-          'Re-create the file with body content only? Tags, properties, and other YAML keys will be lost.',
-        confirmLabel: 'Recreate body-only',
-        danger: true,
-        onConfirm: () => resolve(true),
-        onCancel: () => resolve(false),
-      });
+    const proceedBodyOnly = await uiStore.confirmAsync({
+      title: 'Recover without frontmatter?',
+      body:
+        `Frontmatter for "${rel}" couldn't be recovered (the editor closed before you clicked Keep local). ` +
+        'Re-create the file with body content only? Tags, properties, and other YAML keys will be lost.',
+      confirmLabel: 'Recreate body-only',
+      danger: true,
     });
     if (!proceedBodyOnly) return;
     fm = {};

@@ -52,16 +52,12 @@ function errorCode(err: unknown): string | undefined {
 }
 
 function confirmOverwriteWithoutBackup(rel: string, reason: string): Promise<boolean> {
-  return new Promise<boolean>((resolve) => {
-    uiStore.openConfirm({
-      title: 'Overwrite without a backup?',
-      body: `Filo couldn't back up the other version of "${displayName(rel)}" (${reason}). Overwrite it anyway?`,
-      confirmLabel: 'Overwrite anyway',
-      cancelLabel: 'Cancel',
-      danger: true,
-      onConfirm: () => resolve(true),
-      onCancel: () => resolve(false),
-    });
+  return uiStore.confirmAsync({
+    title: 'Overwrite without a backup?',
+    body: `Filo couldn't back up the other version of "${displayName(rel)}" (${reason}). Overwrite it anyway?`,
+    confirmLabel: 'Overwrite anyway',
+    cancelLabel: 'Cancel',
+    danger: true,
   });
 }
 

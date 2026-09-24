@@ -4,7 +4,7 @@
  * Phase 4 introduced `vaultLifecycle` as the single subscription point for
  * vault-swap reset; Phase 0's `vaultSwapResets.test.ts` covers a hardcoded
  * list of REQUIRED handler names; the `ci:vault-lifecycle-coverage` gate
- * (`scripts/check-vault-lifecycle-coverage.mjs`) statically scans the
+ * (`scripts/gates:vault-lifecycle-coverage`) statically scans the
  * renderer for `$state` modules with no `onVaultSwap(...)` call.
  *
  * This test complements those two by walking the renderer source AT TEST
@@ -22,7 +22,7 @@
  * If you add a new store / lib module with `$state(...)`, you MUST also
  * add an `onVaultSwap('pre-swap', '<name>', ...)` subscription OR add the
  * path to EXEMPT_MODULES below with a one-line reason that matches the
- * `scripts/check-vault-lifecycle-coverage.mjs` entry.
+ * `scripts/gates:vault-lifecycle-coverage` entry.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -32,7 +32,7 @@ import { __getRegisteredHandlerNames } from '@renderer/core/vaultLifecycle';
 const ROOT = join(__dirname, '..', '..', '..');
 const RENDERER_DIR = join(ROOT, 'src', 'renderer');
 
-// Must mirror EXEMPT_MODULES in scripts/check-vault-lifecycle-coverage.mjs.
+// Must mirror EXEMPT_MODULES in scripts/gates:vault-lifecycle-coverage.
 // Any drift between the two is a maintenance hazard — the parity test below
 // fails if the two lists diverge.
 //
@@ -151,7 +151,7 @@ describe('Phase 7 contract — vault-lifecycle coverage', () => {
         throw new Error(
           `Module ${rel} holds \`$state\` but does not call onVaultSwap(...). ` +
             'Either subscribe to vault-swap reset OR add the path to EXEMPT_MODULES ' +
-            'in this file AND scripts/check-vault-lifecycle-coverage.mjs.',
+            'in this file AND scripts/gates:vault-lifecycle-coverage.',
         );
       }
       const registered = __getRegisteredHandlerNames();

@@ -16,7 +16,7 @@
   let inputUrl = $state('');
   let isEditingAlt = $state(false);
   let altDraft = $state('');
-  // UX-1 — surface a fallback when the image fails to load (broken/missing
+  // Surface a fallback when the image fails to load (broken/missing
   // vault path, dead URL) instead of leaving the OS broken-image glyph.
   let loadFailed = $state(false);
 
@@ -72,7 +72,7 @@
   function commitAlt() {
     const next = altDraft.trim();
     const after = next.length > 0 ? next : undefined;
-    // Phase 7 (IMPLEMENTATION_PLAN_2026-05-27) — alt-text edits go through
+    // Alt-text edits go through
     // UpdateImageAltCommand so Ctrl+Z reverses the change. Skip the push
     // when nothing changed so trivial open-close-without-edits doesn't
     // burn a history slot.

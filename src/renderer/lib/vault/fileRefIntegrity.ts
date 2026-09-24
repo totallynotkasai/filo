@@ -17,7 +17,7 @@ const FILE_REF_FIELDS = ['file', 'src', 'filePath', 'coverImage', 'backgroundIma
 
 /** Synthetic-id prefix for a frame's style object in the file-ref scan. */
 const FRAME_SYNTHETIC_PREFIX = 'frame:';
-/** Sprint C / C23 — synthetic id prefix for a kanban column visited via
+/** Synthetic id prefix for a kanban column visited via
  *  `forEachTileLike` so its own `coverImage` participates in rename
  *  propagation / broken-ref detection. The placement-level cover scan
  *  uses the placement's real tileId; the column is a different scope. */
@@ -37,7 +37,7 @@ function sanitizeForFilename(name: string): string {
       .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
       .replace(/\s+/g, ' ')
       .trim()
-      // Audit-19 ERR-2 — lockstep with `fileNameSafe`: strip trailing dots/spaces.
+      // Lockstep with `fileNameSafe`: strip trailing dots/spaces.
       .replace(/[. ]+$/, '') || 'Untitled'
   );
 }
@@ -48,8 +48,8 @@ function sanitizeForFilename(name: string): string {
  * text tiles (e.g. document boards store content inline).
  *
  *   - mindmap  → '' (root, plus per-board / vault-wide pin via cascade)
- *   - kanban   → 'Kanban/<kanbanFolder>' (frozen at create-time, see
- *                Phase 2 / 2.3) OR name-derived for legacy boards
+ *   - kanban   → 'Kanban/<kanbanFolder>' (frozen at create-time) OR
+ *                name-derived for legacy boards
  *   - tasklist → '' (root, plus per-board / vault-wide pin via cascade)
  *
  * MindMap and TaskList both defer to the runtime cascade
@@ -69,13 +69,13 @@ export function getConventionFolder(boardData: V7BoardFileData): string | null {
  * loaded board file. Useful from contexts that only have the live Board
  * runtime (e.g. drag-drop on the active board).
  *
- * Phase 2 / 2.3 — `kanbanFolder` is the frozen create-time folder name
+ * `kanbanFolder` is the frozen create-time folder name
  * stored on KanbanBoardSchema. Pass it through whenever you have it so a
  * renamed Kanban board still resolves its cards under the original folder.
  * When absent (legacy board, mind-map / tasklist call site), the function
  * falls back to the name-derived `Kanban/<sanitize(name)>` for kanban.
  *
- * Phase B / B.4 — when `kanbanFolder` contains a path separator (`/`) it is
+ * When `kanbanFolder` contains a path separator (`/`) it is
  * treated as a full vault-relative folder path and the `Kanban/` prefix is
  * NOT applied. This branch is reached after a cross-folder move via
  * `propagateMarkdownRenameToTextTiles` (e.g. user moved `Kanban/Tasks/`
@@ -154,8 +154,7 @@ function rewritePath(current: string, oldPath: string, newPath: string): string 
  * the result back.
  *
  * Each branch of the board discriminated union surfaces the fields specific
- * to that board type — the previous all-fields union cast hid renames /
- * removals; this version forces the union to be re-narrowed in one place.
+ * to that board type, forcing the union to be re-narrowed in one place.
  */
 function forEachTileLike(
   board: V7BoardFileData,
@@ -214,7 +213,7 @@ function forEachTileLike(
       // placements here doesn't change cascade-delete behavior — a broken
       // cover image clears the field; it does not remove the underlying tile.
       //
-      // Sprint C / C23 — also visit the column itself for its own
+      // Also visit the column itself for its own
       // `coverImage` (column header band). The synthetic `column:`
       // prefix keeps the id distinct from any tile placement so callers
       // downstream don't confuse a column-bg match with a real tile.
@@ -317,7 +316,7 @@ function basenameWithoutMd(relPath: string): string | null {
  * to `propagateRenameAcrossBoards`.
  */
 /**
- * Phase B / B.4 — handles the folder-move branch of
+ * Handles the folder-move branch of
  * `propagateMarkdownRenameToTextTiles`. Updates `board.kanbanFolder` on
  * every kanban board whose convention folder matched the old folder
  * path, so the convention resolver (`getConventionFolderForBoardType`)
@@ -372,7 +371,7 @@ export function propagateMarkdownRenameToTextTiles(
   const oldTitle = basenameWithoutMd(oldSplit.base);
   const newTitle = basenameWithoutMd(newSplit.base);
 
-  // Phase B / B.4 — when neither path ends in `.md`, treat the rename as
+  // When neither path ends in `.md`, treat the rename as
   // a FOLDER move and rewrite the convention abstraction. For each kanban
   // board whose convention folder matched the old path, update
   // `kanbanFolder` to the new full vault-relative path so subsequent card
@@ -458,7 +457,7 @@ export interface CoverImageClear {
 }
 
 /**
- * Sprint C / C23 — column-level cover image clear. Sibling to
+ * Column-level cover image clear. Sibling to
  * `CoverImageClear` but applies to the column's own `coverImage` field
  * (column header band) rather than an individual card placement. No
  * `tileId` because the column carries the reference itself.
@@ -500,7 +499,7 @@ export interface DeleteCascadeResult {
    */
   coverImageClears: Record<string, CoverImageClear[]>;
   /**
-   * Sprint C / C23 — boardId → list of Kanban *columns* whose own
+   * boardId → list of Kanban *columns* whose own
    * `coverImage` (the column header band, distinct from placement
    * covers) matched the deleted path. Same clear-the-field semantics
    * as `coverImageClears`; just at a different scope.
@@ -625,7 +624,7 @@ export function findTilesToCascadeDelete(
             matchedPath: placement.coverImage,
           });
         }
-        // Sprint C / C23 — column-level coverImage scan. The column's own
+        // Column-level coverImage scan. The column's own
         // cover image is independent of any placement's cover; deleting
         // the underlying file should clear the column-header reference
         // without disturbing the columns of cards underneath.

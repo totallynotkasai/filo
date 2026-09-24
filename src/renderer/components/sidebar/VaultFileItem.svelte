@@ -45,7 +45,7 @@
   let isDropTarget = $state(false);
   let autoExpandTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // 6.1.R2 (follow-up) — clear the hover auto-expand timer on unmount. Without
+  // Clear the hover auto-expand timer on unmount. Without
   // this, a vault swap (or any unmount) while the timer is armed mid-drag-hover
   // fires `vaultStore.toggleFolder(node.path)` ~600 ms later against the
   // swapped-in vault. drag-leave / drop already clear it; this covers unmount.
@@ -53,7 +53,7 @@
     if (autoExpandTimer != null) clearTimeout(autoExpandTimer);
   });
 
-  // Phase C / C.7 — auto-enter rename mode when this node was just created
+  // Auto-enter rename mode when this node was just created
   // via the sidebar's "New Folder" button. The toolbar sets
   // `uiStore.pendingSidebarRenameId` to the new folder's absolute path; the
   // first VaultFileItem whose `node.path` matches consumes the flag,
@@ -308,7 +308,7 @@
       }
       if (!sourcePath) continue;
       try {
-        // Phase R2 — drain pending writers before the copy so a
+        // Drain pending writers before the copy so a
         // debounced editor write targeting the destination folder
         // doesn't race the new file's creation. `copyFileIntoVault`
         // returns the envelope verbatim; non-success surfaces a toast
@@ -345,7 +345,7 @@
       const board = boardId
         ? vaultStore.project?.boards?.find((b) => b.id === boardId)
         : undefined;
-      // Audit-19 EXT-1 — an untracked board (appeared mid-session / failed at open) is adopted, then opened.
+      // An untracked board (appeared mid-session / failed at open) is adopted, then opened.
       if (board) tabStore.open(board.id, board.name, board.type as BoardType, board.emoji ?? '');
       else void adoptAndFindBoard(relPath).then((b) => b && tabStore.open(b.id, b.name, b.type as BoardType, b.emoji ?? ''));
       return;
@@ -412,7 +412,7 @@
     const parentPath = node.path.substring(0, node.path.lastIndexOf(node.name));
     const newAbsPath = parentPath + finalName;
 
-    // Phase 31 A3.2 — probe for overwrite before issuing the rename so the
+    // Probe for overwrite before issuing the rename so the
     // user can't silently destroy the destination file by renaming over it.
     // The vault.rename pipeline itself runs `fs.rename` which on POSIX
     // overwrites the target atomically (Windows surfaces EEXIST), so the
@@ -430,8 +430,8 @@
       try {
         const exists = await window.filo.invoke('vault:file-exists', vaultRoot, newRel);
         if (exists) {
-          // Phase C / C.1 — route the overwrite confirm through the in-app
-          // ConfirmDialog so it inherits focus management (C.6), reduced
+          // Route the overwrite confirm through the in-app
+          // ConfirmDialog so it inherits focus management, reduced
           // motion, and the unified Esc/Enter handling.
           const ok = await new Promise<boolean>((resolve) => {
             uiStore.openConfirm({
@@ -461,7 +461,7 @@
         // Source no longer on disk — silently drop the phantom tree entry.
         await vaultStore.refreshTree();
       } else if (result.strandedAt) {
-        // IMPL_PLAN_2026-05-26 / Item 2 — Windows case-only rename
+        // Windows case-only rename
         // exhausted retries AND the rescue restore failed. Name the
         // temp path so the user can recover the file via File Explorer
         // rather than treating the failure as a data loss.
@@ -486,7 +486,7 @@
   }
 
   async function handleDelete() {
-    // Phase 31 B1.5 — `vaultStore.delete` now surfaces IPC failures from
+    // `vaultStore.delete` surfaces IPC failures from
     // inside the store (it has the error code; we don't). We don't need
     // a wrapper toast here.
     await vaultStore.delete(node.path);
@@ -927,7 +927,7 @@
     transition: opacity 0.1s ease;
   }
 
-  .vault-file-item:hover .file-actions, .vault-file-item:focus-within .file-actions, /* 3.2: keyboard focus reveals row actions (WCAG 2.4.7), mirrors TileHeader */
+  .vault-file-item:hover .file-actions, .vault-file-item:focus-within .file-actions, /* keyboard focus reveals row actions (WCAG 2.4.7), mirrors TileHeader */
   .file-actions.has-pinned-active {
     opacity: 1;
   }

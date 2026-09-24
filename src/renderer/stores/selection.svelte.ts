@@ -50,11 +50,9 @@ function replaceSet<T>(set: SvelteSet<T>, next: Iterable<T>): void {
 }
 
 /**
- * Sprint B / B4 — symmetric-difference set update. Cheaper than
- * `replaceSet` for marquee-selection on dense boards because reactive
- * notifications only fire on actual additions/removals, not on the
- * intermediate clear+readd state. With a 10k-tile marquee drag this drops
- * the per-frame reactive work from 2N notifications to (additions + removals).
+ * Symmetric-difference set update. Cheaper than `replaceSet` for
+ * marquee-selection on dense boards: reactive notifications fire only on
+ * actual additions/removals, not on an intermediate clear+readd.
  */
 function diffSet<T>(set: SvelteSet<T>, next: Iterable<T>): void {
   const nextSet = next instanceof Set ? (next as Set<T>) : new Set(next);
@@ -184,8 +182,7 @@ export function createSelectionScope(): SelectionScope {
  */
 export const selectionStore: SelectionScope = makeFacade(() => getActiveScope().selection);
 
-// Phase 4 (Consolidation 2026-05-25) — vault-swap reset registration.
-// Drops the active pane's selection state. Per-pane scopes that get torn
+// Vault-swap reset: drops the active pane's selection state. Per-pane scopes that get torn
 // down on workspace re-hydration release their own state automatically;
 // this handler covers the still-mounted active pane during the swap.
 onVaultSwap('pre-swap', 'selection', () => {

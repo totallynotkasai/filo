@@ -55,7 +55,7 @@ function ensureHook(): void {
   });
 }
 
-// Phase 37 / 37.3 — explicit URI scheme allowlist. DOMPurify's defaults
+// Explicit URI scheme allowlist. DOMPurify's defaults
 // already block `javascript:`, `data:`, `vbscript:`, etc., so this is
 // defence-in-depth against future config drift rather than a live XSS
 // fix. The list mirrors the URI shapes Filo actually renders inside

@@ -71,7 +71,7 @@ export function registerTemplateHandlers(): void {
       if (!name.endsWith('.template.json')) continue;
       const full = path.join(dir, name);
       try {
-        // Phase 8 / 8.1 — pre-stat against `PAYLOAD_LIMITS.TEMPLATE` so a
+        // Pre-stat against `PAYLOAD_LIMITS.TEMPLATE` so a
         // hand-edited multi-GB template file is skipped instead of being
         // buffered into memory only to fail `JSON.parse` after the fact.
         const stat = await fs.promises.stat(full);
@@ -99,7 +99,7 @@ export function registerTemplateHandlers(): void {
     async (_event, vaultRoot: string, filename: string, content: unknown) => {
       try {
         assertActiveVault(vaultRoot);
-        // 6.3.P1/P2 — `templates:layout:write` creates / overwrites a
+        // `templates:layout:write` creates / overwrites a
         // template file in `.filo/templates/`; creation rules apply on
         // every platform so saved templates stay portable.
         assertSafeFilename(filename, { forCreation: true });
@@ -118,7 +118,7 @@ export function registerTemplateHandlers(): void {
         const relPath = `.filo/templates/${filename}`;
         const watcher = getActiveWatcher();
         watcher?.suppress(relPath, LOCK_AWARE_SUPPRESS_MS);
-        // Phase 4 / 4.3 — atomicWriteFile: open → fsync → rename → fsync(dir).
+        // atomicWriteFile: open → fsync → rename → fsync(dir).
         // A crash mid-write would otherwise leave the template file as
         // half-written JSON that fails to parse on next load.
         await atomicWriteFile(full, JSON.stringify(content, null, 2));
@@ -146,7 +146,7 @@ export function registerTemplateHandlers(): void {
     async (_event, vaultRoot: string, oldFilename: string, newFilename: string) => {
       try {
         assertActiveVault(vaultRoot);
-        // 6.3.P1/P2 — OLD filename stays platform-gated (must validate
+        // OLD filename stays platform-gated (must validate
         // existing names that may already live in `.filo/templates/`
         // legitimately on POSIX). NEW filename is a creation target;
         // enforce Windows rules on every platform so the renamed file

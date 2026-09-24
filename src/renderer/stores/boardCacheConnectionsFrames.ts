@@ -10,7 +10,7 @@ import type { CacheContext } from './boardCacheTypes';
  * project mirror is the source of truth for the live `connectionsStore` /
  * `framesStore` derivations.
  *
- * Phase 6 of CONSOLIDATION_PLAN_2026-05-25 — every mutator dispatches to the
+ * Every mutator dispatches to the
  * per-board-type implementation via `connectionsOpsFor(cached.board)` /
  * `framesOpsFor(cached.board)`. The strategy registries in
  * `core/boardConnectionsOps.ts` and `core/boardFramesOps.ts` are exhaustive
@@ -19,8 +19,8 @@ import type { CacheContext } from './boardCacheTypes';
  * resolution (cache scan + warn-and-drop fallbacks) and the cache lookup
  * before dispatching — the actual mutation body lives in the per-type ops.
  *
- * Active-proxy reactivity contract (Phase 1.1 / 2.2 sweep)
- * --------------------------------------------------------
+ * Active-proxy reactivity contract
+ * --------------------------------
  * Unlike the Kanban / Task List slices, **every per-type op mirrors the
  * write through `ctx.updateProjectConnectionsFrames`** in addition to the
  * direct cache-entry write. The project-side mirror is what the live

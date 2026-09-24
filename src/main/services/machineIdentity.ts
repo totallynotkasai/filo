@@ -1,5 +1,5 @@
 /**
- * Audit-19 EXT-6 (plan D5) — this machine's identity, so the crash-recovery
+ * This machine's identity, so the crash-recovery
  * sentinels in a SYNCED vault's `.filo/` never cross machines.
  *
  * `userData/machine-id.json` = `{ id, createdAt }` is created on first launch

@@ -159,12 +159,9 @@ export function createCanvasScope(): CanvasScope {
     },
 
     setBoard(boardId: string | null) {
-      // Audit 3.2 — kill any in-flight camera fly before re-pointing the
-      // scope. Otherwise the RAF keeps ticking after the board changes and,
-      // on completion, persists the OLD board's fly target as the NEW board's
-      // viewport. This single funnel covers board switch, board clear
-      // (setBoard(null)), and vault swap (tabs clear → BoardRouter →
-      // setBoard(null)).
+      // Kill any in-flight camera fly before re-pointing the scope, else the
+      // RAF completes and persists the OLD board's fly target as the NEW
+      // board's viewport. Covers board switch, board clear, and vault swap.
       cancelFlyTo();
       flushPendingViewport();
       currentBoardId = boardId;
@@ -187,7 +184,7 @@ export function createCanvasScope(): CanvasScope {
     },
 
     panBy(dx: number, dy: number) {
-      // Sprint A / A6 — refuse NaN / Infinity inputs. A buggy gesture
+      // Refuse NaN / Infinity inputs. A buggy gesture
       // handler or a hand-edited filo:// link would otherwise propagate
       // a non-finite delta into `transform.x/y`, freezing the canvas
       // (NaN poisons every subsequent matrix-multiplication).
@@ -198,7 +195,7 @@ export function createCanvasScope(): CanvasScope {
     },
 
     zoomTo(newScale: number, centerX: number, centerY: number) {
-      // Sprint A / A6 — any non-finite input is a no-op. NaN scale would
+      // Any non-finite input is a no-op. NaN scale would
       // cascade to NaN transform.x/y on the next `centerX - (centerX -
       // transform.x) * scaleRatio` computation and lock the camera.
       if (
@@ -222,7 +219,7 @@ export function createCanvasScope(): CanvasScope {
     },
 
     zoomBy(factor: number, centerX: number, centerY: number) {
-      // Sprint A / A6 — guard here too because we multiply by transform.scale
+      // Guard here too because we multiply by transform.scale
       // before delegating; an Infinity * finite = Infinity, and we want
       // `zoomTo` to receive a pre-validated value.
       if (
@@ -236,7 +233,7 @@ export function createCanvasScope(): CanvasScope {
     },
 
     centerOn(canvasX: number, canvasY: number) {
-      // Sprint A / A6 — same NaN poison-pill rationale as the other
+      // Same NaN poison-pill rationale as the other
       // mutators. A filo:// link with `position/x/Infinity/Infinity`
       // would otherwise pan the canvas off-screen.
       if (!Number.isFinite(canvasX) || !Number.isFinite(canvasY)) return;
@@ -254,7 +251,7 @@ export function createCanvasScope(): CanvasScope {
     },
 
     flyTo(target: CanvasTransform, durationMs = 300) {
-      // Sprint A / A6 — refuse non-finite targets so the RAF loop can't
+      // Refuse non-finite targets so the RAF loop can't
       // animate towards NaN.
       if (
         !Number.isFinite(target.x) ||
@@ -319,7 +316,7 @@ export function createCanvasScope(): CanvasScope {
     },
 
     destroy() {
-      // Audit 3.2 — pane-teardown hook (PaneView onDestroy). Cancel the
+      // Pane-teardown hook (PaneView onDestroy). Cancel the
       // in-flight fly so a closed pane's RAF stops ticking, and flush any
       // pending viewport persist so the board's last camera move isn't lost.
       // flushPendingViewport no-ops when nothing is pending and when the

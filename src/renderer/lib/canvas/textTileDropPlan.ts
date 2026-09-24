@@ -30,7 +30,7 @@ export function planTextTileDrop(input: {
   boardType: string | null;
   boardName: string | undefined;
   /**
-   * Phase 2 / 2.3 — frozen Kanban convention folder name. Pass the live
+   * Frozen Kanban convention folder name. Pass the live
    * board's `kanbanFolder` field so a renamed Kanban board still resolves
    * its drops under the original folder.
    */

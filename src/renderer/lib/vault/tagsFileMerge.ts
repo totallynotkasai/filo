@@ -1,9 +1,9 @@
 /**
- * A8-M6 — the 3-way merge for `.filo/tags.json` (pure; split out of
- * `stores/fileTags.svelte.ts`, which is at its file-size ceiling).
+ * The 3-way merge for `.filo/tags.json` (pure; split out of
+ * `stores/fileTags.svelte.ts` for its file-size ceiling).
  *
- * Used by the external-reload path (`applyExternalReload`) and, since
- * Audit-19 EXT-8, by the debounced save's pre-write merge: another machine's
+ * Used by the external-reload path (`applyExternalReload`) and by the
+ * debounced save's pre-write merge: another machine's
  * tags.json that lands inside the self-write window (or while a local change
  * is still debounced) is merged in instead of blindly overwritten.
  */

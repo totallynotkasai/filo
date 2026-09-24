@@ -11,7 +11,7 @@ import { onVaultSwap } from '../core/vaultLifecycle';
 import { runWithCloseDrain } from '../lib/editor/closeDrainGate.svelte';
 
 /**
- * Sprint B / B15 — partitions a `flushAllMarkdownWriters` failure list into
+ * Partitions a `flushAllMarkdownWriters` failure list into
  * (a) failures attributable to editors inside `boardId`'s board and
  * (b) failures we can POSITIVELY attribute to another board.
  *
@@ -89,19 +89,12 @@ function partitionMarkdownFailuresByBoard(
       inTab.push(f);
       continue;
     }
-    // Unknown owner shape — preserve the prior "always surface" behaviour
-    // so we never silently swallow a failure.
+    // Unknown owner shape — always surface so we never silently swallow a failure.
     inTab.push(f);
   }
   return { inTab, otherTabs };
 }
 
-/**
- * Phase 4 / 4.2 — promisifies `uiStore.openConfirm` for the save-failure
- * confirm in `close` / `closeOthers`. Mirrors the helper in
- * `vault.svelte.ts` — re-implemented here so this module can stay free
- * of a circular import on `vaultStore`.
- */
 /**
  * Builds a short, user-readable description of what failed to flush.
  * `boardOkOrUnused = true` means no .board.json write was attempted (or
@@ -128,6 +121,10 @@ function buildFailureDetails(
   return ` (${parts.join(', ')})`;
 }
 
+/**
+ * Promisifies `uiStore.openConfirm` for the save-failure confirm in `close` /
+ * `closeOthers`. Duplicated from `vault.svelte.ts` to avoid a circular import.
+ */
 function confirmCloseAnyway(failedDetails: string): Promise<boolean> {
   return new Promise((resolve) => {
     uiStore.openConfirm({
@@ -212,21 +209,15 @@ export const tabStore = {
   /**
    * Closes a tab by its ID.
    *
-   * Sprint B / B2 — drains every pending markdown + frontmatter write
-   * BEFORE removing the tab from `tabs`. Removing the tab triggers the
-   * Svelte unmount of any TextTile / DocumentEditor inside it; the
-   * editor's onDestroy hook does fire a flush, but it's fire-and-forget,
-   * so a user who closes a tab inside the 300 ms idle window can land
-   * the disk write AFTER the contextBridge IPC route has been
-   * unregistered — silently losing the last keystrokes. Awaiting the
-   * registry flush here is the only safe close path. The flush is bounded
-   * by the number of currently-armed editors (small) and is a no-op
-   * for owners without a pending write.
+   * Drains every pending markdown + frontmatter write BEFORE removing the
+   * tab. Removing it unmounts any TextTile / DocumentEditor inside, whose
+   * onDestroy flush is fire-and-forget — closing inside the 300 ms debounce
+   * could otherwise lose the last keystrokes. The flush is a no-op for
+   * owners without a pending write.
    *
-   * Flushes any pending debounced write for the closing tab's board so
-   * a queued settings/placement write can't fire after the cache entry
-   * has changed or under a different active board — both of which were
-   * symptoms of the freeze-on-reopen-after-settings-change bug.
+   * Also flushes the closing board's debounced write so a queued
+   * settings/placement write can't fire after the cache entry has changed
+   * or under a different active board.
    */
   async close(tabId: string): Promise<void> {
     const idx = tabs.findIndex((t) => t.id === tabId);
@@ -234,21 +225,14 @@ export const tabStore = {
 
     const closing = tabs[idx];
 
-    // Audit-17 5.7 — raise the close-drain gate for the ENTIRE drain → confirm
-    // → re-drain window. The editors stay mounted through it, so without this
-    // a keystroke typed during the drain (or during the failed-drain confirm,
-    // which can sit open for minutes) re-arms a debounce the snapshots never
-    // saw and the unmount below destroys it. While the gate is raised the
-    // editors go read-only (a visual "saving…" freeze), so no keystroke can be
-    // stranded. `runWithCloseDrain` lowers the gate on EVERY exit (cancel,
-    // throw, success) via try/finally.
+    // Raise the close-drain gate for the whole drain → confirm → re-drain
+    // window. The editors stay mounted through it (the confirm can sit open
+    // for minutes), so a keystroke would otherwise re-arm a debounce the
+    // unmount below destroys. While raised, editors are read-only.
+    // `runWithCloseDrain` lowers the gate on every exit.
     const proceed = await runWithCloseDrain(async () => {
-      // B2 — drain pending writes synchronously before unmount.
-      //
-      // Phase 4 / 4.2 — collect any failures from the drains so we can
-      // surface a confirm before destroying the editor (and its in-memory
-      // edits). Without this gate, closing a tab while disk is full
-      // silently dropped the user's last edits with no UI indication.
+      // Drain pending writes before unmount, collecting failures so we can
+      // confirm before destroying the editor's in-memory edits (e.g. disk full).
       const mdResult = await flushAllMarkdownWriters();
       const fmResult = await flushAllPendingFrontmatterWrites();
       let boardOk = true;
@@ -257,8 +241,8 @@ export const tabStore = {
         boardOk = result.ok;
       }
 
-      // Sprint B / B15 — only block the close on failures attributable to
-      // editors inside the closing tab. Failures in OTHER tabs are surfaced
+      // Only block the close on failures attributable to editors inside the
+      // closing tab. Failures in OTHER tabs are surfaced
       // via a non-blocking toast so the user knows about them, but they
       // don't gate this tab's close (the user has no recourse to retry a
       // foreign tab's editor from this dialog).
@@ -283,13 +267,10 @@ export const tabStore = {
         if (!ok) return false;
       }
 
-      // Audit-16 6.7 — the editor stays mounted through the drains above (and
-      // through the interactive confirm when one was shown). 5.7 makes it
-      // read-only for that window, so the re-arm window is gone; this second
-      // pass remains as a belt-and-suspenders capture of anything armed before
-      // the gate engaged. A failure in this second pass is not re-confirmed
-      // (no loop) — the writers' trackComponentWrite pipeline surfaces it
-      // loudly (toast + `.filo/.dirty` sentinel), so the bytes are recoverable.
+      // Belt-and-suspenders second pass for anything armed before the gate
+      // engaged. A failure here is not re-confirmed (no loop) — the writers'
+      // trackComponentWrite pipeline surfaces it (toast + `.filo/.dirty`
+      // sentinel), so the bytes are recoverable.
       await flushAllMarkdownWriters();
       await flushAllPendingFrontmatterWrites();
       if (closing) {
@@ -324,19 +305,15 @@ export const tabStore = {
   /**
    * Closes all tabs except the given one.
    *
-   * Sprint B / B2 — same flush gate as `close`: drain pending writes
-   * before unmounting any of the soon-to-close editors.
-   *
-   * Phase 31 A1.4 — mirrors the per-tab `flushDirty` from `close()`: each
-   * closing tab's `.board.json` debounced write is awaited explicitly
-   * before the cache entry is dereferenced. Without this, a settings or
-   * placement mutation that scheduled its 300ms debounce mid-closeOthers
-   * could fire against a stale cache after the tab list narrows.
+   * Same flush gate as `close`: drain pending writes before unmounting any
+   * of the soon-to-close editors, and await each closing board's
+   * `.board.json` debounced write so it can't fire against a stale cache
+   * after the tab list narrows.
    */
   async closeOthers(tabId: string): Promise<void> {
     const keepBoardId = tabs.find((t) => t.id === tabId)?.boardId;
 
-    // A1.4 — collect the closing board ids first (dedupe so we don't
+    // Collect the closing board ids first (dedupe so we don't
     // double-flush when the same boardId is open in multiple tabs).
     const closingBoardIds: string[] = [];
     for (const t of tabs) {
@@ -344,18 +321,16 @@ export const tabStore = {
       if (!closingBoardIds.includes(t.boardId)) closingBoardIds.push(t.boardId);
     }
 
-    // Audit-17 5.7 — same close-drain gate as close(): editors go read-only for
-    // the whole drain → confirm → re-drain window so no keystroke can re-arm a
-    // debounce the bulk unmount would destroy. Gate lowered on every exit.
+    // Same close-drain gate as close(): editors go read-only for the whole
+    // drain → confirm → re-drain window so no keystroke can re-arm a
+    // debounce the bulk unmount would destroy.
     const proceed = await runWithCloseDrain(async () => {
-      // B2 — drain pending writes synchronously before bulk unmount.
-      //
-      // Phase 4 / 4.2 — same save-failure gate as `close()`: if any of the
-      // drains failed, prompt the user before destroying the editors.
+      // Same save-failure gate as `close()`: if any drain failed, prompt
+      // before destroying the editors.
       const mdResult = await flushAllMarkdownWriters();
       const fmResult = await flushAllPendingFrontmatterWrites();
 
-      // A1.4 — await every closing board's flush before mutating the tab list.
+      // Await every closing board's flush before mutating the tab list.
       let boardFailedCount = 0;
       for (const boardId of closingBoardIds) {
         const result = await boardCacheStore.flushDirty(boardId);
@@ -377,8 +352,7 @@ export const tabStore = {
         if (!ok) return false;
       }
 
-      // Audit-16 6.7 — belt-and-suspenders re-flush (now that 5.7 holds the
-      // editors read-only, the re-arm window is gone) before the bulk unmount.
+      // Belt-and-suspenders re-flush before the bulk unmount.
       await flushAllMarkdownWriters();
       await flushAllPendingFrontmatterWrites();
       for (const boardId of closingBoardIds) {
@@ -496,8 +470,7 @@ export const tabStore = {
   },
 };
 
-// Phase 4 (Consolidation 2026-05-25) — vault-swap reset registration.
-// Closes every open tab before the new vault hydrates so a tab pointing
+// Vault-swap reset: closes every open tab before the new vault hydrates so a tab pointing
 // at the prior vault's board id can't briefly render against the new
 // vault's project. `hydrateFromWorkspace` repopulates after the new
 // vault's workspace.json is parsed.

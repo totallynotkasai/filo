@@ -58,7 +58,7 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
-    // QA-11 — while an IME composition is active, Enter commits the candidate
+    // While an IME composition is active, Enter commits the candidate
     // word, not the task. Don't submit (or clear on Escape) mid-composition.
     if (e.isComposing) return;
     if (e.key === 'Enter' && !e.shiftKey) {

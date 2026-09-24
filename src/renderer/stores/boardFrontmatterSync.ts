@@ -8,14 +8,10 @@ import { CascadeDeleteCommand } from '../commands/index';
 /**
  * Board slice — external-edit reconciliation entry points.
  *
- * Phase R7 (Reactive BoardScope, 2026-05-26) — the cache slice
- * (`boardCacheFrontmatter`) handles persistence and is now the single source
- * of truth: the active-pane `tiles` map is `$derived` from
+ * The cache slice (`boardCacheFrontmatter`) handles persistence and is the
+ * single source of truth: the active-pane `tiles` map is `$derived` from
  * `boardCacheStore.cache[currentBoardId]` and re-fires automatically when the
- * cache settles. The pre-R7 runtime-mirror step (patching the runtime `tiles`
- * map to reflect newly-reconciled frontmatter / propagated rename targets) is
- * removed — the derivation does it for us, and removing it eliminates the
- * cache→runtime drift that the mirror was working around.
+ * cache settles, so no runtime mirroring is needed here.
  *
  * Cascade-delete-by-vault-path stays here because it owns the history
  * dispatch (snapshotting tiles + connections + style clears before the cache
@@ -42,20 +38,13 @@ export function makeFrontmatterSyncSlice(_ctx: BoardContext) {
     ): {
       removedTileIds: string[]; changedBoardIds: string[];
     } {
-      // Sprint 35.2 — pure scan. Style-clears are returned alongside the
-      // tile plan so the cascade command can replay them on undo.
+      // Pure scan. Style-clears are returned alongside the tile plan so the
+      // cascade command can replay them on undo.
       const targets = boardCacheStore.findCascadeDeleteTargets(deletedRelPath);
       const removedTileIds: string[] = [];
-      // Phase 1 / 1.3 — iterate every style-clear category instead of
-      // hand-listing them. The hand-listed form silently missed any
-      // future category added to `CascadeStyleClears` — including
-      // `columnCoverImage` (Sprint C / C23), which meant a deleted
-      // attachment used ONLY as a Kanban column header `coverImage`
-      // would set `targets.tileIds === []` and `hasStyleClears === false`,
-      // causing the whole branch to short-circuit and leaving the
-      // column referencing the now-missing file. The Object.values walk
-      // future-proofs the gate: every new style-clear bucket added to
-      // `CascadeStyleClears` participates automatically.
+      // Iterate every style-clear category rather than hand-listing them, so a
+      // new `CascadeStyleClears` bucket can't be missed (e.g. an attachment used
+      // only as a column cover would short-circuit here and stay referenced).
       const hasStyleClears = Object.values(targets.styleClears).some(
         (s) => s !== undefined && Object.keys(s).length > 0,
       );
@@ -64,12 +53,11 @@ export function makeFrontmatterSyncSlice(_ctx: BoardContext) {
       }
 
       // Snapshot the tiles + connections about to be removed so undo can
-      // restore them. Phase 31 A3.5 — the caller may also pass
-      // `fileSnapshots` (vault-relative .md path → body bytes captured
-      // BEFORE the delete IPC), which the command will write back on
-      // undo so restored tiles point at content again instead of broken
-      // refs. External deletes that bypass this path still surface a
-      // broken-ref badge as before.
+      // restore them. The caller may also pass `fileSnapshots`
+      // (vault-relative .md path → body bytes captured BEFORE the delete IPC),
+      // which the command writes back on undo so restored tiles point at
+      // content instead of broken refs. External deletes that bypass this
+      // path still surface a broken-ref badge.
       const byBoardTiles: Record<string, Tile[]> = {};
       const tileIdSet = new Set<string>(targets.tileIds);
       for (const [boardId, tileIds] of Object.entries(targets.byBoard)) {
@@ -98,12 +86,10 @@ export function makeFrontmatterSyncSlice(_ctx: BoardContext) {
         }
       }
 
-      // Sprint 35.2 — apply the style-clear plan AFTER snapshotting and
-      // BEFORE removing tiles. Mutating the cache here mirrors what the
-      // helper used to do inline, but the matched paths now live in the
-      // command's `styleClears` snapshot so undo can restore them. JSON
-      // round-trip rather than structuredClone because boardCache entries
-      // are Svelte 5 $state proxies (see feedback_no_structuredclone_on_state_proxies).
+      // Apply the style-clear plan AFTER snapshotting and BEFORE removing
+      // tiles; the matched paths live in the command's `styleClears` snapshot
+      // so undo can restore them. JSON round-trip rather than structuredClone because boardCache entries
+      // are Svelte 5 $state proxies.
       const styleClearsSnapshot = JSON.parse(JSON.stringify(targets.styleClears));
       if (hasStyleClears) {
         boardCacheStore.applyCascadeStyleClears(targets.styleClears);

@@ -1,7 +1,7 @@
 /**
  * ReplaceAllCommand — vault-wide find-and-replace, history-tracked.
  *
- * Sprint E.5. Mirrors the two-phase atomic pattern from
+ * Mirrors the two-phase atomic pattern from
  * `lib/vault/tagRewriteSweep.ts`:
  *
  *   Phase 1 — Read every candidate `.md` file, compute its rewritten
@@ -17,14 +17,12 @@
  * are surfaced via the find/find-all UI but skipped by Replace — the
  * semantics of renaming a tile title also need to consider whether the
  * backing file should rename, and that's a different code path
- * (`renameTitleCommand`). Future iterations can extend ReplaceAll to
- * cover titles once the rename-cascade tests are in place.
+ * (`renameTitleCommand`).
  *
- * Undo: restores every file's pre-replace snapshot via
- * `vault:write-existing-file-text`. Snapshots live on the command
- * instance, so dropping the command off the history stack drops the
- * recovery breadcrumb — `hasFileSnapshots()` is exposed so the history
- * truncation toast escalates appropriately (Phase 31 B4.8).
+ * Undo: restores every file's pre-replace snapshot. Snapshots live on the
+ * command instance, so dropping the command off the history stack drops the
+ * recovery breadcrumb — `hasFileSnapshots()` lets the history truncation
+ * toast escalate appropriately.
  */
 
 import { Command } from './Command';
@@ -98,16 +96,11 @@ async function buildPlans(
     // top). Translate body offsets back into raw-file offsets by measuring
     // the frontmatter prefix with the SAME splitter the search index used.
     //
-    // 3.1 (Audit-14) — `FileMetadata.content` is produced by
-    // `splitFrontmatterSource` (see `lib/vault/vaultIndex.ts`), so the FM byte
-    // length MUST come from that exact splitter or the offsets diverge. A prior
-    // local `findFrontmatterEnd` regex (`---\r?\n`) disagreed with the index's
-    // fence regex (`---[ \t]*\r?\n`) on a trailing-space fence (`--- \n`):
-    // it matched nothing, returned 0, and every match then failed the
-    // byte-equality guard below (silent skip) — or, at a colliding offset,
-    // could splice into the frontmatter. The body is a suffix of `content`
-    // (the splitter strips a BOM then slices), so its start offset in the raw
-    // file is exactly `content.length - body.length`.
+    // `FileMetadata.content` is produced by `splitFrontmatterSource`, so the FM
+    // length MUST come from that exact splitter — any other fence regex can
+    // disagree (e.g. on a trailing-space `--- \n`) and splice at wrong offsets.
+    // The body is a suffix of `content`, so its start offset in the raw file is
+    // exactly `content.length - body.length`.
     const { body: indexedBody } = splitFrontmatterSource(content);
     const fmEnd = content.length - indexedBody.length;
 
@@ -141,11 +134,8 @@ async function buildPlans(
 export class ReplaceAllCommand extends Command {
   description: string;
   /**
-   * Phase 2 (IMPLEMENTATION_PLAN_2026-05-27) — vault-wide write, not a
-   * board-scoped mutation. The field is set to '' in the constructor so
-   * the history dispatcher's truthy guard skips the board-match check
-   * (matching the prior optional-field semantics for this specific
-   * command).
+   * Vault-wide write, not a board-scoped mutation: '' so the history
+   * dispatcher's guard skips the board-match check.
    */
   readonly targetBoardId: string;
   private readonly vaultRoot: string;
@@ -153,8 +143,6 @@ export class ReplaceAllCommand extends Command {
 
   constructor(vaultRoot: string, plans: FilePlan[]) {
     super();
-    // Phase 2 — vault-wide command; empty string skips the history-store
-    // guard (see readonly targetBoardId doc above).
     this.targetBoardId = '';
     this.vaultRoot = vaultRoot;
     // allow-shallow: FilePlan members (path, content strings, replacement
@@ -170,15 +158,11 @@ export class ReplaceAllCommand extends Command {
   }
 
   async execute(): Promise<void> {
-    // L4 (Audit-13) — re-read each file at execute time rather than trusting the
-    // build-time snapshot. `buildPlans` captured `originalContent` (the undo
-    // snapshot) and `nextContent` when the plan was built; on a REDO (or any gap
-    // before execute) the disk may have moved. Confirm disk STILL equals the
-    // planned `originalContent`; if it diverged, skip that file — a blind write
-    // would (a) clobber the intervening edit and (b) leave the undo snapshot
-    // pointing at bytes we never overwrote — and name it in the aggregate toast.
-    // (The first execute runs same-tick after buildPlans, so nothing drifts
-    // there in practice; this only bites a stale redo.)
+    // Re-read each file rather than trusting the build-time snapshot, since
+    // on a REDO the disk may have moved. Only write when disk STILL equals the
+    // planned `originalContent`; otherwise skip (a blind write would clobber
+    // the intervening edit and desync the undo snapshot) and name it in the
+    // aggregate toast.
     const items: Array<{ path: string; content: string }> = [];
     const skipped: string[] = [];
     for (const p of this.plans) {
@@ -195,9 +179,7 @@ export class ReplaceAllCommand extends Command {
         skipped.push(p.path);
       }
     }
-    // Phase 6.6 — `writeAll` now writes AND reconciles each open editor per
-    // path via the coupled helper, so there is no separate batch reconcile
-    // here that could drift from the write list.
+    // `writeAll` writes AND reconciles each open editor per path.
     if (items.length > 0) {
       await this.writeAll(items);
       // Refresh the vault index so the search panel's matches re-derive against
@@ -218,18 +200,11 @@ export class ReplaceAllCommand extends Command {
   }
 
   async undo(): Promise<void> {
-    // Phase 3 / 3.6 — per-file drift check before reverting. `execute` wrote
-    // each file's `nextContent`; if a file's CURRENT disk content no longer
-    // equals that, it was edited (externally, or via another in-app path)
-    // AFTER the replace, so a blind revert to `originalContent` would silently
-    // clobber that newer edit. Skip such files and name them in one aggregate
-    // toast. A vanished / unreadable file is also skipped — recreating it from
-    // `originalContent` could resurrect a file the user deleted in the gap.
-    // (Skip + warn rather than N interactive prompts: this is a bulk op, so one
-    // aggregate is more usable than a per-file modal. L4 (Audit-13) — `execute`
-    // now drift-skips symmetrically: it re-reads each file and writes only when
-    // disk still equals the planned `originalContent`, so on a stale redo it
-    // won't clobber an intervening edit either.)
+    // Per-file drift check before reverting (symmetric with execute): if a
+    // file's CURRENT disk content no longer equals `nextContent`, it was edited
+    // after the replace and a blind revert would clobber that edit. A vanished /
+    // unreadable file is also skipped (reverting could resurrect a deleted
+    // file). Skipped files are named in one aggregate toast, not N prompts.
     const items: Array<{ path: string; content: string }> = [];
     const skipped: string[] = [];
     for (const p of this.plans) {
@@ -265,25 +240,15 @@ export class ReplaceAllCommand extends Command {
     const failed: string[] = [];
     for (const item of items) {
       try {
-        // Phase 6.6 — coupled write+reconcile. `mode: 'full'` reloads any open
-        // editor on this path with the rewritten bytes (its prior in-memory
-        // body would otherwise re-clobber the replace on the next debounce;
-        // `applyReloadFromDisk` self-cancels the armed writer). The reconcile
-        // is keyed to the SAME path we write, so it can't drift from the write
-        // list. `notifyOnError: false` keeps the bulk loop from spamming a
-        // toast per file — the aggregate toast below names the failures.
-        // Replace All is atomic with the pre-flight read, so routing through
-        // the debounced markdown gateway (which would race the in-flight
-        // searches) is deliberately bypassed.
+        // Coupled write+reconcile. `mode: 'full'` reloads any open editor on
+        // this path (its in-memory body would otherwise re-clobber the replace
+        // on the next debounce). `notifyOnError: false` avoids a toast per
+        // file — the aggregate toast below names the failures. The debounced
+        // markdown gateway is deliberately bypassed.
         //
-        // Audit-10 M1 — but still enrol on the per-path write chain so this
-        // bulk write serialises behind any in-flight editor/gateway write to
-        // the SAME `.md` (a debounced TextTile / DocumentEditor save executing
-        // at the IPC layer would otherwise race it — OS-arbitrated order, the
-        // loser's bytes silently lost). The coupled reconcile below cancels the
-        // editor's ARMED writer; the chain covers the already-in-flight one the
-        // cancel can't reach. `runSerializedMarkdownWrite` is ordering-only (no
-        // debounce), so it doesn't reintroduce the gateway race noted above.
+        // Still enrol on the per-path write chain so this write serialises
+        // behind an already-in-flight editor write to the same `.md` (which the
+        // reconcile's cancel can't reach). It's ordering-only, no debounce.
         await runSerializedMarkdownWrite(item.path, async () => {
           await writeMarkdownAndReconcile({
             vaultRoot: this.vaultRoot,

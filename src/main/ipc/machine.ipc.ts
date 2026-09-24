@@ -7,7 +7,7 @@ import { logMainError } from '../utils/mainLogger';
 import { parseSentinelBasename, type SentinelKind } from '../../shared/sentinelPaths';
 
 /**
- * Audit-19 EXT-6 (plan D5) — machine identity + the per-machine sentinel
+ * Machine identity + the per-machine sentinel
  * listing for a synced vault's `.filo/`.
  */
 export function registerMachineHandlers(): void {

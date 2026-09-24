@@ -9,7 +9,7 @@
  * `src/renderer/commands/` now declares `readonly targetBoardId: string`
  * and assigns it in its constructor. This test pins that contract: a
  * future command that forgets the field fails here in addition to the
- * `scripts/check-commands-have-target-board.mjs` CI gate.
+ * `scripts/gates:commands-target-board` CI gate.
  *
  * "AST walk" is overkill here — the declaration form is consistent
  * across the codebase (`readonly targetBoardId: string;` + `this.targetBoardId = ...;`)

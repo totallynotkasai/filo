@@ -3,7 +3,7 @@
  *
  * `relativeLuminance` and `getDynamicContrastText` use the WCAG 2.1
  * relative-luminance formula (sRGB linearisation + 0.2126/0.7152/0.0722
- * coefficients). Required by the Phase 4 Dynamic Contrast Text feature
+ * coefficients). Required by the Dynamic Contrast Text feature
  * because the design doc explicitly cites WCAG AA.
  */
 
@@ -98,7 +98,7 @@ export function hslToRgb({ h, s, l }: HSL): RGB {
   };
 }
 
-// ── WCAG 2.1 relative luminance (Phase 4 Dynamic Contrast Text) ──
+// ── WCAG 2.1 relative luminance (Dynamic Contrast Text) ──
 
 function linearize(channel: number): number {
   const c = channel / 255;

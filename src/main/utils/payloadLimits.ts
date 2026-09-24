@@ -1,5 +1,5 @@
 /**
- * Phase 21 / M5 — payload-size caps for every write-shaped IPC handler.
+ * Payload-size caps for every write-shaped IPC handler.
  *
  * Filo's IPC surface accepts content from the renderer (Markdown text,
  * board / config / theme JSON, base64 audio, …) and writes it to disk
@@ -56,23 +56,20 @@ export const PAYLOAD_LIMITS = {
   /** `media:save-audio` — base64-decoded audio bytes. */
   AUDIO: 100 * MB,
   /**
-   * Legacy single-file binary IPC cap shared by `vault:write-file-binary`
+   * Single-file binary IPC cap shared by `vault:write-file-binary`
    * (cascade-delete restore) and `export:save` (PNG/SVG/PDF export
    * payloads). 200 MB allows a 4K screen capture or a long high-bitrate
    * recording to survive an export round-trip without false rejection.
    *
    * NOTE: this is NOT the cap used by `media:read-file` — that uses
-   * `MEDIA_READ_INLINE` below. See C20.
+   * `MEDIA_READ_INLINE` below.
    */
   MEDIA: 200 * MB,
   /**
-   * `media:read-file` — disk file size for inline media reads. Caps the
-   * base64-encoded buffer the renderer pulls into memory for a single
-   * tile (image / video poster / audio waveform). The 200 MB legacy cap
-   * was sized for `filo://` streaming, but the inline IPC path keeps the
-   * whole base64 string in renderer memory and so needs a tighter
-   * ceiling. 25 MB covers every legitimate inline-use image / audio while
-   * blocking accidental drag-drops of multi-GB raw video. Sprint C / C20.
+   * `media:read-file` — disk file size for inline media reads. The inline
+   * IPC path keeps the whole base64 string in renderer memory, so it needs
+   * a tighter ceiling than MEDIA. 25 MB covers every legitimate inline-use
+   * image / audio while blocking accidental multi-GB raw video.
    */
   MEDIA_READ_INLINE: 25 * MB,
 } as const;

@@ -28,7 +28,7 @@ import type { ProjectSettings, WorkspaceState } from '@renderer/schema/index';
  * Audit-18 Phase 1 — the dogfood-unblock fix set (3 HIGH + 3 small MEDIUMs).
  * Each describe block locks one fix's load-bearing behaviour. The component-
  * internal guards (H3 TextTile) are additionally pinned by
- * `scripts/check-no-silent-write-abort.mjs`; these tests lock the gateway /
+ * `scripts/gates:no-silent-write-abort`; these tests lock the gateway /
  * primitive facts those guards depend on.
  */
 

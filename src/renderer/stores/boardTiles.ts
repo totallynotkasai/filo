@@ -11,7 +11,7 @@ import { renameAllPathKeys } from '../lib/vault/renamePathKeys';
 import type { BoardContext } from './boardStoreTypes';
 
 /**
- * Phase 5 / 5.6 — return shape of `renameTextTileBackingFile`. When the
+ * Return shape of `renameTextTileBackingFile`. When the
  * rename touched the backing `.md` file, `oldPath` and `newPath` are set
  * so the caller can push a `RenameTitleCommand` that knows how to reverse
  * the disk-side rename. For no-file-rename branches (no vault open, no
@@ -31,7 +31,7 @@ export interface RenameTextTileResult {
 /**
  * Board slice — tile CRUD for the active board. Every mutation is forwarded
  * to the cache (`boardCacheStore.persist*Tile`), which is the single source
- * of truth in the reactive-BoardScope world (Phase R7). The pane's spatial
+ * of truth in the reactive-BoardScope world. The pane's spatial
  * index is also updated imperatively so single-pane drag / resize / rubber-
  * band selection still sees fresh geometry without waiting for a reactive
  * recompute.
@@ -57,7 +57,7 @@ export function makeTilesSlice(ctx: BoardContext) {
         // Hard-reject: persisting a Zod-invalid tile writes a malformed shape
         // to disk, where the next loadBoard silently drops it — losing the
         // placement (and any inline Link/Iframe/Timer data). Mirror updateTile's
-        // reject-and-warn rather than persisting the bad tile anyway. (Audit 1.2)
+        // reject-and-warn rather than persisting the bad tile anyway.
         console.warn('[boardStore.addTile] Rejecting invalid tile:', parsed.error.issues);
         uiStore.toast('Could not add tile — invalid data (see console)', 'error', 4000);
         return;
@@ -138,7 +138,7 @@ export function makeTilesSlice(ctx: BoardContext) {
       newTitleHtml: string | undefined,
       homeBoardId?: string,
     ): Promise<RenameTextTileResult> {
-      // Audit-17 4.1 — resolve from the active scope first, falling back to
+      // Resolve from the active scope first, falling back to
       // the home board's cache when given. The fallback serves the unmount-
       // time blur-commit (TileHeader's teardown): clicking another tab both
       // blurs AND unmounts, so by the time the commit runs the pane's scope
@@ -193,9 +193,8 @@ export function makeTilesSlice(ctx: BoardContext) {
       }
 
       // `vaultStore.rename` wraps the sequence in `withDrainedWrites`, which
-      // drains every markdown writer (editor gateway + shim flushers) before
-      // issuing the IPC rename (Phase 8.2 / R2), so the per-tile markdown
-      // flush that used to live here is no longer needed.
+      // drains every markdown writer before issuing the IPC rename, so no
+      // per-tile markdown flush is needed here.
 
       const docId = (tile as Tile & { contentId?: string }).contentId;
       const existingDoc = documentStore.findByFilename(newRel);
@@ -228,14 +227,9 @@ export function makeTilesSlice(ctx: BoardContext) {
         return { success: false };
       }
 
-      // Phase 6.1.R4 — `vaultStore.rename` runs `renameAllPathKeys`
-      // inside `runRename`, but only when the rename is a sidebar /
-      // folder-ops cascade. The text-tile path goes through
-      // `vaultStore.rename` (which calls the disk-shape IPC) but DOES
-      // include the runRename cascade because the wrapper goes through
-      // `vaultFolderOps`. This extra call is defense-in-depth: covers
-      // the case where a future code path renames the text-tile
-      // backing file without going through the full cascade.
+      // `vaultStore.rename` already runs `renameAllPathKeys` via the
+      // `vaultFolderOps` cascade. This extra call is defense-in-depth for a
+      // code path that renames the backing file without the full cascade.
       renameAllPathKeys(oldRel, newRel);
 
       applyTileUpdate({ title: newTitle, titleHtml: newTitleHtml });
@@ -283,7 +277,7 @@ export function makeTilesSlice(ctx: BoardContext) {
         if (!parsed.success) {
           // Skip the bad update — persisting a Zod-invalid merged tile would
           // write a malformed shape that loadBoard drops on next open. Mirror
-          // updateTile's hard-reject rather than persisting anyway. (Audit 1.2)
+          // updateTile's hard-reject rather than persisting anyway.
           console.warn(`[boardStore.batchUpdateTiles] Rejecting invalid update for ${id}:`, parsed.error.issues);
           dropped++;
           continue;

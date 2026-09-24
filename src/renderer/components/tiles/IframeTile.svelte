@@ -21,11 +21,11 @@
   let loadFailed = $state(false);
 
   const safety = $derived(tile.url ? isSafeIframeUrl(tile.url) : { ok: true });
-  // Phase 5 — `asSafeIframeSrc` is the canonical security gate; the
+  // `asSafeIframeSrc` is the canonical security gate; the
   // `safety.ok` check above keeps the existing user-facing reason string,
   // but `safeSrc` is the value actually bound to the embed below. The two
   // MUST agree on rejection (both allowlist http(s) only); the CI gate
-  // `check-untrusted-sink-discipline.mjs` enforces that the tag goes
+  // `scripts/gates:untrusted-sinks` enforces that the tag goes
   // through this validator.
   const safeSrc = $derived(asSafeIframeSrc(tile.url));
 
@@ -137,8 +137,8 @@
       <!-- Blocker prevents iframe from eating canvas pan events.
            Double-click the tile to enter interact mode. -->
       {#if !interacting}
-        <!-- Audit-14 5.8 — role=button + Enter/Space give a keyboard path into
-             interact mode (was dblclick-only). Double-click stays the mouse
+        <!-- role=button + Enter/Space give a keyboard path into interact
+             mode. Double-click stays the mouse
              affordance so a single canvas click can't accidentally arm it. -->
         <div
           class="iframe-blocker"

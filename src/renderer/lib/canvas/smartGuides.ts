@@ -35,7 +35,7 @@ const DEFAULT_THRESHOLD = 8; // pixels in canvas space
 const MAX_GUIDES = 6;
 
 /**
- * Sprint B / B7 — keep only the N other-tiles closest to the dragged tile
+ * Keep only the N other-tiles closest to the dragged tile
  * by L∞ distance (max of |Δx|, |Δy|) between tile centres. Mutates `tiles`
  * in place when it exceeds `max`; otherwise leaves it untouched. Returning
  * void rather than a new array keeps the GC pressure low — this runs every

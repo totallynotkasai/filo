@@ -1,9 +1,7 @@
 /**
- * Audit-19 ERR-4 — the actionable notice for a board that couldn't be read at
- * vault open because the file was locked (OneDrive / antivirus), online-only
- * while offline, or hit a transient IO error. Before, it read as "not-found"
- * and the board was gone for the session; the only way back was reopening the
- * vault.
+ * The actionable notice for a board that couldn't be read at vault open because
+ * the file was locked (OneDrive / antivirus), online-only while offline, or hit
+ * a transient IO error — so the board isn't simply gone for the session.
  *
  * Sticky (it stays until acted on), keyed per board path, with a Retry that
  * adopts the board into the running session (`adoptBoardAtRuntime`, loaded

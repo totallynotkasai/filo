@@ -2,8 +2,7 @@
   /**
    * TaskListRow — thin wrapper around <TaskItem> for the Task List board.
    *
-   * Promoted from the inline `renderRow` snippet in TaskListBoard.svelte
-   * (Phase 5.8g). The wrapper layer exists because:
+   * The wrapper layer exists because:
    *   - the dndzone keys off `.tasklist-row-wrap`, so the surrounding div
    *     must carry `data-task-id` and the wrap class;
    *   - `<TaskItem>` receives a flat task contract (`task: Tile` + 20+

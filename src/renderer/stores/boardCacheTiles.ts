@@ -10,14 +10,6 @@ import type { CacheContext } from './boardCacheTypes';
  * is a compile error in `core/boardTileOps.ts` until it ships per-type
  * ops.
  *
- * Phase 2 of CONSOLIDATION_PLAN_2026-05-25 — before this lift the body
- * here cast the board to `MindMapBoard` and operated on `.placements` /
- * `.inlineTiles`, fields that don't exist on Kanban / Task List boards.
- * Every renderer entry point (TileHeader, AppShell multi-delete, orphan
- * catcher, DeleteTilesCommand, CascadeDeleteCommand, ...) funnels through
- * this slice; the MindMap-only body silently left orphan placements on
- * disk every time a non-MindMap tile got deleted (bug #2).
- *
  * Active-proxy reactivity contract
  * --------------------------------
  * MindMap uses the **opposite** pattern to Kanban / Task List: the canonical
@@ -73,12 +65,9 @@ export function makeTilesSlice(ctx: CacheContext) {
     async persistAddTile(
       tile: Tile,
       options?: { skipEmptySeed?: boolean },
-      // 6.4.M20 — explicit target board. During cascade-delete rollback the
-      // tile is being RE-ADDED, so it isn't in any board's cache yet and the
-      // findBoardIdForTile memo scan can't resolve it (it invalidates the now-
-      // stale entry and finds nothing), silently dropping the re-add. The
-      // caller (CascadeDeleteCommand.undo) already knows the owning board, so
-      // it passes it here; tile.boardId and the scan stay the fallbacks.
+      // Explicit target board. A tile RE-ADDED by cascade-delete rollback isn't
+      // in any board's cache yet, so the findBoardIdForTile scan can't resolve
+      // it and the re-add would be dropped. tile.boardId and the scan are fallbacks.
       boardId?: string,
     ): Promise<void> {
       // Resolve boardId once at the top. Prefer the explicit arg, then the
@@ -103,10 +92,8 @@ export function makeTilesSlice(ctx: CacheContext) {
 
     persistRemoveTile(tileId: string): void {
       const boardId = ctx.findBoardIdForTile(tileId);
-      // Audit-16 6.5 — warn instead of bare-returning (sibling of the
-      // persistAddTile fix above): an unresolved boardId here means a remove
-      // the cache never applied (e.g. a cascade delete hitting an evicted
-      // board cache entry), which would otherwise vanish without a trace.
+      // Warn rather than bare-return: an unresolved boardId means a remove the
+      // cache never applied (e.g. a cascade delete hitting an evicted entry).
       if (!boardId) {
         ctx.warnUnresolved('persistRemoveTile', `tile ${tileId}`);
         return;
@@ -120,7 +107,7 @@ export function makeTilesSlice(ctx: CacheContext) {
 
     persistUpdateTile(tileId: string, updates: Partial<Tile>, boardId?: string): void {
       const resolvedBoardId = boardId ?? ctx.findBoardIdForTile(tileId);
-      // Audit-16 6.5 — same warn-not-swallow as persistRemoveTile above.
+      // Same warn-not-swallow as persistRemoveTile above.
       if (!resolvedBoardId) {
         ctx.warnUnresolved('persistUpdateTile', `tile ${tileId}`);
         return;

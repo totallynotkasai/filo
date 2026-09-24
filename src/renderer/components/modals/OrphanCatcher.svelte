@@ -7,14 +7,12 @@
    */
   import { onMount } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
-  // Audit-11 R2 — this modal renders at the AppShell root (outside any pane's
-  // `BoardScope` context), so it cannot read a pane scope via `getContext`.
-  // It doesn't need to: the global `boardStore` is the facade Proxy that
-  // delegates to the FOCUSED pane's scope (`getActiveScope()`), NOT a stale
-  // global like R1's `tabStore.activeTab`. `orphansStore.rescan()` reads
+  // This modal renders at the AppShell root (outside any pane's `BoardScope`
+  // context), so it cannot read a pane scope via `getContext`. It doesn't need
+  // to: the global `boardStore` is the facade Proxy that delegates to the
+  // FOCUSED pane's scope (`getActiveScope()`). `orphansStore.rescan()` reads
   // through the SAME facade, so the scan and this modal's `getTile` /
   // `removeTilesWithHistory` always target the same (focused-pane) board.
-  // Pane-correct by construction — no change needed beyond this note.
   import { boardStore } from '../../stores/board.svelte';
   import { canvasStore } from '../../stores/canvas.svelte';
   import { uiStore } from '../../stores/ui.svelte';
@@ -62,17 +60,16 @@
 
   function remove(info: OrphanInfo) {
     boardStore.removeTilesWithHistory([info.tileId]);
-    // Audit 6.1 — the per-row delete stays single-tap (see the bulk-delete
-    // note below) but was previously silent. Surface a toast with the undo
-    // hint so the action isn't invisible, matching the feedback the bulk
+    // The per-row delete stays single-tap (see the bulk-delete note below);
+    // surface a toast with the undo hint so the action isn't invisible, matching the feedback the bulk
     // paths get from their confirm dialog.
     uiStore.toast('Tile deleted — Ctrl+Z to undo', 'info', 2500);
     rescan();
   }
 
-  // Phase C / C.2 — bulk-delete entry points route through `uiStore.openConfirm`
+  // Bulk-delete entry points route through `uiStore.openConfirm`
   // so the destructive action picks up the in-app ConfirmDialog chrome
-  // (focus management from C.6, reduced motion, unified Esc/Enter). The
+  // (focus management, reduced motion, unified Esc/Enter). The
   // per-row `remove` action stays single-tap because it operates on one
   // already-named tile and the user already chose it (it gives toast
   // feedback instead of a confirm — see `remove` above).

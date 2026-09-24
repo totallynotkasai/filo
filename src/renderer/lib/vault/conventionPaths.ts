@@ -25,7 +25,7 @@ export function fileNameSafe(name: string): string {
       .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
       .replace(/\s+/g, ' ')
       .trim()
-      // Audit-19 ERR-2 — Windows strips a trailing dot/space and main rejects
+      // Windows strips a trailing dot/space and main rejects
       // one (`assertSafeFilename`), so "Call Bob." becomes `Call Bob`.
       .replace(/[. ]+$/, '') || 'Untitled'
   );
@@ -37,7 +37,7 @@ export function fileNameSafe(name: string): string {
  * Folder may be empty (vault root). Collisions get `" (N)"` suffixes; the
  * lowest free integer ≥ 2 wins.
  *
- * Audit-19 BL-1 — `taken` is case-folded (NTFS/APFS treat `Groceries.md` and
+ * `taken` is case-folded (NTFS/APFS treat `Groceries.md` and
  * `groceries.md` as one file), prefers a def's explicit `filePath`, and folds
  * in `extraTaken` (the on-disk tree, via `nextFreeMdPath`). This is only the
  * PRE-PICK: the create-exclusive `vault:create-file-text` channel is the
@@ -69,7 +69,7 @@ export function nextUniqueMdPath(
 }
 
 /**
- * Audit-19 BL-1 — disk-aware pre-pick: `nextUniqueMdPath` over the board cache
+ * Disk-aware pre-pick: `nextUniqueMdPath` over the board cache
  * PLUS every file in the live vault tree, so a file that exists on disk but is
  * on no board is not picked. The cache is a parameter (callers pass
  * `boardCacheStore.cache`) to keep this module free of a boardCache import
@@ -120,8 +120,7 @@ export function normalizeRootFolder(activeRootFolder: string | undefined | null)
  *
  * The board param is read through `.passthrough()`'s untyped escape hatch so
  * the helper is board-type-agnostic — every board variant's
- * `BaseBoardSettingsSchema` carries `defaultFolder` since the schema change
- * in step 1 of the per-board-default plan.
+ * `BaseBoardSettingsSchema` carries `defaultFolder`.
  */
 export function getActiveContentFolder(board: Board | null): string {
   const vaultPin = normalizeRootFolder(vaultStore.activeRootFolder);

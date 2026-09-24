@@ -1,14 +1,10 @@
 /**
  * loadVersionedFile — the single migrate-then-validate path for every
- * versioned `.filo/` config file (Phase 4 / E2, recurrence-proofs F6).
+ * versioned `.filo/` config file.
  *
- * F6 was: the board / tags / layout-template envelopes each grew a
- * `version` field and a `migrate*` scaffold, but two of the three loaders
- * (`tagsStorage`, `layoutTemplateStore`) called `Schema.safeParse(raw)`
- * directly and never ran their migrator. A `version: 99` file written by a
- * future Filo therefore parsed clean against the broadened
- * `z.number().int()` version field, and an older build re-saved it → silent
- * downgrade.
+ * A loader that calls `Schema.safeParse(raw)` directly without its migrator
+ * would accept a `version: 99` file written by a future Filo, and an older
+ * build would then re-save it → silent downgrade.
  *
  * This helper bundles the three steps that must always happen together:
  *
@@ -20,7 +16,7 @@
  *
  * Every versioned-config loader routes through here so the "forgot to
  * migrate" failure mode is structurally gone for the configs that share
- * the migrator shape. `scripts/check-versioned-config-loader.mjs` enforces
+ * the migrator shape. `scripts/gates:versioned-config` enforces
  * that any `.safeParse` / `.parse` against a versioned schema lives in a
  * file that also references this helper (or the matching migrator), so the
  * next versioned config type can't skip the migrate step either.

@@ -12,9 +12,8 @@
 
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
   const boardStore = scope.board;
-  // Phase C / C.4 — connections are now selectable via click; the
-  // SelectionScope's `selectedConnectionIds` was already present but
-  // unused at the component level. Wired here + on the Delete shortcut.
+  // Connections are selectable via click (SelectionScope's
+  // `selectedConnectionIds`); wired here + on the Delete shortcut.
   const selectionStore = scope.selection;
   import { getBubblePosition } from '../../lib/connections/bubblePositions';
   import { computePath, computeArrowHead, getPointOnPath, getAngleOnPath } from '../../lib/connections/pathRouter';
@@ -28,7 +27,7 @@
     connection: Connection;
     spatialIndex?: import('../../lib/spatialIndex').SpatialIndex;
     /**
-     * 3.3 — path precomputed by ConnectionLayer (computed once and shared
+     * Path precomputed by ConnectionLayer (computed once and shared
      * with this connection's label). When provided, ConnectionPath uses it
      * instead of recomputing — halving per-frame `computePath` calls. Falls
      * back to its own computation when rendered without it.
@@ -46,7 +45,7 @@
   );
 
   let pathD = $derived.by(() => {
-    // 3.3 — prefer the path ConnectionLayer already computed (shared with
+    // Prefer the path ConnectionLayer already computed (shared with
     // the label); only compute locally when rendered without the prop.
     if (pathDProp !== undefined) return pathDProp;
     if (!fromTile || !toTile) return '';
@@ -129,7 +128,7 @@
     oncontextmenu?.(e, connection);
   }
 
-  // Phase C / C.4 — click selects this connection. Shift-click adds to
+  // Click selects this connection. Shift-click adds to
   // the existing connection selection without clobbering it. We stop
   // propagation so the canvas-background click handler doesn't fire
   // (which would clear the selection we just set).

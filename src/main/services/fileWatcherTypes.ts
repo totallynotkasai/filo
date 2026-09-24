@@ -6,7 +6,7 @@
  * without pulling in `electron`/`fs` (Vitest jsdom environment can't load
  * those).
  *
- * Phase 3 / 3.2 — `config` is split into three granular subtypes (tags /
+ * `config` is split into three granular subtypes (tags /
  * theme / template) so the renderer's exhaustive `dispatchExternalChange`
  * can drive a dedicated reconciler per file kind. The bare `config` kind
  * is retained for `.filo/` files that have no dedicated reconciler today

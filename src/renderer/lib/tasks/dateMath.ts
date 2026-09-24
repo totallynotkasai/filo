@@ -3,7 +3,7 @@
  *
  * Pure: no globals, no Date.now(). Callers supply the base date. Kept separate
  * from `recurrence.ts` / `quickAddParser.ts` so both the recurrence engine and
- * the quick-add parser apply the SAME month-end rule (Audit-8 L6).
+ * the quick-add parser apply the SAME month-end rule.
  */
 
 /**

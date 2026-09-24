@@ -1,7 +1,5 @@
 /**
- * watcherSupervisor — Phase 3 / 3.1.
- *
- * Owns the reopen state machine for `FileWatcher`'s live `fs.watch` handle.
+ * watcherSupervisor — owns the reopen state machine for `FileWatcher`'s live `fs.watch` handle.
  * Three states:
  *
  *  - `active`        — the OS watch handle is alive and emitting events

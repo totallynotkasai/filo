@@ -100,7 +100,7 @@
 
   function applyLink(url: string) {
     const editor = linkSavedEditor;
-    // Audit-19 UX-1 — a non-editable (read-only / frozen) editor refuses edits.
+    // A non-editable (read-only / frozen) editor refuses edits.
     if (!editor || !editor.isEditable) return;
     const ok = editor
       .chain()
@@ -109,7 +109,7 @@
       .extendMarkRange('link')
       .setLink({ href: url })
       .run();
-    // Audit-19 UX-2 — surface a refused href (it used to fail silently).
+    // Surface a refused href rather than failing silently.
     if (!ok) uiStore.toast(LINK_REFUSED_MESSAGE, 'error');
   }
 

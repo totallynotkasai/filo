@@ -34,16 +34,15 @@ export interface DocumentState {
 }
 
 /**
- * Phase 27 / A4 — read-only docs.
+ * Read-only docs.
  *
  * When `loadMarkdownIntoEditor` detects that the body failed to round-trip
  * through tiptap-markdown (Obsidian callouts, math blocks, `==highlight==`,
  * etc.), the doc is added to this set so the debounced markdown writers
- * skip it. The user can flip it off via `takeOwnership(docId)` — a confirm
- * dialog before that point sells the trade-off ("this will overwrite the
- * file with what Filo can read"). Stored separately from `DocumentState`
- * so docs that haven't been registered via `loadDocument` (rare — but
- * possible during the first hydrate) can still be marked.
+ * skip it. The user can flip it off via `takeOwnership(docId)` after a
+ * confirm dialog. Stored separately from `DocumentState` so docs not yet
+ * registered via `loadDocument` (possible during the first hydrate) can
+ * still be marked.
  */
 const readOnlyDocs = new SvelteSet<string>();
 let readOnlyVersion = $state(0);
@@ -54,13 +53,11 @@ const openDocuments = new SvelteMap<string, DocumentState>();
 let activeDocId = $state<string | null>(null);
 
 /**
- * Audit 3.3 — the vault these documents belong to. Bound to the INCOMING
- * vault when `clear()` runs in the `document` pre-swap handler, which fires
- * while the OUTGOING vault is still semantically active (the committed vault
- * path hasn't flipped yet). A stale tile `$effect` from the outgoing vault
- * that fires loadDocument before it unmounts would otherwise repopulate the
- * map with the old vault's content; a subsequent debounced write would then
- * emit that old vault-relative path into the new vault's root. `loadDocument`
+ * The vault these documents belong to. Bound to the INCOMING vault when
+ * `clear()` runs in the pre-swap handler (while the outgoing vault is still
+ * semantically active). A stale tile `$effect` from the outgoing vault could
+ * otherwise repopulate the map with old-vault content, and a later debounced
+ * write would emit that path into the new vault's root. `loadDocument`
  * refuses inserts whose live `getActiveVaultPath()` doesn't match `boundVault`.
  * `null` means unbound (first open / post-close) — the first load then adopts
  * the live vault. Read via the `activeVaultPath` leaf (not `vaultStore`) to
@@ -69,15 +66,12 @@ let activeDocId = $state<string | null>(null);
 let boundVault: string | null = null;
 
 /**
- * Per-writer dirty tracking (audit 2.3). Each open editor on a file (a
- * TextTile and/or a DocumentEditor share one docId) adds its stable
- * `callerId` here when it has unsaved content and removes it on a successful
- * flush. `DocumentState.isDirty` stays true while ANY writer is still dirty,
- * so one editor flushing can't clear the shared flag out from under a sibling
- * editor that still has unsaved keystrokes — which would let the sibling's
- * reload `$effect` (gated on `isDirty`) reload from a stale store body and
- * drop a keystroke for one cycle. Callers that pass no `writerId` keep the
- * legacy "clear everything" semantics, so existing call sites are unaffected.
+ * Per-writer dirty tracking. Each open editor on a file (a TextTile and/or a
+ * DocumentEditor share one docId) adds its stable `callerId` here when it has
+ * unsaved content and removes it on a successful flush. `DocumentState.isDirty`
+ * stays true while ANY writer is still dirty, so one editor flushing can't
+ * clear the shared flag under a sibling that still has unsaved keystrokes.
+ * Callers that pass no `writerId` get "clear everything" semantics.
  */
 const dirtyWriters = new SvelteMap<string, SvelteSet<string>>();
 
@@ -103,12 +97,12 @@ const frontmatterCache = new SvelteMap<string, Record<string, unknown>>();
 let frontmatterVersionTick = $state(0);
 
 /**
- * Audit2 / 1.2 — verbatim frontmatter source bytes per docId, captured when an
- * authoritative disk read seeds the cache (`setFrontmatter` / `applyReloadFromDisk`
- * with a non-empty `rawFrontmatter`). Its PRESENCE is the "clean" signal: while
- * an entry exists, the on-disk frontmatter is byte-identical to what we parsed,
+ * Verbatim frontmatter source bytes per docId, captured when an authoritative
+ * disk read seeds the cache (`setFrontmatter` / `applyReloadFromDisk` with a
+ * non-empty `rawFrontmatter`). Its PRESENCE is the "clean" signal: while an
+ * entry exists, the on-disk frontmatter is byte-identical to what we parsed,
  * so a body-only save can emit it verbatim (preserving comments, key order, and
- * line endings) instead of re-dumping the object through js-yaml.
+ * line endings) instead of re-serialising the object.
  *
  * Any frontmatter MUTATION — `mergeFrontmatter`, or a `setFrontmatter` that
  * carries no disk bytes (a PropertiesPopup / task / kanban write) — drops the
@@ -119,17 +113,13 @@ let frontmatterVersionTick = $state(0);
 const rawFrontmatterCache = new SvelteMap<string, string>();
 
 /**
- * Audit2 4.8 — the last frontmatter SOURCE bytes read from disk for a docId,
- * retained ACROSS in-app mutations (unlike `rawFrontmatterCache`, whose
- * clean-signal drops the entry the moment the object changes). On a dirty write
- * the source-preserving engine (`patchFrontmatterSourceCst`) diffs the live object
+ * The last frontmatter SOURCE bytes read from disk for a docId, retained
+ * ACROSS in-app mutations (unlike `rawFrontmatterCache`). On a dirty write the
+ * source-preserving engine (`patchFrontmatterSourceCst`) diffs the live object
  * against THIS baseline and re-emits only the changed keys, so comments / key
- * order / quoting on every untouched key survive a metadata edit (the fix for
- * the lossy-round-trip KNOWN_LIMITATION #1). Refreshed on every authoritative
- * disk read; never cleared by a mutation (the file on disk still holds these
- * bytes until our write lands, and comments don't change across edits). It is
- * data-safe even when stale: the engine always emits the full live object, so
- * the worst case is preserving comments from a slightly older read.
+ * order / quoting on every untouched key survive a metadata edit. Refreshed on
+ * every authoritative disk read; never cleared by a mutation. Data-safe even
+ * when stale: the engine always emits the full live object.
  */
 const originalFrontmatterCache = new SvelteMap<string, string>();
 
@@ -141,7 +131,7 @@ const originalFrontmatterCache = new SvelteMap<string, string>();
 function noteRawFrontmatter(docId: string, rawFrontmatter: string | undefined): void {
   if (rawFrontmatter !== undefined && rawFrontmatter.trim().length > 0) {
     rawFrontmatterCache.set(docId, rawFrontmatter);
-    // 4.8 — persist the disk baseline for source-preserving dirty writes. NOT
+    // Persist the disk baseline for source-preserving dirty writes. NOT
     // dropped in the else branch: a mutation clears the clean signal above, but
     // the engine still needs the original bytes to diff against.
     originalFrontmatterCache.set(docId, rawFrontmatter);
@@ -152,25 +142,19 @@ function noteRawFrontmatter(docId: string, rawFrontmatter: string | undefined): 
 
 /**
  * Per-docId monotonic mutation counter — the write-staleness TOKEN. Every
- * `mergeFrontmatter` / `setFrontmatter` call increments the docId's entry,
- * and (Audit-16 1.1) so does every body change via `updateContent`: a body
- * mutation makes a previously-flushed snapshot stale in exactly the way an
- * FM mutation does, so a writer that captures the value at schedule time can
- * later detect whether another writer (TaskListBoard ↔ DocumentEditor, etc.)
- * has since flushed a newer version to disk. Used by
- * `frontmatterWriteScheduler` to skip stale debounced writes that would
- * otherwise clobber a fresher one. Before 1.1 the counter covered ONLY FM
- * mutations, so a delta-less body write (Task notes) fired with
- * `scheduledVersion <= lastFlushedVersion`, bare-returned as SUCCESS, and the
- * second-and-later notes edits silently died on quit.
+ * `mergeFrontmatter` / `setFrontmatter` call increments the docId's entry, and
+ * so does every body change via `updateContent` (a body mutation makes a
+ * flushed snapshot stale just like an FM mutation). A writer that captures the
+ * value at schedule time can later detect whether another writer has since
+ * flushed a newer version. Used by `frontmatterWriteScheduler` to skip stale
+ * debounced writes. Without the body bump, a delta-less body write (Task notes)
+ * would be skipped as stale and reported as success — lost on quit.
  *
  * NOT deleted on `clearFrontmatter` / `unloadDocument` (cleared only on the
- * whole-store `clear()`, i.e. vault swap — matching the scheduler's
- * `lastFlushedVersion` lifecycle). docIds are stable tile contentIds, so an
- * unload+reopen reuses the docId; resetting the counter while the scheduler's
- * last-flushed entry survives would make every early write after a reopen
- * compare `scheduledVersion <= last` against the PRE-unload high-water mark
- * and skip — the same silent-drop class 1.1 closes.
+ * whole-store `clear()`, matching the scheduler's `lastFlushedVersion`
+ * lifecycle). docIds are stable, so an unload+reopen reuses the docId;
+ * resetting the counter would make early writes after a reopen compare against
+ * the pre-unload high-water mark and be silently skipped.
  *
  * Kept outside `frontmatterCache` so external-edit reloads can bump it
  * without rebuilding the cache Map (which Svelte tracks as a single
@@ -179,16 +163,12 @@ function noteRawFrontmatter(docId: string, rawFrontmatter: string | undefined): 
 const mutationVersions = new SvelteMap<string, number>();
 
 /**
- * Audit-16 1.1 — per-docId count of BODY bumps folded into `mutationVersions`
- * (bumped only by `updateContent`, always in lockstep with the shared map).
- * Lets `getFrontmatterOnlyMutationVersion` recover the FM-only count
- * (shared − body) for consumers that must ignore body churn — the disk-FM
- * refresh seed (`seedDocumentFrontmatterFromDisk`) compares FM-only versions
- * so a racing notes keystroke doesn't block the refresh (which would strand
- * the cache on the source-baseline-less index placeholder and force a lossy
- * FM re-dump). Same lifecycle as `mutationVersions` by construction
- * (SvelteMap to match the store's lint conventions, not for reactivity —
- * nothing reads it from a template).
+ * Per-docId count of BODY bumps folded into `mutationVersions` (bumped only by
+ * `updateContent`, in lockstep with the shared map). Lets
+ * `getFrontmatterOnlyMutationVersion` recover the FM-only count (shared − body)
+ * for consumers that must ignore body churn — e.g. the disk-FM refresh seed,
+ * so a racing notes keystroke doesn't block the refresh. Same lifecycle as
+ * `mutationVersions` (SvelteMap for lint conventions, not reactivity).
  */
 // allow-module-state: cleared in clear() alongside mutationVersions (vault swap)
 const bodyMutationVersions = new SvelteMap<string, number>();
@@ -241,15 +221,12 @@ export const documentStore = {
   },
 
   /**
-   * Audit2 2.2 — true while `writerId` (one editor view, keyed by its stable
-   * callerId) still holds unsaved content for `docId`. Each editor's reload
-   * `$effect` gates on its OWN writer here instead of the shared `isDirty`
-   * flag: once any view dirties the doc, the shared flag would freeze EVERY
-   * view's reload, so two views editing the same file inside one debounce
-   * window diverge and the last writer's full-body flush silently drops the
-   * other's keystrokes (contradicting design decision #4). Gating per-writer
-   * lets a still-clean sibling reload the latest body before the user types
-   * into it, so both edits survive.
+   * True while `writerId` (one editor view, keyed by its stable callerId)
+   * still holds unsaved content for `docId`. Each editor's reload `$effect`
+   * gates on its OWN writer here instead of the shared `isDirty` flag, which
+   * would freeze every view's reload — two views editing inside one debounce
+   * window would diverge and the last full-body flush would drop the other's
+   * keystrokes. Per-writer gating lets a clean sibling reload the latest body.
    *
    * Reactive — reads the SvelteMap/SvelteSet so a reading effect re-runs when
    * the writer's dirty state flips.
@@ -285,13 +262,12 @@ export const documentStore = {
   },
 
   /**
-   * Audit2 2.2 — whether the frontmatter live-cache already holds an entry for
-   * `docId`. The cached-body / adoption hydrate branches consult this before
-   * trusting the in-memory (body-only) `DocumentState.body` as a hydrate
-   * source: re-parsing frontmatter from a body-only string yields `{}`, and
-   * passing that to `setFrontmatter` would CLOBBER the real frontmatter a
-   * sibling view already seeded from disk — a later body-only save would then
-   * erase the file's frontmatter block. Reactive via the version tick.
+   * Whether the frontmatter live-cache already holds an entry for `docId`.
+   * The cached-body / adoption hydrate branches consult this before trusting
+   * the in-memory (body-only) `DocumentState.body` as a hydrate source:
+   * re-parsing frontmatter from a body-only string yields `{}`, which would
+   * clobber the real frontmatter and let a later body-only save erase the
+   * file's frontmatter block. Reactive via the version tick.
    */
   hasFrontmatter(docId: string): boolean {
     void frontmatterVersionTick;
@@ -303,7 +279,7 @@ export const documentStore = {
    * (when a TextTile / DocumentEditor / TaskListBoard parses the .md for
    * the first time) and on external-change reload.
    *
-   * Audit2 / 1.2 — pass `rawFrontmatter` (the verbatim YAML source from a disk
+   * Pass `rawFrontmatter` (the verbatim YAML source from a disk
    * parse) so a subsequent body-only save can emit those bytes untouched. Omit
    * it (or pass an empty block) for a mutation set — that drops any clean-bytes
    * entry so the next write re-dumps the object.
@@ -316,7 +292,7 @@ export const documentStore = {
   },
 
   /**
-   * Audit2 / 1.2 — the verbatim frontmatter source for `docId` while it is
+   * The verbatim frontmatter source for `docId` while it is
    * still byte-identical to disk (a body-only save may emit it untouched), or
    * `undefined` once a mutation has invalidated it. The write gateway reads
    * this to decide between passthrough and a re-dump.
@@ -327,7 +303,7 @@ export const documentStore = {
   },
 
   /**
-   * Audit2 4.8 — the disk-baseline frontmatter source for `docId` (persists
+   * The disk-baseline frontmatter source for `docId` (persists
    * across mutations; see `originalFrontmatterCache`). The write gateway passes
    * this to `assembleMarkdownFile` so a dirty (frontmatter-changed) save patches
    * the original bytes source-preservingly instead of re-dumping the object.
@@ -339,7 +315,7 @@ export const documentStore = {
 
   /**
    * Returns the docId's monotonic mutation counter — incremented on every
-   * `mergeFrontmatter` / `setFrontmatter` AND (Audit-16 1.1) every body
+   * `mergeFrontmatter` / `setFrontmatter` AND every body
    * change via `updateContent`. Writers capture this at schedule time and
    * compare against the last-flushed value to decide whether their flush is
    * still the freshest.
@@ -349,12 +325,10 @@ export const documentStore = {
   },
 
   /**
-   * Audit-16 1.1 — the FM-ONLY mutation count (the shared counter minus the
-   * body bumps `updateContent` folded in). For consumers that must ignore
-   * body churn: the disk-FM refresh seed gates its placeholder overwrite on
-   * "nothing mutated the FRONTMATTER since the placeholder was seeded" — a
-   * racing notes keystroke is irrelevant to (and must not block) that
-   * decision, since the refresh only replaces the FM cache, never the body.
+   * The FM-ONLY mutation count (the shared counter minus the body bumps
+   * `updateContent` folded in). For consumers that must ignore body churn: the
+   * disk-FM refresh seed gates on "nothing mutated the FRONTMATTER since the
+   * placeholder was seeded", which a racing notes keystroke must not block.
    */
   getFrontmatterOnlyMutationVersion(docId: string): number {
     return (mutationVersions.get(docId) ?? 0) - (bodyMutationVersions.get(docId) ?? 0);
@@ -363,24 +337,21 @@ export const documentStore = {
   /**
    * Merges a partial patch into the cached frontmatter. Returns the merged
    * object so the caller can pass it on to the assembled write without a
-   * second lookup. Empty / undefined / null values are deleted, matching the
-   * cleaning rule that the per-component writers used to apply locally.
+   * second lookup. Empty / undefined / null values in `patch` are deleted.
    */
   mergeFrontmatter(docId: string, patch: Record<string, unknown>): Record<string, unknown> {
     const base = frontmatterCache.get(docId) ?? {};
     const merged: Record<string, unknown> = { ...base, ...patch };
-    // 1.1 — clean ONLY the keys the user actually set in this patch, never the
-    // whole merged object. A present-but-empty disk key the user didn't touch
-    // (`aliases:`, `cssclasses:`, `subtitle: ""`, all kept by `parseMarkdownFile`)
-    // must survive an unrelated field edit; iterating every merged key stripped
-    // it and the write then erased it from the file (Finding #2). An empty value
-    // in `patch` is still a clear → drop it.
+    // Clean ONLY the keys set in this patch, never the whole merged object: a
+    // present-but-empty disk key the user didn't touch (`aliases:`,
+    // `subtitle: ""`) must survive an unrelated field edit. An empty value in
+    // `patch` is a clear → drop it.
     for (const k of Object.keys(patch)) {
       const v = merged[k];
       if (v === '' || v === undefined || v === null) delete merged[k];
     }
     frontmatterCache.set(docId, merged);
-    // 1.2 — the object changed, so the captured raw bytes are stale: drop them
+    // The object changed, so the captured raw bytes are stale: drop them
     // and let the next write re-dump the merged object.
     rawFrontmatterCache.delete(docId);
     bumpMutationVersion(docId);
@@ -396,14 +367,11 @@ export const documentStore = {
     if (!frontmatterCache.has(docId)) return;
     frontmatterCache.delete(docId);
     rawFrontmatterCache.delete(docId);
-    // 4.8 — drop the disk baseline on doc unload so a future reopen re-reads
+    // Drop the disk baseline on doc unload so a future reopen re-reads
     // fresh bytes rather than patching against a stale source.
     originalFrontmatterCache.delete(docId);
-    // Audit-16 1.1 — `mutationVersions` is deliberately KEPT (see its
-    // docstring): docIds are stable contentIds, and resetting the counter
-    // while the scheduler's `lastFlushedVersion` survives would let the
-    // post-reopen versions restart below the old high-water mark and skip
-    // legitimate writes. Cleared only on the whole-store `clear()`.
+    // `mutationVersions` is deliberately KEPT (see its docstring); cleared
+    // only on the whole-store `clear()`.
     frontmatterVersionTick++;
   },
 
@@ -432,7 +400,7 @@ export const documentStore = {
       isDirty: false,
     };
 
-    // Audit 3.3 — cross-vault repopulation guard. During a vault swap the
+    // Cross-vault repopulation guard. During a vault swap the
     // pre-swap handler clears the map and binds the store to the incoming
     // vault; until the committed vault path actually flips to that vault, any
     // load is a stale call from an outgoing-vault component that hasn't
@@ -449,7 +417,7 @@ export const documentStore = {
   },
 
   /**
-   * Phase 27 / A4 — true iff loading detected lossy round-trip syntax and
+   * True iff loading detected lossy round-trip syntax and
    * the doc is held read-only. Reactive — components reading this re-render
    * when `setReadOnly` / `takeOwnership` fires.
    */
@@ -489,12 +457,11 @@ export const documentStore = {
    * Both views will reactively pick up the change.
    */
   updateContent(docId: string, htmlContent: string, markdownBody?: string, writerId?: string) {
-    // Phase 7.6 — dev tripwire. `body` is body-only by contract; frontmatter
-    // lives in frontmatterCache. hydrateFromDisk strips the fence today, but a
-    // regression that fed a full file (frontmatter + body) here would double
-    // the frontmatter on the next serialize. We require BOTH fences so a body
-    // that merely opens with a thematic-break `---` doesn't false-positive.
-    // Non-fatal (warn, not throw) — never block editing on a heuristic.
+    // Dev tripwire. `body` is body-only by contract; frontmatter lives in
+    // frontmatterCache. A full file (frontmatter + body) here would double the
+    // frontmatter on the next serialize. Requires BOTH fences so a body that
+    // merely opens with a thematic-break `---` doesn't false-positive.
+    // Non-fatal — never block editing on a heuristic.
     if (
       import.meta.env.DEV &&
       markdownBody !== undefined &&
@@ -511,16 +478,14 @@ export const documentStore = {
     const doc = openDocuments.get(docId);
     if (!doc) return;
 
-    // Audit 2.3 — register the editing writer so a sibling editor's flush
+    // Register the editing writer so a sibling editor's flush
     // can't clear `isDirty` while this writer still holds unsaved content.
     if (writerId) addDirtyWriter(docId, writerId);
 
-    // Audit-16 1.1 — a body change makes any previously-flushed snapshot
-    // stale, so it must bump the shared write-staleness token or a
-    // delta-less write scheduled for it (Task notes) fires with
-    // `scheduledVersion <= lastFlushedVersion`, no-ops as SUCCESS, and the
-    // edit silently dies on quit. The body bump is mirrored into
-    // `bodyMutationVersions` so FM-only consumers can subtract it back out.
+    // A body change makes any previously-flushed snapshot stale, so it must
+    // bump the shared write-staleness token — otherwise a delta-less write
+    // (Task notes) is skipped as stale, reported as success, and lost on quit.
+    // Mirrored into `bodyMutationVersions` so FM-only consumers can subtract it.
     if (markdownBody !== undefined && markdownBody !== doc.body) {
       bumpMutationVersion(docId);
       bodyMutationVersions.set(docId, (bodyMutationVersions.get(docId) ?? 0) + 1);
@@ -553,7 +518,7 @@ export const documentStore = {
   },
 
   /**
-   * Phase A.4 — variant of `updateTitle` that preserves the current
+   * Variant of `updateTitle` that preserves the current
    * `isDirty` flag instead of forcing it to true. Used by undo / redo of
    * title-rename commands: the rename itself doesn't change the body, so
    * flipping `isDirty` would queue the markdown scheduler to write the
@@ -593,7 +558,7 @@ export const documentStore = {
   },
 
   /**
-   * Phase 4.4 (2026-05-30) — repoints every open document affected by a
+   * Repoints every open document affected by a
    * rename so its registered writer keeps targeting the moved path. Handles
    * the exact-match file rename (`Notes/old.md` → `Notes/new.md`) and the
    * folder-rename case where the open document is a *descendant* of the moved
@@ -601,8 +566,7 @@ export const documentStore = {
    *
    * Mirrors the board-side `boardStore.propagateRename`. Both the in-app
    * rename path (vaultFolderOps) and the rename-cascade recovery retry
-   * (vault.svelte.ts) call this so the two can't drift — the recovery retry
-   * previously skipped the descendant case entirely. Returns the number of
+   * (vault.svelte.ts) call this so the two can't drift. Returns the number of
    * documents repointed.
    */
   propagateRename(oldRel: string, newRel: string): number {
@@ -642,9 +606,9 @@ export const documentStore = {
    * Marks a document as clean after a successful save.
    */
   markClean(docId: string, writerId?: string) {
-    // Audit 2.3 — per-writer clear. Removing this writer leaves the doc dirty
+    // Per-writer clear. Removing this writer leaves the doc dirty
     // if a sibling editor on the same file is still unsaved; only a fully
-    // empty writer set (or a legacy no-writerId call) flips `isDirty` off.
+    // empty writer set (or a no-writerId call) flips `isDirty` off.
     if (writerId) {
       const set = dirtyWriters.get(docId);
       if (set) {
@@ -668,13 +632,11 @@ export const documentStore = {
   },
 
   /**
-   * Audit-7 M1 — drops a single writer's dirty entry WITHOUT asserting its
-   * content reached disk. `markClean` means "this writer saved"; this means
-   * "this writer is going away." `TextTile.onDestroy` calls it synchronously
-   * with a `contentId` captured before teardown, so an unmounting tile can't
+   * Drops a single writer's dirty entry WITHOUT asserting its content reached
+   * disk. `markClean` means "this writer saved"; this means "this writer is
+   * going away." `TextTile.onDestroy` calls it so an unmounting tile can't
    * leave a phantom writerId pinning `DocumentState.isDirty` true — which would
-   * route a now-editorless file's external edit to a spurious Reload prompt and
-   * freeze sibling-view reload `$effect`s (M1's two symptoms).
+   * cause spurious Reload prompts and freeze sibling-view reload `$effect`s.
    *
    * More conservative than `markClean`: it clears `isDirty` ONLY when it drained
    * the last TRACKED writer. A doc whose dirtiness came from a no-writerId
@@ -693,7 +655,7 @@ export const documentStore = {
   },
 
   /**
-   * Marks a document as dirty. Phase 22 M8 — called explicitly from per-component
+   * Marks a document as dirty. Called explicitly from per-component
    * writers (TextTile, DocumentEditor) when their debounced write fails, so a
    * sibling tile's reload `$effect` (gated on `isDirty`) cannot reload the
    * in-memory body and overwrite the editor's still-unsaved text with what is
@@ -701,7 +663,7 @@ export const documentStore = {
    * accidentally call `markClean` ahead of a write that subsequently fails.
    */
   markDirty(docId: string, writerId?: string) {
-    // Audit 2.3 — record the writer before the dirty-flag short-circuit so a
+    // Record the writer before the dirty-flag short-circuit so a
     // second writer marking an already-dirty doc still registers (its later
     // clean must not clear the flag while the first writer is still dirty).
     if (writerId) addDirtyWriter(docId, writerId);
@@ -726,14 +688,10 @@ export const documentStore = {
     openDocuments.delete(docId);
     dirtyWriters.delete(docId);
     rawFrontmatterCache.delete(docId);
-    // Audit-7 L6 — drop the disk-baseline FM source too (mirrors
-    // `clearFrontmatter`). `unloadDocument` doesn't route through it, so
-    // without this the `originalFrontmatterCache` entry leaked for any doc
-    // unloaded (tile removed / tab closed / external delete) without a reopen.
+    // Drop the disk-baseline FM source too (mirrors `clearFrontmatter`, which
+    // this path doesn't route through) so the entry doesn't leak.
     originalFrontmatterCache.delete(docId);
-    // Audit-16 1.1 — `mutationVersions` deliberately survives unload (see its
-    // docstring): a counter reset under a reused docId re-opens the
-    // stale-version skip against the scheduler's surviving lastFlushedVersion.
+    // `mutationVersions` deliberately survives unload (see its docstring).
     if (frontmatterCache.has(docId)) {
       frontmatterCache.delete(docId);
       frontmatterVersionTick++;
@@ -747,7 +705,7 @@ export const documentStore = {
   /**
    * Clears all document state (called on project close/switch).
    *
-   * Audit 3.3 — `nextVault` binds the store to the incoming vault so a stale
+   * `nextVault` binds the store to the incoming vault so a stale
    * outgoing-vault `loadDocument` is refused until `vaultStore.path` flips to
    * it. Defaults to null (unbound) for non-swap callers and tests.
    */
@@ -757,14 +715,12 @@ export const documentStore = {
     dirtyWriters.clear();
     frontmatterCache.clear();
     rawFrontmatterCache.clear();
-    // Audit-7 L6 — the disk-baseline FM sources persist across mutations by
-    // design (see `originalFrontmatterCache`), so the vault-swap reset must
-    // clear them explicitly; the other caches above are cleared but this one
-    // was missed, leaking the outgoing vault's FM source bytes unboundedly.
+    // The disk-baseline FM sources persist across mutations by design, so the
+    // reset must clear them explicitly.
     originalFrontmatterCache.clear();
     mutationVersions.clear();
-    // Audit-16 1.1 — lockstep clear with the shared counter (vault swap is
-    // the one place both reset, matching the scheduler's lastFlushedVersion).
+    // Lockstep clear with the shared counter (matching the scheduler's
+    // lastFlushedVersion lifecycle).
     bodyMutationVersions.clear();
     frontmatterVersionTick++;
     if (readOnlyDocs.size > 0) {
@@ -787,11 +743,9 @@ export const documentStore = {
     newBody: string,
     newRichText: RichTextAnnotation[],
     newFrontmatter?: Record<string, unknown>,
-    // L1 (Audit-13) — the disk read's verbatim FM source bytes. Threaded so the
-    // clean-editor reload refreshes `originalFrontmatterCache` in lockstep with
-    // `frontmatterCache`; without it the byte-preservation baseline predates an
-    // externally-added key and that key loses its inline comment/quoting on the
-    // next body-only save.
+    // The disk read's verbatim FM source bytes, so the clean-editor reload
+    // refreshes `originalFrontmatterCache` in lockstep with `frontmatterCache`;
+    // otherwise an externally-added key loses its comment/quoting on next save.
     rawFrontmatter?: string,
     diskIdentity?: { mtimeMs?: number; size?: number },
   ) {
@@ -807,7 +761,7 @@ export const documentStore = {
       text: `"${doc.title}" was modified externally (${formatBodyDelta(doc.body, newBody)}). Reload from disk, or keep your local edits?`,
       type: 'warning',
       duration: 0,
-      // Audit-19 UX-6 — stays until answered; same key as vaultExternalPrompts'
+      // Stays until answered; same key as vaultExternalPrompts'
       // promptModifiedFile so the two never double up for one file.
       sticky: true,
       dedupeKey: `ext-mod:${doc.filename}`,
@@ -819,17 +773,13 @@ export const documentStore = {
         },
         {
           label: 'Keep local',
-          // Sprint 35.1 — Force-write the current editor body to disk for
-          // exactly this doc's writers. `forceWriteForDocument` bypasses
-          // the per-writer debounce-timer guard, which `flushAllMarkdownWriters`
-          // does not: that path's flush returns early when writeTimer===null,
-          // so if the prior 300ms debounce already fired between the user's
-          // last keystroke and the Keep-local click, the editor body silently
-          // stayed in memory and the external edit on disk persisted. We mark
-          // dirty first so a concurrent reactive-reload `$effect` can't undo
-          // the editor body before the write lands.
-          // Audit-19 UX-6 — back up the external version to .filo/recovery/
-          // first; a declined un-backed-up overwrite leaves both sides as-is.
+          // Force-write the current editor body to disk for exactly this
+          // doc's writers. `forceWriteForDocument` bypasses the debounce-timer
+          // guard (a plain flush no-ops if the debounce already fired, leaving
+          // the external edit on disk). Mark dirty first so a concurrent
+          // reload `$effect` can't undo the editor body before the write lands.
+          // Back up the external version to .filo/recovery/ first; a declined
+          // un-backed-up overwrite leaves both sides as-is.
           handler: async () => {
             const vaultRoot = getActiveVaultPath();
             if (!vaultRoot || !(await backupExternalVersion(vaultRoot, doc.filename))) return;
@@ -843,11 +793,10 @@ export const documentStore = {
   },
 
   /**
-   * Audit-19 MD-5 — upgrade an UNHYDRATED placeholder (body `''`) to the body a
-   * view just read from disk. `loadDocument` returns an existing entry untouched,
-   * so a placeholder created by a DocumentEditor whose read failed (or by
-   * `openTileAsDocument`) kept `''` while the editor showed the real body — and a
-   * later reactive reload loaded `''` back into the editor. Only a clean, empty
+   * Upgrade an UNHYDRATED placeholder (body `''`) to the body a view just read
+   * from disk. `loadDocument` returns an existing entry untouched, so without
+   * this a placeholder would keep `''` while the editor shows the real body, and
+   * a later reactive reload would load `''` back into the editor. Only a clean, empty
    * doc with no dirty writers is touched; unlike `applyReloadFromDisk` this does
    * NOT cancel writes or bump mutation versions (a read is not a user mutation).
    */
@@ -865,12 +814,12 @@ export const documentStore = {
    * If newFrontmatter is provided, the live cache is updated too so the next
    * writer-assembled file picks up the external edits rather than reverting.
    *
-   * Audit2 / 1.2 — pass `rawFrontmatter` (the disk parse's verbatim source)
-   * alongside `newFrontmatter` so a clean body-only save after the reload can
-   * still emit the frontmatter bytes untouched. Omitted reloads drop the clean
-   * bytes (the next write re-dumps) — safe, just without the formatting win.
+   * Pass `rawFrontmatter` (the disk parse's verbatim source) alongside
+   * `newFrontmatter` so a clean body-only save after the reload can still emit
+   * the frontmatter bytes untouched. Omitted reloads drop the clean bytes (the
+   * next write re-serialises) — safe, just without the formatting win.
    *
-   * Audit-7 L13/L16 — pass `diskIdentity` (the read's mtime + byte size) so the
+   * Pass `diskIdentity` (the read's mtime + byte size) so the
    * pre-write drift baseline is re-anchored to the bytes just applied; without
    * it the next keystroke re-detects the absorbed external edit and re-prompts.
    */
@@ -884,15 +833,12 @@ export const documentStore = {
   ) {
     const doc = openDocuments.get(docId);
     if (!doc) return;
-    // Phase 6.0.C2 — cancel any armed body writer for this doc FIRST. The
-    // gateway captured `args.body` by closure at schedule time, so a timer
-    // surviving the reload fires ~250 ms later with the pre-reload body and
-    // silently inverts the reload. Cancel is synchronous so the cancel-then-
-    // state-replacement contract holds for all (currently non-awaiting)
-    // callers. Phase 6.1.R1 will hoist this into a shared helper enforced
-    // by a CI gate.
+    // Cancel any armed body writer for this doc FIRST: the gateway captured
+    // `args.body` at schedule time, so a surviving timer would fire with the
+    // pre-reload body and silently invert the reload. Synchronous so the
+    // cancel-then-replace contract holds for non-awaiting callers.
     cancelMarkdownWritesForDocument(docId);
-    // Audit 2.3 — disk is now authoritative, so every writer is clean.
+    // Disk is now authoritative, so every writer is clean.
     dirtyWriters.delete(docId);
     const updated: DocumentState = {
       ...doc,
@@ -901,14 +847,11 @@ export const documentStore = {
       isDirty: false,
     };
     openDocuments.set(docId, updated);
-    // Audit-7 L13/L16 — re-stamp the pre-write drift baseline to the disk
-    // identity we just applied. Without this the baseline stays at the
-    // pre-external-edit (mtime,size), so the next keystroke's drift check
-    // compares a fresh stat (the external mtime) against the stale anchor and
-    // re-prompts for an edit the user already accepted via Reload. Keyed by
-    // the doc's own filename so it matches the gateway's getBaseline(relPath)
-    // lookup. noteBaseline no-ops on a non-finite mtime/size, so in-memory
-    // reloads (no diskIdentity) keep their prior "no re-stamp" behaviour.
+    // Re-stamp the pre-write drift baseline to the disk identity just applied;
+    // otherwise the next keystroke's drift check re-prompts for an edit the
+    // user already accepted via Reload. Keyed by the doc's filename to match
+    // the gateway's getBaseline(relPath). In-memory reloads (no diskIdentity)
+    // don't re-stamp.
     if (diskIdentity) noteBaseline(doc.filename, diskIdentity.mtimeMs, diskIdentity.size);
     if (newFrontmatter) {
       frontmatterCache.set(docId, { ...newFrontmatter });
@@ -916,39 +859,29 @@ export const documentStore = {
       bumpMutationVersion(docId);
       frontmatterVersionTick++;
     }
-    // Phase 6.0.C2 / Audit-11 EER-1 — drain the frontmatter scheduler after the
-    // state swap. The scheduler reads FM live at fire time, so a legacy
-    // (delta-less) entry that survives an in-memory reload emits disk-truth (a
-    // no-op self-write). A Phase-4 field delta, however, would re-apply the
-    // DISCARDED edit to fresh disk and silently revert the reload — so the
-    // Reload-DISCARD call sites in vaultExternalChanges drop this path's delta +
-    // timer (`dropPendingDelta`) BEFORE calling here. By then those callers have
-    // nothing armed for this doc; this flush still drains any unrelated pending
-    // write and the non-discard (restore) callers' own entries. Fire-and-forget.
+    // Drain the frontmatter scheduler after the state swap. A delta-less entry
+    // reads FM live at fire time, so it emits disk-truth (a no-op). A field
+    // delta would re-apply the DISCARDED edit and revert the reload — so the
+    // Reload-discard call sites drop this path's delta + timer
+    // (`dropPendingDelta`) BEFORE calling here. Fire-and-forget.
     void flushAllPendingFrontmatterWrites();
   },
 };
 
-// Phase 4 (Consolidation 2026-05-25) — vault-swap reset registration.
-// Drops every loaded document, the frontmatter cache, mutation versions
-// and read-only flags so the new vault can't see fragments of the prior
-// vault's open documents.
+// Vault-swap reset: drops every loaded document, the frontmatter cache,
+// mutation versions and read-only flags so the new vault can't see fragments
+// of the prior vault's open documents.
 onVaultSwap('pre-swap', 'document', async (event) => {
-  // Audit-14 1.7 — before discarding open-document state, AWAIT any markdown
-  // write still pumping bytes for each open doc. The async drain cancels armed
-  // timers AND awaits the in-flight write IPC for matching editor-backed writers
-  // (TextTile / DocumentEditor), so a writer can't land bytes against the
-  // outgoing vault after the swap has torn down its state — honoring the
-  // swap-await guarantee its docstring asserts (previously wired nowhere; the
-  // handler only called the sync `cancelMarkdownWritesForDocument` via clear()).
-  // Bounded by each writer's own `writeTimeoutMs`, so a wedged write can't hang
-  // the swap. `fireVaultSwap` awaits this handler (errors are caught + reported
-  // there). Snapshot the ids first — `clear()` empties the map below.
+  // Before discarding open-document state, AWAIT any markdown write still in
+  // flight for each open doc (cancels armed timers and awaits in-flight IPC),
+  // so a writer can't land bytes against the outgoing vault after its state is
+  // torn down. Bounded by each writer's `writeTimeoutMs`. Snapshot the ids
+  // first — `clear()` empties the map below.
   const openDocIds = Array.from(openDocuments.keys());
   await Promise.all(
     openDocIds.map((docId) => cancelAndAwaitMarkdownWritesForDocument(docId)),
   );
-  // Audit 3.3 — bind to the incoming vault so loadDocument refuses stale
+  // Bind to the incoming vault so loadDocument refuses stale
   // outgoing-vault loads until vaultStore.path flips to it.
   documentStore.clear(event.nextVault);
 });

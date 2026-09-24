@@ -3,18 +3,17 @@
  *
  * Wraps `resolveStyle` so each renderer (tile, frame, kanban column/card,
  * task row, document element) only needs a single call to get back its
- * final style, including the Phase 4 Dynamic Contrast Text override.
+ * final style, including the Dynamic Contrast Text override.
  *
  * Cascade order (Design Doc V5 §564–626):
  *   Per-element style > Current Board Settings > Global Defaults
  *
  * The "current board settings" layer is the active board's
- * `settings.defaults` block (added in Phase 4 follow-up). Every field is
- * optional; unset fields defer to the global defaults. Boards created
- * before this feature have `defaults` undefined, which collapses the
- * cascade to per-element > global — identical to prior behaviour.
+ * `settings.defaults` block. Every field is optional; unset fields defer to
+ * the global defaults. A board with `defaults` undefined collapses the cascade
+ * to per-element > global.
  *
- * Dynamic Contrast Text (Phase 4.4):
+ * Dynamic Contrast Text:
  *   - Each defaults schema has a `dynamicContrastText: boolean` field
  *     (default `true`) that lives at the global/board layer.
  *   - Per-element styles may carry a `dynamicContrastText: boolean | null`
@@ -165,13 +164,13 @@ export function effectiveTileStyle(
 }
 
 /**
- * H4 (perf) — lightweight resolver for the Minimap pips. Walks ONLY the
+ * Lightweight resolver for the Minimap pips. Walks ONLY the
  * `headerColor` through the cascade (per-element > board > global) and skips the
  * Dynamic-Contrast-Text work `effectiveTileStyle` does (a `resolveBackgroundColor`
  * + `getDynamicContrastText` for both header and body, per tile). A minimap pip
  * paints a flat fill and never renders text, so the contrast picks are pure
- * waste there — and the full cascade ran per pip per pan/zoom frame on large
- * boards. Returns the resolved header colour (empty string ⇒ caller falls back
+ * waste there — and the full cascade would run per pip per pan/zoom frame on
+ * large boards. Returns the resolved header colour (empty string ⇒ caller falls back
  * to the CSS variable).
  */
 export function effectiveTileHeaderColor(
@@ -661,9 +660,8 @@ export function effectiveDocumentStyle(
   const dctRaw = merged.dynamicContrastText;
   const dynamicContrastText = typeof dctRaw === 'boolean' ? dctRaw : true;
 
-  // DocumentBoard has no header band — `headerColor` was emitted previously
-  // but never painted (see P1.5). Cleaned up here so the cascade no longer
-  // pretends to honour a control the renderer can't show.
+  // DocumentBoard has no header band, so no `headerColor` is resolved — the
+  // cascade doesn't pretend to honour a control the renderer can't show.
   let bodyTextColor: string | null = null;
   if (dynamicContrastText) {
     const bodyBg = resolveBackgroundColor(bodyColor, '--ui-surface');

@@ -1,9 +1,7 @@
 /**
  * Command-pattern objects that participate in the per-board undo/redo
- * history stack. Sprint 39 / 39.7 — what used to live in this one file
- * (~2200 LOC) is now sharded across the sibling modules below. This
- * file is a re-export shim — every existing import path
- * (`from '../commands/index'`) keeps working.
+ * history stack. This file is a re-export shim over the sibling modules
+ * below, so `from '../commands/index'` imports keep working.
  *
  * One concern per file (all re-exported below):
  *  - tileCommands          — tile add/delete/move/resize/style/lock
@@ -16,7 +14,7 @@
  *  - waypointCommands      — Mind Map waypoint add/remove/rename/move/icon/lock
  *  - groupAndBoardCommands — BatchCommand, ToggleGroupCommand,
  *                            CascadeDeleteCommand, UpdateBoardSettingsCommand
- *  - styleCommands         — Phase 15 style-popup commands
+ *  - styleCommands         — style-popup commands
  *  - propertiesCommands    — UpdatePropertiesCommand
  *  - attachmentSrcCommand  — Image/Video/Audio/File source swap
  *  - renameTitleCommand    — tile title rename (cache + doc + .md file)

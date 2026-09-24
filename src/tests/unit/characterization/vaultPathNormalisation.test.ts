@@ -12,7 +12,7 @@
  *    genuinely not a vault-relative path (boardId, tileId, absolute
  *    file-tree path).
  *
- * The CI gate `scripts/check-vault-path-keys.mjs` enforces the contract at
+ * The CI gate `scripts/gates:vault-path-keys` enforces the contract at
  * error level. These tests assert it from the inside as a regression-
  * resistance net:
  *
@@ -125,7 +125,7 @@ interface PathKeyedMapDecl {
 
 /**
  * Same identifier patterns as the CI gate
- * (`scripts/check-vault-path-keys.mjs`). Post-Phase-4, this discovery walk
+ * (`scripts/gates:vault-path-keys`). Post-Phase-4, this discovery walk
  * MUST be empty (modulo `// allow-string-path-key:` escape hatches).
  */
 const PATH_KEYED_IDENT_PATTERNS: ReadonlyArray<RegExp> = [
@@ -183,7 +183,7 @@ describe('Phase 4 sweep — every path-keyed string map has been migrated', () =
     // re-type the declaration to `Map<VaultPath, _>` and route callsites
     // through `vaultPath(...)`, or add `// allow-string-path-key: <reason>`
     // if the key is genuinely NOT a vault-relative path. The CI gate
-    // `check-vault-path-keys.mjs` enforces the same contract at error
+    // `scripts/gates:vault-path-keys` enforces the same contract at error
     // level — the test failure is the friendlier developer signal.
     expect(
       PATH_KEYED_MAPS,

@@ -8,15 +8,12 @@ import type { SpatialScope } from './spatial.svelte';
  * derived view of the active board and read the pane's sub-scopes (spatial /
  * canvas / selection) without owning its own `$state` proxy.
  *
- * Phase R7 (Reactive BoardScope, 2026-05-26) — the per-pane `tiles`,
- * `connections`, `frames`, and `currentBoard` are now `$derived` projections
- * of `boardCacheStore.cache[currentBoardId]`. The cache is the single source
- * of truth; per-pane runtime state has been removed. As a result the slice
- * context only exposes **readers** — slices must mutate state by calling the
- * cache-side writers (`boardCacheStore.persist*`, `boardCacheStore.markDirty`,
- * etc.). The previous setters (`setTiles`, `setConnections`, `setFrames`,
- * `replaceCurrent`) no longer exist; any caller that needs to revert the
- * tile/connection/frame view should route through `boardCacheStore.replaceCache`
+ * The per-pane `tiles`, `connections`, `frames`, and `currentBoard` are
+ * `$derived` projections of `boardCacheStore.cache[currentBoardId]`, the
+ * single source of truth. The slice context therefore only exposes
+ * **readers** — slices mutate state by calling the cache-side writers
+ * (`boardCacheStore.persist*`, `boardCacheStore.markDirty`, etc.). To revert
+ * the tile/connection/frame view, route through `boardCacheStore.replaceCache`
  * (which atomically swaps the cache snapshot and the derived view follows).
  *
  * `spatial` / `canvas` / `selection` give slices access to the SAME per-

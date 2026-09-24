@@ -84,12 +84,12 @@ function captureAndSaveWindowState(): void {
 }
 
 /**
- * L4a (AUDIT_REMEDIATION_PLAN_2026-05-29) — enforce the Content-Security-Policy
- * at the HTTP-header level, in addition to the `<meta>` tag in index.html.
+ * Enforce the Content-Security-Policy at the HTTP-header level, in addition
+ * to the `<meta>` tag in index.html.
  *
  * The `<meta>` CSP governs the app document but does NOT cover web workers or
  * non-document responses; a response header does. The policy string mirrors
- * index.html with ONE deliberate prod divergence (Audit-14 4.7): the dev-only
+ * index.html with ONE deliberate prod divergence: the dev-only
  * `ws://localhost:*` (Vite HMR socket) is dropped from `connect-src` when
  * `app.isPackaged`. The `filo-strip-dev-csp` Vite plugin strips the same token
  * from the index.html `<meta>` at build time, so in a packaged build the header
@@ -104,17 +104,15 @@ function captureAndSaveWindowState(): void {
  *   - impose `default-src 'self'` on third-party `https:` documents loaded
  *     inside Iframe tiles (which the policy's `frame-src https:` permits).
  *
- * Audit-14 4.5 — `frame-src https:` is intentionally broad: Iframe tiles let the
+ * `frame-src https:` is intentionally broad: Iframe tiles let the
  * user embed ANY https origin (YouTube, CodePen, etc.), so a fixed origin
  * allowlist isn't possible. It's accepted defense-in-depth — the tile iframe is
  * sandboxed (`allow-scripts` WITHOUT `allow-same-origin`) and every src is run
  * through `asSafeIframeSrc`. See KNOWN_LIMITATIONS.md #10.
  */
 function installContentSecurityPolicy(): void {
-  // Audit-14 4.7 — assemble from a single pure builder so the packaged header
-  // never authorises a localhost websocket the app doesn't open. Dev keeps
-  // `ws://localhost:*` for Vite HMR; prod (`app.isPackaged`) drops it, matching
-  // the index.html `<meta>` the build-time strip plugin patches.
+  // Assembled by a single pure builder so the packaged header never
+  // authorises a localhost websocket the app doesn't open.
   const CSP = buildAppContentSecurityPolicy(app.isPackaged);
 
   const appOrigin =
@@ -185,7 +183,7 @@ async function createWindow(): Promise<void> {
     // the flush sequence.
     captureAndSaveWindowState();
 
-    // 1.3 — a second X-click while a drain is already in flight MUST keep
+    // A second X-click while a drain is already in flight MUST keep
     // blocking the close (preventDefault), not fall through to Electron's
     // destroy and abort the in-flight write drain. `decideWindowClose` is the
     // pure guard; see windowCloseDecision.ts.
@@ -204,32 +202,28 @@ async function createWindow(): Promise<void> {
     };
     let timer = setTimeout(destroyOnTimeout, FLUSH_TIMEOUT_MS);
 
-    // Audit5 2.1 — drain heartbeat. The renderer beats this immediately and
-    // then every ~2 s while its flush drains. Re-arm the auto-destroy timer on
-    // each beat so an honest drain that runs longer than FLUSH_TIMEOUT_MS (a
-    // large vault on a contended volume — the user's vault lives under OneDrive)
-    // isn't destroyed mid-write. The ceiling now bounds inter-beat SILENCE (a
-    // wedged renderer), not total honest drain time.
+    // Drain heartbeat. The renderer beats immediately and then every ~2 s
+    // while its flush drains. Re-arm the auto-destroy timer on each beat so
+    // an honest drain longer than FLUSH_TIMEOUT_MS (a large vault on a
+    // contended volume, e.g. OneDrive) isn't destroyed mid-write. The ceiling
+    // bounds inter-beat SILENCE (a wedged renderer), not total drain time.
     const onHeartbeat = (): void => {
       clearTimeout(timer);
       timer = setTimeout(destroyOnTimeout, FLUSH_TIMEOUT_MS);
     };
 
-    // Audit-4 DI-04 — heartbeat. The renderer sends this right before it opens
-    // an open-ended "Save failed" confirm. Clear the auto-destroy timer so the
-    // FLUSH_TIMEOUT_MS ceiling bounds only the automated flush, not the human's
-    // decision time at the dialog — otherwise the window destroys out from
-    // under the dialog and the user's choice (and edits) are discarded. The
-    // ready/cancel reply still drives the real quit; a renderer that never
-    // replies just leaves the window open, the safe direction (no data loss).
-    // Drop the heartbeat listener too so a late beat can't re-arm the timer
-    // while the user reads the dialog.
+    // Sent right before the renderer opens an open-ended "Save failed"
+    // confirm. Clear the auto-destroy timer so the ceiling bounds only the
+    // automated flush, not the human's decision time — otherwise the window
+    // destroys under the dialog and the edits are discarded. A renderer that
+    // never replies just leaves the window open (the safe direction). Drop
+    // the heartbeat listener too so a late beat can't re-arm the timer.
     const onAwaitingUser = (): void => {
       clearTimeout(timer);
       ipcMain.removeListener('app:drain-heartbeat', onHeartbeat);
     };
 
-    // 6.2.H4 — two terminal signals from the renderer: ready (proceed to
+    // Two terminal signals from the renderer: ready (proceed to
     // destroy) and cancel (user picked "Stay open and retry" on the save-
     // failure confirm; rewind isFlushingForQuit so they can keep editing).
     // Whichever fires first wins and removes the other listener.
@@ -238,16 +232,14 @@ async function createWindow(): Promise<void> {
       ipcMain.removeListener('app:cancel-quit', onCancel);
       ipcMain.removeListener('app:quit-awaiting-user', onAwaitingUser);
       ipcMain.removeListener('app:drain-heartbeat', onHeartbeat);
-      // Phase 4 / 4.4 — drain windowState + sidebarState before destroying
-      // the window. The renderer's flush completed first; now wait on the
-      // main-side debounces so the next launch sees the latest geometry.
-      // Sprint A / A8 — also stop the file watcher so its reconcile timer
-      // and OS-level handle are released before the window destroy.
+      // Drain the main-side windowState + sidebarState debounces so the next
+      // launch sees the latest geometry, and stop the file watcher so its
+      // timer and OS handle are released before the window destroy.
       void Promise.allSettled([
         flushWindowStateNow(),
         flushSidebarStateNow(),
         stopActiveWatcher(),
-        // 6.2.H4 (follow-up) — persist any preserved-partial locations to
+        // Persist any preserved-partial locations to
         // `.filo/quit-failure.json` before the window destroys (no-op unless
         // a write preserved a partial this session).
         writeQuitFailureBreadcrumb(vaultRegistry.currentVaultPath),
@@ -265,7 +257,7 @@ async function createWindow(): Promise<void> {
     ipcMain.once('app:ready-to-quit', onReady);
     ipcMain.once('app:cancel-quit', onCancel);
     ipcMain.once('app:quit-awaiting-user', onAwaitingUser);
-    // Audit5 2.1 — persistent (`on`, not `once`) so every periodic beat lands;
+    // Persistent (`on`, not `once`) so every periodic beat lands;
     // removed in onReady/onCancel/onAwaitingUser and the catch below.
     ipcMain.on('app:drain-heartbeat', onHeartbeat);
 
@@ -316,10 +308,10 @@ async function createWindow(): Promise<void> {
     menu.popup({ window: mainWindow! });
   });
 
-  // M4 — navigation hardening (defense-in-depth beyond the CSP).
+  // Navigation hardening (defense-in-depth beyond the CSP).
   //
   // `setWindowOpenHandler` denies every `window.open` / `target=_blank`
-  // attempt: the renderer opens external links through the `shell:open-external`
+  // attempt: the renderer opens external links through the `media:open-external`
   // IPC (which validates the URL + blocks private addresses), never via a new
   // BrowserWindow. `will-navigate` blocks any top-level navigation that would
   // leave the app's own document — the SPA never legitimately navigates the
@@ -388,7 +380,7 @@ app.whenReady().then(() => {
   }
 
   installContentSecurityPolicy();
-  // Audit-15 P1.5 — deny-by-default permission handler on the shared session,
+  // Deny-by-default permission handler on the shared session,
   // so an embedded https iframe (CSP allows any origin) can't be granted
   // geolocation / camera / mic / notifications / clipboard by a version-
   // dependent Electron default. See utils/permissionPolicy.ts.
@@ -399,12 +391,9 @@ app.whenReady().then(() => {
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      // Sprint A / A1 — macOS dock-reactivate after every window closed
-      // recreates the BrowserWindow on the SAME process. `isFlushingForQuit`
-      // was set true by the previous window's close handler and never
-      // unset, so the next close would short-circuit the flush sequence
-      // and lose any debounced writes the renderer hadn't drained yet.
-      // Reset the flag here so the new window starts fresh.
+      // macOS dock-reactivate recreates the window on the SAME process, with
+      // `isFlushingForQuit` still set by the previous window's close. Reset
+      // it, or the next close would skip the flush and lose debounced writes.
       isFlushingForQuit = false;
       void createWindow();
     }
@@ -425,8 +414,8 @@ app.on('window-all-closed', () => {
  * write before the process exits.
  *
  * The primary close path (user clicks the window X) is intercepted earlier
- * by the `close` event handler set up in `createWindow`; that path is what
- * actually fixes the silent-loss bug. This handler exists for completeness.
+ * by the `close` event handler set up in `createWindow`; this handler is the
+ * backstop.
  *
  * The renderer signals completion (or failure) via `app:ready-to-quit`.
  * A 5s ceiling protects against a stuck renderer holding shutdown forever;
@@ -440,7 +429,7 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   isFlushingForQuit = true;
 
-  // Phase 4 / 4.4 — flush any in-debounce window-state timer so the
+  // Flush any in-debounce window-state timer so the
   // latest geometry feeds into `flushWindowStateNow` below. Resize at
   // T+0 / Ctrl+Q at T+100ms would otherwise leave the new bounds
   // un-persisted because the 300ms timer never got to fire.
@@ -450,28 +439,22 @@ app.on('before-quit', (event) => {
   }
   captureAndSaveWindowState();
 
-  // Phase 4 / 4.4 — `finish` now also drains the per-machine state
-  // services (windowState + sidebarState) before exit. The renderer
-  // flush has already completed; this catches the main-side debounced
-  // writes (sidebar resize at T+0, Ctrl+Q at T+100ms) that would
-  // otherwise be lost when `app.exit` tore down the event loop.
-  // Sprint A / A8 — `stopActiveWatcher` clears the watcher's reconcile
-  // timer and OS handle so they don't emit late events after the
-  // event loop has torn down.
+  // `finish` drains the main-side debounced writes (windowState +
+  // sidebarState — e.g. a sidebar resize at T+0, Ctrl+Q at T+100ms) that
+  // `app.exit` would otherwise lose, and stops the watcher so it can't emit
+  // late events after teardown.
   const finish = (): void => {
     ipcMain.removeAllListeners('app:ready-to-quit');
-    // 6.2.H4 — also drain the cancel-quit listener so a late renderer
-    // signal can't bring the (already torn down) flush state out of sync.
+    // Also drain the cancel-quit listener so a late renderer signal can't
+    // bring the (already torn down) flush state out of sync.
     ipcMain.removeAllListeners('app:cancel-quit');
-    // Audit-4 DI-04 — drain the awaiting-user listener too.
     ipcMain.removeAllListeners('app:quit-awaiting-user');
-    // Audit5 2.1 — and the periodic drain heartbeat listener.
     ipcMain.removeAllListeners('app:drain-heartbeat');
     void Promise.allSettled([
       flushWindowStateNow(),
       flushSidebarStateNow(),
       stopActiveWatcher(),
-      // 6.2.H4 (follow-up) — see the close-event path above.
+      // See the close-event path above.
       writeQuitFailureBreadcrumb(vaultRegistry.currentVaultPath),
     ]).finally(() => {
       app.exit(0);
@@ -484,17 +467,14 @@ app.on('before-quit', (event) => {
   };
   let timer = setTimeout(exitOnTimeout, FLUSH_TIMEOUT_MS);
 
-  // Audit5 2.1 — drain heartbeat (see the close-event path for the full
-  // rationale). Each beat re-arms the auto-exit timer so an honest drain that
-  // outlasts FLUSH_TIMEOUT_MS isn't cut short; the ceiling bounds inter-beat
-  // silence, not total drain time.
+  // Drain heartbeat (see the close-event path). Each beat re-arms the
+  // auto-exit timer; the ceiling bounds inter-beat silence, not drain time.
   const onHeartbeat = (): void => {
     clearTimeout(timer);
     timer = setTimeout(exitOnTimeout, FLUSH_TIMEOUT_MS);
   };
 
-  // Audit-4 DI-04 — heartbeat (see the close-event path for the full
-  // rationale). Clear the auto-exit timer when the renderer signals a human
+  // See the close-event path. Clear the auto-exit timer when the renderer signals a human
   // is reading the open-ended save-failure confirm, so the 5 s ceiling bounds
   // only the automated flush. The ready/cancel reply still drives the exit.
   const onAwaitingUser = (): void => {
@@ -502,7 +482,7 @@ app.on('before-quit', (event) => {
     ipcMain.removeListener('app:drain-heartbeat', onHeartbeat);
   };
 
-  // 6.2.H4 — same two-signal handshake as the close-event path. On Cancel
+  // Same two-signal handshake as the close-event path. On Cancel
   // we don't exit, we rewind `isFlushingForQuit` and remove the listeners.
   const onReady = (): void => {
     clearTimeout(timer);
@@ -520,7 +500,7 @@ app.on('before-quit', (event) => {
   ipcMain.once('app:ready-to-quit', onReady);
   ipcMain.once('app:cancel-quit', onCancel);
   ipcMain.once('app:quit-awaiting-user', onAwaitingUser);
-  // Audit5 2.1 — persistent (`on`) drain heartbeat; drained by finish() /
+  // Persistent (`on`) drain heartbeat; drained by finish() /
   // onCancel / onAwaitingUser / the catch below.
   ipcMain.on('app:drain-heartbeat', onHeartbeat);
 

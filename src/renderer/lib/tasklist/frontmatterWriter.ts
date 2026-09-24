@@ -50,20 +50,15 @@ export { flushAllPendingFrontmatterWrites };
  * next instance's due date is computed from the live row (current due +
  * recurrence + mode) and written back, keeping `completed: false`.
  *
- * REC-1 — schedule mode needs an anchor `dueDate`; without one `nextDueDate`
- * returns null. Rather than silently terminating the recurrence (the old
- * behaviour — falling through to a plain completion, so an undated repeating
- * task got permanently completed and never recurred again, AND schedule is the
- * DEFAULT mode), we seed the next instance from the completion day
- * (completion-mode semantics) so the task keeps recurring. Only a genuinely
- * unparseable `recurrence` string (both modes return null) falls back to a
- * plain completion.
+ * Schedule mode (the default) needs an anchor `dueDate`; without one
+ * `nextDueDate` returns null. Rather than terminating the recurrence, we seed
+ * the next instance from the completion day (completion-mode semantics) so the
+ * task keeps recurring. Only a genuinely unparseable `recurrence` string (both
+ * modes return null) falls back to a plain completion.
  *
  * Shared by the single-row `toggleCompleted` and the bulk
  * `multiSelectController.bulkMarkComplete` so the two "mark complete" paths
- * can't silently diverge (BULK-1 — the bulk path used to stamp
- * `{ completed: true }` with NO recurrence branch, permanently completing
- * repeating tasks).
+ * can't diverge (e.g. one permanently completing repeating tasks).
  *
  * Pure given `now`; defaults to the current time for production callers.
  */
@@ -73,7 +68,7 @@ export function completionPatchForRow(
 ): Record<string, unknown> {
   if (row.recurrence) {
     let next = nextDueDate(row.dueDate || undefined, row.recurrence, row.recurrenceMode, now);
-    // REC-1 — schedule mode with no anchor date returns null; fall back to
+    // Schedule mode with no anchor date returns null; fall back to
     // completion-mode (next = completion day + interval) so recurrence survives.
     if (!next && row.recurrenceMode !== 'completion') {
       next = nextDueDate(row.dueDate || undefined, row.recurrence, 'completion', now);
@@ -84,7 +79,7 @@ export function completionPatchForRow(
 }
 
 /**
- * NOTES-1 — write a docId-less task's notes body directly to disk, preserving
+ * Write a docId-less task's notes body directly to disk, preserving
  * its frontmatter source byte-for-byte. Reads FM+body fresh (so an external FM
  * edit isn't clobbered), swaps the body for `body`, and routes through the
  * coupled write+reconcile gateway helper, which loud-fails on a write error
@@ -131,7 +126,7 @@ export interface FrontmatterWriterDeps {
   /** Bumps the host's reactivity tick so derived views re-render. */
   bumpCacheVersion: () => void;
   /**
-   * Audit-16 6.2 — screen-reader announcer (aria-live region), used to
+   * Screen-reader announcer (aria-live region), used to
    * announce a FAILED bulk mark-incomplete. The visual error toast already
    * comes from the command chain's reportError pipeline; this gives SR users
    * parity with it. Optional so older test harnesses keep constructing deps.
@@ -188,14 +183,12 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
     const board = getBoard();
     if (!board) return null;
     const path = vaultPathForTile(row.tile);
-    // Resolve the docId WITHOUT seeding (Audit-7 H1): the disk pre-seed moved
-    // INTO UpdateTaskFieldCommand.execute(), and a sync index-seed here would
-    // populate the cache first, making that disk seed a no-op. The command's
-    // execute() now seeds (disk, then index fallback) on the history chain.
+    // Resolve the docId WITHOUT seeding: UpdateTaskFieldCommand.execute() seeds
+    // from disk (then index fallback) on the history chain, and a sync
+    // index-seed here would populate the cache first, making that a no-op.
     const docId = (row.tile as Tile & { contentId?: string }).contentId ?? null;
-    // 6.2.H7 — UpdateTaskFieldCommand now throws on null docId (it was a
-    // silent no-op pre-fix). Short-circuit here so the caller's fallback
-    // branch (extremely rare, pre-live-cache tiles) takes over.
+    // UpdateTaskFieldCommand throws on null docId. Short-circuit here so the
+    // caller's fallback branch (extremely rare, pre-live-cache tiles) takes over.
     if (!docId) return null;
     // Best-effort inverse from the vault index; the command recomputes it from
     // the fresh disk read on execute so undo restores the TRUE prior value.
@@ -206,7 +199,7 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
       // so absent previous keys map to '' (which restores the absent state).
       inverse[key] = key in before ? before[key] : '';
     }
-    // REC-2 — a patch carrying BOTH `completed` and `dueDate` is, in this code, a
+    // A patch carrying BOTH `completed` and `dueDate` is, in this code, a
     // recurrence roll-forward: `completionPatchForRow` is the ONLY producer of
     // that shape (every other task field setter — priority, due, start, status,
     // a plain (un)complete — is single-key). Mark it atomic so undo/redo can't
@@ -223,23 +216,19 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
     if (!board) return;
     const cmd = buildTaskFieldCommand(row, patch);
     if (cmd) {
-      // Audit-7 H1 — the disk pre-seed moved INTO UpdateTaskFieldCommand.
-      // execute() so the read joins the history chain vaultStore.save()/quit
-      // await via whenChainSettled(). Await the command so this resolves only
-      // after the seed + merge + schedule have run; the chain reports its own
-      // errors, so swallow the rejection on this fire-and-forget UI path.
+      // The disk pre-seed runs inside UpdateTaskFieldCommand.execute() so the
+      // read joins the history chain save()/quit await. Await the command so
+      // this resolves only after seed + merge + schedule; the chain reports its
+      // own errors, so swallow the rejection on this fire-and-forget UI path.
       await historyStore.execute(cmd).catch(() => {});
     } else {
-      // A9-L3 — docId-less tile (predates the shared live cache; extremely
-      // rare). The previous fallback armed `scheduleFrontmatterWrite(path, null)`,
-      // which the scheduler resolves as a SILENT no-op (`if (!fm) return`) when
-      // the path is absent from the vault index — dropping the edit with a false
-      // SUCCESS that lets markClean wipe `.filo/.dirty`. Route through the orphan
-      // command instead (mirrors kanbanFrontmatterWriter's no-contentId branch):
-      // it reads body + FM fresh from disk, writes directly via the gateway, is
-      // undoable, and loudly fails (A9-L2) on a write error rather than silently
-      // no-op'ing. The command recomputes the inverse from the fresh disk read,
-      // so this best-effort index inverse is only a construction-time placeholder.
+      // DocId-less tile (predates the shared live cache; extremely rare).
+      // `scheduleFrontmatterWrite(path, null)` would be a SILENT no-op when the
+      // path is absent from the vault index, so route through the orphan
+      // command (mirrors kanbanFrontmatterWriter): it reads body + FM fresh
+      // from disk, writes via the gateway, is undoable, and fails loudly. It
+      // recomputes the inverse from disk, so this index inverse is only a
+      // construction-time placeholder.
       const path = vaultPathForTile(row.tile);
       const before = readFrontmatter(row.tile);
       const inverse: Record<string, unknown> = {};
@@ -263,11 +252,11 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
 
   async function toggleCompleted(row: TaskRow): Promise<void> {
     // Completing routes through the shared `completionPatchForRow` so the
-    // recurrence roll-forward stays identical to the bulk path (BULK-1).
+    // recurrence roll-forward stays identical to the bulk path.
     // Un-completing is a plain `completed: false`.
     const patch = row.completed ? { completed: false } : completionPatchForRow(row);
     await updateRowField(row, patch);
-    // REC-3 — a recurring roll-forward keeps completed:false and advances the due
+    // A recurring roll-forward keeps completed:false and advances the due
     // date, so the checkbox just snaps back with no other signal. Announce the new
     // date so the reschedule is visible (only when completing produced the
     // {completed:false, dueDate} roll-forward shape, not a plain (un)complete).
@@ -289,10 +278,9 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
   }
 
   function setDueDate(row: TaskRow, dueDate: string): Promise<void> {
-    // DATE-3 — clearing the due date also clears any dueTime, in ONE command
-    // (so a single undo entry, no phantom no-op time-clear). A dangling dueTime
-    // with no dueDate is invisible anyway — the chip only renders inside
-    // `{#if dueDate}` (DATE-2). A non-empty date leaves the time untouched.
+    // Clearing the due date also clears any dueTime, in ONE command (a single
+    // undo entry). A dangling dueTime with no dueDate is invisible anyway — the
+    // chip only renders inside `{#if dueDate}`. A non-empty date leaves the time untouched.
     if (!dueDate && row.dueTime) {
       return updateRowField(row, { dueDate: '', dueTime: '' });
     }
@@ -322,11 +310,9 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
     const t = row.tile as Tile & { contentId?: string };
     const docId = t.contentId ?? null;
     if (docId) {
-      // A8-M3(a) — apply the NEW body into the live cache and ARM the write
-      // BEFORE awaiting the disk-FM seed. `seedDocumentFrontmatterFromDisk` is
-      // an IPC read; a quit landing in that await window used to resolve
-      // `whenChainSettled()` against an empty chain (no write scheduled yet) and
-      // drop the typed notes with a clean `.filo/.dirty` sentinel. `loadDocument`
+      // Apply the NEW body into the live cache and ARM the write BEFORE
+      // awaiting the disk-FM seed (an IPC read) — otherwise a quit in that
+      // window finds no write scheduled and drops the typed notes. `loadDocument`
       // and `updateContent` never touch the FM cache, so doing them first is FM-
       // safe; `scheduleFrontmatterWrite` reads the body + FM live at fire time
       // (normally 300 ms later, long after the seed has refreshed FM), so the
@@ -345,43 +331,37 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
         });
       }
       const after = documentStore.getDocument(docId);
-      // NOTES-2 — register a writerId so a sibling DocumentEditor's per-writer
+      // Register a writerId so a sibling DocumentEditor's per-writer
       // markClean can't flip this doc's `isDirty` off while the typed note is
       // still unsaved. The id MATCHES the frontmatter scheduler's gateway
       // callerId (`frontmatter-scheduler:${path}`), so the notes write's OWN
       // success (`markClean(docId, callerId)`) clears it — no pinned-dirty risk.
       documentStore.updateContent(docId, after?.htmlContent ?? '', body, `frontmatter-scheduler:${path}`);
-      // A9-M2 (Audit-9) — seed the FM cache SYNCHRONOUSLY (from the vault index)
-      // BEFORE the early arm. The early-armed write can be drained by a quit's
-      // flushAll DURING the disk read below; with an EMPTY FM cache that drain
-      // hits writeFrontmatter's `if (!fm) return` — a no-op that resolves the
-      // write as SUCCESS → endWrite(true) → markClean wipes `.filo/.dirty`, so the
-      // typed notes are silently dropped (unrecoverable: `.board.json` does not
-      // cache the body). An empty index still seeds `{}` (truthy), which is enough
-      // to clear the no-op so the drain writes the body. `setNotesBody` makes NO
-      // frontmatter mutation, so the disk refresh below safely OVERWRITES this
-      // index placeholder (restoring the source-preserving baseline + any
-      // externally-added key the index lacked).
+      // Seed the FM cache SYNCHRONOUSLY (from the vault index) BEFORE the early
+      // arm. A quit's flushAll can drain the early-armed write DURING the disk
+      // read below; with an EMPTY FM cache writeFrontmatter's `if (!fm) return`
+      // would drop the typed notes as a "success". An empty index still seeds
+      // `{}` (truthy). `setNotesBody` makes NO frontmatter mutation, so the disk
+      // refresh below safely OVERWRITES this placeholder.
       let placeholderVersion: number | undefined;
       if (!documentStore.getFrontmatter(docId)) {
         documentStore.setFrontmatter(
           docId,
           (vaultIndexStore.getMetadata(path)?.frontmatter ?? {}) as Record<string, unknown>,
         );
-        // Audit-16 1.1 — FM-ONLY version (body keystrokes bump the shared
+        // FM-ONLY version (body keystrokes bump the shared
         // token; a second rapid notes edit during the seed read below must
         // not block the refresh — see SeedFrontmatterOptions).
         placeholderVersion = documentStore.getFrontmatterOnlyMutationVersion(docId);
       }
       scheduleFrontmatterWrite(path, docId);
-      // Audit-6 M4 — refresh FM from a fresh disk read so the eventual write
-      // assembles over the latest disk frontmatter (doesn't drop an externally-
-      // added key) AND restores the source-preserving baseline the index
-      // placeholder above lacks. In refresh mode the disk bytes OVERWRITE the
-      // placeholder, but ONLY if nothing mutated FM since it was seeded (A9-M2 —
-      // a racing field edit bumps the version and is preserved). Vault-identity-
-      // guarded inside the primitive (A9-M1). Awaited AFTER the schedule, so the
-      // pending path is already in the flush/sentinel set when the await suspends.
+      // Refresh FM from a fresh disk read so the eventual write assembles over
+      // the latest disk frontmatter (doesn't drop an externally-added key) AND
+      // restores the source-preserving baseline the placeholder lacks. The disk
+      // bytes OVERWRITE the placeholder only if nothing mutated FM since it was
+      // seeded (a racing field edit is preserved). Vault-identity-guarded inside
+      // the primitive. Awaited AFTER the schedule, so the pending path is already
+      // in the flush/sentinel set when the await suspends.
       await seedDocumentFrontmatterFromDisk(
         docId,
         vaultStore.path,
@@ -390,7 +370,7 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
       );
       ensureSeededFm(row.tile);
       // Re-arm the write once FM is seeded. It coalesces with the early
-      // A8-M3(a) schedule above (resetting the 300 ms timer to the same path).
+      // schedule above (resetting the 300 ms timer to the same path).
       // The re-arm also closes the narrow first-touch window where a `flushAll`
       // raced the gated seed and fired the early timer against a still-EMPTY FM
       // cache: `writeFrontmatter`'s `if (!fm) return` makes that fire a no-op AND
@@ -401,13 +381,11 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
       bumpCacheVersion();
       return;
     }
-    // NOTES-1 — docId-less task (predates the live cache; very rare — every
-    // Filo-created/dropped task has a contentId). There is no live document to
-    // mutate, so the old code fell through to `scheduleFrontmatterWrite(path,
-    // null)`, which the scheduler re-emits as the OLD disk body — silently
-    // discarding the typed note (unrecoverable: `.board.json` doesn't cache the
-    // body). Do an orphan body write instead (read fresh, swap body, write via
-    // the loud-failing gateway helper). The error surface comes from
+    // DocId-less task (predates the live cache; very rare). There is no live
+    // document to mutate, and `scheduleFrontmatterWrite(path, null)` would
+    // re-emit the OLD disk body, discarding the typed note. Do an orphan body
+    // write instead (read fresh, swap body, write via the loud-failing gateway
+    // helper). The error surface comes from
     // trackComponentWrite; the catch only keeps this fire-and-forget UI path
     // from raising an unhandled rejection.
     await writeOrphanNotesBody(path, body).catch(() => {});
@@ -420,19 +398,16 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
     const cmds: Command[] = [];
     for (const r of rows) {
       if (!r.completed) continue;
-      // Audit-7 H1 — each row's disk pre-seed moved INTO UpdateTaskFieldCommand.
-      // execute(); BatchCommand awaits its children's execute() in order, so the
+      // Each row's disk pre-seed runs inside UpdateTaskFieldCommand.execute();
+      // BatchCommand awaits its children's execute() in order, so the
       // seeds + writes all run on the history chain that save()/quit drain.
       const cmd = buildTaskFieldCommand(r, { completed: false }, 'Mark incomplete');
       if (cmd) {
         cmds.push(cmd);
         continue;
       }
-      // WRITE-1 — a docId-less completed task (predates the live cache; very
-      // rare). buildTaskFieldCommand returns null for it, and the old loop simply
-      // SKIPPED it: the task stayed `completed: true` AND the success toast
-      // over-counted (it claimed "N marked incomplete" but counted only the
-      // docId-backed rows). Route it through the loud, undoable orphan command
+      // A docId-less completed task (very rare): buildTaskFieldCommand returns
+      // null for it. Route it through the loud, undoable orphan command
       // (mirrors updateRowField's fallback) so the edit actually lands and the
       // reported count is honest.
       const path = vaultPathForTile(r.tile);
@@ -454,17 +429,12 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
       uiStore.toast('No completed tasks to mark', 'info', 2000);
       return;
     }
-    // Await the batch (Audit-7 H1) so the per-row disk seeds + writes — now
-    // inside each child's execute() — finish before the confirmation toast,
-    // matching the old per-row `await preSeedRow` timing.
+    // Await the batch so the per-row disk seeds + writes (inside each child's
+    // execute()) finish before the confirmation toast.
     //
-    // Audit-16 6.2 — the success toast is GATED on the chain actually
-    // resolving. Pre-fix the `.catch(() => {})` swallow meant a rejected
-    // batch (write failure → execute() rolled back) still toasted
-    // "N tasks marked incomplete" — a false success sitting next to the
-    // error toast the chain's reportError pipeline raised. On failure we
-    // only announce for screen readers (the visual error toast already
-    // exists); the rejection itself stays swallowed (fire-and-forget UI path).
+    // The success toast is GATED on the chain resolving (a rejected batch
+    // rolled back). On failure we only announce for screen readers (the visual
+    // error toast already exists); the rejection stays swallowed.
     const ok = await historyStore
       .execute(new BatchCommand(`Mark ${cmds.length} tasks incomplete`, cmds))
       .then(() => true, () => false);

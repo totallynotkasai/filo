@@ -9,7 +9,7 @@
 
   let { onReturnToProject }: Props = $props();
 
-  // Phase C / C.5 — bind the Ctrl+N / Ctrl+O shortcuts the welcome screen
+  // Bind the Ctrl+N / Ctrl+O shortcuts the welcome screen
   // already advertises in its footer. The global hotkeys registry isn't
   // initialised until a vault is open (AppShell.svelte runs `initKeyboardShortcuts`
   // in an $effect there), so the welcome screen gets a scoped, mount-tied
@@ -106,11 +106,10 @@
 
   async function recordOpen(path: string, name: string): Promise<void> {
     try {
-      // Audit-18 4.5 — `invokeOk` throws on the `{ ok: false }` failure branch
-      // (validation / missing directory), so a failed add lands in the catch
-      // and the displayed list is left INTACT. The old bare-array call set
-      // `recentProjects = []` on any failure, wiping the UI on a transient
-      // stat miss (e.g. a network-share vault briefly offline).
+      // `invokeOk` throws on the `{ ok: false }` failure branch (validation /
+      // missing directory), so a failed add lands in the catch and the
+      // displayed list is left INTACT rather than wiped on a transient stat
+      // miss (e.g. a network-share vault briefly offline).
       const { recents } = await invokeOk('vault:add-recent', path, name);
       recentProjects = recents;
     } catch {
@@ -278,9 +277,9 @@
         </div>
         <div class="recent-list">
           {#each sortedRecentProjects as project, i (project.path)}
-            <!-- UX-2 — a non-button row with sibling buttons. The row used to
-                 be a <button> wrapping pin/remove role="button" spans, which is
-                 invalid HTML (interactive descendants) and breaks AT. -->
+            <!-- A non-button row with sibling buttons: a <button> wrapping the
+                 pin/remove controls would be invalid HTML (interactive
+                 descendants) and break AT. -->
             <div class="recent-item" class:pinned={project.pinned} style="animation-delay: {i * 0.04}s">
               <button class="recent-open" onclick={() => handleOpenRecent(project)} aria-label="Open {project.name}">
                 <span class="recent-icon">

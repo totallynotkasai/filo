@@ -1,11 +1,10 @@
 /**
- * Audit-19 EXT-5 / ERR-9 (plan D6, step 6) — sweep orphaned atomic-write temps
- * out of the synced vault.
+ * Sweep orphaned atomic-write temps out of the synced vault.
  *
  * When `atomicWriteFile` exhausts its lock retry it PRESERVES the fully-written
  * tmp as `<file>.<12 hex>.tmp` next to the target (the bytes are the user's last
  * edit). The tree and watcher hide those names, but the sync client uploads
- * them and nothing ever removed them — so they accumulated on every machine.
+ * them, so without a sweep they accumulate on every machine.
  * A stranded Windows case-only rename leaves `<file>.case-rename-<ms>` the same
  * way.
  *

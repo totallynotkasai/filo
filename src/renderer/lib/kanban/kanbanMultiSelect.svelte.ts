@@ -29,12 +29,11 @@ export interface KanbanMultiSelectDeps {
   ensureSeededFm: (tile: Tile) => string | null;
   vaultPathForTile: (tile: Tile) => string | null;
   /**
-   * Audit-18 M7 — opens an in-app text-input popup for the bulk "Add tag" flow
-   * and resolves with the entered tag (raw, un-normalised) or `null` if the user
-   * cancelled. Injected by `KanbanBoard` because `window.prompt` is unimplemented
-   * in Electron's renderer (it throws → a generic unhandled-rejection toast, so
-   * the feature is dead in the packaged app). The controller stays UI-agnostic;
-   * the component owns the popup.
+   * Opens an in-app text-input popup for the bulk "Add tag" flow and resolves
+   * with the entered tag (raw, un-normalised) or `null` if the user cancelled.
+   * Injected by `KanbanBoard` because `window.prompt` is unimplemented in
+   * Electron's renderer (it throws). The controller stays UI-agnostic; the
+   * component owns the popup.
    */
   promptForTag: () => Promise<string | null>;
 }
@@ -127,7 +126,7 @@ export class KanbanMultiSelect {
     }
     if (toMove.length === 0) return;
     const toPosition = (target.tilePlacements ?? []).length;
-    // Phase 16 / H5 — single MoveCardsCommand for the whole bulk move so
+    // Single MoveCardsCommand for the whole bulk move so
     // Ctrl+Z reverses every card at once.
     historyStore.execute(new MoveCardsCommand(boardId, toMove, targetColumnId, toPosition, snapshots));
     this.deps.tickAndPersist();
@@ -140,7 +139,7 @@ export class KanbanMultiSelect {
     const selected = Array.from(this.deps.selection.selectedIds);
     if (selected.length === 0) return;
     if (selected.length === 1) {
-      // Phase 16 / H5 — single-card path uses DeleteCardCommand (it
+      // Single-card path uses DeleteCardCommand (it
       // snapshots the placement + def for undo). Mirrors the multi-card
       // path below so context-menu single delete is just as recoverable.
       historyStore.execute(new DeleteCardCommand(boardId, selected[0]!)); // length === 1 checked above
@@ -157,7 +156,7 @@ export class KanbanMultiSelect {
       onConfirm: () => {
         const stillBoardId = this.deps.getBoardId();
         if (!stillBoardId) return;
-        // Phase 16 / H5 — BatchCommand of DeleteCardCommand so Ctrl+Z
+        // BatchCommand of DeleteCardCommand so Ctrl+Z
         // reverses the bulk delete in one step.
         const commands = selected.map((tileId) => new DeleteCardCommand(stillBoardId, tileId));
         historyStore.execute(new BatchCommand(`Remove ${selected.length} cards`, commands));
@@ -171,7 +170,7 @@ export class KanbanMultiSelect {
   async tagSelectedTiles(): Promise<void> {
     const selected = Array.from(this.deps.selection.selectedIds);
     if (selected.length === 0) return;
-    // Audit-18 M7 — route through the injected in-app popup, NOT `window.prompt`
+    // Route through the injected in-app popup, NOT `window.prompt`
     // (unimplemented in Electron's renderer → throws). Resolves null on cancel.
     const tagName = await this.deps.promptForTag();
     if (!tagName) return;
@@ -181,22 +180,18 @@ export class KanbanMultiSelect {
     if (!boardId) return;
     const allTilesById = this.deps.getAllTilesById();
 
-    // A9-L1 (Audit-9) — build one field command per card and run them as a
-    // single BatchCommand instead of the old per-card `await seed →
-    // mergeFrontmatter → scheduleSharedFrontmatterWrite` loop. That loop was
-    // (a) NOT undoable and (b) lost the tag on every still-unprocessed card if a
-    // quit landed while it was suspended at a card's seed `await`: cards N..end
-    // were never merged or scheduled, so their tag was in no cache/scheduler/
-    // sentinel. Each UpdateCardFieldCommand seeds the FM from disk INSIDE its own
-    // execute() (on the history chain), so vaultStore.save()/quit cover every
-    // card via whenChainSettled(), and the whole bulk add is one undo step.
+    // Build one field command per card and run them as a single BatchCommand.
+    // Each UpdateCardFieldCommand seeds the FM from disk INSIDE its own
+    // execute() (on the history chain), so save()/quit cover every card via
+    // whenChainSettled() — a quit mid-loop can't lose later cards' tags — and
+    // the whole bulk add is one undo step.
     //
     // The `tags` patch is computed up front from the best-available source — the
     // live cache when an open editor / prior edit seeded it, else the vault-index
     // snapshot. A card whose disk frontmatter carries a tag the stale index never
     // learned would have that one external tag dropped by the additive patch —
     // the same narrow index-staleness edge every field-edit command's patch
-    // carries; acceptable for a bulk convenience op (LOW).
+    // carries; acceptable for a bulk convenience op.
     const commands: Command[] = [];
     for (const tileId of selected) {
       const tile = allTilesById[tileId];
@@ -223,11 +218,9 @@ export class KanbanMultiSelect {
       return;
     }
     // Crash-safe (whenChainSettled covers the batch on quit) + undoable in one step.
-    // Audit-18 4.6 — gate the success toast on the chain actually resolving. The
-    // pre-fix `.catch(() => {})` swallow meant a rejected batch (a write failure →
-    // execute() rolled back) still flashed "Added #tag" next to the chain's own
-    // error toast (historyStore.execute's reportError). On failure, stay silent
-    // here — the chain already surfaced the visual error.
+    // Gate the success toast on the chain actually resolving (a rejected batch
+    // rolled back). On failure, stay silent here — the chain already surfaced
+    // the visual error.
     const ok = await historyStore
       .execute(new BatchCommand(`Add #${norm} to ${commands.length} card(s)`, commands, boardId))
       .then(() => true, () => false);

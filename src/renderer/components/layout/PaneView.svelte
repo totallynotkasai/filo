@@ -75,13 +75,13 @@
     }
   });
 
-  // Audit 3.2 — closing a pane drops the scope reference, but a fly-to RAF
+  // Closing a pane drops the scope reference, but a fly-to RAF
   // started in this pane keeps ticking (and would persist a stale viewport)
   // because nothing routes a closing pane through canvas.setBoard(null).
   // Tear the canvas scope down explicitly so the animation frame is cancelled
   // and any pending viewport persist is flushed.
   //
-  // Audit-16 6.6 — if THIS pane's scope still backs the global facades when
+  // If THIS pane's scope still backs the global facades when
   // it unmounts (the last pane closing — vault swap already resets via the
   // pre-swap hook, and a pane close with survivors re-targets via the
   // surviving pane's activation $effect), drop it. Otherwise `boardStore` /

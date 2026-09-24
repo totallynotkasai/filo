@@ -721,8 +721,8 @@
         {/if}
         <!-- Branch on the shadow marker so the placeholder gets its own DOM
              node — otherwise svelte-dnd-action writes `visibility:hidden` to
-             a sibling card via Svelte's keyed `{#each}` reuse, which is what
-             previously made cards go invisible mid-drag. Key suffix is
+             a sibling card via Svelte's keyed `{#each}` reuse, making cards go
+             invisible mid-drag. Key suffix is
              required per dnd-action README v0.9.42+. -->
         {#each cardItems as item (`${item.id}${item[SHADOW_ITEM_MARKER_PROPERTY_NAME] ? '_shadow' : ''}`)}
           {#if item[SHADOW_ITEM_MARKER_PROPERTY_NAME]}

@@ -262,12 +262,10 @@
   let trap: FocusTrap | null = null;
   $effect(() => {
     const triggerEl = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    // Phase 2 (IMPLEMENTATION_PLAN_2026-05-27) — capture the board id at
-    // popup mount so the deferred command push (in the cleanup below)
-    // refers to the originating board, not whichever board is active when
-    // the popup destroys. Without this, switching boards via the tab bar
-    // while the popup is open would result in pushing the style command
-    // onto the wrong board's stack.
+    // Capture the board id at popup mount so the deferred command push (in
+    // the cleanup below) targets the originating board, not whichever board
+    // is active when the popup destroys — otherwise switching boards while
+    // the popup is open would push the style command onto the wrong stack.
     const mountBoardId = boardStore.current?.id ?? '';
     if (popupEl) {
       try {

@@ -37,9 +37,9 @@ async function refresh(): Promise<void> {
     loaded = true;
     return;
   }
-  // Audit-11 VS-5 — capture identity before the list await. A swap during the
-  // read would otherwise stamp the outgoing vault's templates into this
-  // display-only cache AFTER the pre-swap reset cleared it. Bail on swap.
+  // Capture identity before the list await: a swap during the read would
+  // otherwise stamp the outgoing vault's templates into this cache after the
+  // pre-swap reset cleared it.
   const identity = captureVaultIdentity();
   loading = true;
   try {
@@ -122,10 +122,8 @@ export const templatesStore = {
   },
 };
 
-// Phase 4 (Consolidation 2026-05-25) — vault-swap reset registration.
-// Drops the per-vault template cache and the pending insert anchor so the
-// next vault's TemplateBrowser opens empty and re-fetches against the new
-// `.filo/templates/` directory rather than rendering stale entries.
+// Vault-swap reset: drop the template cache and pending insert anchor so the
+// next vault's TemplateBrowser re-fetches instead of rendering stale entries.
 onVaultSwap('pre-swap', 'templates', () => {
   records = [];
   loaded = false;

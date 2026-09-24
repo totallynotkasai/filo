@@ -7,8 +7,8 @@ import type { CacheContext, V7BoardFileData } from '../stores/boardCacheTypes';
  * `BoardType → Ops` so a future board type is a compile error until it lands
  * a registry entry (the mapped type forces exhaustiveness).
  *
- * Phase 6 of CONSOLIDATION_PLAN_2026-05-25 — mirrors the Phase 2 strategy
- * pattern (`boardTileOps`) for the connection slice of the cache. Today every
+ * Mirrors the `boardTileOps` strategy pattern for the connection slice of
+ * the cache. Today every
  * board type's body is identical (connections are conceptually mind-map-only
  * but the cache map exists on every `.board.json`); the registry gives the
  * mutators a typed home so a future per-type divergence (e.g. document boards
@@ -67,9 +67,8 @@ export interface BoardConnectionsOps<B extends Board = Board> {
  * vocabulary doesn't diverge between board types — kanban / tasklist /
  * document boards aren't *supposed* to host connections, but a hand-edited
  * or migrated file could in principle, so we honour the write rather than
- * silently dropping it. Centralising the body here keeps Phase 6 a pure
- * structural lift (no behaviour change) while giving each board type a
- * typed home for future divergence.
+ * silently dropping it. Each board type still gets a typed home for future
+ * divergence.
  */
 const sharedConnectionsBody = {
   addConnection(

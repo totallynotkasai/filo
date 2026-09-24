@@ -1,14 +1,10 @@
 /**
- * Vault-identity guard (Audit-5 G1) — generalizes the post-`await`
- * "did the vault swap under me?" check.
+ * Vault-identity guard — the post-`await` "did the vault swap under me?"
+ * check.
  *
- * Background. Work that suspends on an `await` (a rename cascade, a tree
- * cleanup, a `markClean`, a drained disk-shape op) can resume *after* the
- * user has swapped to a different vault — and then run against the new
- * vault's state. DI-03 added a guard at exactly ONE site
- * (`runRecoverySequencer`, comparing `vaultPath === newVaultPath`); the
- * audit kept finding sibling resumptions that lacked it. This module turns
- * that one-off into a discipline.
+ * Work that suspends on an `await` (a rename cascade, a tree cleanup, a
+ * `markClean`, a drained disk-shape op) can resume *after* the user has
+ * swapped to a different vault — and then run against the new vault's state.
  *
  * Two failure modes the bare `vaultPath ===` compare misses, both covered
  * here by pairing the path with a monotonic generation token:
@@ -30,7 +26,7 @@
  *
  * Pure module-scoped state with no imports — safe for any `lib/` or `store`
  * consumer (no circular-dependency risk). The two scalars (`currentPath`,
- * `generation`) are not Map/Set/Promise, so the `ci:vault-scoped-state`
+ * `generation`) are not Map/Set/Promise, so the `gates:vault-scoped-state`
  * gate does not require an `onVaultSwap` subscription here; they are reset
  * explicitly by `beginVaultGeneration` at the swap boundary instead.
  */

@@ -55,7 +55,7 @@
   }
 
   // View month/year is owned by DatePickerViewState so the "seed once per value,
-  // never reset on navigation" logic (DATE-1) is unit-tested in isolation — the
+  // never reset on navigation" logic is unit-tested in isolation — the
   // repo's vitest setup can't mount a Svelte component that has a scoped style
   // block.
   const view = new DatePickerViewState();
@@ -118,7 +118,7 @@
 
   function handleTimeInput(e: Event) {
     const t = (e.currentTarget as HTMLInputElement).value;
-    // DATE-2 — refuse an orphan time (a dueTime with no dueDate is invisible:
+    // Refuse an orphan time (a dueTime with no dueDate is invisible:
     // the chip only renders inside `{#if dueDate}`). The input is also disabled
     // when there's no date, so this is a belt-and-suspenders guard.
     if (!value) return;

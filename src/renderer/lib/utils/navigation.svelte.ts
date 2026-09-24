@@ -15,7 +15,7 @@ let highlightedTileId = $state<string | null>(null);
 let highlightTimer: ReturnType<typeof setTimeout> | null = null;
 const HIGHLIGHT_DURATION_MS = 2000;
 
-// #13 — module handle for the tile-lookup retry chain (the board switch may
+// Module handle for the tile-lookup retry chain (the board switch may
 // need a tick to load tiles). Hoisted out of the closure so a new navigate or
 // a vault swap can cancel a stale retry — otherwise a late retry could center
 // the viewport / select a tile in the WRONG board (or the new vault) after the
@@ -40,15 +40,15 @@ export function navigateToTile(boardId: string, tileId: string): void {
   const project = vaultStore.project;
   if (!project) return;
 
-  // #13 — a fresh navigate supersedes any in-flight retry chain from a prior
+  // A fresh navigate supersedes any in-flight retry chain from a prior
   // call, so cancel it before starting a new one.
   if (navigateRetryTimer) {
     clearTimeout(navigateRetryTimer);
     navigateRetryTimer = null;
   }
   // Capture the vault we navigated from; a swap mid-retry must abort the chain
-  // so we don't center/select against the new vault's boards. Audit-11 VS-6 —
-  // a generation-aware identity (not a bare path string) also catches a
+  // so we don't center/select against the new vault's boards. A
+  // generation-aware identity (not a bare path string) also catches a
   // close → reopen of the SAME path between scheduling and the retry firing.
   const startVault = captureVaultIdentity();
 
@@ -105,7 +105,7 @@ function setHighlight(tileId: string) {
   }, HIGHLIGHT_DURATION_MS);
 }
 
-// Sprint B / B14 — drop the active highlight (and cancel the pending
+// Drop the active highlight (and cancel the pending
 // timer) on vault swap so the new vault doesn't open with a stale
 // highlight ring pinned to a tile id from the prior vault. Without this,
 // a late timer would also fire `highlightedTileId = null` after the new
@@ -115,7 +115,7 @@ onVaultSwap('pre-swap', 'navigation', () => {
     clearTimeout(highlightTimer);
     highlightTimer = null;
   }
-  // #13 — also cancel any in-flight tile-lookup retry so it can't fire against
+  // Also cancel any in-flight tile-lookup retry so it can't fire against
   // the new vault's boards after the swap.
   if (navigateRetryTimer) {
     clearTimeout(navigateRetryTimer);

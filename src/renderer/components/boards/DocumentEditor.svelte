@@ -49,7 +49,7 @@
   import type { DocumentBoard } from '../../schema/index';
   import type { Editor } from '@tiptap/core';
 
-  // R1 (Audit-11) — pane-scoped, NOT global. BoardRouter renders this with the
+  // Pane-scoped, NOT global. BoardRouter renders this with the
   // pane's own `tabId` (and remounts via `{#key tab.id}` on a pane tab change), so
   // two panes showing different Document boards each bind to their OWN doc. Reading
   // `tabStore.activeTab` here would make both panes mirror the globally-active tab —
@@ -99,17 +99,17 @@
   // Same role as TextTile.backingFileMissing — set on ENOENT so subsequent
   // debounced writes don't re-create a file the user just deleted on disk.
   let backingFileMissing = false;
-  // Phase 31 B1.4 — hydration gate. Mirrored locally; the gateway enforces
+  // Hydration gate. Mirrored locally; the gateway enforces
   // the invariant on the write side via markHydrated.
   let hydrated = false;
   let callerId = '';
-  // M1 (Audit-12) — set when the on-mount disk hydrate read FAILS (Windows
+  // Set when the on-mount disk hydrate read FAILS (Windows
   // file lock / OneDrive / antivirus). While true the editor is held read-only
   // and `buildWriteArgs` refuses to write, so a keystroke into the
   // unexpectedly-blank editor can't truncate the real (unread) file. A banner
   // offers a retry; a later successful read clears the flag and resumes editing.
   let hydrateReadFailed = $state(false);
-  // Audit-19 MD-4 — reactive IME-composition flag (see onMount / reload effect).
+  // Reactive IME-composition flag (see onMount / reload effect).
   let isComposing = $state(false);
 
   // ── Vault-file drop ──
@@ -218,12 +218,12 @@
    * Builds WriteArgs for the gateway. Returns null when the editor isn't
    * writable yet (no editor, no doc, no vault, hydrate pending, read-only,
    * or backing file missing). Sync — captures FM from the documentStore
-   * live cache; the gateway's writeMarkdownFile handles the Phase 18 H13
+   * live cache; the gateway's writeMarkdownFile handles the
    * stale-cache re-read internally.
    */
   function buildWriteArgs(): WriteArgs | null {
     if (!editor || !docState || backingFileMissing || !hydrated) return null;
-    // M1 (Audit-12) — the on-mount disk read failed and we have no real body
+    // The on-mount disk read failed and we have no real body
     // loaded, so the editor is blank for reasons unrelated to the file's
     // content. Never write that emptiness over the file we couldn't read; a
     // successful retry (clears `hydrateReadFailed`) resumes writes.
@@ -250,10 +250,8 @@
 
   async function flushPendingMarkdownWrite(): Promise<void> {
     if (!callerId) return;
-    // Audit-17 2.1 — `flushMarkdownWrite` never rejects (the scheduler
-    // primitive resolves failures as `{ ok: false }`), so the old try/catch
-    // here was dead code: markClean ran unconditionally on a FAILED flush and
-    // the ENOENT degraded mode was unreachable. Branch on the result instead.
+    // `flushMarkdownWrite` never rejects (failures resolve as `{ ok: false }`),
+    // so branch on the result — markClean only on success.
     const result = await flushMarkdownWrite(callerId);
     if (result.ok) {
       if (docState && !backingFileMissing) documentStore.markClean(docState.docId, callerId);
@@ -287,15 +285,14 @@
       onUpdate: (html) => {
         if (isUpdatingFromStore) return;
         if (!editor) return;
-        // Audit-19 — while the disk read failed the editor is frozen; ignore a
+        // While the disk read failed the editor is frozen; ignore a
         // programmatic edit so it can't set `lastLoadedBody` (below) and defeat
         // buildWriteArgs' `hydrateReadFailed && !lastLoadedBody` refusal.
         if (hydrateReadFailed) return;
         const md = editorMarkdown(editor);
-        // Audit-19 MD-4 — record our OWN body so the reload `$effect` treats it
-        // as a no-op once the gateway markCleans this writer. Without it every
-        // successful autosave reloaded the editor's own content (wiping redo,
-        // breaking IME composition). Mirrors TextTile's onUpdate.
+        // Record our OWN body so the reload `$effect` treats it as a no-op once
+        // the gateway markCleans this writer. Without it every autosave would
+        // reload the editor's own content (wiping redo, breaking IME composition).
         lastLoadedBody = md;
         if (docId) {
           documentStore.updateContent(docId, html, md, callerId);
@@ -320,8 +317,8 @@
 
     tiptapToolbar.setActiveEditor(editor);
 
-    // Audit-19 MD-4 — bridge prosemirror's composition state into a reactive
-    // flag so the reload `$effect` defers mid-composition (TextTile's B21 twin).
+    // Bridge prosemirror's composition state into a reactive
+    // flag so the reload `$effect` defers mid-composition.
     // Anchored on the editor DOM, so editor.destroy() removes them.
     const composeEl = editor.view.dom;
     composeEl.addEventListener('compositionstart', () => { isComposing = true; });
@@ -340,34 +337,28 @@
   async function hydrateFromDisk() {
     if (!editor) return;
     try {
-      // audit2 2.2 — only adopt the in-memory (body-only) body as a hydrate
+      // Only adopt the in-memory (body-only) body as a hydrate
       // source when this doc's frontmatter is already seeded (a sibling view,
       // e.g. the backing TextTile, read it from disk). Re-parsing FM from the
       // body-only store body yields {}, and seeding that would clobber the real
       // cached FM → a later body-only save erases the file's frontmatter block.
       // When unseeded, fall through to the authoritative disk read below.
       if (docState?.body && documentStore.hasFrontmatter(docState.docId)) {
-        // Audit-19 MD-3 — load the body-only store body VERBATIM. Re-parsing it
-        // stripped a leading `---…---` rule pair as frontmatter while
-        // `lastLoadedBody` held the raw value, so the reload effect never
-        // corrected the editor and the first keystroke saved the truncated body.
+        // Load the body-only store body VERBATIM. Re-parsing it would strip a
+        // leading `---…---` rule pair as frontmatter and the first keystroke
+        // would save the truncated body.
         lastLoadedBody = docState.body;
         isUpdatingFromStore = true;
         const result = loadMarkdownIntoEditor(editor, docState.body);
         documentStore.setReadOnly(docState.docId, result.lossy);
         isUpdatingFromStore = false;
-        // Phase 6.1.R5 (follow-up) — `docState.body` is body-only by contract,
-        // so a BOM sniff of it is ALWAYS false (the BOM was stripped before the
-        // store cached the body). Marking unconditionally would clobber the
-        // hadBom a sibling view (e.g. the backing TextTile) already read from
-        // disk → the file's BOM is dropped on the next save. Inherit the
-        // existing fileState entry when hydrated; only mark false as a fresh
-        // fallback for a doc with no prior hydrate. Mirrors TextTile's adopt path.
-        // M8 (Audit-13) — but unlike the BOM, the body keeps its line endings,
-        // so sniff CRLF from it: without an `eol` a single-line-FM CRLF file
-        // would emit LF fences on the first gateway write (the A8-M1 hole on the
-        // adopt path — TextTile's twin already does this). Pin only CRLF; leave
-        // LF/unknown to write-time detection so we never force a wrong LF.
+        // `docState.body` is body-only, so a BOM sniff of it is always false;
+        // marking unconditionally would clobber the hadBom a sibling view read
+        // from disk and drop the file's BOM on the next save. Inherit the
+        // existing fileState entry; only mark false as a fresh fallback.
+        // The body does keep its line endings, so sniff CRLF from it — without
+        // an `eol` a single-line-FM CRLF file would emit LF fences on the first
+        // write. Pin only CRLF; leave LF/unknown to write-time detection.
         if (docState.filename && !isHydrated(docState.filename)) {
           const adoptEol = docState.body.includes('\r\n') ? '\r\n' : undefined;
           markHydrated(docState.filename, false, undefined, undefined, adoptEol);
@@ -384,7 +375,7 @@
         let rawFrontmatter = '';
         let readOk = false;
         try {
-          // E1 — read gateway seeds the hydrate gate + drift baseline from
+          // The read gateway seeds the hydrate gate + drift baseline from
           // the same read's mtime, so a later debounced write detects an
           // external edit landing after this hydrate.
           const hydrateResult = await readMarkdownForHydrate(vaultRoot, docState.filename);
@@ -393,7 +384,7 @@
           rawFrontmatter = hydrateResult.rawFrontmatter;
           readOk = true;
         } catch {
-          // M1 (Audit-12) — the read FAILED (Windows lock / OneDrive / AV). Do
+          // The read FAILED (Windows lock / OneDrive / AV). Do
           // NOT mount a blank, writable editor over a file we couldn't read: a
           // keystroke would truncate the real content on the next debounced
           // write. Flag the failure (buildWriteArgs refuses to write), hold the
@@ -426,14 +417,14 @@
         // Mirror the loaded body into the document store so other views (a sibling
         // TextTile on the canvas) reuse the same content without re-reading disk.
         // Pass the parsed body (without frontmatter) to match TextTile's load convention,
-        // and seed the live frontmatter cache (+ the 1.2 verbatim bytes) so the next
+        // and seed the live frontmatter cache (+ the verbatim bytes) so the next
         // writer doesn't revert it and a body-only save preserves its formatting.
         documentStore.applyReloadFromDisk(docState.docId, body, [], frontmatter, rawFrontmatter);
       } catch (err) {
         console.warn('[DocumentEditor] Failed to read markdown file:', err);
       }
     } finally {
-      // Phase 31 B1.4 — flip hydrate true even on failure paths so writes
+      // Flip hydrate true even on failure paths so writes
       // can proceed against the embedded fallback. Without this, every
       // subsequent keystroke's schedule would no-op and the user's edits
       // would be silently dropped.
@@ -469,16 +460,16 @@
     if (!editor || !docState) return;
     const body = docState.body;
     if (body === lastLoadedBody) return;
-    // audit2 2.2 — gate on THIS view's own writer, not the shared isDirty, so a
+    // Gate on THIS view's own writer, not the shared isDirty, so a
     // clean DocumentEditor still reloads a sibling TextTile's latest body
     // instead of diverging and clobbering it on the next debounce flush.
     if (documentStore.isWriterDirty(docState.docId, callerId)) return;
-    // Audit-19 MD-4 — never reload mid-IME-composition; the effect re-runs on
+    // Never reload mid-IME-composition; the effect re-runs on
     // compositionend and picks up whatever landed meanwhile.
     if (isComposing) return;
     // The live cache is refreshed elsewhere — applyReloadFromDisk on external
-    // edits, or another writer's setFrontmatter on hydrate. Audit-19 MD-3 — the
-    // body is body-only by contract: load it VERBATIM (no defensive re-parse).
+    // edits, or another writer's setFrontmatter on hydrate. The body is
+    // body-only by contract: load it VERBATIM (no re-parse).
     lastLoadedBody = body;
     isUpdatingFromStore = true;
     const result = loadMarkdownIntoEditor(editor, body ?? '', { preserveSelection: true });
@@ -486,27 +477,25 @@
     isUpdatingFromStore = false;
   });
 
-  // Phase 27 / A4 — read-only state for the banner.
+  // Read-only state for the banner.
   let readOnly = $derived(docState ? documentStore.isReadOnly(docState.docId) : false);
-  // Audit-19 ERR-7 — a note whose bytes aren't UTF-8 is non-editable until converted.
+  // A note whose bytes aren't UTF-8 is non-editable until converted.
   let nonUtf8 = $derived(isNonUtf8(docState?.filename));
 
-  // Audit-17 5.7 — freeze the editor while a tab-close drain is in flight so a
-  // keystroke typed during the drain / failed-drain confirm can't re-arm a
-  // debounce the unmount would then destroy. Keyed on the reactive gate flag +
-  // `hydrateReadFailed` (which the hydrate path owns); we never re-enable while
-  // a read failed (that path holds it non-editable for its own reason).
-  // Audit-19 UX-1 — a lossy note is truly NON-editable (read-only used to block
-  // only saving, so typed text was silently discarded); Take ownership clears it.
+  // Freeze the editor while a tab-close drain is in flight so a keystroke
+  // typed during the drain / failed-drain confirm can't re-arm a debounce the
+  // unmount would then destroy. We never re-enable while a read failed (that
+  // path holds it non-editable for its own reason). A lossy note is truly
+  // non-editable (else typed text is silently discarded); Take ownership clears it.
   $effect(() => {
     const frozen = closeDrainGate.draining || readOnly || nonUtf8;
     if (!hydrateReadFailed) {
-      // Non-emitting + untracked: see setEditorEditable (the §0.2 effect loop).
+      // Non-emitting + untracked: see setEditorEditable (avoids an effect loop).
       untrack(() => setEditorEditable(editor, !frozen));
     }
   });
 
-  // M1 (Audit-12) — re-run the disk hydrate after a transient read failure
+  // Re-run the disk hydrate after a transient read failure
   // (file lock released, OneDrive synced, AV finished). On success
   // `hydrateFromDisk` clears `hydrateReadFailed` and re-enables editing.
   function retryHydrate(): void {
@@ -547,7 +536,7 @@
   <div class="document-container">
     <div class="document-paper" style={paperInlineStyle}>
       {#if hydrateReadFailed}
-        <!-- M1 (Audit-12) — read failed; editing is paused so a keystroke can't
+        <!-- Read failed; editing is paused so a keystroke can't
              truncate the real (unread) file. Retry re-reads disk. -->
         <div class="readonly-banner" role="alert">
           <span class="readonly-text">Filo couldn't read this file{docState?.filename ? ` ("${docState.filename}")` : ''}. Editing is paused so your changes can't overwrite it — retry once the file is readable.</span>
@@ -698,7 +687,7 @@
     outline: none;
   }
 
-  /* Phase 27 / A4 — lossy-round-trip read-only banner. Non-dismissable. */
+  /* Lossy-round-trip read-only banner. Non-dismissable. */
   .readonly-banner {
     display: flex;
     align-items: center;
@@ -743,7 +732,7 @@
     margin-top: 0;
     margin-bottom: 1.25em;
   }
-  /* Phase A.3 — visible blank-line gap between consecutive paragraphs.
+  /* Visible blank-line gap between consecutive paragraphs.
      Adjacent-sibling rule beats CSS margin collapse so the second paragraph
      always gets the extra breathing room, matching Word-style
      "Enter = blank line between paragraphs." */

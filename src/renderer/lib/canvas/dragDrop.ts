@@ -12,11 +12,11 @@ import type { TextTile, Tile } from '../../schema/index';
 import { getActiveContentFolder, getActiveContentFolderAbs } from '../vault/conventionPaths';
 import { historyStore } from '../../stores/history.svelte';
 import { AddTilesCommand } from '../../commands/index';
-// M5 (Audit-12) — pane-scoped, NOT the global board/canvas facades. A `drop`
-// carries no preceding pointerdown to activate the target pane, so reading the
-// global `boardStore`/`canvasStore` created the tile on the ACTIVE pane's board
-// with the active pane's viewport — wrong pane in a split view. The action now
-// takes the pane's BoardScope and creates against `scope.board`/`scope.canvas`.
+// Pane-scoped, NOT the global board/canvas facades. A `drop` carries no
+// preceding pointerdown to activate the target pane, so the global
+// `boardStore`/`canvasStore` would create the tile on the ACTIVE pane in a split
+// view. The action takes the pane's BoardScope and creates against
+// `scope.board`/`scope.canvas`.
 import { setActiveScope, type BoardScope, type BoardScopeBoard } from '../boards/boardScope.svelte';
 
 /**
@@ -44,7 +44,7 @@ function resolveDroppedFilePath(file: File): string | undefined {
  * Media files are copied to the vault's attachments folder.
  * Markdown files become text tile wrappers (document is the source of truth).
  *
- * M5 (Audit-12) — takes the pane's `BoardScope` (mirrors
+ * Takes the pane's `BoardScope` (mirrors
  * `viewportAction`/`edgePanAction`) so the tile lands on THIS pane's board with
  * THIS pane's viewport, not whichever pane the global facade points at. On drop
  * it also pivots the active scope to this pane so the still-global
@@ -74,7 +74,7 @@ export function dragDropAction(node: HTMLElement, scope: BoardScope) {
     e.preventDefault();
     node.classList.remove('drag-over');
 
-    // M5 (Audit-12) — a drop has no preceding pointerdown to activate the target
+    // A drop has no preceding pointerdown to activate the target
     // pane (PaneView activates on pointerdowncapture), so the GLOBAL facades
     // (framesStore.syncTileMembership, historyStore push) would still resolve to
     // the previously-active pane. Pivot the active scope to THIS pane up front so
@@ -98,7 +98,7 @@ export function dragDropAction(node: HTMLElement, scope: BoardScope) {
     const canvasPos = screenToCanvas(screenX, screenY, scope.canvas.transform);
 
     // Collected tiles for this drop. Pushed as a single AddTilesCommand at
-    // the end so a 30-file drop is one Ctrl+Z, not 30. Phase 16 / H3.
+    // the end so a 30-file drop is one Ctrl+Z, not 30.
     const dropTiles: Tile[] = [];
 
     // Handle vault file drops (from VaultSidebar)
@@ -216,7 +216,7 @@ export function dragDropAction(node: HTMLElement, scope: BoardScope) {
           // .md files: copy to the active root directory (vault root or
           // user-pinned folder), then create text tile wrapper.
           //
-          // Phase R2 — routes through `copyFileIntoVault` so pending
+          // Routes through `copyFileIntoVault` so pending
           // writers drain before the copy lands; otherwise a 300 ms-armed
           // `.board.json` write could fire after the copy and either
           // clobber the new file's referent or stamp a stale tile def.
@@ -238,7 +238,7 @@ export function dragDropAction(node: HTMLElement, scope: BoardScope) {
           // directory (vault root by default, or the user-pinned folder).
           // Filename collisions get a `(1)`, `(2)`, … suffix server-side.
           //
-          // Phase R2 — same drain-before-IPC contract as the .md branch.
+          // Same drain-before-IPC contract as the .md branch.
           const res = await copyFileIntoVault(sourcePath, targetDir);
 
           if (res.success) {
@@ -333,7 +333,7 @@ async function createTextTileFromFile(
     return null;
   }
 
-  // Phase 37 / 37.6 — canonical two-arg form. Resolve to vault-relative
+  // Canonical two-arg form. Resolve to vault-relative
   // first; the IPC handler joins it back onto the active vault root.
   const relPath = vaultRelativeFromAbsolute(filePath, vaultDir) || filePath;
   const readResult = await window.filo.invoke('vault:read-file-text', vaultDir, relPath);

@@ -6,13 +6,12 @@ import type { BoardContext } from './boardStoreTypes';
 /**
  * Board slice — Mind Map waypoints and tile groups.
  *
- * Phase R7 (Reactive BoardScope, 2026-05-26) — `boardStore.current` is now a
- * `$derived` view of `boardCacheStore.cache[currentBoardId].board`. Mutators
- * write directly into the cached `MindMapBoard` (waypoints / groups arrays)
- * and call `boardCacheStore.persistWaypoints` (for waypoints) or `markDirty`
- * (for groups) to schedule the debounced `.board.json` write. The
- * pre-R7 `ctx.replaceCurrent({ ...board })` re-publish is unnecessary
- * because the per-pane derived view watches the cache directly.
+ * `boardStore.current` is a `$derived` view of
+ * `boardCacheStore.cache[currentBoardId].board`. Mutators write directly into
+ * the cached `MindMapBoard` (waypoints / groups arrays) and call
+ * `boardCacheStore.persistWaypoints` (for waypoints) or `markDirty` (for
+ * groups) to schedule the debounced `.board.json` write; no re-publish is
+ * needed because the per-pane derived view watches the cache directly.
  */
 export function makeWaypointsGroupsSlice(ctx: BoardContext) {
   function mindMapBoardOrNull(): MindMapBoard | null {
@@ -79,7 +78,7 @@ export function makeWaypointsGroupsSlice(ctx: BoardContext) {
     },
 
     /**
-     * Sprint B / B11 — explicit setter used by `ToggleWaypointLockCommand`
+     * Explicit setter used by `ToggleWaypointLockCommand`
      * so undo/redo restores the snapshotted boolean rather than running
      * the toggle twice. Without this, an external mutation between
      * execute and undo (sync-client edit, concurrent toggle) would desync

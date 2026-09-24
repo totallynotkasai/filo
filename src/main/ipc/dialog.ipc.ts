@@ -5,14 +5,11 @@ import { registerApprovedSource } from '../services/approvedSources';
 import { vaultRegistry } from '../services/vaultRegistry';
 
 /**
- * Phase 8 / 8.4 — narrow validation for the `dialog:*` options bag.
+ * Narrow validation for the `dialog:*` options bag.
  *
- * Electron's `showMessageBox` / `showOpenDialog` are forgiving when the
- * caller hands them garbage (a string where `defaultId` should be a
- * number, etc.) and either coerce or silently ignore the bad field. That
- * forgiveness used to be a backstop, but a Zod gate at handler entry
- * gives a typed `BAD_DIALOG_OPTIONS` rejection that the renderer can
- * surface as a real error instead of a confusingly-mis-rendered dialog.
+ * Electron's `showMessageBox` / `showOpenDialog` silently coerce or ignore
+ * garbage fields (a string `defaultId`, etc.), producing a confusingly
+ * mis-rendered dialog. A Zod gate at handler entry rejects bad input instead.
  */
 const DialogChoiceOptionsSchema = z
   .object({
@@ -74,7 +71,7 @@ export function registerDialogHandlers(): void {
    * Multi-button choice dialog. Returns the 0-based index of the button the
    * user clicked, or -1 if the dialog closed without a selection (Esc / X).
    *
-   * Phase 31 A2.1 — backs the three-way "Save / Don't Save / Cancel" prompt
+   * Backs the three-way "Save / Don't Save / Cancel" prompt
    * on vault swap so each branch can be wired distinctly (Save: flush;
    * Don't Save: preserve sentinel; Cancel: abort the swap entirely).
    */
@@ -86,8 +83,7 @@ export function registerDialogHandlers(): void {
       buttons: string[],
       options?: { title?: string; detail?: string; defaultId?: number; cancelId?: number },
     ) => {
-      // Phase 8 / 8.4 — narrow validation of the options bag before it
-      // reaches Electron. A bad payload returns -1 (the same value the
+      // Narrow validation of the options bag before it reaches Electron. A bad payload returns -1 (the same value the
       // dialog returns when the user dismisses without a selection) so
       // the renderer's existing "user cancelled" branch handles it
       // gracefully.
@@ -125,7 +121,7 @@ export function registerDialogHandlers(): void {
         multiSelect?: boolean;
       },
     ) => {
-      // Phase 8 / 8.4 — narrow validation of the options bag. A bad
+      // Narrow validation of the options bag. A bad
       // payload returns null (the same value the dialog returns when the
       // user cancels) so the renderer's existing "no file picked" branch
       // handles it gracefully.
@@ -134,14 +130,11 @@ export function registerDialogHandlers(): void {
         logMainError('dialog:open-file', parsed.error);
         return null;
       }
-      // Audit-14 4.2 — require an active vault. The whole point of this picker
-      // is to import a file into the open vault, and every picked path is
-      // registered as an approved `vault:copy-file` source bound to the active
-      // vault (below). With no vault open there is nothing to bind to and a
-      // copy-file would be refused anyway, so fail closed rather than mint an
-      // unbindable approval during the no-vault startup/close window. (The
-      // home-screen vault picker uses the separate `vault:select`
-      // openDirectory channel, so this never blocks opening a vault.)
+      // Require an active vault: every picked path is registered as an
+      // approved `vault:copy-file` source bound to the active vault (below),
+      // so with no vault open fail closed rather than mint an unbindable
+      // approval. (The vault picker uses the separate `vault:select`
+      // channel, so this never blocks opening a vault.)
       if (!vaultRegistry.currentVaultPath) {
         return null;
       }
@@ -159,7 +152,7 @@ export function registerDialogHandlers(): void {
       });
 
       if (result.canceled) return null;
-      // Audit-12 S1 — the user explicitly chose these files, so record them as
+      // The user explicitly chose these files, so record them as
       // approved `vault:copy-file` sources. This is a trusted minting point:
       // main owns the dialog and the USER (not the calling renderer) selects
       // the path, so a hostile renderer can't seed an arbitrary source here.
@@ -171,7 +164,7 @@ export function registerDialogHandlers(): void {
   );
 
   /**
-   * Audit-12 S1 — preload-internal registration of an approved `vault:copy-file`
+   * Preload-internal registration of an approved `vault:copy-file`
    * source (a real OS-dropped file path). Co-located with the dialog-pick
    * registration above so all approved-source minting lives in one module.
    *

@@ -56,7 +56,7 @@
     observer = localObserver;
 
     // Defer one frame so headers added in the same tick are observable.
-    // Audit-14 5.6 — capture THIS run's observer and bail if a later effect
+    // Capture THIS run's observer and bail if a later effect
     // run (a section add/remove) or teardown has replaced/disconnected it, so
     // the deferred observe() can't attach targets to a stale instance.
     queueMicrotask(() => {
@@ -68,10 +68,8 @@
       }
     });
 
-    // Audit-14 5.6 — per-run cleanup: disconnect this run's observer when the
-    // effect re-runs or the component unmounts (previously only the next run's
-    // top-of-body `disconnect()` and a single onDestroy covered it, leaving the
-    // last run's observer live across an in-place teardown edge).
+    // Per-run cleanup: disconnect this run's observer when the effect re-runs
+    // or the component unmounts.
     return () => {
       localObserver.disconnect();
       if (observer === localObserver) observer = null;

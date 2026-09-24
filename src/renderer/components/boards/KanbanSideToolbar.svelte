@@ -327,13 +327,12 @@
     filterMenuOpen = false;
   }
 
-  // Live property filter: each keystroke schedules a debounced commit.
-  // Previously required clicking Apply; users typed and waited for results
-  // that never came. 200ms is short enough to feel responsive and long
+  // Live property filter: each keystroke schedules a debounced commit (no
+  // Apply click needed). 200ms is short enough to feel responsive and long
   // enough to coalesce fast typing.
   let propDebounce: ReturnType<typeof setTimeout> | null = null;
 
-  // 6.1.R2 (follow-up) — clear the live-filter debounce on unmount so a vault
+  // Clear the live-filter debounce on unmount so a vault
   // swap (or toolbar teardown) mid-typing can't fire `onFilterPropChange`
   // ~200 ms later against a board that is no longer mounted.
   onDestroy(() => {

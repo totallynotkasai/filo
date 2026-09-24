@@ -2,8 +2,7 @@
  * `Untrusted<T>` / `Sanitised*` — branded string types that distinguish
  * "value read from the vault" from "value safe to pass to a security sink".
  *
- * Phase 5 (IMPLEMENTATION_PLAN_2026-05-27 §Phase 5): the renderer routes
- * three classes of vault-shipped string into security sinks that, without
+ * The renderer routes three classes of vault-shipped string into security sinks that, without
  * sanitisation, can execute attacker-controlled code or leak info to
  * attacker-controlled hosts:
  *
@@ -20,7 +19,7 @@
  *
  * The three `asSafe*` validators below are the ONLY constructors for the
  * matching `Sanitised*` brand. The CI gate
- * `scripts/check-untrusted-sink-discipline.mjs` enforces that every sink
+ * `scripts/gates:untrusted-sinks` enforces that every sink
  * callsite passes its value through one of these validators (or is
  * annotated `// allow-untrusted-sink: <reason>` with explicit human review).
  *
@@ -99,15 +98,12 @@ export function asSafeIframeSrc(raw: string | null | undefined): SanitisedSrc | 
 /**
  * CSS-injection patterns we refuse. `url(…)` would fetch external
  * resources; `expression(` is legacy IE-CSS-script; `image(` /
- * `image-set(` smuggle URLs. `;` is refused outright (6.2): a single CSS
- * custom-property value never legitimately contains one, and a `;` is the
+ * `image-set(` smuggle URLs. `;` is refused outright: a single CSS
+ * custom-property value never legitimately contains one, and it's the
  * delimiter that would let a tampered value append a follow-up declaration.
- * `setProperty` only ever writes one declaration so a `;` can't actually
- * break out there, and in the renderer the `CSS.supports` gate below
- * rejects a multi-declaration value anyway — but blocklisting `;` keeps the
- * sanitiser matching its contract in EVERY environment, including jsdom and
- * any host where `CSS.supports` is absent (where the substring list is the
- * only line of defence).
+ * `setProperty` and the `CSS.supports` gate below already stop that in the
+ * renderer, but blocklisting `;` keeps the contract where `CSS.supports` is
+ * absent (jsdom, main), where the substring list is the only defence.
  */
 const THEME_VALUE_BLOCKED_SUBSTRINGS = [
   'url(',
@@ -166,15 +162,12 @@ export function asSafeThemeValue(raw: string | null | undefined): SanitisedColor
  * handler in `media.ipc.ts` re-checks this allowlist, so a renderer
  * bypass would still fail closed.
  *
- * L11 (Audit-13) — INTENTIONAL asymmetry with main: `media.ipc.ts` DROPPED
- * `http://` from its allowlist in Audit-12 S2 (cleartext downgrade / SSRF
- * surface) and is the authority. This renderer-side list deliberately KEEPS
- * `http://` so a legacy `http://` link passes the brand wrapper and reaches
- * main, which returns a clean "use https" error — instead of being mangled by
- * the local-path branch (where `http://example.com` would read `.com` as an
- * executable extension). Harmless: main fails it closed either way. The prefix
- * test below is already case-insensitive (`.toLowerCase()`), matching main's
- * L11 fix. Keep this asymmetry documented, not "reconciled".
+ * INTENTIONAL asymmetry with main: `media.ipc.ts` (the authority) refuses
+ * `http://` (cleartext downgrade / SSRF surface). This list deliberately
+ * KEEPS `http://` so a legacy `http://` link reaches main, which returns a
+ * clean "use https" error — instead of being mangled by the local-path branch
+ * (where `http://example.com` would read `.com` as an executable extension).
+ * Main fails it closed either way. Keep this asymmetry, don't "reconcile" it.
  */
 const OPEN_EXTERNAL_ALLOWED_PREFIXES = ['https://', 'http://', 'mailto:', 'tel:'];
 
@@ -193,9 +186,8 @@ const OPEN_EXTERNAL_BLOCKED_PATTERNS: ReadonlyArray<RegExp> = [
 
 /**
  * File extensions whose default OS handler executes attacker-controlled
- * content. Includes the existing executable / scripting set PLUS the
- * HTML-renderable extensions added by Phase 5 (`.html` and friends): a
- * vault attachment named `report.html` opened in the user's browser runs
+ * content. Includes the executable / scripting set PLUS the
+ * HTML-renderable extensions (`.html` and friends): a vault attachment named `report.html` opened in the user's browser runs
  * whatever JS it carries from a trusted-origin frame and can exfiltrate
  * other vault contents via the same-origin policy.
  *
@@ -208,9 +200,9 @@ const UNSAFE_LOCAL_FILE_EXTENSIONS = new Set([
   // OS executables / scripting
   '.exe', '.bat', '.cmd', '.com', '.scr', '.ps1', '.vbs', '.hta',
   '.msi', '.jar', '.lnk', '.appref-ms', '.app', '.bin', '.sh', '.msc',
-  // HTML-renderable — Phase 5 / P1-10 addition
+  // HTML-renderable
   '.html', '.htm', '.xhtml', '.svg', '.shtml', '.xml',
-  // Audit-13 M12 — OS launcher / shell-acted-on shortcuts (kept in sync with
+  // OS launcher / shell-acted-on shortcuts (kept in sync with
   // media.ipc.ts UNSAFE_FILE_EXTENSIONS). The shell acts on these even though
   // they're not executables: `.url`/`.scf`/`.website` can point at a UNC share
   // and leak NetNTLM creds; `.reg`/`.inf` import/run on activation; `.pif`
@@ -219,7 +211,7 @@ const UNSAFE_LOCAL_FILE_EXTENSIONS = new Set([
 ]);
 
 /**
- * Audit-10 B3 — extract a file's launcher-relevant extension robustly,
+ * Extract a file's launcher-relevant extension robustly,
  * defeating the Win32 / NTFS filename-normalisation tricks that
  * `path.extname` (and a naive `lastIndexOf('.')`) miss because the OS
  * shell launches a DIFFERENT byte-name than the one we inspected:
@@ -285,12 +277,9 @@ export function asSafeOpenExternal(raw: string | null | undefined): SanitisedUrl
     return trimmed as SanitisedUrl;
   }
 
-  // Local path branch — must not carry an unsafe extension. Use the
-  // robust launcher-extension extractor (Audit-10 B3) so a Win32 trailing
-  // dot / space (`evil.exe.`) or an NTFS Alternate-Data-Stream suffix
-  // (`evil.exe::$DATA`) can't smuggle an executable past the blocklist:
-  // the OS shell normalises those away and launches `evil.exe`, but a
-  // naive `lastIndexOf('.')` reads the extension as `.` / `.exe::$DATA`.
+  // Local path branch — must not carry an unsafe extension. The robust
+  // extractor stops `evil.exe.` / `evil.exe::$DATA` smuggling an executable
+  // past the blocklist (see launcherExtension).
   const ext = launcherExtension(trimmed);
   if (UNSAFE_LOCAL_FILE_EXTENSIONS.has(ext)) return null;
 
@@ -298,8 +287,7 @@ export function asSafeOpenExternal(raw: string | null | undefined): SanitisedUrl
 }
 
 /**
- * Test-only re-export — the unsafe extension set is consumed by the
- * Phase 5 unit test to assert the HTML-renderable additions stay in
- * sync with `media.ipc.ts`'s server-side blocklist.
+ * Test-only re-export — lets a unit test assert the unsafe extension set
+ * stays in sync with `media.ipc.ts`'s server-side blocklist.
  */
 export const UNSAFE_LOCAL_FILE_EXTENSIONS_FOR_TESTS = UNSAFE_LOCAL_FILE_EXTENSIONS;

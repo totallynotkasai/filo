@@ -203,10 +203,9 @@
   });
 
   async function handleSelectVault() {
-    // Sprint A / A4 — route through the canonical `openVault` so the swap
-    // goes through `fireVaultSwap` (lifecycle reset, history clear, etc.).
-    // The legacy `selectVault` shortcut bypassed every onVaultSwap subscriber
-    // and was a footgun for any caller that wired into it later.
+    // Route through the canonical `openVault` so the swap goes through
+    // `fireVaultSwap` (lifecycle reset, history clear, etc.) and every
+    // onVaultSwap subscriber runs.
     const vaultPath = await window.filo.invoke('vault:select');
     if (!vaultPath) return;
     await vaultStore.openVault(vaultPath);
@@ -276,13 +275,10 @@
     return () => ro.disconnect();
   });
 
-  // Audit-16 3.7 — the external-change bridge subscription
-  // (`vaultStore.listenForChanges`) moved to App.svelte. It used to live
-  // here, but the docked and floating sidebars are mutually exclusive
-  // mounts: a float/dock toggle destroyed this instance (tearing down every
-  // watcher listener mid-session) before mounting the other, dropping any
-  // watcher event delivered in the gap. The bridge is app-lifetime data
-  // plumbing, not sidebar UI.
+  // The external-change bridge subscription (`vaultStore.listenForChanges`)
+  // lives in App.svelte, not here: the docked and floating sidebars are
+  // mutually exclusive mounts, so a float/dock toggle would tear down the
+  // watcher listeners and drop any event delivered in the gap.
 
   let fileTreeEl = $state<HTMLDivElement | null>(null);
 

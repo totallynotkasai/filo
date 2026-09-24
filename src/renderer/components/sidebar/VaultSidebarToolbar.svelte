@@ -160,7 +160,7 @@
 
   // ── New Folder (silent create) ──
   //
-  // Phase C / C.7 — after a successful create we stash the new folder's
+  // After a successful create we stash the new folder's
   // absolute path on `uiStore.pendingSidebarRenameId`. The matching
   // VaultFileItem reads that on mount and immediately enters rename
   // mode with the suggested name pre-selected, so the user can type a
@@ -170,10 +170,9 @@
     const name = await vaultStore.suggestFolderName(vaultStore.path, 'New Folder');
     const result = await vaultStore.createFolder(vaultStore.path, name);
     if (!result.success) {
-      // Phase 9.8 — surface main-process create-folder failures (EACCES,
-      // EEXIST race after suggest, ENOENT on a swapped vault, …) so the
-      // user sees something fired. Previously the IPC error was swallowed
-      // and the sidebar simply didn't gain a new row.
+      // Surface main-process create-folder failures (EACCES, EEXIST race
+      // after suggest, ENOENT on a swapped vault, …) so the user sees
+      // something fired rather than the sidebar silently gaining no row.
       uiStore.toast(
         `Couldn't create folder "${name}"${result.code ? ` (${result.code})` : ''}`,
         'error',
@@ -415,7 +414,7 @@
     </button>
   {/if}
 
-  <!-- Sprint B / B24 — Close vault. Prompts the user to save before
+  <!-- Close vault. Prompts the user to save before
        releasing the watcher and returning to the home screen. -->
   <button
     class="sidebar-btn"

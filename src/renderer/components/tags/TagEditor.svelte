@@ -99,7 +99,7 @@
   function commitTag(rawName: string): void {
     const trimmed = rawName.trim().replace(/^#/, '');
     if (!trimmed) return;
-    // Sprint B / B6 + 1.5a — reject names that round-trip badly through YAML
+    // Reject names that round-trip badly through YAML
     // frontmatter (internal whitespace splits into two tags), produce an empty
     // registry key, or that YAML reads as a non-string / indicator-led scalar
     // (123, null, @home). The rewriter quotes on disk, but these make

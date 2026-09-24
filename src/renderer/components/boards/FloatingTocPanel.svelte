@@ -109,7 +109,7 @@
   }
 
   /**
-   * Phase 7 / 7.3 — capture the pre-gesture bounds so the dragend / resize-end
+   * Capture the pre-gesture bounds so the dragend / resize-end
    * commit can push a single UpdateBoardSettingsCommand for the whole gesture.
    * During the gesture itself, `persistBounds()` keeps writing through the
    * bare `updateSettings` path so the panel position survives reloads even

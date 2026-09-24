@@ -1,7 +1,7 @@
 import type { MoveIntoFolderResult } from '../../stores/vaultFolderOps';
 
 /**
- * Phase 1 / 1.4 — translates a single `moveIntoFolder` failure into a
+ * Translates a single `moveIntoFolder` failure into a
  * concrete toast message. Centralised so VaultSidebar and VaultFileItem
  * surface the same wording for the same failure mode, and so the test
  * suite can pin the copy without rendering the full sidebar component.

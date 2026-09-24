@@ -1,12 +1,11 @@
 /**
- * 6.2.H4 (follow-up) — writes `.filo/quit-failure.json` in the quit drain
- * when the session preserved one or more emergency files.
+ * Writes `.filo/quit-failure.json` in the quit drain when the session
+ * preserved one or more emergency files.
  *
- * The earlier 6.2.H4 fix replaced the 200 ms-toast-then-quit with a blocking
- * "Save failed → Quit anyway / Stay" confirm — closing the silent-loss hole.
- * This adds the durable breadcrumb the plan also called for: if any write
- * preserved a partial file this session (see {@link recordPreservedEmergencyFile}),
- * persist the locations into the vault so the NEXT launch can point the user
+ * A durable breadcrumb alongside the blocking "Save failed" quit confirm: if
+ * any write preserved a partial file this session (see
+ * {@link recordPreservedEmergencyFile}), persist the locations into the vault
+ * so the NEXT launch can point the user
  * at the recoverable bytes (`readQuitFailureBreadcrumb` surfaces it on vault
  * open; `clearQuitFailureBreadcrumb` clears it once the user acknowledges).
  *
@@ -23,8 +22,7 @@ import { getMachineIdentity } from './machineIdentity';
 import { machineSentinelPath } from '../../shared/sentinelPaths';
 
 /**
- * Vault-relative path of THIS machine's breadcrumb (Audit-19 EXT-6: per
- * machine — the absolute `preservedPath`s only make sense on the machine
+ * Vault-relative path of THIS machine's breadcrumb (per machine — the absolute `preservedPath`s only make sense on the machine
  * that wrote them, and another machine must never clear it).
  */
 export function quitFailureRelPath(): string {

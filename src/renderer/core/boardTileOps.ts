@@ -21,11 +21,9 @@ export interface AddTileOpts {
  * `BoardType → Ops` so a future board type is a compile error until it
  * lands a registry entry (the mapped type forces exhaustiveness).
  *
- * Phase 2 of CONSOLIDATION_PLAN_2026-05-25 — replaces the MindMap-only
- * `boardCacheTiles.persist*Tile` sinks that silently dropped Kanban /
- * Task List placements on the floor (bug #2). Every dispatch goes through
- * `opsFor(cached.board)`; the per-type implementations live under
- * `core/boardTileOps/`.
+ * Every dispatch goes through `opsFor(cached.board)`, so no board type's
+ * placements are silently dropped by a MindMap-only sink; the per-type
+ * implementations live under `core/boardTileOps/`.
  */
 export interface BoardTileOps<B extends Board = Board> {
   /** Board type literal — matches `Board['type']` for the implementing variant. */

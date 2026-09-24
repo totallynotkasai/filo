@@ -79,7 +79,7 @@ export const GROUP_ORDER: Record<GroupBy, string[]> = {
  * every UTC-negative zone (all of the Americas) — silently misfiling "today"
  * / "overdue" and the due-date groups. Local construction avoids that drift.
  * Returns `null` for anything that isn't a bare ISO date. Mirrors the inline
- * parsers already used in `dueDateFormat.ts`. (Audit 1.1)
+ * parsers already used in `dueDateFormat.ts`.
  */
 function parseLocalDate(iso: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);

@@ -2,7 +2,7 @@ import { promises as fsPromises } from 'fs';
 import { createHash } from 'crypto';
 
 /**
- * Audit-4 DI-07 / DI-15 — content-hash ceiling for the watcher. Files larger
+ * Content-hash ceiling for the watcher. Files larger
  * than this are not content-hashed; the reconcile diff and the cross-basename
  * rename gate fall back to size + mtime. Reading multi-MB media on the watcher
  * hot path is too costly, and a >10 MB same-size collision is vanishingly
@@ -18,12 +18,9 @@ export const WATCHER_HASH_MAX_BYTES = 10 * 1024 * 1024;
  * misses (FAT/SMB second-resolution mtime, or an atomic temp-rename that
  * preserves mtime).
  *
- * Audit-4 DI-15 — the pre-fix hash covered only the first 4 KB, so a
- * `.board.json` edited past offset 4096 with an unchanged size + coarse mtime
- * hashed "equal" and the external edit was dropped (then overwritten by the
- * local cache flush). Hashing the whole buffer closes that window; the caller
- * decides how many bytes to read (whole file under the ceiling, 4 KB prefix
- * above it).
+ * Hashes the whole buffer so an edit past the first 4 KB isn't missed (and
+ * then overwritten by the local cache flush); the caller decides how many
+ * bytes to read (whole file under the ceiling, 4 KB prefix above it).
  */
 export function fnv1a32(buf: Buffer): number {
   let hash = 0x811c9dc5;
@@ -41,12 +38,10 @@ export function sha1Hex(buf: Buffer): string {
 }
 
 /**
- * Audit-4 DI-07 — whole-file SHA-1 (capped at {@link WATCHER_HASH_MAX_BYTES})
- * for the cross-basename rename gate. The pre-fix probe hashed only the first
- * 4 KB, so two unrelated files sharing a 4 KB head but diverging later hashed
- * identical; `correlateRenames` then mis-paired them and `propagateRename`
- * rewired tile `file` / `src` / `coverImage` refs onto the wrong file (no undo
- * for external renames). Reading the whole file gives real content identity.
+ * Whole-file SHA-1 (capped at {@link WATCHER_HASH_MAX_BYTES}) for the
+ * cross-basename rename gate. A prefix-only hash would let two files sharing
+ * a head collide, mis-pairing them and rewiring tile refs onto the wrong file
+ * (no undo for external renames).
  *
  * Returns `null` above the ceiling (the correlator refuses to pair on size
  * alone there) or on any read error. MUST stay byte-identical to the

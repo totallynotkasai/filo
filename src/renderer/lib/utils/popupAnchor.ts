@@ -40,9 +40,8 @@ export interface ClampToViewportOptions {
 /**
  * Clamps a popover's top-left corner so a `width`×`height` box stays fully
  * inside the viewport with at least `margin` px from every edge. Used by the
- * context menu (L4b) to reposition after measuring its *real* rendered size,
- * replacing the old `items.length * 32` height guess that overflowed when a
- * menu opened near the bottom edge.
+ * context menu to reposition after measuring its *real* rendered size (a
+ * height guess would overflow when a menu opens near the bottom edge).
  *
  * When the box is larger than the viewport along an axis, the top-left pins to
  * `margin` on that axis (the overflow then bleeds off the far edge, which is

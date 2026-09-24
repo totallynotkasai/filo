@@ -100,15 +100,14 @@ export function setActiveScope(scope: BoardScope): void {
 }
 
 /**
- * Audit-7 L18 — drops the active-scope references so the next
+ * Drops the active-scope references so the next
  * `getActiveScope()` lazily rebuilds a fresh default scope.
  *
  * On vault swap `workspace.reset()` unmounts every `PaneView`, but the only
  * writer of `activeScopeRef`/`activeScopeRaw` is a mounted PaneView's
- * `setActiveScope` — so without this the outgoing vault's dead scope lingered
- * in the global facades until the new vault's first PaneView `$effect` re-ran.
- * Reads were null-safe (the dead scope's board id is absent from the new
- * cache), but any facade consumer that mutated during the swap window saw the
+ * `setActiveScope` — so without this the outgoing vault's dead scope would
+ * linger in the global facades until the new vault's first PaneView `$effect`
+ * re-ran, and a facade consumer mutating during the swap window would see the
  * wrong vault's slice. Registered as a `pre-swap` reset below so it fires for
  * both an open-other-vault swap AND a close-to-home (`nextVault === null`).
  */

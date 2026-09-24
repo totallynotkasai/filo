@@ -18,7 +18,7 @@
  *     routes its URL through `asSafeOpenExternal`.
  *   - `link:fetch-metadata` rejects non-http(s) schemes at entry.
  *
- * The CI gate `scripts/check-untrusted-sink-discipline.mjs` enforces the
+ * The CI gate `scripts/gates:untrusted-sinks` enforces the
  * contract at error level. These tests assert it from the inside as a
  * regression-resistance net — a regression here trips a friendlier
  * developer signal than a CI failure.
@@ -86,7 +86,7 @@ describe('Phase 5 contract — IframeTile.svelte routes tile.url through asSafeI
   it('binds the iframe `src` to a sanitised value (safeSrc derived + annotation)', () => {
     // The actual binding is `src={safeSrc}` where `safeSrc` is a
     // `$derived(asSafeIframeSrc(tile.url))` block in <script>. The CI
-    // gate `check-untrusted-sink-discipline.mjs` recognises this via an
+    // gate `scripts/gates:untrusted-sinks` recognises this via an
     // `allow-untrusted-sink:` annotation immediately before the iframe
     // tag — without the annotation the CI gate would fail because the
     // derived call is too far from the iframe tag for its nearby-window

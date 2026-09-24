@@ -6,7 +6,7 @@
   import IconButton from '../shared/IconButton.svelte';
 
   /**
-   * Vault-wide Search panel (Sprint E.3 / E.4).
+   * Vault-wide Search panel.
    *
    * Floating panel anchored to the top-left of the workspace. Rendered
    * inside AppShell so it overlays the active board / pane container.
@@ -60,7 +60,7 @@
    * Body-match offset jumping inside the editor is a future polish item
    * — the spec says "highlight the tile", which `navigateToTile` already
    * delivers. Within-tile scroll-to-offset would require TipTap editor
-   * access and is left to Sprint G.
+   * access and is not implemented yet.
    */
   $effect(() => {
     const jump = searchStore.pendingJump;

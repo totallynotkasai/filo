@@ -21,9 +21,8 @@ export class AddWaypointCommand extends Command {
   ) {
     super();
     this.targetBoardId = boardId ?? boardStore.current?.id ?? '';
-    // M24 — `this.snapshot(...)` deep-clones for consistency with other
-    // Add*Commands. Waypoint is primitives-only today, but the pattern keeps
-    // future nested-field additions safe by default.
+    // Deep-clone for consistency with other Add*Commands. Waypoint is
+    // primitives-only today, but this keeps future nested fields safe.
     this.waypoint = this.snapshot(waypoint);
     this.description = `Add waypoint "${waypoint.name}"`;
   }
@@ -58,7 +57,7 @@ export class RemoveWaypointCommand extends Command {
   ) {
     super();
     this.targetBoardId = boardId ?? boardStore.current?.id ?? '';
-    // M24 — `this.snapshot(...)` for consistency with other Add*Commands.
+    // Deep-clone for consistency with other Add*Commands.
     this.waypoint = this.snapshot(waypoint);
     this.description = `Remove waypoint "${waypoint.name}"`;
   }
@@ -157,12 +156,9 @@ export class ToggleWaypointLockCommand extends Command {
   description: string;
   readonly targetBoardId: string;
   private waypointId: string;
-  // Sprint B / B11 — snapshot the lock state at construction time so undo
-  // restores the captured boolean rather than re-toggling. Without the
-  // snapshot, any out-of-band mutation between execute and undo (sync
-  // client edit, concurrent toggle from another window, etc.) would
-  // desync — the second `toggleWaypointLock()` would flip from the new
-  // state instead of returning to the original.
+  // Snapshot the lock state at construction so undo restores the captured
+  // boolean rather than re-toggling — a re-toggle would desync after any
+  // out-of-band change between execute and undo.
   private before: boolean;
   private after: boolean;
 

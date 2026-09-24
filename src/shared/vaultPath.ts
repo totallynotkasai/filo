@@ -2,16 +2,15 @@
  * `VaultPath` — branded string for vault-relative paths used as map / record /
  * set keys.
  *
- * Phase 4 (IMPLEMENTATION_PLAN_2026-05-27 §Phase 4): on Windows/macOS the
- * file system is case-preserving but not case-sensitive, so a rename from
- * `Notes/Foo.md` → `notes/foo.md` is a no-op on disk but the OS event
- * arrives with the new casing. Any renderer-side `Map<string, _>` keyed by
- * the raw OS path keeps the entry forever under the OLD casing — orphaning
- * frontmatter sync, tag rewrites, broken-ref tracking, and so on (P0 #8 in
- * the 2026-05-26 audit).
+ * On Windows/macOS the file system is case-preserving but not
+ * case-sensitive, so a rename from `Notes/Foo.md` → `notes/foo.md` is a
+ * no-op on disk but the OS event arrives with the new casing. A
+ * `Map<string, _>` keyed by the raw OS path would keep the entry forever
+ * under the OLD casing — orphaning frontmatter sync, tag rewrites,
+ * broken-ref tracking, and so on.
  *
- * Forcing every vault-relative-path map key through `vaultPath()` is the
- * type-level fix: the brand makes raw strings inassignable to `VaultPath`,
+ * Forcing every vault-relative-path map key through `vaultPath()` fixes that
+ * at the type level: the brand makes raw strings inassignable to `VaultPath`,
  * and the constructor always normalises, so a casing drift between writer
  * and reader can never silently miss.
  *
@@ -28,7 +27,7 @@ declare const _brand: unique symbol;
  *  - forward slashes (no backslashes)
  *  - no leading slash
  *  - en-US lowercase (Turkish locale's dotted-i fold would otherwise split
- *    path identity across machines — Phase 31 C3.7)
+ *    path identity across machines)
  *
  * The brand makes it impossible to pass an un-normalised raw `string` into
  * a `Map<VaultPath, _>` / `Record<VaultPath, _>` / `Set<VaultPath>` key
@@ -41,9 +40,8 @@ export type VaultPath = string & { readonly [_brand]: 'VaultPath' };
  * stripped, en-US lowercased. Pinned to `'en-US'` so two Filo installs on
  * different locales agree on whether `Notes/X.md` matches `notes/X.md`.
  *
- * Exported so the renderer's `lib/utils/path.ts` can re-export it — the
- * function is identical to what used to live there and is now the canonical
- * implementation.
+ * Exported so the renderer's `lib/utils/path.ts` can re-export it; this is
+ * the canonical implementation.
  */
 export function normalizeVaultRelative(raw: string): string {
   return raw.replace(/\\/g, '/').replace(/^\/+/, '').toLocaleLowerCase('en-US');

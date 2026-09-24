@@ -67,7 +67,7 @@
   // debounced writes don't re-create a file the user just deleted on disk.
   let backingFileMissing = false;
 
-  // Phase 5 / 5.1 — snapshot the canonical "before" state at popup mount so
+  // Snapshot the canonical "before" state at popup mount so
   // popup-close can dispatch a single UpdatePropertiesCommand spanning every
   // edit made during this session. Per-keystroke commands would blow through
   // MAX_HISTORY for a normal edit; "I opened properties, I undo to close it"
@@ -98,11 +98,9 @@
     return out;
   }
 
-  // Audit-10 B2 — delegate to the canonical resolver so a subfolder tile's
-  // explicit `filePath` wins over the `${title}.md` root fallback. The old body
-  // ignored `filePath`, so editing properties on a subfolder card (Kanban) or a
-  // subfolder Mind-Map text tile read from / wrote to the wrong root path —
-  // losing the edit (ENOENT) or corrupting an unrelated same-named root file.
+  // Delegate to the canonical resolver so a subfolder tile's explicit
+  // `filePath` wins over the `${title}.md` root fallback — otherwise the edit
+  // targets the wrong root path (ENOENT, or an unrelated same-named root file).
   function vaultRelativePath(t: Tile): string | null {
     return resolveTextTileVaultPath(t);
   }
@@ -172,25 +170,19 @@
     // truncate the last few keystrokes.
     const docState = docId ? documentStore.getDocument(docId) : null;
     const body = docState?.body ?? vaultIndexStore.getMetadata(relPath)?.content ?? '';
-    // Phase 6.1.R5 — hydration is now seeded by the `hydrateBackingFile`
-    // disk read fired from onMount. The previous code sniffed `hadBom`
-    // from `vaultIndexStore.content`, which is the body-only field
-    // already BOM-stripped by the index splitter (`splitFrontmatterSource`),
-    // so the sniff was permanently `false` and Notepad-saved files lost their
-    // BOM on the popup's first save. The onMount disk read seeds the correct hadBom into
-    // `fileState` AND seeds the drift baseline. If onMount's read
-    // failed (ENOENT / race), fall back to a no-BOM hydrate so the
-    // write below ENOENT-fails with the same surfaced toast path the
-    // legacy "no fileState entry" branch produced.
+    // Hydration is seeded by the disk read fired from onMount, which records
+    // the correct hadBom in `fileState` AND seeds the drift baseline (the
+    // index's body-only content is already BOM-stripped, so it can't be
+    // sniffed). If onMount's read failed (ENOENT / race), fall back to a
+    // no-BOM hydrate so the write below ENOENT-fails with the surfaced toast.
     if (!isHydrated(relPath)) markHydrated(relPath, false);
-    // Phase 4 (WRITE_PATH_REMEDIATION_PLAN_2026-06-04) — the popup edits in
-    // whole-object terms, so the write SOURCE is the delta of everything that
+    // The popup edits in whole-object terms, so the write SOURCE is the delta of everything that
     // changed since the popup opened (`beforeSnapshot.fm` → current rows). A key
     // the popup never touched — including one an external editor added to disk
     // since the popup opened, which is in NEITHER snapshot — is absent from the
-    // delta, so the gateway sources it from fresh disk and never reverts it (the
-    // live variant of Finding #5). `frontmatter: obj` stays as the legacy
-    // fallback the gateway ignores while a delta is present.
+    // delta, so the gateway sources it from fresh disk and never reverts it.
+    // `frontmatter: obj` stays as the fallback the gateway ignores while a
+    // delta is present.
     const openFm =
       beforeSnapshot?.kind === 'frontmatter' ? beforeSnapshot.fm : {};
     const delta = diffToFrontmatterDelta(openFm, obj);
@@ -202,7 +194,7 @@
       callerId: flusherId,
       docId: docId ?? null,
       frontmatterDelta: delta,
-      // Audit-16 6.8 — fire-time body-source decision (`body` above prefers
+      // Fire-time body-source decision (`body` above prefers
       // the live `docState?.body`); the gateway must not re-derive it from
       // the mutable documentStore at write time.
       bodyIsLive: docState != null,
@@ -220,7 +212,7 @@
     }
     const args = buildFrontmatterWriteArgs();
     if (!args) return;
-    // Sprint C / C.1 — flag the popup as dirty against the backing path so
+    // Flag the popup as dirty against the backing path so
     // a concurrent external frontmatter edit gets routed to a Reload/Keep-
     // local prompt instead of silently clobbering these pending rows.
     // Cleared in flushPendingWrite's success branch + onDestroy.
@@ -238,14 +230,12 @@
 
   async function flushPendingWrite(): Promise<void> {
     if (!flusherId) return;
-    // Audit-17 2.1 — `flushMarkdownWrite` never rejects (the scheduler
-    // primitive resolves failures as `{ ok: false }`), so the old try/catch
-    // was dead code: the dirty flag was cleared on a FAILED flush, dropping
-    // the classifier's popup-dirty conflict routing for rows that never
-    // landed. Branch on the result instead.
+    // `flushMarkdownWrite` never rejects (failures resolve as `{ ok: false }`),
+    // so branch on the result: clearing the dirty flag on a FAILED flush would
+    // drop the popup-dirty conflict routing for rows that never landed.
     const result = await flushMarkdownWrite(flusherId);
     if (result.ok) {
-      // Sprint C / C.1 — write landed; the popup's tracked rows match disk
+      // Write landed; the popup's tracked rows match disk
       // now. Clear the dirty bit so the classifier stops routing future
       // external frontmatter edits to the popup-dirty prompt path.
       clearPropertiesPopupDirty(flusherId);
@@ -310,7 +300,7 @@
   }
 
   /**
-   * Audit-10 B1 — a compact, read-only preview for a `raw` row: a structured
+   * A compact, read-only preview for a `raw` row: a structured
    * value (nested object/array, or an array with non-string items) the typed
    * editors can't represent without loss. JSON is unambiguous; the value itself
    * is preserved verbatim by `valueForRow('raw')`, so this is display-only.
@@ -400,21 +390,18 @@
   }
 
   let flusherId = '';
-  // M3 (Audit-12) — capture the originating board at popup MOUNT, from the
-  // PANE-SCOPED `scope.board` (the `boardStore` alias above), not the global
-  // facade at destroy time. The deferred UpdatePropertiesCommand is constructed
-  // in `pushHistoryEntry` during onDestroy; resolving its board from the
-  // globally-active board THEN would push a non-text tile's property edit onto
-  // the wrong pane's undo stack (or no-op the metadata applySnapshot) when the
-  // user clicked a different pane before closing. Every sibling style popup
-  // already captures a mount-time id this way.
+  // Capture the originating board at popup MOUNT, from the PANE-SCOPED
+  // `scope.board` (the `boardStore` alias above), not the global facade at
+  // destroy time. The deferred UpdatePropertiesCommand is built during
+  // onDestroy; resolving the globally-active board then would push the edit
+  // onto the wrong pane's undo stack if the user clicked another pane first.
   let mountBoardId = '';
 
   onMount(() => {
     flusherId = `properties-popup:${tile.id}:${createId(6)}`;
     mountBoardId = boardStore.current?.id ?? '';
     loadFromBacking();
-    // Phase 6.1.R5 — async disk-read hydrate so the popup's first write
+    // Async disk-read hydrate so the popup's first write
     // assembles against the correct BOM byte AND a drift baseline seeded
     // from the same read. Skip when a sibling editor already hydrated
     // the file (its fileState entry is correct) or when there is no
@@ -445,14 +432,13 @@
     pushHistoryEntry();
     // Best-effort: cancel the gateway TIMER for this flusherId so a late
     // schedule armed in the same tick as onDestroy doesn't fire against a
-    // popup that's already torn down. Audit-18 H1 — `pendingOnly: true` cancels
-    // ONLY an armed timer, never a PARKED fire: `flushIfPending()` above already
-    // owns the parked/in-flight write and lands its newest rows, so the plain
-    // cancel (which marks a parked fire cancelled, Audit-16 4.4) would silently
-    // drop the freshest edits while `flush` still reports success.
+    // popup that's already torn down. `pendingOnly: true` cancels ONLY an armed
+    // timer, never a PARKED fire: `flushIfPending()` above already owns the
+    // parked/in-flight write, so the plain cancel (which marks a parked fire
+    // cancelled) would silently drop the freshest edits.
     if (flusherId) {
       cancelMarkdownWrite(flusherId, true);
-      // Sprint C / C.1 — defence in depth: ensure the popup's tracker entry
+      // Defence in depth: ensure the popup's tracker entry
       // is gone even if flushPendingWrite never resolved (sync teardown
       // before the promise settled). A stale entry would block the
       // sync-frontmatter short-circuit on this path indefinitely.
@@ -471,7 +457,7 @@
     const afterSnapshot = buildAfterSnapshot();
     if (!afterSnapshot) return;
     if (snapshotsEqual(beforeSnapshot, afterSnapshot)) return;
-    // M3 (Audit-12) — pass the mount-time board id so the command targets the
+    // Pass the mount-time board id so the command targets the
     // pane this popup belongs to, not whichever board is active at close time.
     historyStore.pushWithoutExecute(
       new UpdatePropertiesCommand(beforeSnapshot, afterSnapshot, mountBoardId),
@@ -549,7 +535,7 @@
             aria-label="Property type for {propLabel}"
           >
             {#if row.type === 'raw'}
-              <!-- Audit-10 B1 — a structured value can't be re-typed without
+              <!-- A structured value can't be re-typed without
                    loss, so the select is disabled; this option just labels it. -->
               <option value="raw">Raw</option>
             {/if}
@@ -564,7 +550,7 @@
 
           <div class="value-cell" class:value-cell-stack={row.type === 'tag'}>
             {#if row.type === 'raw'}
-              <!-- Audit-10 B1 — read-only verbatim preview. A nested object /
+              <!-- Read-only verbatim preview. A nested object /
                    numeric array round-trips untouched; editing it here would
                    coerce it lossily, so it's display-only with a hint. -->
               <code
@@ -824,7 +810,7 @@
     width: 100%;
   }
 
-  /* Audit-10 B1 — read-only structured-value preview. */
+  /* Read-only structured-value preview. */
   .raw-value {
     display: block;
     width: 100%;

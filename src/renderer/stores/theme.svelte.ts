@@ -58,19 +58,15 @@ export const themeStore = {
    * Lists themes by reading `.filo/themes/`. Hydrates the in-memory
    * cache so subsequent `applyById` calls do not re-hit the disk.
    *
-   * Sprint A / A16 — JSON parse failures surface a single aggregated toast
-   * naming every bad theme file. Previously parse failures were silently
-   * downgraded to a null return at the IPC layer, indistinguishable from
-   * "theme is a built-in", so a corrupt `.filo/themes/foo.json` would
-   * disappear from the picker without explanation.
+   * JSON parse failures surface a single aggregated toast naming every bad
+   * theme file, so a corrupt `.filo/themes/foo.json` doesn't silently vanish
+   * from the picker.
    */
   async refreshAvailable(vaultRoot: string): Promise<void> {
     if (!vaultRoot) return;
-    // Audit-11 VS-4 — snapshot identity before the list/load awaits. A swap
-    // mid-enumeration must not stamp the OUTGOING vault's theme catalogue over
-    // the pre-swap reset (which already cleared `availableThemeIds`/`themeCache`
-    // for the incoming vault). Visual-only, but a stale catalogue flashes the
-    // wrong themes in the picker. Bail before each state commit.
+    // Snapshot identity before the list/load awaits: a swap mid-enumeration
+    // must not stamp the outgoing vault's theme catalogue over the incoming
+    // vault's reset state. Bail before each state commit.
     const identity = captureVaultIdentity();
     try {
       // `theme:list` is a bare-result channel (returns `unknown[]`).
@@ -125,7 +121,7 @@ export const themeStore = {
    * than a bundled file id (e.g. `dark-mode`): the file `dark.json`
    * doesn't exist, but the builtin path applies cleanly.
    *
-   * Phase R4 — never throws. A malformed theme (unknown base) or DOM
+   * Never throws. A malformed theme (unknown base) or DOM
    * failure resolves to `{ ok: false, error }`; the caller surfaces the
    * error (toast / openVault failure / etc.) without leaving global
    * state half-mutated. On any failure path the DOM falls back to the
@@ -159,15 +155,13 @@ export const themeStore = {
           | ThemeFile
           | { ok: false; code: 'invalid-json'; name?: string }
           | null;
-        // Audit-11 VS-4 — a swap during the load await means `themeId` belongs
-        // to the outgoing vault; applying it to the DOM (or seeding the cache)
-        // would flash the wrong palette over the freshly-opened vault. Bail
-        // without applying — the new vault drives its own theme via
-        // `commitFromCandidate`.
+        // A swap during the load await means `themeId` belongs to the outgoing
+        // vault; applying it would flash the wrong palette over the new vault
+        // (which drives its own theme via `commitFromCandidate`).
         if (!isStillSameVault(identity)) {
           return { ok: false, error: 'vault changed during theme load' };
         }
-        // Sprint A / A16 — surface a parse-failure toast distinctly from
+        // Surface a parse-failure toast distinctly from
         // the generic "not found" path so the user knows the file exists
         // but is malformed. Falls back to built-in light below.
         if (isThemeParseFailure(loaded)) {
@@ -194,12 +188,9 @@ export const themeStore = {
       try {
         applyCustomTheme(file, opts);
       } catch (err) {
-        // Sprint A / A15 — surface the failure via the error bus so the
-        // user sees "Could not apply theme 'foo' — using Light fallback"
-        // instead of the generic "Failed to open vault" toast that used
-        // to fire when the throw escaped to `openVault`. The DOM is
-        // already pulled back to the built-in Light theme by the
-        // applyFallbackLight() rescue, so the vault opens cleanly.
+        // Surface a specific toast rather than letting the throw escape to
+        // `openVault` as a generic "Failed to open vault". The Light
+        // fallback keeps the DOM valid so the vault opens cleanly.
         applyFallbackLight();
         reportError(
           'theme.apply',
@@ -223,7 +214,7 @@ export const themeStore = {
   },
 
   /**
-   * Phase R4 — synchronous commit hook for `loadVaultCandidate`.
+   * Synchronous commit hook for `loadVaultCandidate`.
    *
    * Installs a pre-fetched theme catalogue (already loaded over IPC by
    * the candidate phase) and applies the chosen active theme to the DOM.
@@ -264,12 +255,9 @@ export const themeStore = {
     try {
       applyCustomTheme(args.activeFile, opts);
     } catch (err) {
-      // Sprint A / A15 — same rationale as `applyById`. The vault-open
-      // candidate commit lands here when `openVault` pre-resolves the
-      // theme; if the apply throws (invalid `base`, custom variable
-      // shape), surface the error and fall back to Light rather than
-      // aborting the whole openVault chain with a generic "Failed to
-      // open vault" message.
+      // Same rationale as `applyById`: an apply throw (invalid `base`,
+      // bad variable shape) falls back to Light rather than aborting the
+      // whole openVault chain.
       applyFallbackLight();
       reportError(
         'theme.apply',
@@ -390,10 +378,9 @@ export const themeStore = {
 // ── Helpers ──
 
 /**
- * Sprint A / A16 — type guard for the `{ ok: false, code: 'invalid-json' }`
- * envelope the main-side `theme:load` handler returns when a theme file
- * exists on disk but isn't valid JSON. Bare `null` (legacy: ENOENT or
- * unknown error) doesn't match; only the explicit parse-failure envelope.
+ * Type guard for the `{ ok: false, code: 'invalid-json' }` envelope the
+ * main-side `theme:load` handler returns when a theme file exists on disk
+ * but isn't valid JSON. Bare `null` (ENOENT or unknown error) doesn't match.
  */
 function isThemeParseFailure(value: unknown): value is { ok: false; code: 'invalid-json'; name?: string } {
   if (!value || typeof value !== 'object') return false;
@@ -403,7 +390,7 @@ function isThemeParseFailure(value: unknown): value is { ok: false; code: 'inval
 
 
 /**
- * Phase R4 — last-ditch DOM rescue when a theme apply fails.
+ * Last-ditch DOM rescue when a theme apply fails.
  *
  * `applyBuiltinTheme` / `applyCustomTheme` clear the inline `--ui-*`
  * custom properties before they swap `data-theme`. If they throw mid-
@@ -439,8 +426,7 @@ function slugify(name: string): string {
     .slice(0, 64) || 'theme';
 }
 
-// Phase 4 (Consolidation 2026-05-25) — vault-swap reset registration.
-// Drops the per-vault custom-theme cache + active-theme tracking so the
+// Vault-swap reset: drops the per-vault custom-theme cache + active-theme tracking so the
 // next vault opens against its own `.filo/themes/` directory rather than
 // flashing the prior vault's theme while the new one rehydrates.
 onVaultSwap('pre-swap', 'theme', () => {

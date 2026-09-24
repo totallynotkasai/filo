@@ -20,15 +20,11 @@ export type KanbanPriority = 'none' | 'low' | 'medium' | 'high' | 'urgent';
  * Returns the vault-relative path for a text tile's backing `.md` file, or
  * `null` for non-text tiles.
  *
- * Audit-10 B2 — delegates to the canonical `resolveTextTileVaultPath`, which
- * consults the def's explicit `filePath` FIRST. The previous body skipped
- * `filePath` and fell straight to `documentStore` → `${title}.md`, so after a
- * restart (boards don't preload docs, so the cache is empty) a subfolder card
- * resolved to `${title}.md` at the vault ROOT. `UpdateCardFieldCommand` then
- * wrote there: ENOENT-lost the edit (common case) or silently corrupted an
- * unrelated same-named root file (collision case). The canonical resolver
- * anchors `filePath → documentStore.filename → folder cascade`, matching
- * TextTile / TaskListBoard / KanbanCard.
+ * Delegates to the canonical `resolveTextTileVaultPath`, which consults the
+ * def's explicit `filePath` FIRST (`filePath → documentStore.filename → folder
+ * cascade`). After a restart the document cache is empty, so a `${title}.md`
+ * fallback alone would resolve a subfolder card to the vault ROOT and lose the
+ * edit or corrupt an unrelated same-named file.
  */
 export function vaultPathForTile(tile: Tile): string | null {
   return resolveTextTileVaultPath(tile);
@@ -71,7 +67,7 @@ export function makeKanbanFrontmatterWriter(
   const { getBoard, getAllTilesById, bumpCacheVersion, tickAndPersist } = deps;
 
   function vaultPathForTileSafe(tile: Tile): string {
-    // Audit-10 B2 — thread the owning board so the cascade fallback anchors to
+    // Thread the owning board so the cascade fallback anchors to
     // the card's home board's `defaultFolder` rather than whichever board is
     // active. `filePath`/`documentStore.filename` still win when present.
     return resolveTextTileVaultPath(tile, getBoard()?.id) ?? `${tile.title || 'Untitled'}.md`;
@@ -97,9 +93,8 @@ export function makeKanbanFrontmatterWriter(
     const docId = (tile as Tile & { contentId?: string }).contentId ?? null;
     // Best-effort inverse from whatever's already in memory. The docId-backed
     // UpdateCardFieldCommand recomputes the inverse from a FRESH disk read on
-    // execute (Audit-7 H1 — the disk pre-seed that used to run HERE moved INTO
-    // the command so the read joins the history chain that vaultStore.save() /
-    // quit await via whenChainSettled()); the orphan path uses this inverse
+    // execute (the disk pre-seed runs inside the command so the read joins the
+    // history chain that save()/quit await); the orphan path uses this inverse
     // directly. Prefer the live cache (an open editor's in-memory state) over
     // the durably-stale vault index.
     const liveFm = docId ? documentStore.getFrontmatter(docId) : null;
@@ -112,10 +107,9 @@ export function makeKanbanFrontmatterWriter(
     }
     const command = docId
       ? new UpdateCardFieldCommand(board.id, path, docId, patch, inverse)
-      // Phase 5 / 5.5 — orphan-fm path (tile has no contentId). The old
-      // fallback called `scheduleSharedFrontmatterWrite(path, null)`, which was
-      // a silent no-op: the scheduler reads frontmatter from vaultIndexStore
-      // when docId is null, so the patch was never applied.
+      // Orphan-fm path (tile has no contentId). `scheduleSharedFrontmatterWrite(
+      // path, null)` would be a silent no-op (the scheduler reads frontmatter
+      // from vaultIndexStore when docId is null, so the patch never applies).
       // UpdateOrphanFrontmatterCommand writes directly via
       // vault:write-existing-file-text and supports undo.
       : new UpdateOrphanFrontmatterCommand(board.id, path, patch, inverse);
@@ -182,7 +176,7 @@ export function makeKanbanFrontmatterWriter(
       filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] }],
     });
     if (!paths || paths.length === 0) return;
-    // Phase R2 — drain pending writers before the copy so a debounced
+    // Drain pending writers before the copy so a debounced
     // card-cover update doesn't fire against a stale src before the new
     // image lands on disk.
     const src = paths[0];
@@ -194,7 +188,7 @@ export function makeKanbanFrontmatterWriter(
     }
     const stored = res.relativePath ?? res.path ?? '';
     if (!stored) return;
-    // Phase 5 / 5.4 — route through UpdateCoverImageCommand so Ctrl+Z
+    // Route through UpdateCoverImageCommand so Ctrl+Z
     // restores the prior cover (or no-cover state).
     const before = getCurrentCoverImage(board.id, tileId);
     historyStore.execute(new UpdateCoverImageCommand(board.id, tileId, before, stored));
@@ -204,7 +198,7 @@ export function makeKanbanFrontmatterWriter(
   function clearCoverImageForTile(tileId: string): void {
     const board = getBoard();
     if (!board) return;
-    // Phase 5 / 5.4 — same undoable wrapper as pick. No-op when nothing
+    // Same undoable wrapper as pick. No-op when nothing
     // was set in the first place so we don't push an empty history entry.
     const before = getCurrentCoverImage(board.id, tileId);
     if (before === null) return;

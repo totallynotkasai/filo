@@ -4,17 +4,12 @@
  * mounting the component (the repo's vitest setup can't preprocess a `.svelte`
  * `<style>` block).
  *
- * DATE-1 (Task List audit 2026-06-08): the picker used to re-seed
- * viewMonth/viewYear from `value` inside an `$effect` that ALSO read them, so
- * every ‹/› navigation (which mutates the view but not `value`) immediately
- * re-fired the effect and reset the view — making it impossible to reach a
- * different month (there is no date text field, only the grid + chips).
- *
- * The fix lives in `syncToValue`: it re-seeds ONLY when `value` actually
- * changed since the last seed, tracked in a PLAIN (non-reactive) field so the
- * comparison can't pull the seed back. The component drives it from an
- * `$effect(() => view.syncToValue(value))`; because that effect reads only
- * `value` (not viewMonth/viewYear), navigation no longer triggers a reseed.
+ * Re-seeding viewMonth/viewYear from `value` inside an `$effect` that ALSO
+ * read them would reset the view on every ‹/› navigation, making it impossible
+ * to reach a different month. So `syncToValue` re-seeds ONLY when `value`
+ * actually changed since the last seed, tracked in a PLAIN (non-reactive)
+ * field. The component drives it from `$effect(() => view.syncToValue(value))`,
+ * which reads only `value`, so navigation never triggers a reseed.
  */
 
 /** Parse a strict `YYYY-MM-DD` string to a local Date, or null. */
@@ -30,7 +25,7 @@ export class DatePickerViewState {
   viewMonth = $state(0);
 
   /** The `value` the view was last seeded from. PLAIN (non-reactive) on
-   *  purpose — making it `$state` would re-introduce the DATE-1 reset loop. */
+   *  purpose — making it `$state` would re-introduce the reset loop. */
   private lastSeeded: string | null = null;
 
   /**

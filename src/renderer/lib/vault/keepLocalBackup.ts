@@ -5,10 +5,9 @@ import { vaultSwapResettable } from '../../core/vaultLifecycle';
 import { normalizePath, toPosix } from '../utils/path';
 
 /**
- * Audit-19 UX-6 (plan D7) — "Keep local" ALWAYS backs up the external bytes
- * first. Every Keep-local path overwrites a file another device / editor
- * changed; before this module nothing copied those bytes anywhere, so a
- * synced-vault conflict resolved in Filo's favour destroyed the other
+ * "Keep local" ALWAYS backs up the external bytes first. Every Keep-local
+ * path overwrites a file another device / editor changed; without a backup a
+ * synced-vault conflict resolved in Filo's favour would destroy the other
  * machine's edit outright.
  *
  * `backupExternalVersion(vaultRoot, rel)` snapshots the CURRENT disk bytes
@@ -22,7 +21,7 @@ import { normalizePath, toPosix } from '../utils/path';
  *
  * Deduped per (rel, mtimeMs, size): a handler-level call followed by the
  * drift gate's own call for the same bytes snapshots (and confirms) once.
- * The CI gate `ci:keep-local-backup` requires a call in every Keep-local
+ * The CI gate `gates:keep-local-backup` requires a call in every Keep-local
  * handler / branch.
  */
 

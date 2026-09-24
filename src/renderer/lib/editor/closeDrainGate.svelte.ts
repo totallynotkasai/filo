@@ -1,18 +1,15 @@
 /**
- * closeDrainGate — Audit-17 5.7.
+ * closeDrainGate.
  *
  * A tab close / closeOthers drains every pending markdown/frontmatter/board
  * write, then (on a save failure) shows a "close anyway?" confirm, then re-runs
  * the drains once more right before the editors unmount. Through that entire
  * window the editors stay MOUNTED + EDITABLE, so a keystroke typed during the
  * drain or the confirm re-arms a debounce the drains' snapshot never saw — and
- * the unmount then destroys it. Audit-16 6.7's second flush narrowed the window
- * but a keystroke landing after the last drain's snapshot (or during the
- * interactive confirm, which can sit open for minutes) is still lost, with only
- * stale disk content recoverable.
+ * the unmount then destroys it. Extra flush passes can't close that window (the
+ * interactive confirm can sit open for minutes).
  *
- * The fix removes the re-arm window instead of chasing it with more flush
- * passes: while a close drain is in progress the editors go READ-ONLY (a visual
+ * So the re-arm window is removed instead: while a close drain is in progress the editors go READ-ONLY (a visual
  * "saving…" freeze). No keystroke is accepted, so none can be stranded.
  *
  * One global flag (not per-tab): a close drain is brief in the no-failure case,

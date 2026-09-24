@@ -1,5 +1,5 @@
 /**
- * Audit-19 ERR-7 — vault-relative paths whose bytes are not valid UTF-8, as
+ * Vault-relative paths whose bytes are not valid UTF-8, as
  * reported by `vault:read-file-text`'s `encoding` field.
  *
  * Such a note is shown (its text is decoded with U+FFFD for the bad bytes) but

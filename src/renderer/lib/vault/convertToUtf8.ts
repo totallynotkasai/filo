@@ -1,5 +1,5 @@
 /**
- * Audit-19 ERR-7 — the "Convert to UTF-8…" action shown on a non-UTF-8 note.
+ * The "Convert to UTF-8…" action shown on a non-UTF-8 note.
  *
  * Confirms first (naming Windows-1252 and the backup), then asks main to
  * snapshot the original bytes to `.filo/recovery/`, decode them as

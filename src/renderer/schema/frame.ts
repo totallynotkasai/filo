@@ -65,7 +65,7 @@ export const FrameSchema = z.object({
     x: z.number().finite(),
     y: z.number().finite(),
   }).passthrough(),
-  // M18 — accept frames down to 0px on disk rather than rejecting the whole
+  // Accept frames down to 0px on disk rather than rejecting the whole
   // board over a frame the user has visually collapsed. The renderer warns
   // (once) when a loaded frame is smaller than the design-recommended
   // 200×150 minimum; see `warnUndersizedFrames` in boardLoader.
@@ -75,11 +75,11 @@ export const FrameSchema = z.object({
   }).passthrough(),
   style: FrameStyleSchema.prefault({}),
   collapsed: z.boolean().default(false),
-  // Sprint A / A14 — `.min(1)` + uniqueness. A duplicate tileId would
+  // `.min(1)` + uniqueness. A duplicate tileId would
   // double-include a tile in the frame's render set and confuse selection
   // (clicking the tile selects the frame twice via different paths).
   tileIds: z.array(z.string().min(1)).default(() => []).refine(...uniqueStrings('Frame.tileIds')),
-  // Phase 31 A6.6 — .finite() rejects NaN / ±Infinity from hand-edited files.
+  // .finite() rejects NaN / ±Infinity from hand-edited files.
   createdAt: z.number().finite(),
   updatedAt: z.number().finite(),
 }).passthrough();

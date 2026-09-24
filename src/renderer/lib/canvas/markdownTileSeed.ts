@@ -101,7 +101,7 @@ export function buildTextTileDefFromMarkdownFile(args: {
   /** Active board name — feeds Kanban's `Kanban/<boardName>` convention. */
   boardName: string | undefined;
   /**
-   * Phase 2 / 2.3 — frozen Kanban convention-folder name. Pass the live
+   * Frozen Kanban convention-folder name. Pass the live
    * board's `kanbanFolder` field for kanban boards so a renamed board still
    * resolves its drops under the original on-disk folder.
    */

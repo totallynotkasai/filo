@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { TileStyleSchema } from './tile';
 import { ConnectionLabelSchema } from './connection';
 
-// Phase 8 / 8.3 — .finite() rejects NaN / ±Infinity. A template captured
+// .finite() rejects NaN / ±Infinity. A template captured
 // while a tile had a transient NaN-coord (or a hand-edited template file)
 // would otherwise re-instantiate tiles at undefined positions.
 const RelativePositionSchema = z.object({
@@ -82,15 +82,14 @@ export const CURRENT_LAYOUT_TEMPLATE_VERSION = 1;
 export const LayoutTemplateSchema = z.object({
   id: z.string().min(1),
   name: z.string(),
-  // Sprint C / C11 — broadened from `z.literal(1)` to `z.number().int()`
-  // so a future V2 bump doesn't fail parse before the migration scaffold
-  // runs. See `migrateLayoutTemplate` below.
+  // `z.number().int()` (not a literal) so a future V2 bump doesn't fail parse
+  // before the migration scaffold runs. See `migrateLayoutTemplate` below.
   version: z.number().int().default(CURRENT_LAYOUT_TEMPLATE_VERSION),
-  // Phase 31 A6.6 — .finite() rejects NaN / ±Infinity from hand-edited files.
+  // .finite() rejects NaN / ±Infinity from hand-edited files.
   createdAt: z.number().finite(),
   updatedAt: z.number().finite(),
   boundingBox: z.object({
-    // Phase 8 / 8.3 — .finite() guard so a corrupted template's bounding
+    // .finite() guard so a corrupted template's bounding
     // box can't translate into NaN bounds on instantiation.
     width: z.number().finite().min(0),
     height: z.number().finite().min(0),
@@ -109,7 +108,7 @@ export type LayoutTemplateConnection = z.infer<typeof LayoutTemplateConnectionSc
 export type LayoutTemplate = z.infer<typeof LayoutTemplateSchema>;
 
 /**
- * Sprint C / C11 — migration scaffold for layout templates. Mirrors
+ * Migration scaffold for layout templates. Mirrors
  * `migrateBoardFile` / `migrateTagsFile`. Today only V1 exists so the
  * function is effectively a no-op; the scaffold lets a V2 bump land in
  * one file rather than scattering version-aware logic across callers.

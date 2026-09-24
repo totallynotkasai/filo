@@ -58,8 +58,8 @@ export function assertWithinVault(vaultRoot: string, targetPath: string): void {
       // stat or canonicalise it (NTFS ACL, AV scanner lock, sandboxed
       // userprofile dir on Windows).
       //
-      // Phase 31 A5.2 — instead of bypassing the symlink check, walk each
-      // component from `probe` UP to the vault root and `lstat` it.
+      // Rather than bypassing the symlink check, walk each component from
+      // `probe` UP to the vault root and `lstat` it.
       // `lstat` doesn't follow symlinks and reports the entry type
       // directly; if any segment on the path-to-vault is a symlink we
       // refuse, since a symlink between probe and vault root could
@@ -76,8 +76,7 @@ export function assertWithinVault(vaultRoot: string, targetPath: string): void {
         }
         // Walk from probe up to (but not including) the vault root,
         // calling lstat on each component to confirm none is a symlink.
-        // Any lstat failure here we treat as "can't prove safety, refuse"
-        // — this is the more paranoid behaviour the audit asked for.
+        // Any lstat failure here we treat as "can't prove safety, refuse".
         let walker = probe;
         while (walker && walker !== resolvedRoot) {
           try {
@@ -115,10 +114,9 @@ export function assertWithinVault(vaultRoot: string, targetPath: string): void {
  * (CON.txt → console) or hangs the IPC handler waiting for hardware. We
  * reject them up-front for cross-platform parity.
  *
- * Audit-8 L1 — `CONIN$` / `CONOUT$` (console input/output) and `CLOCK$`
- * (system clock) are the device names the original set omitted. They carry
- * a literal `$`, which is a legal filename character generally, so only the
- * exact reserved stem is rejected (`money$.md` stays fine).
+ * `CONIN$` / `CONOUT$` / `CLOCK$` carry a literal `$`, which is otherwise a
+ * legal filename character, so only the exact reserved stem is rejected
+ * (`money$.md` stays fine).
  */
 export const RESERVED_WINDOWS_NAMES = new Set([
   'CON', 'PRN', 'AUX', 'NUL', 'CONIN$', 'CONOUT$', 'CLOCK$',
@@ -127,7 +125,7 @@ export const RESERVED_WINDOWS_NAMES = new Set([
 ]);
 
 /**
- * Audit2 5.4 — Windows-illegal characters that aren't path separators
+ * Windows-illegal characters that aren't path separators
  * (caught by the basename check above) or control codes (caught by the
  * loop below). `:` is the load-bearing entry: on NTFS it opens a hidden
  * Alternate Data Stream, so a filename like `note.md:hidden` writes to a
@@ -139,13 +137,10 @@ export const RESERVED_WINDOWS_NAMES = new Set([
 const WIN_ILLEGAL_CHARS_RE = /[<>:"|?*]/;
 
 /**
- * 6.3.P1 / 6.3.P2 — Windows-only filename restrictions (illegal chars
- * `<>:"|?*` and reserved DOS names CON/NUL/COM1/etc.) are platform-gated by
- * default. The Audit2 5.4 / 5.5 gates were enforced regardless of platform,
- * which made any POSIX vault containing a legitimately-named file like
- * `2025:01:15 meeting.md` (Obsidian's daily-notes default on macOS/Linux)
- * unreadable through Filo — every read/delete/rename IPC threw before reaching
- * `fs.readFile`. Gating to win32 fixes that.
+ * Windows-only filename restrictions (illegal chars `<>:"|?*` and reserved
+ * DOS names CON/NUL/COM1/etc.) are platform-gated by default, so a POSIX
+ * vault with a legitimately-named `2025:01:15 meeting.md` (Obsidian's
+ * daily-notes default on macOS/Linux) stays readable through Filo.
  *
  * For CREATION channels (new file write, new folder, rename target, font
  * import, theme save, board create, media save) callers pass
@@ -174,7 +169,7 @@ const isWin32 = (): boolean => process.platform === 'win32';
  *   - path separators, or a name that is exactly `.` / `..` (a dot segment).
  *     `..` INSIDE a name (`Call Bob..md`, `Ideas... later.md`) is legal —
  *     traversal only ever arrives here as a bare `..` segment, because
- *     `assertSafeRelativePath` splits on `/` and `` first (Audit-19 ERR-2).
+ *     `assertSafeRelativePath` splits on `/` and `` first.
  *   - length > 255 (Windows MAX_PATH segment + POSIX NAME_MAX)
  *   - trailing dot or trailing space (silently stripped by Win32 → name collision)
  *   - control characters (\x00..\x1F, \x7F) including embedded NUL
@@ -203,7 +198,7 @@ export function assertSafeFilename(
   ) {
     throw new Error('Unsafe filename rejected — contains path separators or is a dot segment');
   }
-  // 6.3.P1 — Win-illegal chars are platform-gated. Always enforce at
+  // Win-illegal chars are platform-gated. Always enforce at
   // creation; on POSIX read/delete/rename-OLD pass through so a file
   // named `2025:01:15.md` remains accessible.
   const enforceWinRules = options.forCreation === true || isWin32();
@@ -222,12 +217,12 @@ export function assertSafeFilename(
       throw new Error('Unsafe filename rejected — control character');
     }
   }
-  // 6.3.P2 — DOS device names are platform-gated alongside the illegal-char
-  // check. POSIX vaults legitimately contain `CON.md` / `NUL.txt`; creation
+  // DOS device names are platform-gated alongside the illegal-char check.
+  // POSIX vaults legitimately contain `CON.md` / `NUL.txt`; creation
   // channels still reject them on every platform so the resulting file stays
   // portable to a Windows collaborator.
   if (enforceWinRules) {
-    // Audit-8 L1 — Windows strips leading/trailing spaces from the name
+    // Windows strips leading/trailing spaces from the name
     // component, so ` CON.md` / `CON .md` still open the CON device. Trim the
     // stem before the reserved-name compare so a space-padded device name
     // can't slip through.
@@ -262,7 +257,7 @@ export const MAX_VAULT_PATH_DEPTH = 10;
  * containment check; this helper is the structural sanity gate that runs
  * before path joining so a malformed input can't even reach `path.join`.
  *
- * 6.3.P1 / 6.3.P2 — `options.forCreation` forwards to per-segment
+ * `options.forCreation` forwards to per-segment
  * `assertSafeFilename`. Pass `{ forCreation: true }` from creation channels
  * (write-file-text, create-file-text, create-folder, rename target, etc.) so cross-platform
  * portability rules apply on every platform; omit to platform-gate the
@@ -275,15 +270,10 @@ export function assertSafeRelativePath(
   if (typeof relativePath !== 'string' || relativePath.length === 0) {
     throw new Error('Relative path must be a non-empty string');
   }
-  // D.10 — reject empty segments anywhere in the path. The previous
-  // `[\\/]+.filter(Boolean)` shape silently collapsed `notes//Plan.md`
-  // and `notes\\\\Plan.md` into `[notes, Plan.md]`, hiding what is
-  // almost certainly a buggy caller (path-join with an empty piece) or
-  // an attempt to confuse a downstream tokeniser. `assertWithinVault`
-  // catches the worst outcomes already, but this explicit gate makes
-  // malformed input a first-class failure with a clearer error.
-  // Splitting on a SINGLE separator keeps empty segments visible so
-  // we can flag them.
+  // Reject empty segments anywhere in the path: `notes//Plan.md` is almost
+  // certainly a buggy caller (path-join with an empty piece) or an attempt
+  // to confuse a downstream tokeniser. Splitting on a SINGLE separator keeps
+  // empty segments visible so we can flag them.
   const segments = relativePath.split(/[\\/]/);
   for (const segment of segments) {
     if (segment.length === 0) {
@@ -304,7 +294,7 @@ export function assertSafeRelativePath(
 }
 
 /**
- * Phase 1 / 1.2 — error class for `assertNotInFiloDir` rejections so the
+ * Error class for `assertNotInFiloDir` rejections so the
  * IPC layer can return a stable `code: 'FORBIDDEN'` envelope instead of a
  * generic `IO_ERROR`. The renderer toast distinguishes "the OS refused
  * the write" (IO_ERROR) from "the generic channel won't accept this
@@ -322,7 +312,7 @@ export class FiloDirForbiddenError extends Error {
  * channels: strictly the crash-recovery sentinels. Every other `.filo/` file
  * (themes, configs, tags, templates) is owned by a dedicated IPC channel.
  *
- * Audit-19 EXT-6 (plan D5) — the sentinels are PER MACHINE
+ * The sentinels are PER MACHINE
  * (`.filo/.dirty.<machineId>` …, see `src/shared/sentinelPaths.ts`) because
  * `.filo/` syncs to every machine. Ownership is enforced HERE, main-side, so
  * "a machine only ever clears its own" is structural rather than a renderer
@@ -341,7 +331,7 @@ function isPermittedSentinel(normalised: string, access: 'read' | 'write'): bool
 }
 
 /**
- * Phase 1 / 1.2 — rejects any vault-relative path whose first segment
+ * Rejects any vault-relative path whose first segment
  * normalises to `.filo`. Applied at the entry of every generic
  * `vault:write-file-text` / `vault:write-existing-file-text` /
  * `vault:create-file-text` / `vault:delete`
@@ -355,7 +345,7 @@ function isPermittedSentinel(normalised: string, access: 'read' | 'write'): bool
  * a more specific error. This helper is strictly the `.filo/` guard.
  *
  * Crash-recovery sentinels are allowed through per `isPermittedSentinel`
- * (Audit-19 EXT-6: a WRITE may only target this machine's own sentinel).
+ * (a WRITE may only target this machine's own sentinel).
  */
 export function assertNotInFiloDir(
   relativePath: string,
@@ -386,7 +376,7 @@ export function assertNotInFiloDir(
  * so loopback / ULA / link-local detection actually fires.
  */
 /**
- * Phase 31 A5.3 — normalises a hostname so numeric IP encodings can't bypass
+ * Normalises a hostname so numeric IP encodings can't bypass
  * the private-IP regex. Accepts hex (`0x7f000001`), octal (`0177.0.0.1`),
  * and decimal-integer (`2130706433`) forms and rewrites them to dotted-quad.
  * Returns the input unchanged if it's not a numeric form. Best-effort; if
@@ -425,7 +415,7 @@ export function normalizeNumericIPv4(hostname: string): string {
 }
 
 /**
- * 3.1 — parse an IPv6 address string into its 8 16-bit hextets, expanding
+ * Parse an IPv6 address string into its 8 16-bit hextets, expanding
  * `::` compression and folding a trailing embedded dotted-quad
  * (`::ffff:127.0.0.1`) into two hextets. Returns null if the input isn't a
  * well-formed IPv6 literal. Pure string math — no `net`/`dns` — so it's
@@ -493,7 +483,7 @@ function parseIPv6ToHextets(addr: string): number[] | null {
 }
 
 /**
- * 3.1 — if `ip6` is an IPv6 form that embeds an IPv4 address — IPv4-mapped
+ * If `ip6` is an IPv6 form that embeds an IPv4 address — IPv4-mapped
  * (`::ffff:a.b.c.d`), IPv4-compatible (`::a.b.c.d`, deprecated but still
  * routed by some stacks), or NAT64 well-known-prefix (`64:ff9b::a.b.c.d`)
  * — return the embedded address as a dotted-quad string. Otherwise null.
@@ -542,17 +532,11 @@ export function extractEmbeddedIPv4(ip6: string): string | null {
 
 export function isPrivateUrl(urlString: string): boolean {
   try {
-    // D.1 — IPv4-mapped (`::ffff:1.2.3.4`) and IPv4-compatible
-    // (`::1.2.3.4`) IPv6 forms embed a dotted-quad in the hostname.
-    // Node's URL parser canonicalises `::ffff:10.0.0.1` to its
-    // compressed hex form (`::ffff:a00:1`), so by the time we have a
-    // parsed `hostname` the dotted-quad is gone. Inspect the raw URL
-    // string FIRST for the literal mapped form and route the embedded
-    // v4 through the same `isPrivateUrl` so the RFC-1918 / loopback /
-    // link-local / CGNAT checks apply. Without this the previous
-    // broad `/^::ffff:/i.test(ip6)` over-blocked legitimate public
-    // addresses (`::ffff:8.8.8.8`) once the hostname-side regex
-    // started matching the hex form.
+    // IPv4-mapped (`::ffff:1.2.3.4`) and IPv4-compatible (`::1.2.3.4`)
+    // IPv6 forms embed a dotted-quad, which Node's URL parser rewrites to
+    // hex (`::ffff:a00:1`). Inspect the raw URL string FIRST for the literal
+    // mapped form and classify the embedded v4, so public addresses
+    // (`::ffff:8.8.8.8`) aren't over-blocked.
     const rawMapped = /\[(?:::ffff:|::)(\d{1,3}(?:\.\d{1,3}){3})\]/i.exec(urlString);
     if (rawMapped) {
       return isPrivateUrl(`http://${rawMapped[1]}`);
@@ -562,19 +546,15 @@ export function isPrivateUrl(urlString: string): boolean {
     const ip6 = hostname.startsWith('[') && hostname.endsWith(']')
       ? hostname.slice(1, -1)
       : hostname;
-    // 3.1 — decode IPv4-mapped (`::ffff:`), IPv4-compatible (`::`), and
-    // NAT64 (`64:ff9b::/96`) IPv6 forms — including the compressed-HEX
-    // encodings Node's URL parser produces (`::ffff:a00:1`) and that an
-    // attacker can supply directly — to their embedded dotted-quad and
-    // classify by THAT. The `rawMapped` branch above only catches the
-    // literal dotted-quad spelling; this catches the hex/NAT64 forms it
-    // missed. Classifying by the embedded v4 keeps a hex-encoded PUBLIC
-    // address allowed (`::ffff:808:808` → `8.8.8.8`).
+    // Decode IPv4-mapped, IPv4-compatible and NAT64 (`64:ff9b::/96`) IPv6
+    // forms — including compressed-HEX encodings an attacker can supply
+    // directly — to their embedded dotted-quad and classify by THAT. A
+    // hex-encoded PUBLIC address stays allowed (`::ffff:808:808` → `8.8.8.8`).
     const embeddedV4 = extractEmbeddedIPv4(ip6);
     if (embeddedV4) {
       return isPrivateUrl(`http://${embeddedV4}`);
     }
-    // Phase 31 A5.3 — normalise numeric encodings before regex tests.
+    // Normalise numeric encodings before regex tests.
     const normalised = normalizeNumericIPv4(hostname);
     return (
       hostname === 'localhost' ||
@@ -585,7 +565,7 @@ export function isPrivateUrl(urlString: string): boolean {
       /^192\.168\./.test(normalised) ||
       /^172\.(1[6-9]|2\d|3[01])\./.test(normalised) ||
       /^169\.254\./.test(normalised) ||
-      // Phase 31 A5.3 — CGNAT range 100.64.0.0/10 (RFC 6598) and 0.0.0.0/8.
+      // CGNAT range 100.64.0.0/10 (RFC 6598) and 0.0.0.0/8.
       /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(normalised) ||
       /^0\./.test(normalised) ||
       ip6 === '::1' ||

@@ -23,7 +23,7 @@ import type { IpcChannel } from './types';
  */
 
 /**
- * Non-empty string. Phase 25 L7: every IPC string arg that names a path,
+ * Non-empty string. Every IPC string arg that names a path,
  * filename, channel target, URL, or label is required to be at least one
  * character. Catches whitespace-stripped renderer typos before the main
  * process has to detect them via `path.join('') → ''` or `fs.access('')`.
@@ -57,22 +57,18 @@ export const IPC_PAYLOAD_SCHEMAS = {
   'vault:rename': z.tuple([nonEmptyString, nonEmptyString, nonEmptyString]),
   'vault:delete': z.tuple([nonEmptyString, nonEmptyString]),
   'vault:watch': z.tuple([nonEmptyString]),
-  // Sprint B / B24 — no payload; the handler closes the active vault
-  // unconditionally (idempotent on already-closed state).
+  // No payload; the handler closes the active vault unconditionally
+  // (idempotent on already-closed state).
   'vault:close': z.tuple([]),
-  // Phase 3 / 3.6 — explicit positional shape (sourcePath, vaultRoot,
-  // destFolder?). The previous `.rest(optionalString)` permitted any number
-  // of trailing strings — every caller passes at most 3 args (the main
-  // handler ignores anything past `destFolder`), so the rest-spread was
-  // defensive-only and broadened the validated surface for no benefit.
-  // The union models the two real call shapes — 2 args (drop at vault
-  // root) and 3 args (explicit subfolder) — without permitting unbounded
-  // trailing strings the way `.rest()` did.
+  // Explicit positional shape (sourcePath, vaultRoot, destFolder?): the
+  // union models the two real call shapes — 2 args (drop at vault root) and
+  // 3 args (explicit subfolder) — without permitting unbounded trailing
+  // strings the way `.rest()` would.
   'vault:copy-file': z.union([
     z.tuple([nonEmptyString, nonEmptyString]),
     z.tuple([nonEmptyString, nonEmptyString, optionalString]),
   ]),
-  // Audit-12 S1 — `vault:register-source-path` is preload-INTERNAL: the only
+  // `vault:register-source-path` is preload-INTERNAL: the only
   // legitimate sender is the preload's `getPathForFile` via a direct
   // `ipcRenderer.send` (which bypasses this gate entirely). `z.never()` matches
   // NO argument shape, so any attempt to reach it through the contextBridge
@@ -80,16 +76,14 @@ export const IPC_PAYLOAD_SCHEMAS = {
   // …)` from hostile renderer JS) fails validation and is dropped before it can
   // self-approve an arbitrary copy source. Do NOT relax this to a real tuple.
   'vault:register-source-path': z.never(),
-  // Phase 37 / 37.6 — canonical (vaultRoot, relativePath). The legacy
-  // single-arg absolute-path branch is gone; every renderer caller has been
-  // migrated.
+  // (vaultRoot, relativePath).
   'vault:read-file-text': z.tuple([nonEmptyString, nonEmptyString]),
   // Third arg `content` stays plain z.string(): empty Markdown is legal.
   'vault:write-file-text': z.tuple([nonEmptyString, nonEmptyString, z.string()]),
   'vault:write-existing-file-text': z.tuple([nonEmptyString, nonEmptyString, z.string()]),
-  // Audit-19 BL-1 — create-exclusive seed; same shape as write-file-text.
+  // Create-exclusive seed; same shape as write-file-text.
   'vault:create-file-text': z.tuple([nonEmptyString, nonEmptyString, z.string()]),
-  // Phase 2 / 2.5 — `(vaultRoot, relativePath, base64Data)`. The base64
+  // `(vaultRoot, relativePath, base64Data)`. The base64
   // string can be empty for an empty file, so the third arg is plain
   // `z.string()` and the handler enforces the decoded byte cap.
   'vault:write-file-binary': z.tuple([nonEmptyString, nonEmptyString, z.string()]),
@@ -149,7 +143,7 @@ export const IPC_PAYLOAD_SCHEMAS = {
   // Dialog options are passed through to Electron's `showMessageBox` /
   // `showOpenDialog` — we don't re-validate the inner shape, just the arity.
   'dialog:confirm': z.tuple([nonEmptyString]).rest(optionalString),
-  // Phase 31 A2.1 — multi-button "Save / Don't Save / Cancel"-style dialog.
+  // Multi-button "Save / Don't Save / Cancel"-style dialog.
   // Args: (message, buttons[], options?). Returns the selected button index.
   'dialog:choice': z
     .tuple([nonEmptyString, z.array(nonEmptyString).min(2)])
@@ -180,11 +174,11 @@ export const IPC_PAYLOAD_SCHEMAS = {
 
   // ── App lifecycle (renderer → main) ───────────────────────────────────
   'app:ready-to-quit': z.tuple([]),
-  // 6.2.H4 — same shape as `app:ready-to-quit`; semantics differ in main.
+  // Same shape as `app:ready-to-quit`; semantics differ in main.
   'app:cancel-quit': z.tuple([]),
-  // Audit-4 DI-04 — quit heartbeat (no args); main clears its flush timer.
+  // Awaiting-user signal (no args); main clears its flush timer.
   'app:quit-awaiting-user': z.tuple([]),
-  // Audit5 2.1 — periodic drain heartbeat (no args); main re-arms its timer.
+  // Periodic drain heartbeat (no args); main re-arms its timer.
   'app:drain-heartbeat': z.tuple([]),
 
   // ── Sidebar geometry ──────────────────────────────────────────────────
@@ -200,7 +194,7 @@ export type ValidationResult =
  * Validates the positional args for an IPC channel against
  * `IPC_PAYLOAD_SCHEMAS`. Channels without a schema fall through as `ok` —
  * better to skip validation than crash a flow when a new channel is added
- * and someone forgets the schema. The `ci:ipc-parity` gate already catches
+ * and someone forgets the schema. The `gates:ipc-parity` gate already catches
  * channel-name drift between main + renderer; the schema map is opt-in
  * narrowing on top.
  */

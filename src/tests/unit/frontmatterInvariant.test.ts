@@ -27,7 +27,7 @@ import {
  * either preserve the user's data losslessly OR refuse the write — NEVER
  * silently drop a key, corrupt the YAML, or touch the body.
  *
- * Wired into CI as its own gate via `scripts/check-frontmatter-invariant.mjs`
+ * Wired into CI as its own gate via `scripts/gates:frontmatter-invariant`
  * (`npm run ci:frontmatter-invariant`) so it can't be dropped from `ci:verify`.
  */
 

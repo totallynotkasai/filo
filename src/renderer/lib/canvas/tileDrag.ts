@@ -12,11 +12,10 @@ import type { BoardScope } from '../boards/boardScope.svelte';
  * Supports multi-select drag (moves all selected tiles together).
  * Creates a single MoveTilesCommand on drag end for undo/redo.
  *
- * Audit-18 6.1 — pane-scoped. The action binds `board`/`canvas`/`selection`/
- * `spatial` from the THREADED `scope` (the pane the drag started on), never the
- * global facades, which resolve to whatever pane is globally active. See the
- * `scope` field below and `boardScope.svelte.ts`. Mirrors Audit-12 M5
- * (dragDrop.ts).
+ * Pane-scoped. The action binds `board`/`canvas`/`selection`/`spatial` from the
+ * THREADED `scope` (the pane the drag started on), never the global facades,
+ * which resolve to whatever pane is globally active. See the `scope` field
+ * below and `boardScope.svelte.ts`. Mirrors dragDrop.ts.
  *
  * Usage: <div use:tileDragAction={{ tileId, locked, scope }}>...</div>
  */
@@ -27,7 +26,7 @@ export interface TileDragOptions {
   snapToGrid?: boolean;
   gridSize?: number;
   /**
-   * Audit-18 6.1 — the pane's `BoardScope`, threaded so the drag's spatial
+   * The pane's `BoardScope`, threaded so the drag's spatial
    * batch (and every board/canvas/selection read) operates on the pane the
    * gesture STARTED on, not whichever pane is globally active. The drag is
    * pointer-captured to this pane's node, so its own handlers keep firing here
@@ -43,7 +42,7 @@ export interface TileDragOptions {
 const GRID_SIZE = 20;
 
 /**
- * Sprint B / B7 — upper bound on the number of neighbour tiles fed into
+ * Upper bound on the number of neighbour tiles fed into
  * `computeGuides` per move frame. The rbush viewport query already narrows
  * the candidate set to the visible region, but a dense board can still
  * surface thousands of tiles inside the viewport. `computeGuides` is
@@ -57,14 +56,12 @@ const SMART_GUIDE_MAX_CANDIDATES = 100;
 
 export function tileDragAction(node: HTMLElement, options: TileDragOptions) {
   let currentOptions = options;
-  // Audit-18 6.1 — resolve the pane-scoped store slices from the threaded
-  // `BoardScope`, NOT the global `boardStore`/`canvasStore`/`selectionStore`/
-  // `spatialStore` facades. A tile never moves between panes without
-  // unmount/remount (each PaneView owns its scope via context), so the scope is
-  // stable for this action's life — capture it once. Binding here keeps
-  // begin/endBatch balanced on the SAME spatial index and the drag math on the
-  // originating board even if a second touch on the other pane flips the active
-  // scope mid-gesture. The locals keep the facade names so the body is unchanged.
+  // Resolve the pane-scoped store slices from the threaded `BoardScope`, NOT
+  // the global facades. A tile never moves between panes without
+  // unmount/remount, so the scope is stable for this action's life — capture it
+  // once. This keeps begin/endBatch balanced on the SAME spatial index even if
+  // a second touch on the other pane flips the active scope mid-gesture. The
+  // locals keep the facade names.
   const {
     board: boardStore,
     canvas: canvasStore,
@@ -82,7 +79,7 @@ export function tileDragAction(node: HTMLElement, options: TileDragOptions) {
   let startPanX = 0;
   let startPanY = 0;
   let startPositions: Map<string, { x: number; y: number }> = new Map();
-  // Phase 27 / A2 — capture the pointerId so a mid-drag Escape can release
+  // Capture the pointerId so a mid-drag Escape can release
   // it without an event of its own. pointerup/pointercancel still come with
   // their event, but Escape arrives via window keydown so the capturing
   // node has to remember which pointer to free.
@@ -179,7 +176,7 @@ export function tileDragAction(node: HTMLElement, options: TileDragOptions) {
     node.setPointerCapture(e.pointerId);
     activePointerId = e.pointerId;
     document.body.style.cursor = 'grabbing';
-    // Phase 27 / A2 — activate Escape-cancel only while a drag is in flight.
+    // Activate Escape-cancel only while a drag is in flight.
     // Registering on every pointerdown (not on mount) avoids a global keydown
     // hook on every tile in the document. Removed in pointerup / pointercancel /
     // cancelDrag / destroy so it can never outlive the gesture.
@@ -188,7 +185,7 @@ export function tileDragAction(node: HTMLElement, options: TileDragOptions) {
   }
 
   /**
-   * Phase 27 / A2 — Escape during a drag restores every captured start
+   * Escape during a drag restores every captured start
    * position, suppresses the would-be MoveTilesCommand (hasMoved=false),
    * and tears down the drag state in the same shape as `onPointerCancel`.
    * Capture phase + stopPropagation so the keydown can't bubble into TipTap
@@ -243,11 +240,9 @@ export function tileDragAction(node: HTMLElement, options: TileDragOptions) {
     // loop never operates on stale data — keep this synchronous.
     if (!edgePanStarted) {
       updateEdgePanMouse(e.clientX, e.clientY);
-      // Audit-18 6.1 — edge-pan on THIS pane's canvas (the threaded scope's
-      // slice), not the global facade. A mid-drag touch on the other pane
-      // retargets the facade; pinning the originating pane's canvas keeps the
-      // auto-pan on the right viewport for the whole gesture (supersedes the
-      // earlier Audit-5.4 captured-pane==active-pane assumption).
+      // Edge-pan on THIS pane's canvas (the threaded scope's slice), not the
+      // global facade, so the auto-pan stays on the right viewport even if a
+      // mid-drag touch on the other pane retargets the facade.
       startEdgePan(canvasStore);
       edgePanStarted = true;
     }
@@ -296,7 +291,7 @@ export function tileDragAction(node: HTMLElement, options: TileDragOptions) {
     }
 
     // Smart guides: snap the primary dragged tile, then offset others by the same delta.
-    // Holding Shift disables guides for the duration of the drag (V1.0 plan §2.3).
+    // Holding Shift disables guides for the duration of the drag.
     if (canvasStore.snapEnabled && gridSize === 0 && !e.shiftKey) {
       // Skip re-evaluation when the raw input delta hasn't moved enough since
       // the last evaluation to change snap targets — but still apply the
@@ -346,7 +341,7 @@ export function tileDragAction(node: HTMLElement, options: TileDragOptions) {
             otherTiles.push({ id: t.id, x: t.position.x, y: t.position.y, width: t.size.width, height: t.size.height });
           }
 
-          // Sprint B / B7 — cap the candidate set so dense boards don't melt
+          // Cap the candidate set so dense boards don't melt
           // `computeGuides` per frame. See `capCandidatesByDistance` for the
           // sort criterion.
           capCandidatesByDistance(draggedBounds, otherTiles, SMART_GUIDE_MAX_CANDIDATES);
@@ -434,7 +429,7 @@ export function tileDragAction(node: HTMLElement, options: TileDragOptions) {
 
   function onPointerCancel(_e: PointerEvent) {
     if (!isDragging) return;
-    // D.4 — native pointercancel (OS gesture steals the pointer, browser
+    // Native pointercancel (OS gesture steals the pointer, browser
     // fullscreen, etc.) routes through the same snap-back path as Escape so
     // the user doesn't end up with a tile stranded mid-drag with no way to
     // revert. cancelDrag handles capture release, rAF cleanup, edge-pan
@@ -452,7 +447,7 @@ export function tileDragAction(node: HTMLElement, options: TileDragOptions) {
       currentOptions = newOptions;
     },
     destroy() {
-      // Sprint B / B3 — if the tile unmounts mid-drag, restore each captured
+      // If the tile unmounts mid-drag, restore each captured
       // start position (cancel-not-commit) and NEVER push a MoveTilesCommand.
       // A half-committed move would corrupt undo: the user couldn't reach
       // the pre-drag state without the snapshot, and the post-drag state is

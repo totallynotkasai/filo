@@ -22,7 +22,7 @@
     scale?: number;
   }
 
-  // Phase 1.2a — pattern default is 'none', not 'grid'. Grid is only
+  // Pattern default is 'none', not 'grid'. Grid is only
   // sensible for canvas-based boards (Mind Map) and the Mind Map cascade
   // explicitly opts in. Defaulting to 'none' here prevents a stale
   // .filo/settings.json (one that pre-dates `kanban.backgroundPattern`)

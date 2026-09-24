@@ -1,8 +1,8 @@
 <script lang="ts">
   /**
-   * TagPromptPopup — Audit-18 M7. A small centered text-input dialog for the
-   * Kanban bulk "Add tag" action. Replaces `window.prompt`, which is
-   * unimplemented in Electron's renderer (it throws). Mirrors the
+   * TagPromptPopup — a small centered text-input dialog for the Kanban bulk
+   * "Add tag" action (`window.prompt` is unimplemented in Electron's renderer
+   * — it throws). Mirrors the
    * `LinkInsertPopup` pattern: capture a string, resolve on Add / Enter, or
    * cancel on Escape / click-outside / Cancel.
    *

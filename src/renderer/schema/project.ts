@@ -35,7 +35,7 @@ export type WorkspaceState = z.infer<typeof WorkspaceStateSchema>;
  * plus every loaded `.board.json`. This schema validates the virtual
  * object that gets handed to the renderer stores.
  *
- * Sprint C / C4 — the legacy `version` and `tags` fields are gone. There
+ * The legacy `version` and `tags` fields are gone. There
  * was never a standalone `project.json` to carry a version on, and tag
  * definitions have lived in `.filo/tags.json` since the Obsidian
  * alignment. Both fields are still tolerated on the way in via
@@ -54,7 +54,7 @@ export const ProjectSchema = z.object({
   frames: z.array(FrameSchema).default(() => []).refine(...uniqueBy('id', 'frames')),
   /** Open tabs + active tab, captured at save time. */
   workspace: WorkspaceStateSchema.prefault({}),
-  // Phase 31 A6.6 — .finite() rejects NaN / ±Infinity from hand-edited files.
+  // .finite() rejects NaN / ±Infinity from hand-edited files.
   createdAt: z.number().finite(),
   updatedAt: z.number().finite(),
 }).passthrough();

@@ -1,5 +1,5 @@
 /**
- * Vault-wide Search query parser (Sprint E.1).
+ * Vault-wide Search query parser.
  *
  * Splits a raw search string into:
  *  - structured operators (`tag:`, `board:`, `has:`, `property:`, `type:`)

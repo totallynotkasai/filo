@@ -6,7 +6,7 @@ import type { BoardContext } from './boardStoreTypes';
 /**
  * Board slice — frame CRUD for the active board.
  *
- * Phase R7 (Reactive BoardScope, 2026-05-26) — the per-pane `frames` view is
+ * The per-pane `frames` view is
  * `$derived` from `boardCacheStore.cache[currentBoardId].frames`. Mutations
  * forward to `boardCacheStore.persist*Frame`; the active derivation re-fires
  * automatically when the cache settles.

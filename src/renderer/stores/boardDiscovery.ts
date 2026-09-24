@@ -1,11 +1,8 @@
 /**
- * Audit-19 EXT-1 / ERR-4 — runtime board discovery.
- *
- * `board:list` used to run only at vault open, so a `.board.json` that
- * appeared mid-session (a sync client delivering another machine's board, a
- * copy, an external folder rename) — or one that failed to load at open
- * because OneDrive held a lock / the file was online-only — stayed invisible
- * until the vault was reopened ("reopen the vault" was the only advice).
+ * Runtime board discovery: adopts a `.board.json` that appeared mid-session (a
+ * sync client delivering another machine's board, a copy, an external folder
+ * rename) or that failed to load at open (OneDrive lock / online-only file),
+ * without reopening the vault.
  *
  * `adoptBoardAtRuntime(relPath, captured)` loads one board and merges it into
  * the live stores the same way the vault-open candidate does: cache + path map
@@ -16,7 +13,7 @@
  * Vault-identity discipline: the load awaits disk; a swap during it must not
  * inject the outgoing vault's board into the new vault's cache, so the function
  * re-checks `isStillSameVault(captured)` after every await. Pinned by
- * `ci:reconciler-vault-guard` Part 3.
+ * `gates:reconciler-vault-guard` Part 3.
  */
 import { loadBoard, isTransientBoardLoadError } from '../lib/boards/boardLoader';
 import { captureVaultIdentity, isStillSameVault, type VaultIdentity } from '../lib/vault/vaultIdentity';
@@ -141,7 +138,7 @@ vaultSwapResettable('boardDiscovery', () => {
 });
 
 /**
- * Audit-19 EXT-1 — runtime discovery from the tree refresh: adopt every
+ * Runtime discovery from the tree refresh: adopt every
  * `.board.json` in the tree that no loaded board points at. Each such path is
  * tried ONCE per session (a board that failed at open was already reported;
  * the explicit Retry / sidebar paths call `adoptBoardAtRuntime` directly), and
@@ -172,7 +169,7 @@ export function adoptUntrackedTreeBoards(treePaths: Iterable<string>, captured: 
 }
 
 /**
- * Audit-19 EXT-1 — the sidebar double-click on a board the session doesn't
+ * The sidebar double-click on a board the session doesn't
  * know (appeared mid-session, or failed to load at open): adopt it, then hand
  * back the board to open. A transient failure re-offers the Retry notice; any
  * other failure / duplicate was already surfaced by the adoption.

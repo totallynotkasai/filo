@@ -40,7 +40,7 @@ export const CURRENT_BOARD_FILE_VERSION = 7;
  * loudly rather than be misinterpreted by code that doesn't know the new
  * shape.
  *
- * IMPL_PLAN_2026-05-23_v2 P1.6 — the `.superRefine` cross-checks that every
+ * The `.superRefine` cross-checks that every
  * `connection.fromTileId`/`toTileId` and every `frame.tileIds[]` entry
  * resolves to a real tile (`tileDefs` key, or — for mindmap boards — an
  * `inlineTiles` key, since inline tiles are valid connection / frame
@@ -53,7 +53,7 @@ export const CURRENT_BOARD_FILE_VERSION = 7;
 export const V7BoardFileDataSchema = z.object({
   version: z.literal(CURRENT_BOARD_FILE_VERSION).default(CURRENT_BOARD_FILE_VERSION),
   board: BoardSchema,
-  // Sprint C / C7 — record keys are validated against the nanoid pattern
+  // Record keys are validated against the nanoid pattern
   // via `idString`. Empty / whitespace / special-character keys would
   // otherwise pass through `.passthrough()` and either shadow a real
   // entry on save or crash downstream `Object.keys(...).split(...)`
@@ -61,12 +61,11 @@ export const V7BoardFileDataSchema = z.object({
   tileDefs: z.record(idString, TileDefinitionSchema).default(() => ({})),
   connections: z.record(idString, ConnectionSchema).default(() => ({})),
   frames: z.array(FrameSchema).default(() => []).refine(...uniqueBy('id', 'frames')),
-// Sprint A / A12 — `.passthrough()` so envelope-level fields written by a
+// `.passthrough()` so envelope-level fields written by a
 // future Filo (e.g. a `version: 8` migration introducing a new top-level
 // key) survive the load → cache → save round-trip in this build.
-// Mirrors the nested `BoardSchema.passthrough()` contract. Without this
-// every load + save in an older Filo silently strips unknown top-level
-// keys, contradicting the file's docstring about forward-compat.
+// Mirrors the nested `BoardSchema.passthrough()` contract; without it every
+// load + save in an older Filo would silently strip unknown top-level keys.
 }).passthrough().superRefine((envelope, ctx) => {
   const validIds = new Set<string>(Object.keys(envelope.tileDefs));
   if (envelope.board.type === 'mindmap') {
@@ -110,20 +109,15 @@ export const V7BoardFileDataSchema = z.object({
     }
   }
 
-  // Sprint C / C8 — boardId cross-check. The envelope IS the board
-  // file, so every nested record's `boardId` SHOULD match
-  // `envelope.board.id`. We log mismatches but do not reject at the
-  // schema layer: doing so would route every loosely-tagged test
+  // boardId cross-check. The envelope IS the board file, so every nested
+  // record's `boardId` SHOULD match `envelope.board.id`. We log mismatches
+  // but do not reject: doing so would route every loosely-tagged test
   // fixture through `failedBoards`.
   //
-  // Audit 2.1 — production files are repaired before this parse runs:
-  // `boardLoader.pruneOrphanRefsAndDuplicates` rewrites a divergent
-  // connection / frame / mindmap-group `boardId` to `envelope.board.id`
-  // and marks the board dirty (via the `boardIdsNormalized` flag) so the
-  // fix persists. By the time a real load reaches this superRefine the
-  // values already agree, so this `console.warn` fires only for envelopes
-  // built OUTSIDE the loader (tests, migration tooling, hand-built JSON).
-  // Logging preserves the diagnostic signal without breaking the load path.
+  // Production files are repaired before this parse runs
+  // (`boardLoader.pruneOrphanRefsAndDuplicates` rewrites a divergent
+  // `boardId` and marks the board dirty), so this warning fires only for
+  // envelopes built OUTSIDE the loader (tests, tooling, hand-built JSON).
   const seenMismatch: string[] = [];
   for (const [connId, conn] of Object.entries(envelope.connections)) {
     if (conn.boardId !== envelope.board.id) {
@@ -154,7 +148,7 @@ export const V7BoardFileDataSchema = z.object({
 
 // Note: the runtime `V7BoardFileData` type lives in `lib/boards/tileDefBuilder.ts`
 // and carries `version?: 7` as the literal type so the saver can stamp it
-// before serialise (Phase 33 C2.1). In-memory consumers never need to read
+// before serialise. In-memory consumers never need to read
 // `version` — every loaded envelope is V7 because the loader rejects newer
 // shapes (`boardLoader.ts` from-future branch) and migrates older ones. If a
 // future consumer is tempted to branch on `cache.version`, add a comment

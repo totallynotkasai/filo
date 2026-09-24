@@ -14,7 +14,7 @@ import { atomicWriteFile, LOCK_AWARE_SUPPRESS_MS } from '../vault/filenameUtils'
 import { launcherExtension } from '../../shared/untrusted';
 
 /**
- * Phase 31 A5.3 — DNS-based SSRF defence. Resolves a hostname to every A/AAAA
+ * DNS-based SSRF defence. Resolves a hostname to every A/AAAA
  * record and refuses if any resolution lands in a private range. Catches the
  * DNS-rebinding pattern where the same hostname resolves public at validation
  * time and private at fetch time.
@@ -30,12 +30,10 @@ async function isHostnamePrivate(hostname: string): Promise<boolean> {
   const bare = hostname.startsWith('[') && hostname.endsWith(']')
     ? hostname.slice(1, -1)
     : hostname;
-  // 3.1 — static check first. Catches IP literals (incl. the IPv4-mapped /
-  // NAT64 IPv6 hex forms and numeric-encoded IPv4 that `isPrivateUrl` now
-  // decodes) before we even hit DNS, and covers the DNS-failure path below.
-  // Re-bracket IPv6 literals so `new URL` inside `isPrivateUrl` parses them
-  // — the old `http://${normalised}/` fallback fed a bracketless IPv6 to the
-  // URL parser, which threw and only fail-closed by accident.
+  // Static check first. Catches IP literals (incl. IPv4-mapped / NAT64 IPv6
+  // hex forms and numeric-encoded IPv4) before DNS, and covers the
+  // DNS-failure path below. IPv6 literals are re-bracketed so `new URL`
+  // inside `isPrivateUrl` can parse them.
   const staticUrl = bare.includes(':') ? `http://[${bare}]/` : `http://${bare}/`;
   if (isPrivateUrl(staticUrl)) return true;
   try {
@@ -55,14 +53,14 @@ async function isHostnamePrivate(hostname: string): Promise<boolean> {
 }
 
 /**
- * Phase 31 A5.3 — cap link-metadata response size at 512 KB. Anything
+ * Cap link-metadata response size at 512 KB. Anything
  * larger almost certainly isn't HTML metadata; abort the stream so a
  * giant binary response can't OOM the main process.
  */
 const LINK_METADATA_MAX_BYTES = 512 * 1024;
 
 /**
- * Phase 37 / 37.8 — extract a charset label from a Content-Type header
+ * Extract a charset label from a Content-Type header
  * (e.g. `text/html; charset=shift_jis`). Strips optional surrounding
  * quotes, lowercases, and probes `TextDecoder` to confirm the label is
  * supported by the runtime — unsupported encodings fall back to UTF-8
@@ -82,15 +80,13 @@ export function detectCharsetFromContentType(contentType: string): string {
 }
 
 /**
- * Audit-15 P3.2 — defence-in-depth sanitiser for the `image` / `favicon`
- * URLs `link:fetch-metadata` hands back to the renderer. Both are extracted
- * from attacker-controllable page markup (`og:image` / `<link rel=icon>`), so
- * a hostile page could aim them at an internal address
- * (`http://169.254.169.254/…`, `http://10.0.0.5/…`). Today the renderer CSP
- * (`img-src 'self' data: blob: filo:`) blocks any remote http(s) load, so they
- * never fetch — but if a future code path fetches them main-side, or the CSP
- * widens, an un-validated URL becomes an SSRF vector. Resolve against the
- * (already SSRF-validated) final page URL, then:
+ * Defence-in-depth sanitiser for the `image` / `favicon` URLs
+ * `link:fetch-metadata` hands back to the renderer. Both come from
+ * attacker-controllable markup, so a hostile page could aim them at an
+ * internal address. The renderer CSP blocks remote http(s) loads today, but
+ * if that widens or a main-side fetch is added, an un-validated URL becomes
+ * an SSRF vector. Resolve against the (already SSRF-validated) final page
+ * URL, then:
  *
  *   - empty / unparseable → ''   (no resource)
  *   - data: URL           → kept (CSP permits it; no network fetch → no SSRF)
@@ -130,41 +126,27 @@ export function registerMediaHandlers(): void {
    */
   ipcMain.handle('media:save-audio', async (_event, vaultPath: string, audioData: string, fileName: string, destFolder?: string) => {
     try {
-      // Phase 25 L5 — gate on the active vault so a buggy renderer can't
-      // direct the write into a stale or wrong vault root after a vault
-      // swap. Mirrors `vault:write-file-text` / `media:read-file`.
+      // Gate on the active vault so a stale renderer can't write into the
+      // wrong vault root after a swap.
       assertActiveVault(vaultPath);
-      // 6.3.P1/P2 — `media:save-audio` writes a NEW recording into the
-      // vault; creation rules apply on every platform so the saved
-      // filename + destination subfolder stay portable.
+      // Writes a NEW recording; creation rules apply on every platform so
+      // the saved filename + destination subfolder stay portable.
       assertSafeFilename(fileName, { forCreation: true });
-      // Phase 21 / M5 — cap base64 input by its decoded byte length. The
-      // base64 alphabet expands 3 bytes to 4 chars, so a 100 MB cap on the
-      // decoded buffer corresponds to ~133 MB of base64 string; checking
-      // post-decode is the load-bearing measurement.
+      // Cap by the DECODED byte length (base64 expands 3 bytes to 4 chars).
       const buffer = Buffer.from(audioData, 'base64');
       assertPayloadByteSize(buffer.length, PAYLOAD_LIMITS.AUDIO, 'media:save-audio');
       const normalisedFolder = toPosix(destFolder ?? '')
         .replace(/^\/+/, '')
         .replace(/\/+$/, '');
 
-      // Phase 37 / 37.5 — segment-level validation. `assertWithinVault`
-      // catches absolute escapes and `..`-traversal, but a per-segment
-      // Windows-reserved name (e.g. `attachments/CON/audio.wav`) sneaks
-      // past it because the resolved path is still inside the vault.
-      // Run `assertSafeRelativePath` on the folder so each segment also
-      // has to clear `assertSafeFilename`.
-      //
-      // 6.3.P1/P2 — `forCreation: true` because mkdir-p creates the
-      // destination subfolder if it doesn't exist; keep the new folder
-      // path portable across platforms.
+      // Segment-level validation: `assertWithinVault` misses a per-segment
+      // Windows-reserved name (e.g. `attachments/CON/audio.wav`) because the
+      // resolved path is still inside the vault. `forCreation: true` because
+      // mkdir-p may create the subfolder.
       if (normalisedFolder) assertSafeRelativePath(normalisedFolder, { forCreation: true });
 
-      // 1.4 — refuse writes into `.filo/` like every other vault-writing channel.
-      // `media:save-audio` was the sole vault writer missing this guard; a buggy
-      // renderer passing `destFolder: '.filo'` could otherwise drop arbitrary
-      // bytes into the config dir. Guard the prospective relative destination
-      // (folder + filename) BEFORE mkdir, mirroring `vault:write-file-binary`.
+      // Refuse writes into `.filo/` like every other vault-writing channel;
+      // guard the prospective destination (folder + filename) BEFORE mkdir.
       assertNotInFiloDir(normalisedFolder ? `${normalisedFolder}/${fileName}` : fileName);
 
       const mediaDir = normalisedFolder
@@ -175,16 +157,13 @@ export function registerMediaHandlers(): void {
       const filePath = path.join(mediaDir, fileName);
       assertWithinVault(vaultPath, filePath);
       const relPath = relativePosix(vaultPath, filePath);
-      // Phase 19 S3 — bracket the write with watcher suppression so the
-      // create event doesn't echo into `vault:tree-updated` and force a
-      // full sidebar refresh while the renderer is still wiring up the
-      // new audio tile.
+      // Bracket the write with watcher suppression so the create event
+      // doesn't force a full sidebar refresh while the renderer is still
+      // wiring up the new audio tile.
       const watcher = getActiveWatcher();
       watcher?.suppress(relPath, LOCK_AWARE_SUPPRESS_MS);
-      // Phase 31 B1.1 — atomicWriteFile gives the audio write the same
-      // crash-safety contract as text/board writes: a power loss mid-write
-      // leaves the destination either fully old (here: missing) or fully
-      // new, never a half-written WAV the user can't play.
+      // Atomic write: a power loss mid-write never leaves a half-written
+      // recording.
       await atomicWriteFile(filePath, buffer);
       watcher?.suppress(relPath, 1000);
 
@@ -201,16 +180,8 @@ export function registerMediaHandlers(): void {
   /**
    * Reads a media file from the vault and returns it as base64.
    *
-   * Phase 21 / M2 — the renderer now passes the explicit `vaultRoot` so
-   * we can `assertActiveVault` (a buggy renderer can't trick the handler
-   * into reading from a stale vault root after a vault swap), and the
-   * path is a vault-relative path validated via `assertSafeRelativePath`
-   * before being joined onto the vault root — mirroring the contract
-   * `vault:write-file-text` already enforces.
-   *
-   * Fails closed when no vault is open. Without a vault root we have no
-   * reference point to enforce containment, so we cannot safely service
-   * arbitrary-absolute-path reads issued during the no-vault startup window.
+   * `vaultRoot` is `assertActiveVault`-gated and the vault-relative path is
+   * validated before joining. Fails closed when no vault is open.
    *
    * SVG note: data returned here is base64-encoded for use as a data URL
    * inside `<img>` or CSS `background-image` — both of which disable
@@ -223,13 +194,9 @@ export function registerMediaHandlers(): void {
     try {
       assertActiveVault(vaultRoot);
       assertSafeRelativePath(relativePath);
-      // Audit-15 P3.1 — refuse reads into `.filo/`, like every other vault
-      // channel that takes a renderer-supplied relative path. Not currently
-      // exploitable (every sensitive `.filo/` file is JSON/font →
-      // octet-stream → refused by the MIME allowlist below), but this channel
-      // must enforce its OWN containment rather than lean on an adjacent
-      // control: a future readable media type dropped under `.filo/` would
-      // otherwise leak through. Mirrors `media:save-audio` (1.4).
+      // Refuse reads into `.filo/`. The MIME allowlist below happens to
+      // refuse today's `.filo/` files, but this channel must enforce its OWN
+      // containment rather than lean on that.
       assertNotInFiloDir(relativePath);
       const fullPath = path.join(vaultRoot, relativePath);
       assertWithinVault(vaultRoot, fullPath);
@@ -240,13 +207,9 @@ export function registerMediaHandlers(): void {
       // Stat-check first so a multi-GB file (accidental drag-drop of a raw
       // 4K capture, etc.) is rejected up front rather than buffered into
       // a base64 string ~1.33× the on-disk size and shipped across IPC.
-      // Without this gate the OOM happens deep in `readFile`+toString and
-      // crashes the main process without a clean diagnostic.
       const stat = await fs.promises.stat(fullPath);
-      // Sprint C / C20 — `media:read-file` uses the tighter
-      // MEDIA_READ_INLINE cap (25 MB) rather than the legacy 200 MB
-      // MEDIA cap, because the base64 payload is buffered in renderer
-      // memory rather than streamed.
+      // The tighter MEDIA_READ_INLINE cap (25 MB), not MEDIA, because the
+      // base64 payload is buffered in renderer memory rather than streamed.
       if (stat.size > PAYLOAD_LIMITS.MEDIA_READ_INLINE) {
         return {
           success: false,
@@ -280,19 +243,13 @@ export function registerMediaHandlers(): void {
    */
   ipcMain.handle('media:open-external', async (_event, target: string) => {
     try {
-      // Phase 31 A5.6 — explicit scheme allowlist. Anything matching one of
-      // these prefixes is treated as a URL; everything else falls through
-      // to the vault-relative-path branch. Rejecting file:, javascript:,
-      // data:, and UNC (`\\host\share`) here closes the residual gap where
-      // a tile's stored URL could trick the OS shell into opening a local
-      // file or running a script via the URL handler.
-      // Sprint A / A5 — `tel:` joins `mailto:` as a launcher-style URL the
-      // OS shell handles (Phone app on macOS, FaceTime, default SIP client
-      // on Windows). Same SSRF-skip rationale as mailto: no hostname-bearing
-      // URL component.
-      // Audit-12 S2 — `http://` dropped from the allowlist. Cleartext http is a
-      // downgrade / SSRF surface and every modern target serves https; legacy
-      // link tiles that stored an http:// URL are handled explicitly below.
+      // Explicit scheme allowlist. Anything matching one of these prefixes
+      // is treated as a URL; everything else falls through to the
+      // vault-relative-path branch. Rejecting file:, javascript:, data:, and
+      // UNC (`\\host\share`) stops a stored URL from making the OS shell open
+      // a local file or run a script. `http://` is deliberately excluded
+      // (cleartext downgrade / SSRF surface); legacy http links are handled
+      // explicitly below.
       const ALLOWED_URL_PREFIXES = ['https://', 'mailto:', 'tel:'];
       const DISALLOWED_URL_PATTERNS = [
         /^file:/i,
@@ -306,9 +263,8 @@ export function registerMediaHandlers(): void {
           return { success: false, error: 'URL scheme not allowed' };
         }
       }
-      // Audit-12 S2 — explicit, distinct handling for legacy `http://` URLs: log
-      // a warning and refuse rather than silently opening cleartext (or falling
-      // through to the local-path branch with a confusing "outside vault" error).
+      // Legacy `http://` URLs: log and refuse rather than silently opening
+      // cleartext (or falling through to a confusing "outside vault" error).
       if (/^http:\/\//i.test(target)) {
         logMainError(
           'media:open-external',
@@ -316,13 +272,9 @@ export function registerMediaHandlers(): void {
         );
         return { success: false, error: 'Insecure http:// links are no longer opened — use https://' };
       }
-      // L11 (Audit-13) — compare the scheme case-insensitively. A legitimate
-      // `HTTPS://…` / `Mailto:` link otherwise failed this prefix test (the
-      // prefixes are lowercase) and fell through to the local-path branch, which
-      // refused it — a fail-closed but confusing UX regression. The ORIGINAL
-      // `target` is still what we hand to the OS; only the allowlist + SSRF
-      // discrimination COMPARISONS use the lowercased copy (the URL constructor
-      // in `isPrivateUrl` already lowercases the scheme, so it needs no change).
+      // Compare the scheme case-insensitively so `HTTPS://…` / `Mailto:`
+      // links aren't refused. Only the comparisons use the lowercased copy;
+      // the ORIGINAL `target` is what we hand to the OS.
       const lowerTarget = target.toLowerCase();
       const isAllowedUrl = ALLOWED_URL_PREFIXES.some((prefix) => lowerTarget.startsWith(prefix));
       if (isAllowedUrl) {
@@ -332,13 +284,9 @@ export function registerMediaHandlers(): void {
         // future allowlisted scheme like `httpx:` can't slip past the gate.
         if (lowerTarget.startsWith('http://') || lowerTarget.startsWith('https://')) {
           if (isPrivateUrl(target)) {
-            // Phase 37 / 37.7 — gate the dev-localhost allowance on
-            // `app.isPackaged`. Electron packaged builds don't set
-            // NODE_ENV=production by default, so the previous
-            // `NODE_ENV !== 'production'` check leaked the localhost
-            // allowance into shipped builds. `app.isPackaged` is the
-            // canonical runtime signal and stays correct regardless of
-            // how the binary was launched.
+            // Gate the dev-localhost allowance on `app.isPackaged`, not
+            // NODE_ENV: packaged builds don't set NODE_ENV=production by
+            // default, so a NODE_ENV check would leak it into shipped builds.
             const devOK =
               !app.isPackaged &&
               /^(https?:\/\/)?(localhost|127\.)/i.test(target);
@@ -346,15 +294,11 @@ export function registerMediaHandlers(): void {
               return { success: false, error: 'URL not allowed' };
             }
           } else {
-            // Audit-14 4.1 — DNS-resolution SSRF parity with
-            // `link:fetch-metadata`. The static `isPrivateUrl` above only
-            // catches IP-literal / numeric-encoded hosts; a public-looking
-            // hostname that RESOLVES to a private range — DNS rebinding, or
-            // an attacker-chosen name pointing at 169.254.169.254 /
-            // 10.x — would otherwise be handed straight to the OS browser
-            // (which can reach internal network devices the renderer can't).
-            // Resolve every A/AAAA record and refuse if any lands private,
-            // exactly as the link-metadata fetcher does before it connects.
+            // DNS-resolution SSRF check, as in `link:fetch-metadata`. The
+            // static `isPrivateUrl` only catches IP-literal hosts; a
+            // public-looking hostname that RESOLVES to a private range would
+            // otherwise be handed to the OS browser, which can reach internal
+            // network devices.
             let host: string;
             try {
               host = new URL(target).hostname;
@@ -378,45 +322,33 @@ export function registerMediaHandlers(): void {
           return { success: false, error: 'No vault open' };
         }
         assertWithinVault(vaultRoot, target);
-        // Sprint A / A2 — even when the target is inside the vault, refuse
-        // to hand executable extensions to `shell.openPath`. A vault file
-        // named `notes.exe` (or worse, `report.pdf.exe` masquerading as a
-        // PDF) would otherwise run with the user's privileges. Match the
-        // file's TRUE final extension case-insensitively against a
-        // blocklist of OS launcher / scripting formats.
+        // Even inside the vault, refuse to hand executable extensions to
+        // `shell.openPath` — `report.pdf.exe` would run with the user's
+        // privileges. Match the TRUE final extension case-insensitively.
         //
-        // Audit-10 B3 — extension extraction must use `launcherExtension`,
-        // NOT `path.extname`: on Win32 a trailing dot / space (`evil.exe.`)
-        // is stripped by the path layer before launch, and an NTFS ADS
-        // suffix (`evil.exe::$DATA`) names the real `evil.exe`; both make
-        // `path.extname` read a non-blocklisted `'.'` / `'.exe::$DATA'`,
-        // so `shell.openPath` would run the executable. `assertWithinVault`
-        // realpaths past those (they resolve to the in-vault file) and this
-        // channel does NOT run `assertSafeFilename`, so the blocklist here
-        // is the only line of defence.
+        // Use `launcherExtension`, NOT `path.extname`: on Win32 a trailing
+        // dot / space (`evil.exe.`) is stripped before launch and an NTFS ADS
+        // suffix (`evil.exe::$DATA`) names the real `evil.exe`, but
+        // `path.extname` reads a non-blocklisted extension for both. This
+        // blocklist is the only line of defence here.
         //
-        // Phase 5 / P1-10 — extend with HTML-renderable extensions
-        // (.html / .htm / .xhtml / .svg / .shtml / .xml). The user's
-        // browser opens these directly and runs whatever JS they carry
-        // from a trusted-origin frame, exfiltrating other vault contents
-        // via same-origin. The filo:// protocol's `Content-Disposition:
-        // attachment` chain neutralises SVG inside the app, but
-        // `shell.openPath('foo.svg')` hands it to the OS browser without
-        // that header chain.
+        // HTML-renderable types are blocked too: the OS browser would run
+        // their JS against the local filesystem, and `shell.openPath` skips
+        // the filo:// protocol's `Content-Disposition: attachment` defence.
         const UNSAFE_FILE_EXTENSIONS = new Set([
           // OS executables / scripting
           '.exe', '.bat', '.cmd', '.com', '.scr', '.ps1', '.vbs', '.hta',
           '.msi', '.jar', '.lnk', '.appref-ms', '.app', '.bin', '.sh', '.msc',
-          // HTML-renderable — Phase 5 / P1-10
+          // HTML-renderable
           '.html', '.htm', '.xhtml', '.svg', '.shtml', '.xml',
-          // Audit-13 M12 — OS launcher / shell-acted-on shortcuts. These aren't
+          // OS launcher / shell-acted-on shortcuts. These aren't
           // executables, but the shell ACTS on them: a `.url`/`.scf`/`.website`
           // can point at `\\attacker\share` and leak NetNTLM creds on open;
           // `.reg`/`.inf` import/run on activation; `.pif` executes; `.desktop`
           // runs its `Exec=` on Linux. Kept in sync with untrusted.ts.
           '.url', '.scf', '.website', '.pif', '.reg', '.inf', '.desktop',
         ]);
-        // Audit-10 B3 (defence in depth) — refuse a basename Win32 would
+        // Defence in depth: refuse a basename Win32 would
         // normalise into a DIFFERENT file than the one we validated: a
         // trailing dot/space is silently stripped, and an embedded `:`
         // opens an NTFS Alternate Data Stream (`report.pdf:evil`, whose
@@ -431,13 +363,10 @@ export function registerMediaHandlers(): void {
             error: 'Refusing to open file: unsafe filename (trailing dot/space or alternate data stream)',
           };
         }
-        // Audit-12 S2 — also run the shared filename guard on the basename so a
-        // Windows reserved DOS name (CON / NUL / LPT1 / CONIN$ …) can't be handed
-        // to shell.openPath as a device handle. assertSafeFilename platform-gates
-        // the reserved-name + illegal-char rules to win32 by default, so a
-        // legitimately-named POSIX vault file (e.g. `CON.md` on Linux) stays
-        // openable. The manual trailing-dot/ADS check above is kept because it
-        // applies on every platform; this adds the reserved-name coverage.
+        // Also run the shared filename guard so a Windows reserved DOS name
+        // (CON / NUL / LPT1 / CONIN$ …) can't be opened as a device handle.
+        // Its rules are win32-gated by default, so a POSIX `CON.md` stays
+        // openable; the manual check above applies on every platform.
         try {
           assertSafeFilename(targetBasename);
         } catch {
@@ -465,24 +394,16 @@ export function registerMediaHandlers(): void {
    * Fetches metadata (title, description, image, favicon) from a URL.
    * Runs in main process to avoid CORS restrictions.
    *
-   * Phase 21 / M3 — SSRF protection on redirects. `fetch`'s default
-   * `redirect: 'follow'` chases 30x responses through Node's HTTP stack
-   * without giving us a chance to re-check the destination. A public
-   * URL that 302s to `http://169.254.169.254/latest/meta-data/` (AWS
-   * instance metadata) would silently land on the internal target. We
-   * walk redirects manually with `redirect: 'manual'`, re-running
-   * `isPrivateUrl` on every `Location:` header before refetching, and
-   * cap the chain at 5 hops.
+   * SSRF protection on redirects: `redirect: 'follow'` would let a public
+   * URL 302 to an internal target (e.g. cloud instance metadata) unchecked,
+   * so redirects are walked manually, re-validating every `Location:`
+   * before refetching, capped at 5 hops.
    */
   ipcMain.handle('link:fetch-metadata', async (_event, url: string) => {
     try {
-      // Phase 5 — explicit scheme allowlist at entry. `isPrivateUrl`
-      // catches RFC-1918 hostnames but accepts `javascript:` / `data:`
-      // because they have no hostname to match. `fetch()` would then
-      // throw — we'd hit the generic catch and lose the diagnostic.
-      // Front-loading the scheme check returns a clear error and keeps
-      // the SSRF + redirect walks scoped to the only schemes that can
-      // meaningfully carry HTML metadata.
+      // Explicit scheme allowlist at entry: `isPrivateUrl` accepts
+      // hostname-less schemes like `javascript:` / `data:`, and only http(s)
+      // can meaningfully carry HTML metadata.
       let parsed: URL;
       try {
         parsed = new URL(url);
@@ -495,7 +416,7 @@ export function registerMediaHandlers(): void {
       if (isPrivateUrl(url)) {
         return { success: false, error: 'URL not allowed' };
       }
-      // Phase 31 A5.3 — DNS-resolve the initial hostname and reject if
+      // DNS-resolve the initial hostname and reject if
       // any address falls in a private range. Catches the rebinding
       // pattern (public-then-private resolution) and the URL-encoded
       // numeric forms missed by isPrivateUrl's static string check.
@@ -531,7 +452,7 @@ export function registerMediaHandlers(): void {
               clearTimeout(timeout);
               return { success: false, error: 'URL not allowed (redirect to private target)' };
             }
-            // Phase 31 A5.3 — DNS-resolve every redirect target too,
+            // DNS-resolve every redirect target too,
             // so a public-then-private rebinding attack via redirect
             // chain is still caught.
             const nextUrl = new URL(next);
@@ -560,7 +481,7 @@ export function registerMediaHandlers(): void {
         return { success: false, error: `HTTP ${response.status}` };
       }
 
-      // Phase 31 A5.3 — refuse non-HTML responses. Link-metadata extraction
+      // Refuse non-HTML responses. Link-metadata extraction
       // is meaningful only for HTML pages; anything else is wasted bytes
       // and may pin a multi-GB binary into memory before we realise.
       const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
@@ -569,15 +490,11 @@ export function registerMediaHandlers(): void {
         return { success: false, error: `Unsupported content-type: ${contentType}` };
       }
 
-      // Phase 37 / 37.8 — honour the `charset=` parameter on the
-      // Content-Type header. The previous unconditional `TextDecoder('utf-8')`
-      // mojibake'd non-UTF-8 pages (Shift_JIS Japanese sites, Windows-1252
-      // Western European pages, GBK Chinese sites). Falls back to UTF-8
-      // when the header is missing, unparseable, or names an encoding
-      // TextDecoder doesn't recognise.
+      // Honour the Content-Type `charset=` so non-UTF-8 pages (Shift_JIS,
+      // Windows-1252, GBK) don't mojibake. Falls back to UTF-8.
       const charset = detectCharsetFromContentType(contentType);
 
-      // Phase 31 A5.3 — stream-read with a 512 KB cap. `response.text()`
+      // Stream-read with a 512 KB cap. `response.text()`
       // buffers the whole body unbounded; iterating the reader lets us
       // abort once we hit the cap.
       let html = '';
@@ -608,15 +525,9 @@ export function registerMediaHandlers(): void {
         }
       }
 
-      // Sprint B / B22 — pre-extract the `<head>` section before running
-      // the metadata regexes. The previous unbounded regex on a 512 KB
-      // worst-case HTML was vulnerable to ReDoS via crafted meta-tag
-      // sequences; bounding to `<head>` (capped at 64 KB defensively in
-      // case a page declares a giant inline-script block inside head)
-      // cuts the worst-case attack surface to ~10% of the original input
-      // and matches where every real-world meta tag actually lives. If
-      // there's no closing `</head>`, fall back to the first 64 KB of
-      // body so the parser still finds metadata on malformed pages.
+      // Run the metadata regexes only over `<head>` (capped at 64 KB) to
+      // bound ReDoS exposure from crafted meta-tag sequences; that's where
+      // real meta tags live. With no `</head>`, scan the first 64 KB.
       const HEAD_SCAN_MAX_BYTES = 64 * 1024;
       const headEndIdx = html.search(/<\/head\s*>/i);
       const headSection = headEndIdx > 0
@@ -638,7 +549,7 @@ export function registerMediaHandlers(): void {
       const titleMatch = headSection.match(/<title[^>]*>([^<]*)<\/title>/i);
       const title = getMetaContent('og:title') || (titleMatch?.[1] ?? '').trim();
       const description = getMetaContent('og:description') || getMetaContent('description');
-      // Audit-15 P3.2 — resolve `og:image` against the final page URL (it may
+      // Resolve `og:image` against the final page URL (it may
       // be relative / protocol-relative) and drop it if it points at a private
       // address or a non-displayable scheme before returning it to the renderer.
       const image = sanitizeReturnedResourceUrl(getMetaContent('og:image'), currentUrl);
@@ -656,7 +567,7 @@ export function registerMediaHandlers(): void {
       } else {
         favicon = `${parsedUrl.origin}/favicon.ico`;
       }
-      // Audit-15 P3.2 — sanitise the resolved favicon (a page can declare an
+      // Sanitise the resolved favicon (a page can declare an
       // absolute `<link rel=icon href="http://10.0.0.1/…">`) before returning it.
       favicon = sanitizeReturnedResourceUrl(favicon, currentUrl);
 

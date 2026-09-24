@@ -46,9 +46,9 @@
     void tabStore.close(tab.id);
   }
 
-  // Phase C / C.8 — middle-click closes the tab (matching browser/IDE
+  // Middle-click closes the tab (matching browser/IDE
   // muscle memory). Closing routes through `tabStore.close` which
-  // already runs the Phase 14 unsaved-changes confirm flow when the
+  // already runs the unsaved-changes confirm flow when the
   // active board still has pending writes, so this is safe to wire
   // unconditionally.
   function handleAuxClick(e: MouseEvent) {
@@ -63,7 +63,7 @@
     renameValue = tab.name;
   }
 
-  // P4.1 (Audit-15) — auto-focus + select-all when the rename input mounts,
+  // Auto-focus + select-all when the rename input mounts,
   // mirroring VaultFileItem / KanbanColumn. The bind populates before this
   // effect runs because Svelte mounts the input synchronously after
   // isRenaming flips.
@@ -237,9 +237,8 @@
 {#if showEmojiPicker}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="emoji-picker-overlay" onclick={() => showEmojiPicker = false} onkeydown={(e) => { if (e.key === 'Escape') showEmojiPicker = false; }}></div>
-  <!-- Place the picker trigger at the cursor; EmojiPicker now clamps + flips
-       its own panel into the viewport (Audit-14 5.4), so the previous manual
-       `y - 300` upward nudge is no longer needed. -->
+  <!-- Place the picker trigger at the cursor; EmojiPicker clamps + flips
+       its own panel into the viewport. -->
   <div class="emoji-picker-float" style="left: {emojiPickerPos.x}px; top: {emojiPickerPos.y}px;">
     <EmojiPicker onselect={selectEmoji} />
   </div>

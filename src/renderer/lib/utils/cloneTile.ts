@@ -21,14 +21,13 @@ export function cloneTile(tile: Tile): Tile {
     // Deep-copy mutable sub-objects so undo doesn't share references to them
     position: { ...tile.position },
     size: { ...tile.size },
-    // IMPL_PLAN_2026-05-26 / Item 3 — `style` nests (background, border,
+    // `style` nests (background, border,
     // etc.). A shallow spread aliases those nested objects with the
     // cache, so a future writer that mutates `style.background.colour`
     // in place would corrupt the history snapshot. JSON round-trip is
     // cheap (the largest style we ship is <2KB) and matches the pattern
     // used for `styleClears` in groupAndBoardCommands.ts. The `?? {}`
-    // guard preserves the pre-Item-3 behaviour where a missing style
-    // collapsed to `{}` via `{...undefined}` — some legacy fixtures
+    // guard collapses a missing style to `{}` — some legacy fixtures
     // build tiles without a style payload and rely on that fallback.
     style: JSON.parse(JSON.stringify(tile.style ?? {})),
     tags: [...tile.tags],

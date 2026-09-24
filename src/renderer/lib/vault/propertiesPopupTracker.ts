@@ -1,7 +1,7 @@
 import { onVaultSwap } from '../../core/vaultLifecycle';
 
 /**
- * Sprint C / C.1 — per-instance dirty tracker for open Properties popups.
+ * Per-instance dirty tracker for open Properties popups.
  *
  * Backs the `propertiesPopupDirty` gate in `classifyExternalChange`. When a
  * Properties popup has unflushed row edits for path X, an external

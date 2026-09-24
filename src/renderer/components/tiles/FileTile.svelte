@@ -29,7 +29,7 @@
       const abs = vaultRoot
         ? `${normalizePath(vaultRoot)}/${tile.filePath}`
         : tile.filePath;
-      // Phase 5 — `asSafeOpenExternal` rejects local paths carrying an
+      // `asSafeOpenExternal` rejects local paths carrying an
       // unsafe extension (.html, .svg, .exe etc.) before the IPC call.
       // The main handler re-checks (defence-in-depth) — see
       // `media.ipc.ts:UNSAFE_FILE_EXTENSIONS`.
@@ -67,7 +67,7 @@
 
       const sourcePath = paths[0];
       if (!sourcePath) return; // paths non-empty (checked above)
-      // Phase R2 — drain pending writers before the copy so a debounced
+      // Drain pending writers before the copy so a debounced
       // tile-definition write doesn't fire against a stale `filePath`
       // before the new file lands on disk.
       const res = await copyFileIntoVault(sourcePath, vaultDir);
@@ -129,7 +129,7 @@
     'generic'
   );
 
-  // P4.4 (Audit-15) — proactively surface a missing-file state in the tile
+  // Proactively surface a missing-file state in the tile
   // body when the backing file is gone, rather than only failing with a toast
   // after the user clicks Open. Mirrors ImageTile/VideoTile inline broken
   // badges; reads the same board-level broken-ref tracking the TileHeader `!`
@@ -237,7 +237,7 @@
     color: var(--text-tertiary);
     margin-top: 4px;
   }
-  /* P4.4 — missing-file affordance (mirrors ImageTile's inline broken badge).
+  /* Missing-file affordance (mirrors ImageTile's inline broken badge).
      The icon dims to the danger accent and a notice line appears under the
      file name. */
   .file-container.missing .file-icon {

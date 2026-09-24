@@ -15,7 +15,7 @@ import { z } from 'zod';
  */
 export const TagDefinitionSchema = z.object({
   color: z.string(),
-  // Phase 31 A6.6 — .finite() rejects NaN / ±Infinity from hand-edited files.
+  // .finite() rejects NaN / ±Infinity from hand-edited files.
   createdAt: z.number().finite().optional(),
 }).passthrough();
 
@@ -28,8 +28,8 @@ export type TagDefinition = z.infer<typeof TagDefinitionSchema>;
 export const CURRENT_TAGS_FILE_VERSION = 1;
 
 export const TagsFileSchema = z.object({
-  // Sprint C / C11 — broadened from `z.literal(1)` to `z.number().int()`
-  // so a future bump (V2) doesn't fail parse before the migration
+  // `z.number().int()` (not a literal) so a future bump (V2) doesn't fail
+  // parse before the migration
   // scaffold runs. The migrator is responsible for translating
   // pre-current shapes; this schema accepts whatever the migrator
   // stamps on the way through.
@@ -43,7 +43,7 @@ export type TagsFile = z.infer<typeof TagsFileSchema>;
 export const TAGS_FILE_RELATIVE_PATH = '.filo/tags.json';
 
 /**
- * Sprint C / C11 — migration scaffold for `.filo/tags.json`. Mirrors
+ * Migration scaffold for `.filo/tags.json`. Mirrors
  * `migrateBoardFile` shape so a future V2 bump can land without
  * structural surprises:
  *

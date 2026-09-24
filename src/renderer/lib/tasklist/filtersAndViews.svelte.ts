@@ -1,6 +1,6 @@
 /**
  * Task List transient view state — filters + smart-list + saved views +
- * lastView persistence (Sprint 39 / 39.8).
+ * lastView persistence.
  *
  * Pulled out of `TaskListBoard.svelte` so the component focuses on the
  * structural / rendering wiring. The class follows the same pattern as
@@ -45,9 +45,9 @@ export interface SavedView {
  * value lives in a hand-editable .board.json.
  */
 export interface LastViewSlice {
-  // VIEW-5 — groupBy/sortBy are NOT part of lastView: they live canonically in
-  // board settings and `hydrateFromLastView` never reads them back. They used to
-  // be written here, double-writing .board.json on every sort/group change.
+  // groupBy/sortBy are NOT part of lastView: they live canonically in board
+  // settings and `hydrateFromLastView` never reads them back (writing them here
+  // would double-write .board.json on every sort/group change).
   filterTags?: string[];
   filterStatus?: string | null;
   filterPriority?: Priority | null;
@@ -71,7 +71,7 @@ interface FiltersAndViewsDeps {
   /** Push a screen-reader announcement (used by clearAllFilters). */
   announce: (message: string) => void;
   /**
-   * Phase 7 / 7.5 — board id used as the history `targetBoardId` so the
+   * Board id used as the history `targetBoardId` so the
    * undo dispatcher won't replay a saved-views change against a different
    * board. Optional for back-compat with callers that don't supply it yet
    * (the command falls through to the bare cache write without history).
@@ -107,12 +107,12 @@ export class TaskListFiltersAndViews {
   lastViewPersistTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
-   * Audit2 5.6 — clears the pending lastView debounce so a host unmount
-   * mid-window doesn't fire `updateSettings` + push a history entry against
-   * a board that's already torn down. Called from `TaskListBoard.svelte`'s
-   * `onDestroy`. Idempotent — safe to call when no timer is armed.
+   * Clears the pending lastView debounce so a host unmount mid-window doesn't
+   * fire `updateSettings` + push a history entry against a board that's
+   * already torn down. Called from `TaskListBoard.svelte`'s `onDestroy`.
+   * Idempotent — safe to call when no timer is armed.
    *
-   * Audit-17 4.5 — flush, don't drop: a pending slice is written through the
+   * Flush, don't drop: a pending slice is written through the
    * cache keyed by the hydrated board id (teardown-safe — never the pane's
    * live board, which mid-swap is already the switched-in one). The host's
    * persist-$effect teardown does the same; whichever runs first nulls the
@@ -124,8 +124,8 @@ export class TaskListFiltersAndViews {
       clearTimeout(this.lastViewPersistTimer);
       this.lastViewPersistTimer = null;
     }
-    // Audit-18 5.1 — flush on unmount INDEPENDENTLY of the timer. The host's
-    // persist-$effect cleanup now flushes only on a real board switch and just
+    // Flush on unmount INDEPENDENTLY of the timer. The host's
+    // persist-$effect cleanup flushes only on a real board switch and just
     // clears the timer on a same-board tick (so the 300 ms debounce can
     // accumulate); on a true unmount that cleanup nulls the timer WITHOUT
     // flushing, so gating this flush on the timer would drop the pending slice
@@ -219,7 +219,7 @@ export class TaskListFiltersAndViews {
    */
   buildLastView(): LastViewSlice {
     return {
-      // VIEW-5 — groupBy/sortBy intentionally omitted (see LastViewSlice).
+      // groupBy/sortBy intentionally omitted (see LastViewSlice).
       filterTags: [...this.activeFilterTags],
       filterStatus: this.activeFilterStatus,
       filterPriority: this.activeFilterPriority,
@@ -268,7 +268,7 @@ export class TaskListFiltersAndViews {
       smartList: this.activeSmartList,
     };
     const after = [...existing, view];
-    // Phase 7 / 7.5 — route through history so Ctrl+Z reverses save / delete.
+    // Route through history so Ctrl+Z reverses save / delete.
     const boardId = this.deps.getBoardId?.() ?? null;
     if (boardId) {
       historyStore.execute(

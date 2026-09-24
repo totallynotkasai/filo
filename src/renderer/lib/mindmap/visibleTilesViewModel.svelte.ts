@@ -51,7 +51,7 @@ export class VisibleTilesViewModel {
   hiddenByFrame = $derived(framesStore.hiddenTileIds);
 
   /**
-   * Audit-10 M6 — stable id→insertion-index map for the visible-tile sort
+   * Stable id→insertion-index map for the visible-tile sort
    * below. Built from `board.tiles`' key order (insertion order = the canvas
    * paint/stacking order for tiles sharing the `--z-tile` z-index) and
    * recomputed ONLY when the tile SET changes. A pure pan mutates
@@ -70,11 +70,10 @@ export class VisibleTilesViewModel {
   });
 
   /**
-   * Audit-10 M6 — in interactive mode, build the visible set by mapping over the
-   * culled `visibleTileIds` (size = on-screen tiles) instead of filtering EVERY
-   * tile on the board. A pan re-derives this on every viewport change, so the
-   * prior `Object.values(board.tiles).filter(...)` was O(total tiles) per frame;
-   * this is O(visible). Re-sorted into insertion order so overlapping
+   * In interactive mode, build the visible set by mapping over the culled
+   * `visibleTileIds` (size = on-screen tiles) instead of filtering EVERY tile on
+   * the board. A pan re-derives this on every viewport change, so this is
+   * O(visible) rather than O(total tiles) per frame. Re-sorted into insertion order so overlapping
    * same-z-index tiles keep their current DOM-order stacking. Export mode still
    * walks every tile — viewport culling is intentionally disabled there.
    */

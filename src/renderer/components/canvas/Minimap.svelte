@@ -63,7 +63,7 @@
   });
 
   /**
-   * H4 (perf) — the all-tiles AABB is cached here, keyed on the tile set only
+   * The all-tiles AABB is cached here, keyed on the tile set only
    * (it does NOT read `viewportRect`), so a pure pan/zoom doesn't re-walk every
    * tile. Recomputes only when a tile is added/removed/moved/resized.
    */

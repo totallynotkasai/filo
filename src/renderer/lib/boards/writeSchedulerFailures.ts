@@ -1,25 +1,21 @@
 /**
  * writeSchedulerFailures — failure attribution + RETENTION for `createScheduler`
- * (split out of writeScheduler.ts, which sits at the 1000-LOC ci:file-sizes
+ * (split out of writeScheduler.ts, which sits at the 1000-LOC gates:file-sizes
  * limit).
  *
- * Attribution (moved verbatim): a per-failure-id Set populated by `fireWrite`
- * on rejection / partial failure, drained by `flush(key)` / `flushAll()` so the
- * Ctrl+S aggregate stays scoped to writes the caller awaited, plus the
- * Audit-16 4.7 per-key record so a key's next success prunes the ids its prior
- * failed fires attributed.
+ * Attribution: a per-failure-id Set populated by `fireWrite` on rejection /
+ * partial failure, drained by `flush(key)` / `flushAll()` so the Ctrl+S
+ * aggregate stays scoped to writes the caller awaited, plus a per-key record so
+ * a key's next success prunes the ids its prior failed fires attributed.
  *
- * Retention (Audit-19 EXT-5 / ERR-9, plan D6): the scheduler used to keep only
- * failure IDS. The failed fire's `getArgs` closure was gone, `flushAll`
- * re-fired only `pending`, and the quit dialog's "Stay open and retry" re-issued
- * nothing — so an edit whose write lost a OneDrive lock existed only in memory
- * (lost at exit) and in a preserved `.tmp`. A rejection whose code is in
- * `RETAINABLE` (a transient lock / IO / timeout) now keeps its `getArgs`; the
- * next `flushAll()` (Ctrl+S, quit drain, vault swap, Retry) re-fires it once.
+ * Retention: a rejection whose code is in `RETAINABLE` (a transient lock / IO /
+ * timeout) keeps its `getArgs`; the next `flushAll()` (Ctrl+S, quit drain,
+ * vault swap, Retry) re-fires it once. Without this, an edit whose write lost
+ * e.g. a OneDrive lock would exist only in memory and be lost at exit.
  *
  * DECISION: user-deferred failures (drift-gate 'defer' / re-prompt budget —
  * plain Errors with no code) and validation errors are NOT retained: re-firing
- * them would re-prompt during a quit drain. `ci:failed-write-refire` pins that
+ * them would re-prompt during a quit drain. `gates:failed-write-refire` pins that
  * `RETAINABLE` never gains a drift-defer marker.
  */
 
@@ -75,7 +71,7 @@ export function createFailureLedger<TArgs>(): FailureLedger<TArgs> {
       }
     },
     recordSuccess(key, primaryId) {
-      // Audit-7 L12 — a later success for the same id means it is no longer
+      // A later success for the same id means it is no longer
       // failed; prune so `failures` can't grow for the whole session.
       failures.delete(primaryId);
       const recorded = failureIdsByKey.get(key);

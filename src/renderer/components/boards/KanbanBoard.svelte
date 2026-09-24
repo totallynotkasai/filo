@@ -16,7 +16,7 @@
 
   // Per-pane scope; aliases preserve existing call sites. See boardScope.svelte.ts.
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
-  let { tabId }: { tabId?: string } = $props(); // R1 (Audit-11): pane-correct via scope; accepted + ignored
+  let { tabId }: { tabId?: string } = $props(); // pane-correct via scope; accepted + ignored
   const boardStore = scope.board;
   const selectionStore = scope.selection;
   import { createId } from '../../lib/utils/ids';
@@ -83,7 +83,7 @@
   let settings = $derived(
     board?.settings ?? {
       backgroundColor: '',
-      // Phase 1.2a — defaults align with the non-canvas board cascade
+      // Defaults align with the non-canvas board cascade
       // (kanban/tasklist/document default to 'none', mindmap defaults
       // to 'grid' via its own viewModel).
       backgroundPattern: 'none' as const,
@@ -127,10 +127,10 @@
   // via `<TileContainer flowLayout=true>`). Same pattern as Mind Map / Task
   // List wiring so kanban cards share the unified TagEditor component.
   let tagEditorPopup = $state<{ tileId: string; x: number; y: number } | null>(null);
-  // Audit-18 M7 — in-app tag-input prompt for the bulk "Add tag" action. The
-  // controller (`KanbanMultiSelect`) awaits the injected `promptForTag()`; it
-  // mounts <TagPromptPopup> and resolves on Add / Cancel / Escape. Replaces
-  // `window.prompt`, which throws in Electron's renderer.
+  // In-app tag-input prompt for the bulk "Add tag" action. The controller
+  // (`KanbanMultiSelect`) awaits the injected `promptForTag()`; it mounts
+  // <TagPromptPopup> and resolves on Add / Cancel / Escape. (`window.prompt`
+  // throws in Electron's renderer.)
   let tagPromptResolve = $state<((value: string | null) => void) | null>(null);
   function promptForTag(): Promise<string | null> {
     if (tagPromptResolve) tagPromptResolve(null); // never strand a prior prompt
@@ -225,16 +225,11 @@
 
   // ── Reactivity tick: bump local cacheVersion after cache mutations ──
   //
-  // Phase R7 (Reactive BoardScope, 2026-05-26) — `boardStore.current` is now
-  // a `$derived` view of `boardCacheStore.cache[currentBoardId].board`. The
-  // pre-R7 dual-proxy bridge (`boardStore.setBoard({ ...cached.board }, ...)`)
-  // is no longer required to propagate cache mutations to the active-board
-  // derivation chain.
-  //
-  // `cacheVersion` is retained as a coarse local signal for consumers
+  // `boardStore.current` is a `$derived` view of
+  // `boardCacheStore.cache[currentBoardId].board`, so cache mutations propagate
+  // on their own. `cacheVersion` is a coarse local signal for consumers
   // (filter/sort controller, card-flow derivations) that key off it rather
-  // than walking the deep cache proxy. Removing it is a separate cleanup; the
-  // bump remains cheap and harmless.
+  // than walking the deep cache proxy; the bump is cheap and harmless.
 
   function tickAndPersist(): void {
     cacheVersion++;
@@ -242,12 +237,12 @@
 
   // ── Screen-reader announcement region ──
   //
-  // Phase C item 14: Toasts cover most bulk actions (Toast.svelte already
+  // Toasts cover most bulk actions (Toast.svelte already
   // wires aria-live), but several Kanban mutations are silent — column
   // add/delete/rename, card add/move/delete on the row level. The local
   // announcement state fills that gap so SR users get parity with the
   // visible UI without duplicating toast traffic.
-  // Auto-clearing aria-live announcer; announcer.dispose() in onDestroy (Audit 5.3).
+  // Auto-clearing aria-live announcer; announcer.dispose() in onDestroy.
   const announcer = createAriaAnnouncer();
   function announce(message: string): void {
     announcer.announce(message);
@@ -301,7 +296,7 @@
   }
 
   /**
-   * Phase 7 / 7.2 — captures (collapsed, wipLimit, width) shape so the
+   * Captures (collapsed, wipLimit, width) shape so the
    * UpdateKanbanColumnCommand inverse can restore the exact prior column
    * state (including absent fields, which read as null).
    */
@@ -602,7 +597,7 @@
       multiSelect.deleteSelectedTiles();
     }
 
-    // Phase 6.1 (IMPLEMENTATION_PLAN_2026-05-27) — arrow nav across cards
+    // Arrow nav across cards
     // and columns. The focus model uses `selectionStore.selectedIds` as
     // the focused card surface (single-selection only — shift-arrow extend
     // is not implemented on Kanban yet). Arrow direction maps as:
@@ -663,7 +658,7 @@
   }
 
   /**
-   * Phase 6.1 helper — given a focused tileId, returns the column it sits
+   * Given a focused tileId, returns the column it sits
    * in (by columnId) AND the visible-row index within that column. Used
    * for arrow-key navigation across cards / columns.
    */
@@ -682,7 +677,7 @@
   }
 
   /**
-   * Phase 6.1 helper — picks the neighbour tileId in the requested arrow
+   * Picks the neighbour tileId in the requested arrow
    * direction. Returns null at board boundaries (top of first column,
    * etc.) so the caller can decline to move focus.
    */
@@ -730,14 +725,11 @@
     return () => el.removeEventListener('tile-tag-editor', handleTagEditor);
   });
 
-  // Phase C / C.11 — capture-phase Escape handler for the tag popup.
-  //
-  // The previous overlay-onkeydown only fired when focus was on the
-  // overlay; once the user clicked into the TagEditor's input, Escape
-  // was swallowed by the input element's own focus handling and the
-  // popup wouldn't close. Window-level capture sees the key before
-  // any focused descendant can stop propagation, so Escape closes
-  // the popup regardless of where focus sits.
+  // Capture-phase Escape handler for the tag popup. An overlay onkeydown
+  // only fires when focus is on the overlay; once the user clicks into the
+  // TagEditor's input, the input swallows Escape. Window-level capture sees
+  // the key before any focused descendant can stop propagation, so Escape
+  // closes the popup regardless of where focus sits.
   $effect(() => {
     if (!tagEditorPopup) return;
     function onKeydownCapture(e: KeyboardEvent) {
@@ -841,13 +833,11 @@
     // Drain any queued frontmatter writes so a board close during the
     // 300ms debounce window doesn't lose the user's last field edit.
     void flushAllPendingFrontmatterWrites();
-    // Audit-18 5.1 — flush the pending lastView on a true unmount. The persist
-    // $effect cleanup now flushes only on a real board switch and just clears
-    // the timer on the unmount tick (board id unchanged), so without this the
-    // last filter/sort change within the 300 ms window before a board close /
-    // vault swap would be dropped. Keyed by the CAPTURED hydrated id through
-    // the cache (teardown-safe; JSON-equality guard makes a no-change flush a
-    // no-op). Mirrors TaskListBoard's filters.dispose().
+    // Flush the pending lastView on a true unmount. The persist $effect
+    // cleanup flushes only on a real board switch, so without this the last
+    // filter/sort change within the 300 ms window before a board close / vault
+    // swap would be dropped. Keyed by the CAPTURED hydrated id through the
+    // cache (teardown-safe; a no-change flush is a no-op).
     if (hydratedForBoardId) {
       flushLastViewForBoard(hydratedForBoardId, {
         sortBy: filtersAndSort.activeSortBy,
@@ -895,25 +885,23 @@
     const prop = filtersAndSort.activeFilterProp;
     const id = board?.id;
     if (!id || id !== hydratedForBoardId) return;
-    // Audit-17 4.5 — snapshot at ARM time (a teardown can run after the next
-    // board's hydrate re-seeded the filters) and write keyed by the CAPTURED
-    // id via flushLastViewForBoard (never the live board — the DI-08 wrong-
-    // board-write hazard; its JSON-equality guard skips no-change writes).
+    // Snapshot at ARM time (a teardown can run after the next board's hydrate
+    // re-seeded the filters) and write keyed by the CAPTURED id via
+    // flushLastViewForBoard — never the live board, which may have changed.
+    // Its JSON-equality guard skips no-change writes.
     const nextLastView = { sortBy, filterTags: [...tags], filterProp: prop ? { ...prop } : null };
     if (lastViewPersistTimer) clearTimeout(lastViewPersistTimer);
     lastViewPersistTimer = setTimeout(() => {
       lastViewPersistTimer = null;
       flushLastViewForBoard(id, nextLastView);
     }, 300);
-    // 6.1.R2 — tear the debounce down with the effect (a board close / vault
-    // swap mid-window must not fire a stale write); Audit-17 4.5 — but flush,
-    // don't drop: a filter/sort change within 300 ms of a board switch was
-    // otherwise never written (hydratedForBoardId blocks any re-fire after).
-    // Audit-18 5.1 — the $effect cleanup runs before EVERY re-execution, not
-    // only teardown; flushing unconditionally here fired on every filter/sort
-    // tick and structurally defeated the 300 ms debounce. Flush ONLY on a real
-    // board switch (the live id moved off the armed id); a same-board re-run
-    // just re-arms the timer. Unmount is flushed in onDestroy below.
+    // Tear the debounce down with the effect (a board close / vault swap
+    // mid-window must not fire a stale write), but flush on a board switch: a
+    // change within 300 ms of a switch would otherwise never be written
+    // (hydratedForBoardId blocks any re-fire after). The cleanup runs before
+    // EVERY re-execution, so flush ONLY when the live id moved off the armed
+    // id — flushing unconditionally would defeat the debounce. A same-board
+    // re-run just re-arms the timer. Unmount is flushed in onDestroy below.
     return () => {
       if (lastViewPersistTimer) {
         clearTimeout(lastViewPersistTimer);
@@ -981,7 +969,7 @@
 
   // Set of tile IDs that should currently render (after filter+sort).
   // Paired with `placementsByTileId` to preserve filter semantics that
-  // were previously encoded covertly via the missing-placement lookup.
+  // would otherwise be encoded covertly via the missing-placement lookup.
   let visibleTileIds = $derived.by<SvelteSet<string>>(() => {
     const set = new SvelteSet<string>();
     for (const col of columns) {
@@ -1035,7 +1023,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <!--
-  Phase 6.1 (IMPLEMENTATION_PLAN_2026-05-27) — keyboard-operable Kanban.
+  Keyboard-operable Kanban.
   `role="application"` + `tabindex="0"` makes the surface a screen-reader
   application widget; the per-handler keyboard shortcuts (N / Shift+N /
   Arrow keys / Enter / Delete / Escape / "/") are documented inside
@@ -1133,7 +1121,7 @@
   </div>
 
   {#if columns.length === 0}
-    <!-- Phase C / C.9 — empty-state card. Sits absolute over the board so
+    <!-- Empty-state card. Sits absolute over the board so
          it doesn't interfere with the "Add Column" dashed button (still
          visible for users who know about it). The centered card gives
          a first-time user a clear next step without having to spot the
@@ -1194,7 +1182,7 @@
   <!--
     Screen-reader-only live region. See announce() in the script block —
     fires on column/card add, rename, delete, where the visual UI updates
-    but no toast is dispatched. Phase C item 14.
+    but no toast is dispatched.
   -->
   <div class="kanban-sr-live" aria-live="polite" aria-atomic="true">{announcer.message}</div>
 </div>
@@ -1236,7 +1224,7 @@
 {/if}
 
 {#if tagPromptResolve}
-  <!-- Audit-18 M7 — bulk "Add tag" prompt (replaces window.prompt). -->
+  <!-- Bulk "Add tag" prompt (in place of window.prompt). -->
   <TagPromptPopup onResolve={resolveTagPrompt} />
 {/if}
 
@@ -1395,7 +1383,7 @@
     min-height: 44px;
   }
 
-  /* Phase C / C.9 — first-time empty-state card. Centred over the board
+  /* First-time empty-state card. Centred over the board
      when there are no columns; the "Add Column" dashed button stays in
      the track so the existing affordance isn't removed. */
   .kanban-empty-state {

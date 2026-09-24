@@ -10,7 +10,7 @@
  * `fileTags` to keep references consistent.
  */
 
-// allow-jsyaml: D1 tag-name minting guard (isSafeNewTagName) — intentional YAML-1.1 coercion, NOT a frontmatter read
+// allow-jsyaml: tag-name minting guard (isSafeNewTagName) — intentional YAML-1.1 coercion, NOT a frontmatter read
 import yaml from 'js-yaml';
 import type { TagsFile, TagDefinition } from '../../schema/tagsFile';
 import {
@@ -43,14 +43,9 @@ export function emptyTagsFile(): TagsFile {
  *  - `corrupt`        — the file failed JSON parse or schema validation. The
  *                       in-memory registry falls back to EMPTY (the app must
  *                       run), but the on-disk bytes may be hand-recoverable, so
- *                       the caller must NOT overwrite them this session.
- *
- * Audit-18 H2 — `corrupt` was added because the parse-fail / schema-fail
- * branches previously returned all-false flags, so the empty registry was
- * writable and the vault open itself (post-commit FM tag-seeding → `setAll` →
- * `scheduleSave` → `tags:save`) atomically overwrote the recoverable file within
- * the ~300 ms debounce, with zero user action. With `corrupt`, the file is
- * preserved verbatim for the session exactly like a from-future file.
+ *                       the caller must NOT overwrite them this session
+ *                       (otherwise post-commit FM tag-seeding would save the
+ *                       empty registry over it within ~300 ms of opening).
  *
  * When ANY flag is set the caller (`fileTagsStore`) puts the tag store into
  * read-only mode so the newer / unknown / corrupt file is preserved verbatim.
@@ -68,17 +63,13 @@ export interface LoadTagsFileResult {
  * migrator (`migrateTagsFile`) BEFORE schema validation so a from-future or
  * un-migratable file is detected rather than silently re-saved at the
  * current version. Returns an empty file on JSON / schema failure so a
- * corrupted tags file never bricks a vault open.
+ * corrupted tags file never bricks a vault open. A from-future file surfaces
+ * a friendly "from a newer version" message and read-only flags, so an older
+ * build never silently downgrades it.
  *
- * F6 (2026-05-28) — the migrator existed but had no callers; the loader
- * went straight to `safeParse`, so a `version: 99` file written by a future
- * Filo parsed clean and an older build re-saved it → silent downgrade. This
- * loader surfaces a friendly "from a newer version" message and hands the
- * caller the read-only flags so the file isn't clobbered.
- *
- * Phase 1 / 1.5 — keys in `fileTags` are folded through `normalizeVaultRelative`
- * on load so a pre-fix tags.json stored with case-preserving keys
- * (`Notes/Foo.md`) becomes the canonical form (`notes/foo.md`). If two
+ * Keys in `fileTags` are folded through `normalizeVaultRelative` on load so
+ * an older tags.json stored with case-preserving keys (`Notes/Foo.md`)
+ * becomes the canonical form (`notes/foo.md`). If two
  * mixed-case keys collide after folding (e.g. `Notes/Foo.md` + `notes/foo.md`
  * both existed in a hand-edited file), the tag arrays are unioned so no
  * tag is silently dropped.
@@ -89,7 +80,7 @@ export function loadTagsFile(raw: string | null | undefined): LoadTagsFileResult
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    // Audit-18 H2 — `corrupt: true` gates the save so the unreadable-but-
+    // `corrupt: true` gates the save so the unreadable-but-
     // recoverable bytes are preserved verbatim this session (not overwritten by
     // the empty registry). Copy says "preserved, not saved", not "reset to empty"
     // — the disk file is intact, only the in-memory registry is empty.
@@ -101,7 +92,7 @@ export function loadTagsFile(raw: string | null | undefined): LoadTagsFileResult
     return { file: emptyTagsFile(), fromFuture: false, noMigrationPath: false, corrupt: true };
   }
 
-  // F6 / Phase 4 E2 — route through the shared migrate→validate helper so
+  // Route through the shared migrate→validate helper so
   // the from-future / no-migration-path short-circuits (and the
   // migrate-before-parse ordering) are identical across every versioned
   // config loader. `parsed` is the original JSON value; for the
@@ -135,7 +126,7 @@ export function loadTagsFile(raw: string | null | undefined): LoadTagsFileResult
     return { file: migrateFileTagKeys(loaded.data), fromFuture: false, noMigrationPath: false, corrupt: false };
   }
 
-  // Audit-18 H2 — schema failure is the second corrupt-but-recoverable branch
+  // Schema failure is the second corrupt-but-recoverable branch
   // (valid JSON, wrong shape, e.g. `tags: "oops"`). `corrupt: true` preserves the
   // bytes for the session; copy mirrors the parse-fail branch (preserved, not reset).
   reportError(
@@ -246,13 +237,13 @@ export function isValidTagName(name: string): boolean {
 
 /**
  * Stricter validation for a tag name the USER is creating or renaming TO
- * (1.5a). Beyond {@link isValidTagName} (empty / internal whitespace), rejects:
+ * Beyond {@link isValidTagName} (empty / internal whitespace), rejects:
  *  - any name YAML reads as a NON-string scalar — numbers (`123`, `2024`),
  *    booleans (`true`/`false`), `null`;
  *  - any name starting with a YAML indicator char (`@ \` * & ! % | > : ?`); and
  *  - any name that fails to parse as a bare scalar (`,` `[` `{` etc.).
  *
- * The frontmatter rewriter quotes emitted scalars (1.5b / 1.6), so such names
+ * The frontmatter rewriter quotes emitted scalars, so such names
  * are SAFE on disk — this guard exists only to stop the user MINTING confusing
  * tags at the input boundary. It is deliberately NOT used by `ensureTag` or
  * other programmatic paths, so a tag that already exists in a file (e.g. a
@@ -262,7 +253,7 @@ export function isSafeNewTagName(name: string): boolean {
   if (!isValidTagName(name)) return false;
   const stripped = name.trim().replace(/^#/, '');
   // js-yaml throws on most leading indicators, but `:` / `?` load as plain
-  // strings — reject the whole set explicitly to match the plan. (`#` is
+  // strings — reject the whole set explicitly. (`#` is
   // already stripped above as the tag-syntax convenience.)
   if (/^[@`*&!%|>:?]/.test(stripped)) return false;
   let loaded: unknown;
@@ -272,7 +263,7 @@ export function isSafeNewTagName(name: string): boolean {
     // `true` / `null` to read as non-strings so the guard rejects them as
     // confusing new tag names. (Contrast the frontmatter readers, which are on
     // the `yaml` package and resolve no such 1.1 tags — see the import's
-    // `// allow-jsyaml:` note and the `ci:no-jsyaml-in-frontmatter` gate.)
+    // `// allow-jsyaml:` note and the `gates:no-jsyaml-in-frontmatter` gate.)
     loaded = yaml.load(stripped);
   } catch {
     return false;
@@ -295,13 +286,8 @@ export function isSafeNewTagName(name: string): boolean {
 export function canonicaliseTagName(file: TagsFile, name: string): string {
   const stripped = name.trim().replace(/^#/, '');
   if (!stripped || /\s/.test(stripped)) return '';
-  // Phase 31 C3.7 — pin to en-US locale for tag-identity case-folding.
-  // `toLocaleLowerCase()` with no args uses HOST locale which would split
-  // `Important` and `important` on a Turkish system (`I` → `ı`). The
-  // explicit `'en-US'` argument keeps tag identity portable across
-  // machines and matches the Unicode default that the rest of the codebase
-  // assumes. `toLowerCase()` would also work, but the explicit form
-  // signals intent and guards against future drift.
+  // Pin to en-US locale for tag-identity case-folding: the HOST locale would
+  // split `Important` and `important` on a Turkish system (`I` → `ı`).
   const folded = stripped.toLocaleLowerCase('en-US');
   for (const existing of Object.keys(file.tags)) {
     if (existing.toLocaleLowerCase('en-US') === folded) return existing;
@@ -544,7 +530,7 @@ export function dropFolderInTags(file: TagsFile, prefix: string): TagsFile {
 }
 
 /**
- * Phase 23 M13 — drops every `fileTags` entry whose vault-relative path is
+ * Drops every `fileTags` entry whose vault-relative path is
  * NOT in `knownPaths`. Used to prune stale entries left behind by external
  * file deletions / moves that the watcher missed (e.g. the app was closed
  * while an attachment was deleted from the OS file explorer). The lookup
@@ -582,12 +568,10 @@ function hasFileTag(file: TagsFile, tagName: string): boolean {
 }
 
 /**
- * Phase 1 / 1.5 — keys in `fileTags` are canonicalised through
- * `normalizeVaultRelative` (separator-normalised + lowercased) so a
- * rename that crosses a case-difference (`Notes/Foo.md` → `notes/foo.md`,
- * the typical Windows / macOS shape from OS file events) correctly
- * resolves to the same entry. The stop-gap is here pending the Phase 4
- * VaultPath newtype which makes the contract a compile-time guarantee.
+ * Keys in `fileTags` are canonicalised through `normalizeVaultRelative`
+ * (separator-normalised + lowercased) so a rename that crosses a
+ * case-difference (`Notes/Foo.md` → `notes/foo.md`, the typical Windows /
+ * macOS shape from OS file events) resolves to the same entry.
  *
  * Implication for the on-disk `.filo/tags.json` format: keys are stored
  * lowercased. A human reading the file sees `notes/foo.md` rather than

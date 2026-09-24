@@ -10,7 +10,7 @@
  * of either.
  *
  * Why this is necessary even with the static gate
- * (`scripts/check-ipc-envelope-usage.mjs`):
+ * (`ipc-envelope-usage` in `scripts/gates/ipcSecurity.mjs`):
  *
  *   - The gate detects renderer callsites that ignore the envelope; it does
  *     NOT verify that `assertIpcOk` itself rejects the failure branch. If
@@ -34,7 +34,7 @@ import { join } from 'node:path';
 import { assertIpcOk, IpcEnvelopeError } from '@shared/ipcEnvelope';
 
 const ROOT = join(__dirname, '..', '..', '..');
-const GATE_SCRIPT_PATH = join(ROOT, 'scripts', 'check-ipc-envelope-usage.mjs');
+const GATE_SCRIPT_PATH = join(ROOT, 'scripts', 'gates', 'ipcSecurity.mjs');
 
 // Hand-maintained inventory — mirrors the gate script's `ENVELOPE_CHANNELS`.
 // The parity test below scrapes the gate's list and asserts it matches.
@@ -176,7 +176,7 @@ describe('Phase 7 contract — IPC envelope failure surfacing', () => {
   });
 
   describe('drift parity — gate allowlist mirrors this test\'s inventory', () => {
-    it('ENVELOPE_CHANNELS in check-ipc-envelope-usage.mjs matches the test inventory', () => {
+    it('ENVELOPE_CHANNELS in scripts/gates/ipcSecurity.mjs matches the test inventory', () => {
       const gateList = readGateAllowlist();
       const inventory = new Set(ALL_ENVELOPE_CHANNELS);
       const onlyInGate = [...gateList].filter((c) => !inventory.has(c)).sort();

@@ -123,7 +123,7 @@
 
   async function openLink() {
     if (!tile.url) return;
-    // Phase 5 — gate the URL with `asSafeOpenExternal` before the IPC
+    // Gate the URL with `asSafeOpenExternal` before the IPC
     // call. The main handler re-checks (defence-in-depth) but rejecting
     // here avoids the roundtrip and surfaces the failure inline.
     const safe = asSafeOpenExternal(tile.url);

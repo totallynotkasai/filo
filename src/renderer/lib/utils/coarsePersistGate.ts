@@ -1,14 +1,12 @@
 /**
- * Audit-17 4.6 — cadence gate for the TimerTile coarse countdown persist.
+ * Cadence gate for the TimerTile coarse countdown persist.
  *
- * A RUNNING countdown deliberately writes nothing per tick (Audit2 4.1: the
- * per-100 ms write re-armed the board's 300 ms debounce forever, so the
- * board's writes never flushed), which made the progress unrecoverable on
- * quit (the Svelte tree never unmounts, so onDestroy's persist never runs)
- * and on vault swap (the pre-swap cache clear runs before unmount). The fix
- * is a COARSE periodic persist: at this cadence the board debounce flushes
- * between writes, so the 4.1 bug is not reintroduced, and at most one
- * cadence interval of countdown is lost.
+ * A RUNNING countdown can't write per tick (a per-100 ms write would re-arm the
+ * board's 300 ms debounce forever, so the board never flushes), yet with no
+ * writes its progress is unrecoverable on quit (the Svelte tree never unmounts,
+ * so onDestroy's persist never runs) and on vault swap. A COARSE periodic
+ * persist lets the board debounce flush between writes and loses at most one
+ * cadence interval of countdown.
  *
  * Pure closure so the cadence contract (fires once per interval, never
  * faster) is unit-testable without mounting the component.

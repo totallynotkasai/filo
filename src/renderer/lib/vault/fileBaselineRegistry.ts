@@ -1,7 +1,6 @@
 /**
  * fileBaselineRegistry — per-path baseline (mtime + size) tracker for
- * pre-write external-edit detection (Phase R6, content-aware watcher
- * suppression).
+ * pre-write external-edit detection.
  *
  * Records the mtime AND byte size of every file the renderer is "aware
  * of" — populated at hydrate time (after a fresh read) and refreshed on
@@ -12,12 +11,9 @@
  * routes through the `promptExternalEditOnSync` Reload / Keep-local
  * prompt instead of silently clobbering the external bytes.
  *
- * Replaces the legacy time-windowed `recentSelfWrites` + main-side
- * `watcher.suppress` tier, which silently swallowed any watcher event
- * (real or self-echo) that landed inside a 1.5–5 s window — including
- * legitimate external edits. The baseline compares both mtime AND size:
- * the same (mtime, size) we wrote = our own echo (ignore); a different
- * mtime OR size = real external edit (surface).
+ * The same (mtime, size) we wrote = our own echo (ignore); a different
+ * mtime OR size = real external edit (surface). Unlike a time-windowed
+ * suppression, this never swallows a legitimate external edit.
  *
  * Why size as well as mtime: on coarse-mtime filesystems (FAT32 / exFAT,
  * many SMB/NFS shares, some cloud-sync mounts) two writes that land in
@@ -64,7 +60,7 @@ export interface FileBaseline {
   mtimeMs: number;
   size: number;
   /**
-   * Audit-19 MD-2 — the exact bytes last CONFIRMED on disk for this baseline
+   * The exact bytes last CONFIRMED on disk for this baseline
    * (a hydrate read, or a post-write read-back that matched), when small enough
    * to keep (callers pass it only under the 1 MB read-back threshold). Lets the
    * gateway skip a write whose assembled bytes are identical. Any re-stamp
@@ -80,7 +76,7 @@ export interface FileBaseline {
 const baselines = new Map<string, FileBaseline>();
 
 /**
- * Phase 6.1.R4 — transfer the baseline from `oldRel` to `newRel` so a
+ * Transfer the baseline from `oldRel` to `newRel` so a
  * post-rename body write doesn't drift-fail against a phantom baseline
  * still keyed under the OLD path. Also covers descendants when a folder
  * was renamed: every baseline keyed under `oldRel + '/'` re-keys to
@@ -163,8 +159,8 @@ export function noteBaseline(
  * indicates an external edit landed since the baseline was captured.
  *
  * Returning `undefined` for an unstamped path is treated as "no baseline
- * yet, proceed without drift check" — matches the legacy behaviour where
- * the first write to a fresh file had no comparison anchor.
+ * yet, proceed without drift check" (the first write to a fresh file has no
+ * comparison anchor).
  */
 export function getBaseline(path: string): FileBaseline | undefined {
   if (!path) return undefined;
@@ -192,18 +188,11 @@ export function clearBaseline(path: string): void {
  * drift check compares against the bytes we just wrote, not the pre-write
  * state.
  *
- * Audit-4 DI-14 (2026-06-02) — on an unusable stat (the IPC threw, returned no
- * fields, or returned NaN) this KEEPS the prior baseline. The interim 6.4.M2
- * behaviour CLEARED it to suppress a spurious "modified externally" prompt on
- * the next write — but clearing the baseline also DISABLES that next write's
- * pre-write drift check entirely, opening a (narrow) window where a concurrent
- * external edit is silently overwritten. Keeping the baseline is the data-safe
- * direction: the worst case is a spurious Reload / Keep-local prompt (the user
- * picks Keep-local and proceeds), never a silent clobber. The fs.watch
- * reconcile pipeline never reads this baseline, so it stays an independent
- * backstop; a post-write stat failure is rare (AV scanner, SMB latency, VFS
- * quirk), so the false-positive cost is bounded. This restores the keep-on-
- * failure behaviour the Phase R6 call-site comment originally described.
+ * On an unusable stat (the IPC threw, returned no fields, or returned NaN)
+ * this KEEPS the prior baseline. Clearing it would disable the next write's
+ * drift check and open a silent-overwrite window; keeping it risks at worst a
+ * spurious Reload / Keep-local prompt. Post-write stat failures are rare (AV
+ * scanner, SMB latency), so the false-positive cost is bounded.
  */
 export function refreshBaselineAfterWrite(
   path: string,
@@ -221,8 +210,8 @@ export function refreshBaselineAfterWrite(
     noteBaseline(path, mtimeMs, size, text);
     return;
   }
-  // DI-14 — else: keep the prior baseline. Deliberately NO clearBaseline call.
-  // Audit-19 MD-2 — but drop its confirmed TEXT: a write was issued whose bytes
+  // Else: keep the prior baseline. Deliberately NO clearBaseline call.
+  // But drop its confirmed TEXT: a write was issued whose bytes
   // we could not confirm, so the old text no longer proves what disk holds (on a
   // coarse-mtime volume a same-size write could otherwise leave mtime+size
   // "unchanged" and let a later write back to the old bytes be skipped).
@@ -241,24 +230,18 @@ export function resetAllBaselines(): void {
 }
 
 /**
- * Phase 4 / E4 — dev-only runtime tripwire for the F1 invariant.
+ * Dev-only runtime tripwire: every eagerly-loaded file must have a drift
+ * baseline, or its pre-write drift check silently no-ops.
  *
- * `boardLoader` seeds a drift baseline (`noteBaseline`) for every
- * `.board.json` it loads. If that eager seeding ever regresses, the loaded
- * boards' pre-write drift check silently no-ops — the exact F1 failure mode,
- * just on the board side. Called right after a vault commits (i.e. after
- * `loadVaultCandidate` has run `loadAllBoards`), this `console.warn`s any
- * loaded path that's missing a baseline so the regression surfaces during
- * development. It never throws: a genuinely missing baseline degrades to the
- * legacy unguarded write, never a crash, so production skips the check
- * entirely.
+ * Called right after a vault commits, this `console.warn`s any loaded path
+ * missing a baseline. It never throws: a missing baseline degrades to an
+ * unguarded write, never a crash, so production skips the check entirely.
  *
- * Scope: this checks the EAGERLY-seeded sinks — boards and (since 6.3.P3)
- * the four `.filo/` configs the writer scheduler protects with a pre-write
- * drift check (`defaults.json`, `app.json`, `appearance.json`,
- * `workspace.json`). `.md` baselines are seeded lazily on hydrate via the
- * `readMarkdownForHydrate` gateway (enforced statically by the E1 CI gate),
- * so none are expected at commit time.
+ * Scope: the EAGERLY-seeded sinks — boards and the four `.filo/` configs the
+ * writer scheduler drift-checks (`defaults.json`, `app.json`,
+ * `appearance.json`, `workspace.json`). `.md` baselines are seeded lazily on
+ * hydrate via `readMarkdownForHydrate` (enforced by a CI gate), so none are
+ * expected at commit time.
  *
  * The empty-registry short-circuit keeps unit tests that install boards
  * without going through the real stat-backed load path from tripping the
@@ -278,7 +261,7 @@ export function assertBaselinesSeeded(paths: Iterable<string>, label: string): v
   );
 }
 
-// Phase 6.1.R4 — every rename cascade calls renameAllPathKeys(oldRel,
+// Every rename cascade calls renameAllPathKeys(oldRel,
 // newRel) once, which fires this sweep. Without it, a post-rename body
 // write drift-fails against a phantom baseline still keyed under the
 // OLD path.

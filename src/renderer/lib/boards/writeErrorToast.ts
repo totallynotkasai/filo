@@ -3,18 +3,15 @@
  *
  * Pure + side-effect-free so it can be unit-tested without mounting App.svelte.
  * The App.svelte write-error listener calls `buildWriteErrorToast(info)` and
- * feeds the result through the shared coalescing aggregator (Audit-7 L2 — so a
- * multi-target failure shows ONE count-badged toast per write kind instead of
- * one persistent toast per file).
+ * feeds the result through the shared coalescing aggregator (so a multi-target
+ * failure shows ONE count-badged toast per write kind instead of one per file).
  *
- * Audit-7 M5 — when an atomic write fails AFTER fully writing + fsyncing its
- * tmp file (ENOSPC / EIO / ENOMEM / EACCES on the final rename), main's
- * `atomicWriteFile` PRESERVES the tmp and annotates the error with the tmp
- * path (`filenameUtils.ts`). The bytes ARE on disk — the user can recover them
- * once they free space / regain permissions. The old toast emitted a hardcoded
- * "your changes are not on disk yet", which is factually wrong for that case
- * and named no location. `extractPreservedTmpPath` recovers the path so the
- * toast can point the user at it.
+ * When an atomic write fails AFTER fully writing + fsyncing its tmp file
+ * (ENOSPC / EIO / ENOMEM / EACCES on the final rename), main's
+ * `atomicWriteFile` PRESERVES the tmp and annotates the error with its path
+ * (`filenameUtils.ts`). The bytes ARE on disk, so the toast must not say "not
+ * on disk yet"; `extractPreservedTmpPath` recovers the path so the toast can
+ * point the user at it.
  */
 
 import type { WriteErrorInfo } from './writeStateTracking';
@@ -57,8 +54,8 @@ function matchPreservedPath(text: string): string | undefined {
 
 /**
  * Reads the `code` string off an error-like value (the `{ code }` annotation
- * schedulers attach via `Object.assign(new Error(...), { code })`). Audit-18
- * 4.2 uses it to branch the toast copy for `CONFIG_CORRUPT`.
+ * schedulers attach via `Object.assign(new Error(...), { code })`), used to
+ * branch the toast copy (e.g. `CONFIG_CORRUPT`).
  */
 function errorCode(error: unknown): string | undefined {
   if (error && typeof error === 'object') {
@@ -78,7 +75,7 @@ export interface WriteErrorToastSpec {
   /** Detail line the aggregator renders after the context prefix. */
   message: string;
   /**
-   * A9-L10 — distinct coalescing key when this write PRESERVED bytes at a tmp
+   * Distinct coalescing key when this write PRESERVED bytes at a tmp
    * path: `"<context>::<preservedPath>"`. Two same-kind failures that preserved
    * to DIFFERENT locations then keep separate toasts so neither recovery path
    * is hidden (the shared toast would otherwise overwrite #1's path with #2's).
@@ -86,7 +83,7 @@ export interface WriteErrorToastSpec {
    */
   coalesceKey?: string;
   /**
-   * Audit-19 EXT-5 — the failure is transient-shaped and the scheduler retained
+   * The failure is transient-shaped and the scheduler retained
    * the write, so the toast offers Retry (re-fires every retained failed write).
    * False for a deliberate skip (CONFIG_CORRUPT) that retrying can't fix.
    */
@@ -100,7 +97,7 @@ export interface WriteErrorToastSpec {
  */
 export function buildWriteErrorToast(info: WriteErrorInfo): WriteErrorToastSpec {
   const where = info.path ? ` (${info.path})` : '';
-  // Audit-19 ERR-7 — main refused to overwrite a note whose bytes aren't UTF-8
+  // Main refused to overwrite a note whose bytes aren't UTF-8
   // (the write would have replaced every accented character with U+FFFD).
   if (errorCode(info.error) === 'NOT_UTF8') {
     return {
@@ -112,7 +109,7 @@ export function buildWriteErrorToast(info: WriteErrorInfo): WriteErrorToastSpec 
       retryable: false,
     };
   }
-  // Audit-18 4.2 — a corrupt-config suppression is NOT a disk-space / permission
+  // A corrupt-config suppression is NOT a disk-space / permission
   // failure, so it gets its own honest copy instead of the generic message
   // below. The config write is being SKIPPED on purpose to preserve the
   // unparseable file on disk; tell the user their in-memory changes won't
@@ -138,7 +135,7 @@ export function buildWriteErrorToast(info: WriteErrorInfo): WriteErrorToastSpec 
   const message = preserved
     ? `Filo couldn't finish writing${where}, but your unsaved bytes were preserved on disk — recover or delete them, then free up space or fix permissions:\n${preserved}`
     : `Filo couldn't save${where}. Your changes are not on disk yet — check disk space or file permissions.`;
-  // A9-L10 — give each distinct preserved location its own coalescing key so a
+  // Give each distinct preserved location its own coalescing key so a
   // burst of preserve-failures doesn't collapse to a single toast that names
   // only the last recovery path.
   const coalesceKey = preserved ? `${context}::${preserved}` : undefined;

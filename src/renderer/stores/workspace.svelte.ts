@@ -384,8 +384,7 @@ export const workspaceStore = {
   },
 };
 
-// Phase 4 (Consolidation 2026-05-25) — vault-swap reset registration.
-// Drops the pane tree + active pane id so the new vault's hydrate call
+// Vault-swap reset: drops the pane tree + active pane id so the new vault's hydrate call
 // rebuilds against a clean DEFAULT_LAYOUT rather than merging the prior
 // vault's pane geometry into the new vault's workspace.json on save.
 onVaultSwap('pre-swap', 'workspace', () => {

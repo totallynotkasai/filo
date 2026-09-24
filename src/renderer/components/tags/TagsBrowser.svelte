@@ -93,7 +93,7 @@
   function saveEdit() {
     const trimmed = editName.trim().replace(/^#/, '');
     if (editingTagName && trimmed && trimmed !== editingTagName) {
-      // 1.5a — validate the new name at the rename input boundary. The rewriter
+      // Validate the new name at the rename input boundary. The rewriter
       // quotes on disk, but @home / 123 / null make confusing tags; existing
       // tags are never re-validated. Keep the field open so the user can fix it.
       if (!isSafeNewTagName(trimmed)) {

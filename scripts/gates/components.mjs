@@ -1,0 +1,323 @@
+// Svelte component / UI ratchets.
+import {
+  fail, blank, blankMatches, blankHtmlComments, scriptBlocks, matchBrace, lineAt, markerNear,
+} from './lib.mjs';
+
+const COMPONENTS = 'src/renderer/components';
+
+/** Brace depth before each char of already-blanked code. */
+function depthMap(code) {
+  const depth = new Array(code.length);
+  let d = 0;
+  for (let i = 0; i < code.length; i++) {
+    depth[i] = d;
+    if (code[i] === '{') d++;
+    else if (code[i] === '}') d = Math.max(0, d - 1);
+  }
+  return depth;
+}
+
+/** Text of every teardown region: `onDestroy(…)` bodies and `return () => …` cleanups. */
+function teardownText(code) {
+  let acc = '';
+  for (const m of code.matchAll(/\bonDestroy\s*\(/g)) {
+    const paren = code.indexOf('(', m.index);
+    const close = matchBrace(code, paren, '(', ')');
+    acc += '\n' + code.slice(paren, close < 0 ? code.length : close + 1);
+  }
+  for (const m of code.matchAll(/\breturn\s*\(\s*\)\s*=>/g)) {
+    let j = m.index + m[0].length;
+    while (j < code.length && /\s/.test(code[j])) j++;
+    if (code[j] === '{') {
+      const close = matchBrace(code, j, '{', '}');
+      acc += '\n' + code.slice(j, close < 0 ? code.length : close + 1);
+    } else {
+      const semi = code.indexOf(';', j);
+      acc += '\n' + code.slice(j, semi === -1 ? Math.min(code.length, j + 200) : semi);
+    }
+  }
+  return acc;
+}
+
+// `$derived(<literal>)` / `$derived(() => <literal>)` forms that can never change.
+const DEAD_LITERAL_RE = new RegExp(
+  '^(true|false|null|undefined' +
+    '|-?(0[xX][0-9a-fA-F]+|\\d+(\\.\\d+)?([eE][+-]?\\d+)?|Infinity|NaN)' +
+    "|'[^'\\\\]*'|\"[^\"\\\\]*\"" +
+    '|\\[\\s*\\]|\\{\\s*\\})$',
+);
+
+/** The `$derived(...)` argument text, balancing parens and skipping strings / comments. */
+function derivedArg(src, open) {
+  let depth = 1;
+  let i = open + 1;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === '/' && src[i + 1] === '/') { const nl = src.indexOf('\n', i); i = nl === -1 ? src.length : nl + 1; continue; }
+    if (ch === '/' && src[i + 1] === '*') { const e = src.indexOf('*/', i + 2); i = e === -1 ? src.length : e + 2; continue; }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const q = ch;
+      i++;
+      while (i < src.length) {
+        if (src[i] === '\\') { i += 2; continue; }
+        if (src[i] === q) { i++; break; }
+        if (q === '`' && src[i] === '$' && src[i + 1] === '{') {
+          let bd = 1;
+          i += 2;
+          while (i < src.length && bd > 0) {
+            if (src[i] === '{') bd++;
+            else if (src[i] === '}') bd--;
+            i++;
+          }
+          continue;
+        }
+        i++;
+      }
+      continue;
+    }
+    if (ch === '(') depth++;
+    else if (ch === ')' && --depth === 0) return src.slice(open + 1, i);
+    i++;
+  }
+  return null;
+}
+
+// Pane-scope targets: a split pane renders these twice, so a GLOBAL facade read
+// binds both panes to whichever one is active.
+const PANE_SCOPE_TARGETS = [
+  {
+    file: 'src/renderer/components/boards/DocumentEditor.svelte',
+    svelte: true,
+    forbidden: /\btabStore\s*\.\s*activeTab(?:Id)?\b/g,
+    allow: /\/\/\s*allow-global-tab:\s*\S+/,
+    message: 'reads the GLOBAL active tab — derive the doc from the `tabId` prop',
+  },
+  {
+    file: 'src/renderer/lib/canvas/dragDrop.ts',
+    svelte: false,
+    forbidden: /\b(?:boardStore|canvasStore)\b/g,
+    allow: /\/\/\s*allow-global-(?:board|canvas)-facade:\s*\S+/,
+    message: 'reads a GLOBAL board/canvas facade — use the pane `scope.board` / `scope.canvas`',
+  },
+];
+
+// CSS custom properties: definitions are collected generously, no-fallback uses precisely.
+const CSS_DEF_PROP = /(?<![\w-])--([A-Za-z_][\w-]*)\s*:/g;
+const CSS_DEF_STYLE_DIRECTIVE = /\bstyle:--([A-Za-z_][\w-]*)/g;
+const CSS_DEF_SETPROP = /setProperty\(\s*['"`]--([A-Za-z_][\w-]*)/g;
+const CSS_USE_NOFALLBACK = /var\(\s*--([A-Za-z_][\w-]*)\s*\)/g;
+const CSS_VAR_ALLOWLIST = new Map(); // token → reason, for tokens defined outside src/
+const CSS_MIN_DEFINED = 80;
+
+// Pointer capture that drives an open spatial batch must also handle cancel.
+const stripMarkupComments = (src) =>
+  src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '').replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1');
+
+export const checks = [
+  {
+    id: 'component-timer-cleanup',
+    title: 'component-scope timer handles are cleared on teardown',
+    hint:
+      'An uncleared timer fires after unmount (e.g. on vault swap) against the new vault/board. ' +
+      'Clear it in onDestroy or an $effect cleanup, or annotate `// allow-uncleared-timer: <reason>`.',
+    run(ctx) {
+      const out = [];
+      const decl = /\b(?:let|const|var)\s+(\w+)\s*:\s*ReturnType<typeof\s+(?:setTimeout|setInterval)>/g;
+      for (const rel of ctx.files(COMPONENTS, { ext: ['.svelte'] })) {
+        const raw = ctx.read(rel);
+        const rawLines = raw.split(/\r?\n/);
+        for (const block of scriptBlocks(raw)) {
+          const code = blank(block.content);
+          const depth = depthMap(code);
+          const teardown = teardownText(code);
+          for (const m of code.matchAll(decl)) {
+            if (depth[m.index] !== 0) continue;
+            const line = lineAt(raw, block.start + m.index);
+            if (markerNear(rawLines, line - 1, /\/\/\s*allow-uncleared-timer:\s*\S+/)) continue;
+            if (!new RegExp(`clear(?:Timeout|Interval)\\s*\\(\\s*${m[1]}\\b`).test(teardown)) {
+              out.push(fail(rel, line, `\`${m[1]}\` is never cleared in onDestroy / an $effect cleanup`));
+            }
+          }
+        }
+      }
+      return out;
+    },
+  },
+  {
+    id: 'no-dead-flush',
+    title: 'component-scope `flush*` functions are actually called',
+    hint:
+      'A defined-but-uncalled flusher makes the save path look wired when it is not. ' +
+      'Wire it up or delete it; if intentional annotate `// allow-dead-flush: <reason>`.',
+    run(ctx) {
+      const out = [];
+      const def = /\b(?:async\s+)?function\s+(flush\w*)\s*\(/g;
+      for (const rel of ctx.files(COMPONENTS, { ext: ['.svelte'] })) {
+        const raw = ctx.read(rel);
+        const rawLines = raw.split(/\r?\n/);
+        const blocks = scriptBlocks(raw);
+        const allScript = blocks.map((b) => blank(b.content)).join('\n');
+        const markup = raw.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, (m) => ' '.repeat(m.length));
+        for (const block of blocks) {
+          const code = blank(block.content);
+          const depth = depthMap(code);
+          for (const m of code.matchAll(def)) {
+            if (depth[m.index] !== 0) continue;
+            const line = lineAt(raw, block.start + m.index);
+            if (markerNear(rawLines, line - 1, /\/\/\s*allow-dead-flush:\s*\S+/)) continue;
+            const word = new RegExp(`\\b${m[1]}\\b`, 'g');
+            const uses = (allScript.match(word) ?? []).length;
+            if (uses < 2 && !new RegExp(`\\b${m[1]}\\b`).test(markup)) {
+              out.push(fail(rel, line, `\`${m[1]}\` is never referenced (dead flush path)`));
+            }
+          }
+        }
+      }
+      return out;
+    },
+  },
+  {
+    id: 'dead-derived',
+    title: 'no `$derived(<constant literal>)`',
+    hint: 'A constant $derived tracks nothing — use a const or the real reactive expression, or `// allow-dead-derived: <reason>`.',
+    run(ctx) {
+      const out = [];
+      const intro = /\$derived(?:\.by)?(?:\s*<[^>]+>)?\s*\(/g;
+      for (const rel of ctx.files('src/renderer', { ext: ['.svelte', '.svelte.ts'] })) {
+        const raw = ctx.read(rel);
+        const src = blank(raw, { strings: false });
+        const rawLines = raw.split('\n');
+        for (const m of src.matchAll(intro)) {
+          const arg = derivedArg(src, m.index + m[0].length - 1);
+          if (arg === null) continue;
+          const t = arg.trim();
+          const arrow = t.match(/^\(\s*\)\s*=>\s*([\s\S]+)$/);
+          const dead = DEAD_LITERAL_RE.test(t) ? t : arrow && DEAD_LITERAL_RE.test(arrow[1].trim()) ? `() => ${arrow[1].trim()}` : null;
+          if (!dead) continue;
+          const line = lineAt(src, m.index);
+          if (markerNear(rawLines, line - 1, '// allow-dead-derived:')) continue;
+          out.push(fail(rel, line, `\`$derived(${dead})\` never changes`));
+        }
+      }
+      return out;
+    },
+  },
+  {
+    id: 'document-editor-pane-scoped',
+    title: 'DocumentEditor / OS file drop never read the global active tab or board',
+    hint: 'Components rendered once per split pane must use their own pane scope, not the globally active one.',
+    run(ctx) {
+      const out = [];
+      for (const t of PANE_SCOPE_TARGETS) {
+        const raw = ctx.read(t.file);
+        if (raw === null) { out.push(fail(t.file, undefined, 'target file missing — re-point the check')); continue; }
+        const rawLines = raw.split(/\r?\n/);
+        const scanned = t.svelte
+          ? blankHtmlComments(raw).replace(
+              /(<script\b[^>]*>)([\s\S]*?)(<\/script>)/gi,
+              (_all, open, body, close) => open + blank(body) + close,
+            )
+          : blank(raw);
+        for (const m of scanned.matchAll(t.forbidden)) {
+          const line = lineAt(raw, m.index);
+          if (markerNear(rawLines, line - 1, t.allow)) continue;
+          out.push(fail(t.file, line, `${t.message}: ${(rawLines[line - 1] ?? '').trim()}`));
+        }
+      }
+      return out;
+    },
+  },
+  {
+    id: 'pointer-capture-cleanup',
+    title: 'pointer capture that opens a spatial batch also handles pointercancel',
+    hint:
+      'Without a cancel handler a native pointercancel leaves the spatial batch open (rendering freezes) ' +
+      'and the drag flag stuck. Escape: `// allow-pointer-capture-leak: <reason>`.',
+    run(ctx) {
+      const out = [];
+      let captureFiles = 0;
+      let comboFiles = 0;
+      for (const rel of ctx.files('src/renderer', { ext: ['.ts', '.svelte'] })) {
+        const raw = ctx.read(rel);
+        const code = stripMarkupComments(raw);
+        if (!/setPointerCapture\s*\(/.test(code)) continue;
+        captureFiles++;
+        if (!/\bbeginBatch\s*\(/.test(code)) continue;
+        comboFiles++;
+        if (/\/\/\s*allow-pointer-capture-leak:\s*\S+/.test(raw)) continue;
+        if (!/pointercancel|lostpointercapture/i.test(code)) {
+          out.push(fail(rel, undefined, 'captures the pointer and opens beginBatch() but binds no pointercancel / lostpointercapture'));
+        }
+      }
+      if (captureFiles < 10) out.push(fail('src/renderer', undefined, `tripwire: only ${captureFiles} setPointerCapture files (expected >= 10) — pattern went stale`));
+      if (comboFiles < 2) out.push(fail('src/renderer', undefined, `tripwire: only ${comboFiles} capture+beginBatch files (expected >= 2) — pattern went stale`));
+
+      const FRAME = 'src/renderer/components/frames/Frame.svelte';
+      const frameRaw = ctx.read(FRAME);
+      if (frameRaw === null) return [...out, fail(FRAME, undefined, 'required file missing')];
+      const frame = stripMarkupComments(frameRaw);
+      if (!/onpointercancel\s*=\s*\{/.test(frame)) out.push(fail(FRAME, undefined, 'missing an `onpointercancel={…}` binding'));
+      if (!/onlostpointercapture\s*=\s*\{/.test(frame)) out.push(fail(FRAME, undefined, 'missing an `onlostpointercapture={…}` binding'));
+      const endBatches = (frame.match(/spatialStore\.endBatch\s*\(/g) ?? []).length;
+      if (endBatches < 2) {
+        out.push(fail(FRAME, undefined, `only ${endBatches} spatialStore.endBatch( site(s); need the drag-end handler AND the unmount teardown`));
+      }
+      return out;
+    },
+  },
+  {
+    id: 'zindex-literals',
+    title: 'global-layer z-index values (>= 1000) come from var(--z-*) tokens',
+    hint: 'Use a `var(--z-*)` token from src/css/style.css, or annotate the line with `allow-zindex: <reason>`.',
+    run(ctx) {
+      const out = [];
+      for (const rel of ctx.files('src/renderer', { ext: ['.svelte'] })) {
+        ctx.read(rel).split('\n').forEach((line, i) => {
+          if (line.includes('allow-zindex:')) return;
+          for (const m of line.matchAll(/z-index:\s*(\d+)/g)) {
+            if (parseInt(m[1], 10) >= 1000) out.push(fail(rel, i + 1, `z-index: ${m[1]} literal`));
+          }
+        });
+      }
+      return out;
+    },
+  },
+  {
+    id: 'css-vars',
+    title: 'every no-fallback var(--x) refers to a defined custom property',
+    hint: 'An undefined var() with no fallback renders to nothing. Use a real token or add a fallback.',
+    run(ctx) {
+      const out = [];
+      const css = ctx.files('src', { ext: ['.css'] });
+      const svelte = ctx.files('src', { ext: ['.svelte'] });
+      const ts = ctx.files('src', { ext: ['.ts'] });
+      const defined = new Set();
+      const collect = (text, re) => { for (const m of text.matchAll(re)) defined.add(m[1]); };
+      for (const rel of css) collect(ctx.read(rel), CSS_DEF_PROP);
+      for (const rel of svelte) {
+        const raw = ctx.read(rel);
+        collect(raw, CSS_DEF_PROP);
+        collect(raw, CSS_DEF_STYLE_DIRECTIVE);
+        collect(raw, CSS_DEF_SETPROP);
+      }
+      for (const rel of ts) collect(ctx.read(rel), CSS_DEF_SETPROP);
+
+      const blockComments = (s) => blankMatches(s, /\/\*[\s\S]*?\*\//g);
+      const scan = (rel, text) => {
+        for (const m of text.matchAll(CSS_USE_NOFALLBACK)) {
+          if (defined.has(m[1]) || CSS_VAR_ALLOWLIST.has(`--${m[1]}`)) continue;
+          out.push(fail(rel, lineAt(text, m.index), `var(--${m[1]}) has no fallback and --${m[1]} is defined nowhere`));
+        }
+      };
+      for (const rel of css) scan(rel, blockComments(ctx.read(rel)));
+      for (const rel of svelte) {
+        const noScripts = blankMatches(ctx.read(rel), /<script[\s\S]*?<\/script>/gi);
+        scan(rel, blockComments(blankHtmlComments(noScripts)));
+      }
+      if (defined.size < CSS_MIN_DEFINED) {
+        out.push(fail('src', undefined, `tripwire: only ${defined.size} custom properties defined (expected >= ${CSS_MIN_DEFINED}) — collectors went stale`));
+      }
+      return out;
+    },
+  },
+];

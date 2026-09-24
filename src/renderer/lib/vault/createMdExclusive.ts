@@ -1,14 +1,13 @@
 /**
- * Audit-19 BL-1 — create-exclusive seeding for brand-new `.md` files.
+ * Create-exclusive seeding for brand-new `.md` files.
  *
  * Every creation site (new Kanban card, new task, Task-List OS drop, Mind Map
- * text tile) used to write its seed with `vault:write-file-text`, which is
- * create-OR-OVERWRITE. The collision pre-pick only knew about cached tile defs,
- * so a new card titled "Notes" silently replaced an existing off-board
- * `Notes.md`. This module routes every seed through `vault:create-file-text`
- * (an `O_EXCL` open main-side) and bumps to ` (2)`, ` (3)` … on `EEXIST`.
+ * text tile) seeds through `vault:create-file-text` (an `O_EXCL` open
+ * main-side) and bumps to ` (2)`, ` (3)` … on `EEXIST`. A create-or-overwrite
+ * write would let a new card titled "Notes" silently replace an existing
+ * off-board `Notes.md`.
  *
- * Write accounting (the subtle part — pinned by `ci:seed-writes-exclusive`):
+ * Write accounting (the subtle part — pinned by `gates:seed-writes-exclusive`):
  * a LOSING attempt targets the user's EXISTING file, so it must not touch that
  * path's pending / failed / self-write marks. `trackComponentWrite` would
  * (`beginWrite(path)` → `endWrite(true)` erases another writer's failed mark

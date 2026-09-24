@@ -101,7 +101,7 @@ const BaseTileSchema = z.object({
   renderedWidth: z.number().finite().optional(),
   /** Cached DOM-measured rendered height (for auto-height tiles). */
   renderedHeight: z.number().finite().optional(),
-  // Phase 31 A6.6 — .finite() rejects NaN / ±Infinity from hand-edited files.
+  // .finite() rejects NaN / ±Infinity from hand-edited files.
   createdAt: z.number().finite(),
   updatedAt: z.number().finite(),
 }).passthrough();
@@ -152,7 +152,7 @@ export const AudioTileSchema = BaseTileSchema.extend({
 }).passthrough();
 
 /**
- * Phase 31 B4.2 — URL scheme guard for tiles that emit `src=`/`href=`
+ * URL scheme guard for tiles that emit `src=`/`href=`
  * attributes into the renderer. Empty, http(s), and `about:blank` pass;
  * anything else (`javascript:`, `data:`, `file:`, custom protocols) is
  * rejected at parse time so a hand-edited or future-migrated tile def
@@ -181,7 +181,7 @@ export const IframeTileSchema = BaseTileSchema.extend({
 
 export const TimerTileSchema = BaseTileSchema.extend({
   type: z.literal('timer'),
-  // Sprint C / C3 — `.nonnegative()` because a negative duration / remaining
+  // `.nonnegative()` because a negative duration / remaining
   // is nonsensical: the renderer renders the count-down monotonically
   // toward zero and stops there, so negative seeds either no-op or wrap
   // around when a tick subtracts. A hand-edited `.board.json` with a
@@ -247,13 +247,12 @@ export type TimerTile = z.infer<typeof TimerTileSchema>;
  * Vault-backed tile types: text, image, video, audio, file.
  * Non-vault types (link, iframe, timer) are stored as InlineTile in `.board.json`.
  *
- * Phase R5 — modelled as a discriminated union mirroring `TileSchema` so
+ * Modelled as a discriminated union mirroring `TileSchema` so
  * type-specific fields are validated at parse time. A hand-edited
  * `.board.json` with `{ type: 'link', url: 'javascript:alert(1)' }` is
  * rejected by `tileUrlString` at the def layer rather than relying on the
- * runtime tile schema (which historically only ran when the placement was
- * converted to a runtime tile, leaving the on-disk file as the trusted
- * intermediate). Each variant keeps `.passthrough()` so a forward-compat
+ * runtime tile schema (which only runs when the placement is converted to a
+ * runtime tile). Each variant keeps `.passthrough()` so a forward-compat
  * field survives load → cache → save round-trip.
  */
 
@@ -291,7 +290,7 @@ const TileDefinitionBase = z.object({
   titleHtml: z.string().optional(),
   style: TileStyleSchema,
   tags: z.array(z.string()).default(() => []),
-  // Phase 31 A6.6 — .finite() rejects NaN / ±Infinity from hand-edited files.
+  // .finite() rejects NaN / ±Infinity from hand-edited files.
   createdAt: z.number().finite(),
   updatedAt: z.number().finite(),
 });
@@ -360,7 +359,7 @@ export const IframeTileDefSchema = TileDefinitionBase.extend({
 
 export const TimerTileDefSchema = TileDefinitionBase.extend({
   type: z.literal('timer'),
-  // Sprint C / C3 — mirrors TimerTileSchema.duration / remaining.
+  // Mirrors TimerTileSchema.duration / remaining.
   duration: z.number().finite().nonnegative().default(0),
   remaining: z.number().finite().nonnegative().default(0),
   mode: z.enum(['hms', 'ms', 's', 'clock']).default('hms'),

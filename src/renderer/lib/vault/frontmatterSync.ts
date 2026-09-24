@@ -13,16 +13,10 @@ export const SYNCED_FIELDS = [
   'title',
   'tags',
   'completed',
-  // Audit-11 B-INT-L1 — `date` is intentionally NOT synced. No tile / card /
-  // task reads a cached `date` (only `dueDate` / `startDate` drive display +
-  // smart-list filters), yet keeping it here let `reconcileBoardCacheWith-
-  // Frontmatter` seed-and-write a `date` field onto any text tile backing a
-  // note whose `.md` carried a `date:` key (ubiquitous in Obsidian-style
-  // vaults) — leaking a frontmatter-canonical value into `.board.json`. The
-  // schema's `TASK_METADATA_FIELDS` strip-on-load would then fire a warn-loop
-  // on every reconcile. Dropping it from the synced set closes the leak at its
-  // source (the reconcile never sets it, so it's never written). Do NOT re-add
-  // without also wiring a real cached-`date` reader + the strip-list entry.
+  // `date` is intentionally NOT synced: nothing reads a cached `date`, and
+  // syncing it would write a frontmatter-canonical value into `.board.json`
+  // for any note with a `date:` key (then stripped on load in a warn-loop).
+  // Do NOT re-add without a real cached-`date` reader + the strip-list entry.
   'dueDate',
   'dueTime',
   'startDate',
@@ -61,9 +55,9 @@ export type TileLikeCache = Partial<Record<SyncedField, unknown>>;
 export const normalizeTags = normalizeTagsField;
 
 /**
- * Defensive date normalisation. The single-parser `yaml`-package read (Audit-13
- * M2) keeps an unquoted `date:` as a string (its core schema resolves no
- * timestamp tag), so this rarely fires now — but any `Date` instance that
+ * Defensive date normalisation. The `yaml`-package read keeps an unquoted
+ * `date:` as a string (its core schema resolves no timestamp tag), so this
+ * rarely fires — but any `Date` instance that
  * reaches here (e.g. a programmatic caller, or a value built before the read)
  * is folded back to a `YYYY-MM-DD` string so it round-trips through JSON and
  * compares stably against the on-disk string.
@@ -99,11 +93,11 @@ export function canonicalValues(metadata: FileMetadata): Partial<Record<SyncedFi
   out.title = metadata.title;
   // Authored order (not sorted) so a reconciled tile def's tag chips match
   // the order in the .md. Divergence comparison still sorts via valuesEqual,
-  // so order here is purely cosmetic for the cache. (7.4)
+  // so order here is purely cosmetic for the cache.
   out.tags = orderPreservingTagsField(fm.tags ?? metadata.tags);
 
   if ('completed' in fm) out.completed = normalizeScalar(fm.completed);
-  // Audit-11 B-INT-L1 — `date` deliberately omitted (see SYNCED_FIELDS note).
+  // `date` deliberately omitted (see SYNCED_FIELDS note).
   if ('dueDate' in fm) out.dueDate = normalizeScalar(fm.dueDate);
   if ('dueTime' in fm) out.dueTime = normalizeScalar(fm.dueTime);
   if ('startDate' in fm) out.startDate = normalizeScalar(fm.startDate);
@@ -232,7 +226,7 @@ export function reconcileBoardCacheWithFrontmatter(
   metadata: FileMetadata,
   options?: {
     /**
-     * 6.2.H9 — when false, suppresses the `patched.updatedAt = Date.now()`
+     * When false, suppresses the `patched.updatedAt = Date.now()`
      * stamp on reconciled tiles. The on-open batch reconcile is not a
      * user edit (the disk frontmatter was the canonical source we synced
      * to), so the in-app "last touched" timestamp shouldn't bump. The
@@ -255,15 +249,12 @@ export function reconcileBoardCacheWithFrontmatter(
       if (!tileBacksMarkdownPath(def, relPath)) continue;
 
       // Build the cache subset that participates in sync. Include a key for
-      // every field already on the def, PLUS — Audit 2.3 — every field the
-      // canonical frontmatter carries even when the def never had it, seeded
-      // as an explicit `undefined`. Without that seed, detectDivergence's
-      // `field in cache` guard skips a field the tile didn't previously track,
-      // so a field added to the .md in an external editor (e.g. `dueDate` /
-      // `priority` / `status` on a task) wouldn't reach the live cache until a
-      // board reload — smart-list filters/sort would silently ignore it mid-
-      // session. Fields absent from BOTH the def and the frontmatter stay out,
-      // so we never invent task fields the file doesn't actually have.
+      // every field already on the def, PLUS every field the canonical
+      // frontmatter carries even when the def never had it, seeded as an
+      // explicit `undefined`. Otherwise detectDivergence's `field in cache`
+      // guard would skip a field added to the .md externally (e.g. `dueDate`)
+      // until a board reload. Fields absent from BOTH stay out, so we never
+      // invent task fields the file doesn't have.
       const cacheSubset: TileLikeCache = {};
       const d = def as Record<string, unknown>;
       const canonical = canonicalValues(metadata);

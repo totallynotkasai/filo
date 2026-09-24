@@ -7,8 +7,7 @@ import { vaultStore } from '../../stores/vault.svelte';
 import { reportError } from '../utils/errorBus';
 
 /**
- * Phase 2 (CONSOLIDATION_PLAN_2026-05-25) — extracted from
- * `boardCacheTiles.persistAddTile`. Seeds the backing `.md` file for a new
+ * Seeds the backing `.md` file for a new
  * text tile and registers the in-memory `DocumentState`. Shared between
  * every per-type `BoardTileOps.addTile` so the side-effect is identical
  * regardless of which board the new text tile lands on (today MindMap is
@@ -25,7 +24,7 @@ import { reportError } from '../utils/errorBus';
  * being silently materialised as a blank document.
  */
 /**
- * Phase R7 — pure sync helper that resolves and stamps the seed `.md` path on
+ * Pure sync helper that resolves and stamps the seed `.md` path on
  * a text tile *without* touching disk. Per-type tile ops call this before
  * writing the def into the cache so the cached definition sees the resolved
  * `filePath`, then call `seedTextFileForNewTile` for the deferred I/O.
@@ -66,7 +65,7 @@ export async function seedTextFileForNewTile(
   const filename = stampTextTileSeedPath(tile, resolvedBoardId) ?? `${title}.md`;
 
   try {
-    // Phase B / B.2 — cascade-delete undo passes `skipEmptySeed: true`
+    // Cascade-delete undo passes `skipEmptySeed: true`
     // because the file was already gone before the cascade ran. Writing
     // an empty `.md` here would resurrect the user's deleted file as a
     // blank document, silently destroying any out-of-band recovery
@@ -74,9 +73,8 @@ export async function seedTextFileForNewTile(
     // the placement pointing at a missing file; the broken-ref badge
     // tells the user what happened.
     if (!options?.skipEmptySeed) {
-      // Audit-19 BL-1 — ONE create-exclusive call replaces the old
-      // exists-probe → write pair (a TOCTOU window). `'exists'` is the
-      // same "adopt the existing file" outcome the probe produced.
+      // ONE create-exclusive call (no exists-probe → write TOCTOU window).
+      // `'exists'` means "adopt the existing file".
       const fileText = assembleMarkdownFile({}, initialBody);
       const outcome = await createMdFileExclusive(vaultRoot, filename, fileText);
       if (outcome === 'created') {

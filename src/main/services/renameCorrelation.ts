@@ -3,13 +3,10 @@ import type { FileChangeEvent } from './fileWatcherTypes';
 import { detectConflictCopyPath } from '../../shared/conflictCopy';
 
 /**
- * Phase 31 B2.4 — case-only rename support. Windows and macOS are
- * case-insensitive by default, so renaming `foo.md` → `Foo.md` fires
- * watcher events under the two cases but the bucket key in `byBase`
- * (legacy: strict-case basename) split them into separate buckets and
- * never paired them. Lowercasing the bucket key on these platforms
- * lets the missing+present pair fire as a synthetic rename so tile
- * references propagate.
+ * Case-only rename support. Windows and macOS are case-insensitive by
+ * default, so renaming `foo.md` → `Foo.md` fires events under both cases;
+ * lowercasing the bucket key on these platforms lets the pair fire as a
+ * synthetic rename so tile references propagate.
  *
  * On case-sensitive systems (Linux) we keep the strict-case keying:
  * two genuinely different files `foo.md` and `Foo.md` can coexist,
@@ -26,60 +23,40 @@ function basenameKey(filename: string, caseInsensitive: boolean): string {
  * the chance of two unrelated files sharing a size grows quickly — a vault
  * full of small `.md` notes typically has many ~50-200 byte files that
  * collide by coincidence. Above 256 bytes, a same-size+same-extension match
- * has a much higher prior of being a true rename.
- *
- * Phase 19 S1 — protects sync vaults (Dropbox/iCloud) where rename
- * correlation fires constantly: small files commonly collide on size and
- * silent mispairing would rewrite tile references / `.filo/tags.json` to
- * the wrong file.
+ * has a much higher prior of being a true rename. Matters most on sync
+ * vaults, where a mispairing would silently rewrite tile references /
+ * `.filo/tags.json` onto the wrong file.
  */
 const CROSS_BASENAME_MIN_SIZE_BYTES = 256;
 
 /**
- * Sprint B / B8 — extensions that are interchangeable when correlating a
- * cross-basename rename. A user retyping `Notes.txt` → `Notes.md` in their
- * file manager triggers a delete-of-old + create-of-new pair; if the file
- * has identical contents the size matches, and we want the correlator to
- * emit a single synthetic rename event so tile references propagate
- * automatically. The strict same-extension guard from Phase 19 S1 would
- * otherwise force a delete + create, breaking every tile that pointed at
- * the old file.
- *
- * The set is deliberately narrow: only formats Filo treats as "text-like
- * notes". Adding image formats (`.png` ↔ `.jpg`) here would re-introduce
- * the false-positive risk Phase 19 S1 was added to fix.
+ * Extensions that are interchangeable when correlating a cross-basename
+ * rename, so retyping `Notes.txt` → `Notes.md` in a file manager still
+ * propagates tile references. Deliberately narrow: adding image formats
+ * (`.png` ↔ `.jpg`) would reintroduce same-size false positives.
  */
 const TEXT_LIKE_EXTENSIONS = new Set(['.md', '.txt', '.markdown']);
 
 /**
- * Phase 31 A4.3 — file-size threshold below which a hash-based content
- * match is required when a hash probe is provided. Files >=10 MB keep
- * size-only matching with the legacy 256-byte floor; large same-size
- * collisions are vanishingly rare in real vaults, and hashing multi-MB
- * files inside the per-watcher hot path is too expensive.
+ * File-size threshold below which a content-hash match is required when a
+ * hash probe is provided. Hashing multi-MB files in the watcher hot path is
+ * too expensive (larger files are handled separately below).
  */
 const CROSS_BASENAME_HASH_REQUIRED_BELOW = 10 * 1024 * 1024;
 
 /**
- * Audit2 2.1 — "balanced" content-identity check for a same-basename
- * missing+present pair before treating it as a rename.
+ * "Balanced" content-identity check for a same-basename missing+present pair
+ * before treating it as a rename.
  *
- * The same-basename pass pairs a 1-missing + 1-present bucket as a move, but
- * two *unrelated* files that merely share a basename across folders (the
- * textbook PKM layout — a `Notes.md` / `README.md` / `index.md` per folder)
- * deleted and created in a single watcher batch would otherwise be paired,
- * silently rewriting every tile reference from the deleted file onto the
- * unrelated new one (`propagateRename`) with no undo.
+ * Two *unrelated* files sharing a basename across folders (a `Notes.md` /
+ * `README.md` per folder) deleted and created in one batch would otherwise
+ * be paired, silently rewriting every tile reference onto the new file with
+ * no undo.
  *
- * A genuine move preserves bytes, so when size/hash are observable we require
- * them to match. The policy is deliberately *balanced*, not strict: refuse
- * only on a POSITIVE size or hash mismatch, and fall back to basename-only
- * pairing when a probe is absent or a side's value is uncached. That keeps a
- * cold cache (cold start before the first reconcile walk) and unhashed file
- * types from blocking a legitimate rename — the SHA-1 rename-hash cache is
- * seeded only for `.md` (see fileWatcher's reconcile walk), so attachments
- * and `.board.json` rely on the size match alone. Production always supplies
- * both probes; callers/tests that omit them keep the pre-2.1 behaviour.
+ * A genuine move preserves bytes, so refuse on a POSITIVE size or hash
+ * mismatch; an uncached side is not a mismatch (the SHA-1 cache is seeded
+ * only for `.md`, so attachments and `.board.json` rely on size alone). See
+ * the body for the cold-cache, empty-file and small-file refusals.
  *
  * Returns true when the pair is safe to treat as a move.
  */
@@ -115,37 +92,19 @@ async function sameBasenameBytesPreserved(
     // "balanced, not strict" rationale.
     if (mHash && pHash && mHash !== pHash) return false;
   }
-  // 6.2.H6 — empty / identical-empty guard.
-  //
-  // Two files in DIFFERENT folders sharing a basename and both being
-  // zero-byte (or both content-hashing to the empty buffer SHA1) is
-  // overwhelmingly an unrelated delete + create pair, not a move — every
-  // user's vault accumulates empty placeholder `Notes.md` / `README.md`
-  // across folders. The pre-fix gate refused only on POSITIVE mismatches,
-  // so two empties (same size 0, same SHA1) passed and we silently
-  // rewrote every tile reference. The cross-basename pass had a 256-byte
-  // floor that already covered this — the same-basename pass was missing
-  // the parallel guard.
-  //
-  // Same-folder empty renames (`drafts/Old.md` → `drafts/New.md`) hit
-  // the cross-basename pass with its own 256-byte floor, so an empty file
-  // there also won't pair — the user-facing broken-ref relink covers
-  // that rare case. We only refuse here when the parent folders DIFFER.
+  // Empty-file guard: two zero-byte same-basename files in DIFFERENT folders
+  // (empty placeholder `Notes.md` / `README.md`) are overwhelmingly an
+  // unrelated delete + create, not a move — yet they "match" on size and
+  // hash. Only refuse when the parent folders differ.
   const isEmpty = (mSize === 0 && pSize === 0) || (mHash === EMPTY_BUFFER_SHA1 && pHash === EMPTY_BUFFER_SHA1);
   if (isEmpty && parentFolder(missing.filename) !== parentFolder(present.filename)) {
     return false;
   }
-  // Audit-4 DI-17 (cold-cache) — when BOTH probes were supplied (production
-  // always supplies both) yet NEITHER could perform a comparison, we have zero
-  // evidence the two same-basename files share bytes: the missing (old) side
-  // was never observed, so its size AND hash are both unknown. A cold cache
-  // (vault just opened, no reconcile walk yet, the old path never seen) is
-  // exactly when identity is unknowable — pairing on basename alone here would
-  // rewire tile `file`/`src`/`coverImage` refs (and `.filo/tags.json`) to a
-  // possibly-unrelated file with no undo. Refuse: the pair falls through to
-  // delete+create, recoverable via the broken-ref relink once the cache warms.
-  // Probe-absent callers (legacy tests) keep the pre-2.1 basename-only pairing,
-  // so this only tightens the production both-probes path.
+  // Cold cache: when BOTH probes were supplied (production always does) yet
+  // NEITHER could compare, there is zero evidence the files share bytes —
+  // pairing on basename alone would rewire tile refs to a possibly-unrelated
+  // file with no undo. Refuse; it surfaces as delete+create, recoverable via
+  // the broken-ref relink. Probe-absent callers keep basename-only pairing.
   if (relPathSize && relPathHash) {
     const sizeComparable = mSize !== null && pSize !== null;
     const hashComparable = mHash !== null && pHash !== null;
@@ -153,20 +112,13 @@ async function sameBasenameBytesPreserved(
     // of size (even a tiny file with a real hash match is a genuine move). This
     // also exempts confirmed moves from the small-file floor below.
     if (hashComparable && mHash === pHash) return true;
-    // DI-17 — neither size nor hash comparable ⇒ fully cold cache (missing side
-    // never observed) ⇒ refuse rather than pair on basename alone.
+    // Neither size nor hash comparable ⇒ fully cold cache ⇒ refuse.
     if (!sizeComparable && !hashComparable) return false;
-    // L15 (Audit-6) — apply the cross-basename pass's small-file floor here too.
-    // Without a positive hash match, an equal SIZE is the only signal, and tiny
-    // files collide on size constantly (the per-folder Notes.md / README.md /
-    // index.md layout), so a <256-byte same-basename "move" is more likely an
-    // unrelated delete+create than a real move — refuse and let it surface as
-    // delete+create (recoverable via the broken-ref relink). This is the
-    // coincidence-prone band; a >=256-byte same-size pair keeps the balanced
-    // size-only pairing (a moved attachment / .board.json is never hash-seeded,
-    // and a large same-size+same-basename pair has a high move prior — see the
-    // asymmetric-hash attachment-move test). Equal-size only: an unequal size is
-    // already refused above.
+    // Apply the cross-basename small-file floor here too: with only an equal
+    // SIZE as evidence, tiny files collide constantly, so a <256-byte
+    // "move" is more likely an unrelated delete+create. A >=256-byte
+    // same-size pair keeps size-only pairing (moved attachments /
+    // .board.json are never hash-seeded).
     if (mSize !== null && pSize !== null && mSize === pSize && mSize < CROSS_BASENAME_MIN_SIZE_BYTES) {
       return false;
     }
@@ -190,14 +142,10 @@ async function sameBasenameBytesPreserved(
  *      group by file size. When exactly one missing event and one present
  *      event share a size, the same `type`, AND the same file extension
  *      AND the size is ≥ {@link CROSS_BASENAME_MIN_SIZE_BYTES}, attempt
- *      to pair them. Phase 31 A4.3 adds a content-hash gate: for files
- *      smaller than `CROSS_BASENAME_HASH_REQUIRED_BELOW` the pair MUST
- *      have matching `relPathHash` values (the missing side's hash is
- *      retrieved from `relPathHash`'s cache; the present side is hashed
- *      from disk). Without the hash gate, two unrelated files of the
- *      same size + extension would silently merge tile references on
- *      rename — exactly the false-positive Phase 19 S1 was added to fix,
- *      now extended below the 256-byte floor to the 10 MB ceiling.
+ *      to pair them. Below `CROSS_BASENAME_HASH_REQUIRED_BELOW` the pair
+ *      MUST also have matching `relPathHash` values (missing side from the
+ *      cache, present side hashed from disk), so two unrelated same-size
+ *      files never silently merge tile references.
  *
  * Ambiguous groups (two missing, two existing, more than two candidates)
  * fall through unchanged — better to emit delete + create than to
@@ -211,34 +159,31 @@ export async function correlateRenames(
   relPathExists: (relPath: string) => boolean,
   relPathSize?: (relPath: string) => number | null,
   /**
-   * Polish phase 1.4 — accepts either a sync probe (legacy tests) or a
-   * Promise-returning probe (production fileWatcher's async hash with
-   * concurrency-bounded fs.promises.readFile). The body awaits the
-   * return value, so a Promise resolves naturally; a sync probe's
-   * non-Promise return value works under the await operator unchanged.
+   * Sync (tests) or Promise-returning (production's bounded async hash)
+   * probe; the body awaits either.
    */
   relPathHash?: (relPath: string) => string | null | Promise<string | null>,
   /**
-   * Phase A.2 — test-only override for the platform-detected
+   * Test-only override for the platform-detected
    * case-insensitive flag. Defaults to the module constant so production
    * callers don't need to pass anything. Lets tests exercise both
    * partition branches on any host CI runner.
    */
   caseInsensitiveFs: boolean = DEFAULT_CASE_INSENSITIVE_FS,
   /**
-   * Audit-19 EXT-2 — OneDrive device names seen for this vault (C0's host
-   * rule). The watcher passes `os.hostname()` + the `.filo/machines` registry.
+   * OneDrive device names seen for this vault. The watcher passes
+   * `os.hostname()` + the `.filo/machines` registry.
    */
   knownHosts: readonly string[] = [],
 ): Promise<{
   filtered: FileChangeEvent[];
   renames: Array<{ oldPath: string; newPath: string }>;
-  /** Audit-19 EXT-2 — pairs REFUSED because the present file is a sync conflict copy of the missing one. */
+  /** Pairs REFUSED because the present file is a sync conflict copy of the missing one. */
   conflicts: Array<{ copyPath: string; canonicalPath: string; client: string }>;
 }> {
   const renames: Array<{ oldPath: string; newPath: string }> = [];
   const conflicts: Array<{ copyPath: string; canonicalPath: string; client: string }> = [];
-  // Audit-19 EXT-2 — OneDrive keeps both sides of a conflict by RENAMING the
+  // OneDrive keeps both sides of a conflict by RENAMING the
   // local file to `Note-<DEVICE>.md` (same bytes) and downloading the other
   // version as `Note.md`. If the download lands after this batch closes, the
   // batch holds a missing `Note.md` + a present `Note-<DEVICE>.md` with equal
@@ -257,7 +202,7 @@ export async function correlateRenames(
   for (const c of events) {
     if (c.type !== 'document' && c.type !== 'board' && c.type !== 'attachment') continue;
     correlatable.push(c);
-    // Phase 31 B2.4 — bucket by case-folded basename on case-insensitive
+    // Bucket by case-folded basename on case-insensitive
     // filesystems so `foo.md` → `Foo.md` pairs even though the watcher
     // reports the original cases. The events themselves still carry the
     // on-disk casing, so the synthetic rename event reports e.g.
@@ -276,7 +221,7 @@ export async function correlateRenames(
       else missing.push(c);
     }
     if (missing.length === 1 && present.length === 1) {
-      // Audit2 2.1 — gate the same-basename pair on a content-identity check
+      // Gate the same-basename pair on a content-identity check
       // so a delete + unrelated create of two different files sharing a
       // basename across folders isn't mis-correlated into a rename (which
       // would silently rewire tile references to the wrong file). A refusal
@@ -299,7 +244,7 @@ export async function correlateRenames(
       }
       continue;
     }
-    // Phase A.2 — case-only rename on a case-insensitive filesystem.
+    // Case-only rename on a case-insensitive filesystem.
     // `relPathExists` calls statSync, which succeeds for BOTH casings
     // after the rename (the OS folds the lookup). So the
     // missing/present partition above lands both events in `present`,
@@ -330,8 +275,8 @@ export async function correlateRenames(
 
   // Cross-basename pass: bucket leftover events by size and pair when each
   // bucket has exactly one missing + one present of the same type. Two
-  // additional guards (Phase 19 S1) suppress the most common false positives
-  // on sync vaults: (a) skip files smaller than CROSS_BASENAME_MIN_SIZE_BYTES
+  // additional guards suppress the most common false positives on sync
+  // vaults: (a) skip files smaller than CROSS_BASENAME_MIN_SIZE_BYTES
   // because tiny files frequently share sizes by coincidence, and (b) require
   // the missing + present pair to share a file extension — a `.png` deletion
   // pairing with a `.jpg` creation of the same size is never a true rename.
@@ -362,64 +307,35 @@ export async function correlateRenames(
       // length checks above guarantee both are defined; narrow for the type-checker.
       if (m === undefined || p === undefined) continue;
       if (m.type !== p.type) continue;
-      // Sprint B / B8 — exact same-extension OR both sides in the
-      // text-like set (`.md`, `.txt`, `.markdown`). A user retyping a
-      // file extension from `.txt` to `.md` (common when adopting Filo
-      // from a plain-text note tool) should still get a synthetic
-      // rename so tile references propagate. The text-like exemption
-      // is narrow on purpose — anything broader would re-introduce the
-      // image/binary false-positive risk Phase 19 S1 was added to fix.
+      // Exact same-extension OR both sides text-like (see
+      // TEXT_LIKE_EXTENSIONS), so a `.txt` → `.md` retype still pairs.
       const mExt = extname(m.filename).toLowerCase();
       const pExt = extname(p.filename).toLowerCase();
       const sameExt = mExt === pExt;
       const bothTextLike = TEXT_LIKE_EXTENSIONS.has(mExt) && TEXT_LIKE_EXTENSIONS.has(pExt);
       if (!sameExt && !bothTextLike) continue;
-      // Phase 31 A4.3 — content-hash gate for files below the size
-      // threshold. Two unrelated files of identical byte-length but
-      // different content would silently pair without this; the
-      // expensive part (computing the hash on disk) only runs for
-      // the small set that actually reach this point — at most one
-      // missing + one present per size bucket.
-      //
-      // Hash check is OPT-IN via the optional `relPathHash` probe so
-      // existing tests (which exercise only the size-only path) keep
-      // working. The production fileWatcher always passes the probe,
-      // so the safety guard is active in real vaults — any caller
-      // that omits the probe falls back to the legacy 256-byte floor.
+      // Content-hash gate below the size threshold: two unrelated files of
+      // identical length would otherwise pair. Only runs for at most one
+      // missing + one present per size bucket. Opt-in via the probe; the
+      // production watcher always passes it.
       if (relPathHash && sz < CROSS_BASENAME_HASH_REQUIRED_BELOW) {
-        // Polish phase 1.4 — `await` is harmless for sync probes
-        // (Promise.resolve wraps), and serialises hash reads across
-        // candidates. The watcher hot path bounds concurrency upstream
-        // (see hashAsync semaphore in fileWatcher.notifyRenderers);
-        // the iteration here is already tiny (one candidate per size
-        // bucket) so the serialisation cost is negligible.
+        // Serialised awaits are fine: at most one candidate pair per bucket.
         const missingHash = await relPathHash(m.filename);
         const presentHash = await relPathHash(p.filename);
         if (!missingHash || !presentHash) continue;
         if (missingHash !== presentHash) continue;
       } else if (sz >= CROSS_BASENAME_HASH_REQUIRED_BELOW) {
-        // Sprint C / C-A5-3 — above the hash ceiling we have neither a
-        // hash nor a same-basename anchor: two unrelated >=10 MB files
-        // with identical size + extension would silently merge tile
-        // references (the legacy 256-byte floor offered no defence at
-        // this scale). Refuse cross-basename pairing for large files
-        // entirely. Renames of large media within the same basename
-        // still pair through the same-basename pass earlier; the only
-        // case lost is large-file rename WITH a basename change, which
-        // is uncommon and recoverable via the broken-tile relink flow.
-        //
-        // The legacy 256-byte floor (still enforced at the bucket
-        // population step) handles the lower bound; this branch closes
-        // the upper bound. The mid-range (256 B–10 MB) keeps using the
-        // hash gate above when a probe is supplied; a caller that
-        // omits the probe still falls through to a size-only pair in
-        // that range, matching the pre-existing test contract.
+        // Above the hash ceiling there's neither a hash nor a basename
+        // anchor, so two unrelated same-size large files would silently
+        // merge tile references. Refuse cross-basename pairing entirely;
+        // same-basename moves still pair above, and a large rename WITH a
+        // basename change is recoverable via the broken-tile relink.
         continue;
       }
       const cc = conflictCopyOf(p.filename, m.filename);
       if (cc) {
-        // Both events flow on as delete + create (EXT-4 made the delete
-        // prompt non-destructive by default); the renderer gets a notice.
+        // Both events flow on as delete + create (the delete prompt is
+        // non-destructive by default); the renderer gets a notice.
         conflicts.push({ copyPath: p.filename, canonicalPath: m.filename, client: cc.client });
         continue;
       }

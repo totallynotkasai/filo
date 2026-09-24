@@ -1,31 +1,16 @@
 /**
- * Vault slice — external-edit USER PROMPTS (extracted from
- * `vaultExternalChanges.ts`, Audit-15 P5.1).
+ * Vault slice — external-edit USER PROMPTS.
  *
- * The external-change dispatcher in `vaultExternalChanges.ts` classifies a
- * watcher event and then, for the cases needing a human decision, calls one of
- * the Reload / Keep-local / delete / recreate toast builders defined here. They
- * were split out to keep the dispatcher under the file-size ceiling; the move is
- * a pure relocation — every function keeps its name, signature, behaviour, and
- * (where it had one) `export`.
+ * The dispatcher in `vaultExternalChanges.ts` classifies a watcher event and,
+ * for cases needing a human decision, calls one of the Reload / Keep-local /
+ * delete / recreate toast builders defined here.
  *
- * Dependency direction: the dispatcher imports these builders; NOTHING here
+ * Dependency direction: the dispatcher imports these builders; nothing here
  * imports back into the dispatcher, the rename cascade, or the slice — every
- * builder takes the already-captured `VaultContext` / identity as an argument —
- * so the split introduces no new module cycle.
- *
- * The per-path in-flight drift-prompt registry (`inFlightDriftPrompts`) and its
- * vault-swap reset + rename-transfer registrations moved here WITH their only
- * users (`promptExternalEditOnSync` / `promptBoardExternalEdit`), keeping the
- * exact subscriber names so the lifecycle/rename wiring is unchanged. The
- * deferred `queueMicrotask` that registers the prompts with the markdown / board
- * writers (via setters, to dodge the lib->store import cycle) also moved here; it
- * runs when the dispatcher imports this module.
+ * builder takes the already-captured `VaultContext` / identity as an argument.
  *
  * The `prompt*` builders that re-read disk via `vaultIndexStore.applyChanges()`
- * and then mutate stores are covered by `scripts/check-reconciler-vault-guard.mjs`,
- * whose GUARD_TARGETS scans THIS file with the same triggers/exemption the
- * dispatcher carried.
+ * and then mutate stores are scanned by `scripts/gates:reconciler-vault-guard`.
  */
 import type { FileMetadata } from '../lib/vault/vaultIndex';
 import { vaultIndexStore } from './vaultIndex.svelte';
@@ -43,36 +28,30 @@ import {
   clearPropertiesPopupDirty,
 } from '../lib/vault/propertiesPopupTracker';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
-// Audit-16 6.3 — the click-time-reload no-editor branch re-anchors the drift
-// baseline + drops the seeded-but-not-open FM cache (the applyReloadFromDisk
-// path does both internally; the no-editor / setFrontmatter paths must not skip them).
+// The no-editor / setFrontmatter Reload paths re-anchor the drift baseline and
+// drop the seeded-but-not-open FM cache (applyReloadFromDisk does both itself).
 import { noteBaseline } from '../lib/vault/fileBaselineRegistry';
 import { dropStaleSeededFrontmatterCache } from '../lib/vault/staleSeededFrontmatter';
 import type { DocumentState } from './document.svelte';
 import type { VaultContext } from './vaultStoreTypes';
-// Audit-15 P5.1 — `recreateDeletedFile` (the Keep-local recovery write) lives in
-// the drift-prompt sibling; the bulk + single deleted-file toasts here invoke it.
 import { recreateDeletedFile } from './vaultExternalDriftPrompts';
 import { backupExternalVersion } from '../lib/vault/keepLocalBackup';
 import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
 
 /**
- * Phase 2 / 2.1 — toast for an external delete of an attachment file
+ * Toast for an external delete of an attachment file
  * (image/video/audio/pdf/etc.) referenced by at least one tile, cover image,
  * or frame background. Same shape as `promptClosedBoardFileMissing` but
  * names the attachment basename so the user can scan the toast at a glance.
  *
  * On confirm: routes through the existing undoable cascade so Ctrl+Z still
  * restores placements. `fileSnapshots` is empty because the file is
- * already gone — undo restores tiles but not bodies (which is symmetric
- * with how the in-app sidebar delete handles oversized media).
+ * already gone — undo restores tiles but not bodies.
  */
 export function promptExternalAttachmentDeleted(
   rel: string,
   tileCount: number,
-  // Phase 1 / 1.3 — `vaultRoot` threads through to anchor the cascade
-  // command's vault-swap guard rather than relying on the empty-string
-  // default constructor.
+  // Anchors the cascade command's vault-swap guard.
   vaultRoot: string,
 ): void {
   const filename = rel.split('/').pop() || rel;
@@ -80,16 +59,15 @@ export function promptExternalAttachmentDeleted(
     text: `"${filename}" was deleted externally — ${tileCount} reference${tileCount === 1 ? '' : 's'} (tiles, cover images, frame backgrounds) on existing boards now point at a missing file.`,
     type: 'warning',
     duration: 0,
-    sticky: true, // Audit-19 UX-6 / EXT-4
+    sticky: true,
     dedupeKey: `missing:${rel}`,
     actions: [
       {
         label: 'Remove references',
-        // Audit-19 EXT-4 — behind a danger confirm listing the boards. The
-        // confirm path keeps the 3.8 (Audit-18) click-time re-probe: a
-        // reconcile-synthesised rename or a trash restore can bring the file
-        // back, and then this isn't a deletion. Attachments keep their tags
-        // (fileTags drop is the .md path's concern).
+        // Behind a danger confirm listing the boards, with a click-time
+        // re-probe: a synthesised rename or trash restore can bring the file
+        // back. Attachments keep their tags (fileTags drop is the .md path's
+        // concern).
         handler: () => confirmRemoveTilesForMissingFile(rel, vaultRoot, false),
       },
       {
@@ -109,7 +87,7 @@ export type PendingPrompt =
       rel: string;
       next: FileMetadata;
       editorDoc: DocumentState;
-      // Sprint C / C.1 — distinguishes the editor-dirty path from the
+      // Distinguishes the editor-dirty path from the
       // popup-dirty path so dispatch can pick the right toast (and the
       // popup-aware Reload handler can cancel the popup's pending gateway
       // writes).
@@ -118,7 +96,7 @@ export type PendingPrompt =
   | { kind: 'deleted'; rel: string; editorDoc: DocumentState };
 
 /**
- * Phase 31 B2.1 — single aggregate toast for a bulk external-change batch
+ * Single aggregate toast for a bulk external-change batch
  * with > PROMPT_AGGREGATION_THRESHOLD dirty editors affected. Actions:
  *  - Reload all: apply every modified file from disk, drop every
  *    deleted file's in-memory doc. Local edits are lost (the user
@@ -130,11 +108,9 @@ export type PendingPrompt =
  *    each editor manually).
  */
 export function promptBulkExternalChanges(prompts: PendingPrompt[], ctx: VaultContext): void {
-  // Phase B / B.5 — snapshot frontmatter + body for every deleted-kind
-  // entry NOW, while the docs are still loaded. Same race as the per-file
-  // promptDeletedFile path: if a tab close / vault swap unloads the doc
-  // between toast-open and Keep-all-click, the live `getFrontmatter`
-  // lookup returns undefined and `recreateDeletedFile` lands body-only.
+  // Snapshot frontmatter + body for every deleted-kind entry NOW, while the
+  // docs are loaded: if a tab close / vault swap unloads a doc before the
+  // Keep-all click, `recreateDeletedFile` would otherwise land body-only.
   const deletedSnapshots = new Map<
     string,
     { fmSnapshot: Record<string, unknown>; bodySnapshot: string }
@@ -159,7 +135,7 @@ export function promptBulkExternalChanges(prompts: PendingPrompt[], ctx: VaultCo
     text: `${summary} Reload all (lose local), Keep all (overwrite disk), or Review individually?`,
     type: 'warning',
     duration: 0,
-    sticky: true, // Audit-19 UX-6
+    sticky: true,
     dedupeKey: 'ext-bulk',
     actions: [
       {
@@ -167,30 +143,24 @@ export function promptBulkExternalChanges(prompts: PendingPrompt[], ctx: VaultCo
         // Async so the toast harness / tests wait for the per-file disk
         // re-reads to land before continuing (mirrors promptModifiedFile).
         handler: async () => {
-          // L17 (Audit-13) — capture identity before the per-file disk re-reads;
-          // a vault swap during any `applyChanges` await would otherwise apply the
-          // outgoing vault's disk content to the new vault's same-named stores.
+          // Capture identity before the per-file disk re-reads; a vault swap
+          // during any `applyChanges` await would otherwise apply the outgoing
+          // vault's disk content to the new vault's same-named stores.
           const identity = captureVaultIdentity();
           for (const p of prompts) {
             if (p.kind === 'modified') {
-              // L3 (Audit-12) — re-read the LATEST disk state per file at click
-              // time instead of replaying the `p.next` snapshot captured when
-              // the watcher event first fired. A SECOND external write landing
-              // between detection and the user's click would otherwise make
-              // "Reload all" apply the stale first-detection content. Mirrors
-              // the now-hardened single-file `promptModifiedFile` Reload; fall
-              // back to `p.next` if the file vanished in the gap.
+              // Re-read the LATEST disk state at click time rather than the
+              // detection-time `p.next` snapshot — a second external write since
+              // detection would otherwise be reverted. Falls back to `p.next` if
+              // the file vanished in the gap.
               await vaultIndexStore.applyChanges([p.rel]);
-              // L17 (Audit-13) — bail if a swap landed during the re-read, before
-              // mutating any store with the outgoing vault's disk content.
               if (!isStillSameVault(identity)) return;
               const fresh = vaultIndexStore.getMetadata(p.rel) ?? p.next;
-              // Phase 3 / 3.3 — apply the deferred frontmatter + tag updates
-              // atomically with the body reload so reload-all lands in a
-              // consistent state.
+              // Apply frontmatter + tags atomically with the body reload so
+              // reload-all lands in a consistent state.
               boardStore.applyFrontmatterToBackedTiles(p.rel, fresh);
               fileTagsStore.setFileTags(p.rel, normalizeTags(fresh.frontmatter.tags));
-              // Audit-11 EER-1 — discard any armed field delta BEFORE the reload,
+              // Discard any armed field delta BEFORE the reload,
               // else applyReloadFromDisk's flushAllPendingFrontmatterWrites would
               // re-apply the discarded edit to fresh disk and revert this reload.
               dropPendingDelta(p.rel);
@@ -199,14 +169,12 @@ export function promptBulkExternalChanges(prompts: PendingPrompt[], ctx: VaultCo
                 fresh.content,
                 p.editorDoc.richText,
                 fresh.frontmatter,
-                fresh.rawFrontmatter, // L1 (Audit-13) — refresh originalFrontmatterCache too
+                fresh.rawFrontmatter, // refresh originalFrontmatterCache too
                 { mtimeMs: fresh.lastModified, size: fresh.rawByteSize },
               );
-              // Sprint C / C.1 — for popup-dirty entries also cancel any
-              // pending gateway writes from the dirty popup(s) so a late
-              // debounce doesn't overwrite the just-applied external
-              // frontmatter. Mirrors the single-file
-              // `promptPropertiesPopupModified` Reload handler.
+              // For popup-dirty entries also cancel the dirty popup(s)' pending
+              // gateway writes so a late debounce doesn't overwrite the
+              // just-applied external frontmatter.
               if (p.reason === 'properties-popup-dirty') {
                 for (const callerId of getDirtyInstancesForPath(p.rel)) {
                   cancelMarkdownWrite(callerId);
@@ -215,9 +183,8 @@ export function promptBulkExternalChanges(prompts: PendingPrompt[], ctx: VaultCo
               }
             } else {
               documentStore.unloadDocument(p.editorDoc.docId);
-              // Phase 4.2 (2026-05-30) — Reload-all accepted the deletion of
-              // this file; drop its tags.json membership (mirrors the single-
-              // file Reload). Keep-all re-creates the files, so it must not.
+              // Reload-all accepted the deletion; drop its tags.json
+              // membership. Keep-all re-creates the files, so it must not.
               fileTagsStore.dropFile(p.rel);
             }
           }
@@ -230,26 +197,21 @@ export function promptBulkExternalChanges(prompts: PendingPrompt[], ctx: VaultCo
           const vaultRoot = ctx.getVaultPath();
           for (const p of prompts) {
             if (p.kind === 'modified') {
-              // Audit-19 UX-6 — back up each external version first; a file
-              // whose backup the user declined to skip is left untouched.
+              // Back up each external version first; a file whose backup the
+              // user declined to skip is left untouched.
               if (!vaultRoot || !(await backupExternalVersion(vaultRoot, p.rel))) continue;
               if (!isStillSameVault(identity)) return;
-              // H3 (Audit-7) — mirror the single-file Keep-local path
-              // (promptModifiedFile). The previous `flushAllMarkdownWrites` drains
-              // only armed timers — never `forceWriters` — so a doc whose 300ms
-              // debounce already fired wrote nothing and the external bytes
-              // survived "keep mine". markDirty first (so a concurrent reactive
-              // reload can't undo the body), then `forceWriteForDocument` commits
-              // the live editor body even with no armed debounce.
+              // markDirty first (so a concurrent reactive reload can't undo the
+              // body), then force the write: a doc whose debounce already fired
+              // has no armed timer, so a plain flush would write nothing.
               documentStore.markDirty(p.editorDoc.docId);
               void forceWriteForDocument(p.editorDoc.docId);
             } else {
-              // Phase B / B.5 — pass the snapshot captured at toast-open
-              // so a parallel unload between then and now doesn't drop
-              // the doc's frontmatter on the floor.
+              // Pass the toast-open snapshot so a parallel unload since then
+              // doesn't drop the doc's frontmatter.
               void recreateDeletedFile(p.rel, p.editorDoc, ctx, deletedSnapshots.get(p.editorDoc.docId), (fresh) => {
                 const live = documentStore.getDocument(p.editorDoc.docId);
-                if (live) promptModifiedFile(p.rel, fresh, live); // Audit-19 EXT-3 — it is back
+                if (live) promptModifiedFile(p.rel, fresh, live); // the file is back
               });
             }
           }
@@ -278,22 +240,7 @@ export function promptBulkExternalChanges(prompts: PendingPrompt[], ctx: VaultCo
 }
 
 /**
- * Phase 3 / 3.2 — toast surfaced after `PARTIAL_READ_MAX_RETRIES` retries
- * fail to find the disk content stable. Two outcomes:
- *
- *   - Reload: force-refresh the index against current disk state and apply
- *     it to the editor regardless of the partial-read heuristic. Used when
- *     the user can confirm the file genuinely shrunk (saving a few words,
- *     deleting half the body). Bypasses the classifier — we cannot
- *     distinguish a genuine shrink from a stuck-mid-write at this point,
- *     so we trust the user's intent.
- *   - Keep my view: do nothing. The editor stays on the pre-shrink
- *     baseline restored by `restoreMetadata`. The next external edit
- *     re-classifies normally (the retry counter was cleared on
- *     exhaustion).
- */
-/**
- * M5 — recovery affordance for a silent reload that turned out to be a
+ * Recovery affordance for a silent reload that turned out to be a
  * suspicious (material) shrink: the signature of a mis-judged transient /
  * partial read that slipped past the partial-read heuristic. Routine edits
  * and growth reload silently; only a >50% drop on a non-trivial file surfaces
@@ -346,6 +293,18 @@ export function promptReloadRecoveryIfSuspicious(
   });
 }
 
+/**
+ * Toast surfaced after `PARTIAL_READ_MAX_RETRIES` retries fail to find the
+ * disk content stable. Two outcomes:
+ *
+ *   - Reload: force-refresh the index against current disk state and apply
+ *     it to the editor regardless of the partial-read heuristic. We can't
+ *     tell a genuine shrink from a stuck mid-write here, so we trust the user.
+ *   - Keep my view: do nothing. The editor stays on the pre-shrink
+ *     baseline restored by `restoreMetadata`. The next external edit
+ *     re-classifies normally (the retry counter was cleared on
+ *     exhaustion).
+ */
 export function promptPartialReadExhausted(rel: string): void {
   const filename = rel.split('/').pop() || rel;
   uiStore.pushToast({
@@ -356,10 +315,8 @@ export function promptPartialReadExhausted(rel: string): void {
       {
         label: 'Reload from disk',
         handler: async () => {
-          // L17 (Audit-13) — capture identity before the disk re-read so a vault
-          // swap during it can't apply the outgoing vault's content to the new
-          // vault's stores. (Sibling of the bulk Reload-all / promptModifiedFile
-          // Reload handlers.)
+          // Capture identity before the disk re-read so a vault swap during it
+          // can't apply the outgoing vault's content to the new vault's stores.
           const identity = captureVaultIdentity();
           const editorDoc = documentStore.findByFilename(rel);
           // No editor open — nothing to reload into. The classifier would
@@ -373,20 +330,17 @@ export function promptPartialReadExhausted(rel: string): void {
           boardStore.applyFrontmatterToBackedTiles(rel, next);
           fileTagsStore.setFileTags(rel, normalizeTags(next.frontmatter.tags));
           if (editorDoc) {
-            // Phase 3 / 3.2 — bypass the dirty-editor prompt entirely:
-            // the user just clicked Reload, so we apply unconditionally.
-            // `applyReloadFromDisk` clears `isDirty` so any pending
-            // markdown writer drops its outstanding scheduled write
-            // (the writer self-disarms when the doc transitions to
-            // clean).
-            // Audit-11 EER-1 — also drop the FM field delta (separate accumulator).
+            // The user just clicked Reload, so apply unconditionally (no
+            // dirty-editor prompt). `applyReloadFromDisk` clears `isDirty`, so
+            // any pending markdown writer self-disarms.
+            // Also drop the FM field delta (a separate accumulator).
             dropPendingDelta(rel);
             documentStore.applyReloadFromDisk(
               editorDoc.docId,
               next.content,
               editorDoc.richText,
               next.frontmatter,
-              next.rawFrontmatter, // L1 (Audit-13) — refresh originalFrontmatterCache too
+              next.rawFrontmatter, // refresh originalFrontmatterCache too
               { mtimeMs: next.lastModified, size: next.rawByteSize },
             );
           }
@@ -406,7 +360,7 @@ export function promptPartialReadExhausted(rel: string): void {
 }
 
 /**
- * Audit-19 EXT-4 — what a vault-wide "remove the tiles for a missing file"
+ * What a vault-wide "remove the tiles for a missing file"
  * cascade would touch, computed at toast / confirm time so the copy names the
  * real scope (it spans EVERY board, open ones included — not "closed boards").
  */
@@ -421,10 +375,10 @@ function describeMissingFileScope(rel: string): { tiles: number; boardNames: str
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /**
- * Audit-19 EXT-4 — the cascade is destructive and vault-wide, and its undo lands
- * on whichever board is active, so it only ever runs behind an explicit danger
- * confirm that lists the boards. The click-time re-probe (Audit-18 3.8) still
- * skips it when the file is back on disk (a synced move / trash restore).
+ * The cascade is destructive and vault-wide, and its undo lands on whichever
+ * board is active, so it only ever runs behind an explicit danger confirm that
+ * lists the boards. A click-time re-probe skips it when the file is back on
+ * disk (a synced move / trash restore).
  */
 function confirmRemoveTilesForMissingFile(rel: string, vaultRoot: string, dropTags: boolean): void {
   const { tiles, boardNames } = describeMissingFileScope(rel);
@@ -444,7 +398,7 @@ function confirmRemoveTilesForMissingFile(rel: string, vaultRoot: string, dropTa
         }
         // The existing undoable cascade (fileSnapshots empty: the file is gone).
         boardStore.cascadeDeleteByVaultPath(rel, {}, vaultRoot);
-        // Phase 4.2 — the user confirmed the file is gone; drop its tags.json
+        // The user confirmed the file is gone; drop its tags.json
         // membership so the orphan entry doesn't linger.
         if (dropTags) fileTagsStore.dropFile(rel);
       })().catch((err) => reportError('missingFile.removeTiles', err, 'Removing the tiles failed.'));
@@ -453,7 +407,7 @@ function confirmRemoveTilesForMissingFile(rel: string, vaultRoot: string, dropTa
 }
 
 /**
- * Phase 31 B2.5 / Audit-19 EXT-4 — toast for an external delete of a `.md`
+ * Toast for an external delete of a `.md`
  * referenced by tiles, with NO open editor for it. On a synced vault this fires
  * for moves and delete-then-recreate too, so the DEFAULT does nothing: "Keep
  * tiles" leaves them showing as missing (the boardRefIntegrity badge is the
@@ -464,7 +418,7 @@ function confirmRemoveTilesForMissingFile(rel: string, vaultRoot: string, dropTa
 export function promptClosedBoardFileMissing(
   rel: string,
   tileCount: number,
-  // Phase 1 / 1.3 — see `promptExternalAttachmentDeleted` for rationale.
+  // Anchors the cascade command's vault-swap guard.
   vaultRoot: string,
 ): void {
   const filename = rel.split('/').pop() || rel;
@@ -479,7 +433,7 @@ export function promptClosedBoardFileMissing(
       {
         label: 'Keep tiles (show as missing)',
         handler: () => {
-          // No-op by design (Audit-19 EXT-4): the tiles keep their broken-ref badge.
+          // No-op by design: the tiles keep their broken-ref badge.
         },
       },
       {
@@ -491,24 +445,7 @@ export function promptClosedBoardFileMissing(
 }
 
 /**
- * Audit-18 M3/M6 — cancels every dirty GATEWAY writer armed for `rel` (a
- * Properties popup mid-debounce over this path) and clears its popup-dirty
- * tracker entry. A no-op when nothing is dirty.
- *
- * Every Reload handler MUST call this BEFORE it re-anchors the drift baseline:
- * `applyReloadFromDisk` (and the no-editor `noteBaseline` tail) re-stamp the
- * baseline to the accepted disk state, so a surviving armed gateway write would
- * then sail PAST the pre-write drift gate (its baseline now matches disk) and
- * clobber the FM keys with the rows the user just chose to discard on Reload.
- *
- * Hoisted from the A17-5.6(a) inline loop, which only ran in the no-editor
- * branches. The editor-dirty prompt (`promptModifiedFile`) had NO such loop, and
- * the pending-write-conflict prompt ran it only when no editor was open — so a
- * dirty popup over an OPEN dirty editor re-applied the discarded keys after
- * Reload (M3 + its M6 sibling). One helper, called unconditionally, closes both.
- */
-/**
- * Audit-19 EXT-3 — apply a freshly re-read disk version to an open editor and
+ * Apply a freshly re-read disk version to an open editor and
  * its sinks (tile caches, tags, armed field deltas) — the promptModifiedFile
  * Reload trio, for a file that came back after a "deleted externally" prompt.
  */
@@ -527,6 +464,16 @@ function applyFreshDiskVersion(rel: string, fresh: FileMetadata, doc: DocumentSt
   );
 }
 
+/**
+ * Cancels every dirty GATEWAY writer armed for `rel` (a Properties popup
+ * mid-debounce over this path) and clears its popup-dirty tracker entry.
+ * No-op when nothing is dirty.
+ *
+ * Every Reload handler MUST call this BEFORE it re-anchors the drift baseline:
+ * once the baseline matches disk, a surviving armed gateway write would sail
+ * past the pre-write drift gate and re-apply the FM rows the user just
+ * discarded — including when a dirty popup sits over an open dirty editor.
+ */
 function cancelDirtyGatewayWritersForPath(rel: string): void {
   for (const callerId of getDirtyInstancesForPath(rel)) {
     cancelMarkdownWrite(callerId);
@@ -535,13 +482,10 @@ function cancelDirtyGatewayWritersForPath(rel: string): void {
 }
 
 /**
- * Phase 3 / 3.3 — toast for a dirty editor whose backing `.md` file was
- * edited externally. Replaces the prior path through
- * `documentStore.handleExternalChange` so the disk frontmatter + tags are
- * applied ONLY when the user picks Reload — not eagerly at prompt-open
- * time. The pre-Phase-3 behaviour silently clobbered the editor's tag set
- * with the disk version the instant the watcher event fired, even if the
- * user later picked Keep local.
+ * Toast for a dirty editor whose backing `.md` file was edited externally.
+ * The disk frontmatter + tags are applied ONLY when the user picks Reload,
+ * never eagerly at prompt-open time (that would clobber the editor's tags
+ * even if the user then picks Keep local).
  *
  * Reload: apply external frontmatter to tile-def caches, push external
  *   tags into the tag store, overwrite the editor body with disk. The
@@ -562,7 +506,7 @@ export function promptModifiedFile(
     text: `"${editorDoc.title || rel}" was modified externally. Reload from disk, or keep your local edits?`,
     type: 'warning',
     duration: 0,
-    sticky: true, // Audit-19 UX-6
+    sticky: true,
     dedupeKey: `ext-mod:${rel}`,
     actions: [
       {
@@ -570,34 +514,25 @@ export function promptModifiedFile(
         // Async so a caller that awaits the action (the toast harness, tests)
         // waits for the disk re-read + apply to land before continuing.
         handler: async () => {
-          // L17 (Audit-13) — capture identity before the disk re-read; bail after
-          // it if a vault swap landed, so the trio below can't write the outgoing
-          // vault's content into the new vault.
+          // Capture identity before the disk re-read; bail after it if a vault
+          // swap landed, so the trio below can't write the outgoing vault's
+          // content into the new vault.
           const identity = captureVaultIdentity();
-          // Phase 3 / 3.4 — re-read the LATEST disk state at click time
-          // instead of replaying the `next` snapshot captured when the
-          // watcher event first fired. A SECOND external write landing
-          // between the toast appearing and the user's click would otherwise
-          // make "Reload from disk" apply the already-stale first-detection
-          // content. Mirrors the fresh-read Reload in
-          // `promptExternalEditOnSync`. If the file vanished in the gap, fall
-          // back to the captured `next` so the trio still has coherent bytes
-          // (the watcher's delete event handles a genuine removal separately).
+          // Re-read the LATEST disk state at click time rather than the
+          // detection-time `next` snapshot — a second external write since the
+          // toast appeared would otherwise be reverted. If the file vanished in
+          // the gap, fall back to `next` (the watcher's delete event handles a
+          // genuine removal separately).
           await vaultIndexStore.applyChanges([rel]);
           if (!isStillSameVault(identity)) return;
           const fresh = vaultIndexStore.getMetadata(rel) ?? next;
-          // Audit-18 M3 — cancel any dirty GATEWAY writer (a Properties popup
-          // armed over this same path) BEFORE the applies below re-anchor the
-          // drift baseline. The editor-dirty classification routes here, but a
-          // user can have BOTH a dirty editor and a dirty Properties popup on the
-          // file; without this cancel the popup's armed delta write sails past
-          // the re-stamped drift gate and re-applies the FM keys the user just
-          // discarded on Reload. No-op when nothing is dirty.
+          // A dirty Properties popup can coexist with the dirty editor; cancel
+          // its armed write before the applies re-anchor the drift baseline.
           cancelDirtyGatewayWritersForPath(rel);
           // Atomic trio — match the bulk Reload-all branch.
           boardStore.applyFrontmatterToBackedTiles(rel, fresh);
           fileTagsStore.setFileTags(rel, normalizeTags(fresh.frontmatter.tags));
-          // Audit-11 EER-1 — drop the armed field delta so the reload's
+          // Drop the armed field delta so the reload's
           // flushAllPendingFrontmatterWrites can't re-clobber disk with the
           // edit the user just discarded.
           dropPendingDelta(rel);
@@ -606,7 +541,7 @@ export function promptModifiedFile(
             fresh.content,
             editorDoc.richText,
             fresh.frontmatter,
-            fresh.rawFrontmatter, // L1 (Audit-13) — refresh originalFrontmatterCache too
+            fresh.rawFrontmatter, // refresh originalFrontmatterCache too
             { mtimeMs: fresh.lastModified, size: fresh.rawByteSize },
           );
         },
@@ -614,20 +549,16 @@ export function promptModifiedFile(
       {
         label: 'Keep local',
         handler: async () => {
-          // Audit-19 UX-6 — back up the external version to .filo/recovery/
-          // before the overwrite; a declined un-backed-up overwrite is a no-op.
+          // Back up the external version to .filo/recovery/ before the
+          // overwrite; a declined un-backed-up overwrite is a no-op.
           const identity = captureVaultIdentity();
           const vaultRoot = getActiveVaultPath();
           if (!vaultRoot || !(await backupExternalVersion(vaultRoot, rel))) return;
           if (!isStillSameVault(identity)) return;
-          // Mark dirty first so a concurrent reactive-reload $effect
-          // can't undo the editor body before the write lands. Then
-          // force the registered writer (TextTile or DocumentEditor) to
-          // flush IMMEDIATELY — bypassing the debounce-timer guard that
-          // would otherwise let the external edit on disk persist if
-          // the prior 300 ms debounce already fired. Mirrors the
-          // documentStore.handleExternalChange Keep-local path that
-          // this helper replaces.
+          // Mark dirty first so a concurrent reactive-reload $effect can't undo
+          // the editor body, then force the registered writer (TextTile or
+          // DocumentEditor) to write IMMEDIATELY — if its debounce already
+          // fired there is no armed timer and the external edit would persist.
           documentStore.markDirty(editorDoc.docId);
           void forceWriteForDocument(editorDoc.docId);
         },
@@ -637,7 +568,7 @@ export function promptModifiedFile(
 }
 
 /**
- * F4 (2026-05-28) — Reload / Keep-local prompt for a path with a pending
+ * Reload / Keep-local prompt for a path with a pending
  * LOCAL write the editor-based classifier couldn't see. Mirrors
  * `promptBoardChangedExternally` (the board-JSON equivalent).
  *
@@ -656,60 +587,38 @@ export function promptMarkdownPendingWriteConflict(
     text: `"${label}" was modified externally while you have an unsaved change to it. Reload from disk (discard your change), or keep your change (overwrite on next save)?`,
     type: 'warning',
     duration: 0,
-    sticky: true, // Audit-19 UX-6
+    sticky: true,
     dedupeKey: `ext-mod:${rel}`,
     actions: [
       {
         label: 'Reload',
-        // Audit-16 6.3 — async + click-time disk re-read, mirroring
-        // promptModifiedFile: replaying the detection-time `next` snapshot
-        // would apply already-stale content when a SECOND external write
-        // landed between toast-open and the click.
+        // Async + click-time disk re-read: replaying the detection-time `next`
+        // snapshot would revert a second external write since toast-open.
         handler: async () => {
-          // Audit-17 2.5 — the awaited re-read runs FIRST; the destructive
-          // work (write cancel + store applies) runs in the synchronous tail
-          // AFTER it. The prior 6.3 ordering cancelled the armed frontmatter
-          // write up front, so a rejecting re-read left the user's pending
-          // edit cancelled AND the reload never applied — a destructive
-          // prefix on a failed action. With the re-read first, a failure
-          // leaves everything intact (the toast-action catch in
-          // `uiStore.invokeToastAction` surfaces it). The trade-off this
-          // inverts — the ~300 ms debounce firing DURING the re-read and the
-          // fresh read adopting the user's own discarded change as the
-          // "external" version — is fronted by the drift gate + pending-path
-          // sentinel and was weighed in the Audit-17 review (refuted
-          // finding #5); the cancel lands in the same synchronous tail as
-          // the applies, so no further async gap exists after the read.
+          // The awaited re-read runs FIRST; the destructive work (write cancel
+          // + store applies) runs in the synchronous tail after it, so a
+          // rejecting re-read leaves the user's pending edit intact (the error
+          // surfaces via `uiStore.invokeToastAction`). The debounce firing
+          // during the re-read is fronted by the drift gate + pending-path
+          // sentinel.
           //
-          // L17 (Audit-13) shape — bail if a vault swap lands during the
-          // re-read, before mutating any store with the outgoing vault's
-          // disk content (the swap reset disarms the writers itself).
+          // Bail if a vault swap lands during the re-read, before mutating any
+          // store (the swap reset disarms the writers itself).
           const identity = captureVaultIdentity();
           const wasIndexed = vaultIndexStore.getMetadata(rel) !== undefined;
           await vaultIndexStore.applyChanges([rel]);
           if (!isStillSameVault(identity)) return;
-          // Cancel the still-armed local frontmatter write AND drop its
-          // Phase-4 field delta (Audit-11 EER-1), plus any dirty GATEWAY writer
-          // (a Properties popup armed over this path — Audit-18 M6, hoisted above
-          // the editor branch). No-op when nothing is dirty.
-          //
-          // 3.9 (Audit-18) — these cancels run BEFORE the 5.6(b) deletion
-          // early-return below. A reload that resolves into a DELETION still has
-          // to disarm the armed write: skipping the cancel would leave it to fire
-          // moments later against the now-deleted file (ENOENT-fail, or worse
-          // resurrect it). They still run AFTER the awaited re-read (Audit-17 2.5
-          // — a rejecting re-read leaves everything intact since this is reached
-          // only on success).
+          // Cancel the armed local frontmatter write and its field delta, plus
+          // any dirty GATEWAY writer (a Properties popup over this path).
+          // These run BEFORE the deletion early-return below: an armed write
+          // left alive would fire against the deleted file (ENOENT, or worse,
+          // resurrect it).
           cancelFrontmatterWrite(rel);
           cancelDirtyGatewayWritersForPath(rel);
-          // Audit-17 5.6(b) — undefined after the targeted re-read of a path
-          // that WAS indexed means applyChanges processed a DELETION (file
-          // gone). Skip all store mutations + the baseline stamp — the watcher
-          // delete pipeline owns teardown, and the stale `next` snapshot would
-          // resurrect deleted-file metadata and re-anchor a baseline for a
-          // vanished path. A path that was NEVER indexed (transient — a
-          // never-loaded doc the index hadn't built) keeps the documented
-          // `?? next` fallback.
+          // Undefined after re-reading a path that WAS indexed means a DELETION.
+          // Skip all store mutations + the baseline stamp — the watcher delete
+          // pipeline owns teardown, and the stale `next` would resurrect the
+          // metadata. A never-indexed path keeps the `?? next` fallback.
           const reread = vaultIndexStore.getMetadata(rel);
           if (!reread && wasIndexed) return;
           const fresh = reread ?? next;
@@ -721,18 +630,15 @@ export function promptMarkdownPendingWriteConflict(
               fresh.content,
               editorDoc.richText,
               fresh.frontmatter,
-              fresh.rawFrontmatter, // L1 (Audit-13) — refresh originalFrontmatterCache too
+              fresh.rawFrontmatter, // refresh originalFrontmatterCache too
               { mtimeMs: fresh.lastModified, size: fresh.rawByteSize },
             );
           } else {
-            // Audit-16 6.3 — no open editor: applyReloadFromDisk (which
-            // re-stamps the drift baseline via its diskIdentity arg) never
-            // runs, so re-anchor the per-file baseline here (A8-M2 shape —
-            // a stale baseline makes the NEXT in-app save fire a false
-            // drift prompt) and drop any seeded-but-not-open FM cache so
-            // the next field edit re-seeds from the disk truth the user
-            // just accepted. (The surviving-gateway-writer cancel that used to
-            // live here moved above the branch — Audit-18 M6.)
+            // No open editor, so applyReloadFromDisk never re-stamps the drift
+            // baseline: re-anchor it here (a stale baseline makes the next
+            // in-app save fire a false drift prompt) and drop any
+            // seeded-but-not-open FM cache so the next field edit re-seeds
+            // from the disk truth the user just accepted.
             noteBaseline(rel, fresh.lastModified, fresh.rawByteSize);
             dropStaleSeededFrontmatterCache(rel);
           }
@@ -741,8 +647,7 @@ export function promptMarkdownPendingWriteConflict(
       {
         label: 'Keep local',
         handler: async () => {
-          // Audit-19 UX-6 — back up the external version before the pending
-          // write overwrites it (the drift gate's own backup call dedupes).
+          // Back up the external version before the pending write overwrites it (the drift gate's own backup call dedupes).
           const vaultRoot = getActiveVaultPath();
           if (!vaultRoot || !(await backupExternalVersion(vaultRoot, rel))) return;
           uiStore.pushToast({
@@ -757,7 +662,7 @@ export function promptMarkdownPendingWriteConflict(
 }
 
 /**
- * Sprint C / C.1 — toast for an external frontmatter-only edit to a file
+ * Toast for an external frontmatter-only edit to a file
  * whose Properties popup is open with unflushed row edits. The body is
  * unchanged (the classifier only routes here from the body-equivalent
  * short-circuit), so we never need to touch the editor body — only the
@@ -781,10 +686,8 @@ export function promptMarkdownPendingWriteConflict(
 export function promptPropertiesPopupModified(
   rel: string,
   next: FileMetadata,
-  // Audit-17 5.8 — nullable: the dispatcher also routes here when a Properties
-  // popup is dirty over a NEVER-loaded doc (no open editor), where `editorDoc`
-  // is null. The prompt only needs `rel` + metadata; the editor-only effects
-  // (title label, FM-cache refresh) are guarded on `editorDoc` presence.
+  // Null when the popup is dirty over a never-loaded doc (no open editor); the
+  // editor-only effects (title label, FM-cache refresh) are guarded on it.
   editorDoc: DocumentState | null,
 ): void {
   const filename = editorDoc?.title || rel;
@@ -792,59 +695,51 @@ export function promptPropertiesPopupModified(
     text: `Properties of "${filename}" were modified externally while your Properties popup has unsaved edits. Reload from disk (discard popup edits) or keep your local edits?`,
     type: 'warning',
     duration: 0,
-    sticky: true, // Audit-19 UX-6
+    sticky: true,
     dedupeKey: `ext-mod:${rel}`,
     actions: [
       {
         label: 'Reload',
-        // Audit-16 6.3 — async + click-time disk re-read, mirroring
-        // promptModifiedFile (a second external write between toast-open and
-        // the click would otherwise be reverted by the stale `next` snapshot).
+        // Async + click-time disk re-read (a second external write since
+        // toast-open would otherwise be reverted by the stale `next` snapshot).
         handler: async () => {
-          // Audit-17 2.5 — re-read FIRST, destructive tail after (mirrors the
-          // `promptMarkdownPendingWriteConflict` Reload reorder; see the full
-          // rationale there). The prior 6.3 ordering cancelled the popup's
-          // armed gateway writes + cleared the dirty tracker up front, so a
-          // rejecting re-read dropped the popup's pending rows AND its
-          // conflict routing while the reload never applied.
+          // Re-read FIRST, destructive tail after (see
+          // `promptMarkdownPendingWriteConflict`): a rejecting re-read must not
+          // drop the popup's pending rows and conflict routing.
           //
-          // L17 (Audit-13) shape — bail if a vault swap lands during the re-read.
+          // Bail if a vault swap lands during the re-read.
           const identity = captureVaultIdentity();
           const wasIndexed = vaultIndexStore.getMetadata(rel) !== undefined;
           await vaultIndexStore.applyChanges([rel]);
           if (!isStillSameVault(identity)) return;
-          // Audit-17 5.6(b) — undefined after the targeted re-read of a path
-          // that WAS indexed means applyChanges processed a DELETION (file
-          // gone). Skip the store mutations + baseline stamp; the watcher
-          // delete pipeline owns teardown. A never-indexed path (transient)
-          // keeps the documented `?? next` fallback.
+          // Undefined after re-reading a path that WAS indexed means a
+          // DELETION: skip the store mutations + baseline stamp (the watcher
+          // delete pipeline owns teardown). A never-indexed path keeps the
+          // `?? next` fallback.
           const reread = vaultIndexStore.getMetadata(rel);
           if (!reread && wasIndexed) return;
           const fresh = reread ?? next;
           // Cancel any popup gateway timer armed for this path before the
           // applies, so a debounce armed for the popup's pre-Reload rows
-          // can't fire moments later and overwrite the just-applied external
-          // frontmatter. Clearing the tracker entry is also defensive — a
-          // still-open popup that hadn't yet typed further would otherwise
-          // re-block the next sync-frontmatter for this path. (Audit-18 M6 —
-          // the shared helper; this site already had the loop.)
+          // can't overwrite the just-applied external frontmatter. Clearing
+          // the tracker entry also stops a still-open popup from re-blocking
+          // the next sync-frontmatter for this path.
           cancelDirtyGatewayWritersForPath(rel);
           // Apply external frontmatter trio. The body is unchanged
           // (sync-frontmatter precondition), so applyReloadFromDisk is overkill —
-          // setFrontmatter (with rawFrontmatter, P2.1) refreshes the editor's FM
-          // cache AND originalFrontmatterCache (mirrors the L1/L13 sibling sites).
+          // setFrontmatter (with rawFrontmatter) refreshes the editor's FM
+          // cache AND originalFrontmatterCache.
           boardStore.applyFrontmatterToBackedTiles(rel, fresh);
           fileTagsStore.setFileTags(rel, normalizeTags(fresh.frontmatter.tags));
-          // Audit-17 5.8 — guard on docId presence: with no open editor (the
-          // never-loaded-doc popup case) there is no FM cache to refresh; the
-          // tile-def + tag applies above already carry the external change.
+          // With no open editor there is no FM cache to refresh; the tile-def +
+          // tag applies above already carry the external change.
           if (editorDoc) {
             documentStore.setFrontmatter(editorDoc.docId, fresh.frontmatter, fresh.rawFrontmatter);
           }
-          // Audit-16 6.3 — setFrontmatter (unlike applyReloadFromDisk) never
-          // re-stamps the drift baseline, so re-anchor it to the accepted disk
-          // state (A8-M2 shape) and drop any seeded-but-not-open FM cache for
-          // sibling cards/rows backed by this path.
+          // setFrontmatter (unlike applyReloadFromDisk) never re-stamps the
+          // drift baseline, so re-anchor it to the accepted disk state and drop
+          // any seeded-but-not-open FM cache for sibling cards/rows backed by
+          // this path.
           noteBaseline(rel, fresh.lastModified, fresh.rawByteSize);
           dropStaleSeededFrontmatterCache(rel);
         },
@@ -852,7 +747,7 @@ export function promptPropertiesPopupModified(
       {
         label: 'Keep local',
         handler: async () => {
-          // Audit-19 UX-6 — back up the external version first.
+          // Back up the external version first.
           const vaultRoot = getActiveVaultPath();
           if (!vaultRoot || !(await backupExternalVersion(vaultRoot, rel))) return;
           // No state mutation — the popup's debounced gateway write
@@ -883,33 +778,24 @@ export function promptDeletedFile(
   editorDoc: { docId: string; title: string; body: string },
   ctx: VaultContext,
 ): void {
-  // Phase B / B.5 — snapshot the frontmatter at toast-open time. If a
-  // parallel flow (vault swap, tab close) calls
-  // `documentStore.unloadDocument(editorDoc.docId)` between toast-open
-  // and Keep-local-click, `documentStore.getFrontmatter` returns
-  // undefined and the recreated file lands body-only — losing tags /
-  // properties / any other frontmatter keys. Capturing into a closure
-  // means even if the live cache vanishes, the user's choice can still
-  // honour the data they were looking at when they hit Keep local.
-  //
-  // Body is also captured for the same reason (the doc unload would
-  // wipe `editorDoc.body` since DocumentState is the live store).
+  // Snapshot frontmatter + body at toast-open time. If a vault swap or tab
+  // close unloads the doc before the Keep-local click, the live cache is gone
+  // and the recreated file would land body-only, losing tags / properties.
   const fmSnapshot = { ...(documentStore.getFrontmatter(editorDoc.docId) ?? {}) };
   const bodySnapshot = editorDoc.body;
   uiStore.pushToast({
     text: `"${editorDoc.title || rel}" was deleted externally. Reload (drop in-memory copy), or keep your local edits and re-create the file?`,
     type: 'warning',
     duration: 0,
-    sticky: true, // Audit-19 UX-6
+    sticky: true,
     dedupeKey: `ext-deleted:${rel}`,
     actions: [
       {
         label: 'Reload',
         handler: async () => {
-          // Audit-19 EXT-3 — probe first: a sync client may have re-created
-          // the file since the toast appeared. Then "Reload" means load THAT
-          // version — dropping the doc and its tags.json membership for a
-          // live file (the old behaviour) lost its tags.
+          // Probe first: a sync client may have re-created the file since the
+          // toast appeared. Then "Reload" means load THAT version, not drop the
+          // doc and its tags for a live file.
           const identity = captureVaultIdentity();
           let back = false;
           try {
@@ -928,23 +814,22 @@ export function promptDeletedFile(
           }
           // Drop the in-memory doc — the file is gone, the user wants the
           // delete to win. Pending writers in TextTile / DocumentEditor are
-          // self-disarming on ENOENT via `vault:write-existing-file-text`
-          // (Phase 1), so we don't need to reach into their debounce
-          // timers from here.
+          // self-disarming on ENOENT via `vault:write-existing-file-text`,
+          // so we don't need to reach into their debounce timers from here.
           documentStore.unloadDocument(editorDoc.docId);
-          // Phase 4.2 (2026-05-30) — the user accepted the deletion, so drop
-          // the file's `.filo/tags.json` membership too. Without this the
-          // orphan entry lingers until the next vault-open pruneOrphanFileTags.
-          // (Suppressed on Keep local — that path re-creates the file.)
+          // The user accepted the deletion, so drop the file's
+          // `.filo/tags.json` membership too; otherwise the orphan entry
+          // lingers until the next vault-open prune. (Not on Keep local —
+          // that path re-creates the file.)
           fileTagsStore.dropFile(rel);
         },
       },
       {
         label: 'Keep local',
-        // allow-keep-local-no-backup: recreateDeletedFile creates exclusively (Audit-19 EXT-3) and never overwrites; a reappeared file routes to promptModifiedFile, which backs up
+        // allow-keep-local-no-backup: recreateDeletedFile creates exclusively and never overwrites; a reappeared file routes to promptModifiedFile, which backs up
         handler: async () => {
           await recreateDeletedFile(rel, editorDoc, ctx, { fmSnapshot, bodySnapshot }, (fresh) => {
-            // Audit-19 EXT-3 — the file is back: offer the modified-file choice.
+            // The file is back: offer the modified-file choice.
             const live = documentStore.getDocument(editorDoc.docId);
             if (live) promptModifiedFile(rel, fresh, live);
           });

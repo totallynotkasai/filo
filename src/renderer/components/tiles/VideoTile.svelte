@@ -14,7 +14,7 @@
   let { tile }: { tile: VideoTile } = $props();
 
   let inputUrl = $state('');
-  // UX-1 — surface a fallback when the video fails to load (broken/missing
+  // Surface a fallback when the video fails to load (broken/missing
   // vault path, dead URL) instead of leaving an empty black box.
   let loadFailed = $state(false);
 

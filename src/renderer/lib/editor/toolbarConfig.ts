@@ -2,7 +2,7 @@ import type { Editor } from '@tiptap/core';
 import { toolbarStore } from '../../stores/toolbar.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 
-/** Audit-19 UX-2 — shown when TipTap's Link URI allowlist refuses a link. */
+/** Shown when TipTap's Link URI allowlist refuses a link. */
 export const LINK_REFUSED_MESSAGE = "That link couldn't be added. Use https://, mailto: or a filo:// link.";
 
 /**
@@ -23,10 +23,10 @@ let blurTimeout: ReturnType<typeof setTimeout> | null = null;
 let openInsertLinkPopupImpl: ((anchor: { x: number; y: number }) => void) | null = null;
 
 /**
- * Audit-19 UX-1 — every MUTATING toolbar command routes through here. A
- * non-editable editor (lossy read-only note, close-drain freeze, failed disk
- * read) still accepts TipTap commands programmatically, so a Bold / heading /
- * list button used to change a read-only note's text anyway.
+ * Every MUTATING toolbar command routes through here. A non-editable editor
+ * (lossy read-only note, close-drain freeze, failed disk read) still accepts
+ * TipTap commands programmatically, so without this a Bold / heading / list
+ * button would change a read-only note's text anyway.
  */
 function chainIfEditable(): ReturnType<Editor['chain']> | null {
   if (!activeEditor || !activeEditor.isEditable) return null;
@@ -40,8 +40,8 @@ function chainIfEditable(): ReturnType<Editor['chain']> | null {
  * `$derived` evaluation or template expression. Tiptap fires `onTransaction`
  * synchronously inside chain commands (e.g. `setLink().run()`); when the
  * originating call site is itself reactive, a synchronous `$state` write
- * here would throw `state_unsafe_mutation` and unwind the chain (which was
- * also why Insert Link silently dropped its setLink).
+ * here would throw `state_unsafe_mutation` and unwind the chain (e.g. Insert
+ * Link silently dropping its setLink).
  */
 function syncStateToToolbar(editor: Editor) {
   const heading: 'normal' | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6' =
@@ -232,8 +232,8 @@ export const tiptapToolbar = {
 
   setLink(url: string) {
     if (url) {
-      // Audit-19 UX-2 — setLink returns false when Link's URI allowlist refuses
-      // the href; that used to fail silently.
+      // setLink returns false when Link's URI allowlist refuses the href;
+      // surface it rather than failing silently.
       const ok = chainIfEditable()?.focus().setLink({ href: url }).run();
       if (activeEditor?.isEditable && !ok) uiStore.toast(LINK_REFUSED_MESSAGE, 'error');
     } else {

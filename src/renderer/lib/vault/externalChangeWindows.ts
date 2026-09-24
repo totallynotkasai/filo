@@ -1,9 +1,8 @@
 import { vaultPath, type VaultPath } from '../../../shared/vaultPath';
 
 /**
- * External-change timing/bookkeeping windows — extracted from
- * `stores/vaultExternalChanges.ts` (Phase 2 / audit plan 7.9) so the
- * orchestrator stays under its file-size ceiling.
+ * External-change timing/bookkeeping windows — split out of
+ * `stores/vaultExternalChanges.ts` (file-size ceiling).
  *
  * This module owns the two module-scoped grace/retry windows the external-
  * change pipeline consults to avoid acting on its own in-flight writes and
@@ -26,7 +25,7 @@ import { vaultPath, type VaultPath } from '../../../shared/vaultPath';
  * `onVaultSwap('pre-swap', 'vaultExternalChanges', …)` registration (the
  * characterization test asserts that subscriber name exists) and calls
  * `resetPartialReadRetryInflight()` + `clearRecentRenames()` from inside it.
- * These maps are declared `const`, so the `ci:vault-scoped-state` gate (which
+ * These maps are declared `const`, so the `gates:vault-scoped-state` gate (which
  * only flags `let`-declared module state) does not require a second swap
  * subscription here.
  */
@@ -36,15 +35,13 @@ import { vaultPath, type VaultPath } from '../../../shared/vaultPath';
 // ---------------------------------------------------------------------------
 
 /**
- * Phase 22 M9 — paths currently inside a partial-read retry window. Prevents
- * an infinite re-classify loop when an external write stays mid-flight across
- * the retry interval. A path is removed once its delayed re-read fires.
+ * Paths currently inside a partial-read retry window. Prevents an infinite
+ * re-classify loop when an external write stays mid-flight across the retry
+ * interval. A path is removed once its delayed re-read fires.
  *
- * Phase 3 / 3.2 — replaced the fixed 500 ms interval with a bounded backoff
- * schedule (500 / 1500 / 3000 ms, max 3 attempts) so a perpetually-mid-write
- * file no longer loops indefinitely. After exhaustion we surface a "file
- * shrank externally — reload or keep your view?" toast so the user
- * explicitly chooses.
+ * Bounded backoff (500 / 1500 / 3000 ms, max 3 attempts) so a
+ * perpetually-mid-write file can't loop forever. After exhaustion we surface
+ * a "file shrank externally — reload or keep your view?" toast.
  */
 export const PARTIAL_READ_RETRY_BACKOFF_MS = [500, 1500, 3000] as const;
 export const PARTIAL_READ_MAX_RETRIES = PARTIAL_READ_RETRY_BACKOFF_MS.length;
@@ -60,14 +57,9 @@ const partialReadRetryInflight = new Set<VaultPath>();
 const partialReadRetryCount = new Map<VaultPath, number>();
 
 /**
- * Phase A.5 — tracks the scheduled retry `setTimeout` handles so a vault
- * swap can `clearTimeout` them before they fire against the new vault.
- *
- * Before this map, `resetPartialReadRetryInflight()` cleared the
- * in-flight Set + counter map, but the pending `setTimeout`s still
- * fired their handler. If the new vault had a same-named file, the late
- * timer routed `handleExternalMarkdownChanges([rel])` against the new
- * vault's metadata using the old vault's baseline — a silent
+ * Tracks the scheduled retry `setTimeout` handles so a vault swap can
+ * `clearTimeout` them. Otherwise a late timer would re-classify a same-named
+ * file in the new vault against the old vault's baseline — a silent
  * misclassification that could overwrite content.
  */
 // allow-module-state: reset via resetPartialReadRetryInflight called from vaultExternalChanges's pre-swap handler
@@ -110,7 +102,7 @@ export function schedulePartialReadRetry(
   partialReadRetryInflight.add(key);
   partialReadRetryCount.set(key, attempt + 1);
   const delay = PARTIAL_READ_RETRY_BACKOFF_MS[attempt];
-  // Phase A.5 — record the timer handle so vault-swap reset can
+  // Record the timer handle so vault-swap reset can
   // clearTimeout before it fires. The callback also clears its
   // own entry on dispatch so the map stays bounded.
   const timer = setTimeout(() => {
@@ -123,21 +115,11 @@ export function schedulePartialReadRetry(
 }
 
 /**
- * Phase 3 / 3.4 — clears the partial-read in-flight registry on vault swap.
- * Without this, a same-named file in the new vault could be erroneously
- * deduped from re-classification because the prior vault's retry window
- * left its relative path in the Set. Called from the external-changes store's
- * `onVaultSwap` handler alongside the other vault-swap reset hooks
- * (resetWriteTracking, cancelAllPendingWrites, historyStore.clear).
- *
- * Phase 3 / 3.2 — also clears the per-path retry counter so an exhausted
- * retry in the OUTGOING vault doesn't immediately surface its
- * confirmation toast under the INCOMING vault.
- *
- * Phase A.5 — also `clearTimeout`s every pending retry. The Set-clear
- * alone wasn't enough because the timers still fired their callback,
- * which re-entered the classifier against whatever vault was open at
- * fire time.
+ * Clears the partial-read retry state on vault swap (called from the
+ * external-changes store's `onVaultSwap` handler): the in-flight Set (else a
+ * same-named file in the new vault is wrongly deduped), the per-path counter
+ * (else an outgoing-vault exhaustion toast surfaces in the new vault), and
+ * every pending timer (else it re-enters the classifier against the new vault).
  */
 export function resetPartialReadRetryInflight(): void {
   for (const timer of partialReadRetryTimers.values()) clearTimeout(timer);
@@ -151,7 +133,7 @@ export function resetPartialReadRetryInflight(): void {
 // ---------------------------------------------------------------------------
 
 /**
- * D.4 — grace window (ms) for the deferred attachment-delete prompt. Tracks
+ * Grace window (ms) for the deferred attachment-delete prompt. Tracks
  * the most recently observed `vault:file-renamed` event for each oldPath.
  * When `handleExternalAttachmentChanges` would otherwise prompt for a
  * deleted file, it first sleeps `ATTACHMENT_DELETE_GRACE_MS` and re-checks
@@ -197,7 +179,7 @@ export function clearRecentRenames(): void {
 }
 
 /**
- * Audit-19 EXT-2 — a sync conflict (OneDrive renames the local copy to
+ * A sync conflict (OneDrive renames the local copy to
  * `Note-DEVICE.md`, then downloads the other version as `Note.md`) leaves the
  * canonical path missing for a moment. For that window its "deleted
  * externally" prompt is deferred — the file is expected to reappear.
@@ -219,7 +201,7 @@ export function reappearanceWindowRemaining(rel: string): number {
 }
 
 /**
- * D.4 — test seam for the grace-window timer. Allows unit tests to drain
+ * Test seam for the grace-window timer. Allows unit tests to drain
  * the recent-rename map deterministically without depending on real
  * `Date.now()` progression.
  */

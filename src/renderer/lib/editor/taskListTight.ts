@@ -1,14 +1,14 @@
 import { Extension } from '@tiptap/core';
 
 /**
- * Audit-19 UX-7 — give `taskList` the `tight` attribute bullet/ordered lists
+ * Give `taskList` the `tight` attribute bullet/ordered lists
  * already get from tiptap-markdown's `MarkdownTightLists` (whose `listTypes` is
  * hard-coded to `['bulletList', 'orderedList']` and not configurable).
  *
  * prosemirror-markdown's `renderList` reads `node.attrs.tight`; without it a
- * task list fell back to the loose default, so Filo wrote every checklist with
- * blank lines between items (`- [ ] a\n\n- [ ] b`) and a tight checklist from
- * Obsidian / GitHub round-tripped lossy (read-only). A list parsed from HTML is
+ * task list falls back to the loose default, writing every checklist with
+ * blank lines between items (`- [ ] a\n\n- [ ] b`) so a tight checklist from
+ * Obsidian / GitHub round-trips lossy (read-only). A list parsed from HTML is
  * tight unless its items contain `<p>` (the loose-list shape), so an existing
  * loose checklist stays loose; a checklist created in the editor is tight.
  */

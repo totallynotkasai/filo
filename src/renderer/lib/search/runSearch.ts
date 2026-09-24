@@ -1,5 +1,5 @@
 /**
- * Vault-wide Search engine (Sprint E.2).
+ * Vault-wide Search engine.
  *
  * Walks every loaded tile across every board in the active vault and
  * produces a flat list of `SearchMatch` records ordered for deterministic

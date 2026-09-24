@@ -189,7 +189,7 @@
   let trap: FocusTrap | null = null;
   $effect(() => {
     const triggerEl = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    // Phase 2 — capture board id at popup mount so the deferred push lands
+    // Capture board id at popup mount so the deferred push lands
     // on the originating board even if the user switched boards in the
     // meantime.
     const mountBoardId = boardStore.current?.id ?? '';

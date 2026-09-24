@@ -5,14 +5,9 @@ import { boardCacheStore } from './boardCache.svelte';
 import { onVaultSwap } from '../core/vaultLifecycle';
 
 /**
- * Phase 1 / 1.1 — stable JSON sort used by `hasUnsavedChanges` to compare a
- * pending snapshot against the live store values. The default `JSON.stringify`
- * preserves insertion order, but a deep-clone via `JSON.parse(JSON.stringify(x))`
- * re-serialises keys in the order JavaScript walks them — which is insertion
- * order in modern engines, so the bare comparison would already work. The
- * recursive sort makes the contract explicit: two settings trees compare equal
- * iff every (path, value) pair matches, regardless of how keys were inserted
- * over the session. Cheap given the small settings tree.
+ * Key-sorted JSON used by `hasUnsavedChanges`: two settings trees compare
+ * equal iff every (path, value) pair matches, regardless of key insertion
+ * order. Cheap given the small settings tree.
  */
 function stableStringify(value: unknown): string {
   return JSON.stringify(value, (_key, v) => {
@@ -36,7 +31,7 @@ function stableStringify(value: unknown): string {
  *     `vaultStore.project.settings` that the Global tab edits.
  *   - Current board (`pendingBoardSettings`) — a deep clone of the
  *     active board's `settings` block (including the per-board
- *     `defaults` cascade override added in Phase 4.x follow-up). The
+ *     `defaults` cascade override). The
  *     Current Board tab edits this.
  *
  * Components that want to honour the pending session read from
@@ -87,7 +82,7 @@ export const pendingSettingsStore = {
   },
 
   /**
-   * Phase 1 / 1.1 — true when the active session has edits that diverge from
+   * True when the active session has edits that diverge from
    * the live store values. Drives the modal's discard-changes confirmation:
    * a session with no diff (e.g. just opened the modal, or applied/cancelled
    * before closing) doesn't pester the user. Compares both scopes:
@@ -265,9 +260,7 @@ export const pendingSettingsStore = {
   },
 
   /**
-   * Commits both pending copies. Retained for any caller that wants to
-   * apply both scopes atomically (currently none after the per-tab
-   * Apply rework, but kept as a stable seam).
+   * Commits both pending copies atomically.
    */
   apply(): void {
     this.applyGlobal();
@@ -299,8 +292,7 @@ export const pendingSettingsStore = {
   },
 };
 
-// Phase 4 (Consolidation 2026-05-25) — vault-swap reset registration.
-// Drops any uncommitted Apply/Cancel session so a settings modal still
+// Vault-swap reset: drops any uncommitted Apply/Cancel session so a settings modal still
 // open during the swap doesn't write the previous vault's pending values
 // into the new vault's board on a delayed Apply.
 onVaultSwap('pre-swap', 'pendingSettings', () => {

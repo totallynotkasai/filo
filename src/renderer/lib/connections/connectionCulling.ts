@@ -1,11 +1,10 @@
 /**
- * 3.3 — viewport culling for connections.
+ * Viewport culling for connections.
  *
- * `ConnectionLayer` previously rendered every connection (and recomputed
- * every label's path) on every drag frame with no viewport filter — an
- * O(connections) cost per frame that becomes the perf cliff on the large
- * boards we care about. Tiles are culled via the rbush spatial index;
- * connections were the blind spot.
+ * Without a viewport filter `ConnectionLayer` would render every connection
+ * (and recompute every label's path) on every drag frame — an O(connections)
+ * cost per frame that becomes the perf cliff on large boards. Tiles are culled
+ * via the rbush spatial index; this covers connections.
  *
  * A connection is kept if the axis-aligned bounding box spanning its two
  * endpoint tiles intersects the buffered viewport. Because any routed

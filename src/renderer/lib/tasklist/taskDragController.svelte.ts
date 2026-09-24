@@ -133,7 +133,7 @@ export class TaskDragController {
   private escCancelled = false;
   private escKeyHandler: ((e: KeyboardEvent) => void) | null = null;
   /**
-   * L16 (Audit-6) — the still-armed `armRow` pointerup, tracked so
+   * The still-armed `armRow` pointerup, tracked so
    * `cancelDrag()` / `endDrag()` can detach it if the host unmounts while the
    * pointer is held. The `{ once: true }` closure would otherwise never fire,
    * pinning the controller and re-disabling drag gates on a disposed instance.
@@ -230,7 +230,7 @@ export class TaskDragController {
       this.rowDragDisabledBySection = reset;
       this.pendingDragTileId = null;
     };
-    // L16 — detach any prior still-armed reset (a second pointerdown with no
+    // Detach any prior still-armed reset (a second pointerdown with no
     // intervening pointerup) before arming this one, then track it so
     // cancelDrag()/endDrag() can detach on an unmount-while-pressed.
     this.detachPendingResetPointerUp();
@@ -238,7 +238,7 @@ export class TaskDragController {
     window.addEventListener('pointerup', resetOnce, { once: true });
   }
 
-  /** L16 — remove the still-armed `armRow` pointerup, if any. */
+  /** Remove the still-armed `armRow` pointerup, if any. */
   private detachPendingResetPointerUp(): void {
     if (!this.pendingResetPointerUp) return;
     window.removeEventListener('pointerup', this.pendingResetPointerUp);
@@ -463,13 +463,12 @@ export class TaskDragController {
     if (!isMultiDrag && isSameSection) {
       if (indent.kind === 'indent' && indent.targetTileId && indent.targetTileId !== draggedId) {
         const targetId = indent.targetTileId;
-        // DRAG-2 — `indent.targetTileId` is the row the pointer last hovered,
-        // which can sit in a DIFFERENT section than the dragged row (easy near
-        // a section boundary or over the leading bucket) even though the drop
-        // finalized in the source section. Re-parenting `dragged` under a
-        // foreign-section row would render it under that parent's section while
-        // its placement stays here — the same divergence class as DRAG-1. Only
-        // depth/cycle guarded it before; reject the cross-section case too.
+        // `indent.targetTileId` is the row the pointer last hovered, which can
+        // sit in a DIFFERENT section than the dragged row (easy near a section
+        // boundary or over the leading bucket) even though the drop finalized
+        // in the source section. Re-parenting `dragged` under a foreign-section
+        // row would render it under that parent's section while its placement
+        // stays here (see the cross-section subtask note below), so reject it.
         const draggedIdx = placements.findIndex((pl) => pl.tileId === draggedId);
         const targetIdx = placements.findIndex((pl) => pl.tileId === targetId);
         const crossSectionTarget =
@@ -565,7 +564,7 @@ export class TaskDragController {
       sections: rebuilt.sections,
     };
 
-    // DRAG-4 — a drop outside any zone (or back onto the same slot) leaves the
+    // A drop outside any zone (or back onto the same slot) leaves the
     // rebuilt placement order identical to the pre-drag order. Committing it
     // anyway pushes a phantom undo entry AND (under a non-manual sort) flips the
     // board to Manual with a misleading "Switched to Manual" toast. Skip the
@@ -588,7 +587,7 @@ export class TaskDragController {
       isMultiDrag: false,
       isCrossSection: !isSameSection,
     });
-    // DRAG-1 — a single SUBTASK dragged into a DIFFERENT section: the rebuild
+    // A single SUBTASK dragged into a DIFFERENT section: the rebuild
     // moves its placement into the new section, but `nestedView` re-nests it
     // under its (still-in-the-old-section) parent, so it renders under the
     // parent in the OLD section while its placement sits in the new one — the
@@ -610,7 +609,7 @@ export class TaskDragController {
 
   /** Force-end the drag transaction (e.g. component unmount, panic path). */
   cancelDrag(): void {
-    // L16 — always detach the armRow pointerup, even when no drag actually
+    // Always detach the armRow pointerup, even when no drag actually
     // started (pointerdown armed it but the gesture never began), so an unmount
     // while the pointer is held doesn't leak the listener / pin the controller.
     this.detachPendingResetPointerUp();
@@ -642,7 +641,7 @@ export class TaskDragController {
     this.dragBlockIds = [];
     this.dragSourceSectionId = null;
     this.pendingDragTileId = null;
-    // L16 — belt-and-suspenders: a normal release fires resetOnce (nulling this)
+    // Belt-and-suspenders: a normal release fires resetOnce (nulling this)
     // before finalize → endDrag runs, so this is usually a no-op. It covers the
     // cancelDrag → endDrag and any drop-outside-zone path where the gate-reset
     // pointerup never ran.

@@ -66,7 +66,7 @@ export async function buildTextTileDefForKanbanDrop(args: {
 }): Promise<TileDefinition | null> {
   const { vaultRelPath, tileId, now, vaultRoot, board, allTilesById } = args;
   if (!vaultRoot) return null;
-  // Phase 37 / 37.6 — canonical two-arg form.
+  // Canonical two-arg form.
   let rawContent = '';
   try {
     const readResult = await window.filo.invoke('vault:read-file-text', vaultRoot, vaultRelPath);
@@ -126,12 +126,10 @@ export async function buildTileDefForVaultFile(args: {
     });
   }
 
-  // Switched from a conditional-spread object literal to a discriminated
-  // switch when `TileDefinition` became a `z.discriminatedUnion` (R5). The
-  // spread form widened `tileType` and TypeScript couldn't narrow each
-  // variant's required fields (image needs `src`, file needs `filePath` +
-  // `fileName` + `fileExtension`). The switch lets each branch satisfy its
-  // own variant directly.
+  // A discriminated switch (not a conditional-spread literal) because
+  // `TileDefinition` is a `z.discriminatedUnion`: a spread would widen
+  // `tileType` and TypeScript couldn't narrow each variant's required fields
+  // (image needs `src`, file needs `filePath` + `fileName` + `fileExtension`).
   const titleFromName = name.replace(/\.[^.]+$/, '');
   const baseDef = {
     id: tileId,
@@ -180,7 +178,7 @@ export async function importKanbanFileTile(args: {
   if (type === 'text') {
     // Copy .md to vault root, then build a text tile def referencing it.
     //
-    // Phase R2 — drain pending writers before the copy so a debounced
+    // Drain pending writers before the copy so a debounced
     // `.board.json` write doesn't race the new file's creation.
     const res = await copyFileIntoVault(sourcePath, vaultRoot);
     if (!res.success) return null;
@@ -204,7 +202,7 @@ export async function importKanbanFileTile(args: {
     });
   }
 
-  // Phase R2 — same drain-before-IPC contract for media tile drops.
+  // Same drain-before-IPC contract for media tile drops.
   const res = await copyFileIntoVault(sourcePath, vaultRoot);
   if (!res.success) return null;
   const stored: string = res.relativePath || res.path || '';
@@ -218,7 +216,7 @@ export async function importKanbanFileTile(args: {
     updatedAt: now,
   };
   // Same discriminated-switch shape as `buildTileDefForVaultFile` above —
-  // R5's discriminated `TileDefinition` requires per-variant required
+  // The discriminated `TileDefinition` requires per-variant required
   // fields, which a conditional-spread literal couldn't satisfy.
   switch (type) {
     case 'image':

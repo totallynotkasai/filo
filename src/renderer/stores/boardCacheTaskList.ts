@@ -9,8 +9,8 @@ type PartialTaskSectionStyle = Record<string, unknown>;
  * collapsed-subtask state). Section `position` is an absolute index into the
  * flat `tasks` array and is kept in sync with every insert/remove.
  *
- * Active-proxy reactivity contract (Phase 1.1 / 2.2 sweep)
- * --------------------------------------------------------
+ * Active-proxy reactivity contract
+ * --------------------------------
  * Every mutator below writes through the cache `$state` proxy. The active
  * `boardStore.current` is a separate proxy wrapping the same Board object;
  * Svelte 5 does not propagate writes between the two. The Task List host
@@ -137,8 +137,8 @@ export function makeTaskListSlice(ctx: CacheContext) {
       // populated one): inserting into the LAST tied section would wrongly bump
       // its earlier empty siblings (which sit at the same position), and
       // inserting into an EARLIER tied section needs the later ones bumped.
-      // Bumping every section AFTER the target in array order gets both right
-      // (SEC-1). The target and everything before it keep their position.
+      // Bumping every section AFTER the target in array order gets both right.
+      // The target and everything before it keep their position.
       //
       // Legacy callers (no targetSectionId): fall back to the original
       // carve-out where any section whose start sits exactly at the
@@ -150,14 +150,10 @@ export function makeTaskListSlice(ctx: CacheContext) {
         if (targetSectionId) {
           const targetArrayIdx = sections.findIndex((s) => s.id === targetSectionId);
           if (targetArrayIdx < 0) {
-            // 2.3 (Audit-16) — stale/missing target id (the section was
-            // removed between capture and apply: an undo racing an external
-            // board reload, or a quick-add aimed at a just-deleted section).
-            // The task is already spliced into `tasks` above, so shifting NO
-            // boundaries would leave every section whose slice starts
-            // at/after `insertAt` off by one (transitively misrouting later
-            // adds). Fall back to the legacy numeric shift so the boundaries
-            // stay anchored to the same tasks.
+            // Stale/missing target id (section removed between capture and
+            // apply, e.g. an undo racing an external reload). The task is
+            // already spliced into `tasks`, so shifting NO boundaries would
+            // leave later sections off by one. Fall back to the numeric shift.
             console.warn(
               '[boardCache] persistAddTaskPlacement: targetSectionId not found; falling back to numeric boundary shift',
               { targetSectionId },
@@ -220,7 +216,7 @@ export function makeTaskListSlice(ctx: CacheContext) {
       const tl = ctx.tasklistBoardOrWarn(boardId, 'reorderTaskPlacement');
       if (!tl) return;
 
-      // DRAG-5 — this helper renumbers `tasks` but does NOT adjust section
+      // This helper renumbers `tasks` but does NOT adjust section
       // `position` boundaries, so on a sectioned board it would silently desync
       // the section slices from the rows. It has no production caller today
       // (drag + keyboard reorders route through moveTaskBlock /
@@ -332,15 +328,14 @@ export function makeTaskListSlice(ctx: CacheContext) {
       // positions)" — schema/board.ts).
       //
       // Normalisation is a stable sort + a clamp into [0, taskCount].
-      //   - SEC-2: never emit `position > taskCount`. Such a position is not a
-      //     valid index into `tasks`; it can't own anything AND it silently
-      //     misroutes a later add-to-section into an earlier neighbour (SEC-1).
-      //     Trailing empty sections therefore PIN at taskCount (they used to be
-      //     bumped to taskCount+1, taskCount+2, … — the invalid representation).
+      //   - Never emit `position > taskCount`. Such a position is not a valid
+      //     index into `tasks`; it can't own anything AND it silently misroutes
+      //     a later add-to-section into an earlier neighbour. Trailing empty
+      //     sections therefore PIN at taskCount.
       //   - In-range ties are preserved exactly (bumping one would shift the
       //     next section's start past its first task, silently stealing it — the
       //     cross-section-drag corruption).
-      //   - SEC-4: the sort is stable, so the caller's array order is kept
+      //   - The sort is stable, so the caller's array order is kept
       //     deterministically. Callers must list empty ties BEFORE the populated
       //     owner; the clamp + min() are monotonic so the array stays sorted by
       //     position (a non-decreasing run can only tie, never invert).

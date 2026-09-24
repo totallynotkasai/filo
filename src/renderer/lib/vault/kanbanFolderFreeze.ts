@@ -1,9 +1,8 @@
 /**
- * Phase B / B.1 — Legacy Kanban kanbanFolder freeze helper.
+ * Legacy Kanban kanbanFolder freeze helper.
  *
- * Phase 2.3 stamps `kanbanFolder` on NEW kanban boards in
- * `boardCacheStore.persistNewBoard`. Boards created before that landed
- * have no field, so `getConventionFolderForBoardType` falls through to
+ * `boardCacheStore.persistNewBoard` stamps `kanbanFolder` on NEW kanban
+ * boards. Older boards have no field, so `getConventionFolderForBoardType` falls through to
  * `sanitize(name)`. Once the user renames a legacy board, existing
  * cards (resolved via their explicit `filePath` in tile defs) keep
  * pointing at `Kanban/<oldname>/`, while every NEW card is written

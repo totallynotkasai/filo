@@ -1,5 +1,5 @@
 /**
- * Audit-19 ERR-3 / EXT-7 / EXT-2 — user-facing sync-conflict notices.
+ * User-facing sync-conflict notices.
  *
  * A sync client (OneDrive, Dropbox, iCloud, Syncthing) that sees two edits of
  * one file keeps both: the other version lands under a conflict name
@@ -9,7 +9,7 @@
  *   - at vault open, `board:list-conflicts` (board forks `board:list` can't see);
  *   - live, main's `vault:sync-conflict` event (a board fork appearing, or a
  *     rename the correlator refused because the new name is a conflict copy
- *     of the missing file — EXT-2).
+ *     of the missing file).
  */
 import { uiStore } from '../../stores/ui.svelte';
 import { normalizePath } from '../utils/path';
@@ -94,7 +94,7 @@ export function listenForSyncConflicts(getVaultRoot: () => string): () => void {
     const n = args[0] as SyncConflictNotice | null;
     const root = getVaultRoot();
     if (!root || !n || typeof n.copyPath !== 'string' || typeof n.canonicalPath !== 'string') return;
-    // EXT-2 — the original is usually about to be re-downloaded under its own
+    // The original is usually about to be re-downloaded under its own
     // name; don't greet that gap with a "deleted externally" prompt.
     noteExpectedReappearance(n.canonicalPath, CONFLICT_REAPPEAR_GRACE_MS);
     uiStore.pushToast(syncConflictToast(root, [n]));

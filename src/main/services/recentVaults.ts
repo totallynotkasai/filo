@@ -22,14 +22,11 @@ interface RecentVaultsFile {
 
 const MAX_UNPINNED = 10;
 /**
- * Phase 8 / 8.5 — absolute ceiling on the number of entries in
- * `recent-vaults.json`. Pinned entries previously had no cap, which meant
- * a runaway caller (or hand-edited file) could grow the list unboundedly
- * and slow every launch-time read. With 50, even a power user who pins
- * many workspaces lands well under the practical UI ceiling. If the file
- * on disk already has more, we prune the oldest pinned entries (by
- * `lastOpened`) on the next write — the trim never silently DROPS data
- * the user explicitly asked us to remember without surfacing a write.
+ * Absolute ceiling on the number of entries in `recent-vaults.json`,
+ * including pinned ones, so a runaway caller (or hand-edited file) can't
+ * grow the list unboundedly and slow every launch-time read. If the file
+ * already has more, the oldest pinned entries (by `lastOpened`) are pruned
+ * on the next write.
  */
 const MAX_TOTAL = 50;
 
@@ -47,7 +44,7 @@ async function readFile(): Promise<RecentVaultsFile> {
   try {
     data = await fs.readFile(filePath, 'utf-8');
   } catch (err) {
-    // Phase 21 / M27 — ENOENT on first launch is normal; anything else
+    // ENOENT on first launch is normal; anything else
     // (parse error, EACCES) deserves a breadcrumb so the user can see
     // why their recents list reset.
     if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
@@ -77,13 +74,13 @@ async function readFile(): Promise<RecentVaultsFile> {
 }
 
 async function writeFile(data: RecentVaultsFile): Promise<void> {
-  // Phase 21 / M27 — atomic write so a crash mid-save can't leave the
+  // Atomic write so a crash mid-save can't leave the
   // recent-vaults list as a half-written JSON blob that fails to parse
   // on next launch.
   await atomicWriteFile(getRecentVaultsPath(), JSON.stringify(data, null, 2));
 }
 
-// Phase 8 / 8.5 — two-stage cap:
+// Two-stage cap:
 //   1. unpinned entries are pruned to `MAX_UNPINNED` (most-recent first);
 //   2. if the combined list still exceeds `MAX_TOTAL`, pinned entries are
 //      pruned in lastOpened order so the user keeps the pins they touched

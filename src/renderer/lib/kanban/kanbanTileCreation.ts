@@ -118,11 +118,9 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
     const baseTitle = type === 'text' ? 'New Card' : type === 'audio' ? 'New Recording' : 'New Link';
     const tileTitle = baseTitle;
 
-    // R5 — `TileDefinition` is a discriminated union, so each branch must
-    // construct its own variant directly rather than mutating a partial
-    // object through `as Record<string, unknown>` writes. The earlier
-    // mutation pattern compiled only via casts and bypassed schema-level
-    // validation of the per-type required fields.
+    // `TileDefinition` is a discriminated union, so each branch constructs its
+    // own variant directly rather than mutating a partial object through casts
+    // (which would bypass type-checking of the per-type required fields).
     const baseDefFields = {
       id: tileId,
       title: tileTitle,
@@ -147,7 +145,7 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
       // default is just noise — the user expects the suffix bump.
       if (vaultRoot) {
         try {
-          // Audit-19 BL-1 — create-EXCLUSIVE: an existing off-board file with
+          // Create-EXCLUSIVE: an existing off-board file with
           // the same name is never overwritten; the helper bumps to ` (n)`.
           const created = await createUniqueMdFile({
             vaultRoot,
@@ -173,7 +171,7 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
             richText: [],
           });
         } catch (err) {
-          // Audit-19 BL-1 — no backing file means no card: a card with no
+          // No backing file means no card: a card with no
           // `filePath` would later resolve a convention path onto some other
           // file. The helper already surfaced the write failure.
           reportError('kanban.seed-md', err, `Failed to create a file for "${finalTitle}" — the card was not added`);
@@ -254,7 +252,7 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
     const fmWithDocId = { ...fmWithoutBoardType, id: contentId };
 
     try {
-      // Audit-19 BL-1 — create-EXCLUSIVE; a bumped name re-interpolates
+      // Create-EXCLUSIVE; a bumped name re-interpolates
       // `{{title}}` so the body names the file it actually lives in.
       const created = await createUniqueMdFile({
         vaultRoot,
@@ -284,10 +282,8 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
 
     const tileId = createId();
     const now = Date.now();
-    // R5 — construct the typed text-tile def directly. The previous
-    // partial-then-mutate pattern relied on `as TileDefinition` + casts
-    // through `Record<string, unknown>` and bypassed schema-level
-    // validation of `contentId` (required for text variants).
+    // Construct the typed text-tile def directly so `contentId` (required for
+    // text variants) is type-checked rather than bypassed through casts.
     const def: TileDefinition = {
       id: tileId,
       type: 'text',

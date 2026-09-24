@@ -77,7 +77,7 @@
   let dragBoardId = $state<string | null>(null);
   let dragOverBoardId = $state<string | null>(null);
 
-  // Audit 6.5 — keyboard reorder (Alt+ArrowUp/Down), the a11y equivalent of
+  // Keyboard reorder (Alt+ArrowUp/Down), the a11y equivalent of
   // the drag-to-reorder path above. `boardListEl` lets us refocus the moved
   // row after the keyed `{#each}` re-renders, mirroring TabBar's Alt+Arrow.
   let boardListEl = $state<HTMLDivElement | null>(null);
@@ -199,7 +199,7 @@
     }
     const board = vaultStore.project.boards.find(b => b.id === renamingBoardId);
     if (board) {
-      // Phase B / B.1 — Legacy Kanban kanbanFolder freeze at rename time.
+      // Legacy Kanban kanbanFolder freeze at rename time.
       // Persist BEFORE mutating board.name so a crash between stamp +
       // rename can't leave the board renamed with no kanbanFolder field
       // (the new name would then derive a different `Kanban/<newname>/`

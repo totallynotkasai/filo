@@ -215,12 +215,12 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
       Link.configure({
         openOnClick: false,
         HTMLAttributes: { class: 'tiptap-link' },
-        // Audit-19 DEP-2 — only an explicit-scheme URL autolinks while typing.
-        // Link's default accepts ANY dotted hostname, so typing ` Notes.md ` or
-        // `example.com` saved a bogus `[Notes.md](http://Notes.md)`.
+        // Only an explicit-scheme URL autolinks while typing. Link's default
+        // accepts ANY dotted hostname, so typing ` Notes.md ` would save a bogus
+        // `[Notes.md](http://Notes.md)`.
         shouldAutoLink: (url: string) => /^[a-z][a-z0-9+.-]*:\/\//i.test(url),
-        // Audit-19 UX-2 — allow `filo://` internal links (setLink silently
-        // returned false and notes containing one opened read-only). A custom
+        // Allow `filo://` internal links (otherwise setLink silently returns
+        // false and notes containing one open read-only). A custom
         // `isAllowedUri`, NOT `protocols: ['filo']`: `protocols` registers with
         // linkifyjs globally and Link's onDestroy `reset()`s linkifyjs, so every
         // TextTile unmount would wipe it for all other editors. `javascript:` etc.
@@ -250,13 +250,12 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
         lowlight,
       }),
       Markdown.configure({
-        // Audit 2.5 + 2.6 — `html: true` lets tiptap-markdown round-trip the
-        // marks it has no Markdown token for (underline, text colour, highlight,
-        // font family / size) and non-GFM tables (merged or multi-paragraph
-        // cells) as inline HTML, parsing that HTML back on load. With `html:
-        // false` those marks serialised to empty strings (silent formatting
-        // loss, 2.6) and such a table serialised to the literal sentinel
-        // `[table]`, destroying every cell's contents on the next write (2.5).
+        // `html: true` lets tiptap-markdown round-trip the marks it has no
+        // Markdown token for (underline, text colour, highlight, font family /
+        // size) and non-GFM tables (merged or multi-paragraph cells) as inline
+        // HTML, parsing that HTML back on load. With `html: false` those marks
+        // serialise to empty strings and such a table to the literal `[table]`,
+        // destroying every cell's contents on the next write.
         // ProseMirror's schema-constrained parse keeps the inbound HTML safe:
         // unknown nodes/attrs (scripts, event handlers) are dropped, and
         // TextStyle only re-reads colour / fontSize / fontFamily. Block indent
@@ -265,9 +264,9 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
         // `markdownHtmlMode.test.ts`.
         html: true,
         tightLists: true,
-        // Audit-19 DEP-2 — `linkify: true` turned filenames, bare domains and
-        // emails in ordinary notes into links, so those notes round-tripped
-        // lossy and opened read-only. Bare text stays text (KNOWN_LIMITATIONS #17).
+        // `linkify: true` would turn filenames, bare domains and emails in
+        // ordinary notes into links, so those notes would round-trip lossy and
+        // open read-only. Bare text stays text (KNOWN_LIMITATIONS #17).
         linkify: false,
         breaks: false,
         transformPastedText: true,

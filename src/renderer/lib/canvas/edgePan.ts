@@ -15,12 +15,10 @@ interface EdgePanState {
   rafId: number | null;
   mouseX: number;
   mouseY: number;
-  // Audit 5.4 — the canvas scope captured at start time. Edge-pan is a
-  // module singleton; routing through the global `canvasStore` facade made
-  // tick() pan whichever pane was active AT TICK TIME. Connection drawing
-  // doesn't use pointer capture, so activating another pane mid-draw made
-  // edge-pan scroll the wrong pane's canvas (and persist its viewport).
-  // Pinning the originating pane's scope keeps the pan on the right canvas.
+  // The canvas scope captured at start time. Edge-pan is a module singleton;
+  // routing through the global `canvasStore` facade would pan whichever pane
+  // is active AT TICK TIME (e.g. another pane activated mid-draw). Pinning the
+  // originating pane's scope keeps the pan on the right canvas.
   scope: CanvasScope | null;
 }
 
@@ -67,9 +65,7 @@ function tick() {
 /**
  * Starts edge-panning. Call when a drag operation begins, passing the
  * pane-local canvas scope that should be panned for the duration of the
- * gesture. (Tile drag is pointer-captured to the active pane, so it can
- * pass the global facade; connection drawing must pass its own pane's
- * scope because it has no pointer capture — see Audit 5.4.)
+ * gesture (the pane the drag or connection draw started on).
  */
 export function startEdgePan(scope: CanvasScope): void {
   if (state.active) return;
@@ -115,8 +111,7 @@ export function getEdgePanScope(): CanvasScope | null {
  * transition. Edge-pan is a module singleton armed first-caller-wins
  * (`startEdgePan` early-returns when already active), so the first-mounted pane
  * could pin ITS scope even when the user is drawing in the OTHER pane —
- * edge-pan would then scroll the wrong canvas (Audit 5.2; the earlier Audit-5.4
- * fix pinned a scope but not necessarily the right pane's).
+ * edge-pan would then scroll the wrong canvas.
  *
  * Gate on the active pane: a connection draw starts with a pointerdown in its
  * pane, and PaneView's capture-phase handler activates that pane before drawing

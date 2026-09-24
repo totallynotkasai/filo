@@ -15,7 +15,7 @@ export const FiloLinkSchema = z.object({
   targetBoardId: z.string().optional(),
   targetTileId: z.string().optional(),
   targetPosition: z.object({
-    // Phase 8 / 8.3 — .finite() rejects NaN / ±Infinity that a hand-
+    // .finite() rejects NaN / ±Infinity that a hand-
     // edited filo:// link could otherwise propagate into pan transforms.
     x: z.number().finite(),
     y: z.number().finite(),
@@ -27,7 +27,7 @@ export const FiloLinkSchema = z.object({
 export type FiloLink = z.infer<typeof FiloLinkSchema>;
 
 /**
- * Sprint C / C5 — schema for a *decoded* link, produced by
+ * Schema for a *decoded* link, produced by
  * `decodeFiloLink`. Unlike `FiloLinkSchema`, this has no `id` field
  * because the renderer only ever decodes for navigation (no persistence)
  * — `id` belongs to the stored-on-disk shape. Using the same schema for
@@ -73,11 +73,10 @@ export function encodeFiloLink(link: FiloLink): string {
  * Decodes a filo:// URI back into link parameters.
  * Returns null if the URI is not a valid Filo internal link.
  *
- * Sprint C / C5 — validates the decoded payload through
+ * Validates the decoded payload through
  * `DecodedFiloLinkSchema.safeParse`. Rejects non-finite position
  * coordinates (NaN / ±Infinity) before they reach
- * `canvasStore.centerOn`. The previous `parseFloat(...) || 0` fallback
- * coerced NaN to 0 but happily passed through ±Infinity.
+ * `canvasStore.centerOn`.
  */
 export function decodeFiloLink(uri: string): DecodedFiloLink | null {
   if (!uri.startsWith('filo://')) return null;

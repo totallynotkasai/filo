@@ -10,12 +10,11 @@
   let triggerRef = $state<HTMLButtonElement | null>(null);
   let panelRef = $state<HTMLDivElement | null>(null);
 
-  // Audit-14 5.4 — panel geometry, recomputed on open + window resize so the
-  // panel never renders off-screen. The tab bar (this picker's only consumer)
-  // is the bottom-most chrome, so a below-the-trigger `position: absolute`
-  // panel routinely overflowed the viewport bottom. We now portal the panel
-  // out (escaping any transformed/clipping ancestor) and place it with a
-  // viewport-edge clamp, flipping above the trigger when below won't fit.
+  // Panel geometry, recomputed on open + window resize so the panel never
+  // renders off-screen (the tab bar, this picker's only consumer, is the
+  // bottom-most chrome). The panel is portaled out (escaping any
+  // transformed/clipping ancestor) and placed with a viewport-edge clamp,
+  // flipping above the trigger when below won't fit.
   const PANEL_WIDTH = 280;
   const PANEL_MAX_HEIGHT = 320;
   const PANEL_GAP = 4;
@@ -73,7 +72,7 @@
     { name: 'Nature', emojis: ['🌱','🌿','🍀','🌸','🌺','🌻','🌲','🍁','🌊','🌙','☀️','⛰️','🏔️','🌈','❄️','🦋'] },
   ];
 
-  // P4.2 (Audit-15) — flat index model for roving-tabindex keyboard nav. Every
+  // Flat index model for roving-tabindex keyboard nav. Every
   // category shares the same 8-column layout, so the whole picker reads as one
   // continuous grid; `categoryOffsets[ci]` maps a (category, local-index) pair
   // to a single global index. `CLEAR_INDEX` is the trailing "Clear emoji" stop.
@@ -114,8 +113,8 @@
     const insideWrapper = pickerRef?.contains(target) ?? false;
     const insidePanel = panelRef?.contains(target) ?? false;
     if (!insideWrapper && !insidePanel) {
-      // Audit-14 5.5 — route through closePicker so focus returns to the
-      // trigger (was a bare `showPicker = false`, stranding focus on <body>).
+      // Route through closePicker so focus returns to the trigger instead of
+      // being stranded on <body>.
       closePicker();
     }
   }
@@ -126,7 +125,7 @@
       closePicker();
       return;
     }
-    // P4.2 — roving-tabindex arrow navigation across the grid + to "Clear
+    // Roving-tabindex arrow navigation across the grid + to "Clear
     // emoji". Down from the last emoji row lands on Clear; Up from Clear
     // returns to the last emoji. Enter/Space/Tab fall through to native
     // button behavior.
@@ -167,7 +166,7 @@
     }
   });
 
-  // Reposition the panel on open + window resize (Audit-14 5.4).
+  // Reposition the panel on open + window resize.
   $effect(() => {
     if (!showPicker) return;
     updatePanelPos();
@@ -176,7 +175,7 @@
     return () => window.removeEventListener('resize', onResize);
   });
 
-  // P4.2 — focus the first emoji when the panel opens so arrow keys work
+  // Focus the first emoji when the panel opens so arrow keys work
   // immediately (mirrors ContextMenu/Dropdown). rAF lets the portaled panel
   // finish mounting before we reach into its buttons.
   $effect(() => {
@@ -277,7 +276,7 @@
 
   .emoji-panel {
     /* Portaled to <dialog>/<body> and positioned via inline top/left from
-       updatePanelPos (Audit-14 5.4) so `position: fixed` escapes any
+       updatePanelPos so `position: fixed` escapes any
        transformed / clipping ancestor and the panel stays on-screen. */
     position: fixed;
     width: 280px;

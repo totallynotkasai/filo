@@ -8,7 +8,7 @@ import { clearPendingRenameCascade, type RenameCascadeEntry } from './renameCasc
 import { isStillSameVault, type VaultIdentity } from './vaultIdentity';
 
 /**
- * Phase 4.5 (2026-05-30) — shared repair for the rename-cascade recovery
+ * Shared repair for the rename-cascade recovery
  * sentinel. Re-applies the board-ref + open-document + `.filo/tags.json`
  * cascade for every pending entry and clears the breadcrumb on full success.
  *
@@ -18,22 +18,15 @@ import { isStillSameVault, type VaultIdentity } from './vaultIdentity';
  * the pointers" or "leave them broken"; we repair, then the caller confirms
  * what was fixed. `verb` only flavours the failure toasts.
  *
- * Extracted from vault.svelte.ts (Phase 4 file-size ratchet) — it depends on
- * no vault-store module-private state, only the shared store singletons and
- * the sentinel writer, so it lives cleanly in `lib/vault/`.
- *
  * Returns the number of board references repaired on success (sentinel
  * cleared), or `null` if a board/tags flush failed (sentinel kept so the next
- * vault open retries the whole cascade) OR the vault swapped mid-repair (VS-1).
+ * vault open retries the whole cascade) OR the vault swapped mid-repair.
  *
- * Audit-11 VS-1 — the recovery modal that invokes this is PARKED awaiting a
- * user click, and the repair itself runs in-memory mutations across awaits, so
- * the active vault can swap before the click OR during the repair. The
- * generation-aware `captured` identity is threaded from the recovery sequencer
- * (captured against the vault this cascade belongs to, before the modal opened),
- * and re-checked after each await before any in-memory mutation. Without it a
- * swap would inject the OUTGOING vault's rename entries into the NEW vault's
- * board/doc cache. The disk writes below are main-side gated by
+ * The recovery modal that invokes this is PARKED awaiting a click, and the
+ * repair mutates in-memory state across awaits, so the vault can swap before
+ * or during it. `captured` (from the recovery sequencer, before the modal
+ * opened) is re-checked after each await so the OUTGOING vault's entries are
+ * never applied to the NEW vault's cache. Disk writes are main-side gated by
  * `assertActiveVault`; the in-memory mutations are not.
  */
 export async function repairRenameCascade(
@@ -43,18 +36,16 @@ export async function repairRenameCascade(
   captured: VaultIdentity,
 ): Promise<number | null> {
   await boardCacheStore.ensureAllLoaded();
-  // VS-1 — a swap during the load would apply the outgoing vault's entries to
+  // A swap during the load would apply the outgoing vault's entries to
   // the new vault's cache; bail before any in-memory mutation.
   if (!isStillSameVault(captured)) return null;
   const repairedBoards = new Set<string>();
   for (const entry of entries) {
     try {
-      // A9-L9 — re-apply the moved board's OWN path-key (the `.board.json` file
-      // that relocated), not just references TO the renamed file. Today
-      // `loadAllBoards` rescans the tree on every open, so the freshly-loaded
-      // cache already holds the new path and this is an idempotent no-op
-      // (returns []); the call makes recovery self-sufficient if board
-      // discovery ever stops being scan-driven. Mark each moved board dirty so
+      // Re-apply the moved board's OWN path-key (the `.board.json` file that
+      // relocated), not just references TO the renamed file. Usually an
+      // idempotent no-op (`loadAllBoards` rescans on open), but keeps recovery
+      // self-sufficient if board discovery stops being scan-driven. Mark each moved board dirty so
       // the `flushAllDirty` below rewrites it under its new name (mirrors the
       // live cascade's renameBoardPath → markDirty step).
       for (const id of boardCacheStore.renameBoardPath(entry.oldPath, entry.newPath)) {
@@ -72,7 +63,7 @@ export async function repairRenameCascade(
       );
     }
   }
-  // Phase 4.4 — repoint any open document, mirroring the normal rename path.
+  // Repoint any open document, mirroring the normal rename path.
   // The board loop above only fixes `.board.json` references; without this an
   // editor already open when an in-session repair fires keeps writing to the
   // OLD path, resurrecting it via mkdir-recursive on the next autosave.
@@ -80,7 +71,7 @@ export async function repairRenameCascade(
     documentStore.propagateRename(entry.oldPath, entry.newPath);
   }
   const flush = await boardCacheStore.flushAllDirty();
-  // VS-1 — re-check after the flush await, before the tag-store mutations below
+  // Re-check after the flush await, before the tag-store mutations below
   // (renameFile/renameFolder are in-memory). A swap here means the old vault's
   // board flush already landed (main-gated); just stop before touching tags.
   if (!isStillSameVault(captured)) return null;
@@ -92,11 +83,10 @@ export async function repairRenameCascade(
     });
     return null;
   }
-  // E5 — re-assert the `.filo/tags.json` sink for every rename that touched
-  // it, then flush. renameFile/renameFolder are idempotent (no-op when the
-  // key already moved before the crash), so this safely closes the window
-  // between the disk rename and the original synchronous tag flush (F3)
-  // regardless of which side a crash interrupted. Keep the sentinel if the
+  // Re-assert the `.filo/tags.json` sink for every rename that touched it,
+  // then flush. renameFile/renameFolder are idempotent (no-op when the key
+  // already moved before the crash), so this closes the window between the
+  // disk rename and the original tag flush. Keep the sentinel if the
   // tag write fails so the next open retries the whole cascade.
   let tagsReasserted = false;
   for (const entry of entries) {
@@ -116,7 +106,7 @@ export async function repairRenameCascade(
       return null;
     }
   }
-  // VS-1 — re-check before clearing the OLD vault's sentinel: a swap landed
+  // Re-check before clearing the OLD vault's sentinel: a swap landed
   // during the tag flush, so keep the breadcrumb (the next open of that vault
   // retries) rather than clearing it from the new vault's context.
   if (!isStillSameVault(captured)) return null;

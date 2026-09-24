@@ -6,7 +6,7 @@ import {
 } from '../utils/pathSecurity';
 
 /**
- * Audit 3.2 — resolves a decoded `filo://media/<relPath>` request to an
+ * Resolves a decoded `filo://media/<relPath>` request to an
  * absolute path, applying the SAME guards every generic renderer-facing vault
  * read enforces, in the same order:
  *
@@ -15,8 +15,8 @@ import {
  *      `vault:read-file-text`.
  *   2. `assertNotInFiloDir`     — the `.filo/` carve-out. Media tiles never
  *      legitimately point into `.filo/`; without this a hand-edited tile
- *      `file` (or a stray `fetch('filo://media/.filo/tags.json')`) streamed
- *      config bytes even though path traversal was already blocked.
+ *      `file` (or a stray `fetch('filo://media/.filo/tags.json')`) would
+ *      stream config bytes.
  *   3. `assertWithinVault`      — the primary containment check (canonicalises
  *      symlinks/junctions, refuses escapes).
  *

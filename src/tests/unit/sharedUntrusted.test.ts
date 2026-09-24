@@ -17,7 +17,7 @@ import {
  *   3. `shell.openExternal(...)`   — `asSafeOpenExternal`
  *
  * These tests exercise the validators directly. The CI gate
- * `scripts/check-untrusted-sink-discipline.mjs` enforces that the sinks
+ * `scripts/gates:untrusted-sinks` enforces that the sinks
  * route through these validators (`error` level after Phase 5).
  */
 

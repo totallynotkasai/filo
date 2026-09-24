@@ -6,11 +6,10 @@
  * envelopes (`{ ok: false, ... }` / `{ success: false, ... }`) are
  * part of the type so a caller that doesn't go through `invokeOk` /
  * `assertIpcOk` sees both branches at the type level and can't pretend
- * the call always succeeds. See CONSOLIDATION_PLAN_2026-05-25.md
- * Phase 1 for the bug-class this map prevents.
+ * the call always succeeds.
  *
  * Channel names are kept in sync with `IpcChannel` in `./types.ts` via
- * the `ci:ipc-parity` gate.
+ * the `gates:ipc-parity` gate.
  *
  * The variadic-args contract (each entry's `args`) is intentionally
  * lighter than the runtime check in `IPC_PAYLOAD_SCHEMAS`
@@ -95,11 +94,9 @@ export interface IpcChannelMap {
   };
   'vault:rename': {
     args: [vaultRoot: string, oldRelPath: string, newRelPath: string];
-    // IMPL_PLAN_2026-05-26 / Item 2 — `strandedAt` carries the temp path
-    // a Windows case-only rename ended up on when both the retries and
-    // the rescue restore failed. The renderer's rename-failure toast
-    // includes the path so the user can recover the file via File
-    // Explorer rather than thinking it was lost.
+    // `strandedAt` carries the temp path a Windows case-only rename ended up
+    // on when both the retries and the rescue restore failed, so the toast
+    // can tell the user where to recover the file.
     result:
       | { success: true }
       | { success: false; code?: string; error?: string; strandedAt?: string };
@@ -113,7 +110,7 @@ export interface IpcChannelMap {
     result: IpcSuccess;
   };
   /**
-   * Sprint B / B24 — closes the active vault: stops the watcher, drops the
+   * Closes the active vault: stops the watcher, drops the
    * registry pointer. Idempotent. The renderer-side "Close vault" action
    * pairs this with its own `fireVaultSwap` so per-vault stores reset.
    */
@@ -133,13 +130,11 @@ export interface IpcChannelMap {
   };
   'vault:read-file-text': {
     args: [vaultRoot: string, relPath: string];
-    // `mtimeMs` + `size` (F1, 2026-05-28; size added later) are captured by
-    // the handler's pre-flight stat and returned with the content so hydrate
-    // sites seed the pre-write drift baseline (mtime + size) without a second
-    // `vault:stat` round-trip. Both optional because a future handler revision
-    // could omit them; callers pass them to `markHydrated`, which only seeds a
-    // baseline when both are finite.
-    // Audit-19 ERR-7 — `encoding` is `'invalid-utf-8'` when the bytes aren't UTF-8
+    // `mtimeMs` + `size` are returned with the content so hydrate sites seed
+    // the pre-write drift baseline without a second `vault:stat` round-trip.
+    // Both are omitted when the read wasn't coherent (a write landed during
+    // it); `markHydrated` only seeds a baseline when both are finite.
+    // `encoding` is `'invalid-utf-8'` when the bytes aren't UTF-8
     // (content is still decoded, with U+FFFD, for display only); absent = UTF-8.
     result: IpcSuccess<{ content: string; mtimeMs?: number; size?: number; encoding?: 'utf-8' | 'invalid-utf-8' }>;
   };
@@ -151,7 +146,7 @@ export interface IpcChannelMap {
     args: [vaultRoot: string, relPath: string, content: string];
     result: IpcSuccess<{ path: string }>;
   };
-  /** Audit-19 BL-1 — create-exclusive; fails with code 'EEXIST' instead of overwriting. */
+  /** Create-exclusive; fails with code 'EEXIST' instead of overwriting. */
   'vault:create-file-text': {
     args: [vaultRoot: string, relPath: string, content: string];
     result: IpcSuccess<{ path: string }>;
@@ -186,7 +181,7 @@ export interface IpcChannelMap {
   };
   'vault:add-recent': {
     args: [path: string, name: string];
-    // Audit-18 4.5 — `ok`-discriminated so a failed add (validation / missing
+    // `ok`-discriminated so a failed add (validation / missing
     // directory) is distinguishable from a genuinely empty list; the renderer
     // leaves the displayed recents intact on `{ ok: false }` instead of wiping
     // them. The read-only sibling channels keep their bare `RecentVault[]`.
@@ -213,9 +208,8 @@ export interface IpcChannelMap {
   'board:load': {
     args: [vaultRoot: string, relPath: string];
     /**
-     * Audit-19 ERR-1 — `data` is the parsed board object (legacy double-encoded
-     * files are unwrapped main-side). Audit-19 ERR-4 — failures carry a typed
-     * `code`: ENOENT / LOCKED / OFFLINE / TOO_LARGE / PARSE / IO / NO_ACTIVE_VAULT.
+     * `data` is the parsed board object (legacy double-encoded files are
+     * unwrapped main-side). Failures carry a typed `code`: ENOENT / LOCKED / OFFLINE / TOO_LARGE / PARSE / IO / NO_ACTIVE_VAULT.
      */
     result: IpcSuccess<{ data: unknown }>;
   };
@@ -233,7 +227,7 @@ export interface IpcChannelMap {
     args: [vaultRoot: string, relPath: string];
     result: IpcOk;
   };
-  // Audit-19 ERR-3 / EXT-7 — sync-client forks of a board (never in board:list).
+  // Sync-client forks of a board (never in board:list).
   'board:list-conflicts': {
     args: [vaultRoot: string];
     result: IpcSuccess<{ copies: Array<{ copyPath: string; canonicalPath: string; client: string }> }>;
@@ -244,14 +238,14 @@ export interface IpcChannelMap {
     args: [vaultRoot: string, relPath: string];
     result: IpcOk<{ path: string }>;
   };
-  // Bare channel (like theme:load) — returns the snapshot list directly,
-  // `[]` on scan failure. Not envelope-discriminated: surfacing the list is
-  // best-effort UX, so "scan failed" and "none" both render as nothing.
+  // Bare channel (like theme:load) — returns the snapshot list directly;
+  // a real scan failure rejects (so the renderer can toast) rather than
+  // resolving to `[]`.
   'recovery:list': {
     args: [vaultRoot: string];
     result: Array<{ relPath: string; basename: string; timestamp: string }>;
   };
-  // Audit-19 EXT-6 — per-machine sentinels in `.filo/` (own, foreign, legacy).
+  // Per-machine sentinels in `.filo/` (own, foreign, legacy).
   'recovery:list-sentinels': {
     args: [vaultRoot: string];
     result: IpcSuccess<{
@@ -265,17 +259,17 @@ export interface IpcChannelMap {
       }>;
     }>;
   };
-  // Audit-19 EXT-6 — this machine (userData/machine-id.json) + hostname. Bare.
+  // This machine (userData/machine-id.json) + hostname. Bare.
   'app:machine-identity': {
     args: [];
     result: { machineId: string; hostname: string };
   };
-  // Audit-19 ERR-7 — the only rewrite of a non-UTF-8 note (backs up first).
+  // The only rewrite of a non-UTF-8 note (backs up first).
   'vault:convert-to-utf8': {
     args: [vaultRoot: string, relPath: string];
     result: IpcSuccess<{ converted: boolean; backupPath?: string }>;
   };
-  // Audit-19 EXT-5 — moves orphaned `*.<12hex>.tmp` / `.case-rename-*` files
+  // Moves orphaned `*.<12hex>.tmp` / `.case-rename-*` files
   // older than 10 min into `.filo/recovery/orphan-tmp/` (never deletes).
   'vault:sweep-orphan-tmp': {
     args: [vaultRoot: string];
@@ -309,14 +303,12 @@ export interface IpcChannelMap {
   };
 
   // ── Tags ─────────────────────────────────────────────────────────
-  // Audit-14 4.4 — bare value on success (`string | null` / `void`), a
-  // `{ ok: false }` envelope on error (NO_ACTIVE_VAULT during a swap, an
-  // oversize/locked file). Like `theme:load`, this is a bare-with-
-  // envelope-on-error channel (deliberately NOT in the
-  // `ci:check-ipc-envelope-usage` allowlist): every renderer caller routes
-  // the result through `assertIpcOk`, which passes bare values through and
-  // re-throws on `{ ok: false }` — preserving the old throw-based control
-  // flow the miscScheduler / vault-open pipeline relies on, now with a code.
+  // Bare value on success (`string | null` / `void`), a `{ ok: false }`
+  // envelope on error (NO_ACTIVE_VAULT during a swap, an oversize/locked
+  // file). Deliberately NOT in the `gates:ipc-envelope-usage` allowlist:
+  // every renderer caller routes the result through `assertIpcOk`, which
+  // passes bare values through and throws on `{ ok: false }` — the
+  // throw-based control flow the miscScheduler / vault-open pipeline needs.
   'tags:load': {
     args: [vaultRoot: string];
     result: string | null | { ok: false; code?: string; error?: string };
@@ -413,7 +405,7 @@ export interface IpcChannelMap {
     args:
       | [filename: string, data: string]
       | [filename: string, data: string, mimeType: string | undefined];
-    // Audit-18 4.4 — the failure branch carries an optional `canceled` flag so
+    // The failure branch carries an optional `canceled` flag so
     // the renderer can tell a save-dialog dismissal (no-op) from a real write
     // failure (error toast). Spelled out rather than `IpcSuccess<…>` so the
     // discriminator is part of the contract.
@@ -443,19 +435,19 @@ export interface IpcChannelMap {
     args: [];
     result: void;
   };
-  // 6.2.H4 — renderer cancels the in-flight quit (user picked "Stay
-  // open and retry" on the save-failure confirm).
+  // Renderer cancels the in-flight quit (user picked "Stay open and retry"
+  // on the save-failure confirm).
   'app:cancel-quit': {
     args: [];
     result: void;
   };
-  // Audit-4 DI-04 — renderer heartbeat before the open-ended save-failure
-  // confirm; main clears the auto-destroy flush timer on receipt.
+  // Renderer signal before the open-ended save-failure confirm; main clears
+  // the auto-destroy flush timer on receipt.
   'app:quit-awaiting-user': {
     args: [];
     result: void;
   };
-  // Audit5 2.1 — periodic drain heartbeat WHILE the quit flush runs; main
+  // Periodic drain heartbeat WHILE the quit flush runs; main
   // re-arms the auto-destroy flush timer on each beat.
   'app:drain-heartbeat': {
     args: [];

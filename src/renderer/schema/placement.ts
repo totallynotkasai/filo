@@ -91,7 +91,7 @@ export type PartialTaskStyle = z.infer<typeof PartialTaskStyleSchema>;
  */
 export const KanbanTilePlacementSchema = z.object({
   tileId: z.string().min(1),
-  // Sprint A / A13 — `.nonnegative()` mirrors KanbanColumn.position. A hand-
+  // `.nonnegative()` mirrors KanbanColumn.position. A hand-
   // edited card with `position: -1` would sort before every valid index and
   // corrupt every subsequent reorder operation that relies on dense
   // monotonic positions.
@@ -109,7 +109,7 @@ export type KanbanTilePlacement = z.infer<typeof KanbanTilePlacementSchema>;
  */
 export const TaskPlacementSchema = z.object({
   tileId: z.string().min(1),
-  // Sprint A / A13 — `.nonnegative()` mirrors TaskListSection.position. See
+  // `.nonnegative()` mirrors TaskListSection.position. See
   // the KanbanTilePlacement comment for rationale.
   position: z.number().int().nonnegative().default(0),
   style: PartialTaskStyleSchema.optional(),
@@ -126,11 +126,11 @@ export type TaskPlacement = z.infer<typeof TaskPlacementSchema>;
  * Stores the full tile definition + canvas placement directly in project.json
  * under board.inlineTiles[id]. These tiles do not exist in tiles.json.
  *
- * Phase 1 / 1.4 — every type-specific field is now modelled explicitly so a
+ * Every type-specific field is modelled explicitly so a
  * hand-edited `.board.json` can't smuggle a `javascript:` URL through
  * `.passthrough()` and reach the renderer DOM. `tileUrlString` (shared with
  * `LinkTileSchema` / `IframeTileSchema`) refuses anything but empty,
- * `http(s):`, or `about:blank`. Numeric timer fields gain `.finite()` to
+ * `http(s):`, or `about:blank`. Numeric timer fields use `.finite()` to
  * reject NaN / ±Infinity.
  */
 export const InlineTileSchema = z.object({
@@ -150,14 +150,14 @@ export const InlineTileSchema = z.object({
   locked: z.boolean().default(false),
   faded: z.boolean().default(false),
   tags: z.array(z.string()).default(() => []),
-  // Phase 31 A6.6 — .finite() rejects NaN / ±Infinity from hand-edited files.
+  // .finite() rejects NaN / ±Infinity from hand-edited files.
   createdAt: z.number().finite(),
   updatedAt: z.number().finite(),
   // ── Type-specific fields ────────────────────────────────────────────
   // Validated centrally via tileUrlString — empty / http(s) / about:blank
   // only. Used by `link` and `iframe` types; `timer` ignores it.
   url: tileUrlString.optional(),
-  // Sprint C / C3 — `.nonnegative()` mirrors TimerTileSchema.duration /
+  // `.nonnegative()` mirrors TimerTileSchema.duration /
   // remaining. Inline timer tiles share the same semantics: negative
   // seeds are nonsense.
   duration: z.number().finite().nonnegative().optional(),

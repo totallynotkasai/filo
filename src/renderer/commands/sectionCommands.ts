@@ -9,21 +9,17 @@ export class AddSectionCommand extends Command {
   readonly targetBoardId: string;
   private boardId: string;
   /**
-   * Phase 31 A6.1 — captured DELTA: the single new section, identified by
-   * ID. Avoids the snapshot-replace trap where an out-of-band add/delete
-   * between execute and undo would be silently reverted by replaying the
-   * whole sections array.
+   * Captured DELTA: the single new section, identified by ID. Replaying the
+   * whole sections array would silently revert an out-of-band add/delete
+   * made between execute and undo.
    */
   private newSection: TaskListSection;
   /**
-   * SEC-3 — when this add was the FIRST real section on a section-less board, it
-   * also had to materialise the virtual `__default__` placeholder into a real
-   * section (so the board's existing unsectioned tasks keep a home alongside the
-   * new empty section). Folding that default INTO the command — rather than a
-   * separate, command-less pre-persist in `sectionOps.addSection` — lets undo
-   * strip BOTH and restore the section-less `[]` state (the virtual default
-   * re-appears; the unsectioned tasks stay put in the `tasks` array). Null for
-   * the common case where the board already had at least one persisted section.
+   * When this add was the FIRST real section on a section-less board, it also
+   * materialises the virtual `__default__` placeholder into a real section (so
+   * existing unsectioned tasks keep a home). Folding it into the command lets
+   * undo strip BOTH and restore the section-less `[]` state. Null when the
+   * board already had a persisted section.
    */
   private autoDefault: TaskListSection | null;
 
@@ -50,10 +46,8 @@ export class AddSectionCommand extends Command {
     if (!newSection) {
       // Fallback to the last after-section (legacy callers always append).
       const last = after.sections[after.sections.length - 1];
-      // L8 (Audit-13) — deep-clone, mirroring DeleteSectionCommand. The prior
-      // `allow-shallow` comment was wrong: TaskListSection carries an optional
-      // nested `style` object, so a shallow spread aliased it — a style edit on
-      // the live section between execute and undo would leak into this snapshot.
+      // Deep-clone: TaskListSection carries an optional nested `style` object,
+      // which a shallow spread would alias to the live section.
       this.newSection = last ? this.snapshot(last) : { id: '', title, position: 0, collapsed: false };
     } else {
       this.newSection = this.snapshot(newSection);
@@ -66,7 +60,7 @@ export class AddSectionCommand extends Command {
     const board = cached?.board as { sections?: TaskListSection[] } | undefined;
     if (!board?.sections) return;
     let sections = board.sections as TaskListSection[];
-    // SEC-3 — re-materialise the auto-default first. On the FIRST execute this
+    // Re-materialise the auto-default first. On the FIRST execute this
     // turns the section-less `[]` into `[default]`; on a redo (after an undo that
     // stripped the board back to `[]`) it restores the default the same way. At
     // position 0 it owns the leading unsectioned tasks; persistTaskListStructure
@@ -86,9 +80,8 @@ export class AddSectionCommand extends Command {
     }
     boardCacheStore.persistTaskListStructure(this.boardId, [
       ...sections,
-      // L8 (Audit-13) — deep-clone again (defense-in-depth) so the command stays
-      // self-sufficient: the persisted copy can't alias this command's retained
-      // `newSection.style` even if a future persist path stops re-wrapping it.
+      // Deep-clone again so the persisted copy can't alias this command's
+      // retained `newSection.style`.
       this.snapshot(this.newSection),
     ]);
   }
@@ -98,7 +91,7 @@ export class AddSectionCommand extends Command {
     const board = cached?.board as { sections?: TaskListSection[] } | undefined;
     if (!board?.sections) return;
     let next = (board.sections as TaskListSection[]).filter((s) => s.id !== this.newSection.id);
-    // SEC-3 — also strip the auto-materialised default when it's the ONLY section
+    // Also strip the auto-materialised default when it's the ONLY section
     // left (nothing else was added since, so the board is back to its "section-
     // less + one add" shape). Restoring `[]` makes add-then-undo a true on-disk
     // no-op; the virtual default re-appears. When other real sections exist the
@@ -116,30 +109,23 @@ export class DeleteSectionCommand extends Command {
   readonly targetBoardId: string;
   private boardId: string;
   /**
-   * Phase 31 A6.1 / Audit5 2.5 (#9) — captured DELTA, not a whole-slice
-   * snapshot. `removedSection` is the deleted section marker; `removedPlacements`
-   * + `removedDefs` are the section's OWN tasks (delete-tasks mode only — both
-   * empty for keep-tasks). execute/undo apply this delta against the LIVE cache,
-   * so a task added/edited (or a sibling section renamed/collapsed) between
-   * execute and undo survives — the prior `restoreTaskListSlice` replay reverted
-   * the whole `tileDefs`/`tasks`/`sections` arrays, silently undoing those
-   * out-of-band edits (the wholesale `tileDefs` clobber lost sibling content).
+   * Captured DELTA, not a whole-slice snapshot. `removedSection` is the deleted
+   * section marker; `removedPlacements` + `removedDefs` are the section's OWN
+   * tasks (delete-tasks mode only — both empty for keep-tasks). execute/undo
+   * apply this delta against the LIVE cache, so out-of-band edits to other
+   * tasks/sections made between execute and undo survive.
    */
   private removedSection: TaskListSection;
   private removedPlacements: TaskPlacement[];
   private removedDefs: Record<string, TileDefinition>;
   /**
-   * 2.2 (Audit-16) — ids of the sections that FOLLOWED the removed one in
-   * array order at construction time. Among sections tied at the same
-   * `position` the LAST in array order owns the slice (see
-   * `persistTaskListStructure`), so undo must re-insert the marker at its
-   * original array slot: appending it LAST made a restored EMPTY section
-   * (tied with its populated successor) the new owner of that successor's
-   * entire slice — every task silently re-homed into the "empty" section.
-   * undo() splices the marker back in front of the first surviving
-   * successor (an id anchor over a stale absolute index — the
-   * `DeleteCardCommand.beforeTileId` pattern from Audit-14 2.2); when none
-   * survive it appends, which IS the original tail slot.
+   * Ids of the sections that FOLLOWED the removed one in array order at
+   * construction time. Among sections tied at the same `position` the LAST in
+   * array order owns the slice (see `persistTaskListStructure`), so undo must
+   * re-insert the marker at its original slot: appending a restored EMPTY
+   * section after its tied successor would re-home all the successor's tasks
+   * into it. undo() splices the marker in front of the first surviving
+   * successor, or appends when none survive (the original tail slot).
    */
   private successorIds: string[];
 
@@ -162,7 +148,7 @@ export class DeleteSectionCommand extends Command {
     this.removedSection = this.snapshot(
       removed ?? { id: '', title, position: 0, collapsed: false },
     );
-    // 2.2 — capture the array-order successors as the undo re-insert anchor.
+    // Capture the array-order successors as the undo re-insert anchor.
     const removedIdx = removed ? beforeSections.indexOf(removed) : -1;
     this.successorIds =
       removedIdx >= 0 ? beforeSections.slice(removedIdx + 1).map((s) => s.id) : [];
@@ -226,10 +212,8 @@ export class DeleteSectionCommand extends Command {
     const shiftedSections = liveSections.map((s) =>
       s.position >= insertAt ? { ...s, position: s.position + block.length } : { ...s },
     );
-    // 2.2 (Audit-16) — splice the marker back at its ORIGINAL array slot
-    // (before the first surviving successor), not at the end. Appending an
-    // empty section AFTER a sibling tied at the same position handed it the
-    // sibling's whole slice (last-tied-owns) — see `successorIds`.
+    // Splice the marker back at its ORIGINAL array slot (before the first
+    // surviving successor), not at the end — see `successorIds`.
     const successorSet = new Set(this.successorIds);
     const markerIdx = shiftedSections.findIndex((s) => successorSet.has(s.id));
     const marker = { ...this.removedSection, position: insertAt };
@@ -268,11 +252,9 @@ export class RenameSectionCommand extends Command {
     sectionId: string,
     prevTitle: string,
     nextTitle: string,
-    // Phase 31 A6.1 — the third argument (legacy snapshot of sectionsBefore)
-    // is retained for back-compat with sectionOps's call site but no longer
-    // used. The delta-aware apply reads CURRENT sections from the cache so
-    // an out-of-band AddSection / DeleteSection between execute and undo
-    // doesn't get reverted alongside this rename.
+    // The third argument (sectionsBefore) is unused, kept for sectionOps's call
+    // site. The apply reads CURRENT sections from the cache so an out-of-band
+    // add/delete between execute and undo isn't reverted with this rename.
     _sectionsBefore?: TaskListSection[],
   ) {
     super();
@@ -286,9 +268,8 @@ export class RenameSectionCommand extends Command {
   }
 
   private apply(title: string) {
-    // A6.1 — read the LIVE sections, mutate only the matching ID, write back.
-    // The previous implementation rebuilt the array from a constructor-time
-    // snapshot, which would drop any sections added out-of-band.
+    // Read the LIVE sections, mutate only the matching ID, write back, so
+    // sections added out-of-band aren't dropped.
     const cached = boardCacheStore.cache[this.boardId];
     const board = cached?.board as { sections?: TaskListSection[] } | undefined;
     if (!board?.sections) return;
@@ -303,7 +284,7 @@ export class RenameSectionCommand extends Command {
 }
 
 /**
- * Audit-6 H1 — apply a target section ORDER to the LIVE Task List cache.
+ * Apply a target section ORDER to the LIVE Task List cache.
  *
  * Section `position` values are absolute indices into the flat `tasks` array,
  * so the sections partition that array into contiguous slices. Reordering the
@@ -372,18 +353,12 @@ export class ReorderSectionCommand extends Command {
   readonly targetBoardId: string;
   private boardId: string;
   /**
-   * Audit-6 H1 — the full section-id ORDER before/after the reorder.
+   * The full section-id ORDER before/after the reorder.
    *
-   * `moveSection` (context-menu Move up/down) transposes one adjacent pair, but
-   * a svelte-dnd-action section drag can move a section across MULTIPLE slots,
-   * changing 3+ positions at once. The prior Audit5 adjacent-swap encoding only
-   * set `idA/idB` when EXACTLY two positions changed — so a multi-slot drag left
-   * both empty and execute/undo were silent no-ops: the dragged section snapped
-   * back and the move wasn't undoable. Capturing the WHOLE order makes the
-   * command a general N-section reorder, applied against the LIVE cache so an
-   * out-of-band task add/edit or sibling collapse between execute and undo still
-   * survives (see `applySectionOrderLive`). Adjacent swaps stay correct — they
-   * are just the 2-element case of an N-element permutation.
+   * A section drag can move a section across MULTIPLE slots, so the command is
+   * a general N-section reorder (an adjacent swap is the 2-element case),
+   * applied against the LIVE cache so out-of-band edits between execute and
+   * undo survive (see `applySectionOrderLive`).
    */
   private beforeOrder: string[];
   private afterOrder: string[];

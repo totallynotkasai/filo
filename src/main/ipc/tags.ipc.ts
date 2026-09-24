@@ -15,15 +15,13 @@ function tagsFilePath(vaultRoot: string): string {
 }
 
 /**
- * Audit-14 4.4 — failure envelope for the tags channels. On the happy path the
- * handlers still return a bare value (`string | null` for load, `void` for
- * save); on error they resolve with this `{ ok: false }` shape instead of
- * letting the exception cross IPC as an opaque "Error invoking remote method
- * 'tags:save'" string. NO_ACTIVE_VAULT (a write fired mid vault-swap) /
- * FILE_TOO_LARGE then surface as a typed code. The renderer routes every tags
- * call through `assertIpcOk`, which passes bare values through and re-throws on
- * `{ ok: false }` — so the existing miscScheduler / try-catch pipelines that
- * relied on the raw rejection behave identically, now with a code attached.
+ * Failure envelope for the tags channels. On the happy path the handlers
+ * return a bare value (`string | null` for load, `void` for save); on error
+ * they resolve with this `{ ok: false }` shape so NO_ACTIVE_VAULT (a write
+ * fired mid vault-swap) / FILE_TOO_LARGE surface as a typed code rather than
+ * an opaque "Error invoking remote method" string. The renderer routes every
+ * tags call through `assertIpcOk`, which re-throws on `{ ok: false }`, so the
+ * miscScheduler / try-catch pipelines still see a rejection.
  */
 type TagsFailure = { ok: false; code?: string; error?: string };
 
@@ -49,7 +47,7 @@ export function registerTagsHandlers(): void {
         assertActiveVault(vaultRoot);
         const filePath = tagsFilePath(vaultRoot);
         assertWithinVault(vaultRoot, filePath);
-        // Phase 8 / 8.1 — stat-first so a hand-edited or corrupted multi-GB
+        // Stat-first so a hand-edited or corrupted multi-GB
         // tags.json aborts before the whole file is buffered into memory.
         try {
           const stat = await fs.stat(filePath);
@@ -72,7 +70,7 @@ export function registerTagsHandlers(): void {
           throw err;
         }
       } catch (err) {
-        // Audit-14 4.4 — typed envelope on error (see TagsFailure above). ENOENT
+        // Typed envelope on error (see TagsFailure above). ENOENT
         // already short-circuits to `null` inside; anything reaching here is a
         // real failure (NO_ACTIVE_VAULT / oversize / EACCES on a locked share).
         logMainError('tags:load', err);
@@ -94,7 +92,7 @@ export function registerTagsHandlers(): void {
         const filePath = tagsFilePath(vaultRoot);
         assertWithinVault(vaultRoot, filePath);
         await ensureDir(join(vaultRoot, '.filo'));
-        // Phase 19 S3 — atomicWriteFile generates a rename event for `.filo/tags.json`.
+        // atomicWriteFile generates a rename event for `.filo/tags.json`.
         // Without suppression the watcher would flag the self-write as a tree
         // change and trigger an unnecessary full sidebar refresh on every tag mutation.
         const watcher = getActiveWatcher();
@@ -102,11 +100,9 @@ export function registerTagsHandlers(): void {
         await atomicWriteFile(filePath, json);
         watcher?.suppress(TAGS_REL_PATH, 1000);
       } catch (err) {
-        // Audit-14 4.4 — typed envelope on error. The renderer's save path
-        // (`fileTags.scheduleSave`) routes this through `assertIpcOk`, so a
-        // `{ ok: false }` re-throws into the miscScheduler exactly as the old
-        // raw rejection did — preserving the dirty-flag / retry behaviour — but
-        // now carrying a code instead of an opaque IPC-wrapped string.
+        // Typed envelope on error. `fileTags.scheduleSave` routes this through
+        // `assertIpcOk`, so `{ ok: false }` re-throws into the miscScheduler,
+        // preserving the dirty-flag / retry behaviour.
         logMainError('tags:save', err);
         return { ok: false, code: classifyTagsError(err), error: String(err) };
       }

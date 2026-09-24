@@ -7,10 +7,8 @@
  * so every shortcut-bound action has a stable command name that can later
  * be reused by a palette, menu, or context-menu dispatcher.
  *
- * Shortcut bindings only — no command palette yet. Phase G.12 removed the
- * `registerCommand` / `unregisterCommand` no-op stubs to avoid dead-API
- * drift; reintroduce them (with a Map<name, handler>) when an actual
- * palette is being built.
+ * Shortcut bindings only — no command palette yet. Add `registerCommand` /
+ * `unregisterCommand` (with a Map<name, handler>) when a palette is built.
  */
 
 import { registerShortcut, type ShortcutBinding } from './hotkeys';

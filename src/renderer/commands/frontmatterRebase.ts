@@ -9,23 +9,14 @@ import { readMarkdownForHydrate } from '../lib/vault/markdownFileWriter';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 
 /**
- * Audit2 4.2 — apply a frontmatter-field patch on undo/redo, rebased onto the
- * live (disk-synced) frontmatter instead of blindly clobbering it.
+ * Apply a frontmatter-field patch on undo/redo, rebased onto the live
+ * (disk-synced) frontmatter instead of blindly clobbering it.
  *
- * `UpdateTaskFieldCommand` / `UpdateCardFieldCommand` snapshot a before/after
- * patch at construction and replay it on each leg via `mergeFrontmatter`, which
- * spreads the patch over the live cache. Edits to OTHER frontmatter fields
- * already survive that spread; the gap this closes is the SAME field: after an
- * external edit changed the very field the command toggles, a blind undo/redo
- * silently overwrote the external value (`history.notePossiblyStale` only warns
- * — it never disarms the stack).
- *
- * We now detect the per-field conflict, KEEP the external value (the safe
- * default — no silent data loss), apply only the non-conflicting fields, and
- * surface a prompt offering "Apply anyway" so the user can still force the
- * undo/redo when that was the intent. With no awaitable confirm primitive in
- * the toast layer, the safe-default-plus-override toast is the non-blocking
- * realisation of "prompt instead of clobber".
+ * Edits to OTHER fields survive a plain `mergeFrontmatter` spread; the hazard
+ * is the SAME field changed externally since the command ran. On such a
+ * conflict we KEEP the external value (no silent data loss), apply only the
+ * non-conflicting fields, and offer an "Apply anyway" toast so the user can
+ * still force the undo/redo.
  */
 
 /** Empty-equivalent under mergeFrontmatter's cleaning rule (absent === '' === null === undefined). */
@@ -40,11 +31,8 @@ function isEmptyish(v: unknown): boolean {
  * frontmatterEngine, which is intentionally order-SENSITIVE because reordered
  * bytes must be rewritten).
  *
- * L8 (Audit-7) — the old comparison was `JSON.stringify(a) === JSON.stringify(b)`,
- * which is order-sensitive. An external tool that merely REORDERED an object's
- * keys or an array's items (e.g. an alphabetiser) then read as a conflict, so the
- * rebase kept the external value and silently skipped the user's undo for that
- * field. This compares order-independently on both sides:
+ * An external tool that merely REORDERS keys or items (e.g. an alphabetiser)
+ * must not read as a conflict and skip the user's undo:
  *   • objects — same key set, values recursively equal (YAML/JSON object key order
  *     is never semantically meaningful);
  *   • arrays  — same MULTISET of items (DECISION: a pure reorder of a PKM list
@@ -85,13 +73,11 @@ function fmDeepEqual(a: unknown, b: unknown, depth = 0): boolean {
 /**
  * Canonical equality for frontmatter values, matching `mergeFrontmatter`'s
  * cleaning rule (absent === '' === null === undefined) and comparing
- * arrays/objects structurally — and order-independently (L8) — so a re-emitted or
+ * arrays/objects structurally — and order-independently — so a re-emitted or
  * externally-reordered `tags: [...]` doesn't read as a spurious conflict.
  *
- * 6.2.H8 — exported so the docId-less orphan-FM rebase variant
- * (`kanbanCommands.applyOrphanPatchRebased`) shares this exact equality
- * predicate. Without that, the open-editor and orphan paths could disagree
- * about whether two values represent the same frontmatter state.
+ * Exported so the orphan-FM rebase (`kanbanCommands.applyOrphanPatchRebased`)
+ * shares this exact predicate with the open-editor path.
  */
 export function fmValueEqual(a: unknown, b: unknown): boolean {
   if (isEmptyish(a) && isEmptyish(b)) return true;
@@ -104,18 +90,12 @@ export function fmValueEqual(a: unknown, b: unknown): boolean {
 }
 
 /**
- * Audit-7 H1 — recompute a patch's inverse from the CURRENT live frontmatter
- * cache. The Kanban/Task field writers compute a best-effort inverse at
- * construction time, but `UpdateCardFieldCommand`/`UpdateTaskFieldCommand` now
- * seed the cache from a FRESH disk read inside their own `execute()` (so the
- * read joins the history chain `vaultStore.save()`/quit awaits). Re-capturing
- * the inverse here — after that seed, before the merge — makes undo restore the
- * TRUE prior value of each patched key, including a value an external editor
- * changed since the last vault-index rebuild (the writer's pre-seed inverse
- * would otherwise be stale/empty). Mirrors the writers' `k in before ? … : ''`
- * rule so an absent key restores to absent under mergeFrontmatter's
- * empty-deletes cleaning. The caller wraps the result in `this.snapshot(...)`
- * so a later cache mutation can't alias the retained undo snapshot.
+ * Recompute a patch's inverse from the CURRENT live frontmatter cache. The
+ * field commands call this after seeding the cache from a fresh disk read in
+ * `execute()`, so undo restores the TRUE prior value of each patched key (the
+ * construction-time inverse came from a possibly-stale index). An absent key
+ * maps to '' so it restores to absent under mergeFrontmatter's cleaning. The
+ * caller wraps the result in `this.snapshot(...)` to avoid aliasing the cache.
  */
 export function captureInverseFromCache(
   docId: string,
@@ -133,13 +113,9 @@ export interface RebaseFrontmatterArgs {
   docId: string;
   relPath: string;
   /**
-   * Phase 6.1.R3 — renamed from `boardId` to `targetBoardId` so callers
-   * pass the command's `this.targetBoardId` verbatim. The helper is the
-   * sanctioned chokepoint for "dirty the originating board after a
-   * rebased frontmatter merge"; the inline escape on the `markDirty`
-   * line below tells `check-command-targets-self.mjs` that this
-   * laundered-through-parameter call is intentional, and the gate
-   * verifies every caller passes `this.targetBoardId`.
+   * Callers pass the command's `this.targetBoardId` verbatim (the
+   * `scripts/gates:command-targets-self` gate verifies it); the helper dirties
+   * that originating board after the merge.
    */
   targetBoardId: string;
   /** The patch applied this leg — the forward patch on execute/redo, the inverse on undo. */
@@ -153,7 +129,7 @@ export interface RebaseFrontmatterArgs {
   /** Label for the conflict toast (the backing file path). */
   label: string;
   /**
-   * REC-2 — treat `applying` as a semantically-ATOMIC unit on a conflict. A
+   * Treat `applying` as a semantically-ATOMIC unit on a conflict. A
    * recurrence roll-forward writes `{ completed: false, dueDate: next }`
    * together; the default per-key rebase could apply one key and keep the other
    * external, producing a `completed: true` + advanced-`dueDate` state the
@@ -168,29 +144,25 @@ export interface RebaseFrontmatterArgs {
 /**
  * Merge `applying` into the doc's frontmatter, but skip (and prompt about) any
  * field an external edit changed out from under the command. Also schedules the
- * debounced write and marks the board dirty for whatever it actually applied —
- * matching the post-merge bookkeeping the callers used to do inline.
+ * debounced write and marks the board dirty for whatever it actually applied.
  *
- * A17-1.1 — when no FM cache is seeded for `docId` (never-opened doc, or the
- * seed was dropped by `dropStaleSeededFrontmatterCache` after a classified
- * external FM edit), the compare base is a FRESH disk read (index fallback),
- * never a blind commit — so an undo/redo can't silently clobber an external
- * same-field edit. Async since that read; callers await it.
+ * When no FM cache is seeded for `docId` (never-opened doc, or the seed was
+ * dropped after an external FM edit), the compare base is a FRESH disk read
+ * (index fallback), never a blind commit. Async since that read; callers await.
  */
 export async function applyFrontmatterPatchRebased(args: RebaseFrontmatterArgs): Promise<void> {
   const { docId, relPath, targetBoardId, applying, expectedCurrent, label, atomic } = args;
 
-  // A17-1.3 — captured ONCE here and consulted by the "Apply anyway" toast
-  // handlers below: a click after a vault swap must not schedule this patch
-  // onto the NEW vault's same-named file (`scheduleFrontmatterWrite` resolves
-  // its vaultRoot live at fire time). Also guards the disk read below.
+  // Captured ONCE and consulted by the "Apply anyway" toast handlers: a click
+  // after a vault swap must not schedule this patch onto the NEW vault's
+  // same-named file (`scheduleFrontmatterWrite` resolves its vaultRoot live).
+  // Also guards the disk read below.
   const identity = captureVaultIdentity();
 
   const commit = (patch: Record<string, unknown>): void => {
-    // Phase 4 — mergeFrontmatter keeps the DISPLAY cache live (Kanban cards /
-    // Task rows render from it); the write SOURCE is now the explicit delta,
-    // applied to fresh disk in the gateway so an untouched external key can't be
-    // dropped. The two are decoupled — the cache is never the write source.
+    // mergeFrontmatter keeps the DISPLAY cache live (cards / rows render from
+    // it); the write SOURCE is the explicit delta, applied to fresh disk in the
+    // gateway so an untouched external key can't be dropped.
     documentStore.mergeFrontmatter(docId, patch);
     scheduleFrontmatterWrite(relPath, docId, patchToFrontmatterDelta(patch));
     // allow-non-target-markdirty: shared helper, callers pass this.targetBoardId per the CI gate
@@ -199,12 +171,8 @@ export async function applyFrontmatterPatchRebased(args: RebaseFrontmatterArgs):
 
   let current = documentStore.getFrontmatter(docId);
   if (current === undefined) {
-    // A17-1.1 (HIGH) — no editor seeded the cache (or a classified external FM
-    // edit dropped the seed via dropStaleSeededFrontmatterCache). The old code
-    // blind-`commit(applying)`-ed here with NO conflict detection, so an undo/
-    // redo of a field edit on a never-opened doc silently clobbered an external
-    // same-field edit. Re-read disk fresh and use it as the compare base (the
-    // same shape as propertiesCommands.applySnapshot); the vault index is the
+    // No cache seeded: a blind commit would clobber an external same-field
+    // edit. Re-read disk fresh as the compare base; the vault index is the
     // degraded fallback when the read fails.
     const vaultRoot = vaultStore.path;
     if (!vaultRoot) return;
@@ -226,8 +194,8 @@ export async function applyFrontmatterPatchRebased(args: RebaseFrontmatterArgs):
     }
     if (base === null) {
       // Nothing visible anywhere (file unreadable AND never indexed) — there is
-      // no baseline to detect a conflict against, and nothing visible to lose.
-      // Preserve the legacy blind merge for this narrow corner only.
+      // no baseline to detect a conflict against, and nothing visible to lose,
+      // so blind-merge.
       commit(applying);
       return;
     }
@@ -247,7 +215,7 @@ export async function applyFrontmatterPatchRebased(args: RebaseFrontmatterArgs):
   }
 
   if (atomic) {
-    // REC-2 — the patch is a coupled pair (recurrence roll-forward). Don't split
+    // The patch is a coupled pair (recurrence roll-forward). Don't split
     // it: a partial apply could leave `completed: true` with an advanced
     // `dueDate`. Apply NOTHING and offer to force the whole patch.
     uiStore.pushToast({
@@ -258,7 +226,7 @@ export async function applyFrontmatterPatchRebased(args: RebaseFrontmatterArgs):
         {
           label: 'Apply anyway',
           handler: () => {
-            // A17-1.3 — the toast can be clicked after a vault swap; bail so
+            // The toast can be clicked after a vault swap; bail so
             // the outgoing vault's patch never lands on the new vault's file.
             if (!isStillSameVault(identity)) return;
             commit(applying);
@@ -284,7 +252,7 @@ export async function applyFrontmatterPatchRebased(args: RebaseFrontmatterArgs):
       {
         label: 'Apply anyway',
         handler: () => {
-          // A17-1.3 — see the atomic handler above: bail after a vault swap.
+          // See the atomic handler above: bail after a vault swap.
           if (!isStillSameVault(identity)) return;
           // The user insists — replay the patch over the conflicting fields too.
           const forced: Record<string, unknown> = {};

@@ -9,7 +9,7 @@ import {
 import { uniqueBy, uniqueStrings, idString } from './schemaUtils';
 
 /**
- * Per-board override blocks for the Phase 4 style cascade.
+ * Per-board override blocks for the style cascade.
  *
  * Every field is optional: fields that are unset defer to the global
  * `ProjectSettings` defaults via `resolveStyle`. The shape mirrors the
@@ -25,14 +25,10 @@ import { uniqueBy, uniqueStrings, idString } from './schemaUtils';
  * they're consumed exclusively by the in-process cascade resolver, so
  * unknown keys would only accumulate as dead weight on disk. Forward-
  * compat lives on the outer board envelopes instead — see the DECISION
- * comment on `BoardSchema`.
- *
- * L3 (Audit-13) — RE-CONFIRMED (2026-06-07) against the envelope's "don't
- * destroy data we don't understand" docstring: kept non-passthrough by
- * decision. A forward-compat style key written by a newer Filo is meaningless
- * to an older one's cascade resolver, and the only loss is a newer→older→save
- * downgrade round-trip the user controls via their version. Do NOT add
- * `.passthrough()` here without re-opening that decision.
+ * comment on `BoardSchema`. This is deliberate: a newer Filo's style key is
+ * meaningless to an older cascade resolver, and the only loss is a
+ * newer→older→save downgrade round-trip. Do NOT add `.passthrough()` here
+ * without re-opening that decision.
  */
 const PartialTileStyleSchema = z.object({
   headerColor: z.string().optional(),
@@ -41,11 +37,9 @@ const PartialTileStyleSchema = z.object({
   shape: z.enum(['rectangle', 'rounded']).optional(),
   borderStyle: z.enum(['solid', 'dashed', 'dotted']).optional(),
   borderWidth: z.number().min(0).max(10).optional(),
-  // Sprint C / C1 — .finite() + bounds matching the corresponding defaults
-  // schema in settings.ts. A hand-edited per-element override of
-  // shadowIntensity / pathSize / etc. previously had unbounded `z.number()`
-  // which let Infinity (and other out-of-range values) through into the
-  // style cascade.
+  // .finite() + bounds matching the corresponding defaults schema in
+  // settings.ts, so a hand-edited override can't feed Infinity (or other
+  // out-of-range values) into the style cascade.
   shadowIntensity: z.number().finite().min(0).max(1).optional(),
   dynamicContrastText: z.boolean().optional(),
   fontSizeTitle: z.number().min(8).max(48).optional(),
@@ -54,7 +48,7 @@ const PartialTileStyleSchema = z.object({
 
 const PartialConnectionPathStyleSchema = z.object({
   pathColor: z.string().optional(),
-  // Sprint C / C1 — bounds mirror `ConnectionSchema.pathSize` / `arrowSize`
+  // Bounds mirror `ConnectionSchema.pathSize` / `arrowSize`
   // so a per-board path-size override can't smuggle a 1000-px arrow into
   // the renderer.
   pathSize: z.number().finite().min(1).max(10).optional(),
@@ -76,7 +70,7 @@ const PartialFrameStyleBlockSchema = z.object({
   headerColor: z.string().optional(),
   bodyColor: z.string().optional(),
   backgroundImage: z.string().optional(),
-  // Sprint C / C1 — bounds mirror `FrameStyleSchema.backgroundOpacity` /
+  // Bounds mirror `FrameStyleSchema.backgroundOpacity` /
   // `shadowIntensity` (both 0..1) so the partial-override layer can't
   // smuggle Infinity into the cascade.
   backgroundOpacity: z.number().finite().min(0).max(1).optional(),
@@ -95,7 +89,7 @@ const PartialColumnStyleSchema = z.object({
   borderColor: z.string().optional(),
   borderStyle: z.enum(['solid', 'dashed', 'dotted']).optional(),
   borderWidth: z.number().min(0).max(10).optional(),
-  // Sprint C / C1 — bounds mirror `ColumnDefaultsSchema` in settings.ts.
+  // Bounds mirror `ColumnDefaultsSchema` in settings.ts.
   shadowIntensity: z.number().finite().min(0).max(1).optional(),
   dynamicContrastText: z.boolean().optional(),
   /** Column width in px. Per-column override; falls through to board / global defaults. */
@@ -239,11 +233,8 @@ const KanbanSavedViewSchema = z.object({
   filterTags: z.array(z.string()).default(() => []),
   filterProp: z
     .object({
-      // Sprint C / C6 — empty filter key is meaningless: the filter UI
-      // resolves the key against a tile's frontmatter property bag, and
-      // an empty string never matches a real key. A hand-edited saved
-      // view with `key: ''` would silently filter to "all" or "none"
-      // depending on the resolver branch.
+      // An empty filter key never matches a real frontmatter key, so a
+      // hand-edited `key: ''` would silently filter to "all" or "none".
       key: z.string().min(1),
       value: z.string(),
     })
@@ -280,7 +271,7 @@ const KanbanSettingsSchema = BaseBoardSettingsSchema.extend({
       filterTags: z.array(z.string()).default(() => []),
       filterProp: z
         .object({
-          // Sprint C / C6 — mirrors KanbanSavedViewSchema.filterProp.key.
+          // Mirrors KanbanSavedViewSchema.filterProp.key.
           key: z.string().min(1),
           value: z.string(),
         })
@@ -314,9 +305,9 @@ export type TaskListSavedView = z.infer<typeof TaskListSavedViewSchema>;
 /**
  * Task List board-specific settings.
  *
- * `groupBy` / `sortBy` drive render-time grouping and ordering. Phase C
- * tightens them to defaulted-required so the renderer can consume them
- * without optional chaining.
+ * `groupBy` / `sortBy` drive render-time grouping and ordering. They're
+ * defaulted-required so the renderer can consume them without optional
+ * chaining.
  */
 const TaskListSettingsSchema = BaseBoardSettingsSchema.extend({
   accentColor: z.string().default(ACCENT_COLOR),
@@ -354,7 +345,7 @@ const TaskListSettingsSchema = BaseBoardSettingsSchema.extend({
   // first render.
   tocPanelBounds: z
     .object({
-      // Phase 8 / 8.3 — .finite() guard so a hand-edited bounds payload
+      // .finite() guard so a hand-edited bounds payload
       // (NaN, ±Infinity) can't translate into NaN CSS transforms that
       // freeze the floating panel off-screen.
       x: z.number().finite(),
@@ -387,7 +378,7 @@ const DocumentSettingsSchema = BaseBoardSettingsSchema.extend({
  */
 export const TileGroupSchema = z.object({
   id: z.string().min(1),
-  // Sprint A / A14 — `.min(1)` per element rejects empty strings; the array
+  // `.min(1)` per element rejects empty strings; the array
   // `.refine` rejects duplicates. A duplicate tileId in a group silently
   // breaks every move-group / ungroup operation that maps over ids.
   tileIds: z.array(z.string().min(1)).refine(...uniqueStrings('TileGroup.tileIds')),
@@ -403,7 +394,7 @@ const BaseBoardSchema = z.object({
   id: z.string().min(1),
   name: z.string().default('Untitled Board'),
   emoji: z.string().default(''),
-  // Phase 31 A6.6 — .finite() rejects NaN / ±Infinity from hand-edited files.
+  // .finite() rejects NaN / ±Infinity from hand-edited files.
   createdAt: z.number().finite(),
   updatedAt: z.number().finite(),
 }).passthrough();
@@ -419,7 +410,7 @@ export const MindMapBoardSchema = BaseBoardSchema.extend({
    * Vault-backed tile placements: maps tileId -> placement (position, size, locked, faded).
    * The tile's content and style are stored separately in the vault's tiles.json.
    *
-   * Sprint C / C7 — record keys are validated against the nanoid pattern
+   * Record keys are validated against the nanoid pattern
    * via `idString`. A hand-edited `.board.json` with an empty or
    * special-character key would otherwise pass through and collide
    * silently with whatever the renderer minted next.
@@ -430,7 +421,7 @@ export const MindMapBoardSchema = BaseBoardSchema.extend({
    * These tile types are not vault-backed and have no entry in tiles.json.
    */
   inlineTiles: z.record(idString, InlineTileSchema).default(() => ({})),
-  // Sprint A / A14 — `.min(1)` + uniqueness check on the flat ID arrays.
+  // `.min(1)` + uniqueness check on the flat ID arrays.
   // The connections record at the envelope level is the source of truth;
   // this array is the per-mindmap render-order list. A duplicate id here
   // double-renders a connection and confuses every selection / delete op.
@@ -441,7 +432,7 @@ export const MindMapBoardSchema = BaseBoardSchema.extend({
       z.object({
         id: z.string().min(1),
         name: z.string(),
-        // Phase 8 / 8.3 — .finite() rejects NaN / ±Infinity that a hand-
+        // .finite() rejects NaN / ±Infinity that a hand-
         // edited .board.json could otherwise propagate into pan-to-
         // waypoint transforms (and crash the renderer's matrix math).
         x: z.number().finite(),
@@ -467,20 +458,17 @@ export const MindMapBoardSchema = BaseBoardSchema.extend({
  */
 const KanbanColumnSchema = z.object({
   id: z.string().min(1),
-  // Sprint C / C6 — empty title renders the column header as a blank band
-  // with no visual affordance for selection or rename. Every legitimate
-  // creation path (`addColumn` in KanbanBoard.svelte) seeds 'New Column'.
+  // An empty title renders the column header as a blank band with no
+  // affordance for selection or rename; `addColumn` seeds 'New Column'.
   title: z.string().min(1),
-  // Phase 25 L9 — column ordering index must be ≥ 0. The renderer renders
-  // columns by sorted `position` and negative values either invert the
-  // column order or land before the first valid index, which is never the
-  // intended state. Matches the TaskListSection.position bound at line 455.
+  // Columns render by sorted `position`; a negative value would invert the
+  // order. Matches the TaskListSection.position bound.
   position: z.number().int().nonnegative().default(0),
   collapsed: z.boolean().default(false),
   style: PartialColumnStyleSchema.optional(),
   tilePlacements: z.array(KanbanTilePlacementSchema).default(() => []),
   wipLimit: z.number().int().min(0).optional(),
-  // Sprint C / C23 — column-level cover image (vault-relative path).
+  // Column-level cover image (vault-relative path).
   // Mirrors `KanbanTilePlacement.coverImage` but applies to the column
   // header band rather than an individual card. The cascade-delete and
   // rename pipelines in `lib/vault/fileRefIntegrity.ts` scan this field
@@ -494,7 +482,7 @@ export const KanbanBoardSchema = BaseBoardSchema.extend({
   settings: KanbanSettingsSchema.prefault({}),
   columns: z.array(KanbanColumnSchema).default(() => []).refine(...uniqueBy('id', 'columns')),
   /**
-   * Phase 2 / 2.3 — frozen on-disk folder name where this Kanban board's
+   * Frozen on-disk folder name where this Kanban board's
    * cards live. Set once at board create-time to the sanitised board name;
    * renaming the board afterwards leaves this untouched, so the existing
    * `Kanban/<original-name>/<card>.md` files stay resolvable.
@@ -521,7 +509,7 @@ export const KanbanBoardSchema = BaseBoardSchema.extend({
  */
 const TaskListSectionSchema = z.object({
   id: z.string().min(1),
-  // Sprint C / C6 — empty title renders the section divider as a blank
+  // An empty title renders the section divider as a blank
   // band with no rename affordance. Every legitimate creation path
   // (`addSection` in lib/tasklist/sectionOps.ts) seeds 'New Section'.
   title: z.string().min(1),
@@ -547,7 +535,7 @@ export const TaskListBoardSchema = BaseBoardSchema.extend({
    * the per-section `collapsed` flag. Legacy boards (field absent) hydrate
    * to `[]` via the schema default.
    */
-  // Sprint A / A14 — `.min(1)` + uniqueness. A duplicate id here would
+  // `.min(1)` + uniqueness. A duplicate id here would
   // double-toggle the same subtree's collapsed state and corrupt the
   // collapse/expand UX.
   collapsedSubtasks: z.array(z.string().min(1)).default(() => []).refine(...uniqueStrings('TaskListBoard.collapsedSubtasks')),
@@ -576,7 +564,7 @@ export const BoardSchema = z.discriminatedUnion('type', [
   TaskListBoardSchema,
   DocumentBoardSchema,
 ]).superRefine((board, ctx) => {
-  // Phase 31 A6.2 — Kanban tileId uniqueness across columns. Applied at
+  // Kanban tileId uniqueness across columns. Applied at
   // the union level so the underlying KanbanBoardSchema remains a
   // ZodObject suitable for z.discriminatedUnion (refine-on-the-object
   // would return ZodEffects, which discriminatedUnion can't accept).
@@ -596,7 +584,7 @@ export const BoardSchema = z.discriminatedUnion('type', [
       }
     }
   }
-  // Phase 31 A6.4 — placements + inlineTiles must have disjoint key sets.
+  // placements + inlineTiles must have disjoint key sets.
   // Same union-level placement as above.
   if (board.type === 'mindmap') {
     const placementIds = Object.keys((board as { placements?: Record<string, unknown> }).placements ?? {});

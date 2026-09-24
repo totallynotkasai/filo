@@ -12,7 +12,7 @@ import { getActiveWatcher } from './vault.ipc';
 import { ipcErrorCode } from './ipcErrorCode';
 
 /**
- * Audit-19 ERR-7 — the ONLY way Filo rewrites a non-UTF-8 note.
+ * The ONLY way Filo rewrites a non-UTF-8 note.
  *
  * DECISION: explicit and lossy-aware. The original bytes are snapshotted to
  * `.filo/recovery/` FIRST, then decoded as Windows-1252 (the common legacy

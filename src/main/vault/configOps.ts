@@ -73,7 +73,7 @@ export function snippetsDirPath(vaultRoot: string): string {
  */
 export async function initVaultConfig(vaultRoot: string): Promise<void> {
   const configDir = configDirPath(vaultRoot);
-  // Audit-19 ERR-8 — was `.filo/` already there (created by ANOTHER machine,
+  // Was `.filo/` already there (created by ANOTHER machine,
   // arriving through sync)? Then a missing config file is most likely still
   // syncing down; seeding a default now makes the sync client keep both and
   // produce a conflict copy of `app.json` etc. Only a brand-new vault seeds.
@@ -131,12 +131,12 @@ export async function initVaultConfig(vaultRoot: string): Promise<void> {
         columns: true,
       },
     },
-    // Audit 3.3 — appearance.json is fully Filo-owned: activeTheme + font only.
-    // Must match the writer's payload shape in
+    // appearance.json is fully Filo-owned: activeTheme + font only. Must
+    // match the writer's payload shape in
     // `configWriteScheduler.buildConfigPayloads` exactly, so the first
     // theme/font save (a whole-file atomic replace) doesn't drop a key the
-    // seed itself put here. Do NOT re-add `snippets` without also teaching the
-    // writer to round-trip it (audit option (a)).
+    // seed itself put here. Do NOT add `snippets` without also teaching the
+    // writer to round-trip it.
     'appearance.json': {
       activeTheme: 'light',
       font: 'Inter, system-ui, sans-serif',
@@ -160,7 +160,7 @@ export async function initVaultConfig(vaultRoot: string): Promise<void> {
 
   // Existing `.filo/`: leave missing files alone — the renderer's `config:load`
   // fallback supplies the defaults in memory and the first real save creates
-  // the file. The ordering vs the candidate load (openVault swap memo) is unchanged.
+  // the file.
   if (filoExisted) return;
   for (const [file, defaultData] of Object.entries(defaults)) {
     const filePath = configFilePath(vaultRoot, file as ConfigFile);
@@ -201,7 +201,7 @@ export function isCorruptConfig(value: unknown): value is CorruptConfig {
 /**
  * Reads a config file from .filo/ and returns parsed JSON.
  *
- * Distinguishes the four load outcomes (Phase 23 M21):
+ * Distinguishes the four load outcomes:
  *   - File missing (ENOENT) → returns `fallback`. This is the normal
  *     bootstrap path: a freshly created vault has no `.filo/` configs yet.
  *   - File exists and parses → returns the parsed payload.
@@ -213,16 +213,13 @@ export function isCorruptConfig(value: unknown): value is CorruptConfig {
  *     bootstrap shape.
  *   - EACCES / EBUSY / EPERM (transient lock — Windows Defender, antivirus,
  *     dropbox indexer mid-scan) → retry once after 500 ms before treating
- *     as corrupt. A stealth AV lock that holds the file for ~50–200 ms
- *     used to permanently disable the writer for that session because
- *     the second branch treated it as parse-error-class corruption.
+ *     as corrupt, so a brief AV lock doesn't disable the writer for the
+ *     whole session.
  *
- * Legacy unwrap: pre-fix builds wrote configs double-stringified (the
- * renderer JSON.stringified the payload, then saveConfig JSON.stringified
- * it again). A first parse on those files yields a string, so we detect
- * that and JSON.parse a second time so existing vaults keep loading. If
- * the inner parse fails, that's a true corruption — surface it as such
- * rather than silently dropping to the fallback.
+ * Legacy unwrap: older builds wrote configs double-stringified. A first
+ * parse on those files yields a string, so we JSON.parse a second time so
+ * existing vaults keep loading. If the inner parse fails, that's a true
+ * corruption — surface it rather than silently dropping to the fallback.
  */
 const TRANSIENT_READ_RETRY_MS = 500;
 const TRANSIENT_READ_CODES = new Set(['EACCES', 'EPERM', 'EBUSY']);
@@ -232,7 +229,7 @@ function delay(ms: number): Promise<void> {
 }
 
 /**
- * Phase 8 / 8.1 — stat-then-read with a per-channel size cap. A hand-edited
+ * Stat-then-read with a per-channel size cap. A hand-edited
  * (or corrupted) JSON file pointed at the wrong content type could be many
  * GB; reading it would buffer the whole thing into memory before the
  * downstream JSON.parse rejects it. The pre-stat aborts that case with a
@@ -281,7 +278,7 @@ export async function loadConfig<T>(
   fallback: T,
 ): Promise<T | CorruptConfig> {
   const filePath = configFilePath(vaultRoot, file);
-  // Phase 8 / 8.1 — refuse to read configs that exceed the per-channel cap.
+  // Refuse to read configs that exceed the per-channel cap.
   // Treated as `__corrupt` (not fallback) so the renderer keeps the existing
   // safety behaviour: a too-large file shouldn't silently be replaced with
   // bootstrap defaults.
@@ -379,13 +376,7 @@ export async function saveConfig(
 
 /**
  * Saves the workspace layout config (open tabs, sidebar, split panes).
- *
- * Audit-14 6.4 — the six sibling per-file savers (`saveAppConfig`,
- * `saveAppearanceConfig`, `saveDefaultsConfig`, `saveHotkeysConfig`,
- * `saveViewportsConfig`, `saveSidebarOrderConfig`) were deleted as dead
- * code: the live write path is the generic `saveConfig` reached via the
- * `config:save` IPC channel. Only `saveWorkspaceConfig` retained a real
- * caller (`board.ipc.ts` → `config:save-workspace`), so it stays.
+ * Other config files go through the generic `saveConfig` (`config:save`).
  */
 export async function saveWorkspaceConfig(vaultRoot: string, data: unknown) {
   return saveConfig(vaultRoot, 'workspace.json', data);
@@ -408,7 +399,7 @@ export async function listThemes(vaultRoot: string): Promise<string[]> {
 }
 
 /**
- * Sprint A / A16 — dedicated error class for theme JSON parse failures.
+ * Dedicated error class for theme JSON parse failures.
  * Distinct from ENOENT (file simply doesn't exist) and unknown errors
  * (permission, IO) so the IPC layer can return a specific envelope and
  * the renderer can surface a "theme X is invalid JSON" toast instead of
@@ -429,7 +420,7 @@ export class ThemeParseError extends Error {
  * IPC-layer guard is removed or bypassed, the disk operation here stays
  * contained to `.filo/themes/`.
  *
- * Sprint A / A16 — JSON parse failures throw `ThemeParseError` (not the
+ * JSON parse failures throw `ThemeParseError` (not the
  * unnamed SyntaxError that `JSON.parse` produces). The handler in
  * `board.ipc.ts:theme:load` distinguishes this from ENOENT so the
  * renderer can surface a toast naming the bad theme rather than silently
@@ -438,7 +429,7 @@ export class ThemeParseError extends Error {
 export async function loadTheme(vaultRoot: string, themeName: string): Promise<unknown> {
   assertSafeFilename(themeName);
   const filePath = join(themesDirPath(vaultRoot), `${themeName}.json`);
-  // Phase 8 / 8.1 — pre-stat against `PAYLOAD_LIMITS.THEME` so a hand-rolled
+  // Pre-stat against `PAYLOAD_LIMITS.THEME` so a hand-rolled
   // multi-MB blob in `.filo/themes/` aborts before the entire file is
   // buffered into memory.
   await statAndAssertSize(filePath, PAYLOAD_LIMITS.THEME, `theme:load ${themeName}`);
@@ -462,7 +453,7 @@ export async function saveTheme(
   themeName: string,
   data: unknown,
 ): Promise<void> {
-  // 6.3.P1/P2 — `saveTheme` writes a NEW theme file (atomic write into
+  // `saveTheme` writes a NEW theme file (atomic write into
   // `.filo/themes/`); creation rules apply on every platform so the
   // saved theme stays portable across OSes.
   assertSafeFilename(themeName, { forCreation: true });

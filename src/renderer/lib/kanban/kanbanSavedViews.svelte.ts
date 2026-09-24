@@ -67,7 +67,7 @@ export class KanbanSavedViews {
       filterProp: snapshot.filterProp ?? null,
     };
     const after = [...existing, view];
-    // Phase 7 / 7.4 — route through history so Ctrl+Z reverses save / delete.
+    // Route through history so Ctrl+Z reverses save / delete.
     historyStore.execute(
       new UpdateSavedViewsCommand(boardId, 'kanban', before, after, `Save view "${trimmed}"`),
     );

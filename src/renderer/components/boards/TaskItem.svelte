@@ -100,7 +100,7 @@
     onSetNotes?: (body: string) => void;
     onRename: (title: string) => void;
     onDelete: (anchor?: { x: number; y: number }) => void;
-    /** Audit 5.7 — opt-in delete that also removes the backing .md file. */
+    /** Opt-in delete that also removes the backing .md file. */
     onDeleteWithFile?: () => void;
     onOpen: () => void;
     onAddSubtask?: () => void;
@@ -135,7 +135,7 @@
 
   // Style button dispatches a custom event that bubbles up to TaskListBoard's
   // scroll container — same pattern Mind Map and Kanban tile headers use.
-  // Tags moved to the row context menu (Phase 5.3); Lock is a direct callback
+  // Tags live in the row context menu; Lock is a direct callback
   // because the toggle is a single store write (no popup to position).
   function openStylePopup(e: MouseEvent) {
     e.stopPropagation();
@@ -245,7 +245,7 @@
 
   function onNotesKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
-      e.preventDefault(); e.stopPropagation(); // H1: keep Escape off the global app:cancel
+      e.preventDefault(); e.stopPropagation(); // keep Escape off the global app:cancel
       isExpanded = false;
       draftNotes = bodyOnly;
     } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -277,8 +277,7 @@
   });
 
   // `.task-notes-panel-inner` paints the expanded notes block. Body Colour
-  // moved here (Phase 6 — was previously aliased onto the whole row), so
-  // a user can dial the notes background independently of the row strip.
+  // applies here (not the whole row), so a user can dial the notes background independently of the row strip.
   let notesInlineStyle = $derived.by(() => {
     if (!taskStyle) return '';
     const parts: string[] = [];
@@ -292,7 +291,7 @@
 
   let isEditing = $state(false);
   let editTitle = $state(untrack(() => tile.title));
-  let titleAtEditStart = ''; // REN-3 — title when editing began (detect an external mid-edit rename)
+  let titleAtEditStart = ''; // title when editing began (detect an external mid-edit rename)
 
   function startEdit(e?: Event) {
     e?.stopPropagation();
@@ -302,10 +301,10 @@
   }
 
   function commitEdit() {
-    // REN-1 — one-shot: first commit flips isEditing=false, so the unmount-blur re-commit no-ops.
+    // One-shot: first commit flips isEditing=false, so the unmount-blur re-commit no-ops.
     if (!isEditing) return;
     isEditing = false;
-    // REN-3 — backing title changed externally mid-edit; keep it (the field
+    // Backing title changed externally mid-edit; keep it (the field
     // re-renders to the new name), drop the stale draft.
     if (tile.title !== titleAtEditStart) return;
     if (editTitle.trim() && editTitle !== tile.title) {
@@ -1363,9 +1362,8 @@
 
   /* Locked task: drag handle is replaced with a static padlock badge so the
      row visually communicates "non-movable" even when not hovered. The
-     not-allowed cursor reinforces that drag is impossible — Item M5 in the
-     Phase C audit: users would otherwise hover-grab repeatedly without
-     feedback. */
+     not-allowed cursor reinforces that drag is impossible — users would
+     otherwise hover-grab repeatedly without feedback. */
   .task-drag-handle-locked {
     cursor: not-allowed;
     color: var(--accent-primary);

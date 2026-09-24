@@ -1,15 +1,7 @@
 /**
- * markdownFileWriter — canonical write path for `.md` files.
- *
- * Five write sites previously reconstructed the markdown write operation
- * independently — TextTile, DocumentEditor, PropertiesPopup,
- * frontmatterWriteScheduler, and the orphan-fm commands. Each one re-implemented
- * `assembleMarkdownFile` without threading `parsed.hadBom`, decided locally
- * whether to gate on hydrate state, picked its own IPC channel, owned its own
- * debounce timer with its own cancel semantics, and updated
- * `frontmatterWriteScheduler.lastFlushedVersion` or not.
- *
- * This gateway is the single source of truth:
+ * markdownFileWriter — canonical write path for `.md` files. Every writer
+ * (TextTile, DocumentEditor, PropertiesPopup, frontmatterWriteScheduler, the
+ * orphan-fm commands) routes through here:
  *  - `parseMarkdownFile` reads `hadBom` from disk; the caller's hydrate flow
  *    reports it via `markHydrated(relPath, hadBom)`.
  *  - All writes funnel through `writeMarkdownFile`, which threads
@@ -55,39 +47,31 @@ import { captureVaultIdentity, isStillSameVault } from './vaultIdentity';
 import { freshReadLooksTornMidFrontmatter } from './tornFrontmatterRead';
 import { runPreWriteDriftGate } from './preWriteDriftGate';
 
-/**
- * Default 300ms idle debounce. Mirrors `FM_DEBOUNCE_MS` and the historical
- * TextTile / DocumentEditor / PropertiesPopup window so coalescing behaviour
- * is identical post-migration.
- */
+/** Default 300ms idle debounce (matches `FM_DEBOUNCE_MS`). */
 export const MARKDOWN_WRITE_DEBOUNCE_MS = 300;
 
 /**
- * Audit5 R3 — upper bound on a single markdown write, wired into the scheduler's
- * `writeTimeoutMs`. Re-exported from the dependency-free `boardWriteDebounce`
- * leaf (`WRITE_TIMEOUT_MS`) so the sibling schedulers can share the same bound
- * without the module-eval cycle through this file; see that constant's docstring
- * for the rationale. Kept under this name for back-compat with existing
- * references (the gate, file-size notes, tests).
+ * Upper bound on a single markdown write, wired into the scheduler's
+ * `writeTimeoutMs`. Defined in the dependency-free `boardWriteDebounce` leaf so
+ * sibling schedulers share it without an import cycle through this file.
  */
 export const MARKDOWN_WRITE_TIMEOUT_MS = WRITE_TIMEOUT_MS;
 
 /**
  * UTF-8 byte length of a string. The disk write encodes `fileText` as UTF-8,
  * so this equals the on-disk byte size of a clean self-write — used by the
- * Audit-7 L5 post-write baseline TOCTOU guard to tell our own bytes from a
- * foreign edit that landed in the write→stat gap.
+ * post-write baseline guard to tell our own bytes from a foreign edit that
+ * landed in the write→stat gap.
  */
 const utf8Encoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
 function utf8ByteLength(text: string): number {
   return utf8Encoder ? utf8Encoder.encode(text).length : text.length;
 }
 
-// Audit-18 5.4 / Audit-19 MD-2 — read-back size threshold (moved with the post-write tail).
 export { MARKDOWN_READBACK_BYTE_THRESHOLD };
 
-// Phase R6 — the Reload / Keep-local prompt-handler slot lives in the leaf
-// `externalEditPrompt.ts` (Audit-16 split); re-exported for existing imports.
+// The Reload / Keep-local prompt-handler slot lives in the leaf
+// `externalEditPrompt.ts`; re-exported for existing imports.
 export { setExternalEditPromptHandler } from './externalEditPrompt';
 
 export interface WriteArgs {
@@ -95,7 +79,7 @@ export interface WriteArgs {
   vaultRoot: string;
   /** Vault-relative path of the `.md` file. */
   relPath: string;
-  /** Frontmatter to serialise. Optional: a `frontmatterDelta` caller omits it — the gateway sources FM from a fresh in-chain disk read (FILO-UR-1). */
+  /** Frontmatter to serialise. Optional: a `frontmatterDelta` caller omits it — the gateway sources FM from a fresh in-chain disk read. */
   frontmatter?: Record<string, unknown>;
   /** Body to serialise. */
   body: string;
@@ -108,47 +92,34 @@ export interface WriteArgs {
    */
   docId?: string | null;
   /**
-   * Audit-16 4.3 — the docId's mutation version captured by the CALLER when it
-   * read the body/FM this write carries. The gateway records THIS value as
-   * flushed on success, never the live post-IPC version — a mutation landing
-   * mid-IPC would otherwise be marked flushed while the pre-mutation bytes
-   * landed, and its follow-up scheduled write would skip as "stale" (never
-   * reaching disk). Omitted → captured at `writeMarkdownFile` entry, exact for
-   * callers that build args synchronously at fire time; the FM scheduler
-   * threads its own capture (it awaits a hydrate before the gateway).
+   * The docId's mutation version captured by the CALLER when it read the
+   * body/FM this write carries. Recorded as flushed on success instead of the
+   * live post-IPC version — otherwise a mutation landing mid-IPC is marked
+   * flushed and its follow-up write skips as "stale". Omitted → captured at
+   * `writeMarkdownFile` entry.
    */
   mutationVersionAtCapture?: number;
   /**
-   * Audit-9 L5 — on-disk frontmatter SOURCE (raw bytes between the fences) for a
-   * docId-less caller (orphan-card patch). With a docId the gateway reads it from the
-   * document store; a docId-less write without it full-dumps (losing comments / key
-   * order / quoting), so threading it lets `patchFrontmatterSourceCst` source-preserve.
+   * On-disk frontmatter SOURCE (raw bytes between the fences) for a docId-less
+   * caller (orphan-card patch). With a docId the gateway reads it from the
+   * document store; without it a docId-less write full-dumps (losing comments /
+   * key order / quoting).
    */
   originalFrontmatter?: string;
   /**
-   * WRITE_PATH_REMEDIATION_PLAN_2026-06-04 Phase 4 — the delta-based write
-   * source. When present, the gateway IGNORES `frontmatter` / the documentStore
-   * cache as the FM source: it reads CURRENT disk in-chain, applies ONLY these
-   * `set`/`unset` keys, and assembles against that same fresh read. So every key
-   * the user did not touch — including an external addition the cache never saw —
-   * is sourced from disk and preserved by construction (the root-cause fix for
-   * the recurring untouched-key-drop class). Field-edit (Kanban/Task) and
-   * Properties writes thread this; body-only editor saves do not (they keep the
-   * open-editor-reconciled cache path).
+   * Delta-based write source. When present, the gateway ignores `frontmatter`
+   * and the documentStore cache: it reads current disk in-chain, applies only
+   * these `set`/`unset` keys, and assembles against that same read — so every
+   * untouched key (including an external addition the cache never saw) is
+   * preserved by construction. Field-edit and Properties writes use this;
+   * body-only editor saves do not.
    */
   frontmatterDelta?: FrontmatterDelta;
   /**
-   * Audit-16 6.8 — whether `body` was sourced from a LIVE editor document at
-   * the moment the caller built these args (fire time). The delta branch uses
-   * this to pick its body source: a live body MUST win over the in-chain disk
-   * read (it carries un-debounced keystrokes — the N2 invariant), a snapshot
-   * body must LOSE to it (the watcher-index snapshot can be stale). Decided
-   * at fire time because the live documentStore can change during the
-   * per-path chain wait + IPC: a doc UNLOADING mid-write used to flip the
-   * write-time re-derivation to false and silently discard the fire-time live
-   * body (the keystrokes it carried), and a doc LOADING mid-write used to
-   * promote a stale snapshot body over fresher disk. Omitted → write-time
-   * derivation from `docId` (legacy fallback for direct callers).
+   * Whether `body` came from a live editor when the args were built. A live body
+   * wins over the in-chain disk read (it holds un-debounced keystrokes); a snapshot
+   * body loses to it (may be stale). Captured at fire time because the doc can
+   * load/unload during the write. Omitted → derived from `docId`.
    */
   bodyIsLive?: boolean;
 }
@@ -156,7 +127,7 @@ export interface WriteArgs {
 interface FileState {
   hadBom: boolean;
   /**
-   * A8-M1 — the file's real line ending, sniffed once from the full raw file
+   * The file's real line ending, sniffed once from the full raw file
    * content at hydrate time. Threaded into `assembleMarkdownFile({ eol })` so a
    * CRLF file with a single-line frontmatter keeps CRLF on a metadata edit
    * (detection from the FM source alone can't tell — a one-line FM has no
@@ -170,35 +141,21 @@ interface FileState {
  * which would mean any write here stamps an empty frontmatter on top of
  * whatever YAML the file currently has on disk.
  *
- * AUDIT13 Phase 7 L13 — DECISION: per-session growth is accepted (not
- * refcount-evicted on editor unmount). Entries are tiny ({hadBom, eol?}) and
- * cleared wholesale on every vault swap (cancelAllMarkdownWrites). Evicting on
- * last unmount was rejected: a wrong refcount in this gateway would drop live
- * hydrate state → a "not hydrated" throw or a BOM/eol regression on the next
- * write, for a few-KB upside. clearHydrated() already covers rename/delete.
+ * DECISION: per-session growth is accepted (no refcount eviction on editor
+ * unmount). Entries are tiny and cleared on every vault swap; a wrong refcount
+ * would drop live hydrate state (a "not hydrated" throw or BOM/eol regression).
+ * clearHydrated() covers rename/delete.
  */
 const fileState = new Map<string, FileState>();
 
 /**
- * Phase R1 (2026-05-26) — pending + in-flight bookkeeping now lives in
- * the shared `createScheduler` primitive.
+ * `sentinelMode: 'pending-path'`: `writeMarkdownFile` already wraps its IPC in
+ * `trackComponentWrite` (which bumps the INFLIGHT counter), so the scheduler
+ * must not also bump inflight. It tracks only the pending PATH during the
+ * debounce window, so a crash mid-typing still leaves a `.filo/.dirty`
+ * sentinel and the save indicator doesn't read a premature "idle".
  *
- * Audit2 2.3 — `sentinelMode: 'pending-path'` (was `manageSentinel: false`).
- * `writeMarkdownFile` already wraps its IPC in `trackComponentWrite`, which
- * begin/endWrites the INFLIGHT counter around the disk I/O, so the primitive
- * must NOT also bump inflight (it would double-count). But the previous
- * `manageSentinel: false` left the 300 ms DEBOUNCE window completely
- * untracked: a crash mid-typing lost up to ~300 ms of text with no
- * `.filo/.dirty` sentinel, and the save indicator read a premature "idle".
- * 'pending-path' mode tracks just the pending PATH for the armed window
- * (noteAdditionalPendingPath at schedule, dropPendingPath + syncSentinelIfIdle
- * at fire-handoff / cancel / reschedule / reset) — covering crash recovery and
- * the indicator without touching inflight.
- *
- * `getSentinelInfo` returns the relPath so the schedule-time pending path AND
- * flushAll's tracked `vaultRoot` (for the cross-scheduler `syncSentinelIfIdle`)
- * both carry through. FailureId is the callerId for parity with the legacy
- * `FlushAllResult.failed: [{ ownerId, error }]` shape.
+ * FailureId is the callerId, matching `FlushAllResult.failed: [{ ownerId, error }]`.
  */
 const writerScheduler = createScheduler<WriteArgs>({
   name: 'markdownFileWriter',
@@ -207,22 +164,18 @@ const writerScheduler = createScheduler<WriteArgs>({
   getSentinelInfo: (args) => ({ vaultRoot: args.vaultRoot, path: args.relPath }),
   getFailureId: (args) => args.callerId,
   sentinelMode: 'pending-path',
-  // Audit5 R3 — bound the await so a wedged write can't hang flushAll/save().
+  // Bound the await so a wedged write can't hang flushAll/save().
   writeTimeoutMs: MARKDOWN_WRITE_TIMEOUT_MS,
 });
 
-// Phase 4 / E3 — because this scheduler opts out of sentinel management
-// (`manageSentinel: false`), its armed-but-not-yet-fired writes don't enter
-// `pendingVaultPaths` until they fire. Register a probe so the single
-// `isPathPending` authority still reports them — keeping the external-change
-// reconcilers' dirty-check honest for a debounced editor-body write that
-// hasn't flushed yet. In-flight writes (mid-`trackComponentWrite`) already
-// show up in the ledger, so the probe only covers the pending-timer window.
+// Probe so `isPathPending` also reports this scheduler's armed-but-not-fired
+// writes, keeping the external-change reconcilers' dirty-check honest for a
+// debounced editor-body write. In-flight writes already show up in the ledger.
 registerPendingProbe((path) => {
   const target = vaultPath(path);
-  // Audit-17 5.5 — also consult PARKED fires (in neither `pending` nor `inFlight`
-  // while draining); belt-and-suspenders here since the pending-path ledger
-  // already keeps `isPathPending` true across the park.
+  // Also consult PARKED fires (in neither `pending` nor `inFlight` while
+  // draining); belt-and-suspenders, since the pending-path ledger already
+  // keeps `isPathPending` true across the park.
   return (
     writerScheduler.hasPendingTimer((args) => vaultPath(args.relPath) === target) ||
     writerScheduler.hasParked((info) => info.path !== undefined && vaultPath(info.path) === target)
@@ -238,7 +191,7 @@ function hasNewerWriteForCaller(callerId: string): boolean {
 }
 
 /**
- * Audit-19 MD-2 — true when `callerId` still has unsaved work in the gateway:
+ * True when `callerId` still has unsaved work in the gateway:
  * an armed debounce, a parked fire, or a write in flight. TextTile's onDestroy
  * uses it (with the writer's dirty flag) to write ONLY when there is something
  * to save, instead of on every unmount (culling, LOD, board/tab switch).
@@ -248,22 +201,14 @@ export function hasPendingMarkdownWriteFor(callerId: string): boolean {
 }
 
 /**
- * callerId → fresh-args callback. Carry-over from the old
- * `markdownWriteRegistry.forceWriteForDocument` API: editor-backed writers
- * (TextTile, DocumentEditor) register a callback that returns the LATEST
- * args (live editor body + current frontmatter) so Keep-local can flush
- * exactly what the user sees in the editor, not a stale schedule snapshot.
+ * callerId → fresh-args callback. Editor-backed writers (TextTile,
+ * DocumentEditor) register a callback that returns the LATEST args (live
+ * editor body + current frontmatter) so Keep-local flushes exactly what the
+ * user sees, not a stale schedule snapshot.
  *
  * Non-editor callers (PropertiesPopup, orphan-fm sites) don't need to
  * register here — they always call `writeMarkdownFile` / `scheduleMarkdownWrite`
  * with fresh args inline.
- *
- * 6.3.P4 — the sibling `lastSeenArgs` Map (a shim-migration leftover that
- * was populated by every successful write but read by no production
- * consumer) is deleted. `forceWriteForDocument` always reads the live
- * editor body via `entry.build()` and never falls back to the cached
- * snapshot, so caching it here was dead storage that grew unboundedly
- * over a session.
  */
 interface ForceWriter {
   docId: string | null;
@@ -272,36 +217,25 @@ interface ForceWriter {
 const forceWriters = new Map<string, ForceWriter>();
 
 /**
- * 6.2.H10 — in-flight write tracker keyed by `callerId`. Populated for the
- * lifetime of each `writeMarkdownFile` call so concurrent paths can
- * `await` any pending IPC for the same caller before re-arming a write.
- *
- * Pre-fix race: `scheduleMarkdownWrite` armed a timer; the timer fired
- * and `writeMarkdownFile` entered the IPC await; before that resolved a
- * `forceWriteForDocument` ran, called `cancelMarkdownWrite` (no-op — the
- * timer had already fired), and started a second `writeMarkdownFile`.
- * Two writes raced; the OS serialised them in arbitrary order, the loser
- * silently clobbered the winner's bytes.
- *
- * The wrapper inside `writeMarkdownFile` sets/clears the map entry; the
- * `awaitInFlightWriteForCaller` helper exposes it to the force/cancel
- * paths.
+ * In-flight write tracker keyed by `callerId`, populated for the lifetime of
+ * each `writeMarkdownFile` call. A force-write can arrive after the debounce
+ * timer already fired (so cancelling it is a no-op); it must await this entry
+ * first, or the two writes race and the OS-ordered loser clobbers the winner.
  */
 // allow-module-state: drained synchronously by cancelAllMarkdownWrites at vault swap
 const inFlightWrites = new Map<string, Promise<void>>();
 
 /**
- * Audit-4 DI-09 — per-resolved-path write chain. `inFlightWrites` is keyed by
- * `callerId`, so two editors on one `.md` (TextTile + DocumentEditor) had
- * independent entries and could hit `vault:write-existing-file-text`
- * concurrently (OS-arbitrated order → loser's bytes silently clobbered). This
- * map serialises writes to a given normalized path; see `writeMarkdownFile`.
+ * Per-resolved-path write chain. `inFlightWrites` is keyed by `callerId`, so
+ * two editors on one `.md` (TextTile + DocumentEditor) could otherwise write
+ * concurrently and the OS-ordered loser's bytes would be clobbered. This map
+ * serialises writes to a given normalized path; see `writeMarkdownFile`.
  */
 // allow-module-state: drained synchronously by cancelAllMarkdownWrites at vault swap
 const writeChainByPath = new Map<VaultPath, Promise<void>>();
 
 /**
- * Audit-17 2.1 — last write failure per callerId; `flushMarkdownWrite` hands
+ * Last write failure per callerId; `flushMarkdownWrite` hands
  * it (e.g. ENOENT) to the flushing component, since `fireWrite` never rejects.
  * Cleared at write START (a stale error must not be misattributed to a later
  * timeout whose IPC is still in flight) and on vault swap.
@@ -316,27 +250,18 @@ const lastWriteFailureByCaller = new Map<string, unknown>();
  * status so subsequent writes can re-emit the leading `EF BB BF` byte
  * sequence (preserving Notepad-saved files round-trip).
  *
- * Phase R6 / F1 — `mtimeMs` + `size` (optional) stamp the file's baseline
- * so the pre-write drift check inside `writeMarkdownFile` can detect
- * external edits landing between hydrate and the next debounced write.
- * Both are needed for a complete baseline; passing one without the other
- * seeds nothing (see `noteBaseline`).
- *
- * As of F1 (2026-05-28) the read-driven hydrate sites thread it through
- * `vault:read-file-text`'s returned `mtimeMs`: the TextTile /
- * DocumentEditor disk-read paths (the editor debounced writes they back
- * have no other drift guard), plus the read-then-write command/scheduler
- * paths that also lack their own guard — the frontmatter scheduler, the
- * kanban orphan-frontmatter patch, and UpdatePropertiesCommand.
+ * `mtimeMs` + `size` (optional) stamp the file's baseline so the pre-write
+ * drift check inside `writeMarkdownFile` can detect external edits landing
+ * between hydrate and the next debounced write. Both are needed; passing one
+ * without the other seeds nothing (see `noteBaseline`).
  *
  * `boardCache.syncTileMarkdown` deliberately does NOT thread it: that path
  * runs its own pre-read / pre-write stat guard, so seeding a baseline here
  * would risk a redundant Reload prompt on the same external edit.
  *
  * Callers without an mtime (in-memory hydrate, fresh-file creation) leave
- * the baseline empty — the writer's drift check no-ops, falling back to the
- * legacy "no comparison anchor" behaviour until the first successful write's
- * post-write stat seeds it.
+ * the baseline empty — the drift check no-ops until the first successful
+ * write's post-write stat seeds it.
  *
  * Idempotent — re-calling overwrites the previous flag. Editor remounts
  * across vault swaps will re-hydrate from disk and re-mark.
@@ -347,11 +272,11 @@ export function markHydrated(
   mtimeMs?: number,
   size?: number,
   eol?: '\r\n' | '\n',
-  /** Audit-19 MD-2 — the exact bytes just read (small notes only); see FileBaseline.text. */
+  /** The exact bytes just read (small notes only); see FileBaseline.text. */
   diskText?: string,
 ): void {
   if (!relPath) return;
-  // A8-M1 — record the file's real eol when the caller sniffed it from the raw
+  // Record the file's real eol when the caller sniffed it from the raw
   // disk content (only `readMarkdownForHydrate` does today). In-memory hydrates
   // pass none ⇒ the write path falls back to body/FM-source detection (LF for a
   // genuinely new file).
@@ -375,13 +300,9 @@ export function isHydrated(relPath: string): boolean {
 }
 
 /**
- * Phase 6.1.R4 — transfer the hydrate state from `oldRel` to `newRel`
- * so a post-rename body write doesn't trip "refusing to write — not
- * hydrated" against the new path. Also covers descendants for folder
- * renames. Registered with `renameAllPathKeys` below — the audit's
- * canonical missed example: every prior rename cascade forgot this map,
- * and every keystroke after rename would throw on the gateway's hydrate
- * gate until the user happened to re-mount the editor.
+ * Transfer the hydrate state from `oldRel` to `newRel` (and descendants, for
+ * folder renames) so a post-rename body write doesn't throw "not hydrated"
+ * against the new path. Registered with `renameAllPathKeys` below.
  */
 export function renameFileStatePath(oldRel: string, newRel: string): void {
   if (!oldRel || !newRel || oldRel === newRel) return;
@@ -432,7 +353,7 @@ export interface HydrateReadResult {
   /** Parsed YAML frontmatter (empty object when none). */
   frontmatter: Record<string, unknown>;
   /**
-   * Audit2 / 1.2 — verbatim frontmatter source bytes (empty when none). Seed
+   * Verbatim frontmatter source bytes (empty when none). Seed
    * it into `documentStore.setFrontmatter` so a later body-only save can emit
    * the block untouched instead of re-dumping the parsed object.
    */
@@ -442,20 +363,16 @@ export interface HydrateReadResult {
 }
 
 /**
- * Phase 4 / E1 — the single sanctioned way to read a `.md` file *for the
- * purpose of hydrating* an editor or cache. Recurrence-proofs F1.
+ * The single sanctioned way to read a `.md` file *for the purpose of
+ * hydrating* an editor or cache.
  *
- * F1 was: the drift baseline (`fileBaselineRegistry`) is only seeded when a
- * hydrate threads the read's `mtimeMs` into `markHydrated`. Several read
- * sites forgot to, so the pre-write drift check no-oped and an external
- * edit landing between hydrate and the next debounced write was silently
- * overwritten. Fixing each call site individually re-opens the gap the
- * moment a new hydrate site is added.
- *
+ * The drift baseline is only seeded when a hydrate threads the read's
+ * `mtimeMs` into `markHydrated`; a site that forgets leaves the pre-write
+ * drift check a no-op, so an external edit gets silently overwritten.
  * This gateway does the read + parse + `markHydrated(relPath, hadBom,
  * mtimeMs)` in one place, so the content and the baseline always come from
  * the SAME `vault:read-file-text` call (no read/stat TOCTOU gap) and a
- * hydrate can never land without its baseline. `scripts/check-markdown-read-gateway.mjs`
+ * hydrate can never land without its baseline. `scripts/gates:markdown-read-gateway`
  * forbids any file from pairing a direct `vault:read-file-text` invoke with
  * a `markHydrated` call, so a future disk-read hydrate site must route here.
  *
@@ -464,8 +381,8 @@ export interface HydrateReadResult {
  * fall-back-to-embedded-content (TextTile), or proceed-and-let-the-write-
  * ENOENT (frontmatter scheduler / orphan-fm commands) — wrap this in a
  * try/catch and run their own in-memory `markHydrated(relPath, false)`
- * fallback, exactly as before. Those in-memory (no-disk-read) hydrates stay
- * legal because they pass no `mtimeMs` and seed no baseline.
+ * fallback. Those in-memory (no-disk-read) hydrates stay legal because they
+ * pass no `mtimeMs` and seed no baseline.
  */
 export async function readMarkdownForHydrate(
   vaultRoot: string,
@@ -473,11 +390,11 @@ export async function readMarkdownForHydrate(
 ): Promise<HydrateReadResult> {
   const result = await invokeOk('vault:read-file-text', vaultRoot, relPath);
   const parsed = parseMarkdownFile(result.content);
-  noteReadEncoding(relPath, result.encoding); // Audit-19 ERR-7 — a non-UTF-8 note opens non-editable
-  // A8-M1 — sniff the real eol from the FULL raw content (a single-line FM's
+  noteReadEncoding(relPath, result.encoding); // a non-UTF-8 note opens non-editable
+  // Sniff the real eol from the FULL raw content (a single-line FM's
   // fence-stripped block loses the signal) so a metadata edit re-applies CRLF.
   const eol: '\r\n' | '\n' = result.content.includes('\r\n') ? '\r\n' : '\n';
-  // Audit-19 MD-2 — keep small notes' read bytes as the confirmed baseline text (unchanged re-emit skips).
+  // Keep small notes' read bytes as the confirmed baseline text (unchanged re-emit skips).
   const keepText = utf8ByteLength(result.content) < MARKDOWN_READBACK_BYTE_THRESHOLD ? result.content : undefined;
   markHydrated(relPath, parsed.hadBom, result.mtimeMs, result.size, eol, keepText);
   return {
@@ -500,8 +417,8 @@ export async function readMarkdownForHydrate(
  *  2. Track the write through `trackComponentWrite` so the sentinel,
  *     in-flight counter, and write-error toasts all participate.
  *  3. Bump `frontmatterWriteScheduler.lastFlushedVersion` to the version
- *     captured when the write's content was read (Audit-16 4.3 — never the
- *     post-IPC live version) so concurrent writers don't overwrite stale.
+ *     captured when the write's content was read (never the post-IPC live
+ *     version) so concurrent writers don't overwrite stale.
  *
  * Throws on:
  *  - Unhydrated relPath (no `markHydrated` call yet for this file).
@@ -509,19 +426,12 @@ export async function readMarkdownForHydrate(
  *    mark its component as backing-file-missing, surface its own toast, etc.
  */
 export async function writeMarkdownFile(args: WriteArgs): Promise<void> {
-  // 6.2.H10 — track this fire's promise so a concurrent
-  // `forceWriteForDocument` or `cancelMarkdownWritesForDocument`
-  // can await it before re-arming a new write or returning. Without
-  // this, the timer's late fire (already past the cancel point) raced
-  // a force-write at the IPC layer — two writes ordered by the OS,
-  // last one wins, the loser's bytes silently lost.
+  // Track this fire's promise so a concurrent `forceWriteForDocument` or
+  // `cancelMarkdownWritesForDocument` can await it before re-arming a write.
+  // The per-path chaining lives in `runSerializedMarkdownWrite` so the
+  // single-tag fast path can join the same chain.
   //
-  // Audit-4 DI-09 — the per-resolved-path chaining lives in
-  // `runSerializedMarkdownWrite` so the single-tag fast path can join the SAME
-  // chain (Audit5 R2). `inFlightWrites` (keyed by callerId, for cancel/force
-  // await) is layered on top here.
-  //
-  // Audit-16 4.3 — capture the mutation version BEFORE the chain wait (unless
+  // Capture the mutation version BEFORE the chain wait (unless
   // the caller threaded an earlier capture): a mutation landing after this
   // point is newer than `args`, so the flushed-version bump must not cover it.
   const mutationVersionAtCapture =
@@ -531,7 +441,7 @@ export async function writeMarkdownFile(args: WriteArgs): Promise<void> {
     writeMarkdownFileImpl({ ...args, mutationVersionAtCapture }),
   );
   inFlightWrites.set(args.callerId, promise);
-  // Audit-17 2.1 — record this caller's outcome for `flushMarkdownWrite`.
+  // Record this caller's outcome for `flushMarkdownWrite`.
   lastWriteFailureByCaller.delete(args.callerId);
   try {
     await promise;
@@ -546,7 +456,7 @@ export async function writeMarkdownFile(args: WriteArgs): Promise<void> {
 }
 
 /**
- * Audit-4 DI-09 / Audit5 R2 — runs `op` (a `.md` write) serialised behind any
+ * Runs `op` (a `.md` write) serialised behind any
  * in-flight write to the SAME resolved path, even one issued by a different
  * caller. Two views of one `.md` file (TextTile + DocumentEditor), or the
  * single-tag fast path racing an editor body write, would otherwise both hit
@@ -581,16 +491,12 @@ export async function runSerializedMarkdownWrite(
 }
 
 /**
- * 6.4.M17 — swap-safe final write for component teardown (TextTile.onDestroy).
+ * Swap-safe final write for component teardown (TextTile.onDestroy).
  *
- * A destroyed tile flushes its live editor's last edit, but a vault swap may
- * have already reset the gateway (`cancelAllMarkdownWrites` clears the per-file
- * hydrate state). Calling `writeMarkdownFile` directly in that window throws
- * "not hydrated" — a stray write attempt + error report during teardown that
- * BYPASSES the swap reset the cancel was meant to enforce. This entry point
- * respects the reset: when the file is no longer hydrated the gateway has been
- * torn down (and the swap's own flush already persisted the scheduled bytes),
- * so the final write is skipped instead of throwing.
+ * A vault swap may have already reset the gateway (clearing hydrate state), so
+ * a direct `writeMarkdownFile` would throw "not hydrated" and bypass the swap
+ * reset. When the file is no longer hydrated the swap's own flush already
+ * persisted the scheduled bytes, so the final write is skipped.
  */
 export async function flushFinalWriteOnDestroy(args: WriteArgs): Promise<void> {
   if (!isHydrated(args.relPath)) return;
@@ -610,24 +516,18 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
     );
   }
 
-  // A9-L8 — snapshot the vault identity BEFORE the (possibly long) drift prompt
-  // and the write await below, so the post-write renderer-state bookkeeping can
-  // detect a vault swap that landed in either window and skip mutating the NEW
-  // vault's index / drift baseline / FM-version for `relPath`.
+  // Snapshot the vault identity BEFORE the (possibly long) drift prompt and the
+  // write await, so the post-write bookkeeping can skip mutating the NEW
+  // vault's index / drift baseline / FM-version if a swap landed meanwhile.
   const writeIdentity = captureVaultIdentity();
 
-  // Phase R6 / 6.4.M13 / Audit-16 5.2 — pre-write drift gate (Reload /
-  // Keep-local prompt + bounded re-prompt loop), extracted to
-  // `preWriteDriftGate.ts` (the queued file-size split). 'drop' = the user
-  // chose Reload (the handler already refreshed editor + baseline) — discard
-  // this scheduled write; 'defer' / budget-exhaustion throw loudly inside the
-  // gate (markPathFailed, Audit-6 M1). `verifyStat` anchors the delta branch's
-  // post-read verification below (5.2). The no-baseline short-circuit stays at
-  // THIS call site, not just inside the gate: the pre-split code had NO await
-  // at all on that path, and the extra microtask an `await` of the async gate
-  // would add delays the write IPC's handler attachment by one tick — enough
-  // for an already-rejected IPC promise to surface as an unhandled rejection
-  // under a tight drain budget (and zero-cost parity for unseeded new files).
+  // Pre-write drift gate (Reload / Keep-local prompt + bounded re-prompt loop).
+  // 'drop' = the user chose Reload (editor + baseline already refreshed) —
+  // discard this write; 'defer' / budget-exhaustion throw inside the gate.
+  // `verifyStat` anchors the delta branch's post-read verification below.
+  // The no-baseline short-circuit stays at THIS call site: awaiting the async
+  // gate adds a microtask that delays the write IPC's handler attachment, so an
+  // already-rejected IPC promise could surface as an unhandled rejection.
   const driftGate =
     getBaseline(relPath) === undefined
       ? { action: 'proceed' as const, verifyStat: undefined }
@@ -635,7 +535,7 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
   if (driftGate.action === 'drop') return;
   const preWriteVerifyStat = driftGate.verifyStat;
 
-  // Audit-11 N1 — toast when an assemble below REFUSES a frontmatter edit over
+  // Toast when an assemble below REFUSES a frontmatter edit over
   // unparseable on-disk YAML (the block is kept verbatim, the edit dropped), so
   // it doesn't vanish as a silent success. Stable `kind` → errorBus coalesces.
   const onFrontmatterRefused = (): void => {
@@ -648,16 +548,12 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
   let fileText: string;
   const delta = args.frontmatterDelta;
   if (delta) {
-    // Phase 4 (WRITE_PATH_REMEDIATION_PLAN_2026-06-04) — delta-on-fresh-disk
-    // write source. We are inside `runSerializedMarkdownWrite`, so this read
-    // observes the bytes any prior chained write to THIS path already landed.
-    // Apply ONLY the delta keys to the fresh disk frontmatter and assemble
-    // against the SAME fresh source: `nextFm` and `originalFrontmatter` derive
-    // from one read, so the CST engine rewrites only the changed keys and emits
-    // every untouched key — including an external addition the in-memory cache
-    // never saw — byte-for-byte from disk. This is the root-cause fix: the
-    // cache can no longer be the write source, so a stale / over-cleaned / empty
-    // cache can't silently drop a key.
+    // Delta-on-fresh-disk write source. We are inside
+    // `runSerializedMarkdownWrite`, so this read observes any prior chained
+    // write to this path. `nextFm` and `originalFrontmatter` derive from this
+    // one read, so the CST engine rewrites only the delta keys and emits every
+    // untouched key (including external additions the cache never saw)
+    // byte-for-byte from disk — a stale cache can't drop a key.
     let parsedFresh: ReturnType<typeof parseMarkdownFile>;
     let freshContent: string;
     try {
@@ -668,17 +564,14 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
       // The backing `.md` is gone/unreadable between the caller's hydrate read
       // and this in-chain read (ENOENT, EACCES). Surface the loss (sentinel +
       // indicator) and propagate so `flushAll().failed` attributes `relPath` —
-      // never resurrect a deleted file from a stale in-memory snapshot. Mirrors
-      // the frontmatter scheduler's DI-13 no-editor read-failure handling.
+      // never resurrect a deleted file from a stale in-memory snapshot.
       markPathFailed(vaultRoot, relPath);
       throw err;
     }
-    // 3.3 (Audit-14) — guard a TRUNCATED/partial in-chain read from silently
-    // dropping the on-disk frontmatter: assembling the delta against a read
-    // whose closing fence is missing would emit ONLY the delta keys + the
-    // truncated body. Prior-indexed FM block + fresh read parsed none + raw
-    // still opens with `---` → read anomaly, markPathFailed + throw (next
-    // debounce retries). Heuristic scope documented on the helper.
+    // Guard a TRUNCATED/partial in-chain read from silently dropping the
+    // on-disk frontmatter: assembling the delta against a read whose closing
+    // fence is missing would emit ONLY the delta keys + the truncated body.
+    // markPathFailed + throw; the next debounce retries.
     if (!parsedFresh.hasFrontmatter && freshReadLooksTornMidFrontmatter(relPath, freshContent)) {
       markPathFailed(vaultRoot, relPath);
       throw new Error(
@@ -687,21 +580,19 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
         `external write); not overwriting so the on-disk frontmatter is not dropped`,
       );
     }
-    // 5.2 (Audit-16) — the 3.3 guard catches only the torn-MID-FRONTMATTER
-    // shape; a torn/stale BODY in the fresh read parses cleanly and would be
-    // written back verbatim as `deltaBody` for the common no-live-editor case
-    // (the pre-write drift stat ran BEFORE this read, so a write landing in the
-    // stat→read gap is invisible to it, and the post-write baseline then adopts
-    // our bytes — suppressing later detection). Re-stat and verify the file is
-    // still exactly the one the drift decision trusted; on mismatch abort
-    // loudly (the next debounced write re-detects the drift and prompts).
+    // The guard above catches only a torn frontmatter; a torn/stale BODY parses
+    // cleanly and would be written back verbatim as `deltaBody` (no live
+    // editor). The drift stat ran BEFORE this read, so a write landing in the
+    // stat→read gap is invisible to it. Re-stat and verify the file is still
+    // the one the drift decision trusted; on mismatch abort loudly (the next
+    // debounced write re-detects the drift and prompts).
     if (preWriteVerifyStat !== undefined) {
       let postReadStat: { mtimeMs: number; size: number } | undefined;
       try {
         postReadStat = await invokeOk('vault:stat', vaultRoot, relPath);
       } catch {
         // Can't re-stat (transient IO) while the read itself succeeded —
-        // proceed as the pre-verify code did rather than wedge on a stat hiccup.
+        // proceed rather than wedge on a stat hiccup.
       }
       if (
         postReadStat !== undefined &&
@@ -717,39 +608,25 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
       }
     }
     const nextFm = applyFrontmatterDelta(parsedFresh.frontmatter, delta);
-    // 3.2 (Audit-14) — derive the EOL from the SAME fresh in-chain read that
-    // sources the FM + BOM, not the hydrate-time `state.eol` snapshot. If an
-    // external editor converted LF↔CRLF since hydrate, the stale snapshot would
-    // emit mixed EOLs (the FM bytes are fresh but `detectFrontmatterEol` honours
-    // the stale `options.eol`). Sniff CRLF/LF from the fresh content; fall back
-    // to `state.eol` only for an empty file (no EOL signal at all).
+    // Derive the EOL from the SAME fresh read that sources the FM + BOM, not the
+    // hydrate-time `state.eol` snapshot — an external LF↔CRLF conversion since
+    // hydrate would otherwise emit mixed EOLs. Fall back to `state.eol` only for
+    // an empty file (no EOL signal).
     const freshEol: '\r\n' | '\n' | undefined =
       freshContent.length === 0 ? state.eol : freshContent.includes('\r\n') ? '\r\n' : '\n';
-    // Audit-11 N2 / Audit-15 P1.4 — pick the body source. The delta path carries
-    // only FIELD/FM edits (none touch the body), so the body is just "re-emit the
-    // rest of the file". With a LIVE editor open for this docId, the caller's
-    // `body` is its un-debounced live text and MUST win (swapping in
-    // `parsedFresh.body` would drop unsaved keystrokes) — the N2 invariant. With
-    // NO live editor (orphan / Kanban card / Mind-Map tile never opened as a doc
-    // tab), the caller's `body` is a watcher-index SNAPSHOT an unreliable
-    // `fs.watch` may have left stale (it missed an external body edit). A missed
-    // watcher event also left the drift baseline un-updated, so the pre-write stat
-    // can't catch it and the snapshot body would silently revert the external
-    // edit — so source the fresh in-chain disk `parsedFresh.body` instead.
-    //
-    // Audit-16 6.8 — the live/snapshot decision is the CALLER's, made at FIRE
-    // time (`args.bodyIsLive`): re-deriving it here from the mutable
-    // documentStore raced doc unload/load against the per-path chain wait +
-    // IPC (an unload mid-write discarded a fire-time live body's keystrokes;
-    // a load mid-write promoted a stale fire-time snapshot over fresher
-    // disk). All four delta callers thread the flag from their own
-    // `docState?.body ??` decision; the `getDocument(docId)` derivation
-    // remains only as the legacy fallback for a direct caller that omits it.
+    // Pick the body source. The delta carries only FM edits, so the body is
+    // "re-emit the rest of the file". With a LIVE editor, the caller's `body`
+    // holds un-debounced keystrokes and MUST win. Without one, the caller's
+    // `body` is a watcher-index snapshot that a missed `fs.watch` event may have
+    // left stale (and the drift baseline with it), so use the fresh disk body
+    // instead of silently reverting an external edit. The decision is the
+    // caller's, made at fire time (`args.bodyIsLive`); the `getDocument(docId)`
+    // derivation is only a fallback for a direct caller that omits it.
     const hasLiveEditorBody =
       args.bodyIsLive ?? (docId ? documentStore.getDocument(docId) !== undefined : false);
     const deltaBody = hasLiveEditorBody ? body : parsedFresh.body;
     fileText = assembleMarkdownFile(nextFm, deltaBody, {
-      // Audit-11 N3 — BOM flag from THIS in-chain read (not the pre-write
+      // BOM flag from THIS in-chain read (not the pre-write
       // `state.hadBom` snapshot), so a BOM an external editor added/stripped
       // since hydrate is honoured rather than re-imposing the stale mark.
       bom: parsedFresh.hadBom,
@@ -760,42 +637,23 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
       rawFrontmatter: parsedFresh.rawFrontmatter,
       frontmatterDirty: !isEmptyFrontmatterDelta(delta),
       originalFrontmatter: parsedFresh.rawFrontmatter,
-      // 3.2 (Audit-14) — fresh-read EOL, not the stale hydrate snapshot.
       eol: freshEol,
       onFrontmatterRefused,
     });
   } else {
     // ── Cache-FM path (body-only editor saves + legacy callers) ──
-    // Phase 18 H13 — stale-cache re-read protection. The caller captured the
-    // frontmatter at schedule time, but a cross-board frontmatter writer
-    // (PropertiesPopup, TaskListBoard, etc.) could have flushed a newer FM to
-    // disk in the meantime. The frontmatter scheduler's last-flushed-version
-    // map records the highest mutation version that successfully landed on
-    // disk; if that's higher than the documentStore's current cache version
-    // for this docId, the caller's args are stale — re-read disk, back-merge
-    // into the cache, and use the disk FM. One extra IPC per stale-detected
-    // write; the happy path stays a pure write.
-    // Audit2 2.5 — frontmatter is owned by the live documentStore cache, not the
-    // caller's schedule-time snapshot in `args.frontmatter`. A body write debounces
-    // for 300 ms; if an FM mutation lands in the cache during that window — an
-    // external frontmatter-only edit reconciled in, a PropertiesPopup / TaskList
-    // edit, or a cross-board flush — emitting the frozen snapshot would silently
-    // clobber it. Read the cache live at fire time (its presence is authoritative;
-    // both editor callers source `args.frontmatter` from it anyway), falling back
-    // to the caller's args only when the cache has no entry for this doc.
+    // Frontmatter is owned by the live documentStore cache, not the caller's
+    // schedule-time snapshot in `args.frontmatter`: an FM mutation landing during
+    // the 300 ms debounce (external FM edit, Properties / TaskList edit) would
+    // otherwise be clobbered by the frozen snapshot. Fall back to the caller's
+    // args only when the cache has no entry for this doc.
     let fm = (docId ? documentStore.getFrontmatter(docId) : undefined) ?? args.frontmatter ?? {};
-    // Audit-10 H2 — never assemble a body-only write against an EMPTY /
-    // never-seeded FM cache: that strips an on-disk YAML block. The TextTile
-    // "adopt sibling doc" branch deliberately flips hydrated=true WITHOUT seeding
-    // FM (re-parsing the body-only sibling body would yield {} and clobber the
-    // real cache a sibling already seeded), so a docId can reach here with no
-    // cache entry while the file on disk still carries frontmatter — and `fm`
-    // collapses to `{}`, deleting it. `hasFrontmatter` distinguishes never-seeded
-    // (re-read disk) from a deliberate `{}` seed (a genuinely-empty FM — trust
-    // it). We are inside runSerializedMarkdownWrite, so this read observes any
-    // prior chained write; seeding the cache then routes the assemble below
-    // through the verbatim `rawFrontmatter` path, preserving the block
-    // byte-for-byte (and fixing the cache for later saves + the live display).
+    // Never assemble a body-only write against a never-seeded FM cache: that
+    // strips the on-disk YAML block. (TextTile's "adopt sibling doc" branch flips
+    // hydrated=true without seeding FM.) `hasFrontmatter` distinguishes
+    // never-seeded (re-read disk) from a deliberate `{}` seed (trust it). Seeding
+    // the cache then routes the assemble through the verbatim `rawFrontmatter`
+    // path, preserving the block byte-for-byte.
     const cacheHasFm = docId ? documentStore.hasFrontmatter(docId) : false;
     const argsFmEmpty = !args.frontmatter || Object.keys(args.frontmatter).length === 0;
     if (docId && !cacheHasFm && argsFmEmpty) {
@@ -810,13 +668,10 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
       }
       if (readResult !== undefined) {
         const parsed = parseMarkdownFile(readResult.content);
-        // 5.3 (Audit-16) — same torn-read guard as the delta branch: a partial
-        // read (opening fence, no closing fence) parses as "no frontmatter", and
-        // pre-guard the assemble would strip the on-disk YAML block AND the bogus
-        // `{}` seed was CACHED — poisoning every later save for this docId, not
-        // just this one. Thrown OUTSIDE the try so the ENOENT swallow above
-        // can't eat it; markPathFailed keeps the sentinel dirty and attributes
-        // the path to flushAll().failed (next debounce retries clean).
+        // Same torn-read guard as the delta branch: a partial read parses as
+        // "no frontmatter", which would strip the on-disk YAML block AND cache a
+        // bogus `{}` seed that poisons every later save for this docId. Thrown
+        // OUTSIDE the try so the ENOENT swallow above can't eat it.
         if (!parsed.hasFrontmatter && freshReadLooksTornMidFrontmatter(relPath, readResult.content)) {
           markPathFailed(vaultRoot, relPath);
           throw new Error(
@@ -830,26 +685,17 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
       }
     }
     if (docId) {
-      // M1 — version map is keyed by docId so this comparison stays in the
-      // same version space as `getFrontmatterMutationVersion(docId)`.
-      //
-      // Audit-4 DI-17 — this `lastFlushed > cacheVersion` re-read is believed
-      // UNREACHABLE under M1's docId keying: `lastFlushed` is only ever bumped
-      // (here and in `frontmatterWriteScheduler`) to a PAST value of the
-      // monotonically-increasing per-docId mutation counter, so it can never
-      // exceed the current `cacheVersion`. It is retained, NOT deleted, as cheap
-      // defense-in-depth — a unit test can't construct the inputs to exercise it,
-      // and a stale-cache re-read guard isn't worth pulling out of a data-
-      // integrity write path for marginal cleanup. If a future change ever lets
-      // `lastFlushed` outrun `cacheVersion` (e.g. docId reuse with a reset
-      // counter), this re-read is the safety net that re-syncs from disk.
+      // Stale-cache re-read: if a newer FM version was flushed to disk than the
+      // cache holds, re-read disk. Believed unreachable (`lastFlushed` is only
+      // bumped to a PAST value of the monotonic per-docId counter) but kept as
+      // cheap defense-in-depth, e.g. against docId reuse with a reset counter.
       const lastFlushed = getLastFlushedFrontmatterVersion(docId);
       const cacheVersion = documentStore.getFrontmatterMutationVersion(docId);
       if (lastFlushed > 0 && lastFlushed > cacheVersion) {
         try {
           const readResult = await invokeOk('vault:read-file-text', vaultRoot, relPath);
           const parsed = parseMarkdownFile(readResult.content);
-          // 1.2 — re-seed the verbatim bytes too so this (body-only) write can
+          // Re-seed the verbatim bytes too so this (body-only) write can
           // still emit the freshly-read frontmatter untouched.
           documentStore.setFrontmatter(docId, parsed.frontmatter, parsed.rawFrontmatter);
           fm = parsed.frontmatter;
@@ -859,15 +705,13 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
       }
     }
 
-    // Audit2 / 1.2 — when this write is backed by an open document whose
-    // frontmatter is still byte-identical to disk (no mutation since hydrate),
-    // emit those bytes verbatim. `getRawFrontmatter` returns undefined once a
-    // mutation invalidated them, in which case we re-dump the object as before.
+    // When the open document's frontmatter is still byte-identical to disk (no
+    // mutation since hydrate), emit those bytes verbatim. `getRawFrontmatter`
+    // returns undefined once a mutation invalidated them.
     const rawFrontmatter = docId ? documentStore.getRawFrontmatter(docId) : undefined;
-    // Audit2 4.8 — the disk-baseline source (survives mutations) lets a dirty
-    // write patch the original frontmatter bytes source-preservingly instead of
-    // re-dumping the whole object. Audit-9 L5 — a docId-less orphan patch threads
-    // the disk source via `args.originalFrontmatter`; the cache source wins with a docId.
+    // The disk-baseline source (survives mutations) lets a dirty write patch the
+    // original frontmatter bytes source-preservingly. A docId-less orphan patch
+    // threads it via `args.originalFrontmatter`; the cache source wins with a docId.
     const originalFrontmatter = docId
       ? documentStore.getOriginalFrontmatterSource(docId)
       : args.originalFrontmatter;
@@ -876,18 +720,16 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
       rawFrontmatter,
       frontmatterDirty: rawFrontmatter === undefined,
       originalFrontmatter,
-      // A8-M1 — the file's real eol, sniffed at hydrate time. Wins over FM-source
+      // The file's real eol, sniffed at hydrate time. Wins over FM-source
       // detection so a single-line-FM CRLF file keeps CRLF on a metadata edit even
       // when the body is LF (editor) and the FM source has no internal `\r\n`.
       eol: state.eol,
-      // Audit-11 N1 — same unparseable-YAML toast for the cache-FM (Properties /
-      // dirty-FM) path.
       onFrontmatterRefused,
     });
   }
-  // Audit-7 L5 — capture the exact byte length we're about to write so the
-  // post-write baseline stamp below can reject a stat that observed a FOREIGN
-  // edit instead of our bytes (see the TOCTOU guard at the post-write stat).
+  // Capture the exact byte length we're about to write so the post-write
+  // baseline stamp can reject a stat that observed a FOREIGN edit instead of
+  // our bytes.
   const writtenByteLength = utf8ByteLength(fileText);
   const bookkeeping = {
     relPath,
@@ -897,7 +739,7 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
     mutationVersionAtCapture: args.mutationVersionAtCapture,
     hasNewerWriteFor: hasNewerWriteForCaller,
   };
-  // Audit-19 MD-2 — identical-bytes skip, anchored to the drift BASELINE: only
+  // Identical-bytes skip, anchored to the drift BASELINE: only
   // when the gate proceeded on a NON-drifted stat and the assembled bytes equal
   // the last bytes CONFIRMED on disk (hydrate read / matched read-back). A
   // Keep-local choice (stat ≠ baseline) always writes; an external reload
@@ -916,17 +758,11 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
   await trackComponentWrite(vaultRoot, relPath, async () => {
     await invokeOk('vault:write-existing-file-text', vaultRoot, relPath, fileText);
   });
-  // A9-L8 — the IPC above committed against whatever vault was active when it
-  // ran (main's `assertActiveVault`). If a vault swap landed during the drift
-  // prompt or the write await, the post-write renderer-state bookkeeping below
-  // (drift baseline, vault index, FM flushed-version, markClean) must NOT run
-  // against the NEW vault: stamping the outgoing vault's metadata/baseline for
-  // `relPath` could suppress a legitimate drift check or inject stale metadata
-  // for a same-named file in the new vault. Skip it on a swap — the new vault
-  // self-heals from its own hydrate/watcher, and the baseline registry was
-  // already wiped wholesale by the swap (re-stamping it here would resurrect a
-  // cross-vault entry). (markClean is already a no-op post-swap since the doc
-  // was cleared; the guard makes the whole tail coherent.)
+  // If a vault swap landed during the drift prompt or the write await, skip the
+  // post-write bookkeeping (drift baseline, vault index, FM flushed-version,
+  // markClean): stamping the outgoing vault's state for `relPath` could suppress
+  // a legitimate drift check or inject stale metadata for a same-named file in
+  // the new vault, and would resurrect a cross-vault baseline entry.
   if (!isStillSameVault(writeIdentity)) return;
   await confirmPostWriteBaseline(vaultRoot, relPath, fileText, writtenByteLength);
   finishWriteBookkeeping(bookkeeping);
@@ -937,8 +773,7 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
 /**
  * Schedules a debounced markdown write under `callerId`. Subsequent calls
  * for the same `callerId` reset the timer and replace the args — only the
- * most recent args win, matching the per-component debounce semantics the
- * old TextTile / DocumentEditor / PropertiesPopup writers enforced locally.
+ * most recent args win.
  *
  * Failures inside the deferred write are silenced here — `trackComponentWrite`
  * already routes them through the save-error pipeline (toast + sentinel +
@@ -947,12 +782,11 @@ async function writeMarkdownFileImpl(args: WriteArgs): Promise<void> {
 export function scheduleMarkdownWrite(args: WriteArgs, delay: number = MARKDOWN_WRITE_DEBOUNCE_MS): void {
   // Args getter returns the same stable args reference — the primitive
   // calls it at schedule (probe) and fire (write) time. Re-arming the
-  // same callerId overwrites the prior args, matching the legacy
-  // "latest args win" behaviour.
+  // same callerId overwrites the prior args.
   writerScheduler.schedule(args.callerId, () => args, delay);
 }
 
-/** Audit-17 2.1 — outcome of a `flushMarkdownWrite` drain. */
+/** Outcome of a `flushMarkdownWrite` drain. */
 export interface FlushMarkdownResult {
   /** True when every drained write landed (or nothing was pending). */
   ok: boolean;
@@ -964,10 +798,8 @@ export interface FlushMarkdownResult {
  * Drains `callerId`'s pending write immediately; re-entrant (a concurrent
  * call awaits the in-flight write); no-op (ok: true) when nothing is armed.
  *
- * Audit-17 2.1 — `fireWrite` never rejects, so this CANNOT throw on a failed
- * write (the old "re-throws any IPC failure" docstring was false — the
- * component catch blocks were dead code; a failed flush reported success).
- * Returns `{ ok, error }` so callers branch honestly; user-facing attribution
+ * `fireWrite` never rejects, so this cannot throw on a failed write; it
+ * returns `{ ok, error }` so callers branch honestly. User-facing attribution
  * rides `trackComponentWrite` / `markPathFailed`.
  */
 export async function flushMarkdownWrite(callerId: string): Promise<FlushMarkdownResult> {
@@ -980,7 +812,7 @@ export async function flushMarkdownWrite(callerId: string): Promise<FlushMarkdow
  * Cancels `callerId`'s pending timer without flushing it. Used by the
  * editor's onDestroy when the component is unmounting and a write would
  * land against a now-stale relPath (rename mid-debounce, vault swap, etc.).
- * `pendingOnly` (Audit-18 H1): see the scheduler `cancel` doc in writeSchedulerTypes.
+ * `pendingOnly`: see the scheduler `cancel` doc in writeSchedulerTypes.
  */
 export function cancelMarkdownWrite(callerId: string, pendingOnly = false): void {
   writerScheduler.cancel(callerId, undefined, pendingOnly);
@@ -989,17 +821,10 @@ export function cancelMarkdownWrite(callerId: string, pendingOnly = false): void
 // ── Global hooks ──
 
 /**
- * Audit2 5.9 — test-only flusher registry. Production code MUST NOT use this
- * API; the CI gate `scripts/check-no-prod-markdown-test-flushers.mjs` enforces
- * it. Tests use this to inject arbitrary flush callbacks that get drained
- * alongside the gateway's real pending writes — replacing the deleted
- * `markdownWriteRegistry` shim's `registerMarkdownFlusher` fixture surface
- * without leaving dead-in-production code on the save/flush hot path.
- *
- * Tests import these directly as `__testRegisterFlusher` /
- * `__testUnregisterFlusher`; the alias pattern
- * `import { __testRegisterFlusher as registerMarkdownFlusher }` preserves the
- * inline assertion vocabulary the legacy fixtures used.
+ * Test-only flusher registry. Production code MUST NOT use this API; the CI
+ * gate `scripts/gates:no-prod-md-test-flushers` enforces it. Tests
+ * inject flush callbacks that get drained alongside the gateway's real
+ * pending writes.
  */
 type TestFlusher = () => Promise<void>;
 interface TestFlusherEntry {
@@ -1008,13 +833,8 @@ interface TestFlusherEntry {
   getDocId?: () => string | null | undefined;
 }
 const testFlushers = new Map<string, TestFlusherEntry>();
-// Phase 6.1.R2 — register the test-flusher registry for vault-swap reset.
-// Production never populates the map (no production code calls
-// `__testRegisterFlusher`), but a test that fires `fireVaultSwap` would
-// otherwise carry the prior test's flushers into the new vault's first
-// drain. The `__resetMarkdownFileWriterForTests` reset still clears the
-// map for the per-test cleanup path; this registration covers the
-// swap-without-test-reset edge.
+// Reset on vault swap too, so a test that fires `fireVaultSwap` without the
+// per-test reset doesn't carry prior flushers into the new vault's drain.
 vaultSwapResettable('markdownFileWriter.testFlushers', () => {
   testFlushers.clear();
 });
@@ -1068,11 +888,8 @@ async function drainTestFlushers(): Promise<Array<{ ownerId: string; error: unkn
  * sibling debounce map keyed by relPath; callers that need both drained
  * call `flushAllPendingFrontmatterWrites` alongside this function.
  *
- * Audit2 5.9 — also drains any test-only flushers registered via
- * `__testRegisterFlusher`. In production the test-flusher map is empty
- * (the CI gate forbids prod registrations), so this is a zero-cost
- * pass-through; in tests the registered flushers participate in the
- * same `failed[]` aggregation as real writes.
+ * Also drains test-only flushers registered via `__testRegisterFlusher`
+ * (empty in production).
  */
 export async function flushAllMarkdownWrites(): Promise<{ ok: boolean; failed: string[] }> {
   const [schedulerResult, testFailures] = await Promise.all([
@@ -1084,16 +901,10 @@ export async function flushAllMarkdownWrites(): Promise<{ ok: boolean; failed: s
 }
 
 /**
- * Backwards-compatibility alias for the old `markdownWriteRegistry` API.
- * Consumers that don't care about the failure list (just need a fire-and-
- * forget drain) can use this; consumers that want per-failure attribution
- * call `flushAllMarkdownWrites` directly.
- *
- * Returns the registry's old `{ ok, failed }` shape (ok=count of successful
- * drains, failed=array of `{ ownerId, error }`) so call sites that depend
- * on the registry's return shape (e.g. the `mdResult.failed.length` checks
- * in vaultStore.save, tabsStore.close, vaultFolderOps.delete, fileTags
- * tag-rewrite-everywhere) keep working without modification.
+ * Variant of `flushAllMarkdownWrites` returning `{ ok, failed }` where
+ * ok = count of successful drains and failed = array of `{ ownerId, error }`
+ * (used by the `failed.length` checks in vaultStore.save, tabsStore.close,
+ * vaultFolderOps.delete, fileTags).
  */
 export interface FlushAllResult {
   ok: number;
@@ -1101,11 +912,8 @@ export interface FlushAllResult {
 }
 
 export async function flushAllMarkdownWriters(): Promise<FlushAllResult> {
-  // Mirror flushAllMarkdownWrites internally so the test-flusher errors carry
-  // their *original* rejection (not a generic wrapper), which the
-  // markdownWriteRegistryFlush test contract relies on for `result.failed[i].error`
-  // identity. Production callers only inspect `failed.length`, so the richer
-  // error preservation is a free upgrade for them.
+  // Test-flusher errors carry their *original* rejection (tests rely on
+  // `result.failed[i].error` identity).
   const [schedulerResult, testFailures] = await Promise.all([
     writerScheduler.flushAll(),
     drainTestFlushers(),
@@ -1117,12 +925,7 @@ export async function flushAllMarkdownWriters(): Promise<FlushAllResult> {
     })),
     ...testFailures,
   ];
-  // 6.3.P4 — `ok` now sums production writes drained successfully
-  // (schedulerResult.ok, returned by the writeScheduler primitive) AND
-  // successful test flushers. Pre-fix this was only the test-flusher
-  // count, which is 0 in production — masking actual production write
-  // counts. Production callers still check `failed.length === 0`;
-  // tests rely on `ok` matching the count of registered+drained flushers.
+  // `ok` sums production writes drained successfully AND successful test flushers.
   const testOk = testFlushers.size - testFailures.length;
   return {
     ok: Math.max(0, schedulerResult.ok + testOk),
@@ -1136,33 +939,21 @@ export async function flushAllMarkdownWriters(): Promise<FlushAllResult> {
  * outgoing vault don't fire after the new vault opens (their closures
  * still reference the old vaultRoot through `WriteArgs`).
  *
- * Phase R1 — the scheduler primitive owns pending + in-flight + failure
- * bookkeeping; `reset()` drops every internal map. The remaining
- * gateway-local maps (hydrate state, force-writers, last-seen args) are
- * cleared here for the per-test reset path.
- *
- * Phase R6 — baseline registry resets on vault swap via its own
- * `resetAllBaselines` registered in `vaultLifecycle`. We deliberately
- * DON'T drop it here, because `cancelAllMarkdownWrites` is also called
- * from per-test cleanup paths where the test may still need the
- * baseline for assertions; tests use `__resetBaselinesForTests` for an
- * explicit wipe.
+ * The drift-baseline registry is deliberately NOT dropped here (it resets via
+ * the vault-swap hook below): this is also called from per-test cleanup where
+ * the test may still need the baseline for assertions.
  */
 export function cancelAllMarkdownWrites(): void {
   writerScheduler.reset();
   fileState.clear();
   forceWriters.clear();
-  // 6.2.H10 — drop in-flight promise refs. The promises themselves
-  // will still settle (we can't unsettle a pending IPC), but with no
-  // map entry any cancel/force await becomes a no-op for the new
-  // vault — late settlement of an outgoing-vault write does not block
-  // incoming-vault setup.
+  // Drop in-flight promise refs so a late-settling outgoing-vault write
+  // doesn't block incoming-vault cancel/force awaits.
   inFlightWrites.clear();
-  // Audit-4 DI-09 — drop the per-path write chains too so the new vault's
-  // first write to a same-named path doesn't chain behind an outgoing-vault
-  // write that's still settling.
+  // Drop the per-path chains so the new vault's first write to a same-named
+  // path doesn't chain behind an outgoing-vault write that's still settling.
   writeChainByPath.clear();
-  // Audit-17 2.1 — an outgoing vault's flush error must not leak into the new vault.
+  // An outgoing vault's flush error must not leak into the new vault.
   lastWriteFailureByCaller.clear();
 }
 
@@ -1192,7 +983,7 @@ export function unregisterForceWriter(callerId: string): void {
 }
 
 /**
- * Audit 2.1 — cancels every armed (debounced, not-yet-fired) markdown write
+ * Cancels every armed (debounced, not-yet-fired) markdown write
  * belonging to an open editor on `docId`. Used by vault-wide rewrites
  * (Replace All) that authoritatively rewrite a file on disk and then sync the
  * open editor: a write still armed against the doc carries the editor's
@@ -1209,7 +1000,7 @@ export function cancelMarkdownWritesForDocument(docId: string): void {
 }
 
 /**
- * 6.2.H10 — async sibling of `cancelMarkdownWritesForDocument`. Cancels the
+ * Async sibling of `cancelMarkdownWritesForDocument`. Cancels the
  * armed timers (the synchronous part) AND awaits any in-flight write IPC
  * for matching callers. Use when the caller needs the guarantee that no
  * writer is still pumping bytes against `docId` before it proceeds
@@ -1242,9 +1033,7 @@ export async function cancelAndAwaitMarkdownWritesForDocument(
 
 /**
  * Forces every writer matching `docId` to commit its current in-memory body
- * to disk. Returns the same shape as the old `markdownWriteRegistry.forceWriteForDocument`
- * so existing consumers (the Keep-local handler in `vaultExternalChanges`)
- * keep their failure-aggregation pipeline intact.
+ * to disk (the Keep-local handler in `vaultExternalChanges`).
  *
  * Matching by docId (rather than draining everything) preserves intent:
  * the user only opted in for THIS document, so other open editors with
@@ -1257,9 +1046,8 @@ export interface ForceWriteResult {
 
 export async function forceWriteForDocument(docId: string): Promise<ForceWriteResult> {
   if (!docId) return { ok: 0, failed: [] };
-  // Audit2 5.9 — drain test-registered flushers (no-op in production) so the
-  // shim's force-write contract — "match by getDocId, call forceWrite if
-  // present else flush" — survives the migration.
+  // Test-registered flushers (none in production): match by getDocId, call
+  // forceWrite if present else flush.
   const testMatches: Array<[string, TestFlusher]> = [];
   for (const [ownerId, entry] of testFlushers.entries()) {
     if (entry.getDocId?.() === docId) {
@@ -1282,13 +1070,10 @@ export async function forceWriteForDocument(docId: string): Promise<ForceWriteRe
         // Cancel any armed schedule for this caller so the immediate write
         // isn't duplicated by the timer's deferred write a few hundred ms later.
         cancelMarkdownWrite(args.callerId);
-        // 6.2.H10 — if a timer's late fire is still in the IPC await chain
-        // for this caller, wait for it to settle before starting the new
-        // write. Without this guard the two writes raced and the OS
-        // arbitrated the order, leaving the loser's bytes on disk under
-        // the winner. `.catch` swallows the prior write's failure because
-        // we're about to issue a fresh one — the prior failure has its
-        // own attribution via trackComponentWrite.
+        // If a timer's late fire is still in flight for this caller, wait for
+        // it first — otherwise the OS orders the two writes and the loser's
+        // bytes can land last. `.catch` swallows the prior failure (it has its
+        // own attribution via trackComponentWrite).
         const prior = inFlightWrites.get(args.callerId);
         if (prior) await prior.catch(() => undefined);
         await writeMarkdownFile(args);
@@ -1327,7 +1112,7 @@ export async function forceWriteForDocument(docId: string): Promise<ForceWriteRe
 // outgoing vault's files OR throwing because the IPC handler's vault gate
 // now rejects the old path).
 //
-// Phase R6 — also drop the file-baseline registry. A same-named file in
+// Also drop the file-baseline registry. A same-named file in
 // the new vault would otherwise inherit the outgoing vault's mtime
 // baseline, suppressing a legitimate drift check (mtime differs ⇒
 // "external edit detected") on its first write.
@@ -1339,12 +1124,7 @@ onVaultSwap('pre-swap', 'markdownFileWriter', () => {
 /**
  * Test-only — full reset of every map in the gateway. Use between unit
  * tests so a registration from a prior test doesn't leak into the next
- * test's dispatch.
- *
- * Audit2 5.9 — also clears the test-only flusher registry. Prior to the
- * shim migration the per-test cleanup wiped both maps via
- * `__resetMarkdownFlushersForTests`; merging the reset here keeps the
- * one-call cleanup contract intact for callers of either name.
+ * test's dispatch. Also clears the test-only flusher registry.
  */
 export function __resetMarkdownFileWriterForTests(): void {
   cancelAllMarkdownWrites();

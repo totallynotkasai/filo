@@ -131,13 +131,11 @@ export function tileResizeAction(node: HTMLElement, options: TileResizeOptions) 
       currentOptions = newOptions;
     },
     destroy() {
-      // Audit 3.4 — route teardown through cancelResize() (mirrors tileDrag's
-      // cancelDrag()). If the tile unmounts mid-resize it restores the captured
-      // start size (cancel-not-commit, Sprint B / B3 — never pushes a
-      // ResizeTileCommand), RELEASES the pointer capture (the old ad-hoc cleanup
-      // nulled activePointerId without releasing, leaking the capture and
-      // dropping in-flight pointer events for the gesture), and clears the
-      // cursor + keydown listener. cancelResize() no-ops when not resizing.
+      // Route teardown through cancelResize() (mirrors tileDrag's cancelDrag()).
+      // If the tile unmounts mid-resize it restores the captured start size
+      // (cancel-not-commit — never pushes a ResizeTileCommand), RELEASES the
+      // pointer capture (else it leaks and drops in-flight pointer events), and
+      // clears the cursor + keydown listener. cancelResize() no-ops when not resizing.
       cancelResize();
       node.removeEventListener('pointerdown', onPointerDown);
       node.removeEventListener('pointermove', onPointerMove);

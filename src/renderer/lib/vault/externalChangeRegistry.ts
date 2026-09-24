@@ -1,20 +1,12 @@
 /**
- * externalChangeRegistry — Phase 3 / 3.2.
- *
- * Single, exhaustive dispatcher for `vault:files-changed` events. Each
+ * externalChangeRegistry — single, exhaustive dispatcher for `vault:files-changed` events. Each
  * `FileChangeType` arm has a dedicated reconciler that owns the renderer-
  * side response (apply disk metadata to caches, surface a "modified
  * externally" toast, refresh a config store, etc.). Adding a new
  * `FileChangeType` to `fileWatcherTypes.ts` becomes a compile error here:
  * the `Record<FileChangeType, ExternalChangeReconciler>` constant won't
- * type-check until the new arm has a reconciler.
- *
- * Pre-Phase-3 the renderer hand-filtered `c.type === 'document'` /
- * `c.type === 'attachment'` inside `vault.svelte.ts:listenForChanges`,
- * silently dropping every other kind. External edits to `.board.json` /
- * `.filo/tags.json` / `.filo/themes/*.json` / `.filo/templates/*.json`
- * went unobserved — the user's hand-edit only surfaced on the NEXT
- * Filo-side write (when the writer's mtime drift gate finally noticed).
+ * type-check until the new arm has a reconciler, so no kind (`.board.json`,
+ * `.filo/tags.json`, themes, templates…) can be silently dropped.
  *
  * The registry is intentionally lightweight: the reconcilers themselves
  * live alongside the stores they need to coordinate (boardCache, theme,
@@ -83,8 +75,8 @@ function makePlaceholder(kind: FileChangeType): PlaceholderReconciler {
  * store-owned reconcilers register themselves and override the placeholder.
  *
  * Storing in a `Record` (vs. a Map) gives us exhaustiveness — TypeScript
- * fails the build if any `FileChangeType` arm is missing, so a Phase 0
- * sweep that adds a new watcher kind without a reconciler can't ship.
+ * fails the build if any `FileChangeType` arm is missing, so a new watcher
+ * kind without a reconciler can't ship.
  */
 const reconcilers: Record<FileChangeType, ExternalChangeReconciler> = {
   // The `tree` kind doesn't flow through `vault:files-changed` today
@@ -169,9 +161,8 @@ export async function dispatchExternalChange(event: ExternalChangeEvent): Promis
  *
  * Used by the renderer's listener so multi-file batches (the watcher's
  * 300ms debounce naturally groups events) stay coherent: one reconciler
- * call per kind per batch, not one per file. Per-kind reconcilers that
- * want per-file dispatch (the legacy `document` / `attachment` shapes)
- * are passed an array on each invocation.
+ * call per kind per batch, not one per file. Batch-shaped reconcilers
+ * (`document` / `attachment`) are passed an array on each invocation.
  */
 export interface BatchedReconciler {
   readonly kind: FileChangeType;
@@ -183,8 +174,8 @@ const batchedReconcilers: Partial<Record<FileChangeType, BatchedReconciler>> = {
 /**
  * Registers a batched reconciler. Takes precedence over the single-event
  * reconciler for the same kind in `dispatchExternalChangeBatch`. Used by
- * the document / attachment reconcilers which were already batch-shaped
- * pre-Phase-3 (`handleExternalMarkdownChanges` takes a `string[]`).
+ * the document / attachment reconcilers, which are batch-shaped
+ * (`handleExternalMarkdownChanges` takes a `string[]`).
  */
 export function registerBatchedReconciler(reconciler: BatchedReconciler): void {
   batchedReconcilers[reconciler.kind] = reconciler;
@@ -243,7 +234,7 @@ export function _resetRegistryForTests(): void {
 /**
  * Test-only — returns the current reconciler kinds registered with
  * non-placeholder handlers. Used by the characterisation test in
- * `externalEditReconciliation.test.ts` to assert Phase 3 completeness.
+ * `externalEditReconciliation.test.ts` to assert every kind is registered.
  */
 export function _registeredKindsForTests(): FileChangeType[] {
   const out: FileChangeType[] = [];

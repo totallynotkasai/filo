@@ -1,6 +1,6 @@
 /* ============================================================
    Filo — Connection Path & Label Styles
-   Phase 6: Connections and Frames
+   Connections and Frames
    ============================================================ */
 
 /* ── Connection Bubbles ──
@@ -44,7 +44,7 @@
   filter: drop-shadow(0 0 4px var(--connection-path-hover-glow, var(--accent-primary)));
 }
 
-/* Phase C / C.4 — selection state. The visible stroke colour and width
+/* Selection state. The visible stroke colour and width
    are already overridden inline by ConnectionPath when selected so the
    resolved theme colour can't win the cascade fight; the filter glow
    here gives the selection a hover-style halo so it's recognisable

@@ -159,7 +159,7 @@ export class TaskListKeyboardNav {
     const currentOffset = placementIdx - sectionStart;
 
     const descendantIds = collectDescendantIds(this.deps.getRows(), tileId).filter((id) => id !== tileId);
-    // DRAG-6 — the reorder stays inside the current section, so only descendants
+    // The reorder stays inside the current section, so only descendants
     // whose placement actually sits in [sectionStart, sectionEnd) belong to the
     // moving block. Counting ALL descendants (a leaf reachable via a legacy
     // placement↔parent divergence could live in another section) would inflate
@@ -191,10 +191,7 @@ export class TaskListKeyboardNav {
     });
 
     // Same-section reorder under a non-manual sort: switch to manual AND the
-    // reorder in one BatchCommand so a single Ctrl+Z reverses both. Phase 7
-    // / 7.1 — previously the sortBy flip wrote directly through
-    // `boardStore.updateSettings` and the Toast "Undo" had to fire two
-    // separate ops to restore the prior state.
+    // reorder in one BatchCommand so a single Ctrl+Z reverses both.
     const sortBy = this.deps.getSortBy();
     const reorderCmd = new ReorderTaskWithinSectionCommand(
       board.id,

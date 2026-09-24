@@ -26,27 +26,18 @@ let version = $state(0);
 let isBuilding = $state(false);
 
 /**
- * 2.2 (#5) — monotonic rebuild generation. A fast A→B vault swap can start a
- * second `rebuild()` while the first is still awaiting its chunked reads; both
- * share this module's `index` / `isBuilding` / `buildCompleteResolvers`.
- * Without a token the OUTGOING rebuild's `finally` flips `isBuilding=false` and
- * drains the INCOMING rebuild's resolvers against a half-built index
- * (re-opening 6.2.H3), and its chunk loop keeps upserting stale-vault entries.
- * Every `rebuild()` captures the counter at entry; a superseded rebuild aborts
- * its chunk loop and skips the `finally` drain so only the live generation owns
- * the shared building state.
+ * Monotonic rebuild generation. A fast A→B vault swap can start a second
+ * `rebuild()` while the first is still reading; both share `index` /
+ * `isBuilding` / `buildCompleteResolvers`. Without a token the outgoing
+ * rebuild's `finally` would drain the incoming rebuild's resolvers against a
+ * half-built index. A superseded rebuild aborts its chunk loop and skips the
+ * `finally` drain, so only the live generation owns the building state.
  */
 let buildGeneration = 0;
 
 /**
- * 6.2.H3 — resolvers waiting for the current `rebuild()` to finish. Drained
- * in `rebuild()`'s `finally` block once `isBuilding` flips back to false.
- * Callers that need to read post-rebuild metadata (the recovery sequencer's
- * tag-rewrite partial-state detection) `await vaultIndexStore.whenBuildComplete()`
- * before sampling `allMetadata()` — without it, the metadata sample could
- * fire mid-chunked-rebuild and miss the very `newName` carrier that proves
- * a partial commit, so the sequencer would offer "Discard plan" against a
- * vault that's actually mid-rename.
+ * Resolvers waiting for the current `rebuild()` to finish, drained in its
+ * `finally`. See `whenBuildComplete()`.
  */
 const buildCompleteResolvers: Array<() => void> = [];
 
@@ -62,17 +53,14 @@ interface ReadFileResult {
   ok: boolean;
   content: string | null;
   code: string | null;
-  // Audit2 4.3 — the disk mtime the IPC captured in its pre-flight stat. The
-  // index stamps this (not Date.now()) so the partial-read stability window
-  // measures the file's real age, not the moment we happened to read it.
+  // The disk mtime the IPC captured in its pre-flight stat. The index stamps
+  // this (not Date.now()) so the partial-read stability window measures the
+  // file's real age, not the moment we happened to read it.
   mtimeMs: number | null;
-  /** Audit-19 ERR-7 — 'invalid-utf-8' when the bytes aren't UTF-8 (absent = UTF-8). */
+  /** 'invalid-utf-8' when the bytes aren't UTF-8 (absent = UTF-8). */
   encoding?: 'utf-8' | 'invalid-utf-8';
 }
 
-// Phase 37 / 37.6 — two-arg canonical shape: (vaultRoot, relativePath).
-// Legacy single-arg branch in `vault:read-file-text` has been removed,
-// so passing a pre-joined absolute path no longer works.
 async function readFileText(vaultRoot: string, relativePath: string): Promise<ReadFileResult> {
   const res = await window.filo.invoke('vault:read-file-text', vaultRoot, relativePath);
   if (res.success) {
@@ -90,20 +78,17 @@ async function indexOnePath(relativePath: string): Promise<void> {
   const identity = captureVaultIdentity();
   const rel = normaliseRel(relativePath);
   const res = await readFileText(root, rel);
-  // 2.2 (#5) — re-check vault identity AFTER the awaited read. A vault swap (or
-  // close) during the read leaves `root` pointing at the PRIOR vault; upserting,
-  // removing, or scheduling a retry against the live index now would graft the
-  // old vault's file (or a phantom retry timer) onto the new vault's metadata.
-  // Audit-11 VS-6 — generation-aware so a close → reopen of the SAME path (same
-  // string, new instance) reads as stale too, not just a different-path swap.
+  // Re-check vault identity after the read: a swap (or close → reopen of the
+  // same path) during it would graft the old vault's file (or a phantom retry
+  // timer) onto the new vault's metadata.
   if (!isStillSameVault(identity)) return;
   if (res.ok && res.content !== null) {
-    // Audit2 4.3 — stamp the disk mtime, not Date.now(). Date.now() made the
-    // partial-read window (now - lastModified < 1s) always true, forcing every
-    // settled external truncation through the ~5s retry path.
+    // Stamp the disk mtime, not Date.now(): Date.now() would make the
+    // partial-read window always true, forcing every settled external
+    // truncation through the retry path.
     const metadata = parseMarkdown(relativePath, res.content, res.mtimeMs ?? Date.now());
     index.upsert(metadata);
-    noteReadEncoding(rel, res.encoding); // Audit-19 ERR-7 — a non-UTF-8 note opens non-editable
+    noteReadEncoding(rel, res.encoding); // a non-UTF-8 note opens non-editable
     // Cancel any pending retry — the read succeeded this pass.
     const pending = pendingRetries.get(relativePath);
     if (pending) {
@@ -112,8 +97,7 @@ async function indexOnePath(relativePath: string): Promise<void> {
     }
     return;
   }
-  // Phase 31 C3.6 — only delete the index entry on a true "missing file"
-  // signal. EACCES/EBUSY/EPERM/EMFILE mean we couldn't read RIGHT NOW; the
+  // Only delete the index entry on a true "missing file" signal. EACCES/EBUSY/EPERM/EMFILE mean we couldn't read RIGHT NOW; the
   // index entry from the prior pass is more accurate than nothing. Schedule
   // a single retry; subsequent watcher events will re-enqueue if still bad.
   const code = res.code ?? 'ENOENT';
@@ -132,7 +116,7 @@ async function indexOnePath(relativePath: string): Promise<void> {
 }
 
 /**
- * Phase 31 C2.2 — chunked parallelism for cold-rebuild + bulk applyChanges.
+ * Chunked parallelism for cold-rebuild + bulk applyChanges.
  *
  * Splits the path list into batches of REBUILD_CHUNK_SIZE and runs
  * `indexOnePath` in parallel within each batch. Batched-sequential keeps the
@@ -144,11 +128,9 @@ async function indexOnePath(relativePath: string): Promise<void> {
 const REBUILD_CHUNK_SIZE = 16;
 async function indexPathsChunked(
   paths: string[],
-  // 2.2 (#5) — optional staleness probe. `rebuild()` passes its generation
-  // check so the loop bails between chunks the instant a newer rebuild (or
-  // vault swap) supersedes it, rather than reading every remaining file of a
-  // vault that's no longer open. `applyChanges` omits it (incremental updates
-  // are not generation-scoped).
+  // Optional staleness probe. `rebuild()` passes its generation check so the
+  // loop bails between chunks once a newer rebuild supersedes it. `applyChanges`
+  // omits it (incremental updates are not generation-scoped).
   isCurrent?: () => boolean,
 ): Promise<void> {
   for (let i = 0; i < paths.length; i += REBUILD_CHUNK_SIZE) {
@@ -201,7 +183,7 @@ export const vaultIndexStore = {
       bump();
       return;
     }
-    // 2.2 (#5) — claim a generation up-front. `isCurrent()` is false the moment
+    // Claim a generation up-front. `isCurrent()` is false the moment
     // a newer rebuild() (typically the post-vault-swap one) bumps the counter.
     const myGeneration = ++buildGeneration;
     const isCurrent = (): boolean => myGeneration === buildGeneration;
@@ -215,18 +197,14 @@ export const vaultIndexStore = {
     } catch (err) {
       reportError('vaultIndex.rebuild', err, 'Failed to rebuild file index — search and tag lookups may be stale');
     } finally {
-      // 2.2 — only the CURRENT generation owns the shared building flag and the
-      // resolver drain. A superseded rebuild returns quietly; the newer
-      // rebuild's own `finally` flips the flag and drains once IT completes, so
-      // `whenBuildComplete()` awaiters see a fully-built index for the LIVE
-      // vault rather than this outgoing rebuild's half-built one.
+      // Only the current generation owns the building flag and the resolver
+      // drain; a superseded rebuild returns quietly and the newer one drains
+      // when it completes.
       if (isCurrent()) {
         isBuilding = false;
         bump();
-        // 6.2.H3 — drain the build-complete resolvers so any awaiter (the
-        // recovery sequencer) sees the post-rebuild metadata. Cleared in one
-        // batch so a resolver that re-enqueues itself doesn't loop on a
-        // half-drained list.
+        // Cleared in one batch so a resolver that re-enqueues itself doesn't
+        // loop on a half-drained list.
         const resolvers = buildCompleteResolvers.splice(0);
         for (const r of resolvers) r();
       }
@@ -234,12 +212,11 @@ export const vaultIndexStore = {
   },
 
   /**
-   * 6.2.H3 — resolves once the current `rebuild()` finishes, or immediately
-   * when no rebuild is in flight. The recovery sequencer awaits this before
-   * sampling `allMetadata()` for partial-tag-rewrite detection: pre-fix the
-   * sequencer raced the rebuild, sampled a mid-chunk empty/partial index,
-   * decided "no carrier therefore not partial", and offered a Discard that
-   * actually discarded a partially-committed rename.
+   * Resolves once the current `rebuild()` finishes, or immediately when no
+   * rebuild is in flight. The recovery sequencer awaits this before sampling
+   * `allMetadata()` for partial-tag-rewrite detection — a mid-rebuild sample
+   * could miss the carrier that proves a partial commit and offer a Discard
+   * that throws away a partially-committed rename.
    */
   whenBuildComplete(): Promise<void> {
     if (!isBuilding) return Promise.resolve();
@@ -262,11 +239,8 @@ export const vaultIndexStore = {
       const rel = toPosix(raw);
       if (seen.has(rel)) continue;
       seen.add(rel);
-      // Phase 1 / 1.3 — accept both `.md` and `.markdown` (case-insensitive).
-      // The watcher classifier (`fileWatcher.classifyChange`) already emits
-      // `document` events for `.markdown`; without this match, those events
-      // were silently dropped on the floor and the external-edit pipeline
-      // never saw `.markdown` files at all.
+      // Accept both `.md` and `.markdown` (case-insensitive), matching the
+      // watcher classifier, which emits `document` events for both.
       const dot = rel.lastIndexOf('.');
       const ext = dot >= 0 ? rel.slice(dot) : '';
       if (!isMarkdownExtension(ext)) continue;
@@ -278,7 +252,7 @@ export const vaultIndexStore = {
 
   /**
    * Restores a previously-captured metadata snapshot into the index.
-   * Phase 31 A4.4 — partial-read-retry hook: when `applyChanges` reads a
+   * Partial-read-retry hook: when `applyChanges` reads a
    * mid-write truncated file and the classifier flags `partial-read-retry`,
    * the caller restores the prior baseline so the next retry pass compares
    * against the pre-shrink content (preventing classification of the
@@ -297,7 +271,7 @@ export const vaultIndexStore = {
   },
 
   /**
-   * Sprint B / B9 — rebinds an index entry from `oldPath` to `newPath`
+   * Rebinds an index entry from `oldPath` to `newPath`
    * without re-reading the file. Called from both in-app rename and
    * `handleExternalRename` so vault search returns the new path without
    * waiting for the next full reindex pass. No-ops if `oldPath` is not
@@ -315,8 +289,7 @@ export const vaultIndexStore = {
   },
 };
 
-// Phase 4 (Consolidation 2026-05-25) — vault-swap reset registration.
-// Drops every cached metadata entry and cancels every in-flight transient-
+// Vault-swap reset: drops every cached metadata entry and cancels every in-flight transient-
 // read retry timer. The actual rebuild against the new vault tree happens
 // inside `vault.svelte.ts:openVault` after hydration, because the rebuild
 // has a tag-seeding follow-up that depends on `fileTagsStore` being

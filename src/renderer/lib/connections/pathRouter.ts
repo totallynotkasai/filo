@@ -130,7 +130,7 @@ function computeSmartPath(
   const MARGIN = 150;
   const MAX_ITER = 500;
 
-  // Obstacles near the path region. H4 (perf): an R-tree range query bounded
+  // Obstacles near the path region: an R-tree range query bounded
   // to the region instead of `all().filter(...)` over every tile on the board
   // — the smart route only ever recomputes when a connection endpoint moves
   // (see ConnectionLayer's path memo), and this keeps that recompute O(tiles

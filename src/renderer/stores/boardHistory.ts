@@ -183,22 +183,14 @@ export function makeHistorySlice() {
       const deleteOnUndo: string[] = [];
       for (const k of Object.keys(patch)) {
         if (k in prev) {
-          // Phase 6 / 6.3 — deep-clone the inverse value via JSON
-          // round-trip. `prev[k]` may be a Svelte 5 $state Proxy on a
-          // nested settings object (e.g. defaults.tile.text); a shallow
-          // assignment leaves the inverse referencing the live store,
-          // so any mutation between execute and undo silently corrupts
-          // what undo would restore. structuredClone throws
-          // DataCloneError on $state Proxies — JSON is the documented
-          // safe pattern (see [[feedback-no-structuredclone-on-state-proxies]]).
+          // Deep-clone the inverse via JSON round-trip: `prev[k]` may be a
+          // $state Proxy on a nested settings object, so a shallow copy would
+          // let later mutations corrupt what undo restores. structuredClone
+          // throws DataCloneError on $state Proxies.
           //
-          // L6 (Audit-13) — DECISION: the JSON round-trip drops nested keys
-          // whose value is `undefined`. Accepted: `applyToTarget` restores the
-          // inverse by replacing the whole top-level settings key, and every
-          // settings reader treats a missing key the same as `undefined`
-          // (`?.` / `?? default`), so a dropped `undefined` sub-value is
-          // behaviourally identical to keeping it. Preserving it would mean a
-          // recursive undefined→delete-marker pass for zero observable gain.
+          // DECISION: the JSON round-trip drops nested `undefined` values.
+          // Accepted: undo replaces the whole top-level key and every reader
+          // treats a missing key the same as `undefined`.
           const v = prev[k];
           inversePatch[k] = (v !== null && typeof v === 'object')
             ? JSON.parse(JSON.stringify(v))

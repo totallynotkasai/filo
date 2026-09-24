@@ -3,9 +3,9 @@
  * navigation that should be allowed, vs. an external URL that must be
  * blocked.
  *
- * M4 (2026-05-28) — defense-in-depth beyond the CSP. The renderer is a SPA
- * that never legitimately performs a top-level navigation to a different
- * origin: external links open via the `shell:open-external` IPC (which
+ * Defense-in-depth beyond the CSP. The renderer is a SPA that never
+ * legitimately performs a top-level navigation to a different origin:
+ * external links open via the `media:open-external` IPC (which
  * validates the URL), `filo://` media loads through the custom protocol,
  * and in-app routing is component state, not URL changes. So any
  * `will-navigate` to a different origin is either an accident or an attack

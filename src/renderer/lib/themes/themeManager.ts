@@ -27,7 +27,7 @@ import { reportError } from '../utils/errorBus';
 export type ThemeVariableMap = Record<string, string>;
 
 /**
- * Phase 5 — inline-validates a single variable before writing it. The
+ * Inline-validates a single variable before writing it. The
  * `asSafeThemeValue` sanitiser rejects CSS-injection patterns (`url(…)`,
  * `expression(`, `image(`, `@import`) and over-long / unparsable values.
  * A vault-shipped theme JSON containing `'red; background-image:
@@ -151,7 +151,7 @@ const CONTENT_VAR_NAMES: readonly string[] = [
   '--connection-label-btn-hover-bg', '--connection-label-btn-danger',
   '--connection-label-btn-danger-bg',
   // Frame chrome — varies per theme; omitting these makes a re-applied
-  // saved theme fall back to the base theme's frame palette (P2.13).
+  // saved theme fall back to the base theme's frame palette.
   '--frame-selected-glow', '--frame-header-text', '--frame-header-text-muted',
   '--frame-header-btn-hover-bg', '--frame-header-btn-hover-border',
   '--frame-header-btn-danger', '--frame-header-btn-danger-bg',
@@ -294,7 +294,7 @@ export function applyCustomTheme(
   const root = getRootElement();
   if (!root) return;
   const base = theme.base ?? 'dark';
-  // Sprint B / B17 — validate the base BEFORE we drop the previously
+  // Validate the base BEFORE we drop the previously
   // applied vars. If we cleared first and then threw, the page would be
   // stuck between two themes — the inline overrides gone, but the
   // `data-theme` attribute (and thus the base palette) still pointing at

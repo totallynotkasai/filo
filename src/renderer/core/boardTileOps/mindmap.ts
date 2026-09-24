@@ -18,12 +18,9 @@ import type { CacheContext, V7BoardFileData } from '../../stores/boardCacheTypes
 import type { AddTileOpts, BoardTileOps } from '../boardTileOps';
 
 /**
- * Mind Map tile ops — lifted verbatim from `boardCacheTiles.ts` (Phase 2 of
- * CONSOLIDATION_PLAN_2026-05-25). MindMap is the original sink: every
- * `boardCacheStore.persist*Tile` body until Phase 2 cast the board to
- * `MindMapBoard` and walked `.placements` / `.inlineTiles`. The lift keeps
- * behaviour identical and gates dispatch on `board.type === 'mindmap'` via
- * the registry.
+ * Mind Map tile ops — walks `.placements` / `.inlineTiles` on a
+ * `MindMapBoard`. Dispatch is gated on `board.type === 'mindmap'` via the
+ * registry.
  */
 export const mindmapTileOps: BoardTileOps<MindMapBoard> = {
   type: 'mindmap',
@@ -35,7 +32,7 @@ export const mindmapTileOps: BoardTileOps<MindMapBoard> = {
     tile: Tile,
     opts?: AddTileOpts,
   ): Promise<void> {
-    // Phase R7 — stamp the backing-file path synchronously so the cache write
+    // Stamp the backing-file path synchronously so the cache write
     // below reflects the resolved `filePath` immediately. The deferred disk
     // write (file existence check, `.md` seed, doc registration) still goes
     // through `seedTextFileForNewTile` at the end of the function.
@@ -93,11 +90,9 @@ export const mindmapTileOps: BoardTileOps<MindMapBoard> = {
       ];
       const { [tileId]: _d, ...restDefs } = cached.tileDefs;
       void _d;
-      // Audit 5.6 — refresh the board's identity alongside the def update.
-      // The in-place `delete` above mutates `board.inlineTiles` without
-      // changing the `board` reference; spreading a fresh copy keeps the
-      // cache-identity convention so future identity-comparison consumers
-      // observe the change.
+      // Refresh the board's identity alongside the def update: the in-place
+      // `delete` above doesn't change the `board` reference, so spread a fresh
+      // copy for identity-comparison consumers (cache-identity convention).
       ctx.updateEntry(boardId, { board: { ...mm }, tileDefs: restDefs });
       ctx.markDirty(boardId);
       return;
@@ -119,7 +114,7 @@ export const mindmapTileOps: BoardTileOps<MindMapBoard> = {
         delete updatedConns[key];
       }
     }
-    // Audit 5.6 — fresh `board` ref alongside the in-place `delete` of the
+    // Fresh `board` ref alongside the in-place `delete` of the
     // placement above (cache-identity convention).
     ctx.updateEntry(boardId, { board: { ...mm }, tileDefs: restDefs, connections: updatedConns });
 

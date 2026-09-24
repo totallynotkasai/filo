@@ -1,5 +1,5 @@
 /**
- * Phase 5 / 5.2 — undoable src/url/filePath swaps on attachment tiles.
+ * Undoable src/url/filePath swaps on attachment tiles.
  *
  * Six tile types share a single shape: the user clears or replaces the
  * field that points at the backing file/URL.
@@ -8,10 +8,9 @@
  *   - file                  → `filePath` (plus fileName + fileExtension)
  *   - iframe / link         → `url`
  *
- * Before this phase each component called `boardStore.updateTile` directly,
- * so the "Remove" button silently destroyed the only reference to the
- * backing media with no Ctrl+Z. The command captures the prior fields and
- * the new ones; execute / undo apply them via `boardStore.updateTile`.
+ * Without it, "Remove" would destroy the only reference to the backing media
+ * with no Ctrl+Z. The command captures the prior fields and the new ones;
+ * execute / undo apply them via `boardStore.updateTile`.
  *
  * The command does NOT touch the file on disk — clearing the field only
  * unlinks the tile from the file. The vault file itself stays put (consistent

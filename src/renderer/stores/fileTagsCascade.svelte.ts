@@ -1,20 +1,10 @@
 /**
- * Tag cascade helpers extracted from fileTags.svelte.ts (Sprint 39 / 39.9).
+ * Tag cascade helpers for fileTags.svelte.ts. They only mutate `boardStore` /
+ * `boardCacheStore` state (never the TagsFile state) and only run during
+ * cascade operations, so they live here to keep fileTags.svelte.ts focused.
  *
- * The four "cascade" functions (commitTagRenameInMemory,
- * commitTagRemovalInMemory, iterateInlineTiles, cascadeTagToBoardSettings)
- * and their immediate orchestration (runTagRewriteSweep,
- * pushTagRewriteFailureToast, flushTagRewriteBoardWrites,
- * rewriteAndCommitRetry) all share two traits: they only mutate `boardStore`
- * / `boardCacheStore` state (never the `file` state in fileTags.svelte.ts)
- * and they don't need to be in the fileTagsStore object literal because
- * they only run during cascade operations. Moving them here keeps
- * fileTags.svelte.ts focused on TagsFile wrapping + tile/path mutations.
- *
- * To avoid a circular import with fileTags.svelte.ts the few commit-side
- * helpers that need to call back into the store (renameTag / ensureTag /
- * deleteTag) take it through the `TagCascadeStore` interface — a minimal
- * structural type that the actual fileTagsStore satisfies by construction.
+ * Helpers that call back into the store take it through the minimal
+ * `TagCascadeStore` interface to avoid a circular import.
  */
 
 import { SvelteSet } from 'svelte/reactivity';
@@ -38,9 +28,8 @@ export interface TagCascadeStore {
   renameTag(oldName: string, newName: string): string[];
   deleteTag(tagName: string): string[];
   ensureTag(tagName: string, color?: string): void;
-  // Phase 4.3 (2026-05-30) — the retry path drains the registry write
-  // synchronously after the commit, mirroring renameTagEverywhere /
-  // removeTagEverywhere. The real fileTagsStore satisfies this by construction.
+  // The retry path drains the registry write after the commit, mirroring
+  // renameTagEverywhere / removeTagEverywhere.
   flushPendingSave(): Promise<{ ok: boolean }>;
 }
 
@@ -123,13 +112,11 @@ export function cascadeTagToBoardSettings(oldName: string, newName: string | nul
  * Convenience wrapper that pipes the store's metadata index + applyChanges
  * callback into the pure `rewriteTagInAllMarkdown` sweep.
  *
- * Audit-12 H3 — `vaultRoot` is now an EXPLICIT captured root (identity.path),
- * NOT a live `vaultStore.path` read. The sweep is long-running; if the vault
- * swaps mid-sweep the writes still target the CAPTURED (outgoing) root, which
- * main-side `assertActiveVault` rejects — fail-closed, instead of applying the
- * outgoing vault's tag op to the new vault's same-named files. The metadata walk
- * stays live, but every write is anchored to the captured root, so a swapped-in
- * vault's files are never touched.
+ * `vaultRoot` is an explicit captured root, not a live `vaultStore.path` read.
+ * The sweep is long-running; if the vault swaps mid-sweep the writes still
+ * target the captured (outgoing) root, which main-side `assertActiveVault`
+ * rejects — fail-closed instead of applying the tag op to the new vault's
+ * same-named files.
  */
 export function runTagRewriteSweep(
   oldName: string,
@@ -170,7 +157,7 @@ export function pushTagRewriteFailureToast(opts: {
 }
 
 /**
- * Phase 23 M11 — flushes pending `.board.json` writes scheduled by the
+ * Flushes pending `.board.json` writes scheduled by the
  * in-memory cascade (commitTagRenameInMemory / commitTagRemovalInMemory)
  * and surfaces an error toast if any board write failed.
  *
@@ -280,12 +267,9 @@ export async function rewriteAndCommitRetry(
   failedPaths: ReadonlySet<string>,
   identity: VaultIdentity,
 ): Promise<void> {
-  // Audit-12 H3 — the failure toast (duration: 0) survives a vault swap and this
-  // retry closure used to re-read the LIVE vault path at click time. After a swap,
-  // a retry walked the NEW vault's files (scoped to the OLD vault's failed rel
-  // paths) and main-side assertActiveVault ACCEPTED the writes (they targeted the
-  // active vault) — applying vault A's tag op to vault B. Bail if the vault swapped
-  // since the failed sweep was captured.
+  // The failure toast (duration: 0) survives a vault swap. Without this bail a
+  // retry after a swap would apply the old vault's tag op to the new vault's
+  // same-named files (main accepts them — they target the active vault).
   if (!isStillSameVault(identity)) return;
   const verb = newName === null ? 'Tag removal' : 'Tag rename';
   const result = await runTagRewriteSweep(oldName, newName, identity.path, failedPaths);
@@ -307,9 +291,8 @@ export async function rewriteAndCommitRetry(
   } else {
     commitTagRenameInMemory(store, oldName, newName);
   }
-  // Phase 4.3 (2026-05-30) — drain the registry write before the board flush,
-  // same crash-window guard as the non-retry renameTagEverywhere /
-  // removeTagEverywhere paths.
+  // Drain the registry write before the board flush (same crash-window guard
+  // as renameTagEverywhere / removeTagEverywhere).
   await store.flushPendingSave();
   // Re-check before the board flush (flushPendingSave above can yield across a swap).
   if (!isStillSameVault(identity)) return;

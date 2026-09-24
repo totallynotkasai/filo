@@ -1,23 +1,14 @@
 /**
- * frontmatterDelta — the explicit field-level change-set that the Phase-4
- * write path threads instead of a cached full frontmatter object.
+ * frontmatterDelta — the explicit field-level change-set that field/popup
+ * writes thread instead of a cached full frontmatter object.
  *
- * WRITE_PATH_REMEDIATION_PLAN_2026-06-04 Phase 4 — root cause of the recurring
- * silent-data-loss class: the markdown write path serialised from an in-memory
- * full-object FM cache (`documentStore.getFrontmatter(docId)`) and diffed it
- * against a SEED-TIME frontmatter source. When that cached object disagreed
- * with current disk for any reason unrelated to the user's edit — it went stale
- * (an external editor added a key the cache never saw), was over-cleaned, or was
- * empty because the source didn't parse — the source-preserving CST engine
- * faithfully wrote the WRONG object, dropping untouched keys.
- *
- * The fix makes "never drop an untouched key" STRUCTURAL: a field/popup edit
- * records a `FrontmatterDelta` (the keys the user actually changed), and the
- * write applies it to a FRESH disk read at write time. `nextFm` and the
- * `originalFrontmatter` baseline then derive from the SAME fresh read, so the
- * CST engine rewrites ONLY the delta keys and emits every untouched key —
- * including external additions — byte-for-byte from disk. The full object cache
- * is demoted to a read/display cache; it is never the write source again.
+ * Writing a cached full object is unsafe: if it disagrees with disk for any
+ * reason unrelated to the user's edit (stale, over-cleaned, empty), the CST
+ * engine faithfully writes the WRONG object and drops untouched keys. Instead
+ * an edit records a `FrontmatterDelta` (the keys the user actually changed),
+ * and the write applies it to a FRESH disk read at write time, so every
+ * untouched key — including external additions — is emitted byte-for-byte
+ * from disk. The full object cache is a read/display cache only.
  *
  * Pure module — no store / IPC / DOM access — so it unit-tests in isolation and
  * `lib/vault/markdownFileWriter` (gateway) + `lib/boards/frontmatterWriteScheduler`
@@ -152,7 +143,7 @@ export function mergeFrontmatterDelta(a: FrontmatterDelta, b: FrontmatterDelta):
  */
 function valuesShallowEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
-  // 5.1 (Audit-17) — `NaN !== NaN`, but two `.nan` values are the same data;
+  // `NaN !== NaN`, but two `.nan` values are the same data;
   // treat them equal so a `.nan` key isn't spuriously diffed as changed on every
   // unrelated popup edit (mirrors `valuesEqual` in frontmatterEngine.ts).
   if (typeof a === 'number' && typeof b === 'number' && Number.isNaN(a) && Number.isNaN(b)) {

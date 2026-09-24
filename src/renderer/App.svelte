@@ -35,27 +35,24 @@
   // TaskListBoard); 'board' covers .board.json; 'config' covers .filo/
   // config files.
   //
-  // Audit-7 L2 — route through a DEDICATED coalescing aggregator (keyed by
-  // write kind via `buildWriteErrorToast`'s context) so a multi-target failure
-  // (e.g. many dirty .board.json on a full disk) collapses into one
-  // count-badged toast per kind instead of one persistent toast per file.
-  // Separate instance from the errorBus aggregator below so the two coalescing
-  // namespaces can't cross-talk.
+  // Route through a DEDICATED coalescing aggregator (keyed by write kind) so a
+  // multi-target failure (e.g. many dirty .board.json on a full disk)
+  // collapses into one count-badged toast per kind. Separate from the errorBus
+  // aggregator below so the two coalescing namespaces can't cross-talk.
   //
-  // Audit-7 M5 — when the atomic write preserved its tmp on ENOSPC/EIO/EACCES,
+  // When the atomic write preserved its tmp on ENOSPC/EIO/EACCES,
   // `buildWriteErrorToast` names that location so the user can recover the
-  // bytes (the old hardcoded "not on disk yet" copy was wrong — they ARE on
-  // disk at the preserved tmp path).
+  // bytes.
   const writeErrorAggregator = createErrorToastAggregator({
     pushToast: (opts) => uiStore.pushToast(opts),
     updateToastText: (id, text) => uiStore.updateToastText(id, text),
   });
   setBoardWriteErrorListener((info) => {
     const { context, message, coalesceKey, retryable } = buildWriteErrorToast(info);
-    // A9-L10 — thread the per-preserved-path coalesceKey so two same-kind
-    // failures with DIFFERENT preserved-tmp locations each keep their own
-    // toast (the display prefix stays `context`). Audit-19 EXT-5 — Retry
-    // re-fires every retained failed write (all five schedulers).
+    // Thread the per-preserved-path coalesceKey so two same-kind failures
+    // with DIFFERENT preserved-tmp locations each keep their own toast (the
+    // display prefix stays `context`). Retry re-fires every retained failed
+    // write (all five schedulers).
     const actions = retryable
       ? [{ label: 'Retry', handler: async () => {
           const { failed } = await retryAllFailedWrites();
@@ -68,7 +65,7 @@
   // Feed boardSaver's begin/end counts into the save-state store so the
   // global toolbar can render an idle / saving / saved / error indicator.
   //
-  // Phase C / C.10 — also forward the concrete failed paths so the
+  // Also forward the concrete failed paths so the
   // toolbar popover can list them and offer a Retry button. setStatus
   // clears the path list on a clean drain (inflight=0, failed=0).
   setBoardWriteStateListener(({ inflight, failed, pending, failedPaths }) => {
@@ -95,26 +92,25 @@
   // Drain pending writes when the main process is about to quit.
   // Main blocks shutdown until we send `app:ready-to-quit` (or its 5s
   // timeout fires), so a graceful quit always gets a flush attempt.
-  // 6.2.H4 — on a save failure, the handler surfaces a Confirm dialog
-  // ("Retry now" / "Quit anyway" / "Stay open") instead of sleeping 200 ms
-  // and unconditionally exiting. "Stay open" sends the new
-  // `app:cancel-quit` signal so main rewinds `isFlushingForQuit`.
+  // On a save failure, the handler surfaces a Confirm dialog
+  // ("Retry now" / "Quit anyway" / "Stay open"). "Stay open" sends
+  // `app:cancel-quit` so main rewinds `isFlushingForQuit`.
   window.filo.on('app:flush-and-quit', () => {
     void handleFlushAndQuit({
       saveStateState: () => saveStateStore.state,
       save: () => vaultStore.save(),
       send: (channel) => window.filo.send(channel),
       reportError,
-      // Audit-6 M5 — drain the dirty-flag sentinel mutex so the markClean
-      // queued by save() lands before main destroys the renderer (else a
-      // clean quit leaves `.filo/.dirty` → phantom recovery next launch).
+      // Drain the dirty-flag sentinel mutex so the markClean queued by save()
+      // lands before main destroys the renderer (else a clean quit leaves
+      // `.filo/.dirty` → phantom recovery next launch).
       flushSentinel: () => flushDirtyFlagSentinel(),
-      // Audit-19 EXT-5 — "Retry now" re-fires every retained failed write.
+      // "Retry now" re-fires every retained failed write.
       retryFailed: () => retryAllFailedWrites(),
     });
   });
 
-  // Audit 5.3 — let the history store auto-switch to a command's originating
+  // Let the history store auto-switch to a command's originating
   // board on undo/redo. Registered here (not inside history.svelte) because
   // tabs.svelte.ts imports historyStore, so history can't import the tab /
   // workspace stores back without a cycle. Returns true when the board is open
@@ -136,22 +132,17 @@
     return true;
   });
 
-  // Audit-16 3.7 — the external-change renderer bridge (watcher events →
-  // reconcilers) is app-lifetime, keyed only on "a vault is open". It used
-  // to live in VaultSidebar's mount lifecycle, but the docked and floating
-  // sidebars are mutually exclusive `{#if}` branches in AppShell — toggling
-  // float/dock destroyed one instance (unsubscribing every watcher listener
-  // and discarding a mid-debounce tree reconcile) before mounting the
-  // other, and any watcher event delivered in that gap was dropped. A
-  // dropped `vault:file-renamed` is the worst case: the rename cascade
-  // never runs, and the later reconcile sees delete+create and can evict
-  // the board as missing. Data plumbing must not ride on UI layout state.
+  // The external-change renderer bridge (watcher events → reconcilers) is
+  // app-lifetime, keyed only on "a vault is open". Data plumbing must not ride
+  // on UI layout state: e.g. hosting it in the sidebar would drop watcher
+  // events (worst case a `vault:file-renamed`, skipping the rename cascade)
+  // whenever the sidebar toggles between docked and floating.
   $effect(() => {
     if (vaultStore.isOpen) {
       return vaultStore.listenForChanges();
     }
   });
-  // Audit-19 ERR-3 / EXT-2 — live sync-conflict notices (a board fork / a
+  // Live sync-conflict notices (a board fork / a
   // refused conflict-copy rename). Same app-lifetime ownership as above.
   $effect(() => {
     if (vaultStore.isOpen) {

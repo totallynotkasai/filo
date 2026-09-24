@@ -42,7 +42,7 @@
 
   // Per-pane scope; alias `boardStore` so call sites stay unchanged. See boardScope.svelte.ts.
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
-  let { tabId }: { tabId?: string } = $props(); // R1 (Audit-11): pane-correct via scope; accepted + ignored
+  let { tabId }: { tabId?: string } = $props(); // pane-correct via scope; accepted + ignored
   const boardStore = scope.board;
   import TaskItemStylePopup from './TaskItemStylePopup.svelte';
   import TaskSectionStylePopup from './TaskSectionStylePopup.svelte';
@@ -105,7 +105,7 @@
     flushAllPendingFrontmatterWrites,
   } from '../../lib/tasklist/frontmatterWriter';
   import { makeFileDropHandler } from '../../lib/tasklist/fileDropHandler';
-  // `clearStaleDndStyles` is consumed inside <TaskListSection> (Phase 5.8h).
+  // `clearStaleDndStyles` is consumed inside <TaskListSection>.
   // The host still passes its trigger (`dndSections`) via the
   // `dndSectionsTrigger` prop so the action re-runs after every reorder.
   import {
@@ -139,7 +139,7 @@
   let settings = $derived(
     board?.settings ?? {
       backgroundColor: '',
-      // Phase 1.2a — default to 'none' for non-canvas boards.
+      // Default to 'none' for non-canvas boards.
       backgroundPattern: 'none' as const,
       accentColor: ACCENT_COLOR,
       groupBy: 'status' as GroupBy,
@@ -158,9 +158,7 @@
   );
   let sortBy = $derived<SortBy>(((settings as { sortBy?: SortBy }).sortBy ?? 'priority'));
   // Sections view wins when the user has persisted any section OR explicitly
-  // chose `groupBy='none'`; otherwise the grouped view renders. Previously
-  // hardcoded `$derived(true)`, which silently disabled the grouped view
-  // and the groupBy chip across every board (bug #5, Phase 7).
+  // chose `groupBy='none'`; otherwise the grouped view renders.
   let sectionsActive = $derived(sections.length > 0 || groupBy === 'none');
 
   // Per-row cascade resolver. Walks placement.style (per-element layer) →
@@ -205,8 +203,7 @@
   );
 
   // ── Filter UI state + savedViews + lastView (non-persistent) ──
-  // Sprint 39 / 39.8 — extracted into `lib/tasklist/filtersAndViews.svelte.ts`.
-  // The controller owns the 5 transient filter dimensions, the lastView
+  // Lives in `lib/tasklist/filtersAndViews.svelte.ts`. The controller owns the 5 transient filter dimensions, the lastView
   // hydration gate, and the saved-views CRUD. Effects (hydrate / persist)
   // remain in this file because Svelte's `$effect` registration is tied to
   // component lifecycle.
@@ -228,11 +225,8 @@
 
   // ── Reactivity tick: bump local cacheVersion after cache mutations ──
   //
-  // Phase R7 — see the matching note in KanbanBoard.svelte. The local
-  // `cacheVersion` survives as a coarse signal for derivations that key off
-  // it; the previous `boardStore.setBoard({ ...cached.board }, ...)` bridge
-  // is no longer needed because `boardStore.current` is a `$derived` view of
-  // the cache.
+  // The local `cacheVersion` is a coarse signal for derivations that key off
+  // it; `boardStore.current` is itself a `$derived` view of the cache.
   let cacheVersion = $state(0);
 
   function tickAndPersist(): void {
@@ -246,7 +240,7 @@
   // covered. The local `announcement` text fills the gap for single-row
   // ops (add task, delete task, toggle complete) where no toast fires —
   // SR users would otherwise hear nothing when the row list mutates.
-  // Auto-clearing aria-live announcer; announcer.dispose() in onDestroy (Audit 5.3).
+  // Auto-clearing aria-live announcer; announcer.dispose() in onDestroy.
   const announcer = createAriaAnnouncer();
   function announce(message: string): void {
     announcer.announce(message);
@@ -452,11 +446,10 @@
       return;
     }
 
-    // VIEW-6 — ReorderSectionCommand consumes ONLY the new section ID ORDER (it
-    // sorts `after.sections` by position; `applySectionOrderLive` then recomputes
+    // ReorderSectionCommand consumes ONLY the new section ID ORDER (it sorts
+    // `after.sections` by position; `applySectionOrderLive` then recomputes
     // every position AND re-slices `tasks` from the live cache). So emit just the
-    // real sections renumbered into the dropped order — the old leadingSlice /
-    // per-section placement rebuild was dead work the command threw away.
+    // real sections renumbered into the dropped order.
     const realById = new SvelteMap(sections.map((s) => [s.id, s]));
     const nextSections: TaskListSection[] = [];
     let pos = 0;
@@ -561,10 +554,9 @@
 
   function persistCollapsedSubtasks(next: Set<string>): void {
     if (!board) return;
-    // Phase 7 / 7.10 — route through ToggleSubtaskCollapsedCommand so the
-    // auto-expand on subtask creation participates in undo. The bare
-    // mutator used to write directly through the cache; Ctrl+Z would only
-    // undo the AddTaskCommand and leave the parent expanded.
+    // Route through ToggleSubtaskCollapsedCommand so the auto-expand on
+    // subtask creation participates in undo (otherwise Ctrl+Z would only undo
+    // the AddTaskCommand and leave the parent expanded).
     const before = Array.from(collapsedSubtasks);
     const after = Array.from(next);
     // Skip the redundant push when nothing actually changed (no-op writes
@@ -656,14 +648,14 @@
   $effect(() => {
     const id = board?.id;
     untrack(() => {
-      if (id) { lastTargetedSectionId = null; collapsedGroups.clear(); } // VIEW-1: group-collapse is per-board
+      if (id) { lastTargetedSectionId = null; collapsedGroups.clear(); } // group-collapse is per-board
     });
     void id;
   });
 
   // Task creation, deletion, frontmatter writes, and file drops are owned by
   // factory slices in `lib/tasklist/` closing over the host's reactive accessors,
-  // so the helpers always see live board state (Phase 5.7 kanban slice pattern).
+  // so the helpers always see live board state (same slice pattern as Kanban).
   //
   // Order matters: `frontmatterWriter` exposes `buildTaskFieldCommand`, which
   // both the deleter (cascade "keep subtasks" branch) and the bulk-action
@@ -707,7 +699,7 @@
     buildTaskFieldCommand,
     tickAndPersist,
     announce,
-    pruneSelection: (ids) => multiSelect.pruneSelection(ids), // SEL-2
+    pruneSelection: (ids) => multiSelect.pruneSelection(ids),
   });
   const deleteTask = taskDeleter.deleteTask;
   const deleteTaskWithFile = taskDeleter.deleteTaskWithFile;
@@ -776,11 +768,11 @@
         3500,
       );
     } else if (desiredSafe !== trimmed) {
-      // REN-2 — sanitization changed the title (illegal/reserved), e.g. "???"→"Untitled".
+      // Sanitization changed the title (illegal/reserved), e.g. "???"→"Untitled".
       uiStore.toast(`"${trimmed}" isn't a valid file name — saved as "${finalTitle}".`, 'info', 3500);
     }
 
-    // Phase 7 / 7.9 — route through RenameTitleCommand so Ctrl+Z reverses
+    // Route through RenameTitleCommand so Ctrl+Z reverses
     // both the disk rename and the in-board title update in one step. The
     // command's `applyRename` handles the vault.rename + cache write +
     // documentStore filename/title sync symmetrically.
@@ -794,7 +786,7 @@
       const renameResult = await vaultStore.rename(`${root}/${oldRel}`, `${root}/${newRel}`);
       if (!renameResult.success) {
         const code = renameResult.code;
-        // VIEW-2 — surface a real-disk collision (the IPC refuses to clobber)
+        // Surface a real-disk collision (the IPC refuses to clobber)
         // distinctly from a missing source or a generic failure.
         const msg = code === 'ENOENT' ? `Task file '${oldRel}' is no longer on disk`
           : code === 'TARGET_EXISTS' ? `A file named '${newRel}' already exists on disk`
@@ -867,8 +859,7 @@
   /**
    * Walk a section's top-level rows and emit a flat list of `{ row, depth }`
    * entries in render order — top-level row first, then its visible kids
-   * (recursively). Mirrors what `renderRow`'s recursive snippet produced
-   * before Phase 2; the dndzone needs the items as flat siblings so each
+   * (recursively). The dndzone needs the items as flat siblings so each
    * `.tasklist-row-wrap` maps 1:1 to one entry in the `items` array.
    */
   function flattenSectionRows(topRows: TaskRow[]): FlatRowEntry[] {
@@ -925,7 +916,7 @@
     commitIndent: (tileId, newParent) => {
       const row = viewModel.rows.find((r) => r.tile.id === tileId);
       if (!row || !board) return;
-      // VIEW-3 — auto-expand a collapsed new-parent on BOTH paths (command +
+      // Auto-expand a collapsed new-parent on BOTH paths (command +
       // docId-less fallback), else the indented child is swallowed under the
       // collapsed parent until the chevron is clicked. The command path batches
       // the expand into the same undo unit; the rare fallback expands separately.
@@ -962,7 +953,7 @@
       // Same-section reorder under a non-manual sort: switch to manual AND
       // the reorder in one BatchCommand so a single Ctrl+Z reverses both.
       // Cross-section moves don't trigger the switch — they're a structural
-      // change the sort modes already honour via section ranges. Phase 7 / 7.1.
+      // change the sort modes already honour via section ranges.
       const before = snapshotSections();
       const reorderCmd = new MoveTaskBlockCommand(
         board.id,
@@ -1005,7 +996,7 @@
     onDragStateChange: (_active) => {
       // Bump cacheVersion so derived counts (smart list badges, section
       // counts) re-evaluate mid-gesture. Without this, badges go stale
-      // between drag-start and the commit (audit M6).
+      // between drag-start and the commit.
       cacheVersion++;
     },
   });
@@ -1143,31 +1134,27 @@
     void filters.activeFilterPriority;
     void filters.showCompleted;
     void filters.activeSmartList;
-    // VIEW-5 — groupBy/sortBy aren't in lastView (canonical in board settings,
+    // groupBy/sortBy aren't in lastView (canonical in board settings,
     // never hydrated back), so a sort/group change must not re-fire this persist.
     const id = board?.id;
     if (!id || id !== filters.hydratedForBoardId) return;
-    // Audit-17 4.5 — snapshot at ARM time (a teardown can run after the next
-    // board's hydrate re-seeded `filters`) and write keyed by the CAPTURED id
-    // via flushLastViewForBoard (never the pane's live board — Audit-4 DI-08's
-    // wrong-board-write hazard; its JSON-equality guard skips no-change writes).
+    // Snapshot at ARM time (a teardown can run after the next board's hydrate
+    // re-seeded `filters`) and write keyed by the CAPTURED id via
+    // flushLastViewForBoard — never the pane's live board, which may be a
+    // different board by then. Its JSON-equality guard skips no-change writes.
     const nextLastView = filters.buildLastView();
     if (filters.lastViewPersistTimer) clearTimeout(filters.lastViewPersistTimer);
     filters.lastViewPersistTimer = setTimeout(() => {
       filters.lastViewPersistTimer = null;
       flushLastViewForBoard(id, nextLastView);
     }, 300);
-    // Audit-4 DI-08 — clear the debounce with the effect (mirrors KanbanBoard
-    // 6.1.R2); Audit-17 4.5 — but flush, don't drop: a filter change within
-    // 300 ms of a board switch was otherwise never written (the
-    // hydratedForBoardId guard blocks any re-fire after the switch).
-    // Audit-18 5.1 — the $effect cleanup runs before EVERY re-execution, not
-    // only on teardown, so flushing unconditionally here fired on every filter
-    // tick and structurally defeated the 300 ms debounce (each change wrote one
-    // behind). Flush ONLY on a real board switch (the live id moved off the
-    // armed id); a same-board re-run just re-arms the timer. Unmount is flushed
-    // by `filters.dispose()` in onDestroy (which no longer depends on the timer
-    // this cleanup may have just nulled).
+    // Clear the debounce with the effect, but flush on a board switch: a filter
+    // change within 300 ms of a switch would otherwise never be written (the
+    // hydratedForBoardId guard blocks any re-fire after the switch). The cleanup
+    // runs before EVERY re-execution, so flush ONLY when the live id moved off
+    // the armed id — flushing unconditionally would defeat the debounce. A
+    // same-board re-run just re-arms the timer; unmount is flushed by
+    // `filters.dispose()` in onDestroy.
     return () => {
       if (filters.lastViewPersistTimer) {
         clearTimeout(filters.lastViewPersistTimer);
@@ -1331,13 +1318,11 @@
       },
     });
 
-    // ── Phase 4 commands ──
+    // ── Shortcut commands ──
     //
     // Three shortcut-bound commands: Ctrl+Enter creates a blank task,
-    // Alt+Up / Alt+Down reorder within the section. Phase G.12 dropped
-    // three additional palette-only registrations (lock / style / collapse)
-    // when the palette stubs were removed — they're invoked directly via
-    // row props (`onToggleLocked` / `onToggleSubtaskCollapsed`).
+    // Alt+Up / Alt+Down reorder within the section. Lock / style / collapse
+    // have no shortcut registration — they're invoked directly via row props (`onToggleLocked` / `onToggleSubtaskCollapsed`).
     unregisterTaskListCommands.push(
       registerCommandWithShortcut({
         name: 'tasklist:add-task',
@@ -1378,7 +1363,7 @@
     // any stale inline styles svelte-dnd-action may have left on neighbour
     // sections so they don't end up invisible.
     const cancelSectionDrag = () => {
-      // VIEW-4 — skip the re-render-forcing recovery when no drag is in flight
+      // Skip the re-render-forcing recovery when no drag is in flight
       // (section drag active ⇔ `sectionDragDisabled` false; row drag ⇔ a live
       // `dragTileId`), so a bare Escape doesn't churn the list every keypress.
       if (sectionDragDisabled && dragController.dragTileId === null) return;
@@ -1410,9 +1395,8 @@
     // Drain any queued frontmatter writes so a board close during the
     // 300ms debounce window doesn't lose the user's last field edit.
     void flushAllPendingFrontmatterWrites();
-    // Audit2 5.6 / Audit-4 DI-08 — cancel the lastView debounce; Audit-17 4.5
-    // — dispose() now FLUSHES the pending slice (cache write keyed by the
-    // hydrated board id) instead of dropping it.
+    // dispose() cancels the lastView debounce and FLUSHES the pending slice
+    // (cache write keyed by the hydrated board id) instead of dropping it.
     filters.dispose();
     unregisterFocusQuickAdd?.();
     unregisterFocusQuickAdd = null;
@@ -1672,8 +1656,7 @@
       {:else if viewModel.filteredRows.length === 0 && filters.hasActiveFilter}
         <!-- Filtered to empty: distinct from "no tasks" so the CTA pair makes
              sense — primary action is to clear filters (recover the view),
-             secondary is to add a task anyway. Mirrors the M1 finding in
-             the Phase C audit. -->
+             secondary is to add a task anyway. -->
         <div class="empty-board" role="status">
           <svg class="empty-icon" width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
@@ -1804,14 +1787,14 @@
     Screen-reader-only live region. Adds (or aria-presence-bumps) text on
     add / delete / bulk actions so SR users get parity with the visual
     toast queue, covering the operations that DON'T toast (single-row
-    add, subtask add, single delete). Phase C item 14.
+    add, subtask add, single delete).
   -->
   <div class="tasklist-sr-live" aria-live="polite" aria-atomic="true">{announcer.message}</div>
 
   <!--
     Persistent keyboard hint footer — small, low-contrast, discoverable
     without being noisy. Surfaces the row-level shortcuts so users
-    notice them on first run without an explicit overlay. Phase C item 15.
+    notice them on first run without an explicit overlay.
   -->
   <div class="tasklist-kbd-hints" aria-hidden="true">
     <span><kbd>Space</kbd> Toggle</span>
@@ -1939,7 +1922,7 @@
 
   /* Section header / title / draggable cursor / rename input / drop-target /
      add-task buttons / inline quick-add / row dndzone styles live in
-     `TaskListSection.svelte` (Phase 5.8h). Only selectors still rendered by
+     `TaskListSection.svelte`. Only selectors still rendered by
      the host template (`.add-section-btn`, the non-sectioned `groupBy`
      header chrome — `.tasklist-group / .group-header / .group-collapse-btn /
      .group-title / .group-count / .group-rows / .empty-group`) remain. */
@@ -2039,8 +2022,8 @@
     gap: 4px;
   }
 
-  /* `.tasklist-row-wrap` styles live in TaskListRow.svelte (Phase 5.8g).
-     `.row-dnd-zone` styles live in TaskListSection.svelte (Phase 5.8h). */
+  /* `.tasklist-row-wrap` styles live in TaskListRow.svelte.
+     `.row-dnd-zone` styles live in TaskListSection.svelte. */
 
   /* Cursor-following clone tagged by `transformDraggedRow` on every
      dragmove tick. svelte-dnd-action clones the immediate child of the

@@ -1,20 +1,16 @@
 /**
- * vaultExternalReconcilers — Phase 3 / 3.2.
- *
- * Registers the four new external-edit reconcilers introduced in Phase 3
- * with `externalChangeRegistry`:
+ * vaultExternalReconcilers — registers the external-edit reconcilers with
+ * `externalChangeRegistry`:
  *
  *  - `board`           → `boardJsonReconciler`
  *  - `config-tags`     → `tagsJsonReconciler`
  *  - `config-theme`    → `themeJsonReconciler`
  *  - `config-template` → `templateReconciler`
  *
- * The pre-existing `document` / `attachment` reconcilers continue to live
- * on the `vaultStore` mixin (`handleExternalMarkdownChanges` /
- * `handleExternalAttachmentChanges`) because they coordinate too much
- * cross-store state to extract cleanly in one phase. They register here
- * too — as batched reconcilers — so the dispatcher's `dispatchExternalChangeBatch`
- * route ends up exhaustive.
+ * The `document` / `attachment` reconcilers live on the `vaultStore` mixin
+ * (`handleExternalMarkdownChanges` / `handleExternalAttachmentChanges`)
+ * because they coordinate a lot of cross-store state. They register here as
+ * batched reconcilers so the dispatcher's route is exhaustive.
  *
  * Each reconciler keeps its surface intentionally small:
  *  - Honour `isRecentSelfWrite` so a watcher echo of our own write
@@ -23,19 +19,12 @@
  *    a choice (e.g. board JSON drift mid-edit).
  *  - Refresh the relevant cache directly when there's no in-memory
  *    state the user could lose (tags / themes / templates list).
- *  - **Audit-6 H3/H4/L27 — vault-identity guard.** Every reconciler that
- *    reads the active vault path and then `await`s a disk read MUST
- *    `captureVaultIdentity()` before the await and `isStillSameVault(...)`
- *    after it, bailing before any store mutation. A vault swap can interleave
- *    on the await; without the re-check the outgoing vault's data is applied to
- *    the new vault — the worst case being `reconcileTagsJsonChange`, whose
- *    `applyExternalReload` can `scheduleSave` a merged delta, persisting vault A's
- *    tag registry into vault B's `.filo/tags.json` on disk. This is the G1
- *    discipline (`vaultIdentity.ts`) the rename/cascade paths already follow;
- *    `scripts/check-reconciler-vault-guard.mjs` enforces it here so a future
- *    reconciler can't forget (the structural, class-level cure for root-cause
- *    B — a runtime wrapper can't help because it can't refuse a mutation that
- *    has already happened mid-reconciler).
+ *  - **Vault-identity guard.** Every reconciler that reads the active vault
+ *    path and then `await`s MUST `captureVaultIdentity()` before the await and
+ *    `isStillSameVault(...)` after it, bailing before any store mutation.
+ *    Otherwise a swap during the await applies the outgoing vault's data to the
+ *    new vault (worst case: tags persisted into the new vault's
+ *    `.filo/tags.json`). Enforced by `scripts/gates:reconciler-vault-guard`.
  *
  * Lives in `stores/` because the registrations need to import every store
  * involved. The pure registry surface lives in
@@ -69,15 +58,13 @@ import { selfWriteDivergedFromBaseline } from './vaultExternalChanges';
 // ── Board JSON reconciler ─────────────────────────────────────────────
 
 /**
- * External `.board.json` edit. The pre-existing
- * `boardWriteScheduler.ts:213-249` drift detector catches the case
- * lazily — on the NEXT user-triggered write. Phase 3 / 3.2 surfaces the
- * change proactively so the user knows about it before they keep
- * editing.
+ * External `.board.json` edit. The board write scheduler's drift detector
+ * catches this lazily on the next write; this surfaces the change
+ * proactively so the user knows about it before they keep editing.
  *
  * Three flavours:
- *  - Board not in cache (untracked) — Audit-19 EXT-1: adopted into the
- *    running session (`adoptBoardAtRuntime`) when the file really exists.
+ *  - Board not in cache (untracked) — adopted into the running session
+ *    (`adoptBoardAtRuntime`) when the file really exists.
  *  - Board in cache but clean (no pending writes) — reload silently.
  *    Mirrors the `reload-silently` branch of the `.md` classifier.
  *  - Board in cache AND has a pending debounced write — surface a
@@ -86,15 +73,10 @@ import { selfWriteDivergedFromBaseline } from './vaultExternalChanges';
  */
 async function reconcileBoardJsonChange(event: ExternalChangeEvent): Promise<void> {
   const rel = event.filename;
-  // P2.4 (Audit-15) — mirror the `.md` path's Audit-13 M4 divergence tiebreak: a
-  // recent self-write is dropped as our own echo ONLY when its fresh disk stat
-  // still matches the baseline we wrote. A diverged stat means a SECOND writer
-  // touched the `.board.json` inside the self-write suppression window, so treat
-  // it as a real external edit and fall through to the proactive reconcile.
-  // Data-safe either way (no baseline / unreadable / matching stat → drop, prior
-  // behaviour). Capture vault identity before the stat await and bail on a swap
-  // (the downstream reloadBoardFromDisk also re-checks, but the gate — and
-  // correctness — wants the guard at the live-path read here too).
+  // A recent self-write is dropped as our own echo ONLY when its fresh disk
+  // stat still matches the baseline we wrote. A diverged stat means a second
+  // writer touched the file inside the suppression window, so treat it as a
+  // real external edit.
   if (isRecentSelfWrite(rel)) {
     const captured = captureVaultIdentity();
     const root = vaultStore.path;
@@ -102,24 +84,18 @@ async function reconcileBoardJsonChange(event: ExternalChangeEvent): Promise<voi
     const diverged = await selfWriteDivergedFromBaseline(root, rel);
     if (!isStillSameVault(captured)) return;
     if (!diverged) return;
-    // Audit-16 4.8 — a diverged stat while a NEWER self-write for this path
-    // is still queued or in flight is write N+1's bytes landing between
-    // write N's watcher echo and N+1's post-write baseline stamp — Filo's
-    // own back-to-back saves during normal rapid editing, not a second
-    // writer. Falling through here surfaced a spurious "Board changed
-    // externally" prompt (the isPathPending branch below), and a "Reload"
-    // answer would clobber the un-persisted in-memory edits. Drop the echo;
-    // a genuine external edit in this narrow window is still caught lazily
-    // by `writeBoardFile`'s pre-write drift check on the next save. The
-    // probe deliberately excludes failed paths (see isPathQueuedOrInFlight)
-    // so a failed write doesn't suppress real external-edit echoes.
+    // A diverged stat while a newer self-write for this path is queued or in
+    // flight is our own next save landing, not a second writer — prompting
+    // here (and a "Reload" answer) would clobber un-persisted edits. A genuine
+    // external edit in this window is still caught by `writeBoardFile`'s
+    // pre-write drift check. Failed paths are excluded by the probe so a
+    // failed write doesn't suppress real external edits.
     if (isPathQueuedOrInFlight(rel)) return;
   }
 
-  // Look up boardId for this path. Audit-19 EXT-1 — an untracked
-  // `.board.json` (a sync client delivered another machine's board, a copy,
-  // a folder moved in) is ADOPTED into the session when it really exists,
-  // instead of staying invisible until the vault is reopened.
+  // An untracked `.board.json` (synced from another machine, copied, moved
+  // in) is adopted into the session when it really exists, instead of staying
+  // invisible until the vault is reopened.
   const boardId = findBoardIdForPath(rel);
   if (!boardId) {
     const captured = captureVaultIdentity();
@@ -136,7 +112,7 @@ async function reconcileBoardJsonChange(event: ExternalChangeEvent): Promise<voi
     return;
   }
 
-  // E3 — `isPathPending` is the single pending-write authority shared with
+  // `isPathPending` is the single pending-write authority shared with
   // the `.md` classifier in `vaultExternalChanges`. A pending/in-flight
   // `.board.json` write means the user has local edits the disk version
   // would clobber, so prompt rather than silently reloading.
@@ -147,22 +123,19 @@ async function reconcileBoardJsonChange(event: ExternalChangeEvent): Promise<voi
 
   // No pending write — apply disk silently. Mirrors the `reload-silently`
   // branch of the markdown classifier (clean editor + external edit).
-  // `guardPending: true` re-checks for a write that lands DURING the read
-  // (6.4.M18) so the silent reload can't clobber an edit made in that window.
-  // `reloadBoardFromDisk` reads the active vault path itself and re-checks
-  // vault identity after its async load (Audit-6 H4) before mutating the cache.
+  // `guardPending: true` re-checks for a write that lands DURING the read so
+  // the silent reload can't clobber an edit made in that window.
+  // `reloadBoardFromDisk` re-checks vault identity after its async load.
   await reloadBoardFromDisk(rel, boardId, true);
 }
 
 function findBoardIdForPath(rel: string): string | null {
   const paths = boardStore.paths;
   for (const [boardId, boardPath] of Object.entries(paths)) {
-    // M4 (Audit-12) — case-INSENSITIVE, separator-agnostic compare. Windows /
-    // macOS aren't case-sensitive, so an externally-edited/renamed `.board.json`
-    // whose OS-reported casing diverges from the stored casing must still match.
-    // The raw `===` it replaces silently ignored such an event (no reload), and
-    // the board could later be treated as missing and evicted. Mirrors the
-    // document pipeline, which case-folds everywhere via `samePath`.
+    // Case-insensitive, separator-agnostic compare: on Windows / macOS an
+    // externally-edited `.board.json` whose OS-reported casing differs from
+    // the stored casing must still match, or the event is ignored and the
+    // board may later be evicted as missing.
     if (samePath(boardPath, rel)) return boardId;
   }
   return null;
@@ -171,16 +144,13 @@ function findBoardIdForPath(rel: string): string | null {
 async function reloadBoardFromDisk(
   rel: string,
   boardId: string,
-  // 6.4.M18 — when true (the silent reconciler path), re-check for a pending
-  // write AFTER the async read. The explicit "Reload" handler passes false:
-  // the user there chose to discard local edits, so no re-check.
+  // When true (the silent reconciler path), re-check for a pending write AFTER
+  // the async read. The explicit "Reload" handler passes false: the user there
+  // chose to discard local edits.
   guardPending = false,
 ): Promise<void> {
-  // Audit-6 H4 — capture vault identity BEFORE the async load. `loadBoard`
-  // awaits a disk read; a vault swap can interleave on that await. Without the
-  // re-check below, the freshly-loaded (outgoing-vault) board would be merged
-  // into `boardCacheStore` AFTER the swap — injecting vault A's board JSON into
-  // vault B's in-memory cache. Mirrors `runExternalRenameCascade`'s G1 guard.
+  // Capture vault identity before the async load, so a swap during it can't
+  // merge the outgoing vault's board into the new vault's cache.
   const captured = captureVaultIdentity();
   const vaultRoot = vaultStore.path;
   if (!vaultRoot) return;
@@ -189,7 +159,7 @@ async function reloadBoardFromDisk(
   // outgoing vault and `boardStore.cache` is now the new vault's.
   if (!isStillSameVault(captured)) return;
   if (!result.ok) {
-    // Audit-19 ERR-4 — name the reason (a lock / offline placeholder is not a
+    // Name the reason (a lock / offline placeholder is not a
     // corrupt file) and say what happens next.
     const reason =
       result.error === 'locked' ? 'the file is locked by another program'
@@ -203,21 +173,16 @@ async function reloadBoardFromDisk(
     );
     return;
   }
-  // 6.4.M18 — a user edit landing DURING loadBoard's IPC flips isPathPending
-  // true, but reconcileBoardJsonChange's pre-read check is stale by now. A
-  // silent replaceCache would clobber that just-made edit, so defer to the
-  // dirty-editor prompt instead of overwriting it.
+  // A user edit landing during loadBoard's IPC makes the pre-read pending
+  // check stale; a silent replaceCache would clobber it, so prompt instead.
   if (guardPending && isPathPending(rel)) {
     promptBoardChangedExternally(rel, boardId);
     return;
   }
-  // L14 (Audit-13) — rebind the stored path to the OS-reported casing. A
-  // case-only external rename/edit (`samePath` matched it in
-  // `findBoardIdForPath`, so the fold is equal but the raw casing may differ)
-  // would otherwise leave `boardPaths[boardId]` at the stale casing — and a
-  // later tree reconcile could then treat the board as "missing on disk" and
-  // evict it. `renameBoardPath` no-ops when the path is byte-identical and
-  // rebinds the single matching entry otherwise (L2 made it case-only aware).
+  // Rebind the stored path to the OS-reported casing. After a case-only
+  // external rename the stale casing could later make a tree reconcile treat
+  // the board as missing and evict it. `renameBoardPath` no-ops when the path
+  // is byte-identical.
   const storedPath = boardStore.paths[boardId];
   if (storedPath) boardCacheStore.renameBoardPath(storedPath, rel);
   // Use the boardCache replace path: write the freshly-loaded data
@@ -233,22 +198,21 @@ function promptBoardChangedExternally(rel: string, boardId: string): void {
     text: `Board file "${rel}" was modified externally while you had unsaved changes. Reload from disk (discard your edits), or keep your edits and overwrite on next save?`,
     type: 'warning',
     duration: 0,
-    sticky: true, // Audit-19 UX-6
+    sticky: true,
     dedupeKey: `board-mod:${rel}`,
     actions: [
       {
         label: 'Reload',
         handler: () => {
-          // reloadBoardFromDisk reads the active vault path + re-checks vault
-          // identity across its async load itself (Audit-6 H4).
+          // reloadBoardFromDisk re-checks vault identity across its async load.
           void reloadBoardFromDisk(rel, boardId);
         },
       },
       {
         label: 'Keep your edits',
         handler: async () => {
-          // Audit-19 UX-6 — back up the external board version first (the
-          // board writer's keep-local branch dedupes against this snapshot).
+          // Back up the external board version first (the board writer's
+          // keep-local branch dedupes against this snapshot).
           const identity = captureVaultIdentity();
           const vaultRoot = vaultStore.path;
           if (!vaultRoot || !(await backupExternalVersion(vaultRoot, rel))) return;
@@ -278,40 +242,36 @@ function promptBoardChangedExternally(rel: string, boardId: string): void {
  *
  * Pending in-memory tag mutations (the scheduler's debounce hadn't fired
  * yet) are 3-way merged with the external copy (`applyExternalReload`), and
- * the debounced save itself re-reads + merges before writing (Audit-19
- * EXT-8), so neither side's registrations are lost; a tag-rewrite sweep
- * mid-flight is protected by the rewrite sentinel (`tagRewriteSentinel`).
+ * the debounced save itself re-reads + merges before writing, so neither
+ * side's registrations are lost; a tag-rewrite sweep mid-flight is protected
+ * by the rewrite sentinel (`tagRewriteSentinel`).
  */
 async function reconcileTagsJsonChange(event: ExternalChangeEvent): Promise<void> {
-  // Audit-19 EXT-8 — inside the self-write window, drop the event only when the
-  // disk copy is exactly what we last saved (our echo). Another machine's
-  // tags.json landing in the window falls through and is merged below.
+  // Inside the self-write window, drop the event only when the disk copy is
+  // exactly what we last saved (our echo). Another machine's tags.json landing
+  // in the window falls through and is merged below.
   const inSelfWriteWindow = isRecentSelfWrite(event.filename);
-  // Audit-6 H3 — capture identity before the async `tags:load`. A vault swap
-  // landing during the read would otherwise make the `applyExternalReload`
-  // below (which `scheduleSave`s unconditionally) persist vault A's tag
-  // registry into vault B's `.filo/tags.json` on disk. Re-check after the await.
+  // Capture identity before the async `tags:load`: a swap during the read
+  // would otherwise make `applyExternalReload` (which `scheduleSave`s) persist
+  // the outgoing vault's tags into the new vault's `.filo/tags.json`.
   const captured = captureVaultIdentity();
   const vaultRoot = vaultStore.path;
   if (!vaultRoot) return;
   try {
-    // Audit-14 4.4 — assertIpcOk re-throws a `{ ok: false }` error envelope
+    // assertIpcOk re-throws a `{ ok: false }` error envelope
     // into the catch below; a bare string|null passes through unchanged.
     const raw = assertIpcOk(
       await window.filo.invoke('tags:load', vaultRoot),
       'tags:load',
     ) as string | null;
     if (!isStillSameVault(captured)) return;
-    // F6 — route through the version migrator so an externally-written
-    // from-future tags.json flips the store read-only (preventing a
-    // downgrade re-save) instead of being parsed + persisted blindly.
+    // Route through the version migrator so an externally-written from-future
+    // tags.json flips the store read-only (preventing a downgrade re-save).
     const loaded = loadTagsFile(raw);
     if (inSelfWriteWindow && fileTagsStore.isLastSavedState(loaded.file)) return;
-    // Audit-17 0.2 — `applyExternalReload` returns false when the disk copy
-    // deep-equals our in-memory registry (a self-write echo surfacing in the
-    // 30 s reconcile pass). Skip the toast AND the re-save in that case so an
-    // in-app tags save can't spin a perpetual "modified externally" + re-save
-    // loop. Only a genuine external diff surfaces the toast.
+    // `applyExternalReload` returns false when the disk copy deep-equals our
+    // in-memory registry (a self-write echo). Skip the toast and re-save then,
+    // so an in-app save can't spin a perpetual "modified externally" loop.
     const changed = fileTagsStore.applyExternalReload(loaded);
     if (!changed) return;
     uiStore.pushToast({
@@ -340,18 +300,15 @@ async function reconcileTagsJsonChange(event: ExternalChangeEvent): Promise<void
  * editing `dark.json` clearly wants the new variables applied
  * immediately.
  *
- * Audit-17 0.2 (accepted) — the theme/template reconcilers share the tags
- * reconciler's expired-TTL hole: a self-write's echo can surface in the 30 s
- * reconcile pass and trigger one spurious refresh/re-apply. Unlike tags this
- * does NOT loop — neither reconciler re-saves on reload — so the cost is a
- * single (visual-only) CSS-variable re-apply per self-edit. A content-compare
- * would need a second theme-file load to dedup; not worth it for a one-shot.
+ * Accepted: a self-write's echo arriving after the self-write window expires
+ * triggers one spurious refresh/re-apply. It doesn't loop (neither the theme
+ * nor template reconciler re-saves on reload), so dedup isn't worth a second
+ * theme-file load.
  */
 async function reconcileThemeChange(event: ExternalChangeEvent): Promise<void> {
   if (isRecentSelfWrite(event.filename)) return;
-  // Audit-6 L27 (theme variant of H3/H4) — capture identity before the async
-  // theme reload; a swap during it would otherwise re-apply the outgoing
-  // vault's theme over the new vault (visual-only, same root cause).
+  // Capture identity before the async theme reload; a swap during it would
+  // otherwise re-apply the outgoing vault's theme over the new vault.
   const captured = captureVaultIdentity();
   const vaultRoot = vaultStore.path;
   if (!vaultRoot) return;
@@ -397,23 +354,21 @@ async function reconcileTemplateChange(event: ExternalChangeEvent): Promise<void
   }
 }
 
-// ── Document / attachment batched reconcilers (legacy bridge) ─────────
+// ── Document / attachment batched reconcilers (bridge) ────────────────
 
 /**
- * Phase 3 / 3.2 — bridges the existing `vaultStore.handleExternalMarkdownChanges`
- * surface into the registry so the dispatcher is exhaustive. The store
- * method keeps the pre-Phase-3 cross-store coordination logic (vault
- * index, frontmatter sync, partial-read retry, dirty-editor prompt,
- * properties-popup-dirty path); the bridge just adapts the registry's
- * event shape to its `string[]` argument.
+ * Bridges `vaultStore.handleExternalMarkdownChanges` into the registry so the
+ * dispatcher is exhaustive. The store method owns the cross-store
+ * coordination (vault index, frontmatter sync, partial-read retry,
+ * dirty-editor prompt, properties-popup-dirty path); the bridge just adapts
+ * the event shape to its `string[]` argument.
  */
 const documentBatchedReconciler: BatchedReconciler = {
   kind: 'document',
   handleBatch: async (events) => {
-    // Audit-7 L15 — self-write filtering now lives INSIDE
-    // handleExternalMarkdownChanges (single authority, so the partial-read-
-    // retry timer that re-invokes it directly is filtered too). The bridge
-    // just forwards filenames; the handler drops recent self-writes.
+    // Self-write filtering lives inside handleExternalMarkdownChanges (single
+    // authority, so the partial-read retry timer that re-invokes it directly
+    // is filtered too).
     const paths = events.map((e) => e.filename);
     if (paths.length === 0) return;
     await vaultStore.handleExternalMarkdownChanges(paths);
@@ -422,14 +377,11 @@ const documentBatchedReconciler: BatchedReconciler = {
 
 const attachmentBatchedReconciler: BatchedReconciler = {
   kind: 'attachment',
-  // L5 (Audit-12) — fire-and-forget so the handler's 500 ms attachment-delete
-  // grace deferral runs OUTSIDE the shared rename queue this batch dispatch is
-  // awaited inside (vault.svelte.ts `enqueueRenameQueueWork`). The handler has
-  // its own re-existence + vault-swap guards, so it needs no queue ordering;
-  // awaiting it here stalled every unrelated .md / .board.json reconcile in the
-  // batch — and the next queued rename/tree event — behind the grace window.
-  // The detached promise reports its own failures (the handler's per-probe
-  // guards plus this top-level catch).
+  // Fire-and-forget so the handler's 500 ms attachment-delete grace deferral
+  // runs outside the shared rename queue this batch is awaited inside —
+  // awaiting it would stall every unrelated reconcile and queued rename
+  // behind the grace window. The handler has its own re-existence + vault-swap
+  // guards, and this catch reports its failures.
   handleBatch: (events) => {
     const paths = events
       .map((e) => e.filename)
@@ -448,9 +400,9 @@ const attachmentBatchedReconciler: BatchedReconciler = {
 // ── Register-on-load ──────────────────────────────────────────────────
 
 /**
- * Phase 3 / 3.2 — registers every renderer-side reconciler with the
- * dispatcher at module-load time. The four new reconcilers are
- * single-event; document and attachment are batched (legacy shape).
+ * Registers every renderer-side reconciler with the dispatcher at
+ * module-load time. The four config/board reconcilers are single-event;
+ * document and attachment are batched.
  *
  * Wrapped in a one-shot guard so a test that re-imports the module
  * (vitest's module reset) doesn't accumulate duplicate registrations.

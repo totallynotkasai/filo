@@ -40,10 +40,8 @@ import { patchToFrontmatterDelta } from '../lib/vault/frontmatterDelta';
 
 // Reads the LIVE columns array for a Kanban board (no clone) so a command can
 // locate a column + its index at construction time. `DeleteColumnCommand`
-// snapshots ONLY the removed column via `this.snapshot(...)`; the whole-slice
-// snapshot/restore helpers this replaced (Audit5 Phase 4) were the Kanban
-// analogue of the pre-2.5 TaskList slice-replace bug — a wholesale `columns`
-// restore reverted every sibling-column edit made between execute and undo.
+// snapshots ONLY the removed column: a wholesale `columns` restore would revert
+// every sibling-column edit made between execute and undo.
 function currentKanbanColumns(boardId: string): KanbanBoard['columns'] | null {
   const cached = boardCacheStore.cache[boardId];
   if (!cached || cached.board.type !== 'kanban') return null;
@@ -71,7 +69,7 @@ export class AddCardCommand extends Command {
     this.boardId = boardId;
     this.columnId = columnId;
     // Snapshot (deep-clone) def + style so a caller-side mutation after
-    // construction can't corrupt what redo re-applies (Phase 31 B4.4 / A6 L30).
+    // construction can't corrupt what redo re-applies.
     this.def = this.snapshot(def);
     this.position = position;
     this.style = style ? this.snapshot(style) : style;
@@ -79,7 +77,7 @@ export class AddCardCommand extends Command {
   }
 
   execute() {
-    // P4.5 — toast + bail rather than orphan the card when the column is gone (undo removes by id).
+    // Toast + bail rather than orphan the card when the column is gone (undo removes by id).
     const cached = boardCacheStore.cache[this.boardId];
     if (cached?.board.type !== 'kanban' || !cached.board.columns?.some((c) => c.id === this.columnId)) { toastMissingUndoRedoTarget('redo', 'the column'); return; }
     boardCacheStore.persistAddKanbanPlacement(
@@ -105,11 +103,9 @@ export class DeleteCardCommand extends Command {
   private snapshotPlacement: KanbanTilePlacement | null;
   private snapshotColumnId: string | null;
   private snapshotPosition: number;
-  // 2.2 (Audit-14) — tileId of the next surviving card in the column at
-  // construction time (the card immediately AFTER the deleted one), or null
-  // when the deleted card was the column tail. undo() inserts immediately
-  // before this sibling so an intervening sibling add/remove doesn't land the
-  // restored card at a stale absolute index. Mirrors MoveCardCommand 6.4.M16.
+  // tileId of the card immediately AFTER the deleted one (null = column tail).
+  // undo() inserts before this sibling so an intervening sibling add/remove
+  // doesn't land the restored card at a stale absolute index.
   private beforeTileId: string | null;
 
   constructor(boardId: string, tileId: string) {
@@ -132,15 +128,11 @@ export class DeleteCardCommand extends Command {
         if (idx >= 0) {
           this.snapshotColumnId = col.id;
           this.snapshotPosition = idx;
-          // `this.snapshot(...)` deep-clones both snapshots so a tag/style
-          // mutation on the same tile through TileHeader between execute()
-          // and undo() doesn't mutate shared inner refs (style, coverImage,
-          // tags, …) on the snapshot we plan to restore from. Mirrors
-          // AddCardCommand's Phase 31 B4.4 deep-clone pattern.
+          // Deep-clone so a tag/style edit on the same tile between execute()
+          // and undo() can't mutate shared inner refs on the snapshot.
           const placement = placements[idx];
           if (placement) this.snapshotPlacement = this.snapshot(placement);
-          // 2.2 — capture the next surviving sibling as the undo anchor (only
-          // this one card is removed, so it's simply the card at idx + 1).
+          // Undo anchor: the next sibling (only this one card is removed).
           this.beforeTileId = placements[idx + 1]?.tileId ?? null;
           break;
         }
@@ -156,11 +148,9 @@ export class DeleteCardCommand extends Command {
 
   undo() {
     if (!this.snapshotDef || !this.snapshotPlacement || !this.snapshotColumnId) return;
-    // 6.4.M11 — restore the placement (style + coverImage) atomically. The old
-    // separate setKanbanPlacementCoverImage write re-sanitized the path and
-    // silently dropped a snapshotted value it deemed unsafe (e.g. an absolute
-    // path that reached the cache via a hand-edited / older .board.json), so
-    // undo wasn't faithful. The snapshot is trusted pre-delete state.
+    // Restore the placement (style + coverImage) atomically. A separate
+    // setKanbanPlacementCoverImage write would re-sanitize the path and could
+    // drop a snapshotted value; the snapshot is trusted pre-delete state.
     boardCacheStore.persistAddKanbanPlacement(
       this.boardId,
       this.snapshotColumnId,
@@ -168,7 +158,7 @@ export class DeleteCardCommand extends Command {
       this.snapshotPosition,
       this.snapshotPlacement.style,
       this.snapshotPlacement.coverImage,
-      this.beforeTileId, // 2.2 — anchor over the stale absolute index
+      this.beforeTileId, // anchor over the stale absolute index
     );
   }
 }
@@ -182,7 +172,7 @@ export class MoveCardCommand extends Command {
   private fromPosition: number;
   private toColumnId: string;
   private toPosition: number;
-  // 6.4.M16 — neighbour anchors captured from the pre-move cache (see ctor).
+  // Neighbour anchors captured from the pre-move cache (see ctor).
   private fromBeforeTileId: string | null;
   private toBeforeTileId: string | null;
 
@@ -204,8 +194,8 @@ export class MoveCardCommand extends Command {
     this.toPosition = toPosition;
     this.description = fromColumnId === toColumnId ? 'Reorder card' : 'Move card';
 
-    // 6.4.M16 — capture neighbour anchors from the PRE-move cache (this command
-    // is constructed before execute() applies the move). Absolute positions go
+    // Capture neighbour anchors from the PRE-move cache (this command is
+    // constructed before execute() applies the move). Absolute positions go
     // stale if the column is mutated between execute and a later undo/redo, so
     // we also record the sibling each insert should sit immediately BEFORE,
     // computed against the column with the moved card removed (mirroring
@@ -221,11 +211,9 @@ export class MoveCardCommand extends Command {
   }
 
   execute() {
-    // Phase 37 / 37.9 — destination-guard parity with undo() (Phase 31 B4.7).
-    // Redo can land long after the original move, by which point the
-    // target column might have been deleted. `moveKanbanPlacement`
-    // silently no-ops on a missing column; without this guard Ctrl+Shift+Z
-    // looks like it did nothing and the user has no signal explaining why.
+    // The target column may have been deleted since the original move.
+    // `moveKanbanPlacement` silently no-ops on a missing column, so toast
+    // instead of letting redo look like it did nothing.
     const cached = boardCacheStore.cache[this.boardId];
     const kb = cached && cached.board.type === 'kanban' ? cached.board as KanbanBoard : null;
     const toColumnExists = kb?.columns?.some((c) => c.id === this.toColumnId) ?? false;
@@ -242,17 +230,13 @@ export class MoveCardCommand extends Command {
       this.tileId,
       this.toColumnId,
       this.toPosition,
-      this.toBeforeTileId, // 6.4.M16 — anchor over stale absolute index
+      this.toBeforeTileId, // anchor over stale absolute index
     );
   }
 
   undo() {
-    // Phase 31 B4.7 — guard against the source column being deleted
-    // between execute and undo. `moveKanbanPlacement` silently no-ops on
-    // a missing target column (no warn, no return); from the user's
-    // perspective Ctrl+Z would appear to do nothing, leaving them
-    // confused. Probe the cache for the column first and surface a toast
-    // when it's missing. Match the no-op pattern in MoveTilesCommand.undo.
+    // The source column may have been deleted since execute;
+    // `moveKanbanPlacement` would silently no-op, so toast instead.
     const cached = boardCacheStore.cache[this.boardId];
     const kb = cached && cached.board.type === 'kanban' ? cached.board as KanbanBoard : null;
     const fromColumnExists = kb?.columns?.some((c) => c.id === this.fromColumnId) ?? false;
@@ -269,7 +253,7 @@ export class MoveCardCommand extends Command {
       this.tileId,
       this.fromColumnId,
       this.fromPosition,
-      this.fromBeforeTileId, // 6.4.M16 — anchor over stale absolute index
+      this.fromBeforeTileId, // anchor over stale absolute index
     );
   }
 }
@@ -284,15 +268,10 @@ export class MoveCardCommand extends Command {
  * `moveKanbanPlacement` call lands at the right index (lower positions fill
  * first, shifting higher positions into place).
  *
- * Audit-7 M3 — restoring to the absolute `fromPosition` alone goes stale if a
- * source column is mutated (a card added/removed) between the move and a later
- * undo: the saved index then points at the wrong slot and the cards return
- * scrambled. Each snapshot now also carries the surviving sibling the card
- * should sit immediately BEFORE in its source column, captured from the PRE-move
- * cache and resolved against the LIVE column at undo time (mirrors the
- * single-card `MoveCardCommand` 6.4.M16 anchor). Ascending replay + a
- * next-survivor anchor reconstructs the original interleaving; the absolute
- * position is the fallback when that sibling is gone.
+ * The absolute `fromPosition` goes stale if a source column is mutated between
+ * the move and a later undo, so each snapshot also carries the surviving sibling
+ * the card should sit immediately BEFORE, resolved against the LIVE column at
+ * undo time. The absolute position is the fallback when that sibling is gone.
  */
 export class MoveCardsCommand extends Command {
   description: string;
@@ -305,15 +284,13 @@ export class MoveCardsCommand extends Command {
     tileId: string;
     fromColumnId: string;
     fromPosition: number;
-    // Audit-7 M3 — tileId of the next surviving (non-moved) card in the source
-    // column at construction time; null when the card was last (or only moved
-    // cards follow), in which case undo falls back to the absolute position.
+    // tileId of the next surviving (non-moved) card in the source column at
+    // construction time; null falls back to the absolute position.
     anchorTileId: string | null;
   }>;
-  // M5 (Audit-13) — forward-leg anchor for execute()/redo (undo already anchors
-  // per-card). Without it a multi-card move → undo → edit-target-column → redo
-  // replayed the stale absolute `toPosition`. tileId of the surviving (non-moved)
-  // card the block should sit immediately before; captured pre-move, null = append.
+  // Forward-leg anchor for execute()/redo, so a redo after the target column
+  // was edited doesn't replay a stale `toPosition`. tileId of the surviving
+  // card the block should sit immediately before; null = append.
   private toBeforeTileId: string | null;
 
   constructor(
@@ -330,14 +307,9 @@ export class MoveCardsCommand extends Command {
     this.tileIds = [...tileIds];
     this.toColumnId = toColumnId;
     this.toPosition = toPosition;
-    // Audit-7 M3 — capture each card's neighbour anchor from the PRE-move cache
-    // (this command is constructed before execute() applies the move, so the
-    // moved cards are still in their source columns). The anchor is the first
-    // SURVIVING card after this one in its source column — computed with the
-    // whole moved set skipped (mirrors moveKanbanPlacement's remove-then-insert)
-    // — so an ascending-order undo lands each card immediately before its
-    // original sibling even if the column was mutated meanwhile. Null (card was
-    // last, or only moved cards follow) falls back to the absolute position.
+    // Capture each card's anchor from the PRE-move cache: the first SURVIVING
+    // card after it in its source column, with the whole moved set skipped
+    // (mirrors moveKanbanPlacement's remove-then-insert).
     const movedSet = new Set(tileIds);
     const anchorFor = (fromColumnId: string, tileId: string): string | null => {
       const cached = boardCacheStore.cache[boardId];
@@ -358,7 +330,7 @@ export class MoveCardsCommand extends Command {
       ...s,
       anchorTileId: anchorFor(s.fromColumnId, s.tileId),
     }));
-    // M5 (Audit-13) — forward-leg anchor: the surviving card at `toPosition` in
+    // Forward-leg anchor: the surviving card at `toPosition` in
     // the target column once the whole moved set is removed (the same frame
     // moveKanbanPlacements inserts against). Captured here, pre-move.
     const targetPlacements =
@@ -379,7 +351,7 @@ export class MoveCardsCommand extends Command {
       this.tileIds,
       this.toColumnId,
       this.toPosition,
-      this.toBeforeTileId, // M5 (Audit-13) — anchor over the stale absolute index
+      this.toBeforeTileId, // anchor over the stale absolute index
     );
   }
 
@@ -394,7 +366,7 @@ export class MoveCardsCommand extends Command {
         s.tileId,
         s.fromColumnId,
         s.fromPosition,
-        s.anchorTileId, // Audit-7 M3 — anchor over the stale absolute index
+        s.anchorTileId, // anchor over the stale absolute index
       );
     }
   }
@@ -425,7 +397,7 @@ export class AddColumnCommand extends Command {
     super();
     this.targetBoardId = boardId;
     this.boardId = boardId;
-    // Phase R3 — deep-clone so the optional `style` object can't be mutated
+    // Deep-clone so the optional `style` object can't be mutated
     // through the original caller-side reference after the command is pushed.
     this.column = this.snapshot(column);
     this.description = `Add column "${column.title}"`;
@@ -446,15 +418,10 @@ export class DeleteColumnCommand extends Command {
   private boardId: string;
   private columnId: string;
   /**
-   * Audit5 Phase 4 (#9) — captured DELTA: the single removed column
-   * (deep-cloned, with its card placements) + its original array index. `undo`
-   * re-inserts ONLY this column against the LIVE columns via
-   * `insertKanbanColumnAt`, so an edit to a SURVIVING column (rename, card
-   * move/add, WIP limit, collapse, width, style, cover image) made between
-   * execute and undo survives. The prior whole-`columns`-slice replay reverted
-   * every sibling column's interval edit — the Kanban analogue of the
-   * `DeleteSectionCommand` slice-replace bug fixed in 2.5. `removedColumn` is
-   * null when the column wasn't found at construction (execute/undo no-op).
+   * Captured DELTA: the removed column (deep-cloned, with its placements) + its
+   * original index. `undo` re-inserts ONLY this column against the LIVE columns,
+   * so edits to surviving columns made between execute and undo survive. Null
+   * when the column wasn't found at construction (undo no-ops).
    */
   private removedColumn: KanbanBoard['columns'][number] | null;
   private removedIndex: number;
@@ -542,13 +509,8 @@ export class ReorderColumnCommand extends Command {
 }
 
 /**
- * Phase 5 / 5.4 — undoable Kanban card cover-image set/clear.
- *
- * Both `pickCoverImageForTile` and `clearCoverImageForTile` used to call
- * `boardCacheStore.setKanbanPlacementCoverImage` directly with no history
- * entry, so users had no way to recover the prior image (or no-image
- * state) after a misclick. Snapshot the prior value at construction;
- * execute applies the new value, undo restores the prior.
+ * Undoable Kanban card cover-image set/clear. Snapshots the prior value at
+ * construction; execute applies the new value, undo restores the prior.
  */
 export class UpdateCoverImageCommand extends Command {
   description: string;
@@ -590,7 +552,7 @@ export class UpdateCardFieldCommand extends Command {
   private docId: string;
   private patch: Record<string, unknown>;
   private inversePatch: Record<string, unknown>;
-  // Audit2 4.2 — false on the user's initial Apply (apply directly), true once
+  // False on the user's initial Apply (apply directly), true once
   // executed so a later redo rebases like undo instead of clobbering.
   private hasExecuted = false;
 
@@ -603,11 +565,9 @@ export class UpdateCardFieldCommand extends Command {
     description?: string,
   ) {
     super();
-    // P2.6 (Audit-15) — refuse a null docId, mirroring UpdateTaskFieldCommand's
-    // 6.2.H7 guard. The old dead null-docId branch scheduled a no-delta write that
-    // re-emitted unchanged FM → Apply AND Undo silent no-ops. Both callers already
-    // route null docIds through UpdateOrphanFrontmatterCommand; this is the
-    // chokepoint that stops a new caller re-introducing the silent loss.
+    // Refuse a null docId: without one the write re-emits unchanged FM, so Apply
+    // and Undo would be silent no-ops. Null-docId edits go through
+    // UpdateOrphanFrontmatterCommand.
     if (!docId) {
       throw new Error(
         'UpdateCardFieldCommand requires a non-null docId; route null-docId card edits through UpdateOrphanFrontmatterCommand instead',
@@ -617,12 +577,8 @@ export class UpdateCardFieldCommand extends Command {
     this.boardId = boardId;
     this.relPath = relPath;
     this.docId = docId;
-    // Phase R3 — deep-clone via `this.snapshot(...)` so nested values
-    // (arrays, objects) inside the patch can't be mutated through the
-    // original caller-side reference after the command is pushed. Before
-    // R3 the shallow `{ ...patch }` left arrays (e.g. `tags: [...]`)
-    // aliased with the caller; tag edits between Apply and Undo could
-    // mutate the inverse patch's would-be-restored array.
+    // Deep-clone so nested values (e.g. `tags: [...]`) can't be mutated through
+    // the caller's reference after the command is pushed.
     this.patch = this.snapshot(patch);
     this.inversePatch = this.snapshot(inversePatch);
     this.description = description ?? `Update card ${Object.keys(patch).join(', ')}`;
@@ -630,14 +586,8 @@ export class UpdateCardFieldCommand extends Command {
 
   async execute(): Promise<void> {
     // Drain pending debounced writes before merging the new patch so the
-    // prior in-memory state lands on disk first. Mirrors UpdateTaskFieldCommand —
-    // without this, a rapid toggle → undo can race the still-debounced forward
-    // write against the inverse patch's fresh write at the same docId.
-    //
-    // Phase 2.7 — must `await` rather than fire-and-forget. The previous
-    // `void` discarded the flush completion, so a fast Apply → Undo would
-    // overlap: the forward debounced write was still in-flight when undo
-    // queued the inverse patch and the inverse landed on disk first.
+    // prior in-memory state lands on disk first. Awaited: otherwise a fast
+    // Apply → Undo races the still-debounced forward write against the inverse.
     await flushAllPendingFrontmatterWrites();
     // First execute = the user's own action: apply it directly (the inverse
     // patch was just read from this same live cache). A redo re-applies an old
@@ -655,27 +605,20 @@ export class UpdateCardFieldCommand extends Command {
       });
       return;
     }
-    // A9-H1 — capture vault identity before the seed's disk read; an Open Vault
-    // → "Don't Save" swap can commit mid-read. Bailing after (below) means we
-    // never re-inject (A9-M1) the old vault's FM or arm a write onto the new
-    // vault's same-named file.
+    // Capture vault identity before the seed's disk read; a vault swap can
+    // commit mid-read, and we must not inject the old vault's FM or write onto
+    // the new vault's same-named file.
     const identity = captureVaultIdentity();
-    // Audit-7 H1 — seed the FM cache from a FRESH disk read HERE, inside the
-    // chained command body, so vaultStore.save()/quit (which await
-    // historyStore.whenChainSettled() before flushing) cover this read. The
-    // seed used to run in the writer BEFORE historyStore.execute(); a Ctrl+S /
-    // quit landing in that pre-chain await window saw an empty chain, reported
-    // a premature "Saved", and tore down the renderer before the field write
-    // was scheduled — a silent loss with no .filo/.dirty sentinel (the vault
-    // was clean at edit time). No-op when an open editor / prior edit already
-    // seeded the cache, or when the disk read fails.
+    // Seed the FM cache from a fresh disk read inside the chained command body,
+    // so save()/quit (which await historyStore.whenChainSettled()) cover this
+    // read — seeding before execute() let a quit in that window lose the edit.
+    // No-op when the cache is already seeded or the disk read fails.
     await seedDocumentFrontmatterFromDisk(this.docId, vaultStore.path, this.relPath);
-    // A9-H1 — swap landed mid-seed: abandon before any index/merge/schedule/markDirty sink.
+    // Swap landed mid-seed: abandon before any index/merge/schedule/markDirty sink.
     if (!isStillSameVault(identity)) return;
     if (!documentStore.getFrontmatter(this.docId)) {
       // Disk read failed (ENOENT / transient) — fall back to the vault-index
-      // snapshot, exactly as the writer's old ensureSeededFm did, so the merge
-      // has a full FM object and the source-preserving write can't drop keys.
+      // snapshot so the merge has a full FM object.
       documentStore.setFrontmatter(
         this.docId,
         (vaultIndexStore.getMetadata(this.relPath)?.frontmatter ?? {}) as Record<string, unknown>,
@@ -685,23 +628,19 @@ export class UpdateCardFieldCommand extends Command {
     // TRUE prior value of each patched key — the writer computed it before
     // this seed ran, off a possibly-stale index / empty cache.
     this.inversePatch = this.snapshot(captureInverseFromCache(this.docId, this.patch));
-    // Phase 4 — mergeFrontmatter feeds the DISPLAY cache; the delta is the
-    // write SOURCE (applied to fresh disk in the gateway), so an untouched
-    // external key is preserved by construction instead of dropped from a
-    // stale cache. Decoupled — the cache is never the write source.
+    // mergeFrontmatter feeds the DISPLAY cache only; the delta is the write
+    // SOURCE (applied to a fresh disk read in the gateway), so an untouched
+    // external key is preserved instead of dropped from a stale cache.
     documentStore.mergeFrontmatter(this.docId, this.patch);
-    // Phase 4 — the delta routes through the gateway's fresh-disk apply (docId
-    // path); docId is now guaranteed non-null (P2.6 constructor guard).
     scheduleFrontmatterWrite(this.relPath, this.docId, patchToFrontmatterDelta(this.patch));
     boardCacheStore.markDirty(this.targetBoardId);
   }
 
   async undo(): Promise<void> {
     await flushAllPendingFrontmatterWrites();
-    // Audit2 4.2 — rebase onto the live frontmatter so an external edit to
-    // the same field isn't silently clobbered (prompts to apply anyway).
-    // docId is guaranteed non-null (P2.6 constructor guard). A17-1.1 —
-    // awaited: the rebase re-reads disk when no cache is seeded.
+    // Rebase onto the live frontmatter so an external edit to the same field
+    // isn't silently clobbered (prompts to apply anyway). Awaited: the rebase
+    // re-reads disk when no cache is seeded.
     await applyFrontmatterPatchRebased({
       docId: this.docId,
       relPath: this.relPath,
@@ -714,19 +653,11 @@ export class UpdateCardFieldCommand extends Command {
 }
 
 /**
- * Phase 5 / 5.5 — undoable kanban frontmatter edit for cards whose backing
- * tile lacks a `contentId`. The existing `UpdateCardFieldCommand` assumes
- * a docId so it can merge through the shared documentStore live cache; the
- * frontmatter scheduler in turn reads from documentStore (not the patch)
- * at flush time. With no docId, the scheduler reads from vaultIndexStore
- * — which is a watcher snapshot and won't reflect the patch — so the
- * previous `scheduleSharedFrontmatterWrite(path, null)` fallback was a
- * silent no-op.
- *
- * This command writes directly through `vault:write-existing-file-text`
- * with the assembled `(patched-fm, current-body)`, mirroring the disk
- * path PropertiesPopup uses. The body comes from the watcher snapshot
- * (vaultIndexStore) since there's no live editor for orphan-fm cards.
+ * Undoable kanban frontmatter edit for cards whose backing tile lacks a
+ * `contentId`. `UpdateCardFieldCommand` needs a docId to merge through the
+ * documentStore cache; without one the scheduler would read the watcher
+ * snapshot and never see the patch. This command writes directly instead,
+ * mirroring the PropertiesPopup disk path.
  */
 export class UpdateOrphanFrontmatterCommand extends Command {
   description: string;
@@ -754,24 +685,15 @@ export class UpdateOrphanFrontmatterCommand extends Command {
   }
 
   async execute(): Promise<void> {
-    // A8-M5 — on the FIRST execute, recompute the inverse from the CURRENT
-    // on-disk frontmatter, mirroring the docId path's captureInverseFromCache.
-    // The writer computed `inversePatch` from the (possibly-hours-stale) vault
-    // index at construction; if an external editor added/changed a patched key
-    // since the last index rebuild, that stale inverse is wrong two ways:
-    //   1. execute would FALSELY conflict — `applyOrphanPatchRebased` compares
-    //      the fresh disk value against this `expectedCurrent`, so a stale
-    //      mismatch makes it KEEP the external value and DROP the user's edit.
-    //   2. undo would restore the stale value (''/absent) instead of the TRUE
-    //      prior on-disk value.
-    // Recomputing from a fresh disk read fixes both. Only on the first execute
-    // (not redo): a redo must replay against the value THIS command wrote, which
-    // the inverse already holds. A read failure keeps the construction-time
-    // inverse (best-effort, matching the docId path's index fallback).
+    // On the FIRST execute, recompute the inverse from the current on-disk
+    // frontmatter. The construction-time inverse came from a possibly-stale
+    // vault index: it would make execute falsely conflict (dropping the user's
+    // edit) and make undo restore a stale value. Not on redo — the inverse
+    // already holds what this command wrote. A read failure keeps the
+    // construction-time inverse.
     if (!this.hasExecuted) {
       this.hasExecuted = true;
-      // A9-H1 — guard the inverse recompute against a swap during the flush/read
-      // (don't read the new vault's same-named file); the write below bails too.
+      // Guard the recompute against a vault swap during the flush/read.
       const identity = captureVaultIdentity();
       await flushAllPendingFrontmatterWrites();
       const vaultRoot = vaultStore.path;
@@ -791,7 +713,7 @@ export class UpdateOrphanFrontmatterCommand extends Command {
         }
       }
     }
-    // 6.2.H8 — route through the rebased variant so an external edit to
+    // Route through the rebased variant so an external edit to
     // the same field isn't silently clobbered. The inverse patch IS the
     // expected current state (what we wrote on the prior execute, or the
     // initial state before any execute).
@@ -816,18 +738,10 @@ export class UpdateOrphanFrontmatterCommand extends Command {
 }
 
 /**
- * Phase 7 / 7.2 — undoable mutation for a single Kanban column property
- * (collapsed flag, WIP limit, width). Snapshots the prior column shape so
- * undo can restore the exact field's prior value — including the "absent"
- * case where the previous shape didn't have the field at all. Used by
- * `KanbanBoard.svelte`'s toolbar handlers (toggle collapse, set WIP, set
- * width) and the collapse-all / expand-all bulk variants below.
- *
- * The command captures (column-id, prev-collapsed, prev-wipLimit, prev-style)
- * up-front so a later style write between execute and undo can't poison the
- * inverse. Each `apply()` call routes through the existing cache mutators so
- * the active-proxy tick path stays consistent with the bare write the
- * component used to do.
+ * Undoable mutation for a single Kanban column property (collapsed flag, WIP
+ * limit, width). Snapshots the prior values up-front — including the "absent"
+ * case — so a later write between execute and undo can't poison the inverse.
+ * Used by `KanbanBoard.svelte`'s toolbar handlers.
  */
 export class UpdateKanbanColumnCommand extends Command {
   description: string;
@@ -840,11 +754,8 @@ export class UpdateKanbanColumnCommand extends Command {
   private afterWipLimit: number | null;
   private beforeWidth: number | null;
   private afterWidth: number | null;
-  // L29 (Audit-6) — which of the three fields this command actually changed,
-  // computed once at construction. `apply` only writes the changed ones, so an
-  // undo/redo of a collapse toggle no longer also re-stamps the column's
-  // wipLimit/width — which would clobber an out-of-band edit to those fields
-  // made between this command's execute and its undo.
+  // Which fields this command actually changed. `apply` only writes those, so
+  // undoing a collapse toggle doesn't clobber an out-of-band wipLimit/width edit.
   private changedCollapsed: boolean;
   private changedWipLimit: boolean;
   private changedWidth: boolean;
@@ -902,7 +813,7 @@ export class UpdateKanbanColumnCommand extends Command {
 }
 
 /**
- * Phase 7 / 7.2 — bulk collapse-all / expand-all. Captures every column's
+ * Bulk collapse-all / expand-all. Captures every column's
  * prior `collapsed` flag so undo restores the exact mixed state (some
  * columns may have been collapsed before the bulk op).
  */
@@ -945,16 +856,11 @@ export class SetAllKanbanColumnsCollapsedCommand extends Command {
 }
 
 /**
- * 6.2.H8 — docId-less rebased frontmatter patch for orphan cards (no
- * open editor). Mirrors `applyFrontmatterPatchRebased` (Audit2 4.2) for
- * the docId case: read disk fresh, compare each applying key against
- * `expectedCurrent`, commit only the non-conflicting keys, and surface a
- * "Kept the external value" toast (with an Apply-anyway action) when a
- * field's external value diverged from what we expected.
- *
- * Pre-fix `applyOrphanPatch` blindly spread the patch over the disk
- * frontmatter — so an external editor changing the same field between
- * execute and undo was silently clobbered.
+ * docId-less rebased frontmatter patch for orphan cards (no open editor).
+ * Mirrors `applyFrontmatterPatchRebased`: read disk fresh, compare each
+ * applying key against `expectedCurrent`, commit only the non-conflicting keys,
+ * and toast "Kept the external value" (with Apply anyway) for the rest, so an
+ * external edit to the same field isn't silently clobbered.
  */
 async function applyOrphanPatchRebased(args: {
   relPath: string;
@@ -964,13 +870,13 @@ async function applyOrphanPatchRebased(args: {
   label: string;
 }): Promise<void> {
   const { relPath, targetBoardId, applying, expectedCurrent, label } = args;
-  // A9-H1 — capture identity before reading the live vault path; a swap during
-  // the flush/read must not apply this command's patch to the new vault's file.
+  // Capture identity before reading the live vault path; a swap during the
+  // flush/read must not apply this command's patch to the new vault's file.
   const identity = captureVaultIdentity();
   const vaultRoot = vaultStore.path;
   if (!vaultRoot) return;
 
-  // Audit 2.2 — if a Document editor opened on this file between execute
+  // If a Document editor opened on this file between execute
   // and undo, route through the docId-aware rebased helper (same conflict
   // semantics as orphan path, but uses the live cache). Force-flush so
   // the rebase's write lands immediately instead of riding the debounce.
@@ -994,16 +900,12 @@ async function applyOrphanPatchRebased(args: {
   // first. Mirrors UpdateCardFieldCommand's flush-before-merge ordering.
   await flushAllPendingFrontmatterWrites();
 
-  // D.8 — read the file body fresh from disk rather than trusting
-  // `vaultIndexStore.getMetadata(...)?.content`. The index can be stale
-  // for an orphan (no editor open, watcher reconciliation pending), so
-  // assembling from the stale `content` would clobber an external edit
-  // that landed since the last index rebuild.
+  // Read the body fresh from disk rather than trusting the vault index, which
+  // can be stale for an orphan and would clobber a recent external edit.
   let body = '';
   let baseFm: Record<string, unknown> = {};
-  // A9-L5 — disk FM SOURCE, threaded into the docId-less write below so it
-  // source-preserves instead of full-dumping. Only the disk-read branch sets it
-  // (the index fallback has no source, so that degraded path keeps the full-dump).
+  // Disk FM SOURCE, threaded into the write below so it source-preserves
+  // instead of full-dumping. Unset on the index fallback (no source available).
   let baseRawFm: string | undefined;
   try {
     const hydrateResult = await readMarkdownForHydrate(vaultRoot, relPath);
@@ -1017,20 +919,16 @@ async function applyOrphanPatchRebased(args: {
     if (!isHydrated(relPath)) markHydrated(relPath, false);
   }
 
-  // A9-H1 — swap during the drain/read: don't write this patch onto the new vault.
+  // Swap during the drain/read: don't write this patch onto the new vault.
   if (!isStillSameVault(identity)) return;
 
   const commit = async (patch: Record<string, unknown>): Promise<void> => {
-    // FILO-UR-1 — thread an explicit DELTA, not a cleaned whole object. The old
-    // merge + drop-empty-keys loop deleted present-but-empty disk keys (aliases:,
-    // cssclasses:) and the CST engine spliced them out — loss on execute AND undo.
+    // Thread an explicit DELTA, not a cleaned whole object: cleaning would drop
+    // present-but-empty disk keys (aliases:, cssclasses:).
     const delta = patchToFrontmatterDelta(patch);
-    // A9-L2 — do NOT swallow a failed orphan write (pre-fix this catch only
-    // reportError'd, so the command resolved SUCCESS and markDirty'd while disk
-    // stayed stale). Letting the rejection propagate makes execute()/undo()
-    // reject so the history wrapper rolls the command back, matching the docId
-    // path; the gateway's trackComponentWrite already kept `.filo/.dirty` dirty +
-    // toasted. markDirty below runs ONLY past a successful write (a throw skips it).
+    // Don't swallow a failed write: letting it reject makes execute()/undo()
+    // reject so the history wrapper rolls the command back (the gateway already
+    // toasted and kept `.filo/.dirty`). markDirty runs only after success.
     await writeMarkdownFile({
       vaultRoot,
       relPath,
@@ -1038,9 +936,9 @@ async function applyOrphanPatchRebased(args: {
       body,
       callerId: `kanban-orphan-patch:${relPath}`,
       docId: null,
-      // A9-L5 / FILO-UR-1 — delta baselines from its own fresh read; baseRawFm = no-delta fallback.
+      // Delta baselines from its own fresh read; baseRawFm = no-delta fallback.
       originalFrontmatter: baseRawFm,
-      bodyIsLive: false, // Audit-16 6.8 — always a snapshot body, never a live editor's
+      bodyIsLive: false, // always a snapshot body, never a live editor's
     });
     // allow-non-target-markdirty: shared helper, callers pass this.targetBoardId per the CI gate
     boardCacheStore.markDirty(targetBoardId);
@@ -1056,9 +954,7 @@ async function applyOrphanPatchRebased(args: {
   }
 
   // Keep the external value(s); apply only the fields nothing external
-  // touched. The board still needs to be dirtied (markDirty fires inside
-  // commit), so call commit even with the smaller patch if any safe
-  // fields remain. When ALL fields conflict, skip the write entirely.
+  // touched. When ALL fields conflict, skip the write entirely.
   const safe: Record<string, unknown> = {};
   for (const key of Object.keys(applying)) {
     if (!conflicts.includes(key)) safe[key] = applying[key];
@@ -1066,10 +962,8 @@ async function applyOrphanPatchRebased(args: {
   if (Object.keys(safe).length > 0) {
     await commit(safe);
   }
-  // L7 (Audit-13) — when ALL fields conflict, NOTHING is written to disk and the
-  // cache isn't mutated here, so the prior `markDirty(targetBoardId)` in this
-  // branch only scheduled a redundant `.board.json` rewrite (and could fire a
-  // phantom drift prompt). Skip it: a no-write must not dirty the board.
+  // When ALL fields conflict nothing is written, so don't markDirty — it would
+  // only schedule a redundant `.board.json` rewrite (and a phantom drift prompt).
 
   uiStore.pushToast({
     text: `External edit changed ${conflicts.join(', ')} in ${label}. Kept the external value — that field's undo/redo was skipped.`,
@@ -1081,8 +975,8 @@ async function applyOrphanPatchRebased(args: {
         handler: () => {
           const forced: Record<string, unknown> = {};
           for (const key of conflicts) forced[key] = applying[key];
-          // A9-L2 — commit now rejects on write failure; this fire-and-forget
-          // toast path isn't wrapped by the history runner, so surface + swallow.
+          // commit rejects on write failure; this fire-and-forget toast path
+          // isn't wrapped by the history runner, so surface + swallow.
           void commit(forced).catch((err) =>
             reportError('updateOrphanFrontmatter', err, `Failed to update ${relPath}`),
           );

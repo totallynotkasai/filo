@@ -5,7 +5,7 @@
  * LAST trigger in a burst. `cancel()` drops any pending fire (call it on
  * teardown so the timer can't fire after the owner unmounts).
  *
- * Used by the `vault:tree-updated` listener (M9) to coalesce a sync-storm /
+ * Used by the `vault:tree-updated` listener to coalesce a sync-storm /
  * multi-file git burst — which fires many tree-updated events in quick
  * succession — into a single tree reconcile, instead of one full-vault walk
  * (tree re-filter/sort + broken-ref recompute over every board) per event.

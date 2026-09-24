@@ -8,7 +8,7 @@
    * it can confirm an action initiated from inside another modal — e.g.
    * the "Apply to all Boards" buttons in Project Settings.
    *
-   * Phase C / C.6 — focus the SAFER button on open (Cancel when
+   * Focus the SAFER button on open (Cancel when
    * `danger: true`, Confirm otherwise) and run a strict focus trap
    * across the two buttons + optional `extraOption` checkbox so Tab
    * cycling stays inside the dialog. Mirrors Modal.svelte's trap so
@@ -93,7 +93,7 @@
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       e.preventDefault();
-      // H1: stop Escape bubbling to the global `app:cancel` handler, which
+      // Stop Escape bubbling to the global `app:cancel` handler, which
       // would otherwise also dismiss the modal stacked beneath this dialog.
       e.stopPropagation();
       cancel();

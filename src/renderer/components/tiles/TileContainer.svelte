@@ -59,7 +59,7 @@
   let selected = $derived(selectionStore.isSelected(tile.id));
   let lodLevel = $derived(flowLayout ? 'full' : canvasStore.lodLevel);
   let isOrphanHighlighted = $derived(orphansStore.isHighlighted(tile.id));
-  // Sprint B / B5 — short-lived highlight pulse after navigateToTile (e.g.
+  // Short-lived highlight pulse after navigateToTile (e.g.
   // jumping from search). Cleared via the 2s timer in navigation.svelte.ts.
   let isNavHighlighted = $derived(navigationState.highlightedTileId === tile.id);
 
@@ -152,8 +152,7 @@
   // (e.g. min-height constraints, content overflow). Only fires when delta > 2px.
   // Skipped in flowLayout mode — those tiles aren't on the canvas spatial index.
   // Routed through updateOrDefer so a reflow mid-drag (image load, auto-height)
-  // doesn't perturb the index the smart guides read — it flushes on drag end
-  // (Phase 7.7).
+  // doesn't perturb the index the smart guides read — it flushes on drag end.
   let containerElement = $state<HTMLDivElement | null>(null);
 
   $effect(() => {
@@ -246,7 +245,7 @@
   }
 
   /**
-   * Keyboard a11y for canvas tiles (P1-26 + P1-27):
+   * Keyboard a11y for canvas tiles:
    *   Tab        — focus reaches the tile via the wrapper div (tabindex=0)
    *   Enter      — adds the tile to the active selection
    *   Shift+F10  — opens the same context menu the right-click handler uses,
@@ -291,7 +290,7 @@
 <!--
   Each tile is an independently meaningful content unit (text, image, etc.)
   so `role="article"` is semantically correct. Marking it Tab-reachable
-  (P1-27) and wiring a keydown handler (P1-26) makes it interactive at the
+  and wiring a keydown handler makes it interactive at the
   widget level; Svelte's lint flags non-button interactive content with
   warnings that don't apply here, so silence them.
 -->
@@ -470,13 +469,13 @@
     outline-offset: 1px;
   }
 
-  /* Keyboard focus indicator — canvas tiles are now Tab-reachable (P1-27). */
+  /* Keyboard focus indicator — canvas tiles are Tab-reachable. */
   .tile-container:focus-visible {
     outline: 2px solid var(--accent-primary);
     outline-offset: 2px;
   }
 
-  /* Sprint B / B5 — nav-jump highlight pulse. Applied by `navigateToTile`
+  /* Nav-jump highlight pulse. Applied by `navigateToTile`
      (e.g. from search) for `HIGHLIGHT_DURATION_MS` so the user can spot the
      tile after the viewport snaps to it. Animation uses transform+box-shadow
      only (GPU-accelerated). Respects prefers-reduced-motion: still shows the

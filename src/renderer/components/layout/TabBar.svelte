@@ -16,7 +16,7 @@
 
   let showNewTabMenu = $state(false);
 
-  // Audit-14 5.8 — refs to the menu triggers so Escape-to-close can return
+  // Refs to the menu triggers so Escape-to-close can return
   // focus to the button that opened the popup (WAI-ARIA menu pattern).
   let newTabBtnEl = $state<HTMLButtonElement | null>(null);
   let overflowBtnEl = $state<HTMLButtonElement | null>(null);
@@ -152,7 +152,7 @@
    * convention); Home / End jump to first / last.
    *
    * Alt+ArrowLeft / Alt+ArrowRight reorder the currently focused tab —
-   * the keyboard equivalent of drag-drop reordering (P1-28).
+   * the keyboard equivalent of drag-drop reordering.
    */
   function handleTabListKeydown(e: KeyboardEvent) {
     if (!tabListEl) return;

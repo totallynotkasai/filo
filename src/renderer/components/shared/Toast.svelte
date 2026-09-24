@@ -8,7 +8,7 @@
     error: 'var(--accent-danger)',
   };
 
-  // Phase 6.4 (IMPLEMENTATION_PLAN_2026-05-27) — non-colour state cue so
+  // Non-colour state cue so
   // a colour-blind / monochrome-display user still discriminates toast
   // severity. Each type gets a small inline SVG with an `aria-label`;
   // the visual sits alongside the border-left-color and the role/

@@ -1,17 +1,16 @@
 /**
- * 6.2.H4 (follow-up) — reads / clears `.filo/quit-failure.json` on vault open.
+ * Reads / clears `.filo/quit-failure.json` on vault open.
  *
  * The main-side quit drain writes this breadcrumb when the session preserved
  * emergency partial files after a failed write (see
  * `main/services/quitFailureBreadcrumb`). On the next vault open we surface
  * the preserved locations so the user can recover the bytes.
  *
- * Audit-8 L4 — the READ and the CLEAR are deliberately SEPARATE. The recovery
- * sequencer reads the breadcrumb, surfaces the preserved locations, and clears
- * it ONLY when the user dismisses that toast (acknowledges). So a second crash
- * before the user acts re-surfaces the location next open instead of losing it
- * — the breadcrumb is no longer consumed-on-read. (The preserved `.tmp`
- * partials remain on disk regardless of either operation.)
+ * The READ and the CLEAR are deliberately SEPARATE. The recovery sequencer
+ * reads the breadcrumb, surfaces the preserved locations, and clears it ONLY
+ * when the user dismisses that toast, so a second crash before the user acts
+ * re-surfaces the location next open. (The preserved `.tmp` partials remain
+ * on disk regardless.)
  *
  * Same read/delete shape as the `.filo/.dirty` sentinel: a relative-path read
  * through `vault:read-file-text` (the handler resolves it against the active
@@ -59,7 +58,7 @@ export async function readQuitFailureBreadcrumb(
 
   let content: string;
   try {
-    // Audit-19 EXT-6 — THIS machine's breadcrumb (its absolute paths only make
+    // THIS machine's breadcrumb (its absolute paths only make
     // sense here), else the legacy shared one; another machine's is listed only.
     const result = await readOwnOrLegacySentinel(vaultRoot, 'quit-failure');
     content = result.content;
@@ -100,7 +99,7 @@ export async function readQuitFailureBreadcrumb(
 export async function clearQuitFailureBreadcrumb(vaultRoot: string): Promise<void> {
   if (!vaultRoot) return;
   try {
-    // Audit-19 EXT-6 — this machine's breadcrumb plus the legacy shared one
+    // This machine's breadcrumb plus the legacy shared one
     // (migration). Another machine's is never cleared (main refuses it).
     await clearOwnSentinel(vaultRoot, 'quit-failure');
   } catch (err) {
@@ -113,7 +112,7 @@ export async function clearQuitFailureBreadcrumb(vaultRoot: string): Promise<voi
 }
 
 /**
- * Audit-19 EXT-5 (plan D6, step 6) — asks main to MOVE orphaned atomic-write
+ * Asks main to MOVE orphaned atomic-write
  * temps (`*.<12hex>.tmp` / `*.case-rename-*`, older than 10 min, not listed by
  * any quit-failure breadcrumb) out of the synced vault into
  * `.filo/recovery/orphan-tmp/`. Called on vault open AFTER the breadcrumb has
@@ -136,9 +135,9 @@ export async function sweepOrphanTempFiles(vaultRoot: string, captured: VaultIde
 }
 
 /**
- * Audit-19 — the vault-open checks that run right AFTER the quit-failure
- * breadcrumb was surfaced: move orphaned save temps out of the synced vault
- * (EXT-5), then list other machines' crash sentinels (EXT-6, informational).
+ * The vault-open checks that run right AFTER the quit-failure breadcrumb was
+ * surfaced: move orphaned save temps out of the synced vault, then list other
+ * machines' crash sentinels (informational).
  */
 export async function runPostBreadcrumbChecks(vaultRoot: string, captured: VaultIdentity): Promise<void> {
   await sweepOrphanTempFiles(vaultRoot, captured);

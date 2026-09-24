@@ -1,8 +1,8 @@
 /**
- * Audit-17 4.1 / 4.2 — pure title-commit resolution shared by the TileHeader
+ * Pure title-commit resolution shared by the TileHeader
  * and Frame inline title editors.
  *
- * Mirrors the blur-commit logic both components previously inlined: trim the
+ * The blur-commit logic both components share: trim the
  * plain text (falling back to a default when the user emptied it) and
  * suppress identity HTML when no rich-text marks were added — keeps the
  * schema slim and avoids `<p>foo</p>` being stored for an unstyled title.

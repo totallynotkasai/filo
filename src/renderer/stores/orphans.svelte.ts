@@ -16,8 +16,7 @@ import { onVaultSwap } from '../core/vaultLifecycle';
 const DEFAULT_CLUSTER_DISTANCE = 600;
 
 /**
- * Audit 1.1 — resolves a text tile's real backing body for the empty-orphan
- * check. `tile.content` is always '' (the body lives in the .md), so emptiness
+ * Resolves a text tile's real backing body for the empty-orphan check. `tile.content` is always '' (the body lives in the .md), so emptiness
  * has to come from the live document or the on-disk index. Priority:
  *
  *   1. The open `DocumentState` — captures unsaved in-memory edits and
@@ -94,10 +93,8 @@ export const orphansStore = {
   },
 };
 
-// Phase 4 (Consolidation 2026-05-25) — vault-swap reset registration.
-// Drops the cached orphan list, pulsing highlights, and resets the cluster
-// distance to the default so a stale rescan from the outgoing vault can't
-// flash on the new vault's first frame.
+// Vault-swap reset: drop the orphan list, highlights and cluster distance so a
+// stale rescan from the outgoing vault can't flash on the new vault's first frame.
 onVaultSwap('pre-swap', 'orphans', () => {
   results = [];
   highlighted.clear();

@@ -42,13 +42,10 @@ import {
  * means two `BoardScope` instances pointed at the same boardId reactively
  * share the same tiles / connections / frames / settings state.
  *
- * Phase R7 (Reactive BoardScope, 2026-05-26) — replaces the previous
- * runtime/cache duality where each scope owned its own `$state` for tiles /
- * connections / frames and the Kanban / Task List hosts had to bridge the two
- * proxies with `tickAndPersist()`. The cache is now the single source of
- * truth; the scope tracks only `currentBoardId` (the pane's pinned board) and
- * `settingsVersion` (a separate signal for settings mutations that prefer
- * imperative bumps over deep-proxy tracking).
+ * The cache is the single source of truth; the scope tracks only
+ * `currentBoardId` (the pane's pinned board) and `settingsVersion` (a separate
+ * signal for settings mutations that prefer imperative bumps over deep-proxy
+ * tracking).
  *
  * Each `BoardScope` calls `createBoardScopeBoard()`. The exported `boardStore`
  * is a global facade Proxy that delegates to the active pane's instance, so
@@ -146,11 +143,9 @@ function synthesizeCacheEntry(
 function cleanupAfterBoardRemoved(boardId: string): Promise<void> {
   // Snapshot tab ids first: `tabStore.close` rebuilds the tabs array,
   // so iterating live would skip entries when consecutive tabs match.
-  // Sprint B / B2 — `tabStore.close` is async (drains pending markdown /
-  // frontmatter writes before unmount). Return the aggregate promise so
-  // callers that need to observe the cleanup landing (e.g. vault folder
-  // delete waiting for tab closes before returning to the UI) can await
-  // it. Sync callers can ignore the promise (`void cleanupAfterBoardRemoved(...)`).
+  // `tabStore.close` is async (drains pending writes before unmount), so
+  // return the aggregate promise for callers that must observe the cleanup
+  // landing (e.g. vault folder delete). Sync callers can `void` it.
   const tabIds = tabStore.tabs.filter((t) => t.boardId === boardId).map((t) => t.id);
   historyStore.clearBoard(boardId);
   return Promise.all(tabIds.map((id) => tabStore.close(id))).then(() => undefined);
@@ -224,8 +219,7 @@ export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
    * and from the tiles slice when a tile mutation lands on this scope (so the
    * same-pane drag/select interactions still see fresh spatial entries).
    *
-   * Cross-pane spatial drift remains an acceptable limitation for R7: pane B's
-   * spatial index will not reflect pane A's edits until pane B reactivates.
+   * Cross-pane spatial drift is an accepted limitation: pane B's spatial index will not reflect pane A's edits until pane B reactivates.
    * The reactive `tiles` derivation guarantees the visual rendering does
    * reflect pane A's edits in real time — hit-testing within pane B for
    * rubber-band selection of pane-A-added tiles is the residual gap.
@@ -328,8 +322,8 @@ export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
       // `isActive`-gated $effect. Calling `setActiveBoard` here unconditionally
       // races that effect when an inactive pane's `BoardRouter` re-derives its
       // tab (tab rename, reorder, project shape change), letting a background
-      // pane hijack which board's undo stack Ctrl+Z hits. See PaneView.svelte
-      // lines 59-65 for the correct owner of this signal.
+      // pane hijack which board's undo stack Ctrl+Z hits. PaneView.svelte owns
+      // this signal.
     },
 
     clearBoard() {
@@ -345,11 +339,6 @@ export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
      * during a rename revert, where the per-pane derived tiles will have
      * snapped to the restored cache but the spatial index still reflects the
      * mutated geometry).
-     *
-     * Phase R7 successor to the pre-derivation `replaceActiveTiles` shim:
-     * with the runtime tile map derived from the cache, callers no longer
-     * need to push a snapshot back into the scope; they only need to invite
-     * the scope to rebuild any per-pane caches keyed off tile geometry.
      */
     rehydrateSpatial(): void {
       rehydrateSpatialFromCache();
@@ -407,7 +396,7 @@ export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
     /**
      * Removes every tile flagged as broken on the given board (or every board
      * if omitted). Returns the removed tile ids so callers can route them
-     * through `removeTilesWithHistory` (Phase 16 / H7).
+     * through `removeTilesWithHistory`.
      */
     removeBrokenTiles(boardId?: string): string[] {
       const targets = boardRefIntegrityStore.getBrokenTileIds(boardId);
@@ -420,12 +409,9 @@ export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
      * Merges a partial settings patch into the active board and schedules a
      * debounced write.
      *
-     * Phase R7 — the cache is the single source of truth. The previous
-     * dual-write path (cache mutation + active-proxy mirror) is collapsed
-     * into the cache mutation alone; the `boardStore.current` getter is a
-     * `$derived` of the cache so consumers re-evaluate as soon as the cache
-     * settles. `settingsVersion++` is retained because some downstream
-     * derivations key off it instead of the deep settings proxy.
+     * Writes only the cache; `boardStore.current` is `$derived` from it.
+     * `settingsVersion++` is kept because some downstream derivations key
+     * off it instead of the deep settings proxy.
      */
     updateSettings(patch: Record<string, unknown>): void {
       if (!currentBoard) return;
@@ -659,9 +645,8 @@ export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
  * type. `waypoints` and `groups` are present in the type because the
  * waypoints/groups slice declares them as getters — the spread surfaces
  * those as regular properties at the type level. The runtime
- * `Object.defineProperties` call below redefines them as *live* getters
- * (the spread otherwise freezes them at construction time per the
- * `feedback_no_getter_spread_into_facade.md` memory note).
+ * `Object.defineProperties` call in the factory redefines them as *live*
+ * getters (the spread otherwise freezes them at construction time).
  */
 export type BoardScopeBoard = ReturnType<typeof createBoardScopeBoard>;
 

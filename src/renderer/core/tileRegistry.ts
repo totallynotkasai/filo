@@ -4,16 +4,11 @@ import { createId } from '../lib/utils/ids';
 /**
  * Metadata entry for a tile type in the registry.
  *
- * Audit2 4.4 — the former `component` field, and the eager
- * `import TextTile/ImageTile/… from '../components/tiles/*.svelte'` lines that
- * fed it, were removed. Tile bodies are rendered by the parent board through a
- * Svelte snippet (TileContainer's `children` prop, supplied by MindMapBoard /
- * KanbanCard), NOT through this registry — so the field had zero readers. Its
- * static `TextTile` import nonetheless dragged createEditor → TipTap + lowlight
- * + markdown-tools (~1.8 MB) into the entry chunk's modulepreload graph, parsed
- * before the no-vault Home screen was interactive (this module is pulled at
- * boot by tiles.svelte.ts → getTileDefaults). The registry now carries only the
- * type metadata + creation defaults, which is all any code actually reads.
+ * Carries only type metadata + creation defaults. Tile bodies are rendered by
+ * the parent board through a Svelte snippet (TileContainer's `children` prop),
+ * not through this registry. Don't import tile components here: this module
+ * loads at boot, and e.g. `TextTile` would drag TipTap (~1.8 MB) into the
+ * entry chunk before the Home screen is interactive.
  */
 export interface TileRegistryEntry {
   /** The tile type identifier. */

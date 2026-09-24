@@ -43,7 +43,7 @@ export const ConnectionLabelSchema = z.object({
   content: z.string().optional(), // HTML rich text; plain `text` used as fallback for old data
   textColor: z.string().default(''),
   backgroundColor: z.string().default(''),
-  // Phase 25 L8 — bound the label font size to the same 8–32 range as the
+  // Bound the label font size to the same 8–32 range as the
   // tile/document body cascade so a malformed `.board.json` (or a future UI
   // regression) can't paint a 0-px or 4000-px label that overflows the
   // canvas and DoS's the renderer.
@@ -83,7 +83,7 @@ export const ConnectionSchema = z.object({
     .enum(['visible', 'visible-locked', 'hidden', 'hidden-locked'])
     .default('visible'),
   label: ConnectionLabelSchema.prefault({}),
-  // Phase 31 A6.6 — .finite() rejects NaN / ±Infinity from hand-edited files.
+  // .finite() rejects NaN / ±Infinity from hand-edited files.
   createdAt: z.number().finite(),
   updatedAt: z.number().finite(),
 }).passthrough();

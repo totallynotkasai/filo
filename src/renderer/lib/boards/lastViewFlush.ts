@@ -1,15 +1,13 @@
 /**
- * Audit-17 4.5 — teardown-safe sink for the debounced `lastView` persist
- * (TaskListBoard + KanbanBoard).
+ * Teardown-safe sink for the debounced `lastView` persist (TaskListBoard +
+ * KanbanBoard).
  *
- * The persist effects' cleanup used to `clearTimeout` with NO flush (the
- * Audit-4 DI-08 wrong-board-write fix traded in this drop), so a filter /
- * smart-list / showCompleted change within the 300 ms debounce of a board
- * switch was never written — and after the switch the `hydratedForBoardId`
- * guard blocked any re-fire. The DI-08 hazard was writing through the pane's
- * LIVE board (already the switched-in one by teardown time), not flushing per
- * se: this helper writes through the board cache keyed by the CAPTURED board
- * id, which resolves whether or not that board is still active.
+ * A filter / smart-list / showCompleted change within the 300 ms debounce of a
+ * board switch must still be written (after the switch the `hydratedForBoardId`
+ * guard blocks any re-fire). Writing through the pane's LIVE board at teardown
+ * would hit the switched-in board, so this helper writes through the board
+ * cache keyed by the CAPTURED board id, which resolves whether or not that
+ * board is still active.
  *
  * The JSON-equality guard makes the flush a no-op when the persisted slice
  * already matches (lastView is plain data), so a board switch with nothing

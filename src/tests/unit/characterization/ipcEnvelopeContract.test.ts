@@ -7,7 +7,7 @@
  * a source-scan inside the test — we walk the renderer tree, find every
  * `invoke('channel', ...)` callsite, and look at the surrounding ±10 lines
  * for an `assertIpcOk` consumer. This is the same surface the planned
- * Phase 1 CI gate (`scripts/check-ipc-envelope-usage.mjs`) will police.
+ * Phase 1 CI gate (`scripts/gates:ipc-envelope-usage`) will police.
  *
  * Why this matters: when a renderer caller forgets `assertIpcOk` on an
  * envelope channel, an `{ ok: false, error }` failure mode looks like a
@@ -51,7 +51,7 @@ interface CallSite {
    * True if the call is enveloped-compliantly handled: `assertIpcOk` /
    * `invokeOk` appears within ±10 lines of the call, OR the call is
    * annotated with `// allow-envelope-bare:` (matching the
-   * `scripts/check-ipc-envelope-usage.mjs` CI gate's escape hatch).
+   * `scripts/gates:ipc-envelope-usage` CI gate's escape hatch).
    */
   hasNearbyAssertIpcOk: boolean;
   /** Excerpt of the call's surrounding context for debugging. */

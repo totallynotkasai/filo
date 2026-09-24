@@ -1,10 +1,9 @@
 /**
- * Audit-19 EXT-6 (plan D5) — read / delete helpers for per-machine
- * crash-recovery sentinels.
+ * Read / delete helpers for per-machine crash-recovery sentinels.
  *
  * A machine reads ITS OWN sentinel and, when that is absent, the LEGACY
- * pre-Audit-19 shared one (`LEGACY_SENTINEL_PATHS`). A legacy sentinel is
- * handled exactly as before — once — and then deleted by the owning module;
+ * shared one (`LEGACY_SENTINEL_PATHS`). A legacy sentinel is handled
+ * once and then deleted by the owning module;
  * new code never writes a legacy name. Other machines' sentinels are never
  * read here (see `recovery:list-sentinels` for the informational listing).
  */

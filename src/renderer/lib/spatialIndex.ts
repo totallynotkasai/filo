@@ -99,8 +99,8 @@ export class SpatialIndex {
    * Unlike {@link queryViewport} (which returns ids), this returns the
    * `SpatialItem`s so callers that need each item's extents (e.g. smart
    * connection routing building a Hanan grid from obstacle edges) get them
-   * directly. H4 (perf): replaces an `all().filter(...)` linear scan over
-   * every tile with an R-tree range query bounded to the region.
+   * directly. An R-tree range query bounded to the region, rather than an
+   * `all().filter(...)` linear scan over every tile.
    */
   searchRegion(minX: number, minY: number, maxX: number, maxY: number): SpatialItem[] {
     return this.tree.search({ minX, minY, maxX, maxY });

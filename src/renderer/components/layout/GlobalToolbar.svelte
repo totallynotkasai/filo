@@ -34,18 +34,18 @@
     }
   });
 
-  // Phase C / C.10 — `inError` is read in many spots in the template;
+  // `inError` is read in many spots in the template;
   // a $derived avoids the otherwise-invalid `{@const inError = …}`
   // placement inside a `.toolbar-section` div.
   let inError = $derived(saveStateStore.state === 'error');
 
-  // Phase C / C.10 — clickable error popover anchored to the indicator.
+  // Clickable error popover anchored to the indicator.
   // Open state is local to the toolbar; the popover dismisses on click-
   // outside / Escape / a successful drain that clears `failedPaths`.
   let errorPopoverOpen = $state(false);
   let saveIndicatorEl = $state<HTMLElement | null>(null);
   let retrying = $state(false);
-  // Audit2 5.8 — focus + trap state for the role=dialog popover so keyboard
+  // Focus + trap state for the role=dialog popover so keyboard
   // users land on Retry instead of nowhere, and Tab cycles inside the
   // popover instead of leaking into the toolbar behind it.
   let popoverEl = $state<HTMLDivElement | null>(null);
@@ -101,7 +101,7 @@
     }
   });
 
-  // Audit2 5.8 — when the popover opens, move focus to Retry (the primary
+  // When the popover opens, move focus to Retry (the primary
   // action) and trap Tab inside the popover until it closes. On close,
   // deactivate the trap and return focus to the indicator so the keyboard
   // user lands somewhere meaningful. Mirrors ConfirmDialog's pattern.
@@ -166,7 +166,7 @@
       dropdown. aria-live announces transitions; aria-label gives screen
       readers the full state text on demand.
 
-      Phase C / C.10 — when state === 'error' the surface becomes a
+      When state === 'error' the surface becomes a
       role=button, accepts pointer + keyboard activation, and opens a
       popover listing failed paths + a Retry button. In all other
       states it remains a status surface with pointer-events disabled.
@@ -199,7 +199,7 @@
     </div>
 
     {#if inError && errorPopoverOpen}
-      <!-- Audit2 5.8 — role=dialog needs an accessible name (aria-labelledby
+      <!-- role=dialog needs an accessible name (aria-labelledby
            on the title) + focus trap. `tabindex=-1` lets `popoverEl.focus()`
            land here as a fallback when Retry is disabled. -->
       <div
@@ -342,7 +342,7 @@
     background: transparent;
   }
 
-  /* Phase C / C.10 — in the error state the indicator becomes an
+  /* In the error state the indicator becomes an
      interactive button. Re-enable pointer-events + add a hover affordance
      so the user sees it's clickable. */
   .save-indicator.clickable {
@@ -361,7 +361,7 @@
   .save-indicator.save-saved { color: var(--accent-primary); }
   .save-indicator.save-error { color: var(--accent-danger, #d32f2f); }
 
-  /* Phase C / C.10 — popover anchored below the indicator. position: absolute
+  /* Popover anchored below the indicator. position: absolute
      keeps it inside the global toolbar (which already sets z-index: --z-toolbar),
      so it stacks over board content without escaping the toolbar's chrome. */
   .save-error-popover {

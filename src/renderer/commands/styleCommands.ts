@@ -12,9 +12,6 @@
  * `style` block (and clear it entirely on `null`). To replay an exact
  * snapshot the command first clears (`null`) and then re-applies the
  * snapshot — two cheap in-memory writes per execute/undo.
- *
- * Phase 15 (Sprint D / C3): extracted from `commands/index.ts` to keep
- * the host file under the size-allowlist ceiling.
  */
 
 import { Command } from './Command';
@@ -64,7 +61,6 @@ function applyTaskSectionSnapshot(boardId: string, sectionId: string, snapshot: 
 export class UpdateFrameStyleCommand extends Command {
   description: string;
   /**
-   * Phase 2 (IMPLEMENTATION_PLAN_2026-05-27) — flagged as a P1-5 site.
    * FrameStylePopup captures this at popup mount and threads it through;
    * the destroy effect can fire after a board switch.
    */
@@ -82,7 +78,7 @@ export class UpdateFrameStyleCommand extends Command {
     super();
     this.targetBoardId = boardId ?? boardStore.current?.id ?? '';
     this.frameId = frameId;
-    // Phase R3 — deep-clone via `this.snapshot(...)` so nested style fields
+    // Deep-clone so nested style fields
     // (backgroundImage object, border, etc.) can't be mutated through the
     // caller-side reference after the command is pushed.
     this.beforeStyle = this.snapshot(beforeStyle);
@@ -102,8 +98,8 @@ export class UpdateFrameStyleCommand extends Command {
 export class UpdateKanbanCardStyleCommand extends Command {
   description: string;
   /**
-   * Phase 2 (IMPLEMENTATION_PLAN_2026-05-27) — flagged as a P1-5 site.
-   * The boardId is passed explicitly by the popup's mount-time capture.
+   * The boardId is passed explicitly by the popup's mount-time capture, since
+   * the popup's destroy effect can fire after a board switch.
    */
   readonly targetBoardId: string;
   private boardId: string;
@@ -121,7 +117,7 @@ export class UpdateKanbanCardStyleCommand extends Command {
     this.targetBoardId = boardId;
     this.boardId = boardId;
     this.tileId = tileId;
-    // Phase R3 — deep-clone style snapshots so nested objects can't be
+    // Deep-clone style snapshots so nested objects can't be
     // mutated through caller-side references.
     this.beforeStyle = beforeStyle ? this.snapshot(beforeStyle) : beforeStyle;
     this.afterStyle = afterStyle ? this.snapshot(afterStyle) : afterStyle;
@@ -139,7 +135,7 @@ export class UpdateKanbanCardStyleCommand extends Command {
 
 export class UpdateKanbanColumnStyleCommand extends Command {
   description: string;
-  /** Phase 2 — see UpdateKanbanCardStyleCommand. */
+  /** See UpdateKanbanCardStyleCommand. */
   readonly targetBoardId: string;
   private boardId: string;
   private columnId: string;
@@ -172,7 +168,7 @@ export class UpdateKanbanColumnStyleCommand extends Command {
 
 export class UpdateTaskItemStyleCommand extends Command {
   description: string;
-  /** Phase 2 — see UpdateKanbanCardStyleCommand. */
+  /** See UpdateKanbanCardStyleCommand. */
   readonly targetBoardId: string;
   private boardId: string;
   private tileId: string;
@@ -205,7 +201,7 @@ export class UpdateTaskItemStyleCommand extends Command {
 
 export class UpdateTaskSectionStyleCommand extends Command {
   description: string;
-  /** Phase 2 — see UpdateKanbanCardStyleCommand. */
+  /** See UpdateKanbanCardStyleCommand. */
   readonly targetBoardId: string;
   private boardId: string;
   private sectionId: string;

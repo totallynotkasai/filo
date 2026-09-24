@@ -44,7 +44,7 @@ import { noteReadEncoding, isRegisteredNonUtf8, renameNonUtf8 } from '../service
 let activeWatcher: FileWatcher | null = null;
 let currentVaultRoot: string | null = null;
 
-/** Audit-19 ERR-7 — the typed refusal for a write over a non-UTF-8 file. */
+/** The typed refusal for a write over a non-UTF-8 file. */
 function notUtf8Refusal(relativePath: string): { success: false; code: 'NOT_UTF8'; error: string } {
   return {
     success: false,
@@ -62,12 +62,10 @@ export function getActiveWatcher(): FileWatcher | null {
 }
 
 /**
- * Sprint A / A8 — stops the active watcher during a graceful shutdown so
- * its reconcile timer and OS-level file handle are released before
- * `app.exit()`. Without this, fs.watch's deferred-close behaviour leaves
- * Node emitting "watcher emitting after window destroyed" warnings on
- * quit and (on Windows) holds the vault directory open just long enough
- * to race with system services.
+ * Stops the active watcher during a graceful shutdown so its reconcile timer
+ * and OS-level file handle are released before `app.exit()`. Otherwise
+ * fs.watch's deferred close emits "watcher emitting after window destroyed"
+ * warnings and (on Windows) briefly holds the vault directory open.
  */
 export async function stopActiveWatcher(): Promise<void> {
   if (!activeWatcher) return;
@@ -103,21 +101,12 @@ export function registerVaultHandlers(): void {
   /**
    * Reads the full file tree of the vault directory.
    *
-   * Phase 1 / 1.5 — the cap (`VAULT_TREE_MAX_NODES = 100_000`) is now
-   * applied DURING the walk inside `readDirectoryTree`, not after. A user
-   * who points Filo at `~` / `C:\` aborts within bounded memory instead
-   * of building the whole tree first. The walker throws
-   * `VaultTooLargeError`, which we surface to the renderer as a
-   * `vault:tree-too-large` event so the sidebar can toast "vault too
-   * large to scan" instead of silently showing an empty tree.
+   * The node cap is applied DURING the walk, so pointing Filo at `~` / `C:\`
+   * aborts within bounded memory; `VaultTooLargeError` is surfaced as a
+   * `vault:tree-too-large` event so the sidebar can toast.
    *
-   * D.2 — returns an envelope `{ ok: true, tree }` on success and
-   * `{ ok: false, code, error? }` on failure. The pre-D.2 shape was a
-   * bare `FileTreeNode[]` with `[]` overloaded to mean both "empty
-   * vault" AND "scan failed" — the renderer had no way to surface a
-   * toast for the failure case. The renderer destructures the envelope
-   * and toasts on `!ok` so a too-large-vault / NO_ACTIVE_VAULT /
-   * EACCES outcome doesn't silently mimic an empty vault.
+   * Returns `{ ok: true, tree }` or `{ ok: false, code, error? }` — a failed
+   * scan must not look like an empty vault.
    */
   ipcMain.handle('vault:read-tree', async (_event, vaultPath: string) => {
     try {
@@ -133,11 +122,8 @@ export function registerVaultHandlers(): void {
         return { ok: false, code: 'too-large' as const, error: String(err) };
       }
       if (err instanceof VaultTreeTooLargeError) {
-        // Sprint B / B18 — separate "too many serialized bytes" from
-        // "too many entries". The renderer surface the same vault:tree-too-large
-        // toast for either signal so the user gets the right corrective
-        // hint ("open a more specific folder") regardless of which cap
-        // tripped first.
+        // "Too many serialized bytes" rather than "too many entries"; both
+        // surface the same vault:tree-too-large toast.
         logMainError('vault:read-tree', err);
         for (const win of BrowserWindow.getAllWindows()) {
           win.webContents.send('vault:tree-too-large', { vaultPath, limit: err.limit });
@@ -153,24 +139,20 @@ export function registerVaultHandlers(): void {
   /**
    * Creates a new folder inside the vault.
    *
-   * Phase 25 L6 — takes an explicit `vaultRoot` gated by `assertActiveVault`,
-   * matching the contract every other write handler now uses. A buggy
-   * renderer that passes a stale vault root (post-swap) is rejected before
-   * the containment check, instead of silently mutating the open vault via
-   * the module-level fallback.
+   * `vaultRoot` is gated by `assertActiveVault`, so a stale (post-swap)
+   * vault root is rejected before the containment check.
    */
   ipcMain.handle('vault:create-folder', async (_event, vaultRoot: string, folderPath: string) => {
     try {
       assertActiveVault(vaultRoot);
       assertWithinVault(vaultRoot, folderPath);
-      // Polish phase 1.3 + 6.3.P1/P2 — per-segment safety guard with
-      // `forCreation: true`: rejects depth overrun, separators, `..`,
-      // and Windows-illegal chars / reserved DOS names anywhere in the
-      // new path. `forCreation` enforces the Win-only rules on every
-      // platform so a Mac user can't seed a folder that breaks Windows.
+      // Per-segment safety guard: rejects depth overrun, separators, `..`,
+      // and Windows-illegal chars / reserved DOS names. `forCreation`
+      // enforces the Win-only rules on every platform so a Mac user can't
+      // seed a folder that breaks Windows.
       const relPath = relativePosix(vaultRoot, folderPath);
       assertSafeRelativePath(relPath, { forCreation: true });
-      // Phase 1 / 1.2 — refuse mkdir inside `.filo/` via the generic
+      // Refuse mkdir inside `.filo/` via the generic
       // channel; dedicated config/tags/templates handlers own that dir.
       assertNotInFiloDir(relPath);
       await createFolder(folderPath);
@@ -186,12 +168,6 @@ export function registerVaultHandlers(): void {
    * `baseName` — e.g. "New Folder" → "New Folder (2)" if "New Folder"
    * already exists. Used by the vault sidebar's "+ New Folder" flow so
    * the rename input pre-fills with a non-colliding default.
-   *
-   * Phase 27 / A6 — explicit `vaultRoot` arg gated by `assertActiveVault`.
-   * Previously fell back to the module-level `currentVaultRoot` for the
-   * containment check, so a buggy renderer that called this during a
-   * post-swap window could probe a different vault than the one it
-   * believed it was operating on. Mirrors `vault:rename` / `vault:delete`.
    */
   ipcMain.handle(
     'vault:suggest-folder-name',
@@ -210,40 +186,24 @@ export function registerVaultHandlers(): void {
 
   /**
    * Renames a file or folder.
-   *
-   * Phase 25 L6 — explicit `vaultRoot` arg gated by `assertActiveVault`.
-   * Mirrors `vault:write-file-text` and the rest of the post-Phase-21
-   * write handlers; module-level `currentVaultRoot` is no longer the
-   * containment reference.
    */
   ipcMain.handle('vault:rename', async (_event, vaultRoot: string, oldPath: string, newPath: string) => {
     try {
       assertActiveVault(vaultRoot);
       assertWithinVault(vaultRoot, oldPath);
       assertWithinVault(vaultRoot, newPath);
-      // Phase 1 / 1.2 — refuse both src and dest if either lands inside
-      // `.filo/`. A rename out of `.filo/` would let the renderer
-      // exfiltrate config; a rename into `.filo/` would let it overwrite.
+      // Refuse both src and dest inside `.filo/`: renaming out would let the
+      // renderer exfiltrate config; renaming in would let it overwrite.
       assertNotInFiloDir(relativePosix(vaultRoot, oldPath));
       assertNotInFiloDir(relativePosix(vaultRoot, newPath));
-      // Phase 31 A3.6 + 6.3.P1/P2 — defence-in-depth for the NEW
-      // basename: rejects separators, `..`, Win-illegal chars, and
-      // reserved DOS names. `forCreation: true` enforces the Win-only
-      // rules on every platform so the rename target stays portable.
-      // (The OLD basename intentionally isn't re-validated — a POSIX
-      // file legitimately named `2025:01:15.md` must still rename.)
+      // Validate the NEW basename (portable on every platform). The OLD
+      // basename intentionally isn't — a POSIX file legitimately named
+      // `2025:01:15.md` must still rename.
       assertSafeFilename(basename(newPath), { forCreation: true });
-      // Sprint C / C-A5-1 — bracket renameItem with watcher suppression so
-      // the in-app rename does NOT echo back as a `vault:file-renamed`
-      // external event. Without this, every sidebar rename runs the full
-      // `handleExternalRename` cascade a second time (renameBoardPath +
-      // propagateRename + sentinel write + flushAllDirty + tag-store
-      // rename helpers). The cascade is idempotent so no data corruption,
-      // but it bills an extra recovery-sentinel write + dirty-flush per
-      // rename — and on a folder rename touching every descendant, the
-      // amplification scales linearly with the file count. Mirrors the
-      // vault:delete suppression (Phase C / C.4) so the in-app delete
-      // path doesn't surface "deleted externally" prompts either.
+      // Bracket renameItem with watcher suppression so the in-app rename
+      // doesn't echo back as a `vault:file-renamed` external event and run
+      // the whole rename cascade a second time (idempotent, but costs a
+      // sentinel write + dirty-flush per descendant on a folder rename).
       const oldRel = relativePosix(vaultRoot, oldPath);
       const newRel = relativePosix(vaultRoot, newPath);
       let oldIsDirectory = false;
@@ -268,7 +228,7 @@ export function registerVaultHandlers(): void {
         suppressFn(newRel);
       }
       await renameItem(oldPath, newPath);
-      renameNonUtf8(oldPath, newPath); // Audit-19 ERR-7 — the write refusal follows the file
+      renameNonUtf8(oldPath, newPath); // the non-UTF-8 write refusal follows the file
       // Post-rename re-suppress: the OS may emit the create-side event
       // moments after `renameItem` resolves on slow disks, especially for
       // recursive folder moves. Bracketing both sides keeps the
@@ -288,10 +248,8 @@ export function registerVaultHandlers(): void {
       }
       return { success: true };
     } catch (err) {
-      // IMPL_PLAN_2026-05-26 / Item 2 — case-rename stranded: include the
-      // temp path in the envelope so the renderer toast can name where
-      // the file ended up. The user can recover it from File Explorer
-      // rather than treating the rename failure as a data loss.
+      // Case-rename stranded: include the temp path so the renderer toast
+      // can name where the file ended up (recoverable, not lost).
       if (err instanceof CaseRenameStrandedError) {
         logMainError('vault:rename', err);
         return {
@@ -305,7 +263,7 @@ export function registerVaultHandlers(): void {
       // ENOENT is recoverable: the renderer's tree snapshot was stale
       // (file moved/deleted outside Filo). The caller toasts + refreshes
       // the tree — no need for a stack trace in the main-process log.
-      // TARGET_EXISTS is a routine UX path (Phase 1 / 1.1) — the renderer
+      // TARGET_EXISTS is a routine UX path — the renderer
       // surfaces a confirm prompt, no main-side stack trace needed.
       if (code !== 'ENOENT' && code !== 'TARGET_EXISTS') {
         logMainError('vault:rename', err);
@@ -319,26 +277,17 @@ export function registerVaultHandlers(): void {
   /**
    * Deletes a file or folder.
    *
-   * Phase 25 L6 — explicit `vaultRoot` arg gated by `assertActiveVault`.
-   *
-   * Phase C / C.4 — bracket the unlink with watcher suppression so the
-   * cascade of OS-level delete events triggered by a user-initiated
-   * folder delete doesn't flow into `handleExternalMarkdownChanges`.
-   * Without this, a dirty editor on any file beneath the deleted folder
-   * briefly sees the "deleted externally" prompt for a delete the user
-   * just confirmed. The 5s window covers the unlink latency plus the
-   * 300ms watcher debounce on slow disks.
+   * The unlink is bracketed with watcher suppression so a user-initiated
+   * folder delete doesn't show a dirty editor beneath it a "deleted
+   * externally" prompt. The 5s window covers unlink latency plus the 300ms
+   * watcher debounce on slow disks.
    */
   ipcMain.handle('vault:delete', async (_event, vaultRoot: string, itemPath: string) => {
     try {
       assertActiveVault(vaultRoot);
       assertWithinVault(vaultRoot, itemPath);
-      // Phase 1 / 1.2 — block generic deletes inside `.filo/` (except the
-      // crash-recovery sentinel paths the helper allowlists). Recovery
-      // sentinel cleanup in `dirtyFlagRecovery.markClean` /
-      // `renameCascadeSentinel.clearSentinel` /
-      // `tagRewriteSentinel.clearSentinel` flows through this channel
-      // and stays whitelisted by the allowlist.
+      // Block generic deletes inside `.filo/` except the allowlisted
+      // crash-recovery sentinels, whose cleanup flows through this channel.
       assertNotInFiloDir(relativePosix(vaultRoot, itemPath));
       // Pre-stat the path so we know whether to suppress as a single
       // entry (file) or a tree prefix (folder). Suppression has to
@@ -372,29 +321,16 @@ export function registerVaultHandlers(): void {
   /**
    * Starts watching a vault folder for changes.
    *
-   * M3 (AUDIT_REMEDIATION_PLAN_2026-05-29) — `vault:watch` no longer
-   * self-registers a vault. It now requires the open-vault handshake
-   * (`vault:init-config`, which is the single registration authority) to
-   * have already made `vaultPath` the active vault, and asserts the path
-   * matches via `assertActiveVault`.
+   * Does NOT register a vault: `vault:init-config` is the single registration
+   * authority and must already have made `vaultPath` active. Otherwise a
+   * compromised renderer could anchor the active vault at an arbitrary host
+   * directory (`~/.ssh`, …) and read/write it through every
+   * `assertActiveVault`-gated handler.
    *
-   * Previously, calling this channel with NO vault registered self-registered
-   * ANY stat-able directory — a buggy or compromised renderer could anchor
-   * the active vault at an arbitrary host directory (`C:\Windows\System32`,
-   * `~/.ssh`, …) and then read/write it through every
-   * `assertActiveVault`-gated handler. The earlier Phase 21 / M1 guard only
-   * stopped REDIRECTING an already-open watcher; the no-vault self-register
-   * path stayed open. Requiring the handshake closes it: `vault:watch` can
-   * only ever watch the vault the renderer legitimately opened.
-   *
-   * In every real flow `vault:init-config` runs before `vault:watch`
-   * (`loadVaultCandidate` → commit → `runPostCommitTasks`), so this is a
-   * tightening with no behaviour change for legitimate callers.
-   *
-   * The post-handshake `fs.stat` directory check is kept as defence: the
-   * vault could have been deleted on disk between init-config and watch.
+   * The `fs.stat` directory check is kept as defence: the vault could have
+   * been deleted on disk between init-config and watch.
    */
-  // Phase 3 / 3.5 — `lastReconcileAt` is shared with the `vault:reconcile`
+  // `lastReconcileAt` is shared with the `vault:reconcile`
   // handler below (one per-process throttle) and reset to 0 on a vault swap so
   // the post-swap focus reconcile isn't dropped by the OUTGOING vault's window.
   const RECONCILE_THROTTLE_MS = 5000;
@@ -409,17 +345,12 @@ export function registerVaultHandlers(): void {
       // `NoActiveVaultError` when no vault is open or the path doesn't
       // match — `vault:watch` is not a registration vector.
       assertActiveVault(vaultPath);
-      // Audit-17 3.5 — TOCTOU guard. This handler awaits twice (stat +
-      // watcher stop) and then UNCONDITIONALLY re-arms the registry and
-      // starts a watcher. A `vault:close` (or a rapid swap-to-B whose
-      // init-config re-armed B) completing inside either await window was
-      // silently reversed — worst case re-arming the STALE vault A after B
-      // committed, failing every gated write of B's session. Capture the
-      // registry epoch (bumped on every `setCurrentVault`, so a same-path
-      // close→reopen is caught too) and bail after each await on mismatch
-      // — mirroring the renderer's `isStillSameVault` discipline. The bail
-      // after the stat also keeps a stale call from stopping the NEW
-      // vault's already-running watcher.
+      // TOCTOU guard: this handler awaits twice and then re-arms the
+      // registry and starts a watcher. A `vault:close` or swap landing in
+      // either await would be silently reversed (re-arming a STALE vault and
+      // failing every gated write of the new one). Capture the registry
+      // epoch (bumped on every `setCurrentVault`, so a same-path
+      // close→reopen is caught too) and bail after each await on mismatch.
       const epochAtStart = vaultRegistry.epoch;
       const assertEpochUnchanged = (): void => {
         if (vaultRegistry.epoch !== epochAtStart) {
@@ -435,19 +366,13 @@ export function registerVaultHandlers(): void {
       assertEpochUnchanged();
 
       if (activeWatcher) {
-        // Phase 3 / 3.1 — `stop()` is now async; it awaits any in-flight
-        // reconcile walk so the OLD vault cannot emit late
-        // `vault:files-changed` events under the NEW vault's listener.
-        // Without the await, a slow walk in progress at swap time would
-        // continue running, push synthesised events through the
-        // 300ms debounce, and surface as "external edit" prompts naming
-        // paths from the prior vault.
+        // Await so the OLD vault's in-flight walk can't emit late events
+        // under the NEW vault's listener.
         await activeWatcher.stop();
-        // Audit-17 3.5 — a close/swap may have landed during the stop await;
-        // re-arming + starting a watcher now would reverse it.
+        // A close/swap may have landed during the stop await.
         assertEpochUnchanged();
       }
-      // Sprint A / A3 — canonicalise via `realpathSync` once so the same
+      // Canonicalise via `realpathSync` once so the same
       // resolved path drives the local `currentVaultRoot`, the watcher,
       // and the registry. A user-picked symlink (`/Users/me/vault` →
       // `/Volumes/Drive/vault`) collapses to one canonical form here.
@@ -459,8 +384,8 @@ export function registerVaultHandlers(): void {
         // the input path; the watcher start will surface the real error.
       }
       currentVaultRoot = canonical;
-      // Audit-13 M11 — vault is changing: drop copy-sources approved (dialog /
-      // OS drop) under the PRIOR vault. Registration runs post-open, so this
+      // Vault is changing: drop copy-sources approved (dialog / OS drop)
+      // under the PRIOR vault. Registration runs post-open, so this
       // vault's own picks survive. Pairs with the vault:close clear below.
       clearApprovedSources();
       // Mirror to the cross-window vault registry so the popout sidebar
@@ -468,13 +393,8 @@ export function registerVaultHandlers(): void {
       vaultRegistry.setCurrentVault(canonical);
       activeWatcher = new FileWatcher(canonical);
       activeWatcher.start();
-      // Phase 3 / 3.5 — reset the per-process reconcile throttle so the
-      // very next `vault:reconcile` call (typically fired by the renderer
-      // on window-focus immediately after the swap) is allowed through.
-      // Without this, if the OLD vault's reconcile ran less than 5 s ago
-      // the new vault's first focus-driven reconcile is silently dropped
-      // and any drift on the NEW vault stays invisible until the periodic
-      // 30s timer fires.
+      // Reset the reconcile throttle so the new vault's first focus-driven
+      // reconcile isn't dropped because the OLD vault's ran < 5 s ago.
       lastReconcileAt = 0;
       return { success: true };
     } catch (err) {
@@ -487,23 +407,15 @@ export function registerVaultHandlers(): void {
    * Triggers an on-demand reconciliation pass. The renderer calls this on
    * window-focus so missed events (typical on macOS/Windows when the
    * window has been backgrounded for a while) surface as soon as the user
-   * tabs back in. Phase 19 S2.
+   * tabs back in.
    *
-   * D.5 — main-side throttle. The renderer already throttles its focus
-   * handler to 5 s (`RECONCILE_FOCUS_THROTTLE_MS` in `vault.svelte.ts`),
-   * but the IPC channel is reachable from anywhere in the renderer. A
-   * regression or a buggy plugin that hammered this could pin the main
-   * process on the full vault walk and starve every other IPC handler.
-   * Refuse to run the walker more often than once every 5 s here too —
-   * the bound matches the renderer-side cadence so legitimate users see
-   * no behaviour change.
-   *
-   * Phase 3 / 3.5 — `RECONCILE_THROTTLE_MS` and `lastReconcileAt` are
-   * declared with the `vault:watch` handler above so a vault swap can
-   * reset the throttle. See the comment there for the rationale.
+   * Main-side 5 s throttle (matching the renderer's focus throttle): the
+   * channel is reachable from anywhere in the renderer, and hammering it
+   * would pin main on full vault walks. The throttle state is declared with
+   * `vault:watch` so a vault swap can reset it.
    */
   /**
-   * Sprint B / B24 — closes the active vault: stops the watcher, drops the
+   * Closes the active vault: stops the watcher, drops the
    * registry pointer, and clears the local `currentVaultRoot`. Subsequent
    * IPC handlers gated by `assertActiveVault` will fail-closed until the
    * renderer opens a new vault via `vault:watch`. Idempotent — calling
@@ -521,7 +433,7 @@ export function registerVaultHandlers(): void {
       currentVaultRoot = null;
       vaultRegistry.setCurrentVault(null);
       lastReconcileAt = 0;
-      clearApprovedSources(); // Audit-13 M11 — release this vault's approved copy sources too.
+      clearApprovedSources(); // release this vault's approved copy sources too
       return { success: true };
     } catch (err) {
       logMainError('vault:close', err);
@@ -552,9 +464,6 @@ export function registerVaultHandlers(): void {
    *   - `relativePath` is `assertSafeRelativePath`-validated so each
    *     segment passes the Windows-reserved-name + control-char filter
    *     before being joined onto the vault root.
-   *
-   * Phase 37 / 37.6 — the legacy single-arg absolute-path branch has
-   * been removed. Every renderer caller now passes the tuple form.
    */
   ipcMain.handle('vault:read-file-text', async (_event, vaultRoot: string, relativePath: string) => {
     try {
@@ -562,21 +471,13 @@ export function registerVaultHandlers(): void {
       assertSafeRelativePath(relativePath);
       const abs = join(vaultRoot, relativePath);
       assertWithinVault(vaultRoot, abs);
-      // Sprint A / A9 — pre-read stat caps the read at PAYLOAD_LIMITS.MARKDOWN
-      // (25 MB). A multi-GB `.md` would otherwise OOM main on `readFile` / OOM
-      // renderer on the toString shipped across IPC. Renderer surfaces the
-      // dedicated FILE_TOO_LARGE code so the toast can say "file too large"
-      // instead of "I/O error". ENOENT skips the cap check —
-      // `readFileWithCoherentStat` surfaces the missing-file code through
-      // the normal catch path.
+      // Pre-read stat caps the read at PAYLOAD_LIMITS.MARKDOWN (25 MB); a
+      // multi-GB `.md` would otherwise OOM main or the renderer. The
+      // FILE_TOO_LARGE code lets the toast say "file too large".
       //
-      // 6.4.M7 — the helper does pre-stat (size cap + initial mtime/size),
-      // reads bytes, then post-stats. If the two stats agree, mtimeMs/size
-      // are returned so the renderer can seed its drift baseline. If they
-      // DISAGREE (a write landed in the gap), the helper withholds
-      // mtimeMs/size and the renderer skips the baseline seed — preserving
-      // the data-integrity guarantee at the cost of one extra round-trip
-      // on contended files.
+      // The helper pre-stats, reads, then post-stats. mtimeMs/size are only
+      // returned when the two stats agree; if a write landed in the gap they
+      // are withheld and the renderer skips seeding its drift baseline.
       const result = await readFileWithCoherentStat(abs, PAYLOAD_LIMITS.MARKDOWN);
       if ('tooLarge' in result) {
         return {
@@ -585,7 +486,7 @@ export function registerVaultHandlers(): void {
           error: `File is ${result.size} bytes; vault:read-file-text cap is ${PAYLOAD_LIMITS.MARKDOWN} bytes`,
         };
       }
-      // Audit-19 ERR-7 — record (or clear) a non-UTF-8 file so the text write
+      // Record (or clear) a non-UTF-8 file so the text write
       // channels refuse to overwrite it with U+FFFD-damaged text.
       noteReadEncoding(abs, result.encoding === 'utf-8');
       return {
@@ -632,14 +533,12 @@ export function registerVaultHandlers(): void {
   );
 
   /**
-   * Phase A.3 — returns the file's mtime + size so callers can detect
-   * external edits between a read and a write. Used by
-   * `syncTileMarkdown` to refuse silently clobbering an external edit
-   * that landed in the read/write gap.
+   * Returns the file's mtime + size so callers can detect external edits
+   * between a read and a write (e.g. `syncTileMarkdown` refuses to clobber
+   * one that landed in the gap).
    *
    * On any failure (missing file, EACCES, NO_ACTIVE_VAULT) returns
-   * `{ success: false }`; the renderer treats this as "no baseline" and
-   * proceeds with the write (the legacy pre-Phase-A.3 behaviour).
+   * `{ success: false }`; the renderer treats this as "no baseline".
    */
   ipcMain.handle(
     'vault:stat',
@@ -682,19 +581,14 @@ export function registerVaultHandlers(): void {
       try {
         assertActiveVault(vaultRoot);
         // Structural sanity (depth + per-segment) before path joining.
-        // 6.3.P1/P2 — `forCreation: true` because this channel mkdir-p's
-        // + atomic-writes a NEW file; enforce Win-only rules on every
-        // platform so cross-platform vaults stay portable.
+        // `forCreation: true` because this channel can create a NEW file;
+        // enforce Win-only rules on every platform so vaults stay portable.
         assertSafeRelativePath(relativePath, { forCreation: true });
-        // Phase 1 / 1.2 — refuse generic writes into `.filo/` except for
-        // the allowlisted crash-recovery sentinels. Dedicated channels
-        // (config:save, tags:save, templates:write, theme:save) handle
-        // legitimate `.filo/` writes.
+        // Refuse generic writes into `.filo/` except for the allowlisted
+        // crash-recovery sentinels; dedicated channels own `.filo/` writes.
         assertNotInFiloDir(relativePath);
-        // Phase 21 / M5 — cap the Markdown text payload before we hit the
-        // disk write. Computing byte length up front lets the renderer
-        // surface "file too large" as a typed code instead of seeing a
-        // generic write failure deep inside `atomicWriteFile`.
+        // Cap the payload up front so the renderer gets a typed "file too
+        // large" code instead of a generic write failure.
         assertPayloadByteSize(
           Buffer.byteLength(content, 'utf-8'),
           PAYLOAD_LIMITS.MARKDOWN,
@@ -702,7 +596,7 @@ export function registerVaultHandlers(): void {
         );
         const fullPath = join(vaultRoot, relativePath);
         assertWithinVault(vaultRoot, fullPath);
-        if (isRegisteredNonUtf8(fullPath)) return notUtf8Refusal(relativePath); // Audit-19 ERR-7
+        if (isRegisteredNonUtf8(fullPath)) return notUtf8Refusal(relativePath);
         await fsPromises.mkdir(dirname(fullPath), { recursive: true });
         activeWatcher?.suppress(relativePath, LOCK_AWARE_SUPPRESS_MS);
         await atomicWriteFile(fullPath, content);
@@ -716,7 +610,7 @@ export function registerVaultHandlers(): void {
   );
 
   /**
-   * Audit-19 BL-1 — CREATE-EXCLUSIVE text write for brand-new `.md` seeds
+   * CREATE-EXCLUSIVE text write for brand-new `.md` seeds
    * (Kanban card / task / Task-List OS drop). Reserves the name with an
    * `O_EXCL` open (`'wx'`, case-insensitive on NTFS/APFS) and returns a typed
    * `EEXIST` instead of overwriting a user's existing file; the renderer bumps
@@ -784,7 +678,7 @@ export function registerVaultHandlers(): void {
       try {
         assertActiveVault(vaultRoot);
         assertSafeRelativePath(relativePath);
-        // Phase 1 / 1.2 — same `.filo/` guard as `vault:write-file-text`.
+        // Same `.filo/` guard as `vault:write-file-text`.
         assertNotInFiloDir(relativePath);
         assertPayloadByteSize(
           Buffer.byteLength(content, 'utf-8'),
@@ -802,11 +696,11 @@ export function registerVaultHandlers(): void {
           }
           throw statErr;
         }
-        // Audit-19 ERR-7 — never overwrite a file whose bytes aren't UTF-8 with
-        // text decoded from them (every non-ASCII byte would become U+FFFD).
+        // Never overwrite a file whose bytes aren't UTF-8 with text decoded
+        // from them (every non-ASCII byte would become U+FFFD).
         if (isRegisteredNonUtf8(fullPath)) return notUtf8Refusal(relativePath);
         activeWatcher?.suppress(relativePath, LOCK_AWARE_SUPPRESS_MS);
-        // Audit-7 L7 — `expectExisting` re-verifies the destination right
+        // `expectExisting` re-verifies the destination right
         // before the rename so a delete landing in the stat-precheck→rename
         // gap aborts (ENOENT) instead of resurrecting the file with stale
         // editor bytes. The pre-stat above still short-circuits the common
@@ -822,7 +716,7 @@ export function registerVaultHandlers(): void {
   );
 
   /**
-   * Phase 2 / 2.5 — writes a binary file in the vault from a base64-encoded
+   * Writes a binary file in the vault from a base64-encoded
    * payload. Used by `CascadeDeleteCommand.undo` to restore media files
    * (images, video, audio, pdf) that were captured before an external or
    * sidebar folder delete. Mirrors `vault:write-file-text`:
@@ -842,7 +736,7 @@ export function registerVaultHandlers(): void {
     async (_event, vaultRoot: string, relativePath: string, base64: string) => {
       try {
         assertActiveVault(vaultRoot);
-        // 6.3.P1/P2 — `forCreation: true`; binary writes create new files.
+        // `forCreation: true`; binary writes create new files.
         assertSafeRelativePath(relativePath, { forCreation: true });
         assertNotInFiloDir(relativePath);
         const buffer = Buffer.from(base64, 'base64');
@@ -890,27 +784,20 @@ export function registerVaultHandlers(): void {
 
   ipcMain.handle('vault:list-recents', async () => loadRecentVaults());
 
-  // Phase 8 / 8.5 — defensive caps on every renderer-supplied string that
-  // lands in `recent-vaults.json`. A 4 KB path covers every legitimate OS
-  // path (POSIX PATH_MAX is 4096; Windows extended paths cap at 32k but
-  // 4k is comfortable for vault directories) and a null-byte check stops
-  // a renderer-supplied embedded NUL from confusing downstream `path.*`
-  // helpers (Node's path module truncates at the first NUL byte on
-  // POSIX, which could let a smuggled path slip through later filters).
+  // Defensive caps on every renderer-supplied string that lands in
+  // `recent-vaults.json`. 4 KB covers every legitimate vault path (POSIX
+  // PATH_MAX is 4096); the null-byte check stops an embedded NUL from
+  // truncating a path inside downstream `path.*` helpers.
   const MAX_RECENT_PATH_LEN = 4096;
   const MAX_RECENT_NAME_LEN = 4096;
   const isSafeRecentString = (s: string, max: number): boolean =>
     s.length > 0 && s.length <= max && !s.includes('\0');
 
   ipcMain.handle('vault:add-recent', async (_event, path: unknown, name: unknown) => {
-    // Audit-18 4.5 — typed `{ ok, recents }` envelope. The previous
-    // `[]`-on-failure return overloaded the failure case with a genuinely
-    // empty list, so the renderer (`HomeScreen.recordOpen`) WIPED the
-    // displayed recents on a transient stat failure (e.g. a network-share
-    // vault briefly offline, or a path that no longer exists). Distinguishing
-    // them lets the renderer leave the list intact on failure. (The read-only
-    // sibling channels keep their bare-array return — only the add path can
-    // mistake failure for empty and clobber the UI.)
+    // Typed `{ ok, recents }` envelope: a bare `[]` on failure would be
+    // indistinguishable from an empty list, and the renderer would wipe the
+    // displayed recents on a transient stat failure (e.g. a network share
+    // briefly offline). The read-only sibling channels keep a bare array.
     if (typeof path !== 'string' || typeof name !== 'string') {
       return { ok: false, code: 'INVALID_ARG', error: 'add-recent requires a string path and name' };
     }
@@ -920,12 +807,8 @@ export function registerVaultHandlers(): void {
     if (!isSafeRecentString(name, MAX_RECENT_NAME_LEN)) {
       return { ok: false, code: 'INVALID_ARG', error: 'vault name is empty, too long, or contains a null byte' };
     }
-    // Sprint C / C21 — confirm the path actually points at an existing
-    // directory before persisting it to `recent-vaults.json`. Without
-    // this gate, any string the renderer passes (typo, deleted folder,
-    // raw file path, network share that's gone offline) lands in the
-    // recent list and the user gets a confusing "Vault not found" error
-    // on next click.
+    // Confirm the path is an existing directory before persisting it, so a
+    // typo / deleted folder / file path never lands in the recent list.
     try {
       const stat = await fsPromises.stat(path);
       if (!stat.isDirectory()) {

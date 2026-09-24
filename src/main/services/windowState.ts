@@ -27,7 +27,7 @@ export async function loadWindowState(): Promise<WindowState> {
   try {
     raw = await fs.readFile(getWindowStatePath(), 'utf-8');
   } catch (err) {
-    // Phase 21 / M27 — ENOENT on first launch is the normal path; anything
+    // ENOENT on first launch is the normal path; anything
     // else (parse, EACCES) is logged so the user can diagnose why the
     // window keeps reverting to default geometry.
     if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
@@ -65,7 +65,7 @@ export async function loadWindowState(): Promise<WindowState> {
 }
 
 /**
- * Phase 4 / 4.4 — tracks the most-recent in-flight `saveWindowState`
+ * Tracks the most-recent in-flight `saveWindowState`
  * call so `flushWindowStateNow` can await disk I/O that started before
  * `before-quit` fired.
  */
@@ -74,7 +74,7 @@ let inFlightWrite: Promise<void> | null = null;
 export async function saveWindowState(state: WindowState): Promise<void> {
   const write = (async () => {
     try {
-      // Phase 21 / M27 — atomic write so a power loss / crash during save
+      // Atomic write so a power loss / crash during save
       // can't leave the file as a half-written JSON blob.
       await atomicWriteFile(getWindowStatePath(), JSON.stringify(state, null, 2));
     } catch (err) {
@@ -88,7 +88,7 @@ export async function saveWindowState(state: WindowState): Promise<void> {
 }
 
 /**
- * Phase 4 / 4.4 — drains any in-flight window-state save before
+ * Drains any in-flight window-state save before
  * resolving. Called from `before-quit` (paired with the synchronous
  * `captureAndSaveWindowState` in main.ts that force-fires the latest
  * geometry). Resolves immediately when no write is pending.

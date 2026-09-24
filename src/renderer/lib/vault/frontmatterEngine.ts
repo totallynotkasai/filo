@@ -5,49 +5,28 @@ import { Document } from 'yaml';
  * serialization — used by the source-preserving CST-operations patch engine
  * ({@link import('./frontmatterCstModel').patchFrontmatterSourceCst}) and the
  * external-edit conflict resolver.
- *
- * History (Phase 6): this module once also held `patchFrontmatterSource`, a
- * byte-splice frontmatter engine that diffed a plain object against a re-parsed
- * source and hand-spliced the changed keys — with TWO YAML parsers in the loop
- * (`js-yaml` for the compare, the `yaml` package for the CST ranges + scalar
- * emit). That dual-parser splice was the root cause of a recurring corruption
- * class (DI-01 unquoted-date→ISO, DI-05 destroyed `<<` merge keys, R1
- * canonicalised untouched scalars, M2 cross-parser `1_000`/`0b1010` drift, C1
- * bare-key collapse). Phase 6 replaced it with the single-parser CST engine in
- * `frontmatterCstModel.ts`, which emits every untouched node from its own source
- * tokens — byte-for-byte, no heuristic — so the class cannot recur. Phase 6.7
- * deleted the legacy engine; only these value helpers it shared remain here.
  */
 
 /**
  * Structural equality for frontmatter values (scalars, arrays, plain objects).
  *
- * 6.4.M3 — the previous `JSON.stringify(a) === JSON.stringify(b)` form was
- * key-order-sensitive for plain objects: a YAML map `{author, date}` on disk
- * compared unequal to an in-memory `{date, author}` even though they're the
- * same data. The unequal verdict tripped a node rewrite that discards the
- * original CST tokens — losing any comments attached to the unchanged keys
- * inside that map. Recursing structurally fixes the comparison without
- * rebuilding the JSON twice.
+ * Key-order-insensitive for plain objects: a map `{author, date}` on disk must
+ * equal an in-memory `{date, author}`, or the engine would rewrite the node
+ * and lose comments on its unchanged keys.
  */
 export function valuesEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
-  // 5.1 (Audit-17) — `NaN !== NaN` by IEEE-754, but two `.nan` frontmatter
-  // values are the SAME data. Without this an untouched `.nan` key is flagged
-  // changed on every unrelated edit: a scalar gets spelling-canonicalised, a
-  // collection containing NaN is rebuilt (`rebuildPair`) — permanently dropping
-  // that pair's inner comments / flow formatting (an untouched-key byte-
-  // preservation violation). Treat NaN as equal to NaN.
+  // `NaN !== NaN` by IEEE-754, but two `.nan` frontmatter values are the SAME
+  // data. Otherwise an untouched `.nan` key looks changed on every edit and
+  // gets rewritten (losing its inner comments / formatting).
   if (typeof a === 'number' && typeof b === 'number' && Number.isNaN(a) && Number.isNaN(b)) {
     return true;
   }
   if (a === null || b === null) return false;
   if (typeof a !== typeof b) return false;
-  // DI-01b — a Date is `typeof 'object'` with NO own keys, so the generic
-  // object branch below would compare two DIFFERENT Dates as equal (`Object.keys`
-  // is `[]` for both) and silently drop a date edit. Compare Dates by instant.
-  // Masked today by DI-01 (reads are strings, never Dates), but this forecloses
-  // the collision a naive future change could reintroduce.
+  // A Date is `typeof 'object'` with NO own keys, so the generic object branch
+  // below would compare two DIFFERENT Dates as equal and silently drop a date
+  // edit. Compare Dates by instant. (Reads produce strings today; defensive.)
   if (a instanceof Date || b instanceof Date) {
     return a instanceof Date && b instanceof Date && +a === +b;
   }
@@ -76,10 +55,9 @@ export function valuesEqual(a: unknown, b: unknown): boolean {
 }
 
 /**
- * DI-01b — coerce a residual `Date` to the plain `YYYY-MM-DD` form so a changed
- * date value never re-emits as a `yaml`-package ISO timestamp. Reads produce
- * strings under the `yaml` core schema (DI-01), so this is defence for a future
- * change that lets a `Date` reach the serializer.
+ * Coerce a residual `Date` to the plain `YYYY-MM-DD` form so a changed date
+ * value never re-emits as an ISO timestamp. Reads produce strings under the
+ * `yaml` core schema, so this is defence for a `Date` reaching the serializer.
  */
 function coerceForEmit(value: unknown): unknown {
   return value instanceof Date && !Number.isNaN(value.getTime())

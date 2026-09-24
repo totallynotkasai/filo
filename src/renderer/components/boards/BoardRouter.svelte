@@ -31,7 +31,7 @@
     if (!boardType) return null;
     return boardRegistry[boardType]?.component ?? null;
   });
-  // Audit2 4.4 — resolve the lazy import into a stable promise so unrelated
+  // Resolve the lazy import into a stable promise so unrelated
   // reactive updates don't re-trigger the {#await}. `import()` caches the
   // module, so any re-load after the first is effectively instant.
   let boardModule = $derived(boardComponentLoader ? boardComponentLoader() : null);
@@ -89,11 +89,10 @@
         );
       }
 
-      // Phase R7 — per-pane `tiles` / `connections` / `frames` views are
-      // `$derived` from the shared `boardCacheStore.cache[board.id]`.
-      // `setBoard(board)` only needs to pin the scope to a board id; the
-      // legacy tiles/connections/frames args are reserved for the unit-test
-      // bootstrap path.
+      // Per-pane `tiles` / `connections` / `frames` views are `$derived`
+      // from the shared `boardCacheStore.cache[board.id]`. `setBoard(board)`
+      // only needs to pin the scope to a board id; the tiles/connections/frames
+      // args are reserved for the unit-test bootstrap path.
       scope.board.setBoard(board);
       scope.selection.clear();
 
@@ -160,7 +159,7 @@
     background: var(--canvas-bg);
   }
 
-  /* Audit2 4.4 — brief placeholder while the lazily-imported board chunk
+  /* Brief placeholder while the lazily-imported board chunk
      loads on first open (instant on subsequent opens — the module is cached). */
   .board-loading {
     width: 100%;

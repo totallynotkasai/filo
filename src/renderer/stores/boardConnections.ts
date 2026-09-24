@@ -6,7 +6,7 @@ import type { BoardContext } from './boardStoreTypes';
 /**
  * Board slice — connection CRUD for the active board.
  *
- * Phase R7 (Reactive BoardScope, 2026-05-26) — the per-pane `connections`
+ * The per-pane `connections`
  * view is `$derived` from `boardCacheStore.cache[currentBoardId].connections`.
  * Every mutator forwards to `boardCacheStore.persist*Connection`; the active
  * derivation re-fires automatically when the cache settles. No per-pane

@@ -38,7 +38,7 @@ import type { DeletedFileSnapshot } from './tileCommands';
 // Backing files are never created or removed by Command undo/redo — the
 // Vault API owns file-system side effects. Re-adding a placement after
 // undo simply links it back to the existing `.md`. The one opt-in
-// exception (Audit 5.7) is `DeleteTaskCommand` with `DeleteTaskFileOptions`:
+// exception is `DeleteTaskCommand` with `DeleteTaskFileOptions`:
 // when the user explicitly chooses "Delete task & file", that command owns
 // the disk delete and restores the snapshotted body on undo, mirroring
 // Mind Map's `DeleteTilesCommand`.
@@ -48,12 +48,9 @@ import type { DeletedFileSnapshot } from './tileCommands';
  * tileDefs. Exported for use by section commands (sibling file) which need
  * to snapshot the same slice for their own undo paths.
  */
-// M3 (2026-05-28) — deep-clone via the shared `cloneForSnapshot` helper.
-// The previous one-level spread left each task/section's nested `style` (and
-// each tileDef's nested fields) aliased to the live `$state` proxy, so an
-// in-place mutation between snapshot and undo would corrupt the retained
-// snapshot. Routing through the same JSON-clone every other command uses
-// fully detaches the snapshot.
+// Deep-clone (not a one-level spread): nested `style` / tileDef fields would
+// otherwise stay aliased to the live `$state` proxy, and an in-place mutation
+// between snapshot and undo would corrupt the retained snapshot.
 export function snapshotTaskListSlice(boardId: string): {
   sections: TaskListSection[];
   tasks: TaskPlacement[];
@@ -85,7 +82,7 @@ export function restoreTaskListSlice(
   );
 }
 
-/** Audit-19 BL-1 — what a create-exclusive seed actually created. */
+/** What a create-exclusive seed actually created. */
 export interface SeededFile {
   relPath: string;
   title: string;
@@ -100,12 +97,10 @@ export class AddTaskCommand extends Command {
   private style?: PartialTaskStyle;
   private targetSectionId?: string;
   private sectionsBefore: TaskListSection[] | null;
-  // A9-M3 (Audit-9) — optional backing-`.md` seed (write the file + hydrate the
-  // doc) folded INTO the command so it runs on the history chain. Awaited on the
-  // first execute only; absent for callers (e.g. file-drop) whose `.md` already
-  // exists or is created elsewhere.
-  // Audit-19 BL-1 — the seed may resolve the FINAL path it created (the
-  // create-exclusive helper bumps to ` (n)` when the pre-picked name exists).
+  // Optional backing-`.md` seed folded INTO the command so it runs on the
+  // history chain. Awaited on the first execute only; absent for callers (e.g.
+  // file-drop) whose `.md` already exists. May resolve the FINAL path it created
+  // (the create-exclusive helper bumps to ` (n)` when the name exists).
   private seedBackingFile?: () => Promise<SeededFile | void>;
   private hasExecuted = false;
 
@@ -120,14 +115,10 @@ export class AddTaskCommand extends Command {
     super();
     this.targetBoardId = boardId;
     this.boardId = boardId;
-    // Phase 31 B4.4 — `this.snapshot(...)` deep-clones the def so the caller
-    // can't mutate shared nested fields (tags array, frontmatter snapshots)
-    // after construction and corrupt the undo snapshot.
+    // Deep-clone def + style so the caller can't mutate shared nested fields
+    // after construction and corrupt what undo/redo re-applies.
     this.def = this.snapshot(def);
     this.position = position;
-    // L30 (Audit-6) — deep-clone the optional style so a caller-side mutation
-    // of the same object after construction can't corrupt the value this
-    // command re-applies on redo (mirrors the `def` snapshot above).
     this.style = style ? this.snapshot(style) : style;
     this.targetSectionId = targetSectionId;
     this.seedBackingFile = seedBackingFile;
@@ -149,16 +140,11 @@ export class AddTaskCommand extends Command {
       this.style,
       this.targetSectionId,
     );
-    // A9-M3 (Audit-9) — seed the backing `.md` (with the new task's frontmatter)
-    // on the FIRST execute, INSIDE the chained command body, so it joins the
-    // history chain that vaultStore.save()/quit drain via whenChainSettled().
-    // The seed used to run off-chain AFTER historyStore.execute(); a quit inside
-    // its write window persisted the placement but lost the `.md`
-    // (priority/due/tags) → an orphan board row + lost metadata, with no sentinel
-    // able to reconstruct the typed fields. Skipped on redo (the file already
-    // exists; re-seeding would overwrite later edits). On a seed-write failure,
-    // roll the placement back so we don't leave an orphan row referencing a
-    // missing file (historyStore's catch then removes the command from the stack).
+    // Seed the backing `.md` on the FIRST execute, inside the chained command
+    // body, so save()/quit (which drain via whenChainSettled()) can't persist the
+    // placement but lose the `.md` and its metadata. Skipped on redo (re-seeding
+    // would overwrite later edits). On seed failure, roll the placement back so
+    // no orphan row references a missing file.
     if (isFirst && this.seedBackingFile) {
       let seeded: SeededFile | void;
       try {
@@ -167,7 +153,7 @@ export class AddTaskCommand extends Command {
         this.removePlacement();
         throw err;
       }
-      // Audit-19 BL-1 — the def was cloned (and its placement persisted) BEFORE
+      // The def was cloned (and its placement persisted) BEFORE
       // the seed ran, so a bumped name must re-stamp the cached def; redo then
       // re-adds the bumped path, which is where the file actually lives.
       const current = (this.def as { filePath?: string }).filePath;
@@ -178,7 +164,7 @@ export class AddTaskCommand extends Command {
     }
   }
 
-  /** Title of the task as created (reflects an Audit-19 BL-1 name bump). */
+  /** Title of the task as created (reflects any ` (n)` name bump). */
   get currentTitle(): string {
     return this.def.title ?? '';
   }
@@ -199,10 +185,10 @@ export class AddTaskCommand extends Command {
 }
 
 /**
- * Audit 5.7 — opt-in backing-file delete. When the user picks "Delete task &
+ * Opt-in backing-file delete. When the user picks "Delete task &
  * file", the caller pre-reads the `.md` body (so undo can restore it) and
  * passes it here. Absent these options the command is placement-only and the
- * file is left on disk exactly as before — the default, undo-safe behaviour.
+ * file is left on disk — the default, undo-safe behaviour.
  */
 export interface DeleteTaskFileOptions {
   /** Pre-read backing-.md snapshot; present only when the user opted in and
@@ -220,7 +206,7 @@ export class DeleteTaskCommand extends Command {
   private snapshotDef: TileDefinition | null;
   private snapshotPlacement: TaskPlacement | null;
   private sectionsBefore: TaskListSection[] | null;
-  // Audit 5.7 — when set, execute() also deletes the backing .md and undo()
+  // When set, execute() also deletes the backing .md and undo()
   // writes the snapshotted body back BEFORE restoring the placement, mirroring
   // DeleteTilesCommand. Null on the default placement-only path.
   private fileSnapshot: DeletedFileSnapshot | null;
@@ -250,11 +236,8 @@ export class DeleteTaskCommand extends Command {
       const p = placements.find((x) => x.tileId === tileId);
       if (p) this.snapshotPlacement = this.snapshot(p);
       const def = cached.tileDefs[tileId];
-      // Phase 31 B4.4 — `this.snapshot(...)` deep-clones the def so the undo
-      // snapshot captures every nested field (tags, frontmatter) intact.
-      // Shallow `{...def}` left the `tags` array aliased with the cache, so a
-      // subsequent tag-edit on a sibling tile (or external rewrite) corrupted
-      // the snapshot before undo ever ran.
+      // Deep-clone so a later tag edit or external rewrite can't mutate the
+      // snapshot's nested fields (e.g. the `tags` array) through the cache.
       if (def) this.snapshotDef = this.snapshot(def);
       this.sectionsBefore = ((tl.sections ?? []) as TaskListSection[]).map((s) => this.snapshot(s));
     }
@@ -282,7 +265,7 @@ export class DeleteTaskCommand extends Command {
   }
 
   private async deleteBackingFile(vaultRoot: string, rel: string): Promise<void> {
-    // Phase 25 L6 — vault:delete takes (vaultRoot, absoluteItemPath).
+    // vault:delete takes (vaultRoot, absoluteItemPath).
     const absPath = `${vaultRoot}/${rel}`;
     try {
       const result = await deleteVaultPath(vaultRoot, absPath);
@@ -307,16 +290,10 @@ export class DeleteTaskCommand extends Command {
     if (this.vaultRoot && this.fileSnapshot) {
       const { rel, content } = this.fileSnapshot;
       const vaultRoot = this.vaultRoot;
-      // Audit-14 7.3 — route the snapshot-restore through the coupled
-      // write+reconcile helper (Phase 6.6) instead of a raw `vault:write-file-text`.
-      // The restored task `.md` can be open as a Document on a second pane (the
-      // same file viewed two ways); that editor holds a stale frontmatter cache,
-      // so its next debounced body save would silently invert this restore — the
-      // #4 class the 2.3 DeleteTilesCommand fix closed for tiles. `mode: 'full'`
-      // reloads the open editor (frontmatter + body) for the SAME path; `create:
-      // true` recreates the file the delete removed (mkdir -p). The helper still
-      // wraps the write in trackComponentWrite, so the .filo/.dirty sentinel +
-      // in-flight counter behave exactly as the inline form did.
+      // Route through the coupled write+reconcile helper: the restored `.md` may
+      // be open as a Document elsewhere, and that editor's stale cache would
+      // invert this restore on its next save. `mode: 'full'` reloads the open
+      // editor for the same path; `create: true` recreates the deleted file.
       this.lastUndoCompletion = writeMarkdownAndReconcile({
         vaultRoot,
         path: rel,
@@ -377,7 +354,7 @@ export class MoveTaskBlockCommand extends Command {
     super();
     this.targetBoardId = boardId;
     this.boardId = boardId;
-    // Phase R3 — deep-clone via `this.snapshot(...)` so any nested style /
+    // Deep-clone so any nested style /
     // tags field on a placement can't leak through to the snapshot.
     this.before = this.snapshot(before);
     this.after = this.snapshot(after);
@@ -416,10 +393,10 @@ export class UpdateTaskFieldCommand extends Command {
   private docId: string;
   private patch: Record<string, unknown>;
   private inversePatch: Record<string, unknown>;
-  // Audit2 4.2 — false on the user's initial Apply (apply directly), true once
+  // False on the user's initial Apply (apply directly), true once
   // executed so a later redo rebases like undo instead of clobbering.
   private hasExecuted = false;
-  // REC-2 — when set, undo/redo treat the patch as a coupled pair on a conflict
+  // When set, undo/redo treat the patch as a coupled pair on a conflict
   // (a recurrence roll-forward writes {completed, dueDate} together). Set by
   // buildTaskFieldCommand when the patch carries both keys.
   private atomic: boolean;
@@ -434,17 +411,9 @@ export class UpdateTaskFieldCommand extends Command {
     atomic = false,
   ) {
     super();
-    // 6.2.H7 — refuse construction with a null docId. The pre-fix command
-    // silently no-op'd both legs: execute / undo gated the documentStore
-    // merge on `if (this.docId)`, so with null the patch was never applied
-    // and the scheduled frontmatter write emitted the unchanged FM back to
-    // disk. The board stayed dirty (marked) but the .md file's frontmatter
-    // didn't change — making Apply and Undo both silent.
-    //
-    // Callers that construct via `frontmatterWriter.buildTaskFieldCommand`
-    // already short-circuit on null docId and route through a fallback;
-    // this throw is the chokepoint that prevents a new caller from
-    // re-introducing the silent-no-op bug.
+    // Refuse a null docId: without one the patch is never merged and the write
+    // re-emits unchanged FM, so Apply and Undo would be silent no-ops.
+    // `buildTaskFieldCommand` routes null-docId edits through a fallback.
     if (!docId) {
       throw new Error(
         'UpdateTaskFieldCommand requires a non-null docId; route null-docId task edits through the orphan-write fallback instead',
@@ -454,12 +423,8 @@ export class UpdateTaskFieldCommand extends Command {
     this.boardId = boardId;
     this.relPath = relPath;
     this.docId = docId;
-    // Phase R3 — deep-clone via `this.snapshot(...)` so nested values
-    // (arrays, objects) inside the patch can't be mutated through the
-    // original caller-side reference after the command is pushed. Before
-    // R3 the shallow `{ ...patch }` left arrays (e.g. `tags: [...]`)
-    // aliased with the caller; tag edits between Apply and Undo could
-    // mutate the inverse patch's would-be-restored array.
+    // Deep-clone so nested values (e.g. `tags: [...]`) can't be mutated through
+    // the caller's reference after the command is pushed.
     this.patch = this.snapshot(patch);
     this.inversePatch = this.snapshot(inversePatch);
     this.atomic = atomic;
@@ -468,17 +433,10 @@ export class UpdateTaskFieldCommand extends Command {
 
   async execute(): Promise<void> {
     // Drain pending debounced writes before merging the new patch so the
-    // prior in-memory state lands on disk first. Without this, a rapid
-    // toggle → undo can race the still-debounced forward write against the
-    // inverse patch's fresh write at the same docId.
-    //
-    // Phase 6 / 6.4 — must `await` rather than fire-and-forget; mirrors
-    // UpdateCardFieldCommand. The previous `void` discarded the flush
-    // completion, so a fast Apply → Undo would overlap: the forward
-    // debounced write was still in-flight when undo queued the inverse
-    // patch and the inverse landed on disk first.
-    // SEL-5 — drain only THIS path (the race is same-docId), not the whole
-    // vault, so a bulk batch of field commands doesn't do O(N²) global flushes.
+    // prior in-memory state lands on disk first. Awaited: otherwise a fast
+    // Apply → Undo races the still-debounced forward write against the inverse.
+    // Drains only THIS path (the race is same-docId), so a bulk batch of field
+    // commands doesn't do O(N²) global flushes.
     await flushFrontmatterWriteForPath(this.relPath);
     // First execute = the user's own action: apply it directly (the inverse
     // patch was just read from this same live cache). A redo re-applies an old
@@ -486,7 +444,7 @@ export class UpdateTaskFieldCommand extends Command {
     const isRedo = this.hasExecuted;
     this.hasExecuted = true;
     if (isRedo) {
-      // A17-1.1 — awaited: the rebase now re-reads disk when no cache is seeded.
+      // Awaited: the rebase re-reads disk when no cache is seeded.
       await applyFrontmatterPatchRebased({
         docId: this.docId,
         relPath: this.relPath,
@@ -498,29 +456,21 @@ export class UpdateTaskFieldCommand extends Command {
       });
       return;
     }
-    // A9-H1 (Audit-9) — capture the active vault BEFORE the seed await; a vault
-    // swap (File > Open Vault → "Don't Save") can commit while the disk read is
-    // in flight. Resuming against the NEW vault would re-inject (A9-M1) the OLD
-    // vault's frontmatter and arm a write that fires against the new vault's
-    // same-named file. Bail across the seed before any cache/schedule sink.
+    // Capture the active vault BEFORE the seed await; a vault swap can commit
+    // while the disk read is in flight, and resuming would inject the old
+    // vault's frontmatter and write onto the new vault's same-named file.
     const identity = captureVaultIdentity();
-    // Audit-7 H1 — seed the FM cache from a FRESH disk read HERE, inside the
-    // chained command body, so vaultStore.save()/quit (which await
-    // historyStore.whenChainSettled() before flushing) cover this read. The
-    // seed used to run in the writer (`preSeedRow`) BEFORE historyStore.
-    // execute(); a Ctrl+S / quit landing in that pre-chain await window saw an
-    // empty chain, reported a premature "Saved", and tore down the renderer
-    // before the field write was scheduled — a silent loss with no .filo/.dirty
-    // sentinel. No-op when an open editor / prior edit already seeded the cache,
-    // or when the disk read fails.
+    // Seed the FM cache from a fresh disk read inside the chained command body,
+    // so save()/quit (which await historyStore.whenChainSettled()) cover this
+    // read — seeding before execute() let a quit in that window lose the edit.
+    // No-op when the cache is already seeded or the disk read fails.
     await seedDocumentFrontmatterFromDisk(this.docId, vaultStore.path, this.relPath);
-    // A9-H1 — a swap landed mid-seed: abandon. Do NOT fall back to the index,
-    // merge, schedule a write, or mark the now-foreign board dirty.
+    // A swap landed mid-seed: abandon. Do NOT fall back to the index, merge,
+    // schedule a write, or mark the now-foreign board dirty.
     if (!isStillSameVault(identity)) return;
     if (!documentStore.getFrontmatter(this.docId)) {
       // Disk read failed (ENOENT / transient) — fall back to the vault-index
-      // snapshot, exactly as the writer's old ensureSeededFm did, so the merge
-      // has a full FM object and the source-preserving write can't drop keys.
+      // snapshot so the merge has a full FM object.
       documentStore.setFrontmatter(
         this.docId,
         (vaultIndexStore.getMetadata(this.relPath)?.frontmatter ?? {}) as Record<string, unknown>,
@@ -530,21 +480,19 @@ export class UpdateTaskFieldCommand extends Command {
     // prior value of each patched key — `buildTaskFieldCommand` computed it from
     // the (possibly-stale) vault index before this disk seed ran.
     this.inversePatch = this.snapshot(captureInverseFromCache(this.docId, this.patch));
-    // Phase 4 — mergeFrontmatter feeds the DISPLAY cache; the delta is the write
-    // SOURCE (applied to fresh disk in the gateway), so an untouched external key
-    // survives by construction instead of being dropped from a stale cache.
+    // mergeFrontmatter feeds the DISPLAY cache only; the delta is the write
+    // SOURCE (applied to a fresh disk read in the gateway), so an untouched
+    // external key survives instead of being dropped from a stale cache.
     documentStore.mergeFrontmatter(this.docId, this.patch);
     scheduleFrontmatterWrite(this.relPath, this.docId, patchToFrontmatterDelta(this.patch));
     boardCacheStore.markDirty(this.targetBoardId);
   }
 
   async undo(): Promise<void> {
-    await flushFrontmatterWriteForPath(this.relPath); // SEL-5 — own path only
-    // Audit2 4.2 — rebase onto the live frontmatter so an external edit to
-    // the same field isn't silently clobbered (prompts to apply anyway).
-    // 6.2.H7 — docId is guaranteed non-null by the constructor's throw, so
-    // the legacy null-docId else-branch (a silent no-op in practice) is gone.
-    // A17-1.1 — awaited: the rebase now re-reads disk when no cache is seeded.
+    await flushFrontmatterWriteForPath(this.relPath); // own path only
+    // Rebase onto the live frontmatter so an external edit to the same field
+    // isn't silently clobbered (prompts to apply anyway). Awaited: the rebase
+    // re-reads disk when no cache is seeded.
     await applyFrontmatterPatchRebased({
       docId: this.docId,
       relPath: this.relPath,
@@ -651,7 +599,7 @@ export class UpdatePlacementStyleCommand extends Command {
     this.targetBoardId = boardId;
     this.boardId = boardId;
     this.tileId = tileId;
-    // Phase R3 — deep-clone the style payloads so nested colour / font
+    // Deep-clone the style payloads so nested colour / font
     // overrides can't leak through caller-side reference mutation.
     this.beforeStyle = beforeStyle ? this.snapshot(beforeStyle) : null;
     this.afterPatch = this.snapshot(afterPatch);

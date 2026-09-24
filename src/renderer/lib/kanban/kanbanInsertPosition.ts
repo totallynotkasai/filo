@@ -15,7 +15,7 @@ export function computeKanbanInsertIndex(
   if (!zone) return baseCount;
   const cards = Array.from(zone.querySelectorAll<HTMLElement>('[data-tile-id]'));
   if (cards.length === 0) return 0;
-  // C5 — explicit special-case: a pointer above the first card's top edge
+  // Explicit special-case: a pointer above the first card's top edge
   // must always insert at index 0. The midpoint check below also yields 0
   // in this case, but only when `cards[0]` reports a sensible rect. A card
   // mid-drag (display:none under svelte-dnd-action) can return a zeroed

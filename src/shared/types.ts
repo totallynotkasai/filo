@@ -13,7 +13,7 @@ export type IpcChannel =
   | 'vault:watch'
   | 'vault:close'
   | 'vault:copy-file'
-  // Audit-12 S1 — preload-internal one-way registration of an approved
+  // Preload-internal one-way registration of an approved
   // vault:copy-file source (a real OS-dropped file path). Registered main-side
   // via ipcMain.on and fired ONLY by the preload getPathForFile through a
   // direct ipcRenderer.send. Deliberately absent from SendChannel so the
@@ -26,14 +26,14 @@ export type IpcChannel =
   | 'vault:read-file-text'
   | 'vault:write-file-text'
   | 'vault:write-existing-file-text'
-  // Audit-19 BL-1 — create-exclusive new-file seed (O_EXCL), typed EEXIST on a clash.
+  // Create-exclusive new-file seed (O_EXCL), typed EEXIST on a clash.
   | 'vault:create-file-text'
-  // Phase 2 / 2.5 — used by CascadeDeleteCommand.undo to restore captured
-  // media bodies (base64-encoded). Atomic + size-capped at the handler.
+  // Used by CascadeDeleteCommand.undo to restore captured media bodies
+  // (base64-encoded). Atomic + size-capped at the handler.
   | 'vault:write-file-binary'
   | 'vault:file-exists'
-  // Phase A.3 — returns stat shape with success, optional mtimeMs and size
-  // for an external-edit guard during manual sync (syncTileMarkdown).
+  // Returns stat shape with success, optional mtimeMs and size for an
+  // external-edit guard during manual sync (syncTileMarkdown).
   | 'vault:stat'
   | 'vault:init-config'
   | 'vault:get-launch-preference'
@@ -49,12 +49,12 @@ export type IpcChannel =
   | 'vault:tree-updated'
   | 'vault:file-renamed'
   | 'vault:watcher-failed'
-  // Phase 3 / 3.1 — supervisor state machine. Payload carries the current
-  // state (active/reconnecting/suspended), attempt counter, and a reason
-  // string when transitioning to reconnecting. Renderer surfaces a toast.
+  // Watcher supervisor state machine. Payload carries the current state
+  // (active/reconnecting/suspended), attempt counter, and a reason string
+  // when transitioning to reconnecting. Renderer surfaces a toast.
   | 'vault:watcher-state'
   | 'vault:tree-too-large'
-  // Audit-19 ERR-3 / EXT-2 - a sync-client conflict copy appeared (main -> renderer)
+  // A sync-client conflict copy appeared (main -> renderer)
   | 'vault:sync-conflict'
   // Board operations
   | 'board:list'
@@ -62,19 +62,19 @@ export type IpcChannel =
   | 'board:save'
   | 'board:create'
   | 'board:delete'
-  // Audit-19 ERR-3 / EXT-7 - board files forked by a sync client (Plan.board-HOST.json)
+  // Board files forked by a sync client (Plan.board-HOST.json)
   | 'board:list-conflicts'
   // Recovery snapshot (defensive backup of vault files before overwrite)
   | 'recovery:snapshot'
   // Recovery snapshot listing (surfaced to the user on vault open)
   | 'recovery:list'
-  // Audit-19 EXT-6 - per-machine crash sentinels in .filo (this machine, others, legacy)
+  // Per-machine crash sentinels in .filo (this machine, others, legacy)
   | 'recovery:list-sentinels'
-  // Audit-19 EXT-6 - this machine id (userData) and hostname
+  // This machine id (userData) and hostname
   | 'app:machine-identity'
-  // Audit-19 ERR-7 - rewrite a Windows-1252 note as UTF-8 after backing up the original
+  // Rewrite a Windows-1252 note as UTF-8 after backing up the original
   | 'vault:convert-to-utf8'
-  // Audit-19 EXT-5 - move orphaned atomic-write temps into .filo/recovery/orphan-tmp
+  // Move orphaned atomic-write temps into .filo/recovery/orphan-tmp
   | 'vault:sweep-orphan-tmp'
   // Config operations (.filo/ directory)
   | 'config:load'
@@ -115,22 +115,17 @@ export type IpcChannel =
   | 'app:flush-and-quit'
   // App lifecycle (renderer -> main)
   | 'app:ready-to-quit'
-  // 6.2.H4 — renderer-initiated quit cancellation. On a save-failure
-  // confirm, the Stay-open-and-retry choice sends this so main clears
-  // isFlushingForQuit and the flush-timeout timer, keeping the window
-  // alive for retry instead of destroying it.
+  // Renderer-initiated quit cancellation. On a save-failure confirm, the
+  // Stay-open-and-retry choice sends this so main clears isFlushingForQuit
+  // and the flush-timeout timer, keeping the window alive for retry.
   | 'app:cancel-quit'
-  // Audit-4 DI-04 — renderer heartbeat. Sent right before the open-ended
-  // save-failure confirm so main clears its FLUSH_TIMEOUT_MS auto-destroy
-  // timer and waits on the user reply (Quit-anyway / Stay-open) instead of
-  // destroying the window out from under the dialog (and dropping the edits).
+  // Sent right before the open-ended save-failure confirm so main clears its
+  // FLUSH_TIMEOUT_MS auto-destroy timer and waits on the user reply instead
+  // of destroying the window under the dialog (and dropping the edits).
   | 'app:quit-awaiting-user'
-  // Audit5 2.1 — renderer drain heartbeat. Beat immediately and then every
-  // ~2s WHILE the quit flush drains, so main re-arms its FLUSH_TIMEOUT_MS
-  // auto-destroy timer on each beat and an honest drain that runs longer than
-  // the ceiling (large vault on a contended volume such as OneDrive) does not
-  // destroy the window mid-write. The ceiling then bounds inter-beat silence
-  // (a wedged renderer), not total honest drain time.
+  // Renderer drain heartbeat, every ~2s WHILE the quit flush drains. Main
+  // re-arms its auto-destroy timer on each beat, so the ceiling bounds
+  // inter-beat silence (a wedged renderer), not total honest drain time.
   | 'app:drain-heartbeat'
   // Sidebar — per-machine state (width, in-app floating mode, bounds)
   | 'sidebar:get-state'
@@ -144,10 +139,10 @@ export type IpcChannel =
  * here. Today that's just the quit handshake — `app:ready-to-quit` is the
  * renderer's reply to the main-process `app:flush-and-quit` broadcast.
  *
- * M1 (AUDIT_REMEDIATION_PLAN_2026-05-29) — typing `send` against this narrow
- * union (rather than the full `IpcChannel`) lets the preload `send` wrapper
- * run the same `validateIpcPayload` gate `invoke` uses, closing the hole
- * where `send` forwarded unvalidated args straight to the main process.
+ * Typing `send` against this narrow union (rather than the full
+ * `IpcChannel`) lets the preload `send` wrapper run the same
+ * `validateIpcPayload` gate `invoke` uses, so `send` can't forward
+ * unvalidated args to the main process.
  */
 export type SendChannel =
   | 'app:ready-to-quit'
@@ -156,16 +151,13 @@ export type SendChannel =
   | 'app:drain-heartbeat';
 
 /**
- * Audit-15 P3.3 — channels the renderer may SUBSCRIBE to via `window.filo.on`.
- * These are the pure main→renderer events main pushes with
- * `webContents.send(...)`; the renderer is receive-only on them. The preload
- * `on` wrapper validates against this list at runtime so a compromised renderer
- * can't attach a listener to an arbitrary channel string — defence in depth,
- * since `invoke` and `send` are already payload-validated and `on` was the one
- * un-gated bridge method.
+ * Channels the renderer may SUBSCRIBE to via `window.filo.on`: the pure
+ * main→renderer events main pushes with `webContents.send(...)`. The preload
+ * `on` wrapper validates against this list at runtime so a compromised
+ * renderer can't attach a listener to an arbitrary channel string.
  *
  * MUST stay in sync with `MAIN_TO_RENDERER_EVENTS` in
- * `scripts/check-ipc-parity.mjs` (the parity gate forces every such event into
+ * `scripts/gates:ipc-parity` (the parity gate forces every such event into
  * that set — this is its renderer-facing twin) and with the `broadcastOnly`
  * set in `ipcChannelParity.test.ts`. The `: readonly IpcChannel[]` annotation
  * makes every entry compile-time-checked against the `IpcChannel` union, so a
@@ -272,8 +264,8 @@ export type ToolbarSize = 'small' | 'medium' | 'large';
 /**
  * Window API exposed to the renderer via contextBridge.
  *
- * `invoke` is typed against `IpcChannelMap` from `./ipcContracts.ts`
- * (Phase 1, CONSOLIDATION_PLAN_2026-05-25.md). Each callsite sees the
+ * `invoke` is typed against `IpcChannelMap` from `./ipcContracts.ts`.
+ * Each callsite sees the
  * actual args tuple and the actual return shape — including the
  * `{ ok | success: false, ... }` failure branch on envelope channels.
  *
@@ -321,8 +313,7 @@ export interface FiloAPI {
   on: (channel: IpcChannel, callback: (...args: unknown[]) => void) => () => void;
   /**
    * One-way push to main (no response). Narrowed to `SendChannel` so the
-   * preload wrapper can validate the payload symmetrically with `invoke`
-   * (M1, AUDIT_REMEDIATION_PLAN_2026-05-29).
+   * preload wrapper can validate the payload symmetrically with `invoke`.
    */
   send: (channel: SendChannel, ...args: unknown[]) => void;
   /**

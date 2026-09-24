@@ -1,12 +1,11 @@
 /**
- * Audit-17 4.4 — true-cancel for a frame drag torn down mid-gesture.
+ * True-cancel for a frame drag torn down mid-gesture.
  *
  * Frame.svelte's drag writes positions incrementally per RAF (`updateFrame`
  * + `moveContainedTiles`); only `handleDragEnd` records the MoveFrameCommand.
  * When the component unmounts mid-drag (frame deleted by an external reload,
- * board switch, pane close) the Audit-16 6.1 teardown used to keep whatever
- * had already been written — a persisted frame+tile move with NO undo entry.
- * This helper reverts the frame to its drag-start position and moves the
+ * board switch, pane close), keeping what had already been written would leave
+ * a persisted frame+tile move with NO undo entry. This helper reverts the frame to its drag-start position and moves the
  * captured contained tiles back by the inverse delta, mirroring
  * `tileDrag.destroy()`'s cancel-not-commit ("a half-committed move would
  * corrupt undo").

@@ -2,25 +2,18 @@ import { extname } from 'path';
 import type { FileChangeType } from './fileWatcherTypes';
 
 /**
- * Path classification + ignore rules for the vault file watcher.
- *
- * Audit-14 6.1 — extracted from `fileWatcher.ts` (which was sitting at the
- * 1000-LOC ceiling with no allowlist headroom) so the watcher's event
- * MECHANICS (debounce, suppression, reconcile walk, emit) and its "what IS
- * this path / should we ignore it" DECISION logic live in separate files.
- * None of this logic reads watcher instance state, so it is a set of pure
- * module functions the `FileWatcher` class calls.
+ * Path classification + ignore rules for the vault file watcher: the "what
+ * IS this path / should we ignore it" decisions, kept apart from the
+ * watcher's event mechanics. Pure functions — no watcher instance state.
  */
 
 /**
- * Phase 31 B2.3 — per-segment matching rather than `string.includes`. The
- * legacy substring check matched `Article on Thumbs.db.md` because the
- * basename contains the literal "Thumbs.db" — which is a real-world title
- * pattern users have hit. We now split the relative path by `/` and apply
- * one rule per segment.
+ * Per-segment matching rather than `string.includes`, so a note titled
+ * `Article on Thumbs.db.md` isn't swallowed. The relative path is split by
+ * `/` and one rule applied per segment.
  *
  *  - `exactNames`: a segment whose entire string equals the pattern (e.g.
- *    `Thumbs.db`, `.DS_Store`). `Article on Thumbs.db.md` is no longer
+ *    `Thumbs.db`, `.DS_Store`). `Article on Thumbs.db.md` isn't
  *    swallowed because the *basename* segment isn't exactly `Thumbs.db`.
  *  - `folderNames`: an INTERIOR segment (any but the last) matching the
  *    pattern (e.g. `node_modules`, `.git`). The last segment isn't a
@@ -62,24 +55,23 @@ export function shouldIgnorePath(normalized: string): boolean {
 
 /**
  * File extensions that should be classified as `'attachment'` regardless of
- * the folder they live in. Phase 19 S4 — before this set existed, only files
- * under `attachments/` participated in rename correlation. An OS-level move
- * of `hero.jpg` from the vault root to `media/` produced two `'tree'` events
- * which the correlator ignores, so every tile pointing at the file silently
- * dangled.
+ * the folder they live in, so an OS-level move of `hero.jpg` from the vault
+ * root to `media/` still participates in rename correlation (a `'tree'`
+ * event is ignored by the correlator, leaving every tile pointing at the file
+ * dangling).
  *
  * Keeps the same coverage as `mime.getMimeType`'s media types — anything the
  * media-tile reader could serve is something a user might place outside
  * `attachments/` and expect rename propagation for.
  */
 const MEDIA_EXTENSIONS = new Set<string>([
-  // Images (Phase 31 C3.8 adds .heic/.heif/.avif — modern Apple + browser
-  // capture formats users drag in from Photos.app and screenshots)
+  // Images (incl. .heic/.heif/.avif — modern Apple + browser capture
+  // formats users drag in from Photos.app and screenshots)
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp',
   '.heic', '.heif', '.avif',
   // Video
   '.mp4', '.webm', '.ogv', '.mov',
-  // Audio (Phase 31 C3.8 adds .opus, .mid, .midi — Opus is the modern
+  // Audio (incl. .opus, .mid, .midi — Opus is the modern
   // WebM Opus container, MIDI for music workflows)
   '.mp3', '.wav', '.ogg', '.aac', '.flac', '.m4a',
   '.opus', '.mid', '.midi',
@@ -95,18 +87,17 @@ const MEDIA_EXTENSIONS = new Set<string>([
  */
 export function classifyChange(relativePath: string): FileChangeType {
   if (relativePath.startsWith('.filo/')) {
-    // Phase 3 / 3.2 — granular `.filo/` classification. The renderer's
-    // exhaustive dispatcher then routes each kind to its dedicated
-    // reconciler (`tagsJsonReconciler`, `themeJsonReconciler`, etc.).
-    // Anything that doesn't match a granular subtype keeps the legacy
-    // `config` classification so dispatch can no-op cleanly.
+    // Granular `.filo/` classification. The renderer's exhaustive
+    // dispatcher routes each kind to its dedicated reconciler
+    // (`tagsJsonReconciler`, `themeJsonReconciler`, etc.). Anything else
+    // stays plain `config` so dispatch can no-op cleanly.
     if (relativePath === '.filo/tags.json') return 'config-tags';
     if (relativePath.startsWith('.filo/themes/')) return 'config-theme';
     if (relativePath.startsWith('.filo/templates/')) return 'config-template';
     return 'config';
   }
 
-  // Audit-15 P1.3 — case-fold the `.board.json` match (mirrors `scanBoardFiles`
+  // Case-fold the `.board.json` match (mirrors `scanBoardFiles`
   // + the `.md`/`.txt` extname check below, which already lowercase). An
   // externally-renamed board whose extension casing diverged would otherwise be
   // routed to `tree` instead of `board`, skipping the board reconciler.
@@ -116,26 +107,17 @@ export function classifyChange(relativePath: string): FileChangeType {
 
   const lowerExt = extname(relativePath).toLowerCase();
 
-  // Phase 31 B2.6 — treat `.markdown` the same as `.md`. The renderer's
-  // `isMarkdownExtension` (src/renderer/lib/vault/extension.ts) accepts
-  // both spellings for tile creation; classifyChange used to accept only
-  // `.md`, which meant the watcher missed external edits to `.markdown`
-  // files entirely. Reconciliation, conflict resolution, and the bulk
-  // toast aggregator all hang off the `document` classification.
-  //
-  // Phase 7 (IMPLEMENTATION_PLAN_2026-05-27) — promote `.txt` to
-  // `'document'` so external `.txt` ↔ `.md` renames in a text editor
-  // pair through `correlateRenames` (already accepts both via
-  // `TEXT_LIKE_EXTENSIONS`). Without this promotion `.txt` events were
-  // classified as `'tree'` and skipped the same-basename / cross-basename
-  // correlation passes, so a `Notes.txt` → `Notes.md` rename surfaced as
-  // a delete + create and broke every tile pointing at the file.
+  // `.markdown` matches `.md` (the renderer's `isMarkdownExtension` accepts
+  // both); reconciliation and conflict resolution hang off `document`.
+  // `.txt` is a `document` too so an external `Notes.txt` → `Notes.md`
+  // rename pairs through `correlateRenames` instead of surfacing as a
+  // delete + create that breaks every tile pointing at the file.
   if (lowerExt === '.md' || lowerExt === '.markdown' || lowerExt === '.txt') {
     return 'document';
   }
 
-  // S4: media files participate in rename correlation whether they live
-  // under `attachments/` or anywhere else in the vault. The legacy folder
+  // Media files participate in rename correlation whether they live
+  // under `attachments/` or anywhere else in the vault. The folder
   // prefix is kept as a fallback so a user-defined extension we haven't
   // listed (e.g. `.heic`) still classifies correctly when placed under
   // `attachments/`.

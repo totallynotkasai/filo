@@ -57,9 +57,7 @@ let boardPaths = $state<Record<string, string>>({});
 /**
  * Counter + one-shot toast guard for "couldn't resolve owning board"
  * warnings inside the persist* methods. Without a user-visible surface
- * an off-board tile/connection/frame can silently fail to persist its
- * edit — the original symptom of an unresolvable boardId is the kind of
- * thing the audit flagged as a hidden data-loss path.
+ * an off-board tile/connection/frame can silently fail to persist its edit.
  *
  * We coalesce: the FIRST unresolved warn in a session surfaces a single
  * low-severity toast; subsequent warns increment the counter (visible in
@@ -126,7 +124,7 @@ function getBoardWriteArgs(
 }
 
 /**
- * Phase 7.5 — reverse-index memos (id → owning boardId) for the keyless
+ * Reverse-index memos (id → owning boardId) for the keyless
  * persist paths. A tile / connection / frame / kanban column / task is created
  * on exactly one board and never re-parented (V7 invariant), so a successful
  * scan result stays valid for the entity's life. `resolveOwnerCached` caches
@@ -191,7 +189,7 @@ function findBoardIdForTile(tileId: string): string | null {
       const mm = b as MindMapBoard;
       return Boolean((mm.placements ?? {})[tileId] || (mm.inlineTiles ?? {})[tileId]);
     }
-    // V7: non-mind-map boards no longer have placements/inlineTiles. Tile
+    // V7: non-mind-map boards have no placements/inlineTiles. Tile
     // identity is the tileDefs key; whichever board owns the def owns the tile.
     return Boolean((data.tileDefs ?? {})[tileId]);
   });
@@ -201,9 +199,8 @@ function findBoardIdForTile(tileId: string): string | null {
  * Resolves a connection's owning board ID by scanning the cache.
  *
  * Used as a fallback when the connection object's `boardId` field is empty
- * (legacy data, or a connection created while no board was active). Tile
- * persistence already uses the same scan pattern — extending it to
- * connections eliminates the silent no-op when `conn.boardId === ''`.
+ * (legacy data, or a connection created while no board was active), so an
+ * empty `conn.boardId` isn't a silent no-op.
  */
 function findBoardIdForConnection(connId: string): string | null {
   return resolveOwnerCached(connectionBoardMemo, connId, (data) =>
@@ -214,9 +211,8 @@ function findBoardIdForConnection(connId: string): string | null {
 /**
  * Resolves a frame's owning board ID by scanning the cache.
  *
- * Replaces the previous `vaultStore.project.frames.find(...)` lookup which
- * depended on the project store being in sync with the board cache. The
- * cache is the authoritative source for "which board owns this frame".
+ * The cache (not the project store, which may lag) is the authoritative
+ * source for "which board owns this frame".
  */
 function findBoardIdForFrame(frameId: string): string | null {
   return resolveOwnerCached(frameBoardMemo, frameId, (data) =>
@@ -248,7 +244,7 @@ function findBoardIdForKanbanColumn(columnId: string): string | null {
  * Resolves a Kanban board for a given boardId, surfacing a console warn +
  * one-shot toast on failure rather than silently dropping the mutation.
  * Matches the `warnUnresolved` pattern used by `persistAddTile` / frame /
- * connection paths so race-class drops are no longer invisible.
+ * connection paths so race-class drops aren't invisible.
  */
 function kanbanBoardOrWarn(boardId: string, method: string): KanbanBoard | null {
   const kb = kanbanBoard(boardId);
@@ -280,7 +276,7 @@ function findBoardIdForTask(tileId: string): string | null {
  * Resolves a Task List board for a given boardId, surfacing a console warn +
  * one-shot toast on failure rather than silently dropping the mutation.
  * Mirrors `kanbanBoardOrWarn` — used by every TaskList mutator so race-class
- * drops are no longer invisible.
+ * drops aren't invisible.
  */
 function tasklistBoardOrWarn(boardId: string, method: string): TaskListBoard | null {
   const tl = tasklistBoard(boardId);
@@ -367,13 +363,10 @@ export const boardCacheStore = {
    * (single-file rename) OR whose path is rooted under `oldPath + '/'`
    * (folder rename — every descendant `.board.json` follows).
    *
-   * Phase 31 A3.1 — without this, a `.board.json` rename leaves the cache
-   * still keyed against the old path: the next debounced write fires
-   * against the stale path (recreating a phantom file) AND the vault
-   * tree reconciliation in `listenForChanges` flags the board as
-   * "missing on disk" and calls `cleanupMissingBoard`, dropping it from
-   * the project. Update before the cascade so propagateRename + tree
-   * reconcile both see the truth.
+   * Without this, a `.board.json` rename leaves the cache keyed against the
+   * old path: the next debounced write recreates a phantom file AND tree
+   * reconciliation flags the board "missing on disk" and drops it. Update
+   * before the cascade so propagateRename + tree reconcile both see the truth.
    *
    * Returns the list of board IDs whose path changed so callers can
    * trigger any post-rename housekeeping (e.g. mark dirty so the
@@ -381,27 +374,19 @@ export const boardCacheStore = {
    */
   renameBoardPath(oldPath: string, newPath: string): string[] {
     if (!oldPath || !newPath) return [];
-    // P2.7 (Audit-15) — strip leading slashes so the case-preserving `oldPrefix`
+    // Strip leading slashes so the case-preserving `oldPrefix`
     // and case-folded `foldedPrefix` (below) share a length (else `slice` desyncs).
     const normalisedOld = stripLeadingSlash(normalizePath(oldPath));
     const normalisedNew = stripLeadingSlash(normalizePath(newPath));
-    // L2 (Audit-13) — only a TRUE no-op (identical bytes after separator/trailing
-    // normalisation) returns early. A case-ONLY rename folds equal but the raw
-    // casing differs, and the stored path must still track disk: the prior
-    // `normalizeVaultRelative(old) === normalizeVaultRelative(new)` guard returned
-    // [] for it, leaving `boardPaths` keyed at the stale casing (phantom-file
-    // write + "missing on disk" eviction on a case-sensitive / synced FS). Fall
-    // through so the rebind loop below rewrites the entry to the new casing.
+    // Only a TRUE no-op (identical bytes after normalisation) returns early. A
+    // case-ONLY rename folds equal but must still rebind `boardPaths` to the new
+    // casing, else a phantom-file write + "missing on disk" eviction follows.
     if (normalisedOld === normalisedNew) return [];
-    // M4 (Audit-12) — compare case-INSENSITIVELY (Windows/macOS aren't
-    // case-sensitive) so an OS-reported rename whose casing diverges from the
-    // stored casing still rebinds. The raw `===`/`startsWith` on the
-    // case-PRESERVING `normalizePath` form it replaces silently failed to
-    // rebind a case-only rename, leaving the cache keyed at the stale path
-    // (phantom-file write + "missing on disk" eviction). The descendant SLICE
-    // still uses the case-preserving `oldPrefix` length so the suffix keeps its
-    // on-disk casing — board paths carry no leading slash, so the folded and
-    // unfolded prefixes share the same length.
+    // Compare case-INSENSITIVELY (Windows/macOS aren't case-sensitive) so an
+    // OS-reported rename whose casing diverges from the stored casing still
+    // rebinds. The descendant SLICE uses the case-preserving `oldPrefix` length
+    // so the suffix keeps its on-disk casing — board paths carry no leading
+    // slash, so the folded and unfolded prefixes share the same length.
     const oldPrefix = `${normalisedOld}/`;
     const foldedOld = normalizeVaultRelative(normalisedOld);
     const foldedPrefix = `${foldedOld}/`;
@@ -432,13 +417,12 @@ export const boardCacheStore = {
   },
 
   /**
-   * Replaces the entire cache with the given snapshot. Phase 22 M10 — used
+   * Replaces the entire cache with the given snapshot. Used
    * by vaultFolderOps.rename to roll back a half-mutated cache after the
    * `vault:rename` IPC fails. Does NOT touch `boardPaths` (paths are stable
    * across the rename — the IPC determines whether anything moved). Does NOT
    * mark dirty / schedule writes — the caller is responsible for cancelling
-   * any debounced writes that captured the renamed snapshot under Phase 22
-   * M6 scheduling.
+   * any debounced writes that captured the renamed snapshot.
    */
   replaceCache(snapshot: Record<string, V7BoardFileData>): void {
     boardCache = snapshot;
@@ -446,7 +430,7 @@ export const boardCacheStore = {
 
   /**
    * Replaces the `boardPaths` map with a captured snapshot. Mirrors
-   * `replaceCache` for the path map. Phase 31 A3.1 — paired with
+   * `replaceCache` for the path map. Paired with
    * `renameBoardPath` so the rename revert path can roll back the path
    * rebind without restoring the entire cache.
    */
@@ -477,11 +461,10 @@ export const boardCacheStore = {
    * persists synchronously — otherwise the user could close the app
    * inside the 300 ms debounce and lose the cascade entirely.
    *
-   * Phase 23 M11: returns `{ failed }` so multi-stage cascades (tag rewrite,
-   * folder rename) can surface a toast naming the boards whose `.board.json`
-   * write failed. Existing callers that ignore the return value still get
-   * the same fire-and-forget behaviour because the failed writes have
-   * already been pushed into `failedVaultPaths` via `endWrite(..., false)`.
+   * Returns `{ failed }` so multi-stage cascades (tag rewrite, folder rename)
+   * can toast the boards whose `.board.json` write failed. Callers that ignore
+   * it are still covered: failures are already in `failedVaultPaths` via
+   * `endWrite(..., false)`.
    */
   async flushAllDirty(): Promise<{ failed: string[] }> {
     const result = await flushAllScheduledBoards((boardId) => getBoardWriteArgs(boardId));
@@ -503,11 +486,9 @@ export const boardCacheStore = {
     const vaultRoot = vaultStore.path;
     const project = vaultStore.project;
     if (!vaultRoot || !project) return;
-    // Audit-11 VS-3 — snapshot the active vault identity before the awaited
-    // per-board loads. A swap (or close → reopen) landing mid-loop must NOT
-    // inject the OUTGOING vault's `.board.json` into the NEW vault's cache —
-    // the disk read is anchored to the captured `vaultRoot`, but the cache it
-    // writes into is the live one. Re-check after each await before injecting.
+    // A vault swap (or close → reopen) mid-loop must NOT inject the OUTGOING
+    // vault's `.board.json` into the NEW vault's cache: the read is anchored to
+    // the captured `vaultRoot` but the cache is live. Re-check after each await.
     const identity = captureVaultIdentity();
 
     const missing = project.boards.filter((b) => !boardCache[b.id]);
@@ -567,8 +548,7 @@ export const boardCacheStore = {
   /**
    * Mutates the cached board's settings IN PLACE and schedules a write.
    *
-   * Phase 3 (Consolidation 2026-05-25) — single write path. This is the
-   * canonical sink for board settings mutations whether or not the target
+   * Single write path: this is the canonical sink for board settings mutations whether or not the target
    * board is active. Active-board callers use `boardStore.updateSettings`,
    * which calls this method first and then mirrors the merged object onto
    * `boardStore.current.settings` for immediate reactivity.
@@ -576,13 +556,9 @@ export const boardCacheStore = {
   updateBoardSettings(boardId: string, settings: Record<string, unknown>) {
     const cached = boardCache[boardId];
     if (!cached) return;
-    // Audit 5.5 — build a fresh `board` (and entry) instead of mutating
-    // `cached.board.settings` in place and then ref-copying the same entry.
-    // The in-place path left a transient window where the cache map still
-    // pointed at the old entry while `board.settings` had already changed,
-    // and diverged from the spread-to-update convention used everywhere
-    // else. The new board object also gives identity-comparison consumers
-    // a real change to observe.
+    // Build a fresh `board` (and entry) rather than mutating settings in place:
+    // no transient window where the map points at the old entry with changed
+    // settings, and identity-comparison consumers see a real change.
     const nextBoard = { ...cached.board, settings } as typeof cached.board;
     boardCache = { ...boardCache, [boardId]: { ...cached, board: nextBoard } };
     this.markDirty(boardId);
@@ -636,7 +612,7 @@ export const boardCacheStore = {
     const vaultRoot = vaultStore.path;
     if (!vaultRoot) return false;
 
-    // Phase 2 / 2.3 — freeze the on-disk Kanban folder at create-time. The
+    // Freeze the on-disk Kanban folder at create-time. The
     // folder name is the sanitised board name and stays put on subsequent
     // renames, so cards under `Kanban/<original-name>/*.md` keep resolving.
     // Idempotent — leaves an explicitly-set `kanbanFolder` alone (e.g. when
@@ -684,11 +660,11 @@ export const boardCacheStore = {
 
   /**
    * Convenience wrapper that builds a default Board via `boardRegistry` and
-   * persists it. The Kanban-folder freeze (Phase 2 / 2.3) happens inside
+   * persists it. The Kanban-folder freeze happens inside
    * `persistNewBoard` so every caller (this wrapper, BoardBrowser, TabBar
    * new-tab, templates, BoardRouter auto-create) gets the same on-disk
    * shape — the registry is the single source of truth for default board
-   * fields per type (Phase 5).
+   * fields per type.
    */
   async createBoard(
     name: string,
@@ -697,10 +673,8 @@ export const boardCacheStore = {
   ): Promise<Board | null> {
     const factory = boardDefaults[type as Board['type']];
     if (!factory) return null;
-    // Phase 7.5 — `${type}_${createId()}` (collision-resistant nanoid) replaces
-    // the old `${type}-${Date.now()}-${Math.random()}` recipe. The id is an
-    // opaque cache/path key (nothing parses its structure), so existing boards
-    // keep their old-format ids; only new boards get this shape.
+    // The id is an opaque cache/path key (nothing parses its structure), so
+    // boards with older-format ids keep working alongside this shape.
     const boardId = `${type}_${createId()}`;
     const board = factory(boardId, name, settings);
 
@@ -746,11 +720,11 @@ export const boardCacheStore = {
     const boardPath = boardPaths[boardId];
     if (!boardPath) return false;
 
-    // Phase 1.3 — cancel any pending debounced write BEFORE the delete IPC,
+    // Cancel any pending debounced write BEFORE the delete IPC,
     // else a 300ms-old setTimeout fires after the unlink and resurrects the file.
     cancelBoardWrite(boardId, boardPath);
 
-    // Audit-18 3.11 — cancelBoardWrite only reaches pending/parked timers; an
+    // cancelBoardWrite only reaches pending/parked timers; an
     // IN-FLIGHT board:save (e.g. suspended on the drift prompt) would resolve
     // after this delete and resurrect the .board.json as a ghost. Mark the path
     // so writeBoardFile bails before board:save; clear it once any in-flight
@@ -838,8 +812,7 @@ export const boardCacheStore = {
   },
 };
 
-// Phase 4 (Consolidation 2026-05-25) — vault-swap reset registration.
-// Drops the per-board cache + paths + the unresolved-warn coalesce state
+// Vault-swap reset: drops the per-board cache + paths + the unresolved-warn coalesce state
 // so the next vault opens against a clean slate.
 onVaultSwap('pre-swap', 'boardCache', () => {
   boardCacheStore.clear();
@@ -869,20 +842,14 @@ async function syncTileMarkdown(
   const filename = doc.filename;
   const liveBody = doc.body ?? '';
 
-  // Phase A.3 — capture the file's mtime AND size before reading so we can
-  // detect an external edit that lands in the read/write gap. The stat IPC
-  // throws (via invokeOk) for missing files (new tile path); read the fields
-  // INSIDE the try so a missing / null / malformed stat is caught here and
-  // treated as "no baseline" rather than deref'd later (a new tile has no
-  // backing file yet, so this is the common case, not an error).
+  // Capture the file's mtime AND size before reading so we can detect an
+  // external edit that lands in the read/write gap. The stat throws for a
+  // missing file (the common new-tile case); read the fields INSIDE the try so
+  // that's treated as "no baseline".
   //
-  // Phase 3 / 3.3 — compare SIZE as well as mtime. A coarse-resolution
-  // filesystem (FAT's 2 s stamp, some network / OneDrive mounts) can give a
-  // same-second external write an IDENTICAL `mtimeMs`, so the prior
-  // mtime-only guard silently clobbered it — Filo's worst data-loss class.
-  // `mtime || size` catches every external edit that changed the file's
-  // length even when the clock didn't move. (A same-size, same-mtime edit is
-  // the narrow residual; catching it needs a content hash, out of scope here.)
+  // Compare SIZE as well as mtime: a coarse-resolution filesystem (FAT's 2 s
+  // stamp, some network / OneDrive mounts) can give a same-second external
+  // write an IDENTICAL `mtimeMs`.
   let beforeMtime: number | undefined;
   let beforeSize: number | undefined;
   try {
@@ -895,15 +862,14 @@ async function syncTileMarkdown(
 
   // Read the file fresh from disk so we never miss frontmatter the vault
   // index hasn't caught up to (e.g. external editor changes between watcher
-  // events). Phase 37 / 37.6 — canonical two-arg form (vaultRoot, relPath);
-  // the legacy single-arg branch has been removed from the IPC handler.
+  // events).
   let diskRaw = '';
   try {
     // syncTileMarkdown runs its own pre-read / pre-write mtime guard (see
     // syncTileMarkdownMtimeGuard.test.ts), so it deliberately does NOT route
     // through readMarkdownForHydrate — seeding the drift baseline here would
     // double-count against that guard and risk a redundant Reload prompt
-    // (see the F1 note in markdownFileWriter.ts).
+    // (see markdownFileWriter.ts).
     const readResult = await invokeOk('vault:read-file-text', vaultRoot, filename); // allow-hydrate-read: own mtime guard
     diskRaw = readResult.content;
   } catch {
@@ -922,12 +888,9 @@ async function syncTileMarkdown(
     };
   }
 
-  // Phase A.3 — re-stat before the write. If the mtime moved between the
-  // pre-read stat and now, an external editor wrote to the file in our
-  // read/write gap. Route through the Reload / Keep-local prompt so the
-  // user explicitly chooses whether to clobber the external edit. The
-  // unguarded path silently overwrote external changes — Filo's worst
-  // class of data loss.
+  // Re-stat before the write. If mtime/size moved since the pre-read stat, an
+  // external editor wrote in our read/write gap. Route through the Reload /
+  // Keep-local prompt so the user explicitly chooses whether to clobber it.
   if (beforeMtime !== undefined) {
     let writeMtime: number | undefined;
     let writeSize: number | undefined;
@@ -941,12 +904,10 @@ async function syncTileMarkdown(
     let drift =
       writeMtime !== undefined &&
       (writeMtime !== beforeMtime || writeSize !== beforeSize);
-    // L9 (Audit-13) — a coarse-clock volume (FAT, some network/OneDrive mounts)
-    // can report IDENTICAL mtime AND size for a same-length external overwrite —
-    // the mtime||size guard's residual. Re-read the bytes and compare to what we
-    // read moments ago so that residual still routes through the prompt instead
-    // of being silently clobbered (the gateway's own drift path can't reach a
-    // recovery sync, which deliberately bypasses readMarkdownForHydrate above).
+    // A coarse-clock volume can report IDENTICAL mtime AND size for a
+    // same-length external overwrite. Re-read the bytes and compare so that
+    // still routes through the prompt (the gateway's drift path can't reach a
+    // recovery sync, which bypasses readMarkdownForHydrate above).
     if (!drift && writeMtime !== undefined) {
       try {
         const recheck = await invokeOk('vault:read-file-text', vaultRoot, filename); // allow-hydrate-read: own mtime guard
@@ -967,7 +928,7 @@ async function syncTileMarkdown(
           skippedReason: 'external-edit-reload',
         };
       }
-      if (!(await backupExternalVersion(vaultRoot, filename))) return { wrote: false, skippedReason: 'keep-local-backup-declined' }; // Audit-19 UX-6
+      if (!(await backupExternalVersion(vaultRoot, filename))) return { wrote: false, skippedReason: 'keep-local-backup-declined' };
     }
   }
 
@@ -976,13 +937,9 @@ async function syncTileMarkdown(
   // and the gateway will reject the write). Mark hydrated with the BOM the
   // disk-read observed so the gateway's BOM preservation kicks in.
   if (!isHydrated(filename)) markHydrated(filename, diskParsed.hadBom);
-  // #17 — reconcile the open editor's cached frontmatter + raw baseline with
-  // the fresh disk read we're about to write FROM. Without this, the document
-  // store keeps whatever frontmatter it cached at hydrate time; a later
-  // body-only save through the gateway would emit THAT stale object and could
-  // revert external YAML keys this sync just read off disk. (Largely mooted by
-  // R1's byte-preserving writes, but keeps the cache + clean-bytes baseline
-  // coherent with disk regardless of the write path.)
+  // Reconcile the open editor's cached frontmatter + raw baseline with the
+  // fresh disk read we're about to write FROM, so a later body-only save can't
+  // emit a stale hydrate-time object and revert external YAML keys.
   documentStore.setFrontmatter(docId, diskParsed.frontmatter, diskParsed.rawFrontmatter);
   try {
     await writeMarkdownFile({

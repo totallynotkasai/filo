@@ -24,7 +24,7 @@
   }
 
   /**
-   * Phase 6.4 (IMPLEMENTATION_PLAN_2026-05-27) — skip disabled items on
+   * Skip disabled items on
    * arrow-key nav so a fully-disabled stretch of menu doesn't trap focus
    * on an unactionable row. Walks at most `actionItems.length` steps in
    * the requested direction; if every item is disabled, the focus stays
@@ -110,7 +110,7 @@
       // right; the rAF below refines it against the real rendered size.
       posX = menu.x;
       posY = menu.y;
-      // Phase 6.4 — open on the first ENABLED item so a leading disabled
+      // Open on the first ENABLED item so a leading disabled
       // row doesn't grab initial focus.
       focusedIndex = firstEnabledIndex();
       // Capture the previously-focused element so we can restore it on close.

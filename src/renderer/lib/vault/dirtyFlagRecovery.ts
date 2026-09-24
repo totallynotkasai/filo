@@ -24,29 +24,20 @@ import { getMachineIdentity, ownSentinelPath } from './machineIdentity';
 import { readOwnOrLegacySentinel, clearOwnSentinel, retireConsumedLegacySentinel } from './machineSentinels';
 
 /**
- * Audit-19 EXT-6 — the sentinel is PER MACHINE (`.filo/.dirty.<machineId>`):
- * `.filo/` syncs, and with one shared name machine B's clean shutdown deleted
- * machine A's crash breadcrumb (and B prompted for A's unflushed files). The
- * legacy shared `.filo/.dirty` is read and consumed once, never written.
+ * The sentinel is PER MACHINE (`.filo/.dirty.<machineId>`): `.filo/` syncs,
+ * and a shared name would let machine B's clean shutdown delete machine A's
+ * crash breadcrumb. The legacy shared `.filo/.dirty` is read and consumed
+ * once, never written.
  */
 const ownDirtyPath = (): string => ownSentinelPath('dirty');
 
 
 /**
- * Audit-14 1.3 — per-launch session id, minted ONCE for the lifetime of this
- * renderer process. Stamped into every `.filo/.dirty` payload by `markDirty`
- * and compared in `checkRecovery`.
- *
- * Why: opening a vault that triggers a migration repair (groupsBackfilled /
- * orphan-prune / boardId-normalize) schedules board writes during the swap,
- * and each `beginWrite` lays down a FRESH `.filo/.dirty` for those repaired
- * paths. `checkRecovery` (which runs just after the commit) then reads a
- * sentinel THIS launch just wrote and — with no session marker — cannot tell
- * it from a genuine prior-crash breadcrumb, surfacing a spurious Recovery
- * modal naming the just-repaired boards. A sentinel whose `launchId` equals
- * `LAUNCH_ID` was written by THIS process, so it is treated as "self, not a
- * prior crash" and suppressed. A prior session's sentinel carries a different
- * id (or none, for legacy/pre-fix sentinels) and still prompts.
+ * Per-launch session id, minted ONCE per renderer process, stamped into every
+ * sentinel payload and compared in `checkRecovery`. Opening a vault can
+ * schedule migration-repair writes that lay down a fresh sentinel before
+ * `checkRecovery` runs; without this marker that self-written sentinel would
+ * look like a prior crash and raise a spurious Recovery modal.
  */
 const LAUNCH_ID = createId();
 
@@ -75,16 +66,13 @@ function withSentinelLock<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Audit-6 M5 — awaits the tail of the sentinel mutex chain so a fire-and-forget
+ * Awaits the tail of the sentinel mutex chain so a fire-and-forget
  * `markClean` / `markDirty` enqueued by `endWrite` (via `syncSentinelIfIdle`)
  * has actually landed on disk before the caller proceeds.
  *
- * The quit path drains every pending write — each terminal `endWrite` enqueues
- * a `markClean` onto `sentinelMutex` — and then immediately sends
- * `app:ready-to-quit`; main destroys the renderer before that still-pending
- * `markClean` IPC flushes, so `.filo/.dirty` survives and the next vault open
- * shows a PHANTOM recovery prompt (the session actually shut down clean).
- * `handleFlushAndQuit` awaits this before signalling ready-to-quit.
+ * `handleFlushAndQuit` awaits this before signalling ready-to-quit: otherwise
+ * main destroys the renderer before the final `markClean` IPC flushes, and the
+ * next vault open shows a phantom recovery prompt.
  *
  * Resolves (never rejects) — the individual sentinel ops already surface their
  * own failures via `reportError`, and a rejected tail must not wedge the quit.
@@ -97,17 +85,11 @@ export function flushDirtyFlagSentinel(): Promise<void> {
 }
 
 /**
- * Audit-8 L3 — a locked / read-only share (or a transient AV lock) makes the
- * `.filo/.dirty` sentinel both unreadable AND unclearable, so `checkRecovery`
- * would re-surface the same "sentinel-unreadable" forensic toast (+ snapshot)
- * on EVERY vault open. Track which vault roots have already surfaced it this
- * session and surface ONCE per vault per session. Keyed by `vaultRoot` so
- * distinct vaults stay independent and an A→B→A swap doesn't re-nag. Module-
- * scoped for the whole session; NOT cleared on swap (a re-opened same-path
- * vault should stay quiet). The returned `RecoveryStatus` is unchanged — only
- * the repeat toast/snapshot is suppressed, and the recovery modal already
- * gates the `sentinel-unreadable` reason out, so suppression has no other
- * downstream effect.
+ * A locked / read-only share makes the sentinel both unreadable AND
+ * unclearable, so `checkRecovery` would re-surface the "sentinel-unreadable"
+ * toast (+ snapshot) on every vault open. Surface it ONCE per vault root per
+ * session (not cleared on swap, so an A→B→A swap doesn't re-nag). Only the
+ * repeat toast/snapshot is suppressed; the returned status is unchanged.
  */
 const surfacedUnreadableSentinel = new Set<string>();
 
@@ -140,26 +122,19 @@ interface SentinelPayload {
   dirtyAt: number;
   pendingPaths?: string[];
   /**
-   * Audit-14 1.3 — the {@link LAUNCH_ID} of the process that wrote this
-   * sentinel. Absent on legacy / pre-fix sentinels (treated as a prior
-   * session, so they still prompt).
+   * The {@link LAUNCH_ID} of the process that wrote this sentinel. Absent on
+   * legacy sentinels (treated as a prior session, so they still prompt).
    */
   launchId?: string;
   /**
-   * Audit-16 3.3 — the vault-identity generation active when this sentinel
-   * was written. The launchId alone over-matched: it suppresses by PROCESS,
-   * so a sentinel deliberately PRESERVED across a same-session swap-away
-   * (the Don't-Save branch keeps `.filo/.dirty` precisely so reopening the
-   * vault surfaces the Recovery modal) — or left by a failed write — was
-   * swallowed on an A→B→A or close→reopen in the same session, and the
-   * first clean write cycle then destroyed the breadcrumb permanently.
-   * Suppression now requires BOTH the launchId and the generation of the
-   * CURRENT open to match, scoping it to "written during this very vault
-   * open" (the migration-repair case 1.3 actually targeted). Absent on
-   * legacy sentinels (prompt, as before).
+   * The vault-identity generation active when this sentinel was written.
+   * Suppression requires BOTH launchId and the CURRENT open's generation to
+   * match: launchId alone would also swallow a sentinel deliberately preserved
+   * across a same-session swap-away (Don't-Save) or left by a failed write,
+   * and the next clean write would destroy that breadcrumb.
    */
   vaultGeneration?: number;
-  /** Audit-19 EXT-6 — the writing machine (labels a foreign sentinel). */
+  /** The writing machine (labels a foreign sentinel). */
   machineId?: string;
   hostname?: string;
 }
@@ -178,11 +153,9 @@ export function markDirty(
   pendingPaths?: readonly string[],
 ): Promise<void> {
   if (!vaultRoot) return Promise.resolve();
-  // Audit-14 1.3 — stamp the per-launch session id so `checkRecovery` can tell
-  // a sentinel THIS process wrote (e.g. a migration-repair write during open)
-  // from a genuine prior-crash breadcrumb. Audit-16 3.3 — pair it with the
-  // vault-identity generation so the suppression is scoped to this vault OPEN,
-  // not the whole process (see SentinelPayload.vaultGeneration).
+  // Stamp launch id + vault generation so `checkRecovery` can tell a sentinel
+  // written during THIS vault open from a prior-crash breadcrumb (see
+  // SentinelPayload.vaultGeneration).
   const payload: SentinelPayload = {
     dirtyAt: Date.now(),
     launchId: LAUNCH_ID,
@@ -195,11 +168,8 @@ export function markDirty(
   }
   return withSentinelLock(async () => {
     try {
-      // Phase 31 A1.6 — the sentinel is load-bearing for crash recovery.
-      // A silently-failed write (envelope `{ success: false }`) leaves
-      // the user exposed: the next crash before save lands would have no
-      // recovery breadcrumb. `invokeOk` surfaces the failure as a thrown
-      // IpcEnvelopeError so the catch below reports it via errorBus.
+      // The sentinel is load-bearing for crash recovery, so a failed write
+      // must not be silent: `invokeOk` throws and the catch reports it.
       // allow-direct-write: `.filo/.dirty` is a one-shot crash-recovery
       // sentinel, not a `.md` file — no editor hydrates from it.
       await invokeOk(
@@ -227,14 +197,13 @@ export function markClean(vaultRoot: string): Promise<void> {
   if (!vaultRoot) return Promise.resolve();
   return withSentinelLock(async () => {
     try {
-      // Phase 31 A1.6 — ENOENT (already gone) is the desired terminal state;
-      // EACCES/EBUSY/etc escalate so the user knows "clean" didn't land.
-      // Audit-19 EXT-6 — only THIS machine's sentinel (main refuses others),
-      // plus the legacy shared one once it was surfaced this session.
+      // ENOENT (already gone) is the desired terminal state; EACCES/EBUSY/etc
+      // escalate so the user knows "clean" didn't land. Clears only THIS
+      // machine's sentinel (main refuses others), plus the legacy shared one
+      // once it was surfaced this session.
       await clearOwnSentinel(vaultRoot, 'dirty');
     } catch (err) {
-      // Treat the thrown form of ENOENT the same way (some main-side
-      // handlers historically threw rather than returning an envelope).
+      // Treat a thrown ENOENT the same way.
       if (err && typeof err === 'object' && 'code' in err && (err as { code?: string }).code === 'ENOENT') {
         return;
       }
@@ -248,26 +217,18 @@ export function markClean(vaultRoot: string): Promise<void> {
 }
 
 /**
- * Audit-17 3.2 — pre-commit stash of the prior session's sentinel status.
+ * Pre-commit stash of the prior session's sentinel status.
  *
- * `commitVaultCandidate` marks loader-repaired boards dirty, which schedules
- * writes whose `beginWrite` → `refreshSentinel` → `markDirty` REPLACES the
- * on-disk `.filo/.dirty` with THIS session's pending set (stamped with this
- * launchId + generation) — destroying a genuine prior-crash payload before
- * the recovery sequencer's `checkRecovery` (which runs post-commit) ever
- * reads it; the Audit-16 3.3 self-write suppression then hides the crash
- * entirely. Repairs are merely today's vector — ANY write scheduled between
- * commit and sequencer step 1 has the same effect. So the candidate phase
- * reads + stashes the sentinel BEFORE the commit (no write of the new open
- * can have fired yet), and `checkRecovery` consumes the stashed copy.
+ * Any write scheduled between commit and `checkRecovery` (e.g. loader-repaired
+ * boards) REPLACES the on-disk sentinel with this session's pending set,
+ * destroying a genuine prior-crash payload — which the self-write suppression
+ * would then hide. So the candidate phase reads + stashes the sentinel BEFORE
+ * the commit, and `checkRecovery` consumes the stashed copy.
  *
- * The stashed read deliberately skips the launchId/generation self-write
- * suppression: pre-commit, no write of the upcoming open exists, so ANY
- * sentinel present is by definition a prior session/open's breadcrumb — and
- * MUST prompt. (Suppressing here would also regress the Audit-16 3.3
- * same-path-reopen case: at stash time the generation hasn't been bumped
- * yet, so a Don't-Save-preserved sentinel from the previous open of the
- * SAME path still matches the current launchId + generation.)
+ * The stashed read skips self-write suppression: pre-commit, any sentinel
+ * present is a prior session/open's breadcrumb and MUST prompt. (At stash time
+ * the generation hasn't been bumped yet, so a Don't-Save-preserved sentinel
+ * from a previous open of the SAME path would otherwise still match.)
  */
 let stashedPreCommitStatus: { vaultRoot: string; status: RecoveryStatus } | null = null;
 
@@ -293,22 +254,14 @@ export function __resetRecoveryStashForTests(): void {
  * Reads the sentinel to determine whether the previous session ended with
  * unflushed writes. Called once on vault open.
  *
- * Audit-17 3.2 — consumes the pre-commit stash when one exists for this
- * `vaultRoot` (see `stashRecoveryStatusBeforeCommit`), so open-time repair
- * writes that replaced the on-disk sentinel between commit and this call
- * can't hide a genuine prior-crash payload. Falls back to a live read when
- * no stash matches (direct callers / tests). The stash is single-consume
- * and always cleared here so a stale entry from an aborted open can't leak
- * into an unrelated later check.
+ * Consumes the pre-commit stash when one exists for this `vaultRoot` (see
+ * `stashRecoveryStatusBeforeCommit`); falls back to a live read otherwise.
+ * The stash is single-consume and always cleared here so a stale entry from
+ * an aborted open can't leak into a later check.
  *
- * Two failure modes are deliberately split. ENOENT (sentinel missing) is the
- * "all clean" path — the last session shut down without a pending write. Any
- * OTHER read failure (EACCES, IO_ERROR, the IPC itself throwing) means the
- * sentinel is unreadable: we can't prove the previous session was clean, so
- * we flag `needsRecovery: true` with `reason: 'sentinel-unreadable'` and
- * surface a toast so the user knows to investigate manually. The original
- * code lumped both branches into `needsRecovery: false`, which silently
- * skipped recovery the moment Filo couldn't see its own sentinel.
+ * ENOENT (sentinel missing) is the "all clean" path. Any OTHER read failure
+ * means we can't prove the previous session was clean, so we flag
+ * `needsRecovery: true` with `reason: 'sentinel-unreadable'` and toast.
  */
 export async function checkRecovery(vaultRoot: string): Promise<RecoveryStatus> {
   const stash = stashedPreCommitStatus;
@@ -321,7 +274,7 @@ export async function checkRecovery(vaultRoot: string): Promise<RecoveryStatus> 
 
 /**
  * The actual sentinel read. `suppressSelfWrites: true` (the live-read path)
- * applies the Audit-14 1.3 + Audit-16 3.3 launchId/generation suppression so
+ * applies the launchId/generation suppression so
  * a sentinel written DURING the current open doesn't prompt; the pre-commit
  * stash path passes `false` (see `stashRecoveryStatusBeforeCommit`).
  */
@@ -333,10 +286,9 @@ async function readRecoveryStatus(
   let content: string;
   let source: 'own' | 'legacy' = 'own';
   try {
-    // Phase 1 (CONSOLIDATION_PLAN) — ENOENT means the previous session shut
-    // down cleanly (no pending writes). Any other failure means we couldn't
-    // prove cleanliness — surface it and snapshot the (unreadable) sentinel.
-    // Audit-19 EXT-6 — THIS machine's sentinel, else the legacy shared one;
+    // ENOENT means the previous session shut down cleanly. Any other failure
+    // means we couldn't prove cleanliness — surface it and snapshot the
+    // sentinel. Reads THIS machine's sentinel, else the legacy shared one;
     // another machine's is never prompted for (its data isn't here).
     const result = await readOwnOrLegacySentinel(vaultRoot, 'dirty');
     content = result.content;
@@ -345,17 +297,15 @@ async function readRecoveryStatus(
     if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
       return { needsRecovery: false };
     }
-    // Audit-8 L3 — surface the forensic toast + snapshot only on the FIRST
-    // unreadable open for this vault this session (see
-    // `surfacedUnreadableSentinel`); a read-only share can't self-heal, so an
-    // unguarded toast nags on every open.
+    // Surface the toast + snapshot only on the FIRST unreadable open for this
+    // vault this session (see `surfacedUnreadableSentinel`).
     if (shouldSurfaceUnreadableSentinel(vaultRoot)) {
       reportError(
         'dirtyFlag.check',
         err,
         "Couldn't read the crash-recovery sentinel — Filo can't verify the previous session shut down cleanly",
       );
-      // Phase 31 A2.4 — defensive: copy the raw sentinel bytes into
+      // Defensive: copy the raw sentinel bytes into
       // `.filo/recovery/<ts>/.dirty` before any session-side markDirty
       // overwrites the file. The renderer-side read failed (likely EACCES
       // or EBUSY) but the main-side `fs.copyFile` may still succeed if the
@@ -368,29 +318,14 @@ async function readRecoveryStatus(
     }
     return { needsRecovery: true, reason: 'sentinel-unreadable' };
   }
-  // Audit-19 EXT-6 — a legacy shared sentinel is consumed once: the next
-  // markClean for this vault (the user's Dismiss / first clean cycle) deletes
-  // it (`clearOwnSentinel` retires a legacy file that was read).
+  // A legacy shared sentinel is consumed once: the next markClean for this
+  // vault deletes it (`clearOwnSentinel` retires a legacy file that was read).
   if (!content) {
-    // 6.4.M5 — a zero-byte `.filo/.dirty` is evidence of a crash that
-    // interrupted `markDirty` between the create-empty-file step and the
-    // JSON-payload write. The legacy code treated it as "cleanly absent",
-    // silently hiding the crash. Treat as dirty with the same reason flag
-    // as a sentinel-unreadable EACCES so the recovery UI surfaces the
-    // "investigate manually" copy. No `dirtyAt` available — that's the
-    // signal the recovery handler uses to detect the truncated case.
-    //
-    // Audit-7 M4 — the `sentinel-unreadable` reason is GATED OUT of the
-    // recovery modal in `openVault` (`reason !== 'sentinel-unreadable'`), so
-    // without a toast here the strongest mid-write-crash signal (the exact
-    // case 6.4.M5 added) reached neither the modal nor any notification. Emit
-    // a `reportError` so it routes through the same errorBus toast the EACCES
-    // branch above uses — the user at least learns the previous session may
-    // not have shut down cleanly.
-    //
-    // Audit-8 L3 — on a writable volume `markClean` deletes the sentinel on the
-    // next edit/close so this surfaces once anyway, but a read-only share can't
-    // clear it; the per-session/per-vault guard keeps the repeat quiet there too.
+    // A zero-byte sentinel means a crash interrupted `markDirty` between
+    // creating the file and writing the payload. Treat as dirty with the
+    // unreadable reason (no `dirtyAt` marks the truncated case). That reason
+    // is gated out of the recovery modal, so the toast is the only surface;
+    // it's deduped per vault per session.
     if (shouldSurfaceUnreadableSentinel(vaultRoot)) {
       reportError(
         'dirtyFlag.check',
@@ -408,20 +343,11 @@ async function readRecoveryStatus(
       await retireConsumedLegacySentinel(vaultRoot, 'dirty').catch(() => undefined);
       return { needsRecovery: false };
     }
-    // Audit-14 1.3 — a sentinel stamped with THIS launch's id was written by
-    // the current process (e.g. a migration-repair write during the open that
-    // is about to call us), not a prior crash. Suppress the prompt. A prior
-    // session's sentinel carries a different id, and a legacy/pre-fix sentinel
-    // carries none — both fall through and prompt as before.
-    //
-    // Audit-16 3.3 — the launchId must ALSO carry the CURRENT open's vault
-    // generation. The repair writes that 1.3 targets fire after
-    // `commitVaultCandidate`'s `beginVaultGeneration`, i.e. inside the same
-    // open that is now calling checkRecovery, so they match. A sentinel
-    // preserved by the Don't-Save swap-away (or left by a failed write)
-    // carries an EARLIER generation — same process, different open — and
-    // must prompt: it is the documented breadcrumb contract for "reopening
-    // the outgoing vault surfaces the Recovery modal".
+    // A sentinel stamped with THIS launch's id AND the current open's vault
+    // generation was written during this very open (e.g. a migration-repair
+    // write), not a prior crash — suppress. One from an earlier open of the
+    // same process (Don't-Save swap-away, failed write) carries an earlier
+    // generation and must prompt.
     if (
       opts.suppressSelfWrites
       && parsed.launchId !== undefined
@@ -445,7 +371,7 @@ async function readRecoveryStatus(
 }
 
 /**
- * Test-only — the current process's {@link LAUNCH_ID}. Lets the 1.3 unit test
+ * Test-only — the current process's {@link LAUNCH_ID}. Lets the unit test
  * assert `markDirty` stamps it and craft a "prior session" sentinel with a
  * deliberately different id. Production code never needs this.
  */
@@ -453,22 +379,14 @@ export function __getLaunchIdForTests(): string {
   return LAUNCH_ID;
 }
 
-// Phase 3 (IMPL_PLAN 2026-05-25) — vault-swap reset. The mutex chain
-// head holds promises tethered to the outgoing vault's `.filo/.dirty`
-// path. A straggling `markDirty` / `markClean` enqueued just before
-// swap would otherwise drag the new vault's first sentinel op behind a
-// chain that targets a vault root that's no longer active.
+// Vault-swap reset of the mutex chain, so the new vault's first sentinel op
+// isn't queued behind ops targeting the outgoing vault.
 //
-// G1 — but resetting straight to a fresh `Promise.resolve()` ORPHANS an
-// in-flight `markClean(previousVault)`: `writeStateTracking.resetWriteTracking`
-// (the `writeStateTracking` pre-swap handler, which `runAfter` orders before
-// this one) enqueues that markClean onto `sentinelMutex` on the Save branch.
-// If we drop the chain head, the NEXT vault's first `markDirty` enqueues on
-// the fresh chain and can race the still-running markClean — on a reopened
-// SAME-PATH vault the markClean would delete the new session's freshly-written
-// `.filo/.dirty`, masking a real crash. So await the current tail until the
-// chain is quiescent, THEN reset. The await costs one in-flight IPC delete
-// (~ms); correctness wins over the prior fire-and-forget latency saving.
+// Await the current tail BEFORE resetting: `writeStateTracking`'s pre-swap
+// handler (ordered first via `runAfter`) enqueues a `markClean(previousVault)`.
+// Dropping the chain head would let the next vault's first `markDirty` race
+// it — on a reopened SAME-PATH vault the markClean could delete the new
+// session's fresh sentinel, masking a real crash.
 onVaultSwap(
   'pre-swap',
   'dirtyFlagRecovery',

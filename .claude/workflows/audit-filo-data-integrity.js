@@ -89,7 +89,7 @@ Conventions:
 - Renderer never touches fs; everything is IPC.
 - Markdown writes ALL go through markdownFileWriter (the CI gate enforces this).
 - Stores use Svelte 5 runes ($state, $derived, $effect, SvelteSet) in .svelte.ts files.
-- 23 ci:* guard scripts in package.json ratchet many invariants.
+- ~53 static checks in scripts/gates (npm run ci:gates; list them with: node scripts/gates/run.mjs --list) ratchet many invariants.
 
 Anti-patterns to hunt:
 - $effect that subscribes to something with no return-cleanup → memory leak across vault swaps.
@@ -120,7 +120,7 @@ Read deeply:
 - src/renderer/lib/vault/tagRewriter.ts (line-level fast path + dump fallback)
 - src/main/vault/filenameUtils.ts (atomicWriteFile — open→write→fsync→close→rename→fsync(dir))
 - src/main/ipc/vault.ipc.ts (the write IPC handlers)
-- The CI gates: scripts/check-markdown-gateway.mjs, check-markdown-read-gateway.mjs, check-frontmatter-invariant.mjs, check-no-prod-markdown-test-flushers.mjs
+- The CI gates: scripts/gates/writePath.mjs + markdownFormat.mjs (markdown-gateway, markdown-read-gateway, frontmatter-invariant, no-prod-md-test-flushers, …)
 
 Hunt for:
 - A code path that writes markdown without going through scheduleMarkdownWrite/forceWrite*.
@@ -150,7 +150,7 @@ Read deeply:
 - src/renderer/stores/boardCache.svelte.ts (and boardCacheTiles/Kanban/TaskList/ConnectionsFrames/Frontmatter.ts)
 - src/renderer/stores/history.svelte.ts (per-board undo/redo, snapshot fan-out)
 - src/renderer/commands/*.ts — read at least Command.ts, tileCommands.ts, kanbanCommands.ts, taskCommands.ts, groupAndBoardCommands.ts, styleCommands.ts
-- The CI gates: scripts/check-direct-board-mutations.mjs, check-command-snapshot-discipline.mjs, check-commands-target-board.mjs, check-board-write-paths.mjs
+- The CI gates: scripts/gates/commands.mjs (direct-board-mutations, command-snapshot-discipline, commands-target-board, command-roundtrip-coverage, …)
 
 Hunt for:
 - Commands that mutate state without snapshotting first (or after the mutation — corrupted undo).

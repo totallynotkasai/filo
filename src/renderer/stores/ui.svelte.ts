@@ -10,7 +10,6 @@ let sidebarOpen = $state(true);
 let sidebarWidth = $state(240);
 // In-app floating mode: when true, AppShell renders the vault sidebar
 // inside a draggable `FloatingVaultPanel` instead of the docked column.
-// Replaces the legacy second-BrowserWindow pop-out implementation.
 let sidebarFloating = $state(false);
 let floatingBounds = $state<{ x: number; y: number; width: number; height: number }>({
   x: 80,
@@ -31,7 +30,7 @@ let boardToolbarVisible = $state(true);
 // ── Modals ──
 let activeModal = $state<string | null>(null); // 'keyboard-shortcuts', 'board-browser', 'project-settings', etc.
 
-// Phase 31 B5.1 — side-channel context for the Re-link modal so the
+// Side-channel context for the Re-link modal so the
 // keyless `openModal('relink-tile')` API doesn't need to thread the tile
 // id + compatible extension list through its argument shape.
 interface RelinkContext { tileId: string; expectedTypes: string[] }
@@ -64,7 +63,7 @@ export interface ConfirmDialogConfig {
   onConfirm: (extraOptionChecked: boolean) => void;
   onCancel?: () => void;
   /**
-   * Audit-19 EXT-5 — an optional third, non-destructive button rendered between
+   * An optional third, non-destructive button rendered between
    * Cancel and Confirm (the quit dialog's "Retry now"). Clicking it closes the
    * dialog and calls `onClick` — neither onConfirm nor onCancel fires.
    */
@@ -75,7 +74,7 @@ let confirmDialog = $state<ConfirmDialogConfig | null>(null);
 
 // ── Sidebar pending-rename signal ──
 //
-// Phase C / C.7 — when the user clicks "New Folder" in the sidebar
+// When the user clicks "New Folder" in the sidebar
 // toolbar, the new node should mount already in rename mode with its
 // name selected so the user can type the real name without an extra
 // click. The toolbar sets this to the new folder's absolute path; the
@@ -133,21 +132,20 @@ export interface ToastMessage {
   /** Fires when the toast dismisses without any action being invoked. */
   onDismiss?: () => void;
   /**
-   * M1 (Audit-18) — the toast's `onDismiss` means "the user acknowledged this
-   * → destroy the underlying recovery breadcrumb" (e.g. `clearQuitFailureBreadcrumb`,
-   * `markClean`). Such a toast must be dismissed by a GENUINE user action only:
-   * the automatic dismissal paths (vault-swap teardown, TOAST_CAP eviction)
-   * skip firing its `onDismiss`, so a swap/cap can't silently consume the
-   * breadcrumb — it survives to re-surface next launch instead.
+   * The toast's `onDismiss` means "the user acknowledged this → destroy the
+   * underlying recovery breadcrumb" (e.g. `clearQuitFailureBreadcrumb`,
+   * `markClean`). The automatic dismissal paths (vault-swap teardown,
+   * TOAST_CAP eviction) skip its `onDismiss`, so only a genuine user action
+   * consumes the breadcrumb — otherwise it re-surfaces next launch.
    */
   acknowledgeOnly?: boolean;
   /**
-   * Audit-19 UX-6 — a decision toast that stays until the user acts on it (no
-   * lifetime timer). Refused when `onDismiss` is set: a promise-backed toast
-   * keeps the Audit5-R3 15s cap so it can never strand its write.
+   * A decision toast that stays until the user acts on it (no lifetime
+   * timer). Refused when `onDismiss` is set: a promise-backed toast keeps the
+   * 15s cap so it can never strand its write.
    */
   sticky?: boolean;
-  /** Audit-19 UX-6 — a newer toast with the same key silently replaces this one. */
+  /** A newer toast with the same key silently replaces this one. */
   dedupeKey?: string;
 }
 
@@ -156,17 +154,15 @@ let toastCounter = 0;
 const toastTimers = new SvelteMap<string, ReturnType<typeof setTimeout>>();
 
 /**
- * Every toast auto-dismisses after at most this long — including the
- * external-edit decision toasts that historically passed `duration: 0`
- * to stay on screen until the user picked Reload / Keep. Auto-dismiss is
- * the non-destructive default: the lossy "Reload / discard" choice always
- * requires an explicit click, so a toast timing out only ever keeps the
- * user's in-memory state (the two write-blocking promise toasts resolve
- * to 'defer' on dismiss — see vaultExternalDriftPrompts.ts). Capping the
- * promise-backed toasts here stops a re-firing conflict prompt from
- * blanketing the screen indefinitely. Audit-19 UX-6: a NON-promise decision
- * toast may opt into `sticky` (no timer) together with a `dedupeKey`, which
- * replaces any older toast for the same file so it still can't stack.
+ * Every toast auto-dismisses after at most this long, including external-edit
+ * decision toasts that pass `duration: 0`. Auto-dismiss is the non-destructive
+ * default: the lossy "Reload / discard" choice always requires an explicit
+ * click, so a timeout only keeps the user's in-memory state (the write-blocking
+ * promise toasts resolve to 'defer' on dismiss — see
+ * vaultExternalDriftPrompts.ts). The cap stops a re-firing conflict prompt from
+ * blanketing the screen. A NON-promise decision toast may opt into `sticky`
+ * (no timer) with a `dedupeKey`, which replaces any older toast for the same
+ * file so it still can't stack.
  */
 const TOAST_MAX_LIFETIME_MS = 15000;
 
@@ -256,14 +252,13 @@ export const uiStore = {
   openModal(id: string) { activeModal = id; },
   closeModal() {
     activeModal = null;
-    // Phase 31 B5.1 — drop the per-modal side-channel state on close so a
-    // subsequent open of the relink modal doesn't inherit the prior
-    // tile's context.
+    // Drop the per-modal side-channel state on close so a subsequent open of
+    // the relink modal doesn't inherit the prior tile's context.
     relinkContext = null;
   },
   isModalOpen(id: string) { return activeModal === id; },
 
-  // Phase 31 B5.1 — relink modal context.
+  // Relink modal context.
   get relinkContext() { return relinkContext; },
   openRelinkModal(tileId: string, expectedTypes: string[]) {
     relinkContext = { tileId, expectedTypes };
@@ -273,20 +268,14 @@ export const uiStore = {
   // Confirm dialog
   get confirmDialog() { return confirmDialog; },
   openConfirm(config: ConfirmDialogConfig) {
-    // Audit5 2.4 (#6) — a second openConfirm must NOT silently overwrite a
-    // pending one. The displaced dialog's onConfirm/onCancel is the ONLY way
-    // its awaiter resolves (tabStore.close → confirmCloseAnyway,
-    // handleFlushAndQuit's save-failure confirm, vaultExternalChanges'
-    // recreateDeletedFile); just reassigning `confirmDialog` stranded that
-    // promise forever, wedging the close/quit/recover. Fire the outgoing
-    // onCancel first — the safe, non-destructive resolution, mirroring
-    // `cancelTopLayer` and the vault-swap handler below — so the displaced
-    // decision resolves to "cancel" before the new dialog takes over.
+    // A second openConfirm must not silently overwrite a pending one: the
+    // displaced dialog's onConfirm/onCancel is the ONLY way its awaiter
+    // resolves (tab close, quit save-failure confirm, recreateDeletedFile), so
+    // overwriting would wedge that flow forever. Fire the outgoing onCancel
+    // first — the safe, non-destructive resolution.
     //
-    // (No same-config guard: `$state` stores `config` behind a reactive proxy,
-    // so a later `=== config` reference check can't reliably re-identify it —
-    // and no call site re-opens an already-pending config, so firing the
-    // outgoing onCancel unconditionally is correct.)
+    // (No same-config guard: `$state` proxies `config`, so an `=== config`
+    // check can't re-identify it, and no call site re-opens a pending config.)
     if (confirmDialog) {
       const displaced = confirmDialog;
       confirmDialog = null;
@@ -298,7 +287,7 @@ export const uiStore = {
   },
   closeConfirm() { confirmDialog = null; },
 
-  // Phase C / C.7 — sidebar pending-rename signal.
+  // Sidebar pending-rename signal.
   get pendingSidebarRenameId() { return pendingSidebarRenameId; },
   setPendingSidebarRenameId(id: string | null) { pendingSidebarRenameId = id; },
 
@@ -308,7 +297,7 @@ export const uiStore = {
     // Pre-paint estimate only — a store can't measure the unmounted menu, so
     // this rough clamp (assumed 200px wide, ~32px/row) keeps the first frame
     // from rendering wildly off-screen. ContextMenu.svelte re-clamps against
-    // the menu's *measured* size on mount (L4b), which is authoritative.
+    // the menu's *measured* size on mount, which is authoritative.
     const menuWidth = 200;
     const menuHeight = items.length * 32;
     const clampedX = Math.min(x, window.innerWidth - menuWidth);
@@ -330,8 +319,8 @@ export const uiStore = {
    * Closes the single topmost dismissable layer, in priority order:
    * confirm dialog → modal → context menu. The global Escape handler
    * (`app:cancel`) routes through here so a confirm dialog stacked over a
-   * modal dismisses on its own without also closing the modal beneath it
-   * (H1). Mirrors ConfirmDialog's own cancel by firing the confirm's
+   * modal dismisses on its own without also closing the modal beneath it.
+   * Mirrors ConfirmDialog's own cancel by firing the confirm's
    * `onCancel`. Returns which layer closed, or null when nothing was open.
    */
   cancelTopLayer(): 'confirm' | 'modal' | 'context-menu' | null {
@@ -371,8 +360,7 @@ export const uiStore = {
     sticky?: boolean;
     dedupeKey?: string;
   }): string {
-    // Audit-19 UX-6 — a dedupeKey replaces the older toast for the same
-    // subject. Silent unless the old one is promise-backed (its onDismiss
+    // A dedupeKey replaces the older toast for the same subject. Silent unless the old one is promise-backed (its onDismiss
     // must still resolve → 'defer', never strand).
     if (opts.dedupeKey) {
       for (const t of toasts.filter((x) => x.dedupeKey === opts.dedupeKey)) {
@@ -386,20 +374,16 @@ export const uiStore = {
       }
       sticky = false;
     }
-    // E.4 — cap the visible queue at 8 so an error storm (e.g. a tag-rename
-    // sweep hitting an EPERM directory) can't paint the entire viewport.
-    // Prefer dropping the oldest non-error first so error breadcrumbs stay
-    // visible; if everything queued is an error, drop the oldest error.
+    // Cap the visible queue at 8 so an error storm (e.g. a tag-rename sweep
+    // hitting an EPERM directory) can't paint the entire viewport.
     //
-    // Audit5 R3 (#1) — NEVER silently evict a promise-backed toast (one with an
-    // `onDismiss` callback or action buttons). The external-edit drift prompt
-    // resolves the write awaiting it ONLY through onDismiss/action; a silent
-    // eviction (the old `{ silent: true }` on any victim) stranded that promise
-    // forever, so the flush chain — and a Ctrl+S / quit drain awaiting it —
-    // hung. Prefer evicting a "disposable" toast (no callback, no actions),
-    // oldest non-error first. Only if EVERY queued toast is promise-backed,
-    // evict the oldest but fire its onDismiss (drift → 'defer': keep dirty,
-    // re-prompt on the next write) so its promise resolves instead of stranding.
+    // NEVER silently evict a promise-backed toast (one with `onDismiss` or
+    // action buttons): the external-edit drift prompt resolves its awaiting
+    // write ONLY through onDismiss/action, so a silent eviction would hang the
+    // flush chain (and any Ctrl+S / quit drain). Prefer evicting a disposable
+    // toast, oldest non-error first. Only if EVERY queued toast is
+    // promise-backed, evict the oldest but fire its onDismiss (drift →
+    // 'defer': keep dirty, re-prompt on the next write).
     const TOAST_CAP = 8;
     const isDisposable = (t: ToastMessage): boolean =>
       !t.sticky && !t.onDismiss && (!t.actions || t.actions.length === 0);
@@ -411,15 +395,9 @@ export const uiStore = {
         toasts.find((t) => t.type !== 'error') ??
         toasts[0];
       if (!victim) break; // loop guard (length >= TOAST_CAP) ensures toasts[0] exists
-      // Fire onDismiss when the victim is promise-backed (no disposable toast
-      // was available to drop instead); disposable victims have none, so the
-      // dismissal stays silent for them — preserving the existing behaviour for
-      // the common case.
-      //
-      // M1 (Audit-18) — but NEVER fire onDismiss for an `acknowledgeOnly` toast
-      // (a recovery breadcrumb): the cap evicting it from the screen must not
-      // also destroy the on-disk breadcrumb. Evict it silently; it re-surfaces
-      // next launch.
+      // Fire onDismiss only when the victim is promise-backed. NEVER for an
+      // `acknowledgeOnly` toast (a recovery breadcrumb): evicting it from the
+      // screen must not also destroy the on-disk breadcrumb.
       this.dismissToast(victim.id, { silent: isDisposable(victim) || victim.acknowledgeOnly === true });
     }
 
@@ -437,22 +415,15 @@ export const uiStore = {
     };
     toasts = [...toasts, toast];
 
-    // 1.6 — a genuinely-sticky ERROR (save failed, recovery-location hint,
-    // unflushed-bytes breadcrumb) must persist until the user dismisses it: the
-    // failure it reports outlives the 15s window, and the rich recovery hint is
-    // the only place the user learns WHERE their bytes are. So an error toast
-    // with no explicit positive duration gets NO auto-dismiss timer.
-    //
-    // Audit5 R3 is preserved: NON-error toasts — including the promise-backed
-    // external-edit decision warnings that pass `duration: 0` — still always
-    // auto-dismiss within the cap, so a re-firing prompt can't blanket the
-    // screen and a promise-backed toast can't strand its write. An error toast
-    // with an explicit positive duration (e.g. a 6s delete failure) still
-    // honours that duration.
+    // An error toast with no explicit positive duration (save failed,
+    // recovery-location hint) gets NO auto-dismiss timer: the failure outlives
+    // the 15s window and the hint may be the only place the user learns WHERE
+    // their bytes are. NON-error toasts — including promise-backed decision
+    // warnings passing `duration: 0` — always auto-dismiss within the cap.
     const isStickyError = toast.type === 'error' && !(toast.duration && toast.duration > 0);
     if (!isStickyError && !sticky) {
       // A positive duration is honoured (capped at the max lifetime); `0`/unset
-      // — the old "persistent" sentinel — maps to the 15s cap.
+      // maps to the 15s cap.
       const lifetime =
         toast.duration && toast.duration > 0
           ? Math.min(toast.duration, TOAST_MAX_LIFETIME_MS)
@@ -476,12 +447,10 @@ export const uiStore = {
     if (!toast) return;
     const action = toast.actions?.[actionIndex];
     if (action) {
-      // Audit-17 2.5 — route failures through the errorBus (→ aggregated
-      // toast) instead of a console-only swallow. Toast actions are exactly
-      // the destructive user decisions (Reload, Apply anyway, Keep local)
-      // whose silent failure trains the user to believe the action took
-      // effect; the toast itself is already dismissed by then, so the
-      // errorBus surface is the only honest signal left.
+      // Route failures through the errorBus, not the console: toast actions
+      // are destructive user decisions (Reload, Apply anyway, Keep local),
+      // and with the toast already dismissed this is the only signal that
+      // the action didn't take effect.
       const surface = (err: unknown): void =>
         reportError('toast.action', err, `Toast action "${action.label}" failed.`);
       try {
@@ -507,7 +476,7 @@ export const uiStore = {
       try { toast.onDismiss(); } catch (err) { console.error('[Toast] onDismiss failed:', err); }
     }
   },
-  /** Audit-19 UX-6 — dismisses every toast registered under `dedupeKey`. */
+  /** Dismisses every toast registered under `dedupeKey`. */
   dismissToastsByKey(dedupeKey: string, options: { silent?: boolean } = {}) {
     for (const t of toasts.filter((x) => x.dedupeKey === dedupeKey)) {
       this.dismissToast(t.id, options);
@@ -528,7 +497,7 @@ export const uiStore = {
   },
 };
 
-// Sprint B / B14 — drop transient UI state when the vault swaps so a toast,
+// Drop transient UI state when the vault swaps so a toast,
 // open modal, context menu, or confirm dialog from the prior vault can't
 // stay visible (or fire its callback against a now-unmounted backing
 // store) after the new vault opens. Sidebar geometry stays — it's per
@@ -536,21 +505,16 @@ export const uiStore = {
 onVaultSwap('pre-swap', 'ui', () => {
   for (const timer of toastTimers.values()) clearTimeout(timer);
   toastTimers.clear();
-  // Phase 6.1.R2 — fire each toast's `onDismiss` before nulling the array.
-  // Audit-3 flagged the same shape as the Audit 3.1 confirm-dialog fix
-  // below: a Reload / Keep-local toast surfaced by `promptExternalEditOnSync`
-  // is awaited via a Promise that resolves only through onAction OR
-  // onDismiss; nulling the array directly stranded that Promise across the
-  // swap, leaving `inFlightDriftPrompts[path]` (and any caller awaiting it)
-  // unresolved. The dispatch is best-effort — a thrown onDismiss must not
-  // block the rest of the swap.
+  // Fire each toast's `onDismiss` before nulling the array: a Reload /
+  // Keep-local toast is awaited via a Promise that resolves only through an
+  // action or onDismiss, so nulling directly would strand
+  // `inFlightDriftPrompts[path]` (and its awaiters). Best-effort — a thrown
+  // onDismiss must not block the rest of the swap.
   for (const toast of toasts) {
-    // M1 (Audit-18) — skip `acknowledgeOnly` toasts (recovery breadcrumbs). The
-    // pre-swap teardown fires BEFORE the generation bump, so their onDismiss'
-    // `isStillSameVault` guard still passes and the destructive
-    // `clearQuitFailureBreadcrumb` / `markClean` IPC would land on the OUTGOING
-    // vault — deleting the pointer to preserved unsaved bytes unread. Leave the
-    // breadcrumb on disk so it re-surfaces next launch.
+    // Skip `acknowledgeOnly` toasts (recovery breadcrumbs). Pre-swap runs
+    // BEFORE the generation bump, so their `isStillSameVault` guard still
+    // passes and the destructive `clearQuitFailureBreadcrumb` / `markClean`
+    // would delete the outgoing vault's pointer to preserved unsaved bytes.
     if (toast.onDismiss && !toast.acknowledgeOnly) {
       try { toast.onDismiss(); } catch (err) {
         console.error('[Toast] onDismiss failed during vault swap:', err);
@@ -561,11 +525,10 @@ onVaultSwap('pre-swap', 'ui', () => {
   contextMenu = { visible: false, x: 0, y: 0, items: [] };
   activeModal = null;
   relinkContext = null;
-  // Audit 3.1 — fire the confirm dialog's onCancel before clearing it.
-  // A pending `confirmCloseAnyway` (awaited inside tabStore.close /
-  // closeOthers) resolves ONLY via onConfirm/onCancel; nulling the dialog
-  // directly left that promise unresolved, suspending the close() forever
-  // and stranding a phantom tab. Mirrors cancelTopLayer's confirm branch.
+  // Fire the confirm dialog's onCancel before clearing it: a pending
+  // `confirmCloseAnyway` (tabStore.close / closeOthers) resolves ONLY via
+  // onConfirm/onCancel, so nulling it directly would suspend the close forever
+  // and strand a phantom tab. Mirrors cancelTopLayer's confirm branch.
   if (confirmDialog) {
     const cfg = confirmDialog;
     confirmDialog = null;

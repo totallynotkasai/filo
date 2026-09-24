@@ -110,7 +110,7 @@ function addInterval(from: Date, unit: RecurrenceUnit): Date {
     const lastDay = new Date(targetYear, targetMonth + 1, 0).getDate();
     return new Date(targetYear, targetMonth, Math.min(desiredDay, lastDay));
   }
-  // Months: preserve day-of-month and clamp (shared with quick-add — Audit-8 L6).
+  // Months: preserve day-of-month and clamp (shared with quick-add).
   return addMonthsClamped(from, unit.count);
 }
 
@@ -134,7 +134,7 @@ export function nextDueDate(
     return fmtDate(addInterval(startOfDay(completedOn), parsed));
   }
 
-  // Schedule mode (audit 1.4): the next due date is the first occurrence on the
+  // Schedule mode: the next due date is the first occurrence on the
   // fixed schedule that falls strictly AFTER today (the completion day).
   // Advancing by a single interval would leave a long-overdue task still due in
   // the past, so keep stepping the interval until we clear today.

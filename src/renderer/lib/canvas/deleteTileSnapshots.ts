@@ -1,7 +1,6 @@
 /**
  * Pre-read .md bodies for tiles about to be deleted so `DeleteTilesCommand`
- * can restore them on undo. Cap matches the destructive-undo P0 phase: a
- * 25 MB limit per file keeps a runaway image-paste in an .md from blowing
+ * can restore them on undo. A 25 MB limit per file keeps a runaway image-paste in an .md from blowing
  * the undo stack. Oversized files are still deleted on execute, but undo
  * only restores their placement — the file body is gone.
  *
@@ -16,7 +15,7 @@ import { resolveTextTileVaultPath } from '../boards/textTilePath';
 export const TILE_DELETE_SNAPSHOT_MAX_BYTES = 25 * 1024 * 1024;
 
 /**
- * Phase 2 / 2.5 — separate, smaller cap for media bodies captured by
+ * Separate, smaller cap for media bodies captured by
  * `captureCascadeFileSnapshots` (image/video/audio/pdf). Media at 5 MB+
  * gets oversized-toasted and is not restorable on undo. The cap is
  * deliberately tighter than the .md text snapshot ceiling because a
@@ -26,11 +25,10 @@ export const TILE_DELETE_SNAPSHOT_MAX_BYTES = 25 * 1024 * 1024;
 export const TILE_DELETE_MEDIA_SNAPSHOT_MAX_BYTES = 5 * 1024 * 1024;
 
 /**
- * Phase 2 / 2.5 — extensions captured as binary (base64) in cascade-delete
- * snapshots. Mirrors the main-process watcher's `MEDIA_EXTENSIONS` so the
- * renderer-side walker and the OS-level rename correlator stay in sync.
+ * Extensions captured as binary (base64) in cascade-delete snapshots. Mirrors
+ * the main-process watcher's `MEDIA_EXTENSIONS` so the renderer-side walker
+ * and the OS-level rename correlator stay in sync.
  */
-// Audit-14 6.5 — de-exported: referenced only by `isCascadeMediaPath` below.
 const MEDIA_SNAPSHOT_EXTENSIONS = new Set<string>([
   // Images
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp',
@@ -45,7 +43,7 @@ const MEDIA_SNAPSHOT_EXTENSIONS = new Set<string>([
 ]);
 
 /**
- * Phase 2 / 2.5 — returns true when the given vault-relative path has an
+ * Returns true when the given vault-relative path has an
  * extension recognised as media by the cascade-delete snapshot walker.
  */
 export function isCascadeMediaPath(rel: string): boolean {
@@ -78,7 +76,7 @@ export async function buildDeleteSnapshots(
     if (tile.type !== 'text') continue;
     const relPath = resolveTextTileVaultPath(tile, tile.boardId);
     if (!relPath) continue;
-    // Phase 37 / 37.6 — canonical two-arg form.
+    // Canonical two-arg form.
     const result = await window.filo.invoke('vault:read-file-text', vaultRoot, relPath);
     if (result.success) {
       if (result.content.length > TILE_DELETE_SNAPSHOT_MAX_BYTES) {

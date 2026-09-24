@@ -7,25 +7,15 @@ import { valuesEqual, serializeScalar, serializeKeyValue } from './frontmatterEn
  * `patchFrontmatterSourceCst` (called from `markdownSync.assembleMarkdownFile`
  * and the three `tagRewriter` writers).
  *
- * WHY this engine exists. Six audits patched the same bug class: frontmatter was
- * written by diffing a plain object against a re-parsed source and then
- * hand-splicing bytes for the changed keys — with TWO YAML parsers in the loop
- * (js-yaml for the compare, the `yaml` package for the CST ranges + scalar emit).
- * Every recurring corruption (DI-01, DI-05, R1, M2, C1, L23, L27, L28, DI-06) was
- * a leak in that machine. This engine expresses the write as OPERATIONS ON THE
- * `yaml` PACKAGE'S CST instead: an untouched key is emitted from its own source
- * tokens — byte-for-byte, with no heuristic — so there is no splice arithmetic to
- * get wrong and no second parser to disagree with. Phase 6 built it alongside the
- * legacy byte-splice engine, proved it equivalent across the whole corpus + a
- * fuzzer, routed production through it (6.2–6.6), then 6.7 deleted the legacy
- * splice and its dual-parser scaffolding — so the bug class is gone, not guarded.
+ * The write is expressed as OPERATIONS ON THE `yaml` PACKAGE'S CST: an untouched
+ * key is emitted from its own source tokens — byte-for-byte, with no heuristic —
+ * so there is no byte-splice arithmetic to get wrong.
  *
  * SINGLE PARSER — the value-comparison object is derived with `doc.toJS()` (the
  * `yaml` package), the SAME parser the read path (`markdownSync.parseMarkdownFile`)
  * uses to produce `nextObj`. Both sides of the diff are on one parser, so an
- * untouched scalar can never look "changed" through a cross-parser type mismatch —
- * the M2 class (`1_000` / `0b1010` are STRINGS to the `yaml` package but NUMBERS to
- * js-yaml CORE) is structurally dead.
+ * untouched scalar can never look "changed" through a cross-parser type mismatch
+ * (e.g. `1_000` / `0b1010`, strings here but numbers to other parsers).
  *
  * WHY THE LOW-LEVEL `Parser`, NOT `doc.contents.srcToken`. Stringifying the
  * block-map's `srcToken` drops the document's LEADING comment (a top-level token
@@ -49,7 +39,7 @@ function blockMapOf(tokens: CST.Token[]): CST.BlockMap | null {
   return null;
 }
 
-/** Resolved string form of an item's key, matching the legacy `String(key.value)`. */
+/** Resolved string form of an item's key (`String(key.value)`). */
 function itemKeyString(item: CollectionItem): string | null {
   const key = item.key;
   if (!key || !CST.isScalar(key)) return null;
@@ -61,8 +51,8 @@ function itemKeyString(item: CollectionItem): string | null {
  * `double-quoted-scalar` with no embedded newline). A `block-scalar` (`>` / `|`)
  * is multi-line; a `block-seq` / `flow-collection` is a collection; a bare key
  * has a `null` value. All of those route to the whole-pair rebuild. A bare key
- * has no value token here, so it can never look like a single-line scalar and
- * never gets the unsafe value-only splice that produced `aliases:home` in C1.
+ * has no value token here, so it never gets the unsafe value-only splice (which
+ * would produce e.g. `aliases:home`).
  */
 function isSingleLineScalarValue(value: CST.Token | null | undefined): value is CST.FlowScalar {
   if (!value) return false;
@@ -88,7 +78,7 @@ function isFlowScalar(token: CST.Token | null | undefined): token is CST.FlowSca
 }
 
 /**
- * L27 + 5.2 (Audit-17) — does an item's key/sep/value subtree carry a YAML
+ * Does an item's key/sep/value subtree carry a YAML
  * anchor (`&a`, a SourceToken of type `anchor`, in the item's `sep`/`start`), an
  * alias (`*a`, a FlowScalar of type `alias`), or an explicit `!!tag` / `!tag`
  * (a SourceToken of type `tag`, also in `sep`/`start`)? Re-emitting a CHANGED or
@@ -96,16 +86,14 @@ function isFlowScalar(token: CST.Token | null | undefined): token is CST.FlowSca
  *  - anchor: re-emitting dangles its aliases (js-yaml then throws on re-read,
  *    collapsing the block) — or inlines an alias the object diff already
  *    resolved (silently diverging anchor from alias).
- *  - tag (5.2): the value-only splice keeps the `tag` SourceToken while
- *    replacing the value, emitting e.g. `priority: !!int high` — Filo's own read
- *    then `parseInt`s it to NaN (silent corruption) and js-yaml-based tools
- *    (Obsidian) throw on the file. Treating `tag` like `anchor` routes a touched
- *    tagged key to the full-dump fallback (structure expanded, data exact),
- *    matching the documented anchor semantics.
+ *  - tag: the value-only splice keeps the `tag` SourceToken while replacing
+ *    the value, emitting e.g. `priority: !!int high` — which Filo reads as NaN
+ *    and js-yaml-based tools (Obsidian) reject. A touched tagged key goes to
+ *    the full-dump fallback (structure expanded, data exact).
  * Recurses nested collections so a `widget:\n  <<: *base` alias is found on
  * `widget` even though the alias is nested. An anchor/alias/tag confined to
- * UNTOUCHED keys is spliced verbatim and stays valid (DI-05's `<<: *base`
- * survives a tag-add; an untouched `!!int 5` stays byte-exact).
+ * UNTOUCHED keys is spliced verbatim and stays valid (`<<: *base` survives a
+ * tag-add; an untouched `!!int 5` stays byte-exact).
  */
 function tokenHasAnchorAliasOrTag(token: CST.Token | null | undefined): boolean {
   if (!token) return false;
@@ -155,7 +143,7 @@ function setScalarKeepingComment(item: CollectionItem, value: unknown): void {
  * re-serialises the whole `key: value` pair via {@link serializeKeyValue} and
  * swaps the item's key/sep/value, KEEPING its `start` (so a standalone comment
  * ABOVE the pair survives — the leading-gap is never re-emitted). A same-line
- * trailing comment / inner nested comment is dropped here (documented L23 / L28).
+ * trailing comment / inner nested comment is dropped here (see KNOWN_LIMITATIONS #1).
  * The rebuilt pair always carries a trailing newline; the final trailing-newline
  * trim reconciles the last-line-without-newline case.
  */
@@ -168,7 +156,7 @@ function rebuildPair(item: CollectionItem, key: string, value: unknown): void {
 }
 
 /**
- * L4 — split a DELETED key's leading `start` tokens into the structural gap to
+ * Split a DELETED key's leading `start` tokens into the structural gap to
  * keep (blank lines / key indentation) versus the standalone comment lines to
  * drop. A comment immediately above a key conventionally documents THAT key, so
  * when the key is deleted its comment must go with it rather than relocate onto
@@ -204,24 +192,23 @@ function gapWithoutCommentLines(tokens: CST.SourceToken[]): CST.SourceToken[] {
  * keys keep their exact bytes; a changed single-line scalar is rewritten
  * value-only; collections / type-changes / bare-key sets / added keys are
  * re-serialised; deleted keys are spliced out (keeping the blank-line gap above
- * them but dropping a comment that documented the deleted key — L4 — so it never
+ * them but dropping a comment that documented the deleted key, so it never
  * mis-documents the next survivor). Output is LF with no trailing newline (the
  * caller re-wraps fences and re-applies the file's own line ending).
  *
  * Returns `null` (caller falls back to a full dump) when the source is not a
  * parseable single BLOCK mapping, or when a changed/deleted key carries an
- * anchor/alias (L27) or an explicit YAML tag (5.2).
+ * anchor/alias or an explicit YAML tag.
  */
 export function patchFrontmatterSourceCst(
   originalSource: string,
   nextObj: Record<string, unknown>,
 ): string | null {
-  // Normalise to LF before tokenising (parity with the legacy engine: a dirty FM
-  // write always emits an LF block; the caller re-applies the file's own ending).
+  // Normalise to LF before tokenising (a dirty FM write always emits an LF
+  // block; the caller re-applies the file's own ending).
   const source = originalSource.replace(/\r\n/g, '\n');
 
-  // GATE — parseDocument gives the exact refusal set of the legacy engine (fatal
-  // errors, non-map root, flow-map root).
+  // GATE — refuse on fatal errors, non-map root, flow-map root.
   let doc;
   try {
     doc = parseDocument(source, { uniqueKeys: true });
@@ -235,24 +222,17 @@ export function patchFrontmatterSourceCst(
     if (root.flow === true) return null;
   }
 
-  // Value-comparison object (Phase 6.3) — derived with `doc.toJS()`, the SAME
-  // `yaml`-package parse the read path (`parseMarkdownFile`) used to build
-  // `nextObj`. One parser on both sides of the diff means an untouched scalar is
-  // never seen as "changed" through a cross-parser type mismatch (the M2 class).
+  // Value-comparison object — derived with `doc.toJS()`, the SAME parser the
+  // read path used to build `nextObj`, so an untouched scalar is never seen as
+  // "changed" through a cross-parser type mismatch.
   let currentObj: Record<string, unknown>;
   if (root === null) {
     currentObj = {};
   } else {
-    // H2 (Audit-13) — `parseDocument` reports `errors.length === 0` for an
-    // unresolved/forward alias (`*x` with no prior `&x`), a missing-anchor `<<`
-    // merge, or an alias-in-sequence, but RESOLVING the dangling reference in
-    // `toJS()` then THROWS a ReferenceError. That throw is OUTSIDE the refusal
-    // gate above, so without this catch it propagates out of the engine →
-    // `assembleMarkdownFile` → the write, bypassing the keep-raw safety net
-    // built for malformed YAML (the read path already returned `{}` for the same
-    // block, so a fall-through full dump would ERASE it — total FM loss). Fail
-    // closed to `null` (the documented refusal contract) so the caller keeps the
-    // raw bytes verbatim and only the metadata edit is dropped.
+    // `parseDocument` reports no errors for a dangling alias (`*x` with no
+    // `&x`) or missing-anchor `<<` merge, but `toJS()` THROWS resolving it.
+    // Fail closed to `null` so the caller keeps the raw bytes verbatim (the read
+    // path returned `{}` for this block, so a full dump would erase it).
     let current: unknown;
     try {
       current = doc.toJS();
@@ -278,20 +258,15 @@ export function patchFrontmatterSourceCst(
   const presentKeys = new Set<string>();
 
   if (mapToken) {
-    // 5.4 (Audit-16) — refuse a mapping carrying a NON-SCALAR key (`[a, b]: x`,
-    // `{k: 1}: x`, an explicit-key `? …` form, an empty key). `toJS()`
-    // STRINGIFIES such keys ("[ a, b ]") because a plain JS object can't hold
-    // them, so `currentObj`/`nextObj` are NOT faithful views of the source: the
-    // item can't be matched to an object key (`itemKeyString` → null) and the
-    // added-keys pass below would emit the stringified twin as a NEW string key
-    // — a silent semantic duplicate (`[a, b]: x` + `"[ a, b ]": x`) appended by
-    // any unrelated edit. Mirror the multi-document and anchor refusals: fail
-    // closed and let the caller's keep-raw/dump decision handle it.
+    // Refuse a mapping carrying a NON-SCALAR key (`[a, b]: x`, `{k: 1}: x`,
+    // explicit-key `? …`, an empty key). `toJS()` STRINGIFIES such keys, so the
+    // added-keys pass below would append the stringified twin as a NEW string
+    // key — a silent semantic duplicate. Fail closed.
     for (const item of mapToken.items) {
       if (itemKeyString(item) === null) return null;
     }
 
-    // Pass 1 — L27 anchor/alias + 5.2 tag guard. Refuse before mutating anything
+    // Pass 1 — anchor/alias/tag guard. Refuse before mutating anything
     // if any changed/deleted key's subtree carries an anchor, alias, or explicit
     // YAML tag.
     for (const item of mapToken.items) {
@@ -305,8 +280,8 @@ export function patchFrontmatterSourceCst(
     // Pass 2 — apply. Build the surviving-items array so a deleted item's leading
     // BLANK LINES (`start`) relocate to the next survivor (or, when the deleted
     // key is trailing, onto the document end) — preserving inter-key spacing. A
-    // comment glued to the deleted key is dropped with it (L4: relocating it
-    // would mis-document the next survivor); a surviving key's comments are kept.
+    // comment glued to the deleted key is dropped with it (relocating it would
+    // mis-document the next survivor); a surviving key's comments are kept.
     const nextItems: CST.BlockMap['items'] = [];
     let pendingStart: CST.SourceToken[] = [];
     for (const item of mapToken.items) {
@@ -319,10 +294,8 @@ export function patchFrontmatterSourceCst(
 
       const deleted = !(key in nextObj) || nextObj[key] === undefined;
       if (deleted) {
-        // L4 — keep the structural gap (blank lines) above the deleted key but
-        // DROP a comment glued to it, so its documenting comment is removed with
-        // the key instead of relocating onto the next survivor (mis-documenting
-        // an unrelated field).
+        // Keep the structural gap (blank lines) above the deleted key but DROP a
+        // comment glued to it (see `gapWithoutCommentLines`).
         pendingStart = pendingStart.concat(gapWithoutCommentLines(item.start));
         continue;
       }
@@ -378,38 +351,27 @@ export function patchFrontmatterSourceCst(
 }
 
 /**
- * 1.5 (WRITE_PATH_REMEDIATION_PLAN_2026-06-04) — does `source` parse as valid
- * YAML at all (no fatal parser errors)? Used by the assemble path to tell apart
- * the TWO reasons {@link patchFrontmatterSourceCst} returns `null` for a PRESENT
- * block, which need OPPOSITE handling:
- *  - returns `false` here → the source is genuinely UNPARSEABLE (tabs, duplicate
- *    keys, a stray `---`). A full dump of the live object would DISCARD the
- *    broken-but-present block entirely — total frontmatter loss (Finding #4). The
+ * Does `source` parse as valid YAML at all (no fatal parser errors)? Used by
+ * the assemble path to tell apart the TWO reasons
+ * {@link patchFrontmatterSourceCst} returns `null` for a PRESENT block, which
+ * need OPPOSITE handling:
+ *  - `false` → genuinely UNPARSEABLE (tabs, duplicate keys, a stray `---`). A
+ *    full dump would DISCARD the broken-but-present block entirely, so the
  *    caller keeps the raw bytes instead.
- *  - returns `true` here → the source is valid YAML; the engine refused for a
- *    reason where the dump is DATA-PRESERVING (a flow-mapping root reformats to a
- *    block mapping; a changed/deleted key carrying an anchor/alias expands its
- *    aliases — L27; a changed/deleted key carrying an explicit `!!tag` drops the
- *    now-meaningless tag — 5.2) or replaces a non-mapping root the app never
- *    treated as metadata (a top-level sequence/scalar). The caller's full dump
- *    must proceed.
+ *  - `true` → valid YAML; the engine refused for a reason where the dump is
+ *    DATA-PRESERVING (flow-mapping root, anchor/alias expansion, dropped
+ *    `!!tag`) or replaces a non-mapping root never treated as metadata. The
+ *    caller's full dump proceeds.
  *
- * Narrow by design: only a parse FAILURE — where dump = unrecoverable loss —
- * trips the caller's refuse-and-keep-raw path. Valid-but-non-mapping YAML keeps
- * the long-standing dump fallback (and its pinning test).
- *
- * H2 (Audit-13) — `errors.length === 0` is necessary but NOT sufficient: an
- * unresolved/forward alias or a missing-anchor `<<` merge parses with zero
- * errors yet THROWS in `toJS()` while resolving the dangling reference. Such a
- * block is "unparseable" for our purposes too — the read path returned `{}` for
- * it, so a full dump would discard it (= the loss case). We force the resolution
- * here (the `toJS()` call) so it reports `false`, routing the caller to keep-raw.
+ * `errors.length === 0` is not sufficient: a dangling alias / missing-anchor
+ * `<<` merge parses cleanly yet THROWS in `toJS()`. We force the resolution
+ * here so such a block reports `false` (keep-raw).
  */
 export function frontmatterSourceParses(source: string): boolean {
   try {
     const doc = parseDocument(source.replace(/\r\n/g, '\n'), { uniqueKeys: true });
     if (doc.errors.length > 0) return false;
-    // Resolve aliases/merges — throws on a dangling reference (H2); the catch
+    // Resolve aliases/merges — throws on a dangling reference; the catch
     // below maps that to `false` so the assemble path keeps the raw bytes.
     doc.toJS();
     return true;
@@ -419,7 +381,7 @@ export function frontmatterSourceParses(source: string): boolean {
 }
 
 /**
- * 1.1 (WRITE_PATH_REMEDIATION_PLAN_2026-06-04) — the set of top-level keys in a
+ * The set of top-level keys in a
  * frontmatter source, or an empty set when the source is absent / unparseable.
  *
  * The assemble path consults this before its null/undefined clean pass: a
@@ -445,7 +407,7 @@ export function frontmatterSourceKeys(source: string): Set<string> {
 }
 
 /**
- * 5.4 (Audit-16) — true when the source's top-level block mapping carries an
+ * True when the source's top-level block mapping carries an
  * item whose KEY is not a single scalar (`[a, b]: x`, `{k: 1}: x`, an
  * explicit-key `? …` form, an empty key). For such a source the OBJECT view is
  * not faithful: `toJS()` stringifies the key ("[ a, b ]") because a plain JS

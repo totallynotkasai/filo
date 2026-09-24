@@ -70,13 +70,10 @@ export function classifyExternalChange(params: {
   nextMetadata: FileMetadata | null;
   editor: EditorSnapshot | null;
   /**
-   * Sprint C / C.1 — true when an open Properties popup has unflushed row
-   * edits against `path`. The caller (vaultExternalChanges) consults the
-   * sibling `propertiesPopupTracker` and passes the bool in; we keep the
-   * classifier free of store imports so the unit tests stay simple.
-   *
-   * Defaults to false so existing callers that don't yet pass the flag
-   * retain the pre-Sprint-C behaviour.
+   * True when an open Properties popup has unflushed row edits against
+   * `path`. The caller (vaultExternalChanges) consults
+   * `propertiesPopupTracker` and passes the bool in, keeping the classifier
+   * free of store imports. Defaults to false.
    */
   propertiesPopupDirty?: boolean;
 }): ConflictAction {
@@ -101,18 +98,14 @@ export function classifyExternalChange(params: {
   // and fall through to the editor-state path — that's the safe default.
   if (previousMetadata && isBodyEquivalent(previousMetadata, nextMetadata)) {
     if (!frontmatterEqual(previousMetadata, nextMetadata)) {
-      // VS1 (Audit-6) — even a frontmatter-only delta can be a mid-write
-      // truncated read: the surviving body bytes happen to match the prior
-      // version, but the RAW file shrank drastically (the FM block was caught
-      // mid-rewrite). Applying it would push a truncated frontmatter into tile
-      // caches / tags with no editor open to protect them. Hold for a delayed
-      // re-read — same raw-shrink + fresh-mtime signature the editor-clean
-      // branch already guards. (rawByteSize makes this fire even though the
-      // body — and thus the body-only ratio — looks unchanged.)
+      // Even a frontmatter-only delta can be a mid-write truncated read (the
+      // FM block caught mid-rewrite while the body matches). Applying it would
+      // push truncated frontmatter into tile caches / tags, so hold for a
+      // delayed re-read on the raw-shrink + fresh-mtime signature.
       if (isLikelyPartialRead(previousMetadata, nextMetadata)) {
         return { action: 'partial-read-retry', reason: 'size-shrink' };
       }
-      // Sprint C / C.1 — popup is the canonical frontmatter authority while
+      // The popup is the canonical frontmatter authority while
       // it's open + dirty. A silent sync here would clobber the popup's
       // pending row edits; force a user choice instead.
       if (propertiesPopupDirty) {
@@ -131,15 +124,11 @@ export function classifyExternalChange(params: {
     if (!previousMetadata) {
       return { action: 'sync-frontmatter', reason: 'first-sight' };
     }
-    // Audit-10 M4 — we are past the body-equivalent short-circuit, so the BODY
-    // changed; and no editor owns this path. If the FRONTMATTER also changed we
-    // must still sync it: otherwise a closed-file Kanban card / Task row keeps
-    // stale metadata in its tile cache / tag store / seeded-FM cache and renders
-    // (and computes its field-edit inverse) against the pre-external-edit values.
-    // The body itself needs no action — no editor holds it and the next tile
-    // load hydrates fresh from disk. Guard the same mid-write partial-read
-    // signature the editor branches do so a truncated read isn't pushed into the
-    // caches as if it were settled metadata.
+    // The BODY changed and no editor owns this path. If the FRONTMATTER also
+    // changed we must still sync it, or a closed-file Kanban card / Task row
+    // keeps stale metadata (and computes field-edit inverses against it). The
+    // body needs no action — the next tile load hydrates from disk. Same
+    // partial-read guard as the editor branches.
     if (!frontmatterEqual(previousMetadata, nextMetadata)) {
       if (isLikelyPartialRead(previousMetadata, nextMetadata)) {
         return { action: 'partial-read-retry', reason: 'size-shrink' };
@@ -153,7 +142,7 @@ export function classifyExternalChange(params: {
     return { action: 'prompt-user', reason: 'editor-dirty' };
   }
 
-  // Phase 22 M9 — guard against mid-write partial reads. An external tool
+  // Guard against mid-write partial reads. An external tool
   // that does truncate-then-rewrite (or any non-atomic write on a slow disk)
   // can be caught mid-flight by the watcher; vaultIndex.applyChanges then
   // re-reads a truncated file and the classifier would otherwise hand that
@@ -172,26 +161,15 @@ export function classifyExternalChange(params: {
 const MIN_PARTIAL_READ_PRIOR_BYTES = 1024;
 const PARTIAL_READ_SHRINK_RATIO = 0.1;
 /**
- * Phase 1 / 1.6 — mtime-stability window for the partial-read heuristic.
- * A file shrunk more than this many milliseconds ago is treated as a
- * deliberate edit (the rewrite completed; the mtime represents a stable
- * state), so `reload-silently` fires and the editor catches up.
+ * Mtime-stability window for the partial-read heuristic. A file shrunk more
+ * than this many milliseconds ago is treated as a deliberate edit, so
+ * `reload-silently` fires and the editor catches up.
  *
- * M5 (2026-05-28) — widened from 100 ms to 1000 ms. The 100 ms bound assumed
- * truncate-open and rewrite-completion are only a few hundred ms apart, but a
- * slow disk or a networked/synced filesystem can leave well over 100 ms
+ * 1 s because a slow disk or synced filesystem can leave well over 100 ms
  * between the truncate (which stamps the mtime) and the watcher's debounced
- * re-read. A drastic (>90%) shrink seen 100–1000 ms after the mtime was
- * therefore misclassified as a settled real edit and applied via
- * `reload-silently`, clobbering the clean editor with a partial read.
- *
- * Widening only affects DRASTIC shrinks (the `PARTIAL_READ_SHRINK_RATIO`
- * gate still requires a >90% drop): a routine edit that trims a sentence is
- * nowhere near the bar and still reloads immediately. A genuine drastic
- * deletion within the window is held back at most ~5 s (the bounded retry
- * schedule) before the exhaustion prompt lets the user apply it — the cost
- * of a brief delay on a rare deliberate truncation, in exchange for not
- * silently destroying the view on a slow mid-write read.
+ * re-read. Only DRASTIC (>90%) shrinks are affected; a genuine drastic
+ * deletion inside the window is held back at most ~5 s (bounded retry)
+ * before the exhaustion prompt lets the user apply it.
  */
 const PARTIAL_READ_MTIME_WINDOW_MS = 1000;
 
@@ -205,46 +183,31 @@ function utf8ByteLength(text: string): number {
 /**
  * Heuristic for "this almost certainly caught a mid-write truncated state".
  *
- * C2 — percentage-based threshold. A >90% shrink on a ≥1 KB file is the
- * partial-read signature: external truncate-then-rewrite caught mid-flight.
- * A legitimate edit that drops a sentence or two from a long note shrinks
- * by 5–20%, well below the 10% retention bar. The previous absolute 64-byte
- * cap fired on short truncations but missed a 100 KB file landing at 5 KB
- * mid-write — well within partial-read territory but past the absolute cap.
+ * A >90% shrink on a ≥1 KB file is the partial-read signature (external
+ * truncate-then-rewrite caught mid-flight); a legitimate edit that drops a
+ * sentence shrinks by far less. Percentage-based so a 100 KB file landing at
+ * 5 KB is caught too.
  *
- * Phase 1 / 1.6 — also requires `next.lastModified` to be within the
- * partial-read mtime window (defaults to {@link PARTIAL_READ_MTIME_WINDOW_MS}
- * relative to `now`). A file shrunk seconds or more ago has had its
- * rewrite committed already; treating it as a partial read keeps the user
- * looking at stale content waiting for a retry that won't change anything.
- * `now` is a parameter so tests can pin a deterministic baseline; production
- * callers default to `Date.now()`.
+ * Also requires `next.lastModified` to be within
+ * {@link PARTIAL_READ_MTIME_WINDOW_MS} of `now`: a file shrunk longer ago has
+ * already finished its rewrite. `now` is a parameter for tests.
  *
- * A8-H1 (Audit-8) — the window is about *recency*, not direction, so it is
- * measured with `Math.abs`. OneDrive / SMB / other synced volumes routinely
- * stamp a file's mtime slightly AHEAD of the local clock; a strict `ageMs >= 0`
- * gate then read a future mtime as "not recent", let the >90% mid-write
- * truncation fall through to `reload-silently`, and clobbered a clean editor
- * with the partial read. A future mtime within the window is exactly as
- * suspicious as a past one — both mean "the rewrite is probably still in flight".
+ * The window is about *recency*, not direction, so it uses `Math.abs`: synced
+ * volumes (OneDrive / SMB) often stamp mtimes slightly AHEAD of the local
+ * clock, and a future mtime is just as suspicious as a recent past one.
  *
- * DECISION (Audit-13 L19, deferred): L19 proposed treating a future mtime
- * "beyond a small tolerance" as settled rather than in-flight, to avoid a ~5s
- * retry delay on a genuine drastic truncation that happens to carry a future
- * mtime. We deliberately do NOT do this — it directly tensions the A8-H1 fix
- * above (pinned by `conflictResolver.test.ts`'s `Date.now() + 500` case): a
- * mid-write truncation and a settled truncation are INDISTINGUISHABLE from a
- * single stat on a clock-skewed volume, so any tolerance tight enough to help
- * L19 would re-open A8-H1's clean-editor clobber. The retry-then-exhaustion
- * prompt IS the correct disambiguator for that fundamental ambiguity; the brief
- * delay is the price of never silently destroying a clean editor's view.
+ * DECISION (future mtimes): NOT treated as settled beyond some tolerance.
+ * On a clock-skewed volume a mid-write and a settled truncation are
+ * indistinguishable from one stat, so any such tolerance would re-open the
+ * clean-editor clobber. The retry-then-exhaustion prompt is the disambiguator;
+ * a brief delay is the price.
  */
 function isLikelyPartialRead(
   prev: FileMetadata,
   next: FileMetadata,
   now: number = Date.now(),
 ): boolean {
-  // L12 (Audit-6) — measure the RAW file size (FM + body) when available, not
+  // Measure the RAW file size (FM + body) when available, not
   // the parsed body alone. A truncation that lands mostly in a large frontmatter
   // block leaves the body looking intact, so a body-only ratio would miss it.
   // Falls back to the body byte length for synthetic metadata without rawByteSize.
@@ -255,7 +218,7 @@ function isLikelyPartialRead(
   // Only fire when the shrink is RECENT — an old mtime means the rewrite
   // already finished and we're looking at stable state. `Math.abs` so a
   // clock-skewed FUTURE mtime (OneDrive/SMB) is held for retry too, not
-  // mistaken for a settled edit (A8-H1).
+  // mistaken for a settled edit.
   const ageMs = Math.abs(now - next.lastModified);
   return ageMs < PARTIAL_READ_MTIME_WINDOW_MS;
 }
@@ -279,18 +242,13 @@ function isBodyEquivalent(a: FileMetadata, b: FileMetadata): boolean {
 }
 
 function frontmatterEqual(a: FileMetadata, b: FileMetadata): boolean {
-  // P5.4 (Audit-15) — the hand-rolled key-set + per-key compare loop this
-  // replaced WAS `valuesEqual`'s own plain-object branch (same-key-set check +
-  // recursive value compare), so route through the shared helper instead of
-  // keeping a second copy of "is this a real frontmatter change".
-  //
   // Deliberately `valuesEqual` (frontmatterEngine), NOT `fmValueEqual` /
   // `fmDeepEqual` (frontmatterRebase): those compare arrays as an order-
   // INSENSITIVE multiset and treat a Date as a keyless object. This resolver
   // decides whether DISK diverged from the in-memory copy, so array order must
   // stay significant (an externally REORDERED `tags: [...]` is a real byte
   // change the cache must adopt) and a residual Date must compare by instant.
-  // L14 (Audit-6) — `valuesEqual` still recurses key-order-insensitively for a
+  // `valuesEqual` still recurses key-order-insensitively for a
   // nested map, so a `{author, date}` → `{date, author}` external rewrite reads
   // as a no-op rather than a spurious `sync-frontmatter`.
   return valuesEqual(a.frontmatter, b.frontmatter);

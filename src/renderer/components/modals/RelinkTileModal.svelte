@@ -9,7 +9,7 @@
   import { flattenTreePaths } from '../../lib/vault/vaultTreeSort';
 
   /**
-   * Phase 31 B5.1 — Re-link picker. Surfaces a flat list of vault files
+   * Re-link picker. Surfaces a flat list of vault files
    * filtered to the extensions compatible with the broken tile's type.
    * Selecting a file rebinds the tile's path (`filePath` for text/file,
    * `src` for image/video/audio) through `UpdateTilePathCommand` so the

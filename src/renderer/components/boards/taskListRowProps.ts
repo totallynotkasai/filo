@@ -6,10 +6,7 @@
  * keeps the host import block tidy and avoids the `type-only-from-svelte`
  * footgun.
  *
- * Phase 5.8g — see `Filo_Design_Doc_Rework_V5.md` and the strategy doc at
- * `.claude/plans/you-are-a-senior-gentle-stardust.md` §5.8.
- *
- * Phase 5.8h extends this file with the section-level prop bundles
+ * Also holds the section-level prop bundles
  * (`TaskListSectionControllers`, `TaskListSectionCallbacks`,
  * `SectionView`-keyed view) used by the extracted <TaskListSection>.
  */
@@ -77,7 +74,7 @@ export interface TaskListRowControllers {
 export interface TaskListRowCallbacks {
   onRenameTask: (row: TaskRow, newTitle: string) => void;
   onDeleteTask: (tileId: string, anchor?: { x: number; y: number }) => void;
-  /** Audit 5.7 — opt-in "delete task and its backing .md file" path. */
+  /** Opt-in "delete task and its backing .md file" path. */
   onDeleteWithFile: (tileId: string) => void;
   onOpenTask: (tile: Tile) => void;
   onAddSubtask: (tileId: string) => void;
@@ -99,7 +96,7 @@ export interface TaskListRowBoardCtx {
 }
 
 // ---------------------------------------------------------------------------
-// Section-level prop bundles (Phase 5.8h)
+// Section-level prop bundles
 // ---------------------------------------------------------------------------
 
 /**

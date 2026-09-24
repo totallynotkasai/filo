@@ -2,7 +2,7 @@ import type { uiStore as UIStore } from '../../stores/ui.svelte';
 import type { pendingSettingsStore as PendingSettingsStore } from '../../stores/pendingSettings.svelte';
 
 /**
- * Phase 1 / 1.1 — `Modal.beforeClose` callback for the Project Settings
+ * `Modal.beforeClose` callback for the Project Settings
  * modal. If the user has uncommitted edits in either tab, route them
  * through the in-app confirm dialog before letting the modal close.
  *

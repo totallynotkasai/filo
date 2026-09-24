@@ -17,7 +17,7 @@ export type PropType =
   | 'raw';
 
 /**
- * Audit-10 B1 — true iff a typed row can hold `value` WITHOUT losing
+ * True iff a typed row can hold `value` WITHOUT losing
  * information. The popup's scalar / list / tag rows only round-trip primitives
  * (and `null`) and string-only arrays; everything else — a nested object/array,
  * or an array carrying a non-string item (numbers/booleans/objects) — would be
@@ -34,14 +34,13 @@ export function isRepresentable(value: unknown): boolean {
 /**
  * Classifies a frontmatter value into the editor row type the popup renders.
  *
- * 1.2 (WRITE_PATH_REMEDIATION_PLAN_2026-06-04) — only a PURE `YYYY-MM-DD` value
- * is classified as `date`. A datetime (`2025-01-15T10:30:00Z`, or any value
- * carrying a `T` / timezone component) is deliberately left as `text`: the
- * `date` row renders an `<input type="date">` and `valueForRow` slices the value
- * to its first 10 chars, which would drop the time + timezone on the next write
- * (Finding #3). Leaving it `text` round-trips the full datetime string verbatim.
+ * Only a PURE `YYYY-MM-DD` value is classified as `date`. A datetime
+ * (`2025-01-15T10:30:00Z`, or any value carrying a `T` / timezone component) is
+ * deliberately left as `text`: the `date` row renders an `<input type="date">`
+ * and `valueForRow` slices the value to its first 10 chars, which would drop
+ * the time + timezone on the next write.
  *
- * Audit-10 B1 — a value the typed rows can't represent losslessly (see
+ * A value the typed rows can't represent losslessly (see
  * `isRepresentable`) is classified `raw` BEFORE the array/list branch, so a
  * numeric/boolean/object array or a nested map isn't coerced through `String()`.
  */
@@ -56,14 +55,14 @@ export function detectType(key: string, value: unknown): PropType {
   if (k === 'status' && typeof value === 'string') return 'status';
   if (typeof value === 'boolean') return 'boolean';
   if (typeof value === 'number') return 'number';
-  // B1 — non-representable values become read-only `raw` rows. MUST precede the
+  // Non-representable values become read-only `raw` rows. MUST precede the
   // array/list branch so a numeric/boolean/object array isn't String()-coerced.
   if (!isRepresentable(value)) return 'raw';
   if (Array.isArray(value)) return 'list';
   if (typeof value === 'string') {
     // ISO date-only detection — YYYY-MM-DD with NO time/zone component. A value
     // with a `T` (or space-separated time) falls through to `text` so it isn't
-    // truncated to date-only on write (1.2).
+    // truncated to date-only on write.
     if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return 'date';
   }
   return 'text';
@@ -71,10 +70,10 @@ export function detectType(key: string, value: unknown): PropType {
 
 /**
  * Coerces a raw frontmatter value into the shape the typed row's editor expects.
- * The `date` branch only ever receives a pure `YYYY-MM-DD` value now (see
+ * The `date` branch only ever receives a pure `YYYY-MM-DD` value (see
  * `detectType`), so its `slice(0, 10)` is a no-op for well-formed dates.
  *
- * Audit-10 B1 — the `raw` branch returns the value VERBATIM (no `String()` /
+ * The `raw` branch returns the value VERBATIM (no `String()` /
  * coercion), so a nested object/array round-trips through the popup identically
  * and is absent from the write delta (preserved from disk).
  */

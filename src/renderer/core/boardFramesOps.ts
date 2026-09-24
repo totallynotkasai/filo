@@ -7,8 +7,8 @@ import type { CacheContext, V7BoardFileData } from '../stores/boardCacheTypes';
  * `BoardType → Ops` so a future board type is a compile error until it lands
  * a registry entry (the mapped type forces exhaustiveness).
  *
- * Phase 6 of CONSOLIDATION_PLAN_2026-05-25 — mirrors the Phase 2 strategy
- * pattern (`boardTileOps`) for the frames slice of the cache. Frames are a
+ * Mirrors the `boardTileOps` strategy pattern for the frames slice of the
+ * cache. Frames are a
  * canvas affordance conceptually owned by mind-map boards, but every
  * `.board.json` carries a `frames: Frame[]` field for forward-compat, so the
  * mutators have to be valid for every board type. The strategy registry gives
@@ -64,9 +64,8 @@ export interface BoardFramesOps<B extends Board = Board> {
  * Shared cache+mirror body for every board type. Today the frame vocabulary
  * doesn't diverge between board types — frames render only on mind-map
  * boards, but their on-disk shape is universal and the cache map is
- * universally writable. Centralising the body here keeps Phase 6 a pure
- * structural lift (no behaviour change) while giving each board type a
- * typed home for future divergence.
+ * universally writable. Each board type still gets a typed home for future
+ * divergence.
  */
 const sharedFramesBody = {
   addFrame(

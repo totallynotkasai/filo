@@ -1,12 +1,12 @@
 /**
- * H4 (perf) — minimap bounds math, split out so the all-tiles AABB can be
+ * Minimap bounds math, split out so the all-tiles AABB can be
  * memoized independently of the viewport.
  *
  * The minimap's drawable region is the union of every tile's extent and the
- * current viewport rect, plus padding. The previous single derived recomputed
- * the WHOLE thing — including walking all tiles — on every pan/zoom frame
- * (because it read `viewportRect`). A pure pan doesn't move any tile, so the
- * tiles' AABB is unchanged; only the cheap viewport union needs to re-run.
+ * current viewport rect, plus padding. A single derived would recompute the
+ * WHOLE thing — including walking all tiles — on every pan/zoom frame (because
+ * it reads `viewportRect`). A pure pan doesn't move any tile, so the tiles' AABB
+ * is unchanged; only the cheap viewport union needs to re-run.
  *
  * `Minimap.svelte` keeps `tilesAABB = $derived(computeTilesAABB(tiles))` (keyed
  * on the tile set only — NOT the viewport) and

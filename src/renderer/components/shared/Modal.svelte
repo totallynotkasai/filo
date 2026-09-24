@@ -22,7 +22,7 @@
      */
     showKeyHints?: boolean;
     /**
-     * Phase 1 / 1.1 — optional guard invoked before any close path (Esc,
+     * Optional guard invoked before any close path (Esc,
      * backdrop click, X button). Resolve `false` to keep the modal open
      * (e.g. when a discard-changes confirmation is pending); resolve
      * `true` to let the close proceed. Sync returns are accepted.
@@ -62,7 +62,7 @@
         dialogEl.focus();
       }
     } else if (!isOpen && dialogEl?.open) {
-      // C8 — see lib/utils/focusTrapSafe.ts. The helper short-circuits on
+      // See lib/utils/focusTrapSafe.ts. The helper short-circuits on
       // a detached host (focus-trap's updateTabbableNodes throws and would
       // freeze Svelte 5's flush) and logs the diagnostic.
       safeDeactivateTrap(trap, { host: dialogEl, name: 'Modal' });
@@ -101,7 +101,7 @@
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       e.preventDefault();
-      // H1: keep Escape from reaching the global `app:cancel`, which would
+      // Keep Escape from reaching the global `app:cancel`, which would
       // bypass `beforeClose` and force the modal shut behind its own guard.
       e.stopPropagation();
       void tryClose();

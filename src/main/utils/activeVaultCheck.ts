@@ -43,7 +43,7 @@ export function isActiveVault(vaultRoot: string): boolean {
     : (x: string, y: string): boolean => x === y;
   if (cmp(a, b)) return true;
 
-  // Sprint A / A3 — the registry stores the canonicalised (realpath'd)
+  // The registry stores the canonicalised (realpath'd)
   // form. The renderer keeps its original (potentially symlinked) path,
   // so a strict resolve-equality miss falls through to comparing the
   // canonical form of the input against the canonical registry entry.

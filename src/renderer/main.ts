@@ -19,8 +19,8 @@ import { mount } from 'svelte';
 import App from './App.svelte';
 import { reportError } from './lib/utils/errorBus';
 
-// Audit-17 2.6 — renderer-wide backstops for unknown-unknowns. Every audited
-// write path already routes its failures through trackComponentWrite /
+// Renderer-wide backstops for unknown-unknowns. Write paths already route
+// their failures through trackComponentWrite /
 // markPathFailed, but a programming error in a `void`-ed chain or an event
 // handler otherwise dies as a console-only unhandled rejection. Routing
 // through reportError feeds App.svelte's coalescing errorToastAggregator

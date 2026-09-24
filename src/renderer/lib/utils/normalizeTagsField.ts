@@ -8,8 +8,7 @@
  *    YAML form (array vs comma-string) and preserve each tag's leading `#`
  *    decision. That's `parseTagsField`.
  *
- * Splitting them avoids the previous drift where two near-identical parsers
- * lived in lib/vault/ and could fall out of sync.
+ * Both live here so the two parsers can't drift out of sync.
  */
 
 export interface ParsedTagsField {
@@ -86,7 +85,7 @@ export function orderPreservingTagsField(value: unknown): string[] {
  * `.md` file's frontmatter tags — equality checks, MiniSearch indexing,
  * divergence detection.
  *
- * Semantics (preserved from the legacy `normalizeTags`):
+ * Semantics:
  *   - Drops empty / whitespace-only entries.
  *   - Strips a single leading `#`.
  *   - Dedupes (exact-string equality).

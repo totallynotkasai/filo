@@ -3,7 +3,7 @@ import { z } from 'zod';
 /**
  * Tile default styles used when creating new tiles.
  *
- * `dynamicContrastText` is the Phase 4 Dynamic Contrast Text override
+ * `dynamicContrastText` is the Dynamic Contrast Text override
  * (design doc V5 §625): when true, the renderer overrides text colour to
  * pure black or white based on background luminance (WCAG AA). Cascades
  * per-element > board > global like every other style field.
@@ -263,7 +263,7 @@ export const GeneralSettingsSchema = z.object({
    */
   recentColors: z.array(z.string()).max(8).default(() => []),
   /**
-   * Per-board undo/redo stack size (M23). The default of 500 covers the long
+   * Per-board undo/redo stack size. The default of 500 covers the long
    * tail of "I refactored the board and want to step back" without growing
    * memory unboundedly — each Command is small but a tile-delete snapshots
    * the body, so 5000 is the upper bound. The historyStore reads this via

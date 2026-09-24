@@ -20,7 +20,7 @@ const MAX_NAME_LENGTH = 200;
 /**
  * Sanitizes a string for use as a filename.
  * Strips illegal characters, collapses whitespace, truncates to max length,
- * strips trailing dots / spaces (Audit2 5.5 — Win32 silently strips them at
+ * strips trailing dots / spaces (Win32 silently strips them at
  * file-create time, which collides with a same-stem neighbour), and prefixes
  * an underscore in front of any name whose stem matches a Windows DOS device
  * name (CON / NUL / COM1 / LPT1 / …) so the sanitised result can pass
@@ -31,7 +31,7 @@ export function sanitizeFilename(name: string): string {
     .replace(ILLEGAL_CHARS, '')
     .replace(/\s+/g, ' ')
     .trim()
-    // Audit2 5.5 — strip any trailing dots (or dot+space runs) BEFORE the
+    // Strip any trailing dots (or dot+space runs) BEFORE the
     // length truncation. `note.` on Win32 saves as `note`, masking a name
     // collision with a sibling `note`.
     .replace(/[. ]+$/, '');
@@ -48,7 +48,7 @@ export function sanitizeFilename(name: string): string {
     sanitized = 'Untitled';
   }
 
-  // Audit2 5.5 — same stem-based match as `assertSafeFilename`: `CON.md` /
+  // Same stem-based match as `assertSafeFilename`: `CON.md` /
   // `aux.tar.gz` / `nul` all collide. Prefix with `_` so the sanitised
   // result clears the assert instead of throwing.
   const stem = (sanitized.split('.')[0] ?? '').toUpperCase();
@@ -155,26 +155,23 @@ export async function pathExists(filePath: string): Promise<boolean> {
  * racy — antivirus, the recursive `fs.watch` handle, or a concurrent
  * atomic-write may own a transient lock and return EPERM/EBUSY. Retries
  * recover from those short-lived locks without forcing callers to
- * serialise themselves around every save. Audit-19 EXT-5: the backoff is
- * TIME-bounded (`retryOnWindowsLock`, ~5 s on win32) because sync clients hold
- * such locks for seconds, not milliseconds.
+ * serialise themselves around every save. The backoff is TIME-bounded
+ * (`retryOnWindowsLock`, ~5 s on win32) because sync clients hold such locks
+ * for seconds, not milliseconds.
  *
  * Nonce-suffixed tmp filename: two concurrent atomic writes to the same
  * destination (the body and frontmatter schedulers can both target the
  * same `.md` if their debounces fire on the same tick) would otherwise
  * race on a shared `<path>.tmp`. With per-call nonces each write owns
  * its own tmp file, so the cleanup `unlink` on failure can't accidentally
- * delete the other call's buffer mid-rename. Phase 25 L1.
+ * delete the other call's buffer mid-rename.
  *
- * Audit-7 L7 — `opts.expectExisting` narrows a file-resurrection race. The
- * `vault:write-existing-file-text` channel exists to stop a dirty editor's
- * debounce from recreating a file the user just deleted; the handler enforces
- * that with a stat pre-check, but `fs.rename(tmp, dest)` creates `dest`
- * unconditionally, so a delete landing in the (ms-long) tmp-write→rename gap
- * still resurrects the file. With `expectExisting`, the destination's
- * existence is re-verified immediately before each rename attempt and the
- * write aborts with ENOENT if it's gone — shrinking the window to the
- * check→rename gap (microseconds; the irreducible OS-level residual).
+ * `opts.expectExisting` narrows a file-resurrection race: `fs.rename(tmp,
+ * dest)` creates `dest` unconditionally, so a delete landing in the
+ * tmp-write→rename gap would resurrect the file. With it set, the
+ * destination is re-verified immediately before each rename attempt and the
+ * write aborts with ENOENT if it's gone, leaving only the microsecond
+ * check→rename gap.
  */
 export async function atomicWriteFile(
   filePath: string,
@@ -187,13 +184,10 @@ export async function atomicWriteFile(
   // Write + fsync the temp file. Keeps the data on disk before rename,
   // so a power loss between rename and dir-fsync still produces an
   // intact file (possibly under the old or new name, never empty).
-  // Phase 31 B1.1 — Buffer overload lets binary writers (media:save-audio,
-  // recoverySnapshot copy) share the same crash-safety pipeline.
+  // The Buffer overload lets binary writers share the same pipeline.
   //
-  // Phase 31 C3.3 — clean up the tmp file when the write or sync itself
-  // throws (disk full mid-write, antivirus quarantines the tmp before
-  // sync completes). Without this, the .tmp would linger forever and
-  // accumulate per failed save.
+  // Clean up the tmp file when the write or sync itself throws (disk full
+  // mid-write, antivirus quarantine), or it would linger per failed save.
   try {
     const fh = await fs.open(tmpPath, 'w');
     let writeOrSyncErr: unknown = null;
@@ -232,19 +226,16 @@ export async function atomicWriteFile(
     throw err;
   }
 
-  // Audit-19 EXT-5 — a time-bounded lock backoff (~5 s on win32) instead of the
-  // old ~310 ms count-based loop: OneDrive / Dropbox / antivirus routinely hold
-  // a rename-blocking handle for a second or two, and every exhausted retry
-  // used to surface "Save failed" plus a stray `.tmp` inside the synced folder.
+  // Time-bounded lock backoff (~5 s on win32): OneDrive / Dropbox / antivirus
+  // routinely hold a rename-blocking handle for a second or two, and an
+  // exhausted retry surfaces "Save failed" plus a stray `.tmp`.
   let lastErr: unknown;
   let renamed = false;
   try {
     await retryOnWindowsLock(() => fs.rename(tmpPath, filePath), {
-      // Audit-7 L7 — when the caller asserts the destination must already
-      // exist, re-verify right before EVERY rename attempt. `fs.rename` creates
-      // `dest` unconditionally, so a delete that landed since the handler's stat
-      // pre-check (or during the backoff) would otherwise resurrect the file
-      // with stale editor bytes. The check→rename gap is the OS-level residual.
+      // With `expectExisting`, re-verify right before EVERY rename attempt so
+      // a delete since the handler's pre-check (or during the backoff) isn't
+      // resurrected with stale editor bytes.
       beforeAttempt: async () => {
         if (opts?.expectExisting && !(await pathExists(filePath))) {
           const gone: NodeJS.ErrnoException = new Error(
@@ -261,26 +252,13 @@ export async function atomicWriteFile(
   }
 
   if (!renamed) {
-    // Phase 37 / 37.2 — for ENOSPC (disk full), EIO (hardware), and ENOMEM
-    // (kernel OOM) the rename failed *after* the tmp was fully written and
-    // fsynced. The user's data is intact on disk under `tmpPath`; deleting
-    // it here turns a recoverable "disk full, free some space" scenario
-    // into permanent loss. Preserve the tmp and annotate the error with
-    // its path so the IPC layer / toast can tell the user where to look.
-    // Polish phase 1.1 — EACCES joins the preserve list. The retry loop
-    // exhausted EACCES attempts, but the underlying cause (a brief perms
-    // hold from antivirus / Dropbox / a manual chmod) is the kind users
-    // can fix and then move the tmp into place. Preserving the tmp lets
-    // them recover the staged write after they regain write access on
-    // the destination.
-    // Audit-17 2.2 — EPERM + EBUSY join too. The old comment claimed an
-    // exhausted EPERM/EBUSY tmp held "nothing valuable" — false: by this
-    // point the tmp is fully written AND fsynced; on a quit-time flush it
-    // holds the user's last bytes. The EACCES rationale applies verbatim
-    // (a lingering AV/sync lock the user can wait out, then move the tmp
-    // into place). Only ENOENT (missing parent dir / expectExisting abort
-    // — the DESTINATION is gone, the staged bytes describe a file the
-    // user deleted) still falls to the best-effort cleanup.
+    // The rename failed *after* the tmp was fully written and fsynced, so
+    // the user's data is intact under `tmpPath` — on a quit-time flush it
+    // may be their last bytes. For disk-full / hardware / OOM and for an
+    // exhausted lock (EACCES / EPERM / EBUSY — a lock the user can wait
+    // out), preserve the tmp and annotate the error with its path so the
+    // toast can say where to look. Only other codes (e.g. ENOENT: the
+    // destination is gone) fall to the best-effort cleanup.
     const code = (lastErr as NodeJS.ErrnoException | null)?.code;
     if (
       code === 'ENOSPC' ||
@@ -296,7 +274,7 @@ export async function atomicWriteFile(
         if (typeof original === 'string') {
           (lastErr as { message: string }).message = `${original} (data preserved at ${tmpPath})`;
         }
-        // 6.2.H4 (follow-up) — record the preserved partial so the quit
+        // Record the preserved partial so the quit
         // drain can persist its location into `.filo/quit-failure.json`
         // for next-launch recovery (the transient toast can be missed,
         // especially when the failure lands during a quit-time flush).
@@ -308,7 +286,7 @@ export async function atomicWriteFile(
     throw lastErr;
   }
 
-  // Audit-16 4.6 — the write landed: drop any emergency-registry entries a
+  // The write landed: drop any emergency-registry entries a
   // PRIOR failed write to this same destination recorded, so the quit
   // breadcrumb stops pointing the user at superseded bytes (phantom
   // "Filo preserved emergency files" notice on the next launch). The
@@ -319,14 +297,10 @@ export async function atomicWriteFile(
   // is durably persisted on POSIX. Windows can't open a directory for
   // sync — swallow the EISDIR / EBADF / ENOTSUP / EPERM cases silently.
   //
-  // D.6 — retry on EBUSY / EACCES with the same backoff the rename loop
-  // uses. SMB-mounted vaults on Windows occasionally return EBUSY on a
-  // dir-handle open while antivirus or the parent watcher briefly holds
-  // a transient lock. The retry adds ≤310 ms worst case but keeps the
-  // metadata-durability half of the crash-safety contract intact on
-  // network shares. Other codes (EISDIR / EBADF / ENOTSUP / EPERM)
-  // mean the platform doesn't support dir-fsync at all — fail-open
-  // silently like the previous behaviour.
+  // Retry on EBUSY / EACCES: SMB-mounted vaults occasionally return EBUSY on
+  // a dir-handle open while antivirus or the watcher briefly holds a lock.
+  // The retry adds ≤310 ms worst case. Other codes (EISDIR / EBADF / ENOTSUP
+  // / EPERM) mean the platform doesn't support dir-fsync — fail open.
   const DIR_FSYNC_RETRY_DELAYS_MS = [10, 20, 40, 80, 160];
   for (let attempt = 0; attempt <= DIR_FSYNC_RETRY_DELAYS_MS.length; attempt++) {
     try {
@@ -352,7 +326,7 @@ export async function atomicWriteFile(
 }
 
 /**
- * Audit-19 EXT-5 (plan D6) — the error codes Windows returns while another
+ * The error codes Windows returns while another
  * process (OneDrive, Dropbox, Explorer, antivirus) holds a handle that blocks
  * a rename / replace.
  */
@@ -366,8 +340,8 @@ export const WIN_LOCK_BUDGET_MS = process.platform === 'win32' ? 5000 : 310;
 
 /**
  * Watcher self-write suppression to apply BEFORE an atomic write: the rename
- * can now land up to `WIN_LOCK_BUDGET_MS` late, and its echo must still fall
- * inside the window (the post-write re-suppress is unchanged).
+ * can land up to `WIN_LOCK_BUDGET_MS` late, and its echo must still fall
+ * inside the window.
  */
 export const LOCK_AWARE_SUPPRESS_MS = WIN_LOCK_BUDGET_MS + 2000;
 
@@ -377,7 +351,7 @@ const LOCK_BACKOFF_CAP_MS = 1000;
 export function lockRetryBudgetMs(): number {
   // Read at call time (not the module-load constant) so tests can emulate a
   // platform. `FILO_LOCK_RETRY_BUDGET_MS` is a diagnostic / test override (the
-  // unit-test setup pins it to the legacy 310 ms so suites that force a
+  // unit-test setup pins it to 310 ms so suites that force a
   // permanent lock don't each stall for 5 s).
   const override = Number(process.env.FILO_LOCK_RETRY_BUDGET_MS);
   if (process.env.FILO_LOCK_RETRY_BUDGET_MS !== undefined && Number.isFinite(override) && override >= 0) {

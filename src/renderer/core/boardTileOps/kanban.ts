@@ -22,25 +22,19 @@ import type { AddTileOpts, BoardTileOps } from '../boardTileOps';
  *
  *  - `addTile` seeds the text-tile backing file (shared helper), inserts the
  *    def into `tileDefs`, and does NOT touch column placements. The caller
- *    is responsible for `persistAddKanbanPlacement` if a placement is needed.
- *    This preserves the pre-Phase-2 behaviour for non-mindmap addTile calls
- *    (cascade-delete undo) — restoring a column placement requires column +
+ *    is responsible for `persistAddKanbanPlacement` if a placement is needed:
+ *    restoring a column placement (e.g. cascade-delete undo) requires column +
  *    position info the `Tile` shape doesn't carry.
  *
  *  - `removeTile` sweeps every column for a tilePlacements entry referencing
  *    the tileId, removes the def, and cleans both per-board (`cached
  *    .connections`) and cross-board (project) connections referencing the
- *    tile. Before Phase 2 the top-level `persistRemoveTile` was MindMap-only
- *    so Kanban tiles left orphan placements on disk every time the user hit
- *    the delete shortcut (bug #2 of CONSOLIDATION_PLAN_2026-05-25).
+ *    tile, so no orphan placement is left on disk.
  *
  *  - `updateTile` applies definition-level fields (title, tags, style, …) to
  *    `tileDefs`. Position / size / locked / faded are skipped — Kanban cards
  *    have no canvas geometry and locked/faded fall through column placement
- *    style. This matches the pre-Phase-2 fall-through behaviour where the
- *    mindmap-typed `persistUpdateTile` happened to update the def even on
- *    Kanban boards because the early `inlineTiles[tileId]` lookup returned
- *    undefined.
+ *    style.
  */
 export const kanbanTileOps: BoardTileOps<KanbanBoard> = {
   type: 'kanban',
@@ -52,7 +46,7 @@ export const kanbanTileOps: BoardTileOps<KanbanBoard> = {
     tile: Tile,
     opts?: AddTileOpts,
   ): Promise<void> {
-    // Phase R7 — stamp filePath synchronously so the cache def reflects the
+    // Stamp filePath synchronously so the cache def reflects the
     // resolved path immediately; defer the disk seed.
     stampTextTileSeedPath(tile, boardId);
     const def = buildTileDefinition(tile);
@@ -95,7 +89,7 @@ export const kanbanTileOps: BoardTileOps<KanbanBoard> = {
         delete updatedConns[key];
       }
     }
-    // Audit 5.6 — refresh the board identity alongside the in-place
+    // Refresh the board identity alongside the in-place
     // `columns` rewrite above (cache-identity convention).
     ctx.updateEntry(boardId, { board: { ...kb }, tileDefs: restDefs, connections: updatedConns });
 

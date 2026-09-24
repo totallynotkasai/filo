@@ -44,7 +44,7 @@ export async function listLayoutTemplates(vaultRoot: string): Promise<LayoutTemp
   if (!Array.isArray(entries)) return [];
   const out: LayoutTemplateRecord[] = [];
   for (const { filename, content } of entries) {
-    // F6 / Phase 4 E2 — route through the shared migrate→validate helper so
+    // Route through the shared migrate→validate helper so
     // a from-future / un-migratable template is skipped (not silently
     // re-saved at the current version). Templates are only ever written
     // individually on explicit user save/rename/delete, so skipping one here

@@ -1,42 +1,23 @@
 /**
  * renamePathKeys — central rename-cascade registry for relPath-keyed
- * module state (Phase 6.1.R4).
+ * module state.
  *
- * Class-kill for "X is stranded after rename". Today each rename cascade
- * (`vaultFolderOps.rename`, `runExternalRenameCascade`, the in-app
- * tile-backing-file rename in `boardTiles.ts`) independently calls out
- * to whatever path-keyed sinks it happens to remember:
+ * Prevents "X is stranded after rename": a relPath-keyed map that no rename
+ * cascade remembers to update (e.g. the markdown gateway's hydrate state,
+ * after which every keystroke throws "not hydrated" against the new path).
  *
- *   - `boardCacheStore.renameBoardPath(...)` — placements
- *   - `boardStore.propagateRename(...)` — tile refs
- *   - `fileTagsStore.renameFile(...)` / `renameFolder(...)` — tags
- *   - `vaultIndexStore.renameKey(...)` — search metadata
- *   - `documentStore.updateFilename(...)` — open editor filename
- *
- * The audit's canonical missed example: `markdownFileWriter.fileState`
- * (the hydrate gate) is keyed by relPath but has NO rename method. Every
- * cascade forgets it, so a post-rename body keystroke throws "refusing
- * to write — not hydrated" against the new path. `fileBaselineRegistry`
- * has the same shape. `inFlightDriftPrompts` (a per-path
- * Reload/Keep-local promise dedupe map) and `recentSelfWriteTtl` (the
- * watcher-echo suppression map) too — all keyed by relPath, all missed
- * by the cascades.
- *
- * The fix is one registry + one function. Each owner of relPath-keyed
- * state subscribes a sweep `(oldRel, newRel) => void` at module init.
+ * Each owner of relPath-keyed state subscribes a sweep
+ * `(oldRel, newRel) => void` at module init.
  * Each rename cascade calls `renameAllPathKeys(oldRel, newRel)` exactly
  * once after the disk rename succeeds. New code that introduces a
  * relPath-keyed map either subscribes here or carries the inline escape
  * `// allow-no-rename-transfer: <reason>` on its declaration (e.g. for
  * intentionally rename-blind caches).
  *
- * Out of scope. The existing peer-call sites (`renameBoardPath`,
- * `propagateRename`, `renameFile`, `renameKey`, `updateFilename`)
- * already work, so this commit doesn't migrate them away from the
- * cascade callers — it ADDS the new registry alongside, and the gate
- * enforces that future path-keyed stores route through here. Existing
- * stores that already cover their own rename are listed in the gate's
- * EXEMPT_OWNERS for transparency.
+ * The older explicit peer calls in the cascades (`renameBoardPath`,
+ * `propagateRename`, `renameFile`, `renameKey`, `updateFilename`) remain;
+ * the stores behind them are listed in the gate's EXEMPT_OWNERS. The gate
+ * enforces that new path-keyed stores route through here.
  */
 
 type RenameSweep = (oldRel: string, newRel: string) => void;
@@ -102,7 +83,7 @@ export function renameAllPathKeys(oldRel: string, newRel: string): void {
 
 /**
  * Test-only — returns the set of registered sweep names. Used by the
- * R4 unit tests to assert each owner subscribed at module-init time.
+ * unit tests to assert each owner subscribed at module-init time.
  */
 export function __getRegisteredPathRenamableNames(): Set<string> {
   return new Set(sweeps.map((s) => s.name));

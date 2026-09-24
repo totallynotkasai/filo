@@ -1,5 +1,5 @@
 /**
- * Audit-14 4.7 — single source for the app-origin Content-Security-Policy that
+ * Single source for the app-origin Content-Security-Policy that
  * `installContentSecurityPolicy` (main.ts) emits as an HTTP response header.
  *
  * Kept as a pure, side-effect-free builder so it can be unit-tested — main.ts

@@ -12,7 +12,7 @@ import {
 } from '../utils/payloadLimits';
 
 /**
- * Phase 8 / 8.2 — defence-in-depth: refuse export saves whose final
+ * Defence-in-depth: refuse export saves whose final
  * resolved path lands under `<vault>/.filo/`. Generic exports are user-
  * facing artefacts and have no business being written into the
  * configuration directory; the dedicated `config:save` / `theme:save` /
@@ -47,11 +47,9 @@ export function registerExportHandlers(): void {
   ipcMain.handle(
     'export:save',
     async (_event, format: string, data: string, defaultName?: string) => {
-      // Phase 8 / 8.2 — cap the payload before any disk work. Binary
-      // formats (png/pdf) arrive as base64, so the post-decode byte length
-      // is ~75 % of the string length; we cap the wire payload against
-      // PAYLOAD_LIMITS.MEDIA which is the existing 200 MB ceiling for
-      // single-file binary IPC.
+      // Cap the payload before any disk work. Binary formats (png/pdf)
+      // arrive as base64 (~75 % decoded); the wire payload is capped against
+      // PAYLOAD_LIMITS.MEDIA, the 200 MB single-file binary IPC ceiling.
       try {
         const wireBytes = typeof data === 'string'
           ? Buffer.byteLength(data, 'utf-8')
@@ -85,7 +83,7 @@ export function registerExportHandlers(): void {
       });
 
       if (result.canceled || !result.filePath) {
-        // Audit-18 4.4 — the user dismissed the save dialog. This is NOT a
+        // The user dismissed the save dialog. This is NOT a
         // write failure, so carry a `canceled` discriminator: the renderer
         // treats it as a no-op instead of raising a spurious "Export failed"
         // error toast (a real failure returns `{ success: false }` with NO
@@ -93,7 +91,7 @@ export function registerExportHandlers(): void {
         return { success: false, path: '', canceled: true };
       }
 
-      // Phase 8 / 8.2 — defence-in-depth: never write a user-facing export
+      // Defence-in-depth: never write a user-facing export
       // into `.filo/`. The renderer never points here intentionally; this
       // guards against a buggy renderer (or a future code path) that does.
       if (resolvesUnderFiloDir(result.filePath)) {
@@ -104,8 +102,7 @@ export function registerExportHandlers(): void {
       // exporting a board as PNG into an `Exports/` subfolder), bracket
       // the write with watcher suppression so the create event doesn't
       // echo back into the renderer as a "tree updated" refresh while
-      // the dialog is closing. Phase 25 L4 — mirrors the same suppress
-      // pattern `vault:write-file-text` and `media:save-audio` use.
+      // the dialog is closing (same pattern as `vault:write-file-text`).
       const vaultRoot = getVaultRoot();
       const watcher = getActiveWatcher();
       let relForSuppress: string | null = null;

@@ -1,5 +1,5 @@
 /**
- * Audit-19 EXT-6 (plan D5) — this machine's identity, cached for the renderer.
+ * This machine's identity, cached for the renderer.
  *
  * Fetched ONCE at app boot (`loadMachineIdentity`, awaited before any vault
  * opens) from main's `app:machine-identity` (userData/machine-id.json). Every

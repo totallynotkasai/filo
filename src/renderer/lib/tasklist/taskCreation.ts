@@ -35,7 +35,7 @@ import type { TaskRow } from '../tasks/taskListModel';
  * disk, document-store hydration, and the `AddTaskCommand` dispatch.
  * Factory closes over reactive accessors so the extracted helpers always
  * see the live board / sections / rows state without capturing stale
- * snapshots. Mirrors `kanbanTileCreation.ts` from Phase 5.7.
+ * snapshots. Mirrors `kanbanTileCreation.ts`.
  */
 
 /** Wrapper around the lib helper so callers don't pass the board cache. */
@@ -149,19 +149,18 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
 
   // Shared seed routine: writes the `.md`, hydrates the documentStore, and
   // (for non-null `fm`) caches the frontmatter so the row builder doesn't
-  // lag the watcher. Resolves the path + title it ACTUALLY created (Audit-19
-  // BL-1 — the create-exclusive helper bumps to ` (n)` if the pre-pick exists).
+  // lag the watcher. Resolves the path + title it ACTUALLY created (the
+  // create-exclusive helper bumps to ` (n)` if the pre-pick exists).
   async function seedMdFile(args: SeedFileArgs, kindForError: string): Promise<SeededFile | void> {
     const vaultRoot = vaultStore.path;
     if (!vaultRoot) return;
     const { contentId, fm, folder } = args;
     const seedFile = fm ? assembleMarkdownFile(fm, '') : '---\ncompleted: false\n---\n';
-    // A9-M3 (Audit-9) — the backing `.md` write is CRITICAL: let a failure
-    // PROPAGATE so the chained `AddTaskCommand.execute()` rolls its placement
-    // back (no orphan board row referencing a missing file). The helper routes
-    // the failure through the save-error pipeline (toast + `.filo/.dirty`
-    // sentinel) before rethrowing. Audit-19 BL-1 — create-EXCLUSIVE: an existing
-    // off-board file with the same name is never overwritten.
+    // The backing `.md` write is CRITICAL: let a failure PROPAGATE so the
+    // chained `AddTaskCommand.execute()` rolls its placement back (no orphan
+    // board row referencing a missing file). The helper routes the failure
+    // through the save-error pipeline before rethrowing. Create-EXCLUSIVE: an
+    // existing off-board file with the same name is never overwritten.
     const created = await createUniqueMdFile({
       vaultRoot,
       folder,
@@ -179,11 +178,8 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
       // gateway accepts subsequent writes (from TextTile, PropertiesPopup,
       // etc.) without throwing — the file existed before the next edit.
       markHydrated(relPath, false);
-      // Audit-12 H1 — the `def.filePath = relPath` stamp moved to buildTaskDef
-      // (pre-clone). Stamping it here was a no-op for persistence: AddTaskCommand
-      // had already deep-cloned the def before this runs, so it mutated an object
-      // the cache never sees. seedMdFile no longer needs `def` at all.
-      // Audit-19 MD-3 — `DocumentState.body` is body-only; the seed is a
+      // `def.filePath` is stamped in buildTaskDef (pre-clone), not here.
+      // `DocumentState.body` is body-only; the seed is a
       // frontmatter-only FILE with an empty body, so the store body is ''.
       documentStore.loadDocument({
         docId: contentId,
@@ -232,14 +228,10 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     } as TileDefinition;
     (def as Record<string, unknown>).contentId = contentId;
     (def as Record<string, unknown>).content = '';
-    // Audit-12 H1 — bake `filePath` into the def HERE, before AddTaskCommand's
-    // ctor deep-clones it (`this.def = this.snapshot(def)`). seedMdFile used to
-    // stamp it (on the ORIGINAL def) only AFTER the clone had already entered the
-    // cache, so the persisted `.board.json` row carried NO `filePath`. On a cold
-    // load (boards don't preload docs → documentStore empty) a subfolder task's
-    // field/tag write then fell through the per-board folder cascade / vault root
-    // and hit the wrong file. Kanban + Mind Map already bake filePath in pre-clone;
-    // this brings Task List to parity.
+    // Bake `filePath` into the def HERE, before AddTaskCommand's ctor
+    // deep-clones it — stamping later would mutate an object the cache never
+    // sees, so the persisted row would lack `filePath` and a cold-load field/tag
+    // write for a subfolder task would hit the wrong file.
     (def as Record<string, unknown>).filePath = relPath;
     return { def, contentId, relPath, finalTitle };
   }
@@ -260,23 +252,16 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
       folder,
       extraFm: null,
     });
-    // A9-M3 (Audit-9) — the `.md` seed is folded INTO AddTaskCommand.execute()
-    // (its last argument), which persists the placement synchronously FIRST and
-    // then awaits the seed — all on the history chain. vaultStore.save()/quit
-    // therefore cover the seed via whenChainSettled(): a quit inside the seed
-    // window no longer persists the placement while losing the `.md`
-    // (priority/due/tags). The prior off-chain `await seedMdFile(...)` AFTER
-    // execute() did exactly that → an orphan row + lost metadata. On a seed-write
+    // The `.md` seed is folded INTO AddTaskCommand.execute() (its last
+    // argument), which persists the placement synchronously FIRST and then
+    // awaits the seed — all on the history chain, so save()/quit cover the seed
+    // via whenChainSettled() (no orphan row with lost metadata). On a seed-write
     // failure the command rolls its placement back. Placement-first also keeps
-    // the insertPos TOCTOU tight (no concurrent creation shifts the slot across
-    // the await). The chain reports its own errors; swallow here on this
-    // fire-and-forget UI path.
+    // the insertPos TOCTOU tight.
     const insertPos = endOfSectionIndex(targetSectionId);
-    // Audit-16 6.2 — gate the success announcement on the chain resolving.
-    // Pre-fix the `.catch(() => {})` swallow announced "Task added" even when
-    // the seed write failed and execute() rolled the placement back. The
-    // failure announcement gives SR users parity with the visual error toast
-    // the seed's create-exclusive helper already raised.
+    // Gate the success announcement on the chain resolving (a failed seed
+    // rolls the placement back). The failure announcement gives SR users parity
+    // with the visual error toast.
     const cmd = new AddTaskCommand(board.id, def, insertPos, undefined, targetSectionId ?? undefined, () =>
       seedMdFile({ contentId, relPath, finalTitle, folder, fm: null }, 'new task'),
     );
@@ -303,8 +288,7 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     // gesture (footer "Add task", bulk move). When that's still valid, use
     // it. Otherwise fall back to the FIRST persisted section — most users
     // expect quick-add buttons to land at the top of the list, not the
-    // bottom (Phase 6 audit: previous "last section" fallback was the
-    // primary source of "task created in wrong section" reports).
+    // bottom.
     let target: string | null = getLastTargetedSectionId();
     if (target && !sections.some((s) => s.id === target)) target = null;
     if (!target) {
@@ -349,13 +333,9 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
         : targetSectionId;
     }
 
-    // A9-M3 (Audit-9) — compute the insert slot here, then fold the `.md` seed
-    // INTO AddTaskCommand.execute() so the placement (synchronous) AND the seed
-    // (awaited) both run on the history chain that quit drains via
-    // whenChainSettled(). The prior off-chain `await seedMdFile(...)` after
-    // execute() let a quit-during-seed persist the placement but lose the typed
-    // metadata (priority/due/tags) → orphan row. Reading the live placements
-    // here (pre-dispatch) keeps the insertPos TOCTOU tight. See createTaskInSection.
+    // Compute the insert slot here, then fold the `.md` seed INTO
+    // AddTaskCommand.execute() so placement and seed both run on the history
+    // chain that quit drains. See createTaskInSection.
     const placementsNow = getPlacements();
     let insertPos = placementsNow.length;
     if (resolvedTargetId) {
@@ -367,7 +347,7 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
       }
     }
 
-    // Audit-16 6.2 — success announcement gated on the chain resolving (see addTask).
+    // Success announcement gated on the chain resolving (see createTaskInSection).
     const cmd = new AddTaskCommand(board.id, def, insertPos, undefined, resolvedTargetId ?? undefined, () =>
       seedMdFile({ contentId, relPath, finalTitle, folder, fm }, 'quick-add task'),
     );
@@ -397,20 +377,17 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
 
     const fm: Record<string, unknown> = { completed: false, parent: parentTileId };
 
-    // A9-M3 (Audit-9) — compute the parent index here, then fold the `.md` seed
-    // INTO AddTaskCommand.execute() so the placement (synchronous) AND the seed
-    // (awaited) both ride the history chain that quit drains via
-    // whenChainSettled(). The prior off-chain `await seedMdFile(...)` after
-    // execute() let a quit-during-seed persist the placement but lose the typed
-    // metadata → orphan `.md`. Reading the live placements here pins our slot
-    // before any sibling creation/reload can run (insertPos TOCTOU). Falling back
-    // to end-of-list still covers a parent deleted mid-flight.
+    // Compute the parent index here, then fold the `.md` seed INTO
+    // AddTaskCommand.execute() so placement and seed both ride the history chain
+    // that quit drains. Reading the live placements here pins our slot before
+    // any sibling creation/reload can run. Falling back to end-of-list covers a
+    // parent deleted mid-flight.
     const placementsNow = getPlacements();
     const sectionsNow = getSections();
     const parentIdx = placementsNow.findIndex((p) => p.tileId === parentTileId);
     const insertAt = parentIdx >= 0 ? parentIdx + 1 : placementsNow.length;
     const parentSection = parentIdx >= 0 ? sectionIdForPlacementIndex(sectionsNow, parentIdx) : null;
-    // Audit-16 6.2 — success announcement gated on the chain resolving (see addTask).
+    // Success announcement gated on the chain resolving (see createTaskInSection).
     const cmd = new AddTaskCommand(board.id, def, insertAt, undefined, parentSection ?? undefined, () =>
       seedMdFile({ contentId, relPath, finalTitle, folder, fm }, 'subtask'),
     );

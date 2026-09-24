@@ -1,10 +1,8 @@
 /**
- * Phase 7 / 7.4 + 7.5 — undoable saved-views CRUD for both Kanban and
- * Task List boards. Saved views live on `board.settings.savedViews` and
- * are persisted via `boardCacheStore.setKanbanSavedViews` /
- * `setTaskListSavedViews`. The same Command class drives both surfaces
- * via a `kind` discriminator so 7.5 reuses 7.4's machinery rather than
- * duplicating snapshot logic.
+ * Undoable saved-views CRUD for both Kanban and Task List boards. Saved
+ * views live on `board.settings.savedViews` and are persisted via
+ * `boardCacheStore.setKanbanSavedViews` / `setTaskListSavedViews`. One
+ * Command class drives both surfaces via a `kind` discriminator.
  *
  * Snapshots are deep-cloned via JSON round-trip so a later in-place
  * mutation of either array (e.g. a same-name overwrite that filters the

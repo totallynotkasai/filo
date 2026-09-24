@@ -15,12 +15,8 @@ import { ipcErrorCode } from './ipcErrorCode';
 
 /**
  * `vault:copy-file` handler — copies an external (or in-vault) file into the
- * vault. Audit-14 6.1 split this security-sensitive path out of `vault.ipc.ts`
- * (which had hit the 1000-LOC ceiling). It shares the `ipcErrorCode` mapper
- * with the rest of the vault handlers and is registered alongside them from
- * `ipc/index.ts`. The source-approval (Audit-12 S1) + symlink/device TOCTOU
- * (Audit-14 4.3) guards live here together so the whole copy threat model is
- * in one file.
+ * vault. The source-approval and symlink/device TOCTOU guards live here
+ * together so the whole copy threat model is in one file.
  */
 
 /**
@@ -28,8 +24,7 @@ import { ipcErrorCode } from './ipcErrorCode';
  * `vault:copy-file`. Caps the renderer's ability to pull in extremely large
  * external files (e.g. multi-GB media someone dropped onto a board by
  * accident) before we hit a disk-full or atomic-write failure deep inside
- * `copyFileToVault`. 100 MB matches the Phase 6 destructive-undo cap order
- * of magnitude (25 MB) while leaving headroom for legitimate video imports.
+ * `copyFileToVault`. 100 MB leaves headroom for legitimate video imports.
  */
 const VAULT_COPY_MAX_SIZE_BYTES = 100 * 1024 * 1024;
 
@@ -60,7 +55,7 @@ export function registerVaultCopyHandlers(): void {
         if (typeof sourcePath !== 'string' || sourcePath.length === 0) {
           throw new Error('sourcePath must be a non-empty string');
         }
-        // Audit-12 S1 — only in-vault files or user-picked (dialog) / dropped
+        // Only in-vault files or user-picked (dialog) / dropped
         // (approved-source registry) paths may be a source; else this channel is
         // an arbitrary host-file READ. Runs BEFORE any lstat/open (untouched path).
         if (!isApprovedCopySource(vaultPath, sourcePath)) {
@@ -73,17 +68,11 @@ export function registerVaultCopyHandlers(): void {
         // Stat the source before the copy so we can reject oversized imports
         // up front. Without this an accidental drop of a multi-GB file would
         // run a full copy, possibly fill the disk, before any caller learned
-        // it failed. `fs.stat` also surfaces ENOENT cleanly via ipcErrorCode.
+        // it failed. It also surfaces ENOENT cleanly via ipcErrorCode.
         //
-        // Sprint A / A11 — `fs.lstat` (not `fs.stat`) so a symbolic link to
-        // a character device like `/dev/zero` is rejected as "not a file"
-        // up front. `stat` follows the symlink and reports `isFile()` on
-        // the target; since `/dev/zero` has `size === 0`, the cap check
-        // below would pass and `copyFile` would then read from /dev/zero
-        // until disk is full (no EOF). `lstat` reports the SYMLINK's type,
-        // which is `isSymbolicLink()` not `isFile()`, so we refuse.
-        // Regular files lstat as `isFile()` so the legitimate path is
-        // unchanged.
+        // `lstat`, not `stat`: a symlink to a device like `/dev/zero` must be
+        // rejected as "not a file". `stat` would follow it and pass the size
+        // cap (size 0), then the copy would read until the disk is full.
         const sourceStat = await fsPromises.lstat(sourcePath);
         if (!sourceStat.isFile()) {
           return { success: false, code: 'IO_ERROR', error: 'Source is not a regular file' };
@@ -99,13 +88,13 @@ export function registerVaultCopyHandlers(): void {
           typeof destFolder === 'string' && destFolder.trim().length > 0
             ? toPosix(destFolder).replace(/^\/+/, '').replace(/\/+$/, '')
             : undefined;
-        // Phase 37 / 37.5 + 6.3.P1/P2 — segment-level validation on the
-        // subfolder (a per-segment reserved name would pass `assertWithinVault`
-        // but still open a device handle on Windows). `forCreation: true`
-        // because this channel creates new subfolders + file paths.
+        // Segment-level validation on the subfolder (a per-segment reserved
+        // name would pass `assertWithinVault` but still open a device handle
+        // on Windows). `forCreation: true` because this channel creates new
+        // subfolders + file paths.
         if (subfolder) assertSafeRelativePath(subfolder, { forCreation: true });
 
-        // Phase 1 / 1.2 — refuse `.filo/` on both ends:
+        // Refuse `.filo/` on both ends:
         //  - dest: the subfolder + basename pair must not land inside `.filo/`
         //  - src: if the source happens to live INSIDE the vault under
         //    `.filo/`, refuse — generic copy must not exfiltrate config.
@@ -120,7 +109,7 @@ export function registerVaultCopyHandlers(): void {
           assertNotInFiloDir(sourceRel);
         }
 
-        const destPath = await copyFileToVault(sourcePath, vaultPath, subfolder, VAULT_COPY_MAX_SIZE_BYTES, true); // Audit-14 4.3 — final `true` = noFollowSource (O_NOFOLLOW/lstat-reject; see openSourceForCopy)
+        const destPath = await copyFileToVault(sourcePath, vaultPath, subfolder, VAULT_COPY_MAX_SIZE_BYTES, true); // final `true` = noFollowSource (O_NOFOLLOW/lstat-reject; see openSourceForCopy)
         assertWithinVault(vaultPath, destPath);
         const relativePath = relativePosix(vaultPath, destPath);
         return { success: true, path: destPath, relativePath };

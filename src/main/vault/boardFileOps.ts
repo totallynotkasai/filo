@@ -19,11 +19,10 @@ const BOARD_EXTENSION = '.board.json';
  * Loads and returns the parsed board object of a .board.json file.
  * Caller is responsible for Zod validation.
  *
- * Audit-19 ERR-1 — builds before Audit-19 JSON-encoded the renderer's already-
- * serialised payload a second time, so legacy files hold a JSON STRING literal.
- * Unwrap one level (the configOps precedent); a plain-JSON file (written by a
- * fixed build, or hand-edited) loads as-is. Each legacy file migrates to plain
- * JSON on its next save.
+ * Older builds JSON-encoded the renderer's already-serialised payload a second
+ * time, so legacy files hold a JSON STRING literal. Unwrap one level (as
+ * configOps does); a plain-JSON file loads as-is. Each legacy file migrates to
+ * plain JSON on its next save.
  */
 export async function loadBoardFile(filePath: string): Promise<unknown> {
   const raw = await fs.readFile(filePath, 'utf-8');
@@ -32,7 +31,7 @@ export async function loadBoardFile(filePath: string): Promise<unknown> {
 }
 
 /**
- * Audit-19 ERR-1 — the renderer sends the board already serialised; write that
+ * The renderer sends the board already serialised; write that
  * string VERBATIM so the on-disk size equals the renderer's payload byte length
  * (the post-write drift-baseline check depends on it). Non-string data (tests,
  * internal callers) is serialised here. A cheap sniff refuses a string that
@@ -112,14 +111,14 @@ export async function scanBoardFiles(vaultRoot: string): Promise<string[]> {
 }
 
 /**
- * Audit-19 ERR-3 / EXT-7 — sync-client conflict copies of a board.
+ * Sync-client conflict copies of a board.
  *
  * OneDrive, Dropbox and iCloud put their suffix before the LAST extension, so a
  * fork of `Plan.board.json` is `Plan.board-DESKTOP-1A2B3C4.json` /
  * `Plan.board (… conflicted copy …).json` / `Plan.board 2.json` — names
- * `board:list` never sees. The diverged edits sat on disk with no warning.
+ * `board:list` never sees, so the diverged edits would sit on disk unnoticed.
  * Returns each such copy whose canonical `*.board.json` exists alongside
- * (the C0 detector; weak ` (n)` / ` n` shapes only count with the sibling).
+ * (weak ` (n)` / ` n` shapes only count with the sibling).
  */
 export async function scanBoardConflicts(
   vaultRoot: string,
@@ -144,7 +143,7 @@ async function scanDir(
   dir: string,
   vaultRoot: string,
   results: string[],
-  // Audit-19 ERR-3 — optional sink for `*.board<suffix>.json` names (possible
+  // Optional sink for `*.board<suffix>.json` names (possible
   // sync conflict forks) that `board:list` deliberately excludes.
   others?: string[],
 ): Promise<void> {
@@ -165,10 +164,10 @@ async function scanDir(
     } else if (others && /\.board.+\.json$/i.test(entry.name) && !entry.name.toLowerCase().endsWith(BOARD_EXTENSION)) {
       others.push(relativePosix(vaultRoot, fullPath));
     } else if (entry.name.toLowerCase().endsWith(BOARD_EXTENSION)) {
-      // Audit-15 P1.3 — case-fold the extension match (siblings `fileOps`/the
-      // watcher already do). Filo only ever CREATES lowercase `.board.json`, so
-      // this is robustness against an external tool / cloud sync diverging the
-      // casing: without it, such a board is silently excluded from `board:list`.
+      // Case-fold the extension match (as `fileOps` / the watcher do). Filo
+      // only CREATES lowercase `.board.json`, but an external tool / cloud
+      // sync may diverge the casing, and such a board would otherwise be
+      // silently excluded from `board:list`.
       results.push(relativePosix(vaultRoot, fullPath));
     }
   }

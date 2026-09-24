@@ -2,17 +2,13 @@ import * as path from 'path';
 import { vaultRegistry } from './vaultRegistry';
 
 /**
- * Audit-12 S1 — approved-source registry for `vault:copy-file`.
+ * Approved-source registry for `vault:copy-file`.
  *
- * The `vault:copy-file` handler used to copy ANY absolute path the renderer
- * named into the vault (only the *destination* was vault-contained). Under the
- * hostile-vault threat model (hostile note content reaching IPC via TipTap
- * `html:true`), that is an arbitrary host-file READ primitive: a compromised
- * renderer could pull `~/.ssh/id_rsa`, `/etc/passwd`, browser cookie DBs, etc.
- * into the vault where it can then be exfiltrated.
- *
- * The fix constrains the SOURCE to files the user actually chose. A path is an
- * approved copy source iff it is either:
+ * Copying ANY absolute path the renderer names would be an arbitrary host-file
+ * READ primitive under the hostile-vault threat model: a compromised renderer
+ * could pull `~/.ssh/id_rsa`, browser cookie DBs, etc. into the vault and
+ * exfiltrate them. So the SOURCE is constrained to files the user actually
+ * chose. A path is an approved copy source iff it is either:
  *   1. already inside the active vault (the renderer can already read it via
  *      `vault:read-file-text`, so copying it in is no new capability), or
  *   2. previously presented to the user through a trusted main/preload path —
@@ -31,20 +27,15 @@ import { vaultRegistry } from './vaultRegistry';
  *     schema rejects any `window.filo.send/invoke('vault:register-source-path')`
  *     attempt as a belt-and-braces second line of defence).
  *
- * Audit-14 4.2 — VAULT-BINDING. Each registered source is now tagged with the
- * vault that was active when it was minted (the registry's canonical path), and
- * `isApprovedCopySource` requires that binding to equal the CURRENTLY-active
- * vault. Before this, the set was keyed by absolute path alone, so a path the
- * user picked while vault A was open stayed approved for whatever vault was
- * current — `vault:copy-file` under vault B would accept it. Both the binding
- * (at registration) and the comparison (at check) read the SAME
- * `vaultRegistry.currentVaultPath`, so they agree regardless of any
- * symlinked-vs-canonical spelling the renderer passes. The `clearApprovedSources`
- * swap-clear (Audit-13 M11) is kept as defence-in-depth.
+ * VAULT-BINDING: each registered source is tagged with the vault active when
+ * it was minted, and `isApprovedCopySource` requires that binding to equal the
+ * CURRENTLY-active vault, so a path picked under vault A can't be copied into
+ * vault B. Both sides read the SAME `vaultRegistry.currentVaultPath`, so they
+ * agree regardless of the renderer's symlinked-vs-canonical spelling. The
+ * swap-time `clearApprovedSources` is kept as defence-in-depth.
  *
- * This is defence-in-depth — N/A for first-party vaults — but it removes the
- * arbitrary-read primitive entirely without restricting any legitimate
- * dialog/drag-drop import.
+ * This removes the arbitrary-read primitive without restricting any
+ * legitimate dialog/drag-drop import.
  */
 
 const isWin = process.platform === 'win32';
@@ -87,7 +78,7 @@ const approvedSources = new Map<string, string>();
  * Idempotent; re-registering refreshes recency so a frequently-used source
  * isn't evicted under churn.
  *
- * Audit-14 4.2 — with no active vault there is nothing to bind the approval to,
+ * With no active vault there is nothing to bind the approval to,
  * so the registration is refused. The legitimate dialog/drop minting points
  * only fire while a vault is open (the file picker is gated on it; an OS drop
  * targets a board), so this never drops a real approval.
@@ -108,11 +99,10 @@ export function registerApprovedSource(absPath: string): void {
 }
 
 /**
- * Audit-13 M11 — drops every approved source. Called on `vault:close` and at the
- * start of the `vault:watch` swap path so a path the user picked while vault A
- * was open does NOT stay approved for vault B. Audit-14 4.2's per-source vault
- * binding now makes a leaked approval unusable across a swap on its own, but
- * this clear is kept as defence-in-depth (and to bound the map at swap time).
+ * Drops every approved source. Called on `vault:close` and at the start of
+ * the `vault:watch` swap path. The per-source vault binding already makes a
+ * leaked approval unusable across a swap; this is defence-in-depth (and
+ * bounds the map at swap time).
  */
 export function clearApprovedSources(): void {
   approvedSources.clear();

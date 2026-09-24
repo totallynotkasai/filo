@@ -14,25 +14,23 @@
 
   let lastTickMs = 0;
   let displayTime = $state('');
-  // Phase 31 C2.4 — last second-stamp we wrote to displayTime. The 100 ms
+  // Last second-stamp we wrote to displayTime. The 100 ms
   // tick is required to keep the countdown accurate, but the display only
   // changes once per second. Skip the formatTime + assignment when the
   // second hasn't changed (clock mode and idle/running countdowns alike).
   let lastDisplaySecond = -1;
-  // Audit2 4.1 — the live countdown lives in component state. Persisting the
-  // decrement on every 100 ms tick re-armed this board's 300 ms write debounce
-  // forever, so the board's writes never flushed: any real edit to the board
-  // was lost on a hard crash and the save indicator was pinned on "saving".
-  // We now write the tile only on pause / stop / reset / unmount-while-running.
+  // The live countdown lives in component state. Persisting the decrement on
+  // every 100 ms tick would re-arm the board's 300 ms write debounce forever,
+  // so the board's writes would never flush. The tile is written only on
+  // pause / stop / reset / unmount-while-running (plus the coarse persist below).
   // untrack: deliberately snapshot the initial value — the $effect below
   // re-seeds it on genuine external changes, and tick() mutates it locally.
   let liveRemaining = $state(untrack(() => tile.remaining));
-  // Audit-17 4.6 — coarse periodic persist of a RUNNING countdown. Quit never
-  // unmounts the Svelte tree (onDestroy's persist below never runs) and a
-  // vault swap clears the board cache BEFORE unmount, so a running timer's
-  // progress was unrecoverable from either. The gate fires every 45 s — far
-  // above the board's 300 ms write debounce, so the Audit2 4.1 per-tick
-  // re-arm-forever bug is NOT reintroduced. Armed per running countdown by
+  // Coarse periodic persist of a RUNNING countdown. Quit never unmounts the
+  // Svelte tree (onDestroy's persist never runs) and a vault swap clears the
+  // board cache BEFORE unmount, so neither saves a running timer's progress.
+  // The gate fires every 45 s — far above the board's 300 ms write debounce,
+  // so it can't keep the debounce re-armed. Armed per running countdown by
   // the interval $effect below; null while stopped / in clock mode.
   let coarsePersistDue: ((nowMs: number) => boolean) | null = null;
   // Custom time input state (shown when clicking the display while stopped)
@@ -40,7 +38,7 @@
   let customInput = $state('');
   let customInputEl = $state<HTMLInputElement | null>(null);
 
-  // P4.3 (Audit-15) — end-of-timer cue. `finished` drives a brief flash
+  // End-of-timer cue. `finished` drives a brief flash
   // (transform/opacity only; degrades to a static colour highlight under
   // reduced motion) and `announceText` feeds a visually-hidden aria-live
   // region so a completed countdown is perceivable even when the tile is
@@ -63,7 +61,7 @@
 
   // The display is only editable (click / Enter → custom-time input) while a
   // non-clock timer is stopped. Drives the role/tabindex + keyboard handler so
-  // the affordance is reachable without a mouse (Audit-14 5.8).
+  // the affordance is reachable without a mouse.
   let displayEditable = $derived(tile.mode !== 'clock' && !tile.isRunning);
 
   $effect(() => {
@@ -83,7 +81,7 @@
     // Re-seed the local countdown whenever the persisted value changes from
     // outside our tick — mode swap, duration set, reset, or external reload.
     // A running countdown writes tile.remaining only via the 45 s coarse
-    // persist (Audit-17 4.6), whose value equals the live countdown at write
+    // persist, whose value equals the live countdown at write
     // time — that echo re-seeds by at most one 100 ms tick, a harmless
     // rewind. Otherwise this fires only on genuine external changes, not on
     // our own per-second ticks (liveRemaining is written but not read here,
@@ -92,7 +90,7 @@
     lastDisplaySecond = -1;
   });
 
-  // Phase 7 (IMPLEMENTATION_PLAN_2026-05-27) — config changes (mode swap
+  // Config changes (mode swap
   // and duration set) route through UpdateTimerConfigCommand so Ctrl+Z
   // reverses them. Transient ticks (remaining countdown, isRunning play
   // / pause) keep their direct boardStore.updateTile calls — wrapping
@@ -173,7 +171,7 @@
         boardStore.updateTile(tileRef.id, { remaining: 0, isRunning: false });
         announceFinished();
       } else if (coarsePersistDue?.(now)) {
-        // Audit-17 4.6 — coarse periodic persist so a running countdown
+        // Coarse periodic persist so a running countdown
         // survives quit / vault swap within a minute of truth (see the gate
         // declaration above).
         // allow-direct-mutation: transient countdown progress, not history-worthy.
@@ -221,18 +219,16 @@
       historyStore.execute(new UpdateTimerConfigCommand(tile.id, before, after, 'Set timer duration'));
       editingCustom = false;
     } else {
-      // P4.3 — give feedback instead of silently discarding an unparseable
+      // Give feedback instead of silently discarding an unparseable
       // value; keep the editor open so the user can correct it.
       uiStore.toast('Enter a time like "25" (minutes) or "25:00" (mm:ss).', 'warning', 3000);
     }
   }
 
-  // Audit-14 5.7 — only run the ticking interval when time actually moves: a
-  // running countdown needs the 100 ms cadence to stay accurate, clock mode
-  // only needs a 1 s tick, and a stopped/paused countdown needs NO interval at
-  // all (the display is static until the next user action). Previously a fixed
-  // 100 ms interval ran for the tile's whole lifetime regardless of mode/run
-  // state. The effect re-arms whenever `mode` / `isRunning` flip; the handle
+  // Only run the ticking interval when time actually moves: a running
+  // countdown needs the 100 ms cadence to stay accurate, clock mode only needs
+  // a 1 s tick, and a stopped/paused countdown needs NO interval at all (the
+  // display is static until the next user action). The effect re-arms whenever `mode` / `isRunning` flip; the handle
   // lives in the effect's own cleanup so it's cleared on every re-arm + unmount
   // (no component-scope timer binding to leak).
   $effect(() => {
@@ -249,7 +245,7 @@
       lastDisplaySecond = -1;
       tick();
       if (mode !== 'clock' && !running) return; // static — no interval
-      // Audit-17 4.6 — fresh cadence gate per RUNNING arm (start / resume):
+      // Fresh cadence gate per RUNNING arm (start / resume):
       // the first coarse persist comes one full interval after arming.
       coarsePersistDue = mode !== 'clock' && running
         ? createCoarsePersistGate(Date.now())
@@ -261,19 +257,17 @@
   });
 
   onDestroy(() => {
-    // P4.3 — clear the end-of-timer flash handle so it can't fire after unmount.
+    // Clear the end-of-timer flash handle so it can't fire after unmount.
     if (flashTimer) clearTimeout(flashTimer);
     // Save countdown progress on unmount (e.g. board switch mid-run) — while
     // RUNNING we don't write tile.remaining per tick, so the cached value is
     // otherwise stale.
     //
-    // 6.4.L3 (refuted — the isRunning gate is correct, not paused-timer drift):
-    // togglePlayPause's PAUSE writes `remaining: liveRemaining` synchronously,
-    // and the re-seed $effect above keeps `liveRemaining === tile.remaining`
-    // while paused. So a paused timer carries no unpersisted drift, and the
-    // gate rightly skips the write. Dropping it would be a regression: it would
-    // let unmount overwrite the canonical paused `remaining` with the local
-    // `liveRemaining`, which is only authoritative while the countdown runs.
+    // The isRunning gate is correct: PAUSE writes `remaining: liveRemaining`
+    // synchronously and the re-seed $effect keeps them equal while paused, so a
+    // paused timer has no unpersisted drift. Dropping the gate would let unmount
+    // overwrite the canonical paused `remaining` with `liveRemaining`, which is
+    // only authoritative while the countdown runs.
     if (tile.isRunning && liveRemaining !== tile.remaining) {
       // allow-direct-mutation: persist countdown progress on unmount.
       boardStore.updateTile(tile.id, { remaining: liveRemaining });
@@ -347,7 +341,7 @@
     </div>
   {/if}
 
-  <!-- P4.3 — visually-hidden live region: announces countdown completion. -->
+  <!-- Visually-hidden live region: announces countdown completion. -->
   <span class="sr-only" aria-live="assertive">{announceText}</span>
 </div>
 
@@ -381,7 +375,7 @@
   .display.clickable:hover {
     background: var(--ui-surface-hover);
   }
-  /* P4.3 — end-of-timer cue. GPU-friendly (transform/opacity only); the
+  /* End-of-timer cue. GPU-friendly (transform/opacity only); the
      accent colour stays as a static highlight so reduced-motion users still
      get a visual cue alongside the aria-live announcement + toast. */
   .display.finished {

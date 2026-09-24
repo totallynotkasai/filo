@@ -1,7 +1,7 @@
 /**
  * Tag-rewrite recovery sentinel — survives a crash mid-tag-rename.
  *
- * Sprint B / B3. A tag rename (`renameTagEverywhere`) or removal
+ * A tag rename (`renameTagEverywhere`) or removal
  * (`removeTagEverywhere`) walks every metadata entry, builds a write plan,
  * and commits N disk writes before applying the registry / tile-def cascade.
  * If the process dies mid-Phase-2 (crash, power loss, OS kill), the .md
@@ -32,7 +32,7 @@ import { ownSentinelPath } from './machineIdentity';
 import { readOwnOrLegacySentinel, clearOwnSentinel } from './machineSentinels';
 
 /**
- * Audit-19 EXT-6 — PER MACHINE (`.filo/tag-rewrite-pending.<machineId>.json`):
+ * PER MACHINE (`.filo/tag-rewrite-pending.<machineId>.json`):
  * another machine must never "Resume" this machine's half-finished tag rename
  * (it would rewrite the same files concurrently) nor clear it. The legacy
  * shared file is read once and deleted by the next clear.
@@ -45,9 +45,7 @@ const ownTagRewritePath = (): string => ownSentinelPath('tag-rewrite');
  * before the first one's IPC settles) would interleave the read/write halves
  * of two sentinel writes and end up persisting whichever one happened to
  * resolve last instead of the one the user actually triggered last.
- *
- * Mirrors the renameCascadeSentinel mutex (Sprint 35.3) by design: the same
- * recovery sentinel pattern, the same crash window, the same hazard.
+ * Mirrors the renameCascadeSentinel mutex.
  */
 let lastOp: Promise<unknown> = Promise.resolve();
 
@@ -72,7 +70,7 @@ export interface TagRewriteSentinelPayload {
   /** Vault-relative paths the rewrite was planning to touch. */
   plan: string[];
   /**
-   * Phase 7.3 — vault-relative paths that already carried `newName` BEFORE
+   * Vault-relative paths that already carried `newName` BEFORE
    * the rewrite began (a merge-rename into an existing tag, or files the user
    * had independently tagged). Recorded at write time so partial-state
    * detection can exclude them: a file carrying `newName` only signals an
@@ -82,7 +80,7 @@ export interface TagRewriteSentinelPayload {
    */
   preexistingNewNamePaths: string[];
   /**
-   * 6.3 (AUDIT_REMEDIATION_PLAN_2026-05-31) — vault-relative paths whose `.md`
+   * Vault-relative paths whose `.md`
    * rewrite was CONFIRMED committed to disk, recorded INCREMENTALLY as the
    * sweep progresses. This is the per-path commit breadcrumb that lets reopen
    * detect a partial REMOVAL: the absence of a tag is indistinguishable from
@@ -118,18 +116,12 @@ export function writePendingRewrite(
 ): Promise<void> {
   return withMutex(async () => {
     if (!vaultRoot) return;
-    // Phase 31 A1.6 — failures carry an IpcEnvelopeError with the
-    // channel + code (callers like fileTagsStore.renameTagEverywhere
-    // already abort on throw, surfacing the failure to the user).
-    // Phase 1 (CONSOLIDATION_PLAN) — switched to `invokeOk` so the
-    // envelope check is part of the call shape.
+    // Failures throw an IpcEnvelopeError (callers like
+    // fileTagsStore.renameTagEverywhere abort on throw).
     //
-    // 6.4.L1 (refuted — by design): this deliberately bypasses the markdown
-    // gateway's hydrate/drift discipline. That discipline guards user-owned
-    // `.md` files an external editor can race; this is a Filo-owned, one-shot,
-    // single-writer (the `withMutex` above) crash-recovery sentinel that no
-    // editor hydrates from. A drift prompt or hydrate gate here would be
-    // meaningless. Identical rationale to renameCascadeSentinel.
+    // Deliberately bypasses the markdown gateway's hydrate/drift discipline:
+    // that guards user-owned `.md` files; this is a Filo-owned, single-writer
+    // crash-recovery sentinel no editor hydrates from.
     // allow-direct-write: `.filo/tag-rewrite-pending.json` is a one-shot
     // crash-recovery sentinel — not a `.md` file, no editor hydrates from it.
     await invokeOk(
@@ -151,9 +143,9 @@ export function clearPendingRewrite(vaultRoot: string): Promise<void> {
   return withMutex(async () => {
     if (!vaultRoot) return;
     try {
-      // Phase 31 A1.6 — EACCES/EBUSY reach reportError; ENOENT (already
-      // absent) is the desired terminal state. Audit-19 EXT-6 — this
-      // machine's file plus the legacy shared one (migration).
+      // EACCES/EBUSY reach reportError; ENOENT (already absent) is the
+      // desired terminal state. Clears this machine's file plus the legacy
+      // shared one (migration).
       await clearOwnSentinel(vaultRoot, 'tag-rewrite');
     } catch (err) {
       if (err && typeof err === 'object' && 'code' in err && (err as { code?: string }).code === 'ENOENT') {
@@ -178,11 +170,9 @@ export function readPendingRewrite(vaultRoot: string): Promise<ReadResult> {
     if (!vaultRoot) return {};
     let content: string;
     try {
-      // Phase 37 / 37.6 — canonical two-arg form.
-      // Phase 1 (CONSOLIDATION_PLAN) — `invokeOk` throws on
-      // `{ success: false }`; ENOENT is the steady-state "no sentinel"
-      // case and resolves to `{}`. Any other failure resolves to
-      // `{ unreadable: true }` so the recovery UI still surfaces.
+      // ENOENT is the steady-state "no sentinel" case and resolves to `{}`.
+      // Any other failure resolves to `{ unreadable: true }` so the recovery
+      // UI still surfaces.
       const result = await readOwnOrLegacySentinel(vaultRoot, 'tag-rewrite');
       content = result.content;
     } catch (err) {
@@ -197,12 +187,9 @@ export function readPendingRewrite(vaultRoot: string): Promise<ReadResult> {
       );
       return { unreadable: true };
     }
-    // Audit-4 DI-16 — reaching here means the read SUCCEEDED (ENOENT, the
-    // healthy "no sentinel" steady state, already returned `{}` above), so a
-    // present-but-empty file is a partial write: a crash created the sentinel
-    // but never filled it, stranding a mid-flight tag rewrite. Surface it as
-    // `unreadable` (recovery UI prompts) rather than silently treating it as
-    // clean — symmetric with the 6.4.M5 `.dirty` zero-byte-is-dirty rule.
+    // A present-but-empty file is a partial write: a crash created the
+    // sentinel but never filled it. Surface it as `unreadable` rather than
+    // treating it as clean (same rule as a zero-byte `.dirty`).
     if (!content) return { unreadable: true };
     try {
       const parsed = JSON.parse(content) as Partial<TagRewriteSentinelPayload>;
@@ -215,7 +202,7 @@ export function readPendingRewrite(vaultRoot: string): Promise<ReadResult> {
       ) {
         return { unreadable: true };
       }
-      // Phase 7.3 — `preexistingNewNamePaths` is required in new sentinels but
+      // `preexistingNewNamePaths` is required in new sentinels but
       // absent in ones written by an older app version; tolerate absence
       // (default `[]`) so an upgrade-across-a-pending-rewrite still recovers.
       // When present it must be a string[], else the sentinel is corrupt.
@@ -223,9 +210,8 @@ export function readPendingRewrite(vaultRoot: string): Promise<ReadResult> {
       if (pre !== undefined && (!Array.isArray(pre) || !pre.every((p) => typeof p === 'string'))) {
         return { unreadable: true };
       }
-      // 6.3 — same forward-compatible tolerance for the per-path commit
-      // breadcrumb: absent in pre-6.3 sentinels (read back as `[]`), and a
-      // string[] when present.
+      // Same forward-compatible tolerance for the per-path commit breadcrumb:
+      // absent in older sentinels (read back as `[]`), a string[] when present.
       const committed = parsed.committedPaths;
       if (committed !== undefined && (!Array.isArray(committed) || !committed.every((p) => typeof p === 'string'))) {
         return { unreadable: true };
@@ -247,18 +233,16 @@ export function readPendingRewrite(vaultRoot: string): Promise<ReadResult> {
 }
 
 /**
- * IMPL_PLAN_2026-05-26 / Item 4 — Detect whether a tag rewrite (rename)
+ * Detect whether a tag rewrite (rename)
  * had partial progress at crash time. Returns true when a file in the vault
  * index carries `newName` that WASN'T already a `newName` carrier before the
  * rewrite — meaning some files were rewritten before the crash and some still
  * carry `oldName`. The naive "Discard plan" path would otherwise leave the
  * vault split between the two tag names with no warning.
  *
- * Phase 7.3 — `preexistingNewNamePaths` (snapshotted in the sentinel at write
- * time) is excluded from the scan. Without it, a merge-rename into an existing
- * tag — or any file the user had independently tagged with `newName` — falsely
- * tripped "partial rewrite detected" on every subsequent open, since those
- * files legitimately carried `newName` all along. (A file that carried BOTH
+ * `preexistingNewNamePaths` (snapshotted in the sentinel at write time) is
+ * excluded from the scan, so a merge-rename into an existing tag doesn't
+ * falsely trip "partial rewrite detected" on every open. (A file that carried BOTH
  * tags pre-rename is also exempt; the sentinel records no per-path commit
  * status, so erring toward fewer false alarms is the honest trade-off.)
  *
@@ -266,7 +250,7 @@ export function readPendingRewrite(vaultRoot: string): Promise<ReadResult> {
  * indistinguishable from "never had it" via the index, so this index-based
  * heuristic can't classify a removal. Removals are classified by
  * {@link hasPartialTagRemovalState} from the sentinel's recorded
- * `committedPaths` instead (6.3) — the call site branches on `newName`.
+ * `committedPaths` instead — the call site branches on `newName`.
  *
  * Pure function over an iterable of `{ path, tags }`. Lets the recovery
  * dialog be tested without mounting the vault index.
@@ -285,7 +269,7 @@ export function hasPartialTagRewriteState(
 }
 
 /**
- * 6.3 (AUDIT_REMEDIATION_PLAN_2026-05-31) — Detect whether a tag REMOVAL had
+ * Detect whether a tag REMOVAL had
  * partial progress at crash time, from the sentinel's incrementally-recorded
  * `committedPaths` rather than the index.
  *
@@ -320,13 +304,8 @@ export function __resetTagRewriteSentinelForTests(): void {
   lastOp = Promise.resolve();
 }
 
-// Phase 3 (IMPL_PLAN 2026-05-25) — vault-swap reset. The mutex chain
-// head holds promises tethered to the outgoing vault's sentinel path. A
-// straggling sentinel read/write enqueued just before swap would
-// otherwise drag the new vault's first sentinel op behind a chain that
-// targets a vault root that's no longer active. Resetting to a fresh
-// Promise.resolve() at pre-swap drops the prior chain so the new
-// vault's first sentinel op runs immediately.
+// Vault-swap reset: drop the mutex chain so the new vault's first sentinel op
+// isn't queued behind ops targeting the outgoing vault.
 onVaultSwap('pre-swap', 'tagRewriteSentinel', () => {
   lastOp = Promise.resolve();
 });

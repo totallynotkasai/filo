@@ -6,10 +6,9 @@
  * scheduler out of the per-component closures lets a Command that
  * fires from `historyStore.undo()` schedule its write even when the
  * component that originally scheduled it has unmounted (closing a tab,
- * switching boards). Per-file timers coalesce rapid edits the same way
- * the previous per-component scheduler did.
+ * switching boards). Per-file timers coalesce rapid edits.
  *
- * Write semantics mirror the original component-local implementation:
+ * Write semantics:
  *   - 300ms debounce per relPath.
  *   - At flush time, the FM is pulled from the shared documentStore live
  *     cache so the latest in-memory value wins regardless of which writer
@@ -23,11 +22,10 @@
  * checks the recorded `lastFlushedMutationVersion`; if another writer
  * already flushed a version >= the captured one, the flush is a no-op.
  * This stops a stale, fired-but-not-yet-running debounced flush from
- * clobbering a fresher write that landed first (the DocumentEditor
- * race called out in the audit's C3 finding).
+ * clobbering a fresher write that landed first.
  *
- * Phase R1 (2026-05-26) — pending + in-flight + failure bookkeeping now
- * live in `createScheduler`. The cross-vault finalizer guard is supplied
+ * Pending + in-flight + failure bookkeeping live in `createScheduler`. The
+ * cross-vault finalizer guard is supplied
  * by the primitive's `trackerIsCurrent` check (skipped automatically
  * when `reset()` clears the in-flight map during vault swap).
  */
@@ -79,33 +77,21 @@ interface FrontmatterWriteArgs {
  * schedules that captured an older mutation version short-circuit instead
  * of overwriting newer content.
  *
- * M1 (2026-05-28) — keyed by `docId` (stable identity), NOT `relPath`. The
- * mutation versions themselves come from `documentStore.getFrontmatter-
- * MutationVersion(docId)`, which is a per-docId counter; comparing a docId's
- * scheduled version against a relPath-keyed last-flushed only stays coherent
- * while the docId↔relPath mapping is 1:1. During a rename two docs can
- * transiently alias one relPath — the relPath-keyed guard then let docA's
- * higher version suppress docB's lower-versioned (but newer-for-docB) write,
- * silently dropping the edit. Keying by docId gives each document its own
- * version space so neither can suppress the other.
- *
- * Sprint 35.4 — still cleared on vault swap (see `resetFrontmatterScheduler`).
- * docId keying already prevents the original cross-vault same-`relPath`
- * suppression, but the reset also bounds the map's growth and drops any
- * docIds that could be reused across vaults.
+ * Keyed by `docId` (stable identity), NOT `relPath`: the versions are a
+ * per-docId counter, and during a rename two docs can transiently alias one
+ * relPath — a relPath key would let one doc's higher version suppress the
+ * other's write. Cleared on vault swap (see `resetFrontmatterScheduler`).
  */
 // allow-module-state: reset via resetFrontmatterScheduler called from boardSaver's pre-swap handler
 const lastFlushedVersion = new Map<string, number>();
 
 /**
- * WRITE_PATH_REMEDIATION_PLAN_2026-06-04 Phase 4 — per-relPath accumulated field
- * delta, keyed by the SAME relPath the scheduler coalesces on. Each field edit's
- * delta is folded in (`mergeFrontmatterDelta`) so several debounced edits to one
- * file collapse into a single write that applies them ALL to fresh disk. Peeked
- * (not removed) at fire time and dropped only on a successful write, so a failed
- * write leaves the delta queued for the retry / quit-flush — never silently
- * dropping the user's change. Legacy callers (`scheduleFrontmatterWrite` with no
- * delta — e.g. a notes body write) leave this empty and keep the cache-FM path.
+ * Per-relPath accumulated field delta, keyed by the SAME relPath the scheduler
+ * coalesces on. Deltas are folded together (`mergeFrontmatterDelta`) so several
+ * debounced edits collapse into one write that applies them ALL to fresh disk.
+ * Peeked (not removed) at fire time and dropped only on a successful write, so a
+ * failed write leaves the delta queued for the retry / quit-flush. Callers with
+ * no delta (e.g. a notes body write) leave this empty and use the cache-FM path.
  */
 // allow-module-state: reset via resetFrontmatterScheduler called from boardSaver's pre-swap handler
 const pendingDeltas = new Map<string, FrontmatterDelta>();
@@ -150,7 +136,7 @@ const frontmatterScheduler = createScheduler<FrontmatterWriteArgs>({
   performWrite: (args) => writeFrontmatter(args),
   getSentinelInfo: (args) => ({ vaultRoot: args.vaultRoot, path: args.relPath }),
   getFailureId: (args) => args.relPath,
-  // Audit-11 WC-1 — `writeFrontmatter` awaits the SAME `writeMarkdownFile` the
+  // `writeFrontmatter` awaits the SAME `writeMarkdownFile` the
   // gateway does (its interactive drift prompt + `vault:write-existing-file-text`
   // IPC), so a wedged write here would hang `flushAllPendingFrontmatterWrites` →
   // `save()` → quit forever. Bound it like the gateway.
@@ -162,7 +148,7 @@ const frontmatterScheduler = createScheduler<FrontmatterWriteArgs>({
  * `docId` is forwarded to `writeFrontmatter` so the writer can pull the
  * canonical FM from the documentStore live cache.
  *
- * Phase 31 A1.3 — every newly armed timer calls `beginWrite` so the
+ * Every newly armed timer calls `beginWrite` so the
  * recovery sentinel reflects the in-debounce period (not just the disk
  * I/O window). The matching `endWrite` lives inside `writeFrontmatter`'s
  * trackComponentWrite wrapper, which already accounts for success/failure
@@ -173,12 +159,10 @@ export function scheduleFrontmatterWrite(
   docId: string | null,
   delta?: FrontmatterDelta,
 ): void {
-  // Phase 4 — accumulate the explicit field delta so the eventual write applies
-  // it to FRESH disk (untouched keys, incl. external additions, preserved by
-  // construction). Several rapid edits to one file coalesce by relPath here AND
-  // in the scheduler, so their deltas fold together into one write. A caller
-  // that passes no delta (legacy / body-only notes writes) keeps the cache-FM
-  // write path in `writeFrontmatter` below.
+  // Accumulate the explicit field delta so the eventual write applies it to
+  // FRESH disk (untouched keys, incl. external additions, preserved by
+  // construction). A caller that passes no delta (body-only notes writes) keeps
+  // the cache-FM write path in `writeFrontmatter` below.
   if (delta) accumulateDelta(relPath, delta);
   frontmatterScheduler.schedule(relPath, () => {
     const vaultRoot = vaultStore.path;
@@ -195,10 +179,6 @@ export function scheduleFrontmatterWrite(
  *
  * Returns `{ failed }` (paths whose flush rejected) so the Ctrl+S
  * aggregate can refuse to report "Saved" when one slipped.
- *
- * Phase R1 — delegates to the primitive's `flushAll`, which snapshots
- * pending up-front, awaits in-flight writes, and attributes
- * captured-failure lists via the entry-side `capturedFailures` field.
  */
 export async function flushAllPendingFrontmatterWrites(): Promise<{ failed: string[] }> {
   const result = await frontmatterScheduler.flushAll();
@@ -206,14 +186,11 @@ export async function flushAllPendingFrontmatterWrites(): Promise<{ failed: stri
 }
 
 /**
- * SEL-5 — drains ONLY `relPath`'s pending/in-flight frontmatter write, not the
- * whole vault. The field-command pre-flush (`UpdateTaskFieldCommand` execute /
- * undo) only needs its OWN path drained before merging/applying its patch — the
- * toggle→undo race it guards is same-docId. Flushing globally made a 50-row bulk
- * field op do ~O(N²) serial write+flush round-trips (each child re-drained every
- * prior child's just-scheduled write), magnifying the wedge surface on a slow
- * OneDrive/SMB volume. Awaits the same pending + parked + in-flight drain as
- * `flushAll`, scoped to one key.
+ * Drains ONLY `relPath`'s pending/in-flight frontmatter write, not the whole
+ * vault. The field-command pre-flush (`UpdateTaskFieldCommand` execute / undo)
+ * only needs its OWN path drained; flushing globally would make a bulk field op
+ * O(N²) in serial write+flush round-trips. Awaits the same pending + parked +
+ * in-flight drain as `flushAll`, scoped to one key.
  */
 export async function flushFrontmatterWriteForPath(relPath: string): Promise<void> {
   await frontmatterScheduler.flush(relPath);
@@ -224,7 +201,7 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
   let { docId, scheduledVersion } = args;
   if (!vaultRoot) return;
 
-  // 6.4.L2 — a docId-null (orphan) write can be scheduled for a relPath that
+  // A docId-null (orphan) write can be scheduled for a relPath that
   // ALSO has an open editor: the scheduler coalesces by relPath, so a null
   // schedule overwrites a docId-backed one. With docId null the version guard
   // below is inert (scheduledVersion 0) and the FM source falls back to the
@@ -239,13 +216,12 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
     }
   }
 
-  // Phase 4 — peek the accumulated field delta for this path (dropped only after
-  // a successful write below). Its presence routes the write through the
+  // Peek the accumulated field delta for this path (dropped only after a
+  // successful write below). Its presence routes the write through the
   // gateway's delta path (apply ONLY these keys to FRESH disk), so the three
-  // legacy guards below — the stale-version short-circuit, the cache-FM source,
-  // and the `!fm` abort — are all LEGACY-cache-path-only: a delta write is
-  // authoritative (it reads disk itself), so skipping it for a stale cache
-  // version would strand the user's edit unwritten, and it needs no cache FM.
+  // guards below — the stale-version short-circuit, the cache-FM source, and
+  // the `!fm` abort — apply to the cache path only: a delta write reads disk
+  // itself, so skipping it for a stale cache version would strand the edit.
   const delta = pendingDeltas.get(relPath);
 
   // Version-token guard: refuse to overwrite if a newer write has already
@@ -255,31 +231,24 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
   // content from `documentStore.body` (which may itself be stale relative
   // to the editor's latest keystrokes).
   //
-  // M1 — keyed by docId. A null docId (e.g. a frontmatter-only sync with no
-  // open editor) carries `scheduledVersion === 0`, so the guard below is
-  // inert and the write always proceeds — there is no docId to track.
+  // Keyed by docId. A null docId (e.g. a frontmatter-only sync with no open
+  // editor) carries `scheduledVersion === 0`, so the guard is inert.
   //
-  // Audit-16 1.1 — the token now also covers BODY mutations
-  // (`documentStore.updateContent` bumps the same counter), so a delta-less
-  // notes write scheduled after a flushed version is no longer mistaken for
-  // stale: before 1.1 every second-and-later Task-notes edit (or the first
-  // after a field toggle had flushed at that version) compared
-  // `scheduledVersion <= last`, bare-returned as SUCCESS → endWrite(true) →
-  // markClean wiped `.filo/.dirty`, and the note died on quit.
+  // The token also covers BODY mutations (`documentStore.updateContent` bumps
+  // the same counter); otherwise a delta-less notes write scheduled after a
+  // flushed version would be mistaken for stale and silently skipped as
+  // success, losing the note on quit.
   const last = docId ? (lastFlushedVersion.get(docId) ?? 0) : 0;
   if (!delta && scheduledVersion > 0 && scheduledVersion <= last) return;
 
-  // Phase 27 / A4 + Audit-16 1.2 — read-only docs (lossy tiptap round-trip
-  // detected at editor load). The flag protects the BODY — the FM block
-  // round-trips cleanly even when the body doesn't (the tag writer and the
-  // Properties popup already write FM on read-only docs) — so:
+  // Read-only docs (lossy tiptap round-trip detected at editor load). The flag
+  // protects the BODY — the FM block round-trips cleanly even when the body
+  // doesn't — so:
   //  - A DELTA write proceeds: the gateway applies only the changed FM keys
   //    to a fresh disk read, and the body is sourced from DISK below (never
-  //    `docState.body`, which holds the lossy round-tripped text). Before
-  //    1.2 a bare return here resolved the write as SUCCESS → the sentinel
-  //    was cleaned while the Kanban/Task field edit was silently dropped
-  //    (nothing ever re-fired the orphaned delta).
-  //  - A delta-less (legacy/body) write still refuses — writing the lossy
+  //    `docState.body`, which holds the lossy round-tripped text). A bare
+  //    return here would silently drop the field edit as a "success".
+  //  - A delta-less (body) write still refuses — writing the lossy
   //    body would corrupt the file — but LOUDLY: toast + markPathFailed (the
   //    sentinel + indicator surface the unsaved edit) + throw (attributes
   //    relPath to flushAll().failed so save() returns false).
@@ -299,32 +268,18 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
   const fm = docId
     ? documentStore.getFrontmatter(docId)
     : vaultIndexStore.getMetadata(relPath)?.frontmatter;
-  // Legacy cache path only — a delta write sources its FM from a fresh in-chain
+  // Cache path only — a delta write sources its FM from a fresh in-chain
   // disk read in the gateway, so a missing cache FM must NOT abort it. The bare
   // `!fm` abort stays guarded by `!delta`; the no-editor disk-read failure below
   // still markPathFailed + throws (the loud surface the CI gate requires).
   if (!delta && !fm) return;
 
-  // 6.2.H5 / Audit-8 B1 — body resolution must not silently clobber disk
-  // truth, and must not silently DROP a field edit when no editor is open.
-  //
-  // Pre-6.2.H5: `body = docState?.body ?? vaultIndex.content ?? ''`. If
-  // docState was undefined at fire time the chain fell through to the index's
-  // possibly-hours-stale `content` — or `''` when the index had no entry —
-  // and the write committed those bytes back to disk.
-  //
-  // 6.2.H5 over-corrected with `if (!docState) return` for a docId-backed
-  // write. That silently dropped the COMMON case (Audit-8 B1): a Kanban card /
-  // Task row whose backing doc has a docId — so the FM cache is keyed and the
-  // field patch was merged into it — but was never opened as a Document tab,
-  // so `openDocuments` holds no docState. The bare return resolved performWrite
-  // as SUCCESS → endWrite(true) → markClean cleared `.filo/.dirty`, and the
-  // `.md` was never written, so a toggled `completed` / set `priority` / picked
-  // `dueDate` reverted on the next launch with no error and no recovery
-  // sentinel.
-  //
-  // Both "no docId" (orphan FM write) and "docId but no live docState" now
-  // resolve the body the SAME way — a fresh disk read:
+  // Body resolution must not silently clobber disk truth, and must not silently
+  // DROP a field edit when no editor is open. A Kanban card / Task row often has
+  // a docId (FM cache keyed) but no live docState (never opened as a Document
+  // tab) — returning early there would resolve as SUCCESS, clear `.filo/.dirty`,
+  // and lose the edit on relaunch. So both "no docId" and "docId but no live
+  // docState" resolve the body the SAME way — a fresh disk read:
   // (a) docState present → use the editor's live body (the only place edits
   //     we'd lose by reading disk could live).
   // (b) otherwise → hydrate fresh from disk for the canonical body; never
@@ -332,7 +287,7 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
   //     stale. A throw (ENOENT/EACCES) surfaces the loss via markPathFailed
   //     instead of resurrecting a deleted file or swallowing the edit.
   let body: string;
-  // Audit-16 1.2 — a read-only doc's live `docState.body` is the LOSSY tiptap
+  // A read-only doc's live `docState.body` is the LOSSY tiptap
   // round-trip (the very reason the flag exists), so a delta write must never
   // re-emit it; forcing the no-docState branch sources the body from a fresh
   // disk read instead, preserving the on-disk bytes the editor can't.
@@ -344,16 +299,12 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
       try {
         await readMarkdownForHydrate(vaultRoot, relPath);
       } catch (err) {
-        // 3.3 (Audit-18) — a NON-ENOENT hydrate read failure (EACCES/EBUSY from
-        // AV / OneDrive, or a transient share hiccup) used to fall through to
-        // `markHydrated(relPath, false)` and write ANYWAY against a file we
-        // never read: BOM stripped, a CRLF file's FM flipped to LF, and the
-        // pre-write drift gate blind (no baseline) for that write. Fail LOUDLY
-        // instead — same contract as the no-docState branch below and the H3
-        // TextTile fix: `markPathFailed` surfaces the loss in the save indicator
-        // + `.filo/.dirty` sentinel, and the `throw` attributes `relPath` to
-        // `flushAll().failed` so `save()` returns false. The edit stays queued
-        // (the cache still shows it) for a retry once the file is readable.
+        // A hydrate read failure (EACCES/EBUSY from AV / OneDrive, a share
+        // hiccup) must not write anyway against a file we never read (BOM
+        // stripped, CRLF flipped, drift gate blind). Fail LOUDLY — same contract
+        // as the no-docState branch below: `markPathFailed` surfaces the loss,
+        // and the `throw` makes `save()` return false. The edit stays queued
+        // for a retry once the file is readable.
         markPathFailed(vaultRoot, relPath);
         throw err;
       }
@@ -367,18 +318,11 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
       const hydrate = await readMarkdownForHydrate(vaultRoot, relPath);
       body = hydrate.body;
     } catch (err) {
-      // Audit-4 DI-13 / Audit5 2.3 (#7) / Audit-8 B1 — the backing `.md` is
-      // gone (ENOENT, deleted out-of-band) or unreadable, so this frontmatter
-      // write (an orphan card OR an un-opened Kanban/Task field edit) can't
-      // land. The board cache still shows the edit, so dropping it here would
-      // lose it silently. `markPathFailed` surfaces the loss in the save
-      // indicator + `.filo/.dirty` sentinel; the `throw` propagates it so the
-      // scheduler attributes `relPath` to `flushAll().failed` → `save()`
-      // returns false. Pre-2.3 a bare `return` resolved performWrite as
-      // SUCCESS, so the scheduler's settle `endWrite(true)` then wiped the
-      // failed mark AND Ctrl+S toasted a false "Saved" while the edit never
-      // reached disk. We still refuse to resurrect the deleted file — we just
-      // stop swallowing the drop.
+      // The backing `.md` is gone (ENOENT) or unreadable, so this write can't
+      // land. The board cache still shows the edit, so it must not be dropped
+      // silently: `markPathFailed` surfaces the loss in the save indicator +
+      // `.filo/.dirty` sentinel, and the `throw` makes `save()` return false.
+      // We still refuse to resurrect the deleted file.
       markPathFailed(vaultRoot, relPath);
       throw err;
     }
@@ -389,24 +333,23 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
       vaultRoot,
       relPath,
       // Delta path: the gateway ignores this and reads fresh disk; `fm ?? {}`
-      // is only the legacy fallback (delta undefined). Legacy path: the cache FM.
+      // is only the fallback (delta undefined). Cache path: the cache FM.
       frontmatter: fm ?? {},
       body,
       callerId: `frontmatter-scheduler:${relPath}`,
       docId,
       frontmatterDelta: delta,
-      // Audit-16 4.3 — the version this write's content corresponds to (fire
-      // time, when the body/FM were read), so the gateway's flushed-version
-      // bump can't mark a mid-IPC mutation as flushed.
+      // The version this write's content corresponds to (fire time, when the
+      // body/FM were read), so the gateway's flushed-version bump can't mark a
+      // mid-IPC mutation as flushed.
       mutationVersionAtCapture: docId ? scheduledVersion : undefined,
-      // Audit-16 6.8 — fire-time body-source decision: `body` above came from
-      // the live docState exactly when one resolved (the 1.2 read-only force
-      // to the disk branch correctly reads as NOT live). The gateway must not
-      // re-derive this from the mutable documentStore at write time — a doc
-      // unload during the per-path chain wait would discard the live body.
+      // Fire-time body-source decision: `body` came from the live docState
+      // exactly when one resolved (a read-only doc reads as NOT live). The
+      // gateway must not re-derive this at write time — a doc unload during the
+      // per-path chain wait would discard the live body.
       bodyIsLive: docState !== undefined,
     });
-    // Phase 4 — the delta landed on disk; drop it from the accumulator, UNLESS a
+    // The delta landed on disk; drop it from the accumulator, UNLESS a
     // newer edit folded in since we peeked (ref-identity: a fresh schedule
     // replaced the entry with a new merged object). On a write FAILURE the catch
     // below rethrows WITHOUT clearing, so the retry / quit-flush re-applies the
@@ -417,23 +360,18 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
     // Record the highest version this writer flushed so concurrent stale
     // flushes know not to clobber. The gateway also bumps this map on
     // success (via the threaded `mutationVersionAtCapture`); both bump to
-    // the same value so this is belt-and-braces, not redundant. Only
-    // docId-backed writes have a meaningful version to track (M1 — the map
-    // is keyed by docId).
+    // the same value so this is belt-and-braces. Only docId-backed writes have
+    // a version to track.
     //
-    // Audit-16 4.3 — record the FIRE-time `scheduledVersion` (the version
-    // the body/FM this write assembled were read at), NOT the post-IPC
-    // current version: a mergeFrontmatter/updateContent landing during the
-    // multi-hundred-ms write await would otherwise have its version N+1
-    // marked flushed while version N's bytes landed, and its follow-up
-    // scheduled write would skip on `scheduledVersion <= last` — the
-    // mutation never reaching disk.
+    // Record the FIRE-time `scheduledVersion`, NOT the post-IPC current
+    // version: a mutation landing during the write await would otherwise be
+    // marked flushed, and its follow-up write would skip — never reaching disk.
     if (docId) {
       lastFlushedVersion.set(docId, Math.max(last, scheduledVersion));
     }
   } catch (err) {
     console.error('[frontmatterWriteScheduler] Failed to write frontmatter:', err);
-    // Phase 31 A4.2 — distinguish "file deleted externally" from other
+    // Distinguish "file deleted externally" from other
     // failures. ENOENT-shaped errors mean the backing file is gone, which
     // the trackComponentWrite + errorBus pipeline already surfaces, but a
     // dedicated toast helps the user understand WHY the frontmatter write
@@ -462,7 +400,7 @@ async function writeFrontmatter(args: FrontmatterWriteArgs): Promise<void> {
  * Returns `0` for docs that have never flushed (i.e. the cache is the
  * only source of truth, so no re-read is needed).
  *
- * M1 — keyed by docId (not relPath) to stay in the same version space as
+ * Keyed by docId (not relPath) to stay in the same version space as
  * `documentStore.getFrontmatterMutationVersion(docId)`.
  */
 export function getLastFlushedFrontmatterVersion(docId: string): number {
@@ -479,7 +417,7 @@ export function getLastFlushedFrontmatterVersion(docId: string): number {
  *
  * No-op when `version <= 0` or `version <= current`.
  *
- * M1 — keyed by docId (not relPath); callers without a docId have no
+ * Keyed by docId (not relPath); callers without a docId have no
  * version to track and simply don't call this.
  */
 export function noteFrontmatterFlushedVersion(docId: string, version: number): void {
@@ -490,16 +428,13 @@ export function noteFrontmatterFlushedVersion(docId: string, version: number): v
 }
 
 /**
- * Audit-11 EER-1 — drops a path's accumulated field delta AND cancels its
- * still-armed scheduler timer.
+ * Drops a path's accumulated field delta AND cancels its still-armed scheduler
+ * timer.
  *
- * The Phase-4 delta accumulator (`pendingDeltas`) is keyed independently of the
- * scheduler's own pending timer, so cancelling the timer alone leaves the delta
- * queued: a later `flushAllPendingFrontmatterWrites()` (the open-editor reload
- * fires one) or a fresh `scheduleFrontmatterWrite` for the same path would
- * re-apply the DISCARDED field edit to fresh disk — silently reverting the
- * external edit the user just chose to keep via "Reload". Dropping the delta
- * here makes a discard a true discard. The scheduler's `cancel` still emits a
+ * `pendingDeltas` is keyed independently of the scheduler's timer, so
+ * cancelling the timer alone would leave the delta queued and a later flush /
+ * schedule would re-apply the DISCARDED edit — reverting the external edit the
+ * user chose to keep via "Reload". The scheduler's `cancel` still emits a
  * balanced `endWrite(success=true)` so the recovery sentinel doesn't strand a
  * phantom dirty entry for `relPath`.
  */
@@ -510,12 +445,11 @@ export function dropPendingDelta(relPath: string): void {
 
 /**
  * Cancels a single path's pending frontmatter write without firing it, and
- * (Audit-11 EER-1) drops any accumulated field delta so it can't be resurrected
- * by a later flush. The primitive's `cancel` emits a balanced
- * `endWrite(success=true)` so the recovery sentinel doesn't strand a phantom
- * dirty entry for `relPath`.
+ * drops any accumulated field delta so it can't be resurrected by a later
+ * flush. The primitive's `cancel` emits a balanced `endWrite(success=true)` so
+ * the recovery sentinel doesn't strand a phantom dirty entry for `relPath`.
  *
- * F4 (2026-05-28) — the external-change reconciler calls this from the
+ * The external-change reconciler calls this from the
  * "Reload" branch of its pending-write conflict prompt: once the user opts
  * to take the disk version, the still-armed local frontmatter write must be
  * cancelled or it would fire moments later and clobber the just-reloaded
@@ -528,18 +462,15 @@ export function cancelFrontmatterWrite(relPath: string): void {
 /**
  * Drops every pending timer and clears the per-docId version map.
  *
- * Sprint 35.4 / M1 — clearing `lastFlushedVersion` on vault swap bounds the
- * map's growth and drops any docId that could be reused across vaults. (The
- * original cross-vault same-`relPath` suppression this guarded against is
- * already prevented by the M1 switch to docId keying, but the reset remains
- * correct hygiene.)
+ * Clearing `lastFlushedVersion` on vault swap bounds the map's growth and
+ * drops any docId that could be reused across vaults.
  *
  * Registered as both a production reset (vault swap) and a test reset.
  */
 export function resetFrontmatterScheduler(): void {
   frontmatterScheduler.reset();
   lastFlushedVersion.clear();
-  // Phase 4 — drop any accumulated deltas so an outgoing vault's pending field
+  // Drop any accumulated deltas so an outgoing vault's pending field
   // edit can't apply to a same-named file in the incoming vault.
   pendingDeltas.clear();
 }

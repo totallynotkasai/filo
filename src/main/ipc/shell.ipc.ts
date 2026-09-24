@@ -12,10 +12,7 @@ import { logMainError } from '../utils/mainLogger';
  * this handler to reveal arbitrary host paths (`C:\Windows\System32`,
  * `~/.ssh`, etc.) just by asking.
  *
- * External URL opening goes through `media:open-external` — there used to
- * be a separate `shell:open-external` handler with overlapping behaviour,
- * deleted in Phase 9.5 once every renderer caller had been routed through
- * the media path.
+ * External URL opening goes through `media:open-external`.
  */
 export function registerShellHandlers(): void {
   ipcMain.handle('shell:show-item-in-folder', (_event, fullPath: string) => {

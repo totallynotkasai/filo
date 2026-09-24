@@ -1,12 +1,12 @@
 /**
- * H4 (perf) — connection-path memo.
+ * Connection-path memo.
  *
  * `ConnectionLayer.renderableConnections` reads `viewportRect` for culling, so
  * it re-derives on every pan/zoom frame. A pure pan changes only the CSS
  * transform, NOT the tiles' world coordinates — so a connection's path `d`
- * (computed in world space) is identical across pan frames. On large boards the
- * dominant per-frame cost was recomputing every visible connection's path
- * (and, for `smart`, an A* over a Hanan grid) on each of those re-derives.
+ * (computed in world space) is identical across pan frames. On large boards
+ * recomputing every visible connection's path (and, for `smart`, an A* over a
+ * Hanan grid) on each re-derive would dominate the per-frame cost.
  *
  * This memo caches each connection's `d` keyed on a signature of the inputs
  * that actually determine the path. On a pure pan the signature is unchanged,

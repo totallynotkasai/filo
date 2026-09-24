@@ -1,5 +1,5 @@
 /**
- * Pure reorder helper for the Board Browser's keyboard reordering (audit 6.5).
+ * Pure reorder helper for the Board Browser's keyboard reordering.
  *
  * The Board Browser already supports drag-to-reorder; this is the keyboard
  * a11y equivalent (Alt+ArrowUp / Alt+ArrowDown on a focused board row),

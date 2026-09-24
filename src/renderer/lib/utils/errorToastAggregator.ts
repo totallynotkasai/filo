@@ -9,13 +9,12 @@
  * stream extends the same toast indefinitely. After `windowMs` of silence the
  * entry is dropped, and the next error opens a brand new toast.
  *
- * A9-L10 — the optional per-report `coalesceKey` overrides the coalescing key
- * WITHOUT changing the displayed `context` prefix. The write-error wiring sets
- * it to `context + preservedTmpPath` so two same-kind failures that preserved
- * bytes at DIFFERENT recovery locations each keep their own toast (otherwise
- * the second's `updateToastText` replaced the first's path, hiding a recovery
- * location the user needs). Reports without a `coalesceKey` (the common case)
- * still coalesce by `context` exactly as before.
+ * The optional per-report `coalesceKey` overrides the coalescing key WITHOUT
+ * changing the displayed `context` prefix. The write-error wiring sets it to
+ * `context + preservedTmpPath` so two same-kind failures that preserved bytes at
+ * DIFFERENT recovery locations each keep their own toast (otherwise the second
+ * would overwrite the first's path). Reports without a `coalesceKey` (the
+ * common case) coalesce by `context`.
  *
  * Separated from the `App.svelte` wiring so the aggregation behaviour can be
  * unit-tested without mounting the component.
@@ -24,7 +23,7 @@
 import type { ReportedError } from './errorBus';
 
 /**
- * A9-L10 — a `ReportedError` plus an optional coalescing-key override. Kept a
+ * A `ReportedError` plus an optional coalescing-key override. Kept a
  * superset of `ReportedError` so the generic `onError(aggregator)` path (which
  * never sets `coalesceKey`) still type-checks against the `Handler` signature.
  */
@@ -34,7 +33,7 @@ export interface AggregatedReport extends ReportedError {
    * The DISPLAY prefix always remains `context`.
    */
   coalesceKey?: string;
-  /** Audit-19 EXT-5 — action buttons for a freshly pushed toast (e.g. Retry). */
+  /** Action buttons for a freshly pushed toast (e.g. Retry). */
   actions?: Array<{ label: string; handler: () => void | Promise<void> }>;
 }
 
@@ -78,7 +77,7 @@ export function createErrorToastAggregator(
   const recent = new Map<string, AggregatedToast>();
 
   return ({ context, message, error, coalesceKey, actions }) => {
-    // A9-L10 — coalesce by `coalesceKey` when supplied, else by `context`. The
+    // Coalesce by `coalesceKey` when supplied, else by `context`. The
     // display prefix below always stays `context`, so the count badge reads per
     // write KIND while distinct recovery locations keep separate toasts.
     const key = coalesceKey ?? context;

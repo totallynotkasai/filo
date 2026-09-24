@@ -5,11 +5,10 @@
  * Why a controller class:
  *   Selection state is UI-only and surface-local (canvas / kanban / task list
  *   each scope their own selections), so it doesn't belong in
- *   `selectionStore`. The host file used to declare ~170 LOC of selection
- *   state + bulk handlers inline; moving them into a class with `$state`
- *   fields keeps reactivity intact (instance `$state` is rune-tracked when
- *   the class is declared in `.svelte.ts` and instantiated in the host's
- *   `<script>` block) while shrinking the orchestrator.
+ *   `selectionStore`. A class with `$state` fields keeps reactivity intact
+ *   (instance `$state` is rune-tracked when the class is declared in
+ *   `.svelte.ts` and instantiated in the host's `<script>` block) while
+ *   keeping the orchestrator small.
  *
  * Why the deps closure pattern:
  *   `bulkApplyFieldPatch` needs `buildTaskFieldCommand` (owned by the
@@ -96,10 +95,9 @@ export class MultiSelectController {
         this.selectedTaskIds = next;
         return;
       }
-      // SEL-3 — the anchor was filtered away or deleted (anchorIdx < 0), so there
-      // is no range to extend. Don't collapse the whole selection to the single
-      // clicked row (the old fall-through did): ADD the clicked row to the current
-      // selection and re-anchor here for the next Shift-click.
+      // The anchor was filtered away or deleted (anchorIdx < 0), so there is no
+      // range to extend. Don't collapse the selection to the clicked row: ADD it
+      // to the current selection and re-anchor here for the next Shift-click.
       if (targetIdx >= 0) {
         const next = new SvelteSet(this.selectedTaskIds);
         next.add(tileId);
@@ -133,7 +131,7 @@ export class MultiSelectController {
   }
 
   /**
-   * SEL-2 — drop ids that no longer correspond to a live row (just-deleted
+   * Drop ids that no longer correspond to a live row (just-deleted
    * tasks) so the action bar's "N selected" count stays honest and the anchor
    * never points at a removed row. `selectedRows()` already re-intersects live
    * rows for OPERATIONS, so this fixes the displayed count + the stale anchor,
@@ -172,7 +170,7 @@ export class MultiSelectController {
    * selected row whose `perRowPatch` returns a non-null patch.
    *
    * Returns the count of rows touched AND a `settled` promise that resolves
-   * `true` only if the command chain resolved (Audit-18 4.6). Callers gate
+   * `true` only if the command chain resolved. Callers gate
    * their success toast on `settled` so a rejected batch (write failure →
    * execute() rolled back) doesn't claim success; clearSelection /
    * bumpCacheVersion stay synchronous so selection bookkeeping is unaffected.
@@ -192,15 +190,12 @@ export class MultiSelectController {
     for (const r of sel) {
       const patch = perRowPatch(r);
       if (!patch) continue;
-      // SHARE-1 — two selected rows can resolve to the SAME backing `.md` (the
-      // same vault file dropped twice; a file whose frontmatter `id:` is reused
-      // as the contentId). They share ONE frontmatter cache keyed by docId, so a
-      // command per row would make the second capture its inverse from the cache
-      // the first already mutated (undo wouldn't restore the true original) AND
-      // fold two deltas onto one path. Build ONE command per docId. Rows with no
-      // contentId are orphan/distinct and aren't deduped. (After the SHARE-1
-      // import-mint, a shared contentId always implies the same file, so
-      // collapsing same-doc rows is correct, not lossy.)
+      // Two selected rows can resolve to the SAME backing `.md` (the same vault
+      // file dropped twice). They share ONE frontmatter cache keyed by docId, so
+      // a command per row would make the second capture its inverse from the
+      // cache the first already mutated AND fold two deltas onto one path. Build
+      // ONE command per docId (a shared contentId always implies the same file).
+      // Rows with no contentId are orphan/distinct and aren't deduped.
       const docId = (r.tile as { contentId?: string }).contentId;
       if (docId) {
         if (seenDocIds[docId]) continue;
@@ -210,10 +205,9 @@ export class MultiSelectController {
       if (cmd) cmds.push(cmd);
     }
     if (cmds.length === 0) return { touched: 0, settled: Promise.resolve(true) };
-    // Audit-18 4.6 — keep the settle promise so callers gate their success
-    // toast on the chain resolving. `.then(() => true, () => false)` also
-    // CATCHES the rejection (execute() rethrows after rollback), so the old
-    // fire-and-forget unhandled-rejection is gone too.
+    // Keep the settle promise so callers gate their success toast on the chain
+    // resolving. `.then(() => true, () => false)` also CATCHES the rejection
+    // (execute() rethrows after rollback), avoiding an unhandled rejection.
     const settled = historyStore
       .execute(new BatchCommand(description, cmds))
       .then(() => true, () => false);
@@ -222,9 +216,8 @@ export class MultiSelectController {
   }
 
   /**
-   * Audit-18 4.6 — shared tail for the field-patch bulk ops: clear the
-   * selection synchronously (SEL-1 visibility bookkeeping, asserted by the
-   * unit tests), then announce + toast success ONLY once the chain resolves.
+   * Shared tail for the field-patch bulk ops: clear the selection
+   * synchronously (visibility bookkeeping, see bulkMarkComplete), then announce + toast success ONLY once the chain resolves.
    * On failure stay silent — `historyStore.execute`'s reportError already
    * surfaced the visual error; we add a screen-reader announcement for parity.
    */
@@ -282,13 +275,13 @@ export class MultiSelectController {
     const sel = this.selectedRows();
     const { touched, settled } = this.bulkApplyFieldPatch(
       sel,
-      // BULK-1 — route completion through the shared helper so recurring tasks
-      // roll forward ({completed:false, dueDate:next}) instead of being stamped
+      // Route completion through the shared helper so recurring tasks roll
+      // forward ({completed:false, dueDate:next}) instead of being stamped
       // permanently done. Already-completed rows are skipped (null).
       (r) => (r.completed ? null : completionPatchForRow(r)),
       `Mark ${sel.length} tasks complete`,
     );
-    // SEL-1 — clear the selection after a visibility-changing bulk op (handled
+    // Clear the selection after a visibility-changing bulk op (handled
     // synchronously inside finalizeBulkFieldOp). With a "hide completed" filter
     // active, the just-completed rows vanish but would otherwise stay selected,
     // so the bar shows "N selected" for invisible rows and a follow-up bulk op
@@ -334,7 +327,7 @@ export class MultiSelectController {
         // restores every row at once.
         const cmds: Command[] = sel.map((r) => new DeleteTaskCommand(board.id, r.tile.id));
         if (cmds.length === 0) return;
-        // Audit-18 4.6 — gate the "removed" toast on the chain resolving (and
+        // Gate the "removed" toast on the chain resolving (and
         // catch the rejection so a failed delete doesn't unhandled-reject). The
         // placement removal runs synchronously inside execute(); persisting it
         // can still fail, in which case execute()'s reportError surfaces the
@@ -397,7 +390,7 @@ export class MultiSelectController {
     // Resolve the full block from the multi-selection — selected tiles plus
     // every descendant of each, ordered by placement to keep the block
     // contiguous after the move. Same helper the drag controller uses.
-    // SEL-4 — seed from the LIVE selected rows (matching every field bulk op),
+    // Seed from the LIVE selected rows (matching every field bulk op),
     // not raw `selectedTaskIds`, so a stale/filtered-away id can't skew the
     // moved count reported in the toast.
     const seeds = this.selectedRows().map((r) => r.tile.id);
@@ -441,7 +434,7 @@ export class MultiSelectController {
 
     const targetTitle =
       sections.find((s) => s.id === realTargetSectionId)?.title ?? 'section';
-    // Audit-18 4.6 — gate the "moved" toast on the chain resolving (and catch
+    // Gate the "moved" toast on the chain resolving (and catch
     // the rejection). The reorder runs synchronously inside execute(); a failed
     // board persist surfaces via execute()'s reportError, so we stay silent.
     const settled = historyStore
@@ -455,7 +448,7 @@ export class MultiSelectController {
       )
       .then(() => true, () => false);
     this.deps.tickAndPersist();
-    this.clearSelection(); // SEL-1 (see bulkMarkComplete) — a section filter can hide moved rows
+    this.clearSelection(); // see bulkMarkComplete — a section filter can hide moved rows
     const msg = `Moved ${blockIds.length} task${blockIds.length === 1 ? '' : 's'} to "${targetTitle}"`;
     void settled.then((ok) => {
       if (!ok) return;

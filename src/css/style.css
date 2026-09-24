@@ -974,7 +974,7 @@ select:focus:not(:focus-visible) {
   margin-top: 0;
   margin-bottom: 1em;
 }
-/* Phase A.3 — visible blank-line gap between consecutive paragraphs. The
+/* Visible blank-line gap between consecutive paragraphs. The
    adjacent-sibling rule beats CSS margin collapse so the second paragraph's
    margin-top always applies, matching the Word-style "Enter = blank line"
    expectation. */

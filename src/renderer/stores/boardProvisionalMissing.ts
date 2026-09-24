@@ -1,15 +1,14 @@
 /**
- * Audit-19 EXT-1 — "provisionally missing" boards.
+ * "Provisionally missing" boards.
  *
  * On Windows, `fs.watch` reports an external FOLDER rename (Explorer, a sync
  * client moving a folder) as just `rename Projects` + `rename Work`: no child
- * events, so no live rename is correlated for the `.board.json` inside. The
- * tree refresh then saw the board's path missing and EVICTED the board at once
- * — `cancelBoardWrite` discarded its pending edit, its tabs closed — and when
- * the reconcile walk paired `Projects/Plan.board.json → Work/Plan.board.json`
- * seconds later there was nothing left to rebind.
+ * events, so no live rename is correlated for the `.board.json` inside. Evicting
+ * the board as soon as the tree refresh sees its path missing would discard its
+ * pending edit and close its tabs before the reconcile walk pairs
+ * `Projects/Plan.board.json → Work/Plan.board.json` seconds later.
  *
- * Now a board whose file vanished is only PROVISIONALLY missing:
+ * So a board whose file vanished is only PROVISIONALLY missing:
  *   1. its path is HELD (`holdBoardPath`): a write to it throws
  *      `BoardPathHeldError`, so it is recorded failed (crash sentinel stays
  *      dirty) and RETAINED, instead of `board:save` recreating the old folder;
@@ -21,12 +20,12 @@
  *        - rebound by the reconcile rename → release + re-fire the retained
  *          write to the NEW path (its args read the path at fire time);
  *        - back on disk → release + re-fire;
- *        - still missing with no unsaved write → evict as before;
+ *        - still missing with no unsaved write → evict;
  *        - still missing WITH an unsaved write → a sticky prompt: save at the
  *          original location (recreates the file) or discard.
  *
  * Vault identity: both functions take the captured identity and bail after
- * every await (pinned by `ci:reconciler-vault-guard` Part 3).
+ * every await (pinned by `gates:reconciler-vault-guard` Part 3).
  */
 import {
   holdBoardPath,
@@ -131,7 +130,7 @@ export async function recheckProvisionalBoard(
     return;
   }
   if (exists === null) {
-    // Can't PROVE it's gone (Audit-16 3.6): keep the hold and look again.
+    // Can't PROVE it's gone: keep the hold and look again.
     if (attempt < MAX_UNKNOWN_RECHECKS) {
       setTimeout(() => {
         void enqueue(() => recheckProvisionalBoard(boardId, relPath, captured, enqueue, attempt + 1));

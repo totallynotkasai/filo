@@ -1,13 +1,10 @@
 /**
- * Sprint C / C13 — path helpers for the Electron main process.
+ * Path helpers for the Electron main process.
  *
- * Mirrors `src/renderer/lib/utils/path.ts`. Main-side code historically
- * inlined `.replace(/\\/g, '/')` across ~13 call sites, which is fine
- * in isolation but bloats the audit surface and risks drift if any one
- * call site decides to also strip a leading slash, trim a trailing
- * slash, or apply a different fold. Centralising the primitives gives
- * us one place to bug-fix and a `ci:no-inline-path-normalize-main`
- * gate that prevents regressions.
+ * Mirrors `src/renderer/lib/utils/path.ts`. Centralising the primitives
+ * (rather than inlining `.replace(/\\/g, '/')` per call site) avoids drift
+ * between call sites; the `gates:no-inline-path-normalize` gate enforces
+ * it.
  *
  * Kept deliberately small — no path joining, no absolute-relative
  * resolution. Use Node's `path` module for those.

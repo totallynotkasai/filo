@@ -26,7 +26,7 @@ export class SpatialScope {
   // Resize-driven updates deferred during a batch (multi-tile drag). Keyed by
   // tile id (coalesced — last fire wins); the value is a thunk so the flush in
   // endBatch() reads the tile's *final* position (a dragged tile commits its
-  // drop position before endBatch runs). See updateOrDefer / Phase 7.7.
+  // drop position before endBatch runs). See updateOrDefer.
   // Non-reactive internal cache — flushed imperatively in endBatch(), never read
   // in a reactive context — so a plain Map (not SvelteMap) is correct.
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
@@ -92,7 +92,7 @@ export class SpatialScope {
    * growth, image load) must NOT perturb the index mid-drag: tileDrag keeps
    * the rbush consistent for non-dragged neighbours so the in-flight smart-
    * guides query is stable, and a neighbour reflowing would snap the guides
-   * 1–5px (Phase 7.7). The geometry is passed as a thunk read at flush time,
+   * 1–5px. The geometry is passed as a thunk read at flush time,
    * so a tile that reflows while being dragged still lands at its committed
    * drop position (onPointerUp commits before endBatch). Coalesces by id.
    */
@@ -121,7 +121,7 @@ export class SpatialScope {
     // a per-frame drag mutation. If a drag batch is open, deferring the bump
     // would leave reactive viewport culling stale until the drag ends — the
     // reloaded tiles flicker out. Force-close the batch so the bump fires now;
-    // the drag's eventual endBatch() safely no-ops (depth already 0). (Audit 5.5)
+    // the drag's eventual endBatch() safely no-ops (depth already 0).
     this._batchDepth = 0;
     this._pendingBump = false;
     this.bumpRevision();

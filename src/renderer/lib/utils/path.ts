@@ -12,9 +12,9 @@
  *   - `normalizeVaultRelative` is for vault-relative paths stored in board
  *     JSON / frontmatter. Case-insensitive (Windows/macOS aren't case-
  *     sensitive in practice); strips leading slash so `'/Notes.md'` and
- *     `'Notes.md'` collapse to the same key. Phase 4 moved this helper to
- *     `src/shared/vaultPath.ts`; the re-export below keeps existing
- *     renderer call-sites working without an import rewrite.
+ *     `'Notes.md'` collapse to the same key. Lives in
+ *     `src/shared/vaultPath.ts`; the re-export below keeps renderer
+ *     call-sites working.
  */
 
 import { normalizeVaultRelative as sharedNormalizeVaultRelative } from '../../../shared/vaultPath';
@@ -55,7 +55,7 @@ export function pathsEqual(a: string, b: string): boolean {
 }
 
 /**
- * Phase 4 — re-export of the canonical implementation in
+ * Re-export of the canonical implementation in
  * `src/shared/vaultPath.ts`. New callers should prefer the branded
  * `vaultPath()` constructor from the shared module — it normalises AND types
  * the result so the value can be safely used as a `Map<VaultPath, _>` /

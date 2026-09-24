@@ -61,12 +61,8 @@ export class AddTileCommand extends Command {
   constructor(tile: Tile, boardId?: string) {
     super();
     this.targetBoardId = boardId ?? boardStore.current?.id ?? '';
-    // Phase 31 B4.4 — `this.snapshot(...)` deep-clones the tile so a later
-    // mutation of the caller-side object (e.g. PropertiesPopup mutating
-    // `tile.tags` after the command has been pushed) doesn't poison the
-    // snapshot used by undo. Shallow `{...tile}` would keep nested fields
-    // (position, size, tags array) shared by reference, breaking undo for
-    // any mutation that touches those nested slots.
+    // Deep-clone so a later mutation of the caller-side object (e.g. nested
+    // position / size / tags) can't poison the snapshot used by undo.
     this.tile = this.snapshot(tile);
     this.description = `Add tile "${tile.title}"`;
   }
@@ -81,7 +77,7 @@ export class AddTileCommand extends Command {
 }
 
 /**
- * Phase 31 B5.1 — re-link command. Rebinds a broken-ref tile's backing
+ * Re-link command. Rebinds a broken-ref tile's backing
  * file path. The field depends on the tile type:
  *  - text / file → `filePath`
  *  - image / video / audio → `src`
@@ -118,13 +114,9 @@ export class UpdateTilePathCommand extends Command {
   }
 
   /**
-   * D.3 — re-run broken-ref detection after a relink. The tree itself
-   * didn't change, but `boardStore.recomputeBrokenRefs` runs inside
-   * `vaultStore.refreshTree` against the current tree snapshot, which
-   * is the cheapest way to clear / set the broken-ref badge for the
-   * just-rebound tile. Without this, the user's "Re-link" choice
-   * succeeds at the data layer but the badge stays put until the next
-   * watcher event.
+   * Re-run broken-ref detection after a relink (via `refreshTree`, the
+   * cheapest path to `recomputeBrokenRefs`). Without this the badge stays
+   * put until the next watcher event.
    */
   private async refreshBrokenRefs(): Promise<void> {
     try {
@@ -156,9 +148,7 @@ export class AddTilesCommand extends Command {
   constructor(tiles: Tile[], description?: string, boardId?: string) {
     super();
     this.targetBoardId = boardId ?? boardStore.current?.id ?? '';
-    // Phase 31 B4.4 — deep-clone each tile for the same reason as
-    // AddTileCommand above. The original `.map(t => ({...t}))` was a
-    // shallow per-tile clone that left every nested object aliased.
+    // Deep-clone each tile for the same reason as AddTileCommand above.
     this.tiles = tiles.map((t) => this.snapshot(t));
     this.description = description ?? `Insert ${this.tiles.length} tile(s)`;
   }
@@ -191,13 +181,10 @@ export interface DeleteTilesOptions {
 export class DeleteTilesCommand extends Command {
   description: string;
   /**
-   * Phase 3 / 3.1 (polish plan 2026-05-25) — `restorePlacements` calls
-   * `boardStore.addTile(tile)` which targets the currently-active board.
-   * Without the guard, a redo after the user switched boards would re-add
-   * tiles on the wrong board (or, worse, no-op if a placeholder with the
-   * same ID exists). Connections snapshotted from other boards still flow
-   * through `boardCacheStore.persistAddConnection`, so they keep working —
-   * only the active-board mutations require the originating board match.
+   * `restorePlacements` calls `boardStore.addTile(tile)`, which targets the
+   * active board, so the history guard must refuse an undo/redo after the
+   * user switched boards. Other-board connections go through the cache path
+   * and don't need it.
    */
   readonly targetBoardId: string;
   private tiles: Tile[] = [];
@@ -238,25 +225,16 @@ export class DeleteTilesCommand extends Command {
   }
 
   async execute() {
-    // Phase 3 / 3.2 — placement removal stays synchronous from the caller's
-    // perspective (code before the first `await` runs in the same tick), so
-    // existing call sites and tests that immediately assert on
-    // `boardStore.getTile(...)` after `execute()` continue to work.
+    // Placement removal stays synchronous (before the first `await`), so
+    // callers that immediately assert on `boardStore.getTile(...)` still work.
     for (const tile of this.tiles) {
       boardStore.removeTile(tile.id);
     }
 
-    // Audit 4.1 — remove the snapshotted connections symmetrically with
-    // `undo()`'s `restorePlacements`. `removeTile`'s cache-side sweep only
-    // touches the deleted tile's OWN board cache (and the project mirror),
-    // so a cross-board edge (one parked in another board's cache while
-    // referencing a deleted tile) — exactly what the all-boards snapshot
-    // scan in the constructor captures — would otherwise be re-added by
-    // undo and never re-removed by redo, leaving a dangling connection in
-    // the inactive board's `.board.json`. Mirror the undo routing: same-
-    // board edges through the active facade, other-board edges through the
-    // cache-only persist path. Both are safe no-ops when `removeTile`
-    // already swept the edge.
+    // Remove the snapshotted connections symmetrically with `undo()`.
+    // `removeTile` only sweeps the tile's OWN board cache, so a cross-board
+    // edge would otherwise be re-added by undo and never re-removed by redo.
+    // Same routing as undo; both paths no-op if the edge is already gone.
     // allow-board-store-current: active-vs-cache pivot for cross-board connections
     const activeId = boardStore.current?.id ?? null;
     for (const conn of this.connections) {
@@ -270,22 +248,13 @@ export class DeleteTilesCommand extends Command {
     // File deletes are owned by the command so the snapshot stored on the
     // instance is the same one that gets restored by undo(). Sequenced after
     // the synchronous placement removal so a write-error mid-execute can't
-    // leave the board referencing a half-deleted file.
+    // leave the board referencing a half-deleted file. The combined promise is
+    // stored on `lastExecuteCompletion` so callers can await completion.
     //
-    // Phase 37 / 37.1 — mirror the undo() shape: collect every delete's
-    // promise and surface failures via reportError, but store the combined
-    // Promise.allSettled on `lastExecuteCompletion` so tests (and any caller
-    // that needs to observe completion before re-execute or redo) can await
-    // it.
-    //
-    // Phase 3 / 3.2 — queue this command's new delete IPC behind any prior
-    // delete-IPC or snapshot-write IPC still in flight from an earlier
-    // execute()/undo(). A rapid Ctrl+Y / Ctrl+Z would otherwise re-enter
-    // execute() with a `vault:write-file-text` from the prior undo still
-    // pending on the same path; the new `vault:delete` could win the race
-    // and the snapshot restore would resurrect a file the redo just deleted.
-    // Both prior promises are `Promise.allSettled` wrappers so awaiting them
-    // never rejects.
+    // Queue behind any prior execute()/undo() IPC still in flight: a rapid
+    // Ctrl+Y / Ctrl+Z could otherwise let the prior undo's restore write land
+    // after this delete and resurrect the file. Both priors are allSettled
+    // wrappers, so awaiting them never rejects.
     if (this.vaultRoot && this.fileSnapshots.length > 0) {
       const vaultRoot = this.vaultRoot;
       const prior = Promise.allSettled([this.lastExecuteCompletion, this.lastUndoCompletion]);
@@ -298,17 +267,11 @@ export class DeleteTilesCommand extends Command {
 
   private async executeFileDeletes(vaultRoot: string): Promise<void> {
     const promises = this.fileSnapshots.map((snap) => {
-      // Phase 25 L6 — vault:delete takes (vaultRoot, absoluteItemPath).
-      // All other callers (vaultFolderOps, dirtyFlagRecovery,
-      // tagRewriteSentinel, renameCascadeSentinel) compose the absolute
-      // path the same way; keep parity rather than re-shaping just this one.
+      // vault:delete takes (vaultRoot, absoluteItemPath).
       const absPath = `${vaultRoot}/${snap.rel}`;
-      // Phase R2 — `deleteVaultPath` drains pending writers before the
-      // IPC so a debounced editor write can't fire against `snap.rel`
-      // after we delete it. The upstream `performDeleteSelected` /
-      // `performDeleteTile` already drained when reading the snapshot;
-      // the re-entrancy guard inside `withDrainedWrites` collapses this
-      // inner drain to a no-op.
+      // `deleteVaultPath` drains pending writers first so a debounced editor
+      // write can't fire against `snap.rel` after the delete (a no-op here if
+      // the caller already drained).
       return deleteVaultPath(vaultRoot, absPath)
         .then(
           (result) => {
@@ -338,24 +301,15 @@ export class DeleteTilesCommand extends Command {
     // empty `.md` when the backing file isn't on disk. If we restored
     // placements first, the seed would race with (or overwrite) our snapshot
     // write. Awaiting snapshot writes first guarantees `vault:file-exists`
-    // returns true by the time the seed-check runs, so no double-write.
+    // returns true by the time the seed-check runs. The cost is a ~50-200 ms
+    // delay before the tile reappears — better than corrupting the content
+    // the user pressed Ctrl+Z to recover.
     //
-    // The trade-off is a ~50-200 ms delay between Ctrl+Z and the tile
-    // reappearing. That's acceptable — the alternative is silent
-    // corruption of the very content the user pressed Ctrl+Z to recover.
+    // Snapshots-absent path: restore placements synchronously.
     //
-    // Snapshots-absent path: skip the await; restore placements
-    // synchronously to preserve the pre-P0-18 zero-latency feel.
-    //
-    // Polish phase 2.1 — `undo()` was previously sync and assigned the
-    // `undoWithSnapshot` Promise to `lastUndoCompletion` without awaiting
-    // it. That left the snapshot-restore race-prone for any caller that
-    // assumed `await command.undo()` covered the full restore — notably
-    // BatchCommand's rollback (Phase 2.2) and a tab-close racing against
-    // an in-flight undo. Marking the method `async` and awaiting the
-    // inner promise makes the contract honest; `lastUndoCompletion` is
-    // still tracked so a redo can sequence behind a pending undo
-    // independently of the caller.
+    // `await command.undo()` covers the full restore (BatchCommand rollback
+    // relies on it); `lastUndoCompletion` also lets a redo sequence behind a
+    // pending undo.
     if (this.vaultRoot && this.fileSnapshots.length > 0) {
       this.lastUndoCompletion = this.undoWithSnapshot(this.vaultRoot);
       await this.lastUndoCompletion;
@@ -371,15 +325,10 @@ export class DeleteTilesCommand extends Command {
     for (const snap of this.fileSnapshots) {
       const rel = snap.rel;
       const content = snap.content;
-      // 2.3 (Audit-14) — route through the coupled write+reconcile helper
-      // (Phase 6.6) instead of a raw `vault:write-file-text`. The restored `.md`
-      // can be open as a Document on a SECOND board/pane (the same file placed
-      // twice); that editor holds a stale frontmatter cache, so its next
-      // debounced body save would silently invert this restore (#4). `mode:
-      // 'full'` reloads the open editor (frontmatter + body) for the SAME path,
-      // matching CascadeDeleteCommand.undo; `create: true` recreates the file the
-      // delete removed (mkdir -p). The tile re-mounts + hydrates immediately
-      // after restorePlacements().
+      // Route through the coupled write+reconcile helper: the restored `.md`
+      // may be open in an editor elsewhere whose stale cache would invert this
+      // restore on its next save. `mode: 'full'` reloads that editor for the
+      // SAME path; `create: true` recreates the deleted file.
       const writeP = writeMarkdownAndReconcile({
         vaultRoot,
         path: rel,
@@ -408,7 +357,7 @@ export class DeleteTilesCommand extends Command {
       boardStore.addTile(tile);
     }
     for (const conn of this.connections) {
-      // DI-2 (2026-05-29): skip a restored connection whose endpoint tile no
+      // Skip a restored connection whose endpoint tile no
       // longer exists — it was independently deleted between this delete and
       // the undo, so re-adding the edge would leave a dangling connection.
       // The tile-restore loop above has already mutated the cache synchronously,
@@ -476,7 +425,7 @@ export class DeleteTilesCommand extends Command {
    */
   lastUndoCompletion: Promise<unknown> = Promise.resolve();
   /**
-   * Phase 37 / 37.1 — last `execute()`'s combined delete-IPC promise. Tests
+   * Last `execute()`'s combined delete-IPC promise. Tests
    * await this to observe that every `vault:delete` settled (success or
    * failure surfaced through reportError) before redo/undo runs again.
    * Resolves immediately when no snapshots were provided.
@@ -484,7 +433,7 @@ export class DeleteTilesCommand extends Command {
   lastExecuteCompletion: Promise<unknown> = Promise.resolve();
 
   /**
-   * Phase 3 / 3.8 — opts the command into the escalated history-truncation
+   * Opts the command into the escalated history-truncation
    * toast. True when this command holds the only copy of one or more
    * deleted file bodies, so dropping the command off the undo stack means
    * those file contents become irrecoverable.
@@ -499,7 +448,7 @@ export class MoveTilesCommand extends Command {
   readonly targetBoardId: string;
   private positions: Map<string, { before: { x: number; y: number }; after: { x: number; y: number } }>;
   /**
-   * Phase 6 / 6.1 — pre-move snapshot of frame containment for every frame
+   * Pre-move snapshot of frame containment for every frame
    * that held one of the moved tiles. `tileDrag.ts` pushes the command
    * BEFORE running its post-drag `framesStore.syncTileMembership`, so this
    * read still sees the BEFORE state. On undo we restore those entries and
@@ -535,18 +484,15 @@ export class MoveTilesCommand extends Command {
     }
     if (missing > 0) {
       console.warn(`[MoveTilesCommand.execute] Skipped ${missing} tile(s) that no longer exist`);
-      // Sprint C / C22 — symmetric with the undo toast at the bottom of
-      // this class. Redo'ing a move after the user deleted one of the
-      // moved tiles out-of-band silently no-ops on the missing tiles
-      // pre-Sprint-C; the toast surfaces the divergence so the user
-      // knows their redo didn't fully restore the move.
+      // Symmetric with the undo toast: tell the user the redo didn't fully
+      // restore the move because some tiles were deleted out-of-band.
       uiStore.toast(
         `Redo skipped ${missing} tile(s) that were deleted out-of-band.`,
         'warning',
         4000,
       );
     }
-    // Phase 6 / 6.1 — keep frame containment in sync on redo. The initial
+    // Keep frame containment in sync on redo. The initial
     // drag's external syncTileMembership covered the first commit, but
     // redo doesn't replay that external pass.
     for (const id of this.positions.keys()) {
@@ -568,7 +514,7 @@ export class MoveTilesCommand extends Command {
         4000,
       );
     }
-    // Phase 6 / 6.1 — restore the pre-move frame containment snapshot,
+    // Restore the pre-move frame containment snapshot,
     // then re-run syncTileMembership for each moved tile so any tile
     // deleted out-of-band (filtered above) is also pruned from frames.
     const existingFrameIds = new Set(boardStore.frames.map((f) => f.id));
@@ -621,10 +567,8 @@ export class ResizeTileCommand extends Command {
 export class UpdateTileStyleCommand extends Command {
   description: string;
   /**
-   * Phase 2 (IMPLEMENTATION_PLAN_2026-05-27) — flagged as a P1-5 site by
-   * the audit. Style popups capture this at popup-mount time and thread
-   * it through to the command; the popup's destroy effect fires after a
-   * board switch, and without the guard the command would mutate
+   * Style popups capture this at popup-mount time: the popup's destroy effect
+   * can fire after a board switch, and without it the command would mutate
    * whichever board is active at that point.
    */
   readonly targetBoardId: string;
@@ -641,7 +585,7 @@ export class UpdateTileStyleCommand extends Command {
     super();
     this.targetBoardId = boardId ?? boardStore.current?.id ?? '';
     this.tileId = tileId;
-    // Phase R3 — deep-clone so nested style objects (background, border)
+    // Deep-clone so nested style objects (background, border)
     // can't be mutated through the original reference after the command
     // is pushed.
     this.beforeUpdates = this.snapshot(beforeUpdates);
@@ -661,13 +605,8 @@ export class UpdateTileStyleCommand extends Command {
 }
 
 /**
- * Phase 7 (IMPLEMENTATION_PLAN_2026-05-27) — undoable alt-text edits on
- * image tiles. Pre-Phase-7 the ImageTile commit handler called
- * `boardStore.updateTile` directly, so Ctrl+Z silently no-op'd over an
- * alt-text change. The field affects screen-reader output, so losing it
- * to an accidental edit is a real a11y regression — wrap it in a
- * command exactly like the src/url/filePath swaps already wrapped via
- * `UpdateAttachmentSrcCommand`.
+ * Undoable alt-text edits on image tiles. The field affects screen-reader
+ * output, so an accidental edit must be recoverable with Ctrl+Z.
  */
 export class UpdateImageAltCommand extends Command {
   description: string;
@@ -704,14 +643,10 @@ export class UpdateImageAltCommand extends Command {
 }
 
 /**
- * Phase 7 (IMPLEMENTATION_PLAN_2026-05-27) — undoable timer mode +
- * duration edits. `cycleMode`, `setDuration`, and `applyCustomInput`
- * all rewrote the tile's `mode` / `duration` / `remaining` / `isRunning`
- * fields directly via `boardStore.updateTile`, silently no-op'ing
- * Ctrl+Z. The transient `remaining` countdown and `isRunning` toggle
- * are deliberately NOT wrapped (they fire on every tick / play / pause
- * and would blow through MAX_HISTORY); only the *configuration* changes
- * — switching modes, setting durations — pass through this command.
+ * Undoable timer mode + duration edits (`cycleMode`, `setDuration`,
+ * `applyCustomInput`). The transient `remaining` countdown and `isRunning`
+ * toggle are deliberately NOT wrapped (they fire on every tick / play / pause
+ * and would blow through MAX_HISTORY); only configuration changes are.
  */
 export type TimerMode = 'hms' | 'ms' | 's' | 'clock';
 export interface TimerConfigSnapshot {
@@ -838,7 +773,7 @@ export class LayoutTilesCommand extends Command {
 // ── Tag Fade Command ──
 
 /**
- * Phase 7 / 7.7 — generic "fade these tiles" undoable. Snapshots each
+ * Generic "fade these tiles" undoable. Snapshots each
  * tile's prior `faded` flag so undo restores the mixed state exactly even
  * if the caller mixed already-faded and unfaded tiles into the same call.
  * Used by `SideToolbar.svelte`'s "Fade Selected" action.

@@ -111,9 +111,9 @@ export function parseTemplate(
   ref: TemplateRef,
   rawContent: string,
 ): TemplateContent {
-  // M2 (Audit-13) — parse frontmatter with the `yaml` package (was gray-matter,
-  // whose bundled js-yaml v3 coerced an unquoted `date:` → Date / `0b1010` → 10,
-  // a second parser disagreeing with the rest of the app). The shared split
+  // Parse frontmatter with the `yaml` package — the same parser as the rest of
+  // the app (gray-matter's bundled js-yaml would coerce an unquoted `date:` →
+  // Date / `0b1010` → 10). The shared split
   // helper strips the `---` fences + a leading BOM; the body keeps its bytes.
   const { rawFrontmatter, body } = splitFrontmatterSource(rawContent);
   const frontmatter = parseFrontmatterObject(rawFrontmatter);

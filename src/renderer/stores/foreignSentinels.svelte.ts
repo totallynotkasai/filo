@@ -1,6 +1,6 @@
 /**
- * Audit-19 EXT-6 (plan D5) — other machines' crash-recovery sentinels in a
- * synced vault's `.filo/`, surfaced for INFORMATION only.
+ * Other machines' crash-recovery sentinels in a synced vault's `.filo/`,
+ * surfaced for INFORMATION only.
  *
  * A foreign sentinel's data lives on the other machine, so it is never
  * prompted for, resumed or cleared here (main refuses the write/delete anyway):

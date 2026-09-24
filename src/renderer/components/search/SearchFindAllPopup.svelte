@@ -3,8 +3,8 @@
   import { searchStore } from '../../stores/search.svelte';
 
   /**
-   * SearchFindAllPopup — flat list of every match in the current result set
-   * (Sprint E.4). Anchored to the page right-side as a sibling overlay to
+   * SearchFindAllPopup — flat list of every match in the current result set.
+   * Anchored to the page right-side as a sibling overlay to
    * `SearchPanel`. Click a row to jump to the match; pressing Enter on a
    * keyboard-focused row does the same.
    *

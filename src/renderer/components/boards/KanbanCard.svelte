@@ -194,7 +194,7 @@
   // ── Cover image ──
   let coverPath = $derived<string>(typeof placement.coverImage === 'string' ? placement.coverImage : '');
   let coverDisplaySrc = $derived(coverPath ? toMediaUrl(coverPath, vaultStore.path) : '');
-  // UX-1 — surface a fallback when the cover fails to load (broken/missing
+  // Surface a fallback when the cover fails to load (broken/missing
   // vault path) instead of leaving the OS broken-image glyph in the strip.
   let coverFailed = $state(false);
   function handleCoverLoad() { coverFailed = false; }
@@ -724,7 +724,7 @@
     transition: opacity 0.15s ease, background-color 0.15s ease;
   }
 
-  /* Audit2 5.7 — `:focus-within` mirrors `:hover` so keyboard users see
+  /* `:focus-within` mirrors `:hover` so keyboard users see
      the due-date / cover / priority controls instead of tabbing into
      invisible buttons. Matches the TileHeader / TaskItem pattern. */
   .kanban-card-shell:hover .cover-toggle-btn,

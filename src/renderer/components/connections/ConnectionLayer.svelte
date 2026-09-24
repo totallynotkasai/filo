@@ -68,28 +68,26 @@
     return `M ${from.x} ${from.y} L ${drawing.currentX} ${drawing.currentY}`;
   });
 
-  // 3.3 — matches the tile-culling buffer (VisibleTilesViewModel) so the
+  // Matches the tile-culling buffer (VisibleTilesViewModel) so the
   // connection and tile sets stay consistent at the viewport edge.
   const VIEWPORT_CULL_BUFFER = 200;
 
-  // H4 — per-connection path cache. The derived re-runs on every pan/zoom
+  // Per-connection path cache. The derived re-runs on every pan/zoom
   // frame (it reads `viewportRect` to cull), but a pure pan doesn't move any
   // tile, so each path's signature is unchanged and the cached `d` is reused —
   // no `computePath`/A* runs on pan. See connectionPathMemo for the rationale.
   const pathMemo = createConnectionPathMemo();
 
   /**
-   * 3.3 — single source of truth for what the path + label layers render.
+   * Single source of truth for what the path + label layers render.
    * Culls to the buffered viewport (off-screen connections aren't rendered
-   * and their paths aren't computed at all — fixing the per-frame
-   * recompute-everything cliff on large boards) and computes each visible
-   * path ONCE here, shared by ConnectionPath and the label's measurement
-   * path. That kills the previous 2x `computePath` per connection per frame
-   * and uses the cascade-resolved pathType, so the label rides the same
-   * route the path actually draws (the old label loop hard-coded
-   * `conn.pathType ?? 'curved'`). Export mode renders everything (no cull).
+   * and their paths aren't computed at all, which matters on large boards)
+   * and computes each visible path ONCE here, shared by ConnectionPath and
+   * the label's measurement path. Uses the cascade-resolved pathType, so the
+   * label rides the same route the path actually draws. Export mode renders
+   * everything (no cull).
    *
-   * H4 — each visible path routes through `pathMemo`, so a pan (which re-runs
+   * Each visible path routes through `pathMemo`, so a pan (which re-runs
    * this derived via `viewportRect`) reuses the cached `d` instead of
    * recomputing. `smartRevision` is read UNTRACKED so a tile move bumping the
    * spatial revision doesn't force this derived to re-run every drag frame

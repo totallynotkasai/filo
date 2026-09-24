@@ -2,7 +2,7 @@
  * Rename-cascade recovery sentinel — survives a crash / partial-failure
  * between `vault:rename` and the post-rename `.board.json` flush.
  *
- * Sprint 35.3. `vaultFolderOps.rename` runs four ordered steps:
+ * `vaultFolderOps.rename` runs four ordered steps:
  *
  *   1. Run the in-memory propagateRename cascade (cache mutated to the
  *      new path).
@@ -20,7 +20,7 @@
  * cascade against the freshly-loaded cache. The retry is idempotent: a
  * board that already flushed simply has no propagateRename matches left.
  *
- * Mirrors the Phase 9 tag-rewrite-sweep pattern. Lives in `lib/vault/`
+ * Mirrors the tag-rewrite-sweep pattern. Lives in `lib/vault/`
  * because it's pure I/O orchestration (no UI). The store layer
  * (vaultRecovery) reads the sentinel on vault open and wires the retry
  * handlers.
@@ -35,7 +35,7 @@ import { ownSentinelPath } from './machineIdentity';
 import { readOwnOrLegacySentinel, clearOwnSentinel, retireConsumedLegacySentinel } from './machineSentinels';
 
 /**
- * Audit-19 EXT-6 — PER MACHINE (`.filo/rename-cascade-pending.<machineId>.json`):
+ * PER MACHINE (`.filo/rename-cascade-pending.<machineId>.json`):
  * another machine must never replay (or clear) this machine's half-finished
  * rename cascade. The legacy shared file is read once, then migrated: the next
  * write lands in this machine's file and the legacy one is deleted.
@@ -65,18 +65,14 @@ export interface RenameCascadeEntry {
    */
   failedBoardIds?: string[];
   /**
-   * Phase 4 / E5 — true when the rename also touched the `.filo/tags.json`
-   * tag-membership sink (i.e. a file/folder rename, which moves
-   * `fileTags[oldPath]` → `fileTags[newPath]`). Recovery re-asserts the tag
-   * rename (idempotently) alongside the board cascade so a crash in the
-   * window between the disk rename and the synchronous tag flush (F3) can't
-   * leave `tags.json` keyed by the OLD path while every `.board.json`
-   * already points at the new one — the silent tag-membership loss F3
-   * point-fixed and E5 makes fully recoverable.
+   * True when the rename also touched the `.filo/tags.json` tag-membership
+   * sink (a file/folder rename moves `fileTags[oldPath]` → `fileTags[newPath]`).
+   * Recovery re-asserts the tag rename (idempotently) alongside the board
+   * cascade, so a crash between the disk rename and the tag flush can't leave
+   * `tags.json` keyed by the OLD path.
    *
-   * Optional + defaults to `false` on read so sentinels written by an older
-   * build (board-only) still parse; their recovery simply skips the tag
-   * re-assert, matching pre-E5 behaviour.
+   * Optional + defaults to `false` on read so older board-only sentinels
+   * still parse (their recovery skips the tag re-assert).
    *
    * Note on the "frontmatter" sink: a file rename does NOT write the renamed
    * file's frontmatter — the OS moves the bytes as-is and frontmatter
@@ -121,10 +117,9 @@ async function readSentinelInternal(vaultRoot: string): Promise<ReadResult> {
   if (!vaultRoot) return {};
   let content: string;
   try {
-    // Phase 37 / 37.6 — canonical two-arg form.
-    // Phase 1 (CONSOLIDATION_PLAN) — ENOENT is the steady-state "no
-    // sentinel" case and resolves to `{}`; any other failure resolves
-    // to `{ unreadable: true }` so recovery UI still surfaces.
+    // ENOENT is the steady-state "no sentinel" case and resolves to `{}`;
+    // any other failure resolves to `{ unreadable: true }` so recovery UI
+    // still surfaces.
     const result = await readOwnOrLegacySentinel(vaultRoot, 'rename-cascade');
     content = result.content;
   } catch (err) {
@@ -139,12 +134,9 @@ async function readSentinelInternal(vaultRoot: string): Promise<ReadResult> {
     );
     return { unreadable: true };
   }
-  // Audit-4 DI-16 — reaching here means the read SUCCEEDED (ENOENT, the
-  // healthy "no sentinel" steady state, already returned `{}` above), so a
-  // present-but-empty file is a partial write: a crash created the sentinel
-  // but never filled it, stranding an in-flight rename cascade. Surface it as
-  // `unreadable` (recovery UI prompts) rather than silently treating it as
-  // clean — symmetric with the 6.4.M5 `.dirty` zero-byte-is-dirty rule.
+  // A present-but-empty file is a partial write: a crash created the
+  // sentinel but never filled it. Surface it as `unreadable` rather than
+  // treating it as clean (same rule as a zero-byte `.dirty`).
   if (!content) return { unreadable: true };
   try {
     const parsed = JSON.parse(content) as Partial<SentinelFile>;
@@ -172,7 +164,7 @@ async function readSentinelInternal(vaultRoot: string): Promise<ReadResult> {
         failedBoardIds: Array.isArray((raw as RenameCascadeEntry).failedBoardIds)
           ? (raw as RenameCascadeEntry).failedBoardIds!.filter((b) => typeof b === 'string')
           : undefined,
-        // E5 — defaults to false for board-only sentinels written before this field existed.
+        // Defaults to false for older board-only sentinels.
         tagsAffected: (raw as RenameCascadeEntry).tagsAffected === true,
       });
     }
@@ -188,7 +180,7 @@ async function writeSentinelInternal(vaultRoot: string, entries: RenameCascadeEn
     // Delete the sentinel file entirely when empty so the steady state
     // is "no sentinel on disk" rather than "sentinel with empty array".
     try {
-      // Audit-19 EXT-6 — this machine's file (+ a consumed legacy one).
+      // This machine's file (+ a consumed legacy one).
       await clearOwnSentinel(vaultRoot, 'rename-cascade');
     } catch (err) {
       if (err && typeof err === 'object' && 'code' in err && (err as { code?: string }).code === 'ENOENT') {
@@ -211,7 +203,7 @@ async function writeSentinelInternal(vaultRoot: string, entries: RenameCascadeEn
     ownRenameCascadePath(),
     JSON.stringify(payload),
   );
-  // Audit-19 EXT-6 — entries read from a legacy shared file now live in this
+  // Entries read from a legacy shared file now live in this
   // machine's file; retire the legacy one (once; best-effort).
   await retireConsumedLegacySentinel(vaultRoot, 'rename-cascade').catch(() => undefined);
 }
@@ -230,15 +222,10 @@ export function readPendingRenameCascades(vaultRoot: string): Promise<ReadResult
  * Awaited so a sentinel-write failure aborts the rename pipeline (we'd
  * rather not move the disk file without a recovery breadcrumb).
  *
- * Audit-17 3.7 — refuses to append over an UNREADABLE sentinel. The siblings
- * (`clearPendingRenameCascade`, `markRenameCascadeFlushFailed`) already bail
- * on `!existing.entries`; this append path used to take `entries ?? []` and
- * replace a torn / zero-byte / transiently-locked (AV/EACCES) sentinel with a
- * fresh single-entry file — destroying the prior crash breadcrumb AND, on a
- * transient read failure, any OTHER healthy in-flight entries. Preserve the
- * file, surface the failure, and throw so the caller's existing
- * sentinel-failure handling runs (the in-app rename aborts crash protection
- * loudly; the external-rename sites report and continue).
+ * Refuses to append over an UNREADABLE sentinel: replacing a torn /
+ * zero-byte / transiently-locked file would destroy the prior crash
+ * breadcrumb and any other in-flight entries. Preserve the file, surface the
+ * failure, and throw so the caller's sentinel-failure handling runs.
  *
  * Returns the entry's id so the caller can clear it on full success.
  */
@@ -316,11 +303,8 @@ export function __resetRenameCascadeSentinelForTests(): void {
   lastOp = Promise.resolve();
 }
 
-// Phase 3 (IMPL_PLAN 2026-05-25) — vault-swap reset. The mutex chain
-// head holds promises tethered to the outgoing vault's sentinel path. A
-// straggling append() / clear() enqueued just before swap would
-// otherwise drag the new vault's first sentinel op behind a chain whose
-// IPCs target a vault root that's no longer active.
+// Vault-swap reset: drop the mutex chain so the new vault's first sentinel op
+// isn't queued behind ops targeting the outgoing vault.
 onVaultSwap('pre-swap', 'renameCascadeSentinel', () => {
   lastOp = Promise.resolve();
 });

@@ -1,14 +1,11 @@
 /**
- * Vault-wide Search store (Sprint E.1 / E.4).
+ * Vault-wide Search store.
  *
  * Drives the Search panel: holds the query, derives matches from the
  * vault index + board cache, owns the current-match cursor, and exposes
  * Find / Find All / Replace / Replace All entry points.
  *
- * Most state is intentionally session-scoped — search is a transient
- * UI mode. Only the panel dock position would justify `.filo/` persistence
- * and Sprint E only ships the floating-panel placement; persistence can
- * follow if users ask for it.
+ * State is intentionally session-scoped — search is a transient UI mode.
  *
  * Reactive contract: components read `searchStore.matches` /
  * `searchStore.currentMatch` directly. Both are `$derived` of the parsed
@@ -94,9 +91,8 @@ export const searchStore = {
   setQuery(next: string) {
     if (next === query) return;
     query = next;
-    // Reset the cursor to the head of the new result list. Without this,
-    // editing the query left the user in the middle of the OLD result
-    // list — confusing once the underlying matches change.
+    // Reset the cursor to the head of the new result list, so the user isn't
+    // left mid-way through the old one.
     currentIndex = 0;
   },
   setReplaceText(next: string) {
@@ -176,11 +172,8 @@ function requestJump(): void {
   pendingJump = { match, tick: jumpTick };
 }
 
-// Phase 4 (Consolidation 2026-05-25) — vault-swap reset registration.
-// Drops the entire search session so the next vault opens with a clean
-// panel. `pre-swap` keeps parity with every other store-level reset; the
-// outgoing query refers to outgoing-vault paths that won't resolve under
-// the new vault's index.
+// Vault-swap reset: drops the entire search session — the outgoing query
+// refers to paths that won't resolve under the new vault's index.
 onVaultSwap('pre-swap', 'searchStore', () => {
   searchStore.reset();
 });

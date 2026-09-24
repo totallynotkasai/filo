@@ -4,11 +4,11 @@ import type { CanvasScope } from '../../stores/canvas.svelte';
  * Viewport action — attaches pan and zoom handlers to the canvas container.
  * Uses native pointer events for reliable Electron compatibility.
  *
- * Audit 3.1 — takes the pane's `CanvasScope` so wheel-zoom / drag-pan mutate
- * THIS pane's canvas, not whichever pane the global `canvasStore` facade
- * happens to delegate to. A mouse wheel produces no pointerdown to activate
- * the pane under the cursor, so routing through the facade zoomed the active
- * pane (and persisted the wrong board's viewport). Mirrors `startEdgePan(scope)`.
+ * Takes the pane's `CanvasScope` so wheel-zoom / drag-pan mutate THIS pane's
+ * canvas, not whichever pane the global `canvasStore` facade delegates to. A
+ * mouse wheel produces no pointerdown to activate the pane under the cursor, so
+ * the facade would zoom the active pane (and persist the wrong board's
+ * viewport). Mirrors `startEdgePan(scope)`.
  *
  * Usage: <div use:viewportAction={paneCanvasScope}>...</div>
  */

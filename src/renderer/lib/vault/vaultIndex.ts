@@ -24,17 +24,15 @@ export interface FileMetadata {
   content: string;
   lastModified: number;
   /**
-   * 6.2.H1 — verbatim YAML source between the `---` fences, captured at parse
-   * time so the external-change pipeline can refresh `originalFrontmatterCache`
-   * after a sync-frontmatter reload. Without this, the cache baseline that
-   * `patchFrontmatterSourceCst` diffs against stays at the pre-sync bytes, and a
-   * subsequent body-only save's diff re-emits the externally-changed key and
-   * drops any inline comment on that key. Empty string when the file has no
-   * frontmatter fence.
+   * Verbatim YAML source between the `---` fences, captured at parse time so
+   * the external-change pipeline can refresh `originalFrontmatterCache` after a
+   * sync-frontmatter reload. Otherwise the CST engine's baseline stays at the
+   * pre-sync bytes and a later save drops the inline comment on an
+   * externally-changed key. Empty string when the file has no frontmatter fence.
    */
   rawFrontmatter: string;
   /**
-   * L12 (Audit-6) — UTF-8 byte length of the file's RAW content (frontmatter +
+   * UTF-8 byte length of the file's RAW content (frontmatter +
    * body, before parsing), captured at parse time. The partial-read shrink
    * heuristic (`conflictResolver.isLikelyPartialRead`) measures THIS rather than
    * the parsed body length, so a mid-write truncation that lands mostly inside a
@@ -87,10 +85,8 @@ export function collectMarkdownPaths(tree: FileTreeNode[], vaultRoot: string): s
         if (node.children) walk(node.children);
         continue;
       }
-      // Phase 1 / 1.3 — accept both `.md` and `.markdown`. Without this the
-      // cold rebuild on vault open skips `.markdown` files entirely, so the
-      // external-edit classifier never has a baseline to compare against and
-      // the index can't surface them in search.
+      // Accept both `.md` and `.markdown`, so `.markdown` files get an
+      // external-edit baseline and appear in search.
       const lowerName = node.name.toLowerCase();
       const isMd =
         isMarkdownExtension(node.extension) ||
@@ -210,10 +206,9 @@ function parseWithRemark(rawContent: string): {
 
   for (const child of tree.children) visit(child);
 
-  // M2 (Audit-13) — body split via the shared fence helper (was
-  // `matter(rawContent).content`). The FM object still comes from the remark
-  // `yaml` node above; this only strips the fenced block off the front so the
-  // search-index `content` is body-only.
+  // Body split via the shared fence helper. The FM object comes from the
+  // remark `yaml` node above; this only strips the fenced block off the front
+  // so the search-index `content` is body-only.
   const { body } = splitFrontmatterSource(rawContent);
 
   return { frontmatter, body, headings, links };
@@ -224,10 +219,8 @@ function parseWithRemark(rawContent: string): {
  * from frontmatter (the caller adds them after this returns), so this
  * function focuses on headings and link extraction.
  *
- * M2 (Audit-13) — split + parse via the `yaml` package (was gray-matter, whose
- * bundled js-yaml v3 coerced an unquoted `date:` → Date / `0b1010` → 10 — the
- * second-parser drift class). The FM object now matches the remark path's
- * parser exactly.
+ * Frontmatter is parsed with the same `yaml` package as the remark path, so
+ * the two can't disagree (e.g. on an unquoted `date:` or `0b1010`).
  */
 function parseWithoutRemark(rawContent: string): {
   frontmatter: Record<string, unknown>;
@@ -283,7 +276,7 @@ function parseWithoutRemark(rawContent: string): {
  * gives us clean separation of prose from code blocks so inline tag and link
  * extraction can't be fooled by `#not-a-tag` appearing inside a fenced block.
  * A regex-based parser (`parseWithoutRemark`) remains as a fallback on parse
- * errors — both source frontmatter through the same `yaml` package (M2).
+ * errors — both source frontmatter through the same `yaml` package.
  */
 export function parseMarkdown(
   relativePath: string,
@@ -300,12 +293,10 @@ export function parseMarkdown(
 
   const { frontmatter, body, headings, links } = parsed;
 
-  // 6.2.H1 — capture the verbatim YAML source between fences so the index's view
-  // of "what's between the fences" matches the write gateway's (the external-
-  // change pipeline refreshes `originalFrontmatterCache` from it). `rawContent`
-  // is the raw bytes from `vault:read-file-text` (BOM intact); the shared
-  // `splitFrontmatterSource` strips the BOM and tolerates a trailing space on
-  // the fence (Audit-4 DI-17 / M9 parity), exactly as `parseMarkdownFile` does.
+  // Capture the verbatim YAML source between fences so the index's view matches
+  // the write gateway's (the external-change pipeline refreshes
+  // `originalFrontmatterCache` from it). `splitFrontmatterSource` strips the BOM
+  // and tolerates a trailing space on the fence, exactly as `parseMarkdownFile`.
   const { rawFrontmatter } = splitFrontmatterSource(rawContent);
 
   // Routed through `normalizeTags` so the equality contract used by
@@ -330,7 +321,7 @@ export function parseMarkdown(
     content: body,
     lastModified,
     rawFrontmatter,
-    // L12 (Audit-6) — raw UTF-8 byte size of the whole file (FM + body) for the
+    // Raw UTF-8 byte size of the whole file (FM + body) for the
     // partial-read shrink heuristic. Measured on `rawContent` (the bytes the
     // watcher actually read), not the parsed body.
     rawByteSize: rawUtf8ByteLength(rawContent),
@@ -393,17 +384,12 @@ export function countTagsInInlineTiles(
  * that single file, not the whole vault.
  */
 export class VaultIndex {
-  // M1 (Audit-13) — keyed by the case-FOLDED vault-relative path (the branded
-  // `VaultPath` form), not raw OS casing. Every other path-keyed store
-  // (`fileBaselineRegistry`, `documentStore.findByFilename`, the board
-  // reconciler) already folds; the index was the lone exception. On a
-  // case-insensitive FS an external edit reported with divergent casing
-  // (case-only rename, multi-device OneDrive, git) would otherwise miss the
-  // entry — bypassing the partial-read guard (gated on `previousMetadata`),
-  // misclassifying the change, and upserting a duplicate under the new casing.
-  // The branded key type makes a raw-string `.set` a compile error, so the
-  // fold can't be silently dropped; the stored value keeps `path` in OS casing
-  // for display. Pinned by `check-vault-path-keys.mjs`.
+  // Keyed by the case-FOLDED vault-relative path (branded `VaultPath`), like
+  // every other path-keyed store. On a case-insensitive FS an external edit
+  // reported with divergent casing would otherwise miss the entry (bypassing
+  // the partial-read guard) and upsert a duplicate. The branded key type makes
+  // a raw-string `.set` a compile error; the stored value keeps `path` in OS
+  // casing for display. Pinned by `scripts/gates:vault-path-keys`.
   private readonly metadata = new Map<VaultPath, FileMetadata>();
   private readonly search: MiniSearch<IndexableDoc>;
 
@@ -420,7 +406,7 @@ export class VaultIndex {
   }
 
   /**
-   * M1 (Audit-13) — the single case-folding key derivation for the metadata
+   * The single case-folding key derivation for the metadata
    * Map AND the MiniSearch document id. Returns the branded `VaultPath` form
    * (`vaultPath()` lower-cases + strips the leading slash) so two casings of
    * the same on-disk file collapse to one entry. The branded return type means
@@ -450,14 +436,12 @@ export class VaultIndex {
   }
 
   /**
-   * Sprint B / B9 — rebinds an index entry from `oldPath` to `newPath`.
+   * Rebinds an index entry from `oldPath` to `newPath`.
    * Updates the metadata map key, the cached `metadata.path`, and the
    * MiniSearch document id atomically. No-ops if the entry doesn't exist.
    *
-   * M1 (Audit-13) — both keys fold through `keyOf`. A case-ONLY rename folds
-   * to the SAME key, so instead of dropping it (the entry would keep the stale
-   * OS casing in its `path`), we refresh the stored display casing in place —
-   * mirroring `boardCache.renameBoardPath`'s case-only rebind.
+   * A case-ONLY rename folds to the SAME key, so we refresh the stored display
+   * casing in place (mirrors `boardCache.renameBoardPath`).
    */
   renameKey(oldPath: string, newPath: string): void {
     const oldId = this.keyOf(oldPath);
@@ -500,7 +484,7 @@ export class VaultIndex {
   }
 
   allPaths(): string[] {
-    // M1 (Audit-13) — return the stored OS-casing `path` from each value, not
+    // Return the stored OS-casing `path` from each value, not
     // the folded Map keys, so callers keep display casing.
     return Array.from(this.metadata.values()).map((m) => m.path);
   }
@@ -538,7 +522,7 @@ export class VaultIndex {
   query(queryText: string, limit = 50): VaultIndexSearchResult[] {
     if (!queryText.trim()) return [];
     const raw = this.search.search(queryText, { prefix: true, fuzzy: 0.2 });
-    // M1 (Audit-13) — the MiniSearch id is the folded key; resolve it back to
+    // The MiniSearch id is the folded key; resolve it back to
     // the stored OS-casing `path` so search results carry display casing.
     return raw.slice(0, limit).map((r) => {
       const display = this.metadata.get(this.keyOf(String(r.id)))?.path ?? String(r.id);

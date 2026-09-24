@@ -1,8 +1,7 @@
 /**
  * Shared display metadata for task / Kanban-card priority values. Both
- * TaskItem and KanbanCard render priority pills, and prior to extraction the
- * colour and label maps were defined twice in lock-step — change one, drift
- * began. Importing from here keeps the two boards visually consistent.
+ * TaskItem and KanbanCard render priority pills; importing from here keeps the
+ * two boards visually consistent.
  *
  * The colours resolve to theme tokens (`--priority-*`) so themes can re-skin
  * priority pills without touching the components.

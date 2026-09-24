@@ -122,7 +122,7 @@
 
   let knownTags = $derived<Array<[string, number]>>(Array.from(vaultIndexStore.allTags()));
 
-  // Phase C item 16: dismiss the open menu (filter / group / sort / view /
+  // Dismiss the open menu (filter / group / sort / view /
   // saved views) when the user clicks anywhere outside the toolbar root.
   // Lives as a $effect rather than `use:` action so the listener mounts
   // exactly once and we don't pay the cost when every menu is closed.

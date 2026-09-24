@@ -1,15 +1,15 @@
 /**
- * Audit-19 EXT-6 / ERR-8 (plan D5) — per-machine crash-recovery sentinels.
+ * Per-machine crash-recovery sentinels.
  *
  * The sentinels live in the vault's `.filo/`, which a cloud client syncs to
  * every machine. With ONE shared name per kind, machine B's clean shutdown
- * deleted machine A's crash breadcrumb, B prompted for A's unflushed files (the
- * data only exists on A), and B could "resume" A's half-finished tag rename.
- * Each machine now owns `<name>.<machineId>` (machine id minted in userData,
- * 12 lowercase hex) and only ever writes / deletes its own.
+ * would delete machine A's crash breadcrumb, B would prompt for A's unflushed
+ * files (the data only exists on A), and B could "resume" A's half-finished
+ * tag rename. So each machine owns `<name>.<machineId>` (machine id minted in
+ * userData, 12 lowercase hex) and only ever writes / deletes its own.
  *
- * THE single home of the legacy (pre-Audit-19) bare names: they are read and
- * consumed once for migration, never written. `ci:sentinel-machine-scoped`
+ * THE single home of the legacy shared bare names: they are read and
+ * consumed once for migration, never written. `gates:sentinel-machine-scoped`
  * forbids those literals anywhere else in src/main and src/renderer.
  */
 

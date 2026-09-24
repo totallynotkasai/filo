@@ -1,7 +1,7 @@
 import type { ConfirmDialogConfig } from '../../stores/ui.svelte';
 
 /**
- * Phase C / C.3 — frame-delete confirmation builder.
+ * Frame-delete confirmation builder.
  *
  * Both Frame.svelte's trash icon and MindMapBoard.svelte's context-menu
  * "Delete Frame" route here so the dialog copy stays in one place. The

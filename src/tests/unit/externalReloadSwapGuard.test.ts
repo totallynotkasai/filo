@@ -10,7 +10,7 @@
  * handlers (the others — `promptBulkExternalChanges` "Reload all",
  * `promptModifiedFile` "Reload", `promptPartialReadExhausted` "Reload from disk"
  * — share the identical capture-then-bail shape and are pinned structurally by
- * `check-reconciler-vault-guard.mjs`'s `applyChanges` trigger). This drives the
+ * `scripts/gates:reconciler-vault-guard`'s `applyChanges` trigger). This drives the
  * Reload action directly: a swap during `applyChanges` must `defer` without
  * touching any store; with no swap it applies and resolves `'reload'`.
  */

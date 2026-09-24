@@ -296,8 +296,8 @@
     const ids = [...selectionStore.selectedIds];
     if (ids.length === 0) { uiStore.toast('Select tiles first', 'info', 1500); return; }
     const tiles = ids.map(id => boardStore.getTile(id)).filter(Boolean) as Tile[];
-    // If any are not faded, fade all; otherwise unfade all. Phase 7 / 7.7 —
-    // route through ToggleFadeCommand so Ctrl+Z reverses the mixed change.
+    // If any are not faded, fade all; otherwise unfade all. Route through
+    // ToggleFadeCommand so Ctrl+Z reverses the mixed change.
     const anyNotFaded = tiles.some(t => !t.faded);
     historyStore.execute(
       new ToggleFadeCommand(

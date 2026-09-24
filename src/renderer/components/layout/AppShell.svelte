@@ -78,7 +78,7 @@
       // bind:this may have already nulled it by the time we run.
       const trappedPanel = boardBrowserPanelEl;
       return () => {
-        // C8 — see lib/utils/focusTrapSafe.ts. The helper short-circuits on
+        // See lib/utils/focusTrapSafe.ts. The helper short-circuits on
         // a detached host (a click inside the panel that both closes the
         // browser AND opens a board unmounts the panel before this teardown
         // runs; focus-trap's updateTabbableNodes would otherwise throw and
@@ -104,7 +104,7 @@
   }
 
   function requestDeleteSelected() {
-    // Phase C / C.4 — Delete now applies to connections as well as tiles.
+    // Delete applies to connections as well as tiles.
     // Connection deletes are undoable and not file-backed, so they don't
     // need the heavyweight tile-confirm gate. We do three things in turn:
     //
@@ -148,7 +148,7 @@
   async function performDeleteSelected(deleteWithFile: boolean) {
     const selectedIds = [...selectionStore.selectedIds];
 
-    // Phase R2 — when capturing undo snapshots, the pre-IPC `.md` reads
+    // When capturing undo snapshots, the pre-IPC `.md` reads
     // must reflect the post-flush disk state, NOT the pre-flush editor
     // body. Without the drain, a 300ms-debounced keystroke that landed
     // after the user clicked "Delete with files" would still be sitting
@@ -313,7 +313,7 @@
       registerCommandWithShortcut({
         name: 'vault:save', label: 'Save Project', description: 'Save Project',
         binding: { key: 's', ctrl: true },
-        // Phase 31 A1.1 — fires even when focus is in a TipTap editor.
+        // Fires even when focus is in a TipTap editor.
         // Without this, Ctrl+S inside a TextTile or DocumentEditor is
         // swallowed by the contenteditable guard in hotkeys.ts:78, so the
         // user's manual save attempt silently does nothing. The save path
@@ -354,7 +354,7 @@
         name: 'app:cancel', label: 'Cancel / Close', description: 'Cancel / Close',
         binding: { key: 'Escape' },
         execute: () => {
-          // Layering-aware (H1): close only the topmost dismissable layer
+          // Layering-aware: close only the topmost dismissable layer
           // (confirm dialog → modal → context menu) so a stacked confirm
           // doesn't take the modal beneath it down with it.
           uiStore.cancelTopLayer();
@@ -425,7 +425,7 @@
         },
       }),
 
-      // ── Sprint E — Vault-wide Search (Ctrl+Shift+F) ──
+      // ── Vault-wide Search (Ctrl+Shift+F) ──
       registerCommandWithShortcut({
         name: 'vault:search',
         label: 'Search Vault',
@@ -440,7 +440,7 @@
         },
       }),
 
-      // ── Phase 6.4 (IMPLEMENTATION_PLAN_2026-05-27) — Tab bar a11y ──
+      // ── Tab bar a11y ──
       //
       // Ctrl+W closes the active tab; Ctrl+Tab cycles forward, Ctrl+Shift+Tab
       // cycles backward. All three respect the standard hotkeys editor
@@ -516,13 +516,11 @@
         linksStore.handleLinkClick(href);
       } else if (/^(https?:\/\/|mailto:|tel:)/i.test(href)) {
         // External URLs: hand off to the OS default browser / mail client
-        // / dialler via the media:open-external IPC. Sprint A / A5 — the
-        // previous regex only matched `http(s)://`, so a `mailto:` or
-        // `tel:` link inside a TipTap editor either silently no-op'd or
-        // tried to navigate the renderer (potentially nuking unsaved
-        // state). Both schemes are already in the sanitizeHtml allowlist
-        // and the main-side `ALLOWED_URL_PREFIXES`.
-        // Phase 5 — `asSafeOpenExternal` is the renderer-side gate; the
+        // / dialler via the media:open-external IPC. `mailto:` / `tel:` must be
+        // matched too, or the link would try to navigate the renderer
+        // (potentially nuking unsaved state). Both schemes are in the
+        // sanitizeHtml allowlist and the main-side `ALLOWED_URL_PREFIXES`.
+        // `asSafeOpenExternal` is the renderer-side gate; the
         // main handler re-checks (defence-in-depth) but rejecting here
         // avoids an IPC roundtrip for obvious bad input.
         const safe = asSafeOpenExternal(href);
@@ -614,13 +612,9 @@
 
   <!-- Modals -->
   <!--
-    Phase 3 / 3.7 (A-4) — gate the keyboard-shortcuts modal mount on the
-    open-modal id so its DOM and the lazy KeyboardShortcutsModal contents
-    only exist while the panel is visible. Every other modal in this block
-    already follows the same pattern; the unconditional mount here was an
-    inconsistency, not a deliberate choice (the inner Modal component still
-    gates `<dialog showModal()>` on its own, but pre-3.7 the wrapper paid
-    the always-mounted cost).
+    Gate the keyboard-shortcuts modal mount on the open-modal id so its DOM
+    and the lazy KeyboardShortcutsModal contents only exist while the panel
+    is visible, like every other modal in this block.
   -->
   {#if uiStore.isModalOpen('keyboard-shortcuts')}
     <Modal id="keyboard-shortcuts" title="Help" width="520px">
@@ -630,7 +624,7 @@
 
   <!--
     Board Browser: slide-up panel above TabBar.
-    Polish phase 1.5 — transparent click-outside backdrop wraps the panel.
+    Transparent click-outside backdrop wraps the panel.
     Clicks outside the panel close the modal (matching `Modal.svelte`'s
     `e.target === dialogEl` pattern via a target-equality check on the
     backdrop). Clicks inside the panel bubble normally so buttons, the
@@ -700,11 +694,10 @@
   {/if}
 
   {#if uiStore.isModalOpen('recovery-files')}
-    <!-- Audit-17 3.3 — a bypassed close (Esc / X / backdrop) must still UN-PARK
-         the recovery sequencer; leaving it parked forever silently skipped
-         steps 2–4 (tag-rewrite Resume/Discard, rename-cascade retry, snapshot
-         listing) for the session.
-         Audit-18 4.1 — but a bypassed close is NOT an acknowledgement, so it
+    <!-- A bypassed close (Esc / X / backdrop) must still UN-PARK the recovery
+         sequencer, or steps 2–4 (tag-rewrite Resume/Discard, rename-cascade
+         retry, snapshot listing) are skipped for the session.
+         But a bypassed close is NOT an acknowledgement, so it
          routes through `bypassRecoveryModalClose()` (un-park only) rather than
          `acknowledgeRecovery()`: the `.filo/.dirty` sentinel + pending paths
          are preserved so recovery RE-QUEUES next launch. Only the explicit
@@ -816,11 +809,8 @@
 
   /* ── Board Browser slide-up panel ── */
   /*
-   * Polish phase 1.5 — full-viewport invisible click-catcher that closes
-   * the Board Browser on outside-click. No background colour so the rest
-   * of the app stays visible (the existing "no backdrop overlay" intent
-   * from the previous comment is preserved — only the *interaction*
-   * changes, not the visual presentation).
+   * Full-viewport invisible click-catcher that closes the Board Browser on
+   * outside-click. No background colour so the rest of the app stays visible.
    */
   .board-browser-backdrop {
     position: fixed;
@@ -834,9 +824,9 @@
     bottom: var(--tabbar-height, 36px);
     left: 0;
     width: 560px;
-    /* Audit 6.4 — paint one layer above the click-catcher backdrop
-       (--z-modal-backdrop, 3000) rather than sharing it. Sharing was correct
-       only by DOM order; --z-modal (3001) makes the stacking explicit. */
+    /* Paint one layer above the click-catcher backdrop (--z-modal-backdrop,
+       3000) rather than relying on DOM order; --z-modal (3001) makes the
+       stacking explicit. */
     z-index: var(--z-modal);
     max-height: 80vh;
     background: var(--modal-bg);

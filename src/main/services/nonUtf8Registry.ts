@@ -1,13 +1,12 @@
 /**
- * Audit-19 ERR-7 — files whose bytes are NOT valid UTF-8 (a Windows-1252 note,
- * a UTF-16 "Unicode" Notepad file).
+ * Files whose bytes are NOT valid UTF-8 (a Windows-1252 note, a UTF-16
+ * "Unicode" Notepad file).
  *
- * `fs.readFile(p, 'utf-8')` silently replaces invalid sequences with U+FFFD, so
- * the renderer received `R�union` and the FIRST write of any kind — a body
- * save, a field edit, even a vault-wide tag rename on a note the user never
- * opened — persisted the replacement characters, destroying every non-ASCII
- * byte. `vault:read-file-text` now validates the bytes and records an invalid
- * file here; the generic text write channels REFUSE to overwrite a recorded
+ * A UTF-8 decode silently replaces invalid sequences with U+FFFD, so the
+ * FIRST write of any kind — a body save, a field edit, even a vault-wide tag
+ * rename on a note the user never opened — would persist the replacement
+ * characters, destroying every non-ASCII byte. `vault:read-file-text`
+ * validates the bytes and records an invalid file here; the generic text write channels REFUSE to overwrite a recorded
  * path (`NOT_UTF8`) so a renderer bug that forgets the read-only state can't
  * corrupt it either. Only the explicit `vault:convert-to-utf8` action rewrites
  * such a file (after backing up the original bytes).

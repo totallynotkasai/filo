@@ -21,14 +21,14 @@ import { Mark, mergeAttributes, markInputRule, markPasteRule } from '@tiptap/cor
  *   rationale.
  */
 
-// Phase 31 C3.1 — Unicode property escapes so non-ASCII tags (e.g. `#café`,
+// Unicode property escapes so non-ASCII tags (e.g. `#café`,
 // `#日本語`) get recognised by the input/paste rules. `\p{L}` matches any
 // Unicode letter, `\p{N}` any Unicode digit. The `u` flag is required for
 // these classes to be parsed as properties rather than literal text.
 const INPUT_TAG_RE = /(?:^|\s)(#[\p{L}_][\p{L}\p{N}_/-]*)\s$/u;
 const PASTE_TAG_RE = /(?:^|\s)(#[\p{L}_][\p{L}\p{N}_/-]*)(?=\s|$)/gu;
 
-// Phase Sprint B / B2 — hex-color tokens (`#fff`, `#abcdef`, `#abcdef12`)
+// Hex-color tokens (`#fff`, `#abcdef`, `#abcdef12`)
 // would otherwise get matched as tags because the leading character `a-f` is
 // a valid Unicode letter. Reject any token whose remaining body is entirely
 // hex digits in one of the canonical 3/6/8-char lengths so the user can type
@@ -107,7 +107,7 @@ export const Tag = Mark.create({
       markInputRule({
         find: INPUT_TAG_RE,
         type: this.type,
-        // C1 — skip the rule inside code blocks / inline code so `#hashtag`
+        // Skip the rule inside code blocks / inline code so `#hashtag`
         // appearing in a fenced code sample doesn't get marked as a tag and
         // round-tripped through the tag serializer. Returning null here
         // tells markInputRule to abort, matching the @tiptap/core contract.

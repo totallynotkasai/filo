@@ -10,7 +10,7 @@
  * load.
  *
  * ──────────────────────────────────────────────────────────────────────────
- * Adding a new migration (Phase 23 / M15 worked example)
+ * Adding a new migration
  * ──────────────────────────────────────────────────────────────────────────
  *
  * 1. Bump `CURRENT_BOARD_FILE_VERSION` in `boardFile.ts` AND update the
@@ -53,20 +53,19 @@ export interface MigrateBoardFileResult {
    * `true` when the input declares a `version` higher than this build's
    * `CURRENT_BOARD_FILE_VERSION`. The loader uses this to short-circuit
    * with a friendlier "file from a newer Filo" message instead of leaning
-   * on the generic Zod literal-mismatch text. Phase 23 / M14.
+   * on the generic Zod literal-mismatch text.
    */
   fromFuture: boolean;
   /**
-   * Sprint C / C9 — `true` when the input declares a `version` BELOW
+   * `true` when the input declares a `version` BELOW
    * `CURRENT_BOARD_FILE_VERSION` but no `MIGRATION_STEPS` entry exists for
    * the gap (e.g. a `version: 3` file when this build has steps from v6
    * onward). Distinct from `fromFuture`: this is "we used to support that
    * format and dropped the migration" rather than "saved by a newer
    * Filo". The loader surfaces a different toast.
    *
-   * Sprint C / C10 also routes fractional `version` inputs here, since
-   * a fraction means the file shape is structurally suspect rather than
-   * "from the future".
+   * Fractional `version` inputs also land here, since a fraction means the
+   * file shape is structurally suspect rather than "from the future".
    */
   noMigrationPath: boolean;
 }
@@ -85,7 +84,7 @@ function readInputVersion(raw: unknown): { value: number | null; versionPresent:
     // No `version` field → implicit V6.
     return { value: null, versionPresent: false, fractional: false };
   }
-  // Sprint C / C10 — fractional version numbers are structurally
+  // Fractional version numbers are structurally
   // suspect: every legitimate version Filo has shipped is an integer.
   // Treat them as no-migration-path rather than trying to pick the
   // floor/ceil and silently rewriting the file.
@@ -135,7 +134,7 @@ const MIGRATION_STEPS: Record<number, (raw: unknown) => unknown> = {
 export function migrateBoardFile(raw: unknown): MigrateBoardFileResult {
   const { value: inputVersion, fractional } = readInputVersion(raw);
 
-  // Sprint C / C10 — fractional version is a distinct failure mode.
+  // Fractional version is a distinct failure mode.
   if (fractional && inputVersion !== null) {
     return { data: raw, migratedFrom: inputVersion, fromFuture: false, noMigrationPath: true };
   }
@@ -147,7 +146,7 @@ export function migrateBoardFile(raw: unknown): MigrateBoardFileResult {
   if (inputVersion !== null && inputVersion > CURRENT_BOARD_FILE_VERSION) {
     // Don't touch a file from a newer build — the loader will surface a
     // dedicated error rather than silently downgrading anything we don't
-    // understand. Phase 23 / M14.
+    // understand.
     return { data: raw, migratedFrom: inputVersion, fromFuture: true, noMigrationPath: false };
   }
 
@@ -158,13 +157,9 @@ export function migrateBoardFile(raw: unknown): MigrateBoardFileResult {
   for (let v = startVersion; v < CURRENT_BOARD_FILE_VERSION; v++) {
     const step = MIGRATION_STEPS[v];
     if (!step) {
-      // Sprint C / C9 — distinct error kind. Pre-Sprint-C this reused
-      // `fromFuture: true` so the loader surfaced a "saved by a newer
-      // Filo" toast. That was misleading when the real cause was an
-      // older format Filo no longer carries a migration for (e.g.
-      // `version: 3` when steps exist only for 6→7). The
-      // `noMigrationPath` flag lets the loader emit a precise toast
-      // naming the version gap.
+      // Distinct from `fromFuture`: an older format Filo no longer carries a
+      // migration for (e.g. `version: 3` when steps exist only for 6→7), so
+      // the loader can emit a precise toast naming the version gap.
       return { data: raw, migratedFrom: startVersion, fromFuture: false, noMigrationPath: true };
     }
     current = step(current);

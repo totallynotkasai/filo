@@ -1,8 +1,8 @@
 /**
  * boardSaver — facade aggregating the V7 write pipeline.
  *
- * Historical entry point for the renderer; the real implementations live in
- * sibling modules:
+ * The renderer's entry point; the real implementations live in sibling
+ * modules:
  *
  *   - `tileDefBuilder`     — pure builders + `V7BoardFileData`.
  *   - `writeStateTracking` — inflight counter, sentinel paths, listener
@@ -116,11 +116,8 @@ export function cancelAllPendingWrites(): void {
  * `vaultStore.save()`) can surface an honest pass/fail to the Ctrl+S toast.
  * Each entry in `boardFailed` is the .board.json path that failed; each
  * entry in `configFailed` is a config target identifier
- * (e.g. `appearance.json`).
- *
- * Phase 31 A1.1 — the previous `Promise<void>` signature swallowed all
- * failure context; later phases (vault swap, save indicator, sentinel
- * sync) depend on knowing exactly which writes did not land.
+ * (e.g. `appearance.json`). Vault swap, the save indicator and sentinel sync
+ * depend on knowing exactly which writes did not land.
  */
 export async function flushAll(
   getBoardWriteArgs: (boardId: string) => BoardWriteArgs | null,
@@ -137,7 +134,7 @@ export async function flushAll(
   };
 }
 
-// Phase 4 (Consolidation 2026-05-25) — vault-swap reset registration.
+// Vault-swap reset registration.
 //
 // Two pre-swap handlers for the write pipeline:
 //   - `boardWriteScheduler` cancels every queued debounced timer (board /

@@ -25,10 +25,9 @@ export interface VaultContext {
   getRecoveryPendingPaths(): string[];
   setRecoveryPendingPaths(next: string[]): void;
   /**
-   * Phase 3 / 3.3 — signal to the orchestrator that the user has
-   * acknowledged the recovery-files modal (clicked Dismiss). The
-   * sequencer wired to this resolver advances to the next pending
-   * recovery sentinel. No-op if no sequencer is waiting.
+   * Signal that the recovery-files modal was closed. The sequencer wired to
+   * this resolver advances to the next pending recovery sentinel. No-op if no
+   * sequencer is waiting.
    */
   resolveRecoveryDismissed(): void;
   markMetaDirty(): void;
@@ -36,16 +35,11 @@ export interface VaultContext {
   clearSelection(): void;
   clearActiveRootFolderIfMatches(deletedPath: string): void;
   /**
-   * L15 (Audit-13) — exposes the orchestrator's serialised rename queue to
-   * slices. The queue runs work in arrival order and carries the
-   * enqueue-time vault-identity guard, so re-entrant external-change work
-   * (the partial-read retry timer) inherits both ordering and swap safety
-   * instead of racing a concurrent rename's path rebind.
-   *
-   * Optional so the many test-only `VaultContext` literals don't all have to
-   * stub it; the production `vaultCtx` always provides it, and the lone
-   * consumer (the partial-read retry re-entry) falls back to a direct call
-   * when it's absent.
+   * The orchestrator's serialised rename queue (arrival order + enqueue-time
+   * vault-identity guard), so re-entrant external-change work (the partial-read
+   * retry timer) can't race a concurrent rename's path rebind. Optional so test
+   * `VaultContext` literals needn't stub it; the consumer falls back to a
+   * direct call when absent.
    */
   enqueueRenameQueueWork?<T>(task: () => Promise<T>): Promise<T | undefined>;
 }

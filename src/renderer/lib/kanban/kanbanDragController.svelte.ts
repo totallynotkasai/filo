@@ -114,7 +114,7 @@ export class KanbanDragController {
   private mediaListener: ((e: MediaQueryListEvent) => void) | null = null;
 
   /**
-   * L16 (Audit-6) — window `pointerup` listeners armed by a pointerdown that
+   * Window `pointerup` listeners armed by a pointerdown that
    * hasn't fired yet (card / column drag-gate reset). Tracked so `dispose()`
    * can detach them if the host unmounts while the pointer is still held —
    * otherwise the `{ once: true }` closure never fires, pinning the controller
@@ -134,10 +134,9 @@ export class KanbanDragController {
     }
   }
 
-  /** FLIP animation duration for the card dndzone. 180ms by default — the
-   *  previous 220ms felt sluggish once the placeholder render was fixed and
-   *  sibling cards started animating instead of blinking invisible. Zero
-   *  under `prefers-reduced-motion: reduce` so the OS pref wins.
+  /** FLIP animation duration for the card dndzone. 180ms by default (longer
+   *  feels sluggish now that sibling cards animate). Zero under
+   *  `prefers-reduced-motion: reduce` so the OS pref wins.
    */
   get cardFlipDurationMs(): number {
     return this.reduceMotion ? 0 : 180;
@@ -149,7 +148,7 @@ export class KanbanDragController {
       this.mediaQuery = null;
       this.mediaListener = null;
     }
-    // L16 — detach any pointerup listener still armed at unmount (pointer held
+    // Detach any pointerup listener still armed at unmount (pointer held
     // through teardown). A normal release removes its own entry first.
     for (const handler of this.pendingPointerUps) {
       window.removeEventListener('pointerup', handler);
@@ -158,7 +157,7 @@ export class KanbanDragController {
   }
 
   /**
-   * L16 — arm a one-shot window `pointerup` that re-locks a drag gate, tracking
+   * Arm a one-shot window `pointerup` that re-locks a drag gate, tracking
    * the handler so `dispose()` can detach it if the host unmounts before the
    * release fires. The wrapper deletes its own tracking entry when it runs, so
    * the steady-state (press → release) path leaves nothing behind.
@@ -417,13 +416,10 @@ export class KanbanDragController {
    * Svelte action that sweeps inline drag-leftover styles off every card
    * wrapper inside the zone after each consider/finalize.
    *
-   * Defensive safety net. The root cause of "real cards going invisible
-   * mid-drag" was the render loop filtering out the shadow placeholder via
-   * `{#if isShown}`, which left svelte-dnd-action no DOM node to apply
-   * `visibility: hidden` to — the library then targeted a sibling real card
-   * via Svelte's keyed `{#each}` reuse. That's fixed at the render site
-   * (KanbanColumn.svelte renders `.kanban-drop-slot` with a `_shadow` key
-   * suffix), so this sweep should no longer catch anything in the happy path.
+   * Defensive safety net. Real cards going invisible mid-drag is prevented at
+   * the render site (KanbanColumn.svelte renders `.kanban-drop-slot` with a
+   * `_shadow` key suffix so svelte-dnd-action always has a shadow DOM node to
+   * hide), so this sweep shouldn't catch anything in the happy path.
    *
    * Kept for cancel paths (Escape / drag-outside-any-zone) where the library
    * can leave inline `opacity`/`transform` on the source `.tile-drop-zone`

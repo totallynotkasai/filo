@@ -13,16 +13,13 @@ import { validateIpcPayload } from '../shared/ipcSchemas';
  * `BAD_PAYLOAD` error here — long before the call reaches main and bypasses
  * any handler-side `assertWithinVault` / `assertSafeFilename` checks.
  *
- * `send` (one-way push to main) runs the SAME `validateIpcPayload` gate
- * (M1, AUDIT_REMEDIATION_PLAN_2026-05-29). Previously `send` forwarded its
- * args to `ipcRenderer.send` unvalidated, so a renderer that bypassed
- * `invoke` could smuggle a malformed payload onto a push channel. `send`
- * is fire-and-forget (no Promise to reject), so a bad payload throws
- * synchronously here rather than resolving. Its channel arg is narrowed to
- * `SendChannel` so only the genuine push channels are reachable.
+ * `send` (one-way push to main) runs the SAME `validateIpcPayload` gate, so
+ * a malformed payload can't be smuggled onto a push channel. `send` is
+ * fire-and-forget (no Promise to reject), so a bad payload throws
+ * synchronously here. Its channel arg is narrowed to `SendChannel` so only
+ * the genuine push channels are reachable.
  *
- * The envelope-aware `invokeOk` wrapper (Phase 1,
- * CONSOLIDATION_PLAN_2026-05-25.md) lives renderer-side rather than on
+ * The envelope-aware `invokeOk` wrapper lives renderer-side rather than on
  * the bridge — Electron's `contextBridge` strips custom Error subclass
  * fields via structured clone, which would lose the `channel` / `code`
  * data `IpcEnvelopeError` carries. The renderer-side helper at
@@ -45,7 +42,7 @@ class BadPayloadError extends Error {
 }
 
 /**
- * Audit-15 P3.3 — thrown when the renderer tries to `window.filo.on(...)` a
+ * Thrown when the renderer tries to `window.filo.on(...)` a
  * channel that isn't a known main→renderer event. Receive-only defence in
  * depth: a compromised renderer can't attach a listener to an arbitrary
  * channel string (the symmetric counterpart of `BadPayloadError` for `on`).
@@ -69,12 +66,10 @@ const api = {
     return ipcRenderer.invoke(channel, ...args);
   },
   on: (channel: IpcChannel, callback: (...args: unknown[]) => void) => {
-    // Audit-15 P3.3 — runtime allowlist. `on` was the only bridge method that
-    // forwarded its channel unchecked; restrict subscriptions to the known
-    // main→renderer events so a compromised renderer can't listen on an
-    // arbitrary channel. Throwing (vs a silent no-op) mirrors `send`'s reject
-    // and surfaces a typo'd channel loudly in dev — every legitimate caller
-    // passes one of RECEIVE_CHANNELS, so this never fires in practice.
+    // Runtime allowlist: restrict subscriptions to the known main→renderer
+    // events so a compromised renderer can't listen on an arbitrary
+    // channel. Throwing (vs a silent no-op) surfaces a typo'd channel loudly
+    // in dev; legitimate callers always pass one of RECEIVE_CHANNELS.
     if (!RECEIVABLE_CHANNELS.has(channel)) {
       throw new BadChannelError(channel);
     }
@@ -95,7 +90,7 @@ const api = {
   getPathForFile: (file: File): string => {
     try {
       const resolved = webUtils.getPathForFile(file);
-      // Audit-12 S1 — register the resolved drop path as an approved
+      // Register the resolved drop path as an approved
       // `vault:copy-file` source. `webUtils.getPathForFile` only returns a real
       // path for a `File` backed by an actual on-disk file the user dropped, so
       // this is a TRUSTED minting point a hostile renderer can't abuse: it

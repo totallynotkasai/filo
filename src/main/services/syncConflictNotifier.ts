@@ -1,18 +1,18 @@
 /**
- * Audit-19 ERR-3 / EXT-7 / EXT-2 — live sync-conflict notices.
+ * Live sync-conflict notices.
  *
- * Two watcher-level signals share this module (so `fileWatcher.ts`, near its
- * 1000-LOC limit, only carries a one-line hook):
+ * Two watcher-level signals share this module (so `fileWatcher.ts` only
+ * carries a one-line hook):
  *   - a board FORK appearing (`Plan.board-HOST.json`, a Dropbox conflicted
  *     copy …) — invisible to `board:list`;
  *   - a cross-basename rename the correlator REFUSED because the present file
- *     is a conflict copy of the missing one (EXT-2) — reported by
- *     `correlateRenames` as `conflicts`.
+ *     is a conflict copy of the missing one — reported by `correlateRenames`
+ *     as `conflicts`.
  * Each is sent to the renderer as the main→renderer event `vault:sync-conflict`
  * (`{ copyPath, canonicalPath, client }`), once per copy path per session.
  *
- * Known hosts (C0's OneDrive rule): `os.hostname()` plus every hostname in the
- * vault's `.filo/machines/*.json` registry (EXT-6 writes one file per machine).
+ * Known hosts (for the OneDrive rule): `os.hostname()` plus every hostname in
+ * the vault's `.filo/machines/*.json` registry (one file per machine).
  */
 import { BrowserWindow } from 'electron';
 import { promises as fs } from 'fs';

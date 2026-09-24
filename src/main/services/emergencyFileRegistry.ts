@@ -1,13 +1,12 @@
 /**
- * 6.2.H4 (follow-up) — session registry of "emergency-preserved" files.
+ * Session registry of "emergency-preserved" files.
  *
  * When `atomicWriteFile` / `copyFileToVault` hit ENOSPC / EIO / ENOMEM /
  * EACCES *after* the bytes were already staged on disk, they preserve the
  * partial file (rather than deleting it) and annotate the rejected error
- * with `preservedTmpPath` so the user can recover it manually. Pre-fix that
- * location only ever reached the user as a transient toast — and if it
- * landed during a quit-time flush, the window destroyed before they could
- * read it (the original 6.2.H4 finding).
+ * with `preservedTmpPath` so the user can recover it manually. A transient
+ * toast alone isn't enough — during a quit-time flush the window is
+ * destroyed before the user can read it.
  *
  * This leaf registry records every such preserved file for the lifetime of
  * the process so `writeQuitFailureBreadcrumb` (run in the quit drain) can
@@ -73,13 +72,11 @@ function targetKey(p: string): string {
 }
 
 /**
- * Audit-16 4.6 — drops every entry whose `targetPath` matches a destination
- * that has since been written SUCCESSFULLY. Without this, a transient
- * ENOSPC/EIO/EACCES failure followed by a successful retry of the SAME write
- * left the entry for the whole session: the quit drain then persisted a
- * `.filo/quit-failure.json` breadcrumb pointing at superseded bytes, and the
- * next launch surfaced a phantom "Filo preserved emergency files" notice.
- * Called by `atomicWriteFile` / `copyFileToVault` after their rename lands.
+ * Drops every entry whose `targetPath` matches a destination that has since
+ * been written SUCCESSFULLY, so a transient failure followed by a successful
+ * retry doesn't leave a breadcrumb pointing at superseded bytes (a phantom
+ * "Filo preserved emergency files" notice on the next launch). Called by
+ * `atomicWriteFile` / `copyFileToVault` after their rename lands.
  *
  * The preserved `.tmp` itself is deliberately LEFT on disk — deleting it
  * would require proving its bytes match what landed, and a stale recovery

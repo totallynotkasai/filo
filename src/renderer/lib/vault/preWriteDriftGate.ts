@@ -5,16 +5,15 @@ import { getExternalEditPromptHandler } from './externalEditPrompt';
 import { backupExternalVersion } from './keepLocalBackup';
 
 /**
- * Phase R6 / 6.4.M13 / Audit-16 5.2 — the markdown gateway's PRE-WRITE drift
- * gate, extracted from `markdownFileWriter.writeMarkdownFileImpl` (the
- * file-size split queued since the M13 loop landed).
+ * The markdown gateway's PRE-WRITE drift gate, split out of
+ * `markdownFileWriter.writeMarkdownFileImpl`.
  *
  * If the file's stat on disk differs from the baseline captured at hydrate
  * time (or after the most recent self-write), an external editor wrote to the
  * file since we last knew about it. Surface the Reload / Keep-local prompt so
  * the user explicitly chooses whether to clobber the external bytes — never
- * silently overwrite. No baseline → no comparison anchor → proceed (the legacy
- * unguarded path, e.g. the first write to a freshly-seeded file).
+ * silently overwrite. No baseline → no comparison anchor → proceed (e.g. the
+ * first write to a freshly-seeded file).
  *
  * Outcomes:
  *  - `{ action: 'drop' }` — the user chose Reload; the caller must DISCARD the
@@ -22,23 +21,20 @@ import { backupExternalVersion } from './keepLocalBackup';
  *    and re-stamped the baseline).
  *  - `{ action: 'proceed', verifyStat }` — the write may continue.
  *  - throws — 'defer' (prompt dismissed) or the re-prompt budget was exhausted
- *    against a churning external writer. Audit-6 M1: a bare return here once
- *    resolved performWrite as SUCCESS → `safeEndWrite(true)` → `.filo/.dirty`
- *    markClean'd while the dirty edit never reached disk → quit lost the edit
- *    with a CLEAN sentinel. `markPathFailed` + throw keeps the sentinel dirty,
+ *    against a churning external writer. Must be loud: a bare return would
+ *    resolve the write as SUCCESS and markClean the sentinel while the edit
+ *    never reached disk. `markPathFailed` + throw keeps the sentinel dirty,
  *    shows the error indicator, and attributes the path to `flushAll().failed`.
  */
 export interface DriftGateOutcome {
   action: 'proceed' | 'drop';
   /**
-   * 5.2 (Audit-16) — the last disk stat the drift decision TRUSTED: the
-   * pre-write stat, or the post-prompt re-stat the user approved. The delta
-   * branch re-stats after its in-chain read and verifies against this anchor,
-   * so an external write landing in the stat→read gap — invisible to the
-   * drift check, and a torn/stale read of it would be written back verbatim
-   * as the delta body — aborts loudly instead. Undefined ⇒ no anchor (no
-   * baseline, stat failure, or the legacy proceed-on-failed-re-stat path) —
-   * the verify is skipped, the pre-5.2 trust level.
+   * The last disk stat the drift decision TRUSTED: the pre-write stat, or the
+   * post-prompt re-stat the user approved. The delta branch re-stats after its
+   * in-chain read and verifies against this anchor, so an external write
+   * landing in the stat→read gap aborts loudly instead of being written back
+   * verbatim. Undefined ⇒ no anchor (no baseline or a failed stat) — the
+   * verify is skipped.
    */
   verifyStat?: { mtimeMs: number; size: number };
 }
@@ -61,7 +57,7 @@ export async function runPreWriteDriftGate(
     return { action: 'proceed', verifyStat: preWriteStat };
   }
 
-  // 6.4.M13 — the Reload / Keep-local prompt is async, so the file can drift
+  // The Reload / Keep-local prompt is async, so the file can drift
   // AGAIN while the modal is open. After each 'keep-local', re-stat: if the
   // bytes the user agreed to overwrite changed since they were shown the
   // prompt, re-prompt so an external edit the user never saw is never silently
@@ -80,10 +76,10 @@ export async function runPreWriteDriftGate(
       return { action: 'drop' };
     }
     if (choice === 'defer') {
-      // 6.4.M4 — dismissed without choosing (auto-dismiss or manual close).
-      // Neither side was touched; abort so the external edit on disk survives,
-      // and let the dirty in-memory state persist so the next debounced write
-      // re-prompts. No baseline refresh. Loud per Audit-6 M1 (docstring).
+      // Dismissed without choosing (auto-dismiss or manual close). Neither side
+      // was touched; abort so the external edit on disk survives, and let the
+      // dirty in-memory state persist so the next debounced write re-prompts.
+      // No baseline refresh. Loud (see docstring).
       markPathFailed(vaultRoot, relPath);
       throw new Error(
         `markdownFileWriter: write to "${relPath}" deferred — external edit on disk unresolved; not overwritten`,
@@ -96,15 +92,15 @@ export async function runPreWriteDriftGate(
       recheckStat = await invokeOk('vault:stat', vaultRoot, relPath);
     } catch {
       // Re-stat failed — can't confirm a second drift. Proceed with the
-      // overwrite as the pre-M13 code did; the write IPC surfaces any genuine
-      // IO error through the failure-attribution pipeline.
+      // overwrite; the write IPC surfaces any genuine IO error through the
+      // failure-attribution pipeline.
       recheckStat = undefined;
     }
     if (
       recheckStat === undefined ||
       (recheckStat.mtimeMs === shownStat.mtimeMs && recheckStat.size === shownStat.size)
     ) {
-      // Audit-19 UX-6 — the external bytes go to .filo/recovery/ before the
+      // The external bytes go to .filo/recovery/ before the
       // clobber. A failed backup the user declined to overwrite without →
       // defer (loud, same as a dismissed prompt).
       if (!(await backupExternalVersion(vaultRoot, relPath))) {
@@ -113,9 +109,8 @@ export async function runPreWriteDriftGate(
           `markdownFileWriter: write to "${relPath}" deferred — the external version could not be backed up; not overwritten`,
         );
       }
-      // 5.2 — the approval re-anchors the verify stat: the user agreed to
-      // overwrite the bytes recheckStat observed. A failed re-stat keeps the
-      // legacy proceed-without-confirmation decision — no anchor.
+      // The approval re-anchors the verify stat: the user agreed to overwrite
+      // the bytes recheckStat observed. A failed re-stat leaves no anchor.
       return { action: 'proceed', verifyStat: recheckStat };
     }
     // The file drifted again during the prompt — loop to re-prompt against
@@ -124,7 +119,7 @@ export async function runPreWriteDriftGate(
   }
 
   // Re-prompt budget exhausted against a churning external writer. Abort
-  // rather than clobber an unseen edit (loud per Audit-6 M1 — see docstring).
+  // rather than clobber an unseen edit (loud — see docstring).
   markPathFailed(vaultRoot, relPath);
   throw new Error(
     `markdownFileWriter: write to "${relPath}" aborted — external edit kept churning across drift re-prompts; not overwritten`,

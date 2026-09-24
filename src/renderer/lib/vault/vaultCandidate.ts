@@ -1,19 +1,13 @@
 /**
- * Phase R4 — vault open as a transaction.
+ * Vault open as a transaction.
  *
  * `loadVaultCandidate` performs every fallible I/O for an `openVault`
  * call against a local snapshot, NEVER touching global stores. On
  * success it returns a fully-loaded `VaultCandidate` the orchestrator
  * (`vaultStore.openVault`) can install synchronously; on failure it
- * throws so the caller leaves the user on the home screen.
- *
- * Without this split, the previous `openVault` mutated `currentProject`
- * and `vaultPath` BEFORE its async theme / watcher / tags I/O — any
- * throw past the commit point left the renderer half-open: vault path
- * recorded, but no watcher, no theme, no tags. The audit's concrete
- * reproducer was a custom theme with a hand-edited unknown `base`,
- * which threw inside `applyCustomTheme` after the swap had already
- * committed.
+ * throws so the caller leaves the user on the home screen. This prevents
+ * a throw mid-open (e.g. a custom theme with an unknown `base`) from
+ * leaving the renderer half-open.
  *
  * What goes here vs. what stays in `vault.svelte.ts`:
  *
@@ -66,7 +60,7 @@ import { stashRecoveryStatusBeforeCommit } from './dirtyFlagRecovery';
 import { loadMachineIdentity } from './machineIdentity';
 
 /**
- * Audit-19 ERR-4 — failed-board kinds whose on-disk bytes are readable but
+ * Failed-board kinds whose on-disk bytes are readable but
  * unusable, so a copy in .filo/recovery/ is worth taking. (`not-found`,
  * `too-large`, `snapshot-failed` and the transient kinds are not.)
  */
@@ -90,7 +84,7 @@ export interface VaultCandidateWarning {
   text: string;
   type: 'info' | 'warning' | 'error';
   duration: number;
-  /** Audit-19 ERR-4 — an actionable notice (e.g. a locked board's Retry). */
+  /** An actionable notice (e.g. a locked board's Retry). */
   sticky?: boolean;
   dedupeKey?: string;
   actions?: Array<{ label: string; handler: () => void | Promise<void> }>;
@@ -125,7 +119,7 @@ export interface VaultCandidate {
   workspaceConfig: Record<string, unknown>;
   tagsFile: TagsFile;
   /**
-   * F6 (2026-05-28) — true when `.filo/tags.json` was written by a newer
+   * True when `.filo/tags.json` was written by a newer
    * Filo (or declares an un-migratable version). The commit phase passes
    * this to `fileTagsStore.commitFromCandidate` so the tag store goes
    * read-only and never re-saves (downgrades) the newer file.
@@ -149,28 +143,19 @@ export interface VaultCandidate {
   warnings: VaultCandidateWarning[];
   corruptionTargets: CorruptionTarget[];
   /**
-   * 6.3.P3 — vault-relative paths of `.filo/` config files whose drift
-   * baseline was seeded during load (i.e. the file existed on disk and a
-   * successful `vault:stat` returned its mtime + size). Used by the
-   * commit-side `assertBaselinesSeeded` tripwire to catch a regression
-   * where a config baseline isn't seeded eagerly anymore — symmetrical
-   * to the existing `boardPaths` tripwire.
-   *
-   * Empty when none of the configs exist on disk (fresh vault before any
-   * `config:save` lands). Configs that ENOENT are skipped on purpose:
-   * the writer's drift check no-ops without a baseline, which matches the
-   * legacy "no comparison anchor on first write" behaviour.
+   * Vault-relative paths of `.filo/` config files whose drift baseline was
+   * seeded during load (the file existed and `vault:stat` succeeded). Used by
+   * the commit-side `assertBaselinesSeeded` tripwire. Configs that ENOENT are
+   * skipped: the writer's drift check no-ops without a baseline.
    */
   seededConfigBaselinePaths: string[];
 }
 
 /**
- * 6.3.P3 — sentinel paths for the four bundled config files the writer
- * scheduler (`configWriteScheduler`) protects with a pre-write drift check.
- * Their baselines were never seeded on vault open, so the 5.1 ENOENT
- * resurrection guard was inert on a fresh open until the next successful
- * self-write seeded the baseline. Listed here once so the load-side
- * seed and the dev tripwire stay in lockstep.
+ * The four bundled config files the writer scheduler (`configWriteScheduler`)
+ * protects with a pre-write drift check. Their baselines are seeded on vault
+ * open so the ENOENT-resurrection guard is live from the first write. Listed
+ * once so the load-side seed and the dev tripwire stay in lockstep.
  */
 const CONFIG_SENTINEL_PATHS = [
   '.filo/defaults.json',
@@ -180,7 +165,7 @@ const CONFIG_SENTINEL_PATHS = [
 ] as const;
 
 /**
- * Audit-7 L3 — backoff schedule (ms) for retrying a transient `config:load-all`
+ * Backoff schedule (ms) for retrying a transient `config:load-all`
  * whole-folder read failure. ~1.45 s worst case, and ONLY on the failure path
  * (a successful first read adds zero latency). Kept short so vault-open latency
  * stays acceptable while still riding out the sub-second OneDrive/AV locks that
@@ -209,32 +194,23 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
   const warnings: VaultCandidateWarning[] = [];
   const corruptionTargets: CorruptionTarget[] = [];
 
-  // Audit-19 EXT-6 — every crash sentinel this session names is built from
-  // this machine's id; load it before the first sentinel read below.
+  // Every crash sentinel this session names is built from this machine's id;
+  // load it before the first sentinel read below.
   await loadMachineIdentity();
   await invokeOk('vault:init-config', newVaultPath);
 
-  // Audit-17 3.2 — read + stash the prior session's `.filo/.dirty` payload
-  // BEFORE the commit can schedule any write. Open-time repair writes
-  // (loader-repaired boards marked dirty at commit) REPLACE the on-disk
-  // sentinel with this session's pending set, destroying a genuine
-  // prior-crash breadcrumb before the recovery sequencer reads it; the
-  // sequencer's `checkRecovery` consumes this stash instead. Must run after
-  // `vault:init-config` (the read IPC is gated on the armed registry).
-  // Never throws — read failures stash the `sentinel-unreadable` status.
+  // Read + stash the prior session's sentinel BEFORE the commit can schedule
+  // any write (an open-time repair write would replace it and destroy a
+  // genuine prior-crash breadcrumb). Must run after `vault:init-config` (the
+  // read IPC is gated on the armed registry). Never throws.
   await stashRecoveryStatusBeforeCommit(newVaultPath);
 
   // ── 1. Read & classify `.filo/*.json` configs ────────────────────
-  // Audit-7 L3 — a transient whole-folder read failure (OneDrive/AV lock at
-  // the instant of open) resolves to a `__loadAllFailed`-tagged bag, which
-  // pauses EVERY config write for the WHOLE session (see the `__loadAllFailed`
-  // branch below). `config:load-all` is a pure read, so retry it a few times
-  // with short backoff BEFORE giving up: a momentary lock usually clears within
-  // a second, and a successful retry loads the REAL configs so writes never
-  // pause. Doing this at LOAD time (pre-commit) is the safe cure — resuming
-  // writes post-commit would stamp the bootstrap-default in-memory settings
-  // over the intact-but-was-locked files on disk. Only a persistent failure
-  // falls through to the pause-and-warn path.
+  // A transient whole-folder read failure (OneDrive/AV lock) pauses EVERY
+  // config write for the session (see `__loadAllFailed` below), so retry the
+  // pure read with short backoff first. This must happen at LOAD time:
+  // resuming writes post-commit would stamp bootstrap defaults over the
+  // intact-but-was-locked files on disk.
   const rawConfigs = await loadAllConfigsWithRetry(
     () => window.filo.invoke('config:load-all', newVaultPath),
   ) as Record<string, unknown> | null | undefined;
@@ -258,7 +234,7 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     viewports: 'viewports.json',
     sidebarOrder: 'sidebar-order.json',
   };
-  // L18 (Audit-6) — a TOP-LEVEL `config:load-all` failure (the whole `.filo/`
+  // A TOP-LEVEL `config:load-all` failure (the whole `.filo/`
   // read rejected — locked dir / transient IO, not a per-file parse error) tags
   // the bag with `__loadAllFailed`. Pause EVERY config write so we don't seed
   // bootstrap defaults over the intact-but-unreadable files, and warn ONCE
@@ -281,11 +257,6 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     const detail = typeof v.error === 'string' ? v.error : 'parse error';
     if (target) corruptionTargets.push(target);
     warnings.push({
-      // Audit-4 DI-12 — dropped the dead "or close this toast to overwrite with
-      // defaults" clause. Nothing wired closing the toast to
-      // `clearCorruptConfigTarget`, so the corrupt file is preserved (the safe
-      // direction) and that promise was misleading. State what actually
-      // happens: edits stay paused until the user fixes the JSON and reopens.
       text: `Filo couldn't parse .filo/${key}.json (${detail}). Edits to that file are paused to protect it — fix the JSON and reopen the vault to resume.`,
       type: 'error',
       duration: 0,
@@ -321,7 +292,7 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
   // that lets them recover the file content even if they edit + save
   // adjacent boards before realising one didn't load.
   for (const failed of failedBoards) {
-    // Audit-19 ERR-4 — a locked / offline / transient-IO board is NOT
+    // A locked / offline / transient-IO board is NOT
     // snapshotted (the snapshot would fail, or hydrate an online-only
     // placeholder); it gets a sticky Retry notice instead. Only kinds whose
     // bytes are readable but unusable are worth preserving.
@@ -341,7 +312,7 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     }
   }
 
-  // Audit-19 ERR-3 / EXT-7 — board files a sync client forked
+  // Board files a sync client forked
   // (`Plan.board-HOST.json`) never appear in `board:list`; surface them once,
   // after the open commits (buffered), instead of leaving the other machine's
   // edits invisible. Best-effort: a failed scan just skips the notice.
@@ -361,10 +332,8 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     openTabs: (raw.workspace.openTabs as WorkspaceState['openTabs']) ?? [],
     activeTabId: (raw.workspace.activeTabId as string) ?? '',
   };
-  // Sprint C / C4 — `version` and `tags` were removed from ProjectSchema;
-  // the schema still tolerates them via `.passthrough()` but new call
-  // sites shouldn't seed them. The virtual project is reconstructed on
-  // every open, so there's no on-disk file to migrate.
+  // `version` / `tags` are not part of ProjectSchema; don't seed them. The
+  // virtual project is reconstructed on every open (no on-disk file).
   const virtualProjectInput = {
     vaultPath: newVaultPath,
     name: (raw.app.name as string) || newVaultPath.split(/[\\/]/).pop() || 'Vault',
@@ -416,10 +385,7 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
   // ── 7. Themes — enumerate + load all custom files ────────────────
   const themeCache: Record<string, ThemeFile> = {};
   let availableThemeIds: string[] = [];
-  // Sprint A / A16 — accumulate parse failures so the candidate's
-  // warnings list (surfaced post-commit) can name every bad theme. The
-  // candidate phase doesn't toast directly; the renderer's `applyById`
-  // / `refreshAvailable` path covers post-open follow-ups.
+  // Accumulate parse failures so one toast can name every bad theme.
   const themeParseFailures: string[] = [];
   try {
     const filenames = (await window.filo.invoke('theme:list', newVaultPath)) as string[];
@@ -444,9 +410,8 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
       );
     }
   } catch (err) {
-    // Theme enumeration failed — match the prior `refreshAvailable`
-    // behaviour (graceful: only built-in themes are available) and
-    // surface via the bus so the user knows. Not fatal to the load.
+    // Theme enumeration failed — only built-in themes are available.
+    // Surface via the bus; not fatal to the load.
     reportError(
       'theme.list',
       err,
@@ -468,9 +433,8 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
           | ThemeFile
           | { ok: false; code: 'invalid-json'; name?: string }
           | null;
-        // Sprint A / A16 — same parse-failure envelope as the bulk load
-        // above. Surface a toast naming the bad theme so the user
-        // understands why their picked theme isn't applying.
+        // Same parse-failure envelope as the bulk load above. Surface a toast
+        // naming the bad theme so the user knows why it isn't applying.
         if (loaded && typeof loaded === 'object' && 'ok' in loaded && (loaded as { ok?: boolean }).ok === false) {
           reportError(
             'theme.parse',
@@ -493,9 +457,8 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     if (activeThemeFile) {
       const baseOk = isBuiltinId(activeThemeFile.base ?? 'dark');
       if (!baseOk) {
-        // Audit reproducer: a custom theme's `base` was hand-edited
-        // to an unknown built-in. Throw here so the candidate is
-        // discarded BEFORE any global state is touched.
+        // A custom theme's `base` names an unknown built-in. Throw here so
+        // the candidate is discarded BEFORE any global state is touched.
         throw new Error(
           `Active theme "${activeThemeId}" has unknown base "${activeThemeFile.base}". Fix the value in .filo/themes/${activeThemeId}.json or pick a different active theme.`,
         );
@@ -507,17 +470,16 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
   let tagsFile: TagsFile;
   let tagsReadOnly = false;
   try {
-    // Audit-14 4.4 — assertIpcOk re-throws a `{ ok: false }` error envelope so
-    // the catch below wraps it with context (bare string|null passes through).
+    // assertIpcOk re-throws a `{ ok: false }` error envelope so the catch
+    // below wraps it with context (bare string|null passes through).
     const tagsRaw = assertIpcOk(
       await window.filo.invoke('tags:load', newVaultPath),
       'tags:load',
     ) as string | null;
-    // F6 — route through the version migrator so a from-future tags file is
-    // detected (and surfaced) here rather than silently re-saved later.
-    // Audit-18 H2 — `corrupt` (parse/schema failure) joins the read-only verdict
-    // so the vault open itself can't overwrite a recoverable-but-unparseable
-    // tags.json via post-commit FM tag-seeding.
+    // Route through the version migrator so a from-future tags file is
+    // detected here rather than silently re-saved (downgraded) later. A
+    // `corrupt` file is also read-only, so post-commit FM tag-seeding can't
+    // overwrite a recoverable-but-unparseable tags.json.
     const loaded = loadTagsFile(tagsRaw);
     tagsFile = loaded.file;
     tagsReadOnly = loaded.fromFuture || loaded.noMigrationPath || loaded.corrupt;
@@ -529,18 +491,12 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
 
   // ── 10. Seed drift baselines for `.filo/` configs ────────────────
   //
-  // 6.3.P3 — the 5.1 ENOENT-skip guard inside `writeConfigs` is gated on
-  // `baseline !== undefined`. Without an eager seed at vault open, the
-  // first save after open lands in the "no baseline → skip the drift
-  // check entirely" branch — which the original 5.1 fix calls "the same
-  // bug, re-introduced for the most common open path." Stamp each
-  // existing config's mtime + size here so the guard takes the
-  // intended branch on the very first write after open.
+  // The ENOENT-skip guard inside `writeConfigs` only runs when a baseline
+  // exists, so stamp each existing config's mtime + size here — otherwise the
+  // first save after open would skip the drift check entirely.
   //
-  // ENOENT is the common case for a fresh vault (none of the configs
-  // exist yet); skip silently. Other stat failures (EACCES, NO_ACTIVE_VAULT
-  // after a fast swap) are non-fatal — the legacy "no comparison anchor"
-  // behaviour still protects user edits.
+  // ENOENT is the common case for a fresh vault; skip silently. Other stat
+  // failures (EACCES, NO_ACTIVE_VAULT after a fast swap) are non-fatal.
   const seededConfigBaselinePaths: string[] = [];
   for (const sentinelPath of CONFIG_SENTINEL_PATHS) {
     try {
@@ -548,8 +504,7 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
       // Defensive: a bare-result IPC mock (test fixture that doesn't
       // route `vault:stat`) returns `undefined`; `invokeOk`'s envelope
       // check passes that through. Without baseline data, the load
-      // continues — no baseline = same pre-5.1 behaviour for the
-      // next write, which is the documented fallback shape.
+      // continues unguarded for this file.
       if (!stat || typeof stat.mtimeMs !== 'number' || typeof stat.size !== 'number') {
         continue;
       }
@@ -560,9 +515,8 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
         continue;
       }
       // Non-ENOENT envelope failure: surface via the bus so a permissions
-      // / share hiccup is visible during development. Doesn't block the
-      // load — a missing baseline degrades to the legacy unguarded write
-      // path, which is the same shape as the pre-5.1 behaviour.
+      // / share hiccup is visible. Doesn't block the load — a missing
+      // baseline degrades to an unguarded write.
       reportError(
         'vault.config-baseline-seed',
         err,
@@ -601,7 +555,7 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
 // ── Helpers ──────────────────────────────────────────────────────────
 
 /**
- * Audit-7 L3 — true when `config:load-all` tagged the bag with a top-level
+ * True when `config:load-all` tagged the bag with a top-level
  * read failure (`board.ipc.ts` returns the all-empty bag + `__loadAllFailed`
  * string rather than rejecting). Per-file `__corrupt` sentinels are NOT this —
  * those are genuine parse errors handled per-file below, not a transient lock.
@@ -615,7 +569,7 @@ export function isConfigLoadAllFailed(bag: unknown): boolean {
 }
 
 /**
- * Audit-7 L3 — reads `config:load-all` with bounded retry on a transient
+ * Reads `config:load-all` with bounded retry on a transient
  * whole-folder failure. Returns the first non-`__loadAllFailed` bag, or the
  * last failed bag once the backoff schedule is exhausted (caller then takes
  * the pause-and-warn path). `loadOnce`/`sleep` are injectable so this is unit-
@@ -649,7 +603,7 @@ function parseSettingsSlices(
   defaultsConfig: Record<string, unknown>,
   warnings: VaultCandidateWarning[],
 ): ProjectSettings {
-  // DI-1 — spread the raw config first so keys this build doesn't recognise
+  // Spread the raw config first so keys this build doesn't recognise
   // (forward-compat fields, the vault `name`) survive `GeneralSettingsSchema`'s
   // `.passthrough()` instead of being silently dropped on load → re-saved away.
   // Every schema-known key is normalised explicitly below, overriding the

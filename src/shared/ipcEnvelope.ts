@@ -13,9 +13,8 @@
  * way it would a thrown exception. Bare-result channels (raw arrays,
  * strings, booleans, `null`) pass through untouched.
  *
- * `window.filo.invokeOk` (Phase 1, CONSOLIDATION_PLAN_2026-05-25.md) is
- * implemented in `src/main/preload.ts` on top of this function so the
- * preload + renderer side both honour the same envelope contract.
+ * The renderer-side `invokeOk` helper (`src/renderer/lib/utils/invokeOk.ts`)
+ * applies this function so every caller honours the same envelope contract.
  */
 
 export class IpcEnvelopeError extends Error {

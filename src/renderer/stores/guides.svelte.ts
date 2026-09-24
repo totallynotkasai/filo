@@ -20,12 +20,9 @@ export const guidesStore = {
   },
 };
 
-// Sprint B / B14 — drop any in-flight guide overlays on vault swap so the
-// new vault doesn't open with the prior vault's alignment guides still
-// painted over the canvas. The drag handlers that own these guides will
-// clear them on the next drag-end, but the swap can land mid-drag (e.g.
-// keyboard shortcut while a pointer-capture is active) and the guides
-// would otherwise linger until the next drag.
+// Drop any guide overlays on vault swap: the swap can land mid-drag (e.g. a
+// keyboard shortcut during pointer capture), and the guides would otherwise
+// linger over the new vault's canvas until the next drag-end.
 onVaultSwap('pre-swap', 'guides', () => {
   activeGuides = [];
 });

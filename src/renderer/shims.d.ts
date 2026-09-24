@@ -2,8 +2,7 @@ declare module 'js-yaml' {
   export function load(src: string, options?: unknown): unknown;
   export function dump(obj: unknown, options?: unknown): string;
   // Resolver schemas. Opaque handles passed through to `load`'s `options.schema`
-  // (which is already `unknown`). Audit-4 DI-01 reads frontmatter with
-  // CORE_SCHEMA so the parsed object matches the `yaml`-package serializer.
+  // (which is already `unknown`).
   export const DEFAULT_SCHEMA: unknown;
   export const CORE_SCHEMA: unknown;
   export const JSON_SCHEMA: unknown;
@@ -42,7 +41,7 @@ interface Window {
  * production) for the dev-only invariant guards, plus `MODE` (the literal build
  * mode: `'development'` under `npm run dev`, `'production'` for a packaged build,
  * `'test'` under vitest) so a dev-only tripwire can stay silent in the test
- * runner (Audit-14 6.2). Bringing in the full `vite/client` reference would also
+ * runner. Bringing in the full `vite/client` reference would also
  * pull glob-import / asset-URL types we don't use.
  */
 interface ImportMetaEnv {

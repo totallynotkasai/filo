@@ -127,7 +127,7 @@
     try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* already released */ }
   }
 
-  // Audit-14 5.8 — keyboard resize for the corner handle (was pointer-only).
+  // Keyboard resize for the corner handle.
   // Arrow keys nudge width/height; Shift takes a larger step. Clamped exactly
   // like the pointer path so it can't escape the viewport.
   function onResizeKeydown(e: KeyboardEvent) {
@@ -156,7 +156,7 @@
     onPointerCancel: onDragEnd,
   };
 
-  // Sprint B / B19 — clamp persisted bounds against the current viewport
+  // Clamp persisted bounds against the current viewport
   // on mount. Without this, a saved x=2400 from a multi-monitor desktop
   // session would mount the panel off-screen on a laptop with width
   // 1366. `clamp` already runs during every pointermove, but only after
@@ -173,7 +173,7 @@
   });
 </script>
 
-<!-- Audit-14 5.8 — `region` (labelled landmark), not `dialog`: this is a
+<!-- `region` (labelled landmark), not `dialog`: this is a
      persistent, non-modal floating panel, not a modal dialog with a focus
      trap / Escape-to-close contract. -->
 <div

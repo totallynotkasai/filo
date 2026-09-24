@@ -35,7 +35,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
  *   5.3 malformed-then-edit → writePathRemediationPhase4.test.ts (field seam);
  *                            HERE proves the SECOND delta consumer (Properties)
  *   5.4 quit double-close   → windowCloseDecision.test.ts
- *   5.5 structural gate      → scripts/check-frontmatter-delta-write.mjs (ci gate)
+ *   5.5 structural gate      → scripts/gates:frontmatter-delta-write (ci gate)
  *
  * The two Properties/body seams both flow into the gateway's TWO distinct write
  * sources — the Properties popup/command rides the delta-on-fresh-disk branch,

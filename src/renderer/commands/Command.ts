@@ -1,5 +1,5 @@
 /**
- * Abstract Command base class (Phase R3) + companion Command interface.
+ * Abstract Command base class + companion Command interface.
  *
  * The `Command` *interface* is the public contract used by callers
  * (`historyStore.execute / undo / redo / pushWithoutExecute`). It lists
@@ -9,25 +9,19 @@
  * The `Command` *abstract class* implements that interface and adds the
  * `this.snapshot(...)` deep-clone helper. Concrete commands extend the
  * class (not just implement the interface) so they get the helper and
- * are caught by the `check-command-snapshot-discipline.mjs` CI gate.
+ * are caught by the `scripts/gates:command-snapshot-discipline` CI gate.
  *
  * Both share the same name through TypeScript declaration merging — the
  * interface adds members to the class's instance type, and class
  * instances are structurally assignable to plain `Command` references
  * elsewhere in the codebase.
  *
- * Phase 6.1.R3 note. The class deliberately does NOT add a
- * `markBoardDirty()` helper. The natural implementation would import
- * `boardCacheStore` here, which closes a cycle (Command →
- * boardCache.svelte → vaultExternalChanges → fileTags → commands/index
- * → tileCommands → extends Command) that breaks class evaluation at
- * tileCommands `extends Command`. Instead, every command file imports
- * `boardCacheStore` directly (their existing pattern) and calls
- * `boardCacheStore.markDirty(this.targetBoardId)`. The new CI gate
- * `check-command-targets-self.mjs` forbids `boardStore.current` and
- * non-`this.targetBoardId` arguments in `boardCacheStore.markDirty(...)`
- * calls inside command files, giving us the same invariant the helper
- * would have without the cycle.
+ * The class deliberately does NOT add a `markBoardDirty()` helper: importing
+ * `boardCacheStore` here closes a cycle (Command → boardCache.svelte →
+ * vaultExternalChanges → fileTags → commands/index → tileCommands → extends
+ * Command) that breaks class evaluation. Instead each command file calls
+ * `boardCacheStore.markDirty(this.targetBoardId)` directly, and the CI gate
+ * `scripts/gates:command-targets-self` enforces the `this.targetBoardId` argument.
  */
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export interface Command {
@@ -38,25 +32,15 @@ export interface Command {
   /** Reverse the command. */
   undo(): void | Promise<void>;
   /**
-   * Phase 31 A6.3 — board the command targets. The undo/redo dispatcher
-   * refuses to fire the command unless the provided board matches the
-   * currently-active one. Without this, `UpdateBoardSettingsCommand`
-   * (and similar board-scoped mutations) would happily replay against
-   * whichever board is open when the user hits Ctrl+Z — destroying
-   * settings on board B because a redo intended for board A was still
-   * on the per-board stack via shared per-board stack lookup.
-   *
-   * Phase 2 (IMPLEMENTATION_PLAN_2026-05-27) — promoted from optional to
-   * mandatory. Every Command constructor now captures the originating
-   * board at construction time so a cross-board undo/redo from another
-   * board's stack surfaces a "switch back to originate" toast instead
-   * of silently mutating the wrong target. Board-agnostic commands set
-   * the field to `''` (empty string), which the dispatcher treats as
-   * "no guard required" (same as the prior `undefined` semantics).
+   * Board the command targets, captured at construction. The undo/redo
+   * dispatcher refuses to fire the command unless it matches the active
+   * board (surfacing a "switch back" toast), so a cross-board undo/redo
+   * can't silently mutate the wrong board. Board-agnostic commands set `''`,
+   * which the dispatcher treats as "no guard required".
    */
   readonly targetBoardId: string;
   /**
-   * Phase 3 / 3.8 — opt-in flag declaring that this command carries
+   * Opt-in flag declaring that this command carries
    * pre-delete file body snapshots whose loss on history truncation
    * means file content becomes irrecoverable. The history truncation
    * notification escalates from the standard "earlier actions are no
@@ -71,18 +55,13 @@ export interface Command {
 }
 
 /**
- * Phase R3 — abstract base class. Concrete commands extend it to inherit
- * `this.snapshot(...)`, which is the single deep-clone helper for every
- * snapshot field stored on a command instance.
- *
- * Pre-R3, command constructors used inline `JSON.parse(JSON.stringify(value))`
- * for some fields and shallow `{...value}` for others — the discipline was
- * known but not enforced. The audit found three sites where a shallow copy
- * let a post-construction mutation of the caller-side object leak into the
- * snapshot, corrupting undo. The base class + CI gate
- * (`check-command-snapshot-discipline.mjs`) forbid inline JSON.parse +
- * shallow spread on `this.<field>` assignments in command constructors
- * without an explicit `// allow-shallow:` annotation.
+ * Abstract base class. Concrete commands extend it to inherit
+ * `this.snapshot(...)`, the single deep-clone helper for every snapshot field
+ * stored on a command instance. A shallow copy lets a post-construction
+ * mutation of the caller's object leak into the snapshot and corrupt undo, so
+ * the CI gate (`scripts/gates:command-snapshot-discipline`) forbids inline
+ * JSON.parse / shallow spread on `this.<field>` assignments in command
+ * constructors without an explicit `// allow-shallow:` annotation.
  *
  * Concrete commands DO need to:
  *   - declare `description` (typed string) as an instance field set in the
@@ -91,7 +70,7 @@ export interface Command {
  *   - optionally override `hasFileSnapshots()` to return `true` when they
  *     carry file body snapshots,
  *   - declare `readonly targetBoardId: string` and assign it in the
- *     constructor (mandatory since Phase 2). The typical assignment is
+ *     constructor. The typical assignment is
  *     `this.targetBoardId = boardId ?? boardStore.current?.id ?? '';` —
  *     callers that know the originating board pass it explicitly; the
  *     fallback covers internal callers that have no choice but to use
@@ -100,8 +79,7 @@ export interface Command {
 /**
  * Standalone deep-clone used by `Command.snapshot` and by the module-level
  * snapshot helpers in `kanbanCommands.ts` / `taskCommands.ts` that can't reach
- * the `protected` instance method. Keeping a single exported implementation
- * means there is still exactly ONE deep-clone to audit (M3, 2026-05-28).
+ * the `protected` instance method, so there is exactly ONE deep-clone.
  *
  * Uses the JSON round-trip rather than `structuredClone` for the same reason
  * the instance method does: Svelte 5 `$state` Proxies throw `DataCloneError`
@@ -128,7 +106,7 @@ export abstract class Command {
 
   /**
    * Deep-clone helper. Every snapshot field on a command MUST go through
-   * this method. The CI gate `check-command-snapshot-discipline.mjs`
+   * this method. The CI gate `scripts/gates:command-snapshot-discipline`
    * enforces that constructors assigning `this.<field> = <param>` either
    * route through `this.snapshot(...)` or annotate the line with
    * `// allow-shallow: <reason>` for the cases where shallow copy is
@@ -136,9 +114,8 @@ export abstract class Command {
    *
    * Uses JSON round-trip rather than `structuredClone` because Svelte 5
    * `$state` Proxies throw `DataCloneError` under `structuredClone`. The
-   * round-trip detaches every nested object/array reference, which is
-   * exactly the property the audit needs (a tag/style edit between
-   * execute() and undo() cannot leak into the would-be-restored snapshot).
+   * round-trip detaches every nested object/array reference, so a tag/style
+   * edit between execute() and undo() cannot leak into the snapshot.
    *
    * Trade-off: JSON.stringify drops `undefined` fields and Map / Set / Date
    * objects. Concrete commands that need to preserve those shapes should

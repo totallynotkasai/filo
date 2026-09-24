@@ -1,5 +1,5 @@
 /**
- * Audit-19 C0 — the ONE sync-client conflict-copy detector, shared by main
+ * The ONE sync-client conflict-copy detector, shared by main
  * (board scan, rename correlation, sync-conflict notices) and the renderer
  * (duplicate-board tie-break). Pure, dependency-free: `src/shared` is bundled
  * into both processes, so this file must never import Node or DOM modules.
@@ -15,7 +15,7 @@
  *   - Google Drive: `Note (1).md`                    (weak)
  *   - iCloud:    `Note 2.md`                          (weak)
  *
- * False-positive policy (DECISION, plan D8): a WEAK match counts only when the
+ * False-positive policy (DECISION): a WEAK match counts only when the
  * caller's `exists` probe confirms the canonical sibling is present — never on
  * the name alone (`Report (2).md` with no `Report.md` is an ordinary file).
  * Consumers treat a match only as a tie-break preference / correlation

@@ -87,7 +87,7 @@ export const connectionsStore = {
 
 };
 
-// Sprint B / B14 — drop transient connection UI state on vault swap so the
+// Drop transient connection UI state on vault swap so the
 // new vault doesn't open with the prior vault's "connection-drawing in
 // progress" pointer-tracking pinned to a tile id that no longer exists.
 onVaultSwap('pre-swap', 'connections', () => {

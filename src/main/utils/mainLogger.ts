@@ -10,9 +10,8 @@
  * triage side: a single console line per failure, prefixed with the
  * subsystem so the Electron main-process stdout stays scannable.
  *
- * Keep the surviving `console.error` strictly inside this helper —
- * bare `console.error` elsewhere in `src/main/` is a regression of the
- * Phase 7 audit-driven cleanup.
+ * Keep `console.error` strictly inside this helper — don't add bare
+ * `console.error` calls elsewhere in `src/main/`.
  */
 
 /**

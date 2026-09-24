@@ -1,15 +1,14 @@
 import type { Session } from 'electron';
 
 /**
- * Audit-15 P1.5 — deny-by-default permission policy (defense-in-depth).
+ * Deny-by-default permission policy (defense-in-depth).
  *
  * The app CSP intentionally allows arbitrary `https:` iframes (Iframe tiles let
  * the user embed any origin — see main.ts `installContentSecurityPolicy` /
  * KNOWN_LIMITATIONS #10). An embedded site can therefore issue browser
  * permission requests — geolocation, camera / microphone, notifications,
  * clipboard-read, MIDI, etc. Electron's built-in defaults for these are
- * version-dependent, and the Electron 33→42 jump is exactly the kind of upgrade
- * that can shift them silently.
+ * version-dependent and can shift silently across upgrades.
  *
  * Filo itself needs none of these permissions (spellcheck does NOT route through
  * this gate), so refuse every permission REQUEST and every permission CHECK.

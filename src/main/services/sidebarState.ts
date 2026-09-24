@@ -55,7 +55,7 @@ let cached: SidebarState | null = null;
 let saveTimer: NodeJS.Timeout | null = null;
 
 /**
- * Phase 4 / 4.4 — promise tracking the most-recent in-flight `writeSidebarState`
+ * Promise tracking the most-recent in-flight `writeSidebarState`
  * call. `flushNow` awaits it so a Ctrl+Q after a sidebar resize lands the
  * new geometry before the process exits.
  */
@@ -67,7 +67,7 @@ export async function loadSidebarState(): Promise<SidebarState> {
   try {
     raw = await fs.readFile(statePath(), 'utf-8');
   } catch (err) {
-    // Phase 21 / M27 — ENOENT on first launch is the normal path; surface
+    // ENOENT on first launch is the normal path; surface
     // anything else through mainLogger so the user can diagnose why their
     // sidebar width keeps resetting.
     if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
@@ -93,7 +93,7 @@ function scheduleSave(): void {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
-    // Phase 4 / 4.4 — capture the in-flight promise so `flushNow` can
+    // Capture the in-flight promise so `flushNow` can
     // await both the timer fire AND the disk write.
     inFlightWrite = writeSidebarState().finally(() => {
       inFlightWrite = null;
@@ -104,7 +104,7 @@ function scheduleSave(): void {
 async function writeSidebarState(): Promise<void> {
   if (!cached) return;
   try {
-    // Phase 21 / M27 — atomic write so a crash mid-save doesn't leave the
+    // Atomic write so a crash mid-save doesn't leave the
     // sidebar-state file as half-written garbage that fails to parse on
     // next launch.
     await atomicWriteFile(statePath(), JSON.stringify(cached, null, 2));
@@ -114,7 +114,7 @@ async function writeSidebarState(): Promise<void> {
 }
 
 /**
- * Phase 4 / 4.4 — drains any pending sidebar-state save (timer or
+ * Drains any pending sidebar-state save (timer or
  * in-flight write) before resolving. Called from `before-quit` so a
  * user resizing the sidebar at T+0 and pressing Ctrl+Q at T+100 ms
  * still gets their geometry persisted before the process exits.

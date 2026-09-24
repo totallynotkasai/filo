@@ -152,10 +152,8 @@ export function applyFontDefaultsToAllExisting(): {
 
     // Frames and connections also live inside .board.json (see
     // V7BoardFileData), so they're walked per-owning-board here and
-    // counted into this board's `touched` flag. The previous version
-    // walked `project.frames` / `project.connections` and called
-    // `vaultStore.markMetaDirty()`, which only flushes `.filo/` configs
-    // and silently dropped these edits at the next reload.
+    // counted into this board's `touched` flag (`vaultStore.markMetaDirty()`
+    // only flushes `.filo/` configs, so these edits would be dropped).
     if (cacheEntry) {
       for (const frame of cacheEntry.frames ?? []) {
         const style = ((frame as { style?: Record<string, unknown> }).style ??= {}) as Record<string, unknown>;

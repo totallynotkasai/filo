@@ -4,13 +4,10 @@ import type { Board } from '../schema/index';
 import { boardDefaults, type BoardDefaultFactory } from './boardDefaults';
 
 /**
- * Audit2 4.4 — a lazily-loaded board component module. The board components
- * were statically imported here, which pulled TipTap + lowlight +
- * markdown-tools (~4.5 MB) into the entry chunk's modulepreload graph — fetched
- * and parsed before the no-vault Home screen was even interactive. The board
- * subtree only mounts once a vault is open (tabStore.count > 0), so the
- * component import is deferred to first board render, mirroring the
- * already-lazy exportService.
+ * A lazily-loaded board component module. A static import would pull TipTap +
+ * lowlight + markdown-tools (~4.5 MB) into the entry chunk, parsed before the
+ * no-vault Home screen is interactive. Boards only mount once a vault is open,
+ * so the import is deferred to first board render.
  */
 export type BoardComponentLoader = () => Promise<{
   default: Component<Record<string, unknown>>;
@@ -29,7 +26,7 @@ export interface BoardRegistryEntry {
   /** Whether this board uses the infinite canvas (pan/zoom). */
   usesCanvas: boolean;
   /**
-   * Factory function to create a default board instance. Phase 5 — the four
+   * Factory function to create a default board instance. The four
    * factories live in `./boardDefaults` so non-component code paths (the
    * board-cache store, unit tests) can import them without dragging Svelte
    * components into their dep graph.

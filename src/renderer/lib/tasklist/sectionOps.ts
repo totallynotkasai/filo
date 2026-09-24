@@ -94,14 +94,13 @@ export function makeSectionOps(deps: SectionOpsDeps): SectionOps {
   function addSection(title = 'New Section'): void {
     const board = deps.getBoard();
     if (!board) return;
-    // SEC-3 — snapshot the TRUE pre-add shape (possibly the section-less `[]`
+    // Snapshot the TRUE pre-add shape (possibly the section-less `[]`
     // state) BEFORE materialising the default. When the board has only the
     // virtual default, the new section needs the existing unsectioned tasks to
     // keep a home, so we also materialise a real default — but we fold that into
     // the command (via `autoDefault`) instead of a separate command-less
-    // pre-persist, so the command's undo can strip BOTH and restore `[]`. The
-    // previous flow pre-persisted the default and snapshotted AFTER it, leaving a
-    // permanent materialised default on the disk after add-then-undo.
+    // pre-persist, so the command's undo can strip BOTH and restore `[]`
+    // (otherwise add-then-undo would leave a materialised default on disk).
     const before = deps.snapshotSections();
     const wasEmpty = before.sections.length === 0;
     const autoDefault: TaskListSection | null = wasEmpty

@@ -28,7 +28,7 @@ import { logMainError } from '../utils/mainLogger';
  *     the structural `assertSafeRelativePath` + `.filo/` `assertNotInFiloDir`
  *     guards and then `assertWithinVault` (canonicalises symlinks/junctions,
  *     refuses escapes). A rejected path returns 403 — matching the other
- *     renderer-facing read channels. (Audit 3.2)
+ *     renderer-facing read channels.
  *   - There is no active vault → 404 (renderer should not have a media URL
  *     pointing at a closed vault).
  *
@@ -56,7 +56,7 @@ export function registerFiloProtocol(): void {
 
       let absPath: string;
       try {
-        // Audit 3.2 — structural + `.filo/` carve-out + containment guards.
+        // Structural + `.filo/` carve-out + containment guards.
         // A rejection is a deliberate refusal (forbidden path / malformed
         // input), not a server fault, so map it to 403 rather than letting
         // the outer catch report a generic 500.
@@ -74,7 +74,7 @@ export function registerFiloProtocol(): void {
       const totalSize = stat.size;
       const range = parseRangeHeader(request.headers.get('Range'), totalSize);
 
-      // Phase 21 / M2 — defence-in-depth headers on every response. SVG
+      // Defence-in-depth headers on every response. SVG
       // documents can carry `<script>`, foreignObject HTML, and external
       // references; when loaded via `<img>` or CSS `background-image`
       // (the only legitimate consumers in this app) scripting is already

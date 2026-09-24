@@ -1,12 +1,11 @@
 /**
- * Audit-19 ERR-4 — typed failure codes for `board:load`.
+ * Typed failure codes for `board:load`.
  *
- * `board:load` used to return `null` for EVERY error, and the renderer mapped
- * `null` to "not-found": a board whose file OneDrive held locked for a moment,
- * or an online-only placeholder while the PC was offline, looked deleted for
- * the whole session. The handler now returns an envelope whose `code` says
- * what actually happened, so the renderer can offer Retry for the transient
- * cases and keep a real "not found" honest.
+ * A single "not-found" outcome would make a board whose file OneDrive held
+ * locked for a moment, or an online-only placeholder while offline, look
+ * deleted for the whole session. The `code` says what actually happened, so
+ * the renderer can offer Retry for the transient cases and keep a real "not
+ * found" honest.
  */
 import { WIN_LOCK_CODES } from './filenameUtils';
 

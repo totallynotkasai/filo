@@ -1,23 +1,17 @@
 /**
- * Phase 5 / 5.1 — undoable PropertiesPopup edits.
+ * Undoable PropertiesPopup edits.
  *
- * Each time the popup closes after the user touched a row, a single
- * `UpdatePropertiesCommand` is pushed for the whole session. Per-keystroke
- * commands would blow through MAX_HISTORY for a normal edit, and the user's
- * mental model is "I opened properties, I undo to close it" — one command
- * per popup-session matches that.
+ * One `UpdatePropertiesCommand` is pushed per popup session (when it closes
+ * after the user touched a row); per-keystroke commands would blow through
+ * MAX_HISTORY and don't match the user's mental model.
  *
  * Snapshots capture the metadata source for the tile's type:
  *  - text tiles → frontmatter (canonical source, lives on disk)
  *  - non-text tiles → `tile.metadata` (lives in board JSON)
  *
- * Execute / undo apply the corresponding "after" / "before" snapshot. For
- * text tiles the disk write goes through `vault:write-existing-file-text`
- * (same channel the popup itself uses) so an externally-deleted file does
- * not get resurrected by undo. Pending frontmatter writes are drained
- * pre-execute to mirror `UpdateCardFieldCommand` — a rapid Apply → Undo
- * without the flush would race the still-debounced forward write against
- * the inverse patch's fresh write at the same docId.
+ * For text tiles the write targets the existing file only, so undo can't
+ * resurrect an externally-deleted file. Pending frontmatter writes are drained
+ * first so a rapid Apply → Undo can't race the still-debounced forward write.
  */
 
 import { Command } from './Command';
@@ -48,13 +42,8 @@ export type PropertiesSnapshot =
 export class UpdatePropertiesCommand extends Command {
   description: string;
   /**
-   * Phase 3 / 3.1 (polish plan 2026-05-25) — capture the originating board
-   * so the history dispatcher refuses to redo this against a different
-   * board. The execute/undo's `boardCacheStore.markDirty(this.targetBoardId)`
-   * call (post Phase 6.1.R3) always uses the captured id — a redo against
-   * a different active board would otherwise mark the wrong board dirty
-   * AND the targetBoardId guard in `historyStore.undo/redo` surfaces a
-   * "switch back to originate" toast.
+   * The originating board: execute/undo always mark THIS board dirty, never
+   * whichever board is active at redo time.
    */
   readonly targetBoardId: string;
   private before: PropertiesSnapshot;
@@ -75,8 +64,7 @@ export class UpdatePropertiesCommand extends Command {
         kind: 'frontmatter',
         relPath: snap.relPath,
         docId: snap.docId,
-        // Phase R3 — `this.snapshot(...)` detaches every nested key/value
-        // in the frontmatter map.
+        // Detaches every nested key/value in the frontmatter map.
         fm: this.snapshot(snap.fm),
       };
     }
@@ -88,16 +76,11 @@ export class UpdatePropertiesCommand extends Command {
   }
 
   async execute(): Promise<void> {
-    // Audit-6 H2 — pass BOTH legs so the frontmatter apply can rebase: it
-    // diffs after-vs-before to learn which keys this command OWNS, then merges
-    // only those onto the LIVE frontmatter. Any key it doesn't own (incl. one
-    // added externally between the popup edit and Ctrl+Z) is preserved.
+    // Pass BOTH legs so the frontmatter apply can rebase: it diffs
+    // after-vs-before to learn which keys this command OWNS, then merges only
+    // those onto the LIVE frontmatter, preserving any other (e.g. external) key.
     await applySnapshot(this.after, this.before, this.targetBoardId);
-    // Phase 6.1.R3 — dirty the ORIGINATING board, not whichever board is
-    // active at execute/redo time. The metadata-kind branch of
-    // `applySnapshot` previously skipped this entirely (silently),
-    // leaving the cache flush dependent on a sibling write — this call
-    // closes that gap too.
+    // Dirty the ORIGINATING board, not whichever board is active at redo time.
     boardCacheStore.markDirty(this.targetBoardId);
   }
 
@@ -132,14 +115,9 @@ function cleanFrontmatter(fm: Record<string, unknown>): Record<string, unknown> 
  *   - It merges only those keys onto the LIVE base frontmatter (the open
  *     editor's cache, else a fresh disk read), so an untouched key — including
  *     one another tool added between the popup edit and Ctrl+Z — survives.
- *   - Audit2 4.2 conflict handling: if an external edit moved an owned field
- *     away from what the opposite leg left it at, KEEP the external value and
- *     surface an "Apply anyway" toast (no silent clobber).
- *
- * Pre-fix this `setFrontmatter`-replaced the whole snapshot and wrote it
- * wholesale, so undo erased any externally-added key (H2). The card/task field
- * commands already rebased via `applyFrontmatterPatchRebased`; Properties was
- * the Audit2-4.2 gap.
+ *   - Conflicts: if an external edit moved an owned field away from what the
+ *     opposite leg left it at, KEEP the external value and surface an
+ *     "Apply anyway" toast (no silent clobber).
  */
 async function applySnapshot(
   target: PropertiesSnapshot,
@@ -151,10 +129,9 @@ async function applySnapshot(
     return;
   }
 
-  // FILO-UR-2 (Audit-11) — capture vault identity before the drain so the guards
-  // below bail on a swap. The different-path swap is main-side blocked by
-  // assertActiveVault; this closes the close→reopen-same-path window (new
-  // generation, same path string) + the stale post-write renderer bookkeeping.
+  // Capture vault identity before the drain so the guards below bail on a
+  // swap. A different-path swap is blocked main-side by assertActiveVault; this
+  // also covers a close→reopen of the same path and the post-write bookkeeping.
   const identity = captureVaultIdentity();
 
   // Drain pending debounced writes before this command writes its own copy
@@ -166,7 +143,7 @@ async function applySnapshot(
 
   const vaultRoot = vaultStore.path;
   if (!vaultRoot) return;
-  if (!isStillSameVault(identity)) return; // FILO-UR-2 — swap during the drain
+  if (!isStillSameVault(identity)) return; // swap during the drain
 
   const { relPath, docId } = target;
   const targetFm = target.fm;
@@ -181,21 +158,15 @@ async function applySnapshot(
 
   // Obtain the LIVE base frontmatter + body in as few reads as possible.
   //
-  // Phase 2 / 2.2 (WRITE_PATH_REMEDIATION_PLAN_2026-06-04) — only an OPEN
-  // editor's documentStore FM cache is a trustworthy rebase base: the
-  // sync-frontmatter reconciler keeps it fresh and it carries any unsaved popup
-  // FM edits. A NOT-open doc (a Kanban card / Task row seeded once but never
-  // opened) is NOT refreshed by that reconciler, so an externally-added key
-  // never reached its cache; rebasing this undo/redo onto the stale cache would
-  // silently revert that external key (Finding #5). For the not-open case
-  // re-read FRESH disk instead — the command already drained pending writes
-  // above and is per-path serialized, so the read is race-free. (Interim form
-  // of Phase 4's delta-onto-fresh-disk invariant; the index is the last resort.)
+  // Only an OPEN editor's FM cache is a trustworthy rebase base (the reconciler
+  // keeps it fresh). A not-open doc's cache isn't refreshed, so rebasing onto
+  // it would revert an externally-added key; re-read fresh disk instead (race-
+  // free: pending writes were drained above). The index is the last resort.
   const docState = docId ? documentStore.getDocument(docId) : null;
   let base: Record<string, unknown> | null =
     docState && docId ? documentStore.getFrontmatter(docId) ?? null : null;
   let diskBody: string | undefined;
-  // Audit-18 6.3 — track whether the hydrate read THREW so the no-baseline
+  // Track whether the hydrate read THREW so the no-baseline
   // branch below can tell "file genuinely has no FM" from "file unreadable".
   let readFailed = false;
   // Read disk when we still need a base (not-open doc, or an unseeded open doc)
@@ -204,7 +175,7 @@ async function applySnapshot(
   if (base === null || !isHydrated(relPath)) {
     try {
       const hydrate = await readMarkdownForHydrate(vaultRoot, relPath);
-      if (!isStillSameVault(identity)) return; // FILO-UR-2 — swap during the hydrate read
+      if (!isStillSameVault(identity)) return; // swap during the hydrate read
       diskBody = hydrate.body;
       if (base === null) {
         base = hydrate.frontmatter;
@@ -216,8 +187,7 @@ async function applySnapshot(
       }
     } catch {
       // File missing or unreadable — mark hydrated with no BOM so the write
-      // below ENOENT-fails on missing files, surfacing the same toast path
-      // the old direct write produced. Audit-18 6.3 — flag the failure so the
+      // below ENOENT-fails on missing files. Flag the failure so the
       // no-baseline branch refuses (rather than blind-writes) when there's no
       // live editor body to fall back on.
       readFailed = true;
@@ -237,31 +207,20 @@ async function applySnapshot(
 
   let merged: Record<string, unknown>;
   const conflicts: string[] = [];
-  // Phase 4 — the safe (non-conflicting) owned keys also become an explicit
-  // delta the gateway applies to FRESH disk, so any key this command doesn't own
-  // — including one added externally between the popup edit and Ctrl+Z — survives
-  // by construction instead of being reverted off a stale `base`. `merged` is
-  // still computed for the DISPLAY cache. `undefined` for the base===null corner
-  // keeps the legacy blind-apply write (the gateway delta read would just
-  // ENOENT-fail on the same unreadable file).
+  // The safe (non-conflicting) owned keys become an explicit delta the gateway
+  // applies to FRESH disk, so any key this command doesn't own survives instead
+  // of being reverted off a stale `base`. `merged` is for the DISPLAY cache.
+  // `undefined` in the base===null corner keeps a blind-apply write.
   let delta: FrontmatterDelta | undefined;
   if (base === null) {
-    // No baseline obtainable. base===null here means the disk read THREW
-    // (`readFailed`) AND neither the cache nor the index held frontmatter — a
-    // successful read always yields an object (even `{}`), so it can't land
-    // here.
+    // No baseline: the disk read THREW and neither cache nor index held
+    // frontmatter (a successful read always yields an object).
     //
-    // Audit-18 6.3 — the old comment "with nothing visible there's no external
-    // key to lose" wrongly assumed a read failure implies the WRITE will fail
-    // too (ENOENT on a missing file). But a NON-ENOENT read failure
-    // (FILE_TOO_LARGE on a >25 MB note, transient EACCES/EBUSY from AV/OneDrive)
-    // leaves the file PRESENT — the write below would SUCCEED and overwrite it
-    // with the target snapshot's FM plus a STALE/empty body (`docState?.body`
-    // is null here, so `body` fell back to the index `content` or `''`). That
-    // silently replaces the real on-disk note. Refuse like the B1 contract:
-    // markPathFailed (keeps the `.filo/.dirty` sentinel + "save failed" surface)
-    // + reportError + throw, so the command rejects and history's rollback drops
-    // it — never a blind write against an unverified body.
+    // A non-ENOENT read failure (FILE_TOO_LARGE, transient EACCES/EBUSY) leaves
+    // the file PRESENT, so the write would succeed and replace the real note
+    // with a stale/empty body. With no live editor body, refuse: markPathFailed
+    // (keeps `.filo/.dirty` + "save failed") + reportError + throw, so history
+    // rolls the command back.
     if (readFailed && !docState) {
       markPathFailed(vaultRoot, relPath);
       const err = new Error(
@@ -271,9 +230,8 @@ async function applySnapshot(
       throw err;
     }
     // Otherwise a live editor body IS available (`docState.body`), so the body
-    // is safe to write — blind-apply the target snapshot's FM. This is the
-    // legacy behaviour for that corner; with a live body and nothing else
-    // visible there's no external key to lose.
+    // is safe to write — blind-apply the target snapshot's FM; with nothing
+    // else visible there's no external key to lose.
     merged = cleanFrontmatter({ ...targetFm });
   } else {
     merged = { ...base };
@@ -298,7 +256,7 @@ async function applySnapshot(
     delta = d;
   }
 
-  // FILO-UR-2 — final swap check before the cache mutation + write. The write
+  // Final swap check before the cache mutation + write. The write
   // IPC is main-side gated (a captured-vaultRoot write throws after a swap), but
   // the documentStore.setFrontmatter cache mutation below is not.
   if (!isStillSameVault(identity)) return;
@@ -312,26 +270,22 @@ async function applySnapshot(
       callerId: `update-properties-command:${relPath}`,
       docId,
       frontmatterDelta: delta,
-      // Audit-16 6.8 — fire-time body-source decision (`body` above prefers
-      // `docState?.body`); the gateway must not re-derive it at write time.
+      // Fire-time body-source decision (`body` above prefers `docState?.body`);
+      // the gateway must not re-derive it at write time.
       bodyIsLive: docState != null,
     });
   } catch (err) {
     reportError('updateProperties', err, `Failed to apply properties to ${relPath}`);
-    // A17-1.4 — rethrow so execute()/undo() reject and historyStore's
-    // rollbackExecute/rollbackUndo drop the never-applied command from the
-    // stack. The old swallow resolved failure as success: the command sat on
-    // the stack as "applied" while disk never changed.
+    // Rethrow so execute()/undo() reject and history drops the never-applied
+    // command instead of leaving it on the stack as "applied".
     throw err;
   }
 
   // Sync the live FM cache so an open editor/popup sees the applied result
-  // (an already-open PropertiesPopup would otherwise re-write its stale
-  // snapshot 300ms later and clobber what we just applied). A17-1.4 — stamped
-  // AFTER the successful write: the history rollback doesn't revert cache
-  // mutations, so a pre-write stamp left the display cache diverged from disk
-  // when the write failed. Identity-guarded — a swap completing during the
-  // write IPC must not re-create the outgoing doc's entry in the new vault.
+  // (an open PropertiesPopup would otherwise re-write its stale snapshot and
+  // clobber it). Stamped only AFTER a successful write, since history rollback
+  // doesn't revert cache mutations. Identity-guarded so a swap during the write
+  // can't re-create the outgoing doc's entry in the new vault.
   if (docId && isStillSameVault(identity)) documentStore.setFrontmatter(docId, merged);
 
   if (conflicts.length > 0) {
@@ -343,16 +297,13 @@ async function applySnapshot(
         {
           label: 'Apply anyway',
           handler: () => {
-            // A17-1.3 class — the `duration: 0` toast can be clicked after a
-            // vault swap; bail so the outgoing vault's patch never lands on
-            // the new vault's same-named file (the different-path swap is
-            // main-side rejected, but a close→reopen of the SAME path passes).
+            // The `duration: 0` toast can be clicked after a vault swap; bail
+            // so the outgoing vault's patch never lands on the new vault's
+            // same-named file.
             if (!isStillSameVault(identity)) return;
             // The user insists — force the owned snapshot value onto the
-            // conflicting fields too, still preserving untouched (external) keys.
-            // Phase 4 — the forced fields become their own delta so the gateway
-            // applies ONLY them to fresh disk (every other key, incl. external
-            // additions, stays).
+            // conflicting fields, as their own delta so the gateway applies
+            // ONLY them to fresh disk (every other key stays).
             const forcedDelta: FrontmatterDelta = { set: {}, unset: [] };
             for (const k of conflicts) {
               const v = targetFm[k];
@@ -362,13 +313,10 @@ async function applySnapshot(
                 forcedDelta.unset.push(k);
               }
             }
-            // A17-1.2 — re-resolve the body at CLICK time. The old handler
-            // froze `body`/`bodyIsLive` at CONFLICT time, so a click minutes
-            // later wrote the frozen body back — reverting every editor save
-            // made in the interim (and a doc CLOSED since the conflict still
-            // claimed its frozen body was live). With no live editor,
-            // `bodyIsLive: false` makes the gateway's delta branch source the
-            // body from its fresh in-chain disk read instead of the snapshot.
+            // Re-resolve the body at CLICK time: a conflict-time body would
+            // revert every editor save made since. With no live editor,
+            // `bodyIsLive: false` makes the gateway source the body from its
+            // fresh in-chain disk read.
             const liveDoc = docId ? documentStore.getDocument(docId) : null;
             // Display cache — merge the forced keys onto the CURRENT cache,
             // not the conflict-time `merged` object (stale by click time).
@@ -394,7 +342,7 @@ async function applySnapshot(
               callerId: `update-properties-command:${relPath}`,
               docId,
               frontmatterDelta: forcedDelta,
-              // Audit-16 6.8 / A17-1.2 — click-time liveness decision.
+              // Click-time liveness decision.
               bodyIsLive: liveDoc != null,
             }).catch((err) =>
               reportError('updateProperties', err, `Failed to apply properties to ${relPath}`),

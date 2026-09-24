@@ -70,8 +70,7 @@
   // empty strings (which are interpreted as "unset" by the cascade — see
   // `effectiveTileStyle`). Hardcoding shape / borderStyle / borderWidth /
   // shadowIntensity here would short-circuit the cascade and the
-  // BoardDefaults edits for those fields would have no visible effect
-  // (P2.6).
+  // BoardDefaults edits for those fields would have no visible effect.
   const mockTile: Tile = {
     id: 'preview-tile',
     type: 'text',
@@ -339,7 +338,7 @@
       </div>
     </div>
 
-    <!-- Task Section (P2.9) -->
+    <!-- Task Section -->
     <div class="preview-cell">
       <span class="preview-label">Task section</span>
       <div
@@ -361,7 +360,7 @@
       </div>
     </div>
 
-    <!-- Document Element (P2.10) -->
+    <!-- Document Element -->
     <div class="preview-cell">
       <span class="preview-label">Document</span>
       <div
@@ -377,13 +376,13 @@
       </div>
     </div>
 
-    <!-- Mind Map background + pattern (P2.7) -->
+    <!-- Mind Map background + pattern -->
     <div class="preview-cell">
       <span class="preview-label">Mind Map background</span>
       <div class="preview-canvas-swatch" style={patternSwatchStyle(mindmapPattern, mindmapBg)}></div>
     </div>
 
-    <!-- Connection path (P2.7) -->
+    <!-- Connection path -->
     <div class="preview-cell">
       <span class="preview-label">Connection path</span>
       <div class="preview-conn-path">
@@ -407,7 +406,7 @@
       </div>
     </div>
 
-    <!-- Connection label (P2.8) -->
+    <!-- Connection label -->
     <div class="preview-cell">
       <span class="preview-label">Connection label</span>
       <div class="preview-conn-label-row">
@@ -424,7 +423,7 @@
       </div>
     </div>
 
-    <!-- Accent colours (P2.12) -->
+    <!-- Accent colours -->
     <div class="preview-cell">
       <span class="preview-label">Accent</span>
       <div class="preview-accent-row">

@@ -39,9 +39,8 @@
   // "changing one tab clobbers the other".
   // Apply handlers commit pending changes to the in-memory project, then
   // AWAIT vaultStore.save() so the success toast only fires after the disk
-  // write resolves. Previously these were sync and the toast fired during
-  // the 300ms debounce window, before the write reached disk — a hard quit
-  // in that window would lose the change. The save-state indicator in the
+  // write resolves — otherwise the toast would fire during the 300ms debounce
+  // window, before the write reached disk. The save-state indicator in the
   // GlobalToolbar provides visual feedback during the await; the button is
   // disabled to prevent double-clicks.
   let isSaving = $derived(saveStateStore.state === 'saving');
@@ -112,9 +111,8 @@
   }
 
   // The `saveMode` chip flags each tab's commit semantics — auto-save vs
-  // explicit Apply/Cancel. This is the user-visible cue P3.17 (Style Menu
-  // Audit) flagged: the modal mixes three save behaviours and the 12px
-  // helper line wasn't loud enough.
+  // explicit Apply/Cancel — a user-visible cue, since the modal mixes save
+  // behaviours and a small helper line isn't loud enough.
   const tabs: { id: SettingsTab; label: string; icon: string; saveMode: 'auto' | 'apply' }[] = [
     { id: 'general', label: 'General', saveMode: 'auto', icon: 'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z' },
     { id: 'defaults', label: 'Global Defaults', saveMode: 'apply', icon: 'M12 3v18M3 12h18M5.5 5.5l13 13M18.5 5.5l-13 13' },

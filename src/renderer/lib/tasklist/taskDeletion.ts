@@ -47,7 +47,7 @@ export interface TaskDeletionDeps {
   tickAndPersist: () => void;
   announce: (message: string) => void;
   /**
-   * SEL-2 — drops just-deleted tile ids from the multi-select set so the action
+   * Drops just-deleted tile ids from the multi-select set so the action
    * bar's "N selected" count + anchor don't go stale. Optional: the selection
    * lives in the host's MultiSelectController, which isn't visible to this slice.
    */
@@ -80,7 +80,7 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
     const titleForAnnounce = tilesById[tileId]?.title ?? 'Task';
     historyStore.execute(new DeleteTaskCommand(board.id, tileId));
     tickAndPersist();
-    pruneSelection?.([tileId]); // SEL-2
+    pruneSelection?.([tileId]);
     announce(`Task removed: ${titleForAnnounce}`);
   }
 
@@ -126,7 +126,7 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
           const cmds = ordered.map((id) => new DeleteTaskCommand(b.id, id));
           historyStore.execute(new BatchCommand(`Delete task + ${childCount} subtasks`, cmds));
           tickAndPersist();
-          pruneSelection?.(descendants); // SEL-2 — parent + every removed subtask
+          pruneSelection?.(descendants); // parent + every removed subtask
           announce(`Task and ${childCount} subtask${childCount === 1 ? '' : 's'} removed`);
         },
       },
@@ -146,7 +146,7 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
           cmds.push(new DeleteTaskCommand(b.id, tileId));
           historyStore.execute(new BatchCommand(`Delete task (keep subtasks)`, cmds));
           tickAndPersist();
-          pruneSelection?.([tileId]); // SEL-2 — only the parent is removed; kids stay
+          pruneSelection?.([tileId]); // only the parent is removed; kids stay
           announce(
             `Task removed; ${directKids.length} subtask${directKids.length === 1 ? '' : 's'} kept`,
           );
@@ -160,11 +160,11 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
   function deleteAllCompleted(): void {
     const board = getBoard();
     if (!board) return;
-    // Audit 5.2 — derive the completed set from the already-projected
-    // `rows`, whose `completed` flag is read documentStore-first (live, set
-    // synchronously by toggleCompleted) with a vaultIndex fallback. Reading
-    // `vaultIndexStore` directly here lagged ~300 ms behind a just-checked
-    // task, so a check-then-bulk-delete could silently skip it. `rows` is
+    // Derive the completed set from the already-projected `rows`, whose
+    // `completed` flag is read documentStore-first (live, set synchronously by
+    // toggleCompleted) with a vaultIndex fallback. `vaultIndexStore` alone lags
+    // ~300 ms behind a just-checked task, so a check-then-bulk-delete could
+    // silently skip it. `rows` is
     // the UNFILTERED projection, so a hide-completed view filter doesn't
     // narrow what this bulk action sees.
     const completedTileIds = getRows()
@@ -188,7 +188,7 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
         );
         historyStore.execute(new BatchCommand(`Delete ${cmds.length} completed tasks`, cmds));
         tickAndPersist();
-        pruneSelection?.(completedTileIds); // SEL-2
+        pruneSelection?.(completedTileIds);
         uiStore.toast(
           `${completedTileIds.length} task${completedTileIds.length === 1 ? '' : 's'} removed`,
           'success',
@@ -199,7 +199,7 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
   }
 
   /**
-   * Audit 5.7 — opt-in "delete the backing file too" path. The default delete
+   * Opt-in "delete the backing file too" path. The default delete
    * keeps the `.md` (and is instant + one-click); this confirms first because
    * removing the file is the heavy, broken-ref-causing action. It pre-reads the
    * body so a DeleteTaskCommand that owns the disk delete can restore it on undo.
@@ -249,7 +249,7 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
           );
         }
         tickAndPersist();
-        pruneSelection?.([tileId]); // SEL-2
+        pruneSelection?.([tileId]);
         announce(`Task removed: ${tile.title || 'task'}`);
       });
     } catch (err) {

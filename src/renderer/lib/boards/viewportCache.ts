@@ -44,7 +44,7 @@ export function seedViewportsCache(
 ): void {
   viewportsCache.clear();
   viewportsVaultRoot = vaultRoot;
-  // Publish the committed vault root for cross-vault guards (audit 3.3). This
+  // Publish the committed vault root for cross-vault guards. This
   // is the single commit-time call that receives the candidate path, so it
   // doubles as the renderer's "active vault" signal for stores that must not
   // import vaultStore (would form an import cycle).
@@ -69,7 +69,7 @@ export function clearViewportsCache(): void {
   viewportsCache.clear();
   viewportsVaultRoot = null;
   // Swap/close drops the active-vault signal too, so a cross-vault guard sees
-  // no committed vault during the swap window (audit 3.3).
+  // no committed vault during the swap window.
   setActiveVaultPath('');
 }
 

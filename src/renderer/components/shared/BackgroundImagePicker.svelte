@@ -53,7 +53,7 @@
       filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] }],
     });
     if (!paths || paths.length === 0) return;
-    // Phase R2 — drain pending writers before the copy so a debounced
+    // Drain pending writers before the copy so a debounced
     // .board.json write referring to the new image path doesn't fire
     // before the file lands on disk.
     const src = paths[0];

@@ -15,7 +15,7 @@
 import { markDirty, markClean } from '../vault/dirtyFlagRecovery';
 import { vaultPath, type VaultPath } from '../../../shared/vaultPath';
 
-// ── Recent self-write registry (Phase 19 S3) ──
+// ── Recent self-write registry ──
 //
 // The main-process file watcher suppresses its own write echoes for ~500-2000ms
 // via `FileWatcher.suppress`. On slow disks, large batches (tag-rename of 200
@@ -27,7 +27,7 @@ import { vaultPath, type VaultPath } from '../../../shared/vaultPath';
 // spurious "Reload / Keep local" toast.
 //
 // Every write path that funnels through `trackComponentWrite` or the board /
-// config schedulers now registers its target path here with a TTL. The
+// config schedulers registers its target path here with a TTL. The
 // `vault:files-changed` listener consults this registry before dispatching
 // external-change reconciliation; recently-self-written paths are dropped.
 //
@@ -39,13 +39,9 @@ const RECENT_SELF_WRITE_TTL_MS = 1500;
 const RECENT_SELF_WRITE_TTL_BULK_MS = 5000;
 
 /**
- * Phase 4 — every key is routed through `vaultPath()` so the lookup is
- * unconditionally case-insensitive (matching the rest of the codebase via
- * `normalizeVaultRelative`). Pre-Phase-4 this module had its own
- * `detectCaseInsensitiveFs` gate that case-folded only on Windows/macOS;
- * the gate has been removed in favour of the unified `VaultPath` rule so
- * the registry, the watcher's suppression map, and the tag-storage
- * normaliser all agree on key identity regardless of platform.
+ * Every key is routed through `vaultPath()` so the lookup is unconditionally
+ * case-insensitive, and the registry, the watcher's suppression map, and the
+ * tag-storage normaliser all agree on key identity regardless of platform.
  */
 
 /** Vault-relative path -> expiry timestamp (ms since epoch). */
@@ -64,7 +60,7 @@ const recentSelfWrites = new Map<VaultPath, number>();
  */
 export function markRecentSelfWrite(path: string): void {
   if (!path) return;
-  // Phase 4 — case-fold + slash-normalise via `vaultPath()` so an OS-emitted
+  // Case-fold + slash-normalise via `vaultPath()` so an OS-emitted
   // watcher event differing only in case (`notes.md` vs the renderer's
   // `Notes.md`) still matches the registry entry.
   const normalised = vaultPath(path);
@@ -83,7 +79,7 @@ export function markRecentSelfWrite(path: string): void {
  */
 export function isRecentSelfWrite(path: string): boolean {
   if (!path) return false;
-  // Phase 4 — symmetric `vaultPath()` so the late OS watcher event's
+  // Symmetric `vaultPath()` so the late OS watcher event's
   // path matches the key the writer registered.
   const normalised = vaultPath(path);
   const expiry = recentSelfWrites.get(normalised);
@@ -104,16 +100,11 @@ export function __clearRecentSelfWritesForTests(): void {
 }
 
 /**
- * Phase 1 / 1.4 — drops `path` from the recent-self-write registry
- * immediately, rather than waiting for the TTL. Called from
- * `trackComponentWrite`'s catch branch when the underlying IPC throws:
- * the write never reached disk, so we MUST NOT suppress the next watcher
- * event for it — the user (or another process) may be trying to recover
- * the file and the renderer needs to see that event flow through the
- * external-change pipeline. Without this delete, a failed Filo write
- * leaves an entry in the registry whose TTL ranges from 1.5 s to 5 s,
- * during which a manual edit-then-save by the user against the same
- * path would be classified as a self-write and silently dropped.
+ * Drops `path` from the recent-self-write registry immediately, rather than
+ * waiting for the TTL. Called from `trackComponentWrite`'s catch branch: the
+ * write never reached disk, so the next watcher event for it must NOT be
+ * suppressed — otherwise an external edit within the TTL would be classified
+ * as a self-write and silently dropped.
  *
  * Uses the same case-fold normalisation as the mark/check helpers so the
  * deletion targets the actual key. Idempotent — a missing entry is a no-op.
@@ -161,39 +152,26 @@ const pendingVaultPaths = new Set<VaultPath>();
 const failedVaultPaths = new Set<VaultPath>();
 
 /**
- * Audit-14 1.5 — monotonic per-path write generation for COMPONENT writes
- * (everything routed through {@link trackComponentWrite}: the markdown gateway,
- * the frontmatter scheduler, the per-component `.md` writers). Bumped once at
- * the start of each `trackComponentWrite` and threaded into the matching
- * `endWrite`. The success branch only clears the path from `failedVaultPaths`
- * when this write is still the newest for the path — so a write that timed out
- * in the scheduler but LANDS LATE (its `endWrite(true)` self-heal) can't erase
- * a NEWER writer's legitimately-recorded failure for the same path (mirrors the
- * Audit-13 M3 generation guard the board/config/misc late-success heal already
- * has via `clearFailedPathAfterLateSuccess`). The 'full'-mode schedulers
- * (board/config/misc) call `endWrite` with no generation → unconditional clear,
- * back-compat. Keyed by case-folded `VaultPath`; cleared on vault swap.
+ * Per-path write generation for COMPONENT writes (everything routed through
+ * {@link trackComponentWrite}). Minted at the start of each `trackComponentWrite`
+ * and threaded into the matching `endWrite`, whose success branch only clears
+ * the path from `failedVaultPaths` when this write is still the newest — so a
+ * timed-out write that lands late can't erase a NEWER writer's failure. The
+ * 'full'-mode schedulers (board/config/misc) call `endWrite` with no generation
+ * → unconditional clear. Keyed by case-folded `VaultPath`; cleared on vault swap.
  */
 // allow-module-state: reset via resetWriteTracking called from boardSaver's pre-swap handler
 const componentWriteGenByPath = new Map<VaultPath, number>();
 
 /**
- * Audit-16 4.1/4.2 — session-monotonic write-generation mint, shared by the
- * scheduler-level per-path map (`writeScheduler.ts` `writeGenByPath`) and
- * `componentWriteGenByPath` above. Never reissues a value within the
- * process: both per-path maps PRUNE their entry on a still-newest success
- * (the Audit-14 1.5/1.6 boundedness fix), so a per-path `(get(key) ?? 0) + 1`
- * re-mint restarted at 1 and could COLLIDE with a generation an OLDER write's
- * late-success heal still holds — A times out (gen 1, failed mark + heal
- * continuation), B succeeds (prunes the entry), C re-mints gen 1 and fails
- * (legitimate failed mark), A finally lands → generations match → A's heal
- * erases C's mark: clean save indicator, wiped `.filo/.dirty`, no recovery
- * prompt while C's payload never reached disk. With a counter that only
- * climbs, a captured generation is unambiguous for the session, and a
- * MISSING map entry still reads "not current" (`get() !== gen` for any real
- * gen). Deliberately NOT reset on vault swap — the maps are cleared there,
- * and a stale continuation's old generation must keep comparing unequal to
- * every post-swap mint.
+ * Session-monotonic write-generation mint, shared by `writeScheduler.ts`'s
+ * `writeGenByPath` and `componentWriteGenByPath` above. Both per-path maps
+ * PRUNE their entry on a still-newest success, so a per-path `+1` re-mint could
+ * restart at 1 and collide with a generation an older write's late-success heal
+ * still holds (erasing a newer write's failed mark). A counter that only climbs
+ * makes a captured generation unambiguous, and a missing map entry still reads
+ * "not current". Deliberately NOT reset on vault swap, so a stale continuation's
+ * generation keeps comparing unequal to every post-swap mint.
  */
 // allow-module-state: monotonic by design; per-path maps reset on vault swap
 let writeGenerationCounter = 0;
@@ -208,8 +186,6 @@ export function mintWriteGeneration(): number {
  * Mints and records the component write generation for `path`. Called by
  * `trackComponentWrite` before its `beginWrite`; the returned value is handed
  * back to `endWrite` so the success branch can check it's still newest.
- * Audit-16 4.2 — routed through {@link mintWriteGeneration} (see its doc for
- * the prune/re-mint collision this closes).
  */
 function bumpComponentWriteGen(path: string): number {
   const key = vaultPath(path);
@@ -281,16 +257,14 @@ export interface WriteStateInfo {
   inflight: number;
   failed: number;
   /**
-   * Audit2 2.3 — count of paths queued for write (debounced-but-not-yet-fired
-   * AND in-flight), i.e. `pendingVaultPaths.size`. Lets the save indicator
-   * show "saving" during a debounce window even when `inflight` is still 0 —
-   * the markdown gateway tracks its armed-but-not-fired body writes here
-   * (sentinel-mode 'pending-path') without bumping `inflight`, so without this
-   * the indicator read a premature "idle"/"saved" while text was unwritten.
+   * Count of paths queued for write (debounced-but-not-yet-fired AND
+   * in-flight), i.e. `pendingVaultPaths.size`. Lets the save indicator show
+   * "saving" during a debounce window even when `inflight` is 0 — the markdown
+   * gateway tracks armed body writes here without bumping `inflight`.
    */
   pending: number;
   /**
-   * Phase C / C.10 — concrete paths in the failure set so the renderer
+   * Concrete paths in the failure set so the renderer
    * popover can list them with a Retry button. Order is undefined
    * (Set iteration order); the renderer dedups via its own queue.
    */
@@ -340,7 +314,7 @@ export function noteAdditionalPendingPath(vaultRoot: string | undefined, path: s
   pendingVaultPaths.add(key);
   trimSetIfOverflowing(pendingVaultPaths, 'pendingVaultPaths');
   refreshSentinel(vaultRoot);
-  // Audit2 2.3 — surface the new pending path to the save indicator so a
+  // Surface the new pending path to the save indicator so a
   // debounced-but-not-inflight write (markdown gateway) reads "saving".
   notifyWriteState();
 }
@@ -350,17 +324,17 @@ export function noteAdditionalPendingPath(vaultRoot: string | undefined, path: s
  * or moving it to `failedVaultPaths`. Used when the path of a still-pending
  * write changes mid-debounce (rename) — the old path is no longer the
  * write's target so it must leave `pendingVaultPaths` before the matching
- * `endWrite` fires against the new path. Phase 31 A2.3.
+ * `endWrite` fires against the new path.
  */
 export function dropPendingPath(vaultRoot: string | undefined, path: string): void {
   if (!pendingVaultPaths.delete(vaultPath(path))) return;
   refreshSentinel(vaultRoot);
-  // Audit2 2.3 — keep the save indicator in step as the pending set drains.
+  // Keep the save indicator in step as the pending set drains.
   notifyWriteState();
 }
 
 /**
- * Phase 4 / E3 — extra pending-write probes. Most schedulers
+ * Extra pending-write probes. Most schedulers
  * (board / frontmatter / config / misc) call `beginWrite` at SCHEDULE time
  * (`manageSentinel: true`), so a debounced-but-not-yet-fired write already
  * shows up in `pendingVaultPaths`. The markdown-file gateway is the
@@ -368,8 +342,8 @@ export function dropPendingPath(vaultRoot: string | undefined, path: string): vo
  * `trackComponentWrite` wrapper does begin/endWrite around the disk I/O,
  * so its SCHEDULED writes don't enter the ledger until they fire. Such a
  * scheduler registers a probe here so `isPathPending` can still answer
- * "yes" for its armed-but-not-fired writes — making the authority genuinely
- * cover *every* scheduler.
+ * "yes" for its armed-but-not-fired writes, so the authority covers *every*
+ * scheduler.
  */
 const pendingProbes: Array<(path: string) => boolean> = [];
 
@@ -385,12 +359,10 @@ export function registerPendingProbe(probe: (path: string) => boolean): void {
 }
 
 /**
- * Phase 4 / E3 — THE single authority for "does any scheduler have a
- * pending or in-flight write for this vault-relative path?". Recurrence-proofs
- * F4 by giving both external-change reconcilers (the `.md` classifier in
- * `vaultExternalChanges` and the `.board.json` reconciler in
- * `vaultExternalReconcilers`) one consistent dirty-check instead of each
- * re-deriving "is an editor open?" / "is a board write queued?" differently.
+ * THE single authority for "does any scheduler have a pending or in-flight
+ * write for this vault-relative path?". Gives both external-change reconcilers
+ * (the `.md` classifier in `vaultExternalChanges` and the `.board.json`
+ * reconciler in `vaultExternalReconcilers`) one consistent dirty-check.
  *
  * True when the path is:
  *  - pending (a debounce timer is armed — most schedulers mark this at
@@ -417,8 +389,8 @@ export function isPathPending(path: string): boolean {
 }
 
 /**
- * Back-compat alias for {@link isPathPending}. Predates the E3 consolidation;
- * retained so existing call sites / tests keep working. Prefer
+ * Back-compat alias for {@link isPathPending}, retained so existing call
+ * sites / tests keep working. Prefer
  * `isPathPending` in new code — it's the named single authority.
  */
 export function hasPendingWrite(path: string): boolean {
@@ -426,7 +398,7 @@ export function hasPendingWrite(path: string): boolean {
 }
 
 /**
- * Audit-16 4.8 — "is a write for this path armed or mid-flight RIGHT NOW?"
+ * "Is a write for this path armed or mid-flight RIGHT NOW?"
  * Distinct from {@link isPathPending}: deliberately EXCLUDES
  * `failedVaultPaths`. The board reconciler's self-write divergence tiebreak
  * (`reconcileBoardJsonChange`) uses this to recognise write N's watcher echo
@@ -447,18 +419,13 @@ export function isPathQueuedOrInFlight(path: string): boolean {
 }
 
 /**
- * Phase 3 / 3.1 — true when ANY path's last write FAILED and hasn't since been
- * retried successfully (i.e. `failedVaultPaths` is non-empty).
+ * True when ANY path's last write FAILED and hasn't since been retried
+ * successfully (i.e. `failedVaultPaths` is non-empty).
  *
- * A per-scheduler `flushAll()` only re-surfaces failures for writes it actually
- * drained THIS cycle (pending timers + currently in-flight). A fire-and-forget
- * timer write that already FAILED and SETTLED before the flush is recorded in
- * `failedVaultPaths` but is no longer in any scheduler's pending/in-flight maps,
- * so the next `flushAll` reports a clean `failed: []`. `vaultStore.save()`
- * consults this after its flushes so the Ctrl+S / flush-and-quit aggregate
- * boolean is honest. The `.filo/.dirty` sentinel is unaffected — it is driven
- * by this same set, so it was already (correctly) staying dirty; this only
- * closes the boolean-honesty gap.
+ * A per-scheduler `flushAll()` only reports failures for writes it drained THIS
+ * cycle; a timer write that already failed and settled before the flush is
+ * only recorded here. `vaultStore.save()` consults this after its flushes so the
+ * Ctrl+S / flush-and-quit result is honest.
  */
 export function hasFailedWrites(): boolean {
   return failedVaultPaths.size > 0;
@@ -485,17 +452,15 @@ export function markPathFailed(vaultRoot: string | undefined, path: string): voi
 }
 
 /**
- * Audit-12 M2 — clears `path` from the failed set after a LATE success: a write
- * that exceeded the scheduler's `writeTimeoutMs` (so `fireWrite` stopped
- * awaiting it and `markPathFailed`-ed the path) but then actually LANDED on disk.
+ * Clears `path` from the failed set after a LATE success: a write that exceeded
+ * the scheduler's `writeTimeoutMs` (so the path was marked failed) but then
+ * actually LANDED on disk.
  *
- * The markdown gateway + frontmatter scheduler self-heal this for free — their
- * `performWrite` wraps the IPC in `trackComponentWrite`, whose late
- * `endWrite(true)` already drops the path from `failedVaultPaths`. Board / config
- * / misc call their IPC directly, so without this their phantom "failed" mark
- * sticks for the whole session — `vaultStore.save()` keeps returning false,
- * `.filo/.dirty` stays set, and the next launch shows a recovery prompt while the
- * bytes are actually on disk.
+ * The markdown gateway + frontmatter scheduler self-heal via
+ * `trackComponentWrite`'s late `endWrite(true)`. Board / config / misc call
+ * their IPC directly, so without this their phantom "failed" mark would stick
+ * for the session (save() false, `.filo/.dirty` set, recovery prompt next
+ * launch) while the bytes are on disk.
  *
  * Does NOT touch `inflightWriteCount` — the timeout's `endWrite`/`safeEndWrite`
  * already balanced the begin/end pair. Syncs the sentinel (markClean iff the
@@ -547,14 +512,14 @@ export function endWrite(
   vaultRoot: string | undefined,
   pendingPath?: string,
   success: boolean = true,
-  // Audit-14 1.5 — the component write generation captured at `beginWrite` time
+  // The component write generation captured at `beginWrite` time
   // (from `bumpComponentWriteGen`). When provided, the success branch only
   // clears the path's failed mark if THIS write is still the newest for the
   // path. Undefined for the 'full'-mode schedulers → unconditional clear.
   writeGen?: number,
 ): void {
   if (inflightWriteCount === 0) {
-    // Phase 34 D1.1 — dev-only signal that the begin/end pairing has drifted.
+    // Dev-only signal that the begin/end pairing has drifted.
     // Production code self-corrects (counter stays at 0), but a double-end
     // means a writer either finished twice or skipped its beginWrite — both
     // are bugs worth investigating before they corrupt the sentinel.
@@ -571,19 +536,16 @@ export function endWrite(
     const key = vaultPath(pendingPath);
     if (success) {
       pendingVaultPaths.delete(key);
-      // Audit-14 1.5 — only clear the failed mark when this write is still the
-      // newest for the path. A no-generation caller (board/config/misc 'full'
-      // mode) clears unconditionally as before. A stale, timed-out component
-      // write landing late (its self-heal `endWrite(true)`) whose generation
-      // is no longer current leaves a newer writer's legit failure intact.
+      // Only clear the failed mark when this write is still the newest for the
+      // path (a no-generation caller clears unconditionally), so a stale
+      // timed-out write landing late leaves a newer writer's failure intact.
       const genCurrent = writeGen === undefined ? undefined : componentWriteGenByPath.get(key);
       if (writeGen === undefined || genCurrent === writeGen) {
         failedVaultPaths.delete(key);
       }
-      // Audit-14 1.5/1.6 — prune the generation entry on a still-newest success
-      // so the map doesn't grow per distinct `.md` path for the session
-      // (re-created at gen 1 by the next write). A superseded late write
-      // (genCurrent !== writeGen) leaves it for the newest write to prune.
+      // Prune the generation entry on a still-newest success so the map doesn't
+      // grow per distinct `.md` path. A superseded late write leaves it for the
+      // newest write to prune.
       if (writeGen !== undefined && genCurrent === writeGen) {
         componentWriteGenByPath.delete(key);
       }
@@ -634,7 +596,7 @@ export function registerTestResetCallback(cb: () => void): void {
  * pending-write timer cancelled mid-debounce leaves a `.filo/.dirty`
  * sentinel on the old vault that names paths the new session will never
  * touch — the next vault open against that path would surface a phantom
- * "Recover unsaved work" modal. Phase 18 H14.
+ * "Recover unsaved work" modal.
  *
  * The sentinel write is fire-and-forget; the in-memory state cleanup
  * cannot wait on disk I/O without blocking the vault-swap UI thread.
@@ -646,9 +608,8 @@ export function resetWriteTracking(oldVaultRoot?: string): void {
   pendingVaultPaths.clear();
   failedVaultPaths.clear();
   recentSelfWrites.clear();
-  // Audit-14 1.5 — drop per-path component write generations so the new vault's
-  // first write to a same-named path starts at generation 1 (a stale late
-  // self-heal from the outgoing vault no longer matches and can't clear).
+  // Drop per-path component write generations so a stale late self-heal from
+  // the outgoing vault can't match and clear.
   componentWriteGenByPath.clear();
   inflightWriteCount = 0;
   for (const cb of resetCallbacks) cb();
@@ -672,7 +633,7 @@ export function __resetDirtyTrackingForTests(): void {
 
 /**
  * Test-only — count of retained per-path component write-generation entries.
- * Pins the Audit-14 1.5/1.6 prune: after component writes complete it returns
+ * Pins the success-path prune: after component writes complete it returns
  * to ~0 rather than retaining one entry per distinct path until vault swap.
  */
 export function __componentWriteGenSizeForTests(): number {
@@ -685,11 +646,9 @@ export function __componentWriteGenSizeForTests(): number {
  * Wraps a per-component IPC write so it participates in the same inflight /
  * sentinel / write-error pipeline as board and config writes.
  *
- * Without this, the four per-component markdown/frontmatter writers
- * (TextTile, DocumentEditor, PropertiesPopup, TaskListBoard) fire
- * `vault:write-file-text` directly and any failure is silently logged
- * to the console — the save indicator stays "saved" while the disk write
- * was rejected, and the `.filo/.dirty` sentinel never reflects the loss.
+ * Without this, a per-component write failure would only be logged to the
+ * console — the save indicator would stay "saved" and the `.filo/.dirty`
+ * sentinel would never reflect the loss.
  *
  * On failure the listener is notified and the path is moved into
  * `failedVaultPaths` (so the sentinel stays dirty until a later retry
@@ -718,18 +677,14 @@ export async function trackComponentWrite<T>(
   const kind = options.kind ?? 'component';
   const notifyOnError = options.notifyOnError ?? true;
 
-  // Audit-14 1.5 — capture this write's per-path generation BEFORE beginWrite so
-  // a late `endWrite(true)` self-heal can be gated on still being the newest.
+  // Capture this write's per-path generation BEFORE beginWrite so a late
+  // `endWrite(true)` self-heal can be gated on still being the newest.
   const writeGen = bumpComponentWriteGen(path);
   beginWrite(vaultRoot, path);
-  // Phase A.2a — register suppression BEFORE awaiting the IPC. The OS-level
-  // file watcher event for our own write can fire (and reach the renderer)
-  // before the IPC promise resolves; marking after the await meant
-  // `vault:files-changed` saw the path as "unknown self-write" and routed
-  // it into the external-edit pipeline, surfacing a spurious
-  // "External edit replaced 'New Tile'" toast for every freshly-created
-  // file. Re-mark on success to refresh the TTL in case the IPC took
-  // longer than the suppression window.
+  // Register suppression BEFORE awaiting the IPC: the watcher event for our
+  // own write can reach the renderer before the IPC resolves and would be
+  // treated as an external edit. Re-mark on success to refresh the TTL in case
+  // the IPC took longer than the suppression window.
   markRecentSelfWrite(path);
   try {
     const result = await writeFn();
@@ -737,14 +692,9 @@ export async function trackComponentWrite<T>(
     endWrite(vaultRoot, path, true, writeGen);
     return result;
   } catch (err) {
-    // Phase 1 / 1.4 — clear the recent-self-write registration before
-    // re-throwing. The IPC failed, so the write never landed on disk;
-    // suppressing the next watcher event for this path would mask any
-    // recovery action (the user re-saving in another tool, a git
-    // checkout, …) by treating the foreign change as one of Filo's own.
-    // Mirrors the `failedVaultPaths` move done by `endWrite(success=false)`
-    // below — both sides of the fail-state need to release suppression
-    // so the recovery pipeline can observe disk.
+    // Clear the recent-self-write registration before re-throwing. The write
+    // never landed, so suppressing the next watcher event would mask a
+    // recovery action (re-save in another tool, git checkout, …) as Filo's own.
     dropRecentSelfWrite(path);
     if (notifyOnError) notifyWriteError({ kind, path, error: err });
     endWrite(vaultRoot, path, false);
@@ -752,6 +702,6 @@ export async function trackComponentWrite<T>(
   }
 }
 
-// Audit-19 EXT-5 — Retry fan-out across all five schedulers (board, markdown
+// Retry fan-out across all five schedulers (board, markdown
 // gateway, frontmatter, config, misc); implemented next to the failure ledger.
 export { retryAllFailedWrites } from './writeSchedulerFailures';

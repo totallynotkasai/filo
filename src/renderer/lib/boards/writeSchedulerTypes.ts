@@ -1,12 +1,10 @@
 /**
  * writeSchedulerTypes — the type surface of the `createScheduler` primitive.
  *
- * Audit-16 Phase 4 — split out of `writeScheduler.ts` so the implementation
- * file stays under the `ci:file-sizes` limit (the Phase 4 fixes added the
- * parked-cancel + per-key failure-id bookkeeping). Pure declarations only;
- * every name is re-exported from `writeScheduler.ts`, so importers are
- * unchanged. The behavioural documentation lives here with the contracts it
- * describes; the implementation comments stay with the code.
+ * Split out of `writeScheduler.ts` to keep it under the `gates:file-sizes` limit.
+ * Pure declarations only; every name is re-exported from `writeScheduler.ts`.
+ * The behavioural documentation lives here with the contracts it describes;
+ * the implementation comments stay with the code.
  */
 
 /**
@@ -30,7 +28,7 @@ export interface PerformWriteResult {
 }
 
 /**
- * Audit-14 1.4 — per-fire context handed to `performWrite`. Lets a write
+ * Per-fire context handed to `performWrite`. Lets a write
  * decide whether its post-write side effects (notably the drift-baseline
  * stamp) are still valid by the time its IPC lands.
  */
@@ -43,7 +41,7 @@ export interface PerformWriteContext {
    * a newer write for the same path fired) lands late as a SUPERSEDED write;
    * it must NOT stamp the post-write drift baseline, because that would anchor
    * the baseline to its now-stale bytes and silently defeat future drift
-   * detection (1.4). Always `true` for a write whose sentinel info carries no
+   * detection. Always `true` for a write whose sentinel info carries no
    * path (no generation tracked).
    */
   isLatestWrite(): boolean;
@@ -110,7 +108,7 @@ export interface CreateSchedulerOptions<TArgs> {
    */
   manageSentinel?: boolean;
   /**
-   * Audit2 2.3 — how the primitive keeps the `.filo/.dirty` sentinel and the
+   * How the primitive keeps the `.filo/.dirty` sentinel and the
    * `pendingVaultPaths` ledger in sync across the debounce → write window:
    *  - `'full'` (default): `beginWrite` at schedule, `endWrite` at outcome —
    *    owns BOTH the inflight counter and the pending path for the whole
@@ -133,20 +131,19 @@ export interface CreateSchedulerOptions<TArgs> {
    * BEFORE `performWrite` runs. Used by the board scheduler to deep-clone
    * the live cache proxy so a mid-flush mutation can't leak into the
    * payload. Critically, snapshots taken during `flushAll`'s synchronous
-   * capture loop freeze BEFORE any await — preserving Phase 25 L12 / C5
-   * "capture path + snapshot upfront" semantics.
+   * capture loop freeze BEFORE any await ("capture path + snapshot upfront").
    */
   snapshotArgs?: (args: TArgs) => TArgs;
   /**
-   * Audit5 R3 — optional upper bound (ms) on a single `performWrite`. When set,
+   * Optional upper bound (ms) on a single `performWrite`. When set,
    * `fireWrite` races the write against this timeout; if it elapses first the
    * scheduler STOPS awaiting that write, marks its path failed (keeping the
    * `.filo/.dirty` sentinel + the save indicator's failed list live), and
    * attributes the failure so `flush`/`flushAll` (and the `save()` boolean that
    * folds them) report it instead of hanging forever. The underlying
    * `performWrite` keeps running — a late success self-heals via its own
-   * `trackComponentWrite` `endWrite`. Omit to await indefinitely (the prior
-   * behaviour, correct for schedulers whose writes can't wedge on user input).
+   * `trackComponentWrite` `endWrite`. Omit to await indefinitely (correct for
+   * schedulers whose writes can't wedge on user input).
    * Set ONLY high enough to exceed any legitimate in-write await (e.g. the
    * markdown gateway's interactive drift prompt); it is a wedged-write backstop,
    * not a latency budget.
@@ -183,15 +180,11 @@ export interface InFlightEntry {
  * Internal — one PARKED fire's tracking entry (a debounce fire deferred
  * behind `drainPriorInFlight`; see the `parked` map in `writeScheduler.ts`).
  *
- * Audit-16 4.4 — carries the schedule-time sentinel info plus a `cancelled`
- * flag so `cancel(key)` can reach a parked fire: `cancel` used to consult
- * only `pending`, so a board deleted mid-park had its parked fire resume
- * AFTER the `board:delete` IPC — `getArgs()` → null → a false "couldn't
- * save" reportError + `endWrite(false)` planting the deleted board's path
- * in `failedVaultPaths` for the session (no later write can clear it),
- * sticky `.filo/.dirty`, phantom recovery prompt next launch. `cancel`
- * now marks the entry cancelled and emits the balanced `endWrite(true)`
- * itself; the parked closure bails without firing.
+ * Carries the schedule-time sentinel info plus a `cancelled` flag so
+ * `cancel(key)` can reach a parked fire (e.g. a board deleted mid-park):
+ * `cancel` marks the entry cancelled and emits the balanced `endWrite(true)`
+ * itself; the parked closure bails without firing, so the deleted path is
+ * never marked failed.
  */
 export interface ParkedEntry {
   promise: Promise<void>;
@@ -208,13 +201,8 @@ export interface ParkedEntry {
  * here `failed` is a flat list of failure identifiers and `vaultRoot` carries
  * the last-seen root for post-drain sentinel sync. Do not unify the two.
  *
- * 6.3.P4 — `ok` tracks the count of writes drained successfully so the
- * gateway-side `flushAllMarkdownWriters` (which composes scheduler + test
- * flushers) reports a meaningful production count. Pre-fix the gateway's
- * `ok` was a `testFlushers.size - testFailures.length` synthesis, which
- * is always 0 in production (no test flushers registered) — masking the
- * shim-migration leftover where `lastSeenArgs` was still populated by
- * every write but read by no production consumer.
+ * `ok` tracks the count of writes drained successfully so the gateway-side
+ * `flushAllMarkdownWriters` reports a meaningful production count.
  */
 export interface FlushAllResult {
   /** Identifiers (paths or failure ids) whose write failed. */
@@ -254,12 +242,12 @@ export interface Scheduler<TArgs> {
    * schedule-time captured path (e.g. a board-delete site that knows the
    * board's most recent path).
    *
-   * Audit-16 4.4 — also reaches PARKED fires (a debounce fire deferred
-   * behind an in-flight write): each is marked cancelled (the parked
-   * closure bails instead of firing / surfacing missing-source) and its
-   * balanced `endWrite(success=true)` is emitted here.
+   * Also reaches PARKED fires (a debounce fire deferred behind an in-flight
+   * write): each is marked cancelled (the parked closure bails instead of
+   * firing / surfacing missing-source) and its balanced
+   * `endWrite(success=true)` is emitted here.
    *
-   * Audit-18 H1 — pass `pendingOnly: true` to cancel ONLY an armed-but-unfired
+   * Pass `pendingOnly: true` to cancel ONLY an armed-but-unfired
    * timer and leave any parked/in-flight fire untouched. A teardown caller that
    * has ALREADY flushed (PropertiesPopup.onDestroy: `flushIfPending()` then
    * cancel, same tick) owns the parked fire — `flush` drains it and lands its
@@ -291,11 +279,11 @@ export interface Scheduler<TArgs> {
    */
   flushAll(): Promise<FlushAllResult>;
   /**
-   * Audit-19 EXT-5 — re-fires the retained failed writes (all, or `key`'s) with
-   * fresh args and awaits them. `flushAll` also re-fires them once per call.
+   * Re-fires the retained failed writes (all, or `key`'s) with fresh args and
+   * awaits them. `flushAll` also re-fires them once per call.
    */
   retryFailed(key?: string): Promise<{ failed: string[] }>;
-  /** Audit-19 EXT-1 — true while `key` has a pending, parked, in-flight or retained write. */
+  /** True while `key` has a pending, parked, in-flight or retained write. */
   hasWork(key: string): boolean;
   /**
    * Vault-swap nuclear option — clears pending timers, in-flight tracker
@@ -304,45 +292,42 @@ export interface Scheduler<TArgs> {
    */
   reset(): void;
   /**
-   * Phase 4 / E3 — true when any armed (pending, not-yet-fired) timer's args
-   * satisfy `predicate` (a `manageSentinel:false` scheduler's probe into
-   * `isPathPending`). P2.5 (Audit-15) — `hasPendingTimer`, NOT `hasPending`:
-   * ONLY armed timers, never `parked`/`inFlight` (no args; `markClean` needs
-   * "is a NEWER timer armed"). Durability checks use the sentinel ledger
-   * (`isPathPending`/`hasPendingWrite`), which tracks parked + in-flight.
+   * True when any armed (pending, not-yet-fired) timer's args satisfy
+   * `predicate` (a `manageSentinel:false` scheduler's probe into
+   * `isPathPending`). ONLY armed timers, never `parked`/`inFlight` (no args;
+   * `markClean` needs "is a NEWER timer armed"). Durability checks use the
+   * sentinel ledger (`isPathPending`/`hasPendingWrite`), which tracks parked +
+   * in-flight.
    */
   hasPendingTimer(predicate: (args: TArgs) => boolean): boolean;
   /**
-   * Audit-17 5.5 — true when a non-cancelled PARKED fire (a debounce fire
-   * deferred behind an in-flight write by `drainPriorInFlight`, in neither
-   * `pending` nor `inFlight` while it awaits the drain) matches `predicate`.
-   * Kept SEPARATE from `hasPendingTimer` (whose P2.5 armed-timer-only contract
-   * other callers depend on); a probe that must NOT report idle / clean while a
+   * True when a non-cancelled PARKED fire (a debounce fire deferred behind an
+   * in-flight write by `drainPriorInFlight`, in neither `pending` nor
+   * `inFlight` while it awaits the drain) matches `predicate`. Kept SEPARATE
+   * from `hasPendingTimer` (whose armed-timer-only contract other callers
+   * depend on); a probe that must NOT report idle / clean while a
    * newer parked write is unsaved ORs the two. Parked entries carry no args, so
    * the predicate sees the schedule-time `{ key, path }`.
    */
   hasParked(predicate: (info: { key: string; path: string | undefined }) => boolean): boolean;
   /**
    * Test-only — count of attributed-but-undrained failure identifiers retained
-   * in the internal `failures` Set. Pins the Audit-7 L12 fix: a fire-and-forget
-   * failure followed by a successful write to the SAME key must prune the stale
-   * id (returns 0), rather than retaining it until `reset()`. Audit-16 4.7 —
-   * also pins that a partial-failure id list (config bundle per-target ids)
-   * recorded for a key is pruned by that key's later success, not just the
-   * primary failureId. Production code never needs this; the Set is otherwise
-   * an opaque internal.
+   * in the internal `failures` Set. Pins that a failure followed by a
+   * successful write to the SAME key prunes the stale id(s) — including a
+   * partial-failure id list — rather than retaining them until `reset()`.
+   * Production code never needs this.
    */
   __failuresSizeForTests(): number;
   /**
    * Test-only — count of retained per-path write-generation entries
-   * (`writeGenByPath`). Pins the Audit-14 1.6 fix: after N distinct paths are
+   * (`writeGenByPath`). Pins the success-path prune: after N distinct paths are
    * written to completion this returns to ~0 (each successful, still-newest
    * settle prunes its entry), rather than retaining one entry per
    * distinct-path-ever-written until `reset()`. Production code never needs it.
    */
   __writeGenSizeForTests(): number;
   /**
-   * Test-only (Audit-15 P1.1) — registers a parked-fire placeholder for `key`
+   * Test-only — registers a parked-fire placeholder for `key`
    * and returns a release that clears it. Lets a test construct the
    * production-unreachable "parked but pending/inFlight empty" gap to prove
    * `flush(key)` waits on it. Production code never needs it.

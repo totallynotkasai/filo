@@ -3,8 +3,7 @@
    * TaskListSection — one rendered bucket (header + per-row dndzone +
    * inline quick-add / footer add-task button) for the Task List board.
    *
-   * Promoted from the inline `renderSection` snippet in TaskListBoard.svelte
-   * (Phase 5.8h). The section is the unit of drag for the outer
+   * The section is the unit of drag for the outer
    * `tasklist-section-dnd` zone and also hosts the per-section row dndzone
    * (`type: 'tasklist-rows'`), so all of its drag wiring + drop-target
    * cueing belongs together.
@@ -366,8 +365,7 @@
         {/if}
       </div>
       <!-- Footer "Add task" button — the only per-section creation
-           affordance after the Phase 6 audit consolidation (header "+" /
-           inline quick-add removed). Users who want token parsing use the
+           affordance (no header "+" / inline quick-add). Users who want token parsing use the
            board-level quick-add at the top. Sets
            `lastTargetedSectionId` here so the next sidebar "Add Task"
            click also lands in this section — explicit intent, not

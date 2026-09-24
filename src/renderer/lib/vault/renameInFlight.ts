@@ -1,5 +1,5 @@
 /**
- * Rename-in-flight guard (Audit-18 M2) — a counter that is non-zero while an
+ * Rename-in-flight guard — a counter that is non-zero while an
  * in-app rename / move is mid-flight.
  *
  * Background. `vaultFolderOps.runRename` rebinds `boardStore.paths[boardId]` to
@@ -9,9 +9,8 @@
  * board path names a file that does not yet (or no longer) exists on disk. A
  * concurrently-armed watcher reconcile (`vault.refreshTreeAndCleanup`) sees the
  * path missing from the freshly-read tree, its `vault:file-exists` probe
- * confirms "missing", and it evicts the LIVE board mid-rename (tabs closed,
- * pending writes cancelled, cascade flush skipped) while the rename clears as
- * success.
+ * confirms "missing", and without this guard it would evict the LIVE board
+ * mid-rename (tabs closed, pending writes cancelled, cascade flush skipped).
  *
  * The `rename` method brackets its whole sequence (drain + cascade + IPC +
  * revert) in `beginRenameInFlight()` / `endRenameInFlight()`; the reconcile's

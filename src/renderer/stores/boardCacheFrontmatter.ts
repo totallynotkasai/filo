@@ -14,7 +14,7 @@ import { vaultSwapResettable } from '../core/vaultLifecycle';
 import { isStillSameVault, type VaultIdentity } from '../lib/vault/vaultIdentity';
 
 /**
- * 6.2.H9 — per-md mtime check so the on-open batch reconcile can skip
+ * Per-md mtime check so the on-open batch reconcile can skip
  * files whose disk frontmatter hasn't changed since we last reconciled
  * against them. Cleared on vault swap so the new vault's first reconcile
  * walks every md exactly once.
@@ -28,7 +28,7 @@ vaultSwapResettable('boardCacheFrontmatter.lastReconciledMtime', () => {
 });
 
 /**
- * 6.2.H9 — test-only reset for the mtime gate. Production code drives the
+ * Test-only reset for the mtime gate. Production code drives the
  * reset via the vault-swap dispatch; tests don't fire that for every
  * `beforeEach`, so we expose a direct hook to keep test isolation simple.
  */
@@ -37,8 +37,7 @@ export function __resetLastReconciledMtimeForTests(): void {
 }
 
 /**
- * 6.2.H9 — batches every ~50 reconciled mds before yielding to the event
- * loop. The microtask checkpoint lets queued watcher events and UI
+ * Yield to the event loop every ~50 reconciled mds. The microtask checkpoint lets queued watcher events and UI
  * reactivity interleave with a long batch reconcile on vault open.
  */
 const RECONCILE_BATCH_YIELD_EVERY = 50;
@@ -49,8 +48,8 @@ const RECONCILE_BATCH_YIELD_EVERY = 50;
  * code path that ingests an external change (file watcher, vault rename,
  * cascade delete) flows through one place.
  *
- * Active-proxy reactivity contract (Phase 1.1 / 2.2 sweep)
- * --------------------------------------------------------
+ * Active-proxy reactivity contract
+ * --------------------------------
  * Every mutator in this file calls `ctx.setCache({ ...cache })` after a
  * structural change, which forces a NEW cache-map identity. That re-fires
  * any `$state` consumer that subscribes to the cache map (the
@@ -70,9 +69,8 @@ export interface CascadeStyleClears {
   /** boardId → list of placement coverImage clears to apply / undo. */
   coverImage: Record<string, CoverImageClear[]>;
   /**
-   * Sprint C / C23 — boardId → list of column-level coverImage clears.
-   * Sibling to `coverImage`; applies to the column header band's own
-   * cover (distinct from placement cards' covers).
+   * boardId → list of column-level coverImage clears (the column header
+   * band's own cover, distinct from placement cards' covers).
    */
   columnCoverImage: Record<string, ColumnCoverImageClear[]>;
   /** boardId → list of frame.style.backgroundImage clears. */
@@ -95,18 +93,15 @@ export function makeFrontmatterSlice(ctx: CacheContext) {
       if (result.changedBoardIds.length === 0) return [];
       ctx.setCache({ ...cache });
       for (const boardId of result.changedBoardIds) ctx.markDirty(boardId);
-      // 6.2.H9 — stamp lastReconciledMtime so the on-open batch reconcile
-      // skips this md until its disk mtime moves again.
+      // Stamp lastReconciledMtime so the on-open batch reconcile skips this md until its disk mtime moves again.
       lastReconciledMtime.set(relPath, metadata.lastModified);
       return result.changedBoardIds;
     },
 
     /**
-     * 6.2.H9 — batched, chunked, mtime-gated, no-updatedAt-stamp variant
-     * of `applyFrontmatterToBackedTiles` for the on-open reconcile pass.
-     * The pre-fix on-open loop did one `setCache({ ...cache })` PER md
-     * file — O(M) cache identity flips that thrashed the Svelte reactive
-     * graph on a vault with thousands of `.md` files. This variant:
+     * Batched, chunked, mtime-gated, no-updatedAt-stamp variant of
+     * `applyFrontmatterToBackedTiles` for the on-open reconcile pass (one
+     * `setCache` per md would thrash reactivity on a large vault). It:
      *
      *   (a) suppresses the `updatedAt = Date.now()` stamp on reconciled
      *       tiles (the reconcile isn't a user edit; the disk frontmatter
@@ -120,25 +115,16 @@ export function makeFrontmatterSlice(ctx: CacheContext) {
      *
      * Returns the union of changed board ids so the caller can log.
      *
-     * M6 (Audit-12) — `identity` is the caller's `captureVaultIdentity()` from
-     * BEFORE this batch ran. The captured `cache` reference belongs to the
-     * vault that was open when the batch started; the loop yields across
-     * microtasks, so a vault swap can interleave. Without re-checking, the
-     * terminal `setCache({ ...cache })` would overwrite the NEW vault's cache
-     * with the OLD vault's reconciled boards. We bail (no mutation) if the vault
-     * changed — after every yield AND immediately before the terminal setCache.
+     * `identity` is the caller's `captureVaultIdentity()` from before the batch.
+     * The loop yields, so a vault swap can interleave; we bail (no mutation)
+     * after every yield and before the terminal setCache, else the old vault's
+     * reconciled boards would overwrite the new vault's cache.
      *
-     * M6 (Audit-13) — the SAME-vault analogue: holding the captured `cache` map
-     * across yields also reverts a concurrent same-vault mutation. A vault-open
-     * `updateEntry`/`touchBoard`/placement write that lands during a yield
-     * replaces the cache-map identity (and a board object); the cross-vault
-     * guard passes, but the old terminal `setCache({ ...cache })` flipped the
-     * STALE captured map back, dropping that write. So we re-read `ctx.getCache()`
-     * after each yield (reconciles after the yield run on the live map) AND for
-     * the terminal flip (no await sits between the re-read and the synchronous
-     * commit, so nothing can interleave there). The mtime-gate stamps are also
-     * deferred to the clean-finish commit — a swap/abort that returns early must
-     * not leave files marked "already reconciled" whose changes never landed.
+     * Same-vault analogue: we re-read `ctx.getCache()` after each yield and for
+     * the terminal flip, so a concurrent same-vault write that landed during a
+     * yield isn't reverted by flipping a stale captured map back. Mtime-gate
+     * stamps are committed only on a clean finish, so an early abort doesn't
+     * mark files "already reconciled" whose changes never landed.
      */
     async applyFrontmatterToBackedTilesBatch(
       metadataList: FileMetadata[],
@@ -163,22 +149,20 @@ export function makeFrontmatterSlice(ctx: CacheContext) {
           { stampUpdatedAt: false },
         );
         for (const id of result.changedBoardIds) changedBoardIds.add(id);
-        // M6 (Audit-13) — stamp the gate only on a clean finish (see below).
+        // Stamp the gate only on a clean finish (see below).
         pendingStamps.push([md.path, md.lastModified]);
         // (c) microtask yield every N iterations.
         if (i > 0 && i % RECONCILE_BATCH_YIELD_EVERY === 0) {
           await new Promise<void>((r) => queueMicrotask(() => r()));
-          // M6 — a vault swap may have landed on this yield. Bail before any
-          // further work / the terminal setCache so the outgoing vault's `cache`
-          // can't be flipped onto the new vault. No pending stamps applied.
+          // A vault swap may have landed on this yield — bail so the outgoing
+          // vault's `cache` can't be flipped onto the new vault.
           if (identity && !isStillSameVault(identity)) return [];
-          // M6 (Audit-13) — re-read the LIVE map so reconciles after the yield
-          // run against it (and the terminal flip below can't revert a
-          // same-vault write that landed during the yield).
+          // Re-read the live map so a same-vault write that landed during the
+          // yield isn't reverted.
           cache = ctx.getCache();
         }
       }
-      // M6 — final guard: covers a swap on the LAST chunk (after the loop's last
+      // Final guard: covers a swap on the LAST chunk (after the loop's last
       // yield, or a list too small to ever yield).
       if (identity && !isStillSameVault(identity)) return [];
       // (b) one setCache identity flip + one markDirty per changed board. Re-read
@@ -189,7 +173,7 @@ export function makeFrontmatterSlice(ctx: CacheContext) {
         ctx.setCache({ ...ctx.getCache() });
         for (const id of changedBoardIds) ctx.markDirty(id);
       }
-      // M6 (Audit-13) — commit the mtime-gate stamps now that the batch finished
+      // Commit the mtime-gate stamps now that the batch finished
       // without aborting (no-change files included, so they aren't re-walked).
       for (const [path, mtime] of pendingStamps) lastReconciledMtime.set(path, mtime);
       return Array.from(changedBoardIds);
@@ -213,16 +197,11 @@ export function makeFrontmatterSlice(ctx: CacheContext) {
     },
 
     /**
-     * Sprint 35.2 — pure scan. Returns the cascade-delete plan along with
-     * the style-clear info, leaving the cache untouched. The caller is
-     * expected to call `applyCascadeStyleClears` to mutate the cache and
-     * to snapshot `styleClears` into the resulting CascadeDeleteCommand so
-     * Ctrl+Z can replay the clears in reverse.
-     *
-     * Previously this method mutated the cache inline, which meant the
-     * resulting CascadeDeleteCommand only knew about removed tiles — the
-     * cleared cover images / frame backgrounds / per-board frame defaults
-     * stayed wiped after undo, and the next debounce persisted the loss.
+     * Pure scan. Returns the cascade-delete plan along with the style-clear
+     * info, leaving the cache untouched. The caller calls
+     * `applyCascadeStyleClears` to mutate the cache and snapshots
+     * `styleClears` into the CascadeDeleteCommand so Ctrl+Z can restore the
+     * cleared cover images / frame backgrounds too.
      */
     findCascadeDeleteTargets(deletedRelPath: string): CascadeDeleteTargets {
       const cache = ctx.getCache();
@@ -247,10 +226,8 @@ export function makeFrontmatterSlice(ctx: CacheContext) {
     },
 
     /**
-     * Sprint 35.2 — applies the style-clear plan returned by
-     * `findCascadeDeleteTargets`. Mirrors the per-bucket loops that used
-     * to live inline inside `findCascadeDeleteTargets`. Caller is
-     * responsible for snapshotting the clears BEFORE calling so an undo
+     * Applies the style-clear plan returned by
+     * `findCascadeDeleteTargets`. Caller is responsible for snapshotting the clears BEFORE calling so an undo
      * command can replay them.
      *
      * Each loop guards against cache drift between scan and apply by
@@ -284,7 +261,7 @@ export function makeFrontmatterSlice(ctx: CacheContext) {
         }
       }
 
-      // Sprint C / C23 — Kanban column.coverImage clears. Same drift
+      // Kanban column.coverImage clears. Same drift
       // guard as the placement-level loop above. Defensive `?? {}` for
       // legacy callers that hand-build a CascadeStyleClears without the
       // new column slice (older test fixtures, etc.).
@@ -350,23 +327,14 @@ export function makeFrontmatterSlice(ctx: CacheContext) {
     },
 
     /**
-     * Sprint 35.2 — restores a style-clear plan (used by
-     * CascadeDeleteCommand.undo). Re-applies the matched paths into the
-     * placements/frames/settings the original clear wiped.
+     * Restores a style-clear plan (used by CascadeDeleteCommand.undo):
+     * writes each matchedPath back into the placements/frames/settings the
+     * original clear wiped. Idempotent.
      *
-     * Mirrors `applyCascadeStyleClears` shape but in reverse: writes the
-     * matchedPath back instead of deleting. Each loop is idempotent — if
-     * the field already holds the value (e.g. the user manually restored
-     * it via paste / edit between cascade and undo), it stays put.
-     *
-     * Polish phase 3.2 (2026-05-25) — manual-edit guard. Originally the
-     * skip condition was `value === matchedPath` (i.e. only skip when the
-     * field already holds the value we'd write). That meant if the user
-     * manually re-pointed coverImage / backgroundImage to a DIFFERENT file
-     * between cascade-delete and undo, undo would trample their pick. The
-     * corrected guard skips when the field holds *any* non-empty value
-     * other than the original matchedPath. An empty/absent value still
-     * gets restored — that's the common case (cascade-delete wiped it).
+     * Manual-edit guard: a field holding any non-empty value other than the
+     * original matchedPath is skipped, so undo never tramples a file the user
+     * re-pointed to between cascade-delete and undo. Empty/absent values are
+     * restored (the common case).
      */
     restoreCascadeStyleClears(styleClears: CascadeStyleClears): void {
       const cache = ctx.getCache();
@@ -400,7 +368,7 @@ export function makeFrontmatterSlice(ctx: CacheContext) {
         }
       }
 
-      // Sprint C / C23 — column-level coverImage restore. Same
+      // Column-level coverImage restore. Same
       // manual-edit guard as the placement-level loop above. Defensive
       // `?? {}` (see applyCascadeStyleClears for rationale).
       for (const [boardId, clears] of Object.entries(styleClears.columnCoverImage ?? {})) {

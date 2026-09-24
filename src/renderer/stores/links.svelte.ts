@@ -106,8 +106,8 @@ export const linksStore = {
       updatedAt: now,
     } as Tile;
 
-    // Phase 16 / H3 — push through history so the auto-created tile from a
-    // filo:// link drop is undoable.
+    // Push through history so the auto-created tile from a filo:// link drop
+    // is undoable.
     historyStore.execute(new AddTileCommand(tile));
   },
 };

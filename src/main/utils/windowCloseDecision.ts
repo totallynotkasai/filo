@@ -1,13 +1,11 @@
 /**
- * 1.3 (WRITE_PATH_REMEDIATION_PLAN_2026-06-04) — pure decision for the main
- * window's `close` handler, extracted from `main.ts` so the re-entrancy guard
- * is unit-testable without a live BrowserWindow.
+ * Pure decision for the main window's `close` handler, kept out of `main.ts`
+ * so the re-entrancy guard is unit-testable without a live BrowserWindow.
  *
  * The window stays interactive during a flush-and-quit drain, which can be slow
- * on a contended / OneDrive volume. A SECOND X-click while the first drain is
- * still running previously hit a bare `if (isFlushingForQuit) return;` — it did
- * NOT call `event.preventDefault()`, so Electron proceeded to DESTROY the window
- * and aborted the in-flight write drain, losing the unflushed bytes.
+ * on a contended / OneDrive volume. A SECOND X-click during the drain must still
+ * call `event.preventDefault()`, or Electron destroys the window and aborts the
+ * in-flight write drain, losing the unflushed bytes.
  *
  * The guard branch must keep blocking the close (preventDefault) until the drain
  * itself destroys the window via `mainWindow.destroy()` — which does not refire

@@ -1,12 +1,11 @@
 /**
- * Screen-reader live-region announcer (Audit 5.3).
+ * Screen-reader live-region announcer.
  *
  * Holds the current announcement text for an `aria-live` region and auto-clears
- * it after `clearDelayMs` so the region doesn't retain stale text. Extracted
- * from the byte-identical inline logic that TaskListBoard and KanbanBoard each
- * carried, so the auto-clear timer can be cancelled on unmount: a board torn
- * down within the clear window previously left a `setTimeout` armed to fire
- * against orphaned component state (harmless under Svelte 5, but unhygienic).
+ * it after `clearDelayMs` so the region doesn't retain stale text. Shared by
+ * TaskListBoard and KanbanBoard so the auto-clear timer can be cancelled on
+ * unmount (otherwise a board torn down within the clear window leaves a
+ * `setTimeout` armed against orphaned component state).
  *
  * `dispose()` cancels the pending timer — call it from the host's `onDestroy`.
  */

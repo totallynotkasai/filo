@@ -2,13 +2,13 @@ import type { Editor } from '@tiptap/core';
 import type { Plugin } from '@tiptap/pm/state';
 
 /**
- * Audit-19 MD-1 — drop the editor's undo/redo stacks WITHOUT emitting a
+ * Drop the editor's undo/redo stacks WITHOUT emitting a
  * transaction.
  *
  * A full-document load (hydrate or reload) is a history boundary: Ctrl+Z must
- * never cross it. Without this, undo right after opening a note emptied it, and
- * undo after an external (e.g. OneDrive) reload resurrected the pre-reload text —
- * and either result was autosaved. `addToHistory: false` on the load alone is not
+ * never cross it. Without this, undo right after opening a note would empty it,
+ * and undo after an external (e.g. OneDrive) reload would resurrect the
+ * pre-reload text — and either result would be autosaved. `addToHistory: false` on the load alone is not
  * enough: an earlier user event survives, remapped, so `can().undo()` stays true.
  *
  * Technique: the same one TipTap's own `registerPlugin` uses — reconfigure the

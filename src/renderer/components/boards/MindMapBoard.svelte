@@ -22,7 +22,7 @@
   // call sites throughout this component while routing reads to this pane's
   // scope — so two panes can show different boards independently.
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
-  // R1 (Audit-11) — BoardRouter passes every board the pane's `tabId`. This board
+  // BoardRouter passes every board the pane's `tabId`. This board
   // is pane-correct via BoardScope, so it declares + ignores it (silences Svelte's
   // dev-mode "unknown prop" warning).
   let { tabId }: { tabId?: string } = $props();
@@ -125,8 +125,7 @@
   // wins. Gate on this pane being the active one so only the pane the user is
   // drawing in arms edge-pan (the draw's pointerdown activates its pane first
   // via PaneView's capture handler) — otherwise the wrong pane's scope is
-  // pinned and edge-pan scrolls the wrong canvas (Audit 5.2; the earlier
-  // Audit-5.4 fix pinned a scope but not necessarily the right pane's).
+  // pinned and edge-pan scrolls the wrong canvas.
   $effect(() => {
     syncConnectionEdgePan(canvasStore, !!connectionsStore.drawing, isActiveScope(scope));
   });
@@ -174,7 +173,7 @@
     `transform: translate(${canvasStore.x}px, ${canvasStore.y}px) scale(${canvasStore.scale}); transform-origin: 0 0;`,
   );
 
-  // Phase 1.2c — read scope canvas scalars into explicit $derived locals
+  // Read scope canvas scalars into explicit $derived locals
   // before passing them to BoardBackground. Inline `scale={canvasStore.scale}`
   // template reads ought to be reactive in Svelte 5, but observed reports
   // suggest the prop value doesn't always re-flow on zoom for non-DOM-bound
@@ -342,7 +341,7 @@
       onRemoveBroken: brokenCount > 0 ? () => {
         const boardId = boardStore.current?.id;
         if (!boardId) return;
-        // Phase 16 / H7 — make broken-tile removal undoable. Construct the
+        // Make broken-tile removal undoable. Construct the
         // DeleteTilesCommand BEFORE removing (so its constructor snapshots
         // placements + connections), then call removeBrokenTiles, then
         // pushWithoutExecute (the live mutation has already happened). The
@@ -364,7 +363,7 @@
       frame,
       onStyle: () => { popups?.openFrameStyle(frame, e.clientX, e.clientY); },
       onToggleCollapse: () => {
-        // Phase 7 / 7.6 — route through UpdateFrameCommand so Ctrl+Z reverses
+        // Route through UpdateFrameCommand so Ctrl+Z reverses
         // the collapse. The command snapshots the prior `collapsed` flag as
         // the inverse patch.
         const prevCollapsed = frame.collapsed;
@@ -378,7 +377,7 @@
         );
       },
       onSelectAll: () => selectionStore.selectMultiple(frame.tileIds),
-      // Phase C / C.3 — context-menu delete shares the same confirm
+      // Context-menu delete shares the same confirm
       // gate as the Frame.svelte trash button so neither entry point
       // can rip out a frame without a stop-the-world confirmation.
       onDelete: () => confirmRemoveFrame({
@@ -409,7 +408,7 @@
 
   // ── Keyboard handler ──
   //
-  // Phase 6.2 (IMPLEMENTATION_PLAN_2026-05-27) — keyboard-operable Mind Map.
+  // Keyboard-operable Mind Map.
   // Bindings (only fire when focus is NOT inside an editable text target):
   //
   //   • Escape         — cancel connection-drawing / exit connection mode
@@ -417,7 +416,6 @@
   //                      the pressed direction (anchored on the most-recent
   //                      selected tile)
   //   • Ctrl+Shift+Arrow — extend selection in the pressed direction
-  //                      (legacy behaviour; predates Phase 6)
   //   • Ctrl+Arrow     — move the selected tile(s) by 10 canvas px
   //   • N              — create a new tile near the focused selection (or
   //                      the viewport centre if nothing is selected)
@@ -428,7 +426,7 @@
   //                      cascade-aware confirm gate
   //   • C              — start a connection from the focused tile
   function handleKeydown(e: KeyboardEvent) {
-    // Audit-14 5.1 — pane-scope gate. `<svelte:window onkeydown>` fires for
+    // Pane-scope gate. `<svelte:window onkeydown>` fires for
     // EVERY mounted Mind Map pane, so without this an inactive split pane would
     // also act on a bare key: one `n` creating a tile on two boards, arrows
     // moving the selection in both, Delete/Backspace double-dispatching. Mirror
@@ -527,11 +525,10 @@
       return;
     }
 
-    // Audit-14 5.2 — Delete is owned by the GLOBAL gated `tile:delete` command
-    // (AppShell), which also removes selected connections + offers the
-    // delete-backing-file option — richer than this branch, and a single
-    // confirm. Handling `Delete` here too double-dispatched (two confirm
-    // dialogs) even single-pane. `Backspace` stays as a board-local,
+    // Delete is owned by the GLOBAL gated `tile:delete` command (AppShell),
+    // which also removes selected connections + offers the delete-backing-file
+    // option; handling `Delete` here too would double-dispatch (two confirm
+    // dialogs). `Backspace` stays as a board-local,
     // tiles-only alias (pane-gated above) so the mind map keeps its
     // Backspace-to-delete affordance without a second GLOBAL Backspace binding
     // (which would double-fire against Task List / Kanban rows that bind it).

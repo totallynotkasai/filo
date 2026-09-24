@@ -59,9 +59,9 @@
   });
 
   // Position on path — pathD dependency ensures re-computation when path geometry changes.
-  // Sprint C / C24 — defensive clamp at render time. The schema (`ConnectionLabelSchema.position`)
+  // Defensive clamp at render time. The schema (`ConnectionLabelSchema.position`)
   // already bounds the field to `[0, 1]`, but a hand-edited `.board.json` or
-  // any future schema bypass would otherwise place the label past the
+  // a schema bypass would otherwise place the label past the
   // path's end (or before its start), pinning it off-canvas where the
   // user can't grab it.
   let labelPos = $derived.by(() => {

@@ -56,11 +56,11 @@
   let isEditing = $state(false);
   let titleEditorElement = $state<HTMLDivElement | null>(null);
   let titleEditor: Editor | null = $state(null);
-  // Audit-11 R3 — handle for the inline blur→commit defer below. Stored so it
+  // Handle for the inline blur→commit defer below. Stored so it
   // can be cancelled on teardown (and re-armed cleanly on a fresh blur);
   // otherwise a tile deleted / board switched inside the 200ms window leaves a
   // dangling timer that fires `commitTitleEdit()` against a torn-down editor.
-  // The `ci:component-timer-cleanup` gate can't see a timer armed inside a
+  // The `gates:component-timer-cleanup` gate can't see a timer armed inside a
   // TipTap callback, so this is cleaned up by hand in `destroyTitleEditor()`.
   let blurCommitTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -94,7 +94,7 @@
   }
 
   function destroyTitleEditor() {
-    // Audit-11 R3 — cancel a pending blur→commit defer so it can't fire after
+    // Cancel a pending blur→commit defer so it can't fire after
     // the editor is gone (commit/cancel/unmount all route through here; the
     // `$effect` teardown at the bottom calls this on unmount).
     if (blurCommitTimer) {
@@ -111,10 +111,8 @@
   }
 
   /**
-   * Audit-17 4.1 — snapshot the live editor's value as resolved commit
-   * inputs. Must be read BEFORE `destroyTitleEditor()` — a torn-down TipTap
-   * editor can't be queried (the R3 hazard the old cancel-on-unmount dodged
-   * by dropping the rename instead).
+   * Snapshot the live editor's value as resolved commit inputs. Must be read
+   * BEFORE `destroyTitleEditor()` — a torn-down TipTap editor can't be queried.
    */
   function snapshotEditorTitle(): ResolvedTitleCommit | null {
     if (!titleEditor) return null;
@@ -131,15 +129,14 @@
 
   /**
    * Applies a resolved title commit to the tile. `fromTeardown` marks the
-   * unmount-time commit (Audit-17 4.1): by then the pane's scope may already
+   * unmount-time commit: by then the pane's scope may already
    * point at the switched-in board (the very switch that unmounted us), so
    * the write resolves through the tile's home board (`tile.boardId`).
    *
-   * Audit-18 5.2 — a text-tile teardown commit now ALSO pushes
-   * `RenameTitleCommand` onto the tile's HOME board's undo stack (via
-   * `pushWithoutExecuteOnBoard`, keyed by `tile.boardId`) so the `.md` rename
-   * is undoable. Earlier it dropped the entry because the GLOBAL active board's
-   * stack can't be trusted mid-swap — but the home board's stack always can.
+   * A text-tile teardown commit pushes `RenameTitleCommand` onto the tile's
+   * HOME board's undo stack (via `pushWithoutExecuteOnBoard`, keyed by
+   * `tile.boardId`) so the `.md` rename is undoable — the GLOBAL active
+   * board's stack can't be trusted mid-swap, but the home board's can.
    * The non-text teardown path stays a cache write (no file rename to reverse).
    */
   async function applyTitleCommit(snap: ResolvedTitleCommit, fromTeardown: boolean): Promise<void> {
@@ -157,7 +154,7 @@
       // `tile.boardId` lets the helper fall back to the home board's cache
       // when the active scope no longer has the tile (teardown commit).
       //
-      // Phase 5 / 5.6 — push RenameTitleCommand on success so Ctrl+Z
+      // Push RenameTitleCommand on success so Ctrl+Z
       // reverses both the filename rename and the title update.
       const result = await boardStore.renameTextTileBackingFile(
         tile.id, plain, newTitleHtml, tile.boardId,
@@ -165,8 +162,8 @@
       if (result.success) {
         const paths = { oldPath: result.oldPath ?? null, newPath: result.newPath ?? null };
         if (fromTeardown) {
-          // Audit-18 5.2 — file the rename onto the HOME board's stack (keyed
-          // by tile.boardId) so it's undoable, instead of dropping it. Thread
+          // File the rename onto the HOME board's stack (keyed by
+          // tile.boardId) so it's undoable. Thread
           // `boardId` so the command's targetBoardId is the home board (a later
           // cross-board Ctrl+Z auto-switches) and undo can fall back to the
           // cache when the tile isn't on the active canvas.
@@ -235,7 +232,7 @@
           // don't trigger a premature commit. The Tile commit fires after
           // 200ms — long enough for a toolbar interaction to keep the
           // editor alive via `keepActiveEditor`.
-          // Audit-11 R3 — store the handle (and clear any prior one) so a
+          // Store the handle (and clear any prior one) so a
           // teardown inside the window cancels it; null it once it fires.
           if (blurCommitTimer) clearTimeout(blurCommitTimer);
           blurCommitTimer = setTimeout(() => {
@@ -259,19 +256,17 @@
     }
   });
 
-  // Guard against unmount during edit. Audit-11 R3 cleared the pending
-  // blur→commit timer here so it couldn't fire against a torn-down editor —
-  // but cancel-not-commit silently DROPPED the rename when the unmount landed
-  // inside the 200 ms blur window (Audit-17 4.1: clicking another tab/board
-  // blurs AND unmounts within ms). An armed timer at teardown means the user
-  // finished editing and the commit was still pending: snapshot the editor's
+  // Guard against unmount during edit. An armed blur→commit timer at teardown
+  // means the user finished editing inside the 200 ms blur window (clicking
+  // another tab/board blurs AND unmounts within ms), so commit rather than
+  // drop the rename: snapshot the editor's
   // value BEFORE tearing it down, clear the timer (kept inline so
-  // `ci:component-timer-cleanup` sees it in a recognised `$effect` teardown;
+  // `gates:component-timer-cleanup` sees it in a recognised `$effect` teardown;
   // `destroyTitleEditor` also clears it for the commit/cancel paths), then
   // commit fire-and-forget (the rename helper is async-safe and self-guards
   // when the tile is already gone, e.g. mid-vault-swap).
   //
-  // Audit-18 5.2 — DEFER the commit one microtask past the synchronous
+  // DEFER the commit one microtask past the synchronous
   // teardown so the `.md` rename doesn't race the board switch's own
   // reactivity, and `applyTitleCommit` pushes the undo command onto the tile's
   // HOME board's stack (see there) instead of dropping it. `snap` is captured
@@ -286,7 +281,7 @@
     };
   });
 
-  // Phase 6.2 (IMPLEMENTATION_PLAN_2026-05-27) — keyboard "rename" hook.
+  // Keyboard "rename" hook.
   // MindMapBoard's Enter handler dispatches a `request-rename` event
   // (with the focused tile's id) at the canvas container. The event
   // bubbles up to window; this listener filters by tileId and routes
@@ -351,7 +346,7 @@
    * Opens a context-menu-style quick-action popup anchored to the broken-ref
    * badge. Offers Sync (writes local state to a new file at the expected
    * path), Re-link (pick a different vault file via the modal picker) and
-   * Remove (drops the placement). Phase 31 B5.1 wired the Re-link action.
+   * Remove (drops the placement).
    */
   function openBrokenRefMenu(e: MouseEvent) {
     e.preventDefault();
@@ -383,7 +378,7 @@
         icon: 'M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2',
         danger: true,
         action: () => {
-          // Phase 5 / 5.3 — route through removeTilesWithHistory so Ctrl+Z
+          // Route through removeTilesWithHistory so Ctrl+Z
           // restores the placement. No fileSnapshots needed: the backing
           // file is already missing (that's why we're removing the tile),
           // so DeleteTilesCommand's snapshots-absent path is exactly right
@@ -450,7 +445,7 @@
     const tileId = tile.id;
     const tileRef = tile;
 
-    // Phase R2 — drain pending writers BEFORE `buildDeleteSnapshots` so
+    // Drain pending writers BEFORE `buildDeleteSnapshots` so
     // the captured .md body reflects post-flush disk state. Without the
     // drain, a debounced editor write armed seconds ago could land
     // *after* the snapshot read but *before* the IPC delete, producing

@@ -21,8 +21,6 @@
  * channels. Calling `invokeOk` on a bare channel is gated by
  * `EnvelopeChannel` — TS rejects `invokeOk('vault:file-exists', ...)`
  * at compile time.
- *
- * See CONSOLIDATION_PLAN_2026-05-25.md Phase 1 for context.
  */
 
 import { assertIpcOk } from '@shared/ipcEnvelope';

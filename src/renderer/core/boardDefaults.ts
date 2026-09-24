@@ -1,6 +1,6 @@
 /**
  * Default-board factories — the single source of truth for the shape of a
- * freshly-created board of each type (Phase 5 of CONSOLIDATION_PLAN_2026-05-25).
+ * freshly-created board of each type.
  *
  * Lives in its own file (separate from `boardRegistry.ts`) so non-component
  * callers — `boardCache.svelte.ts`, unit tests — can import the factories
@@ -8,7 +8,7 @@
  * component-bearing registry (`boardRegistry.ts`) re-uses these factories
  * verbatim.
  *
- * Phase 5 DECISIONS baked in here:
+ * Decisions baked in here:
  *   - Kanban: `columns: []` (no starter "To Do / In Progress / Done").
  *   - Tasklist: one default `Task List` section + `collapsedSubtasks: []`.
  */

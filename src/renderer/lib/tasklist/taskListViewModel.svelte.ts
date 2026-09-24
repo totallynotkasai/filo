@@ -4,9 +4,8 @@
  * row / group / section structures consumed by TaskListBoard.svelte.
  *
  * Why a class with `$derived` fields:
- *   The component used to declare 14 top-level `$derived` chains in its
- *   `<script>` block. Inlining them made the host file unmanageably long.
- *   Moving them into a class instance preserves their lazy + cached
+ *   Keeping the ~14 `$derived` chains out of the component's `<script>` keeps
+ *   the host file manageable. A class instance preserves their lazy + cached
  *   reactivity (instance `$derived` fields recompute on demand when their
  *   inputs change, exactly like top-level ones) without scattering helpers
  *   across the host. The class is declared in this `.svelte.ts` file and
@@ -26,7 +25,7 @@
  *   updates (the row data depends on frontmatter on disk).
  */
 
-// P5.2 (Audit-15) — the row/group/section derivations below build their date,
+// The row/group/section derivations below build their date,
 // map, and set scratch collections INSIDE a `$derived` body (or a `$derived`
 // field), use them only to produce that derivation's return value, and rebuild
 // them from scratch on every recompute. Reactivity already flows through the
@@ -147,7 +146,7 @@ export class TaskListViewModel {
   smartListCounts = $derived.by<Record<SmartListId, number>>(() => {
     void this.deps.getCacheVersion();
     void vaultIndexStore.version;
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch Date; reactivity is the enclosing $derived (P5.2)
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch Date; reactivity is the enclosing $derived
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const counts: Record<SmartListId, number> = {
@@ -170,7 +169,7 @@ export class TaskListViewModel {
   });
 
   filteredRows = $derived.by<TaskRow[]>(() => {
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch Date; reactivity is the enclosing $derived (P5.2)
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch Date; reactivity is the enclosing $derived
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     return filterTaskRows(this.rows, today, {
@@ -200,11 +199,11 @@ export class TaskListViewModel {
   // position within the parent reflects the same `sortBy`. Grouping is
   // purely a top-level concern — children always sit under their parent
   // regardless of the parent's group.
-  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- the $derived itself is the reactive value; the Set is rebuilt each run (P5.2)
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- the $derived itself is the reactive value; the Set is rebuilt each run
   visibleRowIds = $derived(new Set(this.sortedRows.map((r) => r.tile.id)));
 
   nestedView = $derived.by<{ children: Map<string, TaskRow[]>; top: TaskRow[] }>(() => {
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- nestedView is the reactive $derived; this Map is its rebuilt-each-run output (P5.2)
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- nestedView is the reactive $derived; this Map is its rebuilt-each-run output
     const children = new Map<string, TaskRow[]>();
     const top: TaskRow[] = [];
     for (const r of this.sortedRows) {
@@ -229,11 +228,11 @@ export class TaskListViewModel {
     const groupBy = this.deps.getGroupBy();
     // Local midnight — mirrors `filteredRows` / `smartListCounts` so due-date
     // grouping agrees with the smart lists, and is passed explicitly to keep
-    // `groupKey` deterministic rather than reading `new Date()` itself (audit 1.3).
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch Date; reactivity is the enclosing $derived (P5.2)
+    // `groupKey` deterministic rather than reading `new Date()` itself.
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch Date; reactivity is the enclosing $derived
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local grouping scratch; reactivity is the enclosing $derived (P5.2)
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local grouping scratch; reactivity is the enclosing $derived
     const buckets = new Map<string, TaskGroup>();
     for (const row of this.topLevelRows) {
       const { key, label } = groupKey(row, groupBy, today);
@@ -266,7 +265,7 @@ export class TaskListViewModel {
   // fall into an unlabelled "leading" bucket so an old (pre-section) board
   // doesn't silently drop tasks once the first section is added.
   //
-  // DRAG-3 — two distinct orderings are at play, don't conflate them:
+  // Two distinct orderings are at play, don't conflate them:
   //   • MEMBERSHIP (which section owns a row) is decided by the row's
   //     PLACEMENT index against the section ranges (`ownerByIndex`), NOT by the
   //     active sort — so moving a task between sections is meaningful under any
@@ -286,18 +285,18 @@ export class TaskListViewModel {
     // Map placement index → top-level row (children render under their
     // parent via childrenByParent, so iterating top-level rows here keeps
     // the top-level/child split intact).
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch map; reactivity is the enclosing $derived (P5.2)
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch map; reactivity is the enclosing $derived
     const indexByTileId = new Map<string, number>();
     placements.forEach((p, i) => indexByTileId.set(p.tileId, i));
     const sorted = [...displaySections].sort((a, b) => a.position - b.position);
 
-    // P5.3 (Audit-15) — assign each top-level row to its owning section in ONE
-    // pass instead of a `.filter` per section (was O(sections × rows)). Sections
+    // Assign each top-level row to its owning section in ONE pass instead of a
+    // `.filter` per section (O(sections × rows)). Sections
     // partition the placement range into contiguous `[position, nextPosition)`
     // slices, so precompute, for every placement index, the section that owns it
     // (`ownerByIndex`; −1 ⇒ the leading "Unsectioned" bucket). The slices don't
     // overlap, so filling them is O(placements) total; the row scan is then
-    // O(rows). Behaviour is identical to the old per-section filter: row order
+    // O(rows). Behaviour matches a per-section filter: row order
     // within a bucket follows `topLevelRows`, every real section is emitted even
     // when empty, the leading bucket is emitted only when non-empty, and a row
     // whose tile has no placement index is dropped from every bucket.

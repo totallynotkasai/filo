@@ -23,22 +23,17 @@ import type { AddTileOpts, BoardTileOps } from '../boardTileOps';
  *
  *  - `addTile` seeds the text-tile backing file (shared helper) and writes
  *    the def into `tileDefs`. Does NOT insert into `tasks[]` — callers that
- *    need a placement use `persistAddTaskPlacement` directly. Matches the
- *    pre-Phase-2 cascade-delete undo behaviour where Task List tiles came
- *    back as defs without placements.
+ *    need a placement use `persistAddTaskPlacement` directly (so a
+ *    cascade-delete undo restores defs without placements).
  *
  *  - `removeTile` drops the `tasks[]` entry referencing the tileId, shifts
  *    section positions to stay anchored, removes the def, and sweeps both
  *    per-board (`cached.connections`) and cross-board (project) connections.
- *    Before Phase 2 the top-level `persistRemoveTile` was MindMap-only and
- *    Task List tiles left orphan `tasks[]` entries (bug #2 of
- *    CONSOLIDATION_PLAN_2026-05-25).
  *
  *  - `updateTile` applies definition-level fields to `tileDefs`. Position /
  *    size / locked / faded skipped — Task List rows have no canvas
  *    geometry; `locked` lives on the per-task placement and routes through
- *    `setTaskPlacementLocked`. This matches the pre-Phase-2 fall-through
- *    behaviour.
+ *    `setTaskPlacementLocked`.
  */
 export const tasklistTileOps: BoardTileOps<TaskListBoard> = {
   type: 'tasklist',
@@ -50,7 +45,7 @@ export const tasklistTileOps: BoardTileOps<TaskListBoard> = {
     tile: Tile,
     opts?: AddTileOpts,
   ): Promise<void> {
-    // Phase R7 — stamp filePath synchronously so the cache def reflects the
+    // Stamp filePath synchronously so the cache def reflects the
     // resolved path immediately; defer the disk seed.
     stampTextTileSeedPath(tile, boardId);
     const def = buildTileDefinition(tile);
@@ -98,7 +93,7 @@ export const tasklistTileOps: BoardTileOps<TaskListBoard> = {
         delete updatedConns[key];
       }
     }
-    // Audit 5.6 — refresh the board identity alongside the in-place
+    // Refresh the board identity alongside the in-place
     // `tasks`/`sections` rewrites above (cache-identity convention).
     ctx.updateEntry(boardId, { board: { ...tl }, tileDefs: restDefs, connections: updatedConns });
 

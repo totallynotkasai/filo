@@ -63,11 +63,8 @@ export function registerFontHandlers(): void {
     // renderer-supplied, so a compromised renderer could pass a system path
     // (e.g. `C:\Windows\System32`) and have us copy blobs into it. We
     // cross-check against the active vault root to bind the destination to
-    // the vault that's actually open in this process.
-    //
-    // Phase 31 A5.5 — vaultPath is required from every caller. Remove the
-    // dead `vaultPath`-absent branch (was a no-op path that copied the
-    // file in place without anchoring to a vault).
+    // the vault that's actually open in this process. `vaultPath` is
+    // required.
     const activeVaultRoot = getVaultRoot();
     if (!vaultPath || !activeVaultRoot || !isActiveVault(vaultPath)) {
       return { success: false, fonts: [], error: 'Vault path mismatch' };
@@ -79,7 +76,7 @@ export function registerFontHandlers(): void {
 
     const imported: { name: string; path: string; dataBase64: string }[] = [];
 
-    // Phase 31 A5.5 — refuse to import font files larger than 25 MB and
+    // Refuse to import font files larger than 25 MB and
     // reject anything whose first four bytes don't match a recognised
     // font magic. Stops a renderer that's been tricked into selecting a
     // multi-GB file from streaming it through the context bridge, and
@@ -103,7 +100,7 @@ export function registerFontHandlers(): void {
       const fileName = path.basename(filePath);
       const fontName = path.parse(fileName).name;
 
-      // A5.5 — pre-flight stat + magic check.
+      // Pre-flight stat + magic check.
       let stat: fs.Stats;
       try {
         stat = await fs.promises.stat(filePath);
@@ -137,12 +134,11 @@ export function registerFontHandlers(): void {
         await fd?.close().catch(() => undefined);
       }
 
-      // 6.3.P1/P2 — font import copies a NEW file into `.filo/fonts/`;
-      // creation rules apply on every platform so the imported font
-      // file remains portable.
+      // Font import copies a NEW file into `.filo/fonts/`; creation rules
+      // apply on every platform so the imported font file remains portable.
       assertSafeFilename(fileName, { forCreation: true });
 
-      // Phase 4 / 4.3 — collision-suffix loop so re-importing a font
+      // Collision-suffix loop so re-importing a font
       // with the same filename doesn't silently overwrite the prior
       // entry. Matches the pattern `copyFileToVault` uses for attachment
       // copies — `My Font.otf` → `My Font (2).otf` on collision.
@@ -152,7 +148,7 @@ export function registerFontHandlers(): void {
 
       // Read the source then atomic-write to the vault so a crash
       // mid-copy can't leave a torn / partial font file behind.
-      // atomicWriteFile takes a Buffer for binary content (Phase 31 B1.1).
+      // atomicWriteFile takes a Buffer for binary content.
       const sourceBytes = await fs.promises.readFile(filePath);
       await atomicWriteFile(finalPath, sourceBytes);
 

@@ -50,7 +50,7 @@ function preFilterUnknownTileTypes(raw: unknown): string[] {
 }
 
 /**
- * Phase 2.4 — summary of what `pruneOrphanRefsAndDuplicates` removed from
+ * Summary of what `pruneOrphanRefsAndDuplicates` removed from
  * a raw envelope before schema validation. Empty totals mean "no prune
  * ran" — the loader uses this to decide whether to surface a toast and
  * write a recovery snapshot.
@@ -69,7 +69,7 @@ interface OrphanPruneReport {
   /** Task List duplicate placements dropped (first occurrence kept). */
   droppedTaskListDuplicates: string[];
   /**
-   * Audit 2.1 — connection / frame / mindmap-group refs whose nested
+   * Connection / frame / mindmap-group refs whose nested
    * `boardId` disagreed with `envelope.board.id` and was rewritten to match.
    * Each entry is a `kind:id` tag (e.g. `connection:c1`, `frame:f1`,
    * `group:g1`) for diagnostics. Deliberately NOT counted by
@@ -104,7 +104,7 @@ function orphanReportHasFindings(r: OrphanPruneReport): boolean {
 }
 
 /**
- * IMPL_PLAN_2026-05-23_v2 P1.6 — set of tile IDs that are valid connection /
+ * Set of tile IDs that are valid connection /
  * frame.tileIds targets on this envelope. Mirrors the validity set used by
  * `V7BoardFileDataSchema`'s superRefine so the loader's pre-parse prune and
  * the schema's cross-check stay in lockstep.
@@ -113,8 +113,7 @@ function orphanReportHasFindings(r: OrphanPruneReport): boolean {
  * - Mind Map only: `board.inlineTiles` keys are ALSO valid. Inline tiles
  *   (Link / Iframe / Timer) live on the board itself rather than tileDefs
  *   but participate in `mergeBoardTiles` and can be connection / frame
- *   members. Pre-fix the prune dropped legitimate connections to inline
- *   tiles because tileDefs was the only validity check.
+ *   members.
  */
 function collectValidTileIds(envelope: {
   tileDefs?: Record<string, unknown>;
@@ -128,7 +127,7 @@ function collectValidTileIds(envelope: {
 }
 
 /**
- * Phase 2.4 — strips orphan connection refs, orphan IDs from
+ * Strips orphan connection refs, orphan IDs from
  * `frame.tileIds`, and duplicate placements (Kanban / Task List) from a
  * raw envelope IN PLACE. Mirrors the `preFilterUnknownTileTypes` pattern:
  * any structural inconsistency that would otherwise route the entire
@@ -246,15 +245,12 @@ function pruneOrphanRefsAndDuplicates(raw: unknown): OrphanPruneReport {
     envelope.board.tasks = next;
   }
 
-  // Audit 2.1 — normalize nested boardId refs to the envelope's `board.id`.
-  // The superRefine in `schema/boardFile.ts` only warns on a mismatch and
-  // relies on THIS pass to repair it (its comment now reflects reality). A
-  // stale / foreign boardId — copied connections, a third-party tool, or a
-  // board file restored under a renamed id — would otherwise round-trip to
-  // disk unrepaired and could mask a cross-board mix-up (e.g. combined with a
-  // duplicate-id collision). Repair is deterministic (the correct value IS
-  // `board.id`), so no recovery snapshot is taken; the board is just marked
-  // dirty via the `boardIdsNormalized` flag so the corrected values persist.
+  // Normalize nested boardId refs to the envelope's `board.id`. The
+  // superRefine in `schema/boardFile.ts` only warns on a mismatch and relies on
+  // THIS pass to repair it. A stale / foreign boardId (copied connections, a
+  // third-party tool, a restored file) would otherwise round-trip unrepaired and
+  // could mask a cross-board mix-up. Repair is deterministic, so no recovery
+  // snapshot is taken; `boardIdsNormalized` marks the board dirty so it persists.
   const canonicalBoardId = envelope.board?.id;
   if (typeof canonicalBoardId === 'string' && canonicalBoardId.length > 0) {
     if (envelope.connections && typeof envelope.connections === 'object') {
@@ -313,7 +309,7 @@ export interface LoadBoardResult {
   droppedTileTypes: string[];
   /**
    * True when `backfillGroupDisplayIndices` assigned indices to one or more
-   * legacy groups (M26). The caller markDirty's the board so the freshly
+   * legacy groups. The caller markDirty's the board so the freshly
    * assigned indices land on disk — otherwise the backfill re-runs on every
    * reopen and the indices can drift if the user reorders groups in between.
    */
@@ -327,7 +323,7 @@ export interface LoadBoardResult {
    */
   orphansPruned: boolean;
   /**
-   * Audit 2.1 — true when `pruneOrphanRefsAndDuplicates` rewrote at least one
+   * True when `pruneOrphanRefsAndDuplicates` rewrote at least one
    * nested connection / frame / mindmap-group `boardId` to match
    * `board.id`. Benign self-heal: unlike `orphansPruned` it takes no recovery
    * snapshot and never refuses the load. The caller marks the board dirty so
@@ -335,7 +331,7 @@ export interface LoadBoardResult {
    */
   boardIdsNormalized: boolean;
   /**
-   * Audit-19 ERR-3 — the file's mtime from the bracketing pre-read stat, used
+   * The file's mtime from the bracketing pre-read stat, used
    * to rank two files that declare the same board id. Undefined when the stat
    * failed.
    */
@@ -350,18 +346,17 @@ export interface LoadBoardError {
     | 'schema-invalid'
     | 'io-error'
     | 'from-future'
-    // Sprint C / C9 + C10 — input version is below
+    // Input version is below
     // `CURRENT_BOARD_FILE_VERSION` but no `MIGRATION_STEPS` entry covers
     // the gap (or the version is fractional). Surfaces a different
     // toast than `from-future`.
     | 'no-migration-path'
-    // Phase B / B.3 — board needed orphan-ref / duplicate prune but the
+    // Board needed orphan-ref / duplicate prune but the
     // `recovery:snapshot` IPC failed, so we have nowhere to preserve the
     // original bytes. We refuse to load (and therefore can't subsequently
     // overwrite the disk file with the pruned shape).
     | 'snapshot-failed'
-    // Audit-19 ERR-4 — transient / size failures main now reports explicitly
-    // instead of collapsing everything into "not-found".
+    // Transient / size failures, reported explicitly rather than as "not-found".
     | 'locked'
     | 'offline'
     | 'too-large';
@@ -369,7 +364,7 @@ export interface LoadBoardError {
 }
 
 /**
- * Audit-19 ERR-4 — failure kinds worth a Retry (the file is there, just not
+ * Failure kinds worth a Retry (the file is there, just not
  * readable right now). They are NOT snapshotted to .filo/recovery/ (a snapshot
  * of a locked / online-only file fails or hydrates the placeholder).
  */
@@ -410,9 +405,9 @@ export interface FailedBoardEntry {
   path: string;
   // `loadBoard` never returns `'duplicate-board-id'` — it's detected at the
   // aggregate level in `loadAllBoards` when two files declare the same
-  // `board.id` (Audit 1.2). Widening here (rather than in `LoadBoardError`)
+  // `board.id`. Widening here (rather than in `LoadBoardError`)
   // keeps `loadBoard`'s own return type honest.
-  // Audit-19 ERR-3 — 'sync-conflict-copy': a duplicate-id loser whose name is a
+  // 'sync-conflict-copy': a duplicate-id loser whose name is a
   // sync-client conflict copy of another board file.
   errorKind: LoadBoardError['error'] | 'duplicate-board-id' | 'sync-conflict-copy';
   message: string;
@@ -428,12 +423,11 @@ export async function loadBoard(
   vaultRoot: string,
   relPath: string,
 ): Promise<LoadBoardResult | LoadBoardError> {
-  // 3.5 (Audit-18) — stat the file BEFORE the content read so the post-read
-  // stat below can be BRACKETED. The baseline must reflect the bytes we actually
-  // loaded; a foreign write landing in the read→stat gap would otherwise make a
-  // lone post-read stat "our" baseline, and the next save would match-and-clobber
-  // the external edit with no drift prompt. Best-effort — a failed pre-stat just
-  // skips the baseline (the writer's drift check no-ops, legacy unguarded write).
+  // Stat the file BEFORE the content read so the post-read stat below can be
+  // BRACKETED. The baseline must reflect the bytes we actually loaded; a foreign
+  // write in the read→stat gap would otherwise become "our" baseline and the
+  // next save would clobber it with no drift prompt. Best-effort — a failed
+  // pre-stat just skips the baseline (no drift check for this board).
   let preStat: { mtimeMs: number; size: number } | null = null;
   try {
     preStat = await invokeOk('vault:stat', vaultRoot, relPath);
@@ -441,12 +435,9 @@ export async function loadBoard(
     preStat = null;
   }
 
-  // Audit-19 ERR-1 — main now returns the parsed board OBJECT (it unwraps a
-  // legacy double-encoded file itself); a string still parses below, for older
-  // mains / test stubs that return `JSON.stringify(board)`.
-  // Audit-19 ERR-4 — an envelope with a typed failure code. A bare payload (an
-  // older main / a test stub returning the board directly, or `null`) is still
-  // accepted.
+  // Main returns the parsed board OBJECT (it unwraps a legacy double-encoded
+  // file itself) inside an envelope with a typed failure code; a string still
+  // parses below and a bare payload (or `null`) is accepted, for test stubs.
   let raw: unknown;
   try {
     const res: unknown = await invokeOk('board:load', vaultRoot, relPath);
@@ -459,13 +450,11 @@ export async function loadBoard(
     return { ok: false, error: 'not-found', message: `No board at ${relPath}` };
   }
 
-  // Phase R6 — capture the file's mtime as the drift baseline. Used by
-  // `writeBoardFile`'s pre-write stat check to detect external edits
-  // that land between load and the next debounced write. Best-effort:
-  // a failed stat just leaves the baseline empty (writer's drift check
-  // no-ops, falling back to the legacy unguarded write).
+  // Capture the file's mtime as the drift baseline, used by `writeBoardFile`'s
+  // pre-write stat check to detect external edits between load and the next
+  // write. Best-effort: a failed stat leaves the baseline empty.
   //
-  // 3.5 (Audit-18) — stat-read-stat: stamp ONLY when the bracketing stats match
+  // Stat-read-stat: stamp ONLY when the bracketing stats match
   // (mtime + size). A mismatch means a write landed around the content read, so
   // this stat reflects bytes we didn't load — leave the baseline unstamped so the
   // next save's drift check re-detects + prompts rather than adopting foreign bytes.
@@ -485,11 +474,10 @@ export async function loadBoard(
     return { ok: false, error: 'parse-error', message: `${err}` };
   }
 
-  // Phase 4 E2 — route migrate → prune → validate through the shared
-  // versioned-load helper (`loadVersionedFile`) so the migrate-before-parse
-  // ordering and the from-future / no-migration-path short-circuits are
-  // identical to every other versioned config loader. The `transform` slot
-  // runs the board-specific prune the loader has always done:
+  // Route migrate → prune → validate through the shared versioned-load helper
+  // (`loadVersionedFile`) so the migrate-before-parse ordering and the
+  // from-future / no-migration-path short-circuits match every other versioned
+  // config loader. The `transform` slot runs the board-specific prune:
   //
   //  - strip tile-def entries whose `type` isn't in the live `TILE_TYPES`
   //    union (e.g. `calendar` entries left over from the removed board
@@ -519,7 +507,7 @@ export async function loadBoard(
     },
   );
 
-  // Phase 23 / M14 — short-circuit files declaring a `version` higher than
+  // Short-circuit files declaring a `version` higher than
   // this build understands. The schema parse would otherwise return a
   // generic "Invalid literal value, expected 7" — accurate but useless to
   // the user, who really needs to know they're trying to load a file
@@ -535,11 +523,9 @@ export async function loadBoard(
     };
   }
 
-  // Sprint C / C9 + C10 — distinct surface for files we *understand the
-  // age of* but can't migrate: either pre-v6 (no MIGRATION_STEPS entry)
-  // or a fractional version (structurally suspect). The pre-Sprint-C
-  // code routed these through the from-future toast, which lied about
-  // the cause.
+  // Distinct surface for files we *understand the age of* but can't migrate:
+  // either pre-v6 (no MIGRATION_STEPS entry) or a fractional version
+  // (structurally suspect). The from-future message would misstate the cause.
   if (loaded.status === 'no-migration-path') {
     return {
       ok: false,
@@ -550,12 +536,10 @@ export async function loadBoard(
     };
   }
 
-  // Phase B / B.3 + Phase 2.4 — if the prune actually mutated the envelope,
-  // preserve the on-disk original in `.filo/recovery/` BEFORE any future
-  // save can rewrite the file with the pruned shape. `recovery:snapshot`
-  // copies the disk file (untouched by the in-memory prune above), so it's
-  // equivalent to the old peek-then-snapshot ordering. If the snapshot
-  // can't be written we refuse to load — building in-memory state from the
+  // If the prune actually mutated the envelope, preserve the on-disk original
+  // in `.filo/recovery/` BEFORE any future save can rewrite the file with the
+  // pruned shape. `recovery:snapshot` copies the disk file (untouched by the
+  // in-memory prune above). If the snapshot can't be written we refuse to load — building in-memory state from the
   // pruned shape would let the next save clobber the unrecoverable original.
   const prunedAny =
     droppedTileTypes.length > 0 || orphanReportHasFindings(orphanReport);
@@ -636,7 +620,7 @@ export async function loadBoard(
     );
   }
 
-  // M18 — frames are accepted down to 0px on disk so a hand-collapsed frame
+  // Frames are accepted down to 0px on disk so a hand-collapsed frame
   // doesn't reject the entire board, but the renderer can't usefully draw
   // anything below the design-recommended 200×150 floor. Surface one summary
   // toast per board listing the affected titles so the user can fix them by
@@ -644,14 +628,11 @@ export async function loadBoard(
   // overwrite an intentional collapse).
   warnUndersizedFrames(data.frames, data.board.name || relPath);
 
-  // Audit-4 DI-11 — spread the parsed envelope FIRST so unknown top-level keys
-  // that `V7BoardFileDataSchema.passthrough()` preserved at parse time survive
-  // the load → cache → save round-trip: the cache stores this object by
-  // reference (`cache[id] = data`) and the board write scheduler mutates +
-  // `JSON.stringify`s it in place, so a key present here is a key written back.
-  // Without the spread this reconstruction silently dropped any forward-compat
-  // envelope key a future Filo wrote, contradicting the schema's passthrough
-  // contract. The explicit fields below still pin the validated shape.
+  // Spread the parsed envelope FIRST so unknown top-level keys preserved by
+  // `V7BoardFileDataSchema.passthrough()` survive the load → cache → save
+  // round-trip (the cache stores this object and the writer serialises it), so
+  // a forward-compat key a newer Filo wrote isn't dropped. The explicit fields
+  // below still pin the validated shape.
   const normalised: V7BoardFileData = {
     ...data,
     board: data.board,
@@ -677,7 +658,7 @@ export async function loadBoard(
   };
 }
 
-/** Audit-19 ERR-3 — one successful load, kept for the duplicate-id ranking. */
+/** One successful load, kept for the duplicate-id ranking. */
 interface LoadedBoardEntry {
   relPath: string;
   /** Position in `board:list` (code-unit) order — the final tie-break. */
@@ -698,7 +679,7 @@ function baseName(rel: string): string {
 }
 
 /**
- * Audit-19 ERR-3 — ranks two files declaring the same board id (negative →
+ * Ranks two files declaring the same board id (negative →
  * `a` wins): not a sync conflict copy, then named after the board, then the
  * newest mtime, then the `board:list` order.
  */
@@ -724,7 +705,7 @@ function editedAt(mtimeMs: number | undefined): string {
 }
 
 /**
- * Audit-19 ERR-3 — neutral copy: never "remove the copy", never calls either
+ * Neutral copy: never "remove the copy", never calls either
  * file the duplicate. Both files are untouched; the loser is snapshotted.
  */
 function duplicateBoardMessage(winner: LoadedBoardEntry, loser: LoadedBoardEntry): string {
@@ -738,8 +719,8 @@ function duplicateBoardMessage(winner: LoadedBoardEntry, loser: LoadedBoardEntry
 
 /**
  * Emits a single board-scoped toast naming frames smaller than the design-
- * recommended 200×150 floor. M18 lowered the schema minimum to 0 so a
- * hand-edited collapse no longer rejects the whole board file; this warning
+ * recommended 200×150 floor. The schema minimum is 0 so a hand-edited
+ * collapse doesn't reject the whole board file; this warning
  * is the user-visible counterpart that surfaces *what* shrank. Kept here
  * rather than in the schema's `.refine` so the message can name the board.
  */
@@ -767,7 +748,7 @@ function warnUndersizedFrames(frames: readonly Frame[], boardName: string): void
  * partially-migrated file keeps its existing numbers stable.
  *
  * Returns `true` when at least one index was assigned, so the caller can
- * mark the board dirty (M26) — otherwise the backfill re-runs on every
+ * mark the board dirty — otherwise the backfill re-runs on every
  * reopen and can drift if the user reorders groups between loads.
  */
 function backfillGroupDisplayIndices(board: Board): boolean {
@@ -813,12 +794,12 @@ export async function loadAllBoards(
   failedBoards: FailedBoardEntry[];
   /**
    * Board IDs whose tile-group `displayIndex` field was backfilled on load
-   * (M26). The caller must `boardCacheStore.markDirty(id)` for each so the
+   * The caller must `boardCacheStore.markDirty(id)` for each so the
    * freshly assigned indices reach disk on the next debounced save.
    */
   backfilledBoardIds: string[];
   /**
-   * Phase 2.4 — board IDs that had orphan refs / duplicate placements
+   * Board IDs that had orphan refs / duplicate placements
    * pruned during load. The caller marks each dirty so the pruned shape
    * lands on disk and the orphans don't re-surface on every reopen. The
    * source `.board.json` is preserved under `.filo/recovery/` (snapshot
@@ -826,7 +807,7 @@ export async function loadAllBoards(
    */
   prunedBoardIds: string[];
   /**
-   * Audit 2.1 — board IDs whose nested connection / frame / mindmap-group
+   * Board IDs whose nested connection / frame / mindmap-group
    * `boardId` was normalized to `board.id` on load. The caller marks each
    * dirty so the corrected values reach disk (mirrors `backfilledBoardIds`;
    * no recovery snapshot is involved).
@@ -850,17 +831,11 @@ export async function loadAllBoards(
     const result = await loadBoard(vaultRoot, relPath);
     if (!result.ok) {
       failedBoards.push({ path: relPath, errorKind: result.error, message: result.message });
-      // Audit-19 ERR-4 — a transient failure (lock / offline / IO) gets an
-      // actionable sticky Retry toast from vaultCandidate after the open, not a
-      // one-shot error here.
+      // A transient failure (lock / offline / IO) gets an actionable sticky
+      // Retry toast from vaultCandidate after the open, not a one-shot error here.
       if (isTransientBoardLoadError(result.error)) continue;
-      // Phase 23 / M14 — the from-future case has a user-facing message
-      // already; route it through verbatim instead of wrapping it in a
-      // generic prefix that obscures the cause. Phase B / B.3 — the
-      // snapshot-failed case is treated the same way for the same
-      // reason (its message names the specific remediation steps).
-      // Sprint C / C9 — no-migration-path also carries a precise
-      // user-facing message describing the version gap.
+      // These kinds already carry a precise user-facing message; route it
+      // through verbatim instead of wrapping it in a generic prefix.
       const hasUserFacingMessage =
         result.error === 'from-future' ||
         result.error === 'snapshot-failed' ||
@@ -875,15 +850,14 @@ export async function loadAllBoards(
     loaded.push({ relPath, index: loaded.length, result });
   }
 
-  // Audit 1.2 + Audit-19 ERR-3 — two `.board.json` files declaring the same
-  // board.id must not collapse (cache[id] / paths[id] would silently overwrite
-  // and the loser's connections/frames would pollute the survivor). Before
-  // Audit-19 the FIRST file in code-unit order won — and ' ' / '-' sort before
-  // '.', so `Plan (1).board.json` / `Plan - Copy.board.json` hijacked the
-  // canonical `Plan.board.json` (every save then went into the copy). Rank each
-  // id group instead: a non-conflict-copy name first (C0 detector), then the
-  // name matching the board's own name, then the newest mtimeMs, then the old
-  // code-unit order. Only the winner's connections/frames are merged.
+  // Two `.board.json` files declaring the same board.id must not collapse
+  // (cache[id] / paths[id] would silently overwrite and the loser's
+  // connections/frames would pollute the survivor). Code-unit order alone would
+  // let `Plan (1).board.json` / `Plan - Copy.board.json` (' ' / '-' sort before
+  // '.') hijack the canonical `Plan.board.json`, so rank each id group: a
+  // non-conflict-copy name first, then the name matching the board's own name,
+  // then the newest mtimeMs, then code-unit order. Only the winner's
+  // connections/frames are merged.
   const relSet = new Set(relList.map((r) => r.toLowerCase()));
   const isConflictCopy = (rel: string): boolean =>
     detectConflictCopyPath(rel, { exists: (c) => relSet.has(c.toLowerCase()) }) !== null;

@@ -11,11 +11,8 @@ export class AddFrameCommand extends Command {
   constructor(frame: Frame, boardId?: string) {
     super();
     this.targetBoardId = boardId ?? boardStore.current?.id ?? '';
-    // M24 — `this.snapshot(...)` deep-clones via JSON round-trip so the
-    // snapshot doesn't share `position`, `size`, `style`, or `tileIds` with
-    // the live store. A shallow `{ ...frame }` would let later style or
-    // containment mutations silently leak into the would-be-restored value
-    // on redo.
+    // Deep-clone so the snapshot doesn't share `position`, `size`, `style`, or
+    // `tileIds` with the live store; later mutations would leak into redo.
     this.frame = this.snapshot(frame);
     this.description = `Add frame "${frame.title}"`;
   }
@@ -32,13 +29,13 @@ export class AddFrameCommand extends Command {
 /**
  * Generic Frame patch — captures a before/after `Partial<Frame>` pair so
  * title commits, collapse toggles, resize endpoints and drag endpoints can
- * all share one command shape. Phase 16 / H4.
+ * all share one command shape.
  *
  * Drag is handled by `MoveFrameCommand` rather than this class because the
  * frame's contained tiles also move during a drag — see that command for
  * the full picture.
  *
- * Phase 6 / 6.2 — when the patch changes `size`, the frame's contained
+ * When the patch changes `size`, the frame's contained
  * tile set can shift (tiles fall outside the new bounds, others fall
  * inside). The constructor snapshots `frame.tileIds` BEFORE the resize
  * (Frame.svelte runs `updateContainment` AFTER `pushWithoutExecute`, so
@@ -64,7 +61,7 @@ export class UpdateFrameCommand extends Command {
     super();
     this.targetBoardId = boardId ?? boardStore.current?.id ?? '';
     this.frameId = frameId;
-    // Phase R3 — deep-clone so nested `style` or `tileIds` arrays can't be
+    // Deep-clone so nested `style` or `tileIds` arrays can't be
     // mutated through the original reference after the command is pushed.
     this.beforeUpdates = this.snapshot(beforeUpdates);
     this.afterUpdates = this.snapshot(afterUpdates);
@@ -150,7 +147,7 @@ export class MoveFrameCommand extends Command {
 
   execute() {
     this.applyTo(this.afterPos, this.beforePos);
-    // C3 — recompute containment so tiles added or removed between the
+    // Recompute containment so tiles added or removed between the
     // original drag and a redo (or any tile whose centre now falls
     // outside the frame's restored position) get the correct tileIds.
     framesStore.updateContainment(this.frameId);
@@ -171,17 +168,12 @@ export class DeleteFrameCommand extends Command {
     super();
     this.targetBoardId = boardId ?? boardStore.current?.id ?? '';
     const f = boardStore.frames.find(fr => fr.id === frameId);
-    // D.1 — explicit not-found guard. Without this, `JSON.stringify(undefined)`
-    // returns the value `undefined`, which `JSON.parse` then throws on with
-    // an opaque "Unexpected token u in JSON" — a poor diagnostic for what's
-    // actually a race between a stale UI handle and a frame that's already
-    // been removed (external delete, undo of an AddFrameCommand, …).
+    // Explicit not-found guard: otherwise snapshotting `undefined` throws an
+    // opaque JSON.parse error for what is really a stale UI handle racing a
+    // frame that was already removed.
     if (!f) throw new Error(`DeleteFrameCommand: frame ${frameId} not found`);
-    // M24 — `this.snapshot(...)` deep-clones via JSON round-trip so the
-    // snapshot doesn't share `tileIds`, `style`, `position`, or `size` with
-    // the live store. A shallow `{ ...f }` would let a tile drop into / out
-    // of the frame between delete and undo silently mutate the
-    // would-be-restored containment.
+    // Deep-clone so a tile dropped into / out of the frame between delete and
+    // undo can't mutate the snapshot's containment through the live store.
     this.frame = this.snapshot(f);
     this.description = `Delete frame`;
   }

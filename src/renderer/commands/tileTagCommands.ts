@@ -3,10 +3,8 @@ import { boardStore } from '../stores/board.svelte';
 import { fileTagsStore } from '../stores/fileTags.svelte';
 
 /**
- * Tag-driven tile commands, all dispatched by `fileTagsStore`. Sharded out of
- * tileCommands.ts so that file stays under the 1000-LOC cap (CLAUDE.md "one
- * concern per file"). Covers fade-by-tag plus the undoable tile-mode and
- * path-mode tag add/remove pairs.
+ * Tag-driven tile commands, all dispatched by `fileTagsStore`. Covers
+ * fade-by-tag plus the undoable tile-mode and path-mode tag add/remove pairs.
  *
  * `fileTagsStore` is referenced inside execute/undo (not at module load) so
  * the circular import (fileTags.svelte.ts → commands/index.ts → here → back)
@@ -15,7 +13,7 @@ import { fileTagsStore } from '../stores/fileTags.svelte';
 
 /**
  * Toggles faded state for a set of tiles (typically all tiles with a given tag).
- * Stores previous faded states for clean undo. Transplanted from Fork's FadeTagCommand.
+ * Stores previous faded states for clean undo.
  */
 export class ToggleTagFadeCommand extends Command {
   description: string;
@@ -59,11 +57,10 @@ export class ToggleTagFadeCommand extends Command {
 
 // ── Tile Tag Commands ──
 //
-// Phase 16 / H2. The fileTagsStore's public addTagToTile/removeTagFromTile
-// now push these commands so a Ctrl+Z reverses a single-tile tag change.
-// Global tag rename remains excluded from history — a single command can't
-// cleanly represent a multi-file disk-write batch, and the audit explicitly
-// flags it as out of scope.
+// The fileTagsStore's public addTagToTile/removeTagFromTile push these
+// commands so a Ctrl+Z reverses a single-tile tag change. Global tag rename
+// is excluded from history — a single command can't cleanly represent a
+// multi-file disk-write batch.
 
 export class AddTileTagCommand extends Command {
   description: string;
@@ -93,12 +90,9 @@ export class RemoveTileTagCommand extends Command {
   readonly targetBoardId: string;
   private tileId: string;
   private tagName: string;
-  // 2.5 (Audit-14) — the tag's global colour at construction time. The inverse
-  // re-add on undo (`_applyAddTagToTile` → `ensureTag`) resurrects the tag with
-  // the DEFAULT colour if the global definition was deleted between execute and
-  // undo (e.g. an interleaved global tag delete); re-asserting this snapshot
-  // first preserves the original colour. See the class note below for why we
-  // keep the inverse op (not a full membership snapshot) for the tile's tags.
+  // The tag's global colour at construction time. If the global definition is
+  // deleted before undo, the inverse re-add (`ensureTag`) would resurrect it
+  // with the DEFAULT colour; re-asserting this snapshot first preserves it.
   private snapshotColor: string | undefined;
 
   constructor(tileId: string, tagName: string, boardId?: string) {
@@ -115,7 +109,7 @@ export class RemoveTileTagCommand extends Command {
   }
 
   undo() {
-    // 2.5 — re-create the global tag definition with its ORIGINAL colour before
+    // Re-create the global tag definition with its ORIGINAL colour before
     // the inverse re-add, so a definition deleted in the interim isn't
     // resurrected with the default colour. `ensureTag` is idempotent (no-op when
     // the definition still exists), so this never overrides a colour the user
@@ -130,7 +124,7 @@ export class RemoveTileTagCommand extends Command {
 }
 
 /**
- * Phase 7 / 7.8 — undoable path-mode tag add. Mirrors the tile-mode pair
+ * Undoable path-mode tag add. Mirrors the tile-mode pair
  * above but targets a vault-relative file path (Document board / sidebar
  * editor). The write fan-out — three sinks: `.filo/tags.json`, every text
  * tile def, and the file's frontmatter — is the same as the tile-mode
@@ -164,7 +158,7 @@ export class RemovePathTagCommand extends Command {
   readonly targetBoardId: string;
   private path: string;
   private tagName: string;
-  // 2.5 (Audit-14) — see RemoveTileTagCommand: snapshot the tag's global colour
+  // See RemoveTileTagCommand: snapshot the tag's global colour
   // so the inverse re-add on undo doesn't resurrect a deleted definition with
   // the default colour.
   private snapshotColor: string | undefined;
@@ -183,7 +177,7 @@ export class RemovePathTagCommand extends Command {
   }
 
   undo() {
-    // 2.5 — preserve the original tag colour across the round-trip (see
+    // Preserve the original tag colour across the round-trip (see
     // RemoveTileTagCommand.undo). `ensureTag` is idempotent.
     if (this.snapshotColor) fileTagsStore.ensureTag(this.tagName, this.snapshotColor);
     fileTagsStore._applyAddTagToPath(this.path, this.tagName);

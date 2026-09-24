@@ -1,10 +1,8 @@
 /**
- * Phase 5 / 5.6 — undoable title rename for tiles.
+ * Undoable title rename for tiles.
  *
  * For text tiles the title rename also renames the backing `.md` file (so
- * "Notes.md" → "Plans.md" follows the title change). Before this phase the
- * rename ran without history; Ctrl+Z couldn't undo the disk-side rename or
- * the in-board title change.
+ * "Notes.md" → "Plans.md" follows the title change).
  *
  * The forward rename happens at component-time via the existing
  * `renameTextTileBackingFile` flow (which handles collision detection
@@ -33,7 +31,6 @@ import type { Tile } from '../schema/index';
 export class RenameTitleCommand extends Command {
   description: string;
   /**
-   * Phase 2 (IMPLEMENTATION_PLAN_2026-05-27) — flagged as a P1-5 site.
    * Title-rename mutates `boardStore.updateTile(...)` against the active
    * board; if a redo lands after a board switch the rename would target
    * whichever tile/title pair happens to live on the now-active board.
@@ -54,7 +51,7 @@ export class RenameTitleCommand extends Command {
   private oldPath: string | null;
   private newPath: string | null;
   /**
-   * Phase 7 / 7.9 — board id for cache-backed tiles (Task List / Kanban
+   * Board id for cache-backed tiles (Task List / Kanban
    * cards). `null` for active-canvas tiles where `boardStore.getTile`
    * resolves on its own. When set, undo/redo route through
    * `boardCacheStore.persistUpdateTile` since the tile isn't on the active
@@ -62,7 +59,7 @@ export class RenameTitleCommand extends Command {
    */
   private boardId: string | null;
   /**
-   * Phase 7 / 7.9 — document id, if the renamed tile is backed by a docStore
+   * Document id, if the renamed tile is backed by a docStore
    * entry. When set, undo/redo also update the document's filename + title
    * to match the rename. Document board / sidebar tiles + tasks all use
    * this so the resolver sees the new path immediately.
@@ -128,7 +125,7 @@ export class RenameTitleCommand extends Command {
     if (boardStore.getTile(this.tileId)) {
       boardStore.updateTile(this.tileId, titlePatch);
     } else if (this.boardId) {
-      // Phase 7 / 7.9 — cache-only path for Task List / Kanban tiles that
+      // Cache-only path for Task List / Kanban tiles that
       // aren't on the active mind-map canvas. Mirrors the live-tile branch
       // by routing through the cache so the next render picks up the title
       // change via the active-proxy bridge (TaskListBoard.tickAndPersist).
@@ -136,13 +133,9 @@ export class RenameTitleCommand extends Command {
     }
     if (this.contentId && toPath) {
       documentStore.updateFilename(this.contentId, toPath);
-      // Phase A.4 — undo/redo of a title rename do NOT modify body
-      // content, so flipping `isDirty` would queue the markdown
-      // scheduler to write the in-memory body — possibly stale after
-      // external edits during the rename window — back to the
-      // freshly-renamed-back file, silently overwriting the external
-      // changes. Use the clean variant that preserves whatever dirty
-      // state the doc already had.
+      // Undo/redo of a title rename don't modify the body, so use the clean
+      // variant: flipping `isDirty` would write the (possibly stale) in-memory
+      // body over the renamed file, clobbering external edits.
       documentStore.updateTitleClean(this.contentId, title);
     }
   }

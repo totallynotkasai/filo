@@ -4,7 +4,7 @@
   import { foreignSentinelsStore, machineLabel } from '../../stores/foreignSentinels.svelte';
 
   let paths = $derived(vaultStore.recoveryPendingPaths);
-  // Audit-19 EXT-6 — other machines' unclean-shutdown markers / quit-failure
+  // Other machines' unclean-shutdown markers / quit-failure
   // breadcrumbs in the synced `.filo/`: listed read-only (their data is on
   // that machine; Filo never prompts for, resumes or clears them).
   let foreign = $derived(
@@ -17,10 +17,9 @@
   // Acknowledgement — drops the pending-paths list, clears the on-disk
   // `.filo/.dirty` sentinel (if the write tracker is idle), and un-parks the
   // recovery sequencer so the remaining sentinel prompts (tag-rewrite,
-  // rename-cascade, snapshot listing) can surface. Audit-17 3.3 — Esc /
-  // backdrop / X now acknowledge too (via the Modal's `beforeClose` in
-  // AppShell): every close path is an acknowledgement, otherwise a bypassed
-  // close parked the sequencer forever and steps 2–4 never ran that session.
+  // rename-cascade, snapshot listing) can surface. Esc / backdrop / X only
+  // un-park (the Modal's `beforeClose` in AppShell); this explicit Dismiss is
+  // the one path that acknowledges.
   async function dismiss() {
     await vaultStore.acknowledgeRecovery();
     uiStore.closeModal();

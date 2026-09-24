@@ -66,7 +66,7 @@ const SRC_ROOT = resolve(__dirname, '../../');
 const SCAN_DIRS = ['main', 'renderer'];
 const EXTENSIONS = ['.svelte', '.svelte.ts', '.ts'];
 
-// Same heuristics as `scripts/check-legacy-read-file-text.mjs`. The two
+// Same heuristics as `scripts/gates:legacy-read`. The two
 // scripts agreeing on the rejection set means the CI gate and unit suite
 // can't drift apart silently.
 const LEGACY_TEMPLATE_LITERAL = /['"]vault:read-file-text['"]\s*,\s*`/;

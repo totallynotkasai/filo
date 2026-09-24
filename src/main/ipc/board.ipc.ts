@@ -52,7 +52,7 @@ import {
   PayloadTooLargeError,
 } from '../utils/payloadLimits';
 
-/** Audit-19 ERR-4 — lock-retry budget for ONE board read at vault open. */
+/** Lock-retry budget for ONE board read at vault open. */
 const BOARD_LOAD_LOCK_BUDGET_MS = 1500;
 
 /**
@@ -81,7 +81,7 @@ export function registerBoardHandlers(): void {
    * Initializes a vault's .filo/ config directory with default files.
    * Safe to call on an already-initialized vault (existing files not overwritten).
    *
-   * Phase 1 / 1.2 — three layered guards before the registry mutation:
+   * Three layered guards before the registry mutation:
    *
    *   1. Non-empty string — already enforced upstream by the preload
    *      `validateIpcPayload` against `IPC_PAYLOAD_SCHEMAS['vault:init-config']`
@@ -130,16 +130,15 @@ export function registerBoardHandlers(): void {
       vaultRegistry.setCurrentVault(vaultRoot);
       try {
         await initVaultConfig(vaultRoot);
-        // Audit-19 EXT-6 — this machine in `.filo/machines/` (labels foreign
-        // sentinels + feeds the conflict-copy host list). Best-effort.
+        // Record this machine in `.filo/machines/` (labels foreign sentinels
+        // + feeds the conflict-copy host list). Best-effort.
         await registerMachineInVault(vaultRoot);
       } catch (initErr) {
-        // Audit 5.8 — roll the registry back so a failed `.filo/` init (EACCES
-        // on a read-only mount, ENOSPC, a flaky network share) doesn't leave a
-        // half-initialised vault armed. A stale registry would block a clean
-        // re-open of a DIFFERENT vault via the guard above while the renderer
-        // believes the open failed. Restore the PRIOR value (not unconditional
-        // null) so a same-vault re-init failure leaves the active vault armed.
+        // Roll the registry back so a failed `.filo/` init (EACCES, ENOSPC, a
+        // flaky share) doesn't leave a half-initialised vault armed, which
+        // would block re-opening a DIFFERENT vault via the guard above.
+        // Restore the PRIOR value (not null) so a same-vault re-init failure
+        // leaves the active vault armed.
         vaultRegistry.setCurrentVault(current);
         throw initErr;
       }
@@ -167,7 +166,7 @@ export function registerBoardHandlers(): void {
   });
 
   /**
-   * Audit-19 ERR-3 / EXT-7 — lists sync-client conflict forks of boards
+   * Lists sync-client conflict forks of boards
    * (`Plan.board-HOST.json` …) whose canonical `*.board.json` exists. Kept
    * separate from `board:list` so its bare `string[]` contract is unchanged.
    */
@@ -185,10 +184,10 @@ export function registerBoardHandlers(): void {
 
   /**
    * Loads a .board.json file. Returns `{ success: true, data }` (the parsed
-   * board; the caller validates with Zod) or a typed failure code (Audit-19
-   * ERR-4: ENOENT / LOCKED / OFFLINE / TOO_LARGE / PARSE / IO).
+   * board; the caller validates with Zod) or a typed failure code (ENOENT /
+   * LOCKED / OFFLINE / TOO_LARGE / PARSE / IO).
    *
-   * Phase 31 A5.4 — pre-flight stat caps the file at the same size limit
+   * A pre-flight stat caps the file at the same size limit
    * the writer uses (PAYLOAD_LIMITS.BOARD = 50 MB). A larger `.board.json`
    * either indicates corruption or a runaway tile-spam loop; in either
    * case we refuse to load it rather than OOM the renderer on a multi-GB
@@ -200,17 +199,17 @@ export function registerBoardHandlers(): void {
       assertSafeRelativePath(relativePath);
       const fullPath = resolveBoardPath(vaultRoot, relativePath);
       assertWithinVault(vaultRoot, fullPath);
-      // Audit-19 ERR-4 — retry a transient Windows lock (OneDrive / antivirus)
-      // with a SHORT budget: one board mustn't stall the vault open for 5 s.
+      // Retry a transient Windows lock (OneDrive / antivirus) with a SHORT
+      // budget: one board mustn't stall the vault open for 5 s.
       const budgetMs = Math.min(BOARD_LOAD_LOCK_BUDGET_MS, lockRetryBudgetMs());
       const { promises: fs } = await import('fs');
-      // A5.4 — refuse to load `.board.json` files larger than PAYLOAD_LIMITS.BOARD.
+      // Refuse to load `.board.json` files larger than PAYLOAD_LIMITS.BOARD.
       const stat = await retryOnWindowsLock(() => fs.stat(fullPath), { budgetMs });
       if (stat.size > PAYLOAD_LIMITS.BOARD) throw new BoardTooLargeError(stat.size, PAYLOAD_LIMITS.BOARD);
       const data = await retryOnWindowsLock(() => loadBoardFile(fullPath), { budgetMs });
       return { success: true, data };
     } catch (err) {
-      // Audit-19 ERR-4 — a typed code instead of a bare `null`: a lock or an
+      // A typed code instead of a bare `null`: a lock or an
       // offline cloud placeholder must not read as "not-found" (the board would
       // be gone for the whole session with no way back but reopening the vault).
       if (err instanceof NoActiveVaultError) {
@@ -228,15 +227,11 @@ export function registerBoardHandlers(): void {
   ipcMain.handle('board:save', async (_event, vaultRoot: string, relativePath: string, data: unknown) => {
     try {
       assertActiveVault(vaultRoot);
-      // Audit-14 4.6 — `board:save` is a CREATING channel (it writes a brand-new
-      // `.board.json` the first time a board is persisted, then overwrites it on
-      // every later save). Validate with `forCreation: true` so the Windows-only
-      // rules (reserved DOS stems like `CON.board.json`, illegal chars) apply on
-      // every platform — a POSIX user must not be able to author a board path
-      // that breaks the same vault when opened on Windows. `board:create`
-      // already does this for its name; `board:save` is the path a renderer can
-      // also reach directly. (`board:load`/`board:delete` stay creation-free —
-      // they operate on paths that already exist; see ci:no-forcreation-on-read-delete.)
+      // `board:save` is a CREATING channel (the first save writes a brand-new
+      // `.board.json`), so validate with `forCreation: true`: a POSIX user
+      // must not author a board path that breaks the vault on Windows.
+      // (`board:load`/`board:delete` stay creation-free — they operate on
+      // paths that already exist; see gates:no-forcreation-on-read-delete.)
       assertSafeRelativePath(relativePath, { forCreation: true });
       assertPayloadByteSize(jsonPayloadByteSize(data), PAYLOAD_LIMITS.BOARD, 'board:save');
       const fullPath = resolveBoardPath(vaultRoot, relativePath);
@@ -269,21 +264,13 @@ export function registerBoardHandlers(): void {
       // Defence-in-depth — reject `..`, absolute paths, NUL bytes, Windows
       // reserved names, and excessive depth on the subfolder before
       // `createBoardFile` joins it onto vaultRoot and writes the JSON.
-      // Mirrors the pattern added to `vault:copy-file` in Phase 37 / 37.5.
       // `assertWithinVault` below would also catch a traversal, but only
-      // after the file has been written outside the vault.
-      //
-      // 6.3.P1/P2 — `board:create` is a creation channel; pass
-      // `forCreation: true` so the Windows-only rules (illegal chars,
-      // reserved DOS names) apply on every platform. A POSIX user
-      // creating `CON.board.json` would otherwise produce a file that
-      // breaks the same vault on Windows.
+      // after the file has been written outside the vault. `forCreation`
+      // applies the Windows-only rules on every platform.
       if (subfolder) assertSafeRelativePath(subfolder, { forCreation: true });
-      // Phase B / B.1 — reject DOS device names (CON, NUL, LPT1, ...) on the
-      // board name before `createBoardFile` calls `atomicWriteFile`. Without
-      // this gate `CON.board.json` opens a console device handle on Windows
-      // and the write either silently no-ops or hangs the IPC. The basename
-      // form matches the rename gate at `vault:rename` (Phase 31 A3.6).
+      // Reject DOS device names (CON, NUL, LPT1, ...) on the board name:
+      // `CON.board.json` would open a console device handle on Windows and
+      // the write would no-op or hang the IPC.
       assertSafeFilename(`${name}.board.json`, { forCreation: true });
       assertPayloadByteSize(jsonPayloadByteSize(data), PAYLOAD_LIMITS.BOARD, 'board:create');
       const fullPath = await createBoardFile(vaultRoot, name, data, subfolder);
@@ -370,17 +357,13 @@ export function registerBoardHandlers(): void {
       return { app, appearance, defaults, hotkeys, workspace, viewports, sidebarOrder };
     } catch (err) {
       logMainError('config:load-all', err);
-      // L18 (Audit-6) — a TOP-LEVEL failure reaches here only for a hard error
-      // the per-file loaders re-throw (e.g. a transient EACCES/EPERM on fs.stat
-      // under a OneDrive/AV lock; ENOENT → default and parse/too-large →
-      // `__corrupt` are handled inside `loadConfig` and never reject). The old
-      // all-empty return made openVault seed BOOTSTRAP DEFAULTS in memory, and a
-      // later config save could then overwrite the intact-but-was-locked files
-      // on disk. Tag the bag with a top-level failure marker (the shape stays a
-      // plain object — no `{ ok }` envelope, so the bare-channel contract is
-      // unchanged) so `loadVaultCandidate` pauses EVERY config write (preserving
-      // the on-disk files) and shows one low-key toast instead of seeding
-      // defaults. Reopening the vault retries the read.
+      // Only a hard error the per-file loaders re-throw lands here (e.g. a
+      // transient EACCES/EPERM under a OneDrive/AV lock; ENOENT and parse
+      // failures are handled inside `loadConfig`). An all-empty return would
+      // seed BOOTSTRAP DEFAULTS in memory, and a later save could overwrite
+      // the intact-but-locked files on disk. Tag the (still bare) bag with a
+      // failure marker so `loadVaultCandidate` pauses every config write and
+      // toasts instead. Reopening the vault retries the read.
       return {
         app: {}, appearance: {}, defaults: {}, hotkeys: {}, workspace: {}, viewports: {}, sidebarOrder: {},
         __loadAllFailed: String(err),
@@ -422,11 +405,10 @@ export function registerBoardHandlers(): void {
       assertSafeFilename(name);
       return await loadTheme(vaultRoot, name);
     } catch (err) {
-      // Sprint A / A16 — distinguish parse failure from missing-file. A
-      // hand-edited theme that's no longer valid JSON returns an
-      // envelope so `refreshAvailable` can aggregate the names of every
-      // failing theme into one toast. ENOENT keeps the legacy bare-null
-      // shape (the renderer treats it as "theme not found").
+      // Distinguish parse failure from missing-file. A hand-edited theme
+      // that's no longer valid JSON returns an envelope so
+      // `refreshAvailable` can aggregate every failing theme into one toast.
+      // ENOENT keeps the bare-null shape ("theme not found").
       if (err instanceof ThemeParseError) {
         logMainError(`theme:load ${name}`, err);
         return { ok: false, code: 'invalid-json', name, error: err.message };
@@ -446,7 +428,7 @@ export function registerBoardHandlers(): void {
   ipcMain.handle('theme:save', async (_event, vaultRoot: string, name: string, data: unknown) => {
     try {
       assertActiveVault(vaultRoot);
-      // 6.3.P1/P2 — `theme:save` creates `<vault>/.filo/themes/<name>.json`;
+      // `theme:save` creates `<vault>/.filo/themes/<name>.json`;
       // creation rules apply on every platform so a saved theme stays
       // portable.
       assertSafeFilename(name, { forCreation: true });
@@ -490,19 +472,15 @@ export function registerBoardHandlers(): void {
     try {
       assertActiveVault(vaultRoot);
       assertSafeRelativePath(relativePath);
-      // Sprint A / A10 — refuse snapshots of `.filo/` contents. The
-      // recovery snapshot path is intended for `.board.json` and vault
-      // markdown files; without this gate a renderer could ask main to
-      // copy `.filo/tags.json` (or any other config file) into the
-      // recovery directory, which is essentially an exfiltration vector
-      // for vault-internal state. The dedicated tags/templates/theme
-      // channels already own legitimate access to those files.
+      // Refuse snapshots of `.filo/` contents: copying config files into the
+      // recovery directory would be an exfiltration vector for vault-internal
+      // state. The dedicated tags/templates/theme channels own those files.
       assertNotInFiloDir(relativePath);
       const destAbs = await snapshotForRecovery(vaultRoot, relativePath);
       return { ok: true, path: destAbs };
     } catch (err) {
       logMainError(`recovery:snapshot ${relativePath}`, err);
-      // Audit-19 UX-6 — pass the errno through (ENOENT = nothing to back up;
+      // Pass the errno through (ENOENT = nothing to back up;
       // EBUSY / RECOVERY_SNAPSHOT_TOO_LARGE = the keep-local backup failed).
       const errno = (err as NodeJS.ErrnoException | null)?.code;
       const code = classifyError(err) ?? (typeof errno === 'string' ? errno : undefined);
@@ -511,15 +489,10 @@ export function registerBoardHandlers(): void {
   });
 
   /**
-   * #11 — lists preserved snapshots under `.filo/recovery/` so the renderer
-   * can surface them on vault open (basename + timestamp + reveal). Read-only:
-   * it never prunes, so the user's recovery backups are only removed when they
-   * act on them or the write-time cap trims the oldest — never silently on
-   * open. BARE channel (returns the array directly, like `theme:load`): a scan
-   * failure logs on the main side and resolves to `[]` so the open proceeds
-   * without the (defensive) listing. Not an envelope channel — there is no
-   * data-integrity decision riding on distinguishing "scan failed" from "no
-   * snapshots"; both mean "show nothing".
+   * Lists preserved snapshots under `.filo/recovery/` so the renderer can
+   * surface them on vault open (basename + timestamp + reveal). Read-only: it
+   * never prunes. BARE channel (returns the array directly, like
+   * `theme:load`); a scan failure is logged and re-thrown (see below).
    */
   ipcMain.handle('recovery:list', async (_event, vaultRoot: string) => {
     try {
@@ -527,20 +500,16 @@ export function registerBoardHandlers(): void {
       return await listRecoverySnapshots(vaultRoot);
     } catch (err) {
       logMainError('recovery:list', err);
-      // L20/L21 (Audit-6) — `listRecoverySnapshots` already maps ENOENT (no
-      // recovery dir → steady state) to `[]` internally, so any error reaching
-      // here is a REAL scan failure: EACCES / EBUSY on a locked share, ENOTDIR,
-      // NO_ACTIVE_VAULT after a swap. Swallowing it into `[]` is indistinguishable
-      // from "no snapshots" and hides the user's backup exactly when the disk is
-      // locked. Re-throw (the channel stays bare — no `{ ok }` envelope) so the
-      // renderer's `vault.recovery-snapshots` catch surfaces the low-key
-      // "couldn't scan recovery, check .filo/recovery manually" toast.
+      // ENOENT is already mapped to `[]`, so anything here is a REAL scan
+      // failure (a locked share, ENOTDIR, NO_ACTIVE_VAULT after a swap).
+      // Returning `[]` would hide the user's backup exactly when the disk is
+      // locked; re-throw so the renderer toasts "couldn't scan recovery".
       throw err;
     }
   });
 
   /**
-   * Audit-19 EXT-5 — sweeps orphaned atomic-write temps (older than 10 min,
+   * Sweeps orphaned atomic-write temps (older than 10 min,
    * not listed by any quit-failure breadcrumb, not tracked by this process)
    * into `.filo/recovery/orphan-tmp/`. The renderer calls it on vault open
    * AFTER surfacing the quit-failure breadcrumb. Moves, never deletes.

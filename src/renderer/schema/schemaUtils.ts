@@ -11,26 +11,14 @@ import { z } from 'zod';
  *   - ±Infinity  → passed through unchanged; REJECTED at the caller's
  *                  downstream `.pipe(z.number().finite())` gate (see below).
  *   - unparseable string → NaN (via `parseFloat`); REJECTED at the caller's
- *                  downstream `.pipe(z.number().finite())` gate (see SC-1).
+ *                  downstream `.pipe(z.number().finite())` gate (see below).
  *   - numeric string     → parsed via `parseFloat`.
  *
- * DECISION (2026-05-28, M2): ±Infinity now fails loud rather than folding
- * to the fallback. Previously the final transform replaced a non-finite
- * number with `fallback` and then persisted that on the next save — silently
- * rewriting a hand-edited coordinate (e.g. `1e999` → Infinity) to 240/160,
- * which contradicted the loader's otherwise fail-loud stance for corrupt
- * data. A board with an Infinity coord now routes to `failedBoards` + a
- * recovery snapshot, exactly like a NaN coord. Both share the rationale that
- * a non-finite coordinate poisons the rbush spatial index, so surfacing the
- * board for recovery beats quietly mutating the user's file.
- *
- * DECISION (2026-05-29, SC-1): an unparseable size string (e.g. `"wide"`)
- * now also fails loud. Previously the string branch folded a `NaN` parse to
- * `fallback`, silently substituting 240/160 for a corrupt hand-edited size —
- * inconsistent with the ±Infinity stance above. The branch now returns the
- * raw `parseFloat` result (NaN for unparseable input), so the downstream
- * `.finite()` gate rejects it and the board routes to `failedBoards` +
- * recovery. Numeric strings (`"300"`) still parse and pass.
+ * DECISION — ±Infinity and unparseable strings fail loud rather than folding
+ * to the fallback: folding would persist e.g. 240/160 on the next save,
+ * silently rewriting a hand-edited value. A non-finite coordinate poisons the
+ * rbush spatial index, so the board routes to `failedBoards` + a recovery
+ * snapshot instead, like a NaN coord. Numeric strings (`"300"`) still parse.
  *
  * Contract: callers MUST chain `.pipe(z.number().finite()…)` — that gate is
  * what rejects the passed-through ±Infinity / NaN. Every call site does
@@ -86,7 +74,7 @@ export const optionalNumber = <T extends z.ZodType>(
  * user at the right slice of the board file.
  */
 /**
- * Sprint A / A14 — array `.refine` predicate for flat ID arrays. Mirrors
+ * Array `.refine` predicate for flat ID arrays. Mirrors
  * `uniqueBy` but for `z.array(z.string())` (no object key to project
  * through). Use alongside `.min(1)` on the string element so empty IDs
  * are rejected at element-level. The duplicate check fires only when
@@ -101,17 +89,15 @@ export const uniqueStrings = (
 ];
 
 /**
- * Sprint C / C7 — pattern matching the nanoid alphabet
+ * Pattern matching the nanoid alphabet
  * (alphanumerics + `_` + `-`). The minimum-length check is deferred
- * to a separate `.min(1)`; an 8-char floor would break a swathe of
- * existing test fixtures that use 6-char ids like `tile_x` / `frame_x`
- * — the bug the plan targets is empty / whitespace / special-character
- * keys, not short test ids. Production ids come from
+ * to a separate `.min(1)`; an 8-char floor would break test fixtures that
+ * use short ids like `tile_x` — the hazard is empty / whitespace /
+ * special-character keys, not short ids. Production ids come from
  * `lib/utils/ids.ts` (`createId()` → `nanoid(12)`, occasionally with a
  * semantic prefix like `sec_`) and easily satisfy this even at the
  * looser bound.
  */
-// Audit-14 6.5 — de-exported: referenced only by `idString` below.
 const NANOID_REGEX = /^[A-Za-z0-9_-]+$/;
 
 /**

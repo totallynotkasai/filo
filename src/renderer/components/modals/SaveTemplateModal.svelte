@@ -96,7 +96,7 @@
       uiStore.closeModal();
       uiStore.toast(`Saved template "${trimmed}"`, 'success', 1800);
     } catch (err) {
-      // C14 — route through the error bus so the failure also surfaces as a
+      // Route through the error bus so the failure also surfaces as a
       // toast. The inline `error` text below is the in-modal user surface;
       // the toast catches the user who's already dismissed or moved away.
       reportError('SaveTemplateModal', err, 'Failed to save template');

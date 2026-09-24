@@ -79,8 +79,7 @@ export const boardRefIntegrityStore = {
   },
 };
 
-// Phase 4 (Consolidation 2026-05-25) — vault-swap reset registration.
-// Drops the broken-ref tracking so the next vault's `recompute` starts
+// Vault-swap reset: drops the broken-ref tracking so the next vault's `recompute` starts
 // from an empty map rather than carrying ghost-broken entries that point
 // at tile ids the new vault doesn't own.
 onVaultSwap('pre-swap', 'boardRefIntegrity', () => {

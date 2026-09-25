@@ -10,6 +10,10 @@
    * subscription combined with ColorPicker `onchange` writing back into the
    * store created an unbounded reactive cascade.
    *
+   * With `tileIds` it styles several tiles at once: the controls are seeded
+   * from `tile`, each pick is applied to every listed tile that renders that
+   * field (`stylePatchForType`), and closing pushes one undo step for all.
+   *
    * Dismissal is via Escape or the close button only — outside-click does
    * NOT close the popup, since unrelated UI clicks (e.g. picker swatches)
    * would dismiss it unexpectedly.
@@ -20,7 +24,9 @@
   import type { Tile } from '../../schema/index';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { historyStore } from '../../stores/history.svelte';
-  import { UpdateTileStyleCommand } from '../../commands/index';
+  import { BatchCommand, UpdateTileStyleCommand } from '../../commands/index';
+  import type { Command } from '../../commands/Command';
+  import { stylePatchForType, supportsBodyFontSize } from '../../lib/styles/tileStyleSupport';
 
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
   const boardStore = scope.board;
@@ -32,26 +38,43 @@
 
   let {
     tile: initialTile,
+    tileIds,
     x,
     y,
     onclose,
   }: {
     tile: Tile;
+    /** Style several tiles at once. `tile` seeds the controls and is always included. */
+    tileIds?: string[];
     x: number;
     y: number;
     onclose: () => void;
   } = $props();
 
-  // Snapshot the style at mount so popup-close can dispatch a single
-  // UpdateTileStyleCommand spanning every pick made during this session.
-  // Per-pick history entries would blow through MAX_HISTORY for any
-  // meaningful styling session (changing one tile's colour + shape + shadow
-  // intensity costs 3 entries), and the user's mental model is "I opened
-  // the picker, I undo to close it" — a single command is the right grain.
+  // The tiles this session styles, fixed at mount.
+  const targetIds: string[] = untrack(() => [...new Set([initialTile.id, ...(tileIds ?? [])])]);
+  const popupTitle = targetIds.length > 1 ? `Style: ${targetIds.length} tiles` : 'Tile Style';
+  const showBodyFontSize = untrack(() =>
+    targetIds.some((id) => {
+      const t = boardStore.getTile(id);
+      return t ? supportsBodyFontSize(t.type) : false;
+    }),
+  );
+
+  // Snapshot every target's style at mount so popup-close can push one undo
+  // step spanning every pick made during this session. Per-pick history
+  // entries would blow through MAX_HISTORY for any meaningful styling session
+  // (changing one tile's colour + shape + shadow intensity costs 3 entries),
+  // and the user's mental model is "I opened the picker, I undo to close it".
   // JSON round-trip detaches the snapshot from the live Svelte 5 $state
   // Proxy so later store mutations don't leak in.
-  const beforeStyle: Tile['style'] = untrack(() =>
-    JSON.parse(JSON.stringify(initialTile.style)),
+  const beforeStyles = new Map<string, Tile['style']>(
+    untrack(() =>
+      targetIds.flatMap((id): [string, Tile['style']][] => {
+        const t = boardStore.getTile(id);
+        return t ? [[id, JSON.parse(JSON.stringify(t.style))]] : [];
+      }),
+    ),
   );
   let hasChanged = false;
 
@@ -60,11 +83,13 @@
   // — tag editor, external file watcher, undo/redo — are not clobbered
   // when the user picks a colour in the popup.
   function dispatchStyle(patch: Partial<Tile['style']>): void {
-    const current = boardStore.getTile(initialTile.id);
-    if (!current) return;
-    boardStore.updateTile(initialTile.id, {
-      style: { ...current.style, ...patch },
-    });
+    for (const id of targetIds) {
+      const current = boardStore.getTile(id);
+      if (!current) continue;
+      boardStore.updateTile(id, {
+        style: { ...current.style, ...stylePatchForType(current.type, patch) },
+      });
+    }
     hasChanged = true;
   }
 
@@ -76,20 +101,23 @@
   // `borderWidth`, `shadowIntensity` are optional in TileStyleSchema (no
   // `.default()`), so Zod's parse no longer re-fills the per-element layer.
   function dispatchClear(): void {
-    boardStore.updateTile(initialTile.id, {
-      style: {
-        headerColor: '',
-        bodyColor: '',
-        borderColor: '',
-        shape: undefined,
-        borderStyle: undefined,
-        borderWidth: undefined,
-        shadowIntensity: undefined,
-        dynamicContrastText: undefined,
-        fontSizeTitle: undefined,
-        fontSizeBody: undefined,
-      } as never,
-    });
+    for (const id of targetIds) {
+      if (!boardStore.getTile(id)) continue;
+      boardStore.updateTile(id, {
+        style: {
+          headerColor: '',
+          bodyColor: '',
+          borderColor: '',
+          shape: undefined,
+          borderStyle: undefined,
+          borderWidth: undefined,
+          shadowIntensity: undefined,
+          dynamicContrastText: undefined,
+          fontSizeTitle: undefined,
+          fontSizeBody: undefined,
+        } as never,
+      });
+    }
     hasChanged = true;
   }
 
@@ -283,25 +311,29 @@
     return () => {
       safeDeactivateTrap(trap);
       trap = null;
-      // Push a single UpdateTileStyleCommand for the whole session — only
-      // if the user actually changed something, and only if before/after
-      // differ. The store mutations have already happened (live preview),
+      // Push one undo step for the whole session: an UpdateTileStyleCommand
+      // per tile whose style actually changed, batched when there are
+      // several. The store mutations have already happened (live preview),
       // so pushWithoutExecute is the right verb: it records the diff for
       // undo/redo without re-running the writes.
       if (hasChanged) {
-        const current = boardStore.getTile(initialTile.id);
-        if (current) {
+        const commands: Command[] = [];
+        for (const [id, beforeStyle] of beforeStyles) {
+          const current = boardStore.getTile(id);
+          if (!current) continue;
           const afterStyle: Tile['style'] = JSON.parse(JSON.stringify(current.style));
-          if (JSON.stringify(beforeStyle) !== JSON.stringify(afterStyle)) {
-            historyStore.pushWithoutExecute(
-              new UpdateTileStyleCommand(
-                initialTile.id,
-                { style: beforeStyle },
-                { style: afterStyle },
-                mountBoardId,
-              ),
-            );
-          }
+          if (JSON.stringify(beforeStyle) === JSON.stringify(afterStyle)) continue;
+          commands.push(
+            new UpdateTileStyleCommand(id, { style: beforeStyle }, { style: afterStyle }, mountBoardId),
+          );
+        }
+        const [only] = commands;
+        if (commands.length === 1 && only) {
+          historyStore.pushWithoutExecute(only);
+        } else if (commands.length > 1) {
+          historyStore.pushWithoutExecute(
+            new BatchCommand(`Style ${commands.length} tiles`, commands, mountBoardId),
+          );
         }
       }
       if (triggerEl && triggerEl.isConnected) {
@@ -333,7 +365,7 @@
     onpointermove={onDragMove}
     onpointerup={onDragEnd}
   >
-    <span class="popup-title" id={popupTitleId}>Tile Style</span>
+    <span class="popup-title" id={popupTitleId}>{popupTitle}</span>
     <button class="close-btn" onclick={onclose} aria-label="Close">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
     </button>
@@ -439,19 +471,21 @@
     />
   </div>
 
-  <div class="style-row">
-    <label for="tile-fs-body">Body Font Size</label>
-    <input
-      id="tile-fs-body"
-      class="style-number"
-      type="number"
-      min="8"
-      max="48"
-      placeholder="—"
-      value={fontSizeBody}
-      onchange={(e) => setFontSizeBody((e.target as HTMLInputElement).value)}
-    />
-  </div>
+  {#if showBodyFontSize}
+    <div class="style-row">
+      <label for="tile-fs-body">Body Font Size</label>
+      <input
+        id="tile-fs-body"
+        class="style-number"
+        type="number"
+        min="8"
+        max="48"
+        placeholder="—"
+        value={fontSizeBody}
+        onchange={(e) => setFontSizeBody((e.target as HTMLInputElement).value)}
+      />
+    </div>
+  {/if}
 </div>
 
 <style>

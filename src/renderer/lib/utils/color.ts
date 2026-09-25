@@ -155,3 +155,19 @@ export function resolveBackgroundColor(
     .trim();
   return isValidHex(value) ? value : fallbackHex;
 }
+
+/**
+ * `hex` with its lightness moved `amount` (0–1) away from it: darker on a
+ * light colour, lighter on a dark one, same hue. A surface drawn over the
+ * colour (the minimap over the canvas) then reads as part of it but stays
+ * distinct. Returns the fallback unchanged when `hex` isn't a hex colour.
+ */
+export function contrastShade(hex: string, amount = 0.06, fallbackHex = '#888888'): string {
+  const rgb = parseHex(hex) ?? parseHex(fallbackHex);
+  if (!rgb) return fallbackHex;
+  const hsl = rgbToHsl(rgb);
+  const l = relativeLuminance(rgbToHex(rgb)) > 0.179
+    ? Math.max(0, hsl.l - amount)
+    : Math.min(1, hsl.l + amount);
+  return rgbToHex(hslToRgb({ ...hsl, l }));
+}

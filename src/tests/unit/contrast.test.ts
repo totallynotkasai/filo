@@ -9,6 +9,7 @@ import {
   contrastRatio,
   getDynamicContrastText,
   resolveBackgroundColor,
+  contrastShade,
 } from '@renderer/lib/utils/color';
 
 describe('Hex parsing', () => {
@@ -133,5 +134,30 @@ describe('resolveBackgroundColor', () => {
 
   it('uses the default fallback grey when no explicit override and no CSS var resolves', () => {
     expect(resolveBackgroundColor('', '--definitely-undefined-var')).toBe('#888888');
+  });
+});
+
+describe('contrastShade', () => {
+  it('darkens a light colour and lightens a dark one, keeping the hue', () => {
+    const light = contrastShade('#f0f0f4');
+    const dark = contrastShade('#232338');
+    expect(relativeLuminance(light)).toBeLessThan(relativeLuminance('#f0f0f4'));
+    expect(relativeLuminance(dark)).toBeGreaterThan(relativeLuminance('#232338'));
+    expect(Math.round(rgbToHsl(parseHex(dark)!).h)).toBe(Math.round(rgbToHsl(parseHex('#232338')!).h));
+  });
+
+  it('stays close to the original, so the surface reads as part of it', () => {
+    expect(contrastRatio(contrastShade('#1f3f64'), '#1f3f64')).toBeLessThan(1.5);
+  });
+
+  it('pairs with a stroke that reads on it for every built-in canvas colour', () => {
+    for (const bg of ['#232338', '#f0f0f4', '#1f3f64', '#463c30', '#364e30']) {
+      const fill = contrastShade(bg);
+      expect(contrastRatio(getDynamicContrastText(fill), fill)).toBeGreaterThan(4.5);
+    }
+  });
+
+  it('falls back when the input is not a hex colour', () => {
+    expect(contrastShade('var(--x)', 0.06, '#000000')).toBe(rgbToHex(hslToRgb({ h: 0, s: 0, l: 0.06 })));
   });
 });

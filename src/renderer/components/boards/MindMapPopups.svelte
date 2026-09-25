@@ -13,7 +13,7 @@
 
   let frameStylePopup = $state<{ frame: Frame; x: number; y: number } | null>(null);
   let connectionStylePopup = $state<{ connection: Connection; x: number; y: number } | null>(null);
-  let tileStylePopup = $state<{ tile: Tile; x: number; y: number } | null>(null);
+  let tileStylePopup = $state<{ tile: Tile; tileIds?: string[]; x: number; y: number } | null>(null);
   let tagEditorPopup = $state<{ tileId?: string; tileIds?: string[]; x: number; y: number } | null>(null);
 
   export function openFrameStyle(frame: Frame, x: number, y: number): void {
@@ -22,8 +22,9 @@
   export function openConnectionStyle(connection: Connection, x: number, y: number): void {
     connectionStylePopup = { connection, x, y };
   }
-  export function openTileStyle(tile: Tile, x: number, y: number): void {
-    tileStylePopup = { tile, x, y };
+  /** `tileIds` styles several tiles at once; the popup is seeded from `tile`. */
+  export function openTileStyle(tile: Tile, x: number, y: number, tileIds?: string[]): void {
+    tileStylePopup = { tile, tileIds, x, y };
   }
   export function openTagEditor(args: {
     tileId?: string; tileIds?: string[]; x: number; y: number;
@@ -56,6 +57,7 @@
 {#if tileStylePopup}
   <TileStylePopup
     tile={tileStylePopup.tile}
+    tileIds={tileStylePopup.tileIds}
     x={tileStylePopup.x}
     y={tileStylePopup.y}
     onclose={() => tileStylePopup = null}

@@ -14,7 +14,7 @@
   let triggerEl: HTMLElement | null = null;
 
   const menu = $derived(uiStore.contextMenu);
-  const actionItems = $derived(menu.items.filter((item) => !item.divider));
+  const actionItems = $derived(menu.items.filter((item) => !item.divider && !item.heading));
   const hasCheckable = $derived(menu.items.some((item) => item.checked !== undefined));
 
   function handleItemClick(item: ContextMenuItem) {
@@ -162,6 +162,8 @@
     {#each menu.items as item, i (`${item.id}_${i}`)}
       {#if item.divider}
         <div class="menu-divider" role="separator"></div>
+      {:else if item.heading}
+        <div class="menu-heading" role="presentation">{item.label}</div>
       {:else}
         {@const actionIdx = actionItems.indexOf(item)}
         {@const isCheckable = item.checked !== undefined}
@@ -294,6 +296,16 @@
     margin-left: 24px;
     font-size: 12px;
     color: var(--text-tertiary);
+  }
+
+  .menu-heading {
+    padding: 4px 12px 2px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    user-select: none;
   }
 
   .menu-divider {

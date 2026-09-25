@@ -1,6 +1,16 @@
 import type { ContextMenuItem } from '../../stores/ui.svelte';
 import type { Frame, Tile } from '../../schema/index';
 
+const STYLE_ICON = 'M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z';
+const TAGS_ICON = 'M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82zM7 7h.01';
+const LOCK_ICON = 'M19 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2zM7 11V7a5 5 0 0 1 10 0v4';
+const DELETE_ICON = 'M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2';
+
+/** " (N tiles)" when more than one tile is affected, else nothing. */
+function countSuffix(count: number): string {
+  return count > 1 ? ` (${count} tiles)` : '';
+}
+
 interface BuildTileMenuOpts {
   selectedCount: number;
   hasBrokenTiles: boolean;
@@ -12,22 +22,25 @@ interface BuildTileMenuOpts {
   onDelete: () => void;
 }
 
+/**
+ * The tile menu. Every action applies to the whole selection (the right-clicked
+ * tile is always part of it), so each label carries the count when it's
+ * more than one.
+ */
 export function buildTileContextMenu(opts: BuildTileMenuOpts): ContextMenuItem[] {
-  const tagsLabel = opts.selectedCount > 1
-    ? `Tags (${opts.selectedCount} tiles)`
-    : 'Tags';
+  const suffix = countSuffix(opts.selectedCount);
 
   return [
     {
       id: 'style',
-      label: 'Style',
-      icon: 'M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z',
+      label: `Style${suffix}`,
+      icon: STYLE_ICON,
       action: opts.onStyle,
     },
     {
       id: 'tags',
-      label: tagsLabel,
-      icon: 'M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82zM7 7h.01',
+      label: `Tags${suffix}`,
+      icon: TAGS_ICON,
       action: opts.onTags,
     },
     { id: 'div1', label: '', divider: true },
@@ -39,15 +52,16 @@ export function buildTileContextMenu(opts: BuildTileMenuOpts): ContextMenuItem[]
     },
     {
       id: 'lock',
-      label: 'Lock / Unlock',
-      icon: 'M19 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2zM7 11V7a5 5 0 0 1 10 0v4',
+      label: `Lock / Unlock${suffix}`,
+      icon: LOCK_ICON,
+      shortcut: 'Ctrl+L',
       action: opts.onToggleLock,
     },
     { id: 'div2', label: '', divider: true },
     {
       id: 'delete',
-      label: 'Delete',
-      icon: 'M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2',
+      label: `Delete${suffix}`,
+      icon: DELETE_ICON,
       shortcut: 'Delete',
       danger: true,
       action: opts.onDelete,
@@ -69,7 +83,7 @@ export function buildFrameContextMenu(opts: BuildFrameMenuOpts): ContextMenuItem
     {
       id: 'style',
       label: 'Style',
-      icon: 'M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z',
+      icon: STYLE_ICON,
       action: opts.onStyle,
     },
     {
@@ -89,14 +103,30 @@ export function buildFrameContextMenu(opts: BuildFrameMenuOpts): ContextMenuItem
     {
       id: 'delete',
       label: 'Delete Frame',
-      icon: 'M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2',
+      icon: DELETE_ICON,
       danger: true,
       action: opts.onDelete,
     },
   ];
 }
 
+/**
+ * Actions on the current selection, offered on empty canvas when two or more
+ * tiles are selected. Each applies to every selected tile.
+ */
+export interface CanvasSelectionActions {
+  count: number;
+  /** Ctrl+L's rule: lock all if any is unlocked, else unlock all. */
+  anyUnlocked: boolean;
+  onToggleLock: () => void;
+  onTags: () => void;
+  onStyle: () => void;
+  onDelete: () => void;
+}
+
 interface BuildCanvasMenuOpts {
+  /** Present only when two or more tiles are selected. */
+  selection?: CanvasSelectionActions;
   brokenCount: number;
   onNewTile: () => void;
   onNewFrame: () => void;
@@ -107,8 +137,34 @@ interface BuildCanvasMenuOpts {
   onRemoveBroken?: () => void;
 }
 
+function buildSelectionGroup(sel: CanvasSelectionActions): ContextMenuItem[] {
+  const n = ` (${sel.count} tiles)`;
+  return [
+    { id: 'selection-heading', label: `${sel.count} tiles selected`, heading: true },
+    {
+      id: 'selection-lock',
+      label: `${sel.anyUnlocked ? 'Lock' : 'Unlock'}${n}`,
+      icon: LOCK_ICON,
+      shortcut: 'Ctrl+L',
+      action: sel.onToggleLock,
+    },
+    { id: 'selection-tags', label: `Tags${n}`, icon: TAGS_ICON, action: sel.onTags },
+    { id: 'selection-style', label: `Style${n}`, icon: STYLE_ICON, action: sel.onStyle },
+    {
+      id: 'selection-delete',
+      label: `Delete${n}`,
+      icon: DELETE_ICON,
+      shortcut: 'Delete',
+      danger: true,
+      action: sel.onDelete,
+    },
+    { id: 'selection-div', label: '', divider: true },
+  ];
+}
+
 export function buildCanvasContextMenu(opts: BuildCanvasMenuOpts): ContextMenuItem[] {
   const items: ContextMenuItem[] = [
+    ...(opts.selection && opts.selection.count > 1 ? buildSelectionGroup(opts.selection) : []),
     {
       id: 'new-tile',
       label: 'New Tile',
@@ -155,7 +211,7 @@ export function buildCanvasContextMenu(opts: BuildCanvasMenuOpts): ContextMenuIt
     items.push({
       id: 'remove-broken',
       label: `Remove Broken Tiles (${opts.brokenCount})`,
-      icon: 'M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2',
+      icon: DELETE_ICON,
       danger: true,
       action: opts.onRemoveBroken,
     });

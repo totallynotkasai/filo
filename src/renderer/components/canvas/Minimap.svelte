@@ -5,13 +5,26 @@
    *
    * Layout: waypoints list on the LEFT, map graphic on the RIGHT.
    * Dimensions scale with window size (20% of viewport, clamped min/max).
+   * The map shows a local window around the viewport (`computeMinimapWindow`),
+   * so it scales with zoom and a far-away tile can't shrink it to dots.
+   * Its fill is a shade of the board background, and the viewport box's
+   * stroke is light or dark to match.
    * Tile pips use headerColor with fallback. Active media uses mm-pulse-anim ripple.
    */
   import { getContext } from 'svelte';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
   import { effectiveTileHeaderColor } from '../../lib/styles/effectiveStyle';
-  import { computeTilesAABB, computeMinimapBounds } from '../../lib/canvas/minimapBounds';
+  import { computeTilesAABB, computeMinimapWindow, isFiniteTile } from '../../lib/canvas/minimapBounds';
+  import { contrastShade, getDynamicContrastText, resolveBackgroundColor } from '../../lib/utils/color';
+  import { themeStore } from '../../stores/theme.svelte';
+
+  interface Props {
+    /** The board's resolved background colour; empty means the theme's `--canvas-bg`. */
+    bgColor?: string;
+  }
+
+  let { bgColor = '' }: Props = $props();
 
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
   const boardStore = scope.board;
@@ -70,12 +83,37 @@
   let tilesAABB = $derived(computeTilesAABB(Object.values(allTiles)));
 
   /**
-   * Bounding box — the union of the cached tile AABB and the current viewport,
-   * with 10% + 100px padding on all sides. Reads `viewportRect` (so it re-runs
-   * on pan), but that's now a cheap four-min/max union over the cached AABB
-   * instead of a full tile walk.
+   * The canvas region drawn: a local window around the viewport, kept inside
+   * the board. Reads `viewportRect` (so it re-runs on pan), but only does a
+   * few min/max ops over the cached AABB.
    */
-  let bounds = $derived(computeMinimapBounds(tilesAABB, canvasStore.viewportRect));
+  let bounds = $derived(
+    computeMinimapWindow(tilesAABB, canvasStore.viewportRect, effectiveMapW, mapH),
+  );
+
+  // Pips for finite tiles that overlap the window. The rest would be clipped
+  // anyway, and skipping them keeps a big board's minimap cheap.
+  let visibleTiles = $derived(
+    Object.values(allTiles).filter(
+      (t) =>
+        isFiniteTile(t) &&
+        t.position.x < bounds.maxX &&
+        t.position.x + t.size.width > bounds.minX &&
+        t.position.y < bounds.maxY &&
+        t.position.y + t.size.height > bounds.minY,
+    ),
+  );
+
+  // Colours follow the board background, including unsaved Settings edits.
+  // Reading the theme ids re-resolves `--canvas-bg` after a theme switch: the
+  // theme store applies the CSS variables before it updates them.
+  let resolvedBg = $derived.by(() => {
+    void themeStore.active;
+    void themeStore.activeFileId;
+    return resolveBackgroundColor(bgColor, '--canvas-bg');
+  });
+  let mapFill = $derived(contrastShade(resolvedBg));
+  let viewportStroke = $derived(getDynamicContrastText(mapFill));
 
   // Scale to fit bounds uniformly inside the map area
   let mapScale = $derived(
@@ -275,13 +313,13 @@
   <div
     class="minimap"
     onclick={handleMapClick}
-    style="width: {effectiveMapW}px; height: {mapH}px;"
+    style="width: {effectiveMapW}px; height: {mapH}px; background: {mapFill}; --mm-viewport-stroke: {viewportStroke};"
   >
     <!-- Tile pips. Re-resolve each tile via `getTile()` so a stale entry that
          the proxy hasn't yet finished evicting cannot leave a ghost pip.
          Route headerColor through the full cascade so board/global defaults
          show up in the minimap pips, not just per-tile overrides. -->
-    {#each Object.values(allTiles).filter((t) => boardStore.getTile(t.id)) as tile (tile.id)}
+    {#each visibleTiles.filter((t) => boardStore.getTile(t.id)) as tile (tile.id)}
       {@const isActive = activeMediaIds.has(tile.id)}
       {@const headerColor = effectiveTileHeaderColor(tile, vaultStore.project?.settings, boardStore.current)}
       <div
@@ -304,7 +342,7 @@
     <!-- Waypoint pips. Gated by the same toggle as the canvas markers and
          the side panel so "Hide Waypoints" hides waypoints everywhere. -->
     {#if canvasStore.waypointsVisible}
-      {#each waypoints as wp (wp.id)}
+      {#each waypoints.filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y)) as wp (wp.id)}
         <div
           class="minimap-waypoint-pip"
           class:wp-dragging={wpIsDragging && draggingWpId === wp.id}
@@ -355,7 +393,6 @@
 
   .minimap {
     position: relative;
-    background: var(--ui-surface);
     border: 1px solid var(--ui-border);
     border-radius: 8px;
     overflow: hidden;
@@ -427,8 +464,8 @@
   /* ── Viewport indicator ── */
   .minimap-viewport {
     position: absolute;
-    border: 2px solid var(--accent-primary);
-    background: var(--selection-bg);
+    border: 2px solid var(--mm-viewport-stroke);
+    background: color-mix(in srgb, var(--mm-viewport-stroke) 12%, transparent);
     border-radius: 2px;
     pointer-events: none;
   }

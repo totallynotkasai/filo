@@ -52,6 +52,7 @@
   import { VisibleTilesViewModel } from '../../lib/mindmap/visibleTilesViewModel.svelte';
   import { MarqueeSelectionController } from '../../lib/mindmap/marqueeSelectionController.svelte';
   import { confirmRemoveFrame } from '../../lib/frames/confirmRemoveFrame';
+  import { createSelectionActions } from '../../lib/mindmap/selectionActions';
   import type { Frame } from '../../schema/index';
 
   import SmartGuides from '../canvas/SmartGuides.svelte';
@@ -196,6 +197,14 @@
     return () => observer.disconnect();
   });
 
+  // Tile menu, and canvas menu with 2+ selected.
+  const selectionActions = createSelectionActions({
+    board: boardStore,
+    selection: selectionStore,
+    openTileStyle: (tile, x, y, tileIds) => popups?.openTileStyle(tile, x, y, tileIds),
+    openTagEditor: (args) => popups?.openTagEditor(args),
+  });
+
   // ── Context menu ──
   function handleContextMenu(e: MouseEvent) {
     // Defer to the browser's native menu (spell-check suggestions, etc.)
@@ -224,44 +233,12 @@
         selectedCount: selectionStore.selectedIds.size,
         hasBrokenTiles: false,
         brokenCount: 0,
-        onStyle: () => {
-          const tile = boardStore.getTile(tileId);
-          if (tile) popups?.openTileStyle(tile, e.clientX, e.clientY);
-        },
-        onTags: () => {
-          const ids = [...selectionStore.selectedIds];
-          popups?.openTagEditor(
-            ids.length > 1
-              ? { tileIds: ids, x: e.clientX, y: e.clientY }
-              : { tileId, x: e.clientX, y: e.clientY },
-          );
-        },
+        onStyle: () => selectionActions.openStyle(tileId, e.clientX, e.clientY),
+        onTags: () => selectionActions.openTags(e.clientX, e.clientY),
         onSaveTemplate: () => uiStore.openModal('save-template'),
-        onToggleLock: () => {
-          const tile = boardStore.getTile(tileId);
-          if (!tile) return;
-          const nextLocked = !tile.locked;
-          boardStore.setTilesLockedWithHistory(
-            new Map([[tileId, tile.locked === true]]),
-            nextLocked,
-          );
-        },
-        onDelete: () => {
-          const ids = [...selectionStore.selectedIds];
-          if (ids.length === 0) return;
-          uiStore.openConfirm({
-            title: ids.length === 1 ? 'Delete tile?' : `Delete ${ids.length} tiles?`,
-            body: ids.length === 1
-              ? 'The placement is removed from this board. Backing vault files are preserved. You can undo this.'
-              : `${ids.length} placements will be removed from this board. Backing vault files are preserved. You can undo this.`,
-            confirmLabel: 'Delete',
-            danger: true,
-            onConfirm: () => {
-              boardStore.removeTilesWithHistory(ids);
-              selectionStore.clear();
-            },
-          });
-        },
+        // The right-clicked tile is always selected (above), so this covers it.
+        onToggleLock: selectionActions.toggleLock,
+        onDelete: selectionActions.confirmDelete,
       });
       uiStore.showContextMenu(e.clientX, e.clientY, items, tileId);
       return;
@@ -279,7 +256,18 @@
       : undefined;
     const brokenTileIds = brokenSet ? Array.from(brokenSet) : [];
     const brokenCount = brokenTileIds.length;
+    const selectedIds = selectionActions.tileIds();
     const items = buildCanvasContextMenu({
+      selection: selectedIds.length > 1
+        ? {
+            count: selectedIds.length,
+            anyUnlocked: selectedIds.some((id) => !boardStore.getTile(id)?.locked),
+            onToggleLock: selectionActions.toggleLock,
+            onTags: () => selectionActions.openTags(e.clientX, e.clientY),
+            onStyle: () => selectionActions.openStyle(null, e.clientX, e.clientY),
+            onDelete: selectionActions.confirmDelete,
+          }
+        : undefined,
       brokenCount,
       onNewTile: () => {
         const now = Date.now();
@@ -755,7 +743,7 @@
 
   <!-- Minimap -->
   {#if canvasStore.minimapVisible}
-    <Minimap />
+    <Minimap bgColor={viewModel.bgColor} />
   {/if}
 
   <!-- Zoom indicator (also surfaces the active LOD level so users understand

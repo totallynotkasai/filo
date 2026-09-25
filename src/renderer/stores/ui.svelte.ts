@@ -99,6 +99,8 @@ export interface ContextMenuItem {
   danger?: boolean;
   disabled?: boolean;
   divider?: boolean; // if true, renders as separator
+  /** A non-interactive label over the items that follow it; skipped by keyboard navigation. */
+  heading?: boolean;
   /** When boolean, renders the item as role="menuitemcheckbox" with aria-checked; reserves a leading checkmark slot in the menu so all rows align. */
   checked?: boolean;
   action?: () => void;

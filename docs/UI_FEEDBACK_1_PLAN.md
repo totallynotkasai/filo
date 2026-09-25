@@ -250,6 +250,31 @@ Markdown is not a limitation here. A link is stored as `[text](https://…)`, wh
 - One undo reverts a multi-lock and a multi-style.
 - The tile-menu lock covers the whole selection.
 
+### Status: done (2026-09-26)
+
+3a fix steps 1–4 and 3b fix steps 1–5 are implemented, with the deviations below.
+
+**Tests.**
+- `src/tests/unit/minimapBounds.test.ts` covers the local window: its size is `LOCAL_FACTOR` viewports, it follows a pan, it scales with zoom so the viewport box keeps one size, a far-away tile changes neither scale nor window, a small board shows whole, the window stays inside the board near its edge and always contains the viewport, and it doesn't jump when the board crosses the window's size. Non-finite tiles are skipped.
+- `src/tests/unit/contrast.test.ts` covers `contrastShade`, including that the black/white viewport stroke reads (> 4.5:1) on the minimap fill for every built-in theme's canvas colour.
+- `src/tests/unit/mindMapContextMenus.test.ts` covers the canvas menu with 0, 1 and N selected, Lock vs Unlock, each entry's wiring, and the tile menu's count labels.
+- `src/tests/component/multiTileSelectionActions.test.ts` covers `toggleLockSelection` (lock-all/unlock-all, one undo restores a mixed selection), the tile-menu actions locking the whole selection and seeding Style from the right-clicked tile, and the real TileStylePopup with three tiles (text, text, image): each pick lands on every tile, the image gets no body font size, and one undo reverts the whole session.
+
+**Real app.** A Playwright script drove the built Electron app against a scratch vault whose Mind Map had one tile moved to (80000, 60000) and a cream background (`#f3e9d2`). At 100% the minimap showed the six nearby tiles as 15×10 px pips (not dots) with the viewport box at 70×41 px on a 280×164 map. At 75% the pips shrank to 11×7 px and the box stayed 70×41 px. There were no `NaN` styles. The minimap fill was a darker shade of the cream with a black viewport stroke. With all tiles selected, right-clicking empty canvas showed "7 tiles selected", Lock / Tags / Style / Delete (7 tiles) and a divider above the usual items. Lock locked all seven on disk and one Ctrl+Z unlocked all seven. Style opened "Style: 7 tiles"; Shape and Title Font Size landed on all seven in the board file, and one Ctrl+Z reverted all seven. The tile menu's "Lock / Unlock (7 tiles)" locked all seven. The console had no errors or warnings.
+
+`npm run ci:verify` passes.
+
+### Deviations from the plan
+
+1. **How "never smaller than the tiles bounding box" is read.** The window is always `LOCAL_FACTOR` (4) viewports, shaped to the map's aspect ratio so there are no blank bands. When the whole board (tiles plus viewport, padded 10% + 100px as before) is smaller than that on an axis, the window is centred on the board, so a small board shows whole. When the board is bigger, the window is centred on the viewport but slid back inside the board near its edge, so the minimap doesn't show empty canvas past the last tile. The two cases agree when the board is exactly the window's size, so the minimap never jumps while zooming. The viewport box is then off-centre near a board edge, rather than always in the middle.
+2. **Pips outside the window are skipped, not just clipped,** so a big board's minimap renders only the pips it can show. Waypoints with non-finite coordinates are skipped too.
+3. **The colour helper is `contrastShade`** in `lib/utils/color.ts`: it moves the background's lightness 6% away (darker on light, lighter on dark) and keeps the hue. The viewport stroke reuses the existing `getDynamicContrastText` (black or white by WCAG luminance) instead of a new helper; its fill is the stroke at 12% via `color-mix`. A theme switch re-resolves `--canvas-bg`.
+4. **The menu group's heading is a new `heading` context-menu item**, a non-interactive label that keyboard navigation skips, rather than a disabled button. The Lock entry names the action it will take ("Lock (N tiles)" or "Unlock (N tiles)") instead of "Lock / Unlock", since the rule is known when the menu opens. Lock shows Ctrl+L as its shortcut.
+5. **The tile menu now labels Style, Lock / Unlock and Delete with "(N tiles)" too,** not just Tags, and its Style opens the multi-tile popup for the whole selection (seeded from the right-clicked tile). Everything on that menu already applied to the selection except Style and Lock.
+6. **The selection actions live in `lib/mindmap/selectionActions.ts`** (`createSelectionActions`), and the lock rule in `lib/boards/toggleLockSelection.ts`. MindMapBoard would otherwise have gone over the 1000-line gate. `toggleLockSelection` shows the same "Tiles locked / unlocked" toast for the hotkey and both menus ("Tile" for one).
+7. **"Properties they support" means body font size only.** Every tile renders the header, body and border colours, shape, border, shadow, contrast text and title size through TileContainer and TileHeader; only a text tile reads `fontSizeBody`. The popup drops it for other types and hides the Body Font Size row when no target is a text tile, so a single image tile's popup no longer shows it either.
+8. **One pre-existing edge, not changed.** The popup builds its undo step in its teardown, and Svelte's teardown reads the last *rendered* tile state. A pick followed by closing in the same tick would therefore record nothing. Real clicks and keys always flush between events, so this can't happen from the UI; the component test settles before closing. The single-tile popup behaved the same before this phase.
+
 ---
 
 ## Phase 4: Tags

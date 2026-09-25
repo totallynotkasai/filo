@@ -33,7 +33,8 @@
   import { initKeyboardShortcuts, loadHotkeyOverrides } from '../../core/hotkeys';
   import { registerCommandWithShortcut } from '../../core/commandRegistry';
   import { createTile } from '../../stores/tiles.svelte';
-  import { type TextTile, type Tile } from '../../schema/index';
+  import { type TextTile } from '../../schema/index';
+  import { toggleLockSelection } from '../../lib/boards/toggleLockSelection';
   import { textTileNotePaths } from '../../commands/index';
   import { isEditableTextTarget } from '../../lib/utils/editableTarget';
   import { normalizePath } from '../../lib/utils/path';
@@ -357,16 +358,7 @@
       registerCommandWithShortcut({
         name: 'tile:toggle-lock', label: 'Lock / Unlock Selected', description: 'Lock / Unlock Selected',
         binding: { key: 'l', ctrl: true },
-        execute: () => {
-          const ids = [...selectionStore.selectedIds];
-          if (ids.length === 0) return;
-          const tiles = ids.map(id => boardStore.getTile(id)).filter(Boolean) as Tile[];
-          if (tiles.length === 0) return;
-          const targetLocked = tiles.some(t => !t.locked);
-          const previousStates = new Map<string, boolean>(tiles.map(t => [t.id, t.locked === true]));
-          boardStore.setTilesLockedWithHistory(previousStates, targetLocked);
-          uiStore.toast(targetLocked ? 'Tiles locked' : 'Tiles unlocked', 'info', 1500);
-        },
+        execute: () => { toggleLockSelection(boardStore, selectionStore.selectedIds); },
       }),
 
       // ── Insert Link in active editor ──

@@ -295,6 +295,7 @@ filo/
 │   │   │   │   ├── tileDefBuilder.ts
 │   │   │   │   ├── textTilePath.ts
 │   │   │   │   ├── viewportCache.ts
+│   │   │   │   ├── toggleLockSelection.ts # Ctrl+L rule (lock all if any unlocked), one undo step
 │   │   │   │   └── writeStateTracking.ts # trackComponentWrite + counters
 │   │   │   ├── canvas/                # Canvas engine (custom pointer events)
 │   │   │   │   ├── coordinates.ts     # screenToCanvas, getCanvasPointFromEvent
@@ -330,6 +331,8 @@ filo/
 │   │   │   ├── tasklist/              # Task List logic
 │   │   │   ├── tasks/                 # Task-frontmatter helpers, recurrence, quickAddParser (shared)
 │   │   │   ├── mindmap/               # Mind-map keyboard + selection
+│   │   │   │   ├── mindMapContextMenus.ts # Tile / frame / canvas menus ("N tiles selected" group)
+│   │   │   │   └── selectionActions.ts # Lock / Tags / Style / Delete on the selection
 │   │   │   ├── settings/              # Settings cascade helpers
 │   │   │   ├── styles/                # Override-cascade resolver
 │   │   │   │   ├── effectiveStyle.ts  # Tile / column / card / task / document style cascade
@@ -337,6 +340,7 @@ filo/
 │   │   │   │   ├── resolvedTileStyleContext.ts
 │   │   │   │   ├── buildBoardDefaults.ts
 │   │   │   │   ├── applyDefaultsToAll.ts
+│   │   │   │   ├── tileStyleSupport.ts # Which style fields each tile type renders
 │   │   │   │   └── defaultFontSizes.ts
 │   │   │   ├── themes/                # Theme loading + CSS variable injection
 │   │   │   │   └── themeManager.ts

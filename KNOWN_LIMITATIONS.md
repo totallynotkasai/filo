@@ -31,9 +31,8 @@ bare-key collapse, DI-06 folded-scalar reflow). The shared root cause was a
 the compare, the `yaml` package for the emit) — two libraries that disagreed on a
 handful of scalar forms. Phase 6 replaced that machine with the single-parser CST
 engine, so the class is **structurally gone, not guarded**. The
-`ci:no-jsyaml-in-frontmatter` gate keeps js-yaml out of every frontmatter path
-(its one remaining, annotated use is the tag-name minting guard, which is not a
-frontmatter read).
+`no-jsyaml` gate keeps js-yaml out of the app entirely (tests keep it only as an
+independent oracle).
 
 **Residual full re-dump (lossless by nature):** When the engine has no on-disk
 source to preserve, or can't safely patch the source, it emits a full dump
@@ -167,7 +166,10 @@ Windows file lock (OneDrive / antivirus) before failing, a drain of N serialised
 locked writes can take up to about N × 5 s; the absolute
 `QUIT_DRAIN_DEADLINE_MS` (60 s) still bounds it, after which the "Save failed"
 dialog offers **Retry now** (re-fires every retained failed write), **Quit
-anyway** or **Stay open**.
+anyway** or **Stay open**. The dialog names each file and why it wasn't saved
+(locked, no longer exists, waiting for a conflict answer, not UTF-8), and
+**Quit anyway** first writes rescue copies of the unsaved text to
+`.filo/recovery/<timestamp>-unsaved/` (#33).
 
 ---
 
@@ -279,7 +281,10 @@ coincidence, cross-basename correlation (the name actually changed, e.g.
 `git mv clip.mp4 final.mp4`) is **refused** at the size extremes:
 
 - **< 256 B** (`CROSS_BASENAME_MIN_SIZE_BYTES`) — too many small files share an
-  exact byte-length for size to be evidence.
+  exact byte-length for size to be evidence, so a small file pairs only on a
+  whole-content hash match. The old side's hash comes from the watcher's cache,
+  which holds notes (`.md`) and board files only, so a small note is followed
+  but a small attachment is not. Empty files never pair.
 - **≥ 10 MB** (`CROSS_BASENAME_HASH_REQUIRED_BELOW`) — above this the content-hash
   gate is skipped (hashing every large file on each watcher batch is too costly),
   and size+extension alone isn't strong enough evidence to merge tile references
@@ -389,7 +394,7 @@ file is untouched. Every attempt to distinguish "stable FM-removed body that
 starts with `---`" from "genuine partial read" using only the read is
 undecidable: a size heuristic (e.g. "read is < ½ the prior byte size") lets a
 truncated read of *most* of a small file through, which re-opens the
-HIGH-severity Audit-14 3.3 silent-frontmatter-drop (the `audit14Phase3` "refuses
+HIGH-severity Audit-14 3.3 silent-frontmatter-drop (the `deltaWriteEolTruncation` "refuses
 … truncated" test pins exactly that 25-of-38-byte case). For a data-integrity
 guard, "never silently drop frontmatter" correctly wins over "never show a
 spurious toast."
@@ -525,6 +530,38 @@ serializer can't preserve cheaply):
 No longer read-only after Audit-19: filenames, bare domains, emails and bare URLs
 (DEP-2 — linkify is off), `filo://` internal links (UX-2), tight checklists
 (UX-7), GFM table **padding** differences and the `1)` ordered-list delimiter.
+
+**Aligned and indented paragraphs are HTML in the file.** Markdown has no way
+to write alignment or indent, so a paragraph or heading aligned or indented from
+the toolbar is saved as one HTML line, e.g.
+`<p style="text-align: center;">Some <strong>bold</strong></p>`. Inside that line
+the formatting is HTML too (a Markdown parser doesn't read Markdown inside a
+block HTML tag). Every other block stays Markdown. Most Markdown apps show such
+a paragraph aligned; a plain text editor shows the HTML. Filo reads back only
+the `style` form it writes: another app's `<p align="center">` is block HTML
+Filo can't reproduce, so that note opens read-only (list above). Line spacing
+applies to the whole note and is saved as one frontmatter key
+(`lineSpacing: 1.5`), not in the body; other apps ignore it and show their own
+spacing.
+
+**Filo restyles other apps' Markdown on the first edit.** So that notes from
+Obsidian and other apps don't open read-only, the lossy check treats these as
+the same, and the first body edit rewrites each into Filo's form:
+
+| On disk | Written by Filo |
+|---|---|
+| `_italic_` | `*italic*` |
+| `__bold__` | `**bold**` |
+| `* * *`, `***`, `___`, `- - -` | `---` |
+| Setext headings (`Title` over `===` / `---`) | `# Title` / `## Title` |
+| `1)` ordered lists | `1.` |
+| `+` or `*` bullets | `-` |
+| two-space hard breaks | backslash hard breaks (`\` at line end) |
+| trailing spaces, 3+ blank lines, table cell padding | removed / collapsed |
+
+Nothing is lost, but a note you edit gets a formatting diff that sync tools and
+git will show, including lines you didn't touch. A note you only read is never
+written.
 
 **Where:** `normaliseForRoundTripCompare` in
 [src/renderer/lib/editor/markdownSync.ts](src/renderer/lib/editor/markdownSync.ts);
@@ -711,10 +748,27 @@ the trash from Settings → Trash to free it sooner.
 
 **What:** Emptying Filo's trash and the 30-day purge hand each item to the OS
 Recycle Bin (`shell.trashItem`). On some volumes the Recycle Bin may refuse, or
-may delete permanently without saying so. The planned probe has **not been run
-yet**: it needs the packaged build, on a OneDrive vault (including an
-online-only placeholder file), a mapped network share and a FAT32 USB stick.
-The results will be recorded here.
+may delete without saying so.
+
+**Probe results (2026-09-25, Windows 11, OneDrive personal, Electron 44.4.5,
+dev binary; the same `shell.trashItem` call the packaged build makes):**
+
+| Item in a OneDrive folder | `shell.trashItem` | Where it went |
+|---|---|---|
+| A normal (downloaded) file | succeeded | Windows Recycle Bin |
+| A folder with two files | succeeded | Windows Recycle Bin |
+| An **online-only** placeholder (`attrib +U -P`) | succeeded, no error | **Not** in the Windows Recycle Bin. OneDrive handles the delete itself: the file goes to OneDrive's own recycle bin on the web, per OneDrive's documented behaviour. The probe didn't check the web side. |
+
+The same probe checked the trash **restore** move, which hard-links a file into
+place (`fs.link`) and then unlinks it from the trash:
+- a hard link works in a OneDrive folder, for a normal file and for an
+  online-only one, and stays a placeholder;
+- a link onto an existing file fails with `EEXIST`, so a restore never replaces
+  a file.
+
+**Not probed:** a mapped network share and a FAT32 USB stick (none on the test
+machine). On those, `fs.link` may be unsupported. The restore then falls back to
+a re-check just before the rename.
 
 **What Filo does today:** if `trashItem` throws for an item, that item stays in
 Filo's trash and Filo shows one confirm listing every such file, titled
@@ -727,9 +781,13 @@ a channel that accepts nothing but trash ids.
 [src/main/ipc/vaultTrash.ipc.ts](src/main/ipc/vaultTrash.ipc.ts), the confirm in
 [src/renderer/stores/trash.svelte.ts](src/renderer/stores/trash.svelte.ts).
 
-**Impact:** Unknown until the probe runs. If a volume makes `trashItem` succeed
-while actually deleting, emptying Filo's trash on it is permanent. Undo and
-Restore are not affected: they only move items within the vault.
+**Impact:**
+- On OneDrive, emptying Filo's trash sends an online-only item to OneDrive's
+  web recycle bin, not the Windows one. Filo's confirm ("the Recycle Bin can
+  [restore it]") is then only true of OneDrive's recycle bin.
+- On a network share or FAT32 drive (not probed), `trashItem` may succeed
+  while actually deleting, so emptying Filo's trash there may be permanent.
+- Undo and Restore are not affected: they only move items within the vault.
 
 ## 26. A tag merge can't be undone
 
@@ -837,3 +895,105 @@ passes through the rich editor, the raw view is also allowed on lossy notes
 
 **Impact:** Choosing Keep mine replaces the other version in the note itself;
 it survives only as the backup in `.filo/recovery/`.
+
+---
+
+## 31. A move by another program is followed only if its two halves arrive within about 1.5 s
+
+**What:** The watcher sees a move as "old name gone" plus "new name appeared"
+and pairs them back into a rename. A note that goes missing without a partner
+is held for `MISSING_NOTE_HOLD_MS` (1.5 s) so a partner that arrives in a later
+batch can still pair with it; after that it is reported as deleted. In the
+renderer, a note with a change not yet on disk waits `NOTE_RENAME_GRACE_MS`
+(3 s) before the "deleted" or "couldn't save" prompt, and asks nothing if a
+rename re-points it meanwhile. A note write hides only its own echo: a rename
+or delete of the file straight after Filo wrote it is still reported
+(`FileWatcher.suppressWrite`), and the watcher's hash cache is updated with the
+bytes Filo wrote so the pair still matches.
+
+**Where:** [src/main/services/fileWatcher.ts](src/main/services/fileWatcher.ts)
+(`MISSING_NOTE_HOLD_MS`, `suppressWrite`, `recordOwnWrite`),
+[src/renderer/lib/vault/externalChangeWindows.ts](src/renderer/lib/vault/externalChangeWindows.ts)
+(`NOTE_RENAME_GRACE_MS`), `askUnlessMoved` in
+[src/renderer/stores/notes.svelte.ts](src/renderer/stores/notes.svelte.ts).
+
+**Why accepted:** Holding every delete longer would make a real delete slower
+to show. 1.5 s covers Explorer and `git mv`, which move a file in one
+operation. It has not yet been measured against OneDrive, whose download of the
+new name and removal of the old one can be further apart.
+
+**Impact:**
+- A move whose halves are further apart shows as a delete (the prompt keeps
+  tiles by default and offers a relink) plus a new file. An unsaved edit is
+  kept behind the "deleted" prompt's **Keep mine**, not lost.
+- An external delete of a note reaches the app about 1.5 s later than before.
+- A case-only rename (`Draft.md` → `draft.md`) made within about 7 s of a Filo
+  write to the note is not reported at once (the echo window can't tell the
+  two spellings apart). Filo's next write keeps the new spelling on disk, and
+  the app shows it after the next reconcile pass (at most 30 s).
+
+---
+
+## 32. `tiptap-markdown` is the write path's most fragile dependency
+
+**What:** Every note body Filo saves is serialised by `tiptap-markdown` (0.9,
+which declares TipTap 3 as its peer but was designed in the TipTap 2 era and has
+little upstream activity). Filo extends it in several places: the tight-list
+rule (`taskListTight.ts`), the aligned or indented block writer
+(`blockLayout.ts`), and the lossy check that opens a note read-only when a
+round trip would change it (#17). A TipTap upgrade, or a patch release of the
+package itself, can change how a node is written without any type error.
+
+**Where:** [src/renderer/lib/editor/createEditor.ts](src/renderer/lib/editor/createEditor.ts),
+[src/renderer/lib/editor/markdownSync.ts](src/renderer/lib/editor/markdownSync.ts),
+`package.json` (`tiptap-markdown`, `@tiptap/*`).
+
+**Why accepted:** Replacing it with a serialiser of our own is a large job, and
+the package does what Filo needs today. The guard is the round-trip suites,
+which pin its output byte for byte: `markdownBodyRoundTrip.test.ts` (the golden
+corpus, LF and CRLF), `toolbarFormattingRoundTrip.test.ts` (every toolbar
+command, gate `toolbar-formatting-saved`), `markdownSync.test.ts` and the
+component and characterisation specs that save and reopen notes.
+
+**Impact:** Upgrade `tiptap-markdown` or any `@tiptap/*` package only on its own
+branch, with the full `test:unit:strict` run green. A change the suites don't
+cover could re-style notes on their next save (nothing is lost: a note whose
+round trip changes it opens read-only).
+
+---
+
+## 33. Rescue copies in `.filo/recovery/` are never deleted automatically
+
+**What:** When you close the vault, open another one, or quit while some
+changes couldn't be saved, and choose **Close anyway**, **Open anyway** or
+**Quit anyway**, Filo first writes each unsaved change to
+`.filo/recovery/<timestamp>-unsaved/`:
+- a note as its last known frontmatter plus the body you typed (with any
+  queued frontmatter change applied), named after its flattened vault path
+  (`Notes__Draft.md`);
+- a board whose save failed as its in-memory `.board.json`.
+
+These are the only copy of that text. The ordinary recovery snapshots (the
+backups behind **Keep mine**, conversions and refused boards) are pruned to 20
+per name and 100 in total, but both prunes skip any folder ending in
+`-unsaved`, so Filo never deletes a rescue copy. The copies show in the
+recovery listing offered when the vault next opens.
+
+**Where:** `keepUnsavedCopies` and the prunes in
+[src/main/services/recoverySnapshot.ts](src/main/services/recoverySnapshot.ts),
+`recovery:keep-unsaved` in [src/main/ipc/recovery.ipc.ts](src/main/ipc/recovery.ipc.ts),
+[src/renderer/stores/unsavedRescue.ts](src/renderer/stores/unsavedRescue.ts),
+[src/renderer/stores/vaultLeaveGuard.ts](src/renderer/stores/vaultLeaveGuard.ts).
+
+**Why accepted:** A rescue copy holds work that exists nowhere else, so any
+automatic deletion could lose it. Rescues only happen after a save failed and
+you chose to leave anyway, so they should be rare and small.
+
+**Impact:**
+- `.filo/recovery/` can grow until you delete old `…-unsaved` folders by hand
+  (any file manager; Filo doesn't need them).
+- `.filo/` syncs with the vault, so a rescue copy reaches your other machines
+  too.
+- A copy isn't written for a change over 25 MB, on a disk error, or for a
+  failed `.filo/` config write (the recovery channel refuses `.filo/` paths).
+  Filo then asks once more ("… and lose them") before leaving.

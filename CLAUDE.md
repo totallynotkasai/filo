@@ -26,15 +26,15 @@ Package:        npm run package
 
 `npm run ci:verify` mirrors the GitHub Actions `verify` job: **lint → check (svelte-check) → typecheck:main → test:unit:strict → build → ci:gates**. A second job, `verify-windows`, runs `test:unit:strict` and `typecheck:main` on `windows-latest`.
 
-`ci:gates` runs `node scripts/gates/run.mjs`: 55 small static checks that pin invariants which past data-loss bugs broke. They share one helper module ([scripts/gates/lib.mjs](scripts/gates/lib.mjs)) and are grouped by subsystem. `--list` shows every check, `--only <id,id>` / `--group <name>` narrow a run, and each failure prints `file:line` plus a fix hint.
+`ci:gates` runs `node scripts/gates/run.mjs`: 60 small static checks that pin invariants which past data-loss bugs broke. They share one helper module ([scripts/gates/lib.mjs](scripts/gates/lib.mjs)) and are grouped by subsystem. `--list` shows every check, `--only <id,id>` / `--group <name>` narrow a run, and each failure prints `file:line` plus a fix hint.
 
 | Group | Protects |
 |---|---|
-| `writePath` | Only the note writer ([noteWriter.ts](src/renderer/lib/notes/noteWriter.ts)) writes a `.md`, and it applies every change to a **fresh read of the file**; a note is renamed, trashed or restored only while its write queue is held; writes are time-bounded, failed writes are kept and re-fired, and nothing silently aborts; new files are created exclusively (never overwrite an existing note); "Keep mine" / "Keep local" first backs up the other version; user deletes move items to `.filo/trash` (only a confirmed fallback deletes for good). |
-| `markdownFormat` | Byte fidelity: BOM, UTF-8 validation (non-UTF-8 notes are read-only), EOL re-application, a single YAML parser (no js-yaml / gray-matter on frontmatter), editor load/undo/unmount discipline, and that the frontmatter-invariant and markdown body round-trip suites exist and aren't skipped. |
+| `writePath` | Only the note writer ([noteWriter.ts](src/renderer/lib/notes/noteWriter.ts)) writes a `.md`, and it applies every change to a **fresh read of the file**; a note is renamed, trashed or restored only while its write queue is held; writes are time-bounded, failed writes are kept and re-fired, and nothing silently aborts; new files are created exclusively (never overwrite an existing note); "Keep mine" / "Keep local" first backs up the other version (for a note, inside `resolveConflict`, so the backup is of the bytes it then overwrites); user deletes move items to `.filo/trash` (only a confirmed fallback deletes for good); a note write hides only its own watcher echo, so another program's rename or delete right after it still gets through; a drift baseline only moves forward, and a new board's create counts as Filo's own write; close, open-another-vault and quit save first and never let unsaved work go without a rescue copy. |
+| `markdownFormat` | Byte fidelity: BOM, UTF-8 validation (non-UTF-8 notes are read-only), EOL re-application, a single YAML parser (no js-yaml / gray-matter anywhere in the app), editor load/undo/unmount discipline, a save → reload case for every formatting-toolbar command, and that the frontmatter-invariant and markdown body round-trip suites exist and aren't skipped. |
 | `vaultIdentity` | A vault swap mid-`await` can't apply the outgoing vault's data to the new one (`isStillSameVault`); vault-scoped state resets on swap; path-keyed stores use `VaultPath` keys, case-fold compares, and follow renames; crash sentinels are per-machine; disk-shape IPC goes through `vaultOperations.ts`. |
 | `ipcSecurity` | Every `ipcMain` channel is in the `IpcChannel` union (and vice versa); envelope usage; untrusted values pass an `asSafe*` validator before a sink; `vault:copy-file` only copies approved sources; renderer reads can't reach `.filo/`; config loaders migrate before parsing. |
-| `commands` | Undo/redo: high-value mutations go through Commands, which snapshot their slice, carry a `targetBoardId`, and have an execute→undo round-trip test; no command keeps a copy of a note body; Task List section positions are clamped. |
+| `commands` | Undo/redo: high-value mutations go through Commands, which snapshot their slice, carry a `targetBoardId`, and have an execute→undo round-trip test; no command keeps a copy of a note body; every path a command holds follows renames; Task List section positions are clamped. |
 | `components` | Component timers are cleared, `flush*` functions are actually called, no dead `$derived`, DocumentEditor / drag-drop are pane-scoped, pointer capture + spatial batches handle `pointercancel`, z-index tokens, every `var(--x)` without a fallback is defined, and views read notes from the note store (nothing keeps its own copy of a note). |
 | `codebase` | No file in `src/main` / `src/renderer` over 1000 lines except the allowlisted ones, which may only shrink (**split an over-limit file, don't raise its ceiling**); no `as any` / `as unknown as`; test sources type-check under `tsconfig.tests.json`, with a per-file error baseline (`scripts/gates/testTypecheckBaseline.json`) that may only go down; board tile defs never store a note's title, tags or body; the board loader accepts only the current format; a note is named only by its vault path (no `contentId` / `docId`); the characterisation suite stays whole, un-skipped and black-box. |
 
@@ -103,12 +103,14 @@ filo/
 │   │   │   ├── tags.ipc.ts            # .filo/tags.json load/save
 │   │   │   ├── templates.ipc.ts       # .filo/templates/ CRUD
 │   │   │   ├── sidebar.ipc.ts         # Sidebar geometry (userData)
-│   │   │   └── export.ipc.ts          # PNG/SVG/PDF/Markdown export
+│   │   │   ├── export.ipc.ts          # PNG/SVG/PDF/Markdown export
+│   │   │   └── recovery.ipc.ts        # recovery:keep-unsaved (rescue copies) / recovery:preserved-tmp
 │   │   ├── services/                  # Main-process-only services
 │   │   │   ├── fileWatcher.ts         # fs.watch wrapper, debounced events
 │   │   │   ├── fileWatcherTypes.ts    # Shared watcher types
+│   │   │   ├── watcherSuppression.ts  # Own-echo windows: suppress / suppressWrite / suppressTree
 │   │   │   ├── vaultRegistry.ts       # Active vault tracker (gates IPC)
-│   │   │   ├── recoverySnapshot.ts    # `.filo/recovery/` snapshot helper
+│   │   │   ├── recoverySnapshot.ts    # `.filo/recovery/` snapshots + `<ts>-unsaved/` rescue copies (never pruned)
 │   │   │   ├── renameCorrelation.ts   # Pairs missing+present events into renames
 │   │   │   ├── rendererCrashHandler.ts # Renderer crash → breadcrumb + Reload/Quit dialog
 │   │   │   ├── recentVaults.ts        # Persisted recent vault list
@@ -151,6 +153,10 @@ filo/
 │   │   │   ├── notePrompts.ts         # The note conflict prompt (Reload / Keep mine) + deleted-note prompt
 │   │   │   ├── vaultExternalChanges.ts  # Watcher events → vault index + noteStore.onDiskChanged
 │   │   │   ├── vaultRecovery.ts       # `.filo/.dirty.<machineId>` sentinel + recovery modal
+│   │   │   ├── vaultLeaveGuard.ts     # saveBeforeLeaving: close / open another vault save first, ask only if work is left
+│   │   │   ├── unsavedRescue.ts       # keepRescueCopies → `.filo/recovery/<ts>-unsaved/`
+│   │   │   ├── newNotesInTree.ts      # Every created note re-reads the sidebar tree
+│   │   │   ├── noteLayout.ts          # setNoteLineSpacing
 │   │   │   ├── vaultFolderOps.ts      # In-app rename/move
 │   │   │   ├── vaultDeleteOps.ts      # Sidebar delete → .filo/trash + tile cascade (undoable)
 │   │   │   ├── trash.svelte.ts        # Settings → Trash list, restore, empty, 30-day purge
@@ -215,7 +221,10 @@ filo/
 │   │   │
 │   │   ├── commands/                  # Command pattern objects (undo/redo)
 │   │   │   ├── index.ts               # Re-export shim — every import path still works
-│   │   │   ├── Command.ts             # Base Command interface + abstract class (targetBoardId)
+│   │   │   ├── Command.ts             # Base Command interface + abstract class (targetBoardId, renamePath)
+│   │   │   ├── commandPaths.ts        # rebaseCommandFields: PATH_FIELDS / CONTENT_FIELDS, trashed paths pinned
+│   │   │   ├── noteGoneError.ts       # Undo / redo on a note that no longer exists
+│   │   │   ├── noteLayoutCommands.ts  # SetLineSpacingCommand (frontmatter `lineSpacing:`)
 │   │   │   ├── tileCommands.ts        # tile add/delete/move/resize/style/lock
 │   │   │   ├── trashedFiles.ts        # trashFiles / restoreFiles: shared by the delete commands' undo
 │   │   │   ├── noteFieldCommand.ts    # Base of the card/task field commands: forward + inverse FrontmatterDelta
@@ -268,7 +277,9 @@ filo/
 │   │   │   │   ├── tagRewriteSentinel.ts # `.filo/tag-rewrite-pending.<machineId>.json` crash-recovery
 │   │   │   │   ├── renameCascadeSentinel.ts # Rename-cascade crash-recovery sentinel (path rewrites only)
 │   │   │   │   ├── fileBaselineRegistry.ts # Pre-write drift baselines (mtime/size) for board + `.filo/` files
-│   │   │   │   ├── externalChangeWindows.ts # Self-write / attachment-delete timing windows
+│   │   │   │   ├── externalChangeWindows.ts # Self-write / attachment-delete / note-rename grace windows
+│   │   │   │   ├── keepLocalBackup.ts # backupThenRead: back up, read, re-stat (Keep mine overwrites only what it backed up)
+│   │   │   │   ├── unsavedMessages.ts # Close / open / quit wording for unsaved work, by cause
 │   │   │   │   └── vaultTreeSort.ts   # Sidebar sort/group helpers
 │   │   │   ├── boards/                # Board file load/save logic
 │   │   │   │   ├── boardLoader.ts
@@ -303,6 +314,7 @@ filo/
 │   │   │   ├── editor/                # TipTap setup
 │   │   │   │   ├── createEditor.ts    # Editor factory with all extensions
 │   │   │   │   ├── markdownSync.ts    # MD ↔ ProseMirror round-trip
+│   │   │   │   ├── blockLayout.ts     # Aligned / indented paragraph or heading → one HTML line
 │   │   │   │   ├── noteEditorView.ts  # Editor ↔ noteStore bridge (150 ms idle serialise; never reloads its own body)
 │   │   │   │   └── tagExtension.ts
 │   │   │   ├── tags/                  # Tag editing helpers
@@ -539,7 +551,7 @@ External file change → fs.watch (main) → IPC → Store update → Reactive U
 ### Source of Truth Hierarchy
 
 1. **File system** is the ultimate source of truth.
-2. **The `.md` file is the only copy of a note's title, tags, fields and body.** The title is frontmatter `title:`, or the filename stem when there is no `title:`. Tags are frontmatter `tags:`. Task and card fields (`completed`, due date, priority, status, recurrence…) are frontmatter keys.
+2. **The `.md` file is the only copy of a note's title, tags, fields and body.** The title is frontmatter `title:`, or the filename stem when there is no `title:`. Tags are frontmatter `tags:`. Task and card fields (`completed`, due date, priority, status, recurrence…) are frontmatter keys, and so is the note's Line Spacing (`lineSpacing:`).
 3. **Board JSON holds visuals only.** A note-backed tile def stores its `filePath` (vault-relative) plus position, size, style, lock/fade, column or section and order, and optional `titleHtml` (formatting, shown only while its text matches the note's title). It never stores a note's title, tags or body, so there is nothing to keep in sync (gate `board-schema-no-note-copies`). Board-only tiles (link, iframe, timer) keep their own `title` and `tags`, because they have no file.
 4. **Media and other non-Markdown files** keep their tags in `.filo/tags.json:fileTags[path]`, their only copy.
 5. **In-memory stores** reflect the file system state. They are caches, not sources. One note open in several views is one `NoteModel` in `noteStore`; closed notes are read from the vault index.
@@ -558,6 +570,8 @@ The only state that lives in Electron `userData` (i.e. outside any vault) is the
 | `machine-id.json` | Identifies this machine so crash sentinels in the synced vault (`.filo/.dirty.<machineId>` …) never cross machines. |
 
 Anything else — including overlay positions (Kanban side toolbar etc.), open tabs, viewports, themes, defaults — goes in `.filo/`.
+
+**Close, open-another-vault and quit never drop unsaved work silently.** `closeVault` / `openVault` call `saveBeforeLeaving` (`stores/vaultLeaveGuard.ts`): it saves, and goes ahead with no dialog when `unsavedWork()` (`lib/boards/writeStateTracking.ts`: pending, failed, in-flight, plus note bodies from the note store's registered source) is then empty. Otherwise it asks *"N changes couldn't be saved"*, naming each file and its cause, with **Close anyway** / **Open anyway** and **Cancel** (the default). There is no "Don't Save". Leaving anyway, and the quit dialog's **Quit anyway**, first write **rescue copies** (`stores/unsavedRescue.ts` → IPC `recovery:keep-unsaved`) to `.filo/recovery/<timestamp>-unsaved/<flattened path>`: each unsaved note as its last frontmatter plus the local body, each unsaved board as JSON. The `-unsaved` suffix makes the snapshot prunes skip these folders, so only the user deletes them (KNOWN_LIMITATIONS #33). A copy that can't be written triggers a second confirm ("… and lose them"). Leaving anyway keeps `.filo/.dirty.<machineId>`, so reopening the vault offers recovery. All the wording lives in `lib/vault/unsavedMessages.ts`. Gate `close-keeps-rescue-copy`.
 
 **Tag persistence — note for attachments.** A note's tags live only in its YAML frontmatter (`tags: [...]`). Attachment tags (image / video / audio / generic file) have nowhere to write into the file itself, so they live only in `.filo/tags.json:fileTags[mediaPath]`. The trade-off: tags on attachments are **vault-local** — copying or moving an attachment outside the vault without `.filo/` will lose its tags, whereas text-tile tags travel with the `.md` file. This is a deliberate consequence of the open-format principle (no sidecar files next to media). Don't add a sidecar without a separate design discussion.
 
@@ -586,6 +600,26 @@ Boundary").
   queues (`noteStore.hold`) so no write can land on the old path mid-move.
   Gate `no-raw-disk-shape-ipc` forbids raw renderer invokes of these channels
   outside this module.
+- **The drain is scoped.** `withDrainedWrites(op, { paths })` always flushes
+  everything, but a failed write refuses the op only if its path equals one of
+  `paths` or sits under or over one (case-folded). Other failures keep their
+  error toast and the op goes ahead: a pending write can only disturb a
+  disk-shape op on the same path or a parent/child. Each caller passes the
+  paths it touches (rename: old and new; trash / restore: the item; new folder
+  and copy: the target; external rename: old and new). With no `paths`, the
+  global rule applies: any failure refuses (the vault-wide tag sweep drains
+  this way). Close, open-another-vault and quit don't drain-and-refuse: they
+  save, then ask if anything at all is left (see "Persistence Boundary").
+- **A note write that fails because the file is gone** raises one sticky
+  toast with **Save as new file** (`noteStore.recreate`, exclusive create; only
+  when the queued change has a body) and **Discard change**
+  (`noteStore.discardQueued`), so a failed mark never lingers for the session.
+  Both it and the "deleted by another program" prompt wait
+  `NOTE_RENAME_GRACE_MS` (3 s) first and ask nothing if a rename re-points the
+  note meanwhile (`askUnlessMoved`).
+- **External renames re-key before draining.** `handleExternalRename`
+  (`stores/vaultExternalChanges.ts`) calls `renameAllPathKeys` first, since the
+  file has already moved, so a pending body lands on the new path.
 - **Deletes go to Filo's trash.** Every user-facing delete (sidebar file or
   folder, board, "delete tile and file", "delete task and file") calls
   `trashVaultPath`, which moves the item to
@@ -626,6 +660,8 @@ When adding a new tile type or board type: register it, implement the interface,
 - Uses command pattern. Every undoable action implements `{ execute(): void; undo(): void }`.
 - Each board has its own independent undo/redo stack. A Document tab has its own stack too, keyed by the tab's id (PaneView makes it the active history board); `boardCacheStore.markDirty` ignores such ids, since no board file carries them.
 - **Board undo covers layout plus inverse frontmatter deltas.** A command that changes a note (title, tags, task/card fields, Properties) records a forward and an inverse `FrontmatterDelta`. Undo sends the inverse through `noteStore.patchFrontmatter`, so it lands on a fresh read of the file and keeps unrelated edits made in between. If another program changed the same key since, undo keeps that value and offers "Apply anyway" on a toast (`applyDeltaChecked`), because a blind inverse would overwrite the newer value.
+- **Commands follow renames.** Every command on every stack (Document-tab stacks included) is re-pointed when a file or folder is renamed, in-app or by another program: `stores/history.svelte.ts` registers a `'history'` rename sweep that calls `Command.renamePath(old, new)`. The default (`rebaseCommandFields` in `commands/commandPaths.ts`) rewrites every string held under a name in `PATH_FIELDS`, including snapshots, arrays and child commands; it never walks the user's own data (`CONTENT_FIELDS`: frontmatter, deltas, splices), and paths under a trashed item stay pinned, because restore puts the item back at its original path first. A new path-like field name must go in `PATH_FIELDS` (gate `commands-follow-renames`). Only `RenameFileCommand` overrides `renamePath`.
+- **Undo on a note that's gone doesn't queue a write.** `applyDeltaChecked` throws `NoteGoneError` when the file no longer exists; the history store puts the command back where it was and shows *Couldn't undo: "Card.md" no longer exists.* with **Skip this step** (drops it so earlier steps can still be undone).
 - **No command keeps a note body.** Delete undo is a restore from `.filo/trash` (a rename back); Replace All keeps only the replaced snippets and before/after hashes, and applies only while the file's bytes match. Gate `no-note-body-in-commands`.
 - Text editing undo is handled by TipTap/ProseMirror internally (separate from board undo). Board-level Ctrl+Z fires when no TipTap editor is focused.
 - **Vault-wide tag delete and rename are undone from their toast** (`stores/tagUndo.svelte.ts`, 15 s), not from board history, because they touch many files and belong to no board. A merge (rename into an existing tag) has no undo. A board delete, and a sidebar delete that no open board's stack can hold, also offer Undo on their "moved to Filo's trash" toast.
@@ -665,12 +701,15 @@ Themes overwrite Global Defaults. They are not a separate layer.
 - **Titles are not filenames.** A title edit writes frontmatter `title:` and never renames the file. The filename is derived from the title once, at creation (illegal characters become `-`, ` (n)` on collision). The sidebar shows filenames; its context menu offers "Rename file to match title".
 - **Only v8 board files load.** The loader accepts exactly `version: 8`. An older or newer board is listed as failed and never written.
 - **Frontmatter writes are source-preserving.** `assembleNoteText` (`lib/notes/noteFile.ts`) hands the fresh frontmatter source to `assembleMarkdownFile` (`lib/editor/markdownSync.ts`), which patches it with `patchFrontmatterSourceCst` (`lib/vault/frontmatterCstModel.ts`), a CST engine on the `yaml` package. It rewrites only the keys whose value changed and emits every untouched key byte-for-byte from the on-disk source: comments, key order, quoting, and exotic scalars (`02134`, `0xFF00FF`, `1_000`) all survive. A full re-dump (`new Document(fm).toString()`) happens only for a new file, a block that isn't a block mapping, or a changed/deleted key carrying an anchor/alias. Remaining narrow losses: KNOWN_LIMITATIONS #1.
-  - **One parser.** Reads (`readNoteText`, the vault index via `lib/vault/frontmatterRead.ts`), the tag rewriter and the engine's value-compare all use the `yaml` package. js-yaml and gray-matter are banned on frontmatter (a second parser coerces unquoted dates / `0b1010` / `<<` merges differently). The one exception, a tag-name validator in `tagsStorage`, carries `// allow-jsyaml:`.
+  - **One parser.** Reads (`readNoteText`, the vault index via `lib/vault/frontmatterRead.ts`), the tag rewriter and the engine's value-compare all use the `yaml` package. js-yaml and gray-matter are banned from the app (gate `no-jsyaml`; a second parser coerces unquoted dates / `0b1010` / `<<` merges differently). Tests keep js-yaml only as an independent oracle.
   - **Line endings and BOM.** The engine works in LF, so the file's real EOL and BOM, read fresh at each flush, are re-applied to the whole file. Without it, a CRLF note flips to LF on its first metadata edit.
   - **Every write is a change applied to a fresh read.** Each note-writer flush reads the file inside the path's queue, then applies the queued change: a `FrontmatterDelta` (`lib/vault/frontmatterDelta.ts`) patches the fresh frontmatter, and a body replaces the fresh body. A batch without a body keeps the body on disk. So keys or text added by another program are never dropped, and no write is assembled from a cached whole file.
   - **Body drift is a conflict, frontmatter drift is not.** If the batch carries a body and the body on disk no longer matches the one the edit was built on (`NoteModel.base`), the writer holds the body and the note store shows one prompt: **Reload** or **Keep mine** (which first backs the other version up to `.filo/recovery/`). A change on disk that only touched frontmatter is taken silently and the local body is kept (`lib/notes/noteDiskChange.ts`).
   - **Own-write echoes are recognised by content hash.** The writer remembers the hashes of its recent writes, and a watcher event whose bytes match one (or the model's base) is ignored.
   - **Before the write**, the writer re-stats the file and starts over if it changed since the read, and skips the write when the assembled bytes equal what is on disk.
+- **Drift baselines only move forward.** Board and `.filo/` files are checked for drift against a stat baseline (`lib/vault/fileBaselineRegistry.ts`). A reader takes `const seq = baselineSeq(path)` before its read and stamps with `noteBaseline(path, mtime, size, { ifUnchangedSince: seq })`; if one of Filo's own writes refreshed the baseline meanwhile, the reader's older stat is dropped instead of rolling it back (which made the next save see its own previous write as external). The sequence is one counter that never resets, so a ticket from before a vault swap or rename can't match by accident. Production calls must pass `ifUnchangedSince` (gate `baseline-stamp-forward-only`). A new board is seeded at create: `board:create` suppresses its own echo and returns the stat, and `persistNewBoard` marks a self-write and stamps it.
+- **A note write hides only its own watcher echo.** Note-write IPC handlers call `FileWatcher.suppressWrite` (drops an event only while the file still exists: an atomic write never leaves it missing) and `noteOwnWrite` / `recordOwnWrite` (refreshes the watcher's cached size and SHA-1, so a rename right after pairs). A missing `.md` with no partner is held `MISSING_NOTE_HOLD_MS` (1.5 s) for a late create. Overwrites go through `withOnDiskSpelling`, so Filo never undoes another program's case-only rename. Board, media and config writes keep the plain `suppress`. Gate `note-write-suppression`; limits in KNOWN_LIMITATIONS #31.
+- **Aligned or indented blocks are HTML in the file.** A paragraph or heading with a non-left alignment or an indent is saved as one HTML line (`lib/editor/blockLayout.ts`); everything else stays Markdown. Line Spacing is per note, frontmatter `lineSpacing:` (`SetLineSpacingCommand`, read by `noteLineSpacing`). Every toolbar command needs a save → reload case in `toolbarFormattingRoundTrip.test.ts` (gate `toolbar-formatting-saved`).
 
 ---
 

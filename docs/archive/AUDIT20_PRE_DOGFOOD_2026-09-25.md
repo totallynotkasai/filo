@@ -10,6 +10,37 @@
 
 ---
 
+## Resolution (2026-09-25)
+
+Every finding was fixed or documented on branch `audit20/fixes`, following [AUDIT20_IMPLEMENTATION_PLAN_2026-09-25.md](AUDIT20_IMPLEMENTATION_PLAN_2026-09-25.md), which records what was built and every deviation. Each fix started with a characterisation spec that failed for the reason given below.
+
+| Finding | Phase | Status | Where |
+|---|---|---|---|
+| H1 undo after a rename | 1 | Fixed: every command follows renames (`Command.renamePath`, `'history'` sweep); undo on a gone note throws `NoteGoneError` instead of queueing a write | commit `097185b`; spec `undoAcrossRenames.test.ts` |
+| M2 one failed write blocks the vault | 1 | Fixed: scoped `withDrainedWrites(op, { paths })`; a gone-file toast with **Save as new file** / **Discard change** | commit `097185b` |
+| H2 external rename while dirty | 2 | Fixed: re-key before the drain; the watcher hides only a note write's own echo, pairs small notes by hash, holds a lone missing `.md` 1.5 s; the renderer waits 3 s before a delete prompt | `2aa2875`; spec `externalRenames.test.ts`; KNOWN_LIMITATIONS #31 |
+| H3 false drift after creating a board | 3 | Fixed: the cause was the create's own watcher echo (see H3 below); baselines also only move forward now | `2aa2875`; spec `newBoards.test.ts` |
+| M1 close always asks / M3 wrong quit message | 4 | Fixed: close and open save first and ask only if something is left; no "Don't Save"; leaving or quitting anyway keeps rescue copies; the quit text is worded by cause | `2aa2875`; spec `closeVault.test.ts`; KNOWN_LIMITATIONS #4, #33 |
+| M4 alignment not saved | 5 | Fixed by keeping it (your decision): aligned or indented blocks are saved as one HTML line. Line Spacing, also found unsaved, is now frontmatter `lineSpacing:` | `2aa2875`; specs `blockLayout.test.ts`, `lineSpacing.test.ts` |
+| M5 restyling of other apps' Markdown | 5 | Documented: KNOWN_LIMITATIONS #17 lists every restyling | `2aa2875` |
+| M6 synced-vault trash | 6 | Probed on OneDrive: an online-only file goes to OneDrive's web recycle bin, not Windows'. Network share and FAT32 not probed | KNOWN_LIMITATIONS #25 |
+| L1 new notes late in the sidebar | 6 | Fixed: every note create re-reads the tree | `2aa2875`; spec `newNotesInSidebar.test.ts` |
+| L2 Keep mine backup gap | 6 | Fixed: `backupThenRead` inside `resolveConflict` | `2aa2875` |
+| L3 trash restore gap | 6 | Fixed: hard-link restore (EEXIST = taken), re-checked rename fallback | `2aa2875` |
+| L4 legacy and redundancy | 6 | Done: `BoardFileData`, js-yaml test-only, the 41 audit-named test files renamed by subject, `tiptap-markdown` in KNOWN_LIMITATIONS #32 | `9c68ee4` (renames), `2aa2875` |
+| L5 your real vault | — | Nothing to fix in code (v7 boards are refused by design, #29) | — |
+
+**Commits** (branch `audit20/fixes`, merged to `main`): Phase 1 `097185b` (docs `dd8cb68`); the Phase 6 test-file renames on their own, `9c68ee4`; Phases 2–6 `2aa2875`; Phase 7 docs in the commit that archived this report.
+
+**Checks at the end of Phase 7:** see the plan, "Phase 7 — done".
+
+**Still open (manual):**
+- The real-app scratch-vault check after Phases 2–6 (ground rule 4), in particular Phase 4: close with and without a pending edit, delete an open edited note in Explorer and then close, and quit while a note is locked.
+- The OneDrive rename gap (#31), and the trash probe on a network share and a FAT32 stick (#25).
+- The Empty-trash confirm says "the Recycle Bin can restore them", which isn't true for online-only OneDrive files. A wording change is your call.
+
+---
+
 ## Ratings
 
 | Area | Score | Why |
@@ -74,9 +105,11 @@ Add a characterisation spec for the steps above.
 
 **Not** caused by the latest commit (`dde5075`): it still happens with that line reverted.
 
-**Likely cause (to confirm while fixing):** the board loader's stat-read-stat baseline stamp (`boardLoader.ts:450`, `noteBaseline`) for the new board lands **after** a newer self-write has already refreshed the baseline. It rolls the baseline back to the create-time mtime, so the next write sees "drift". A stamp should never replace a baseline written after the read began, for example by checking a write generation or keeping the newer mtime.
+**Confirmed cause (Phase 3):** the create's own watcher echo. `board:create` didn't suppress the watcher, and `persistNewBoard` didn't mark the new path as a recent self-write. About 300 ms after the create, the watcher reported the new file as an external change. When the first edit's save was still pending, the reconciler asked (this prompt). When none was pending, it reloaded the board silently.
 
-**Workaround until fixed:** if this appears on a board you just created, choose **Keep your edits**.
+**First guess, partly right:** the board loader's stat-read-stat baseline stamp (`boardLoader.ts:450`, `noteBaseline`) for the new board lands **after** a newer self-write has already refreshed the baseline. It rolls the baseline back to the create-time mtime, so the next write sees "drift". A stamp should never replace a baseline written after the read began, for example by checking a write generation or keeping the newer mtime. That rollback can happen, but only on the silent-reload branch above, and it was not what raised the prompt. Both are fixed; see the plan, "Phase 3 — done".
+
+**Workaround until fixed** (no longer needed after Phase 3): if this appears on a board you just created, choose **Keep your edits**.
 
 ---
 
@@ -144,6 +177,8 @@ Run that probe before you use **Settings → Trash → Empty** on a OneDrive vau
 - **Quit.** The drain is time-bounded and never quits silently over unsaved work.
 
 ## Before you start using it
+
+*As written at audit time. H1, H2, H3 and M1 are fixed and the OneDrive probe has been run (see "Resolution"), so the three things to avoid in point 1 no longer apply.*
 
 1. **Safe now:** notes and boards in a local vault, if you avoid three things:
    - Don't press Ctrl+Z on a board after renaming one of its notes (H1).

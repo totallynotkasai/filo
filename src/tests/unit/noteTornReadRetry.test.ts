@@ -21,7 +21,7 @@ const TORN = '---\ntitle: Notes\nta';
 const REWRITTEN = '---\ntitle: Notes\ntags: [a, b]\n---\n# Rewritten\n';
 
 let vault: MemoryVault;
-const prompts = { conflict: vi.fn(), deletedWithUnsavedBody: vi.fn(), reloadShrank: vi.fn(), dismiss: vi.fn() };
+const prompts = { conflict: vi.fn(), deletedWithUnsavedBody: vi.fn(), writeTargetMissing: vi.fn(), reloadShrank: vi.fn(), dismiss: vi.fn() };
 
 function readsOf(rel: string): number {
   return vi.mocked(window.filo.invoke).mock.calls

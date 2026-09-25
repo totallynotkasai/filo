@@ -192,8 +192,9 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
       // against `oldRel` firing after the cascade rebinds tile defs would
       // target a path that no longer exists (ENOENT — silent loss).
       try {
-        await withDrainedWrites(() =>
-          runExternalRenameCascade(ctx, oldRel, newRel, captured),
+        await withDrainedWrites(
+          () => runExternalRenameCascade(ctx, oldRel, newRel, captured),
+          { paths: [oldRel, newRel] },
         );
       } catch (err) {
         if (err instanceof PendingWritesFailedError) {

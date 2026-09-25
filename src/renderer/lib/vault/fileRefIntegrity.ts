@@ -1,6 +1,7 @@
 import type { V7BoardFileData } from '../boards/boardSaver';
 import type { Board } from '../../schema/index';
-import { normalizeVaultRelative, stripLeadingSlash, toPosix } from '../utils/path';
+import { normalizeVaultRelative } from '../utils/path';
+import { rebasePath } from './renamePathKeys';
 
 /**
  * Field names on a tile-like object that may hold a vault-relative file
@@ -48,17 +49,7 @@ function pathStartsWith(candidate: string, prefix: string): boolean {
 }
 
 function rewritePath(current: string, oldPath: string, newPath: string): string {
-  const cNorm = normalizeVaultRelative(current);
-  const oNorm = normalizeVaultRelative(oldPath);
-  const nNorm = stripLeadingSlash(toPosix(newPath));
-  const cForward = toPosix(current);
-  const oForward = toPosix(oldPath);
-
-  if (cNorm === oNorm) return nNorm;
-  if (cNorm.startsWith(oNorm + '/')) {
-    return nNorm + cForward.slice(oForward.length);
-  }
-  return current;
+  return rebasePath(current, oldPath, newPath) ?? current;
 }
 
 /**

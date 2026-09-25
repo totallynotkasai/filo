@@ -214,7 +214,7 @@ export async function performDelete(ctx: VaultContext, itemPath: string): Promis
       ctx.clearSelection();
       if (noBoardUndo && command) toastMovedToTrash(itemName, () => command.undo());
       return true;
-    });
+    }, { paths: [itemPath] });
   } catch (err) {
     if (err instanceof PendingWritesFailedError) {
       // The drain already toasted; the sidebar keeps the row.

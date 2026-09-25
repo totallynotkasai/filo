@@ -23,6 +23,8 @@
  * `boardCacheStore.markDirty(this.targetBoardId)` directly, and the CI gate
  * `scripts/gates:command-targets-self` enforces the `this.targetBoardId` argument.
  */
+import { rebaseCommandFields } from './commandPaths';
+
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export interface Command {
   /** Human-readable description of what this command does. */
@@ -100,5 +102,20 @@ export abstract class Command {
    */
   protected snapshot<T>(value: T): T {
     return cloneForSnapshot(value);
+  }
+
+  /**
+   * `oldRel` (a file, or a folder above it) was renamed to `newRel`: every
+   * path the command holds now names the file where it is, so its undo and
+   * redo act on the file at its new path. The history store calls it on every
+   * command it holds after each rename. `pinned` paths (files a parent
+   * command holds in Filo's trash) stay as they are.
+   *
+   * The default rewrites every path held under a path field name
+   * (`commandPaths.ts`: `PATH_FIELDS`), snapshots and child commands
+   * included. Override when a path must not follow (see `RenameFileCommand`).
+   */
+  renamePath(oldRel: string, newRel: string, pinned: readonly string[] = []): void {
+    rebaseCommandFields(this, oldRel, newRel, pinned);
   }
 }

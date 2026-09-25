@@ -143,23 +143,22 @@
 
     // Drain pending writes first, so a debounced keystroke can't land after
     // its note moved to the trash (recreating the file there).
+    // The notes behind the selected text tiles move to Filo's trash with them
+    // (DeleteTilesCommand owns the move and its undo). Only a failed write to
+    // one of those notes blocks the delete.
+    const filePaths = deleteWithFile && selectionHasVaultFiles()
+      ? textTileNotePaths(
+          selectedIds
+            .map((id) => boardStore.getTile(id))
+            .filter((t): t is NonNullable<typeof t> => !!t),
+        )
+      : [];
     try {
       await withDrainedWrites(async () => {
-        let filePaths: string[] = [];
-        let vaultRoot: string | undefined;
-        if (deleteWithFile && selectionHasVaultFiles()) {
-          vaultRoot = normalizePath(vaultStore.path);
-          // The notes behind the selected text tiles move to Filo's trash with
-          // them; DeleteTilesCommand owns the move and its undo.
-          filePaths = textTileNotePaths(
-            selectedIds
-              .map((id) => boardStore.getTile(id))
-              .filter((t): t is NonNullable<typeof t> => !!t),
-          );
-        }
+        const vaultRoot = filePaths.length > 0 ? normalizePath(vaultStore.path) : undefined;
         boardStore.removeTilesWithHistory(selectedIds, { filePaths, vaultRoot });
         selectionStore.clear();
-      });
+      }, { paths: filePaths });
     } catch (err) {
       if (err instanceof PendingWritesFailedError) {
         // Drain already pushed its own toast; bail without removing

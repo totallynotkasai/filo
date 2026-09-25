@@ -97,6 +97,11 @@ export interface NoteWriterHost {
     snapshot: DiskSnapshot,
     consumed: { bodyVersion?: number; delta?: FrontmatterDelta },
   ): void;
+  /**
+   * A queued change can't land because the file is gone. The change stays
+   * queued (and failed) until the user saves it as a new file or discards it.
+   */
+  onTargetMissing(path: VaultPath, relPath: string, hasBody: boolean): void;
   /** The active vault root. */
   vaultRoot(): string | null;
 }
@@ -300,13 +305,11 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
         // Gone or unreadable: the change can't land, and a deleted file is
         // never recreated from memory. Keep it queued and say so.
         markPathFailed(vaultRoot, relPath);
-        reportError(
-          isMissingFileError(err) ? 'note.missing' : 'note.unreadable',
-          isMissingFileError(err) ? null : err,
-          isMissingFileError(err)
-            ? `Couldn't save changes to "${relPath}": the file no longer exists.`
-            : `Couldn't save changes to "${relPath}": the file couldn't be read.`,
-        );
+        if (isMissingFileError(err)) {
+          if (isStillSameVault(identity)) host.onTargetMissing(path, relPath, entry.body !== undefined);
+        } else {
+          reportError('note.unreadable', err, `Couldn't save changes to "${relPath}": the file couldn't be read.`);
+        }
         throw err;
       }
       if (!isStillSameVault(identity)) return;

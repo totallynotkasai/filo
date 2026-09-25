@@ -23,7 +23,8 @@ import { applyDeltaChecked, inverseDelta } from './frontmatterInverse';
 export abstract class NoteFieldCommand extends Command {
   description: string;
   readonly targetBoardId: string;
-  protected readonly relPath: string;
+  /** Follows renames (`Command.renamePath`), so undo and redo reach the note where it is now. */
+  protected relPath: string;
   private forward: FrontmatterDelta;
   private inverse: FrontmatterDelta;
   private hasExecuted = false;

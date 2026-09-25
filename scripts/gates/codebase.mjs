@@ -35,6 +35,7 @@ const CHARACTERISATION_SPECS = {
   'trash.test.ts': 9,
   'tagUndo.test.ts': 4,
   'tagRowAndRawView.test.ts': 7,
+  'undoAcrossRenames.test.ts': 6,
 };
 
 // Board format v8: a def names its file and stores only visuals. These are

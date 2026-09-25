@@ -31,6 +31,7 @@ function makeWriter(): NoteWriter {
     },
     canWriteBody: (p) => !bodyBlocked.has(p),
     onBodyConflict: (_p, rel) => conflicts.push(rel),
+    onTargetMissing: () => undefined,
     onWritten: (p, rel, text, snapshot, consumed) => {
       bases.set(p, snapshot);
       written.push({ rel, raw: text.raw, bodyVersion: consumed.bodyVersion });

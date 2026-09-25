@@ -3,6 +3,8 @@ import { boardCacheStore } from '../stores/boardCache.svelte';
 import { noteStore } from '../stores/notes.svelte';
 import type { FrontmatterDelta } from '../lib/vault/frontmatterDelta';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
+import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
+import { NoteGoneError } from './noteGoneError';
 
 /**
  * Board undo of a note's frontmatter (a title, tags, a task or card field,
@@ -150,9 +152,11 @@ export interface ApplyDeltaArgs {
    */
   atomic?: boolean;
   /**
-   * When the note can't be read (gone or unreadable): `apply` sends the delta
-   * anyway (the writer reports a write it can't land); `throw` rejects so
-   * history drops the command. Default `apply`.
+   * When the note is on disk but can't be read: `apply` sends the delta
+   * anyway (a lock that clears later still lets it land; the writer reports a
+   * write it can't land); `throw` rejects so history keeps the command where
+   * it was. Default `apply`. A note that is gone always rejects with
+   * `NoteGoneError`: a write to a missing file can't land.
    */
   whenUnreadable?: 'apply' | 'throw';
 }
@@ -183,11 +187,19 @@ export async function applyDeltaChecked(args: ApplyDeltaArgs): Promise<void> {
   const current = await noteStore.currentFrontmatter(relPath);
   if (!isStillSameVault(identity)) return;
   if (current === null) {
+    const vaultRoot = getActiveVaultPath();
+    const exists = vaultRoot
+      ? await window.filo.invoke('vault:file-exists', vaultRoot, relPath).catch(() => true)
+      : true;
+    if (!isStillSameVault(identity)) return;
+    // Only a definite "not there" counts as gone; an unanswered probe is
+    // treated as present, the side that never drops the change.
+    if (exists === false) throw new NoteGoneError(relPath);
     if (args.whenUnreadable === 'throw') {
       throw new Error(`Could not read ${relPath} to apply the change.`);
     }
-    // Nothing readable: no baseline to detect a conflict against, and nothing
-    // visible to lose. The writer reports a write it can't land.
+    // Present but unreadable: no baseline to detect a conflict against, and
+    // nothing visible to lose. The writer reports a write it can't land.
     commit(delta);
     return;
   }

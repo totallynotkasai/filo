@@ -158,8 +158,9 @@ export function makeFolderOpsSlice(ctx: VaultContext) {
       // `isRenameInFlight()` and defers eviction. See renameInFlight.ts.
       beginRenameInFlight();
       try {
-        return await withDrainedWrites(() =>
-          runRename(ctx, vaultPath, oldPath, newPath, oldRel, newRel),
+        return await withDrainedWrites(
+          () => runRename(ctx, vaultPath, oldPath, newPath, oldRel, newRel),
+          { paths: [oldRel ?? oldPath, newRel ?? newPath] },
         );
       } catch (err) {
         if (err instanceof PendingWritesFailedError) {

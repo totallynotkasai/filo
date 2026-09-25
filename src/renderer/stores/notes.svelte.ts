@@ -131,12 +131,18 @@ const overlays = new SvelteMap<VaultPath, FrontmatterDelta>();
 export interface NotePromptHandlers {
   conflict(model: NoteModel): void;
   deletedWithUnsavedBody(model: NoteModel): void;
+  /**
+   * A queued change couldn't be saved because the file is gone. `model` is
+   * set when a body is among it (it can be saved as a new file).
+   */
+  writeTargetMissing(relPath: string, model: NoteModel | undefined): void;
   reloadShrank(model: NoteModel, priorBody: string): void;
   dismiss(relPath: string): void;
 }
 let prompts: NotePromptHandlers = {
   conflict: () => undefined,
   deletedWithUnsavedBody: () => undefined,
+  writeTargetMissing: () => undefined,
   reloadShrank: () => undefined,
   dismiss: () => undefined,
 };
@@ -159,6 +165,10 @@ const writer: NoteWriter = createNoteWriter({
   },
   onWritten: (path, relPath, written, snapshot, consumed) => {
     afterWrite(path, relPath, written, snapshot, consumed);
+  },
+  onTargetMissing: (path, relPath, hasBody) => {
+    const m = models.get(path);
+    prompts.writeTargetMissing(relPath, hasBody && m ? m : undefined);
   },
 });
 
@@ -655,6 +665,21 @@ export const noteStore = {
     writer.dropBody(relPath);
     m.hasUnsavedBody = false;
     m.status = 'missing';
+    evictIfIdle(m);
+  },
+
+  /**
+   * Everything still queued for `relPath` is dropped (the user discarded a
+   * change that can't be saved because the file is gone), so the failure no
+   * longer blocks anything or reads as unsaved work.
+   */
+  discardQueued(relPath: string): void {
+    writer.drop(relPath);
+    const key = vaultPath(relPath);
+    overlays.delete(key);
+    const m = models.get(key);
+    if (!m) return;
+    m.hasUnsavedBody = false;
     evictIfIdle(m);
   },
 

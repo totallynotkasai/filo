@@ -86,6 +86,7 @@ describe('external note edits flow into later saves', () => {
     setNotePromptHandlers({
       conflict: (m) => conflicts.push(m.relPath),
       deletedWithUnsavedBody: () => undefined,
+      writeTargetMissing: () => undefined,
       reloadShrank: () => undefined,
       dismiss: () => undefined,
     });

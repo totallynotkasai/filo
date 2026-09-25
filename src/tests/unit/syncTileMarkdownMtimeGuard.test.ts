@@ -64,7 +64,7 @@ function makeKanbanFixtureWithTextTile(): V7BoardFileData {
   };
 }
 
-const prompts = { conflict: vi.fn(), deletedWithUnsavedBody: vi.fn(), reloadShrank: vi.fn(), dismiss: vi.fn() };
+const prompts = { conflict: vi.fn(), deletedWithUnsavedBody: vi.fn(), writeTargetMissing: vi.fn(), reloadShrank: vi.fn(), dismiss: vi.fn() };
 
 /** Hydrates the board and opens the note with `body` typed but not yet written. */
 async function seedBoardAndNote(body: string): Promise<void> {

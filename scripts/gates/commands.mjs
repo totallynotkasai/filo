@@ -314,4 +314,59 @@ export const checks = [
       return out;
     },
   },
+  {
+    // An undo after a rename acted on the old path: the write failed, stayed
+    // queued, and blocked every later rename and delete in the vault.
+    id: 'commands-follow-renames',
+    title: 'every path a command holds follows renames',
+    hint:
+      'Commands follow renames through Command.renamePath, which rewrites fields named in PATH_FIELDS ' +
+      '(commands/commandPaths.ts) and the history sweep calls on every stack. Name a path field with a listed ' +
+      'name, add its name to PATH_FIELDS, or override renamePath() in the class.',
+    run(ctx) {
+      const out = [];
+      const pathsFile = `${COMMANDS}/commandPaths.ts`;
+      const listedSrc = /PATH_FIELDS[^=]*=\s*new Set\(\[([\s\S]*?)\]\)/.exec(ctx.read(pathsFile) ?? '');
+      if (!listedSrc) return [fail(pathsFile, undefined, 'PATH_FIELDS (new Set([...])) not found')];
+      const listed = new Set([...listedSrc[1].matchAll(/'([^']+)'/g)].map((m) => m[1]));
+
+      const baseFile = `${COMMANDS}/Command.ts`;
+      const base = blank(ctx.read(baseFile) ?? '', { strings: false });
+      if (!/\brenamePath\s*\([^)]*\)\s*:\s*void\s*\{\s*rebaseCommandFields\s*\(\s*this\b/.test(base)) {
+        out.push(fail(baseFile, undefined, 'Command.renamePath must default to rebaseCommandFields(this, …)'));
+      }
+      const historyFile = 'src/renderer/stores/history.svelte.ts';
+      const history = blank(ctx.read(historyFile) ?? '', { strings: false });
+      if (!/registerPathRenamable\s*\(\s*'history'[\s\S]*?\.renamePath\s*\(/.test(history)) {
+        out.push(fail(historyFile, undefined, "the history store must register a 'history' rename sweep that calls renamePath on every command"));
+      }
+
+      // A path-like property name: a field of a command or of a snapshot type it keeps.
+      const PATH_LIKE = /^(?:path|paths|rel|src)$|(?:Path|Paths|Rel|Rels|Src|Cover|Image)$/;
+      const EXEMPT = new Map([
+        ['rel', "a trashed item's original path; pinned on purpose (commandPaths.ts: trashedPaths)"],
+        ['restoredPath', 'where a restore landed; used once, never kept on a command'],
+      ]);
+      for (const rel of ctx.files(COMMANDS, { ext: ['.ts'], recursive: false })) {
+        if (rel === pathsFile) continue;
+        const raw = ctx.read(rel);
+        const code = blank(raw, { strings: false });
+        // Classes that override renamePath own their paths.
+        const overriding = [];
+        for (const cls of code.matchAll(/class\s+\w+\s+extends\s+\w*Command\b[^{]*\{/g)) {
+          const open = cls.index + cls[0].length - 1;
+          const end = skipBlock(code, open);
+          const body = code.slice(open, end < 0 ? code.length : end);
+          if (/^\s+renamePath\s*\(/m.test(body)) overriding.push([open, end < 0 ? code.length : end]);
+        }
+        for (const m of code.matchAll(/^[ \t]+(?:(?:private|protected|public|readonly)\s+)*(\w+)\??\s*:[^;\n]*;[ \t]*$/gm)) {
+          const name = m[1];
+          if (!PATH_LIKE.test(name) || listed.has(name) || EXEMPT.has(name)) continue;
+          if (overriding.some(([a, b]) => m.index > a && m.index < b)) continue;
+          out.push(fail(rel, lineAt(raw, m.index), `'${name}' looks like a path but is not in PATH_FIELDS, so it won't follow a rename`));
+        }
+      }
+      return out;
+    },
+  },
 ];

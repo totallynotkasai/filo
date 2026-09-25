@@ -401,13 +401,14 @@
 
     // Drain pending writers first, so no debounced write can recreate the note
     // after it moved to the trash.
+    // Only a failed write to the note being trashed blocks the delete.
+    const filePaths = deleteWithFile && hasVaultFile ? textTileNotePaths([tileRef]) : [];
     try {
       await withDrainedWrites(async () => {
-        const filePaths = deleteWithFile && hasVaultFile ? textTileNotePaths([tileRef]) : [];
         const vaultRoot = filePaths.length > 0 ? normalizePath(vaultStore.path) : undefined;
         selectionStore.deselect(tileId);
         boardStore.removeTilesWithHistory([tileId], { filePaths, vaultRoot });
-      });
+      }, { paths: filePaths });
     } catch (err) {
       if (err instanceof PendingWritesFailedError) {
         // Drain already toasted; bail without removing the tile.

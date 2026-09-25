@@ -27,7 +27,7 @@ beforeEach(() => {
   });
   vaultIndexStore.clear();
   noteStore.__resetForTests();
-  setNotePromptHandlers({ conflict: vi.fn(), deletedWithUnsavedBody: vi.fn(), reloadShrank: vi.fn(), dismiss: vi.fn() });
+  setNotePromptHandlers({ conflict: vi.fn(), deletedWithUnsavedBody: vi.fn(), writeTargetMissing: vi.fn(), reloadShrank: vi.fn(), dismiss: vi.fn() });
 });
 
 afterEach(() => {

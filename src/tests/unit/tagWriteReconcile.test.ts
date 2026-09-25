@@ -19,7 +19,7 @@ import { restoreFiloDefault } from '../helpers/filoBridge';
  *   - a note deleted meanwhile is left deleted.
  */
 
-const prompts = { conflict: vi.fn(), deletedWithUnsavedBody: vi.fn(), reloadShrank: vi.fn(), dismiss: vi.fn() };
+const prompts = { conflict: vi.fn(), deletedWithUnsavedBody: vi.fn(), writeTargetMissing: vi.fn(), reloadShrank: vi.fn(), dismiss: vi.fn() };
 
 describe('single-tag write and an open note', () => {
   let vault: MemoryVault;

@@ -7,6 +7,9 @@
  * - Deleted: a note with an unsaved edit was deleted by another program.
  *   "Keep mine" writes it back (only if nothing is at the path again);
  *   "Discard" lets it go.
+ * - Can't save: a queued change met a file that is gone. "Save as new file"
+ *   writes it back (only if nothing is at the path again); "Discard change"
+ *   drops it.
  * - Reload shrank: a clean note reloaded from a much shorter version on disk
  *   (a sync client's truncation looks like this); "Undo reload" writes the
  *   previous body back after backing the short version up.
@@ -106,6 +109,47 @@ function promptDeleted(m: NoteModel): void {
   });
 }
 
+/**
+ * A change couldn't be saved because its file is gone. Until the user picks,
+ * the change stays queued and failed (save and quit report it, and disk
+ * operations on that path wait). Shares the deleted prompt's key, so a note
+ * never shows both.
+ */
+function promptWriteTargetMissing(rel: string, m: NoteModel | undefined): void {
+  const saveAsNew = m
+    ? [
+        {
+          label: 'Save as new file',
+          handler: async () => {
+            const vaultRoot = getActiveVaultPath();
+            const identity = captureVaultIdentity();
+            // Something may be at the path again: back it up before comparing.
+            if (!vaultRoot || !(await backupExternalVersion(vaultRoot, m.relPath))) return;
+            if (!isStillSameVault(identity)) return;
+            const outcome = await noteStore.recreate(m.relPath, recreatedText(m));
+            if (outcome === 'exists') void noteStore.onDiskChanged(m.relPath);
+          },
+        },
+      ]
+    : [];
+  uiStore.pushToast({
+    text: `Couldn't save changes to "${noteTitle(rel)}": the file no longer exists.`,
+    type: 'error',
+    duration: 0,
+    sticky: true,
+    dedupeKey: deletedKey(rel),
+    actions: [
+      ...saveAsNew,
+      {
+        label: 'Discard change',
+        handler: () => {
+          noteStore.discardQueued(m?.relPath ?? rel);
+        },
+      },
+    ],
+  });
+}
+
 function promptReloadShrank(m: NoteModel, priorBody: string): void {
   uiStore.pushToast({
     text: `"${noteTitle(m.relPath)}" was reloaded from disk and is much shorter than before.`,
@@ -132,6 +176,7 @@ export function registerNotePrompts(): void {
   setNotePromptHandlers({
     conflict: promptConflict,
     deletedWithUnsavedBody: promptDeleted,
+    writeTargetMissing: promptWriteTargetMissing,
     reloadShrank: promptReloadShrank,
     dismiss: (rel) => {
       uiStore.dismissToastsByKey(conflictKey(rel), { silent: true });

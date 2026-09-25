@@ -20,7 +20,27 @@
  * enforces that new path-keyed stores route through here.
  */
 
+import { normalizeVaultRelative } from '@shared/vaultPath';
+import { stripLeadingSlash, toPosix } from '../utils/path';
+
 type RenameSweep = (oldRel: string, newRel: string) => void;
+
+/**
+ * Where `path` is after `oldRel` was renamed to `newRel`: `newRel` itself when
+ * `path` is `oldRel`, `newRel/…` when `path` sits under the folder `oldRel`,
+ * else null (the rename doesn't touch it). Paths compare case-folded, as the
+ * file system does; the result keeps `newRel`'s spelling and the rest of
+ * `path` as it was.
+ */
+export function rebasePath(path: string, oldRel: string, newRel: string): string | null {
+  if (!path || !oldRel) return null;
+  const p = normalizeVaultRelative(path);
+  const o = normalizeVaultRelative(oldRel).replace(/\/+$/, '');
+  const next = stripLeadingSlash(toPosix(newRel)).replace(/\/+$/, '');
+  if (p === o) return next;
+  if (p.startsWith(`${o}/`)) return next + stripLeadingSlash(toPosix(path)).slice(o.length);
+  return null;
+}
 
 interface RegisteredSweep {
   name: string;

@@ -237,13 +237,14 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
     try {
       // Drain pending writes first, so nothing queued for the note can
       // recreate it after it moved to the trash.
+      // Only a failed write to the note being trashed blocks the delete.
+      const filePath = tile.type === 'text' && tile.filePath ? tile.filePath : undefined;
       await withDrainedWrites(async () => {
-        const filePath = tile.type === 'text' && tile.filePath ? tile.filePath : undefined;
         await historyStore.execute(new DeleteTaskCommand(boardId, tileId, filePath ? { filePath, vaultRoot } : {}));
         tickAndPersist();
         pruneSelection?.([tileId]);
         announce(`Task removed: ${tile.title || 'task'}`);
-      });
+      }, { paths: filePath ? [filePath] : [] });
     } catch (err) {
       if (err instanceof PendingWritesFailedError) return;
       throw err;

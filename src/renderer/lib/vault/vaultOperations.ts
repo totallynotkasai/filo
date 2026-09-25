@@ -6,10 +6,12 @@
  * recreates the path the change just removed.
  *
  * `withDrainedWrites(op)` enforces the contract by design: every disk-shape
- * change first drains the writer pipelines, then runs `op`. If any
- * drain reports a failure the wrapper surfaces a single aggregated toast
- * naming the failed paths and throws `PendingWritesFailedError` so the
- * caller can bail before issuing the IPC.
+ * change first drains the writer pipelines, then runs `op`. If a write
+ * failed on a path the change touches (`{ paths }`: the path itself, a folder
+ * above it or a file below it; every path when no scope is given), the
+ * wrapper surfaces a single aggregated toast naming the failed paths and
+ * throws `PendingWritesFailedError` so the caller can bail before issuing the
+ * IPC. A failure elsewhere keeps its own error toast and doesn't block.
  *
  * The thin IPC wrappers (`renameVaultPath`, `trashVaultPath`,
  * `restoreTrashed`, `createVaultFolder`, `copyFileIntoVault`) are convenience
@@ -30,13 +32,15 @@
  */
 
 import { noteStore } from '../../stores/notes.svelte';
-import { toVaultRelative } from '../utils/path';
+import { toPosix, toVaultRelative } from '../utils/path';
 import { flushAllMisc } from '../boards/miscWriteScheduler';
 import { flushScheduledConfig } from '../boards/configWriteScheduler';
 import { isBoardPathHeld } from '../boards/boardWriteScheduler';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { currentVaultGeneration } from './vaultIdentity';
+import { getActiveVaultPath } from './activeVaultPath';
+import { vaultPath } from '@shared/vaultPath';
 import type {
   ChannelArgs,
   ChannelResult,
@@ -103,17 +107,16 @@ export class PendingWritesFailedError extends Error {
 /**
  * The in-flight drain's outcome, carried IN `drainPromise` so a parked
  * sibling can react without re-running its own full drain:
- *  - `{ ok: true }` — every writer pipeline drained clean; the sibling proceeds
- *    (after a vault-generation re-check, see below).
- *  - `{ ok: false, detail }` — the drain failed the `totalFailed` check; the
- *    sibling throws the SAME `PendingWritesFailedError` (re-draining per
- *    sibling would cost up to ~60 s each and re-toast).
- *  - `{ ok: false, detail: null }` — an UNEXPECTED drain/op rejection (a flush
- *    threw, not the `totalFailed` branch); the sibling bails too.
+ *  - `{ detail }` — every writer pipeline drained; `detail` lists what failed
+ *    (maybe nothing). Each call then decides for its own scope whether a
+ *    failure blocks it (see `blockingFailures`), so a sibling never re-drains
+ *    (up to ~60 s each).
+ *  - `{ detail: null }` — an UNEXPECTED drain/op rejection (a flush threw);
+ *    the sibling bails too.
  * Carrying the verdict in the promise (rather than a separate module var) makes
  * it immune to the finally-clears-it-before-the-await-resolves race.
  */
-type DrainOutcome = { ok: true } | { ok: false; detail: PendingWritesFailedDetail | null };
+type DrainOutcome = { detail: PendingWritesFailedDetail | null };
 
 let drainingGeneration: number | null = null;
 let drainPromise: Promise<DrainOutcome> | null = null;
@@ -127,10 +130,79 @@ function summariseFailedPaths(results: PendingWritesFailedDetail): string[] {
   return out;
 }
 
+function totalFailures(results: PendingWritesFailedDetail): number {
+  return results.notes.failed.length + results.board.failed.length + results.misc.failed.length + results.config.failed.length;
+}
+
+/** What a disk-shape operation touches, for `withDrainedWrites`. */
+export interface DrainScope {
+  /**
+   * The paths the operation creates, moves or removes (vault-relative or
+   * absolute under the vault). A failed write blocks it only when its path is
+   * one of these, or a folder above or a file below one. Omitted: every
+   * failure blocks.
+   */
+  paths?: string[];
+}
+
+/** `p` as a case-folded vault-relative key; an absolute path under the vault is made relative. */
+function scopeKey(p: string, vaultRoot: string): string {
+  return vaultPath(toVaultRelative(p, vaultRoot) ?? p).replace(/\/+$/, '');
+}
+
+function overlaps(a: string, b: string): boolean {
+  return a === b || a === '' || b === '' || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
+}
+
 /**
- * Drains the three writer pipelines in parallel, then runs `op` if every
- * drain succeeded. On partial failure: surfaces an aggregated toast naming
- * up to the first three failed targets and throws
+ * The failures that block an operation with `scope`: all of them without a
+ * scope, else those whose path overlaps one of the scope's paths.
+ *
+ * DECISION: a pending write can only disturb a disk-shape operation on the
+ * same path or a parent/child path (it would land on a path that moved, or
+ * recreate one that went). An unrelated failure keeps its own error toast but
+ * is no reason to refuse the operation. Close, open, quit and Save don't come
+ * through here and still refuse on any failure.
+ */
+function blockingFailures(detail: PendingWritesFailedDetail, scope: DrainScope): PendingWritesFailedDetail {
+  if (!scope.paths) return detail;
+  const vaultRoot = getActiveVaultPath();
+  const keys = scope.paths.map((p) => scopeKey(p, vaultRoot));
+  const hits = (failed: string[]): string[] =>
+    failed.filter((f) => {
+      const k = scopeKey(f, vaultRoot);
+      return keys.some((s) => overlaps(k, s));
+    });
+  return {
+    notes: { failed: hits(detail.notes.failed) },
+    board: { failed: hits(detail.board.failed) },
+    misc: { failed: hits(detail.misc.failed) },
+    config: { failed: hits(detail.config.failed) },
+  };
+}
+
+/** Throws (after one toast) when `detail` holds a failure that blocks `scope`. */
+function refuseIfBlocked(detail: PendingWritesFailedDetail, scope: DrainScope): void {
+  const blocking = blockingFailures(detail, scope);
+  const total = totalFailures(blocking);
+  if (total === 0) return;
+  const failedPaths = summariseFailedPaths(blocking);
+  const sample = failedPaths.slice(0, 3).join(', ');
+  const more = failedPaths.length > 3 ? `, +${failedPaths.length - 3} more` : '';
+  uiStore.pushToast({
+    text: `Couldn't complete the operation — ${total} pending write${total === 1 ? '' : 's'} failed: ${sample}${more}. Resolve the save errors above and try again.`,
+    type: 'error',
+    duration: 0,
+    // Siblings sharing one failed drain show one toast, not one each.
+    dedupeKey: `drain-failed:${failedPaths.join('|')}`,
+  });
+  throw new PendingWritesFailedError(blocking);
+}
+
+/**
+ * Drains the writer pipelines in parallel, then runs `op` unless a write
+ * that touches `scope` failed. On such a failure: surfaces an aggregated toast
+ * naming up to the first three failed targets and throws
  * `PendingWritesFailedError` so the caller can refuse to invoke the IPC.
  *
  * The drain order is parallel (writers don't share state) but the
@@ -139,45 +211,38 @@ function summariseFailedPaths(results: PendingWritesFailedDetail): string[] {
  * caught — that's a design call: keystrokes during a rename are rare
  * enough that re-arming a 300 ms debounce mid-rename is acceptable.
  */
-export async function withDrainedWrites<T>(op: () => Promise<T>): Promise<T> {
+export async function withDrainedWrites<T>(op: () => Promise<T>, scope: DrainScope = {}): Promise<T> {
   const generation = currentVaultGeneration();
   if (drainingGeneration === generation && drainPromise) {
     // Already covered by an outer drain for THIS vault generation. Two cases:
     //  - NESTED call (op() invoking a convenience helper): the outer drain has
-    //    already settled successfully (op only runs post-drain), so the await
-    //    below resolves `{ ok: true }` immediately and we just run the op with
-    //    no second drain cost.
+    //    already settled (op only runs post-drain), so the await below
+    //    resolves immediately and we just run the op with no second drain.
     //  - CONCURRENT sibling: the outer drain is still in flight (possibly
     //    parked behind an interactive drift prompt for up to ~60 s). Await it
     //    rather than running the op un-drained.
     const outcome = await drainPromise;
-    if (outcome.ok) {
-      // Re-validate AFTER the park: a vault swap during it would otherwise run
-      // this op's stale captured inputs against the NEW vault. Main's
-      // `assertActiveVault` gates the disk IPC, but the in-memory half of a
-      // cascade op is not gated — bail loudly.
-      if (currentVaultGeneration() !== generation) {
-        throw new Error(
-          'Vault changed during write drain — refusing the disk-shape op (stale generation).',
-        );
-      }
-      return op();
+    if (!outcome.detail) {
+      throw new Error('Pending writes drain failed — refusing the disk-shape op.');
     }
-    // The outer drain FAILED. Share its verdict rather than re-draining per
-    // sibling (up to ~60 s each, re-toasting). The outer call already toasted,
-    // so throw the same error (or a generic one for an unexpected rejection)
-    // and let the caller bail.
-    throw outcome.detail
-      ? new PendingWritesFailedError(outcome.detail)
-      : new Error('Pending writes drain failed — refusing the disk-shape op.');
+    // Share the outer drain's result rather than re-draining, judged against
+    // this call's own scope.
+    refuseIfBlocked(outcome.detail, scope);
+    // Re-validate AFTER the park: a vault swap during it would otherwise run
+    // this op's stale captured inputs against the NEW vault. Main's
+    // `assertActiveVault` gates the disk IPC, but the in-memory half of a
+    // cascade op is not gated — bail loudly.
+    if (currentVaultGeneration() !== generation) {
+      throw new Error(
+        'Vault changed during write drain — refusing the disk-shape op (stale generation).',
+      );
+    }
+    return op();
   }
   drainingGeneration = generation;
-  // `drainPromise` carries the drain outcome
-  // (see `DrainOutcome`): settled `{ ok: true }` once every writer pipeline
-  // drained clean (before op runs), `{ ok: false, detail }` on a `totalFailed`
-  // drain, `{ ok: false, detail: null }` on an unexpected rejection. Never
-  // rejects, so a parked sibling can't crash on an error the outer call already
-  // surfaced.
+  // `drainPromise` carries the drain outcome (see `DrainOutcome`), settled
+  // before op runs. Never rejects, so a parked sibling can't crash on an error
+  // the outer call already surfaced.
   let settleDrain: (outcome: DrainOutcome) => void = () => {};
   drainPromise = new Promise<DrainOutcome>((resolve) => { settleDrain = resolve; });
   try {
@@ -211,32 +276,11 @@ export async function withDrainedWrites<T>(op: () => Promise<T>): Promise<T> {
       config: { failed: configResult?.failed ?? [] },
     };
 
-    const totalFailed =
-      noteResult.failed.length +
-      boardResult.failed.length +
-      miscResult.failed.length +
-      (configResult?.failed.length ?? 0);
-
-    if (totalFailed > 0) {
-      const failedPaths = summariseFailedPaths(detail);
-      const sample = failedPaths.slice(0, 3).join(', ');
-      const more =
-        failedPaths.length > 3 ? `, +${failedPaths.length - 3} more` : '';
-      uiStore.pushToast({
-        text: `Couldn't complete the operation — ${totalFailed} pending write${totalFailed === 1 ? '' : 's'} failed: ${sample}${more}. Resolve the save errors above and try again.`,
-        type: 'error',
-        duration: 0,
-      });
-      // Settle the failure DETAIL into drainPromise before the
-      // throw so parked siblings bail with the same error (no re-drain).
-      settleDrain({ ok: false, detail });
-      throw new PendingWritesFailedError(detail);
-    }
-
-    // Drain phase complete — release any concurrent siblings parked above
-    // BEFORE the op runs (their ops were never serialised behind the outer
-    // op, only behind the drain).
-    settleDrain({ ok: true });
+    // Release any concurrent siblings parked above BEFORE the op runs (their
+    // ops were never serialised behind the outer op, only behind the drain).
+    // Each judges the result against its own scope.
+    settleDrain({ detail });
+    refuseIfBlocked(detail, scope);
     return await op();
   } finally {
     // Only clear if we're still the generation that set it. A swap mid-drain
@@ -247,12 +291,11 @@ export async function withDrainedWrites<T>(op: () => Promise<T>): Promise<T> {
       drainingGeneration = null;
       drainPromise = null;
     }
-    // Idempotent (first settle wins): a no-op on the success path (already
-    // `{ ok: true }`) and the totalFailed path (already `{ ok: false, detail }`
-    // above). Catches an UNEXPECTED drain/op rejection (a flush threw, not the
-    // totalFailed branch) → `{ ok: false, detail: null }` so parked siblings
-    // bail rather than hang on a promise that never resolves.
-    settleDrain({ ok: false, detail: null });
+    // Idempotent (first settle wins): a no-op once the drain settled above.
+    // Catches an UNEXPECTED drain rejection (a flush threw) →
+    // `{ detail: null }` so parked siblings bail rather than hang on a
+    // promise that never resolves.
+    settleDrain({ detail: null });
   }
 }
 
@@ -287,7 +330,7 @@ export async function renameVaultPath(
     return noteStore.hold(notePathsOf(vaultRoot, [oldPath, newPath]), async () => {
       return window.filo.invoke('vault:rename', vaultRoot, oldPath, newPath);
     });
-  });
+  }, { paths: [oldPath, newPath] });
 }
 
 /** The vault-relative paths of `absPaths` that name notes (`.md`). */
@@ -319,7 +362,7 @@ export async function trashVaultPath(
     return noteStore.hold(notePathsOfRel([relPath]), async () => {
       return window.filo.invoke('vault:trash-move', vaultRoot, relPath);
     });
-  });
+  }, { paths: [relPath] });
 }
 
 /**
@@ -336,7 +379,7 @@ export async function restoreTrashed(
     return noteStore.hold(notePathsOfRel([originalPath]), async () => {
       return window.filo.invoke('vault:trash-restore', vaultRoot, trashId);
     });
-  });
+  }, { paths: [originalPath] });
 }
 
 /** What is in Filo's trash, newest first. */
@@ -375,7 +418,7 @@ export async function createVaultFolder(
 ): Promise<ChannelResult<'vault:create-folder'>> {
   return withDrainedWrites(async () => {
     return window.filo.invoke('vault:create-folder', ...args);
-  });
+  }, { paths: [args[1]] });
 }
 
 /**
@@ -391,7 +434,13 @@ export async function copyFileIntoVault(
 ): Promise<ChannelResult<'vault:copy-file'>> {
   return withDrainedWrites(async () => {
     return window.filo.invoke('vault:copy-file', ...args);
-  });
+  }, { paths: [copyTarget(args[0], args[2] ?? args[1])] });
+}
+
+/** Where an import lands: the source's file name in the destination folder. */
+function copyTarget(sourcePath: string, destFolder: string): string {
+  const name = toPosix(sourcePath).split('/').pop() ?? '';
+  return `${toPosix(destFolder).replace(/\/+$/, '')}/${name}`;
 }
 
 // ── Test-only helpers ─────────────────────────────────────────────────

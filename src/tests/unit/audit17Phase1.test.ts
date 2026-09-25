@@ -15,6 +15,7 @@ import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTra
 import { __resetVaultIdentityForTests } from '@renderer/lib/vault/vaultIdentity';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { restoreFiloDefault } from '../helpers/filoBridge';
+import { NoteGoneError } from '@renderer/commands/noteGoneError';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TaskListBoard, KanbanBoard } from '@renderer/schema/index';
 
@@ -178,17 +179,17 @@ describe('undo/redo on a never-opened note rebases against FRESH disk (no blind 
     expect(conflictToast()).toBeFalsy();
   });
 
-  it('nothing readable (file gone) applies the inverse without a conflict prompt', async () => {
+  it('a gone file rejects the undo with NoteGoneError and queues nothing', async () => {
     const cmd = new UpdateTaskFieldCommand('tl', 'task.md', { priority: 'high' }, { priority: 'normal' });
     await cmd.execute();
     await noteStore.flushAll();
 
-    // The file becomes unreadable: there is no baseline to detect a conflict
-    // against, and nothing visible to clobber.
+    // A write to a missing file can't land, and a queued one would block
+    // every later disk operation on that path.
     vault.remove('task.md');
 
-    await cmd.undo();
-    expect(noteStore.frontmatter('task.md').priority).toBe('normal');
+    await expect(cmd.undo()).rejects.toBeInstanceOf(NoteGoneError);
+    expect(noteStore.hasPendingWrites('task.md')).toBe(false);
     expect(conflictToast()).toBeFalsy();
   });
 });

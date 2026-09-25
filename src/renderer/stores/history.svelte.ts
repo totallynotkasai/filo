@@ -4,6 +4,8 @@ import { uiStore } from './ui.svelte';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { Command } from '../commands/Command';
 import { reportError } from '../lib/utils/errorBus';
+import { registerPathRenamable } from '../lib/vault/renamePathKeys';
+import { NoteGoneError } from '../commands/noteGoneError';
 
 // `Command` lives in `commands/Command.ts`; re-exported here for callers that
 // import it from the history store.
@@ -407,6 +409,33 @@ function rollbackRedo(
   if (dirtyId) boardStore.markDirty(dirtyId);
 }
 
+/**
+ * An undo or redo found its note gone: the command is back where it was (the
+ * rollback), nothing was queued, and the user is told. The step stays so it
+ * works again if the file comes back (restored from Filo's trash); "Skip this
+ * step" drops it, so the steps before it are reachable. Resolves rather than
+ * rejects: the failure is handled and shown.
+ */
+function toastNoteGone(command: Command, err: NoteGoneError, verb: 'undo' | 'redo'): void {
+  uiStore.pushToast({
+    text: `Couldn't ${verb}: "${err.relPath}" no longer exists.`,
+    type: 'warning',
+    duration: 0,
+    dedupeKey: `history-note-gone:${err.relPath}`,
+    actions: [{ label: 'Skip this step', handler: () => dropCommand(command) }],
+  });
+}
+
+/** Removes `command` from every stack (the user skipped a step that can't run). */
+function dropCommand(command: Command): void {
+  for (const stack of Object.values(stacks)) {
+    mutateStack(stack, (s) => {
+      s.undoStack = s.undoStack.filter((c) => c !== command);
+      s.redoStack = s.redoStack.filter((c) => c !== command);
+    });
+  }
+}
+
 export const historyStore = {
   get canUndo() {
     const stack = getActiveStack();
@@ -544,6 +573,10 @@ export const historyStore = {
       : () => command.undo();
     return runChained(op).catch((err) => {
       rollbackUndo(command, preUndoStack, undoStackRef, originBoardId);
+      if (err instanceof NoteGoneError) {
+        toastNoteGone(command, err, 'undo');
+        return;
+      }
       // See execute(): report before the (mostly unobserved) rethrow.
       reportError('historyStore', err, `Undo of "${command.description}" failed and was rolled back.`);
       throw err;
@@ -598,6 +631,10 @@ export const historyStore = {
       : () => command.execute();
     return runChained(op).catch((err) => {
       rollbackRedo(command, preRedoStack, redoStackRef, originBoardId);
+      if (err instanceof NoteGoneError) {
+        toastNoteGone(command, err, 'redo');
+        return;
+      }
       // See execute(): report before the (mostly unobserved) rethrow.
       reportError('historyStore', err, `Redo of "${command.description}" failed and was rolled back.`);
       throw err;
@@ -743,6 +780,22 @@ export const historyStore = {
     }
   },
 };
+
+// A renamed or moved file: every command on every stack (boards and Document
+// tabs alike) follows it, so an undo after the rename reaches the file at its
+// new path instead of failing on the old one. Both the in-app rename and the
+// external-rename cascade fire this sweep.
+registerPathRenamable('history', (oldRel, newRel) => {
+  for (const stack of Object.values(stacks)) {
+    for (const command of [...stack.undoStack, ...stack.redoStack]) {
+      try {
+        command.renamePath(oldRel, newRel);
+      } catch (err) {
+        console.error(`[historyStore] "${command.description}" couldn't follow the rename of "${oldRel}":`, err);
+      }
+    }
+  }
+});
 
 // Vault-swap reset: drops every per-board undo/redo stack so a Ctrl+Z in the
 // new vault can't replay against ids that no longer exist. Also resets

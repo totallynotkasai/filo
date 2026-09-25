@@ -7,7 +7,7 @@
  * internal API moves, update the adapter, not the spec.
  */
 import { mount, flushSync, tick } from 'svelte';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mainBridge, type MainBridge } from './mainBridge';
@@ -27,6 +27,10 @@ export interface CharApp {
   snapshot(): Map<string, string>;
   /** An edit made by another program: plain bytes on disk, seen through the real watcher. */
   writeExternally(rel: string, text: string): void;
+  /** A rename made by another program (Explorer, a sync client): a plain rename, seen through the real watcher. */
+  renameExternally(from: string, to: string): void;
+  /** A delete made by another program: the file is gone, seen through the real watcher. */
+  deleteExternally(rel: string): void;
 }
 
 let appEl: HTMLElement | null = null;
@@ -153,6 +157,13 @@ export async function startApp(
       const p = abs(rel);
       mkdirSync(dirname(p), { recursive: true });
       writeFileSync(p, text);
+    },
+    renameExternally: (from, to) => {
+      mkdirSync(dirname(abs(to)), { recursive: true });
+      renameSync(abs(from), abs(to));
+    },
+    deleteExternally: (rel) => {
+      rmSync(abs(rel), { recursive: true, force: true });
     },
   };
   current = app;

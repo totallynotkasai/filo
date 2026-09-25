@@ -39,6 +39,7 @@ import { installMemoryVault } from '../helpers/memoryVault';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { noteStore } from '@renderer/stores/notes.svelte';
+import { registerNotePrompts } from '@renderer/stores/notePrompts';
 
 beforeEach(() => {
   // Runs the test-reset callbacks, which clear the active vault path.
@@ -317,6 +318,85 @@ describe('withDrainedWrites — IPC convenience wrappers', () => {
     await copyFileIntoVault('/source/img.png', '/vault', 'Sub');
 
     expect(calls).toEqual([['/source/img.png', '/vault', 'Sub']]);
+  });
+});
+
+describe('withDrainedWrites — scoped to the paths an operation touches', () => {
+  /** A change queued for `rel` whose file is gone: every drain fails it (ENOENT). */
+  async function failedWriteAt(rel: string, others: Record<string, string> = {}): Promise<void> {
+    const vault = installMemoryVault({ [rel]: '---\ntitle: T\n---\nBody\n', ...others });
+    vault.remove(rel);
+    noteStore.patchFrontmatter(rel, { set: { status: 'x' }, unset: [] });
+    // The first drain reports it; the write stays queued and failed.
+    await expect(withDrainedWrites(async () => undefined)).rejects.toBeInstanceOf(PendingWritesFailedError);
+    for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
+  }
+
+  it('a failed write elsewhere does not block the operation', async () => {
+    await failedWriteAt('Card.md', { 'Other.md': 'x' });
+    const op = vi.fn(async () => 'ran');
+    await expect(withDrainedWrites(op, { paths: ['Other.md', 'Other renamed.md'] })).resolves.toBe('ran');
+    expect(op).toHaveBeenCalledTimes(1);
+    expect(uiStore.toasts.some((t) => t.text.includes("Couldn't complete the operation"))).toBe(false);
+  });
+
+  it('a failed write on the path itself blocks it', async () => {
+    await failedWriteAt('Card.md');
+    const op = vi.fn(async () => 'ran');
+    await expect(withDrainedWrites(op, { paths: ['card.md'] })).rejects.toBeInstanceOf(PendingWritesFailedError);
+    expect(op).not.toHaveBeenCalled();
+    expect(uiStore.toasts.find((t) => t.type === 'error')?.text).toContain('Card.md');
+  });
+
+  it('a folder rename over a failed note inside it is blocked', async () => {
+    await failedWriteAt('Work/Card.md');
+    const op = vi.fn(async () => 'ran');
+    await expect(withDrainedWrites(op, { paths: ['Work', 'Projects'] })).rejects.toBeInstanceOf(PendingWritesFailedError);
+    expect(op).not.toHaveBeenCalled();
+  });
+
+  it('absolute paths under the vault are matched too', async () => {
+    await failedWriteAt('Card.md');
+    await expect(
+      renameVaultPath('/vault', '/vault/Card.md', '/vault/Moved.md'),
+    ).rejects.toBeInstanceOf(PendingWritesFailedError);
+  });
+
+  it('an unscoped drain and save (close, open, quit) still refuse on any failure', async () => {
+    await failedWriteAt('Card.md', { 'Other.md': 'x' });
+    await withDrainedWrites(async () => undefined, { paths: ['Other.md'] });
+    await expect(withDrainedWrites(async () => undefined)).rejects.toBeInstanceOf(PendingWritesFailedError);
+    expect(await vaultStore.save()).toBe(false);
+  });
+
+  it('the "file no longer exists" prompt offers Discard change, which unblocks the path', async () => {
+    registerNotePrompts();
+    await failedWriteAt('Card.md');
+    // Drain again so the prompt is raised on a toast we can see.
+    await expect(withDrainedWrites(async () => undefined, { paths: ['Card.md'] })).rejects.toBeInstanceOf(PendingWritesFailedError);
+    const prompt = uiStore.toasts.find((t) => t.text.includes('the file no longer exists'));
+    expect(prompt?.actions?.map((a) => a.label)).toEqual(['Discard change']);
+    await prompt!.actions![0].handler();
+
+    const op = vi.fn(async () => 'ran');
+    await expect(withDrainedWrites(op, { paths: ['Card.md'] })).resolves.toBe('ran');
+    expect(await vaultStore.save()).toBe(true);
+  });
+
+  it('with an unsaved body, "Save as new file" writes the note back at its path', async () => {
+    registerNotePrompts();
+    const vault = installMemoryVault({ 'Card.md': '---\ntitle: Card\n---\nBody\n' });
+    const m = noteStore.acquire('Card.md', 'editor');
+    await m.loaded;
+    vault.remove('Card.md');
+    noteStore.setBody('Card.md', 'Typed text\n', 'editor');
+    await expect(withDrainedWrites(async () => undefined, { paths: ['Card.md'] })).rejects.toBeInstanceOf(PendingWritesFailedError);
+    const prompt = uiStore.toasts.find((t) => t.text.includes('the file no longer exists'));
+    expect(prompt?.actions?.map((a) => a.label)).toEqual(['Save as new file', 'Discard change']);
+    await prompt!.actions![0].handler();
+
+    expect(vault.read('Card.md')).toBe('---\ntitle: Card\n---\nTyped text\n');
+    expect(await vaultStore.save()).toBe(true);
   });
 });
 

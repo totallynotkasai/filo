@@ -628,6 +628,18 @@ export function toastActions(): string[] {
   return $$(document, '.toast .toast-action').map((b) => (b.textContent ?? '').trim());
 }
 
+/** Text of every error toast on screen. */
+export function errorToasts(): string[] {
+  return $$(document, '.toast')
+    .filter((t) => t.querySelector('.toast-icon[aria-label="Error"]') !== null)
+    .map((t) => (t.querySelector('.toast-text')?.textContent ?? '').trim());
+}
+
+/** Text of every toast on screen. */
+export function toastTexts(): string[] {
+  return $$(document, '.toast .toast-text').map((t) => (t.textContent ?? '').trim());
+}
+
 /** Whether the "recovered from unflushed changes" prompt (shown after a crash) is up. */
 export function recoveryPromptShown(): boolean {
   return document.querySelector('.recovery-body') !== null;

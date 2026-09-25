@@ -614,6 +614,11 @@ export const boardCacheStore = {
         project.boards = [...project.boards, board];
       }
 
+      // List the new file in the sidebar now rather than when the watcher
+      // reports it: a recursive watch can report a new file late, or not at
+      // all (Node's recursive fs.watch on Linux).
+      void vaultStore.refreshTree();
+
       return true;
     } catch (err) {
       reportError(

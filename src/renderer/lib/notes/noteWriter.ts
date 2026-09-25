@@ -30,6 +30,7 @@ import { createScheduler } from '../boards/writeScheduler';
 import { WRITE_TIMEOUT_MS } from '../boards/boardWriteDebounce';
 import {
   beginWrite,
+  clearFailedPathAfterLateSuccess,
   endWrite,
   markPathFailed,
   markRecentSelfWrite,
@@ -79,6 +80,8 @@ export interface FreshRead {
 export interface NoteWriterHost {
   /** The bytes the note's local body was built on; undefined when no model holds the note. */
   baseOf(path: VaultPath): DiskSnapshot | undefined;
+  /** Whether the note was last known to have frontmatter (its base, else the vault index). */
+  hadFrontmatter(path: VaultPath): boolean;
   /** False while the body must not be written (lossy note, unresolved conflict). */
   canWriteBody(path: VaultPath): boolean;
   /** A pending body met a different body on disk. The body stays pending. */
@@ -151,13 +154,12 @@ export async function readNoteFresh(vaultRoot: string, relPath: string): Promise
 }
 
 /**
- * A read that shows an opening fence but no closing one, of a note whose
- * last known bytes had frontmatter, is another program's write caught half
- * way. Assembling against it would drop the frontmatter.
+ * A read that shows an opening fence but no closing one, of a note last
+ * known to have frontmatter, is another program's write caught half way.
+ * Assembling against it would drop the frontmatter.
  */
-export function looksTorn(fresh: NoteText, base: DiskSnapshot | undefined): boolean {
-  if (fresh.hasFrontmatter || !base) return false;
-  if (!readNoteText(base.rawText).hasFrontmatter) return false;
+export function looksTorn(fresh: NoteText, hadFrontmatter: boolean): boolean {
+  if (fresh.hasFrontmatter || !hadFrontmatter) return false;
   const raw = fresh.hadBom ? fresh.raw.slice(1) : fresh.raw;
   return /^---[ \t]*\r?\n/.test(raw);
 }
@@ -175,6 +177,8 @@ export interface NoteWriter {
   hasWork(path: string): boolean;
   /** Drops the queued body (a Reload discarded it). */
   dropBody(path: string): void;
+  /** Drops everything queued for `path` (the user deleted the note). */
+  drop(path: string): void;
   /** Writes `path`'s queue now. `ok` is false when the write failed or a conflict holds the body. */
   flush(path: string): Promise<{ ok: boolean }>;
   /** Writes every queue now. */
@@ -296,6 +300,13 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
         // Gone or unreadable: the change can't land, and a deleted file is
         // never recreated from memory. Keep it queued and say so.
         markPathFailed(vaultRoot, relPath);
+        reportError(
+          isMissingFileError(err) ? 'note.missing' : 'note.unreadable',
+          isMissingFileError(err) ? null : err,
+          isMissingFileError(err)
+            ? `Couldn't save changes to "${relPath}": the file no longer exists.`
+            : `Couldn't save changes to "${relPath}": the file couldn't be read.`,
+        );
         throw err;
       }
       if (!isStillSameVault(identity)) return;
@@ -309,7 +320,7 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
         throw new Error(`noteWriter: "${relPath}" is not UTF-8`);
       }
       const base = host.baseOf(path);
-      if (looksTorn(fresh.text, base)) {
+      if (looksTorn(fresh.text, host.hadFrontmatter(path))) {
         await sleep(READ_RETRY_MS[attempt] ?? 300);
         continue;
       }
@@ -364,6 +375,14 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
     throw new Error(`noteWriter: "${args.relPath}" kept changing on disk; not overwriting it`);
   }
 
+  /**
+   * Nothing is left to write for `relPath` (the user discarded it), so an
+   * earlier failure no longer means unsaved work.
+   */
+  function settled(relPath: string): void {
+    clearFailedPathAfterLateSuccess(host.vaultRoot() ?? undefined, relPath);
+  }
+
   function failHeldBody(vaultRoot: string, relPath: string): never {
     markPathFailed(vaultRoot, relPath);
     throw new Error(`noteWriter: the edit to "${relPath}" waits for a decision about the version on disk`);
@@ -374,14 +393,18 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
     if (!vaultRoot) throw new Error('noteWriter: no vault is open');
     // A losing attempt targets someone else's file, so the in-flight window is
     // tracked without a path: a path mark would hide that file's next change.
+    const identity = captureVaultIdentity();
     beginWrite(vaultRoot);
     const raw = await window.filo
       .invoke('vault:create-file-text', vaultRoot, relPath, text)
       .catch((err: unknown) => ({ success: false as const, thrown: err }));
     const result = raw as { success?: boolean; code?: string; error?: string; thrown?: unknown };
     if (result.success) {
-      rememberOwnWrite(vaultPath(relPath), noteTextHash(text));
-      markRecentSelfWrite(relPath);
+      // After a vault swap the path means a file in another vault.
+      if (isStillSameVault(identity)) {
+        rememberOwnWrite(vaultPath(relPath), noteTextHash(text));
+        markRecentSelfWrite(relPath);
+      }
       endWrite(vaultRoot);
       return 'created';
     }
@@ -428,10 +451,21 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
       const entry = pending.get(key);
       if (!entry) return;
       entry.body = undefined;
-      if (!entry.delta) {
-        pending.delete(key);
-        scheduler.cancel(key, undefined, true);
+      if (entry.delta) {
+        arm(key);
+        return;
       }
+      pending.delete(key);
+      scheduler.cancel(key, undefined, true);
+      settled(entry.relPath);
+    },
+
+    drop(path) {
+      const key = vaultPath(path);
+      const entry = pending.get(key);
+      pending.delete(key);
+      scheduler.cancel(key);
+      settled(entry?.relPath ?? path);
     },
 
     async flush(path) {
@@ -463,9 +497,17 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
         const vaultRoot = host.vaultRoot();
         if (!vaultRoot) return null;
         const identity = captureVaultIdentity();
-        const fresh = await readNoteFresh(vaultRoot, relPath);
+        let fresh: FreshRead;
+        try {
+          fresh = await readNoteFresh(vaultRoot, relPath);
+        } catch (err) {
+          // Present but unreadable: the change is unsaved, so say so. A note
+          // that's gone has nothing left to change.
+          if (!isMissingFileError(err) && isStillSameVault(identity)) markPathFailed(vaultRoot, relPath);
+          throw err;
+        }
         if (!isStillSameVault(identity) || fresh.nonUtf8) return null;
-        if (looksTorn(fresh.text, host.baseOf(path))) {
+        if (looksTorn(fresh.text, host.hadFrontmatter(path))) {
           throw new Error(`noteWriter: "${relPath}" was mid-write by another program; try again`);
         }
         const next = fn(fresh.text);
@@ -486,8 +528,9 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
 
     async createExclusive(relPath, text) {
       const path = vaultPath(relPath);
+      const identity = captureVaultIdentity();
       const outcome = await onPath(path, () => createExclusive(relPath, text));
-      if (outcome === 'created') {
+      if (outcome === 'created' && isStillSameVault(identity)) {
         const written = readNoteText(text);
         host.onWritten(path, relPath, written, snapshotOf(written), {});
       }
@@ -518,6 +561,7 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
       await onPath(path, async () => {
         const vaultRoot = host.vaultRoot();
         if (!vaultRoot) throw new Error('noteWriter: no vault is open');
+        const identity = captureVaultIdentity();
         rememberOwnWrite(path, noteTextHash(text));
         await trackComponentWrite(
           vaultRoot,
@@ -525,6 +569,7 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
           () => invokeOk('vault:write-file-text', vaultRoot, relPath, text),
           track ?? {},
         );
+        if (!isStillSameVault(identity)) return;
         const written = readNoteText(text);
         host.onWritten(path, relPath, written, snapshotOf(written), {});
       });

@@ -1,170 +1,118 @@
 /**
- * Audit-6 M1 — gateway drift-abort must NOT report SUCCESS.
+ * A note write that doesn't land must NOT report success.
  *
- * When the pre-write drift check fires the Reload / Keep-local prompt and the
- * user defers (auto-dismiss / manual close) — or the re-prompt budget is
- * exhausted against a churning external writer — `writeMarkdownFileImpl` aborts
- * the write. Pre-fix it `return`ed, which resolved `performWrite` as SUCCESS:
- * the scheduler dropped the path from `pendingVaultPaths` and
- * `syncSentinelIfIdle` markClean'd `.filo/.dirty` (the path was never in
- * `failedVaultPaths`). The editor stayed dirty but disk was unchanged → a quit
- * lost the note body with a CLEAN sentinel (no recovery prompt).
- *
- * The fix mirrors `frontmatterWriteScheduler` DI-13: `markPathFailed` keeps the
- * sentinel dirty + the indicator showing error, and the throw attributes the
- * path to `flushAll().failed` so `save()` returns false.
+ * When an unsaved body meets a body another program wrote (a conflict the user
+ * hasn't answered yet), or the file keeps changing under every attempt, the
+ * writer keeps the change queued. It must also mark the path failed, so the
+ * dirty sentinel stays dirty and `flushAll().failed` names the note (save()
+ * returns false). Reporting success here would let a quit lose the body with
+ * a clean sentinel and no recovery prompt.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import {
-  writeMarkdownFile,
-  scheduleMarkdownWrite,
-  flushAllMarkdownWrites,
-  markHydrated,
-  setExternalEditPromptHandler,
-  __resetMarkdownFileWriterForTests,
-} from '@renderer/lib/vault/markdownFileWriter';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   isPathPending,
   setWriteStateListener,
   __resetDirtyTrackingForTests,
   type WriteStateInfo,
 } from '@renderer/lib/boards/writeStateTracking';
-import { __resetBaselinesForTests } from '@renderer/lib/vault/fileBaselineRegistry';
-import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { noteStore, setNotePromptHandlers, type NoteModel } from '@renderer/stores/notes.svelte';
+import { vaultStore } from '@renderer/stores/vault.svelte';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
-/**
- * Mocks the disk so the pre-write stat ALWAYS reports a drift versus the
- * baseline seeded below (mtime 200/size 20 vs baseline 100/10). The write IPC
- * is never reached on the defer path, but it's wired to succeed so the
- * happy-path assertion can confirm the inverse.
- */
-function installDriftingDisk(): Array<{ channel: string; args: unknown[] }> {
-  const calls: Array<{ channel: string; args: unknown[] }> = [];
-  installFiloMock((channel: unknown, ...args: unknown[]) => {
-    calls.push({ channel: channel as string, args });
-    if (channel === 'vault:stat') return { success: true, mtimeMs: 200, size: 20 };
-    if (channel === 'vault:write-existing-file-text') return { success: true };
-    if (channel === 'vault:read-file-text') {
-      return { success: true, content: 'body', mtimeMs: 200, size: 20 };
-    }
-    return undefined;
-  });
-  return calls;
-}
+const prompts = { conflict: vi.fn(), deletedWithUnsavedBody: vi.fn(), reloadShrank: vi.fn(), dismiss: vi.fn() };
 
-describe('Audit-6 M1 — gateway drift defer/budget keeps the path failed', () => {
+describe('note writes that do not land are reported as failed', () => {
+  let vault: MemoryVault;
+  let lastState: WriteStateInfo | null;
+
   beforeEach(() => {
-    __resetMarkdownFileWriterForTests();
     __resetDirtyTrackingForTests();
-    __resetBaselinesForTests();
+    vaultStore.setPath('/vault');
+    noteStore.__resetForTests();
+    for (const fn of Object.values(prompts)) fn.mockReset();
+    setNotePromptHandlers(prompts);
+    vault = installMemoryVault({
+      'Dirty.md': '---\ntitle: Dirty\n---\nBase\n',
+      'Churn.md': '---\ntitle: Churn\n---\nBase\n',
+    });
+    lastState = null;
+    setWriteStateListener((s) => {
+      lastState = { ...s };
+    });
   });
   afterEach(() => {
-    setExternalEditPromptHandler(null);
     setWriteStateListener(null);
-    __resetMarkdownFileWriterForTests();
+    noteStore.__resetForTests();
     __resetDirtyTrackingForTests();
-    __resetBaselinesForTests();
+    vaultStore.setPath('');
     restoreFiloDefault();
   });
 
-  it("'defer' throws, marks the path failed, and keeps the sentinel dirty", async () => {
-    installDriftingDisk();
-    // Hydrate with a baseline of (100, 10); the stat mock reports (200, 20) → drift.
-    markHydrated('Dirty.md', false, 100, 10);
-    setExternalEditPromptHandler(() => Promise.resolve('defer'));
+  async function editWhileTheyEdit(rel: string): Promise<NoteModel> {
+    const m = noteStore.acquire(rel, 'view');
+    await m.loaded;
+    noteStore.setBody(rel, 'Mine', 'view');
+    vault.writeExternally(rel, `---\ntitle: ${rel}\n---\nTheirs\n`);
+    return m;
+  }
 
-    let lastState: WriteStateInfo | null = null;
-    setWriteStateListener((s) => {
-      lastState = s;
-    });
+  it('a body held by an unanswered conflict fails, marks the path failed, and keeps the sentinel dirty', async () => {
+    const m = await editWhileTheyEdit('Dirty.md');
 
-    await expect(
-      writeMarkdownFile({
-        vaultRoot: '/vault',
-        relPath: 'Dirty.md',
-        frontmatter: {},
-        body: 'dirty body',
-        callerId: 'text-tile:Dirty.md',
-        notePath: null,
-      }),
-    ).rejects.toThrow(/deferred/);
+    expect(await noteStore.flush('Dirty.md')).toBe(false);
 
-    // Path is recorded failed (sentinel stays dirty) — NOT silently cleaned.
+    expect(m.status).toBe('conflict');
+    expect(vault.read('Dirty.md')).toBe('---\ntitle: Dirty.md\n---\nTheirs\n');
     expect(isPathPending('Dirty.md')).toBe(true);
     expect(lastState).not.toBeNull();
-    expect((lastState as unknown as WriteStateInfo).failed).toBeGreaterThan(0);
-    // failedPaths entries are normalised through `vaultPath()` (case-folded on
-    // case-insensitive filesystems), so compare case-insensitively.
-    expect(
-      (lastState as unknown as WriteStateInfo).failedPaths.map((p) => p.toLowerCase()),
-    ).toContain('dirty.md');
+    expect(lastState!.failed).toBeGreaterThan(0);
+    expect(lastState!.failedPaths.map((p) => p.toLowerCase())).toContain('dirty.md');
   });
 
-  it("budget-exhausted (always 'keep-local' but file keeps drifting) throws + fails the path", async () => {
-    // Each stat returns a DIFFERENT mtime so the post-prompt re-stat never
-    // matches what the user was shown → the keep-local re-prompt loop exhausts.
-    let tick = 300;
-    installFiloMock((channel: unknown) => {
-      if (channel === 'vault:stat') return { success: true, mtimeMs: tick++, size: 30 };
-      if (channel === 'vault:write-existing-file-text') return { success: true };
-      return undefined;
-    });
-    markHydrated('Churn.md', false, 100, 10);
-    setExternalEditPromptHandler(() => Promise.resolve('keep-local'));
+  it('a file that keeps changing under every attempt fails the path instead of overwriting it', async () => {
+    let n = 0;
+    vault.afterRead = (rel) => {
+      if (rel !== 'Churn.md') return;
+      // Another program rewrites the file after each of our reads.
+      queueMicrotask(() => vault.writeExternally('Churn.md', `---\ntitle: Churn\nrev: ${++n}\n---\nBase\n`));
+    };
+    noteStore.patchFrontmatter('Churn.md', { set: { status: 'mine' }, unset: [] });
 
-    await expect(
-      writeMarkdownFile({
-        vaultRoot: '/vault',
-        relPath: 'Churn.md',
-        frontmatter: {},
-        body: 'churn body',
-        callerId: 'text-tile:Churn.md',
-        notePath: null,
-      }),
-    ).rejects.toThrow(/churning|aborted/);
+    expect(await noteStore.flush('Churn.md')).toBe(false);
 
+    expect(vault.read('Churn.md')).not.toContain('status: mine');
     expect(isPathPending('Churn.md')).toBe(true);
   });
 
-  it('flushAll surfaces the deferred caller in failed[] (save() would return false)', async () => {
-    installDriftingDisk();
-    markHydrated('Sched.md', false, 100, 10);
-    setExternalEditPromptHandler(() => Promise.resolve('defer'));
+  it('a note deleted before its write is not recreated, and the path is failed', async () => {
+    noteStore.patchFrontmatter('Churn.md', { set: { status: 'mine' }, unset: [] });
+    vault.remove('Churn.md');
 
-    scheduleMarkdownWrite({
-      vaultRoot: '/vault',
-      relPath: 'Sched.md',
-      frontmatter: {},
-      body: 'scheduled body',
-      callerId: 'text-tile:Sched.md',
-      notePath: null,
-    });
+    expect(await noteStore.flush('Churn.md')).toBe(false);
 
-    const result = await flushAllMarkdownWrites();
-    expect(result.ok).toBe(false);
-    expect(result.failed).toContain('text-tile:Sched.md');
-    expect(isPathPending('Sched.md')).toBe(true);
+    expect(vault.read('Churn.md')).toBeUndefined();
+    expect(isPathPending('Churn.md')).toBe(true);
+    expect(lastState!.failedPaths.map((p) => p.toLowerCase())).toContain('churn.md');
   });
 
-  it('happy path (keep-local, no further drift) still writes and clears pending', async () => {
-    // Stable stat → after keep-local the re-stat matches → write commits.
-    installFiloMock((channel: unknown) => {
-      if (channel === 'vault:stat') return { success: true, mtimeMs: 200, size: 20 };
-      if (channel === 'vault:write-existing-file-text') return { success: true };
-      return undefined;
-    });
-    markHydrated('Ok.md', false, 100, 10);
-    setExternalEditPromptHandler(() => Promise.resolve('keep-local'));
+  it('flushAll names the held note in failed[] (save() would return false)', async () => {
+    await editWhileTheyEdit('Dirty.md');
 
-    await writeMarkdownFile({
-      vaultRoot: '/vault',
-      relPath: 'Ok.md',
-      frontmatter: {},
-      body: 'ok body',
-      callerId: 'text-tile:Ok.md',
-      notePath: null,
-    });
+    const result = await noteStore.flushAll();
 
-    expect(isPathPending('Ok.md')).toBe(false);
+    expect(result.failed.map((p) => p.toLowerCase())).toContain('dirty.md');
+    expect(isPathPending('Dirty.md')).toBe(true);
+  });
+
+  it('once the user keeps theirs, the write lands and the path is no longer pending', async () => {
+    await editWhileTheyEdit('Dirty.md');
+    await noteStore.flush('Dirty.md');
+
+    await noteStore.resolveConflict('Dirty.md', 'keep-mine');
+
+    expect(vault.read('Dirty.md')).toBe('---\ntitle: Dirty.md\n---\nMine\n');
+    expect(isPathPending('Dirty.md')).toBe(false);
+    expect((await noteStore.flushAll()).failed).toEqual([]);
   });
 });

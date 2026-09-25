@@ -1,23 +1,26 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { makeExternalChangesSlice, resetPartialReadRetryInflight } from '@renderer/stores/vaultExternalChanges';
-import { documentStore } from '@renderer/stores/document.svelte';
+/**
+ * A clean note follows a change on disk without asking. When that reload is a
+ * material shrink (the new body under half of a non-trivial prior body, as a
+ * sync client's truncation looks), an "Undo reload" toast offers the prior
+ * body back: it backs up the short version, then puts the prior body in as an
+ * unsaved edit that the writer lands over the truncation. Routine edits and
+ * growth reload silently.
+ */
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { makeExternalChangesSlice } from '@renderer/stores/vaultExternalChanges';
+import { noteStore, type NoteModel } from '@renderer/stores/notes.svelte';
+import { registerNotePrompts } from '@renderer/stores/notePrompts';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
+import { __resetKeepLocalBackupForTests } from '@renderer/lib/vault/keepLocalBackup';
 import type { VaultContext } from '@renderer/stores/vaultStoreTypes';
-import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
-
-/**
- * M5 (2026-05-28) — a silent reload of a CLEAN editor now snapshots the prior
- * body/frontmatter so a mis-judged transient / partial read (one that slipped
- * past the partial-read heuristic) is recoverable. When the reload is a
- * material shrink (>50% of a non-trivial file) a one-shot "Undo reload" toast
- * surfaces; its action restores the pre-reload content. Routine edits / growth
- * reload silently as before (no toast).
- */
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
 function clearToasts(): void {
-  for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id);
+  for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
 }
 
 function makeCtx(): VaultContext {
@@ -46,102 +49,88 @@ function makeCtx(): VaultContext {
   };
 }
 
-describe('vaultExternalChanges — reload-silently recovery (M5)', () => {
-  let ctx: VaultContext;
-  let slice: ReturnType<typeof makeExternalChangesSlice>;
+async function waitFor(pred: () => boolean): Promise<void> {
+  for (let i = 0; i < 100 && !pred(); i++) await new Promise((r) => setTimeout(r, 5));
+}
 
-  // Prior body well above RELOAD_RECOVERY_MIN_PRIOR_BYTES (256) and the
-  // partial-read floor (1024) so a non-drastic shrink classifies as
-  // reload-silently (not partial-read-retry).
+const shrankToast = () => uiStore.toasts.find((t) => t.text.includes('much shorter'));
+
+describe('a clean note reloaded from disk', () => {
+  let slice: ReturnType<typeof makeExternalChangesSlice>;
+  let vault: MemoryVault;
+  let m: NoteModel;
+
   const bigBody = '# Note\n' + 'x'.repeat(2000) + '\n';
 
-  async function primeAndOpen(): Promise<void> {
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') return { success: true, content: bigBody, mtimeMs: 1 };
-      return { success: true };
-    });
-    await vaultIndexStore.applyChanges(['Notes.md']);
-    documentStore.loadDocument({
-      filename: 'Notes.md',
-      title: 'Notes',
-      body: bigBody,
-      htmlContent: '',
-      richText: [],
-    });
+  async function changeOnDisk(body: string): Promise<void> {
+    vault.writeExternally('Notes.md', body);
+    await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await waitFor(() => m.body === body);
   }
 
   beforeEach(async () => {
-    documentStore.clear();
+    __resetDirtyTrackingForTests();
+    __resetKeepLocalBackupForTests();
     vaultIndexStore.clear();
-    resetPartialReadRetryInflight();
     clearToasts();
     vaultStore.setPath('/vault');
-    ctx = makeCtx();
-    slice = makeExternalChangesSlice(ctx);
-    await primeAndOpen();
+    noteStore.__resetForTests();
+    registerNotePrompts();
+    vault = installMemoryVault({ 'Notes.md': bigBody });
+    slice = makeExternalChangesSlice(makeCtx());
+    m = noteStore.acquire('Notes.md', 'tile');
+    await m.loaded;
   });
 
   afterEach(() => {
+    noteStore.__resetForTests();
     restoreFiloDefault();
     vaultStore.setPath('');
-    documentStore.clear();
     vaultIndexStore.clear();
-    resetPartialReadRetryInflight();
     clearToasts();
+    vi.restoreAllMocks();
   });
 
-  it('surfaces an Undo-reload toast on a material shrink and restores prior content', async () => {
-    // External edit drops the body to ~35% of its prior size — material
-    // (>50% lost) but not drastic enough (>90%) to be a partial-read.
+  it('offers Undo reload on a material shrink, which writes the prior body back', async () => {
     const shrunk = '# Note\n' + 'x'.repeat(700) + '\n';
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') return { success: true, content: shrunk, mtimeMs: 2 };
-      return { success: true };
-    });
+    await changeOnDisk(shrunk);
 
-    await slice.handleExternalMarkdownChanges(['Notes.md']);
-
-    // The silent reload landed the shrunk body…
-    expect(documentStore.getDocument('Notes.md')?.body).toBe(shrunk);
-
+    // The reload landed the shrunk body…
+    expect(m.body).toBe(shrunk);
     // …and a recovery toast was surfaced.
-    const toast = uiStore.toasts.find((t) => t.text.includes('shrank sharply'));
-    expect(toast).toBeDefined();
-    const undo = toast?.actions?.find((a) => a.label === 'Undo reload');
+    const undo = shrankToast()?.actions?.find((a) => a.label === 'Undo reload');
     expect(undo).toBeDefined();
 
-    // Undo restores the pre-reload body and marks the doc dirty so the
-    // recovery is force-written back over the external truncation.
-    await undo!.handler();
-    const doc = documentStore.getDocument('Notes.md');
-    expect(doc?.body).toBe(bigBody);
-    expect(doc?.isDirty).toBe(true);
+    await undo?.handler();
+    expect(m.body).toBe(bigBody);
+    expect(m.hasUnsavedBody).toBe(true);
+    // The short version was backed up before the prior body goes back over it.
+    expect(vi.mocked(window.filo.invoke).mock.calls.some((c) => c[0] === 'recovery:snapshot' && c[2] === 'Notes.md')).toBe(true);
+
+    await noteStore.flushAll();
+    expect(vault.read('Notes.md')).toBe(bigBody);
   });
 
-  it('does NOT surface a recovery toast for a modest shrink (real edit)', async () => {
-    // ~25% smaller — below the material-shrink bar — reloads silently.
+  it('Keep reloaded leaves the disk version', async () => {
+    const shrunk = '# Note\n' + 'x'.repeat(700) + '\n';
+    await changeOnDisk(shrunk);
+    await shrankToast()?.actions?.find((a) => a.label === 'Keep reloaded')?.handler();
+    await noteStore.flushAll();
+    expect(m.body).toBe(shrunk);
+    expect(vault.read('Notes.md')).toBe(shrunk);
+  });
+
+  it('does NOT offer recovery for a modest shrink (a real edit)', async () => {
     const trimmed = '# Note\n' + 'x'.repeat(1500) + '\n';
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') return { success: true, content: trimmed, mtimeMs: 2 };
-      return { success: true };
-    });
-
-    await slice.handleExternalMarkdownChanges(['Notes.md']);
-
-    expect(documentStore.getDocument('Notes.md')?.body).toBe(trimmed);
-    expect(uiStore.toasts.find((t) => t.text.includes('shrank sharply'))).toBeUndefined();
+    await changeOnDisk(trimmed);
+    expect(m.body).toBe(trimmed);
+    expect(shrankToast()).toBeUndefined();
   });
 
-  it('does NOT surface a recovery toast when the file grew', async () => {
+  it('does NOT offer recovery when the file grew', async () => {
     const grown = '# Note\n' + 'x'.repeat(3000) + '\n';
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') return { success: true, content: grown, mtimeMs: 2 };
-      return { success: true };
-    });
-
-    await slice.handleExternalMarkdownChanges(['Notes.md']);
-
-    expect(documentStore.getDocument('Notes.md')?.body).toBe(grown);
-    expect(uiStore.toasts.find((t) => t.text.includes('shrank sharply'))).toBeUndefined();
+    await changeOnDisk(grown);
+    expect(m.body).toBe(grown);
+    expect(shrankToast()).toBeUndefined();
   });
 });

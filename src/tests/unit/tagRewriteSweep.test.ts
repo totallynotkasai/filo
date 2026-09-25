@@ -19,13 +19,25 @@ import {
   __resetTagRewriteSweepForTests,
 } from '@renderer/lib/vault/tagRewriteSweep';
 import { __resetTagRewriteSentinelForTests } from '@renderer/lib/vault/tagRewriteSentinel';
-import {
-  __testRegisterFlusher,
-  __resetMarkdownFileWriterForTests,
-} from '@renderer/lib/vault/markdownFileWriter';
+import { noteStore } from '@renderer/stores/notes.svelte';
+import { vaultStore } from '@renderer/stores/vault.svelte';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import type { FileMetadata } from '@renderer/lib/vault/vaultIndex';
 
 type InvokeRoute = (...args: unknown[]) => unknown | Promise<unknown>;
+
+/** A read envelope as main returns it (the note writer wants mtime + size). */
+function readOk(content: string): { success: true; content: string; mtimeMs: number; size: number } {
+  return { success: true, content, mtimeMs: 1, size: content.length };
+}
+
+/** The note store writes through the active vault. */
+function resetNoteStore(): void {
+  // Runs the test-reset callbacks, which clear the active vault path.
+  __resetDirtyTrackingForTests();
+  vaultStore.setPath('/vault');
+  noteStore.__resetForTests();
+}
 
 interface FakeFs {
   files: Map<string, string>;
@@ -40,10 +52,15 @@ function installFiloStub(fs: FakeFs): void {
     'vault:read-file-text': async (_vaultRoot: unknown, relPath: unknown) => {
       const content = fs.files.get(relPath as string);
       if (content === undefined) return { success: false, code: 'ENOENT' };
-      return { success: true, content };
+      return readOk(content);
     },
     'vault:file-exists': async (_vaultRoot: unknown, relPath: unknown) => {
       return fs.files.has(relPath as string);
+    },
+    'vault:stat': async (_vaultRoot: unknown, relPath: unknown) => {
+      const content = fs.files.get(relPath as string);
+      if (content === undefined) return { success: false, code: 'ENOENT' };
+      return { success: true, mtimeMs: 1, size: content.length };
     },
     'vault:write-file-text': async (_vaultRoot: unknown, relPath: unknown, content: unknown) => {
       // Sentinel writes flow through this channel; record but no delay.
@@ -94,6 +111,7 @@ function makeMetadata(paths: string[], tag: string): FileMetadata[] {
     links: [],
     content: '',
     lastModified: 0,
+    rawFrontmatter: '',
   }));
 }
 
@@ -103,10 +121,12 @@ describe('rewriteTagInAllMarkdown — sweep mutex (polish phase 4.3)', () => {
   beforeEach(() => {
     fs = { files: new Map(), writeLog: [], writeDelayMs: 0 };
     installFiloStub(fs);
+    resetNoteStore();
     __resetTagRewriteSweepForTests();
     __resetTagRewriteSentinelForTests();
   });
   afterEach(() => {
+    noteStore.__resetForTests();
     uninstallFiloStub();
     __resetTagRewriteSweepForTests();
     __resetTagRewriteSentinelForTests();
@@ -199,7 +219,7 @@ describe('rewriteTagInAllMarkdown — sweep mutex (polish phase 4.3)', () => {
         if (channel === 'vault:read-file-text') {
           const content = fs.files.get(args[1] as string);
           if (content === undefined) return { success: false, code: 'ENOENT' };
-          return { success: true, content };
+          return readOk(content);
         }
         if (channel === 'vault:file-exists') {
           return fs.files.has(args[1] as string);
@@ -282,7 +302,7 @@ describe('rewriteTagInAllMarkdown — sweep mutex (polish phase 4.3)', () => {
         if (channel === 'vault:read-file-text') {
           const content = fs.files.get(args[1] as string);
           if (content === undefined) return { success: false, code: 'ENOENT' };
-          return { success: true, content };
+          return readOk(content);
         }
         if (channel === 'vault:file-exists') return fs.files.has(args[1] as string);
         if (channel === 'vault:delete') return { success: true };
@@ -337,47 +357,38 @@ describe('rewriteTagInAllMarkdown — sweep mutex (polish phase 4.3)', () => {
   });
 });
 
-// ── Audit-7 M2 — the sweep re-reads after the inner drain ─────────────────────
+// ── The sweep re-reads after the drain ──────────────────────────────────────
 //
-// Phase 1 read each candidate and (pre-fix) snapshotted `rewrite(rawBytes)`.
-// The Phase-2 commit loop's `withDrainedWrites` flushes any armed editor body to
-// disk; the sweep then wrote the STALE snapshot over it, and the `mode:'full'`
-// reconcile reloaded the open editor to that stale body — losing a keystroke
-// that landed after the caller's up-front drain. The fix recomputes the rewrite
-// from a POST-drain re-read so the flushed body survives (tag still rewritten).
-describe('rewriteTagInAllMarkdown — re-reads after the drain (Audit-7 M2)', () => {
+// Phase 1 reads each candidate. The Phase-2 commit loop's `withDrainedWrites`
+// flushes any queued editor body to disk; writing a Phase-1 snapshot over it
+// would lose that keystroke. The rewrite is recomputed from a post-drain
+// re-read so the flushed body survives (tag still rewritten).
+describe('rewriteTagInAllMarkdown — re-reads after the drain', () => {
   let fs: FakeFs;
 
   beforeEach(() => {
     fs = { files: new Map(), writeLog: [], writeDelayMs: 0 };
     installFiloStub(fs);
+    resetNoteStore();
     __resetTagRewriteSweepForTests();
     __resetTagRewriteSentinelForTests();
-    __resetMarkdownFileWriterForTests();
   });
   afterEach(() => {
+    noteStore.__resetForTests();
     uninstallFiloStub();
     __resetTagRewriteSweepForTests();
     __resetTagRewriteSentinelForTests();
-    __resetMarkdownFileWriterForTests();
   });
 
   it('preserves a body the inner drain flushes instead of clobbering it with a pre-drain snapshot', async () => {
     const withFm = (tag: string, body: string) => `---\ntags:\n  - ${tag}\n---\n${body}\n`;
-    const C0 = withFm('draft', 'OLD BODY'); // pre-flight disk content (Phase-1 read)
-    const C1 = withFm('draft', 'NEW BODY'); // the live keystroke the drain flushes (tag NOT renamed yet)
-    fs.files.set('note.md', C0);
+    fs.files.set('note.md', withFm('draft', 'OLD BODY'));
 
-    // Simulate an editor body write that a keystroke re-armed after the caller's
-    // up-front drain: the sweep's own `withDrainedWrites` flushes it to disk.
-    // `flushAllMarkdownWriters` (inside withDrainedWrites) drains test flushers.
-    let flushed = false;
-    __testRegisterFlusher('editor:note.md', async () => {
-      if (flushed) return;
-      flushed = true;
-      fs.files.set('note.md', C1);
-      fs.writeLog.push({ path: 'note.md', content: C1, at: 0 });
-    });
+    // An editor body typed but not yet written: the sweep's own drain writes it.
+    const model = noteStore.acquire('note.md', 'editor');
+    await model.loaded;
+    noteStore.setBody('note.md', 'NEW BODY\n', 'editor');
+    expect(fs.files.get('note.md')).toContain('OLD BODY');
 
     const res = await rewriteTagInAllMarkdown({
       vaultRoot: '/vault',
@@ -387,14 +398,16 @@ describe('rewriteTagInAllMarkdown — re-reads after the drain (Audit-7 M2)', ()
       applyChanges: async () => {},
     });
 
-    expect(flushed, 'the inner drain must have flushed the editor body').toBe(true);
     expect(res.succeeded).toContain('note.md');
     const final = fs.files.get('note.md')!;
     // The drained body survives AND the tag is renamed — not the stale pre-drain
-    // body the Phase-1 snapshot would have re-written.
+    // body the Phase-1 read saw.
     expect(final).toContain('NEW BODY');
     expect(final).not.toContain('OLD BODY');
     expect(final).toMatch(/- review/);
     expect(final).not.toMatch(/draft/);
+    // The open view follows the rewrite and keeps its body.
+    expect(model.body).toBe('NEW BODY\n');
+    expect(model.hasUnsavedBody).toBe(false);
   });
 });

@@ -2,26 +2,20 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
+import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { CascadeDeleteCommand } from '@renderer/commands/index';
-import { markHydrated, cancelAllMarkdownWrites } from '@renderer/lib/vault/markdownFileWriter';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
-import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 
 /**
- * Phase 6.1.R1 — `CascadeDeleteCommand.undo` syncs open editors with the
- * restored file body.
- *
- * The cascade resurrected a file by writing its captured snapshot back via
- * `vault:write-file-text`. If an editor is still mounted on that file (the
- * delete fired through an external watcher while the editor was open, or
- * the undo races a tab reopen), the editor keeps its pre-delete in-memory
- * body. Without the sync, the next debounced write would carry that body
- * and silently revert the restored bytes. The fix routes the restored
- * (path, content) pairs through `syncOpenEditorsAfterDiskMutation`, which
- * goes through `applyReloadFromDisk` (self-cancelling per 6.0.C2).
+ * `CascadeDeleteCommand.undo` writes each deleted note's captured bytes back.
+ * An editor still mounted on that note (the delete arrived while it was open,
+ * or the undo races a tab reopen) must follow the restored bytes: if it kept
+ * its pre-delete body, its next save would silently revert the restore.
  */
 
 function makeMindMap(boardId: string, tileId: string, filePath: string): V7BoardFileData {
@@ -62,55 +56,47 @@ function makeMindMap(boardId: string, tileId: string, filePath: string): V7Board
   };
 }
 
-describe('CascadeDeleteCommand.undo — syncs open editors (Phase 6.1.R1)', () => {
+describe('CascadeDeleteCommand.undo — open editors follow the restored note', () => {
+  let vault: MemoryVault;
+
   beforeEach(() => {
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
+    noteStore.__resetForTests();
+    vaultIndexStore.clear();
     boardCacheStore.clear();
     boardStore.clearBoard();
     vaultStore.setPath('/vault');
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:stat') return { ok: true, mtimeMs: 1, size: 1 };
-      return { ok: true, success: true };
-    });
+    vault = installMemoryVault({ 'Notes.md': '---\ntitle: Notes\n---\nstale pre-delete body\n' });
   });
 
   afterEach(() => {
-    cancelAllMarkdownWrites();
+    noteStore.__resetForTests();
     __resetDirtyTrackingForTests();
-    documentStore.clear();
+    vaultIndexStore.clear();
     boardCacheStore.clear();
     boardStore.clearBoard();
     vaultStore.setPath('');
     restoreFiloDefault();
   });
 
-  it("syncs an open editor with the restored file body on undo", async () => {
+  it('an open editor shows the restored body, and its next save builds on it', async () => {
     const relPath = 'Notes.md';
     const restoredBytes = '---\ntitle: Notes\n---\nrestored body\n';
 
-    // Seed a cache so the cascade has something to undo against.
     const boardData = makeMindMap('board-1', 't_1', relPath);
     boardCacheStore.hydrate({ 'board-1': boardData }, { 'board-1': 'board-1.board.json' });
-    const tilesA = boardCacheStore.getFullTilesForBoard('board-1');
-    boardStore.setBoard(boardData.board, tilesA, {}, []);
+    boardStore.setBoard(boardData.board, boardCacheStore.getFullTilesForBoard('board-1'), {}, []);
 
-    // Editor is still mounted, holding stale pre-delete in-memory body.
-    documentStore.loadDocument({
-      filename: relPath,
-      title: 'Notes',
-      body: 'stale pre-delete body',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter(relPath, { title: 'Notes' }, '---\ntitle: Notes\n---');
-    markHydrated(relPath, false);
+    // The editor is mounted, holding the pre-delete body; the file goes away.
+    const m = noteStore.acquire(relPath, 'text-tile:t_1');
+    await m.loaded;
+    expect(m.body).toBe('stale pre-delete body\n');
+    vault.remove(relPath);
+    await noteStore.onDiskChanged(relPath);
+    expect(m.status).toBe('missing');
 
-    // Capture the cascade in mid-state then undo.
-    const tiles = Object.values(boardData.tileDefs);
     const cmd = new CascadeDeleteCommand(
-      { 'board-1': tiles },
+      { 'board-1': Object.values(boardData.tileDefs) },
       [],
       { [relPath]: restoredBytes },
       '/vault',
@@ -118,31 +104,38 @@ describe('CascadeDeleteCommand.undo — syncs open editors (Phase 6.1.R1)', () =
     cmd.execute();
     await cmd.undo();
 
-    // Phase 6.1.R1 — the editor MUST reflect the restored bytes.
-    const doc = documentStore.getDocument(relPath);
-    expect(doc?.body).toBe('restored body\n');
-    const fm = documentStore.getFrontmatter(relPath);
-    expect(fm).toEqual({ title: 'Notes' });
+    expect(vault.read(relPath)).toBe(restoredBytes);
+    expect(m.status).toBe('ready');
+    expect(m.body).toBe('restored body\n');
+    expect(m.frontmatter).toEqual({ title: 'Notes' });
+
+    // Our own restore coming back through the watcher changes nothing.
+    await noteStore.onDiskChanged(relPath);
+    expect(m.body).toBe('restored body\n');
+
+    // The editor's next keystroke lands on the restored file.
+    noteStore.setBody(relPath, 'restored body, edited', 'text-tile:t_1');
+    await noteStore.flush(relPath);
+    expect(vault.read(relPath)).toBe('---\ntitle: Notes\n---\nrestored body, edited\n');
   });
 
-  it("is a no-op when no editor is open on the restored file", async () => {
+  it('restores the bytes when no editor is open on the file', async () => {
     const relPath = 'Orphan.md';
     const restoredBytes = '---\ntitle: Orphan\n---\norphan body\n';
 
     const boardData = makeMindMap('board-2', 't_2', relPath);
     boardCacheStore.hydrate({ 'board-2': boardData }, { 'board-2': 'board-2.board.json' });
-    const tilesA = boardCacheStore.getFullTilesForBoard('board-2');
-    boardStore.setBoard(boardData.board, tilesA, {}, []);
+    boardStore.setBoard(boardData.board, boardCacheStore.getFullTilesForBoard('board-2'), {}, []);
 
-    const tiles = Object.values(boardData.tileDefs);
     const cmd = new CascadeDeleteCommand(
-      { 'board-2': tiles },
+      { 'board-2': Object.values(boardData.tileDefs) },
       [],
       { [relPath]: restoredBytes },
       '/vault',
     );
     cmd.execute();
-    // No editor exists for relPath; the helper inside undo() must not throw.
     await expect(cmd.undo()).resolves.toBeUndefined();
+    expect(vault.read(relPath)).toBe(restoredBytes);
+    expect(noteStore.get(relPath)).toBeUndefined();
   });
 });

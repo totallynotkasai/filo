@@ -175,6 +175,19 @@ export async function reopenVault(app: CharApp): Promise<void> {
   app.bridge.resetLog();
 }
 
+/**
+ * Quit the way a user does, straight after their last keystroke: close the
+ * vault, saving. Resolves with how long the close took (ms). The app stays
+ * mounted; `stopApp` then only removes the vault.
+ */
+export async function quitApp(app: CharApp): Promise<number> {
+  app.bridge.attach();
+  const { vaultStore } = await import('@renderer/stores/vault.svelte');
+  const started = Date.now();
+  if (!(await vaultStore.closeVault())) throw new Error('closeVault refused');
+  return Date.now() - started;
+}
+
 /** Close the vault (saving, as a user quitting normally would) and delete it, unless `keep`. */
 export async function stopApp(opts: { keep?: boolean } = {}): Promise<void> {
   const app = current;

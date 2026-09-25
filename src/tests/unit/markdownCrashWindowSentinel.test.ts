@@ -1,47 +1,32 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { saveStateStore } from '@renderer/stores/saveState.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import {
   noteAdditionalPendingPath,
   dropPendingPath,
+  isPathPending,
   setWriteStateListener,
   __resetDirtyTrackingForTests,
   type WriteStateInfo,
 } from '@renderer/lib/boards/writeStateTracking';
-import {
-  scheduleMarkdownWrite,
-  cancelMarkdownWrite,
-  cancelAllMarkdownWrites,
-  type WriteArgs,
-} from '@renderer/lib/vault/markdownFileWriter';
+import { setActiveVaultPath } from '@renderer/lib/vault/activeVaultPath';
+import { beginVaultGeneration, __resetVaultIdentityForTests } from '@renderer/lib/vault/vaultIdentity';
+import { ownSentinelPath } from '@renderer/lib/vault/machineIdentity';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Audit2 2.3 — a pure markdown body keystroke schedules a write through the
- * gateway, which is sentinel-mode 'pending-path': it must lay down the
- * `.filo/.dirty` crash-recovery sentinel for the duration of the 300 ms
- * debounce window (previously it didn't, so a crash mid-typing lost up to
- * ~300 ms of text with no recovery prompt), and the save indicator must read
- * "saving" — not the premature "idle"/"saved" — while text is unwritten.
+ * A body edit waits out the note writer's 300 ms debounce before it reaches
+ * disk. For that whole window the `.filo/.dirty` crash-recovery sentinel
+ * must name the note (a crash mid-typing otherwise loses the text with no recovery
+ * prompt), and the save indicator must read "saving", not "saved".
  *
- * The debounce window is observable through the write-state ledger: an armed
- * markdown write now adds its path to `pendingVaultPaths` (which drives the
- * sentinel) WITHOUT bumping the inflight counter (trackComponentWrite owns
- * inflight at fire time), and reports a non-zero `pending` count to the save
- * indicator.
+ * The note writer's scheduler runs in 'pending-path' sentinel mode: an armed
+ * write adds its path to the pending set (which drives the sentinel) WITHOUT
+ * bumping the inflight counter; the write itself owns inflight when it fires.
  */
 
-function makeArgs(callerId: string, relPath: string): WriteArgs {
-  return {
-    vaultRoot: '/vault',
-    relPath,
-    frontmatter: {},
-    body: 'hello',
-    callerId,
-    notePath: relPath,
-  };
-}
-
-describe('saveState — pending writes show "saving" (audit2 2.3)', () => {
+describe('saveState — pending writes show "saving"', () => {
   beforeEach(() => saveStateStore.__reset());
 
   it('treats a pending (debounced-but-not-inflight) write as "saving"', () => {
@@ -63,7 +48,7 @@ describe('saveState — pending writes show "saving" (audit2 2.3)', () => {
   });
 });
 
-describe('writeStateTracking — pending-path tracking reports through the ledger (audit2 2.3)', () => {
+describe('writeStateTracking — pending-path tracking reports through the ledger', () => {
   let last: WriteStateInfo | null = null;
   beforeEach(() => {
     __resetDirtyTrackingForTests();
@@ -91,34 +76,73 @@ describe('writeStateTracking — pending-path tracking reports through the ledge
   });
 });
 
-describe('markdownFileWriter — schedule arms the crash-recovery sentinel window (audit2 2.3)', () => {
+describe('note writer — a queued edit arms the crash-recovery sentinel window', () => {
   let last: WriteStateInfo | null = null;
-  beforeEach(() => {
+  let vault: MemoryVault;
+
+  beforeEach(async () => {
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
+    __resetVaultIdentityForTests();
+    beginVaultGeneration('/vault');
+    setActiveVaultPath('/vault');
+    vault = installMemoryVault({ 'Notes/A.md': '---\ntitle: A\n---\nBody\n' });
+    noteStore.__resetForTests();
     last = null;
     setWriteStateListener((info) => { last = info; });
   });
   afterEach(() => {
-    cancelAllMarkdownWrites();
+    noteStore.__resetForTests();
     setWriteStateListener(null);
     __resetDirtyTrackingForTests();
+    setActiveVaultPath('');
     restoreFiloDefault();
   });
 
-  it('scheduleMarkdownWrite tracks the armed write as pending (sentinel + indicator)', () => {
-    scheduleMarkdownWrite(makeArgs('text-tile:t1', 'Notes/A.md'));
-    // The debounce window is covered: the path is pending (drives the
-    // .filo/.dirty sentinel) and the indicator would read "saving", NOT idle.
+  function sentinelPayloads(): Array<{ pendingPaths?: string[] }> {
+    return vault.writes
+      .filter(([, rel]) => rel === ownSentinelPath('dirty'))
+      .map(([, , text]) => JSON.parse(text) as { pendingPaths?: string[] });
+  }
+
+  it('a body edit is pending (sentinel + indicator) before the debounce fires', async () => {
+    const m = noteStore.acquire('Notes/A.md', 'tile');
+    await m.loaded;
+    noteStore.setBody('Notes/A.md', 'typing', 'tile');
+
     expect(last?.pending).toBeGreaterThan(0);
-    expect(last?.inflight).toBe(0); // trackComponentWrite owns inflight at fire time, not now
-    expect(saveStateStore.state).not.toBe('idle');
+    expect(last?.inflight).toBe(0);
+    expect(isPathPending('Notes/A.md')).toBe(true);
+    // The sentinel on disk names the note while its text is unwritten.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sentinelPayloads().some((p) => p.pendingPaths?.includes('notes/a.md'))).toBe(true);
+    // Nothing has reached the note itself yet.
+    expect(vault.read('Notes/A.md')).toBe('---\ntitle: A\n---\nBody\n');
   });
 
-  it('cancelMarkdownWrite releases the pending window so the sentinel can clear', () => {
-    scheduleMarkdownWrite(makeArgs('text-tile:t1', 'Notes/A.md'));
+  it('a frontmatter change on an unopened note is pending the same way', () => {
+    noteStore.patchFrontmatter('Notes/A.md', { set: { status: 'done' }, unset: [] });
     expect(last?.pending).toBeGreaterThan(0);
-    cancelMarkdownWrite('text-tile:t1');
+    expect(isPathPending('Notes/A.md')).toBe(true);
+  });
+
+  it('the pending window closes once the write lands', async () => {
+    const m = noteStore.acquire('Notes/A.md', 'tile');
+    await m.loaded;
+    noteStore.setBody('Notes/A.md', 'typing', 'tile');
+    expect(last?.pending).toBeGreaterThan(0);
+    await noteStore.flush('Notes/A.md');
     expect(last?.pending).toBe(0);
+    expect(isPathPending('Notes/A.md')).toBe(false);
+    expect(vault.read('Notes/A.md')).toBe('---\ntitle: A\n---\ntyping\n');
+  });
+
+  it('deleting the note in the app releases the pending window', async () => {
+    const m = noteStore.acquire('Notes/A.md', 'tile');
+    await m.loaded;
+    noteStore.setBody('Notes/A.md', 'typing', 'tile');
+    expect(last?.pending).toBeGreaterThan(0);
+    noteStore.forgetDeleted('Notes/A.md');
+    expect(last?.pending).toBe(0);
+    expect(isPathPending('Notes/A.md')).toBe(false);
   });
 });

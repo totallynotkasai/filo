@@ -9,7 +9,7 @@ import { cloneTile } from '../lib/utils/cloneTile';
 import { reportError } from '../lib/utils/errorBus';
 import { trackComponentWrite } from '../lib/boards/boardSaver';
 import { invokeOk } from '../lib/utils/invokeOk';
-import { writeMarkdownAndReconcile } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
+import { noteStore } from '../stores/notes.svelte';
 
 /**
  * Opens the inconsistent-state modal when one or more rollback children threw
@@ -349,22 +349,12 @@ export class CascadeDeleteCommand extends Command {
     const restorePromises: Promise<unknown>[] = [];
     for (const [relPath, content] of Object.entries(this.fileSnapshots)) {
       if (!this.vaultRoot) break;
-      const vaultRoot = this.vaultRoot;
       restorePromises.push(
-        // Coupled write+reconcile. `create: true` recreates the deleted file;
-        // `mode: 'full'` reloads any editor still mounted on the SAME path so a
-        // still-armed debounce can't clobber the restoration ~300 ms later.
-        writeMarkdownAndReconcile({
-          vaultRoot,
-          path: relPath,
-          content,
-          mode: 'full',
-          create: true,
-        }).catch((err) => {
-          // trackComponentWrite (inside the helper) already reports via
-          // notifyWriteError + marks the path failed. We still log a topical
-          // message so the restored-undo path surfaces in errorBus alongside
-          // the toast.
+        // Through the note writer, which recreates the file; an editor still
+        // mounted on the same path follows the restored bytes.
+        noteStore.restore(relPath, content).catch((err) => {
+          // The writer already reported the failure and marked the path
+          // failed; this puts the undo in the error log too.
           reportError('CascadeDeleteCommand', err, `Failed to restore ${relPath}`);
         }),
       );

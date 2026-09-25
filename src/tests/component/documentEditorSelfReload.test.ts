@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { undoDepth } from '@tiptap/pm/history';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { editorMarkdown } from '@renderer/lib/editor/markdownSync';
 import {
   recordingFilo,
@@ -12,13 +12,12 @@ import {
 } from './helpers/mountEditor';
 
 /**
- * Audit-19 MD-4 — DocumentEditor never recorded its own typed body as
- * `lastLoadedBody`, so once the gateway markCleaned the writer after an
- * autosave, the reload `$effect` saw `docState.body !== lastLoadedBody` and
- * reloaded the editor's OWN content: redo was wiped, an IME composition broke,
- * and (with MD-1's history reset) the undo stack was lost on every save.
+ * The view that typed owns the note's body: its own autosave must never load
+ * back into it (that would wipe redo, break an IME composition and reset the
+ * undo stack on every save). A body typed in another view does load, but not
+ * in the middle of a composition.
  */
-describe('DocumentEditor does not reload its own autosave (MD-4)', () => {
+describe('DocumentEditor does not reload its own autosave', () => {
   beforeEach(() => resetEditorHarness());
   afterEach(() => teardownEditorHarness());
 
@@ -30,7 +29,7 @@ describe('DocumentEditor does not reload its own autosave (MD-4)', () => {
     ed.commands.insertContent('X');
     await drainDebounce();
     expect(fs.writesTo('Doc.md').length).toBe(1);
-    // A self-reload would have reset history (MD-1) — the typed step survives.
+    // A self-reload would have reset history; the typed step survives.
     expect(undoDepth(ed.state)).toBeGreaterThan(0);
 
     ed.commands.undo();
@@ -42,18 +41,20 @@ describe('DocumentEditor does not reload its own autosave (MD-4)', () => {
     await m.unmount();
   });
 
-  it('defers a sibling reload until the IME composition ends', async () => {
+  it('defers a sibling view\'s body until the IME composition ends', async () => {
     recordingFilo({ 'Doc.md': '---\na: 1\n---\nHello\n' });
     const m = await mountDocumentEditor({ docPath: 'Doc.md' });
     m.proseMirror().dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
     await settle();
-    documentStore.updateContent('Doc.md', '<p>Sibling</p>', 'Sibling\n', 'text-tile:other');
+    noteStore.acquire('Doc.md', 'text-tile:other');
+    noteStore.setBody('Doc.md', 'Sibling\n', 'text-tile:other');
     await settle();
     expect(m.proseMirror().textContent).toContain('Hello');
     expect(m.proseMirror().textContent).not.toContain('Sibling');
     m.proseMirror().dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
     await settle();
     expect(m.proseMirror().textContent).toContain('Sibling');
+    noteStore.release('Doc.md', 'text-tile:other');
     await m.unmount();
   });
 });

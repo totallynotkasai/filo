@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { makeExternalChangesSlice } from '@renderer/stores/vaultExternalChanges';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
@@ -108,7 +108,7 @@ describe('vaultExternalChanges — external rename propagation (Phase 2.2)', () 
   let slice: ReturnType<typeof makeExternalChangesSlice>;
 
   beforeEach(() => {
-    documentStore.clear();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
     boardCacheStore.clear();
     boardStore.clearBoard();
@@ -124,7 +124,7 @@ describe('vaultExternalChanges — external rename propagation (Phase 2.2)', () 
   afterEach(() => {
     restoreFiloDefault();
     vaultStore.setPath('');
-    documentStore.clear();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
     boardCacheStore.clear();
     boardStore.clearBoard();

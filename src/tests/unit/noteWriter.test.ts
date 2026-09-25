@@ -25,6 +25,10 @@ function makeWriter(): NoteWriter {
   const host: NoteWriterHost = {
     vaultRoot: () => vault.root,
     baseOf: (p) => bases.get(p),
+    hadFrontmatter: (p) => {
+      const b = bases.get(p);
+      return b ? readNoteText(b.rawText).hasFrontmatter : false;
+    },
     canWriteBody: (p) => !bodyBlocked.has(p),
     onBodyConflict: (_p, rel) => conflicts.push(rel),
     onWritten: (p, rel, text, snapshot, consumed) => {

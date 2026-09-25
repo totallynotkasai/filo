@@ -6,10 +6,9 @@
  *  - the live tile's `titleHtml` follows execute / undo / redo, while its
  *    title is read from the note (the board def never gains a `title`);
  *  - a tile that owns its title edits it on the live board;
- *  - a title edit is a frontmatter-only write, so an open editor's dirty flag
- *    (the pending BODY write) is neither set nor cleared by execute / undo:
- *    setting it would flush a possibly stale body over the file, clearing it
- *    would drop the user's unsaved body edit;
+ *  - a title edit is a frontmatter-only write, so an open note's unsaved body
+ *    is neither written nor dropped by execute / undo: writing it early
+ *    would flush a half-typed body, dropping it would lose the user's edit;
  *  - the command targets the tile's home board's undo stack.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -17,14 +16,9 @@ import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { UpdateTitleCommand } from '@renderer/commands/index';
-import {
-  flushAllPendingFrontmatterWrites,
-  resetFrontmatterScheduler,
-} from '@renderer/lib/boards/frontmatterWriteScheduler';
-import { cancelAllMarkdownWrites } from '@renderer/lib/vault/markdownFileWriter';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
@@ -109,26 +103,22 @@ function noteTitleEdit(oldTitleHtml?: string, newTitleHtml?: string): UpdateTitl
 describe('UpdateTitleCommand — active mind-map board', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    resetFrontmatterScheduler();
     vaultStore.setPath('/vault');
     boardCacheStore.clear();
     boardStore.clearBoard();
     vaultIndexStore.clear();
-    documentStore.clear();
+    noteStore.__resetForTests();
     activate();
   });
   afterEach(() => {
     for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
     restoreFiloDefault();
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    resetFrontmatterScheduler();
     vaultStore.setPath('');
     boardCacheStore.clear();
     boardStore.clearBoard();
     vaultIndexStore.clear();
-    documentStore.clear();
+    noteStore.__resetForTests();
   });
 
   it('titleHtml round-trips on the live tile through execute / undo / redo; the file is never renamed', async () => {
@@ -137,18 +127,18 @@ describe('UpdateTitleCommand — active mind-map board', () => {
     const cmd = noteTitleEdit('<p>Idea <strong>bold</strong></p>', '<p>Better idea</p>');
 
     await cmd.execute();
-    await flushAllPendingFrontmatterWrites();
+    await noteStore.flushAll();
     expect(boardStore.getTile('t1')?.titleHtml).toBe('<p>Better idea</p>');
     expect(disk.get()).toBe('---\ntitle: Better idea\n---\nBody\n');
     expect((boardCacheStore.cache.mm.tileDefs.t1 as Record<string, unknown>).title).toBeUndefined();
 
     await cmd.undo();
-    await flushAllPendingFrontmatterWrites();
+    await noteStore.flushAll();
     expect(boardStore.getTile('t1')?.titleHtml).toBe('<p>Idea <strong>bold</strong></p>');
     expect(disk.get()).toBe(original);
 
     await cmd.execute();
-    await flushAllPendingFrontmatterWrites();
+    await noteStore.flushAll();
     expect(boardStore.getTile('t1')?.titleHtml).toBe('<p>Better idea</p>');
     expect(disk.get()).toBe('---\ntitle: Better idea\n---\nBody\n');
     expect(disk.renames).toEqual([]);
@@ -174,45 +164,39 @@ describe('UpdateTitleCommand — active mind-map board', () => {
     expect(disk.renames).toEqual([]);
   });
 
-  it("a clean open editor stays clean through execute and undo (the body isn't re-written)", async () => {
-    installDisk('---\ntitle: Idea\n---\nBody\n');
-    documentStore.loadDocument({
-      filename: 'Idea.md',
-      title: 'Idea',
-      body: 'Body',
-      htmlContent: '',
-      richText: [],
-    });
-    expect(documentStore.getDocument('Idea.md')?.isDirty).toBe(false);
+  it("a clean open note stays clean through execute and undo (the body isn't re-written)", async () => {
+    const disk = installDisk('---\ntitle: Idea\n---\nBody\n');
+    const m = noteStore.acquire('Idea.md', 'editor');
+    await m.loaded;
+    expect(m.hasUnsavedBody).toBe(false);
     const cmd = noteTitleEdit();
 
     await cmd.execute();
-    await flushAllPendingFrontmatterWrites();
-    expect(documentStore.getDocument('Idea.md')?.isDirty).toBe(false);
+    await noteStore.flushAll();
+    expect(m.hasUnsavedBody).toBe(false);
+    expect(m.body).toBe('Body\n');
+    expect(disk.get()).toBe('---\ntitle: Better idea\n---\nBody\n');
 
     await cmd.undo();
-    await flushAllPendingFrontmatterWrites();
-    expect(documentStore.getDocument('Idea.md')?.isDirty).toBe(false);
+    await noteStore.flushAll();
+    expect(m.hasUnsavedBody).toBe(false);
+    expect(disk.get()).toBe('---\ntitle: Idea\n---\nBody\n');
   });
 
-  it('an already-dirty open editor keeps its pending body edit through undo', async () => {
-    installDisk('---\ntitle: Idea\n---\nBody\n');
-    documentStore.loadDocument({
-      filename: 'Idea.md',
-      title: 'Idea',
-      body: 'Body',
-      htmlContent: '',
-      richText: [],
-    });
+  it('an open note with an unsaved body edit keeps it through undo', async () => {
+    const disk = installDisk('---\ntitle: Idea\n---\nBody\n');
+    const m = noteStore.acquire('Idea.md', 'editor');
+    await m.loaded;
     const cmd = noteTitleEdit();
     await cmd.execute();
-    await flushAllPendingFrontmatterWrites();
+    await noteStore.flushAll();
 
-    // An editor marks its unsaved body under its own writer id.
-    documentStore.markDirty('Idea.md', 'document-editor:pane-1');
+    noteStore.setBody('Idea.md', 'Still typing\n', 'editor');
     await cmd.undo();
-    await flushAllPendingFrontmatterWrites();
-    expect(documentStore.getDocument('Idea.md')?.isDirty).toBe(true);
+    expect(m.body).toBe('Still typing\n');
+    expect(m.hasUnsavedBody).toBe(true);
+    await noteStore.flushAll();
+    expect(disk.get()).toBe('---\ntitle: Idea\n---\nStill typing\n');
   });
 
   it("targets the tile's home board and describes the new title", () => {

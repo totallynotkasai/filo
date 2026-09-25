@@ -1,176 +1,103 @@
 /**
- * Sprint 35.1 regression — Keep-local on an external-edit toast must persist
- * the editor's current body to disk even when the 300ms debounce has already
- * fired and `writeTimer === null`.
- *
- * Bug: the previous Keep-local handler called `flushAllMarkdownWriters()`,
- * and each per-writer `flushPendingMarkdownWrite` early-returned on
- * `if (!writeTimer) return`. So if the debounce had already drained between
- * the user's last keystroke and the Keep-local click, the editor body sat
- * in memory while the external file content stayed on disk — silent loss.
- *
- * Fix: a parallel `forceWrite` callback per writer that bypasses the
- * writeTimer guard, looked up by note path via `forceWriteForDocument`.
+ * "Keep mine" on the conflict prompt must put the local body on disk even when
+ * the debounce already fired: the writer found the conflict itself, so no
+ * timer is armed any more and only the held body remains. The other program's
+ * version is backed up to `.filo/recovery/` before it is overwritten.
  */
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { noteStore } from '@renderer/stores/notes.svelte';
+import { registerNotePrompts } from '@renderer/stores/notePrompts';
+import { uiStore } from '@renderer/stores/ui.svelte';
+import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
+import { setActiveVaultPath } from '@renderer/lib/vault/activeVaultPath';
+import { beginVaultGeneration, __resetVaultIdentityForTests } from '@renderer/lib/vault/vaultIdentity';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
+import { __resetKeepLocalBackupForTests } from '@renderer/lib/vault/keepLocalBackup';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import {
-  __testRegisterFlusher as registerMarkdownFlusher,
-  forceWriteForDocument,
-  __resetMarkdownFileWriterForTests as __resetMarkdownFlushersForTests,
-} from '../../renderer/lib/vault/markdownFileWriter';
+let vault: MemoryVault;
 
-describe('forceWriteForDocument (Sprint 35.1)', () => {
-  beforeEach(() => {
-    __resetMarkdownFlushersForTests();
-  });
-  afterEach(() => {
-    __resetMarkdownFlushersForTests();
-  });
+function clearToasts(): void {
+  for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
+}
 
-  it('calls the forceWrite callback for writers matching the note path, bypassing the flush short-circuit', async () => {
-    let flushCalls = 0;
-    let forceCalls = 0;
+function conflictToast() {
+  return uiStore.toasts.find((t) => t.text.includes('changed by another program'));
+}
 
-    // Simulate TextTile after the 300ms debounce already fired: `writeTimer`
-    // is conceptually null, so the flush returns early without writing.
-    registerMarkdownFlusher('text-tile:t1', async () => {
-      flushCalls++;
-      // Mirrors the production guard: no pending timer → no-op.
-    }, {
-      forceWrite: async () => {
-        forceCalls++;
-      },
-      getNotePath: () => 'Notes/A.md',
-    });
+beforeEach(() => {
+  __resetDirtyTrackingForTests();
+  __resetVaultIdentityForTests();
+  __resetKeepLocalBackupForTests();
+  beginVaultGeneration('/vault');
+  setActiveVaultPath('/vault');
+  vault = installMemoryVault({ 'Notes/A.md': '---\ntitle: A\n---\nOriginal\n' });
+  vaultIndexStore.clear();
+  noteStore.__resetForTests();
+  clearToasts();
+  registerNotePrompts();
+});
 
-    const result = await forceWriteForDocument('Notes/A.md');
+afterEach(() => {
+  noteStore.__resetForTests();
+  clearToasts();
+  restoreFiloDefault();
+});
 
-    expect(forceCalls).toBe(1);
-    expect(flushCalls).toBe(0);
-    expect(result.ok).toBe(1);
-    expect(result.failed).toEqual([]);
-  });
+describe('Keep mine after the writer found the conflict', () => {
+  it('writes the held body even though no debounce is armed any more', async () => {
+    const m = noteStore.acquire('Notes/A.md', 'tile');
+    await m.loaded;
+    noteStore.setBody('Notes/A.md', 'Mine', 'tile');
+    vault.writeExternally('Notes/A.md', '---\ntitle: A\n---\nTheirs\n');
 
-  it('skips writers whose note path does not match', async () => {
-    let forceCallsA = 0;
-    let forceCallsB = 0;
+    // The debounce fires (here: a flush) and the writer finds the body drift.
+    expect(await noteStore.flush('Notes/A.md')).toBe(false);
+    expect(m.status).toBe('conflict');
+    expect(vault.read('Notes/A.md')).toBe('---\ntitle: A\n---\nTheirs\n');
 
-    registerMarkdownFlusher('text-tile:t1', async () => {}, {
-      forceWrite: async () => {
-        forceCallsA++;
-      },
-      getNotePath: () => 'Notes/A.md',
-    });
-    registerMarkdownFlusher('text-tile:t2', async () => {}, {
-      forceWrite: async () => {
-        forceCallsB++;
-      },
-      getNotePath: () => 'Notes/B.md',
-    });
+    const toast = conflictToast();
+    expect(toast).toBeDefined();
+    await toast?.actions?.find((a) => a.label === 'Keep mine')?.handler();
 
-    await forceWriteForDocument('Notes/A.md');
-
-    expect(forceCallsA).toBe(1);
-    expect(forceCallsB).toBe(0);
-  });
-
-  it('falls back to flush() for writers without forceWrite (bulk writers)', async () => {
-    let flushCalls = 0;
-
-    // Bulk writers (KanbanBoard, TaskListBoard, PropertiesPopup) register
-    // without forceWrite — they don't have a writeTimer-guard pattern.
-    // forceWriteForDocument should still call their flush so the bulk path
-    // remains correct.
-    registerMarkdownFlusher('kanban:k1', async () => {
-      flushCalls++;
-    }, {
-      getNotePath: () => 'Notes/A.md',
-    });
-
-    await forceWriteForDocument('Notes/A.md');
-
-    expect(flushCalls).toBe(1);
+    expect(vault.read('Notes/A.md')).toBe('---\ntitle: A\n---\nMine\n');
+    expect(m.status).toBe('ready');
+    expect(m.hasUnsavedBody).toBe(false);
+    expect(noteStore.hasPendingWrites('Notes/A.md')).toBe(false);
   });
 
-  it('matches the note path case-insensitively', async () => {
-    let forceCalls = 0;
-    registerMarkdownFlusher('text-tile:t1', async () => {}, {
-      forceWrite: async () => {
-        forceCalls++;
-      },
-      getNotePath: () => 'Notes/A.md',
-    });
+  it('backs up the other version before overwriting it', async () => {
+    const m = noteStore.acquire('Notes/A.md', 'tile');
+    await m.loaded;
+    noteStore.setBody('Notes/A.md', 'Mine', 'tile');
+    vault.writeExternally('Notes/A.md', '---\ntitle: A\n---\nTheirs\n');
+    await noteStore.flush('Notes/A.md');
 
-    const result = await forceWriteForDocument('notes/a.md');
+    await conflictToast()?.actions?.find((a) => a.label === 'Keep mine')?.handler();
 
-    expect(forceCalls).toBe(1);
-    expect(result.ok).toBe(1);
+    const calls = vi.mocked(window.filo.invoke).mock.calls.map((c) => [c[0], c[2]]);
+    const backup = calls.findIndex(([ch, rel]) => ch === 'recovery:snapshot' && rel === 'Notes/A.md');
+    const write = calls.findIndex(([ch, rel]) => ch === 'vault:write-existing-file-text' && rel === 'Notes/A.md');
+    expect(backup).toBeGreaterThanOrEqual(0);
+    expect(write).toBeGreaterThan(backup);
   });
 
-  it('returns ok=0 and empty failed when no writers match', async () => {
-    registerMarkdownFlusher('text-tile:t1', async () => {}, {
-      forceWrite: async () => {},
-      getNotePath: () => 'Notes/A.md',
-    });
+  it('a path is matched in any spelling, and a sibling note is untouched', async () => {
+    vault.writeExternally('Notes/B.md', '---\ntitle: B\n---\nB body\n');
+    const a = noteStore.acquire('notes/a.md', 'tile');
+    const b = noteStore.acquire('Notes/B.md', 'tile-b');
+    await Promise.all([a.loaded, b.loaded]);
+    noteStore.setBody('notes/a.md', 'Mine', 'tile');
+    noteStore.setBody('Notes/B.md', 'B typed', 'tile-b');
+    vault.writeExternally('Notes/A.md', '---\ntitle: A\n---\nTheirs\n');
+    await noteStore.flush('NOTES/A.MD');
 
-    const result = await forceWriteForDocument('Notes/Other.md');
+    await noteStore.resolveConflict('Notes/A.md', 'keep-mine');
 
-    expect(result.ok).toBe(0);
-    expect(result.failed).toEqual([]);
-  });
-
-  it('captures multiple writers for the same doc (sibling views — TextTile + DocumentEditor on the same .md)', async () => {
-    const calls: string[] = [];
-
-    registerMarkdownFlusher('text-tile:t1', async () => {}, {
-      forceWrite: async () => {
-        calls.push('text-tile');
-      },
-      getNotePath: () => 'Notes/A.md',
-    });
-    registerMarkdownFlusher('document-editor:Notes/A.md', async () => {}, {
-      forceWrite: async () => {
-        calls.push('document-editor');
-      },
-      getNotePath: () => 'Notes/A.md',
-    });
-
-    const result = await forceWriteForDocument('Notes/A.md');
-
-    expect(calls.sort()).toEqual(['document-editor', 'text-tile']);
-    expect(result.ok).toBe(2);
-  });
-
-  it('surfaces per-writer failures', async () => {
-    const errA = new Error('disk full');
-
-    registerMarkdownFlusher('text-tile:t1', async () => {}, {
-      forceWrite: async () => {
-        throw errA;
-      },
-      getNotePath: () => 'Notes/A.md',
-    });
-    registerMarkdownFlusher('text-tile:t2', async () => {}, {
-      forceWrite: async () => {},
-      getNotePath: () => 'Notes/A.md',
-    });
-
-    const result = await forceWriteForDocument('Notes/A.md');
-
-    expect(result.ok).toBe(1);
-    expect(result.failed).toHaveLength(1);
-    expect(result.failed[0].ownerId).toBe('text-tile:t1');
-    expect(result.failed[0].error).toBe(errA);
-  });
-
-  it('handles an empty note path gracefully', async () => {
-    registerMarkdownFlusher('text-tile:t1', async () => {}, {
-      forceWrite: async () => {},
-      getNotePath: () => 'Notes/A.md',
-    });
-
-    const result = await forceWriteForDocument('');
-    expect(result).toEqual({ ok: 0, failed: [] });
+    expect(vault.read('Notes/A.md')).toBe('---\ntitle: A\n---\nMine\n');
+    // B's own edit is still queued, not written by A's decision.
+    expect(vault.read('Notes/B.md')).toBe('---\ntitle: B\n---\nB body\n');
+    expect(noteStore.hasPendingWrites('Notes/B.md')).toBe(true);
   });
 });

@@ -15,10 +15,9 @@
  *      `{ ok: false, error }`.
  *   3. `writeConfigs` rethrows when `config:save` resolves to
  *      `{ ok: false, error }`.
- *   4. `writeFrontmatter` rejects (so `flushAllPendingFrontmatterWrites`
- *      via `Promise.all` rejects too) when `vault:write-file-text`
- *      resolves to `{ success: false, error }`. Without the C2 fix this
- *      flow swallowed the error inside the outer catch.
+ *   4. a note write whose `vault:write-existing-file-text` resolves to
+ *      `{ success: false, error }` is reported: `noteStore.flushAll()` names
+ *      the path in `failed` and the write-error listener sees it.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -33,15 +32,11 @@ import {
   type WriteStateInfo,
   type V7BoardFileData,
 } from '@renderer/lib/boards/boardSaver';
-import {
-  flushAllPendingFrontmatterWrites,
-  scheduleFrontmatterWrite,
-  resetFrontmatterScheduler,
-} from '@renderer/lib/boards/frontmatterWriteScheduler';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import type { ProjectSettings, WorkspaceState } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 
 describe('assertIpcOk', () => {
   it('passes through bare values (null, string, number, array)', () => {
@@ -182,98 +177,55 @@ describe('writeConfigs — envelope failure', () => {
   });
 });
 
-describe('flushAllPendingFrontmatterWrites — envelope failure', () => {
+describe('noteStore.flushAll — envelope failure', () => {
+  let vault: MemoryVault;
+
   beforeEach(() => {
     __resetDirtyTrackingForTests();
-    resetFrontmatterScheduler();
-    restoreFiloDefault();
+    vaultStore.setPath('/vault');
+    noteStore.__resetForTests();
     setWriteErrorListener(null);
     setWriteStateListener(null);
+    vault = installMemoryVault({
+      'Notes/foo.md': '---\ntitle: Foo\n---\nhello\n',
+      'Notes/bar.md': '---\ntitle: Bar\n---\nworld\n',
+    });
   });
   afterEach(() => {
+    noteStore.__resetForTests();
     __resetDirtyTrackingForTests();
-    resetFrontmatterScheduler();
     restoreFiloDefault();
+    vaultStore.setPath('');
     setWriteErrorListener(null);
     setWriteStateListener(null);
   });
 
-  it('rejects when vault:write-file-text returns { success: false, error }', async () => {
-    // vaultStore.path is a getter — set it for this test, then leave the
-    // default restored by afterEach.
-    vaultStore.setPath('/vault');
+  it('reports the path failed when vault:write-existing-file-text returns { success: false, error }', async () => {
+    vault.failNextWrite('Notes/foo.md', 'EPERM');
+    noteStore.patchFrontmatter('Notes/foo.md', { set: { status: 'done' }, unset: [] });
 
-    installFiloMock({
-      'vault:file-exists': () => true,
-      // 3.3 (Audit-18) — writeFrontmatter hydrates on demand + fails loud on a
-      // read error; supply a working read mock so the failure under test is the
-      // WRITE IPC (not the hydrate read).
-      'vault:read-file-text': () => ({ success: true, content: 'x', mtimeMs: 1, size: 1 }),
-      // Phase 31 A4.2 — frontmatter writer now calls
-      // `vault:write-existing-file-text` (ENOENT-short-circuits instead
-      // of resurrecting a deleted file). Mock that channel here.
-      'vault:write-existing-file-text': () => ({ success: false, code: 'EPERM', error: 'disk full' }),
-    });
-
-    // Seed a document so writeFrontmatter has frontmatter to assemble.
-    documentStore.loadDocument({
-      filename: 'Notes/foo.md',
-      title: 'Foo',
-      body: 'hello',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter('Notes/foo.md', { title: 'Foo' });
-
-    scheduleFrontmatterWrite('Notes/foo.md', 'Notes/foo.md');
-
-    // Capture the writeError surface for the assertion below.
     const observed: WriteErrorInfo[] = [];
     setWriteErrorListener((info) => observed.push(info));
 
-    // Phase 31 A1.3 — flush returns `{ failed }` so the Ctrl+S aggregate
-    // can surface "Save failed" without the writer's individual error
-    // hiding (Phase 14) the rest of the flush. Each failed path is
-    // accounted for via endWrite(failure) → failed-set membership AND in
-    // the returned array.
-    const res = await flushAllPendingFrontmatterWrites();
+    // Flush returns `{ failed }` so the Ctrl+S aggregate can surface "Save
+    // failed" without one writer's error hiding the rest of the flush.
+    const res = await noteStore.flushAll();
     expect(res.failed).toEqual(['Notes/foo.md']);
     expect(observed).toHaveLength(1);
     expect(observed[0]).toMatchObject({ kind: 'component', path: 'Notes/foo.md' });
+    expect(vault.read('Notes/foo.md')).toBe('---\ntitle: Foo\n---\nhello\n');
   });
 
   it('write-state listener observes the failed path in failed count', async () => {
-    vaultStore.setPath('/vault');
-
-    installFiloMock({
-      'vault:file-exists': () => true,
-      // 3.3 (Audit-18) — writeFrontmatter hydrates on demand + fails loud on a
-      // read error; supply a working read mock so the failure under test is the
-      // WRITE IPC (not the hydrate read).
-      'vault:read-file-text': () => ({ success: true, content: 'x', mtimeMs: 1, size: 1 }),
-      // A4.2 — same channel migration as above.
-      'vault:write-existing-file-text': () => ({ success: false, error: 'EPERM' }),
-    });
-
-    documentStore.loadDocument({
-      filename: 'Notes/bar.md',
-      title: 'Bar',
-      body: 'world',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter('Notes/bar.md', { title: 'Bar' });
-
+    vault.failNextWrite('Notes/bar.md', 'EPERM');
     const states: WriteStateInfo[] = [];
     setWriteStateListener((info) => states.push({ ...info }));
 
-    scheduleFrontmatterWrite('Notes/bar.md', 'Notes/bar.md');
-    const res = await flushAllPendingFrontmatterWrites();
+    noteStore.patchFrontmatter('Notes/bar.md', { set: { status: 'done' }, unset: [] });
+    const res = await noteStore.flushAll();
     expect(res.failed).toEqual(['Notes/bar.md']);
 
     // Final state: nothing inflight, exactly one failed path.
-    // Phase C / C.10 — WriteStateInfo also carries `failedPaths`; pin
-    // only the counter shape.
     expect(states[states.length - 1]).toMatchObject({ inflight: 0, failed: 1 });
   });
 });

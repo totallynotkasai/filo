@@ -95,10 +95,8 @@
   } from '../../commands/index';
   import { makeTaskCreator } from '../../lib/tasklist/taskCreation';
   import { makeTaskDeleter } from '../../lib/tasklist/taskDeletion';
-  import {
-    makeFrontmatterWriter,
-    flushAllPendingFrontmatterWrites,
-  } from '../../lib/tasklist/frontmatterWriter';
+  import { makeFrontmatterWriter } from '../../lib/tasklist/frontmatterWriter';
+  import { noteStore } from '../../stores/notes.svelte';
   import { makeFileDropHandler } from '../../lib/tasklist/fileDropHandler';
   // `clearStaleDndStyles` is consumed inside <TaskListSection>.
   // The host still passes its trigger (`dndSections`) via the
@@ -692,10 +690,9 @@
   }
 
   // Frontmatter writers (debounced per-task) are owned by the slice
-  // `lib/tasklist/frontmatterWriter.ts`. The closure handles seeding from
-  // vaultIndexStore on first touch, queues debounced disk writes via the
-  // shared `frontmatterWriteScheduler`, and bumps `cacheVersion` for
-  // optimistic re-render. See the slice's header comment for the full
+  // `lib/tasklist/frontmatterWriter.ts`. The closure builds undoable field
+  // commands (which queue frontmatter deltas on the note writer) and bumps
+  // `cacheVersion` for optimistic re-render. See the slice's header comment for the full
   // architecture rationale.
 
   // ── Title edit (the note's frontmatter `title:`; the file keeps its name) ──
@@ -1176,11 +1173,6 @@
   });
 
   onMount(() => {
-    // The TaskList no longer registers its own flusher — `flushAllMarkdownWrites`
-    // (in the gateway) drains `flushAllPendingFrontmatterWrites` as part of
-    // its parallel drain step. Ctrl+S / tab close / vault swap all funnel
-    // through the gateway flush and pick up task field updates without
-    // this component participating in the registry.
     unregisterFocusQuickAdd = registerCommandWithShortcut({
       name: 'tasklist:focus-quick-add',
       label: 'Task List: Focus quick-add input',
@@ -1279,7 +1271,7 @@
   onDestroy(() => {
     // Drain any queued frontmatter writes so a board close during the
     // 300ms debounce window doesn't lose the user's last field edit.
-    void flushAllPendingFrontmatterWrites();
+    void noteStore.flushAll();
     // dispose() cancels the lastView debounce and FLUSHES the pending slice
     // (cache write keyed by the hydrated board id) instead of dropping it.
     filters.dispose();

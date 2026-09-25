@@ -34,7 +34,7 @@ export interface FileMetadata {
   /**
    * UTF-8 byte length of the file's RAW content (frontmatter +
    * body, before parsing), captured at parse time. The partial-read shrink
-   * heuristic (`conflictResolver.isLikelyPartialRead`) measures THIS rather than
+   * heuristic measures THIS rather than
    * the parsed body length, so a mid-write truncation that lands mostly inside a
    * large frontmatter block is still caught (the surviving body alone can look
    * unchanged). Optional: synthetic `FileMetadata` built in tests or non-parse
@@ -294,7 +294,7 @@ export function parseMarkdown(
   const { frontmatter, body, headings, links } = parsed;
 
   // Capture the verbatim YAML source between fences so the index's view matches
-  // the write gateway's (the external-change pipeline refreshes
+  // the note writer's (the external-change pipeline refreshes
   // `originalFrontmatterCache` from it). `splitFrontmatterSource` strips the BOM
   // and tolerates a trailing space on the fence, exactly as `parseMarkdownFile`.
   const { rawFrontmatter } = splitFrontmatterSource(rawContent);

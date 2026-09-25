@@ -9,7 +9,7 @@
    */
   import { untrack } from 'svelte';
   import { uiStore } from '../../stores/ui.svelte';
-  import { documentStore } from '../../stores/document.svelte';
+  import { noteStore } from '../../stores/notes.svelte';
   import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
   import type { Tile } from '../../schema/index';
@@ -154,25 +154,16 @@
 
   // ── Inline notes (body preview + edit) ──
   //
-  // The .md body lives in two possible places: documentStore (loaded if the
-  // task or its source file has been opened) and vaultIndexStore (parsed by
-  // the watcher on every file load). documentStore is preferred when loaded
-  // because it reflects in-flight edits the watcher hasn't seen yet.
-  //
-  // Defensive strip: documentStore.body sometimes carries the YAML block —
-  // historical convention has been inconsistent and a sibling writer may
-  // round-trip the full file content into the cache. Strip on read so the
-  // preview never shows frontmatter lines.
+  // The body comes from the note's model when it is open (it reflects edits
+  // the watcher hasn't seen yet), else from the vault index. The strip is
+  // defensive: the preview must never show frontmatter lines.
 
   let backingPath = $derived(resolveTextTileVaultPath(tile) ?? '');
 
   let rawBody = $derived.by(() => {
-    void documentStore.frontmatterVersion;
     void vaultIndexStore.version;
-    if (backingPath) {
-      const doc = documentStore.getDocument(backingPath);
-      if (doc) return doc.body;
-    }
+    const note = backingPath ? noteStore.get(backingPath) : undefined;
+    if (note && note.status !== 'loading') return note.body;
     return vaultIndexStore.getMetadata(backingPath)?.content ?? '';
   });
 

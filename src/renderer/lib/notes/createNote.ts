@@ -1,5 +1,5 @@
-import { assembleMarkdownFile } from '../editor/markdownSync';
-import { createUniqueMdFile } from '../vault/createMdExclusive';
+import { newNoteText } from './noteFile';
+import { noteStore } from '../../stores/notes.svelte';
 import { fileNameSafe, nextFreeMdPath } from '../vault/conventionPaths';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 
@@ -27,15 +27,9 @@ export async function createNoteFile(args: {
   const { title: _ignored, ...rest } = args.frontmatter ?? {};
   void _ignored;
   const fm = { title: args.title, ...rest };
-  const created = await createUniqueMdFile({
-    vaultRoot: args.vaultRoot,
-    folder: args.folder,
-    baseName,
-    firstCandidate: nextFreeMdPath(boardCacheStore.cache, args.folder, baseName),
-    buildContent: (stem) => {
-      const body = typeof args.body === 'function' ? args.body(stem) : (args.body ?? '');
-      return assembleMarkdownFile(fm, body);
-    },
-  });
-  return { relPath: created.relPath, content: created.content };
+  const created = await noteStore.createUnique(
+    nextFreeMdPath(boardCacheStore.cache, args.folder, baseName),
+    (stem) => newNoteText(fm, typeof args.body === 'function' ? args.body(stem) : (args.body ?? '')),
+  );
+  return { relPath: created.relPath, content: created.text };
 }

@@ -247,8 +247,10 @@ describe('CascadeDeleteCommand', () => {
     // Placement must come back …
     expect(boardStore.getTile('t_a')).toBeDefined();
     // … but no write IPC fired against the cascaded path.
+    // A new tile's empty seed goes through the create channel, so check it too.
     const wroteFile = invocations.some((c) =>
-      c.channel === 'vault:write-file-text' && c.args[1] === 'Notes.md',
+      (c.channel === 'vault:write-file-text' || c.channel === 'vault:create-file-text')
+      && c.args[1] === 'Notes.md',
     );
     expect(wroteFile).toBe(false);
   });

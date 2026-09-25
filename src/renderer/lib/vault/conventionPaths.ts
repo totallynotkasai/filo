@@ -36,7 +36,7 @@ export function fileNameSafe(name: string): string {
  * `groceries.md` as one file), holds every text def's `filePath`, and folds
  * in `extraTaken` (the on-disk tree, via `nextFreeMdPath`). This is only the
  * PRE-PICK: the create-exclusive `vault:create-file-text` channel is the
- * authority, and `createUniqueMdFile` bumps again on EEXIST.
+ * authority, and `noteStore.createUnique` bumps again on EEXIST.
  */
 export function nextUniqueMdPath(
   cache: Record<string, V7BoardFileData>,
@@ -65,7 +65,7 @@ export function nextUniqueMdPath(
  * PLUS every file in the live vault tree, so a file that exists on disk but is
  * on no board is not picked. The cache is a parameter (callers pass
  * `boardCacheStore.cache`) to keep this module free of a boardCache import
- * cycle. `createUniqueMdFile` still re-checks exclusively.
+ * cycle. `noteStore.createUnique` still re-checks exclusively.
  */
 export function nextFreeMdPath(
   cache: Record<string, V7BoardFileData>,

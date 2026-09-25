@@ -65,6 +65,7 @@
       const next: Record<string, { content: TemplateContent; raw: string }> = { ...known };
       for (const ref of missing) {
         try {
+          // allow-raw-read: a template's source text for the picker, not a note view
           const result = await window.filo.invoke('vault:read-file-text', root, ref.path);
           const raw = result.success ? result.content : '';
           next[ref.path] = { content: parseTemplate(ref, raw), raw };

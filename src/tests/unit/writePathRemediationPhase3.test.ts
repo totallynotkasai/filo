@@ -1,26 +1,22 @@
 /**
- * Write-path remediation — Phase 3 (the ◐ "verify first" items).
+ * Write-path round trips that each reproduce, through the UI/command → write
+ * path, a way a user's data was once lost:
  *
- * Each block reproduces, through the UI/command → write round-trip, the bug a
- * Phase-3 item fixed, and is bite-verified by temp-reverting the fix (the
- * expected red count is noted per block):
- *
- *   3.1 — `vaultStore.save()` returns true while a prior fire-and-forget write
- *         is still recorded as failed (`failedVaultPaths`).              → 1 red
- *   3.2 — in-app rename revert re-injects the OUTGOING vault's cache snapshot
- *         after a vault swap landed mid-rename.                          → 1 red
- *   3.3 — `syncTile` mtime-only guard misses a same-mtime, different-size
- *         external edit (size-blind).                                    → 1 red
- *   3.4 — `promptModifiedFile` Reload replays the stale first-detection
- *         snapshot instead of re-reading current disk.                   → 1 red
- *   3.5 — Kanban column-reorder undo drops an out-of-band-added column.  → 1 red
- *   3.6 — ReplaceAll undo clobbers a post-replace external edit.         → 1 red
+ *   - `vaultStore.save()` returns true while a prior fire-and-forget write
+ *     is still recorded as failed (`failedVaultPaths`).
+ *   - in-app rename revert re-injects the OUTGOING vault's cache snapshot
+ *     after a vault swap landed mid-rename.
+ *   - the conflict prompt's Reload shows a stale snapshot instead of the
+ *     file as it is when the user clicks.
+ *   - Kanban column-reorder undo drops an out-of-band-added column.
+ *   - ReplaceAll undo clobbers a post-replace external edit.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
+import { registerNotePrompts } from '@renderer/stores/notePrompts';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
@@ -31,22 +27,21 @@ import {
   markPathFailed,
   hasFailedWrites,
   __resetDirtyTrackingForTests,
-  __clearRecentSelfWritesForTests,
 } from '@renderer/lib/boards/writeStateTracking';
 import { cancelAllPendingWrites } from '@renderer/lib/boards/boardSaver';
-import { __resetMarkdownFileWriterForTests } from '@renderer/lib/vault/markdownFileWriter';
 import {
   beginVaultGeneration,
   __resetVaultIdentityForTests,
 } from '@renderer/lib/vault/vaultIdentity';
 import type { VaultContext } from '@renderer/stores/vaultStoreTypes';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
-import type { KanbanBoard, MindMapBoard, TileDefinition } from '@renderer/schema/index';
+import type { KanbanBoard, MindMapBoard } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 
-// ── 3.1 — save() boolean honesty ──────────────────────────────────────────────
+// ── save() boolean honesty ──────────────────────────────────────────────
 
-describe('Phase 3 / 3.1 — save() consults failedVaultPaths', () => {
+describe('save() consults failedVaultPaths', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     installFiloMock(() => ({ success: true }));
@@ -77,7 +72,7 @@ describe('Phase 3 / 3.1 — save() consults failedVaultPaths', () => {
   });
 });
 
-// ── 3.2 — rename revert vault-identity guard ──────────────────────────────────
+// ── rename revert vault-identity guard ──────────────────────────────────
 
 function makeMiniMindMap(id: string): V7BoardFileData {
   return {
@@ -99,9 +94,9 @@ function makeMiniMindMap(id: string): V7BoardFileData {
   };
 }
 
-describe('Phase 3 / 3.2 — in-app rename revert skips a swapped-away vault', () => {
+describe('in-app rename revert skips a swapped-away vault', () => {
   beforeEach(() => {
-    __resetMarkdownFileWriterForTests();
+    noteStore.__resetForTests();
     __resetDirtyTrackingForTests();
     __resetVaultIdentityForTests();
     boardCacheStore.clear();
@@ -113,7 +108,7 @@ describe('Phase 3 / 3.2 — in-app rename revert skips a swapped-away vault', ()
   afterEach(() => {
     cancelAllPendingWrites();
     restoreFiloDefault();
-    __resetMarkdownFileWriterForTests();
+    noteStore.__resetForTests();
     __resetDirtyTrackingForTests();
     __resetVaultIdentityForTests();
     boardCacheStore.clear();
@@ -151,130 +146,22 @@ describe('Phase 3 / 3.2 — in-app rename revert skips a swapped-away vault', ()
   });
 });
 
-// ── 3.3 — syncTile mtime + size guard ─────────────────────────────────────────
+// ── Conflict Reload shows the file as it is when clicked ──────────────────────
 
-function makeKanbanWithTextTile(): V7BoardFileData {
-  const def: TileDefinition = {
-    id: 't1',
-    type: 'text',
-    style: {
-      headerColor: '#000',
-      bodyColor: '#fff',
-      borderColor: '',
-      shape: 'rounded',
-      borderStyle: 'solid',
-      borderWidth: 1,
-      shadowIntensity: 0.3,
-    } as never,
-    createdAt: 0,
-    updatedAt: 0,
-    filePath: 'note.md',
-  };
-  return {
-    version: 8,
-    board: {
-      id: 'kb',
-      type: 'kanban',
-      name: 'Tasks',
-      emoji: '',
-      createdAt: 0,
-      updatedAt: 0,
-      settings: {},
-      columns: [
-        { id: 'c1', title: 'To Do', position: 0, collapsed: false, tilePlacements: [{ tileId: 't1' }] },
-      ],
-    } as unknown as KanbanBoard,
-    tileDefs: { t1: def },
-    connections: {},
-    frames: [],
-  };
-}
-
-describe('Phase 3 / 3.3 — syncTile guard compares mtime AND size', () => {
-  beforeEach(() => {
-    vaultStore.setPath('/vault');
-    boardCacheStore.clear();
-    restoreFiloDefault();
-  });
-  afterEach(() => {
-    vaultStore.setPath('');
-    boardCacheStore.clear();
-    documentStore.clear();
-    restoreFiloDefault();
-  });
-
-  it('same mtime but different size → external-edit prompt fires (no silent clobber)', async () => {
-    const writeCalls: unknown[][] = [];
-    let statCall = 0;
-    installFiloMock({
-      'vault:stat': () => {
-        statCall++;
-        // IDENTICAL mtimeMs across the before-read and before-write stats
-        // (coarse-resolution clock), but the size moved — an external edit
-        // the mtime-only guard would have missed.
-        return statCall === 1
-          ? { success: true, mtimeMs: 1000, size: 100 }
-          : { success: true, mtimeMs: 1000, size: 145 };
-      },
-      'vault:read-file-text': () => ({
-        success: true,
-        content: '---\ntitle: Note\n---\nDisk body',
-      }),
-      'vault:write-existing-file-text': (...args: unknown[]) => {
-        writeCalls.push(args);
-        return { success: true };
-      },
-      'vault:file-exists': () => true,
-      'board:save': () => ({ success: true }),
-    });
-
-    boardCacheStore.hydrate({ kb: makeKanbanWithTextTile() }, { kb: 'tasks.board.json' });
-    documentStore.loadDocument({
-      filename: 'note.md',
-      title: 'Note',
-      body: 'Local body to write',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.markDirty('note.md');
-
-    const syncPromise = boardCacheStore.syncTile('t1');
-    for (let i = 0; i < 20; i++) await Promise.resolve();
-
-    const promptToast = uiStore.toasts.find((t) =>
-      t.text.includes('modified externally between Filo'),
-    );
-    expect(promptToast).toBeDefined();
-
-    // Reload → the write is skipped, so the external (size-changed) edit
-    // survives. Pre-fix the size-blind guard wrote straight over it.
-    uiStore.invokeToastAction(promptToast!.id, 0);
-    const result = await syncPromise;
-    expect(result.wrote).toBe(false);
-    expect(result.skippedReason).toBe('external-edit-reload');
-    expect(writeCalls.length).toBe(0);
-  });
-});
-
-// ── 3.4 — promptModifiedFile re-reads fresh disk on Reload ─────────────────────
-
-describe('Phase 3 / 3.4 — external-edit Reload applies current disk, not the captured snapshot', () => {
-  let ctx: VaultContext;
+describe('conflict Reload applies current disk, not a snapshot from detection time', () => {
   let slice: ReturnType<typeof makeExternalChangesSlice>;
-  let diskContent: string;
+  let vault: MemoryVault;
 
   beforeEach(() => {
-    documentStore.clear();
-    vaultIndexStore.clear();
-    __clearRecentSelfWritesForTests();
-    for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id);
+    // Runs the test-reset callbacks, which clear the active vault path.
+    __resetDirtyTrackingForTests();
     vaultStore.setPath('/vault');
-    diskContent = '---\nstatus: v1\n---\nbody1';
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') return { success: true, content: diskContent };
-      return { success: true };
-    });
-    ctx = {
+    noteStore.__resetForTests();
+    vaultIndexStore.clear();
+    for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
+    registerNotePrompts();
+    vault = installMemoryVault({ 'Notes.md': '---\nstatus: v1\n---\nbody1\n' });
+    const ctx: VaultContext = {
       getVaultPath: () => '/vault',
       setVaultPath: () => {},
       getFileTree: () => [],
@@ -295,54 +182,43 @@ describe('Phase 3 / 3.4 — external-edit Reload applies current disk, not the c
       refreshTree: async () => {},
       clearSelection: () => {},
       clearActiveRootFolderIfMatches: () => {},
-    } as unknown as VaultContext;
+      resolveRecoveryDismissed: () => {},
+    };
     slice = makeExternalChangesSlice(ctx);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
   afterEach(() => {
+    noteStore.__resetForTests();
     restoreFiloDefault();
     vaultStore.setPath('');
-    documentStore.clear();
     vaultIndexStore.clear();
-    for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id);
+    for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
     vi.restoreAllMocks();
   });
 
   it('Reload reads the LATEST disk content even when the file changed again after detection', async () => {
-    await vaultIndexStore.applyChanges(['Notes.md']); // index v1
-    documentStore.loadDocument({
-      filename: 'Notes.md',
-      title: 'Notes',
-      body: 'dirty local',
-      htmlContent: '<p>dirty local</p>',
-      richText: [],
-    });
-    documentStore.updateContent('Notes.md', '<p>dirty local</p>', 'dirty local'); // isDirty = true
+    const m = noteStore.acquire('Notes.md', 'editor');
+    await m.loaded;
+    noteStore.setBody('Notes.md', 'dirty local\n', 'editor');
 
-    // External edit #1 → v2; the watcher fires, surfacing the prompt with the
-    // v2 snapshot captured as `next`.
-    diskContent = '---\nstatus: v2\n---\nbody2';
+    // External edit #1 → v2; the watcher fires, surfacing the conflict prompt.
+    vault.writeExternally('Notes.md', '---\nstatus: v2\n---\nbody2\n');
     await slice.handleExternalMarkdownChanges(['Notes.md']);
-    for (let i = 0; i < 20; i++) await Promise.resolve();
-
-    const toast = uiStore.toasts.find(
-      (t) => t.actions?.[0]?.label === 'Reload' && t.text.includes('was modified externally'),
-    );
-    expect(toast).toBeDefined();
+    const findToast = () =>
+      uiStore.toasts.find((t) => t.actions?.[0]?.label === 'Reload' && t.text.includes('changed by another program'));
+    await vi.waitFor(() => expect(findToast()).toBeDefined());
 
     // External edit #2 → v3 lands BEFORE the user clicks (no new dispatch).
-    diskContent = '---\nstatus: v3\n---\nbody3';
+    vault.writeExternally('Notes.md', '---\nstatus: v3\n---\nbody3\n');
 
-    await toast!.actions![0].handler();
-    for (let i = 0; i < 20; i++) await Promise.resolve();
-
-    // Pre-fix the Reload replayed the captured v2 snapshot; the fix re-reads
-    // disk and applies the current v3 body.
-    expect(documentStore.getDocument('Notes.md')?.body).toBe('body3');
+    await findToast()!.actions![0].handler();
+    await vi.waitFor(() => expect(m.body).toBe('body3\n'));
+    expect(m.frontmatter).toEqual({ status: 'v3' });
+    expect(m.hasUnsavedBody).toBe(false);
   });
 });
 
-// ── 3.5 — Kanban column reorder keeps out-of-band survivors ────────────────────
+// ── Kanban column reorder keeps out-of-band survivors ────────────────────
 
 function makeKanbanThreeColumns(): V7BoardFileData {
   return {
@@ -366,7 +242,7 @@ function makeKanbanThreeColumns(): V7BoardFileData {
   };
 }
 
-describe('Phase 3 / 3.5 — ReorderColumnCommand.undo preserves an out-of-band column', () => {
+describe('ReorderColumnCommand.undo preserves an out-of-band column', () => {
   beforeEach(() => {
     installFiloMock(() => null);
     vaultStore.setPath('/vault');
@@ -405,68 +281,48 @@ describe('Phase 3 / 3.5 — ReorderColumnCommand.undo preserves an out-of-band c
   });
 });
 
-// ── 3.6 — ReplaceAll undo drift check ─────────────────────────────────────────
+// ── ReplaceAll undo drift check ────────────────────────────────────────────────
 
-interface FileMap {
-  [path: string]: string;
-}
+describe('ReplaceAll undo skips files changed since the replace', () => {
+  let vault: MemoryVault;
 
-function installReplaceAllStub(filesystem: FileMap): void {
-  installFiloMock((channel: string, ...args: unknown[]) => {
-    if (channel === 'vault:read-file-text') {
-      const p = String(args[1]);
-      const content = filesystem[p];
-      if (content === undefined) return { success: false, error: 'ENOENT', code: 'ENOENT' };
-      return { success: true, content };
-    }
-    if (channel === 'vault:write-existing-file-text' || channel === 'vault:write-file-text') {
-      filesystem[String(args[1])] = String(args[2]);
-      return { success: true };
-    }
-    if (channel === 'vault:stat') return { success: true, mtimeMs: 0, size: 0 };
-    return { success: true };
-  });
-}
-
-describe('Phase 3 / 3.6 — ReplaceAll undo skips files changed since the replace', () => {
   beforeEach(() => {
-    vaultIndexStore.clear();
-    documentStore.clear();
-    for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id);
+    // Runs the test-reset callbacks, which clear the active vault path.
+    __resetDirtyTrackingForTests();
     vaultStore.setPath('/vault');
+    noteStore.__resetForTests();
+    vaultIndexStore.clear();
+    for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
+    vault = installMemoryVault({ 'a.md': 'hello frodo', 'b.md': 'hello frodo' });
   });
   afterEach(() => {
+    noteStore.__resetForTests();
     restoreFiloDefault();
     vaultIndexStore.clear();
-    documentStore.clear();
-    for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id);
+    for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
     vaultStore.setPath('');
   });
 
   it('undo reverts an untouched file but preserves one externally edited after the replace', async () => {
-    const filesystem: FileMap = { 'a.md': 'hello frodo', 'b.md': 'hello frodo' };
-    installReplaceAllStub(filesystem);
-
     const cmd = new ReplaceAllCommand('/vault', [
       { path: 'a.md', originalContent: 'hello frodo', nextContent: 'hello sam', replacementCount: 1 },
       { path: 'b.md', originalContent: 'hello frodo', nextContent: 'hello sam', replacementCount: 1 },
     ]);
 
     await cmd.execute();
-    expect(filesystem['a.md']).toBe('hello sam');
-    expect(filesystem['b.md']).toBe('hello sam');
+    expect(vault.read('a.md')).toBe('hello sam');
+    expect(vault.read('b.md')).toBe('hello sam');
 
     // External edit to a.md AFTER the replace (its disk content no longer
     // matches what execute wrote).
-    filesystem['a.md'] = 'hello sam — and an external addition';
+    vault.writeExternally('a.md', 'hello sam — and an external addition');
 
     await cmd.undo();
 
     // a.md is preserved (skipped, not clobbered); b.md still matched what we
-    // wrote, so it reverts cleanly. Pre-fix undo blindly wrote `originalContent`
-    // over a.md, destroying the external edit.
-    expect(filesystem['a.md']).toBe('hello sam — and an external addition');
-    expect(filesystem['b.md']).toBe('hello frodo');
+    // wrote, so it reverts cleanly.
+    expect(vault.read('a.md')).toBe('hello sam — and an external addition');
+    expect(vault.read('b.md')).toBe('hello frodo');
 
     const skippedToast = uiStore.toasts.find((t) => t.text.includes('Undo skipped'));
     expect(skippedToast).toBeDefined();

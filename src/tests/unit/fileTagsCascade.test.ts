@@ -389,6 +389,8 @@ describe('fileTagsStore — rename / delete cascade', () => {
     it('leaves the registry + tile-defs at the OLD name when a `.md` write fails', async () => {
       vi.useRealTimers();
       __resetDirtyTrackingForTests();
+      // That reset also clears the active vault the note writer writes into.
+      vaultStore.setPath('/vault');
       hydrateCacheAndProject();
       seedVaultIndexWithTaggedFile('Tasks/A.md', 'urgent', makeMarkdown('urgent'));
 
@@ -449,6 +451,7 @@ describe('fileTagsStore — rename / delete cascade', () => {
     it('removeTagEverywhere — same atomicity guarantee for the delete path', async () => {
       vi.useRealTimers();
       __resetDirtyTrackingForTests();
+      vaultStore.setPath('/vault');
       hydrateCacheAndProject();
       seedVaultIndexWithTaggedFile('Tasks/A.md', 'urgent', makeMarkdown('urgent'));
 
@@ -496,6 +499,7 @@ describe('fileTagsStore — rename / delete cascade', () => {
     it('silently skips files that no longer exist on disk (not counted as failure)', async () => {
       vi.useRealTimers();
       __resetDirtyTrackingForTests();
+      vaultStore.setPath('/vault');
       hydrateCacheAndProject();
       seedVaultIndexWithTaggedFile('Tasks/Gone.md', 'urgent', '');
 
@@ -519,16 +523,15 @@ describe('fileTagsStore — rename / delete cascade', () => {
     });
   });
 
-  // Phase 9.2 (P1-9): when the frontmatter writer can't read the source `.md`
-  // back but the file still exists on disk, the user's tag change isn't on
-  // disk — keep the sentinel dirty and surface an error toast. The pre-fix
-  // behaviour silently swallowed the null read, leaving the user thinking
-  // the tag had saved.
-  describe('frontmatter read-null surfacing', () => {
-    it('surfaces an error and marks the path failed when the read returns null but the file exists', async () => {
+  // A tag change the note writer can't land (the file exists but can't be
+  // read) isn't on disk; the user must be told rather than left thinking the
+  // tag saved. A note deleted meanwhile has no tags to change: silence.
+  describe('tag write read-failure surfacing', () => {
+    it('surfaces an error when the note exists but cannot be read', async () => {
       vi.useRealTimers();
       __resetErrorBusForTests();
       __resetDirtyTrackingForTests();
+      vaultStore.setPath('/vault');
 
       const states: WriteStateInfo[] = [];
       setWriteStateListener((info) => states.push({ ...info }));
@@ -539,7 +542,7 @@ describe('fileTagsStore — rename / delete cascade', () => {
         'tags:load': async () => emptyTagsFile(),
         'tags:save': async () => null,
         'board:save': async () => null,
-        'vault:read-file-text': async () => ({ success: false, content: null }),
+        'vault:read-file-text': async () => ({ success: false, code: 'EACCES', error: 'EACCES' }),
         'vault:file-exists': async () => true,
       });
 
@@ -547,18 +550,9 @@ describe('fileTagsStore — rename / delete cascade', () => {
 
       fileTagsStore.addTagToPath('Notes/foo.md', 'urgent');
 
-      // writeTagChangeToMarkdownPath is fire-and-forget — wait for the
-      // microtask queue to flush so the read + file-exists + markPathFailed
-      // chain completes.
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-
-      expect(errors.some((e) => e.context === 'fileTags.writePathFrontmatter')).toBe(true);
-      // We only care that `failed` includes the unwritable path. The
-      // `inflight` counter is non-zero because `addTagToPath` also schedules
-      // an unrelated `tags:save` write via the misc scheduler — that's
-      // background bookkeeping, not the target of this regression.
-      expect(states[states.length - 1].failed).toBe(1);
+      await vi.waitFor(() => expect(errors.some((e) => e.context === 'fileTagsStore')).toBe(true));
+      // The unsaved tag keeps the dirty sentinel: the path is marked failed.
+      expect(states[states.length - 1]?.failed).toBe(1);
 
       unsubscribe();
       setWriteStateListener(null);
@@ -569,17 +563,22 @@ describe('fileTagsStore — rename / delete cascade', () => {
       vi.useRealTimers();
       __resetErrorBusForTests();
       __resetDirtyTrackingForTests();
+      vaultStore.setPath('/vault');
 
       const states: WriteStateInfo[] = [];
       setWriteStateListener((info) => states.push({ ...info }));
       const errors: ReportedError[] = [];
       const unsubscribe = onError((e) => errors.push(e));
+      const reads: string[] = [];
 
       installFiloMock({
         'tags:load': async () => emptyTagsFile(),
         'tags:save': async () => null,
         'board:save': async () => null,
-        'vault:read-file-text': async () => ({ success: false, content: null }),
+        'vault:read-file-text': async (...args: unknown[]) => {
+          reads.push(String(args[1]));
+          return { success: false, code: 'ENOENT', error: 'ENOENT' };
+        },
         'vault:file-exists': async () => false,
       });
 
@@ -587,6 +586,7 @@ describe('fileTagsStore — rename / delete cascade', () => {
 
       fileTagsStore.addTagToPath('Notes/gone.md', 'urgent');
 
+      await vi.waitFor(() => expect(reads).toContain('Notes/gone.md'));
       await new Promise((resolve) => setTimeout(resolve, 0));
       await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -594,8 +594,8 @@ describe('fileTagsStore — rename / delete cascade', () => {
       // out-of-band), so the queued tag write is a benign no-op and the
       // sentinel must not be tainted with a path that doesn't exist.
       // Inflight may be >0 from the unrelated tags:save scheduled by
-      // addTagToFile — we only assert `failed` stays at zero.
-      expect(errors.some((e) => e.context === 'fileTags.writePathFrontmatter')).toBe(false);
+      // addTagToPath — we only assert `failed` stays at zero.
+      expect(errors.some((e) => e.context === 'fileTagsStore')).toBe(false);
       expect((states[states.length - 1] ?? { failed: 0 }).failed).toBe(0);
 
       unsubscribe();

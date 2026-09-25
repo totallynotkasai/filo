@@ -1,121 +1,113 @@
+/**
+ * A read of the outgoing vault's note that is still in flight when a vault
+ * swap commits (File > Open Vault + "Don't Save") must not land in the new
+ * vault: neither as a loaded model's frontmatter, nor as a field edit whose
+ * "before" read spanned the swap and would then write into the new vault's
+ * same-named file.
+ */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { documentStore } from '@renderer/stores/document.svelte';
-import { seedDocumentFrontmatterFromDisk } from '@renderer/lib/boards/seedFrontmatterFromDisk';
-import { cancelAllMarkdownWrites } from '@renderer/lib/vault/markdownFileWriter';
-import {
-  beginVaultGeneration,
-  __resetVaultIdentityForTests,
-} from '@renderer/lib/vault/vaultIdentity';
+import { noteStore } from '@renderer/stores/notes.svelte';
+import { UpdateCardFieldCommand } from '@renderer/commands/kanbanCommands';
+import { fireVaultSwap } from '@renderer/core/vaultLifecycle';
+import { setActiveVaultPath } from '@renderer/lib/vault/activeVaultPath';
+import { beginVaultGeneration, __resetVaultIdentityForTests } from '@renderer/lib/vault/vaultIdentity';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
-/**
- * A9-M1 REGRESSION GUARD (was the fresh-audit #1/#3 REPRO, 2026-06-04).
- *
- * `seedDocumentFrontmatterFromDisk` reads the OUTGOING vault's bytes and awaits
- * the disk IPC. Before A9-M1 the post-await `documentStore.setFrontmatter(...)`
- * was guarded ONLY by a cache-PRESENCE re-check — NOT a vault-identity re-check.
- * So a vault swap landing during the await (File > Open Vault + "Don't Save",
- * which skips save()/whenChainSettled and resets the history chain) let the
- * orphaned continuation re-inject vault A's frontmatter into the freshly-cleared,
- * now-vault-B-bound store; in the command path that stale entry then armed a
- * frontmatter write that fired against vault B (cross-vault corruption, A9-H1).
- *
- * A9-M1 captures the active vault identity BEFORE the await and bails after it
- * (`isStillSameVault`). This test pins that: a swap that COMMITS during the gated
- * read (modelled by `documentStore.clear()` + `beginVaultGeneration(B)`, exactly
- * what `commitVaultCandidate` does) leaves the doc UNSEEDED. Temp-reverting the
- * guard reds the first case (the injection returns).
- */
-describe('A9-M1 — seed primitive bails on a vault swap mid-read', () => {
+const VAULT_A_NOTE = '---\npriority: high\ntitle: VaultA Card\n---\nbody A\n';
+const VAULT_B_NOTE = '---\ntitle: VaultB Card\n---\nbody B\n';
+
+let releaseRead: () => void;
+let writes: Array<{ root: string; rel: string }>;
+
+/** Vault A's reads wait on a gate so a swap can land during them; vault B answers at once. */
+function installVaults(): void {
+  const readGate = new Promise<void>((resolve) => {
+    releaseRead = resolve;
+  });
+  installFiloMock((channel: string, ...args: unknown[]) => {
+    const root = args[0] as string;
+    const rel = args[1] as string;
+    if (channel === 'vault:read-file-text') {
+      if (root === '/vaultA') {
+        return readGate.then(() => ({ success: true, content: VAULT_A_NOTE, mtimeMs: 5, size: VAULT_A_NOTE.length, encoding: 'utf-8' }));
+      }
+      return { success: true, content: VAULT_B_NOTE, mtimeMs: 7, size: VAULT_B_NOTE.length, encoding: 'utf-8' };
+    }
+    if (channel === 'vault:stat') {
+      return root === '/vaultA'
+        ? { success: true, mtimeMs: 5, size: VAULT_A_NOTE.length }
+        : { success: true, mtimeMs: 7, size: VAULT_B_NOTE.length };
+    }
+    if (channel.startsWith('vault:write') || channel === 'vault:create-file-text') {
+      writes.push({ root, rel });
+      return { success: true };
+    }
+    return { success: true };
+  });
+}
+
+async function swapToVaultB(): Promise<void> {
+  await fireVaultSwap({ phase: 'pre-swap', previousVault: '/vaultA', nextVault: '/vaultB', saveOutgoing: false });
+  beginVaultGeneration('/vaultB');
+  setActiveVaultPath('/vaultB');
+}
+
+describe('a note read that spans a vault swap is dropped', () => {
   beforeEach(() => {
+    __resetDirtyTrackingForTests();
     __resetVaultIdentityForTests();
-    documentStore.clear();
-    cancelAllMarkdownWrites();
+    beginVaultGeneration('/vaultA');
+    setActiveVaultPath('/vaultA');
+    noteStore.__resetForTests();
+    writes = [];
+    installVaults();
   });
   afterEach(() => {
+    noteStore.__resetForTests();
+    setActiveVaultPath('');
     restoreFiloDefault();
     __resetVaultIdentityForTests();
-    documentStore.clear();
-    cancelAllMarkdownWrites();
   });
 
-  it('does NOT inject the outgoing vault A frontmatter when a swap commits during the seed read', async () => {
-    beginVaultGeneration('/vaultA'); // vault A is the active vault
-
-    // Gate the disk read so we can simulate a vault swap while the seed is suspended.
-    let releaseRead!: () => void;
-    const readGate = new Promise<void>((resolve) => {
-      releaseRead = resolve;
-    });
-
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') {
-        // Vault A's bytes — captured against vaultStore.path at call time.
-        return readGate.then(() => ({
-          success: true,
-          content: '---\npriority: high\ntitle: VaultA Card\n---\nbody A',
-          mtimeMs: 5,
-          size: 50,
-        }));
-      }
-      return { success: true };
-    });
-
-    // First-touch field edit on an UN-OPENED card: docA has no FM cache entry,
-    // so the seed actually performs the disk read and suspends at the await.
-    const seedPromise = seedDocumentFrontmatterFromDisk('docA', '/vaultA', 'Note.md');
-
-    // Let the seed reach its `await readMarkdownForHydrate(...)`.
+  it('does NOT load vault A\'s frontmatter into the new vault when a swap commits during the read', async () => {
+    const m = noteStore.acquire('Note.md', 'card');
     await Promise.resolve();
 
-    // User picks File > Open Vault (vault B) + "Don't Save": the swap's pre-swap
-    // document handler clears the FM cache, then commitVaultCandidate bumps the
-    // vault generation to vault B — all before the read resolves.
-    documentStore.clear('/vaultB');
-    beginVaultGeneration('/vaultB');
-    expect(documentStore.getFrontmatter('docA')).toBeUndefined();
+    await swapToVaultB();
+    expect(noteStore.get('Note.md')).toBeUndefined();
 
-    // The seed read (against vault A) resolves; the orphaned continuation runs.
     releaseRead();
-    await seedPromise;
+    await m.loaded;
 
-    // GUARDED: the seed detected the swap (generation bumped) and bailed — vault
-    // A's frontmatter was NOT re-injected into the now-vault-B store.
-    expect(documentStore.getFrontmatter('docA')).toBeUndefined();
-    expect(documentStore.getOriginalFrontmatterSource('docA')).toBeUndefined();
+    // The orphaned model never adopted vault A's bytes, and nothing in vault
+    // B's store shows them.
+    expect(m.status).toBe('loading');
+    expect(m.frontmatter).toEqual({});
+    expect(noteStore.get('Note.md')).toBeUndefined();
+    expect(noteStore.frontmatter('Note.md').priority).toBeUndefined();
   });
 
-  it('still seeds normally when no swap lands during the read', async () => {
-    beginVaultGeneration('/vaultA');
-
-    let releaseRead!: () => void;
-    const readGate = new Promise<void>((resolve) => {
-      releaseRead = resolve;
-    });
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') {
-        return readGate.then(() => ({
-          success: true,
-          content: '---\npriority: high\ntitle: VaultA Card\n---\nbody A',
-          mtimeMs: 5,
-          size: 50,
-        }));
-      }
-      return { success: true };
-    });
-
-    const seedPromise = seedDocumentFrontmatterFromDisk('docA', '/vaultA', 'Note.md');
+  it('a field edit whose first read spans the swap writes nothing to the new vault', async () => {
+    const cmd = new UpdateCardFieldCommand('kb', 'Note.md', { priority: 'low' }, { priority: 'high' });
+    const executing = cmd.execute();
     await Promise.resolve();
-    // No swap — the vault stays the same across the read.
-    releaseRead();
-    await seedPromise;
 
-    expect(documentStore.getFrontmatter('docA')).toEqual({
-      priority: 'high',
-      title: 'VaultA Card',
-    });
-    expect(documentStore.getOriginalFrontmatterSource('docA')).toBe(
-      'priority: high\ntitle: VaultA Card',
-    );
+    await swapToVaultB();
+    releaseRead();
+    await executing;
+
+    expect(noteStore.hasPendingWrites('Note.md')).toBe(false);
+    await noteStore.flushAll();
+    expect(writes.filter((w) => w.rel.endsWith('.md'))).toEqual([]);
+  });
+
+  it('still loads normally when no swap lands during the read', async () => {
+    const m = noteStore.acquire('Note.md', 'card');
+    await Promise.resolve();
+    releaseRead();
+    await m.loaded;
+    expect(m.status).toBe('ready');
+    expect(m.frontmatter).toEqual({ priority: 'high', title: 'VaultA Card' });
   });
 });

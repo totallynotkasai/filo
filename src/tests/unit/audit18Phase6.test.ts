@@ -12,24 +12,17 @@
  *      the action and bind begin/endBatch (and all board/canvas/selection reads)
  *      to `scope.spatial` — immune to active-scope flips. Mirrors Audit-12 M5.
  *
- *  6.3 `UpdatePropertiesCommand`'s undo/redo (`applySnapshot`) blind-applied the
- *      target snapshot's frontmatter with a STALE/empty body (index `content` or
- *      `''`) when the disk hydrate read FAILED and no editor was open. The branch
- *      comment wrongly assumed a read failure implies the WRITE will ENOENT-fail;
- *      a non-ENOENT read failure (FILE_TOO_LARGE / transient EACCES/EBUSY) leaves
- *      the file PRESENT, so the write succeeds and silently overwrites the real
- *      note. Fix (B1 contract): when the read failed AND there's no live
- *      docState, `markPathFailed` + throw instead of blind-writing.
+ *  6.3 `UpdatePropertiesCommand`'s undo/redo must not write when the note
+ *      can't be read: a non-ENOENT read failure (FILE_TOO_LARGE / transient
+ *      EACCES/EBUSY) leaves the file PRESENT, so a write built without it would
+ *      silently overwrite the real note. The command rejects instead, so
+ *      history drops it and nothing is queued.
  *
- * The jsdom suite has no Svelte component-mount harness; 6.1 is driven through
- * the raw action (the component only forwards its context scope), and 6.3's
- * narrowness (the else-path blind-apply is preserved) is pinned via a
- * source-shape assertion, same pattern as audit18Phase5.
+ * 6.1 is driven through the raw action (the component only forwards its
+ * context scope).
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { readFileSync } from 'fs';
-import { join } from 'path';
 
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
@@ -42,19 +35,16 @@ import {
 } from '@renderer/lib/boards/boardScope.svelte';
 import { UpdatePropertiesCommand } from '@renderer/commands/propertiesCommands';
 import {
-  beginVaultGeneration,
   __resetVaultIdentityForTests,
 } from '@renderer/lib/vault/vaultIdentity';
 import {
-  hasFailedWrites,
   __resetDirtyTrackingForTests,
 } from '@renderer/lib/boards/writeStateTracking';
-import { __resetMarkdownFileWriterForTests } from '@renderer/lib/vault/markdownFileWriter';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, TileDefinition } from '@renderer/schema/index';
 
-const ROOT = process.cwd();
 
 // ── 6.1 helpers ──────────────────────────────────────────────────────────
 
@@ -232,61 +222,46 @@ describe('Audit-18 6.1 — tile drag spatial batch is pane-scoped', () => {
   });
 });
 
+
 // ── 6.3 ──────────────────────────────────────────────────────────────────
 
-describe('Audit-18 6.3 — Properties undo/redo refuses on read failure with no docState', () => {
+describe('Audit-18 6.3 — Properties undo/redo refuses when the note cannot be read', () => {
   beforeEach(() => {
     __resetVaultIdentityForTests();
-    __resetMarkdownFileWriterForTests();
     __resetDirtyTrackingForTests();
+    noteStore.__resetForTests();
     vaultStore.setPath('/vault');
-    beginVaultGeneration('/vault');
   });
   afterEach(() => {
     restoreFiloDefault();
+    noteStore.__resetForTests();
     __resetVaultIdentityForTests();
-    __resetMarkdownFileWriterForTests();
     __resetDirtyTrackingForTests();
     vaultStore.setPath('');
   });
 
-  it('throws and fires NO write IPC when the hydrate read fails and no doc is open', async () => {
+  it('rejects and fires NO write IPC when the read fails and no view holds the note', async () => {
     // The on-disk `.md` exists but is unreadable (e.g. AV/OneDrive holds a read
-    // lock, or a >25 MB note hits FILE_TOO_LARGE) — the read THROWS but the file
+    // lock, or a >25 MB note hits FILE_TOO_LARGE): the read fails but the file
     // is present, so a blind write would overwrite it with a stale/empty body.
-    const writeSpy = vi.fn(async () => ({ ok: true, data: undefined }));
+    const writeSpy = vi.fn(async () => ({ success: true }));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     installFiloMock({
-      'vault:read-file-text': () => {
-        throw new Error('EACCES: read locked by another process');
-      },
+      'vault:read-file-text': () => ({ success: false, code: 'EACCES', error: 'EACCES: read locked by another process' }),
       'vault:write-existing-file-text': writeSpy,
+      'vault:write-file-text': writeSpy,
     });
 
-    // No note path → no live docState → no live body to fall back on.
     const cmd = new UpdatePropertiesCommand(
-      { kind: 'frontmatter', relPath: 'Note.md', notePath: null, fm: { status: 'todo' } },
-      { kind: 'frontmatter', relPath: 'Note.md', notePath: null, fm: { status: 'done' } },
+      { kind: 'frontmatter', relPath: 'Note.md', fm: { status: 'todo' } },
+      { kind: 'frontmatter', relPath: 'Note.md', fm: { status: 'done' } },
       'b1',
     );
 
-    await expect(cmd.execute()).rejects.toThrow(/Could not read|refusing to overwrite/i);
-    // The blind write was refused — the real on-disk note is untouched.
+    await expect(cmd.execute()).rejects.toThrow(/Could not read/i);
+    expect(noteStore.hasPendingWrites('Note.md')).toBe(false);
+    await noteStore.flushAll();
+    // The blind write was refused: the real on-disk note is untouched.
     expect(writeSpy).not.toHaveBeenCalled();
-    // Failure is surfaced loudly (sentinel stays dirty), not swallowed as success.
-    expect(hasFailedWrites()).toBe(true);
-  });
-
-  it('source pins the refuse guard AND preserves the else-path blind-apply (narrowness)', () => {
-    const src = readFileSync(
-      join(ROOT, 'src/renderer/commands/propertiesCommands.ts'),
-      'utf8',
-    );
-    // The refuse is gated on BOTH the read failing and there being no live
-    // docState (a live body is safe to write), and it fails loudly.
-    expect(src).toMatch(/if\s*\(\s*readFailed\s*&&\s*!docState\s*\)/);
-    expect(src).toMatch(/markPathFailed\(\s*vaultRoot\s*,\s*relPath\s*\)/);
-    // The non-refuse corner (live body present) still blind-applies — the fix is
-    // narrow, not a blanket refusal of every no-baseline write.
-    expect(src).toMatch(/merged\s*=\s*cleanFrontmatter\(\s*\{\s*\.\.\.targetFm\s*\}\s*\)/);
   });
 });

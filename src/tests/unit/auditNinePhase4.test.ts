@@ -2,18 +2,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
 import type { TagsFile } from '@renderer/schema/tagsFile';
 import type { LoadTagsFileResult } from '@renderer/lib/vault/tagsStorage';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
-import {
-  scheduleMarkdownWrite,
-  flushMarkdownWrite,
-  markHydrated,
-  cancelAllMarkdownWrites,
-  type WriteArgs,
-} from '@renderer/lib/vault/markdownFileWriter';
+import { setActiveVaultPath } from '@renderer/lib/vault/activeVaultPath';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import {
   beginVaultGeneration,
@@ -24,12 +18,13 @@ import { repairRenameCascade } from '@renderer/lib/vault/renameCascadeRepair';
 import type { RenameCascadeEntry } from '@renderer/lib/vault/renameCascadeSentinel';
 import { __resetRenameCascadeSentinelForTests } from '@renderer/lib/vault/renameCascadeSentinel';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 
 /**
  * Audit-9 Phase 4 — coherence / recovery completeness (latent / self-healing).
  *
  *  A9-L7  fileTags 3-way merge base desync across a concurrent external reload
- *  A9-L8  markdown gateway post-write bookkeeping runs against the NEW vault on swap
+ *  A9-L8  note writer post-write bookkeeping must not run against the NEW vault on swap
  *  A9-L9  repairRenameCascade never re-applied the moved board's own path key
  *
  * (A9-L10 lives with the rest of the write-error coalescing tests in
@@ -117,92 +112,63 @@ describe('A9-L7 — a concurrent external reload is not clobbered by an in-fligh
   });
 });
 
-// ── A9-L8 — gateway skips post-write bookkeeping when the vault swapped ──
+// ── A9-L8 — the note writer skips post-write bookkeeping when the vault swapped ──
 
 describe('A9-L8 — post-write index bookkeeping is skipped after a mid-write vault swap', () => {
-  function bodyWriteArgs(relPath: string, body: string): WriteArgs {
-    return {
-      vaultRoot: '/vault',
-      relPath,
-      frontmatter: documentStore.getFrontmatter(relPath) ?? {},
-      body,
-      callerId: `text-tile:${relPath}`,
-      notePath: relPath,
-    };
-  }
-
-  function loadHydratedDoc(relPath: string): void {
-    documentStore.loadDocument({
-      filename: relPath,
-      title: 'L8',
-      body: 'orig',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter(relPath, { title: 'L8' }, 'title: L8');
-    markHydrated(relPath, false);
-  }
+  let vault: MemoryVault;
 
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     __resetVaultIdentityForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
+    beginVaultGeneration('/vault');
+    setActiveVaultPath('/vault');
+    vault = installMemoryVault({
+      'Notes/L8.md': '---\ntitle: L8\n---\norig\n',
+      'Notes/L8b.md': '---\ntitle: L8\n---\norig\n',
+    });
   });
 
   afterEach(() => {
-    cancelAllMarkdownWrites();
+    noteStore.__resetForTests();
     __resetDirtyTrackingForTests();
     __resetVaultIdentityForTests();
-    documentStore.clear();
     vaultIndexStore.clear();
+    setActiveVaultPath('');
     restoreFiloDefault();
     vi.restoreAllMocks();
   });
 
   it('does NOT restore the outgoing vault metadata into the new vault index', async () => {
     const relPath = 'Notes/L8.md';
-    const callerId = `text-tile:${relPath}`;
-    loadHydratedDoc(relPath);
-    beginVaultGeneration('/vault'); // identity captured at write entry
+    const m = noteStore.acquire(relPath, 'text-tile');
+    await m.loaded;
 
     const restoreSpy = vi.spyOn(vaultIndexStore, 'restoreMetadata');
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:stat') return { ok: true, mtimeMs: 1, size: 1 };
-      if (channel === 'vault:write-existing-file-text') {
-        // A vault swap lands while the write IPC is in flight.
-        beginVaultGeneration('/vault2');
-        return { ok: true, success: true };
-      }
-      return { ok: true, success: true };
-    });
+    // A vault swap lands while the write IPC is in flight.
+    vault.beforeWrite = (rel) => {
+      if (rel === relPath) beginVaultGeneration('/vault2');
+    };
 
-    documentStore.updateContent(relPath, '<p>x</p>', 'edited body', callerId);
-    scheduleMarkdownWrite(bodyWriteArgs(relPath, 'edited body'));
-    await flushMarkdownWrite(callerId);
+    noteStore.setBody(relPath, 'edited body', 'text-tile');
+    await noteStore.flush(relPath);
 
-    // The disk write committed against whatever vault was active, but the
-    // renderer-state index restore was skipped — it would have upserted the OLD
-    // vault's FileMetadata for relPath into the NEW vault's index.
+    // The disk write committed against the vault it was issued for, but the
+    // index restore was skipped: it would have upserted the OLD vault's
+    // metadata for relPath into the NEW vault's index.
+    expect(vault.read(relPath)).toContain('edited body');
     expect(restoreSpy).not.toHaveBeenCalled();
   });
 
   it('still restores metadata on the normal (no-swap) path', async () => {
     const relPath = 'Notes/L8b.md';
-    const callerId = `text-tile:${relPath}`;
-    loadHydratedDoc(relPath);
-    beginVaultGeneration('/vault');
+    const m = noteStore.acquire(relPath, 'text-tile');
+    await m.loaded;
 
     const restoreSpy = vi.spyOn(vaultIndexStore, 'restoreMetadata');
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:stat') return { ok: true, mtimeMs: 1, size: 1 };
-      return { ok: true, success: true };
-    });
-
-    documentStore.updateContent(relPath, '<p>x</p>', 'edited body', callerId);
-    scheduleMarkdownWrite(bodyWriteArgs(relPath, 'edited body'));
-    await flushMarkdownWrite(callerId);
+    noteStore.setBody(relPath, 'edited body', 'text-tile');
+    await noteStore.flush(relPath);
 
     expect(restoreSpy).toHaveBeenCalledWith(relPath, expect.anything());
   });
@@ -213,7 +179,7 @@ describe('A9-L8 — post-write index bookkeeping is skipped after a mid-write va
 describe('A9-L9 — repairRenameCascade re-applies the moved board path key', () => {
   beforeEach(() => {
     __resetRenameCascadeSentinelForTests();
-    documentStore.clear();
+    noteStore.__resetForTests();
     boardCacheStore.clear();
     boardStore.clearBoard();
     vaultStore.setPath('/vault');
@@ -228,7 +194,7 @@ describe('A9-L9 — repairRenameCascade re-applies the moved board path key', ()
   afterEach(() => {
     restoreFiloDefault();
     __resetRenameCascadeSentinelForTests();
-    documentStore.clear();
+    noteStore.__resetForTests();
     boardCacheStore.clear();
     boardStore.clearBoard();
     vaultStore.setPath('');

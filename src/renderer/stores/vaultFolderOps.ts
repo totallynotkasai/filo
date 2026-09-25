@@ -1,6 +1,6 @@
 import { boardStore } from './board.svelte';
 import { boardCacheStore } from './boardCache.svelte';
-import { documentStore } from './document.svelte';
+import { noteStore } from './notes.svelte';
 import { fileTagsStore } from './fileTags.svelte';
 import { uiStore } from './ui.svelte';
 import { vaultIndexStore } from './vaultIndex.svelte';
@@ -264,7 +264,7 @@ export function makeFolderOpsSlice(ctx: VaultContext) {
     ): Promise<{ success: boolean; code?: string; error?: string }> {
       const fullPath = `${parentPath}/${folderName}`;
       const vaultRoot = ctx.getVaultPath();
-      // Route through the gateway so the create races a clean
+      // Route through vaultOperations so the create races a clean
       // disk: any in-flight `.md` / `.board.json` / frontmatter write whose
       // target path lives under `fullPath` flushes before the `mkdir`.
       try {
@@ -529,11 +529,11 @@ async function runRename(
       }
 
       if (oldRel && newRel) {
-        // Fire every registered relPath-keyed sweep (markdownFileWriter
-        // fileState, fileBaselineRegistry, inFlightDriftPrompts, …). Run
-        // BEFORE the peer rename calls below so a throwing sweep can't be
-        // masked by a later flush, and the hydrate gate / drift baseline
-        // transfer happens in the same critical section as the peer state.
+        // Fire every registered relPath-keyed sweep (noteStore,
+        // fileBaselineRegistry, inFlightDriftPrompts, …). Run BEFORE the peer
+        // rename calls below so a throwing sweep can't be masked by a later
+        // flush, and open notes move in the same critical section as the
+        // peer state.
         // The peer calls (renameFile, renameKey, propagateRename, …) aren't
         // migrated to the registry; the gate's EXEMPT_OWNERS list documents them.
         renameAllPathKeys(oldRel, newRel);
@@ -879,23 +879,12 @@ async function performDelete(ctx: VaultContext, itemPath: string): Promise<boole
           // the post-delete `await refreshTree()`, leaving the UI showing
           // a phantom tab whose backing board is already gone.
           await Promise.allSettled(cleanupPromises);
-          // Re-check after the allSettled await, before the
-          // documentStore unload loop, for the same cross-vault reason.
+          // Re-check after the allSettled await, before the note store is
+          // told, for the same cross-vault reason.
           if (!isStillSameVault(deleteIdentity)) return true;
-          // Drop documentStore entries for every .md under the deleted
-          // path. The cascade above removed tile placements, but the in-
-          // memory DocumentState still holds a stale body — a future
-          // hydrate of that path would pick up that body instead of
-          // finding the file genuinely missing.
-          const docsToUnload: string[] = [];
-          for (const doc of documentStore.documents.values()) {
-            if (!doc.filename) continue;
-            const docPathLower = toPosix(doc.filename).toLowerCase();
-            if (docPathLower === relLower || docPathLower.startsWith(relPrefix)) {
-              docsToUnload.push(doc.filename);
-            }
-          }
-          for (const notePath of docsToUnload) documentStore.unloadDocument(notePath);
+          // Every note under the deleted path goes missing and nothing
+          // queued for it may recreate it.
+          noteStore.forgetDeleted(rel);
           // Flush the cascade immediately — see `rename` for the rationale.
           const deleteCascadeFlush = await boardCacheStore.flushAllDirty();
           // Same toast as rename: surface partial-failure

@@ -16,13 +16,9 @@ import TextTile from '@renderer/components/tiles/TextTile.svelte';
 import DocumentEditor from '@renderer/components/boards/DocumentEditor.svelte';
 import { BOARD_SCOPE_KEY, getActiveScope } from '@renderer/lib/boards/boardScope.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { tabStore } from '@renderer/stores/tabs.svelte';
 import { tiptapToolbar } from '@renderer/lib/editor/toolbarConfig';
-import {
-  cancelAllMarkdownWrites,
-  __resetMarkdownFileWriterForTests,
-} from '@renderer/lib/vault/markdownFileWriter';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { __resetBaselinesForTests } from '@renderer/lib/vault/fileBaselineRegistry';
 import { installFiloMock, restoreFiloDefault } from '../../helpers/filoBridge';
@@ -155,19 +151,20 @@ export async function settle(rounds = 20): Promise<void> {
   }
 }
 
-/** Wait past the 300 ms markdown write debounce, then settle. */
+/**
+ * Wait past the editor's 150 ms serialise idle and the note writer's 300 ms
+ * debounce, then settle.
+ */
 export async function drainDebounce(): Promise<void> {
-  await new Promise((r) => setTimeout(r, 360));
+  await new Promise((r) => setTimeout(r, 520));
   await settle();
 }
 
 export function resetEditorHarness(): void {
   resetEditorLoopBreaker();
-  cancelAllMarkdownWrites();
-  __resetMarkdownFileWriterForTests();
+  noteStore.__resetForTests();
   __resetDirtyTrackingForTests();
   __resetBaselinesForTests();
-  documentStore.clear();
   tiptapToolbar.clearActiveEditor();
 }
 
@@ -239,24 +236,14 @@ export async function mountTextTile(opts: {
 }
 
 /**
- * Mounts a DocumentEditor bound to a document tab. Seeds a placeholder
- * DocumentState (body `''`, the same shape `openTileAsDocument` creates) plus the
- * tab, then lets the editor's own disk hydrate run.
+ * Mounts a DocumentEditor bound to a document tab for `docPath`; the editor
+ * acquires the note from the note store, which reads it from disk.
  */
 export async function mountDocumentEditor(opts: {
   docPath: string;
   title?: string;
 }): Promise<Mounted> {
   vaultStore.setPath(VAULT);
-  if (!documentStore.getDocument(opts.docPath)) {
-    documentStore.loadDocument({
-      filename: opts.docPath,
-      title: opts.title ?? 'Doc',
-      body: '',
-      htmlContent: '',
-      richText: [],
-    });
-  }
   const tab = tabStore.openNote(opts.docPath, opts.title ?? 'Doc');
   if (!tab) throw new Error('tab not opened');
   const target = document.createElement('div');

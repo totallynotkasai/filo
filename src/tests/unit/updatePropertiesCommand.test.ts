@@ -1,59 +1,30 @@
 /**
- * Phase 5 / 5.1 — UpdatePropertiesCommand regression guard.
+ * UpdatePropertiesCommand regression guard.
  *
- * The PropertiesPopup writes frontmatter (text tiles) or `tile.metadata`
- * (non-text tiles) directly without history before this phase. The new
- * command snapshots before/after on popup close and lets Ctrl+Z restore
- * both the cache + the on-disk YAML.
+ * The PropertiesPopup snapshots before/after on popup close and pushes one
+ * command, so Ctrl+Z restores both the board cache (non-text tiles) and the
+ * on-disk YAML (text tiles).
  *
  * These tests assert:
- *   - execute() applies the "after" snapshot for both kinds (text → disk
- *     write via vault:write-existing-file-text; non-text → boardStore.updateTile).
- *   - undo() restores the "before" snapshot.
+ *   - execute() applies the "after" snapshot for both kinds (text → the note's
+ *     frontmatter on disk; non-text → boardStore.updateTile).
+ *   - undo() restores the "before" snapshot, rebased on the note as it stands:
+ *     a key another program added meanwhile survives.
  *   - redo() re-applies "after" again.
+ *   - a leg against a note that can't be read refuses instead of writing.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { UpdatePropertiesCommand } from '@renderer/commands/index';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Tile, TextTile, ImageTile } from '@renderer/schema/index';
-import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
-
-interface FiloRecorder {
-  calls: Array<{ channel: string; args: unknown[] }>;
-}
-
-/**
- * Phase 4 (WRITE_PATH_REMEDIATION_PLAN_2026-06-04) — the Properties write now
- * applies its field delta to a FRESH disk read. Tests that exercise a text-tile
- * FM write pass `diskContent` (the on-disk `.md` the gateway re-reads in-chain).
- * Omitting it leaves `vault:read-file-text` unhandled (returns undefined), which
- * the disk-read path treats as "unreadable" → the `base === null` blind-apply
- * legacy write — the corner the null-notePath / no-vault tests rely on.
- */
-function installRecorder(diskContent?: string): FiloRecorder {
-  const calls: FiloRecorder['calls'] = [];
-  installFiloMock((channel: unknown, ...args: unknown[]) => {
-    calls.push({ channel: channel as string, args });
-    if (channel === 'vault:write-existing-file-text') {
-      return { success: true };
-    }
-    if (diskContent !== undefined) {
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: diskContent, mtimeMs: 1, size: diskContent.length };
-      }
-      if (channel === 'vault:stat') {
-        return { success: true, mtimeMs: 1, size: diskContent.length };
-      }
-    }
-    return undefined;
-  });
-  return { calls };
-}
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
 function makeMindMapWithTiles(tiles: Tile[]): V7BoardFileData {
   const placements: Record<string, unknown> = {};
@@ -112,7 +83,7 @@ function makeImageTile(metadata: Record<string, unknown>): ImageTile {
 
 describe('UpdatePropertiesCommand — metadata (non-text tile)', () => {
   beforeEach(() => {
-    installRecorder();
+    installMemoryVault();
     vaultStore.setPath('/vault');
     boardCacheStore.clear();
     boardStore.clearBoard();
@@ -151,211 +122,173 @@ describe('UpdatePropertiesCommand — metadata (non-text tile)', () => {
 });
 
 describe('UpdatePropertiesCommand — frontmatter (text tile)', () => {
-  let recorder: FiloRecorder;
+  let vault: MemoryVault;
 
   beforeEach(() => {
-    recorder = installRecorder();
+    // Runs the test-reset callbacks, which clear the active vault path.
+    __resetDirtyTrackingForTests();
     vaultStore.setPath('/vault');
+    noteStore.__resetForTests();
+    vault = installMemoryVault({
+      'Notes.md': '---\ntags:\n  - old\n---\nhello body\n',
+      'A.md': '---\npriority: low\n---\nbody\n',
+      'X.md': '---\ntags:\n  - b\n---\nbody\n',
+    });
     boardCacheStore.clear();
     boardStore.clearBoard();
   });
   afterEach(() => {
+    noteStore.__resetForTests();
     restoreFiloDefault();
     vaultStore.setPath('');
     boardCacheStore.clear();
     boardStore.clearBoard();
-    documentStore.clear();
   });
 
-  it('execute writes the after snapshot via vault:write-existing-file-text', async () => {
-    // Phase 4 — disk holds the seeded "before" state; the delta is applied to it.
-    recorder = installRecorder('---\ntags:\n  - old\n---\nhello body\n');
-    documentStore.loadDocument({
-      filename: 'Notes.md',
-      title: 'Notes',
-      body: 'hello body',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter('Notes.md', { tags: ['old'] });
+  it('execute writes the after snapshot to the note, keeping its body', async () => {
+    const m = noteStore.acquire('Notes.md', 'popup');
+    await m.loaded;
 
     const cmd = new UpdatePropertiesCommand(
-      { kind: 'frontmatter', relPath: 'Notes.md', notePath: 'Notes.md', fm: { tags: ['old'] } },
-      { kind: 'frontmatter', relPath: 'Notes.md', notePath: 'Notes.md', fm: { tags: ['new'], priority: 'high' } },
+      { kind: 'frontmatter', relPath: 'Notes.md', fm: { tags: ['old'] } },
+      { kind: 'frontmatter', relPath: 'Notes.md', fm: { tags: ['new'], priority: 'high' } },
     );
 
     await cmd.execute();
-    const writeCall = recorder.calls.find((c) => c.channel === 'vault:write-existing-file-text');
-    expect(writeCall).toBeDefined();
-    expect(writeCall?.args[1]).toBe('Notes.md');
-    expect(writeCall?.args[2]).toContain('priority: high');
-    expect(writeCall?.args[2]).toContain('hello body');
-    expect(documentStore.getFrontmatter('Notes.md')).toMatchObject({
-      tags: ['new'],
-      priority: 'high',
-    });
+    expect(m.frontmatter).toMatchObject({ tags: ['new'], priority: 'high' });
+    await noteStore.flushAll();
+    const written = vault.read('Notes.md') ?? '';
+    expect(written).toContain('priority: high');
+    expect(written).toContain('- new');
+    expect(written).toContain('hello body');
   });
 
-  it('undo restores prior frontmatter via vault:write-existing-file-text', async () => {
-    recorder = installRecorder('---\npriority: low\n---\nbody\n');
-    documentStore.loadDocument({
-      filename: 'A.md',
-      title: 'A',
-      body: 'body',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter('A.md', { priority: 'low' });
+  it('undo restores the prior frontmatter on disk; redo re-applies', async () => {
+    const m = noteStore.acquire('A.md', 'popup');
+    await m.loaded;
 
     const cmd = new UpdatePropertiesCommand(
-      { kind: 'frontmatter', relPath: 'A.md', notePath: 'A.md', fm: { priority: 'low' } },
-      { kind: 'frontmatter', relPath: 'A.md', notePath: 'A.md', fm: { priority: 'high' } },
+      { kind: 'frontmatter', relPath: 'A.md', fm: { priority: 'low' } },
+      { kind: 'frontmatter', relPath: 'A.md', fm: { priority: 'high' } },
     );
 
     await cmd.execute();
-    expect(documentStore.getFrontmatter('A.md')).toMatchObject({ priority: 'high' });
+    expect(m.frontmatter).toMatchObject({ priority: 'high' });
+    await noteStore.flushAll();
+    expect(vault.read('A.md')).toBe('---\npriority: high\n---\nbody\n');
 
     await cmd.undo();
-    const undoCall = recorder.calls
-      .filter((c) => c.channel === 'vault:write-existing-file-text')
-      .pop();
-    expect(undoCall?.args[2]).toContain('priority: low');
-    expect(documentStore.getFrontmatter('A.md')).toMatchObject({ priority: 'low' });
+    expect(m.frontmatter).toMatchObject({ priority: 'low' });
+    await noteStore.flushAll();
+    expect(vault.read('A.md')).toBe('---\npriority: low\n---\nbody\n');
+
+    await cmd.execute();
+    await noteStore.flushAll();
+    expect(vault.read('A.md')).toBe('---\npriority: high\n---\nbody\n');
   });
 
   it('snapshots deep-cloned so later mutations do not poison the command', async () => {
-    // Disk holds the post-execute "after" state (tags: [b]); undo reverts it to
-    // the "before" snapshot. Audit-18 6.3 — a successful read is REQUIRED now: a
-    // null-notePath Properties undo against an UNREADABLE file refuses rather than
-    // blind-writing a stale body, so this test mocks the (realistic) readable
-    // disk and asserts the deep-cloned snapshot is what reaches the write.
-    recorder = installRecorder('---\ntags:\n  - b\n---\nbody\n');
+    // Disk holds the post-execute "after" state (tags: [b]); undo reverts it
+    // to the "before" snapshot.
     const sharedFm = { tags: ['a'] };
     const cmd = new UpdatePropertiesCommand(
-      { kind: 'frontmatter', relPath: 'X.md', notePath: null, fm: sharedFm },
-      { kind: 'frontmatter', relPath: 'X.md', notePath: null, fm: { tags: ['b'] } },
+      { kind: 'frontmatter', relPath: 'X.md', fm: sharedFm },
+      { kind: 'frontmatter', relPath: 'X.md', fm: { tags: ['b'] } },
     );
 
     // Mutate the caller-side object after construction.
     (sharedFm.tags as string[]).push('poison');
 
     await cmd.undo();
-    // Snapshot survived intact — disk write reflects ['a'], not ['a','poison'].
-    const writeCall = recorder.calls
-      .filter((c) => c.channel === 'vault:write-existing-file-text')
-      .pop();
-    expect(writeCall?.args[2]).toContain('- a');
-    expect(writeCall?.args[2]).not.toContain('poison');
+    await noteStore.flushAll();
+    const written = vault.read('X.md') ?? '';
+    expect(written).toContain('- a');
+    expect(written).not.toContain('poison');
   });
 
-  it('no-op when no vault is open (defensive)', async () => {
+  it('refuses without writing when the note is gone (never recreates it)', async () => {
+    vault.remove('A.md');
+    const cmd = new UpdatePropertiesCommand(
+      { kind: 'frontmatter', relPath: 'A.md', fm: { priority: 'high' } },
+      { kind: 'frontmatter', relPath: 'A.md', fm: { priority: 'low' } },
+    );
+    await expect(cmd.undo()).rejects.toThrow();
+    await noteStore.flushAll();
+    expect(vault.read('A.md')).toBeUndefined();
+    expect(vault.writes.filter(([, rel]) => rel === 'A.md')).toEqual([]);
+  });
+
+  it('writes nothing when no vault is open (defensive)', async () => {
     vaultStore.setPath('');
     const cmd = new UpdatePropertiesCommand(
-      { kind: 'frontmatter', relPath: 'X.md', notePath: null, fm: {} },
-      { kind: 'frontmatter', relPath: 'X.md', notePath: null, fm: { priority: 'high' } },
+      { kind: 'frontmatter', relPath: 'X.md', fm: {} },
+      { kind: 'frontmatter', relPath: 'X.md', fm: { priority: 'high' } },
     );
-    await cmd.execute();
-    // No write attempted — only the missing-vault early-return fires.
-    expect(recorder.calls.find((c) => c.channel === 'vault:write-existing-file-text')).toBeUndefined();
+    await cmd.execute().catch(() => undefined);
+    await noteStore.flushAll();
+    expect(vault.writes.filter(([, rel]) => rel.endsWith('.md'))).toEqual([]);
   });
 });
 
-describe('UpdatePropertiesCommand — H2 undo preserves externally-added keys', () => {
-  let recorder: FiloRecorder;
+describe('UpdatePropertiesCommand — undo preserves externally-added keys', () => {
+  let vault: MemoryVault;
 
   beforeEach(() => {
-    recorder = installRecorder();
+    // Runs the test-reset callbacks, which clear the active vault path.
+    __resetDirtyTrackingForTests();
     vaultStore.setPath('/vault');
+    noteStore.__resetForTests();
+    vault = installMemoryVault({ 'H2.md': '---\npriority: low\n---\nh2 body\n' });
     boardCacheStore.clear();
     boardStore.clearBoard();
   });
   afterEach(() => {
+    noteStore.__resetForTests();
     restoreFiloDefault();
     vaultStore.setPath('');
     boardCacheStore.clear();
     boardStore.clearBoard();
-    documentStore.clear();
   });
 
-  it('undo keeps a key added externally between edit and Ctrl+Z', async () => {
-    // Phase 4 — the external editor wrote `reviewed: true` to DISK; the gateway's
-    // delta write re-reads disk, so the untouched key survives by construction
-    // (the reconciler also merges it into the live cache, mirrored below).
-    recorder = installRecorder('---\npriority: high\nreviewed: true\n---\nh2 body\n');
-    documentStore.loadDocument({
-      filename: 'H2.md',
-      title: 'H2',
-      body: 'h2 body',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter('H2.md', { priority: 'low' });
+  it('undo keeps a key added externally between edit and Ctrl+Z (open note)', async () => {
+    const m = noteStore.acquire('H2.md', 'popup');
+    await m.loaded;
 
     // User changes ONE property (priority low → high) via the popup.
     const cmd = new UpdatePropertiesCommand(
-      { kind: 'frontmatter', relPath: 'H2.md', notePath: 'H2.md', fm: { priority: 'low' } },
-      { kind: 'frontmatter', relPath: 'H2.md', notePath: 'H2.md', fm: { priority: 'high' } },
+      { kind: 'frontmatter', relPath: 'H2.md', fm: { priority: 'low' } },
+      { kind: 'frontmatter', relPath: 'H2.md', fm: { priority: 'high' } },
     );
     await cmd.execute();
-    expect(documentStore.getFrontmatter('H2.md')).toMatchObject({ priority: 'high' });
+    await noteStore.flushAll();
 
-    // Another tool added `reviewed: true` (on disk above); the sync reconciler
-    // merges it into the live cache — the state the next undo rebases against.
-    documentStore.setFrontmatter('H2.md', { priority: 'high', reviewed: true });
+    // Another tool adds `reviewed: true`; the watcher hands it to the note.
+    vault.writeExternally('H2.md', '---\npriority: high\nreviewed: true\n---\nh2 body\n');
+    await noteStore.onDiskChanged('H2.md');
 
     await cmd.undo();
-    // Pre-fix the whole-snapshot replace wrote `{ priority: low }` and erased
-    // `reviewed`. The rebase keeps it: only the OWNED key (priority) reverts.
-    expect(documentStore.getFrontmatter('H2.md')).toMatchObject({
-      priority: 'low',
-      reviewed: true,
-    });
-    const undoWrite = recorder.calls
-      .filter((c) => c.channel === 'vault:write-existing-file-text')
-      .pop();
-    expect(undoWrite?.args[2]).toContain('priority: low');
-    expect(undoWrite?.args[2]).toContain('reviewed: true');
+    // Only the OWNED key (priority) reverts; `reviewed` stays.
+    expect(m.frontmatter).toMatchObject({ priority: 'low', reviewed: true });
+    await noteStore.flushAll();
+    expect(vault.read('H2.md')).toBe('---\npriority: low\nreviewed: true\n---\nh2 body\n');
   });
 
-  it('undo keeps a key added externally ON DISK when no editor cache is seeded', async () => {
-    // No documentStore seed → the live base comes from a fresh disk read.
-    const calls: FiloRecorder['calls'] = [];
-    installFiloMock((channel: unknown, ...args: unknown[]) => {
-      calls.push({ channel: channel as string, args });
-      if (channel === 'vault:read-file-text') {
-        return {
-          success: true,
-          content: '---\npriority: high\nreviewed: true\n---\nDisk body\n',
-          mtimeMs: 1,
-          size: 60,
-        };
-      }
-      if (channel === 'vault:stat') return { success: true, mtimeMs: 1, size: 60 };
-      if (channel === 'vault:write-existing-file-text') return { success: true };
-      return undefined;
-    });
+  it('undo keeps a key added externally ON DISK when no view has the note open', async () => {
+    vault.writeExternally('H2.md', '---\npriority: high\nreviewed: true\n---\nDisk body\n');
 
     const cmd = new UpdatePropertiesCommand(
-      { kind: 'frontmatter', relPath: 'Disk.md', notePath: 'Disk.md', fm: { priority: 'low' } },
-      { kind: 'frontmatter', relPath: 'Disk.md', notePath: 'Disk.md', fm: { priority: 'high' } },
+      { kind: 'frontmatter', relPath: 'H2.md', fm: { priority: 'low' } },
+      { kind: 'frontmatter', relPath: 'H2.md', fm: { priority: 'high' } },
     );
 
     // Undo reverts priority high → low while preserving the on-disk reviewed key.
     await cmd.undo();
-    const undoWrite = calls
-      .filter((c) => c.channel === 'vault:write-existing-file-text')
-      .pop();
-    expect(undoWrite?.args[2]).toContain('priority: low');
-    expect(undoWrite?.args[2]).toContain('reviewed: true');
+    await noteStore.flushAll();
+    expect(vault.read('H2.md')).toBe('---\npriority: low\nreviewed: true\n---\nDisk body\n');
   });
 });
 
 describe('UpdatePropertiesCommand — description', () => {
-  beforeEach(() => {
-    installRecorder();
-  });
-  afterEach(() => restoreFiloDefault());
-
   it('uses a stable human-readable label', () => {
     const cmd = new UpdatePropertiesCommand(
       { kind: 'metadata', tileId: 't1', metadata: {} },

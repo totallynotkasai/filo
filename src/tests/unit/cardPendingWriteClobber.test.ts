@@ -1,41 +1,24 @@
+/**
+ * A Kanban card / Task toggle queues a frontmatter change for a note no
+ * editor has open. A frontmatter-only edit made by another program before
+ * that change lands must not clobber it, and the change must not clobber the
+ * other program's edit: the queued change is a delta applied to a fresh read
+ * of the file, so both survive, silently (there is nothing to ask about).
+ */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { makeExternalChangesSlice } from '@renderer/stores/vaultExternalChanges';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
-import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
-import { scheduleFrontmatterWrite } from '@renderer/lib/boards/frontmatterWriteScheduler';
-import { hasPendingWrite, __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
+import { patchToFrontmatterDelta } from '@renderer/lib/vault/frontmatterDelta';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
 import type { VaultContext } from '@renderer/stores/vaultStoreTypes';
-import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
-import { setActiveVaultPath } from '@renderer/lib/vault/activeVaultPath';
-
-/**
- * F4 (2026-05-28) — pending-local-write guard on the markdown classifier.
- *
- * The external-change classifier defines "dirty" as "has an OPEN editor"
- * (`documentStore.findByFilename`). A Kanban card / Task whose `completed`
- * toggle scheduled a frontmatter write but whose editor isn't mounted has a
- * pending local write the classifier can't see. A frontmatter-only external
- * edit to the same file therefore classified as `sync-frontmatter` and
- * silently applied disk over the in-memory state — then the pending local
- * debounce fired last-write-wins, clobbering one side without the user's say.
- *
- * The fix mirrors the board-JSON reconciler: before applying a silent
- * `sync-frontmatter` / `reload-silently`, consult the shared
- * `hasPendingWrite` ledger (which the frontmatter scheduler populates on
- * schedule). If a local write is pending, surface a Reload / Keep-local
- * prompt instead of silently reconciling.
- *
- * This suite reproduces the no-editor scenario the audit called out and
- * asserts the local pending write is never silently dropped.
- */
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
 function clearToasts(): void {
-  for (const t of [...uiStore.toasts]) {
-    uiStore.dismissToast(t.id);
-  }
+  for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
 }
 
 function makeCtx(): VaultContext {
@@ -64,121 +47,54 @@ function makeCtx(): VaultContext {
   };
 }
 
-describe('vaultExternalChanges — pending-write guard (F4)', () => {
-  let ctx: VaultContext;
+describe('a queued card frontmatter change meets an external frontmatter edit', () => {
+  let vault: MemoryVault;
   let slice: ReturnType<typeof makeExternalChangesSlice>;
 
   beforeEach(async () => {
-    __resetDirtyTrackingForTests(); // also resets the frontmatter scheduler
-    documentStore.clear();
+    __resetDirtyTrackingForTests();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
-    fileTagsStore.reset();
     clearToasts();
     vaultStore.setPath('/vault');
-    ctx = makeCtx();
-    slice = makeExternalChangesSlice(ctx);
-
-    // Prime: index sees Card.md with completed=false, no tags, body "Body".
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: '---\ncompleted: false\n---\nBody', mtimeMs: 1000 };
-      }
-      return { success: true };
-    });
+    vault = installMemoryVault({ 'Card.md': '---\ncompleted: false\n---\nBody\n' });
+    slice = makeExternalChangesSlice(makeCtx());
     await vaultIndexStore.applyChanges(['Card.md']);
 
-    // Simulate the Kanban card toggle: the live frontmatter cache holds
-    // completed=true, and a frontmatter write is scheduled — but NO editor
-    // is mounted (no `loadDocument`), so `findByFilename` returns null.
-    // The card's writer keys the note by its session id, so the live cache is
-    // what every view of Card.md reads while the write is pending.
-    documentStore.setFrontmatter('Card.md', { completed: true });
-    scheduleFrontmatterWrite('Card.md', 'Card.md');
+    // The card toggle: a frontmatter change is queued, no editor holds the note.
+    noteStore.patchFrontmatter('Card.md', patchToFrontmatterDelta({ completed: true }));
   });
 
   afterEach(() => {
-    restoreFiloDefault();
-    __resetDirtyTrackingForTests();
+    noteStore.__resetForTests();
     vaultStore.setPath('');
-    documentStore.clear();
     vaultIndexStore.clear();
-    fileTagsStore.reset();
     clearToasts();
+    restoreFiloDefault();
   });
 
-  it('frontmatter-only external edit + pending write → prompt, no silent sync', async () => {
-    // Sanity: the toggle armed a pending write the classifier can't see.
-    expect(hasPendingWrite('Card.md')).toBe(true);
-    expect(documentStore.findByFilename('Card.md')).toBeNull();
+  it('both the local toggle and the external tag land, with no prompt', async () => {
+    expect(noteStore.get('Card.md')).toBeUndefined();
+    expect(noteStore.hasPendingWrites('Card.md')).toBe(true);
 
-    // External editor adds a tag (frontmatter-only; body unchanged).
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: '---\ncompleted: false\ntags: [theirs]\n---\nBody', mtimeMs: 2000 };
-      }
-      return { success: true };
-    });
-
+    vault.writeExternally('Card.md', '---\ncompleted: false\ntags: [theirs]\n---\nBody\n');
     await slice.handleExternalMarkdownChanges(['Card.md']);
 
-    // A Reload / Keep-local prompt fired instead of a silent sync-frontmatter.
-    const toast = uiStore.toasts.find((t) => t.text.includes('modified externally'));
-    expect(toast).toBeDefined();
-    expect(toast?.actions?.[0].label).toBe('Reload');
-    expect(toast?.actions?.[1].label).toBe('Keep local');
+    // The card still shows the local toggle over the refreshed index.
+    expect(noteStore.frontmatter('Card.md')).toEqual({ completed: true, tags: ['theirs'] });
+    expect(uiStore.toasts).toHaveLength(0);
+    // The local change is still queued: the external edit didn't drop it.
+    expect(noteStore.hasPendingWrites('Card.md')).toBe(true);
 
-    // The local pending write was NOT silently dropped — it is still armed.
-    expect(hasPendingWrite('Card.md')).toBe(true);
-
-    // The external tags were NOT silently pushed into the tag store (the bug:
-    // the old sync-frontmatter path called setFileTags unconditionally).
-    expect(fileTagsStore.tagsForFile('Card.md')).toEqual([]);
+    await noteStore.flushAll();
+    expect(vault.read('Card.md')).toBe('---\ncompleted: true\ntags: [theirs]\n---\nBody\n');
+    expect(vaultIndexStore.getMetadata('Card.md')?.frontmatter).toEqual({ completed: true, tags: ['theirs'] });
   });
 
-  it('Reload cancels the pending write and applies the disk frontmatter', async () => {
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: '---\ncompleted: false\ntags: [theirs]\n---\nBody', mtimeMs: 2000 };
-      }
-      return { success: true };
-    });
-
+  it('an external edit to the same key loses to the later local toggle, and other keys survive', async () => {
+    vault.writeExternally('Card.md', '---\ncompleted: false\npriority: high\n---\nBody\n');
     await slice.handleExternalMarkdownChanges(['Card.md']);
-    const toast = uiStore.toasts.find((t) => t.text.includes('modified externally'));
-    expect(toast).toBeDefined();
-
-    // Audit-16 6.3 — the Reload handler is now async (click-time disk re-read).
-    await toast!.actions![0].handler(); // Reload
-
-    // Pending write cancelled so it can't fire and re-clobber the reload.
-    expect(hasPendingWrite('Card.md')).toBe(false);
-    // Disk frontmatter applied to the tag store.
-    expect(fileTagsStore.tagsForFile('Card.md')).toEqual(['theirs']);
-  });
-
-  it('Keep local leaves the pending write armed to overwrite on next save', async () => {
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: '---\ncompleted: false\ntags: [theirs]\n---\nBody', mtimeMs: 2000 };
-      }
-      return { success: true };
-    });
-
-    await slice.handleExternalMarkdownChanges(['Card.md']);
-    const toast = uiStore.toasts.find((t) => t.text.includes('modified externally'));
-    expect(toast).toBeDefined();
-
-    // Audit-19 UX-6 — Keep local now backs up the external version first (async).
-    setActiveVaultPath('/vault');
-    await toast!.actions![1].handler(); // Keep local
-    setActiveVaultPath('');
-
-    // Pending write still armed → the local toggle wins on the next flush.
-    expect(hasPendingWrite('Card.md')).toBe(true);
-    // External tags NOT applied — the user kept their local view.
-    expect(fileTagsStore.tagsForFile('Card.md')).toEqual([]);
-    // A follow-up info toast confirms the choice.
-    const info = uiStore.toasts.find((t) => t.text.includes('overwrite the external edit'));
-    expect(info).toBeDefined();
+    await noteStore.flushAll();
+    expect(vault.read('Card.md')).toBe('---\ncompleted: true\npriority: high\n---\nBody\n');
   });
 });

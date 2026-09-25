@@ -98,7 +98,7 @@ test.describe('Filo E2E — Kanban Board', () => {
     { timeout: 3000 }).toBeGreaterThan(beforeTabCount);
 
     // And at least one tab should be of boardType 'document' (pointing at
-    // the seeded .md file via documentStore.openDocumentTab).
+    // the seeded .md file via openNoteInDocumentTab).
     const hasDocumentTab = await window.evaluate(async () => {
       const { tabStore } = await import('/src/renderer/stores/tabs.svelte.ts');
       return tabStore.tabs.some((t) => t.boardType === 'document');

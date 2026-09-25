@@ -9,7 +9,9 @@
   import { onMount, onDestroy, untrack } from 'svelte';
   import { tabStore } from '../../stores/tabs.svelte';
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
-  import { documentStore } from '../../stores/document.svelte';
+  import { noteStore, type NoteModel } from '../../stores/notes.svelte';
+  import { NoteEditorView } from '../../lib/editor/noteEditorView';
+  import { createId } from '../../lib/utils/ids';
   import { vaultStore } from '../../stores/vault.svelte';
   import { isNonUtf8 } from '../../lib/vault/nonUtf8Paths.svelte';
   import { confirmConvertToUtf8 } from '../../lib/vault/convertToUtf8';
@@ -20,22 +22,7 @@
   import { createTiptapEditor } from '../../lib/editor/createEditor';
   import { closeDrainGate } from '../../lib/editor/closeDrainGate.svelte';
   import { setEditorEditable } from '../../lib/editor/setEditorEditable';
-  import {
-    loadMarkdownIntoEditor,
-    editorMarkdown,
-  } from '../../lib/editor/markdownSync';
-  import {
-    markHydrated,
-    isHydrated,
-    readMarkdownForHydrate,
-    scheduleMarkdownWrite as gatewayScheduleMarkdownWrite,
-    flushMarkdownWrite,
-    registerForceWriter,
-    unregisterForceWriter,
-    type WriteArgs,
-  } from '../../lib/vault/markdownFileWriter';
   import { reportError } from '../../lib/utils/errorBus';
-  import { IpcEnvelopeError } from '@shared/ipcEnvelope';
   import { effectiveDocumentStyle } from '../../lib/styles/effectiveStyle';
   import { vaultRelativeFromAbsolute } from '../../lib/canvas/vaultPath';
   import { portal } from '../../lib/utils/portal';
@@ -58,10 +45,9 @@
   // The note this tab shows, by vault path; the rename cascade rewrites it
   // when the file moves (see tabs.svelte.ts).
   let notePath = $derived(tab?.notePath ?? '');
-  let docState = $derived(notePath ? documentStore.getDocument(notePath) : undefined);
 
   // BoardRouter intentionally skips boardStore loading for document tabs
-  // (DocumentEditor reads from documentStore, not boardStore). The per-board
+  // (DocumentEditor reads the note store, not boardStore). The per-board
   // styling cascade still needs the Board record, so we look it up from the
   // board cache by the tab's board id.
   let board = $derived(
@@ -95,23 +81,21 @@
 
   let editorElement: HTMLDivElement;
   let editor: Editor | null = null;
-  let isUpdatingFromStore = false;
-  let lastLoadedBody: string | null = null;
-  // Same role as TextTile.backingFileMissing — set on ENOENT so subsequent
-  // debounced writes don't re-create a file the user just deleted on disk.
-  let backingFileMissing = false;
-  // Hydration gate. Mirrored locally; the gateway enforces
-  // the invariant on the write side via markHydrated.
-  let hydrated = false;
-  let callerId = '';
-  // Set when the on-mount disk hydrate read FAILS (Windows
-  // file lock / OneDrive / antivirus). While true the editor is held read-only
-  // and `buildWriteArgs` refuses to write, so a keystroke into the
-  // unexpectedly-blank editor can't truncate the real (unread) file. A banner
-  // offers a retry; a later successful read clears the flag and resumes editing.
-  let hydrateReadFailed = $state(false);
-  // Reactive IME-composition flag (see onMount / reload effect).
+  // One view per mount; a split pane showing the same note is another view
+  // of the same note model.
+  const view = new NoteEditorView(`document-editor:${createId(8)}`, () => editor);
+  // The model at the tab's path, whichever object it is (a rename can move
+  // another one there).
+  let model = $derived<NoteModel | null>(notePath ? (noteStore.get(notePath) ?? null) : null);
+  // The note's path in its on-disk spelling, once acquired.
+  let docPath = $derived(model?.relPath ?? '');
+  // Reactive IME-composition flag (see onMount / the follow effect).
   let isComposing = $state(false);
+
+  $effect(() => {
+    const path = notePath;
+    untrack(() => view.show(path));
+  });
 
   // ── Vault-file drop ──
   //
@@ -175,7 +159,7 @@
   // (the note's frontmatter); the file-path mode of TagEditor adds/removes
   // tags in that frontmatter.
   let documentTags = $derived.by<string[]>(() => {
-    const path = docState?.filename;
+    const path = docPath;
     if (!path) return [];
     return fileTagsStore.tagsForFile(path);
   });
@@ -198,66 +182,6 @@
   }
   function closeTagPopup() { tagPopup = null; }
 
-  /**
-   * Builds WriteArgs for the gateway. Returns null when the editor isn't
-   * writable yet (no editor, no doc, no vault, hydrate pending, read-only,
-   * or backing file missing). Sync — captures FM from the documentStore
-   * live cache; the gateway's writeMarkdownFile handles the
-   * stale-cache re-read internally.
-   */
-  function buildWriteArgs(): WriteArgs | null {
-    if (!editor || !docState || backingFileMissing || !hydrated) return null;
-    // The on-mount disk read failed and we have no real body
-    // loaded, so the editor is blank for reasons unrelated to the file's
-    // content. Never write that emptiness over the file we couldn't read; a
-    // successful retry (clears `hydrateReadFailed`) resumes writes.
-    if (hydrateReadFailed && !lastLoadedBody) return null;
-    if (documentStore.isReadOnly(docState.filename)) return null;
-    const vaultRoot = vaultStore.path;
-    if (!vaultRoot) return null;
-    const fm = documentStore.getFrontmatter(docState.filename) ?? {};
-    return {
-      vaultRoot,
-      relPath: docState.filename,
-      frontmatter: fm,
-      body: editorMarkdown(editor),
-      callerId,
-      notePath: docState.filename,
-    };
-  }
-
-  function scheduleMarkdownWrite(): void {
-    const args = buildWriteArgs();
-    if (!args) return;
-    gatewayScheduleMarkdownWrite(args);
-  }
-
-  async function flushPendingMarkdownWrite(): Promise<void> {
-    if (!callerId) return;
-    // `flushMarkdownWrite` never rejects (failures resolve as `{ ok: false }`),
-    // so branch on the result — markClean only on success.
-    const result = await flushMarkdownWrite(callerId);
-    if (result.ok) {
-      if (docState && !backingFileMissing) documentStore.markClean(docState.filename, callerId);
-      return;
-    }
-    const err = result.error;
-    if (err instanceof IpcEnvelopeError && err.code === 'ENOENT' && docState) {
-      backingFileMissing = true;
-      reportError(
-        'DocumentEditor',
-        null,
-        `"${docState.filename}" no longer exists on disk. Further edits won't be saved until the file is restored.`,
-      );
-      return;
-    }
-    // Generic failure — keep the doc dirty so the next flush attempt retries.
-    // No reportError here: the gateway already surfaced the failure through
-    // trackComponentWrite's save-error pipeline (toast + sentinel), so a
-    // second toast would double-report.
-    if (docState) documentStore.markDirty(docState.filename, callerId);
-  }
-
   onMount(() => {
     if (!editorElement) return;
 
@@ -266,22 +190,8 @@
       content: '',
       placeholder: '',
       editable: true,
-      onUpdate: (html) => {
-        if (isUpdatingFromStore) return;
-        if (!editor) return;
-        // While the disk read failed the editor is frozen; ignore a
-        // programmatic edit so it can't set `lastLoadedBody` (below) and defeat
-        // buildWriteArgs' `hydrateReadFailed && !lastLoadedBody` refusal.
-        if (hydrateReadFailed) return;
-        const md = editorMarkdown(editor);
-        // Record our OWN body so the reload `$effect` treats it as a no-op once
-        // the gateway markCleans this writer. Without it every autosave would
-        // reload the editor's own content (wiping redo, breaking IME composition).
-        lastLoadedBody = md;
-        if (notePath) {
-          documentStore.updateContent(notePath, html, md, callerId);
-        }
-        scheduleMarkdownWrite();
+      onUpdate: () => {
+        view.edited();
       },
       onFocus: () => {
         if (editor) {
@@ -289,6 +199,8 @@
         }
       },
       onBlur: () => {
+        // Another view may take over the note next; hand it every keystroke.
+        view.serialize();
         tiptapToolbar.clearActiveEditor();
       },
       onSelectionUpdate: () => {
@@ -301,205 +213,75 @@
 
     tiptapToolbar.setActiveEditor(editor);
 
-    // Bridge prosemirror's composition state into a reactive
-    // flag so the reload `$effect` defers mid-composition.
     // Anchored on the editor DOM, so editor.destroy() removes them.
     const composeEl = editor.view.dom;
     composeEl.addEventListener('compositionstart', () => { isComposing = true; });
     composeEl.addEventListener('compositionend', () => { isComposing = false; });
-
-    callerId = `document-editor:${notePath}`;
-    void hydrateFromDisk();
-    registerForceWriter(callerId, notePath, buildWriteArgs);
+    // The model may have loaded before the editor existed.
+    untrack(() => view.sync({ composing: false }));
   });
-
-  // Loads the document body from the in-memory store when available, falling
-  // back to a fresh disk read. Without the disk fallback, opening a document
-  // via "Expand to Document" before its text tile had mounted (LOD block mode
-  // or a just-loaded board) would leave the editor empty and any keystroke
-  // would overwrite the .md file's real content.
-  async function hydrateFromDisk() {
-    if (!editor) return;
-    try {
-      // Only adopt the in-memory (body-only) body as a hydrate
-      // source when this doc's frontmatter is already seeded (a sibling view,
-      // e.g. the backing TextTile, read it from disk). Re-parsing FM from the
-      // body-only store body yields {}, and seeding that would clobber the real
-      // cached FM → a later body-only save erases the file's frontmatter block.
-      // When unseeded, fall through to the authoritative disk read below.
-      if (docState?.body && documentStore.hasFrontmatter(docState.filename)) {
-        // Load the body-only store body VERBATIM. Re-parsing it would strip a
-        // leading `---…---` rule pair as frontmatter and the first keystroke
-        // would save the truncated body.
-        lastLoadedBody = docState.body;
-        isUpdatingFromStore = true;
-        const result = loadMarkdownIntoEditor(editor, docState.body);
-        documentStore.setReadOnly(docState.filename, result.lossy);
-        isUpdatingFromStore = false;
-        // `docState.body` is body-only, so a BOM sniff of it is always false;
-        // marking unconditionally would clobber the hadBom a sibling view read
-        // from disk and drop the file's BOM on the next save. Inherit the
-        // existing fileState entry; only mark false as a fresh fallback.
-        // The body does keep its line endings, so sniff CRLF from it — without
-        // an `eol` a single-line-FM CRLF file would emit LF fences on the first
-        // write. Pin only CRLF; leave LF/unknown to write-time detection.
-        if (docState.filename && !isHydrated(docState.filename)) {
-          const adoptEol = docState.body.includes('\r\n') ? '\r\n' : undefined;
-          markHydrated(docState.filename, false, undefined, undefined, adoptEol);
-        }
-        return;
-      }
-
-      const vaultRoot = vaultStore.path;
-      if (!vaultRoot || !docState?.filename) return;
-
-      try {
-        let body = '';
-        let frontmatter: Record<string, unknown> = {};
-        let rawFrontmatter = '';
-        let readOk = false;
-        try {
-          // The read gateway seeds the hydrate gate + drift baseline from
-          // the same read's mtime, so a later debounced write detects an
-          // external edit landing after this hydrate.
-          const hydrateResult = await readMarkdownForHydrate(vaultRoot, docState.filename);
-          body = hydrateResult.body;
-          frontmatter = hydrateResult.frontmatter;
-          rawFrontmatter = hydrateResult.rawFrontmatter;
-          readOk = true;
-        } catch {
-          // The read FAILED (Windows lock / OneDrive / AV). Do
-          // NOT mount a blank, writable editor over a file we couldn't read: a
-          // keystroke would truncate the real content on the next debounced
-          // write. Flag the failure (buildWriteArgs refuses to write), hold the
-          // editor read-only, and surface a retry banner. Still mark hydrated
-          // (no disk mtime → no baseline) so the write-side invariant holds once
-          // a retry succeeds.
-          markHydrated(docState.filename, false);
-          hydrateReadFailed = true;
-        }
-        if (!editor || editor.isDestroyed) return;
-        if (!readOk) {
-          // Keep the editor empty + non-editable; the banner's Retry re-runs
-          // hydrateFromDisk. We deliberately skip the loadMarkdownIntoEditor +
-          // applyReloadFromDisk below so the unread file's content isn't
-          // replaced in-memory by an empty body. `finally` still sets `hydrated`.
-          setEditorEditable(editor, false);
-          return;
-        }
-        // Read succeeded — clear any prior failed state and re-enable editing
-        // (the retry path lands here once the file becomes readable again).
-        if (hydrateReadFailed) {
-          hydrateReadFailed = false;
-          setEditorEditable(editor, true);
-        }
-        lastLoadedBody = body;
-        isUpdatingFromStore = true;
-        const loadResult = loadMarkdownIntoEditor(editor, body);
-        documentStore.setReadOnly(docState.filename, loadResult.lossy);
-        isUpdatingFromStore = false;
-        // Mirror the loaded body into the document store so other views (a sibling
-        // TextTile on the canvas) reuse the same content without re-reading disk.
-        // Pass the parsed body (without frontmatter) to match TextTile's load convention,
-        // and seed the live frontmatter cache (+ the verbatim bytes) so the next
-        // writer doesn't revert it and a body-only save preserves its formatting.
-        documentStore.applyReloadFromDisk(docState.filename, body, [], frontmatter, rawFrontmatter);
-      } catch (err) {
-        console.warn('[DocumentEditor] Failed to read markdown file:', err);
-      }
-    } finally {
-      // Flip hydrate true even on failure paths so writes
-      // can proceed against the embedded fallback. Without this, every
-      // subsequent keystroke's schedule would no-op and the user's edits
-      // would be silently dropped.
-      hydrated = true;
-    }
-  }
 
   onDestroy(() => {
-    // Drain the gateway's pending write BEFORE unregistering the force-writer
-    // so a concurrent flushAllMarkdownWrites() snapshot still includes this
-    // writer. Editor teardown is chained off the flush promise so the
-    // synchronous editorMarkdown() capture inside writeMarkdownFile doesn't
-    // race with TipTap destroy. The callerId binding is stable, and a rename
-    // carries the force-writer's registered path along with the note.
-    const id = callerId;
-    void flushPendingMarkdownWrite().finally(() => {
-      if (id) unregisterForceWriter(id);
-      if (editor) {
-        tiptapToolbar.clearActiveEditor();
-        editor.destroy();
-        editor = null;
-      }
-    });
-  });
-
-  // Reload editor content when the underlying disk body changes (external edit
-  // resolved via documentStore.applyReloadFromDisk). We compare against the
-  // last body we loaded so user-driven edits don't trigger a reload loop.
-  // `preserveSelection` keeps the caret in place when an external edit
-  // replaces the body underneath an open editor.
-  $effect(() => {
-    if (!editor || !docState) return;
-    const body = docState.body;
-    if (body === lastLoadedBody) return;
-    // Gate on THIS view's own writer, not the shared isDirty, so a
-    // clean DocumentEditor still reloads a sibling TextTile's latest body
-    // instead of diverging and clobbering it on the next debounce flush.
-    if (documentStore.isWriterDirty(docState.filename, callerId)) return;
-    // Never reload mid-IME-composition; the effect re-runs on
-    // compositionend and picks up whatever landed meanwhile.
-    if (isComposing) return;
-    // The live cache is refreshed elsewhere — applyReloadFromDisk on external
-    // edits, or another writer's setFrontmatter on hydrate. The body is
-    // body-only by contract: load it VERBATIM (no re-parse).
-    lastLoadedBody = body;
-    isUpdatingFromStore = true;
-    const result = loadMarkdownIntoEditor(editor, body ?? '', { preserveSelection: true });
-    documentStore.setReadOnly(docState.filename, result.lossy);
-    isUpdatingFromStore = false;
-  });
-
-  // Read-only state for the banner.
-  let readOnly = $derived(docState ? documentStore.isReadOnly(docState.filename) : false);
-  // A note whose bytes aren't UTF-8 is non-editable until converted.
-  let nonUtf8 = $derived(isNonUtf8(docState?.filename));
-
-  // Freeze the editor while a tab-close drain is in flight so a keystroke
-  // typed during the drain / failed-drain confirm can't re-arm a debounce the
-  // unmount would then destroy. We never re-enable while a read failed (that
-  // path holds it non-editable for its own reason). A lossy note is truly
-  // non-editable (else typed text is silently discarded); Take ownership clears it.
-  $effect(() => {
-    const frozen = closeDrainGate.draining || readOnly || nonUtf8;
-    if (!hydrateReadFailed) {
-      // Non-emitting + untracked: see setEditorEditable (avoids an effect loop).
-      untrack(() => setEditorEditable(editor, !frozen));
+    // Unsaved keystrokes go to the model; the note writer saves them after
+    // this view is gone.
+    view.close();
+    if (editor) {
+      tiptapToolbar.clearActiveEditor();
+      editor.destroy();
+      editor = null;
     }
   });
 
-  // Re-run the disk hydrate after a transient read failure
-  // (file lock released, OneDrive synced, AV finished). On success
-  // `hydrateFromDisk` clears `hydrateReadFailed` and re-enables editing.
-  function retryHydrate(): void {
-    void hydrateFromDisk();
+  // Follow the note: a body typed in another view (a split pane, a tile), a
+  // change on disk or a reload loads here, keeping the caret where it was.
+  // Never mid-composition; the effect re-runs on compositionend.
+  $effect(() => {
+    const m = model;
+    if (!m) return;
+    void m.bodyRevision;
+    void m.status;
+    const composing = isComposing;
+    untrack(() => view.sync({ composing }));
+  });
+
+  let readOnly = $derived(model?.lossy ?? false);
+  // A note whose bytes aren't UTF-8 is non-editable until converted.
+  let nonUtf8 = $derived(isNonUtf8(docPath));
+  // The read failed for a reason other than a missing file: typing would
+  // overwrite the unread file with an empty editor.
+  let unreadable = $derived(model?.status === 'unreadable');
+  let missing = $derived(model?.status === 'missing');
+
+  // Freeze the editor while a tab-close drain is in flight (a keystroke would
+  // be stranded by the unmount), while the note can't be written (lossy, not
+  // UTF-8, unreadable, missing) and until it has loaded.
+  $effect(() => {
+    const status = model?.status;
+    const frozen =
+      closeDrainGate.draining || readOnly || nonUtf8 || unreadable || missing || status === 'loading';
+    // Non-emitting + untracked: see setEditorEditable (avoids an effect loop).
+    untrack(() => setEditorEditable(editor, !frozen));
+  });
+
+  function retryRead(): void {
+    if (docPath) void noteStore.reload(docPath);
   }
 
   function convertToUtf8(): void {
     const vaultRoot = vaultStore.path;
-    if (vaultRoot && docState?.filename) confirmConvertToUtf8(vaultRoot, docState.filename);
+    if (vaultRoot && docPath) confirmConvertToUtf8(vaultRoot, docPath);
   }
 
   function takeOwnership(): void {
-    if (!docState) return;
-    const cid = docState.filename;
+    if (!docPath) return;
+    const path = docPath;
     uiStore.openConfirm({
       title: 'Take ownership of this file?',
       body: "Filo will be able to edit and save this file, but formatting it can't preserve (for example hard-wrapped lines, callouts, wiki links, comments) will be rewritten or removed on the next save. Continue?",
       confirmLabel: 'Take ownership',
       cancelLabel: 'Cancel',
       danger: true,
-      onConfirm: () => documentStore.takeOwnership(cid),
+      onConfirm: () => noteStore.takeOwnership(path),
     });
   }
 </script>
@@ -518,12 +300,12 @@
   />
   <div class="document-container">
     <div class="document-paper" style={paperInlineStyle}>
-      {#if hydrateReadFailed}
+      {#if unreadable}
         <!-- Read failed; editing is paused so a keystroke can't
              truncate the real (unread) file. Retry re-reads disk. -->
         <div class="readonly-banner" role="alert">
-          <span class="readonly-text">Filo couldn't read this file{docState?.filename ? ` ("${docState.filename}")` : ''}. Editing is paused so your changes can't overwrite it — retry once the file is readable.</span>
-          <button class="readonly-action" onclick={retryHydrate}>Retry</button>
+          <span class="readonly-text">Filo couldn't read this file{docPath ? ` ("${docPath}")` : ''}. Editing is paused so your changes can't overwrite it — retry once the file is readable.</span>
+          <button class="readonly-action" onclick={retryRead}>Retry</button>
         </div>
       {/if}
       {#if nonUtf8}
@@ -537,7 +319,7 @@
           <button class="readonly-action" onclick={takeOwnership}>Take ownership</button>
         </div>
       {/if}
-      {#if docState?.filename}
+      {#if docPath}
         <div class="document-tags-bar" aria-label="Document tags">
           {#each documentTags as name (name)}
             <TagBadge tagName={name} size="sm" onClick={(e) => handleTagClick(name, e)} />
@@ -566,7 +348,7 @@
   </div>
 </div>
 
-{#if tagEditorPopup && docState?.filename}
+{#if tagEditorPopup && docPath}
   <div
     class="document-tag-popup-overlay"
     role="presentation"
@@ -574,7 +356,7 @@
     onkeydown={(e) => { if (e.key === 'Escape') tagEditorPopup = null; }}
   ></div>
   <div class="document-tag-popup-anchor" style="position: fixed; left: {tagEditorPopup.x}px; top: {tagEditorPopup.y}px;">
-    <TagEditor filePath={docState.filename} onClose={() => tagEditorPopup = null} />
+    <TagEditor filePath={docPath} onClose={() => tagEditorPopup = null} />
   </div>
 {/if}
 

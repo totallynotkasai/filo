@@ -51,7 +51,7 @@
       return;
     }
 
-    // Document tabs read from documentStore, not boardStore — skip board loading
+    // Document tabs read the note store, not boardStore — skip board loading
     if (t.boardType === 'document') {
       scope.selection.clear();
       scope.canvas.setBoard(null);

@@ -1,14 +1,12 @@
 import type { KanbanBoard as KanbanBoardType, Tile } from '../../schema/index';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
-import { documentStore } from '../../stores/document.svelte';
 import { historyStore } from '../../stores/history.svelte';
 import { uiStore } from '../../stores/ui.svelte';
-import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
+import { noteFrontmatter } from '../../stores/noteMeta';
 import { vaultStore } from '../../stores/vault.svelte';
 import {
   UpdateCardFieldCommand,
   UpdateCoverImageCommand,
-  UpdateOrphanFrontmatterCommand,
 } from '../../commands/index';
 import { copyFileIntoVault } from '../vault/vaultOperations';
 import { resolveTextTileVaultPath } from '../boards/textTilePath';
@@ -43,10 +41,9 @@ export interface KanbanFrontmatterWriter {
 /**
  * Frontmatter writer for Kanban card mutations.
  *
- * Same pattern as TaskListBoard's per-row writer. Mutations land in
- * `documentStore.mergeFrontmatter` (shared live cache), then a 300ms
- * debounce assembles the `.md` and writes via `trackComponentWrite` so the
- * save-error pipeline catches failures.
+ * Same pattern as TaskListBoard's per-row writer: each edit is an undoable
+ * `UpdateCardFieldCommand`, which sends it to the note writer as a
+ * frontmatter delta.
  *
  * Factory closes over `getBoard` / `getAllTilesById` accessors so the
  * writer always sees the live reactive board state from the calling
@@ -61,15 +58,9 @@ export function makeKanbanFrontmatterWriter(
     return resolveTextTileVaultPath(tile) ?? '';
   }
 
+  /** The card's note path (the note store answers its frontmatter directly). */
   function ensureSeededFm(tile: Tile): string | null {
-    const notePath = resolveTextTileVaultPath(tile);
-    if (!notePath) return null;
-    if (!documentStore.getFrontmatter(notePath)) {
-      const path = vaultPathForTileSafe(tile);
-      const fm = (vaultIndexStore.getMetadata(path)?.frontmatter ?? {}) as Record<string, unknown>;
-      documentStore.setFrontmatter(notePath, fm);
-    }
-    return notePath;
+    return resolveTextTileVaultPath(tile);
   }
 
   async function updateTileFrontmatter(tileId: string, patch: Record<string, unknown>): Promise<void> {
@@ -77,34 +68,20 @@ export function makeKanbanFrontmatterWriter(
     if (!board) return;
     const tile = getAllTilesById()[tileId];
     if (!tile) return;
-    const path = vaultPathForTileSafe(tile);
-    const notePath = resolveTextTileVaultPath(tile);
-    // Best-effort inverse from whatever's already in memory. The notePath-backed
-    // UpdateCardFieldCommand recomputes the inverse from a FRESH disk read on
-    // execute (the disk pre-seed runs inside the command so the read joins the
-    // history chain that save()/quit await); the orphan path uses this inverse
-    // directly. Prefer the live cache (an open editor's in-memory state) over
-    // the durably-stale vault index.
-    const liveFm = notePath ? documentStore.getFrontmatter(notePath) : null;
-    const fmBefore = (liveFm
-      ?? vaultIndexStore.getMetadata(path)?.frontmatter
-      ?? {}) as Record<string, unknown>;
+    // Only a text card has a note to hold fields.
+    const path = resolveTextTileVaultPath(tile);
+    if (!path) return;
+    // Best-effort inverse from what's shown; the command recomputes it from
+    // the note as it stands on execute.
+    const fmBefore = noteFrontmatter(path);
     const inverse: Record<string, unknown> = {};
     for (const k of Object.keys(patch)) {
       inverse[k] = k in fmBefore ? fmBefore[k] : '';
     }
-    const command = notePath
-      ? new UpdateCardFieldCommand(board.id, path, notePath, patch, inverse)
-      // Orphan-fm path (not a text tile with a note path). `scheduleSharedFrontmatterWrite(
-      // path, null)` would be a silent no-op (the scheduler reads frontmatter
-      // from vaultIndexStore when notePath is null, so the patch never applies).
-      // UpdateOrphanFrontmatterCommand writes directly via
-      // vault:write-existing-file-text and supports undo.
-      : new UpdateOrphanFrontmatterCommand(board.id, path, patch, inverse);
-    // Await the chained command so this resolves only after the seed + merge +
-    // schedule have run (callers and tests rely on the cache reflecting the
-    // disk seed once this resolves). The history chain reports its own errors,
-    // so swallow the rejection here to keep this fire-and-forget UI path quiet.
+    const command = new UpdateCardFieldCommand(board.id, path, patch, inverse);
+    // Await the chained command so this resolves once the change is queued
+    // and shows on the card. The history chain reports its own errors, so
+    // swallow the rejection here to keep this fire-and-forget UI path quiet.
     await historyStore.execute(command).catch(() => {});
     bumpCacheVersion();
   }

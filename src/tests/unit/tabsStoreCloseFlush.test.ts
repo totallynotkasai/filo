@@ -1,90 +1,83 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { tabStore } from '@renderer/stores/tabs.svelte';
-import {
-  __testRegisterFlusher as registerMarkdownFlusher,
-  __resetMarkdownFileWriterForTests as __resetMarkdownFlushersForTests,
-} from '@renderer/lib/vault/markdownFileWriter';
+import { vaultStore } from '@renderer/stores/vault.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import {
   cancelAllPendingWrites,
   __resetDirtyTrackingForTests,
 } from '@renderer/lib/boards/boardSaver';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Sprint B / B2: `tabStore.close` must drain pending markdown / frontmatter
- * writers BEFORE removing the tab from `tabs`. Removing the tab triggers the
- * Svelte unmount of any TextTile / DocumentEditor inside it, which fires its
- * onDestroy flush as fire-and-forget — so without an awaited drain in
- * `close`, the last 300 ms of debounced edits race the contextBridge IPC
- * teardown and can silently disappear.
+ * `tabStore.close` must drain pending note writes BEFORE removing the tab
+ * from `tabs`. Removing the tab unmounts any TextTile / DocumentEditor
+ * inside it, whose onDestroy flush is fire-and-forget — so without an
+ * awaited drain in `close`, the last 300 ms of debounced edits race the
+ * contextBridge IPC teardown and can silently disappear.
  *
- * The verification approach: register a deliberately-slow flusher that
- * records when it completes, then call `close` and observe whether the flush
- * resolved BEFORE the tab was removed from `tabStore.tabs`.
+ * The verification approach: hold a queued note write open, then call
+ * `close` and observe that the write landed BEFORE the tab was removed from
+ * `tabStore.tabs`.
  */
 
-function installFiloStub(): void {
-  (window as unknown as Record<string, unknown>).filo = {
-    invoke: async () => null,
-    on: () => () => {},
-    send: () => {},
-  };
-}
+const NOTE = '---\ntitle: Note\n---\nBody\n';
 
-function uninstallFiloStub(): void {
-  delete (window as unknown as Record<string, unknown>).filo;
-}
+describe('tabStore.close — flush before unmount', () => {
+  let vault: MemoryVault;
 
-describe('tabStore.close — Sprint B / B2 flush before unmount', () => {
   beforeEach(() => {
-    uninstallFiloStub();
-    installFiloStub();
-    __resetMarkdownFlushersForTests();
+    restoreFiloDefault();
+    // Runs the test-reset callbacks, which clear the active vault path.
     __resetDirtyTrackingForTests();
+    vaultStore.setPath('/vault');
+    noteStore.__resetForTests();
+    vault = installMemoryVault({ 'A.md': NOTE, 'B.md': NOTE });
     tabStore.closeAll();
   });
   afterEach(() => {
     cancelAllPendingWrites();
-    uninstallFiloStub();
-    __resetMarkdownFlushersForTests();
+    noteStore.__resetForTests();
+    restoreFiloDefault();
     __resetDirtyTrackingForTests();
     tabStore.closeAll();
   });
 
-  it('awaits every registered markdown flusher before mutating the tabs array', async () => {
+  it('awaits every queued note write before mutating the tabs array', async () => {
     const events: string[] = [];
-    let resolveFlush: (() => void) | null = null;
-    const flushPromise = new Promise<void>((res) => {
-      resolveFlush = res;
+    let release!: () => void;
+    const held = new Promise<void>((res) => {
+      release = res;
     });
-    registerMarkdownFlusher('text-tile:t1', async () => {
-      await flushPromise;
-      events.push('flush-done');
-    });
+    let writeStarted = false;
+    vault.beforeWrite = async (rel) => {
+      if (!rel.endsWith('.md')) return;
+      writeStarted = true;
+      await held;
+      events.push('write-done');
+    };
+    noteStore.patchFrontmatter('A.md', { set: { status: 'edited' }, unset: [] });
 
     const tab = tabStore.open('board-1', 'Board One', 'mindmap', '');
     expect(tabStore.tabs.some((t) => t.id === tab.id)).toBe(true);
 
     const closePromise = tabStore.close(tab.id);
 
-    // Microtask boundary — the close is awaiting the flusher and has NOT
-    // mutated tabs yet. (If the implementation had been fire-and-forget,
-    // tabs would already be empty here.)
-    await Promise.resolve();
+    // The close is waiting on the held write and has NOT mutated tabs yet.
+    // (A fire-and-forget implementation would already have emptied tabs.)
+    for (let i = 0; i < 50 && !writeStarted; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(writeStarted).toBe(true);
     expect(tabStore.tabs.some((t) => t.id === tab.id)).toBe(true);
 
-    // Release the flusher. After this resolves, close can proceed and
-    // remove the tab.
-    resolveFlush?.();
+    release();
     await closePromise;
 
-    // Audit-16 6.7 — close() runs the flush pass TWICE (the second pass
-    // captures keystrokes that re-armed a debounce during the first drain /
-    // interactive confirm), so the flusher fires once per pass.
-    expect(events).toEqual(['flush-done', 'flush-done']);
+    expect(events).toEqual(['write-done']);
+    expect(vault.read('A.md')).toContain('status: edited');
     expect(tabStore.tabs.some((t) => t.id === tab.id)).toBe(false);
   });
 
-  it('proceeds normally when no flushers are registered (no-op flush)', async () => {
+  it('proceeds normally when nothing is queued (no-op flush)', async () => {
     const tab = tabStore.open('board-2', 'Board Two', 'kanban', '');
     expect(tabStore.tabs.length).toBe(1);
     await tabStore.close(tab.id);
@@ -92,13 +85,13 @@ describe('tabStore.close — Sprint B / B2 flush before unmount', () => {
   });
 
   it('closeOthers also drains pending writes before removing the other tabs', async () => {
-    let flushCount = 0;
-    registerMarkdownFlusher('text-tile:a', async () => {
-      flushCount++;
-    });
-    registerMarkdownFlusher('text-tile:b', async () => {
-      flushCount++;
-    });
+    const tabCountAtWrite: number[] = [];
+    vault.beforeWrite = (rel) => {
+      if (!rel.endsWith('.md')) return;
+      tabCountAtWrite.push(tabStore.tabs.length);
+    };
+    noteStore.patchFrontmatter('A.md', { set: { status: 'a' }, unset: [] });
+    noteStore.patchFrontmatter('B.md', { set: { status: 'b' }, unset: [] });
 
     const t1 = tabStore.open('board-a', 'A', 'mindmap', '');
     const t2 = tabStore.open('board-b', 'B', 'mindmap', '');
@@ -107,12 +100,12 @@ describe('tabStore.close — Sprint B / B2 flush before unmount', () => {
 
     await tabStore.closeOthers(t2.id);
 
-    // Audit-16 6.7 — two flushers × two flush passes (see close() test above).
-    expect(flushCount).toBe(4);
+    // Both writes landed while all three tabs were still open.
+    expect(tabCountAtWrite).toEqual([3, 3]);
+    expect(vault.read('A.md')).toContain('status: a');
+    expect(vault.read('B.md')).toContain('status: b');
     expect(tabStore.tabs.length).toBe(1);
     expect(tabStore.tabs[0].id).toBe(t2.id);
-    // Suppress unused-variable lint for t1/t3 (their ids are the basis of
-    // the "other" closures).
     expect(t1.id).not.toBe(t2.id);
     expect(t3.id).not.toBe(t2.id);
   });

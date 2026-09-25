@@ -1,9 +1,8 @@
 import type { KanbanBoard as KanbanBoardType, Tile } from '../../schema/index';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
-import { documentStore } from '../../stores/document.svelte';
+import { noteFrontmatter } from '../../stores/noteMeta';
 import type { SelectionScope } from '../../stores/selection.svelte';
 import { uiStore } from '../../stores/ui.svelte';
-import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import { historyStore } from '../../stores/history.svelte';
 import type { Command } from '../../commands/Command';
 import {
@@ -11,10 +10,8 @@ import {
   DeleteCardCommand,
   MoveCardsCommand,
   UpdateCardFieldCommand,
-  UpdateOrphanFrontmatterCommand,
 } from '../../commands/index';
 
-import { resolveTextTileVaultPath } from '../boards/textTilePath';
 export interface KanbanMultiSelectDeps {
   /** The pane's selection scope. Bulk actions and the click-toggle both
    * mutate THIS scope, so two panes opening the same Kanban board don't
@@ -187,9 +184,8 @@ export class KanbanMultiSelect {
     // whenChainSettled() — a quit mid-loop can't lose later cards' tags — and
     // the whole bulk add is one undo step.
     //
-    // The `tags` patch is computed up front from the best-available source — the
-    // live cache when an open editor / prior edit seeded it, else the vault-index
-    // snapshot. A card whose disk frontmatter carries a tag the stale index never
+    // The `tags` patch is computed up front from what the card shows — the
+    // note's model when open, else the vault-index snapshot. A card whose disk frontmatter carries a tag the stale index never
     // learned would have that one external tag dropped by the additive patch —
     // the same narrow index-staleness edge every field-edit command's patch
     // carries; acceptable for a bulk convenience op.
@@ -199,20 +195,14 @@ export class KanbanMultiSelect {
       if (!tile) continue;
       const path = this.deps.vaultPathForTile(tile);
       if (!path) continue;
-      const notePath = resolveTextTileVaultPath(tile);
-      const fm = (notePath ? documentStore.getFrontmatter(notePath) : undefined)
-        ?? (vaultIndexStore.getMetadata(path)?.frontmatter ?? {});
+      const fm = noteFrontmatter(path);
       const existing = Array.isArray((fm as Record<string, unknown>).tags)
         ? ((fm as Record<string, unknown>).tags as unknown[]).map((t) => String(t).replace(/^#/, ''))
         : [];
       if (existing.includes(norm)) continue;
       const nextTags = [...existing, norm];
       const desc = `Add #${norm}`;
-      commands.push(
-        notePath
-          ? new UpdateCardFieldCommand(boardId, path, notePath, { tags: nextTags }, { tags: existing }, desc)
-          : new UpdateOrphanFrontmatterCommand(boardId, path, { tags: nextTags }, { tags: existing }, desc),
-      );
+      commands.push(new UpdateCardFieldCommand(boardId, path, { tags: nextTags }, { tags: existing }, desc));
     }
     if (commands.length === 0) {
       uiStore.toast(`All selected cards already have #${norm}`, 'info', 2000);

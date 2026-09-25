@@ -1,15 +1,16 @@
 /**
  * fileBaselineRegistry — per-path baseline (mtime + size) tracker for
- * pre-write external-edit detection.
+ * pre-write external-edit detection of board and `.filo/` config files.
+ * (Notes compare content instead: see `lib/notes/noteWriter.ts`.)
  *
  * Records the mtime AND byte size of every file the renderer is "aware
- * of" — populated at hydrate time (after a fresh read) and refreshed on
+ * of" — populated at load time (after a fresh read) and refreshed on
  * every successful self-write. Writers consult `getBaseline(path)`
  * immediately before committing bytes to disk: if the on-disk mtime OR
- * size differs from the baseline, an external editor (Obsidian sync,
+ * size differs from the baseline, an external editor (a sync client,
  * `git checkout`, VSCode) landed an edit in the gap. The writer then
- * routes through the `promptExternalEditOnSync` Reload / Keep-local
- * prompt instead of silently clobbering the external bytes.
+ * routes through the Reload / Keep-local prompt instead of silently
+ * clobbering the external bytes.
  *
  * The same (mtime, size) we wrote = our own echo (ignore); a different
  * mtime OR size = real external edit (surface). Unlike a time-windowed
@@ -33,6 +34,7 @@
 
 import { stripLeadingSlash, toPosix } from '../utils/path';
 import { registerPathRenamable } from './renamePathKeys';
+import { vaultSwapResettable } from '../../core/vaultLifecycle';
 
 function detectCaseInsensitiveFs(): boolean {
   const proc = (globalThis as { process?: { platform?: unknown } }).process;
@@ -72,7 +74,7 @@ export interface FileBaseline {
 }
 
 /** Vault-relative path -> last-observed (mtime, size) baseline. */
-// allow-module-state: reset via resetAllBaselines called from markdownFileWriter's pre-swap handler (cancelAllMarkdownWrites)
+// allow-module-state: reset on vault swap (resetAllBaselines, registered below)
 const baselines = new Map<string, FileBaseline>();
 
 /**
@@ -122,11 +124,8 @@ export function hasBaselineDrifted(
 
 /**
  * Stamps `path`'s baseline (mtime + size). Called from:
- *   - hydrate paths (after a fresh `vault:read-file-text`, which returns
- *     both mtime and size)
+ *   - load paths (after a fresh read, which returns both mtime and size)
  *   - successful self-write completion (post-write `vault:stat`)
- *   - the Reload branch of `promptExternalEditOnSync` (after the
- *     renderer's in-memory copy was replaced by the on-disk version)
  *
  * Idempotent — re-stamping an existing entry just overwrites the value.
  * No-op when `path` is empty or either `mtimeMs` / `size` is not a finite
@@ -183,8 +182,8 @@ export function clearBaseline(path: string): void {
  * stat supplies a usable mtime + size, and otherwise KEEPS the prior baseline
  * untouched.
  *
- * Used by every successful self-write site (`markdownFileWriter`,
- * `boardWriteScheduler`, `configWriteScheduler`) so the next write's pre-write
+ * Used by every successful self-write site (`boardWriteScheduler`,
+ * `configWriteScheduler`) so the next write's pre-write
  * drift check compares against the bytes we just wrote, not the pre-write
  * state.
  *
@@ -229,6 +228,8 @@ export function resetAllBaselines(): void {
   baselines.clear();
 }
 
+vaultSwapResettable('fileBaselineRegistry', resetAllBaselines);
+
 /**
  * Dev-only runtime tripwire: every eagerly-loaded file must have a drift
  * baseline, or its pre-write drift check silently no-ops.
@@ -239,9 +240,7 @@ export function resetAllBaselines(): void {
  *
  * Scope: the EAGERLY-seeded sinks — boards and the four `.filo/` configs the
  * writer scheduler drift-checks (`defaults.json`, `app.json`,
- * `appearance.json`, `workspace.json`). `.md` baselines are seeded lazily on
- * hydrate via `readMarkdownForHydrate` (enforced by a CI gate), so none are
- * expected at commit time.
+ * `appearance.json`, `workspace.json`).
  *
  * The empty-registry short-circuit keeps unit tests that install boards
  * without going through the real stat-backed load path from tripping the

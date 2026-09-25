@@ -1,313 +1,146 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { documentStore } from '@renderer/stores/document.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { UpdatePropertiesCommand } from '@renderer/commands/index';
-import {
-  markHydrated,
-  scheduleMarkdownWrite,
-  flushMarkdownWrite,
-  cancelAllMarkdownWrites,
-} from '@renderer/lib/vault/markdownFileWriter';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
-import { __resetBaselinesForTests } from '@renderer/lib/vault/fileBaselineRegistry';
-import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * WRITE_PATH_REMEDIATION_PLAN_2026-06-04 Phase 5 — the "missing layer":
- * command/popup → write SEAM round-trips that assert the *bytes on disk*, the
- * layer the engine corpus/fuzz suites structurally cannot reach (they drive the
- * engine with pre-cleaned, pre-truncated objects).
+ * Command/popup → write round-trips that assert the *bytes on disk*, the
+ * layer the engine corpus/fuzz suites structurally cannot reach (they drive
+ * the engine with pre-cleaned objects).
  *
- * Phase 5 enumerates five items. This file closes the two 5.1 seams the Phase 4
- * suite left uncovered; the rest already have dedicated homes (cross-referenced
- * so the whole of Phase 5 is discoverable from one place):
- *
- *   5.1 field edit         → writePathRemediationPhase4.test.ts (Kanban writer:
- *                            empty key / full datetime / comment+order / #1 repro)
- *   5.1 Properties apply   → HERE  (delta path via UpdatePropertiesCommand)
- *   5.1 body save          → HERE  (cache-FM source-preserving path)
- *   5.2 external-then-edit  → writePathRemediationPhase2.test.ts +
- *                            updatePropertiesCommand.test.ts (H2) +
- *                            writePathRemediationPhase4.test.ts (#1 repro)
- *   5.3 malformed-then-edit → writePathRemediationPhase4.test.ts (field seam);
- *                            HERE proves the SECOND delta consumer (Properties)
- *   5.4 quit double-close   → windowCloseDecision.test.ts
- *   5.5 structural gate      → scripts/gates:frontmatter-delta-write (ci gate)
- *
- * The two Properties/body seams both flow into the gateway's TWO distinct write
- * sources — the Properties popup/command rides the delta-on-fresh-disk branch,
- * a body save rides the cache-FM source-preserving branch — so covering them
- * here exercises both halves of the write path, not just the field-edit third.
+ * Two write sources reach the note writer:
+ *   - a Properties edit is a frontmatter delta, applied to a fresh read;
+ *   - a body save carries the body only, and the frontmatter comes from the
+ *     fresh read with any queued delta laid over it.
+ * Either way every untouched key — an empty `aliases:`, a full datetime, a
+ * comment, key order, a key another program added — must survive on disk,
+ * and a malformed block is never replaced. (The Kanban field-edit seam is in
+ * writePathRemediationPhase4.test.ts.)
  */
 
-interface Captured {
-  channel: string;
-  args: unknown[];
-}
+let vault: MemoryVault;
 
-function lastWrite(captured: Captured[]): string | undefined {
-  for (let i = captured.length - 1; i >= 0; i--) {
-    if (captured[i].channel === 'vault:write-existing-file-text') {
-      return captured[i].args[2] as string; // (vaultRoot, relPath, fileText)
-    }
-  }
-  return undefined;
-}
+beforeEach(() => {
+  // Runs the test-reset callbacks, which clear the active vault path.
+  __resetDirtyTrackingForTests();
+  vaultStore.setPath('/vault');
+  noteStore.__resetForTests();
+  boardCacheStore.clear();
+  boardStore.clearBoard();
+  vaultIndexStore.clear();
+  vault = installMemoryVault();
+  vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+});
+afterEach(() => {
+  noteStore.__resetForTests();
+  restoreFiloDefault();
+  __resetDirtyTrackingForTests();
+  boardCacheStore.clear();
+  boardStore.clearBoard();
+  vaultIndexStore.clear();
+  vaultStore.setPath('');
+  vi.restoreAllMocks();
+});
 
-// ───────────────────────────────────────────────────────────────────────────
-// 5.1 — Properties apply seam (the gateway's delta-on-fresh-disk branch).
-//
-// UpdatePropertiesCommand records the keys it OWNS (those that differ between
-// its before/after legs) as a FrontmatterDelta and lets the gateway apply ONLY
-// those to a fresh disk read. Every key the popup did not touch — an empty
-// `aliases:`, a full datetime, a comment — must survive on disk by construction.
-// ───────────────────────────────────────────────────────────────────────────
-
-describe('Phase 5.1 — Properties apply → write round-trip (untouched keys survive bytes on disk)', () => {
-  let captured: Captured[];
-
-  /** Installs a recorder whose `.md` on disk is `diskContent` (mtime stable). */
-  function installDisk(diskContent: string): void {
-    captured = [];
-    installFiloMock((channel: unknown, ...args: unknown[]) => {
-      captured.push({ channel: channel as string, args });
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: diskContent, mtimeMs: 5, size: diskContent.length };
-      }
-      if (channel === 'vault:stat') return { success: true, mtimeMs: 5, size: diskContent.length };
-      if (channel === 'vault:write-existing-file-text') return { success: true };
-      return undefined;
-    });
-  }
-
-  /**
-   * Drives a single-key Properties edit on a NOT-open text tile (a Kanban card /
-   * Task row seeded once but never opened as a Document tab). No `loadDocument` /
-   * `setFrontmatter` → `docState` is null and the command rebases onto a fresh
-   * disk read, exactly the real not-open path.
-   */
+describe('Properties apply → write round-trip (untouched keys survive bytes on disk)', () => {
+  /** A single Properties edit on a note no view has open. */
   async function applyPropertyEdit(
     relPath: string,
     beforeFm: Record<string, unknown>,
     afterFm: Record<string, unknown>,
   ): Promise<void> {
     const cmd = new UpdatePropertiesCommand(
-      { kind: 'frontmatter', relPath, notePath: relPath, fm: beforeFm },
-      { kind: 'frontmatter', relPath, notePath: relPath, fm: afterFm },
+      { kind: 'frontmatter', relPath, fm: beforeFm },
+      { kind: 'frontmatter', relPath, fm: afterFm },
     );
     await cmd.execute();
+    await noteStore.flushAll();
   }
 
-  beforeEach(() => {
-    __resetDirtyTrackingForTests();
-    __resetBaselinesForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
-    boardCacheStore.clear();
-    boardStore.clearBoard();
-    vaultIndexStore.clear();
-    vaultStore.setPath('/vault');
-    captured = [];
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
-  });
-  afterEach(() => {
-    restoreFiloDefault();
-    __resetDirtyTrackingForTests();
-    __resetBaselinesForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
-    boardCacheStore.clear();
-    boardStore.clearBoard();
-    vaultIndexStore.clear();
-    vaultStore.setPath('');
-    vi.restoreAllMocks();
-  });
-
   it('preserves a present-but-empty disk key (aliases:) when a different property is edited', async () => {
-    installDisk('---\naliases:\npriority: low\n---\nbody\n');
+    vault.writeExternally('Note.md', '---\naliases:\npriority: low\n---\nbody\n');
 
     await applyPropertyEdit('Note.md', { priority: 'low' }, { priority: 'high' });
 
-    const written = lastWrite(captured)!;
-    expect(written).toContain('priority: high'); // the edit landed
-    expect(written).toContain('aliases:'); // the empty key was NOT stripped
-    expect(written).toContain('body');
+    expect(vault.read('Note.md')).toBe('---\naliases:\npriority: high\n---\nbody\n');
   });
 
   it('preserves a full datetime on an untouched key', async () => {
-    installDisk('---\ncreated: 2025-01-15T10:30:00Z\npriority: low\n---\nbody\n');
+    vault.writeExternally('Event.md', '---\ncreated: 2025-01-15T10:30:00Z\npriority: low\n---\nbody\n');
 
     await applyPropertyEdit('Event.md', { priority: 'low' }, { priority: 'high' });
 
-    const written = lastWrite(captured)!;
-    expect(written).toContain('created: 2025-01-15T10:30:00Z'); // not truncated to date
-    expect(written).toContain('priority: high');
+    expect(vault.read('Event.md')).toBe('---\ncreated: 2025-01-15T10:30:00Z\npriority: high\n---\nbody\n');
   });
 
   it('preserves a comment + key order on untouched keys', async () => {
-    installDisk('---\n# important note\nzeta: 1\npriority: low\nalpha: 2\n---\nbody\n');
+    vault.writeExternally('Doc.md', '---\n# important note\nzeta: 1\npriority: low\nalpha: 2\n---\nbody\n');
 
     await applyPropertyEdit('Doc.md', { priority: 'low' }, { priority: 'high' });
 
-    const written = lastWrite(captured)!;
-    expect(written).toContain('# important note'); // comment survived
-    expect(written).toContain('zeta: 1');
-    expect(written).toContain('alpha: 2');
-    expect(written.indexOf('zeta')).toBeLessThan(written.indexOf('alpha')); // order preserved
-    expect(written).toContain('priority: high');
+    expect(vault.read('Doc.md')).toBe('---\n# important note\nzeta: 1\npriority: high\nalpha: 2\n---\nbody\n');
   });
 
-  it('preserves an externally-added key the command never saw (5.2 via the Properties seam)', async () => {
-    // Disk carries `reviewed: true` an external editor added; the not-open card's
-    // cache never learned it. The delta-on-fresh-disk write reads it back.
-    installDisk('---\npriority: low\nreviewed: true\n---\nbody\n');
+  it('preserves an externally-added key the command never saw', async () => {
+    vault.writeExternally('Ext.md', '---\npriority: low\nreviewed: true\n---\nbody\n');
 
     await applyPropertyEdit('Ext.md', { priority: 'low' }, { priority: 'high' });
 
-    const written = lastWrite(captured)!;
-    expect(written).toContain('priority: high'); // owned key changed
-    expect(written).toContain('reviewed: true'); // external key survived
+    expect(vault.read('Ext.md')).toBe('---\npriority: high\nreviewed: true\n---\nbody\n');
   });
 
-  it('does NOT destroy a malformed frontmatter block on a property edit (5.3 via the Properties seam)', async () => {
-    // Tab indentation + duplicate keys → the YAML parser refuses the block. The
-    // gateway's delta branch reaches the same keep-raw safety net Finding #4
-    // added, so the broken-but-present block is kept verbatim rather than
-    // replaced by a dump of just the new key (total-FM-loss class).
-    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    installDisk('---\n\tbad: yaml\n  dup: 1\n  dup: 2\n---\nbody\n');
+  it('does NOT destroy a malformed frontmatter block on a property edit', async () => {
+    // Tab indentation + duplicate keys → the YAML parser refuses the block, so
+    // it is kept verbatim rather than replaced by a dump of just the new key.
+    const bad = '---\n\tbad: yaml\n  dup: 1\n  dup: 2\n---\nbody\n';
+    vault.writeExternally('Bad.md', bad);
 
     await applyPropertyEdit('Bad.md', {}, { priority: 'high' });
 
-    // Audit-19 MD-2 — the refused edit leaves the bytes identical to disk, so the
-    // gateway may skip the write entirely; either way disk keeps the block.
-    const written = lastWrite(captured) ?? '---\n\tbad: yaml\n  dup: 1\n  dup: 2\n---\nbody\n';
-    expect(written).toContain('bad: yaml');
-    expect(written).toContain('dup: 1');
-    expect(written).toContain('body');
+    expect(vault.read('Bad.md')).toBe(bad);
   });
 });
 
-// ───────────────────────────────────────────────────────────────────────────
-// 5.1 — body save seam (the gateway's cache-FM source-preserving branch).
-//
-// A body-only editor save does NOT thread a delta; it rides the cache-FM path,
-// which emits the frontmatter from `documentStore.getRawFrontmatter` (verbatim
-// when unchanged) or patches the persistent `originalFrontmatterCache` baseline
-// source-preservingly when one key was dirtied. Either way every untouched key —
-// empty, datetime, comment — must survive the bytes on disk while the new body
-// lands.
-// ───────────────────────────────────────────────────────────────────────────
-
-describe('Phase 5.1 — body save → write round-trip (untouched keys survive bytes on disk)', () => {
-  let captured: Captured[];
-
-  beforeEach(() => {
-    __resetDirtyTrackingForTests();
-    __resetBaselinesForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
-    vaultIndexStore.clear();
-    vaultStore.setPath('/vault');
-    captured = [];
-    installFiloMock((channel: unknown, ...args: unknown[]) => {
-      captured.push({ channel: channel as string, args });
-      if (channel === 'vault:stat') return { success: true, ok: true, mtimeMs: 1, size: 1 };
-      if (channel === 'vault:write-existing-file-text') return { success: true, ok: true };
-      return { success: true, ok: true };
-    });
-    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-  });
-  afterEach(() => {
-    restoreFiloDefault();
-    __resetDirtyTrackingForTests();
-    __resetBaselinesForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
-    vaultIndexStore.clear();
-    vaultStore.setPath('');
-    vi.restoreAllMocks();
-  });
-
-  it('a clean body-only save emits the FM block verbatim (empty + datetime + comment) and lands the new body', async () => {
+describe('body save → write round-trip (untouched keys survive bytes on disk)', () => {
+  it('a body-only save emits the FM block verbatim (empty + datetime + comment) and lands the new body', async () => {
     const relPath = 'Notes/Body.md';
-    // Seed the live cache from disk WITH the verbatim FM source bytes (what a
-    // hydrate does) — the clean signal that lets a body-only save passthrough.
-    const rawFm = '# top comment\naliases:\ncreated: 2025-01-15T10:30:00Z\nstatus: draft';
-    documentStore.loadDocument({
-      filename: relPath,
-      title: 'Body',
-      body: 'old body',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter(
-      relPath,
-      { aliases: null, created: '2025-01-15T10:30:00Z', status: 'draft' },
-      rawFm,
+    vault.writeExternally(relPath, '---\n# top comment\naliases:\ncreated: 2025-01-15T10:30:00Z\nstatus: draft\n---\nold body\n');
+    const m = noteStore.acquire(relPath, 'editor');
+    await m.loaded;
+
+    noteStore.setBody(relPath, 'edited body text\n', 'editor');
+    expect(await noteStore.flush(relPath)).toBe(true);
+
+    expect(vault.read(relPath)).toBe(
+      '---\n# top comment\naliases:\ncreated: 2025-01-15T10:30:00Z\nstatus: draft\n---\nedited body text\n',
     );
-    markHydrated(relPath, false);
-
-    // A body keystroke arms a body-only write (frontmatter untouched).
-    scheduleMarkdownWrite({
-      vaultRoot: '/vault',
-      relPath,
-      frontmatter: { aliases: null, created: '2025-01-15T10:30:00Z', status: 'draft' },
-      body: 'edited body text',
-      callerId: `text-tile:${relPath}`,
-      notePath: relPath,
-    });
-    await flushMarkdownWrite(`text-tile:${relPath}`);
-
-    const written = lastWrite(captured)!;
-    expect(written).toContain('# top comment'); // comment preserved verbatim
-    expect(written).toContain('aliases:'); // empty key preserved
-    expect(written).toContain('created: 2025-01-15T10:30:00Z'); // full datetime preserved
-    expect(written).toContain('status: draft');
-    expect(written).toContain('edited body text'); // the new body landed
-    expect(written).not.toContain('old body');
   });
 
-  it('a body save after one FM-cache edit preserves the OTHER untouched keys (source-preserving baseline)', async () => {
+  it('a body save with one frontmatter edit queued preserves the OTHER untouched keys', async () => {
     const relPath = 'Notes/Mixed.md';
-    const rawFm = '# keep me\naliases:\ncreated: 2025-01-15T10:30:00Z';
-    documentStore.loadDocument({
-      filename: relPath,
-      title: 'Mixed',
-      body: 'old body',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter(
-      relPath,
-      { aliases: null, created: '2025-01-15T10:30:00Z' },
-      rawFm,
-    );
-    markHydrated(relPath, false);
+    vault.writeExternally(relPath, '---\n# keep me\naliases:\ncreated: 2025-01-15T10:30:00Z\n---\nold body\n');
+    const m = noteStore.acquire(relPath, 'editor');
+    await m.loaded;
 
-    // One field changes via the cache (e.g. a PropertiesPopup mutation), which
-    // drops the verbatim-clean signal but KEEPS the disk baseline. The body
-    // write then re-serialises source-preservingly against that baseline.
-    documentStore.mergeFrontmatter(relPath, { status: 'done' });
+    // One field changes (a Properties edit) and the body is edited; both land
+    // in one write on the file's own bytes.
+    noteStore.patchFrontmatter(relPath, { set: { status: 'done' }, unset: [] });
+    noteStore.setBody(relPath, 'new body content\n', 'editor');
+    expect(await noteStore.flush(relPath)).toBe(true);
 
-    scheduleMarkdownWrite({
-      vaultRoot: '/vault',
-      relPath,
-      frontmatter: documentStore.getFrontmatter(relPath) ?? {},
-      body: 'new body content',
-      callerId: `text-tile:${relPath}`,
-      notePath: relPath,
-    });
-    await flushMarkdownWrite(`text-tile:${relPath}`);
-
-    const written = lastWrite(captured)!;
-    expect(written).toContain('status: done'); // the cache edit landed
+    const written = vault.read(relPath) ?? '';
+    expect(written).toContain('status: done'); // the edit landed
     expect(written).toContain('# keep me'); // untouched comment survived
     expect(written).toContain('aliases:'); // untouched empty key survived
     expect(written).toContain('created: 2025-01-15T10:30:00Z'); // untouched datetime survived
     expect(written).toContain('new body content');
+    expect(written).not.toContain('old body');
   });
 });

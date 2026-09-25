@@ -27,13 +27,12 @@ import { Command } from './Command';
 import { historyStore } from '../stores/history.svelte';
 import { searchStore } from '../stores/search.svelte';
 import { vaultStore } from '../stores/vault.svelte';
-import { vaultIndexStore } from '../stores/vaultIndex.svelte';
 import { uiStore } from '../stores/ui.svelte';
 import { runVaultSearch, type SearchMatch } from '../lib/search/runSearch';
 import { invokeOk } from '../lib/utils/invokeOk';
 import { reportError } from '../lib/utils/errorBus';
-import { writeMarkdownAndReconcile } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
-import { runSerializedMarkdownWrite } from '../lib/vault/markdownFileWriter';
+import { noteStore } from '../stores/notes.svelte';
+import { isMissingFileError } from '../lib/notes/noteWriter';
 import { splitFrontmatterSource } from '../lib/vault/frontmatterRead';
 
 interface FilePlan {
@@ -156,109 +155,53 @@ export class ReplaceAllCommand extends Command {
   }
 
   async execute(): Promise<void> {
-    // Re-read each file rather than trusting the build-time snapshot, since
-    // on a REDO the disk may have moved. Only write when disk STILL equals the
-    // planned `originalContent`; otherwise skip (a blind write would clobber
-    // the intervening edit and desync the undo snapshot) and name it in the
-    // aggregate toast.
-    const items: Array<{ path: string; content: string }> = [];
-    const skipped: string[] = [];
-    for (const p of this.plans) {
-      let diskNow: string | null = null;
-      try {
-        const read = await invokeOk('vault:read-file-text', this.vaultRoot, p.path);
-        diskNow = read.content;
-      } catch {
-        diskNow = null;
-      }
-      if (diskNow !== null && diskNow === p.originalContent) {
-        items.push({ path: p.path, content: p.nextContent });
-      } else {
-        skipped.push(p.path);
-      }
-    }
-    // `writeAll` writes AND reconciles each open editor per path.
-    if (items.length > 0) {
-      await this.writeAll(items);
-      // Refresh the vault index so the search panel's matches re-derive against
-      // the new content. Without this, the next "Find" cycle would still see
-      // the old offsets until the file watcher fires (which may have already
-      // been suppressed by `trackComponentWrite`).
-      await vaultIndexStore.applyChanges(items.map((i) => i.path));
-    }
-    if (skipped.length > 0) {
-      const sample = skipped.slice(0, 3).join(', ');
-      const more = skipped.length > 3 ? `, +${skipped.length - 3} more` : '';
-      uiStore.toast(
-        `Replace skipped ${skipped.length} file(s) changed since the search (${sample}${more}) to avoid overwriting newer edits.`,
-        'warning',
-        6000,
-      );
-    }
+    // On a redo the disk may have moved: a file is rewritten only while it
+    // still holds exactly the planned `originalContent`; otherwise it is
+    // skipped (a blind write would clobber the intervening edit and desync the
+    // undo snapshot) and named in the aggregate toast.
+    const skipped = await this.swapAll('originalContent', 'nextContent');
+    this.toastSkipped(skipped, 'Replace skipped', 'changed since the search');
   }
 
   async undo(): Promise<void> {
-    // Per-file drift check before reverting (symmetric with execute): if a
-    // file's CURRENT disk content no longer equals `nextContent`, it was edited
-    // after the replace and a blind revert would clobber that edit. A vanished /
-    // unreadable file is also skipped (reverting could resurrect a deleted
-    // file). Skipped files are named in one aggregate toast, not N prompts.
-    const items: Array<{ path: string; content: string }> = [];
-    const skipped: string[] = [];
-    for (const p of this.plans) {
-      let diskNow: string | null = null;
-      try {
-        const read = await invokeOk('vault:read-file-text', this.vaultRoot, p.path);
-        diskNow = read.content;
-      } catch {
-        diskNow = null;
-      }
-      if (diskNow !== null && diskNow === p.nextContent) {
-        items.push({ path: p.path, content: p.originalContent });
-      } else {
-        skipped.push(p.path);
-      }
-    }
-    if (items.length > 0) {
-      await this.writeAll(items);
-      await vaultIndexStore.applyChanges(items.map((i) => i.path));
-    }
-    if (skipped.length > 0) {
-      const sample = skipped.slice(0, 3).join(', ');
-      const more = skipped.length > 3 ? `, +${skipped.length - 3} more` : '';
-      uiStore.toast(
-        `Undo skipped ${skipped.length} file(s) changed since the replace (${sample}${more}) to avoid overwriting newer edits.`,
-        'warning',
-        6000,
-      );
-    }
+    // Symmetric: a file edited after the replace (or gone) is left alone.
+    const skipped = await this.swapAll('nextContent', 'originalContent');
+    this.toastSkipped(skipped, 'Undo skipped', 'changed since the replace');
   }
 
-  private async writeAll(items: Array<{ path: string; content: string }>): Promise<void> {
+  /**
+   * Rewrites every planned file from `from` to `to` through the note store:
+   * inside each note's write queue, after anything queued for it (an editor
+   * body) has landed, and only when the fresh bytes still equal `from`. Any
+   * open view of the note follows. Returns the files that didn't match.
+   */
+  private async swapAll(
+    from: 'originalContent' | 'nextContent',
+    to: 'originalContent' | 'nextContent',
+  ): Promise<string[]> {
+    const skipped: string[] = [];
     const failed: string[] = [];
-    for (const item of items) {
+    for (const plan of this.plans) {
+      let matched = false;
       try {
-        // Coupled write+reconcile. `mode: 'full'` reloads any open editor on
-        // this path (its in-memory body would otherwise re-clobber the replace
-        // on the next debounce). `notifyOnError: false` avoids a toast per
-        // file — the aggregate toast below names the failures. The debounced
-        // markdown gateway is deliberately bypassed.
-        //
-        // Still enrol on the per-path write chain so this write serialises
-        // behind an already-in-flight editor write to the same `.md` (which the
-        // reconcile's cancel can't reach). It's ordering-only, no debounce.
-        await runSerializedMarkdownWrite(item.path, async () => {
-          await writeMarkdownAndReconcile({
-            vaultRoot: this.vaultRoot,
-            path: item.path,
-            content: item.content,
-            mode: 'full',
-            track: { notifyOnError: false },
-          });
-        });
+        await noteStore.transform(
+          plan.path,
+          (fresh) => {
+            if (fresh.raw !== plan[from]) return null;
+            matched = true;
+            return plan[to];
+          },
+          // One aggregate toast below, not one per file.
+          { notifyOnError: false },
+        );
+        if (!matched) skipped.push(plan.path);
       } catch (err) {
-        reportError('replaceAll.write', err, `Failed to write ${item.path}`);
-        failed.push(item.path);
+        if (isMissingFileError(err)) {
+          skipped.push(plan.path);
+          continue;
+        }
+        reportError('replaceAll.write', err, `Failed to write ${plan.path}`);
+        failed.push(plan.path);
       }
     }
     if (failed.length > 0) {
@@ -270,6 +213,18 @@ export class ReplaceAllCommand extends Command {
         6000,
       );
     }
+    return skipped;
+  }
+
+  private toastSkipped(skipped: string[], verb: string, why: string): void {
+    if (skipped.length === 0) return;
+    const sample = skipped.slice(0, 3).join(', ');
+    const more = skipped.length > 3 ? `, +${skipped.length - 3} more` : '';
+    uiStore.toast(
+      `${verb} ${skipped.length} file(s) ${why} (${sample}${more}) to avoid overwriting newer edits.`,
+      'warning',
+      6000,
+    );
   }
 }
 

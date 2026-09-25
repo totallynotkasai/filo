@@ -5,16 +5,15 @@
    * priority pill, checklist progress badge, and due-date badge.
    *
    * Priority and dueDate live in the backing `.md`'s YAML frontmatter (canonical
-   * fields per `SYNCED_FIELDS`); reads go through `vaultIndexStore`, writes are
-   * routed back through `documentStore.mergeFrontmatter` + the parent's
-   * debounced frontmatter writer.
+   * fields); reads go through `noteFrontmatter`, writes through the parent's
+   * field commands to the note writer.
    *
    * Cover image is placement-level (not frontmatter) — a card-visual concern
    * that should not travel with the underlying file across boards. Stored on
    * the `KanbanTilePlacement` and rendered via the same `filo://` media URL
    * pipeline as `ImageTile`.
    */
-  import { documentStore } from '../../stores/document.svelte';
+  import { noteStore } from '../../stores/notes.svelte';
   import { noteFrontmatter } from '../../stores/noteMeta';
   import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
@@ -154,14 +153,13 @@
   let dueDate = $derived<string>(FIELD_READERS.dueDate(frontmatter));
 
   // ── Checklist progress (TipTap TaskList round-trips to `- [ ]` / `- [x]`) ──
-  // Reads the markdown body from documentStore so toggle-in-editor refreshes
-  // the badge without a disk round-trip. Hides when total === 0.
+  // Reads the open note's body so ticking a box in its editor refreshes the
+  // badge without a disk round-trip. Hides when total === 0.
   let checklistProgress = $derived.by<{ checked: number; total: number } | null>(() => {
-    void documentStore.frontmatterVersion;
     if (!notePath) return null;
-    const doc = documentStore.getDocument(notePath);
-    if (!doc) return null;
-    const body = doc.body ?? '';
+    const note = noteStore.get(notePath);
+    if (!note) return null;
+    const body = note.body;
     const checked = (body.match(/\[x\]/gi) ?? []).length;
     const open = (body.match(/\[ \]/g) ?? []).length;
     const total = checked + open;

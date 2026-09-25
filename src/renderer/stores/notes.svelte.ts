@@ -21,9 +21,10 @@
  * clean note follows the disk, and the one prompt appears only when an unsaved
  * body edit meets a body change on disk.
  */
-import { SvelteMap } from 'svelte/reactivity';
+import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { vaultPath, type VaultPath } from '@shared/vaultPath';
 import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
+import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { registerPathRenamable } from '../lib/vault/renamePathKeys';
 import { vaultIndexStore } from './vaultIndex.svelte';
@@ -42,12 +43,17 @@ import {
   sameBody,
   snapshotBody,
   snapshotOf,
+  readNoteText,
   type DiskSnapshot,
   type NoteText,
 } from '../lib/notes/noteFile';
 import { looksTorn } from '../lib/notes/noteWriter';
 import { decideDiskChange } from '../lib/notes/noteDiskChange';
-import type { TrackComponentWriteOptions } from '../lib/boards/writeStateTracking';
+import {
+  dropPendingPath,
+  noteAdditionalPendingPath,
+  type TrackComponentWriteOptions,
+} from '../lib/boards/writeStateTracking';
 
 export type ViewId = string;
 
@@ -112,6 +118,11 @@ export class NoteModel {
 const TORN_RETRY_MS = [500, 1500, 3000];
 
 const models = new SvelteMap<VaultPath, NoteModel>();
+/** `writeBody` calls still waiting for their note to load (settled promises leave). */
+// allow-module-state: transient; each entry settles with its note's first read
+// eslint-disable-next-line svelte/prefer-svelte-reactivity
+const bodiesLoading = new Set<Promise<void>>();
+const loadingBodyPaths = new SvelteSet<VaultPath>();
 /** Queued frontmatter changes of notes no model holds, for display. */
 const overlays = new SvelteMap<VaultPath, FrontmatterDelta>();
 
@@ -135,6 +146,7 @@ export function setNotePromptHandlers(handlers: NotePromptHandlers): void {
 const writer: NoteWriter = createNoteWriter({
   vaultRoot: () => getActiveVaultPath() || null,
   baseOf: (path) => models.get(path)?.base,
+  hadFrontmatter: (path) => hadFrontmatter(path),
   canWriteBody: (path) => {
     const m = models.get(path);
     return !!m && m.status !== 'conflict' && !m.readOnly;
@@ -179,6 +191,16 @@ function afterWrite(
   setTimeout(() => evictIfIdle(m), 0);
 }
 
+/**
+ * Whether the note was last known to have frontmatter: its base when a model
+ * holds one, else the vault index. A read that contradicts this may be torn.
+ */
+function hadFrontmatter(path: VaultPath): boolean {
+  const base = models.get(path)?.base;
+  if (base) return readNoteText(base.rawText).hasFrontmatter;
+  return (vaultIndexStore.getMetadata(path)?.rawFrontmatter ?? '') !== '';
+}
+
 /** `fm` with the note's still-queued frontmatter change applied. */
 function withQueued(path: VaultPath, fm: Record<string, unknown>): Record<string, unknown> {
   const queued = writer.pendingDelta(path);
@@ -215,17 +237,42 @@ function adoptDisk(m: NoteModel, fresh: FreshRead): void {
   m.status = 'ready';
 }
 
-async function load(m: NoteModel): Promise<void> {
+async function load(m: NoteModel, force = false): Promise<void> {
   const vaultRoot = getActiveVaultPath();
   if (!vaultRoot) return;
+  const identity = captureVaultIdentity();
   try {
-    const fresh = await readNoteFresh(vaultRoot, m.relPath);
-    if (models.get(m.path) !== m || getActiveVaultPath() !== vaultRoot) return;
+    let fresh = await readNoteFresh(vaultRoot, m.relPath);
+    // A first read caught mid-write by another program is read again; one
+    // that stays torn is not taken as the note.
+    for (let attempt = 0; looksTorn(fresh.text, hadFrontmatter(m.path)); attempt++) {
+      if (attempt >= TORN_RETRY_MS.length || models.get(m.path) !== m || !isStillSameVault(identity)) {
+        if (models.get(m.path) === m && isStillSameVault(identity)) {
+          m.readError = new Error(`"${m.relPath}" looks half-written by another program`);
+          m.status = 'unreadable';
+        }
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, TORN_RETRY_MS[attempt]));
+      fresh = await readNoteFresh(vaultRoot, m.relPath);
+    }
+    if (models.get(m.path) !== m) return;
+    if (!isStillSameVault(identity)) {
+      // The read belongs to the previous vault. A model still held here (a
+      // view of the new vault acquired it) reads again rather than staying
+      // loading.
+      if (m.status === 'loading') m.loaded = load(m);
+      return;
+    }
     // A write (a brand-new note's create) may have filled the model meanwhile.
-    if (m.status === 'ready' && m.base) return;
+    if (!force && m.status === 'ready' && m.base) return;
     adoptDisk(m, fresh);
   } catch (err) {
     if (models.get(m.path) !== m) return;
+    if (!isStillSameVault(identity)) {
+      if (m.status === 'loading') m.loaded = load(m);
+      return;
+    }
     if (isMissingFileError(err)) {
       if (m.status === 'loading') {
         m.status = 'missing';
@@ -279,6 +326,9 @@ export const noteStore = {
     if (!m) return;
     m.views.delete(viewId);
     if (m.editorOwner === viewId) m.editorOwner = null;
+    // The last view is going: write what it left now (this also retries a
+    // write that failed earlier) rather than waiting for the next save.
+    if (m.views.size === 0 && m.hasUnsavedBody) void writer.flush(m.relPath);
     evictIfIdle(m);
   },
 
@@ -298,6 +348,30 @@ export const noteStore = {
     return queued ? applyFrontmatterDelta(indexed, queued) : indexed;
   },
 
+  /**
+   * The note's frontmatter as it stands, for a decision about to change it:
+   * the model's when loaded, else a fresh read of the file with any queued
+   * change laid over it (the index may lag the disk). Null when the file
+   * can't be read.
+   */
+  async currentFrontmatter(relPath: string): Promise<Record<string, unknown> | null> {
+    const key = vaultPath(relPath);
+    const identity = captureVaultIdentity();
+    const m = models.get(key);
+    if (m) await m.loaded;
+    if (!isStillSameVault(identity)) return null;
+    if (m && models.get(key) === m && m.status !== 'missing' && m.status !== 'unreadable') return m.frontmatter;
+    const vaultRoot = getActiveVaultPath();
+    if (!vaultRoot) return null;
+    try {
+      const fresh = await readNoteFresh(vaultRoot, relPath);
+      if (!isStillSameVault(identity)) return null;
+      return withQueued(key, fresh.text.frontmatter);
+    } catch {
+      return null;
+    }
+  },
+
   /** A view's editor produced `markdown` as the note's body. */
   setBody(relPath: string, markdown: string, viewId: ViewId): void {
     const m = models.get(vaultPath(relPath));
@@ -311,6 +385,35 @@ export const noteStore = {
     m.localBodyVersion++;
     m.hasUnsavedBody = true;
     writer.queueBody(m.relPath, markdown, m.localBodyVersion);
+  },
+
+  /**
+   * Sets the note's body from a view that isn't an editor (the Task List
+   * notes box): loads the note first, so the drift check has its base.
+   */
+  async writeBody(relPath: string, body: string): Promise<void> {
+    const viewId = `body:${vaultPath(relPath)}`;
+    const identity = captureVaultIdentity();
+    const vaultRoot = getActiveVaultPath() || undefined;
+    const m = noteStore.acquire(relPath, viewId);
+    // Until the note has loaded nothing is queued, yet the text is unsaved:
+    // save and quit wait for it, and the crash sentinel names the path.
+    noteAdditionalPendingPath(vaultRoot, relPath);
+    const done = (async () => {
+      await m.loaded;
+      if (isStillSameVault(identity)) noteStore.setBody(m.relPath, body, viewId);
+    })();
+    bodiesLoading.add(done);
+    loadingBodyPaths.add(vaultPath(relPath));
+    try {
+      await done;
+    } finally {
+      bodiesLoading.delete(done);
+      loadingBodyPaths.delete(vaultPath(relPath));
+      dropPendingPath(vaultRoot, relPath);
+      // The model stays while the body is unsaved.
+      noteStore.release(m.relPath, viewId);
+    }
   },
 
   /**
@@ -328,19 +431,21 @@ export const noteStore = {
 
   /** Writes `path`'s queued changes now. */
   async flush(relPath: string): Promise<boolean> {
+    await Promise.all([...bodiesLoading]);
     serializeViews(vaultPath(relPath));
     return (await writer.flush(relPath)).ok;
   },
 
   /** Writes every queued change now (save, quit, before a rename). */
   async flushAll(): Promise<{ failed: string[] }> {
+    await Promise.all([...bodiesLoading]);
     serializeViews();
     return writer.flushAll();
   },
 
   /** True while anything for `path` is queued, being written or failed. */
   hasPendingWrites(relPath: string): boolean {
-    return writer.hasWork(relPath);
+    return loadingBodyPaths.has(vaultPath(relPath)) || writer.hasWork(relPath);
   },
 
   /** The editor found the body can't round-trip; it's shown but not written. */
@@ -359,7 +464,7 @@ export const noteStore = {
   async reload(relPath: string): Promise<void> {
     const m = models.get(vaultPath(relPath));
     if (!m) return;
-    m.loaded = load(m);
+    m.loaded = load(m, true);
     await m.loaded;
   },
 
@@ -368,9 +473,10 @@ export const noteStore = {
     const key = vaultPath(relPath);
     const m = models.get(key);
     if (!m) return;
+    const identity = captureVaultIdentity();
     await m.loaded;
     const vaultRoot = getActiveVaultPath();
-    if (!vaultRoot) return;
+    if (!vaultRoot || !isStillSameVault(identity)) return;
     serializeViews(key);
     let fresh: FreshRead | null = null;
     try {
@@ -378,7 +484,7 @@ export const noteStore = {
     } catch (err) {
       if (!isMissingFileError(err)) return;
     }
-    if (models.get(key) !== m || getActiveVaultPath() !== vaultRoot) return;
+    if (models.get(key) !== m || !isStillSameVault(identity)) return;
     const hash = fresh ? noteTextHash(fresh.text.raw) : null;
     const action = decideDiskChange({
       exists: fresh !== null,
@@ -386,7 +492,7 @@ export const noteStore = {
       hasUnsavedBody: m.hasUnsavedBody || writer.hasPendingBody(key),
       bodyChanged: fresh !== null && (!m.base || !sameBody(fresh.text.body, snapshotBody(m.base))),
       // After a few tries a file that still looks torn is taken as it is.
-      torn: attempt < TORN_RETRY_MS.length && fresh !== null && looksTorn(fresh.text, m.base),
+      torn: attempt < TORN_RETRY_MS.length && fresh !== null && looksTorn(fresh.text, hadFrontmatter(key)),
     });
     switch (action) {
       case 'ignore':
@@ -427,10 +533,12 @@ export const noteStore = {
     const m = models.get(key);
     const vaultRoot = getActiveVaultPath();
     if (!m || !vaultRoot) return;
+    const identity = captureVaultIdentity();
     let fresh: FreshRead;
     try {
       fresh = await readNoteFresh(vaultRoot, m.relPath);
     } catch (err) {
+      if (!isStillSameVault(identity)) return;
       if (!isMissingFileError(err)) throw err;
       if (choice === 'reload') {
         writer.dropBody(key);
@@ -440,7 +548,7 @@ export const noteStore = {
       }
       return;
     }
-    if (models.get(key) !== m) return;
+    if (models.get(key) !== m || !isStillSameVault(identity)) return;
     if (choice === 'reload') {
       writer.dropBody(key);
       m.editorOwner = null;
@@ -470,13 +578,22 @@ export const noteStore = {
       writer.dropBody(relPath);
       m.hasUnsavedBody = false;
     }
-    const outcome = await writer.createExclusive(relPath, text);
-    if (outcome === 'exists' && m) {
-      // Something is back at the path: keep the local body pending so the
-      // conflict check compares it with what's there now.
+    const keepPending = (): void => {
+      if (!m) return;
       m.hasUnsavedBody = true;
       writer.queueBody(m.relPath, m.body, m.localBodyVersion);
+    };
+    let outcome: 'created' | 'exists';
+    try {
+      outcome = await writer.createExclusive(relPath, text);
+    } catch (err) {
+      // The create failed (reported by the writer): the edit is still unsaved.
+      keepPending();
+      throw err;
     }
+    // Something is back at the path: keep the local body pending so the
+    // conflict check compares it with what's there now.
+    if (outcome === 'exists') keepPending();
     return outcome;
   },
 
@@ -491,6 +608,29 @@ export const noteStore = {
     m.localBodyVersion++;
     m.hasUnsavedBody = true;
     writer.queueBody(m.relPath, body, m.localBodyVersion);
+  },
+
+  /**
+   * The user deleted `relPath` (a note, or a folder of them) in the app:
+   * whatever was queued for those notes is dropped and their models go
+   * missing. The watcher doesn't report our own deletes.
+   */
+  forgetDeleted(relPath: string): void {
+    const key = vaultPath(relPath);
+    const prefix = `${key}/`;
+    for (const [path, m] of [...models]) {
+      if (path !== key && !path.startsWith(prefix)) continue;
+      writer.drop(path);
+      m.hasUnsavedBody = false;
+      m.status = 'missing';
+      evictIfIdle(m);
+    }
+    for (const path of [...overlays.keys()]) {
+      if (path === key || path.startsWith(prefix)) {
+        writer.drop(path);
+        overlays.delete(path);
+      }
+    }
   },
 
   /** The unsaved body of a note deleted on disk is dropped. */
@@ -542,6 +682,7 @@ export const noteStore = {
     writer.reset();
     models.clear();
     overlays.clear();
+    loadingBodyPaths.clear();
   },
 };
 
@@ -549,11 +690,21 @@ export const noteStore = {
  * The rename sweep: each model, queued change and overlay under the old path
  * moves to the new one, so every view keeps its note and later writes land
  * on the renamed file.
+ *
+ * A board can point its tiles at the new path before the file is renamed on
+ * disk, so a view may already have acquired a model there (found missing). The
+ * moved model takes its place and its views. A model at the new path that
+ * nothing moved onto is read again, now that the file is there.
  */
 function renameNotePaths(oldRel: string, newRel: string): void {
   const oldKey = vaultPath(oldRel);
+  const newKey = vaultPath(newRel);
   const oldPrefix = `${oldKey}/`;
+  const newPrefix = `${newKey}/`;
   writer.renamePath(oldRel, newRel);
+  // A local scratch set, never read reactively.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
+  const moved = new Set<NoteModel>();
   for (const [key, m] of [...models]) {
     let rel: string | null = null;
     if (key === oldKey) rel = newRel;
@@ -561,7 +712,16 @@ function renameNotePaths(oldRel: string, newRel: string): void {
     if (rel === null) continue;
     models.delete(key);
     m.relPath = rel;
+    const displaced = models.get(vaultPath(rel));
+    if (displaced && displaced !== m) {
+      for (const [viewId, hooks] of displaced.views) m.views.set(viewId, hooks);
+    }
     models.set(vaultPath(rel), m);
+    moved.add(m);
+  }
+  for (const [key, m] of models) {
+    if (moved.has(m) || (key !== newKey && !key.startsWith(newPrefix))) continue;
+    if (m.status === 'missing' || m.status === 'loading') m.loaded = load(m, true);
   }
   for (const [key, delta] of [...overlays]) {
     if (key === oldKey || key.startsWith(oldPrefix)) {
@@ -577,4 +737,5 @@ onVaultSwap('pre-swap', 'noteStore', () => {
   writer.reset();
   models.clear();
   overlays.clear();
+  loadingBodyPaths.clear();
 });

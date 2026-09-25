@@ -2,7 +2,7 @@
  * Frontmatter readers for task / Kanban-card metadata.
  *
  * Each reader takes the raw frontmatter map (an `unknown`-valued record from
- * vaultIndexStore / documentStore) and returns a typed, canonical value with
+ * the vault index or a note model) and returns a typed, canonical value with
  * tolerant fallbacks for hand-edited YAML. Shared between TaskListBoard and
  * KanbanCard so the two boards agree on how to interpret the same fields.
  *

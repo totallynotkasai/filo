@@ -3,7 +3,7 @@ import { parseDocument } from 'yaml';
 /**
  * The lightweight frontmatter READ helpers for the non-editor paths (the vault
  * index + the template service). They use the same `yaml` package as the
- * read/write gateway, so there is one parser for all frontmatter — a second
+ * note writer, so there is one parser for all frontmatter — a second
  * parser (e.g. gray-matter's js-yaml, which coerces `date:` → `Date`,
  * `1_000` → `1000`) would disagree and cause "looks changed but isn't" drift.
  * `gates:no-jsyaml-in-frontmatter` forbids js-yaml / gray-matter here.
@@ -36,7 +36,7 @@ export function splitFrontmatterSource(rawContent: string): {
 
 /**
  * Parses a YAML frontmatter SOURCE block (the bytes between the fences) into a
- * plain object with the `yaml` package — the SAME parser the read/write gateway
+ * plain object with the `yaml` package — the SAME parser the note writer
  * uses. Calls `.toJS()` EVEN WHEN `parseDocument` reports recoverable errors
  * (`TAB_AS_INDENT`, `DUPLICATE_KEY`, …) so a malformed-but-recoverable block
  * still parses. The `yaml` core schema resolves no timestamp or merge tag, so

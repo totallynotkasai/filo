@@ -1,12 +1,10 @@
 import type { Tile } from '../../schema/index';
-import { assembleMarkdownFile } from '../editor/markdownSync';
-import { createMdFileExclusive, createUniqueMdFile } from '../vault/createMdExclusive';
+import { newNoteText } from '../notes/noteFile';
 import { fileNameSafe, getActiveContentFolder, nextFreeMdPath } from '../vault/conventionPaths';
-import { documentStore } from '../../stores/document.svelte';
+import { noteStore } from '../../stores/notes.svelte';
 import { vaultStore } from '../../stores/vault.svelte';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { reportError } from '../utils/errorBus';
-import { splitFrontmatterSource } from '../vault/frontmatterRead';
 
 /**
  * Text tiles whose note was allocated by `stampTextTileSeedPath` (a brand-new
@@ -38,8 +36,9 @@ export function stampTextTileSeedPath(tile: Tile, resolvedBoardId: string): stri
 }
 
 /**
- * Creates the backing `.md` for a new text tile and registers its
- * `DocumentState`. Shared by every per-type `BoardTileOps.addTile`.
+ * Creates the backing `.md` for a new text tile. Shared by every per-type
+ * `BoardTileOps.addTile`. The note writer reports the create to the note
+ * store, so a tile editor that mounted before the file existed fills in.
  *
  * - A new note (path allocated by the stamp) is created exclusively with
  *   `title: <tile title>`. If another file took the name meanwhile, the next
@@ -68,20 +67,9 @@ export async function seedTextFileForNewTile(
   const fresh = freshNotes.has(tile);
   freshNotes.delete(tile);
 
-  // The text written when this call created the note; `null` when the note
-  // already existed (adopted) or wasn't created.
-  let created: string | null = null;
   try {
     if (fresh) {
-      const slash = filename.lastIndexOf('/');
-      const result = await createUniqueMdFile({
-        vaultRoot,
-        folder: slash >= 0 ? filename.slice(0, slash) : '',
-        baseName: fileNameSafe(title),
-        firstCandidate: filename,
-        buildContent: () => assembleMarkdownFile({ title }, body),
-      });
-      created = result.content;
+      const result = await noteStore.createUnique(filename, () => newNoteText({ title }, body));
       if (result.relPath !== filename) {
         filename = result.relPath;
         tile.filePath = filename;
@@ -96,27 +84,8 @@ export async function seedTextFileForNewTile(
       // `'exists'` means "adopt the existing file" (a dropped or restored
       // note); a note that has to be created here is new, so it gets its
       // title like any other new note.
-      const text = assembleMarkdownFile({ title }, body);
-      const outcome = await createMdFileExclusive(vaultRoot, filename, text);
-      if (outcome === 'created') {
-        created = text;
-        await vaultStore.refreshTree();
-      }
-    }
-    if (created !== null) {
-      // The tile's editor mounted with the tile and may have read the path
-      // before this create landed (and found nothing). Record what was just
-      // written so its first save keeps the new note's `title:`.
-      documentStore.setFrontmatter(filename, { title }, splitFrontmatterSource(created).rawFrontmatter);
-    }
-    if (!documentStore.getDocument(filename)) {
-      documentStore.loadDocument({
-        filename,
-        title,
-        body,
-        htmlContent: body,
-        richText: [],
-      });
+      const outcome = await noteStore.createExclusive(filename, newNoteText({ title }, body));
+      if (outcome === 'created') await vaultStore.refreshTree();
     }
   } catch (err) {
     reportError(

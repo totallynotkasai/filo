@@ -1,107 +1,85 @@
 /**
- * Phase 4 / E1 — `readMarkdownForHydrate` is the single disk-read hydrate
- * path (recurrence-proofs F1). These tests pin the invariant that a
- * disk-read hydrate ALWAYS seeds the pre-write drift baseline from the same
- * read's `mtimeMs`, so the writer's drift check can't no-op the way it did
- * before F1.
+ * Loading a note is one fresh read, and the model's base (the bytes the local
+ * state is built on, which the writer's drift check compares against) comes
+ * from that same read: its hash, mtime and size, and its BOM. A base taken
+ * from anything else would let the drift check pass against a disk it never
+ * saw.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import {
-  readMarkdownForHydrate,
-  isHydrated,
-  __resetMarkdownFileWriterForTests,
-} from '@renderer/lib/vault/markdownFileWriter';
-import {
-  getBaseline,
-  __resetBaselinesForTests,
-} from '@renderer/lib/vault/fileBaselineRegistry';
-import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { noteStore } from '@renderer/stores/notes.svelte';
+import { setActiveVaultPath } from '@renderer/lib/vault/activeVaultPath';
+import { beginVaultGeneration, __resetVaultIdentityForTests } from '@renderer/lib/vault/vaultIdentity';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
+import { noteTextHash } from '@renderer/lib/notes/noteFile';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
-type InvokeHandler = (...args: unknown[]) => unknown | Promise<unknown>;
+const BOM = '﻿';
+let vault: MemoryVault;
 
-function installFiloStub(routes: Record<string, InvokeHandler>): void {
-  (window as unknown as Record<string, unknown>).filo = {
-    invoke: async (channel: string, ...args: unknown[]) => {
-      const handler = routes[channel];
-      if (!handler) return { success: true };
-      return handler(...args);
-    },
-    on: () => () => {},
-    send: () => {},
-  };
-}
-
-function uninstallFiloStub(): void {
-  delete (window as unknown as Record<string, unknown>).filo;
-}
-
-describe('readMarkdownForHydrate — disk-read hydrate gateway', () => {
-  beforeEach(() => {
-    __resetMarkdownFileWriterForTests();
-    __resetDirtyTrackingForTests();
-    __resetBaselinesForTests();
+beforeEach(() => {
+  __resetDirtyTrackingForTests();
+  __resetVaultIdentityForTests();
+  beginVaultGeneration('/vault');
+  setActiveVaultPath('/vault');
+  vault = installMemoryVault({
+    'Notes/a.md': '---\ntags: [x]\n---\nHello body',
+    'Notes/bom.md': `${BOM}---\ntitle: T\n---\nBody`,
   });
-  afterEach(() => {
-    __resetMarkdownFileWriterForTests();
-    __resetDirtyTrackingForTests();
-    __resetBaselinesForTests();
-    uninstallFiloStub();
-  });
+  noteStore.__resetForTests();
+});
 
-  it('reads + parses + marks hydrated + seeds the drift baseline atomically', async () => {
-    const relPath = 'Notes/a.md';
-    installFiloStub({
-      'vault:read-file-text': () => ({
-        success: true,
-        content: '---\ntags: [x]\n---\nHello body',
-        mtimeMs: 4242,
-        size: 50,
-      }),
+afterEach(() => {
+  noteStore.__resetForTests();
+  setActiveVaultPath('');
+  restoreFiloDefault();
+});
+
+describe('loading a note', () => {
+  it('parses the read and takes the base from the same read', async () => {
+    const reads = (): number =>
+      vaultReads().filter((rel) => rel === 'Notes/a.md').length;
+    const m = noteStore.acquire('Notes/a.md', 'tile');
+    await m.loaded;
+
+    expect(m.status).toBe('ready');
+    expect(m.body).toBe('Hello body');
+    expect(m.frontmatter.tags).toEqual(['x']);
+    expect(reads()).toBe(1);
+
+    const raw = vault.read('Notes/a.md') ?? '';
+    const stat = await window.filo.invoke('vault:stat', '/vault', 'Notes/a.md');
+    expect(m.base).toMatchObject({
+      rawText: raw,
+      hash: noteTextHash(raw),
+      hadBom: false,
+      mtimeMs: (stat as { mtimeMs: number }).mtimeMs,
+      size: new TextEncoder().encode(raw).length,
     });
-
-    // Pre-condition: no baseline, not hydrated.
-    expect(getBaseline(relPath)).toBeUndefined();
-    expect(isHydrated(relPath)).toBe(false);
-
-    const result = await readMarkdownForHydrate('/vault', relPath);
-
-    // Parsed content surfaced to the caller.
-    expect(result.body).toBe('Hello body');
-    expect(result.frontmatter.tags).toEqual(['x']);
-    expect(result.mtimeMs).toBe(4242);
-    expect(result.size).toBe(50);
-    expect(result.hadBom).toBe(false);
-
-    // The invariant: hydrate gate set AND baseline (mtime + size) seeded
-    // from the SAME read.
-    expect(isHydrated(relPath)).toBe(true);
-    expect(getBaseline(relPath)).toMatchObject({ mtimeMs: 4242, size: 50 });
   });
 
-  it('records hadBom = true for a BOM-led file', async () => {
-    const relPath = 'Notes/bom.md';
-    installFiloStub({
-      'vault:read-file-text': () => ({
-        success: true,
-        content: '﻿---\ntitle: T\n---\nBody',
-        mtimeMs: 7,
-        size: 12,
-      }),
-    });
-
-    const result = await readMarkdownForHydrate('/vault', relPath);
-    expect(result.hadBom).toBe(true);
-    expect(getBaseline(relPath)).toMatchObject({ mtimeMs: 7, size: 12 });
+  it('records the BOM of a BOM-led file', async () => {
+    const m = noteStore.acquire('Notes/bom.md', 'tile');
+    await m.loaded;
+    expect(m.base?.hadBom).toBe(true);
+    expect(m.frontmatter).toEqual({ title: 'T' });
+    expect(m.body).toBe('Body');
   });
 
-  it('propagates a read failure (caller owns the in-memory fallback)', async () => {
-    installFiloStub({
-      'vault:read-file-text': () => ({ success: false, code: 'ENOENT' }),
-    });
-
-    await expect(readMarkdownForHydrate('/vault', 'Notes/missing.md')).rejects.toBeDefined();
-    // No baseline seeded on a failed read — the caller's catch decides how to
-    // hydrate (or not).
-    expect(getBaseline('Notes/missing.md')).toBeUndefined();
+  it('a failed read leaves no base (the note is missing, not empty on disk)', async () => {
+    const m = noteStore.acquire('Notes/missing.md', 'tile');
+    await m.loaded;
+    expect(m.status).toBe('missing');
+    expect(m.base).toBeUndefined();
+    // An edit to it is never written as a new file.
+    noteStore.setBody('Notes/missing.md', 'typed', 'tile');
+    await noteStore.flushAll();
+    expect(vault.read('Notes/missing.md')).toBeUndefined();
   });
 });
+
+function vaultReads(): string[] {
+  return vi.mocked(window.filo.invoke).mock.calls
+    .filter((c) => c[0] === 'vault:read-file-text')
+    .map((c) => String(c[2]));
+}

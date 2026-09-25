@@ -74,9 +74,8 @@ import {
   RemovePathTagCommand,
 } from '../commands/index';
 import { scheduleMiscWrite, flushAllMisc, flushMiscWrite } from '../lib/boards/boardSaver';
-import { flushAllMarkdownWriters } from '../lib/vault/markdownFileWriter';
+import { noteStore } from './notes.svelte';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
-import { flushAllPendingFrontmatterWrites } from '../lib/boards/frontmatterWriteScheduler';
 import { assertIpcOk } from '../lib/utils/ipcEnvelope';
 import { reportError } from '../lib/utils/errorBus';
 import { uiStore } from './ui.svelte';
@@ -706,13 +705,8 @@ export const fileTagsStore = {
     // Drain pending markdown / frontmatter debouncers BEFORE the sweep reads
     // metadata. Otherwise an unflushed edit fires after the sweep and
     // re-asserts the OLD tag name on disk.
-    const mdResult = await flushAllMarkdownWriters();
-    const fmResult = await flushAllPendingFrontmatterWrites();
-    if (mdResult.failed.length > 0 || fmResult.failed.length > 0) {
-      const failedPaths = [
-        ...mdResult.failed.map((f) => f.ownerId),
-        ...fmResult.failed,
-      ];
+    const { failed: failedPaths } = await noteStore.flushAll();
+    if (failedPaths.length > 0) {
       uiStore.pushToast({
         text: `Tag rename aborted — could not flush pending edits to ${failedPaths.length} file${failedPaths.length === 1 ? '' : 's'}. Resolve the per-file errors above and try again.`,
         type: 'error',
@@ -762,13 +756,8 @@ export const fileTagsStore = {
     await boardCacheStore.ensureAllLoaded();
 
     // See renameTagEverywhere: flush the debouncers before the sweep reads metadata.
-    const mdResult = await flushAllMarkdownWriters();
-    const fmResult = await flushAllPendingFrontmatterWrites();
-    if (mdResult.failed.length > 0 || fmResult.failed.length > 0) {
-      const failedPaths = [
-        ...mdResult.failed.map((f) => f.ownerId),
-        ...fmResult.failed,
-      ];
+    const { failed: failedPaths } = await noteStore.flushAll();
+    if (failedPaths.length > 0) {
       uiStore.pushToast({
         text: `Tag removal aborted — could not flush pending edits to ${failedPaths.length} file${failedPaths.length === 1 ? '' : 's'}. Resolve the per-file errors above and try again.`,
         type: 'error',

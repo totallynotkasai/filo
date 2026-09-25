@@ -3,8 +3,8 @@
  * `DocumentBoard.content` / `updatedAt` directly onto the by-reference
  * in-memory virtual `project.boards`, bypassing reactivity. The virtual
  * project is in-memory only and nothing reads `.content` as a write source
- * (the `.md` write sources from the editor markdown; `documentStore.updateContent`
- * is the canonical body sync the DocumentEditor's reactive `$effect` picks up),
+ * (the `.md` write sources from the editor markdown through the note model;
+ * `NoteEditorView` is the canonical body sync every other view follows),
  * so the mutation was vestigial. It was deleted.
  *
  * This is a source-scan pin (the mutation lived inside a tiptap `onUpdate`
@@ -12,7 +12,7 @@
  * convention; the repo pins component-internal invariants by source scan, e.g.
  * `characterization/externalEditReconciliation.test.ts`). It asserts the
  * vestigial `project.boards` write can't silently return AND that the canonical
- * `documentStore.updateContent` sync still runs.
+ * `NoteEditorView` binding (the editor → note model sync) is still there.
  */
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
@@ -44,7 +44,7 @@ describe('TextTile — no in-memory project.boards mutation (Audit-12 L2)', () =
     expect(src).not.toMatch(/\.getData\(\)/);
   });
 
-  it('keeps the canonical documentStore.updateContent body sync', () => {
-    expect(src).toMatch(/documentStore\.updateContent\(/);
+  it('keeps the canonical NoteEditorView body sync', () => {
+    expect(src).toMatch(/new NoteEditorView\(/);
   });
 });

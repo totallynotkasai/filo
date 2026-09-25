@@ -270,7 +270,7 @@ export const uiStore = {
   openConfirm(config: ConfirmDialogConfig) {
     // A second openConfirm must not silently overwrite a pending one: the
     // displaced dialog's onConfirm/onCancel is the ONLY way its awaiter
-    // resolves (tab close, quit save-failure confirm, recreateDeletedFile), so
+    // resolves (tab close, quit save-failure confirm, a note recreated after an external delete), so
     // overwriting would wedge that flow forever. Fire the outgoing onCancel
     // first — the safe, non-destructive resolution.
     //

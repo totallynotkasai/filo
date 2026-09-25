@@ -32,7 +32,6 @@
   import { linksStore } from '../../stores/links.svelte';
   import { isFiloLink } from '../../schema/link';
   import { canvasStore } from '../../stores/canvas.svelte';
-  import { documentStore } from '../../stores/document.svelte';
   import { initKeyboardShortcuts, loadHotkeyOverrides } from '../../core/hotkeys';
   import { registerCommandWithShortcut } from '../../core/commandRegistry';
   import { createTile } from '../../stores/tiles.svelte';
@@ -168,16 +167,10 @@
           // the placement-removal command so any read failure (file already gone,
           // ENOENT race) drops out cleanly without leaving a half-restored undo
           // snapshot. The file is also deleted by the command itself, not here —
-          // see DeleteTilesCommand.execute(). Also unload the document on the way
-          // through so a sibling editor doesn't keep a stale body in memory.
+          // see DeleteTilesCommand.execute().
           const tilesToRead = selectedIds
             .map((id) => boardStore.getTile(id))
             .filter((t): t is NonNullable<typeof t> => !!t);
-          for (const tile of tilesToRead) {
-            if (tile.type === 'text' && tile.filePath) {
-              documentStore.unloadDocument(tile.filePath);
-            }
-          }
           const result = await buildDeleteSnapshots(tilesToRead, vaultRoot);
           fileSnapshots = result.fileSnapshots;
           if (result.oversizedPaths.length > 0) {

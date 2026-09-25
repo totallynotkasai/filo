@@ -1,9 +1,6 @@
 import { Command, cloneForSnapshot } from './Command';
 import { boardCacheStore } from '../stores/boardCache.svelte';
-import { documentStore } from '../stores/document.svelte';
 import { uiStore } from '../stores/ui.svelte';
-import { vaultStore } from '../stores/vault.svelte';
-import { vaultIndexStore } from '../stores/vaultIndex.svelte';
 import { defTitle } from '../stores/noteMeta';
 import type {
   TaskListBoard,
@@ -14,15 +11,8 @@ import type {
   TaskPlacement,
   PartialTaskStyle,
 } from '../schema/placement';
-import {
-  scheduleFrontmatterWrite,
-  flushFrontmatterWriteForPath,
-} from '../lib/boards/frontmatterWriteScheduler';
-import { seedDocumentFrontmatterFromDisk } from '../lib/boards/seedFrontmatterFromDisk';
-import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
-import { applyFrontmatterPatchRebased, captureInverseFromCache } from './frontmatterRebase';
-import { patchToFrontmatterDelta } from '../lib/vault/frontmatterDelta';
-import { writeMarkdownAndReconcile } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
+import { NoteFieldCommand } from './noteFieldCommand';
+import { noteStore } from '../stores/notes.svelte';
 import { reportError } from '../lib/utils/errorBus';
 import { deleteVaultPath } from '../lib/vault/vaultOperations';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
@@ -299,18 +289,9 @@ export class DeleteTaskCommand extends Command {
     // just wrote and skips the empty-seed path (mirrors DeleteTilesCommand).
     if (this.vaultRoot && this.fileSnapshot) {
       const { rel, content } = this.fileSnapshot;
-      const vaultRoot = this.vaultRoot;
-      // Route through the coupled write+reconcile helper: the restored `.md` may
-      // be open as a Document elsewhere, and that editor's stale cache would
-      // invert this restore on its next save. `mode: 'full'` reloads the open
-      // editor for the same path; `create: true` recreates the deleted file.
-      this.lastUndoCompletion = writeMarkdownAndReconcile({
-        vaultRoot,
-        path: rel,
-        content,
-        mode: 'full',
-        create: true,
-      }).catch((err) => {
+      // Through the note writer: a view of the note that is still open
+      // follows the restored bytes.
+      this.lastUndoCompletion = noteStore.restore(rel, content).catch((err) => {
         uiStore.toast(
           `Task restored but file content could not be recovered: ${rel}`,
           'error',
@@ -389,129 +370,20 @@ export class MoveTaskBlockCommand extends Command {
 }
 
 /**
- * Merges a frontmatter patch into a task's `.md` file via the shared
- * documentStore live cache. Captures the prior values of every patched
- * field so undo can restore them exactly (an empty string deletes the
- * field via mergeFrontmatter's cleaning rule, matching what users see
- * when they "clear" a property in the UI).
+ * A change to a task's note frontmatter (`completed`, due date, priority…).
+ * See `NoteFieldCommand` for the execute / undo / redo rules. `atomic`
+ * keeps a recurrence roll-forward (`completed` + `dueDate`) in one piece.
  */
-export class UpdateTaskFieldCommand extends Command {
-  description: string;
-  readonly targetBoardId: string;
-  private boardId: string;
-  private relPath: string;
-  private notePath: string;
-  private patch: Record<string, unknown>;
-  private inversePatch: Record<string, unknown>;
-  // False on the user's initial Apply (apply directly), true once
-  // executed so a later redo rebases like undo instead of clobbering.
-  private hasExecuted = false;
-  // When set, undo/redo treat the patch as a coupled pair on a conflict
-  // (a recurrence roll-forward writes {completed, dueDate} together). Set by
-  // buildTaskFieldCommand when the patch carries both keys.
-  private atomic: boolean;
-
+export class UpdateTaskFieldCommand extends NoteFieldCommand {
   constructor(
     boardId: string,
     relPath: string,
-    notePath: string | null,
     patch: Record<string, unknown>,
     inversePatch: Record<string, unknown>,
     description?: string,
     atomic = false,
   ) {
-    super();
-    // Refuse a null notePath: without one the patch is never merged and the write
-    // re-emits unchanged FM, so Apply and Undo would be silent no-ops.
-    // `buildTaskFieldCommand` routes null-notePath edits through a fallback.
-    if (!notePath) {
-      throw new Error(
-        'UpdateTaskFieldCommand requires a non-null notePath; route null-notePath task edits through the orphan-write fallback instead',
-      );
-    }
-    this.targetBoardId = boardId;
-    this.boardId = boardId;
-    this.relPath = relPath;
-    this.notePath = notePath;
-    // Deep-clone so nested values (e.g. `tags: [...]`) can't be mutated through
-    // the caller's reference after the command is pushed.
-    this.patch = this.snapshot(patch);
-    this.inversePatch = this.snapshot(inversePatch);
-    this.atomic = atomic;
-    this.description = description ?? `Update task ${Object.keys(patch).join(', ')}`;
-  }
-
-  async execute(): Promise<void> {
-    // Drain pending debounced writes before merging the new patch so the
-    // prior in-memory state lands on disk first. Awaited: otherwise a fast
-    // Apply → Undo races the still-debounced forward write against the inverse.
-    // Drains only THIS path (the race is same-notePath), so a bulk batch of field
-    // commands doesn't do O(N²) global flushes.
-    await flushFrontmatterWriteForPath(this.relPath);
-    // First execute = the user's own action: apply it directly (the inverse
-    // patch was just read from this same live cache). A redo re-applies an old
-    // patch and must rebase like undo so an external edit since isn't clobbered.
-    const isRedo = this.hasExecuted;
-    this.hasExecuted = true;
-    if (isRedo) {
-      // Awaited: the rebase re-reads disk when no cache is seeded.
-      await applyFrontmatterPatchRebased({
-        notePath: this.notePath,
-        relPath: this.relPath,
-        targetBoardId: this.targetBoardId,
-        applying: this.patch,
-        expectedCurrent: this.inversePatch,
-        label: this.relPath,
-        atomic: this.atomic,
-      });
-      return;
-    }
-    // Capture the active vault BEFORE the seed await; a vault swap can commit
-    // while the disk read is in flight, and resuming would inject the old
-    // vault's frontmatter and write onto the new vault's same-named file.
-    const identity = captureVaultIdentity();
-    // Seed the FM cache from a fresh disk read inside the chained command body,
-    // so save()/quit (which await historyStore.whenChainSettled()) cover this
-    // read — seeding before execute() let a quit in that window lose the edit.
-    // No-op when the cache is already seeded or the disk read fails.
-    await seedDocumentFrontmatterFromDisk(this.notePath, vaultStore.path, this.relPath);
-    // A swap landed mid-seed: abandon. Do NOT fall back to the index, merge,
-    // schedule a write, or mark the now-foreign board dirty.
-    if (!isStillSameVault(identity)) return;
-    if (!documentStore.getFrontmatter(this.notePath)) {
-      // Disk read failed (ENOENT / transient) — fall back to the vault-index
-      // snapshot so the merge has a full FM object.
-      documentStore.setFrontmatter(
-        this.notePath,
-        (vaultIndexStore.getMetadata(this.relPath)?.frontmatter ?? {}) as Record<string, unknown>,
-      );
-    }
-    // Recapture the inverse from the just-seeded cache so undo restores the TRUE
-    // prior value of each patched key — `buildTaskFieldCommand` computed it from
-    // the (possibly-stale) vault index before this disk seed ran.
-    this.inversePatch = this.snapshot(captureInverseFromCache(this.notePath, this.patch));
-    // mergeFrontmatter feeds the DISPLAY cache only; the delta is the write
-    // SOURCE (applied to a fresh disk read in the gateway), so an untouched
-    // external key survives instead of being dropped from a stale cache.
-    documentStore.mergeFrontmatter(this.notePath, this.patch);
-    scheduleFrontmatterWrite(this.relPath, this.notePath, patchToFrontmatterDelta(this.patch));
-    boardCacheStore.markDirty(this.targetBoardId);
-  }
-
-  async undo(): Promise<void> {
-    await flushFrontmatterWriteForPath(this.relPath); // own path only
-    // Rebase onto the live frontmatter so an external edit to the same field
-    // isn't silently clobbered (prompts to apply anyway). Awaited: the rebase
-    // re-reads disk when no cache is seeded.
-    await applyFrontmatterPatchRebased({
-      notePath: this.notePath,
-      relPath: this.relPath,
-      targetBoardId: this.targetBoardId,
-      applying: this.inversePatch,
-      expectedCurrent: this.patch,
-      label: this.relPath,
-      atomic: this.atomic,
-    });
+    super(boardId, relPath, patch, inversePatch, description ?? `Update task ${Object.keys(patch).join(', ')}`, atomic);
   }
 }
 

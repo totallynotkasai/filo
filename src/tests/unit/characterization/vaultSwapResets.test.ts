@@ -85,9 +85,10 @@ const REQUIRED_PRE_SWAP_HANDLERS = [
   'boardRefIntegrity',
   'boardWriteScheduler',
   'dirtyFlagRecovery',
-  'document',
+  'fileBaselineRegistry',
   'fileTags',
   'history',
+  'noteStore',
   'orphans',
   'pendingSettings',
   'renameCascadeSentinel',
@@ -112,7 +113,7 @@ beforeAll(async () => {
   await Promise.all([
     import('@renderer/stores/boardCache.svelte'),
     import('@renderer/stores/boardRefIntegrity.svelte'),
-    import('@renderer/stores/document.svelte'),
+    import('@renderer/stores/notes.svelte'),
     import('@renderer/stores/fileTags.svelte'),
     import('@renderer/stores/history.svelte'),
     import('@renderer/stores/orphans.svelte'),
@@ -129,6 +130,7 @@ beforeAll(async () => {
     // Phase 3 (IMPL_PLAN 2026-05-25) — sentinel mutex modules register
     // their pre-swap handlers at module-init time.
     import('@renderer/lib/vault/dirtyFlagRecovery'),
+    import('@renderer/lib/vault/fileBaselineRegistry'),
     import('@renderer/lib/vault/renameCascadeSentinel'),
     import('@renderer/lib/vault/tagRewriteSentinel'),
   ]);

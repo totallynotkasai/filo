@@ -69,6 +69,7 @@
     const root = vaultStore.path;
     if (!root) return null;
     try {
+      // allow-raw-read: a template's source text for the browser, not a note view
       const result = await window.filo.invoke('vault:read-file-text', root, ref.path);
       if (result.success) return result.content;
       return null;

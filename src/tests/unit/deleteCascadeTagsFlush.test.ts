@@ -1,19 +1,21 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { tabStore } from '@renderer/stores/tabs.svelte';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
-import { __resetMarkdownFileWriterForTests as __resetMarkdownFlushersForTests } from '@renderer/lib/vault/markdownFileWriter';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
  * Phase 4.1 (2026-05-30) — in-app delete must flush `.filo/tags.json`
  * synchronously, mirroring the rename cascade's F3 flush.
+ *
+ * The file is an attachment: a note's tags live in its frontmatter, but an
+ * attachment's live in `tags.json`.
  *
  * The folder-ops delete path drops the deleted file's tag membership via
  * `fileTagsStore.dropFile` / `dropFolder`, which only arm the 300ms misc
@@ -51,8 +53,7 @@ describe('delete cascade — synchronous tags.json flush (Phase 4.1)', () => {
 
   beforeEach(async () => {
     __resetDirtyTrackingForTests();
-    __resetMarkdownFlushersForTests();
-    documentStore.clear();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
     boardCacheStore.clear();
     boardStore.clearBoard();
@@ -75,10 +76,10 @@ describe('delete cascade — synchronous tags.json flush (Phase 4.1)', () => {
       return { success: true };
     });
 
-    // Seed a tag on Notes/foo.md and drain the resulting write so the
+    // Seed a tag on Notes/foo.png and drain the resulting write so the
     // delete's flush is the only tags:save we observe.
     await fileTagsStore.hydrate('/vault');
-    fileTagsStore.setFileTags('Notes/foo.md', ['mytag']);
+    fileTagsStore.setFileTags('Notes/foo.png', ['mytag']);
     await fileTagsStore.flushPendingSave();
     tagsSaves.length = 0;
   });
@@ -86,8 +87,7 @@ describe('delete cascade — synchronous tags.json flush (Phase 4.1)', () => {
   afterEach(() => {
     restoreFiloDefault();
     __resetDirtyTrackingForTests();
-    __resetMarkdownFlushersForTests();
-    documentStore.clear();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
     boardCacheStore.clear();
     boardStore.clearBoard();
@@ -98,7 +98,7 @@ describe('delete cascade — synchronous tags.json flush (Phase 4.1)', () => {
   });
 
   it('drops the deleted file from tags.json and persists it before delete resolves', async () => {
-    const pending = vaultStore.delete('/vault/Notes/foo.md');
+    const pending = vaultStore.delete('/vault/Notes/foo.png');
     await autoConfirm();
     const ok = await pending;
     expect(ok).toBe(true);
@@ -109,6 +109,6 @@ describe('delete cascade — synchronous tags.json flush (Phase 4.1)', () => {
     expect(tagsSaves.length).toBeGreaterThanOrEqual(1);
     const latest = JSON.parse(tagsSaves[tagsSaves.length - 1]);
     // tags.json keys are canonicalised to lowercase (normalizeVaultRelative).
-    expect(latest.fileTags['notes/foo.md']).toBeUndefined();
+    expect(latest.fileTags['notes/foo.png']).toBeUndefined();
   });
 });

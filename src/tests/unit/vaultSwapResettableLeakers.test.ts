@@ -6,34 +6,24 @@ import {
 import { uiStore } from '@renderer/stores/ui.svelte';
 
 /**
- * Phase 6.1.R2 — the four module-level subscriptions class-killed in this
- * pass:
+ * Module-level state that must reset on a vault swap:
  *
  *   - `vaultExternalChanges.inFlightDriftPrompts`: the per-path
  *     Reload/Keep-local promise dedup map. Without reset, an unresolved
  *     entry from the outgoing vault would block a fresh prompt for the
  *     same path in the new vault.
- *   - `fileTags.readOnlyTagToastShown`: note-keyed Set that suppresses
- *     duplicate "tag updated but body not saved" toasts. Without reset,
- *     a note path that exists in both vaults would suppress a legitimate toast.
- *   - `markdownFileWriter.testFlushers`: the test-only flusher registry.
- *     Defense-in-depth for tests that fire `fireVaultSwap` between
- *     fixtures and rely on the gateway's own per-test reset NOT having
- *     fired yet.
- *   - `ui.toasts onDismiss`: the existing `ui` pre-swap handler now
- *     fires each toast's `onDismiss` before nulling the array. A
- *     prompt-shaped toast whose Promise resolves only through
- *     onAction/onDismiss would otherwise hang across the swap.
+ *   - `ui.toasts onDismiss`: the `ui` pre-swap handler fires each toast's
+ *     `onDismiss` before nulling the array. A prompt-shaped toast whose
+ *     Promise resolves only through onAction/onDismiss would otherwise hang
+ *     across the swap.
  */
 
-describe('Phase 6.1.R2 — leakers registered for vault-swap reset', () => {
+describe('module state registered for vault-swap reset', () => {
   beforeEach(async () => {
     // Force every store / lib that subscribes a pre-swap handler to
     // evaluate so the registry sees the subscription.
     await Promise.all([
       import('@renderer/stores/vaultExternalChanges'),
-      import('@renderer/stores/fileTags.svelte'),
-      import('@renderer/lib/vault/markdownFileWriter'),
       import('@renderer/stores/ui.svelte'),
     ]);
   });
@@ -43,11 +33,9 @@ describe('Phase 6.1.R2 — leakers registered for vault-swap reset', () => {
     for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id);
   });
 
-  it('the four new leakers are registered through vaultSwapResettable', () => {
+  it('the drift-prompt dedup map is registered through vaultSwapResettable', () => {
     const names = __getResettableHandlerNames();
     expect(names.has('vaultExternalChanges.inFlightDriftPrompts')).toBe(true);
-    expect(names.has('fileTags.readOnlyTagToastShown')).toBe(true);
-    expect(names.has('markdownFileWriter.testFlushers')).toBe(true);
   });
 
   it('uiStore.pushToast.onDismiss fires on vault swap', async () => {
@@ -94,47 +82,5 @@ describe('Phase 6.1.R2 — leakers registered for vault-swap reset', () => {
       }),
     ).resolves.toBeUndefined();
     expect(uiStore.toasts.length).toBe(0);
-  });
-
-  /**
-   * 6.3.P4 — behaviour check (not just registration): a test flusher
-   * registered before vault swap must be DROPPED so the new vault's
-   * `flushAllMarkdownWriters` doesn't replay it. Pins the contract the
-   * `vaultSwapResettable('markdownFileWriter.testFlushers')` registration
-   * promises.
-   */
-  it('testFlushers map is drained on vault swap (not just registered)', async () => {
-    const { __testRegisterFlusher, flushAllMarkdownWriters, __resetMarkdownFileWriterForTests } =
-      await import('@renderer/lib/vault/markdownFileWriter');
-
-    // Hard reset to start from a known-empty state.
-    __resetMarkdownFileWriterForTests();
-
-    let calls = 0;
-    __testRegisterFlusher('leaker', async () => {
-      calls += 1;
-    });
-
-    // First drain proves the flusher is registered and reachable.
-    const before = await flushAllMarkdownWriters();
-    expect(calls).toBe(1);
-    expect(before.ok).toBe(1);
-
-    // Vault swap drains testFlushers via vaultSwapResettable.
-    await fireVaultSwap({
-      phase: 'pre-swap',
-      previousVault: '/a',
-      nextVault: '/b',
-      saveOutgoing: false,
-    });
-
-    // After swap, the prior test's flusher must NOT replay against the
-    // new vault. Reset for cleanup since the test owns the registry.
-    const after = await flushAllMarkdownWriters();
-    expect(calls).toBe(1); // unchanged — flusher was dropped before this drain
-    expect(after.ok).toBe(0);
-    expect(after.failed).toEqual([]);
-
-    __resetMarkdownFileWriterForTests();
   });
 });

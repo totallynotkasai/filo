@@ -6,25 +6,22 @@ import {
 import { historyStore } from '@renderer/stores/history.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
-import {
-  __resetDirtyTrackingForTests,
-  __clearRecentSelfWritesForTests,
-} from '@renderer/lib/boards/writeStateTracking';
-import { __resetBaselinesForTests } from '@renderer/lib/vault/fileBaselineRegistry';
-import { cancelAllMarkdownWrites } from '@renderer/lib/vault/markdownFileWriter';
-import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { noteStore } from '@renderer/stores/notes.svelte';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 import type { TaskRow } from '@renderer/lib/tasks/taskListModel';
 import type { Tile, TaskListBoard } from '@renderer/schema/index';
 
 /**
- * P2.3 (Task List audit 2026-06-08) — the two note-less ("orphan") task write
- * gaps: a text tile with no `filePath`. Every Filo-created task carries one,
- * so these paths only fire on a hand-edited / legacy `.board.json`. Before the fix they SILENTLY dropped the
- * edit:
- *   WRITE-1 — markAllIncomplete skipped note-less rows (stayed completed) AND
- *             over-counted the success toast.
- *   NOTES-1 — setNotesBody scheduled scheduleFrontmatterWrite(path, null), which
- *             re-emits the OLD disk body, discarding the typed note.
+ * Task List frontmatter-writer contracts:
+ *   - markAllIncomplete counts only the rows it actually changes. A text tile
+ *     with no `filePath` (a hand-edited / legacy `.board.json`) has no note,
+ *     so it gets no command and isn't counted.
+ *   - The notes box writes the typed body, never re-emits the old disk body,
+ *     and keeps the frontmatter.
+ *   - Clearing a due date clears its time in one command.
+ *   - A recurring roll-forward announces the new date.
  */
 
 function mkRow(over: Partial<TaskRow> & { id: string }): TaskRow {
@@ -56,12 +53,10 @@ function makeWriter(): FrontmatterWriter {
   });
 }
 
-describe('WRITE-1 — markAllIncomplete routes note-less rows through an orphan command', () => {
+describe('markAllIncomplete counts only rows with a note', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('builds a command for the note-less completed row AND counts it honestly', async () => {
-    // Mock execute so the orphan command isn't actually run (no disk IO needed —
-    // we only assert the routing decision + honest count).
+  it('builds a command for the row with a note and counts it honestly', async () => {
     const executeSpy = vi.spyOn(historyStore, 'execute').mockResolvedValue(undefined);
     const toastSpy = vi.spyOn(uiStore, 'toast');
     const writer = makeWriter();
@@ -71,14 +66,12 @@ describe('WRITE-1 — markAllIncomplete routes note-less rows through an orphan 
       completed: true,
       tile: { id: 'withDoc', type: 'text', title: 'WithDoc', filePath: 'WithDoc.md' } as unknown as Tile,
     });
-    const orphanRow = mkRow({ id: 'orphan', completed: true }); // no filePath
+    const pathlessRow = mkRow({ id: 'pathless', completed: true }); // no filePath
 
-    await writer.markAllIncomplete([noteRow, orphanRow]);
+    await writer.markAllIncomplete([noteRow, pathlessRow]);
 
-    // Both rows produce a command → one batch executed; count = 2 (was 1 pre-fix,
-    // because the orphan row used to be skipped while the toast still claimed it).
     expect(executeSpy).toHaveBeenCalledTimes(1);
-    expect(toastSpy).toHaveBeenCalledWith('2 tasks marked incomplete', 'success', 2000);
+    expect(toastSpy).toHaveBeenCalledWith('1 task marked incomplete', 'success', 2000);
   });
 
   it('toasts "no completed tasks" when none are completed', async () => {
@@ -89,59 +82,47 @@ describe('WRITE-1 — markAllIncomplete routes note-less rows through an orphan 
   });
 });
 
-describe('NOTES-1 — setNotesBody writes a note-less task body via the gateway', () => {
-  let captured: Array<{ channel: string; args: unknown[] }>;
+describe('setNotesBody writes the typed body', () => {
+  let vault: MemoryVault;
 
   beforeEach(() => {
-    captured = [];
+    // Runs the test-reset callbacks, which clear the active vault path.
+    __resetDirtyTrackingForTests();
     vaultStore.setPath('/vault');
-    installFiloMock((channel, ...args) => {
-      if (channel === 'vault:read-file-text') {
-        return {
-          success: true,
-          content: '---\ncompleted: false\n---\nOLD BODY\n',
-          mtimeMs: 1,
-          size: 30,
-        };
-      }
-      if (
-        channel === 'vault:write-existing-file-text' ||
-        channel === 'vault:write-file-text'
-      ) {
-        captured.push({ channel, args });
-        return { success: true };
-      }
-      return undefined;
-    });
+    noteStore.__resetForTests();
+    vault = installMemoryVault({ 'Task.md': '---\ncompleted: false\n---\nOLD BODY\n' });
   });
   afterEach(() => {
+    noteStore.__resetForTests();
     restoreFiloDefault();
     vaultStore.setPath('');
     __resetDirtyTrackingForTests();
-    __clearRecentSelfWritesForTests();
-    __resetBaselinesForTests();
-    cancelAllMarkdownWrites();
   });
 
   it('writes the NEW note body (not the re-emitted old disk body), FM preserved', async () => {
     const writer = makeWriter();
-    const orphanRow = mkRow({
-      id: 'orphan',
-      tile: { id: 'orphan', type: 'text', title: 'Orphan' } as unknown as Tile, // no filePath
+    const row = mkRow({
+      id: 't',
+      tile: { id: 't', type: 'text', title: 'Task', filePath: 'Task.md' } as unknown as Tile,
     });
 
-    await writer.setNotesBody(orphanRow, 'NEW NOTE BODY');
+    await writer.setNotesBody(row, 'NEW NOTE BODY');
+    await noteStore.flushAll();
 
-    const write = captured.find((c) => c.channel.startsWith('vault:write'));
-    expect(write).toBeTruthy();
-    const content = write!.args[2] as string;
-    expect(content).toContain('NEW NOTE BODY'); // the typed note actually landed
-    expect(content).not.toContain('OLD BODY'); // the old disk body was NOT re-emitted
-    expect(content).toContain('completed: false'); // frontmatter preserved verbatim
+    const content = vault.read('Task.md') ?? '';
+    expect(content).toContain('NEW NOTE BODY');
+    expect(content).not.toContain('OLD BODY');
+    expect(content).toContain('completed: false');
+  });
+
+  it('a row with no note writes nothing', async () => {
+    const writer = makeWriter();
+    await writer.setNotesBody(mkRow({ id: 'pathless' }), 'typed');
+    await noteStore.flushAll();
+    expect(vault.writes).toEqual([]);
   });
 });
-
-describe('DATE-3 — clearing a due date clears its time in ONE command', () => {
+describe('clearing a due date clears its time in ONE command', () => {
   afterEach(() => vi.restoreAllMocks());
 
   function dateWriter(): FrontmatterWriter {
@@ -200,7 +181,7 @@ describe('DATE-3 — clearing a due date clears its time in ONE command', () => 
   });
 });
 
-describe('REC-3 — recurring roll-forward announces the new date', () => {
+describe('recurring roll-forward announces the new date', () => {
   afterEach(() => vi.restoreAllMocks());
 
   function writer(): FrontmatterWriter {

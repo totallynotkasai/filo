@@ -1,7 +1,7 @@
 import { SvelteSet } from 'svelte/reactivity';
 import type { Tile } from '../schema/index';
 import { boardStore } from './board.svelte';
-import { documentStore } from './document.svelte';
+import { noteStore } from './notes.svelte';
 import { vaultIndexStore } from './vaultIndex.svelte';
 import { resolveTextTileVaultPath } from '../lib/boards/textTilePath';
 import { findOrphans, type OrphanInfo } from '../lib/canvas/orphanCatcher';
@@ -30,8 +30,8 @@ const DEFAULT_CLUSTER_DISTANCE = 600;
 function resolveTextBody(tile: Tile): string | undefined {
   if (tile.type !== 'text') return undefined;
   const path = resolveTextTileVaultPath(tile);
-  const doc = path ? documentStore.getDocument(path) : undefined;
-  if (doc) return doc.body;
+  const note = path ? noteStore.get(path) : undefined;
+  if (note && note.status === 'ready') return note.body;
   if (path) {
     const md = vaultIndexStore.getMetadata(path);
     if (md) return md.content;

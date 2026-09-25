@@ -381,7 +381,7 @@ export interface AssembleMarkdownOptions {
   originalFrontmatter?: string;
   /**
    * The file's REAL line ending, captured from the full raw file at hydrate time
-   * (`FileState.eol`, threaded by the gateway). Needed because a single-line FM
+   * (`NoteText.eol`, threaded by the note writer). Needed because a single-line FM
    * (`title: x`) carries no internal `\r\n`, so detection from the FM source
    * alone would flip a CRLF file's frontmatter to LF. When supplied it wins;
    * otherwise `detectFrontmatterEol` falls back to detection.
@@ -393,7 +393,7 @@ export interface AssembleMarkdownOptions {
   /**
    * Invoked when the assembler REFUSES a frontmatter edit because the on-disk
    * YAML is genuinely unparseable (the keep-raw branch below). The edit is
-   * dropped to protect the existing YAML; this hook lets the gateway surface a
+   * dropped to protect the existing YAML; this hook lets the note writer surface a
    * toast instead of the edit vanishing as a silent success. Pure-assemble
    * callers omit it.
    */
@@ -531,7 +531,7 @@ export function assembleMarkdownFile(
       console.warn(
         '[markdownSync] Refusing to overwrite unparseable/unmodelable frontmatter; metadata edit not applied. Fix the YAML on disk to re-enable property writes.',
       );
-      // Surface the dropped edit to the user (the gateway wires a toast).
+      // Surface the dropped edit to the user (the note writer wires a toast).
       options.onFrontmatterRefused?.();
       return emitWithRawFrontmatter(bomPrefix, original, body, detectFrontmatterEol(options, body));
     }

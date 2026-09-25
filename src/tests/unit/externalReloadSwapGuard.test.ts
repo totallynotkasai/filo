@@ -1,135 +1,145 @@
 /**
- * Audit-13 L17 — the async external-edit "Reload" toast handlers re-read disk via
- * `vaultIndexStore.applyChanges([rel])` and then synchronously mutate stores
- * (the open editor's body + frontmatter) keyed by the relative path. A vault
- * swap landing on that `await` would apply the OUTGOING vault's disk content to
- * the NEW vault's same-named file. The fix captures `captureVaultIdentity()` at
- * the top of each handler and bails via `isStillSameVault` after the re-read.
- *
- * `promptExternalEditOnSync` is the exported representative of the four sibling
- * handlers (the others — `promptBulkExternalChanges` "Reload all",
- * `promptModifiedFile` "Reload", `promptPartialReadExhausted` "Reload from disk"
- * — share the identical capture-then-bail shape and are pinned structurally by
- * `scripts/gates:reconciler-vault-guard`'s `applyChanges` trigger). This drives the
- * Reload action directly: a swap during `applyChanges` must `defer` without
- * touching any store; with no swap it applies and resolves `'reload'`.
+ * An external change to a note re-reads disk and then updates the open note
+ * keyed by its relative path. A vault swap landing on that await would apply
+ * the OUTGOING vault's bytes to the NEW vault's same-named note. Each step
+ * re-checks the vault after its read: the external-change handler after the
+ * index refresh, `noteStore.onDiskChanged` after its fresh read, and the
+ * conflict's "Reload" after its read.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { promptExternalEditOnSync } from '@renderer/stores/vaultExternalChanges';
-import { uiStore } from '@renderer/stores/ui.svelte';
+import { makeExternalChangesSlice } from '@renderer/stores/vaultExternalChanges';
+import { noteStore, setNotePromptHandlers, type NoteModel } from '@renderer/stores/notes.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import type { VaultContext } from '@renderer/stores/vaultStoreTypes';
+import { setActiveVaultPath } from '@renderer/lib/vault/activeVaultPath';
 import {
   beginVaultGeneration,
   __resetVaultIdentityForTests,
 } from '@renderer/lib/vault/vaultIdentity';
-import type { FileMetadata } from '@renderer/lib/vault/vaultIndex';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { restoreFiloDefault } from '../helpers/filoBridge';
 
-interface CapturedAction {
-  label: string;
-  handler: () => void;
-}
+let vault: MemoryVault;
+const prompts = { conflict: vi.fn(), deletedWithUnsavedBody: vi.fn(), reloadShrank: vi.fn(), dismiss: vi.fn() };
 
-/** Spies `pushToast` and returns a getter for the Reload action it captured. */
-function captureReloadAction(): () => CapturedAction {
-  let actions: CapturedAction[] = [];
-  vi.spyOn(uiStore, 'pushToast').mockImplementation((spec) => {
-    if (spec.actions) actions = spec.actions as unknown as CapturedAction[];
-    return 'toast-id';
-  });
-  return () => {
-    const reload = actions.find((a) => a.label === 'Reload');
-    if (!reload) throw new Error('Reload action was not captured');
-    return reload;
-  };
-}
-
-function freshMetadata(path: string): FileMetadata {
+function ctxFor(): VaultContext {
   return {
-    path,
-    title: path,
-    headings: [],
-    tags: [],
-    frontmatter: { tags: [] },
-    links: [],
-    content: 'disk body',
-    lastModified: 42,
-    rawFrontmatter: '',
-    rawByteSize: 9,
+    getVaultPath: () => '/vault',
+    setVaultPath: () => {},
+    getFileTree: () => [],
+    setFileTree: () => {},
+    getSearchQuery: () => '',
+    setSearchQuery: () => {},
+    getIsLoading: () => false,
+    setIsLoading: () => {},
+    getExpandedFolders: () => new Set(),
+    setExpandedFolders: () => {},
+    getSelectedPaths: () => new Set(),
+    setSelectedPaths: () => {},
+    getProject: () => null,
+    setProject: () => {},
+    getRecoveryPendingPaths: () => [],
+    setRecoveryPendingPaths: () => {},
+    resolveRecoveryDismissed: () => {},
+    markMetaDirty: () => {},
+    refreshTree: async () => {},
+    clearSelection: () => {},
+    clearActiveRootFolderIfMatches: () => {},
   };
 }
 
-/** Opens an editor on `path` so the Reload handler has a document to refresh. */
-function openEditor(path: string): string {
-  documentStore.loadDocument({
-    filename: path,
-    title: path,
-    body: 'local body',
-    htmlContent: '',
-    richText: [],
-  });
-  return path;
+async function loaded(rel: string): Promise<NoteModel> {
+  const m = noteStore.acquire(rel, 'view');
+  await m.loaded;
+  return m;
 }
 
-describe('Audit-13 L17 — external-reload handlers bail on a mid-applyChanges vault swap', () => {
+/** Lets the fire-and-forget `onDiskChanged` the handler starts settle. */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+}
+
+/** What a vault swap's pre-swap does to the note store, plus the new vault's identity. */
+function swapVault(): void {
+  noteStore.__resetForTests();
+  setActiveVaultPath('/vault-B');
+  beginVaultGeneration('/vault-B');
+}
+
+describe('external note reloads bail on a vault swap mid-read', () => {
   beforeEach(() => {
+    __resetDirtyTrackingForTests();
     __resetVaultIdentityForTests();
-    documentStore.clear();
+    beginVaultGeneration('/vault');
+    setActiveVaultPath('/vault');
+    vault = installMemoryVault({ 'Note.md': '---\ntitle: Note\n---\nLocal body\n' });
     vaultIndexStore.clear();
+    noteStore.__resetForTests();
+    for (const fn of Object.values(prompts)) fn.mockReset();
+    setNotePromptHandlers(prompts);
   });
+
   afterEach(() => {
     vi.restoreAllMocks();
-    __resetVaultIdentityForTests();
-    documentStore.clear();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
+    __resetVaultIdentityForTests();
+    setActiveVaultPath('');
     restoreFiloDefault();
   });
 
-  it('Reload defers (no store mutation) when the vault swaps during applyChanges', async () => {
-    beginVaultGeneration('/vault-A');
-    const notePath = openEditor('l17-swap.md');
-    const getReload = captureReloadAction();
-    const reloadSpy = vi.spyOn(documentStore, 'applyReloadFromDisk');
-    // applyChanges resolves AFTER bumping the vault generation — i.e. the vault
-    // swapped to B while the re-read was in flight.
+  it('the external-change handler leaves the open note alone when the vault swaps during the index refresh', async () => {
+    const m = await loaded('Note.md');
+    vault.writeExternally('Note.md', '---\ntitle: Note\n---\nOutgoing vault body\n');
+    const onDisk = vi.spyOn(noteStore, 'onDiskChanged');
     vi.spyOn(vaultIndexStore, 'applyChanges').mockImplementation(async () => {
       beginVaultGeneration('/vault-B');
     });
 
-    const settled = promptExternalEditOnSync({ path: 'l17-swap.md' });
-    getReload().handler();
-    const result = await settled;
+    await makeExternalChangesSlice(ctxFor()).handleExternalMarkdownChanges(['Note.md']);
+    await settle();
 
-    // Guard fired: defer the writer, and the editor was not refreshed with the
-    // outgoing vault's content.
-    expect(result).toBe('defer');
-    expect(reloadSpy).not.toHaveBeenCalled();
-    expect(documentStore.getDocument(notePath)?.body).toBe('local body');
+    expect(onDisk).not.toHaveBeenCalled();
+    expect(m.body).toBe('Local body\n');
   });
 
-  it('control: Reload applies disk content + resolves "reload" when no swap occurs', async () => {
-    beginVaultGeneration('/vault-A');
-    const notePath = openEditor('l17-control.md');
-    const getReload = captureReloadAction();
-    const reloadSpy = vi.spyOn(documentStore, 'applyReloadFromDisk');
-    vi.spyOn(vaultIndexStore, 'applyChanges').mockResolvedValue(undefined);
-    vi.spyOn(vaultIndexStore, 'getMetadata').mockReturnValue(
-      freshMetadata('l17-control.md'),
-    );
+  it('control: with no swap the clean open note follows the disk', async () => {
+    const m = await loaded('Note.md');
+    vault.writeExternally('Note.md', '---\ntitle: Note\n---\nDisk body\n');
 
-    const settled = promptExternalEditOnSync({ path: 'l17-control.md' });
-    getReload().handler();
-    const result = await settled;
+    await makeExternalChangesSlice(ctxFor()).handleExternalMarkdownChanges(['Note.md']);
+    await settle();
 
-    expect(result).toBe('reload');
-    expect(reloadSpy).toHaveBeenCalledWith(
-      notePath,
-      'disk body',
-      expect.anything(),
-      { tags: [] },
-      '',
-      { mtimeMs: 42, size: 9 },
-    );
+    expect(m.body).toBe('Disk body\n');
+  });
+
+  it('onDiskChanged does not adopt a read that finished after the vault changed', async () => {
+    const m = await loaded('Note.md');
+    vault.writeExternally('Note.md', '---\ntitle: Note\n---\nOutgoing vault body\n');
+    vault.afterRead = () => {
+      setActiveVaultPath('/vault-B');
+      beginVaultGeneration('/vault-B');
+    };
+
+    await noteStore.onDiskChanged('Note.md');
+
+    expect(m.body).toBe('Local body\n');
+    expect(m.base?.rawText).toBe('---\ntitle: Note\n---\nLocal body\n');
+  });
+
+  it('a conflict\'s Reload does not apply the outgoing vault\'s bytes after a swap mid-read', async () => {
+    const m = await loaded('Note.md');
+    noteStore.setBody('Note.md', 'Mine', 'view');
+    vault.writeExternally('Note.md', '---\ntitle: Note\n---\nTheirs\n');
+    await noteStore.onDiskChanged('Note.md');
+    expect(m.status).toBe('conflict');
+
+    vault.afterRead = () => swapVault();
+    await noteStore.resolveConflict('Note.md', 'reload');
+
+    expect(m.body).toBe('Mine');
+    expect(m.status).toBe('conflict');
+    expect(vault.writes.filter(([, rel]) => rel.endsWith('.md'))).toHaveLength(0);
   });
 });

@@ -6,21 +6,16 @@ import { tmpdir } from 'os';
 import { scanBoardFiles } from '../../main/vault/boardFileOps';
 import { classifyChange } from '../../main/services/fileWatcherClassify';
 
-import {
-  writeMarkdownFile,
-  markHydrated,
-  __resetMarkdownFileWriterForTests,
-} from '@renderer/lib/vault/markdownFileWriter';
 import { patchToFrontmatterDelta } from '@renderer/lib/vault/frontmatterDelta';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import {
   __resetDirtyTrackingForTests,
   __clearRecentSelfWritesForTests,
 } from '@renderer/lib/boards/writeStateTracking';
-import { __resetBaselinesForTests } from '@renderer/lib/vault/fileBaselineRegistry';
-import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
  * Audit-15 Phase 1 — the sibling-parity MEDIUM fixes that need a unit guard.
@@ -29,9 +24,10 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
  *         (`classifyChange`) now case-fold the extension, so an externally
  *         case-mangled board isn't silently dropped from the project / routed
  *         past the board reconciler.
- *   P1.4  the gateway delta write sources the body from FRESH disk when there is
- *         no live editor for the note (orphan / card-only file), so a Properties
- *         field save can't revert an external body edit `fs.watch` missed.
+ *   P1.4  a field delta keeps the body from FRESH disk when there is no live
+ *         editor for the note (orphan / card-only file), so a Properties field
+ *         save can't revert an external body edit `fs.watch` missed; with an
+ *         editor open, its typed body and the delta land together.
  *   P1.5  a deny-by-default permission handler is installable on the session.
  *
  * P1.1 (scheduler parked early-return) lives in `audit14Phase1.test.ts` beside
@@ -72,100 +68,56 @@ describe('Audit-15 P1.3 — .board.json enumeration + classification case-fold',
   });
 });
 
-describe('Audit-15 P1.4 — delta write sources the body from fresh disk when no editor is open', () => {
-  interface Captured {
-    channel: string;
-    args: unknown[];
-  }
-  let captured: Captured[];
 
-  function lastWrite(): string | undefined {
-    for (let i = captured.length - 1; i >= 0; i--) {
-      const c = captured[i];
-      if (c && c.channel === 'vault:write-existing-file-text') return c.args[2] as string;
-    }
-    return undefined;
-  }
-
-  function installDisk(content: string): void {
-    installFiloMock((channel: string, ...args: unknown[]) => {
-      captured.push({ channel, args });
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content, mtimeMs: 7, size: content.length };
-      }
-      if (channel === 'vault:stat') return { success: true, mtimeMs: 7, size: content.length };
-      return { success: true };
-    });
-  }
+describe('Audit-15 P1.4 — a field delta keeps the fresh disk body when no editor is open', () => {
+  let vault: MemoryVault;
+  const lastWrite = (rel: string): string | undefined =>
+    vault.writes.filter(([, r]) => r === rel).at(-1)?.[2];
 
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     __clearRecentSelfWritesForTests();
-    __resetBaselinesForTests();
-    __resetMarkdownFileWriterForTests();
-    documentStore.clear();
     vaultIndexStore.clear();
     vaultStore.setPath('/vault');
-    captured = [];
+    noteStore.__resetForTests();
   });
   afterEach(() => {
+    noteStore.__resetForTests();
     restoreFiloDefault();
     __resetDirtyTrackingForTests();
-    __resetBaselinesForTests();
-    __resetMarkdownFileWriterForTests();
-    documentStore.clear();
     vaultIndexStore.clear();
     vaultStore.setPath('');
   });
 
-  it('writes the FRESH disk body, not the stale caller snapshot, for a never-opened file', async () => {
-    const fresh = '---\ncompleted: false\n---\nFRESH external body\n';
-    installDisk(fresh);
-    // Baseline matches the current disk stat → no drift prompt fires.
-    markHydrated('Card.md', false, 7, fresh.length);
-    // No documentStore.loadDocument → getDocument('Card.md') is undefined → no live editor.
+  it('writes the FRESH disk body for a never-opened file', async () => {
+    vault = installMemoryVault({ 'Card.md': '---\ncompleted: false\n---\nold body\n' });
+    // An external edit the watcher never reported.
+    vault.writeExternally('Card.md', '---\ncompleted: false\n---\nFRESH external body\n');
 
-    await writeMarkdownFile({
-      vaultRoot: '/vault',
-      relPath: 'Card.md',
-      body: 'STALE snapshot body', // what a Properties popup passes from the watcher index
-      callerId: 'props-1',
-      notePath: 'Card.md',
-      frontmatterDelta: patchToFrontmatterDelta({ completed: true }),
-    });
+    noteStore.patchFrontmatter('Card.md', patchToFrontmatterDelta({ completed: true }));
+    expect(await noteStore.flush('Card.md')).toBe(true);
 
-    const written = lastWrite();
+    const written = lastWrite('Card.md');
     expect(written).toBeDefined();
     expect(written).toContain('FRESH external body'); // disk body preserved
-    expect(written).not.toContain('STALE snapshot body'); // stale snapshot NOT written
+    expect(written).not.toContain('old body');
     expect(written).toContain('completed: true'); // the field delta still applied
   });
 
-  it('keeps the LIVE editor body when an editor IS open for the note (N2 invariant)', async () => {
-    const disk = '---\ncompleted: false\n---\nold disk body\n';
-    installDisk(disk);
-    markHydrated('Open.md', false, 7, disk.length);
-    documentStore.loadDocument({
-      filename: 'Open.md',
-      title: 'Open',
-      body: 'LIVE editor body',
-      htmlContent: '',
-      richText: [],
-    });
+  it('keeps the LIVE editor body when an editor IS open for the note', async () => {
+    vault = installMemoryVault({ 'Open.md': '---\ncompleted: false\n---\nold disk body\n' });
+    const m = noteStore.acquire('Open.md', 'text-tile:open');
+    await m.loaded;
+    noteStore.setBody('Open.md', 'LIVE editor body', 'text-tile:open');
 
-    await writeMarkdownFile({
-      vaultRoot: '/vault',
-      relPath: 'Open.md',
-      body: 'LIVE editor body', // the live, un-debounced editor text the caller hands in
-      callerId: 'props-2',
-      notePath: 'Open.md',
-      frontmatterDelta: patchToFrontmatterDelta({ completed: true }),
-    });
+    noteStore.patchFrontmatter('Open.md', patchToFrontmatterDelta({ completed: true }));
+    expect(await noteStore.flush('Open.md')).toBe(true);
 
-    const written = lastWrite();
+    const written = lastWrite('Open.md');
     expect(written).toBeDefined();
     expect(written).toContain('LIVE editor body'); // live body wins over disk
     expect(written).not.toContain('old disk body');
     expect(written).toContain('completed: true');
+    noteStore.release('Open.md', 'text-tile:open');
   });
 });

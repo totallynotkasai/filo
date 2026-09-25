@@ -4,25 +4,21 @@ import fs from 'fs';
 import os from 'os';
 
 /**
- * Phase 4.2 / IMPL_PLAN_2026-05-25 — pre-daily-use regression bracket.
+ * Pre-daily-use regression bracket: three silent-data-loss paths the note
+ * store and writer must keep closed.
  *
- * Three scenarios pin the markdown-write gateway against the three P0
- * silent-data-loss paths the gateway was built to close:
- *
- *  1. Vault swap with "Don't Save" — cancelAllMarkdownWrites pre-swap hook
- *     drops every armed timer before the outgoing vault closes, so a
- *     pending write against vault A can't land after vault B opens.
- *     Closes P0 #4.
- *  2. BOM-preserving edit — parseMarkdownFile/markHydrated thread `hadBom`
- *     into assembleMarkdownFile so a Notepad-saved `.md` keeps its leading
- *     `EF BB BF` after a write round-trip. Closes P0 #1.
- *  3. Hydrate gate — writeMarkdownFile refuses to write a relPath that
- *     hasn't been markHydrated() yet, so the 100ms race window between
- *     editor mount and disk hydrate can no longer clobber the file with
- *     an empty body. Closes P0 #2.
+ *  1. Vault swap with "Don't Save" — the note store's pre-swap reset drops
+ *     every queued write before the outgoing vault closes, so a pending
+ *     write against vault A can't land after vault B opens.
+ *  2. BOM-preserving edit — every write applies the change to a fresh read
+ *     and re-emits its BOM, so a Notepad-saved `.md` keeps its leading
+ *     `EF BB BF` after a write round-trip.
+ *  3. Nothing is written before the note has loaded — a body set while the
+ *     note is still being read is refused, so the race between editor mount
+ *     and the read can't clobber the file with an empty body.
  *
  * Tests drive the renderer via `window.evaluate` (same pattern as
- * dailyDriverSmoke.test.ts) rather than DOM gestures — the gateway is a
+ * dailyDriverSmoke.test.ts) rather than DOM gestures — the store is a
  * lib-layer contract and DOM-driven editing adds incidental flake without
  * exercising any extra code path.
  */
@@ -78,33 +74,22 @@ test.describe('Filo E2E — Pre-daily-use regression bracket', () => {
       const result = await window.evaluate(
         async ([rootA, rootB]) => {
           const { vaultStore } = await import('/src/renderer/stores/vault.svelte.ts');
-          const gateway = await import('/src/renderer/lib/vault/markdownFileWriter.ts');
-          const { parseMarkdownFile } = await import('/src/renderer/lib/editor/markdownSync.ts');
+          const { noteStore } = await import('/src/renderer/stores/notes.svelte.ts');
           const { fireVaultSwap } = await import('/src/renderer/core/vaultLifecycle.ts');
-          const { invokeOk } = await import('/src/renderer/lib/utils/invokeOk.ts');
 
-          // Phase 1: open vault A, hydrate Notes.md, schedule an edit.
+          // Phase 1: open vault A, load Notes.md, queue an edit.
           await vaultStore.openVault(rootA as string);
-          const readA = await invokeOk('vault:read-file-text', rootA as string, 'Notes.md');
-          const parsedA = parseMarkdownFile(readA.content);
-          gateway.markHydrated('Notes.md', parsedA.hadBom);
-          gateway.scheduleMarkdownWrite({
-            vaultRoot: rootA as string,
-            relPath: 'Notes.md',
-            frontmatter: parsedA.frontmatter,
-            body: 'A edited body — should never land on disk',
-            callerId: 'pre-daily-use-test:vault-a:Notes.md',
-          });
+          const note = noteStore.acquire('Notes.md', 'pre-daily-use-test');
+          await note.loaded;
+          noteStore.setBody('Notes.md', 'A edited body — should never land on disk', 'pre-daily-use-test');
 
           // Phase 2: fire pre-swap with saveOutgoing=false — the
-          // "Don't Save" branch in vaultStore.openVault. The gateway's
-          // onVaultSwap('pre-swap', 'markdownFileWriter', ...) handler
-          // calls cancelAllMarkdownWrites; the armed timer should never
-          // fire. We invoke fireVaultSwap directly rather than
-          // openVault(rootB) because openVault would surface the native
-          // "Save / Don't Save / Cancel" dialog that hangs the Playwright
-          // window — the lifecycle event is what the Don't Save branch
-          // dispatches in production anyway.
+          // "Don't Save" branch in vaultStore.openVault. The note store's
+          // onVaultSwap('pre-swap', 'noteStore', ...) handler drops every
+          // queued write; the armed timer should never fire. We invoke
+          // fireVaultSwap directly rather than openVault(rootB) because
+          // openVault would surface the native "Save / Don't Save / Cancel"
+          // dialog that hangs the Playwright window.
           await fireVaultSwap({
             phase: 'pre-swap',
             previousVault: rootA as string,
@@ -112,11 +97,11 @@ test.describe('Filo E2E — Pre-daily-use regression bracket', () => {
             saveOutgoing: false,
           });
 
-          // Phase 3: drain anything that might still be pending. After
-          // cancelAllMarkdownWrites runs, this should be a no-op — but
-          // explicitly draining surfaces a regression where a write
-          // armed against rootA leaks past the pre-swap hook.
-          await gateway.flushAllMarkdownWrites();
+          // Phase 3: drain anything that might still be pending. After the
+          // reset this should be a no-op — but explicitly draining surfaces
+          // a regression where a write queued against rootA leaks past the
+          // pre-swap hook.
+          await noteStore.flushAll();
 
           return { ok: true };
         },
@@ -156,23 +141,14 @@ test.describe('Filo E2E — Pre-daily-use regression bracket', () => {
     try {
       await window.evaluate(async (rootArg) => {
         const { vaultStore } = await import('/src/renderer/stores/vault.svelte.ts');
-        const gateway = await import('/src/renderer/lib/vault/markdownFileWriter.ts');
-        const { parseMarkdownFile } = await import('/src/renderer/lib/editor/markdownSync.ts');
-        const { invokeOk } = await import('/src/renderer/lib/utils/invokeOk.ts');
+        const { noteStore } = await import('/src/renderer/stores/notes.svelte.ts');
 
         await vaultStore.openVault(rootArg);
-        const read = await invokeOk('vault:read-file-text', rootArg, 'BomNote.md');
-        const parsed = parseMarkdownFile(read.content);
-        // markHydrated must record hadBom=true so writeMarkdownFile threads
-        // it into assembleMarkdownFile and re-emits the leading BOM.
-        gateway.markHydrated('BomNote.md', parsed.hadBom);
-        await gateway.writeMarkdownFile({
-          vaultRoot: rootArg,
-          relPath: 'BomNote.md',
-          frontmatter: parsed.frontmatter,
-          body: 'edited body line',
-          callerId: 'pre-daily-use-test:bom:BomNote.md',
-        });
+        // The writer reads the file fresh and re-emits the BOM it finds.
+        const note = noteStore.acquire('BomNote.md', 'pre-daily-use-test');
+        await note.loaded;
+        noteStore.setBody('BomNote.md', 'edited body line', 'pre-daily-use-test');
+        await noteStore.flush('BomNote.md');
       }, vaultDir);
 
       // The leading three bytes must still be the BOM. Other byte-level
@@ -192,7 +168,7 @@ test.describe('Filo E2E — Pre-daily-use regression bracket', () => {
     }
   });
 
-  test('hydrate gate — writeMarkdownFile refuses an unhydrated relPath; body intact', async () => {
+  test('a body set before the note has loaded is refused; body intact', async () => {
     test.setTimeout(60_000);
 
     const vaultDir = path.join(tempRoot, 'vault-hydrate');
@@ -211,38 +187,24 @@ test.describe('Filo E2E — Pre-daily-use regression bracket', () => {
     try {
       const guard = await window.evaluate(async (rootArg) => {
         const { vaultStore } = await import('/src/renderer/stores/vault.svelte.ts');
-        const gateway = await import('/src/renderer/lib/vault/markdownFileWriter.ts');
+        const { noteStore } = await import('/src/renderer/stores/notes.svelte.ts');
 
         await vaultStore.openVault(rootArg);
 
-        // Simulate the race: editor mounts, the user's first keystroke
-        // fires onUpdate, scheduleMarkdownWrite would build args — but
-        // hydrateFromDisk hasn't completed yet, so the gate refuses.
-        // We call writeMarkdownFile directly with no prior markHydrated:
-        // the same code path the schedule timer eventually invokes once
-        // the debounce window expires.
-        let threw = false;
-        let message = '';
-        try {
-          await gateway.writeMarkdownFile({
-            vaultRoot: rootArg,
-            relPath: 'BigDoc.md',
-            frontmatter: {},
-            body: 'X', // hostile body — single char would replace 200KB on disk
-            callerId: 'pre-daily-use-test:hydrate:BigDoc.md',
-          });
-        } catch (err) {
-          threw = true;
-          message = err instanceof Error ? err.message : String(err);
-        }
-
-        return { threw, message };
+        // Simulate the race: an editor mounts and a keystroke arrives while
+        // the note is still being read. The store refuses a body until the
+        // note has loaded.
+        const note = noteStore.acquire('BigDoc.md', 'pre-daily-use-test');
+        const statusAtSet = note.status;
+        noteStore.setBody('BigDoc.md', 'X', 'pre-daily-use-test'); // hostile body: would replace 200KB
+        await note.loaded;
+        await noteStore.flushAll();
+        return { statusAtSet, pending: note.hasUnsavedBody };
       }, vaultDir);
 
-      // The gateway must have thrown. If it didn't, the 200KB body
-      // would now be a single 'X' on disk.
-      expect(guard.threw).toBe(true);
-      expect(guard.message).toContain('not hydrated');
+      // If the body had been taken, the 200KB note would now be a single 'X'.
+      expect(guard.statusAtSet).toBe('loading');
+      expect(guard.pending).toBe(false);
 
       // File on disk is byte-identical to the seed — no write happened.
       const after = fs.readFileSync(path.join(vaultDir, 'BigDoc.md'), 'utf8');

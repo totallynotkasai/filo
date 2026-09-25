@@ -3,14 +3,12 @@
    * TileHeader — header bar with title, tags, lock, style, expand, delete buttons.
    */
   import type { Tile, TextTile } from '../../schema/index';
-  import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
   import type { ResolvedTileStyle } from '../../lib/styles/effectiveStyle';
   import type { Editor } from '@tiptap/core';
   import { getContext } from 'svelte';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { boardCacheStore } from '../../stores/boardCache.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
-  import { documentStore } from '../../stores/document.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { normalizePath } from '../../lib/utils/path';
   import { effectiveTileStyle } from '../../lib/styles/effectiveStyle';
@@ -412,7 +410,6 @@
         let fileSnapshots: { rel: string; content: string }[] | undefined;
         let vaultRoot: string | undefined;
         if (deleteWithFile && hasVaultFile) {
-          const notePath = resolveTextTileVaultPath(tileRef);
           vaultRoot = normalizePath(vaultStore.path);
           // Same flow as AppShell's multi-tile delete: pre-read the backing .md
           // so DeleteTilesCommand.undo() can rewrite it. The command itself
@@ -426,7 +423,6 @@
               7000,
             );
           }
-          if (notePath) documentStore.unloadDocument(notePath);
         }
         selectionStore.deselect(tileId);
         boardStore.removeTilesWithHistory([tileId], { fileSnapshots, vaultRoot });

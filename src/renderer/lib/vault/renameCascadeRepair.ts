@@ -1,11 +1,11 @@
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { boardStore } from '../../stores/board.svelte';
-import { documentStore } from '../../stores/document.svelte';
 import { fileTagsStore } from '../../stores/fileTags.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { reportError } from '../utils/errorBus';
 import { clearPendingRenameCascade, type RenameCascadeEntry } from './renameCascadeSentinel';
 import { isStillSameVault, type VaultIdentity } from './vaultIdentity';
+import { renameAllPathKeys } from './renamePathKeys';
 
 /**
  * Shared repair for the rename-cascade recovery
@@ -63,12 +63,12 @@ export async function repairRenameCascade(
       );
     }
   }
-  // Repoint any open document, mirroring the normal rename path.
-  // The board loop above only fixes `.board.json` references; without this an
-  // editor already open when an in-session repair fires keeps writing to the
-  // OLD path, resurrecting it via mkdir-recursive on the next autosave.
+  // Repoint every path-keyed piece of state (open notes, queued writes,
+  // tabs), mirroring the normal rename path. The board loop above only fixes
+  // `.board.json` references; without this an editor already open when an
+  // in-session repair fires keeps writing to the OLD path.
   for (const entry of entries) {
-    documentStore.propagateRename(entry.oldPath, entry.newPath);
+    renameAllPathKeys(entry.oldPath, entry.newPath);
   }
   const flush = await boardCacheStore.flushAllDirty();
   // Re-check after the flush await, before the tag-store mutations below

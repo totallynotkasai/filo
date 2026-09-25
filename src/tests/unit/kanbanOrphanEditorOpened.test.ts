@@ -1,119 +1,66 @@
+/**
+ * A card field edit made while no view holds the note, undone after the user
+ * opened the note in an editor: the undo must show in the open editor and
+ * reach disk, and the editor's next body save must not bring the undone value
+ * back.
+ */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
-import { UpdateOrphanFrontmatterCommand } from '@renderer/commands/kanbanCommands';
+import { noteStore } from '@renderer/stores/notes.svelte';
+import { UpdateCardFieldCommand } from '@renderer/commands/kanbanCommands';
 import { historyStore } from '@renderer/stores/history.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { parseMarkdown } from '@renderer/lib/vault/vaultIndex';
-import {
-  registerForceWriter,
-  __resetMarkdownFileWriterForTests,
-  type WriteArgs,
-} from '@renderer/lib/vault/markdownFileWriter';
-
-// ── Stubs ──
-
-type InvokeHandler = (...args: unknown[]) => unknown | Promise<unknown>;
-
-interface FileMap {
-  [path: string]: string;
-}
-
-function installFiloStub(filesystem: FileMap): void {
-  const routes: Record<string, InvokeHandler> = {
-    'vault:read-file-text': async (_vaultRoot: unknown, relPath: unknown) => {
-      const p = String(relPath);
-      const content = filesystem[p];
-      if (content === undefined) return { success: false, error: 'ENOENT', code: 'ENOENT' };
-      return { success: true, content };
-    },
-    'vault:write-existing-file-text': async (_vaultRoot: unknown, relPath: unknown, content: unknown) => {
-      filesystem[String(relPath)] = String(content);
-      return { success: true };
-    },
-    'vault:stat': async () => ({ success: true, mtimeMs: 0, sizeBytes: 0 }),
-  };
-  (window as unknown as Record<string, unknown>).filo = {
-    invoke: async (channel: string, ...args: unknown[]) => {
-      const handler = routes[channel];
-      if (!handler) return { success: false, error: `unknown: ${channel}`, code: 'EUNKNOWN' };
-      return handler(...args);
-    },
-    on: () => () => {},
-    send: () => {},
-  };
-}
-
-function seedVault(): void {
-  Object.defineProperty(vaultStore, 'path', { configurable: true, get: () => '/vault' });
-}
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
+import { installMemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
 beforeEach(() => {
+  __resetDirtyTrackingForTests();
+  vaultStore.setPath('/vault');
   vaultIndexStore.clear();
   boardCacheStore.clear();
   historyStore.clear();
-  documentStore.clear();
-  __resetMarkdownFileWriterForTests();
-  seedVault();
+  noteStore.__resetForTests();
 });
 
 afterEach(() => {
-  delete (vaultStore as unknown as Record<string, unknown>).path;
-  documentStore.clear();
-  __resetMarkdownFileWriterForTests();
+  noteStore.__resetForTests();
+  vaultIndexStore.clear();
+  __resetDirtyTrackingForTests();
+  vaultStore.setPath('');
+  restoreFiloDefault();
 });
 
-// ── Test ──
-
-describe('UpdateOrphanFrontmatterCommand — editor opened between execute and undo (audit 2.2)', () => {
-  it('routes undo through the live editor cache when a doc was opened after execute', async () => {
+describe('UpdateCardFieldCommand — editor opened between execute and undo', () => {
+  it('the undo shows in the open editor and its next save does not revert it', async () => {
     const REL = 'Tasks/card.md';
-    const filesystem: FileMap = { [REL]: '---\ntitle: Card\n---\nBody' };
-    installFiloStub(filesystem);
-    vaultIndexStore.restoreMetadata(REL, parseMarkdown(REL, filesystem[REL]));
+    const vault = installMemoryVault({ [REL]: '---\ntitle: Card\n---\nBody' });
+    vaultIndexStore.restoreMetadata(REL, parseMarkdown(REL, vault.read(REL) ?? ''));
 
-    // patch adds a due date; inverse removes it (empty string == delete key,
-    // matching how the orphan merge and mergeFrontmatter clean fields).
-    const cmd = new UpdateOrphanFrontmatterCommand('kb', REL, { due: '2026-06-01' }, { due: '' });
+    // The patch adds a due date; the inverse removes it (empty value = delete key).
+    const cmd = new UpdateCardFieldCommand('kb', REL, { due: '2026-06-01' }, { due: '' });
 
-    // 1) Execute while the card is an orphan (no editor open) — blind disk write.
+    // 1) Execute while no view holds the card's note.
     await cmd.execute();
-    expect(filesystem[REL]).toContain('due:');
-    expect(filesystem[REL]).toContain('2026-06-01');
+    await noteStore.flushAll();
+    expect(vault.read(REL)).toContain('2026-06-01');
 
-    // 2) The user now opens the card's file as a Document. A live session +
-    //    force-writer appears, with the frontmatter cache mirroring disk.
-    documentStore.loadDocument({
-      filename: REL,
-      title: 'Card',
-      body: 'Body',
-      htmlContent: '<p>Body</p>',
-      richText: [],
-    });
-    documentStore.setFrontmatter(REL, { title: 'Card', due: '2026-06-01' });
-    const callerId = `document-editor:${REL}`;
-    const buildArgs = (): WriteArgs => ({
-      vaultRoot: '/vault',
-      relPath: REL,
-      frontmatter: documentStore.getFrontmatter(REL) ?? {},
-      body: 'Body',
-      callerId,
-      notePath: REL,
-    });
-    registerForceWriter(callerId, REL, buildArgs);
+    // 2) The user opens the card's note as a Document.
+    const m = noteStore.acquire(REL, 'document-editor');
+    await m.loaded;
+    expect(m.frontmatter.due).toBe('2026-06-01');
 
-    // 3) Undo. The fix must apply the inverse through the LIVE cache (so the
-    //    open editor doesn't re-clobber it), not a blind disk write the
-    //    editor's next debounce would revert.
+    // 3) Undo.
     await cmd.undo();
+    expect(m.frontmatter.due).toBeUndefined();
+    await noteStore.flushAll();
+    expect(vault.read(REL)).not.toContain('2026-06-01');
 
-    // The live frontmatter cache reflects the inverse (due removed). Without
-    // the fix this still reads `due: 2026-06-01`, and the editor's next write
-    // would re-add it — silently reverting the undo.
-    const fm = documentStore.getFrontmatter(REL) ?? {};
-    expect(fm.due).toBeUndefined();
-    // Disk is consistent with the editor's view too.
-    expect(filesystem[REL]).not.toContain('2026-06-01');
+    // 4) The editor saves a body edit: the due date stays gone.
+    noteStore.setBody(REL, 'Body edited', 'document-editor');
+    await noteStore.flushAll();
+    expect(vault.read(REL)).toBe('---\ntitle: Card\n---\nBody edited\n');
   });
 });

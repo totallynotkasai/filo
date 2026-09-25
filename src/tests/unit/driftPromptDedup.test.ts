@@ -1,19 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import {
-  promptExternalEditOnSync,
+  promptBoardExternalEdit,
   __inFlightDriftPromptsForTests,
 } from '@renderer/stores/vaultExternalChanges';
 import { restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Audit2 5.2 — concurrent drift prompts for the same file dedupe.
+ * Concurrent board drift prompts for the same file dedupe.
  *
- * Before the fix, every keystroke that armed a body write while an external
- * edit was already detected pushed a fresh Reload / Keep-local toast onto
- * the queue (toast storm) and awaited an independent decision (redundant
- * writes). The fix keys an in-flight `Map<path, Promise<choice>>` so all
- * concurrent callers for the same path share one toast and one decision.
+ * Every board save that meets an external edit asks the same question; without
+ * the per-path in-flight `Map<path, Promise<choice>>` a save storm would stack
+ * duplicate Reload / Keep-local toasts and await independent decisions.
  */
 
 function findOpenDriftToast(pathSubstr?: string) {
@@ -43,7 +41,7 @@ async function clickKeepLocal(pathSubstr?: string): Promise<void> {
   await Promise.resolve();
 }
 
-describe('promptExternalEditOnSync — per-path dedup (5.2)', () => {
+describe('promptBoardExternalEdit — per-path dedup', () => {
   beforeEach(() => {
     restoreFiloDefault();
     // Clear any toasts lingering from prior tests.
@@ -56,9 +54,9 @@ describe('promptExternalEditOnSync — per-path dedup (5.2)', () => {
   });
 
   it('two concurrent prompts for the same path share one toast and one promise', async () => {
-    const path = 'shared.md';
-    const p1 = promptExternalEditOnSync({ path });
-    const p2 = promptExternalEditOnSync({ path });
+    const path = 'shared.board.json';
+    const p1 = promptBoardExternalEdit({ path });
+    const p2 = promptBoardExternalEdit({ path });
 
     // Both callers got the SAME promise instance.
     expect(p1).toBe(p2);
@@ -83,8 +81,8 @@ describe('promptExternalEditOnSync — per-path dedup (5.2)', () => {
   });
 
   it('different paths get independent prompts (no cross-talk)', async () => {
-    const a = promptExternalEditOnSync({ path: 'a.md' });
-    const b = promptExternalEditOnSync({ path: 'b.md' });
+    const a = promptBoardExternalEdit({ path: 'a.board.json' });
+    const b = promptBoardExternalEdit({ path: 'b.board.json' });
 
     expect(a).not.toBe(b);
     expect(__inFlightDriftPromptsForTests().size).toBe(2);
@@ -94,27 +92,24 @@ describe('promptExternalEditOnSync — per-path dedup (5.2)', () => {
     );
     expect(driftToasts).toHaveLength(2);
 
-    // Dismiss one — the OTHER stays in the map.
-    await clickKeepLocal('a.md');
+    // Resolve one — the OTHER stays in the map.
+    await clickKeepLocal('a.board.json');
     await expect(a).resolves.toBe('keep-local');
 
-    // b.md still in flight.
-    expect(__inFlightDriftPromptsForTests().has('b.md')).toBe(true);
-    expect(__inFlightDriftPromptsForTests().has('a.md')).toBe(false);
+    expect(__inFlightDriftPromptsForTests().has('b.board.json')).toBe(true);
+    expect(__inFlightDriftPromptsForTests().has('a.board.json')).toBe(false);
 
-    // Drain b.md too so the test doesn't leave a dangling toast.
-    await clickKeepLocal('b.md');
+    // Drain b too so the test doesn't leave a dangling toast.
+    await clickKeepLocal('b.board.json');
     await b;
   });
 
-  // 6.4.M4 — the toast's `onDismiss` historically resolved to 'keep-local',
-  // so an unattended auto-dismiss silently overwrote the external edit on
-  // disk. The fix: dismiss resolves to 'defer' (abort the write, leave
-  // both sides intact); the next write attempt re-prompts so the user
-  // must explicitly choose Reload or Keep-local.
-  it('toast auto-dismiss resolves to defer, not keep-local (M4)', async () => {
-    const path = 'autoDismiss.md';
-    const p = promptExternalEditOnSync({ path });
+  // An unattended dismiss must not overwrite the external edit: it resolves
+  // 'defer' (abort the write, leave both sides intact) and the next write
+  // re-prompts so the user must choose Reload or Keep-local explicitly.
+  it('toast auto-dismiss resolves to defer, not keep-local', async () => {
+    const path = 'autoDismiss.board.json';
+    const p = promptBoardExternalEdit({ path });
 
     const toast = findOpenDriftToast(path);
     expect(toast).toBeDefined();
@@ -129,16 +124,16 @@ describe('promptExternalEditOnSync — per-path dedup (5.2)', () => {
   });
 
   it('a fresh call AFTER the prior prompt resolved opens a new toast', async () => {
-    const path = 'sequential.md';
+    const path = 'sequential.board.json';
 
-    const first = promptExternalEditOnSync({ path });
+    const first = promptBoardExternalEdit({ path });
     await clickKeepLocal();
     await first;
     expect(__inFlightDriftPromptsForTests().size).toBe(0);
 
     // Now a second external-edit race fires — the dedup must NOT latch the
     // old decision; the user gets a fresh prompt.
-    const second = promptExternalEditOnSync({ path });
+    const second = promptBoardExternalEdit({ path });
     expect(__inFlightDriftPromptsForTests().size).toBe(1);
     expect(findOpenDriftToast()).toBeDefined();
 

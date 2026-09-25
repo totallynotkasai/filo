@@ -6,7 +6,7 @@ import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
-import { __resetMarkdownFileWriterForTests as __resetMarkdownFlushersForTests } from '@renderer/lib/vault/markdownFileWriter';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import type { FileMetadata } from '@renderer/lib/vault/vaultIndex';
 
@@ -34,7 +34,7 @@ describe('tag cascade — synchronous tags.json flush (Phase 4.3)', () => {
 
   beforeEach(async () => {
     __resetDirtyTrackingForTests();
-    __resetMarkdownFlushersForTests();
+    noteStore.__resetForTests();
     boardCacheStore.clear();
     boardStore.clearBoard();
     vaultIndexStore.clear();
@@ -65,7 +65,7 @@ describe('tag cascade — synchronous tags.json flush (Phase 4.3)', () => {
     restoreFiloDefault();
     vi.restoreAllMocks();
     __resetDirtyTrackingForTests();
-    __resetMarkdownFlushersForTests();
+    noteStore.__resetForTests();
     boardCacheStore.clear();
     boardStore.clearBoard();
     vaultIndexStore.clear();
@@ -118,7 +118,8 @@ describe('tag cascade — synchronous tags.json flush (Phase 4.3)', () => {
       }
       if (channel === 'vault:file-exists') return true;
       if (channel === 'vault:read-file-text') {
-        return { success: true, content: '---\ntags: [old]\n---\nbody\n' };
+        const content = '---\ntags: [old]\n---\nbody\n';
+        return { success: true, content, mtimeMs: 1, size: content.length };
       }
       if (channel === 'vault:write-file-text' || channel === 'vault:write-existing-file-text') {
         const rel = String(args[1]);

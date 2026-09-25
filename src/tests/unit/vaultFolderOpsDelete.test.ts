@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { tabStore } from '@renderer/stores/tabs.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore, type NoteModel } from '@renderer/stores/notes.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
@@ -11,44 +11,57 @@ import {
   __resetVaultIdentityForTests,
 } from '@renderer/lib/vault/vaultIdentity';
 import {
-  __resetMarkdownFileWriterForTests as __resetMarkdownFlushersForTests,
-} from '@renderer/lib/vault/markdownFileWriter';
-import {
   cancelAllPendingWrites,
   __resetDirtyTrackingForTests,
   type V7BoardFileData,
 } from '@renderer/lib/boards/boardSaver';
 import type { DocumentBoard } from '@renderer/schema/index';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Sprint B / B4: `vaultStore.delete` on a folder must unload any
- * `documentStore` entries whose backing `.md` lived under the deleted
- * path AND close any Document Board tab pointing at one of those files,
- * even when the Document Board's own `.board.json` lives outside the
- * deleted tree.
+ * `vaultStore.delete` on a file or folder: every open note under the deleted
+ * path goes missing (nothing queued for it may recreate it), and any
+ * Document Board tab pointing at one of those notes closes, even when the
+ * Document Board's own `.board.json` lives outside the deleted tree.
  *
- * Before the cleanup, deleting `Notes/2026/` while a Document Board at
- * `Boards/Daily.board.json` showed `Notes/2026/foo.md` left the tab open
- * and the `DocumentState` in memory, so a future hydrate would adopt the
- * stale body instead of finding the file genuinely missing.
+ * Otherwise deleting `Notes/2026/` while a Document Board at
+ * `Boards/Daily.board.json` showed `Notes/2026/foo.md` would leave the tab
+ * open and the note's model live, showing a file that no longer exists.
+ *
+ * A vault swap during the post-delete awaits skips the in-memory cascade:
+ * the outgoing vault's state belongs to the vault being torn down.
  */
 
 type InvokeRoute = (...args: unknown[]) => unknown | Promise<unknown>;
 
-function installFiloStub(routes: Record<string, InvokeRoute>): void {
-  (window as unknown as Record<string, unknown>).filo = {
-    invoke: async (channel: string, ...args: unknown[]) => {
-      const handler = routes[channel];
-      if (!handler) return null;
-      return handler(...args);
-    },
-    on: () => () => {},
-    send: () => {},
-  };
+let vault: MemoryVault;
+
+/**
+ * An in-memory vault holding `files`, with `routes` answering the other
+ * channels. `vault:delete` removes the file or folder unless a route
+ * overrides it.
+ */
+function installFiloStub(routes: Record<string, InvokeRoute>, files: Record<string, string> = {}): void {
+  vault = installMemoryVault(files);
+  const base = window.filo.invoke as (channel: string, ...args: unknown[]) => Promise<unknown>;
+  window.filo.invoke = (async (channel: string, ...args: unknown[]) => {
+    const handler = routes[channel];
+    const result = handler ? await handler(...args) : await base(channel, ...args);
+    if (channel === 'vault:delete' && (result as { success?: boolean } | null)?.success) {
+      const rel = String(args[1]).replace(/^\/vault\//, '').toLowerCase();
+      for (const key of [...vault.files.keys()]) {
+        if (key === rel || key.startsWith(`${rel}/`)) vault.remove(key);
+      }
+    }
+    return result;
+  }) as typeof window.filo.invoke;
 }
 
-function uninstallFiloStub(): void {
-  delete (window as unknown as Record<string, unknown>).filo;
+async function open(rel: string): Promise<NoteModel> {
+  const m = noteStore.acquire(rel, `view:${rel}`);
+  await m.loaded;
+  return m;
 }
 
 function makeDocumentBoardFixture(boardPath: string, filePath: string): V7BoardFileData {
@@ -70,10 +83,9 @@ function makeDocumentBoardFixture(boardPath: string, filePath: string): V7BoardF
 }
 
 /**
- * Phase C / C.1 — vaultStore.delete now routes confirmation through
- * `uiStore.openConfirm` instead of the OS-native `dialog:confirm` IPC.
- * `autoConfirm()` polls until the modal config is present, then fires
- * its `onConfirm` so the test body proceeds without a real user click.
+ * `vaultStore.delete` confirms through `uiStore.openConfirm`. `autoConfirm()`
+ * polls until the modal config is present, then fires its `onConfirm` so the
+ * test body proceeds without a real user click.
  */
 async function autoConfirm(): Promise<void> {
   for (let i = 0; i < 50; i++) {
@@ -87,86 +99,84 @@ async function autoConfirm(): Promise<void> {
   }
 }
 
-describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', () => {
+const FILES = {
+  'Notes/2026/foo.md': '---\ntitle: foo\n---\nfoo body\n',
+  'Notes/2026/bar.md': '---\ntitle: bar\n---\nbar body\n',
+  'Other/bar.md': '---\ntitle: kept\n---\nkept\n',
+};
+
+const ROUTES: Record<string, InvokeRoute> = {
+  'vault:delete': async () => ({ success: true }),
+  'vault:read-tree': async () => ({ ok: true, tree: [] }),
+  'board:save': async () => ({ success: true }),
+};
+
+describe('vaultStore.delete — open notes and Document Boards under the deleted path', () => {
   beforeEach(() => {
-    uninstallFiloStub();
+    restoreFiloDefault();
     uiStore.closeConfirm();
-    __resetMarkdownFlushersForTests();
+    // Runs the test-reset callbacks, which clear the active vault path.
     __resetDirtyTrackingForTests();
+    vaultStore.setPath('/vault');
+    noteStore.__resetForTests();
     boardCacheStore.clear();
     boardStore.clearBoard();
-    documentStore.clear();
     tabStore.closeAll();
-    vaultStore.setPath('/vault');
   });
   afterEach(() => {
     cancelAllPendingWrites();
-    uninstallFiloStub();
+    noteStore.__resetForTests();
+    restoreFiloDefault();
     uiStore.closeConfirm();
-    __resetMarkdownFlushersForTests();
     __resetDirtyTrackingForTests();
     boardCacheStore.clear();
     boardStore.clearBoard();
-    documentStore.clear();
     tabStore.closeAll();
     vaultStore.setPath('');
   });
 
-  it('unloads documentStore entries for .md files under the deleted folder', async () => {
-    installFiloStub({
-      'vault:delete': async () => ({ success: true }),
-      'vault:read-tree': async () => ({ ok: true, tree: [] }),
-    });
-
-    documentStore.loadDocument({
-      filename: 'Notes/2026/foo.md',
-      title: 'foo',
-      body: 'stale body',
-      htmlContent: '<p>stale</p>',
-      richText: [],
-    });
-    // Sibling document outside the deleted folder — must be preserved.
-    documentStore.loadDocument({
-      filename: 'Other/bar.md',
-      title: 'bar',
-      body: 'kept',
-      htmlContent: '<p>kept</p>',
-      richText: [],
-    });
+  it('every open note under the deleted folder goes missing; others stay', async () => {
+    installFiloStub(ROUTES, FILES);
+    const foo = await open('Notes/2026/foo.md');
+    const kept = await open('Other/bar.md');
 
     const pending = vaultStore.delete('/vault/Notes/2026');
     await autoConfirm();
     const ok = await pending;
     expect(ok).toBe(true);
 
-    expect(documentStore.getDocument('Notes/2026/foo.md')).toBeUndefined();
-    expect(documentStore.getDocument('Other/bar.md')).toBeDefined();
+    expect(foo.status).toBe('missing');
+    expect(kept.status).toBe('ready');
+    expect(vault.read('Notes/2026/foo.md')).toBeUndefined();
   });
 
-  it('bails before the in-memory cascade when the vault swaps during the post-delete flush (Audit-10 M2)', async () => {
-    // The existing identity bail covers the `ensureAllLoaded` await; M2 adds a
-    // second bail after the `flushAllDirty` await (the suspension point right
-    // before the in-memory cascade + doc-unload). We simulate a vault swap that
-    // lands during THAT flush: the disk delete already succeeded against the old
-    // vault, so the op must report success and skip the cross-vault cascade —
-    // leaving the documentStore entry for the deleted path untouched (it belongs
-    // to the outgoing vault, which the swap is tearing down).
-    installFiloStub({
-      'vault:delete': async () => ({ success: true }),
-      'vault:read-tree': async () => ({ ok: true, tree: [] }),
-    });
+  it('an edit typed into the note lands before the delete and is never written after it', async () => {
+    installFiloStub(ROUTES, FILES);
+    const foo = await open('Notes/2026/foo.md');
+    noteStore.setBody('Notes/2026/foo.md', 'last words\n', 'view:Notes/2026/foo.md');
 
-    documentStore.loadDocument({
-      filename: 'Notes/2026/foo.md',
-      title: 'foo',
-      body: 'stale body',
-      htmlContent: '<p>stale</p>',
-      richText: [],
-    });
+    const pending = vaultStore.delete('/vault/Notes/2026/foo.md');
+    await autoConfirm();
+    expect(await pending).toBe(true);
 
-    // Bump the vault generation during the FIRST flushAllDirty that runs AFTER
-    // ensureAllLoaded (i.e. the line-871 flush, not the drain's flush before it),
-    // so the swap lands at exactly the window the new bail guards.
+    // The drain wrote the edit before the delete (the undo snapshot has it).
+    expect(vault.writes.some(([, rel, text]) => rel === 'Notes/2026/foo.md' && text.includes('last words'))).toBe(true);
+    expect(foo.hasUnsavedBody).toBe(false);
+    expect(noteStore.hasPendingWrites('Notes/2026/foo.md')).toBe(false);
+    await noteStore.flushAll();
+    expect(vault.read('Notes/2026/foo.md')).toBeUndefined();
+  });
+
+  it('bails before the in-memory cascade when the vault swaps during the post-delete flush', async () => {
+    // The disk delete already succeeded against the old vault, so the op
+    // reports success and skips the cross-vault cascade — leaving the note
+    // model for the deleted path untouched (it belongs to the outgoing
+    // vault, which the swap is tearing down).
+    installFiloStub(ROUTES, FILES);
+    const foo = await open('Notes/2026/foo.md');
+
+    // Bump the vault generation during the first flushAllDirty that runs
+    // AFTER ensureAllLoaded (not the drain's flush before it).
     let ensureLoadedDone = false;
     let swapped = false;
     const ensureSpy = vi
@@ -191,12 +201,9 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
       await autoConfirm();
       const ok = await pending;
 
-      // Disk delete succeeded → reported as success.
       expect(ok).toBe(true);
-      // The swap fired during the flush, so the bail skipped the in-memory
-      // cascade + doc-unload: the outgoing vault's docStore entry is untouched.
       expect(swapped).toBe(true);
-      expect(documentStore.getDocument('Notes/2026/foo.md')).toBeDefined();
+      expect(foo.status).toBe('ready');
     } finally {
       ensureSpy.mockRestore();
       flushSpy.mockRestore();
@@ -204,34 +211,15 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
     }
   });
 
-  it('bails before the in-memory cascade when the vault swaps during the tags-drop flush (Audit-12 L4)', async () => {
-    // L4 adds two more bails AFTER the M2 flushAllDirty bail: one after the
-    // `fileTagsStore.flushPendingSave()` await (before the B4 filePath-clear
-    // loop) and one after the `Promise.allSettled` await (before the doc-unload
-    // loop). We swap the vault during the tags-drop flush — the window the first
-    // new bail protects — and assert the B4 loop (cache mutation) AND the
-    // doc-unload loop were both skipped, leaving the outgoing vault's state
-    // untouched. Bite: remove both L4 bails → the board's filePath is cleared
-    // and foo.md is unloaded against the swapped-in vault.
-    installFiloStub({
-      'vault:delete': async () => ({ success: true }),
-      'vault:read-tree': async () => ({ ok: true, tree: [] }),
-      'board:save': async () => ({ success: true }),
-    });
-
-    documentStore.loadDocument({
-      filename: 'Notes/2026/foo.md',
-      title: 'foo',
-      body: 'stale body',
-      htmlContent: '<p>stale</p>',
-      richText: [],
-    });
-    // A Document Board OUTSIDE the deleted tree whose filePath points at the
-    // deleted .md → the B4 loop would clear its filePath (the guard-1 window).
+  it('bails before the in-memory cascade when the vault swaps during the tags-drop flush', async () => {
+    // Two bails follow the tags-drop flush: one before the Document Board
+    // filePath-clear loop and one before the notes are told. Swapping during
+    // the flush must skip both, leaving the outgoing vault's state untouched.
+    installFiloStub(ROUTES, FILES);
+    const foo = await open('Notes/2026/foo.md');
     const fixture = makeDocumentBoardFixture('Boards/Daily.board.json', 'Notes/2026/foo.md');
     boardCacheStore.hydrate({ daily: fixture }, { daily: 'Boards/Daily.board.json' });
 
-    // Swap during the single awaited fileTagsStore.flushPendingSave().
     let swapped = false;
     const flushSpy = vi
       .spyOn(fileTagsStore, 'flushPendingSave')
@@ -246,14 +234,12 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
       await autoConfirm();
       const ok = await pending;
 
-      expect(ok).toBe(true); // disk delete landed → success
+      expect(ok).toBe(true);
       expect(swapped).toBe(true);
-      // guard-1: the B4 filePath-clear loop was skipped — board untouched.
       expect((boardCacheStore.cache.daily?.board as { filePath?: string }).filePath).toBe(
         'Notes/2026/foo.md',
       );
-      // guards: the doc-unload loop was skipped — outgoing vault's doc untouched.
-      expect(documentStore.getDocument('Notes/2026/foo.md')).toBeDefined();
+      expect(foo.status).toBe('ready');
     } finally {
       flushSpy.mockRestore();
       __resetVaultIdentityForTests();
@@ -261,19 +247,8 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
   });
 
   it('closes Document Board tabs whose filePath points at a .md under the deleted folder, even when the .board.json lives outside the tree', async () => {
-    installFiloStub({
-      'vault:delete': async () => ({ success: true }),
-      'vault:read-tree': async () => ({ ok: true, tree: [] }),
-      'board:save': async () => null,
-    });
-
-    documentStore.loadDocument({
-      filename: 'Notes/2026/foo.md',
-      title: 'foo',
-      body: '',
-      htmlContent: '',
-      richText: [],
-    });
+    installFiloStub(ROUTES, FILES);
+    const foo = await open('Notes/2026/foo.md');
 
     const fixture = makeDocumentBoardFixture('Boards/Daily.board.json', 'Notes/2026/foo.md');
     boardCacheStore.hydrate({ daily: fixture }, { daily: 'Boards/Daily.board.json' });
@@ -287,45 +262,30 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
     expect(ok).toBe(true);
 
     expect(tabStore.tabs.some((t) => t.boardId === 'daily')).toBe(false);
-    expect(documentStore.getDocument('Notes/2026/foo.md')).toBeUndefined();
+    expect(foo.status).toBe('missing');
   });
 
-  it('exact-file delete unloads only the matching note and leaves siblings intact', async () => {
-    installFiloStub({
-      'vault:delete': async () => ({ success: true }),
-      'vault:read-tree': async () => ({ ok: true, tree: [] }),
-    });
-
-    documentStore.loadDocument({
-      filename: 'Notes/2026/foo.md',
-      title: 'foo',
-      body: '',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.loadDocument({
-      filename: 'Notes/2026/bar.md',
-      title: 'bar',
-      body: '',
-      htmlContent: '',
-      richText: [],
-    });
+  it('exact-file delete forgets only the matching note and leaves siblings intact', async () => {
+    installFiloStub(ROUTES, FILES);
+    const foo = await open('Notes/2026/foo.md');
+    const bar = await open('Notes/2026/bar.md');
 
     const pending = vaultStore.delete('/vault/Notes/2026/foo.md');
     await autoConfirm();
     const ok = await pending;
     expect(ok).toBe(true);
 
-    expect(documentStore.getDocument('Notes/2026/foo.md')).toBeUndefined();
-    expect(documentStore.getDocument('Notes/2026/bar.md')).toBeDefined();
+    expect(foo.status).toBe('missing');
+    expect(bar.status).toBe('ready');
+    expect(vault.read('Notes/2026/bar.md')).toBe(FILES['Notes/2026/bar.md']);
   });
 
-  it('Phase C / C.1 — cancel button returns false without invoking vault:delete', async () => {
+  it('the cancel button returns false without invoking vault:delete', async () => {
     let deleteCalls = 0;
     installFiloStub({
+      ...ROUTES,
       'vault:delete': async () => { deleteCalls++; return { success: true }; },
-      'vault:read-tree': async () => ({ ok: true, tree: [] }),
-    });
+    }, FILES);
     const pending = vaultStore.delete('/vault/Notes/2026/foo.md');
     for (let i = 0; i < 50; i++) {
       if (uiStore.confirmDialog) {
@@ -339,21 +299,19 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
     const ok = await pending;
     expect(ok).toBe(false);
     expect(deleteCalls).toBe(0);
+    expect(vault.read('Notes/2026/foo.md')).toBe(FILES['Notes/2026/foo.md']);
   });
 
   /**
-   * Polish phase 4.1 (2026-05-25) — when a folder delete removes the
-   * .md that a Document Board's `filePath` points at, the cached board
-   * entry must have its filePath cleared and the cleared value must
-   * be flushed to disk BEFORE the cleanup wipes the cache. Otherwise
-   * the .board.json on disk retains the dangling path; reopening
-   * the board crashes the editor on the missing pointer.
+   * When a folder delete removes the .md a Document Board's `filePath`
+   * points at, the cached board entry must have its filePath cleared and
+   * the cleared value flushed to disk BEFORE the cleanup wipes the cache.
+   * Otherwise the .board.json on disk retains the dangling path.
    */
   it('clears the Document Board filePath and persists the cleared value to disk', async () => {
     const boardSavePayloads: Array<{ relPath: string; filePath: string }> = [];
     installFiloStub({
-      'vault:delete': async () => ({ success: true }),
-      'vault:read-tree': async () => ({ ok: true, tree: [] }),
+      ...ROUTES,
       'board:save': async (_vaultRoot: unknown, relPath: unknown, jsonStr: unknown) => {
         try {
           const parsed = JSON.parse(jsonStr as string) as { board?: { filePath?: string } };
@@ -366,18 +324,8 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
         }
         return { success: true };
       },
-    });
+    }, FILES);
 
-    documentStore.loadDocument({
-      filename: 'Notes/2026/foo.md',
-      title: 'foo',
-      body: '',
-      htmlContent: '',
-      richText: [],
-    });
-
-    // Document Board lives OUTSIDE the deleted folder but its filePath
-    // points to a note INSIDE.
     const fixture = makeDocumentBoardFixture('Boards/Daily.board.json', 'Notes/2026/foo.md');
     boardCacheStore.hydrate({ daily: fixture }, { daily: 'Boards/Daily.board.json' });
 
@@ -386,15 +334,10 @@ describe('vaultStore.delete (folder) — Sprint B / B4 documentStore cleanup', (
     const ok = await pending;
     expect(ok).toBe(true);
 
-    // The Document Board's `.board.json` on disk was rewritten with
-    // filePath cleared. If the cleanup had wiped the cache before the
-    // flush ran, the write would have been a no-op and this assertion
-    // would fail.
     const dailyWrites = boardSavePayloads.filter(
       (w) => w.relPath === 'Boards/Daily.board.json',
     );
     expect(dailyWrites.length).toBeGreaterThanOrEqual(1);
-    // At least one of the writes carried the cleared filePath.
     expect(dailyWrites.some((w) => w.filePath === '')).toBe(true);
   });
 });

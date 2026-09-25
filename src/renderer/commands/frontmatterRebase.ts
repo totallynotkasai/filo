@@ -1,11 +1,7 @@
-import { documentStore } from '../stores/document.svelte';
 import { uiStore } from '../stores/ui.svelte';
 import { boardCacheStore } from '../stores/boardCache.svelte';
-import { vaultStore } from '../stores/vault.svelte';
-import { vaultIndexStore } from '../stores/vaultIndex.svelte';
-import { scheduleFrontmatterWrite } from '../lib/boards/frontmatterWriteScheduler';
+import { noteStore } from '../stores/notes.svelte';
 import { patchToFrontmatterDelta } from '../lib/vault/frontmatterDelta';
-import { readMarkdownForHydrate } from '../lib/vault/markdownFileWriter';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 
 /**
@@ -90,18 +86,17 @@ export function fmValueEqual(a: unknown, b: unknown): boolean {
 }
 
 /**
- * Recompute a patch's inverse from the CURRENT live frontmatter cache. The
- * field commands call this after seeding the cache from a fresh disk read in
- * `execute()`, so undo restores the TRUE prior value of each patched key (the
- * construction-time inverse came from a possibly-stale index). An absent key
- * maps to '' so it restores to absent under mergeFrontmatter's cleaning. The
- * caller wraps the result in `this.snapshot(...)` to avoid aliasing the cache.
+ * The inverse of `patch` against `before` (the note's frontmatter just before
+ * the patch applies): each patched key's prior value, with an absent key as
+ * '' so undo removes it. The field commands compute it on first execute from
+ * the note as it stands, so undo restores the true prior value even when the
+ * caller's construction-time inverse came from a stale index. The caller wraps
+ * the result in `this.snapshot(...)`.
  */
-export function captureInverseFromCache(
-  notePath: string,
+export function inverseOfPatch(
+  before: Readonly<Record<string, unknown>>,
   patch: Record<string, unknown>,
 ): Record<string, unknown> {
-  const before = (documentStore.getFrontmatter(notePath) ?? {}) as Record<string, unknown>;
   const inverse: Record<string, unknown> = {};
   for (const key of Object.keys(patch)) {
     inverse[key] = key in before ? before[key] : '';
@@ -110,7 +105,6 @@ export function captureInverseFromCache(
 }
 
 export interface RebaseFrontmatterArgs {
-  notePath: string;
   relPath: string;
   /**
    * Callers pass the command's `this.targetBoardId` verbatim (the
@@ -142,67 +136,39 @@ export interface RebaseFrontmatterArgs {
 }
 
 /**
- * Merge `applying` into the doc's frontmatter, but skip (and prompt about) any
- * field an external edit changed out from under the command. Also schedules the
- * debounced write and marks the board dirty for whatever it actually applied.
+ * Apply `applying` to the note's frontmatter, but skip (and prompt about) any
+ * field an external edit changed out from under the command. The change goes
+ * to the note writer as a delta and the board is marked dirty for whatever was
+ * actually applied.
  *
- * When no FM cache is seeded for `notePath` (never-opened doc, or the seed was
- * dropped after an external FM edit), the compare base is a FRESH disk read
- * (index fallback), never a blind commit. Async since that read; callers await.
+ * The compare base is the note as it stands (its model, or a fresh read of the
+ * file), never a cache that could lag the disk. Async since that read.
  */
 export async function applyFrontmatterPatchRebased(args: RebaseFrontmatterArgs): Promise<void> {
-  const { notePath, relPath, targetBoardId, applying, expectedCurrent, label, atomic } = args;
+  const { relPath, targetBoardId, applying, expectedCurrent, label, atomic } = args;
 
   // Captured ONCE and consulted by the "Apply anyway" toast handlers: a click
-  // after a vault swap must not schedule this patch onto the NEW vault's
-  // same-named file (`scheduleFrontmatterWrite` resolves its vaultRoot live).
-  // Also guards the disk read below.
+  // after a vault swap must not queue this patch onto the NEW vault's
+  // same-named file (the writer resolves its vault root live). Also guards
+  // the read below.
   const identity = captureVaultIdentity();
 
   const commit = (patch: Record<string, unknown>): void => {
-    // mergeFrontmatter keeps the DISPLAY cache live (cards / rows render from
-    // it); the write SOURCE is the explicit delta, applied to fresh disk in the
-    // gateway so an untouched external key can't be dropped.
-    documentStore.mergeFrontmatter(notePath, patch);
-    scheduleFrontmatterWrite(relPath, notePath, patchToFrontmatterDelta(patch));
+    // A delta, applied by the writer to a fresh read, so an untouched external
+    // key can't be dropped.
+    noteStore.patchFrontmatter(relPath, patchToFrontmatterDelta(patch));
     // allow-non-target-markdirty: shared helper, callers pass this.targetBoardId per the CI gate
     boardCacheStore.markDirty(targetBoardId);
   };
 
-  let current = documentStore.getFrontmatter(notePath);
-  if (current === undefined) {
-    // No cache seeded: a blind commit would clobber an external same-field
-    // edit. Re-read disk fresh as the compare base; the vault index is the
-    // degraded fallback when the read fails.
-    const vaultRoot = vaultStore.path;
-    if (!vaultRoot) return;
-    let base: Record<string, unknown> | null = null;
-    let rawFm: string | undefined;
-    try {
-      const hydrate = await readMarkdownForHydrate(vaultRoot, relPath);
-      base = hydrate.frontmatter;
-      rawFm = hydrate.rawFrontmatter;
-    } catch {
-      // ENOENT / transient — fall through to the index snapshot below.
-    }
-    // A swap landed during the read: don't seed the new vault's cache or
-    // schedule a write onto its same-named file.
-    if (!isStillSameVault(identity)) return;
-    if (base === null) {
-      const indexed = vaultIndexStore.getMetadata(relPath)?.frontmatter;
-      if (indexed) base = indexed as Record<string, unknown>;
-    }
-    if (base === null) {
-      // Nothing visible anywhere (file unreadable AND never indexed) — there is
-      // no baseline to detect a conflict against, and nothing visible to lose,
-      // so blind-merge.
-      commit(applying);
-      return;
-    }
-    // Seed the display cache from the base so the merge in `commit` lands on a
-    // complete object (mirrors the execute legs' seedDocumentFrontmatterFromDisk).
-    documentStore.setFrontmatter(notePath, base, rawFm);
-    current = base;
+  const current = await noteStore.currentFrontmatter(relPath);
+  if (!isStillSameVault(identity)) return;
+  if (current === null) {
+    // Nothing readable (file gone or unreadable): no baseline to detect a
+    // conflict against, and nothing visible to lose. The writer reports a
+    // write it can't land.
+    commit(applying);
+    return;
   }
 
   const conflicts = Object.keys(applying).filter(

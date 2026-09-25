@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { fileStemFromTitle, fileNameProblem } from '@shared/fileNames';
 import { noteStem, noteTitle, titleFromFrontmatter } from '@renderer/stores/noteMeta';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { parseMarkdown } from '@renderer/lib/vault/vaultIndex';
 import { visibleTitleHtml } from '@renderer/lib/editor/titleCommit';
 
@@ -50,7 +50,7 @@ describe('fileNameProblem', () => {
 describe('noteTitle', () => {
   beforeEach(() => {
     vaultIndexStore.clear();
-    documentStore.clear();
+    noteStore.__resetForTests();
   });
 
   it('is the frontmatter title', () => {
@@ -62,6 +62,12 @@ describe('noteTitle', () => {
     vaultIndexStore.restoreMetadata('Notes/b.md', parseMarkdown('Notes/b.md', '# Heading\nText\n'));
     expect(noteTitle('Notes/b.md')).toBe('b');
     expect(noteTitle('Unindexed note.markdown')).toBe('Unindexed note');
+  });
+
+  it('shows a queued title change before it is written', () => {
+    vaultIndexStore.restoreMetadata('Notes/a.md', parseMarkdown('Notes/a.md', '---\ntitle: Alpha\n---\n'));
+    noteStore.patchFrontmatter('Notes/a.md', { set: { title: 'Beta' }, unset: [] });
+    expect(noteTitle('notes/A.md')).toBe('Beta');
   });
 
   it('ignores an empty or non-string title', () => {

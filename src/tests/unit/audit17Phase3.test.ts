@@ -8,11 +8,7 @@ import {
   __resetDrainGuardForTests,
 } from '@renderer/lib/vault/vaultOperations';
 import { scheduleMiscWrite } from '@renderer/lib/boards/miscWriteScheduler';
-import {
-  scheduleMarkdownWrite,
-  markHydrated,
-  __resetMarkdownFileWriterForTests,
-} from '@renderer/lib/vault/markdownFileWriter';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import {
   checkRecovery,
@@ -210,7 +206,7 @@ describe('Audit-17 3.4 — concurrent withDrainedWrites siblings queue behind th
   beforeEach(() => {
     __resetDrainGuardForTests();
     __resetDirtyTrackingForTests();
-    __resetMarkdownFileWriterForTests();
+    noteStore.__resetForTests();
     restoreFiloDefault();
     dismissAllToasts();
   });
@@ -218,7 +214,7 @@ describe('Audit-17 3.4 — concurrent withDrainedWrites siblings queue behind th
   afterEach(() => {
     __resetDrainGuardForTests();
     __resetDirtyTrackingForTests();
-    __resetMarkdownFileWriterForTests();
+    noteStore.__resetForTests();
     restoreFiloDefault();
     dismissAllToasts();
     vi.useRealTimers();
@@ -407,7 +403,7 @@ describe('Audit-17 3.6 — external rename drain failure writes the rename-casca
   beforeEach(() => {
     __resetDrainGuardForTests();
     __resetDirtyTrackingForTests();
-    __resetMarkdownFileWriterForTests();
+    noteStore.__resetForTests();
     __resetRenameCascadeSentinelForTests();
     dismissAllToasts();
   });
@@ -415,15 +411,18 @@ describe('Audit-17 3.6 — external rename drain failure writes the rename-casca
   afterEach(() => {
     __resetDrainGuardForTests();
     __resetDirtyTrackingForTests();
-    __resetMarkdownFileWriterForTests();
+    noteStore.__resetForTests();
     __resetRenameCascadeSentinelForTests();
     restoreFiloDefault();
     dismissAllToasts();
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it('a failed pre-cascade drain still records old→new for next-open recovery', async () => {
-    vi.useFakeTimers();
+    vaultStore.setPath('/vault');
+    // The failing note write reports through reportError (console breadcrumb).
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const sentinelWrites: string[] = [];
     installFiloMock((channel: string, ...args: unknown[]) => {
       // The armed editor write fails — that's the drain failure under test.
@@ -441,18 +440,9 @@ describe('Audit-17 3.6 — external rename drain failure writes the rename-casca
       return { success: true };
     });
 
-    // Arm a dirty editor write against the OLD path so the cascade's drain
-    // has something to (fail to) flush.
-    markHydrated('Old.md', false);
-    scheduleMarkdownWrite({
-      vaultRoot: '/vault',
-      relPath: 'Old.md',
-      frontmatter: {},
-      body: 'pending edit',
-      callerId: 'audit17-3.6',
-    });
-    vi.advanceTimersByTime(400);
-    vi.useRealTimers();
+    // Queue a note write against the OLD path so the cascade's drain has
+    // something to (fail to) flush.
+    noteStore.patchFrontmatter('Old.md', { set: { status: 'pending edit' }, unset: [] });
 
     const slice = makeExternalChangesSlice(ctxFor());
     await slice.handleExternalRename('Old.md', 'New.md');

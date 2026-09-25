@@ -146,8 +146,8 @@ describe('Audit-12 H3 — vault-wide tag rename/remove swap guard', () => {
 
     await fileTagsStore.renameTagEverywhere('urgent', 'important');
 
-    // (a) No write targeted the NEW vault — they're anchored to the captured root.
-    expect(writeRoots.length).toBeGreaterThan(0);
+    // (a) No write targets the NEW vault: the planned notes are not written
+    // after the swap, and the recovery sentinel stays on the captured root.
     expect(writeRoots).not.toContain('/vault-B');
     expect(writeRoots.every((r) => r === '/vault')).toBe(true);
 

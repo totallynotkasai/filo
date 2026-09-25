@@ -1,131 +1,70 @@
 /**
- * Sprint 35.4 regression — `frontmatterWriteScheduler`'s `lastFlushedVersion`
- * map is module-state. Without a vault-swap reset it accumulates entries
- * across vaults; the reset clears it via the scheduler's registered callback
- * before the next vault opens.
- *
- * The map is keyed by the note's case-folded vault path, so two vaults that
- * each hold a `Notes.md` share a key: without the reset, vault A's recorded
- * version would suppress vault B's first write to the same path.
+ * The note store and writer are keyed by the note's case-folded vault path, so
+ * two vaults that each hold a `Notes.md` share a key. A vault swap resets them:
+ * nothing queued in the outgoing vault may land on the new vault's same-named
+ * file, and nothing remembered about it may suppress or distort the new
+ * vault's first write to that path.
  */
-
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import {
-  scheduleFrontmatterWrite,
-  flushAllPendingFrontmatterWrites,
-  getLastFlushedFrontmatterVersion,
-  resetFrontmatterScheduler,
-} from '@renderer/lib/boards/frontmatterWriteScheduler';
-import {
-  resetWriteTracking,
-  __resetDirtyTrackingForTests,
-} from '@renderer/lib/boards/writeStateTracking';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
+import { fireVaultSwap } from '@renderer/core/vaultLifecycle';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
-import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { installMemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
-describe('frontmatterWriteScheduler — vault-swap reset (Sprint 35.4)', () => {
+const NOTE_A = '---\nvault: A\ntitle: Notes\n---\nvault A body\n';
+const NOTE_B = '---\nvault: B\ntitle: Notes\n---\nvault B body\n';
+
+async function swap(): Promise<void> {
+  await fireVaultSwap({ phase: 'pre-swap', previousVault: '/vault-A', nextVault: '/vault-B', saveOutgoing: false });
+  vaultStore.setPath('/vault-B');
+}
+
+describe('note store — vault-swap reset', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
-    resetFrontmatterScheduler();
-    restoreFiloDefault();
+    noteStore.__resetForTests();
+    vaultStore.setPath('/vault-A');
   });
   afterEach(() => {
+    noteStore.__resetForTests();
     __resetDirtyTrackingForTests();
-    resetFrontmatterScheduler();
+    vaultStore.setPath('');
     restoreFiloDefault();
   });
 
-  it('clears lastFlushedVersion on resetWriteTracking', async () => {
-    vaultStore.setPath('/vault-A');
-    installFiloMock({
-      'vault:file-exists': () => true,
-      // 3.3 (Audit-18) — writeFrontmatter now hydrates on demand and fails loud
-      // on a read error, so the docState write path needs a working read mock.
-      'vault:read-file-text': () => ({ success: true, content: 'x', mtimeMs: 1, size: 1 }),
-      'vault:write-existing-file-text': () => ({ success: true }),
-    });
+  it('after a vault swap, a write to a same-named file in the new vault lands', async () => {
+    const vaultA = installMemoryVault({ 'Notes.md': NOTE_A }, '/vault-A');
+    const a = noteStore.acquire('Notes.md', 'view');
+    await a.loaded;
+    noteStore.setBody('Notes.md', 'vault A edit', 'view');
+    await noteStore.flushAll();
+    expect(vaultA.read('Notes.md')).toBe('---\nvault: A\ntitle: Notes\n---\nvault A edit\n');
 
-    // Seed a document and flush a frontmatter write so lastFlushedVersion
-    // gets populated for 'Notes.md'.
-    documentStore.loadDocument({
-      filename: 'Notes.md',
-      title: 'Notes',
-      body: 'hello',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter('Notes.md', { vault: 'A', title: 'Notes' });
+    await swap();
+    const vaultB = installMemoryVault({ 'Notes.md': NOTE_B }, '/vault-B');
 
-    scheduleFrontmatterWrite('Notes.md', 'Notes.md');
-    const res1 = await flushAllPendingFrontmatterWrites();
-    expect(res1.failed).toEqual([]);
-    expect(getLastFlushedFrontmatterVersion('Notes.md')).toBeGreaterThan(0);
+    const b = noteStore.acquire('Notes.md', 'view');
+    expect(b).not.toBe(a);
+    await b.loaded;
+    expect(b.body).toBe('vault B body\n');
+    noteStore.setBody('Notes.md', 'vault B edit', 'view');
+    expect((await noteStore.flushAll()).failed).toEqual([]);
 
-    // Vault swap — resetWriteTracking should fire the registered callback
-    // that clears lastFlushedVersion.
-    resetWriteTracking('/vault-A');
-
-    expect(getLastFlushedFrontmatterVersion('Notes.md')).toBe(0);
+    expect(vaultB.read('Notes.md')).toBe('---\nvault: B\ntitle: Notes\n---\nvault B edit\n');
   });
 
-  it('after vault swap, a write to a same-named file in the new vault is not suppressed', async () => {
-    // Vault A: seed + flush so 'Notes.md' has a stale version recorded.
-    vaultStore.setPath('/vault-A');
-    let writeCount = 0;
-    installFiloMock({
-      'vault:file-exists': () => true,
-      // 3.3 (Audit-18) — writeFrontmatter now hydrates on demand and fails loud
-      // on a read error, so the docState write path needs a working read mock.
-      'vault:read-file-text': () => ({ success: true, content: 'x', mtimeMs: 1, size: 1 }),
-      'vault:write-existing-file-text': () => {
-        writeCount++;
-        return { success: true };
-      },
-    });
+  it('a change still queued in the outgoing vault never lands on the new vault\'s file', async () => {
+    installMemoryVault({ 'Notes.md': NOTE_A }, '/vault-A');
+    noteStore.patchFrontmatter('Notes.md', { set: { status: 'from-A' }, unset: [] });
 
-    documentStore.loadDocument({
-      filename: 'Notes.md',
-      title: 'Notes',
-      body: 'vault A body',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter('Notes.md', { vault: 'A', title: 'Notes' });
-    // Bump the FM mutation version a few times so lastFlushedVersion lands
-    // at something > 0.
-    documentStore.setFrontmatter('Notes.md', { vault: 'A', title: 'Notes', tag: 'a' });
-    documentStore.setFrontmatter('Notes.md', { vault: 'A', title: 'Notes', tag: 'b' });
+    await swap();
+    const vaultB = installMemoryVault({ 'Notes.md': NOTE_B }, '/vault-B');
 
-    scheduleFrontmatterWrite('Notes.md', 'Notes.md');
-    await flushAllPendingFrontmatterWrites();
-    expect(writeCount).toBe(1);
-    const versionAfterA = getLastFlushedFrontmatterVersion('Notes.md');
-    expect(versionAfterA).toBeGreaterThan(0);
-
-    // Vault swap. The document store's pre-swap reset restarts the note's
-    // mutation version, as it does in the app.
-    resetWriteTracking('/vault-A');
-    documentStore.clear();
-    vaultStore.setPath('/vault-B');
-
-    // Vault B: a fresh document also named 'Notes.md'. Its mutation version
-    // starts at 0; without the reset, the version-token guard
-    // (`scheduledVersion <= last`) would suppress this write.
-    documentStore.loadDocument({
-      filename: 'Notes.md',
-      title: 'Notes',
-      body: 'vault B body',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter('Notes.md', { vault: 'B', title: 'Notes' });
-
-    scheduleFrontmatterWrite('Notes.md', 'Notes.md');
-    await flushAllPendingFrontmatterWrites();
-
-    // Without the vault-swap reset this would still be 1 (suppressed). After
-    // the fix, the vault-B write actually lands on disk.
-    expect(writeCount).toBe(2);
+    expect(noteStore.hasPendingWrites('Notes.md')).toBe(false);
+    expect((await noteStore.flushAll()).failed).toEqual([]);
+    expect(vaultB.read('Notes.md')).toBe(NOTE_B);
+    expect(vaultB.writes.filter(([, rel]) => rel.endsWith('.md'))).toHaveLength(0);
   });
 });

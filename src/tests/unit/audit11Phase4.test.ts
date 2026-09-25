@@ -3,7 +3,7 @@
  * commands (`UpdateCardFieldCommand` / `UpdateTaskFieldCommand`).
  *
  * The existing `frontmatterRebaseConflict.test.ts` asserts only the DISPLAY
- * cache (`documentStore.getFrontmatter`) and mocks reads as empty — so it never
+ * cache and mocks reads as empty — so it never
  * proved that the BYTES on disk survive an execute → undo cycle. These tests use
  * a MUTABLE-disk mock (reads return the current file, writes mutate it) and
  * assert the on-disk bytes directly, covering the two cases the cache-only tests
@@ -12,16 +12,16 @@
  *   - a previously-absent key added by the edit is removed again on undo, while
  *     the untouched present-but-empty key is preserved throughout.
  *
- * Both ride the Phase-4 delta-onto-fresh-disk write source: the field command
- * schedules `patchToFrontmatterDelta(patch)` and the gateway applies ONLY the
- * delta keys to a fresh in-chain disk read, so the source-preserving CST engine
+ * Both ride the delta-onto-fresh-disk write source: the field command
+ * queues `patchToFrontmatterDelta(patch)` and the note writer applies ONLY the
+ * delta keys to a fresh disk read, so the source-preserving CST engine
  * emits every untouched key from disk verbatim.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
@@ -29,11 +29,6 @@ import {
   UpdateCardFieldCommand,
   UpdateTaskFieldCommand,
 } from '@renderer/commands/index';
-import {
-  flushAllPendingFrontmatterWrites,
-  resetFrontmatterScheduler,
-} from '@renderer/lib/boards/frontmatterWriteScheduler';
-import { cancelAllMarkdownWrites } from '@renderer/lib/vault/markdownFileWriter';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
@@ -98,8 +93,7 @@ function makeKanbanFixture(): V7BoardFileData {
 describe('Audit-11 FILO-UR-3 — field-command disk-bytes undo round-trip', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    resetFrontmatterScheduler();
+    noteStore.__resetForTests();
     vaultStore.setPath('/vault');
     boardCacheStore.clear();
     boardStore.clearBoard();
@@ -113,8 +107,7 @@ describe('Audit-11 FILO-UR-3 — field-command disk-bytes undo round-trip', () =
     for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
     restoreFiloDefault();
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    resetFrontmatterScheduler();
+    noteStore.__resetForTests();
     vaultStore.setPath('');
     boardCacheStore.clear();
     boardStore.clearBoard();
@@ -127,19 +120,18 @@ describe('Audit-11 FILO-UR-3 — field-command disk-bytes undo round-trip', () =
     const cmd = new UpdateCardFieldCommand(
       'kb',
       'card.md',
-      'doc-card',
       { priority: 'high' },
       { priority: 'low' },
     );
 
     await cmd.execute();
-    await flushAllPendingFrontmatterWrites();
+    await noteStore.flushAll();
     // The empty key the user never touched is still on disk; the edit applied.
     expect(disk.get()).toContain('aliases:');
     expect(disk.get()).toMatch(/priority: high/);
 
     await cmd.undo();
-    await flushAllPendingFrontmatterWrites();
+    await noteStore.flushAll();
     // Undo restored priority WITHOUT destroying the untouched empty key.
     expect(disk.get()).toContain('aliases:');
     expect(disk.get()).toMatch(/priority: low/);
@@ -153,18 +145,17 @@ describe('Audit-11 FILO-UR-3 — field-command disk-bytes undo round-trip', () =
     const cmd = new UpdateTaskFieldCommand(
       'tl',
       'task.md',
-      'doc-task',
       { priority: 'high' },
       { priority: 'low' },
     );
 
     await cmd.execute();
-    await flushAllPendingFrontmatterWrites();
+    await noteStore.flushAll();
     expect(disk.get()).toContain('aliases:');
     expect(disk.get()).toMatch(/priority: high/);
 
     await cmd.undo();
-    await flushAllPendingFrontmatterWrites();
+    await noteStore.flushAll();
     expect(disk.get()).toContain('aliases:');
     expect(disk.get()).toMatch(/priority: low/);
   });
@@ -176,20 +167,19 @@ describe('Audit-11 FILO-UR-3 — field-command disk-bytes undo round-trip', () =
     const cmd = new UpdateCardFieldCommand(
       'kb',
       'card.md',
-      'doc-card2',
       { dueDate: '2026-06-06' },
       { dueDate: undefined },
     );
 
     await cmd.execute();
-    await flushAllPendingFrontmatterWrites();
+    await noteStore.flushAll();
     expect(disk.get()).toMatch(/dueDate: ['"]?2026-06-06/);
     // The untouched present-but-empty key is preserved alongside the addition.
     expect(disk.get()).toContain('aliases:');
     expect(disk.get()).toMatch(/priority: low/);
 
     await cmd.undo();
-    await flushAllPendingFrontmatterWrites();
+    await noteStore.flushAll();
     // The added key is gone again; the empty key + untouched priority survive.
     expect(disk.get()).not.toMatch(/dueDate:/);
     expect(disk.get()).toContain('aliases:');

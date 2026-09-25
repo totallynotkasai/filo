@@ -2,14 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createScheduler } from '@renderer/lib/boards/writeScheduler';
 import { loadTagsFile, emptyTagsFile } from '@renderer/lib/vault/tagsStorage';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
-import {
-  isHydrated,
-  readMarkdownForHydrate,
-  writeMarkdownFile,
-  cancelAllMarkdownWrites,
-  __clearFileStateForTests,
-} from '@renderer/lib/vault/markdownFileWriter';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
+import { vaultStore } from '@renderer/stores/vault.svelte';
 import { historyStore } from '@renderer/stores/history.svelte';
 import { KanbanMultiSelect } from '@renderer/lib/kanban/kanbanMultiSelect.svelte';
 import { writeConfigs } from '@renderer/lib/boards/configWriteScheduler';
@@ -19,6 +13,7 @@ import { noteBaseline, __resetBaselinesForTests } from '@renderer/lib/vault/file
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import type { Tile } from '@renderer/schema/index';
 import type { KanbanBoard as KanbanBoardType } from '@renderer/schema/index';
 import type { SelectionScope } from '@renderer/stores/selection.svelte';
@@ -163,95 +158,66 @@ describe('Audit-18 H2 — corrupt tags.json loads read-only', () => {
   });
 });
 
-// ── H3 — TextTile hydrate-failure gateway contract (twin of M1) ──────────────
+// ── H3 — a note whose read failed is never written from an editor ────────────
 //
-// The component guard lives in TextTile.svelte (pinned by ci:no-silent-write-
-// abort's TEXT_TILE_FILE arm). jsdom can't mount TipTap, so these lock the
-// gateway facts: a NON-ENOENT read failure rejects (the trigger that flips
-// hydrateReadFailed), an ENOENT failure rejects with a distinguishable code (the
-// branch that KEEPS the embedded fallback writable), and an empty-body write
-// truncates real content (why the guard is load-bearing).
-describe('Audit-18 H3 — TextTile failed-hydrate write guard (gateway contract)', () => {
-  let diskFiles: Map<string, string>;
+// The component side (TextTile / DocumentEditor frozen with a Retry banner) is
+// pinned by the component suite. These lock the note-store facts it rests on: a
+// NON-ENOENT read failure leaves the note `unreadable` and refuses editor
+// bodies, so an empty editor can't overwrite the unread file; a missing file
+// is `missing`, and a body typed there never recreates it.
+describe('Audit-18 H3 — a failed note read blocks editor writes', () => {
+  let vault: MemoryVault;
 
   beforeEach(() => {
     __resetDirtyTrackingForTests();
-    __clearFileStateForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
-    diskFiles = new Map();
-    installFiloMock((channel: string, ...args: unknown[]) => {
-      if (channel === 'vault:read-file-text') {
-        const rel = args[1] as string;
-        const content = diskFiles.get(rel);
-        if (content === undefined) {
-          // The test seeds a specific failure code per path below via a marker.
-          const code = failureCodeByPath.get(rel) ?? 'ENOENT';
-          return { success: false, code };
-        }
-        return { success: true, content, mtimeMs: 100, size: content.length };
-      }
-      if (channel === 'vault:write-existing-file-text' || channel === 'vault:write-file-text') {
-        const rel = args[1] as string;
-        diskFiles.set(rel, args[2] as string);
-        return { success: true };
-      }
-      if (channel === 'vault:stat') return { ok: true, mtimeMs: 100, size: 100 };
-      return { ok: true, success: true };
-    });
+    vaultStore.setPath('/vault');
+    noteStore.__resetForTests();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
-    cancelAllMarkdownWrites();
-    __clearFileStateForTests();
-    failureCodeByPath.clear();
+    noteStore.__resetForTests();
     restoreFiloDefault();
+    vi.restoreAllMocks();
   });
 
-  const failureCodeByPath = new Map<string, string>();
-
-  it('a NON-ENOENT read failure rejects with its code (the hydrateReadFailed trigger)', async () => {
+  it('a NON-ENOENT read failure leaves the note unreadable and refuses editor bodies', async () => {
     const rel = 'Notes/TooBig.md';
-    failureCodeByPath.set(rel, 'FILE_TOO_LARGE');
-    expect(isHydrated(rel)).toBe(false);
-    let caught: unknown;
-    try { await readMarkdownForHydrate('/vault', rel); } catch (e) { caught = e; }
-    expect(caught).toBeInstanceOf(IpcEnvelopeError);
-    expect((caught as IpcEnvelopeError).code).toBe('FILE_TOO_LARGE');
-    // The failed read mutated nothing — the unread bytes are untouched.
-    expect(diskFiles.has(rel)).toBe(false);
+    vault = installMemoryVault({ [rel]: '---\ntitle: Big\n---\nreal content\n' });
+    const invoke = window.filo.invoke;
+    window.filo.invoke = (async (channel: string, ...args: unknown[]) => {
+      if (channel === 'vault:read-file-text' && args[1] === rel) {
+        return { success: false, code: 'FILE_TOO_LARGE', error: 'FILE_TOO_LARGE' };
+      }
+      return (invoke as (c: string, ...a: unknown[]) => Promise<unknown>)(channel, ...args);
+    }) as typeof window.filo.invoke;
+
+    const m = noteStore.acquire(rel, 'text-tile:big');
+    await m.loaded;
+    expect(m.status).toBe('unreadable');
+    expect(m.readError).toBeInstanceOf(IpcEnvelopeError);
+    expect((m.readError as IpcEnvelopeError).code).toBe('FILE_TOO_LARGE');
+
+    noteStore.setBody(rel, '', 'text-tile:big');
+    expect(m.hasUnsavedBody).toBe(false);
+    await noteStore.flushAll();
+    // The unread bytes are untouched.
+    expect(vault.writes.filter(([, r]) => r === rel)).toEqual([]);
+    expect(vault.read(rel)).toBe('---\ntitle: Big\n---\nreal content\n');
+    noteStore.release(rel, 'text-tile:big');
   });
 
-  it('an ENOENT read failure rejects with ENOENT (the keep-embedded-fallback branch)', async () => {
+  it('an ENOENT read leaves the note missing, and a body typed there never recreates it', async () => {
     const rel = 'Notes/Gone.md';
-    failureCodeByPath.set(rel, 'ENOENT');
-    let caught: unknown;
-    try { await readMarkdownForHydrate('/vault', rel); } catch (e) { caught = e; }
-    expect(caught).toBeInstanceOf(IpcEnvelopeError);
-    expect((caught as IpcEnvelopeError).code).toBe('ENOENT');
-  });
+    vault = installMemoryVault({});
+    const m = noteStore.acquire(rel, 'text-tile:gone');
+    await m.loaded;
+    expect(m.status).toBe('missing');
 
-  it('an empty-body write over real content TRUNCATES it (why the guard is load-bearing)', async () => {
-    const rel = 'Notes/Real.md';
-    const real = '---\ntitle: Real\n---\n\n# Heading\n\nMust survive.\n';
-    diskFiles.set(rel, real);
-
-    // Control: a normal hydrate reads the real bytes (and marks the file
-    // hydrated so the gateway permits the subsequent write).
-    const hydrated = await readMarkdownForHydrate('/vault', rel);
-    expect(hydrated.body).toContain('Heading');
-
-    // Un-guarded shape: the tile wrote an empty body. The gateway faithfully
-    // persists it, destroying the real content — exactly what H3's guard prevents
-    // by refusing the write while hydrateReadFailed && !lastLoadedBody.
-    await writeMarkdownFile({
-      vaultRoot: '/vault',
-      relPath: rel,
-      frontmatter: {},
-      body: '',
-      callerId: `text-tile:${rel}`,
-    });
-    expect(diskFiles.get(rel) ?? '').not.toContain('Heading');
+    noteStore.setBody(rel, 'typed into a missing note', 'text-tile:gone');
+    await noteStore.flushAll();
+    expect(vault.read(rel)).toBeUndefined();
+    noteStore.release(rel, 'text-tile:gone');
   });
 });
 
@@ -340,14 +306,14 @@ describe('Audit-18 M7 — bulk Add tag uses the injected popup resolver', () => 
   }
 
   beforeEach(() => {
-    documentStore.clear();
+    noteStore.__resetForTests();
     historyStore.clear();
     historyStore.setActiveBoard('kb');
   });
   afterEach(() => {
     historyStore.setActiveBoard(null);
     historyStore.clear();
-    documentStore.clear();
+    noteStore.__resetForTests();
   });
 
   it('builds a BatchCommand from the popup value (no window.prompt)', async () => {

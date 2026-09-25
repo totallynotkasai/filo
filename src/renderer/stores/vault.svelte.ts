@@ -71,8 +71,8 @@ import {
 // registration itself is wrapped in `queueMicrotask` to defer past
 // the circular dependency between this module and vaultExternalReconcilers.
 import './vaultExternalReconcilers';
-import { flushAllMarkdownWriters } from '../lib/vault/markdownFileWriter';
-import { flushAllPendingFrontmatterWrites } from '../lib/boards/frontmatterWriteScheduler';
+import { noteStore } from './notes.svelte';
+import { setActiveVaultPath } from '../lib/vault/activeVaultPath';
 import { reportError } from '../lib/utils/errorBus';
 import { invokeOk } from '../lib/utils/invokeOk';
 import { createTrailingDebounce } from '../lib/utils/trailingDebounce';
@@ -931,10 +931,12 @@ export const vaultStore = {
   // ── File tree setters ──
   setPath(path: string) {
     vaultPath = path;
-    // Keep the vault-identity generation in sync so production guards (which
-    // read the identity module, not `vaultPath`) stay consistent in unit tests,
-    // and a test can drive a swap by re-`setPath`ing.
+    // Keep the vault-identity generation and the committed-vault signal in
+    // sync so production guards (which read those modules, not `vaultPath`)
+    // stay consistent in unit tests, and a test can drive a swap by
+    // re-`setPath`ing.
     beginVaultGeneration(path);
+    setActiveVaultPath(path);
   },
   setTree(tree: FileTreeNode[]) { fileTree = tree; },
   setSearch(query: string) { searchQuery = query; },
@@ -1248,18 +1250,16 @@ export const vaultStore = {
       }
     }
     // Drain the async command chain FIRST. An async command (e.g.
-    // UpdateCardFieldCommand) schedules its debounced writes only after its body
-    // runs on `runChained`; flushing earlier would miss them and report a
-    // premature "saved".
+    // UpdateCardFieldCommand) queues its note write only after its body runs
+    // on `runChained`; flushing earlier would miss it and report a premature
+    // "saved".
     await historyStore.whenChainSettled();
-    const mdResult = await flushAllMarkdownWriters();
-    const fmResult = await flushAllPendingFrontmatterWrites();
+    const noteResult = await noteStore.flushAll();
     const flushResult = await flushAll(getBoardWriteArgs, getConfigWriteArgs);
     // Misc writes: tags / themes / templates / viewports / sidebar order.
     const miscResult = await flushAllMisc();
     return (
-      mdResult.failed.length === 0 &&
-      fmResult.failed.length === 0 &&
+      noteResult.failed.length === 0 &&
       flushResult.boardFailed.length === 0 &&
       flushResult.configFailed.length === 0 &&
       miscResult.failed.length === 0 &&

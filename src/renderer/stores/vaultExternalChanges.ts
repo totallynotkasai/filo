@@ -1,24 +1,17 @@
-import { vaultPath, type VaultPath } from '../../shared/vaultPath';
-import type { FileMetadata } from '../lib/vault/vaultIndex';
 import { vaultIndexStore } from './vaultIndex.svelte';
-import { documentStore } from './document.svelte';
+import { noteStore } from './notes.svelte';
 import { fileTagsStore } from './fileTags.svelte';
 import { boardStore } from './board.svelte';
 import { boardCacheStore } from './boardCache.svelte';
 import { uiStore } from './ui.svelte';
-import { classifyExternalChange } from '../lib/vault/conflictResolver';
 import { reportError } from '../lib/utils/errorBus';
-import { isPathPending, isRecentSelfWrite } from '../lib/boards/boardSaver';
-import { noteBaseline, getBaseline, hasBaselineDrifted } from '../lib/vault/fileBaselineRegistry';
-import { isPropertiesPopupDirty } from '../lib/vault/propertiesPopupTracker';
-import { historyStore } from './history.svelte';
+import { getBaseline, hasBaselineDrifted } from '../lib/vault/fileBaselineRegistry';
 import {
   writePendingRenameCascade,
   clearPendingRenameCascade,
   markRenameCascadeFlushFailed,
 } from '../lib/vault/renameCascadeSentinel';
 import { PendingWritesFailedError, withDrainedWrites } from '../lib/vault/vaultOperations';
-import { dropStaleSeededFrontmatterCache } from '../lib/vault/staleSeededFrontmatter';
 import { renameAllPathKeys } from '../lib/vault/renamePathKeys';
 import {
   captureVaultIdentity,
@@ -28,39 +21,22 @@ import {
 import type { VaultContext } from './vaultStoreTypes';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import {
-  PARTIAL_READ_MAX_RETRIES,
-  isPartialReadRetryInflight,
-  getPartialReadRetryCount,
-  clearPartialReadRetryCount,
-  schedulePartialReadRetry,
-  resetPartialReadRetryInflight,
   noteRecentRename,
   wasRecentlyRenamed,
   clearRecentRenames,
   ATTACHMENT_DELETE_GRACE_MS,
   reappearanceWindowRemaining,
 } from '../lib/vault/externalChangeWindows';
-// The user-facing toast builders live in a sibling module. The Promise-based
-// drift prompts + recreate recovery live in `./vaultExternalDriftPrompts`,
-// wired to the writers by that module's own deferred registration.
 import {
   promptExternalAttachmentDeleted,
-  promptBulkExternalChanges,
-  promptReloadRecoveryIfSuspicious,
-  promptPartialReadExhausted,
   promptClosedBoardFileMissing,
-  promptModifiedFile,
-  promptMarkdownPendingWriteConflict,
-  promptPropertiesPopupModified,
-  promptDeletedFile,
-  type PendingPrompt,
 } from './vaultExternalPrompts';
 
 /**
- * Vault slice — external-edit pipeline. Diff prior vs next file metadata,
- * classify the change, and dispatch sync-frontmatter / reload-silently /
- * prompt-user / partial-read-retry / ignore. Cache and editor state are kept
- * in sync without a tab switch.
+ * Vault slice — external-edit pipeline. A changed note refreshes the vault
+ * index and, when a view holds it, its note model (`noteStore.onDiskChanged`
+ * decides per the C.5 table). Deletes offer to remove tiles that point at the
+ * file; renames re-key every path-keyed piece of state.
  *
  * The partial-read retry bookkeeping and the attachment-delete grace window
  * (module-scoped timing state + their reset helpers) live in
@@ -69,26 +45,11 @@ import {
  */
 
 export {
-  resetPartialReadRetryInflight,
   _resetAttachmentDeleteGraceForTests,
 } from '../lib/vault/externalChangeWindows';
 
-// Re-export the drift prompts' public surface for existing import sites
-// (`boardCache.svelte.ts` and the drift-prompt unit tests).
-export {
-  promptExternalEditOnSync,
-  promptBoardExternalEdit,
-  __inFlightDriftPromptsForTests,
-} from './vaultExternalDriftPrompts';
-
-/**
- * Threshold above which per-file dirty-editor toasts collapse
- * into a single aggregate "N files changed externally" toast with Reload all
- * / Keep all / Review actions. A bulk external edit (git checkout, rsync,
- * Obsidian sync) can affect dozens of files at once; N persistent toasts would
- * blanket the screen and make picking through them practically impossible.
- */
-const PROMPT_AGGREGATION_THRESHOLD = 5;
+// Re-export the board drift prompt for existing import sites (tests).
+export { promptBoardExternalEdit, __inFlightDriftPromptsForTests } from './vaultExternalDriftPrompts';
 
 /**
  * Tiebreak for a path inside the self-write suppression window. Returns true
@@ -139,300 +100,45 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
   return {
     async handleExternalMarkdownChanges(relPaths: string[]): Promise<void> {
       // Capture vault identity before the first await so the guards below can
-      // bail on a swap; otherwise this vault's classification is applied to
-      // the new vault's same-named file.
+      // bail on a swap; otherwise this vault's decisions would apply to the
+      // new vault's same-named file.
       const identity = captureVaultIdentity();
-      // Single self-write authority: every entry path (bridge + partial-read
-      // retry re-entry) lands here. A recent self-write is dropped only when its
-      // fresh disk stat still matches our baseline — see
-      // `selfWriteDivergedFromBaseline`.
-      const root = ctx.getVaultPath();
-      const paths: string[] = [];
-      for (const rel of relPaths) {
-        if (!isRecentSelfWrite(rel)) {
-          paths.push(rel);
-          continue;
-        }
-        if (root && (await selfWriteDivergedFromBaseline(root, rel))) {
-          paths.push(rel);
-        }
-      }
-      if (paths.length === 0) return;
-      // A swap during the stat loop invalidates the keep/drop decisions.
-      if (!isStillSameVault(identity)) return;
-      // A full index rebuild clears the index then re-reads in chunks; in that
-      // window getMetadata returns null, which would route a dirty-editor change
-      // to a spurious prompt. Wait so `previous` reflects rebuilt metadata.
+      if (relPaths.length === 0) return;
+      // A full index rebuild clears the index then re-reads in chunks; wait so
+      // the refresh below lands on the rebuilt index.
       if (vaultIndexStore.isBuilding) {
         await vaultIndexStore.whenBuildComplete();
       }
-      const previousByPath = new Map<VaultPath, FileMetadata | null>();
-      for (const rel of paths) {
-        previousByPath.set(vaultPath(rel), vaultIndexStore.getMetadata(rel));
-      }
-
-      await vaultIndexStore.applyChanges(paths);
-      // Bail if a swap landed during the awaits above, before any sink runs.
-      // The per-file loop below is synchronous, so this is the only suspension
-      // boundary that needs the re-check.
+      // The index is a projection of disk: refresh it for every change. Our
+      // own writes coming back re-index to the same metadata.
+      await vaultIndexStore.applyChanges(relPaths);
       if (!isStillSameVault(identity)) return;
 
-      // Collect prompt-user changes so a bulk external edit can collapse into
-      // one aggregate toast (see PROMPT_AGGREGATION_THRESHOLD).
-      const pendingPrompts: PendingPrompt[] = [];
-
-      for (const rel of paths) {
-        const relKey = vaultPath(rel);
+      for (const rel of relPaths) {
         const next = vaultIndexStore.getMetadata(rel);
-        const previous = previousByPath.get(relKey) ?? null;
-        const editorDoc = documentStore.findByFilename(rel);
-        const editor = editorDoc
-          ? { path: rel, isDirty: editorDoc.isDirty }
-          : null;
-        // The file is back on disk (sync re-created it,
-        // a move landed, trash restore): a still-visible "missing" / "deleted
-        // externally" toast for it is stale and must not stay clickable.
+        const note = noteStore.get(rel);
+        // The file is back on disk (sync re-created it, a move landed, trash
+        // restore): a still-visible "missing" / "deleted externally" toast
+        // for it is stale and must not stay clickable.
         if (next) {
           uiStore.dismissToastsByKey(`missing:${rel}`, { silent: true });
           uiStore.dismissToastsByKey(`ext-deleted:${rel}`, { silent: true });
         }
-
-        const decision = classifyExternalChange({
-          path: rel,
-          previousMetadata: previous,
-          nextMetadata: next,
-          editor,
-          // An open + dirty Properties popup against this
-          // path converts the silent frontmatter-only sync into a
-          // Reload/Keep-local toast so the popup's pending row edits
-          // aren't clobbered without the user's say-so.
-          propertiesPopupDirty: isPropertiesPopupDirty(rel),
-        });
-
-        // Any non-retry classification means the
-        // mid-write window closed (the file's body matches the index
-        // baseline, the file is now clean+equivalent, etc.). Drop the
-        // retry budget so a future transient shrink starts fresh.
-        if (decision.action !== 'partial-read-retry') {
-          clearPartialReadRetryCount(relKey);
-        }
-
-        // Pending-local-write guard. The classifier only sees OPEN editors, so
-        // a Kanban card / Task with a pending frontmatter write but no mounted
-        // editor would silently reconcile and then lose to (or clobber via) the
-        // pending debounce. When any scheduler has a pending/in-flight write
-        // for this path (`isPathPending`, shared with the `.board.json`
-        // reconciler), prompt instead. Dirty editors already route to
-        // `prompt-user`.
-        if (
-          next &&
-          (decision.action === 'sync-frontmatter' || decision.action === 'reload-silently') &&
-          isPathPending(rel)
-        ) {
-          promptMarkdownPendingWriteConflict(rel, next, editorDoc);
-          historyStore.notePossiblyStale(editorDoc?.title || rel);
-          continue;
-        }
-
-        switch (decision.action) {
-          case 'sync-frontmatter':
-            // Pure metadata change — body unchanged, so we only need the new
-            // frontmatter. Skip if `next` is missing (the file vanished
-            // between classify and apply); the prompt-user branch handles
-            // the deleted-file flow.
-            if (!next) break;
-            // Refresh the live cache so the next writer assembles from the
-            // disk-canonical frontmatter, not the stale in-memory snapshot.
-            // Thread the post-sync `rawFrontmatter` so the source-preserving FM
-            // engine's baseline refreshes too; otherwise the next body-only
-            // save would re-emit the changed key and lose its inline comment.
-            if (editorDoc) documentStore.setFrontmatter(editorDoc.filename, next.frontmatter, next.rawFrontmatter);
-            // The line above only refreshes an OPEN editor's FM cache; a
-            // seeded-but-not-open Kanban card / Task row would keep a stale
-            // cache and revert this edit on its next field write.
-            dropStaleSeededFrontmatterCache(rel);
-            // Re-stamp the drift baseline to the post-sync (mtime, size). This
-            // branch never reloads the body, so without it the next in-app
-            // save's drift check fires a false "modified externally" prompt.
-            noteBaseline(rel, next.lastModified, next.rawByteSize);
-            // Only true external edits invalidate undo. sync-frontmatter also
-            // fires for 'first-sight' (a never-indexed file: bootstrap, fresh
-            // tile creation), which is not an external edit.
-            if (decision.reason === 'frontmatter-only') {
-              historyStore.notePossiblyStale(editorDoc?.title || rel);
-            }
-            break;
-          case 'reload-silently': {
-            // Clean editor + external body edit — overwrite the in-memory
-            // copy with disk. Requires `next` so we have the new body and
-            // frontmatter to apply.
-            if (!next) break;
-            if (editorDoc) {
-              // Snapshot the pre-reload editor state before clobbering it. The
-              // editor is clean, but a partial read that slipped past the
-              // heuristic could still replace it with truncated content; the
-              // snapshot makes that recoverable (promptReloadRecoveryIfSuspicious).
-              const priorBody = editorDoc.body;
-              const priorRichText = editorDoc.richText;
-              const priorFm = documentStore.getFrontmatter(editorDoc.filename);
-              documentStore.handleExternalChange(
-                editorDoc.filename,
-                next.content,
-                editorDoc.richText,
-                next.frontmatter,
-                // Thread the disk FM source so the reload
-                // refreshes originalFrontmatterCache too (an externally-added
-                // key keeps its inline comment on the next body-only save).
-                next.rawFrontmatter,
-                { mtimeMs: next.lastModified, size: next.rawByteSize },
-              );
-              promptReloadRecoveryIfSuspicious(
-                rel,
-                editorDoc.filename,
-                priorBody,
-                priorRichText,
-                priorFm,
-                next.content,
-              );
-            }
-            // Same stale-cache drop as the sync-frontmatter branch, for a
-            // seeded-but-not-open card/row the reload above doesn't cover.
-            dropStaleSeededFrontmatterCache(rel);
-            // External body replaced our in-memory snapshot, so any
-            // local undo command whose inverse depends on the prior body
-            // (text-tile edits, frontmatter patches) may no longer round-trip.
-            // Surface the one-shot "Clear undo history" toast.
-            historyStore.notePossiblyStale(editorDoc?.title || rel);
-            break;
-          }
-          case 'prompt-user':
-            if (next) {
-              // Do NOT apply disk frontmatter to tile caches or the tag store
-              // at prompt-open time: until the user picks Reload the editor
-              // is the source of truth, and a Keep local would otherwise
-              // leave disk, tag store and editor inconsistent. The Reload
-              // handler in `promptModifiedFile` applies FM + tags together
-              // with the body reload; Keep local force-writes the editor's
-              // own FM and tags.
-              if (editorDoc) {
-                // Defer the prompt; we may aggregate below. Carry the
-                // classifier's reason so the dispatch can pick the
-                // popup-aware toast (which also cancels the popup's pending
-                // writes on Reload, so they can't clobber the loaded FM).
-                pendingPrompts.push({
-                  kind: 'modified',
-                  rel,
-                  next,
-                  editorDoc,
-                  reason: decision.reason,
-                });
-              } else if (decision.reason === 'properties-popup-dirty') {
-                // A dirty Properties popup over a never-loaded doc (no open
-                // editor) still needs the conflict prompt, or its pending row
-                // edits are silently clobbered. Dispatch the popup-aware toast
-                // directly with a null editorDoc: it only needs `rel` +
-                // metadata, and its FM-cache refresh is notePath-guarded.
-                promptPropertiesPopupModified(rel, next, null);
-              }
-              // notePossiblyStale fires regardless — the undo stack's inverse
-              // may no longer match disk. It's a soft signal, not a state
-              // mutation, so it's safe even if the user picks Keep local.
-              historyStore.notePossiblyStale(editorDoc?.title || rel);
-            } else if (editorDoc) {
-              // Externally deleted file with a dirty editor open: surface a
-              // persistent toast, otherwise the in-memory doc silently
-              // dangles (the `vault:write-existing-file-text` ENOENT
-              // short-circuit stops a resurrect, but the user must choose).
-              // If a sync conflict just renamed this file away and its other
-              // version is about to be downloaded here, wait.
-              if (deferWhileReappearing(rel, identity, () => promptDeletedFile(rel, editorDoc, ctx))) break;
-              pendingPrompts.push({ kind: 'deleted', rel, editorDoc });
-            }
-            break;
-          case 'partial-read-retry': {
-            // `applyChanges` indexed a (likely truncated) snapshot. Don't
-            // reload the editor; re-classify against fresh disk after a
-            // delay — by then the external write has either settled with
-            // real content, or the small body is genuine and classifies as
-            // `ignore`.
-            //
-            // Restore the pre-shrink metadata so the next pass compares
-            // against it, not the truncated snapshot.
-            //
-            // Bounded backoff (PARTIAL_READ_MAX_RETRIES attempts) so a file
-            // genuinely truncated externally can't loop forever; on
-            // exhaustion a toast lets the user Reload the shrunk content or
-            // keep the pre-shrink baseline.
-            vaultIndexStore.restoreMetadata(rel, previous);
-            if (isPartialReadRetryInflight(relKey)) break;
-            const attempt = getPartialReadRetryCount(relKey);
-            if (attempt >= PARTIAL_READ_MAX_RETRIES) {
-              clearPartialReadRetryCount(relKey);
-              promptPartialReadExhausted(rel);
-              break;
-            }
-            const handler = this.handleExternalMarkdownChanges.bind(this);
-            // `schedulePartialReadRetry` marks the path in-flight, bumps the
-            // attempt counter, and tracks the timer handle so vault-swap
-            // reset can clearTimeout before it fires. The callback clears its
-            // own entries on dispatch so the maps stay bounded.
-            schedulePartialReadRetry(relKey, attempt, () => {
-              // Re-enter through the shared rename queue so a concurrent
-              // rename can't interleave with the retry's re-index, and a vault
-              // swap between enqueue and execution skips it. Direct call only
-              // in test contexts whose VaultContext stub omits the queue.
-              if (ctx.enqueueRenameQueueWork) {
-                void ctx.enqueueRenameQueueWork(() => handler([rel]));
-              } else {
-                void handler([rel]);
-              }
-            });
-            break;
-          }
-          case 'ignore':
-            // External delete of a file with no open editor but referenced
-            // by tiles: nothing for the body-sync pipeline to do, but the
-            // tiles now dangle. Surface a toast offering "Keep tiles" /
-            // "Remove tiles…" (removal only behind a confirm). No auto-clean:
-            // the user might be moving the file and the rename correlator
-            // may still pair it.
-            if (decision.reason === 'file-missing') {
-              const targets = boardCacheStore.findCascadeDeleteTargets(rel);
-              if (targets.tileIds.length > 0) {
-                // Capture root at toast-creation time.
-                const root = ctx.getVaultPath();
-                const prompt = (): void => promptClosedBoardFileMissing(rel, targets.tileIds.length, root);
-                if (!deferWhileReappearing(rel, identity, prompt)) prompt();
-              }
-            } else if (decision.reason === 'no-editor-open' && next) {
-              // A closed-file body-only edit must re-stamp the drift baseline,
-              // else the next in-app field edit on a card/row backed by this
-              // file false-flags "modified externally".
-              noteBaseline(rel, next.lastModified, next.rawByteSize);
-            }
-            break;
-        }
-      }
-
-      // Aggregate or dispatch the prompt-user batch: one toast per file up to
-      // the threshold, else a single Reload all / Keep all / Review toast.
-      if (pendingPrompts.length > PROMPT_AGGREGATION_THRESHOLD) {
-        promptBulkExternalChanges(pendingPrompts, ctx);
-      } else {
-        for (const pending of pendingPrompts) {
-          if (pending.kind === 'modified') {
-            // The prompt applies disk frontmatter + tags only on Reload, and
-            // force-writes the editor's own on Keep local. The popup-dirty
-            // variant also cancels the popup's pending writes on Reload so
-            // its stale rows can't clobber the just-applied frontmatter.
-            if (pending.reason === 'properties-popup-dirty') {
-              promptPropertiesPopupModified(pending.rel, pending.next, pending.editorDoc);
-            } else {
-              promptModifiedFile(pending.rel, pending.next, pending.editorDoc);
-            }
-          } else {
-            promptDeletedFile(pending.rel, pending.editorDoc, ctx);
-          }
+        // A loaded note decides for itself: our own write coming back is
+        // ignored by hash, a clean note follows the disk, and the one prompt
+        // appears only when an unsaved body meets a body change on disk.
+        if (note) void noteStore.onDiskChanged(rel);
+        if (next) continue;
+        // Deleted, and tiles still point at it: offer "Keep tiles" / "Remove
+        // tiles…" (removal only behind a confirm). No auto-clean: the user
+        // might be moving the file and the rename correlator may still pair
+        // it. A note with an unsaved edit gets its own prompt instead.
+        if (note?.hasUnsavedBody) continue;
+        const targets = boardCacheStore.findCascadeDeleteTargets(rel);
+        if (targets.tileIds.length > 0) {
+          const root = ctx.getVaultPath();
+          const prompt = (): void => promptClosedBoardFileMissing(rel, targets.tileIds.length, root);
+          if (!deferWhileReappearing(rel, identity, prompt)) prompt();
         }
       }
     },
@@ -799,12 +505,10 @@ async function runExternalRenameCascade(
   }
 }
 
-// Vault-swap reset: drops the partial-read retry timers + counter and the
-// recent-rename grace map, else a same-named file in the new vault could be
+// Vault-swap reset: drops the recent-rename grace map, else a same-named file in the new vault could be
 // deduped by a stale entry from the prior vault. The subscriber name
 // `'vaultExternalChanges'` is asserted by a characterization test.
 onVaultSwap('pre-swap', 'vaultExternalChanges', () => {
-  resetPartialReadRetryInflight();
   clearRecentRenames();
 });
 

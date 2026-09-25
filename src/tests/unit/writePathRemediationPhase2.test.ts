@@ -1,57 +1,28 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { makeExternalChangesSlice } from '@renderer/stores/vaultExternalChanges';
-import { dropStaleSeededFrontmatterCache } from '@renderer/lib/vault/staleSeededFrontmatter';
-import { documentStore } from '@renderer/stores/document.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { makeKanbanFrontmatterWriter } from '@renderer/lib/kanban/kanbanFrontmatterWriter';
-import { flushAllPendingFrontmatterWrites } from '@renderer/lib/boards/frontmatterWriteScheduler';
-import { cancelAllMarkdownWrites } from '@renderer/lib/vault/markdownFileWriter';
-import { __resetDirtyTrackingForTests, __clearRecentSelfWritesForTests } from '@renderer/lib/boards/writeStateTracking';
-import { UpdatePropertiesCommand } from '@renderer/commands/index';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import type { VaultContext } from '@renderer/stores/vaultStoreTypes';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard as KanbanBoardType, Tile } from '@renderer/schema/index';
-import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * WRITE_PATH_REMEDIATION_PLAN_2026-06-04 — Phase 2 regression cover.
- *
- * The HIGH this phase closes: the write path serializes from an in-memory full
- * FM cache rather than from current disk + a field delta, so a cache that went
- * STALE for a not-open doc silently reverts an external edit.
- *
- *   2.1 — On a sync-frontmatter / reload-silently external edit, the reconciler
- *         refreshes the documentStore FM cache ONLY for an open editor. A Kanban
- *         card / Task row seeded once but never opened keeps a stale cache; the
- *         next field edit merges over it and the source-preserving write DROPS
- *         the externally-added key. Fix: drop the seeded-but-not-open cache so
- *         the next field edit's seed re-reads fresh disk.
- *
- *   2.2 — UpdatePropertiesCommand undo/redo rebased onto that same stale cache
- *         (it trusted `documentStore.getFrontmatter(path)` whenever the file
- *         was hydrated). Fix: for a not-open doc, rebase onto a FRESH disk read.
+ * An external edit to a card no view has open must survive the card's next
+ * field edit. The card's frontmatter was read once (when the card was
+ * edited earlier); another program then adds a key and the watcher reports
+ * it. The next field edit must land on the file as it is now, keeping that
+ * key, not on an earlier copy.
  */
-
-interface Captured {
-  channel: string;
-  args: unknown[];
-}
-
-function lastWrite(captured: Captured[]): string | undefined {
-  for (let i = captured.length - 1; i >= 0; i--) {
-    if (captured[i].channel === 'vault:write-existing-file-text') {
-      return captured[i].args[2] as string;
-    }
-  }
-  return undefined;
-}
 
 /**
  * Hydrates the board cache with one Kanban board carrying a single card backed
- * by `Card.md`, and returns the card's runtime tile (its note named by
- * `filePath`, as every view of that note is).
+ * by `Card.md`, and returns the card's runtime tile.
  */
 function hydrateBoardWithCard(boardId: string): Tile {
   const data: V7BoardFileData = {
@@ -105,215 +76,58 @@ function makeCtx(): VaultContext {
     refreshTree: async () => {},
     clearSelection: () => {},
     clearActiveRootFolderIfMatches: () => {},
+    resolveRecoveryDismissed: () => {},
   };
 }
 
-// ── 2.1 — the dropStaleSeededFrontmatterCache helper in isolation ────────────
-
-describe('Phase 2 / 2.1 — dropStaleSeededFrontmatterCache', () => {
-  beforeEach(() => {
-    documentStore.clear();
-    boardCacheStore.clear();
-  });
-  afterEach(() => {
-    documentStore.clear();
-    boardCacheStore.clear();
-  });
-
-  it('clears a seeded-but-not-open doc backed by the path', () => {
-    documentStore.setFrontmatter('Closed.md', { priority: 'high' });
-
-    dropStaleSeededFrontmatterCache('Closed.md');
-
-    expect(documentStore.hasFrontmatter('Closed.md')).toBe(false);
-  });
-
-  it('PRESERVES an OPEN editor’s cache (the reconciler keeps it fresh)', () => {
-    documentStore.loadDocument({
-      filename: 'Open.md',
-      title: 'Open',
-      body: 'body',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter('Open.md', { priority: 'high' });
-
-    dropStaleSeededFrontmatterCache('Open.md');
-
-    expect(documentStore.getFrontmatter('Open.md')).toEqual({ priority: 'high' });
-  });
-
-  it('leaves an unrelated path’s cache untouched', () => {
-    documentStore.setFrontmatter('A.md', { x: 1 });
-    documentStore.setFrontmatter('B.md', { y: 2 });
-
-    dropStaleSeededFrontmatterCache('A.md');
-
-    expect(documentStore.hasFrontmatter('A.md')).toBe(false);
-    expect(documentStore.getFrontmatter('B.md')).toEqual({ y: 2 });
-  });
-});
-
-// ── 2.1 — driven through the real external-change handler + a field edit ─────
-
-describe('Phase 2 / 2.1 — external edit to a not-open card is not reverted', () => {
+describe('external edit to a not-open card is not reverted by its next field edit', () => {
   let slice: ReturnType<typeof makeExternalChangesSlice>;
-  let captured: Captured[];
+  let vault: MemoryVault;
 
   beforeEach(() => {
+    // Runs the test-reset callbacks, which clear the active vault path.
     __resetDirtyTrackingForTests();
-    __clearRecentSelfWritesForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
+    vaultStore.setPath('/vault');
+    noteStore.__resetForTests();
     boardCacheStore.clear();
     vaultIndexStore.clear();
-    vaultStore.setPath('/vault');
-    captured = [];
+    vault = installMemoryVault({ 'Card.md': '---\ncompleted: false\n---\ncard body\n' });
     slice = makeExternalChangesSlice(makeCtx());
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
+    noteStore.__resetForTests();
     restoreFiloDefault();
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
     boardCacheStore.clear();
     vaultIndexStore.clear();
     vaultStore.setPath('');
     vi.restoreAllMocks();
   });
 
-  const INITIAL = '---\ncompleted: false\n---\ncard body';
-  const EXTERNAL = '---\ncompleted: false\nstatus: blocked\n---\ncard body';
-
-  it('drops the stale seeded cache so the next field edit re-reads fresh disk', async () => {
-    hydrateBoardWithCard('kb');
-    const note = 'Card.md';
-
-    // Prime the index from the INITIAL bytes (no status) so the handler sees a
-    // real previous entry and the classifier returns frontmatter-only.
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') return { success: true, content: INITIAL };
-      return { success: true };
-    });
-    await vaultIndexStore.applyChanges(['Card.md']);
-
-    // The card was field-edited once: its FM cache is SEEDED (no status) but it
-    // is NOT open as a Document tab.
-    documentStore.setFrontmatter(note, { completed: false });
-    expect(documentStore.getDocument(note)).toBeUndefined();
-
-    // An external editor adds `status: blocked`. Drive the watcher handler.
-    installFiloMock((channel: string, ...args: unknown[]) => {
-      captured.push({ channel, args });
-      if (channel === 'vault:read-file-text') return { success: true, content: EXTERNAL };
-      return { success: true };
-    });
-    await slice.handleExternalMarkdownChanges(['Card.md']);
-
-    // 2.1: the not-open seeded cache was dropped (so the next seed re-reads disk).
-    // Pre-fix it survived stale (no status) and the field write below dropped the
-    // external key.
-    expect(documentStore.hasFrontmatter(note)).toBe(false);
-  });
-
-  it('end-to-end: the next field edit preserves the externally-added key on disk', async () => {
+  it('the next field edit preserves the externally-added key on disk', async () => {
     const tile = hydrateBoardWithCard('kb');
-    const note = 'Card.md';
-
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') return { success: true, content: INITIAL };
-      return { success: true };
-    });
-    await vaultIndexStore.applyChanges(['Card.md']);
-    documentStore.setFrontmatter(note, { completed: false });
-
-    // External add + watcher handler.
-    installFiloMock((channel: string, ...args: unknown[]) => {
-      captured.push({ channel, args });
-      if (channel === 'vault:read-file-text') return { success: true, content: EXTERNAL };
-      if (channel === 'vault:stat') return { success: true, mtimeMs: 9, size: EXTERNAL.length };
-      if (channel === 'vault:write-existing-file-text') return { success: true };
-      return { success: true };
-    });
-    await slice.handleExternalMarkdownChanges(['Card.md']);
-
-    // Now the user toggles `completed` on the (still not-open) card.
     const writer = makeKanbanFrontmatterWriter({
       getBoard: () => ({ id: 'kb', type: 'kanban', columns: [] }) as unknown as KanbanBoardType,
       getAllTilesById: () => ({ t1: tile }),
       bumpCacheVersion: () => {},
       tickAndPersist: () => {},
     });
+
+    // The card was field-edited once before (its frontmatter was read then).
+    await vaultIndexStore.applyChanges(['Card.md']);
+    await writer.updateTileFrontmatter('t1', { priority: 'low' });
+    await noteStore.flushAll();
+
+    // An external editor adds `status: blocked`; the watcher reports it.
+    vault.writeExternally('Card.md', '---\ncompleted: false\npriority: low\nstatus: blocked\n---\ncard body\n');
+    await slice.handleExternalMarkdownChanges(['Card.md']);
+
+    // Now the user toggles `completed` on the (still not-open) card.
     await writer.updateTileFrontmatter('t1', { completed: true });
+    await noteStore.flushAll();
 
-    await vi.waitFor(
-      async () => {
-        await flushAllPendingFrontmatterWrites();
-        expect(lastWrite(captured), 'no markdown write captured').toBeDefined();
-      },
-      { timeout: 1000, interval: 20 },
-    );
-
-    const written = lastWrite(captured);
-    expect(written).toContain('status: blocked'); // external key survived (re-read disk)
-    expect(written).toContain('completed: true'); // the user's edit applied
-    expect(written).toContain('card body'); // body intact
-  });
-});
-
-// ── 2.2 — UpdatePropertiesCommand rebases onto fresh disk for a not-open doc ──
-
-describe('Phase 2 / 2.2 — Properties undo rebases onto fresh disk, not a stale cache', () => {
-  beforeEach(() => {
-    vaultStore.setPath('/vault');
-    documentStore.clear();
-    boardCacheStore.clear();
-    vaultIndexStore.clear();
-  });
-  afterEach(() => {
-    restoreFiloDefault();
-    vaultStore.setPath('');
-    documentStore.clear();
-    boardCacheStore.clear();
-    vaultIndexStore.clear();
-  });
-
-  it('undo preserves an external key the STALE not-open cache never saw', async () => {
-    const calls: Captured[] = [];
-    installFiloMock((channel: unknown, ...args: unknown[]) => {
-      calls.push({ channel: channel as string, args });
-      if (channel === 'vault:read-file-text') {
-        // Disk carries an externally-added `reviewed: true` the cache lacks.
-        return {
-          success: true,
-          content: '---\npriority: high\nreviewed: true\n---\nDisk body\n',
-          mtimeMs: 1,
-          size: 60,
-        };
-      }
-      if (channel === 'vault:stat') return { success: true, mtimeMs: 1, size: 60 };
-      if (channel === 'vault:write-existing-file-text') return { success: true };
-      return undefined;
-    });
-
-    // STALE seeded cache for a NOT-open doc: knows `priority`, never saw the
-    // externally-added `reviewed`. No loadDocument → docState is null.
-    documentStore.setFrontmatter('Stale.md', { priority: 'high' });
-    expect(documentStore.getDocument('Stale.md')).toBeUndefined();
-
-    const cmd = new UpdatePropertiesCommand(
-      { kind: 'frontmatter', relPath: 'Stale.md', notePath: 'Stale.md', fm: { priority: 'low' } },
-      { kind: 'frontmatter', relPath: 'Stale.md', notePath: 'Stale.md', fm: { priority: 'high' } },
-    );
-
-    // Undo reverts priority high → low. Pre-fix it rebased onto the stale cache
-    // and the write dropped `reviewed`; post-fix it rebases onto fresh disk.
-    await cmd.undo();
-
-    const undoWrite = calls.filter((c) => c.channel === 'vault:write-existing-file-text').pop();
-    expect(undoWrite?.args[2]).toContain('priority: low'); // owned key reverted
-    expect(undoWrite?.args[2]).toContain('reviewed: true'); // external key survived
+    expect(vault.read('Card.md')).toBe('---\ncompleted: true\npriority: low\nstatus: blocked\n---\ncard body\n');
   });
 });

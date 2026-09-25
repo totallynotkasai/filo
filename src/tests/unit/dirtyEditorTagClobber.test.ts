@@ -1,34 +1,29 @@
+/**
+ * An unsaved body edit meets an external rewrite of the same note (body and
+ * tags). Until the user answers the prompt, nothing the app shows moves to
+ * the external version: not the body, not the tags. "Reload" then takes the
+ * external body and tags together; "Keep mine" writes the local body onto the
+ * external version, so the external tags (which the user never edited here)
+ * survive alongside it and nothing from either side is lost.
+ */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { makeExternalChangesSlice } from '@renderer/stores/vaultExternalChanges';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore, type NoteModel } from '@renderer/stores/notes.svelte';
+import { registerNotePrompts } from '@renderer/stores/notePrompts';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
+import { __resetKeepLocalBackupForTests } from '@renderer/lib/vault/keepLocalBackup';
 import type { VaultContext } from '@renderer/stores/vaultStoreTypes';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
-/**
- * Phase 3 / 3.3 — dirty editor + external frontmatter edit must NOT clobber
- * the tag store.
- *
- * Pre-fix, vaultExternalChanges's `prompt-user` switch arm eagerly called
- * `boardStore.applyFrontmatterToBackedTiles` + `fileTagsStore.setFileTags`
- * with the disk frontmatter BEFORE the user picked Reload / Keep local. If
- * they later picked Keep local, the editor's writer would push its own
- * (different) frontmatter back to disk — but the tag store + tile-def caches
- * were already updated to the external version, leaving a three-way
- * inconsistency between disk, store, and editor.
- *
- * The fix defers those updates to the Reload handler. Keep local leaves the
- * stores on the editor's view and force-writes the editor's frontmatter +
- * tags back to disk.
- */
+const THEIRS = '---\ntags: [theirs]\n---\nexternally rewritten body\n';
 
 function clearToasts(): void {
-  for (const t of [...uiStore.toasts]) {
-    uiStore.dismissToast(t.id);
-  }
+  for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
 }
 
 function makeCtx(): VaultContext {
@@ -57,119 +52,88 @@ function makeCtx(): VaultContext {
   };
 }
 
-describe('vaultExternalChanges — dirty editor + external frontmatter (Phase 3 / 3.3)', () => {
-  let ctx: VaultContext;
+async function settle(): Promise<void> {
+  for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+}
+
+describe('dirty editor + external body and tag rewrite', () => {
+  let vault: MemoryVault;
+  let snapshots: string[];
   let slice: ReturnType<typeof makeExternalChangesSlice>;
+  let model: NoteModel;
 
   beforeEach(async () => {
-    documentStore.clear();
+    __resetDirtyTrackingForTests();
+    __resetKeepLocalBackupForTests();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
-    fileTagsStore.reset();
     clearToasts();
     vaultStore.setPath('/vault');
-    ctx = makeCtx();
-    slice = makeExternalChangesSlice(ctx);
-
-    // Prime: index sees `Notes.md` with [mine]. Reload returns the same
-    // content so subsequent dirty-state checks use [mine] as baseline.
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: '---\ntags: [mine]\n---\nlocal body' };
+    vault = installMemoryVault({ 'Notes.md': '---\ntags: [mine]\n---\nlocal body\n' });
+    // The memory vault answers the note channels; the Keep-mine backup
+    // snapshot is recorded here.
+    const memoryFilo: object = Reflect.get(window, 'filo');
+    const memoryInvoke: (channel: string, ...args: unknown[]) => Promise<unknown> = Reflect.get(memoryFilo, 'invoke');
+    snapshots = [];
+    installFiloMock((channel: string, ...args: unknown[]) => {
+      if (channel === 'recovery:snapshot') {
+        snapshots.push(args[1] as string);
+        return { success: true, path: '/vault/.filo/recovery/Notes.md' };
       }
-      return { success: true };
+      return memoryInvoke(channel, ...args);
     });
+    registerNotePrompts();
+    slice = makeExternalChangesSlice(makeCtx());
     await vaultIndexStore.applyChanges(['Notes.md']);
-    fileTagsStore.setFileTags('Notes.md', ['mine']);
 
-    // Open a dirty editor with the editor frontmatter cache holding
-    // the editor's view of tags.
-    documentStore.loadDocument({
-      filename: 'Notes.md',
-      title: 'Notes',
-      body: 'local body',
-      htmlContent: '<p>local body</p>',
-      richText: [],
-    });
-    documentStore.setFrontmatter('Notes.md', { tags: ['mine'] });
-    // Flip to dirty by simulating a content edit.
-    documentStore.updateContent('Notes.md', '<p>local body+</p>', 'local body+');
+    model = noteStore.acquire('Notes.md', 'doc');
+    await model.loaded;
+    noteStore.setBody('Notes.md', 'local body+', 'doc');
+
+    vault.writeExternally('Notes.md', THEIRS);
+    await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await settle();
   });
 
   afterEach(() => {
-    restoreFiloDefault();
+    noteStore.__resetForTests();
     vaultStore.setPath('');
-    documentStore.clear();
     vaultIndexStore.clear();
-    fileTagsStore.reset();
     clearToasts();
+    restoreFiloDefault();
   });
 
-  it('does NOT push external tags into the tag store at prompt-open time', async () => {
-    // External edit: disk now has [theirs].
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: '---\ntags: [theirs]\n---\nexternally rewritten body' };
-      }
-      return { success: true };
-    });
+  function prompt(): (typeof uiStore.toasts)[number] | undefined {
+    return uiStore.toasts.find((t) => t.actions?.some((a) => a.label === 'Reload'));
+  }
 
-    await slice.handleExternalMarkdownChanges(['Notes.md']);
-
-    // The tag store must NOT yet include `theirs` — the user hasn't
-    // chosen Reload.
+  it('does NOT show the external tags or body while the prompt is open', () => {
+    expect(model.status).toBe('conflict');
     expect(fileTagsStore.tagsForFile('Notes.md')).toEqual(['mine']);
-
-    // The persistent prompt should be visible.
-    const toast = uiStore.toasts.find((t) => t.text.includes('modified externally'));
-    expect(toast).toBeDefined();
-    expect(toast?.actions?.[0].label).toBe('Reload');
-    expect(toast?.actions?.[1].label).toBe('Keep local');
+    expect(model.body).toBe('local body+');
+    expect(prompt()?.actions?.map((a) => a.label)).toEqual(['Reload', 'Keep mine']);
+    expect(vault.read('Notes.md')).toBe(THEIRS);
   });
 
-  it('Reload applies external frontmatter + tags atomically with body', async () => {
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: '---\ntags: [theirs]\n---\nexternally rewritten body' };
-      }
-      return { success: true };
-    });
-
-    await slice.handleExternalMarkdownChanges(['Notes.md']);
-    const toast = uiStore.toasts.find((t) => t.text.includes('modified externally'));
-    expect(toast).toBeDefined();
-
-    await toast?.actions?.[0].handler(); // Reload
+  it('Reload applies the external frontmatter + tags together with the body', async () => {
+    await prompt()?.actions?.find((a) => a.label === 'Reload')?.handler();
+    await settle();
 
     expect(fileTagsStore.tagsForFile('Notes.md')).toEqual(['theirs']);
-    const doc = documentStore.getDocument('Notes.md');
-    expect(doc?.body).toBe('externally rewritten body');
-    expect(doc?.isDirty).toBe(false);
+    expect(model.body).toBe('externally rewritten body\n');
+    expect(model.hasUnsavedBody).toBe(false);
+    await noteStore.flushAll();
+    expect(vault.read('Notes.md')).toBe(THEIRS);
   });
 
-  it('Keep local leaves tag store on the editor\'s view (no external clobber)', async () => {
-    // Track every write so we can confirm the editor's frontmatter
-    // lands on disk after Keep local.
-    const writes: Array<{ channel: string; args: unknown[] }> = [];
-    installFiloMock((channel: string, ...args: unknown[]) => {
-      writes.push({ channel, args });
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: '---\ntags: [theirs]\n---\nexternally rewritten body' };
-      }
-      return { success: true };
-    });
+  it('Keep mine backs up the external version, then writes the local body over it', async () => {
+    await prompt()?.actions?.find((a) => a.label === 'Keep mine')?.handler();
+    await settle();
 
-    await slice.handleExternalMarkdownChanges(['Notes.md']);
-    const toast = uiStore.toasts.find((t) => t.text.includes('modified externally'));
-    expect(toast).toBeDefined();
-
-    await toast?.actions?.[1].handler(); // Keep local
-
-    // Tag store must still show `[mine]` — Keep local does NOT pull in
-    // the external tags.
-    expect(fileTagsStore.tagsForFile('Notes.md')).toEqual(['mine']);
-
-    // The editor doc is still in memory with the editor's body.
-    const doc = documentStore.getDocument('Notes.md');
-    expect(doc?.body).toBe('local body+');
+    expect(snapshots).toEqual(['Notes.md']);
+    expect(model.body).toBe('local body+');
+    expect(model.status).toBe('ready');
+    expect(vault.read('Notes.md')).toBe('---\ntags: [theirs]\n---\nlocal body+\n');
+    expect(fileTagsStore.tagsForFile('Notes.md')).toEqual(['theirs']);
   });
 });

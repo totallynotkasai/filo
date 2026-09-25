@@ -4,7 +4,7 @@ import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { boardStore } from '@renderer/stores/board.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
@@ -60,7 +60,7 @@ describe('rename cascade — synchronous tags.json flush (F3)', () => {
   beforeEach(async () => {
     __resetDirtyTrackingForTests();
     __resetRenameCascadeSentinelForTests();
-    documentStore.clear();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
     boardCacheStore.clear();
     boardStore.clearBoard();
@@ -91,7 +91,7 @@ describe('rename cascade — synchronous tags.json flush (F3)', () => {
     restoreFiloDefault();
     __resetDirtyTrackingForTests();
     __resetRenameCascadeSentinelForTests();
-    documentStore.clear();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
     boardCacheStore.clear();
     boardStore.clearBoard();

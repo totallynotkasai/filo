@@ -30,8 +30,8 @@
  * (which delete recovery breadcrumbs, not user files).
  */
 
-import { flushAllMarkdownWriters } from './markdownFileWriter';
-import { flushAllPendingFrontmatterWrites } from '../boards/frontmatterWriteScheduler';
+import { noteStore } from '../../stores/notes.svelte';
+import { toVaultRelative } from './vaultTreeSort';
 import { flushAllMisc } from '../boards/miscWriteScheduler';
 import { flushScheduledConfig } from '../boards/configWriteScheduler';
 import { isBoardPathHeld } from '../boards/boardWriteScheduler';
@@ -43,12 +43,7 @@ import type {
   ChannelResult,
 } from '@shared/ipcContracts';
 
-interface MarkdownFlushResult {
-  ok: number;
-  failed: Array<{ ownerId: string; error: unknown }>;
-}
-
-interface FrontmatterFlushResult {
+interface NoteFlushResult {
   failed: string[];
 }
 
@@ -65,8 +60,7 @@ interface ConfigFlushResult {
 }
 
 export interface PendingWritesFailedDetail {
-  md: MarkdownFlushResult;
-  fm: FrontmatterFlushResult;
+  notes: NoteFlushResult;
   board: BoardFlushResult;
   misc: MiscFlushResult;
   config: ConfigFlushResult;
@@ -77,8 +71,7 @@ export class PendingWritesFailedError extends Error {
 
   constructor(results: PendingWritesFailedDetail) {
     const totalFailed =
-      results.md.failed.length +
-      results.fm.failed.length +
+      results.notes.failed.length +
       results.board.failed.length +
       results.misc.failed.length +
       results.config.failed.length;
@@ -128,8 +121,7 @@ let drainPromise: Promise<DrainOutcome> | null = null;
 
 function summariseFailedPaths(results: PendingWritesFailedDetail): string[] {
   const out: string[] = [];
-  for (const entry of results.md.failed) out.push(entry.ownerId);
-  for (const path of results.fm.failed) out.push(path);
+  for (const path of results.notes.failed) out.push(path);
   for (const path of results.board.failed) out.push(path);
   for (const path of results.misc.failed) out.push(path);
   for (const path of results.config.failed) out.push(path);
@@ -199,10 +191,9 @@ export async function withDrainedWrites<T>(op: () => Promise<T>): Promise<T> {
     // scheduler captures args at schedule time. We pass `() => null` so the
     // signature stays satisfied without coupling this module to the project
     // store's `getConfigWriteArgs`.
-    const [mdResult, fmResult, boardDrain, miscResult, configResult] =
+    const [noteResult, boardDrain, miscResult, configResult] =
       await Promise.all([
-        flushAllMarkdownWriters(),
-        flushAllPendingFrontmatterWrites(),
+        noteStore.flushAll(),
         boardCacheStore.flushAllDirty(),
         flushAllMisc(),
         flushScheduledConfig(() => null),
@@ -215,16 +206,14 @@ export async function withDrainedWrites<T>(op: () => Promise<T>): Promise<T> {
     // strand the board at its old path. The write stays retained + failed.
     const boardResult = { ...boardDrain, failed: boardDrain.failed.filter((p) => !isBoardPathHeld(p)) };
     const detail: PendingWritesFailedDetail = {
-      md: mdResult,
-      fm: fmResult,
+      notes: noteResult,
       board: boardResult,
       misc: miscResult,
       config: { failed: configResult?.failed ?? [] },
     };
 
     const totalFailed =
-      mdResult.failed.length +
-      fmResult.failed.length +
+      noteResult.failed.length +
       boardResult.failed.length +
       miscResult.failed.length +
       (configResult?.failed.length ?? 0);
@@ -294,8 +283,22 @@ export async function renameVaultPath(
   newPath: string,
 ): Promise<ChannelResult<'vault:rename'>> {
   return withDrainedWrites(async () => {
-    return window.filo.invoke('vault:rename', vaultRoot, oldPath, newPath);
+    // A note's write queue stays idle while its file moves: a write that
+    // started now would land on the old path (or recreate it).
+    return noteStore.hold(notePathsOf(vaultRoot, [oldPath, newPath]), async () => {
+      return window.filo.invoke('vault:rename', vaultRoot, oldPath, newPath);
+    });
   });
+}
+
+/** The vault-relative paths of `absPaths` that name notes (`.md`). */
+function notePathsOf(vaultRoot: string, absPaths: string[]): string[] {
+  const out: string[] = [];
+  for (const abs of absPaths) {
+    const rel = toVaultRelative(abs, vaultRoot);
+    if (rel && /.(md|markdown)$/i.test(rel)) out.push(rel);
+  }
+  return out;
 }
 
 /**
@@ -313,7 +316,10 @@ export async function deleteVaultPath(
   itemPath: string,
 ): Promise<ChannelResult<'vault:delete'>> {
   return withDrainedWrites(async () => {
-    return window.filo.invoke('vault:delete', vaultRoot, itemPath);
+    // The note's write queue stays idle while its file goes.
+    return noteStore.hold(notePathsOf(vaultRoot, [itemPath]), async () => {
+      return window.filo.invoke('vault:delete', vaultRoot, itemPath);
+    });
   });
 }
 

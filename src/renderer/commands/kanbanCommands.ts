@@ -1,36 +1,14 @@
 import { Command, cloneForSnapshot } from './Command';
 import { toastMissingUndoRedoTarget } from './missingTargetToast';
 import { boardCacheStore } from '../stores/boardCache.svelte';
-import { documentStore } from '../stores/document.svelte';
 import { uiStore } from '../stores/ui.svelte';
-import { vaultIndexStore } from '../stores/vaultIndex.svelte';
 import { defTitle } from '../stores/noteMeta';
-import { vaultStore } from '../stores/vault.svelte';
 import type { TileDefinition, KanbanBoard } from '../schema/index';
 import type {
   KanbanTilePlacement,
   PartialKanbanCardStyle,
 } from '../schema/placement';
-import {
-  scheduleFrontmatterWrite,
-  flushAllPendingFrontmatterWrites,
-} from '../lib/boards/frontmatterWriteScheduler';
-import {
-  writeMarkdownFile,
-  markHydrated,
-  isHydrated,
-  readMarkdownForHydrate,
-} from '../lib/vault/markdownFileWriter';
-import { reportError } from '../lib/utils/errorBus';
-import { forceWriteForDocument } from '../lib/vault/markdownFileWriter';
-import { seedDocumentFrontmatterFromDisk } from '../lib/boards/seedFrontmatterFromDisk';
-import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
-import {
-  applyFrontmatterPatchRebased,
-  captureInverseFromCache,
-  fmValueEqual,
-} from './frontmatterRebase';
-import { patchToFrontmatterDelta } from '../lib/vault/frontmatterDelta';
+import { NoteFieldCommand } from './noteFieldCommand';
 
 // ── Kanban Commands ──
 //
@@ -549,130 +527,11 @@ export class UpdateCoverImageCommand extends Command {
   }
 }
 
-export class UpdateCardFieldCommand extends Command {
-  description: string;
-  readonly targetBoardId: string;
-  private boardId: string;
-  private relPath: string;
-  private notePath: string;
-  private patch: Record<string, unknown>;
-  private inversePatch: Record<string, unknown>;
-  // False on the user's initial Apply (apply directly), true once
-  // executed so a later redo rebases like undo instead of clobbering.
-  private hasExecuted = false;
-
-  constructor(
-    boardId: string,
-    relPath: string,
-    notePath: string | null,
-    patch: Record<string, unknown>,
-    inversePatch: Record<string, unknown>,
-    description?: string,
-  ) {
-    super();
-    // Refuse a null notePath: without one the write re-emits unchanged FM, so Apply
-    // and Undo would be silent no-ops. Null-notePath edits go through
-    // UpdateOrphanFrontmatterCommand.
-    if (!notePath) {
-      throw new Error(
-        'UpdateCardFieldCommand requires a non-null notePath; route null-notePath card edits through UpdateOrphanFrontmatterCommand instead',
-      );
-    }
-    this.targetBoardId = boardId;
-    this.boardId = boardId;
-    this.relPath = relPath;
-    this.notePath = notePath;
-    // Deep-clone so nested values (e.g. `tags: [...]`) can't be mutated through
-    // the caller's reference after the command is pushed.
-    this.patch = this.snapshot(patch);
-    this.inversePatch = this.snapshot(inversePatch);
-    this.description = description ?? `Update card ${Object.keys(patch).join(', ')}`;
-  }
-
-  async execute(): Promise<void> {
-    // Drain pending debounced writes before merging the new patch so the
-    // prior in-memory state lands on disk first. Awaited: otherwise a fast
-    // Apply → Undo races the still-debounced forward write against the inverse.
-    await flushAllPendingFrontmatterWrites();
-    // First execute = the user's own action: apply it directly (the inverse
-    // patch was just read from this same live cache). A redo re-applies an old
-    // patch and must rebase like undo so an external edit since isn't clobbered.
-    const isRedo = this.hasExecuted;
-    this.hasExecuted = true;
-    if (isRedo) {
-      await applyFrontmatterPatchRebased({
-        notePath: this.notePath,
-        relPath: this.relPath,
-        targetBoardId: this.targetBoardId,
-        applying: this.patch,
-        expectedCurrent: this.inversePatch,
-        label: this.relPath,
-      });
-      return;
-    }
-    // Capture vault identity before the seed's disk read; a vault swap can
-    // commit mid-read, and we must not inject the old vault's FM or write onto
-    // the new vault's same-named file.
-    const identity = captureVaultIdentity();
-    // Seed the FM cache from a fresh disk read inside the chained command body,
-    // so save()/quit (which await historyStore.whenChainSettled()) cover this
-    // read — seeding before execute() let a quit in that window lose the edit.
-    // No-op when the cache is already seeded or the disk read fails.
-    await seedDocumentFrontmatterFromDisk(this.notePath, vaultStore.path, this.relPath);
-    // Swap landed mid-seed: abandon before any index/merge/schedule/markDirty sink.
-    if (!isStillSameVault(identity)) return;
-    if (!documentStore.getFrontmatter(this.notePath)) {
-      // Disk read failed (ENOENT / transient) — fall back to the vault-index
-      // snapshot so the merge has a full FM object.
-      documentStore.setFrontmatter(
-        this.notePath,
-        (vaultIndexStore.getMetadata(this.relPath)?.frontmatter ?? {}) as Record<string, unknown>,
-      );
-    }
-    // Recapture the inverse from the just-seeded cache so undo restores the
-    // TRUE prior value of each patched key — the writer computed it before
-    // this seed ran, off a possibly-stale index / empty cache.
-    this.inversePatch = this.snapshot(captureInverseFromCache(this.notePath, this.patch));
-    // mergeFrontmatter feeds the DISPLAY cache only; the delta is the write
-    // SOURCE (applied to a fresh disk read in the gateway), so an untouched
-    // external key is preserved instead of dropped from a stale cache.
-    documentStore.mergeFrontmatter(this.notePath, this.patch);
-    scheduleFrontmatterWrite(this.relPath, this.notePath, patchToFrontmatterDelta(this.patch));
-    boardCacheStore.markDirty(this.targetBoardId);
-  }
-
-  async undo(): Promise<void> {
-    await flushAllPendingFrontmatterWrites();
-    // Rebase onto the live frontmatter so an external edit to the same field
-    // isn't silently clobbered (prompts to apply anyway). Awaited: the rebase
-    // re-reads disk when no cache is seeded.
-    await applyFrontmatterPatchRebased({
-      notePath: this.notePath,
-      relPath: this.relPath,
-      targetBoardId: this.targetBoardId,
-      applying: this.inversePatch,
-      expectedCurrent: this.patch,
-      label: this.relPath,
-    });
-  }
-}
-
 /**
- * Undoable kanban frontmatter edit for cards that aren't a text tile with a
- * note path. `UpdateCardFieldCommand` needs a notePath to merge through the
- * documentStore cache; without one the scheduler would read the watcher
- * snapshot and never see the patch. This command writes directly instead,
- * mirroring the PropertiesPopup disk path.
+ * A change to a card's note frontmatter (due date, priority, tags, status…).
+ * See `NoteFieldCommand` for the execute / undo / redo rules.
  */
-export class UpdateOrphanFrontmatterCommand extends Command {
-  description: string;
-  readonly targetBoardId: string;
-  private boardId: string;
-  private relPath: string;
-  private patch: Record<string, unknown>;
-  private inversePatch: Record<string, unknown>;
-  private hasExecuted = false;
-
+export class UpdateCardFieldCommand extends NoteFieldCommand {
   constructor(
     boardId: string,
     relPath: string,
@@ -680,65 +539,7 @@ export class UpdateOrphanFrontmatterCommand extends Command {
     inversePatch: Record<string, unknown>,
     description?: string,
   ) {
-    super();
-    this.targetBoardId = boardId;
-    this.boardId = boardId;
-    this.relPath = relPath;
-    this.patch = this.snapshot(patch);
-    this.inversePatch = this.snapshot(inversePatch);
-    this.description = description ?? `Update card ${Object.keys(patch).join(', ')}`;
-  }
-
-  async execute(): Promise<void> {
-    // On the FIRST execute, recompute the inverse from the current on-disk
-    // frontmatter. The construction-time inverse came from a possibly-stale
-    // vault index: it would make execute falsely conflict (dropping the user's
-    // edit) and make undo restore a stale value. Not on redo — the inverse
-    // already holds what this command wrote. A read failure keeps the
-    // construction-time inverse.
-    if (!this.hasExecuted) {
-      this.hasExecuted = true;
-      // Guard the recompute against a vault swap during the flush/read.
-      const identity = captureVaultIdentity();
-      await flushAllPendingFrontmatterWrites();
-      const vaultRoot = vaultStore.path;
-      if (vaultRoot) {
-        try {
-          const hydrate = await readMarkdownForHydrate(vaultRoot, this.relPath);
-          if (isStillSameVault(identity)) {
-            const before = (hydrate.frontmatter ?? {}) as Record<string, unknown>;
-            const inverse: Record<string, unknown> = {};
-            for (const key of Object.keys(this.patch)) {
-              inverse[key] = key in before ? before[key] : '';
-            }
-            this.inversePatch = this.snapshot(inverse);
-          }
-        } catch {
-          // ENOENT / transient — keep the construction-time inverse.
-        }
-      }
-    }
-    // Route through the rebased variant so an external edit to
-    // the same field isn't silently clobbered. The inverse patch IS the
-    // expected current state (what we wrote on the prior execute, or the
-    // initial state before any execute).
-    await applyOrphanPatchRebased({
-      relPath: this.relPath,
-      targetBoardId: this.targetBoardId,
-      applying: this.patch,
-      expectedCurrent: this.inversePatch,
-      label: this.relPath,
-    });
-  }
-
-  async undo(): Promise<void> {
-    await applyOrphanPatchRebased({
-      relPath: this.relPath,
-      targetBoardId: this.targetBoardId,
-      applying: this.inversePatch,
-      expectedCurrent: this.patch,
-      label: this.relPath,
-    });
+    super(boardId, relPath, patch, inversePatch, description ?? `Update card ${Object.keys(patch).join(', ')}`);
   }
 }
 
@@ -858,135 +659,4 @@ export class SetAllKanbanColumnsCollapsedCommand extends Command {
       }
     }
   }
-}
-
-/**
- * cache-less rebased frontmatter patch for orphan cards (no open editor).
- * Mirrors `applyFrontmatterPatchRebased`: read disk fresh, compare each
- * applying key against `expectedCurrent`, commit only the non-conflicting keys,
- * and toast "Kept the external value" (with Apply anyway) for the rest, so an
- * external edit to the same field isn't silently clobbered.
- */
-async function applyOrphanPatchRebased(args: {
-  relPath: string;
-  targetBoardId: string;
-  applying: Record<string, unknown>;
-  expectedCurrent: Record<string, unknown>;
-  label: string;
-}): Promise<void> {
-  const { relPath, targetBoardId, applying, expectedCurrent, label } = args;
-  // Capture identity before reading the live vault path; a swap during the
-  // flush/read must not apply this command's patch to the new vault's file.
-  const identity = captureVaultIdentity();
-  const vaultRoot = vaultStore.path;
-  if (!vaultRoot) return;
-
-  // If a Document editor opened on this file between execute
-  // and undo, route through the notePath-aware rebased helper (same conflict
-  // semantics as orphan path, but uses the live cache). Force-flush so
-  // the rebase's write lands immediately instead of riding the debounce.
-  const openDoc = documentStore.findByFilename(relPath);
-  if (openDoc) {
-    await applyFrontmatterPatchRebased({
-      notePath: openDoc.filename,
-      relPath,
-      targetBoardId,
-      applying,
-      expectedCurrent,
-      label,
-    });
-    const result = await forceWriteForDocument(openDoc.filename);
-    if (result.ok > 0) return;
-    // No writer registered yet (editor mid-mount); fall through to the
-    // direct orphan write path below.
-  }
-
-  // Drain pending debounced writes so the prior in-memory state lands
-  // first. Mirrors UpdateCardFieldCommand's flush-before-merge ordering.
-  await flushAllPendingFrontmatterWrites();
-
-  // Read the body fresh from disk rather than trusting the vault index, which
-  // can be stale for an orphan and would clobber a recent external edit.
-  let body = '';
-  let baseFm: Record<string, unknown> = {};
-  // Disk FM SOURCE, threaded into the write below so it source-preserves
-  // instead of full-dumping. Unset on the index fallback (no source available).
-  let baseRawFm: string | undefined;
-  try {
-    const hydrateResult = await readMarkdownForHydrate(vaultRoot, relPath);
-    body = hydrateResult.body;
-    baseFm = hydrateResult.frontmatter;
-    baseRawFm = hydrateResult.rawFrontmatter;
-  } catch {
-    const meta = vaultIndexStore.getMetadata(relPath);
-    baseFm = (meta?.frontmatter ?? {}) as Record<string, unknown>;
-    body = meta?.content ?? '';
-    if (!isHydrated(relPath)) markHydrated(relPath, false);
-  }
-
-  // Swap during the drain/read: don't write this patch onto the new vault.
-  if (!isStillSameVault(identity)) return;
-
-  const commit = async (patch: Record<string, unknown>): Promise<void> => {
-    // Thread an explicit DELTA, not a cleaned whole object: cleaning would drop
-    // present-but-empty disk keys (aliases:, cssclasses:).
-    const delta = patchToFrontmatterDelta(patch);
-    // Don't swallow a failed write: letting it reject makes execute()/undo()
-    // reject so the history wrapper rolls the command back (the gateway already
-    // toasted and kept `.filo/.dirty`). markDirty runs only after success.
-    await writeMarkdownFile({
-      vaultRoot,
-      relPath,
-      frontmatterDelta: delta,
-      body,
-      callerId: `kanban-orphan-patch:${relPath}`,
-      notePath: null,
-      // Delta baselines from its own fresh read; baseRawFm = no-delta fallback.
-      originalFrontmatter: baseRawFm,
-      bodyIsLive: false, // always a snapshot body, never a live editor's
-    });
-    // allow-non-target-markdirty: shared helper, callers pass this.targetBoardId per the CI gate
-    boardCacheStore.markDirty(targetBoardId);
-  };
-
-  const conflicts = Object.keys(applying).filter(
-    (key) => !fmValueEqual(baseFm[key], expectedCurrent[key]),
-  );
-
-  if (conflicts.length === 0) {
-    await commit(applying);
-    return;
-  }
-
-  // Keep the external value(s); apply only the fields nothing external
-  // touched. When ALL fields conflict, skip the write entirely.
-  const safe: Record<string, unknown> = {};
-  for (const key of Object.keys(applying)) {
-    if (!conflicts.includes(key)) safe[key] = applying[key];
-  }
-  if (Object.keys(safe).length > 0) {
-    await commit(safe);
-  }
-  // When ALL fields conflict nothing is written, so don't markDirty — it would
-  // only schedule a redundant `.board.json` rewrite (and a phantom drift prompt).
-
-  uiStore.pushToast({
-    text: `External edit changed ${conflicts.join(', ')} in ${label}. Kept the external value — that field's undo/redo was skipped.`,
-    type: 'warning',
-    duration: 0,
-    actions: [
-      {
-        label: 'Apply anyway',
-        handler: () => {
-          const forced: Record<string, unknown> = {};
-          for (const key of conflicts) forced[key] = applying[key];
-          // commit rejects on write failure; this fire-and-forget toast path
-          // isn't wrapped by the history runner, so surface + swallow.
-          void commit(forced).catch((err) =>
-            reportError('updateOrphanFrontmatter', err, `Failed to update ${relPath}`),
-          );
-        },
-      },
-    ],
-  });
 }

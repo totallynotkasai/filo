@@ -1,37 +1,22 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+/**
+ * "Sync this tile" on a text tile whose backing file was deleted from the OS
+ * must not recreate the file from memory: it reports the write as not landed
+ * instead. When the file is there, the tile's queued body is written.
+ */
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TileDefinition, KanbanBoard } from '@renderer/schema/index';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
-/**
- * Phase 1.4 regression: `syncTile` previously wrote through the
- * mkdir-p-style `vault:write-file-text` channel. If the user deleted the
- * backing file from the OS and then clicked "Sync this tile", the IPC
- * silently recreated the file. The fix routes through
- * `vault:write-existing-file-text`, which returns
- * `{ success: false, code: 'ENOENT', … }` so `assertIpcOk` throws an
- * `IpcEnvelopeError`, which `syncTile` catches and surfaces as a
- * `{ wrote: false, skippedReason: 'file-missing' }` result.
- */
-
-type InvokeHandler = (...args: unknown[]) => unknown | Promise<unknown>;
-
-function installFiloStub(routes: Record<string, InvokeHandler> = {}): void {
-  (window as unknown as Record<string, unknown>).filo = {
-    invoke: async (channel: string, ...args: unknown[]) => {
-      const handler = routes[channel];
-      if (!handler) return null;
-      return handler(...args);
-    },
-    on: () => () => {},
-    send: () => {},
-  };
-}
+let vault: MemoryVault;
 
 function makeKanbanFixtureWithTextTile(): V7BoardFileData {
-  const def: TileDefinition = {
+  const def = {
     id: 't1',
     type: 'text',
     filePath: 'note.md',
@@ -68,80 +53,42 @@ function makeKanbanFixtureWithTextTile(): V7BoardFileData {
 }
 
 describe('boardCacheStore.syncTile — deleted backing file', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    __resetDirtyTrackingForTests();
+    noteStore.__resetForTests();
     vaultStore.setPath('/vault');
     boardCacheStore.clear();
+    vault = installMemoryVault({ 'note.md': '# Disk content\n' });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    boardCacheStore.hydrate({ kb: makeKanbanFixtureWithTextTile() }, { kb: 'tasks.board.json' });
+    const m = noteStore.acquire('note.md', 'tile:t1');
+    await m.loaded;
   });
   afterEach(() => {
+    noteStore.__resetForTests();
     vaultStore.setPath('');
     boardCacheStore.clear();
+    vi.restoreAllMocks();
+    restoreFiloDefault();
   });
 
-  it('returns skippedReason file-missing when the IPC reports ENOENT', async () => {
-    const writeCalls: Array<{ channel: string; args: unknown[] }> = [];
-    installFiloStub({
-      'vault:read-file-text': async () => ({ success: true, content: '# Stale disk content\n' }),
-      'vault:write-existing-file-text': async (...args) => {
-        writeCalls.push({ channel: 'vault:write-existing-file-text', args });
-        return { success: false, code: 'ENOENT', error: 'file no longer exists' };
-      },
-      'vault:write-file-text': async (...args) => {
-        writeCalls.push({ channel: 'vault:write-file-text', args });
-        return { success: true };
-      },
-      'board:save': async () => ({ success: true }),
-    });
-
-    boardCacheStore.hydrate(
-      { kb: makeKanbanFixtureWithTextTile() },
-      { kb: 'tasks.board.json' },
-    );
-
-    documentStore.loadDocument({
-      filename: 'note.md',
-      title: 'Note',
-      body: 'Local body that should NOT resurrect the deleted file.',
-      htmlContent: '',
-      richText: [],
-    });
+  it('reports not written, and never recreates the deleted file', async () => {
+    noteStore.setBody('note.md', 'Local body that should NOT resurrect the deleted file.', 'tile:t1');
+    vault.remove('note.md');
 
     const result = await boardCacheStore.syncTile('t1');
     expect(result.wrote).toBe(false);
-    expect(result.skippedReason).toBe('file-missing');
-    // The `.filo/.dirty` sentinel write is expected (it routes through
-    // `vault:write-file-text` because mkdir -p of `.filo/` is required).
-    // We only care that the BACKING FILE was not resurrected.
-    const resurrectionCall = writeCalls.find(
-      (c) => c.channel === 'vault:write-file-text' && c.args[1] === 'note.md',
-    );
-    expect(resurrectionCall).toBeUndefined();
-    expect(writeCalls.some(
-      (c) => c.channel === 'vault:write-existing-file-text' && c.args[1] === 'note.md',
-    )).toBe(true);
+    expect(result.skippedReason).toBeTruthy();
+    expect(vault.read('note.md')).toBeUndefined();
+    expect(vault.writes.filter(([, rel]) => rel === 'note.md')).toEqual([]);
   });
 
   it('returns wrote:true when the write succeeds', async () => {
-    installFiloStub({
-      'vault:read-file-text': async () => ({ success: true, content: '' }),
-      'vault:write-existing-file-text': async () => ({ success: true, path: '/vault/note.md' }),
-      'board:save': async () => ({ success: true }),
-    });
-
-    boardCacheStore.hydrate(
-      { kb: makeKanbanFixtureWithTextTile() },
-      { kb: 'tasks.board.json' },
-    );
-
-    documentStore.loadDocument({
-      filename: 'note.md',
-      title: 'Note',
-      body: 'New body content',
-      htmlContent: '',
-      richText: [],
-    });
+    noteStore.setBody('note.md', 'New body content', 'tile:t1');
 
     const result = await boardCacheStore.syncTile('t1');
     expect(result.wrote).toBe(true);
     expect(result.skippedReason).toBeUndefined();
+    expect(vault.read('note.md')).toBe('New body content\n');
   });
 });

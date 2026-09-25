@@ -4,17 +4,15 @@
  * The `.md` file is the only copy of a note's metadata; boards store just the
  * path. These selectors are what every view reads instead of a board copy:
  *
- * - An open note (or one whose frontmatter an edit has seeded) answers from
- *   the document store's live frontmatter, so an edit shows before its
+ * - An open note answers from its note model, so an edit shows before its
  *   debounced write lands.
- * - Anything else answers from the vault index, which the write gateway
- *   refreshes after each write and the watcher refreshes after each external
- *   change.
+ * - Anything else answers from the vault index (which the note writer
+ *   refreshes after each write and the watcher after each external change),
+ *   with any queued frontmatter change laid over it.
  *
  * Reactive: a `$derived` that calls these re-runs when either source changes.
  */
-import { documentStore } from './document.svelte';
-import { vaultIndexStore } from './vaultIndex.svelte';
+import { noteStore } from './notes.svelte';
 import { orderPreservingTagsField } from '../lib/utils/normalizeTagsField';
 
 const EMPTY: Readonly<Record<string, unknown>> = Object.freeze({});
@@ -25,12 +23,10 @@ export function noteStem(path: string): string {
   return base.replace(/\.(md|markdown)$/i, '');
 }
 
-/** The note's frontmatter: the live cache when seeded, else the vault index. */
+/** The note's frontmatter: its model when loaded, else the vault index. */
 export function noteFrontmatter(path: string): Readonly<Record<string, unknown>> {
   if (!path) return EMPTY;
-  const live = documentStore.getFrontmatter(path);
-  if (live) return live;
-  return (vaultIndexStore.getMetadata(path)?.frontmatter as Record<string, unknown> | undefined) ?? EMPTY;
+  return noteStore.frontmatter(path);
 }
 
 /** Frontmatter `title` when it is a non-empty string, else `null`. */

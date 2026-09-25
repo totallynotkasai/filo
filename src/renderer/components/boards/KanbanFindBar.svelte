@@ -3,7 +3,7 @@
    * KanbanFindBar — narrow text input pinned to the top of the Kanban view.
    *
    * Filters cards in-place via the parent's per-column `tileMatchesFilters`
-   * helper (matches title, body via documentStore, and frontmatter tags).
+   * helper (matches title, body via the note store, and frontmatter tags).
    */
   let {
     query,

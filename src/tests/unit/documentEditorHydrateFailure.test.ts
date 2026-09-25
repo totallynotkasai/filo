@@ -1,115 +1,89 @@
+/**
+ * A note whose first read FAILED (a Windows file lock, OneDrive, antivirus)
+ * must not be written from its blank editor: a keystroke into that
+ * unexpectedly-empty view would otherwise truncate the real, unread file. The
+ * note is `unreadable` and takes no body until a later read succeeds.
+ */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import {
-  isHydrated,
-  readMarkdownForHydrate,
-  writeMarkdownFile,
-  cancelAllMarkdownWrites,
-  __clearFileStateForTests,
-} from '@renderer/lib/vault/markdownFileWriter';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
+import { setActiveVaultPath } from '@renderer/lib/vault/activeVaultPath';
+import { beginVaultGeneration, __resetVaultIdentityForTests } from '@renderer/lib/vault/vaultIdentity';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
-/**
- * Audit-12 M1 — DocumentEditor must not write an empty body over a file whose
- * on-mount hydrate read FAILED.
- *
- * Root cause: a transient read failure (Windows file lock / OneDrive / AV) left
- * the editor blank + writable. A keystroke into that unexpectedly-empty editor
- * then truncated the real (unread) file on the next debounced write. The fix
- * flags the failed read (`hydrateReadFailed`) and `buildWriteArgs` refuses to
- * write while it's set with no real body loaded — pinned structurally by the
- * `ci:no-silent-write-abort` gate (both tokens REQUIRED in DocumentEditor.svelte).
- *
- * The guard itself is component-internal (DocumentEditor.svelte) and this repo's
- * jsdom test env doesn't mount TipTap components, so these tests lock the two
- * GATEWAY-level facts the guard relies on:
- *   1. A failed `readMarkdownForHydrate` REJECTS — the exact trigger that sets
- *      `hydrateReadFailed = true` in the component's catch.
- *   2. Writing an EMPTY body over a file with real content DOES truncate it —
- *      proving the guard is load-bearing — while declining the write (the
- *      guard's effect) leaves the file's real content intact.
- *   3. A later SUCCESSFUL read returns the real content — the resume path that
- *      clears the flag and re-enables editing.
- */
-describe('Audit-12 M1 — DocumentEditor failed-hydrate write guard (gateway contract)', () => {
-  let diskFiles: Map<string, string>;
+const REAL = '---\ntitle: Real\n---\n\n# Real heading\n\nReal paragraph that must survive.\n';
 
-  beforeEach(() => {
-    __resetDirtyTrackingForTests();
-    __clearFileStateForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
-    diskFiles = new Map();
-    installFiloMock((channel: string, ...args: unknown[]) => {
-      if (channel === 'vault:read-file-text') {
-        const rel = args[1] as string;
-        const content = diskFiles.get(rel);
-        if (content === undefined) return { success: false, code: 'ENOENT' };
-        return { success: true, content, mtimeMs: 100, size: content.length };
-      }
-      if (channel === 'vault:write-existing-file-text' || channel === 'vault:write-file-text') {
-        const rel = args[1] as string;
-        diskFiles.set(rel, args[2] as string);
-        return { success: true };
-      }
-      if (channel === 'vault:stat') return { ok: true, mtimeMs: 100, size: 100 };
-      return { ok: true, success: true };
-    });
+let diskFiles: Map<string, string>;
+let locked: boolean;
+let writes: string[];
+
+beforeEach(() => {
+  __resetDirtyTrackingForTests();
+  __resetVaultIdentityForTests();
+  beginVaultGeneration('/vault');
+  setActiveVaultPath('/vault');
+  noteStore.__resetForTests();
+  diskFiles = new Map([['Notes/Locked.md', REAL]]);
+  locked = true;
+  writes = [];
+  installFiloMock((channel: string, ...args: unknown[]) => {
+    const rel = args[1] as string;
+    if (channel === 'vault:read-file-text') {
+      if (locked) return { success: false, code: 'EBUSY', error: 'EBUSY: resource busy or locked' };
+      const content = diskFiles.get(rel);
+      if (content === undefined) return { success: false, code: 'ENOENT', error: 'ENOENT' };
+      return { success: true, content, mtimeMs: 100, size: content.length, encoding: 'utf-8' };
+    }
+    if (channel === 'vault:write-existing-file-text' || channel === 'vault:write-file-text') {
+      writes.push(rel);
+      diskFiles.set(rel, args[2] as string);
+      return { success: true };
+    }
+    if (channel === 'vault:stat') {
+      const content = diskFiles.get(rel);
+      return content === undefined
+        ? { success: false, code: 'ENOENT', error: 'ENOENT' }
+        : { success: true, mtimeMs: 100, size: content.length };
+    }
+    return { success: true };
+  });
+});
+
+afterEach(() => {
+  noteStore.__resetForTests();
+  setActiveVaultPath('');
+  restoreFiloDefault();
+});
+
+describe('a failed first read blocks writes until a read succeeds', () => {
+  it('the note is unreadable and a keystroke writes nothing', async () => {
+    const m = noteStore.acquire('Notes/Locked.md', 'document-editor');
+    await m.loaded;
+    expect(m.status).toBe('unreadable');
+    expect(m.body).toBe('');
+
+    noteStore.setBody('Notes/Locked.md', 'x', 'document-editor');
+    expect(m.hasUnsavedBody).toBe(false);
+    await noteStore.flushAll();
+
+    expect(writes.filter((w) => w.endsWith('.md'))).toEqual([]);
+    expect(diskFiles.get('Notes/Locked.md')).toBe(REAL);
   });
 
-  afterEach(() => {
-    cancelAllMarkdownWrites();
-    __clearFileStateForTests();
-    restoreFiloDefault();
-  });
+  it('a later successful read resumes editing on the real content', async () => {
+    const m = noteStore.acquire('Notes/Locked.md', 'document-editor');
+    await m.loaded;
+    expect(m.status).toBe('unreadable');
 
-  it('a failed hydrate read REJECTS (the trigger that flips hydrateReadFailed)', async () => {
-    const rel = 'Notes/Locked.md';
-    // No entry in diskFiles → the read returns { success: false } → the gateway
-    // read helper throws. This is what the component catches to set the flag.
-    expect(isHydrated(rel)).toBe(false);
-    await expect(readMarkdownForHydrate('/vault', rel)).rejects.toBeTruthy();
-    // The file remains absent in our mock — the failed read mutated nothing.
-    expect(diskFiles.has(rel)).toBe(false);
-  });
+    locked = false;
+    await noteStore.reload('Notes/Locked.md');
+    expect(m.status).toBe('ready');
+    expect(m.body).toContain('Real heading');
 
-  it('an empty-body write over real content TRUNCATES it (why the guard is load-bearing)', async () => {
-    const rel = 'Notes/Real.md';
-    const real = '---\ntitle: Real\n---\n\n# Real heading\n\nReal paragraph that must survive.\n';
-    diskFiles.set(rel, real);
-
-    // Hydrate succeeds here (control): a normal open reads the real bytes.
-    const hydrated = await readMarkdownForHydrate('/vault', rel);
-    expect(hydrated.body).toContain('Real heading');
-
-    // Simulate the UN-GUARDED failure: the editor wrote an empty body. The
-    // gateway faithfully persists whatever body it's handed, so the real
-    // content is lost — this is exactly the data loss M1's guard prevents.
-    await writeMarkdownFile({
-      vaultRoot: '/vault',
-      relPath: rel,
-      frontmatter: {},
-      body: '',
-      callerId: `document-editor:${rel}`,
-      notePath: null,
-    });
-    expect(diskFiles.get(rel) ?? '').not.toContain('Real heading');
-  });
-
-  it('declining the write (the guard) preserves the real file; a later read resumes', async () => {
-    const rel = 'Notes/Guarded.md';
-    const real = '# Important\n\nUnread content stays put.\n';
-    diskFiles.set(rel, real);
-
-    // The component, on a failed read, sets hydrateReadFailed and buildWriteArgs
-    // returns null — so NO write is issued. We model that by simply not calling
-    // writeMarkdownFile. The on-disk content is therefore untouched.
-    expect(diskFiles.get(rel)).toBe(real);
-
-    // Resume path: once the file is readable again, the retry's read returns the
-    // real content (clears the flag + re-enables editing in the component).
-    const reread = await readMarkdownForHydrate('/vault', rel);
-    expect(reread.body).toContain('Unread content stays put.');
+    noteStore.setBody('Notes/Locked.md', '# Real heading\n\nReal paragraph that must survive.\n\nAdded.', 'document-editor');
+    await noteStore.flush('Notes/Locked.md');
+    expect(diskFiles.get('Notes/Locked.md')).toContain('Real paragraph that must survive.');
+    expect(diskFiles.get('Notes/Locked.md')).toContain('Added.');
+    expect(diskFiles.get('Notes/Locked.md')?.startsWith('---\ntitle: Real\n---\n')).toBe(true);
   });
 });

@@ -130,10 +130,10 @@ export interface IpcChannelMap {
   };
   'vault:read-file-text': {
     args: [vaultRoot: string, relPath: string];
-    // `mtimeMs` + `size` are returned with the content so hydrate sites seed
-    // the pre-write drift baseline without a second `vault:stat` round-trip.
+    // `mtimeMs` + `size` are returned with the content so a reader has the
+    // file's identity without a second `vault:stat` round-trip.
     // Both are omitted when the read wasn't coherent (a write landed during
-    // it); `markHydrated` only seeds a baseline when both are finite.
+    // it); the note writer re-reads such a read before trusting it.
     // `encoding` is `'invalid-utf-8'` when the bytes aren't UTF-8
     // (content is still decoded, with U+FFFD, for display only); absent = UTF-8.
     result: IpcSuccess<{ content: string; mtimeMs?: number; size?: number; encoding?: 'utf-8' | 'invalid-utf-8' }>;

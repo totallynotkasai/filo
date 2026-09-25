@@ -1,113 +1,72 @@
 /**
- * Audit-4 DI-13 — an orphan frontmatter write (a Kanban / Task field edit with
- * no open editor) whose backing `.md` was deleted out-of-band must surface the
- * loss rather than swallow it.
- *
- * The orphan branch of `writeFrontmatter` hydrates the body fresh from disk; if
- * that read ENOENTs the write can't land. Pre-DI-13 the catch did a bare
- * `return`, so the board cache kept showing the edit while it never reached
- * disk and the save indicator stayed clean. DI-13 calls `markPathFailed` in
- * that catch, so the path lands in the failed set (sticky 'error' in the save
- * indicator) — matching the write-phase ENOENT discipline. The deleted file is
- * still NOT resurrected; the drop is just made visible.
- *
- * Audit5 2.3 (#7) — DI-13's bare `return` still resolved `performWrite` as a
- * SUCCESS, so `flushAllPendingFrontmatterWrites().failed` OMITTED the path and
- * `vaultStore.save()` returned true → Ctrl+S toasted a false "Saved" while the
- * indicator read error and `.dirty` was set. The catch now `throw`s so the
- * failure propagates into the flush result. These tests assert on that return
- * value, not just the transient indicator peak.
+ * A frontmatter edit to a note no view has open (a Kanban / Task field edit)
+ * whose `.md` was deleted by another program can't land, and must say so
+ * rather than swallow it: the path goes into the failed set (the save
+ * indicator's sticky error) AND into `flushAll().failed`, so Ctrl+S reports
+ * the failure instead of a false "Saved". The deleted file is never
+ * recreated from memory.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import {
-  scheduleFrontmatterWrite,
-  flushAllPendingFrontmatterWrites,
-  resetFrontmatterScheduler,
-} from '@renderer/lib/boards/frontmatterWriteScheduler';
-import { setWriteStateListener } from '@renderer/lib/boards/writeStateTracking';
-import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
-import { __resetMarkdownFileWriterForTests } from '@renderer/lib/vault/markdownFileWriter';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { noteStore } from '@renderer/stores/notes.svelte';
+import { setWriteStateListener, __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { parseMarkdown } from '@renderer/lib/vault/vaultIndex';
 import { vaultStore } from '@renderer/stores/vault.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
-import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
-describe('DI-13 — orphan frontmatter write to a deleted backing file', () => {
+describe('a frontmatter edit to an unopened note whose file was deleted', () => {
   let maxFailed = 0;
+  let vault: MemoryVault;
+  const TEXT = '---\nstatus: todo\n---\nbody';
 
   beforeEach(() => {
-    __resetMarkdownFileWriterForTests();
     __resetDirtyTrackingForTests();
-    resetFrontmatterScheduler();
     vaultIndexStore.clear();
-    documentStore.clear();
     vaultStore.setPath('/vault');
+    noteStore.__resetForTests();
+    vault = installMemoryVault({ 'Tasks/orphan.md': TEXT, 'Tasks/healthy.md': TEXT });
     maxFailed = 0;
     setWriteStateListener((info) => {
       maxFailed = Math.max(maxFailed, info.failed);
     });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
   afterEach(() => {
     setWriteStateListener(null);
-    __resetMarkdownFileWriterForTests();
+    noteStore.__resetForTests();
     __resetDirtyTrackingForTests();
-    resetFrontmatterScheduler();
     vaultIndexStore.clear();
-    documentStore.clear();
     vaultStore.setPath('');
     restoreFiloDefault();
+    vi.restoreAllMocks();
   });
 
-  it('marks the path failed (save indicator error) instead of silently dropping the edit', async () => {
+  it('marks the path failed and reports it from flushAll instead of dropping the edit', async () => {
     const relPath = 'Tasks/orphan.md';
-    // Orphan path: note path null, FM sourced from the index. The index still has
-    // the file's metadata (the edit scheduled this write), but the backing .md
-    // was deleted out-of-band so the hydrate read ENOENTs.
-    vaultIndexStore.restoreMetadata(
-      relPath,
-      parseMarkdown(relPath, '---\nstatus: todo\n---\nbody'),
-    );
+    // The index still has the file (the edit was made from it), but the file
+    // is gone by the time the write runs.
+    vaultIndexStore.restoreMetadata(relPath, parseMarkdown(relPath, TEXT));
+    vault.remove(relPath);
 
-    installFiloMock({
-      'vault:read-file-text': () => ({ success: false, code: 'ENOENT' }),
-      'vault:write-existing-file-text': () => ({ success: true }),
-      'vault:stat': () => ({ success: false, code: 'ENOENT' }),
-    });
+    noteStore.patchFrontmatter(relPath, { set: { status: 'done' }, unset: [] });
+    const result = await noteStore.flushAll();
 
-    scheduleFrontmatterWrite(relPath, null);
-    const result = await flushAllPendingFrontmatterWrites();
-
-    // The deleted-file ENOENT was surfaced as a failed path, not swallowed.
     expect(maxFailed).toBeGreaterThan(0);
-    // Audit5 2.3 — and it propagates to the flush result that `save()` folds,
-    // so Ctrl+S reports the failure instead of a false "Saved".
     expect(result.failed).toContain(relPath);
+    expect(vault.read(relPath)).toBeUndefined();
+    expect(vault.writes.filter(([, rel]) => rel === relPath)).toEqual([]);
   });
 
-  it('a healthy orphan write does NOT mark the path failed (no false positive)', async () => {
+  it('a healthy edit does NOT mark the path failed (no false positive)', async () => {
     const relPath = 'Tasks/healthy.md';
-    vaultIndexStore.restoreMetadata(
-      relPath,
-      parseMarkdown(relPath, '---\nstatus: todo\n---\nbody'),
-    );
+    vaultIndexStore.restoreMetadata(relPath, parseMarkdown(relPath, TEXT));
 
-    installFiloMock({
-      'vault:read-file-text': () => ({
-        success: true,
-        content: '---\nstatus: todo\n---\nbody',
-        mtimeMs: 1000,
-        size: 100,
-      }),
-      'vault:write-existing-file-text': () => ({ success: true }),
-      'vault:stat': () => ({ success: true, mtimeMs: 1000, size: 100 }),
-    });
-
-    scheduleFrontmatterWrite(relPath, null);
-    const result = await flushAllPendingFrontmatterWrites();
+    noteStore.patchFrontmatter(relPath, { set: { status: 'done' }, unset: [] });
+    const result = await noteStore.flushAll();
 
     expect(maxFailed).toBe(0);
-    // No false positive — a healthy orphan write reports no failure.
     expect(result.failed).toEqual([]);
+    expect(vault.read(relPath)?.startsWith('---\nstatus: done\n---\nbody')).toBe(true);
   });
 });

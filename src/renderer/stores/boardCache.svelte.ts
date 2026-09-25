@@ -7,15 +7,8 @@ import type {
   Connection,
   Frame,
 } from '../schema/index';
-import { documentStore } from './document.svelte';
+import { noteStore } from './notes.svelte';
 import { vaultStore } from './vault.svelte';
-import { promptExternalEditOnSync } from './vaultExternalChanges';
-import { parseMarkdownFile } from '../lib/editor/markdownSync';
-import {
-  writeMarkdownFile,
-  markHydrated,
-  isHydrated,
-} from '../lib/vault/markdownFileWriter';
 import {
   type V7BoardFileData,
   scheduleBoardWrite,
@@ -25,10 +18,9 @@ import {
   setViewport,
   removeViewport,
 } from '../lib/boards/boardSaver';
-import { flushAllScheduledBoards, markBoardPathDeleting, clearBoardPathDeleting, backupExternalVersion } from '../lib/boards/boardWriteScheduler';
+import { flushAllScheduledBoards, markBoardPathDeleting, clearBoardPathDeleting } from '../lib/boards/boardWriteScheduler';
 import { loadBoard } from '../lib/boards/boardLoader';
 import { reportError } from '../lib/utils/errorBus';
-import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { invokeOk } from '../lib/utils/invokeOk';
 import { normalizePath, toPosix, normalizeVaultRelative, stripLeadingSlash } from '../lib/utils/path';
 import { createId } from '../lib/utils/ids';
@@ -724,15 +716,11 @@ export const boardCacheStore = {
   // ── Manual sync (recovery path when autosave silently failed) ──
 
   /**
-   * Force-rewrites the backing `.md` file for a text tile from the current
-   * in-memory document state (frontmatter from the vault index + body from
-   * the document store), then commits any pending placement edits to disk.
-   * For non-text tiles, just flushes the pending board JSON write.
+   * Writes a text tile's note now (whatever it has queued), then commits any
+   * pending placement edits to disk. For non-text tiles, just flushes the
+   * pending board JSON write.
    *
-   * Returns `{ wrote, skippedReason? }`. Throws on hard errors (no vault, IPC failure).
-   * Refuses to write when local body is empty but the disk file has content —
-   * protects against wiping data when a text tile was never hydrated (LOD
-   * block mode, `expandToDocument` seeding with body='', etc.).
+   * Returns `{ wrote, skippedReason? }`. Throws when no vault is open.
    */
   async syncTile(tileId: string): Promise<{ wrote: boolean; skippedReason?: string }> {
     const boardId = findBoardIdForTile(tileId);
@@ -786,147 +774,20 @@ onVaultSwap('pre-swap', 'boardCache', () => {
 
 /**
  * Inner sync helper used by both single-tile and bulk paths so behaviour
- * can't drift. Writes the tile's backing `.md` from the in-memory document
- * state, with a hard guard against emptying a non-empty file on disk.
+ * can't drift: writes whatever the tile's note has queued now (the note
+ * writer applies it to a fresh read of the file, and asks before
+ * overwriting a body another program changed).
  *
- * Returns `{ wrote }` when the file was written (or the tile is not a text
- * tile so nothing to write). Returns `{ wrote: false, skippedReason }` when
- * the write was deliberately refused.
+ * Returns `{ wrote }` when the note is on disk as the app shows it (or the
+ * tile has no note). Returns `{ wrote: false, skippedReason }` when the
+ * write didn't land.
  */
 async function syncTileMarkdown(
   def: TileDefinition | undefined,
 ): Promise<{ wrote: boolean; skippedReason?: string }> {
   if (!def || def.type !== 'text') return { wrote: false };
-
-  const vaultRoot = vaultStore.path;
-  if (!vaultRoot) throw new Error('No vault open');
-
-  const notePath = def.filePath;
-  const doc = documentStore.getDocument(notePath);
-  if (!doc) return { wrote: false };
-
-  const filename = doc.filename;
-  const liveBody = doc.body ?? '';
-
-  // Capture the file's mtime AND size before reading so we can detect an
-  // external edit that lands in the read/write gap. The stat throws for a
-  // missing file (the common new-tile case); read the fields INSIDE the try so
-  // that's treated as "no baseline".
-  //
-  // Compare SIZE as well as mtime: a coarse-resolution filesystem (FAT's 2 s
-  // stamp, some network / OneDrive mounts) can give a same-second external
-  // write an IDENTICAL `mtimeMs`.
-  let beforeMtime: number | undefined;
-  let beforeSize: number | undefined;
-  try {
-    const beforeStat = await invokeOk('vault:stat', vaultRoot, filename);
-    beforeMtime = beforeStat.mtimeMs;
-    beforeSize = beforeStat.size;
-  } catch {
-    // File doesn't exist (or stat failed) — no baseline; proceed without guard.
-  }
-
-  // Read the file fresh from disk so we never miss frontmatter the vault
-  // index hasn't caught up to (e.g. external editor changes between watcher
-  // events).
-  let diskRaw = '';
-  try {
-    // syncTileMarkdown runs its own pre-read / pre-write mtime guard (see
-    // syncTileMarkdownMtimeGuard.test.ts), so it deliberately does NOT route
-    // through readMarkdownForHydrate — seeding the drift baseline here would
-    // double-count against that guard and risk a redundant Reload prompt
-    // (see markdownFileWriter.ts).
-    const readResult = await invokeOk('vault:read-file-text', vaultRoot, filename); // allow-hydrate-read: own mtime guard
-    diskRaw = readResult.content;
-  } catch {
-    // File doesn't exist (new tile) — write proceeds with empty disk content.
-  }
-
-  const diskParsed = parseMarkdownFile(diskRaw);
-
-  // Hard guard: refuse to overwrite a non-empty disk file with an empty body.
-  // This catches the LOD-block / expandToDocument-with-empty-body footgun
-  // that would otherwise destroy user data.
-  if (liveBody.trim().length === 0 && diskParsed.body.trim().length > 0) {
-    return {
-      wrote: false,
-      skippedReason: 'Local content is empty; refusing to overwrite non-empty file',
-    };
-  }
-
-  // Re-stat before the write. If mtime/size moved since the pre-read stat, an
-  // external editor wrote in our read/write gap. Route through the Reload /
-  // Keep-local prompt so the user explicitly chooses whether to clobber it.
-  if (beforeMtime !== undefined) {
-    let writeMtime: number | undefined;
-    let writeSize: number | undefined;
-    try {
-      const writeStat = await invokeOk('vault:stat', vaultRoot, filename);
-      writeMtime = writeStat.mtimeMs;
-      writeSize = writeStat.size;
-    } catch {
-      writeMtime = undefined;
-    }
-    let drift =
-      writeMtime !== undefined &&
-      (writeMtime !== beforeMtime || writeSize !== beforeSize);
-    // A coarse-clock volume can report IDENTICAL mtime AND size for a
-    // same-length external overwrite. Re-read the bytes and compare so that
-    // still routes through the prompt (the gateway's drift path can't reach a
-    // recovery sync, which bypasses readMarkdownForHydrate above).
-    if (!drift && writeMtime !== undefined) {
-      try {
-        const recheck = await invokeOk('vault:read-file-text', vaultRoot, filename); // allow-hydrate-read: own mtime guard
-        if (recheck.content !== diskRaw) drift = true;
-      } catch {
-        // Re-read failed — leave `drift` as-is; the write below surfaces real errors.
-      }
-    }
-    if (drift) {
-      const choice = await promptExternalEditOnSync({ path: filename });
-      if (choice === 'reload') {
-        // The prompt's Reload handler refreshed the vault index and
-        // applied disk content to the editor. The caller's pending
-        // markdown writer (if any) self-disarms when the doc transitions
-        // to clean via `applyReloadFromDisk`.
-        return {
-          wrote: false,
-          skippedReason: 'external-edit-reload',
-        };
-      }
-      if (!(await backupExternalVersion(vaultRoot, filename))) return { wrote: false, skippedReason: 'keep-local-backup-declined' };
-    }
-  }
-
-  // Use the disk frontmatter as the base — preserves any external additions.
-  // Orphan-fm semantics: the file just had its content read (or doesn't exist
-  // and the gateway will reject the write). Mark hydrated with the BOM the
-  // disk-read observed so the gateway's BOM preservation kicks in.
-  if (!isHydrated(filename)) markHydrated(filename, diskParsed.hadBom);
-  // Reconcile the open editor's cached frontmatter + raw baseline with the
-  // fresh disk read we're about to write FROM, so a later body-only save can't
-  // emit a stale hydrate-time object and revert external YAML keys.
-  documentStore.setFrontmatter(notePath, diskParsed.frontmatter, diskParsed.rawFrontmatter);
-  try {
-    await writeMarkdownFile({
-      vaultRoot,
-      relPath: filename,
-      frontmatter: diskParsed.frontmatter,
-      body: liveBody,
-      callerId: `board-cache-sync-tile:${notePath}`,
-      notePath,
-    });
-  } catch (err) {
-    if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
-      reportError(
-        'boardCache.sync-tile',
-        err,
-        `Skipped sync — file ${filename} no longer exists`,
-      );
-      return { wrote: false, skippedReason: 'file-missing' };
-    }
-    throw err;
-  }
-  documentStore.markClean(notePath);
-  return { wrote: true };
+  if (!vaultStore.path) throw new Error('No vault open');
+  if (!noteStore.get(def.filePath)) return { wrote: false };
+  const ok = await noteStore.flush(def.filePath);
+  return ok ? { wrote: true } : { wrote: false, skippedReason: 'the change could not be saved' };
 }

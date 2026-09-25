@@ -26,7 +26,7 @@ import { KanbanMultiSelect } from '@renderer/lib/kanban/kanbanMultiSelect.svelte
 import type { SelectionScope } from '@renderer/stores/selection.svelte';
 import type { TaskRow } from '@renderer/lib/tasks/taskListModel';
 import { historyStore } from '@renderer/stores/history.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { Command } from '@renderer/commands/Command';
 
@@ -263,7 +263,7 @@ describe('Audit-18 4.6 — Kanban bulk Add tag gates the success toast on the ch
   }
 
   beforeEach(() => {
-    documentStore.clear();
+    noteStore.__resetForTests();
     historyStore.clear();
     historyStore.setActiveBoard('kb');
     toastSpy = vi.spyOn(uiStore, 'toast').mockImplementation(() => '' as never);
@@ -272,7 +272,7 @@ describe('Audit-18 4.6 — Kanban bulk Add tag gates the success toast on the ch
     vi.restoreAllMocks();
     historyStore.setActiveBoard(null);
     historyStore.clear();
-    documentStore.clear();
+    noteStore.__resetForTests();
   });
 
   it('toasts success only when the batch RESOLVES', async () => {

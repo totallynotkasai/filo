@@ -1,27 +1,28 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
-import {
-  __testRegisterFlusher as registerMarkdownFlusher,
-  __resetMarkdownFileWriterForTests as __resetMarkdownFlushersForTests,
-} from '@renderer/lib/vault/markdownFileWriter';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import {
   cancelAllPendingWrites,
   __resetDirtyTrackingForTests,
   type V7BoardFileData,
 } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, ImageTile, Tile } from '@renderer/schema/index';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Phase 8.2 + 8.3 (P1-3 + P1-4) integration: `vaultStore.rename` must
+ * `vaultStore.rename` must
  *
- *   1. drain every registered markdown flusher BEFORE issuing the
- *      `vault:rename` IPC, so a debounced editor write armed against
- *      the OLD path lands on disk before the file moves — otherwise
- *      the write either races the atomic rename (Windows EBUSY) or
- *      resurrects the old file after the rename completes; and
- *   2. apply the in-memory `boardStore.propagateRename` cascade BEFORE
+ *   1. land every queued note write BEFORE issuing the `vault:rename` IPC,
+ *      so an edit queued against the OLD path reaches disk before the file
+ *      moves — otherwise the write either races the atomic rename (Windows
+ *      EBUSY) or resurrects the old file after the rename completes; a
+ *      queued write that fails blocks the rename;
+ *   2. keep an open note's model on the renamed file, so later edits land
+ *      at the new path; and
+ *   3. apply the in-memory `boardStore.propagateRename` cascade BEFORE
  *      the IPC, then REVERT the cascade if the IPC fails — so the cache
  *      never lingers in a half-renamed state pointing at a file that
  *      doesn't exist on disk.
@@ -30,24 +31,39 @@ import type { MindMapBoard, ImageTile, Tile } from '@renderer/schema/index';
 type InvokeRoute = (...args: unknown[]) => unknown | Promise<unknown>;
 type InvokeRecord = { channel: string; args: unknown[]; orderIndex: number };
 
-function installFiloStub(routes: Record<string, InvokeRoute>): InvokeRecord[] {
+let vault: MemoryVault;
+
+/**
+ * An in-memory vault (the note writer's channels) with `routes` answering
+ * the other channels. Every call is recorded in order.
+ */
+function installFiloStub(
+  routes: Record<string, InvokeRoute>,
+  files: Record<string, string> = {},
+): InvokeRecord[] {
+  vault = installMemoryVault(files);
+  const base = window.filo.invoke as (channel: string, ...args: unknown[]) => Promise<unknown>;
   const calls: InvokeRecord[] = [];
   let counter = 0;
-  (window as unknown as Record<string, unknown>).filo = {
-    invoke: async (channel: string, ...args: unknown[]) => {
-      calls.push({ channel, args, orderIndex: counter++ });
-      const handler = routes[channel];
-      if (!handler) return null;
-      return handler(...args);
-    },
-    on: () => () => {},
-    send: () => {},
-  };
+  window.filo.invoke = (async (channel: string, ...args: unknown[]) => {
+    calls.push({ channel, args, orderIndex: counter++ });
+    const handler = routes[channel];
+    if (handler) return handler(...args);
+    return base(channel, ...args);
+  }) as typeof window.filo.invoke;
   return calls;
 }
 
-function uninstallFiloStub(): void {
-  delete (window as unknown as Record<string, unknown>).filo;
+/** `vault:rename` for the in-memory vault: moves one file. */
+function moveFile(_root: unknown, oldAbs: unknown, newAbs: unknown): { success: true } {
+  const from = String(oldAbs).replace(/^\/vault\//, '');
+  const to = String(newAbs).replace(/^\/vault\//, '');
+  const text = vault.read(from);
+  if (text !== undefined) {
+    vault.remove(from);
+    vault.writeExternally(to, text);
+  }
+  return { success: true };
 }
 
 function makeImageBoardFixture(srcPath: string): V7BoardFileData {
@@ -109,50 +125,70 @@ function makeImageRuntimeTile(srcPath: string): Tile {
   } as unknown as ImageTile as Tile;
 }
 
-describe('vaultStore.rename — Phase 8 transactional flow', () => {
+describe('vaultStore.rename — transactional flow', () => {
   beforeEach(() => {
-    uninstallFiloStub();
-    __resetMarkdownFlushersForTests();
+    restoreFiloDefault();
+    // Runs the test-reset callbacks, which clear the active vault path.
     __resetDirtyTrackingForTests();
+    vaultStore.setPath('/vault');
+    noteStore.__resetForTests();
     boardCacheStore.clear();
     boardStore.clearBoard();
-    vaultStore.setPath('/vault');
   });
   afterEach(() => {
     cancelAllPendingWrites();
-    uninstallFiloStub();
-    __resetMarkdownFlushersForTests();
+    noteStore.__resetForTests();
+    restoreFiloDefault();
     __resetDirtyTrackingForTests();
     boardCacheStore.clear();
     boardStore.clearBoard();
     vaultStore.setPath('');
   });
 
-  it('drains markdown flushers BEFORE the vault:rename IPC fires', async () => {
-    let flushOrder = -1;
-    let renameOrder = -1;
-    let counter = 0;
-
-    const calls = installFiloStub({
-      'vault:rename': async () => {
-        renameOrder = counter++;
-        return { success: true };
+  it('lands queued note writes BEFORE the vault:rename IPC fires', async () => {
+    const calls = installFiloStub(
+      {
+        'vault:rename': moveFile,
+        'vault:read-tree': async () => ({ ok: true, tree: [] }),
+        'board:save': async () => null,
+        'shell:path-join': async (...segs: unknown[]) => (segs as string[]).join('/'),
       },
-      'vault:read-tree': async () => ({ ok: true, tree: [] }),
-      'board:save': async () => null,
-      'shell:path-join': async (...segs: unknown[]) => (segs as string[]).join('/'),
-    });
+      { 'a.md': '---\ntitle: A\n---\nBody\n' },
+    );
+    noteStore.patchFrontmatter('a.md', { set: { status: 'edited' }, unset: [] });
 
-    registerMarkdownFlusher('text-tile:t1', async () => {
-      flushOrder = counter++;
-    });
-
-    const result = await vaultStore.rename('/vault/photo.jpg', '/vault/renamed.jpg');
+    const result = await vaultStore.rename('/vault/a.md', '/vault/b.md');
 
     expect(result.success).toBe(true);
-    expect(flushOrder).toBeGreaterThanOrEqual(0);
-    expect(renameOrder).toBeGreaterThan(flushOrder);
-    expect(calls.find((c) => c.channel === 'vault:rename')).toBeDefined();
+    const writeIdx = calls.find((c) => c.channel === 'vault:write-existing-file-text' && c.args[1] === 'a.md')?.orderIndex ?? -1;
+    const renameIdx = calls.find((c) => c.channel === 'vault:rename')?.orderIndex ?? -1;
+    expect(writeIdx).toBeGreaterThanOrEqual(0);
+    expect(renameIdx).toBeGreaterThan(writeIdx);
+    expect(vault.read('a.md')).toBeUndefined();
+    expect(vault.read('b.md')).toBe('---\ntitle: A\nstatus: edited\n---\nBody\n');
+  });
+
+  it('an open note follows the rename: its next edit lands on the new file', async () => {
+    installFiloStub(
+      {
+        'vault:rename': moveFile,
+        'vault:read-tree': async () => ({ ok: true, tree: [] }),
+        'board:save': async () => null,
+        'shell:path-join': async (...segs: unknown[]) => (segs as string[]).join('/'),
+      },
+      { 'a.md': '---\ntitle: A\n---\nBody\n' },
+    );
+    const m = noteStore.acquire('a.md', 'editor');
+    await m.loaded;
+
+    const result = await vaultStore.rename('/vault/a.md', '/vault/b.md');
+    expect(result.success).toBe(true);
+    expect(noteStore.get('b.md')).toBe(m);
+
+    noteStore.setBody('b.md', 'After rename\n', 'editor');
+    await noteStore.flushAll();
+    expect(vault.read('b.md')).toBe('---\ntitle: A\n---\nAfter rename\n');
+    expect(vault.read('a.md')).toBeUndefined();
   });
 
   it('on IPC failure, reverts the in-memory propagateRename cascade', async () => {
@@ -200,7 +236,7 @@ describe('vaultStore.rename — Phase 8 transactional flow', () => {
     expect((boardStore.tiles.i1 as { src?: string }).src).toBe(newRel);
   });
 
-  it('Phase 22 M10 — multi-board cascade revert: every touched board is rolled back, not just the active one', async () => {
+  it('multi-board cascade revert: every touched board is rolled back, not just the active one', async () => {
     installFiloStub({
       'vault:rename': async () => ({ success: false, code: 'EACCES' }),
       'vault:read-tree': async () => ({ ok: true, tree: [] }),
@@ -210,7 +246,7 @@ describe('vaultStore.rename — Phase 8 transactional flow', () => {
 
     const oldRel = 'photo.jpg';
     // Two boards both referencing the same image — only the first is active,
-    // but the cascade mutates both. Pre-Phase-22 the inverse-only revert
+    // but the cascade mutates both. An inverse-only revert
     // could leave the inactive board half-mutated when the inverse threw;
     // the snapshot-based revert restores every entry unconditionally.
     const fixtureA: V7BoardFileData = makeImageBoardFixture(oldRel);
@@ -241,36 +277,30 @@ describe('vaultStore.rename — Phase 8 transactional flow', () => {
     expect((boardStore.cache['mm-b'].tileDefs['i1-b'] as { src?: string }).src).toBe(oldRel);
   });
 
-  it('flusher that throws blocks the rename and surfaces an IO_ERROR', async () => {
-    // Phase R2 — `vaultStore.rename` now wraps the cascade in
-    // `withDrainedWrites`. A flusher that throws is reported in
-    // `flushAllMarkdownWriters().failed[]`, which causes the drain to
-    // throw `PendingWritesFailedError` BEFORE the IPC issues. The
-    // rename helper catches that and returns `{ success: false, code:
-    // 'IO_ERROR' }` so the sidebar caller doesn't optimistically remove
-    // the source row from the tree.
-    //
-    // Replaces the pre-R2 "log and continue" behaviour — proceeding
-    // with the rename while the flusher's write was guaranteed to fail
-    // produced silent data loss when the editor's debounce content
-    // never reached disk under either the OLD or NEW path.
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    installFiloStub({
-      'vault:rename': async () => ({ success: true }),
-      'vault:read-tree': async () => ({ ok: true, tree: [] }),
-      'board:save': async () => null,
-      'shell:path-join': async (...segs: unknown[]) => (segs as string[]).join('/'),
-    });
-
-    registerMarkdownFlusher('text-tile:doomed', async () => {
-      throw new Error('flush failed');
-    });
+  it('a queued note write that fails blocks the rename and surfaces an IO_ERROR', async () => {
+    // `vaultStore.rename` wraps the cascade in `withDrainedWrites`. A failed
+    // note write makes the drain throw `PendingWritesFailedError` BEFORE the
+    // IPC issues; the rename returns `{ success: false, code: 'IO_ERROR' }`
+    // so the sidebar caller doesn't optimistically remove the source row.
+    // Proceeding would leave the edit on neither the OLD nor the NEW path.
+    const calls = installFiloStub(
+      {
+        'vault:rename': moveFile,
+        'vault:read-tree': async () => ({ ok: true, tree: [] }),
+        'board:save': async () => null,
+        'shell:path-join': async (...segs: unknown[]) => (segs as string[]).join('/'),
+      },
+      { 'a.md': '---\ntitle: A\n---\nBody\n' },
+    );
+    vault.failNextWrite('a.md', 'EACCES');
+    noteStore.patchFrontmatter('a.md', { set: { status: 'edited' }, unset: [] });
 
     const result = await vaultStore.rename('/vault/a.md', '/vault/b.md');
 
     // Drain failure short-circuits the rename — the IPC is never issued.
     expect(result.success).toBe(false);
     expect(result.code).toBe('IO_ERROR');
-    consoleError.mockRestore();
+    expect(calls.find((c) => c.channel === 'vault:rename')).toBeUndefined();
+    expect(vault.read('a.md')).toBe('---\ntitle: A\n---\nBody\n');
   });
 });

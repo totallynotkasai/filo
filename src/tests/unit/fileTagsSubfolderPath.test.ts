@@ -3,7 +3,7 @@
  * the note its `filePath` names, NOT a same-named note at the vault ROOT.
  *
  * The bug: on a cold-loaded subfolder Task row (not on the active board, no
- * docState), a root-fallback path resolution wrote the tag to a ROOT file,
+ * loaded note), a root-fallback path resolution wrote the tag to a ROOT file,
  * corrupting an unrelated same-named root note or creating a ghost.
  *
  * This drives `fileTagsStore.addTagToTile` for a cold tile and asserts the
@@ -16,7 +16,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { cancelAllPendingWrites, __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
@@ -40,7 +40,7 @@ describe('Audit-12 H2 — fileTags tag write honors subfolders', () => {
     mdWrites = [];
     boardCacheStore.clear();
     boardStore.clearBoard();
-    documentStore.clear();
+    noteStore.__resetForTests();
     __resetDirtyTrackingForTests();
     vaultStore.setPath('/vault');
     fileTagsStore.reset();
@@ -69,7 +69,7 @@ describe('Audit-12 H2 — fileTags tag write honors subfolders', () => {
     restoreFiloDefault();
     boardCacheStore.clear();
     boardStore.clearBoard();
-    documentStore.clear();
+    noteStore.__resetForTests();
     fileTagsStore.reset();
     vaultStore.setPath('');
     __resetDirtyTrackingForTests();
@@ -111,7 +111,7 @@ describe('Audit-12 H2 — fileTags tag write honors subfolders', () => {
 
   it('explicit subfolder filePath → resolves the tag write to that path', async () => {
     hydrateColdTextTile('Sub/B.md');
-    // Cold: not on the active board, no live docState.
+    // Cold: not on the active board, no loaded note.
     expect(boardStore.getTile('t1')).toBeUndefined();
 
     fileTagsStore.addTagToTile('t1', 'newtag');

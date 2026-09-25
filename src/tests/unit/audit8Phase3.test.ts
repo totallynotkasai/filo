@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { makeExternalChangesSlice } from '@renderer/stores/vaultExternalChanges';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
@@ -11,38 +11,16 @@ import type { TagsFile } from '@renderer/schema/tagsFile';
 import type { VaultContext } from '@renderer/stores/vaultStoreTypes';
 import type { TaskListBoard as TaskListBoardType, Tile } from '@renderer/schema/index';
 import type { TaskRow } from '@renderer/lib/tasks/taskListModel';
-import {
-  getBaseline,
-  __resetBaselinesForTests,
-} from '@renderer/lib/vault/fileBaselineRegistry';
-import {
-  __clearRecentSelfWritesForTests,
-  __resetDirtyTrackingForTests,
-  isPathPending,
-} from '@renderer/lib/boards/writeStateTracking';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
+import { patchToFrontmatterDelta } from '@renderer/lib/vault/frontmatterDelta';
 import { makeFrontmatterWriter } from '@renderer/lib/tasklist/frontmatterWriter';
 import { makeTaskCreator } from '@renderer/lib/tasklist/taskCreation';
-import { flushAllPendingFrontmatterWrites } from '@renderer/lib/boards/frontmatterWriteScheduler';
-import { cancelAllMarkdownWrites } from '@renderer/lib/vault/markdownFileWriter';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 
 /**
  * Audit-8 Phase 3 — MEDIUM data-integrity fixes.
  */
-
-interface Captured {
-  channel: string;
-  args: unknown[];
-}
-
-function lastMarkdownWrite(captured: Captured[]): string | undefined {
-  for (let i = captured.length - 1; i >= 0; i--) {
-    if (captured[i].channel === 'vault:write-existing-file-text') {
-      return captured[i].args[2] as string;
-    }
-  }
-  return undefined;
-}
 
 function ctxFor(): VaultContext {
   return {
@@ -62,6 +40,7 @@ function ctxFor(): VaultContext {
     setProject: () => {},
     getRecoveryPendingPaths: () => [],
     setRecoveryPendingPaths: () => {},
+    resolveRecoveryDismissed: () => {},
     markMetaDirty: () => {},
     refreshTree: async () => {},
     clearSelection: () => {},
@@ -69,142 +48,97 @@ function ctxFor(): VaultContext {
   };
 }
 
-function byteLen(text: string): number {
-  return new TextEncoder().encode(text).length;
-}
-
 function clearToasts(): void {
-  for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id);
+  for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
 }
 
-// ── A8-M2 — sync-frontmatter re-stamps the drift baseline ────────────────
+async function settle(): Promise<void> {
+  for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+}
 
-describe('A8-M2 — sync-frontmatter reconcile re-stamps the drift baseline', () => {
-  // Same body, different frontmatter → classifyExternalChange returns
-  // sync-frontmatter (frontmatter-only). The body never reloads, so this branch
-  // is the ONLY place the per-file (mtime,size) baseline can re-anchor; without
-  // the fix the stale baseline makes the next in-app save's pre-write drift
-  // check fire a false "modified externally" prompt.
+// ── A8-M2 — an external frontmatter-only edit never makes the next save prompt ──
+
+describe('A8-M2 — after an external frontmatter-only edit, the next in-app save lands without a prompt', () => {
+  // Same body, different frontmatter: the body never reloads, and the next
+  // in-app save must neither re-detect that edit as a conflict nor drop it.
   const BODY = '# Heading\n\nA paragraph that does not change.\n';
   const v1 = `---\ntitle: Note\nstatus: draft\n---\n${BODY}`;
   const v2 = `---\ntitle: Note\nstatus: published\n---\n${BODY}`;
+  let vault: MemoryVault;
 
   beforeEach(() => {
-    documentStore.clear();
+    __resetDirtyTrackingForTests();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
-    __resetBaselinesForTests();
-    __clearRecentSelfWritesForTests();
     clearToasts();
     vaultStore.setPath('/vault');
+    vault = installMemoryVault({ 'Card.md': v1, 'Open.md': v1 });
   });
 
   afterEach(() => {
-    restoreFiloDefault();
-    documentStore.clear();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
-    __resetBaselinesForTests();
     clearToasts();
     vaultStore.setPath('');
+    restoreFiloDefault();
   });
 
-  it('stamps the post-sync (mtime,size) when no editor is open (Kanban card / un-opened file)', async () => {
+  it('no editor open (Kanban card / un-opened file): the next field edit keeps the external key', async () => {
     const slice = makeExternalChangesSlice(ctxFor());
-
-    // Index the original version (becomes `previous`).
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') return { success: true, content: v1, mtimeMs: 1 };
-      return { success: true };
-    });
     await vaultIndexStore.applyChanges(['Card.md']);
-    // No baseline yet (no hydrate read seeded one in this unit context).
-    expect(getBaseline('Card.md')).toBeUndefined();
 
-    // External FM-only edit lands with a fresh mtime.
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') return { success: true, content: v2, mtimeMs: 2 };
-      return { success: true };
-    });
+    vault.writeExternally('Card.md', v2);
     await slice.handleExternalMarkdownChanges(['Card.md']);
+    expect(noteStore.frontmatter('Card.md').status).toBe('published');
 
-    // The baseline now equals the just-read disk identity, so the next field
-    // edit's pre-write stat (mtime 2, that size) won't re-detect drift.
-    expect(getBaseline('Card.md')).toEqual({ mtimeMs: 2, size: byteLen(v2) });
+    noteStore.patchFrontmatter('Card.md', patchToFrontmatterDelta({ priority: 'high' }));
+    expect(await noteStore.flush('Card.md')).toBe(true);
+    expect(vault.read('Card.md')).toBe(`---\ntitle: Note\nstatus: published\npriority: high\n---\n${BODY}`);
+    expect(uiStore.toasts).toHaveLength(0);
   });
 
-  it('stamps the post-sync identity even with a clean editor open', async () => {
+  it('a clean editor open: the body stays, the frontmatter follows, and the next keystroke saves', async () => {
     const slice = makeExternalChangesSlice(ctxFor());
-
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') return { success: true, content: v1, mtimeMs: 10 };
-      return { success: true };
-    });
     await vaultIndexStore.applyChanges(['Open.md']);
-    documentStore.loadDocument({
-      filename: 'Open.md',
-      title: 'Open',
-      body: BODY,
-      htmlContent: '',
-      richText: [],
-    });
+    const m = noteStore.acquire('Open.md', 'doc');
+    await m.loaded;
+    const rev = m.bodyRevision;
 
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') return { success: true, content: v2, mtimeMs: 20 };
-      return { success: true };
-    });
+    vault.writeExternally('Open.md', v2);
     await slice.handleExternalMarkdownChanges(['Open.md']);
+    await settle();
 
-    // Editor body untouched (FM-only change), and the baseline re-anchored.
-    expect(documentStore.getDocument('Open.md')?.body).toBe(BODY);
-    expect(getBaseline('Open.md')).toEqual({ mtimeMs: 20, size: byteLen(v2) });
+    expect(m.body).toBe(BODY);
+    expect(m.bodyRevision).toBe(rev);
+    expect(m.frontmatter.status).toBe('published');
+
+    noteStore.setBody('Open.md', `${BODY}\nMore.`, 'doc');
+    expect(await noteStore.flush('Open.md')).toBe(true);
+    expect(m.status).toBe('ready');
+    expect(uiStore.toasts).toHaveLength(0);
+    expect(vault.read('Open.md')).toBe(`---\ntitle: Note\nstatus: published\n---\n${BODY}\nMore.\n`);
   });
 });
 
-// ── A8-M3(a) — Task notes body: arm the write before the seed await ──────
+// ── A8-M3(a) — Task notes body reaches disk and keeps the disk frontmatter ──
 
-describe('A8-M3(a) — setNotesBody arms the write BEFORE the disk-FM seed await', () => {
-  let captured: Captured[];
-  let order: string[];
-  let releaseRead: () => void;
-  let readGate: Promise<void>;
-  const DISK = '---\ntitle: T\npriority: high\n---\nold body';
+describe('A8-M3(a) — setNotesBody writes the notes onto the note as it is on disk', () => {
+  let vault: MemoryVault;
+  const DISK = '---\ntitle: T\npriority: high\n---\nold body\n';
 
   beforeEach(() => {
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
-    __resetBaselinesForTests();
     vaultStore.setPath('/vault');
-    captured = [];
-    order = [];
-    releaseRead = () => {};
-    readGate = new Promise<void>((resolve) => {
-      releaseRead = resolve;
-    });
-    installFiloMock(async (channel: string, ...args: unknown[]) => {
-      captured.push({ channel, args });
-      if (channel === 'vault:read-file-text') {
-        order.push('read');
-        // Gate the seed read so setNotesBody is suspended mid-seed when we
-        // observe the pending state below.
-        await readGate;
-        return { success: true, content: DISK, mtimeMs: 5, size: byteLen(DISK) };
-      }
-      if (channel === 'vault:stat') return { success: true, mtimeMs: 5, size: byteLen(DISK) };
-      if (channel === 'vault:write-existing-file-text') return { success: true };
-      return { success: true };
-    });
+    vault = installMemoryVault({ 'Task.md': DISK });
   });
 
   afterEach(() => {
-    releaseRead();
-    restoreFiloDefault();
-    __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
-    __resetBaselinesForTests();
     vaultStore.setPath('');
+    restoreFiloDefault();
   });
 
   function makeWriter() {
@@ -235,37 +169,15 @@ describe('A8-M3(a) — setNotesBody arms the write BEFORE the disk-FM seed await
     };
   }
 
-  it('the write is pending while the seed read is still in flight', async () => {
+  it('the notes reach disk and the frontmatter key already on disk survives', async () => {
     const writer = makeWriter();
-    // Fire the notes edit WITHOUT awaiting (mirrors a keystroke). The FM cache
-    // is empty (first touch), so the seed read fires and gates the function.
-    const p = writer.setNotesBody(makeRow(), 'My typed notes');
-    await new Promise((r) => setTimeout(r, 0));
+    await writer.setNotesBody(makeRow(), 'My typed notes');
+    await noteStore.flushAll();
 
-    // The seed read is in flight…
-    expect(order).toContain('read');
-    // …and yet the frontmatter write is ALREADY armed (A8-M3(a)): a quit-drain
-    // here would find + flush it. Pre-fix the schedule ran only AFTER the seed
-    // await, so this was false and a quit dropped the notes with a clean sentinel.
-    expect(isPathPending('Task.md')).toBe(true);
-    // The new body is already live in the cache, so the armed write captures it.
-    expect(documentStore.getDocument('Task.md')?.body).toBe('My typed notes');
-
-    releaseRead();
-    await p;
-
-    // End-to-end: the body reaches disk and the externally-added FM key survives
-    // (the seed refreshed FM from disk before the write assembled).
-    await vi.waitFor(
-      async () => {
-        await flushAllPendingFrontmatterWrites();
-        expect(lastMarkdownWrite(captured), 'no markdown write captured').toBeDefined();
-      },
-      { timeout: 1000, interval: 20 },
-    );
-    const written = lastMarkdownWrite(captured);
+    const written = vault.read('Task.md') ?? '';
     expect(written).toContain('My typed notes');
     expect(written).toContain('priority: high');
+    expect(written).toBe('---\ntitle: T\npriority: high\n---\nMy typed notes\n');
   });
 });
 
@@ -276,14 +188,13 @@ describe('A8-M3(b) — task creation dispatches the placement BEFORE the seed aw
 
   beforeEach(() => {
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
+    noteStore.__resetForTests();
     boardCacheStore.clear();
     vaultIndexStore.clear();
     vaultStore.setPath('/vault');
     order = [];
     installFiloMock((channel: string) => {
-      if (channel === 'vault:write-file-text') {
+      if (channel === 'vault:create-file-text') {
         order.push('seed-write');
         return { success: true };
       }
@@ -299,8 +210,7 @@ describe('A8-M3(b) — task creation dispatches the placement BEFORE the seed aw
     vi.restoreAllMocks();
     restoreFiloDefault();
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
+    noteStore.__resetForTests();
     boardCacheStore.clear();
     vaultIndexStore.clear();
     vaultStore.setPath('');

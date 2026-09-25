@@ -1,978 +1,291 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { makeExternalChangesSlice } from '@renderer/stores/vaultExternalChanges';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore, type NoteModel } from '@renderer/stores/notes.svelte';
+import { registerNotePrompts } from '@renderer/stores/notePrompts';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
-import { historyStore, type Command } from '@renderer/stores/history.svelte';
+import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import type { VaultContext } from '@renderer/stores/vaultStoreTypes';
-import { onError, __resetErrorBusForTests, type ReportedError } from '@renderer/lib/utils/errorBus';
-import {
-  __testRegisterFlusher,
-  __resetMarkdownFileWriterForTests,
-} from '@renderer/lib/vault/markdownFileWriter';
-import {
-  __clearRecentSelfWritesForTests,
-  __resetDirtyTrackingForTests,
-} from '@renderer/lib/boards/writeStateTracking';
+import { __resetErrorBusForTests } from '@renderer/lib/utils/errorBus';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { beginVaultGeneration } from '@renderer/lib/vault/vaultIdentity';
-import {
-  markPropertiesPopupDirty,
-  __resetPropertiesPopupTrackerForTests,
-} from '@renderer/lib/vault/propertiesPopupTracker';
-import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { __resetKeepLocalBackupForTests } from '@renderer/lib/vault/keepLocalBackup';
+import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { KanbanBoard } from '@renderer/schema/index';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Regression cover for Phase 2.1 — `prompt-user` for an externally-deleted
- * file used to be silently dropped because `if (!next) continue;` short-
- * circuited the switch. With the file deleted on disk AND a dirty editor
- * open, the consumer must surface a persistent toast so the user can choose
- * between Reload (drop in-memory) and Keep local (re-create on disk).
+ * `handleExternalMarkdownChanges` — what the watcher's `.md` changes do:
+ *  - an open note with an unsaved edit that another program deleted asks
+ *    "Keep mine" / "Discard" and writes nothing until the user answers; Keep
+ *    mine re-creates the file exclusively with its frontmatter and the local
+ *    body;
+ *  - a clean open note follows the disk, keeping the other program's
+ *    frontmatter source (comments) for the next save;
+ *  - a deleted file that tiles still point at offers to remove them;
+ *  - a vault swap during the index refresh drops the change.
  */
 
 function clearToasts(): void {
   // Snapshot the array first — dismissToast filters in place.
-  for (const t of [...uiStore.toasts]) {
-    uiStore.dismissToast(t.id);
-  }
+  for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
 }
 
-describe('vaultExternalChanges — external delete + dirty editor', () => {
-  let ctx: VaultContext;
-  let slice: ReturnType<typeof makeExternalChangesSlice>;
-  let writes: Array<{ channel: string; args: unknown[] }>;
+function makeCtx(): VaultContext {
+  return {
+    getVaultPath: () => '/vault',
+    // Unused by the slice — minimal stub to satisfy the VaultContext shape.
+    setVaultPath: () => {},
+    getFileTree: () => [],
+    setFileTree: () => {},
+    getSearchQuery: () => '',
+    setSearchQuery: () => {},
+    getIsLoading: () => false,
+    setIsLoading: () => {},
+    getExpandedFolders: () => new Set(),
+    setExpandedFolders: () => {},
+    getSelectedPaths: () => new Set(),
+    setSelectedPaths: () => {},
+    getProject: () => null,
+    setProject: () => {},
+    getRecoveryPendingPaths: () => [],
+    setRecoveryPendingPaths: () => {},
+    markMetaDirty: () => {},
+    refreshTree: async () => {},
+    clearSelection: () => {},
+    clearActiveRootFolderIfMatches: () => {},
+    resolveRecoveryDismissed: () => {},
+  };
+}
 
-  beforeEach(async () => {
-    documentStore.clear();
-    vaultIndexStore.clear();
-    clearToasts();
-    // Audit-7 L15 — handleExternalMarkdownChanges now filters recent self-writes
-    // internally; clear the module-global registry so a prior test's recreate
-    // write (trackComponentWrite marks the path) doesn't suppress this test's
-    // external-delete reconcile.
-    __clearRecentSelfWritesForTests();
-    vaultStore.setPath('/vault');
+let vault: MemoryVault;
+let slice: ReturnType<typeof makeExternalChangesSlice>;
 
-    ctx = {
-      getVaultPath: () => '/vault',
-      // Unused by the slice — minimal stub to satisfy the VaultContext shape.
-      setVaultPath: () => {},
-      getFileTree: () => [],
-      setFileTree: () => {},
-      getSearchQuery: () => '',
-      setSearchQuery: () => {},
-      getIsLoading: () => false,
-      setIsLoading: () => {},
-      getExpandedFolders: () => new Set(),
-      setExpandedFolders: () => {},
-      getSelectedPaths: () => new Set(),
-      setSelectedPaths: () => {},
-      getProject: () => null,
-      setProject: () => {},
-      getRecoveryPendingPaths: () => [],
-      setRecoveryPendingPaths: () => {},
-      markMetaDirty: () => {},
-      refreshTree: async () => {},
-      clearSelection: () => {},
-      clearActiveRootFolderIfMatches: () => {},
-    };
-    slice = makeExternalChangesSlice(ctx);
+beforeEach(() => {
+  // Runs the test-reset callbacks, which clear the active vault path.
+  __resetDirtyTrackingForTests();
+  vaultStore.setPath('/vault');
+  noteStore.__resetForTests();
+  __resetErrorBusForTests();
+  __resetKeepLocalBackupForTests();
+  vaultIndexStore.clear();
+  boardCacheStore.clear();
+  clearToasts();
+  registerNotePrompts();
+  vault = installMemoryVault({ 'Notes.md': '---\ntags:\n  - local-tag\n---\nbody\n' });
+  slice = makeExternalChangesSlice(makeCtx());
+});
 
-    writes = [];
-    // Suppress reportError's console.error breadcrumb so the failing-write
-    // test doesn't pollute the test output.
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+afterEach(() => {
+  noteStore.__resetForTests();
+  restoreFiloDefault();
+  vaultStore.setPath('');
+  vaultIndexStore.clear();
+  boardCacheStore.clear();
+  clearToasts();
+  vi.restoreAllMocks();
+});
+
+/** Opens `rel` in a view and types `body` without saving it. */
+async function openWithUnsavedBody(rel: string, body: string): Promise<NoteModel> {
+  const m = noteStore.acquire(rel, 'editor');
+  await m.loaded;
+  noteStore.setBody(rel, body, 'editor');
+  return m;
+}
+
+const deletedToast = () => uiStore.toasts.find((t) => t.text.includes('was deleted by another program'));
+const noteWrites = (rel: string) => vault.writes.filter(([, r]) => r === rel);
+
+describe('vaultExternalChanges — external delete of a note with an unsaved edit', () => {
+  it('a failed Keep mine is surfaced and keeps the edit unsaved', async () => {
+    const m = await openWithUnsavedBody('Notes.md', 'local\n');
+    vault.remove('Notes.md');
+
+    await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await vi.waitFor(() => expect(deletedToast()).toBeDefined());
+
+    vault.failNextWrite('Notes.md', 'EROFS');
+    await Promise.resolve(deletedToast()?.actions?.[0].handler()).catch(() => undefined);
+
+    expect(vault.read('Notes.md')).toBeUndefined();
+    expect(m.body).toBe('local\n');
+    expect(m.hasUnsavedBody).toBe(true);
+    expect(noteStore.hasPendingWrites('Notes.md')).toBe(true);
   });
 
-  afterEach(() => {
-    restoreFiloDefault();
-    vaultStore.setPath('');
-    documentStore.clear();
-    vaultIndexStore.clear();
-    clearToasts();
-    vi.restoreAllMocks();
-  });
-
-  async function primeIndexWith(rel: string, content: string): Promise<void> {
-    installFiloMock((channel: string, ..._args: unknown[]) => {
-      if (channel === 'vault:read-file-text') return { success: true, content };
-      return { success: true };
-    });
-    await vaultIndexStore.applyChanges([rel]);
-  }
-
-  function loadDirtyEditor(opts: {
-    filename: string;
-    body: string;
-    title: string;
-  }): void {
-    documentStore.loadDocument({
-      filename: opts.filename,
-      title: opts.title,
-      body: opts.body,
-      htmlContent: `<p>${opts.body}</p>`,
-      richText: [],
-    });
-    // updateContent flips isDirty=true; load alone is clean.
-    documentStore.updateContent(opts.filename, `<p>${opts.body}</p>`, opts.body);
-  }
-
-  function installRecordingMock(handlerByChannel: Record<string, (...args: unknown[]) => unknown>): void {
-    installFiloMock((channel: string, ...args: unknown[]) => {
-      writes.push({ channel, args });
-      const h = handlerByChannel[channel];
-      if (h) return h(...args);
-      return { success: true };
-    });
-  }
-
-  it('surfaces a persistent toast when the file is deleted externally and the editor is dirty', async () => {
-    await primeIndexWith('Notes.md', '# Notes\nbody');
-    loadDirtyEditor({ filename: 'Notes.md', body: 'dirty', title: 'Notes' });
-
-    // File is now missing.
-    installRecordingMock({
-      'vault:read-file-text': () => ({ success: false }),
-    });
+  it('surfaces a persistent Keep mine / Discard toast', async () => {
+    await openWithUnsavedBody('Notes.md', 'dirty\n');
+    vault.remove('Notes.md');
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
 
-    const toast = uiStore.toasts.find((t) => t.text.includes('deleted externally'));
-    expect(toast).toBeDefined();
+    await vi.waitFor(() => expect(deletedToast()).toBeDefined());
+    const toast = deletedToast();
     expect(toast?.type).toBe('warning');
     expect(toast?.duration).toBe(0);
-    expect(toast?.actions).toHaveLength(2);
-    expect(toast?.actions?.[0].label).toBe('Reload');
-    expect(toast?.actions?.[1].label).toBe('Keep local');
+    expect(toast?.actions?.map((a) => a.label)).toEqual(['Keep mine', 'Discard']);
   });
 
-  it('does NOT silently re-create the deleted file (no write fires before user chooses)', async () => {
-    await primeIndexWith('Notes.md', '# Notes\nbody');
-    loadDirtyEditor({ filename: 'Notes.md', body: 'dirty', title: 'Notes' });
-
-    installRecordingMock({
-      'vault:read-file-text': () => ({ success: false }),
-    });
+  it('does NOT silently re-create the deleted file (no write fires before the user chooses)', async () => {
+    await openWithUnsavedBody('Notes.md', 'dirty\n');
+    vault.remove('Notes.md');
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await vi.waitFor(() => expect(deletedToast()).toBeDefined());
+    await noteStore.flushAll();
 
-    // No write-file-text call should have fired yet — only the
-    // applyChanges read calls.
-    const recreationWrite = writes.find(
-      (w) =>
-        w.channel === 'vault:write-file-text' ||
-        w.channel === 'vault:write-existing-file-text' ||
-        w.channel === 'vault:create-file-text',
-    );
-    expect(recreationWrite).toBeUndefined();
+    expect(noteWrites('Notes.md')).toEqual([]);
+    expect(vault.read('Notes.md')).toBeUndefined();
   });
 
-  it('Reload action drops the in-memory document', async () => {
-    await primeIndexWith('Notes.md', '# Notes\nbody');
-    loadDirtyEditor({ filename: 'Notes.md', body: 'dirty', title: 'Notes' });
-
-    installRecordingMock({
-      'vault:read-file-text': () => ({ success: false }),
-    });
+  it('Discard drops the unsaved edit and leaves the file deleted', async () => {
+    const m = await openWithUnsavedBody('Notes.md', 'dirty\n');
+    vault.remove('Notes.md');
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await vi.waitFor(() => expect(deletedToast()).toBeDefined());
 
-    const toast = uiStore.toasts.find((t) => t.text.includes('deleted externally'));
-    expect(toast).toBeDefined();
-    expect(documentStore.getDocument('Notes.md')).toBeDefined();
+    await deletedToast()?.actions?.[1].handler();
 
-    // Invoke Reload.
-    await toast?.actions?.[0].handler();
-
-    expect(documentStore.getDocument('Notes.md')).toBeUndefined();
+    expect(m.hasUnsavedBody).toBe(false);
+    expect(m.status).toBe('missing');
+    await noteStore.flushAll();
+    expect(vault.read('Notes.md')).toBeUndefined();
   });
 
-  it('Keep local action writes the file via vault:create-file-text (exclusive — Audit-19 EXT-3) with cached frontmatter + body', async () => {
-    await primeIndexWith('Notes.md', '# Notes\nbody');
-    loadDirtyEditor({ filename: 'Notes.md', body: 'local body', title: 'Notes' });
-    documentStore.setFrontmatter('Notes.md', { tags: ['local-tag'] });
-
-    installRecordingMock({
-      'vault:read-file-text': () => ({ success: false }),
-      'vault:create-file-text': () => ({ success: true }),
-    });
+  it('Keep mine re-creates the file exclusively with its frontmatter and the local body', async () => {
+    const m = await openWithUnsavedBody('Notes.md', 'local body\n');
+    vault.remove('Notes.md');
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await vi.waitFor(() => expect(deletedToast()).toBeDefined());
 
-    const toast = uiStore.toasts.find((t) => t.text.includes('deleted externally'));
-    expect(toast).toBeDefined();
+    await deletedToast()?.actions?.[0].handler();
 
-    await toast?.actions?.[1].handler();
-
-    // Filter for the file recreation specifically — `trackComponentWrite`
-    // also fires `vault:write-file-text` for the `.filo/.dirty` sentinel.
-    const write = writes.find(
-      (w) => w.channel === 'vault:create-file-text' && w.args[1] === 'Notes.md',
-    );
-    expect(write).toBeDefined();
-    expect(write?.args[0]).toBe('/vault');
-    const body = write?.args[2] as string;
-    expect(body).toContain('local body');
-    expect(body).toContain('local-tag');
-
-    expect(documentStore.getDocument('Notes.md')?.isDirty).toBe(false);
+    const writes = noteWrites('Notes.md');
+    expect(writes.map(([channel]) => channel)).toEqual(['vault:create-file-text']);
+    expect(vault.read('Notes.md')).toBe('---\ntags:\n  - local-tag\n---\nlocal body\n');
+    expect(m.hasUnsavedBody).toBe(false);
   });
 
-  it('Keep local routes write failures through errorBus.reportError', async () => {
-    await primeIndexWith('Notes.md', '# Notes\nbody');
-    loadDirtyEditor({ filename: 'Notes.md', body: 'local', title: 'Notes' });
+});
 
-    const reported: ReportedError[] = [];
-    __resetErrorBusForTests();
-    onError((e) => reported.push(e));
+describe('vaultExternalChanges — changes that ask nothing', () => {
+  it('a change to a file nobody has open and no tile uses surfaces no toast', async () => {
+    await slice.handleExternalMarkdownChanges(['Phantom.md']);
+    expect(uiStore.toasts).toHaveLength(0);
+  });
 
-    installFiloMock((channel: string, ...args: unknown[]) => {
-      writes.push({ channel, args });
-      if (channel === 'vault:read-file-text') return { success: false };
-      // Only fail the file recreation, not the sentinel write — the sentinel
-      // path is wrapped in a try/catch that swallows errors silently and
-      // would obscure the failure surface under test.
-      if (channel === 'vault:create-file-text' && args[1] === 'Notes.md') {
-        return { success: false, error: 'EROFS' };
-      }
-      return { success: true };
-    });
-
-    await slice.handleExternalMarkdownChanges(['Notes.md']);
-
-    const toast = uiStore.toasts.find((t) => t.text.includes('deleted externally'));
-    expect(toast).toBeDefined();
-
-    await toast?.actions?.[1].handler();
-
-    const reportedFailure = reported.find((e) =>
-      (e.message ?? '').includes('Failed to re-create'),
-    );
-    expect(reportedFailure).toBeDefined();
-    expect(reportedFailure?.context).toBe('vaultExternalChanges');
-    // The doc remains dirty because the write didn't land.
-    expect(documentStore.getDocument('Notes.md')?.isDirty).toBe(true);
+  it('a new file first seen by the watcher surfaces no toast', async () => {
+    vault.writeExternally('NewTile.md', '---\ntags: []\n---\nfresh body\n');
+    await slice.handleExternalMarkdownChanges(['NewTile.md']);
+    expect(uiStore.toasts).toHaveLength(0);
+    expect(vaultIndexStore.getMetadata('NewTile.md')).toBeDefined();
   });
 });
 
-describe('vaultExternalChanges — non-deleted decisions still flow', () => {
-  let ctx: VaultContext;
-  let slice: ReturnType<typeof makeExternalChangesSlice>;
+describe('vaultExternalChanges — a clean open note follows a frontmatter edit', () => {
+  it('keeps the other program\'s frontmatter source (inline comment) through the next save', async () => {
+    vault.writeExternally('Note.md', '---\ntitle: Hello\npriority: low   # inline note\n---\nbody\n');
+    const m = noteStore.acquire('Note.md', 'editor');
+    await m.loaded;
 
-  beforeEach(() => {
-    documentStore.clear();
-    vaultIndexStore.clear();
-    clearToasts();
-    vaultStore.setPath('/vault');
-    ctx = {
-      getVaultPath: () => '/vault',
-      setVaultPath: () => {},
-      getFileTree: () => [],
-      setFileTree: () => {},
-      getSearchQuery: () => '',
-      setSearchQuery: () => {},
-      getIsLoading: () => false,
-      setIsLoading: () => {},
-      getExpandedFolders: () => new Set(),
-      setExpandedFolders: () => {},
-      getSelectedPaths: () => new Set(),
-      setSelectedPaths: () => {},
-      getProject: () => null,
-      setProject: () => {},
-      getRecoveryPendingPaths: () => [],
-      setRecoveryPendingPaths: () => {},
-      markMetaDirty: () => {},
-      refreshTree: async () => {},
-      clearSelection: () => {},
-      clearActiveRootFolderIfMatches: () => {},
-    };
-    slice = makeExternalChangesSlice(ctx);
-  });
+    // External editor flips priority and keeps the inline comment.
+    vault.writeExternally('Note.md', '---\ntitle: Hello\npriority: high   # inline note\n---\nbody\n');
+    await slice.handleExternalMarkdownChanges(['Note.md']);
+    await vi.waitFor(() => expect(m.frontmatter.priority).toBe('high'));
 
-  afterEach(() => {
-    restoreFiloDefault();
-    vaultStore.setPath('');
-    documentStore.clear();
-    vaultIndexStore.clear();
-    clearToasts();
-  });
-
-  it('ignore decisions do not surface a toast', async () => {
-    // No editor open, no previous entry — classifier returns ignore.
-    installFiloMock({
-      'vault:read-file-text': () => ({ success: false }),
-    });
-
-    await slice.handleExternalMarkdownChanges(['Phantom.md']);
-
+    // A body-only save must not re-emit the changed line and lose its comment.
+    noteStore.setBody('Note.md', 'edited body\n', 'editor');
+    expect(await noteStore.flush('Note.md')).toBe(true);
+    expect(vault.read('Note.md')).toBe('---\ntitle: Hello\npriority: high   # inline note\n---\nedited body\n');
     expect(uiStore.toasts).toHaveLength(0);
   });
 });
 
-/**
- * Phase A.2b — sync-frontmatter `first-sight` does NOT call notePossiblyStale.
- *
- * The classifier returns `{ action: 'sync-frontmatter', reason: 'first-sight' }`
- * for every freshly-created tile (previousMetadata===null + no editor) — that's
- * bootstrap, not an external edit. Surfacing the "Earlier undo steps may no
- * longer match disk" toast for every newly-created file made the app
- * unusable. The fix is to only call `notePossiblyStale` when reason is
- * `'frontmatter-only'` (a real external metadata edit).
- */
-describe('vaultExternalChanges — first-sight does NOT invalidate undo', () => {
-  let ctx: VaultContext;
-  let slice: ReturnType<typeof makeExternalChangesSlice>;
-
-  beforeEach(() => {
-    documentStore.clear();
-    vaultIndexStore.clear();
-    historyStore.clear();
-    clearToasts();
-    vaultStore.setPath('/vault');
-    historyStore.setActiveBoard('board_test');
-    ctx = {
-      getVaultPath: () => '/vault',
-      setVaultPath: () => {},
-      getFileTree: () => [],
-      setFileTree: () => {},
-      getSearchQuery: () => '',
-      setSearchQuery: () => {},
-      getIsLoading: () => false,
-      setIsLoading: () => {},
-      getExpandedFolders: () => new Set(),
-      setExpandedFolders: () => {},
-      getSelectedPaths: () => new Set(),
-      setSelectedPaths: () => {},
-      getProject: () => null,
-      setProject: () => {},
-      getRecoveryPendingPaths: () => [],
-      setRecoveryPendingPaths: () => {},
-      markMetaDirty: () => {},
-      refreshTree: async () => {},
-      clearSelection: () => {},
-      clearActiveRootFolderIfMatches: () => {},
-    };
-    slice = makeExternalChangesSlice(ctx);
-  });
-
-  afterEach(() => {
-    restoreFiloDefault();
-    vaultStore.setPath('');
-    documentStore.clear();
-    vaultIndexStore.clear();
-    historyStore.setActiveBoard(null);
-    historyStore.clear();
-    clearToasts();
-  });
-
-  function pushDummyCommand(): void {
-    // Minimal Command implementation so the notePossiblyStale gate has
-    // prior history to act on. Without it, the gate short-circuits
-    // regardless of reason — defeating the test.
-    const cmd: Command = {
-      description: 'dummy',
-      execute() {},
-      undo() {},
-    };
-    historyStore.pushWithoutExecute(cmd);
-  }
-
-  it('first-sight: no "External edit replaced" toast even with prior history', async () => {
-    pushDummyCommand();
-    expect(historyStore.canUndo).toBe(true);
-
-    // First sighting: no editor open, previousMetadata === null. The file
-    // is readable (next ≠ null), so classifier returns sync-frontmatter
-    // with reason 'first-sight'.
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: '---\ntags: []\n---\nfresh body' };
-      }
-      return { success: true };
-    });
-
-    await slice.handleExternalMarkdownChanges(['NewTile.md']);
-
-    const staleToast = uiStore.toasts.find((t) =>
-      t.text.includes('External edit replaced'),
-    );
-    expect(staleToast).toBeUndefined();
-  });
-
-  it('frontmatter-only: DOES surface the "External edit replaced" toast', async () => {
-    pushDummyCommand();
-
-    // Seed the index so the next read produces previousMetadata !== null.
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: '---\ntags: [a]\n---\nbody' };
-      }
-      return { success: true };
-    });
-    await vaultIndexStore.applyChanges(['Note.md']);
-
-    // Now the watcher fires a frontmatter-only change (body same, tags changed).
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: '---\ntags: [a, b]\n---\nbody' };
-      }
-      return { success: true };
-    });
-
-    await slice.handleExternalMarkdownChanges(['Note.md']);
-
-    const staleToast = uiStore.toasts.find((t) =>
-      t.text.includes('External edit replaced'),
-    );
-    expect(staleToast).toBeDefined();
-  });
-});
-
-/**
- * 6.2.H1 — when `sync-frontmatter` lands, `originalFrontmatterCache` must
- * refresh to the post-sync raw bytes. The pre-fix bug: `setFrontmatter` was
- * called WITHOUT a `rawFrontmatter` argument, so the clean-bytes signal was
- * dropped but the baseline used by `patchFrontmatterSource` stayed at the
- * pre-sync bytes. A subsequent body-only save's diff would then see the
- * external editor's value as "different" and re-emit the node, losing any
- * YAML comment on the changed line.
- */
-describe('vaultExternalChanges — 6.2.H1: sync-frontmatter refreshes originalFrontmatterSource', () => {
-  let ctx: VaultContext;
-  let slice: ReturnType<typeof makeExternalChangesSlice>;
-
-  beforeEach(() => {
-    documentStore.clear();
-    vaultIndexStore.clear();
-    clearToasts();
-    vaultStore.setPath('/vault');
-    ctx = {
-      getVaultPath: () => '/vault',
-      setVaultPath: () => {},
-      getFileTree: () => [],
-      setFileTree: () => {},
-      getSearchQuery: () => '',
-      setSearchQuery: () => {},
-      getIsLoading: () => false,
-      setIsLoading: () => {},
-      getExpandedFolders: () => new Set(),
-      setExpandedFolders: () => {},
-      getSelectedPaths: () => new Set(),
-      setSelectedPaths: () => {},
-      getProject: () => null,
-      setProject: () => {},
-      getRecoveryPendingPaths: () => [],
-      setRecoveryPendingPaths: () => {},
-      markMetaDirty: () => {},
-      refreshTree: async () => {},
-      clearSelection: () => {},
-      clearActiveRootFolderIfMatches: () => {},
-    };
-    slice = makeExternalChangesSlice(ctx);
-  });
-
-  afterEach(() => {
-    restoreFiloDefault();
-    vaultStore.setPath('');
-    documentStore.clear();
-    vaultIndexStore.clear();
-    clearToasts();
-  });
-
-  it('refreshes originalFrontmatterSource to the post-sync raw bytes (preserving the new comment)', async () => {
-    // Seed the index from disk so the next handleExternalMarkdownChanges sees
-    // a real previous entry and the classifier returns frontmatter-only.
-    const initial = '---\ntitle: Hello\npriority: low   # inline note\n---\nbody';
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') return { success: true, content: initial };
-      return { success: true };
-    });
-    await vaultIndexStore.applyChanges(['Note.md']);
-
-    // Seed the editor's frontmatter cache as a clean disk read would (the
-    // hydrate path does this via setFrontmatter with rawFrontmatter).
-    documentStore.loadDocument({
-      filename: 'Note.md',
-      title: 'Note',
-      body: 'body',
-      htmlContent: '<p>body</p>',
-      richText: [],
-    });
-    documentStore.setFrontmatter(
-      'Note.md',
-      { title: 'Hello', priority: 'low' },
-      'title: Hello\npriority: low   # inline note',
-    );
-
-    expect(documentStore.getOriginalFrontmatterSource('Note.md')).toBe(
-      'title: Hello\npriority: low   # inline note',
-    );
-
-    // External editor flips priority and keeps the inline comment.
-    const updated = '---\ntitle: Hello\npriority: high   # inline note\n---\nbody';
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') return { success: true, content: updated };
-      return { success: true };
-    });
-
-    await slice.handleExternalMarkdownChanges(['Note.md']);
-
-    // Post-fix: the baseline reflects the post-sync raw bytes (still carrying
-    // the inline comment). Pre-fix: it stayed at the pre-sync bytes, so a
-    // body-only save's diff would re-emit `priority: high` and lose the
-    // comment because the source the engine diffs against still said `low`.
-    const baseline = documentStore.getOriginalFrontmatterSource('Note.md');
-    expect(baseline).toBeDefined();
-    expect(baseline).toContain('priority: high');
-    expect(baseline).toContain('# inline note');
-  });
-});
-
-/**
- * Audit-15 P2.1 — the Properties-popup-modified Reload handler
- * (`promptPropertiesPopupModified`) must thread `next.rawFrontmatter` into
- * `setFrontmatter`, mirroring the 6 sibling reload sites (L1/L13). Pre-fix it
- * called `setFrontmatter(path, next.frontmatter)` with NO raw bytes, so
- * `originalFrontmatterCache` stayed at the pre-external-edit source: a later
- * body-only save would diff fresh FM against the stale baseline and could lose
- * an external key's inline comment / quoting.
- */
-describe('vaultExternalChanges — P2.1: Properties-popup Reload refreshes originalFrontmatterSource', () => {
-  let ctx: VaultContext;
-  let slice: ReturnType<typeof makeExternalChangesSlice>;
-
-  beforeEach(() => {
-    documentStore.clear();
-    vaultIndexStore.clear();
-    clearToasts();
-    __resetPropertiesPopupTrackerForTests();
-    vaultStore.setPath('/vault');
-    ctx = {
-      getVaultPath: () => '/vault',
-      setVaultPath: () => {},
-      getFileTree: () => [],
-      setFileTree: () => {},
-      getSearchQuery: () => '',
-      setSearchQuery: () => {},
-      getIsLoading: () => false,
-      setIsLoading: () => {},
-      getExpandedFolders: () => new Set(),
-      setExpandedFolders: () => {},
-      getSelectedPaths: () => new Set(),
-      setSelectedPaths: () => {},
-      getProject: () => null,
-      setProject: () => {},
-      getRecoveryPendingPaths: () => [],
-      setRecoveryPendingPaths: () => {},
-      markMetaDirty: () => {},
-      refreshTree: async () => {},
-      clearSelection: () => {},
-      clearActiveRootFolderIfMatches: () => {},
-    };
-    slice = makeExternalChangesSlice(ctx);
-  });
-
-  afterEach(() => {
-    restoreFiloDefault();
-    vaultStore.setPath('');
-    documentStore.clear();
-    vaultIndexStore.clear();
-    clearToasts();
-    __resetPropertiesPopupTrackerForTests();
-  });
-
-  it('Reload threads next.rawFrontmatter so the baseline reflects the external bytes', async () => {
-    const initial = '---\ntitle: Hello\npriority: low   # inline note\n---\nbody';
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') return { success: true, content: initial };
-      return { success: true };
-    });
-    await vaultIndexStore.applyChanges(['Note.md']);
-
-    documentStore.loadDocument({
-      filename: 'Note.md',
-      title: 'Note',
-      body: 'body',
-      htmlContent: '<p>body</p>',
-      richText: [],
-    });
-    documentStore.setFrontmatter(
-      'Note.md',
-      { title: 'Hello', priority: 'low' },
-      'title: Hello\npriority: low   # inline note',
-    );
-
-    // A Properties popup is open + dirty for this path → the classifier routes a
-    // frontmatter-only external edit to promptPropertiesPopupModified (not a
-    // silent sync-frontmatter).
-    markPropertiesPopupDirty('props-caller', 'Note.md');
-
-    // External editor flips priority and keeps the inline comment (body unchanged).
-    const updated = '---\ntitle: Hello\npriority: high   # inline note\n---\nbody';
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') return { success: true, content: updated };
-      return { success: true };
-    });
-
-    await slice.handleExternalMarkdownChanges(['Note.md']);
-
-    const toast = uiStore.toasts.find((t) =>
-      /Properties of .* were modified externally/.test(t.text),
-    );
-    expect(toast).toBeDefined();
-    expect(toast!.actions?.[0].label).toBe('Reload');
-
-    // Audit-16 6.3 — the Reload handler is now async (click-time disk re-read).
-    await toast!.actions![0].handler(); // Reload
-
-    // P2.1: the baseline now reflects the post-external raw bytes (still carrying
-    // the inline comment). Bite: pre-fix setFrontmatter omitted rawFrontmatter,
-    // so this stayed at the pre-edit `priority: low` source.
-    const baseline = documentStore.getOriginalFrontmatterSource('Note.md');
-    expect(baseline).toBeDefined();
-    expect(baseline).toContain('priority: high');
-    expect(baseline).toContain('# inline note');
-  });
-});
-
-/**
- * Audit-17 5.8 — a dirty Properties popup over a NEVER-loaded doc (Kanban card /
- * Task row, no open Document editor) must still surface the conflict prompt on a
- * frontmatter-only external edit. Pre-fix the dispatcher's prompt-user arm only
- * pushed when `editorDoc` was non-null, so the popup case fell through silently
- * and the external frontmatter was synced over the popup's pending row edits with
- * no user say-so.
- */
-describe('vaultExternalChanges — 5.8: popup-dirty over a never-loaded doc still prompts', () => {
-  let ctx: VaultContext;
-  let slice: ReturnType<typeof makeExternalChangesSlice>;
-
-  beforeEach(() => {
-    documentStore.clear();
-    vaultIndexStore.clear();
-    clearToasts();
-    __resetPropertiesPopupTrackerForTests();
-    vaultStore.setPath('/vault');
-    ctx = {
-      getVaultPath: () => '/vault',
-      setVaultPath: () => {},
-      getFileTree: () => [],
-      setFileTree: () => {},
-      getSearchQuery: () => '',
-      setSearchQuery: () => {},
-      getIsLoading: () => false,
-      setIsLoading: () => {},
-      getExpandedFolders: () => new Set(),
-      setExpandedFolders: () => {},
-      getSelectedPaths: () => new Set(),
-      setSelectedPaths: () => {},
-      getProject: () => null,
-      setProject: () => {},
-      getRecoveryPendingPaths: () => [],
-      setRecoveryPendingPaths: () => {},
-      markMetaDirty: () => {},
-      refreshTree: async () => {},
-      clearSelection: () => {},
-      clearActiveRootFolderIfMatches: () => {},
-    };
-    slice = makeExternalChangesSlice(ctx);
-  });
-
-  afterEach(() => {
-    restoreFiloDefault();
-    vaultStore.setPath('');
-    documentStore.clear();
-    vaultIndexStore.clear();
-    clearToasts();
-    __resetPropertiesPopupTrackerForTests();
-  });
-
-  it('raises the popup prompt (not a silent sync) when the doc was never opened', async () => {
-    const initial = '---\ntitle: Hello\npriority: low\n---\nbody';
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') return { success: true, content: initial };
-      return { success: true };
-    });
-    await vaultIndexStore.applyChanges(['Note.md']);
-
-    // NO documentStore.loadDocument — the backing doc was never opened, so
-    // `findByFilename('Note.md')` returns null. But a Properties popup is dirty
-    // for the path (a Kanban card / Task row editing its frontmatter).
-    markPropertiesPopupDirty('props-caller', 'Note.md');
-
-    // External editor flips a frontmatter-only field (body unchanged).
-    const updated = '---\ntitle: Hello\npriority: high\n---\nbody';
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') return { success: true, content: updated };
-      return { success: true };
-    });
-
-    await slice.handleExternalMarkdownChanges(['Note.md']);
-
-    // 5.8: the popup-aware toast fires even with no open editor. Bite: pre-fix
-    // (editorDoc-gated push) there was NO toast.
-    const toast = uiStore.toasts.find((t) =>
-      /Properties of .* were modified externally/.test(t.text),
-    );
-    expect(toast).toBeDefined();
-    expect(toast!.actions?.[0].label).toBe('Reload');
-  });
-});
-
-/**
- * Audit-7 H3 — the bulk "Keep all" handler used to `markDirty` each modified
- * doc and then `flushAllMarkdownWrites()`. But `markDirty` arms NO gateway
- * timer, and `flushAllMarkdownWrites` drains only pending/in-flight timers
- * (and test flushers via their `flush`) — it never iterates the force-writer
- * registry. So a doc whose 300ms debounce already fired during the prompt
- * window had nothing armed and the drain was a no-op: disk kept the external
- * content after the user chose "keep mine". The fix mirrors the single-file
- * Keep-local path — `forceWriteForDocument(path)` per modified doc, which
- * reads the live editor body and commits even with no armed debounce.
- */
-describe('vaultExternalChanges — bulk "Keep all" force-writes each modified doc (Audit-7 H3)', () => {
-  let ctx: VaultContext;
-  let slice: ReturnType<typeof makeExternalChangesSlice>;
-  const COUNT = 6; // strictly > PROMPT_AGGREGATION_THRESHOLD (5) → bulk toast
-
-  beforeEach(() => {
-    documentStore.clear();
-    vaultIndexStore.clear();
-    __resetMarkdownFileWriterForTests();
-    clearToasts();
-    vaultStore.setPath('/vault');
-    ctx = {
-      getVaultPath: () => '/vault',
-      setVaultPath: () => {},
-      getFileTree: () => [],
-      setFileTree: () => {},
-      getSearchQuery: () => '',
-      setSearchQuery: () => {},
-      getIsLoading: () => false,
-      setIsLoading: () => {},
-      getExpandedFolders: () => new Set(),
-      setExpandedFolders: () => {},
-      getSelectedPaths: () => new Set(),
-      setSelectedPaths: () => {},
-      getProject: () => null,
-      setProject: () => {},
-      getRecoveryPendingPaths: () => [],
-      setRecoveryPendingPaths: () => {},
-      markMetaDirty: () => {},
-      refreshTree: async () => {},
-      clearSelection: () => {},
-      clearActiveRootFolderIfMatches: () => {},
-    };
-    slice = makeExternalChangesSlice(ctx);
-  });
-
-  afterEach(() => {
-    restoreFiloDefault();
-    __resetMarkdownFileWriterForTests();
-    vaultStore.setPath('');
-    documentStore.clear();
-    vaultIndexStore.clear();
-    clearToasts();
-  });
-
-  it('calls forceWriteForDocument for every modified doc (not the no-op flushAll)', async () => {
-    const forceWritten: string[] = [];
-    const flushed: string[] = [];
-    const rels = Array.from({ length: COUNT }, (_, i) => `F${i}.md`);
-
-    // Prime the index from disk so each file has a previous metadata entry.
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: '---\ntags: []\n---\noriginal body' };
-      }
-      return { success: true };
-    });
-    for (const rel of rels) await vaultIndexStore.applyChanges([rel]);
-
-    // A DIRTY editor for each file + a registered force-writer with NO armed
-    // debounce. The distinct `flush` / `forceWrite` capture lists let us assert
-    // the Keep-all path used the force-write route, not the (pre-fix) flushAll.
-    rels.forEach((rel, i) => {
-      documentStore.loadDocument({
-        filename: rel,
-        title: rel,
-        body: `local ${i}`,
-        htmlContent: `<p>local ${i}</p>`,
-        richText: [],
-      });
-      documentStore.updateContent(rel, `<p>local ${i}</p>`, `local ${i}`); // isDirty=true
-      __testRegisterFlusher(
-        `w_${i}`,
-        async () => {
-          flushed.push(rel);
-        },
-        {
-          forceWrite: async () => {
-            forceWritten.push(rel);
-          },
-          getNotePath: () => rel,
-        },
-      );
-    });
-
-    // External edit every file — body differs from both the index and the
-    // editor, so the classifier routes each to prompt-user (modified).
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: '---\ntags: []\n---\nexternal body' };
-      }
-      return { success: true };
-    });
-
-    await slice.handleExternalMarkdownChanges(rels);
-
-    // Over the aggregation threshold → the single Reload all / Keep all toast.
-    const toast = uiStore.toasts.find((t) => t.text.includes('changed externally'));
-    expect(toast).toBeDefined();
-    const keepAll = toast?.actions?.find((a) => a.label === 'Keep all');
-    expect(keepAll).toBeDefined();
-
-    keepAll!.handler();
-    // forceWriteForDocument is async + fire-and-forget; let microtasks settle.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    // Every modified doc was force-written through its registered writer —
-    // pre-fix `forceWritten` would be empty (flushAll uses `flush`, and no
-    // debounce was armed).
-    expect([...forceWritten].sort()).toEqual([...rels].sort());
-  });
-});
-
-/**
- * A8-H2(a) (Audit-8) — `handleExternalMarkdownChanges` captures the active
- * vault identity before its awaits (`whenBuildComplete` / `applyChanges`) and
- * bails if a vault swap lands during them. Without the guard, a swap mid-await
- * applies the OUTGOING vault's classification to the NEW vault's same-named
- * file — here, clobbering a clean editor's body with the other vault's content.
- * The whole per-file loop is synchronous, so the single post-`applyChanges`
- * check covers every sink.
- *
- * 🔍 Watch it fail first: remove the `if (!isStillSameVault(identity)) return;`
- * after `applyChanges` and the guard test below reloads the editor with the
- * external body just like the control test.
- */
-describe('vaultExternalChanges — A8-H2(a): vault swap during applyChanges bails before clobbering', () => {
-  let ctx: VaultContext;
-  let slice: ReturnType<typeof makeExternalChangesSlice>;
-
-  function makeCtx(): VaultContext {
+describe('vaultExternalChanges — a deleted file that tiles still use', () => {
+  function kanbanWithTileOn(rel: string): V7BoardFileData {
     return {
-      getVaultPath: () => '/vault',
-      setVaultPath: () => {},
-      getFileTree: () => [],
-      setFileTree: () => {},
-      getSearchQuery: () => '',
-      setSearchQuery: () => {},
-      getIsLoading: () => false,
-      setIsLoading: () => {},
-      getExpandedFolders: () => new Set(),
-      setExpandedFolders: () => {},
-      getSelectedPaths: () => new Set(),
-      setSelectedPaths: () => {},
-      getProject: () => null,
-      setProject: () => {},
-      getRecoveryPendingPaths: () => [],
-      setRecoveryPendingPaths: () => {},
-      markMetaDirty: () => {},
-      refreshTree: async () => {},
-      clearSelection: () => {},
-      clearActiveRootFolderIfMatches: () => {},
+      board: {
+        id: 'kb',
+        type: 'kanban',
+        name: 'Tasks',
+        emoji: '',
+        createdAt: 0,
+        updatedAt: 0,
+        settings: {},
+        columns: [{ id: 'c1', title: 'To Do', position: 0, collapsed: false, tilePlacements: [{ tileId: 't1' }] }],
+      } satisfies Partial<KanbanBoard> as KanbanBoard,
+      tileDefs: {
+        t1: { id: 't1', type: 'text', filePath: rel, style: { headerColor: '', bodyColor: '', borderColor: '' }, createdAt: 0, updatedAt: 0 },
+      },
+      connections: {},
+      frames: [],
     };
   }
 
-  beforeEach(() => {
-    documentStore.clear();
-    vaultIndexStore.clear();
-    clearToasts();
-    // Clear pending/failed write-state too — a sibling test's markPathFailed
-    // would otherwise make isPathPending(rel) true and the F4 guard would route
-    // the change to a pending-write prompt instead of reload-silently.
-    __resetDirtyTrackingForTests();
-    __clearRecentSelfWritesForTests();
-    vaultStore.setPath('/vault'); // bumps the vault-identity generation
-    ctx = makeCtx();
-    slice = makeExternalChangesSlice(ctx);
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  it('offers to keep or remove the tiles, and removes nothing by itself', async () => {
+    boardCacheStore.hydrate({ kb: kanbanWithTileOn('Notes.md') }, { kb: 'tasks.board.json' });
+    vault.remove('Notes.md');
+
+    await slice.handleExternalMarkdownChanges(['Notes.md']);
+
+    const toast = uiStore.toasts.find((t) => t.text.includes('is missing from the vault'));
+    expect(toast).toBeDefined();
+    expect(toast?.actions?.[0].label).toBe('Keep tiles (show as missing)');
+    expect(boardCacheStore.cache.kb.tileDefs.t1).toBeDefined();
   });
 
-  afterEach(() => {
-    restoreFiloDefault();
-    vaultStore.setPath('');
-    documentStore.clear();
-    vaultIndexStore.clear();
-    clearToasts();
-    vi.restoreAllMocks();
+  it('a note with an unsaved edit gets the note prompt instead of the tiles prompt', async () => {
+    boardCacheStore.hydrate({ kb: kanbanWithTileOn('Notes.md') }, { kb: 'tasks.board.json' });
+    await openWithUnsavedBody('Notes.md', 'dirty\n');
+    vault.remove('Notes.md');
+
+    await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await vi.waitFor(() => expect(deletedToast()).toBeDefined());
+    expect(uiStore.toasts.find((t) => t.text.includes('is missing from the vault'))).toBeUndefined();
   });
+});
 
-  function primeAndLoadCleanEditor(): void {
-    documentStore.loadDocument({
-      filename: 'Notes.md',
-      title: 'Notes',
-      body: 'original body',
-      htmlContent: '<p>original body</p>',
-      richText: [],
-    });
-    // loadDocument alone leaves the editor CLEAN → reload-silently is eligible.
-  }
+/**
+ * `handleExternalMarkdownChanges` captures the active vault identity before
+ * its awaits and bails if a vault swap lands during them. Without the guard,
+ * a swap mid-await applies the OUTGOING vault's change to the NEW vault's
+ * same-named note — here, replacing a clean note's body with the other
+ * vault's content.
+ */
+describe('vaultExternalChanges — vault swap during the index refresh bails before clobbering', () => {
+  it('does NOT reload a clean note when the vault swaps during the refresh', async () => {
+    vault.writeExternally('Notes.md', '---\ntags: [a]\n---\noriginal body\n');
+    const m = noteStore.acquire('Notes.md', 'editor');
+    await m.loaded;
 
-  it('does NOT reload a clean editor when the vault swaps during applyChanges', async () => {
-    // Prime the index with the original body so `previous` is non-null.
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: '---\ntags: [a]\n---\noriginal body' };
-      }
-      return { success: true };
-    });
-    await vaultIndexStore.applyChanges(['Notes.md']);
-    primeAndLoadCleanEditor();
-
-    // The handler's own applyChanges re-reads CHANGED content; a vault swap
-    // (same path, NEW generation) lands during that read.
+    vault.writeExternally('Notes.md', '---\ntags: [a]\n---\nEXTERNAL CLOBBER\n');
     let swapped = false;
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') {
-        if (!swapped) {
-          swapped = true;
-          beginVaultGeneration('/vault'); // close→reopen: stale captured identity
-        }
-        return { success: true, content: '---\ntags: [a]\n---\nEXTERNAL CLOBBER' };
-      }
-      return { success: true };
-    });
+    vault.afterRead = () => {
+      if (swapped) return;
+      swapped = true;
+      beginVaultGeneration('/vault'); // close→reopen: stale captured identity
+    };
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await new Promise((r) => setTimeout(r, 20));
 
-    // Guard bailed before the reload-silently sink: the clean editor still
-    // shows the original body, not the other generation's external content.
-    expect(documentStore.getDocument('Notes.md')?.body).toBe('original body');
+    expect(swapped).toBe(true);
+    expect(m.body).toBe('original body\n');
   });
 
-  it('control: WITHOUT a swap, the same external change DOES reload the clean editor', async () => {
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: '---\ntags: [a]\n---\noriginal body' };
-      }
-      return { success: true };
-    });
-    await vaultIndexStore.applyChanges(['Notes.md']);
-    primeAndLoadCleanEditor();
+  it('control: WITHOUT a swap, the same external change DOES reload the clean note', async () => {
+    vault.writeExternally('Notes.md', '---\ntags: [a]\n---\noriginal body\n');
+    const m = noteStore.acquire('Notes.md', 'editor');
+    await m.loaded;
 
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: '---\ntags: [a]\n---\nEXTERNAL CLOBBER' };
-      }
-      return { success: true };
-    });
-
+    vault.writeExternally('Notes.md', '---\ntags: [a]\n---\nEXTERNAL CLOBBER\n');
     await slice.handleExternalMarkdownChanges(['Notes.md']);
 
-    // No swap → the guard passes → reload-silently applies the external body.
-    // This proves the guard test above isn't passing vacuously.
-    expect(documentStore.getDocument('Notes.md')?.body).toBe('EXTERNAL CLOBBER');
+    await vi.waitFor(() => expect(m.body).toBe('EXTERNAL CLOBBER\n'));
   });
 });

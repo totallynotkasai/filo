@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { makeExternalChangesSlice } from '@renderer/stores/vaultExternalChanges';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
@@ -93,7 +93,7 @@ describe('vaultExternalChanges — external attachment delete', () => {
   let slice: ReturnType<typeof makeExternalChangesSlice>;
 
   beforeEach(() => {
-    documentStore.clear();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
     boardCacheStore.clear();
     boardStore.clearBoard();
@@ -106,7 +106,7 @@ describe('vaultExternalChanges — external attachment delete', () => {
   afterEach(() => {
     restoreFiloDefault();
     vaultStore.setPath('');
-    documentStore.clear();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
     boardCacheStore.clear();
     boardStore.clearBoard();

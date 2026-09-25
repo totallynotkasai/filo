@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { editorMarkdown } from '@renderer/lib/editor/markdownSync';
 import { tiptapToolbar } from '@renderer/lib/editor/toolbarConfig';
 import {
@@ -23,20 +23,20 @@ const HARD_WRAPPED = 'A paragraph that is\nhard-wrapped across lines.\n';
 
 async function assertFrozenThenOwned(m: Mounted, rel: string, fs: ReturnType<typeof recordingFilo>): Promise<void> {
   const ed = m.editor();
-  expect(documentStore.isReadOnly(rel)).toBe(true);
+  expect(noteStore.get(rel)?.readOnly).toBe(true);
   expect(ed.isEditable).toBe(false);
   expect(m.target.textContent).toContain('Take ownership');
 
   const before = editorMarkdown(ed);
-  const bodyBefore = documentStore.getDocument(rel)?.body;
+  const bodyBefore = noteStore.get(rel)?.body;
   ed.commands.selectAll();
   tiptapToolbar.setActiveEditor(ed);
   tiptapToolbar.toggleBold();
   tiptapToolbar.setHeading(1);
   expect(editorMarkdown(ed)).toBe(before);
-  expect(documentStore.getDocument(rel)?.body).toBe(bodyBefore);
+  expect(noteStore.get(rel)?.body).toBe(bodyBefore);
 
-  documentStore.takeOwnership(rel);
+  noteStore.takeOwnership(rel);
   await settle();
   expect(ed.isEditable).toBe(true);
   ed.commands.focus('end');
@@ -45,7 +45,7 @@ async function assertFrozenThenOwned(m: Mounted, rel: string, fs: ReturnType<typ
   expect(fs.writesTo(rel).length).toBe(1);
 }
 
-describe('a lossy note is truly non-editable (UX-1)', () => {
+describe('a lossy note is truly non-editable', () => {
   beforeEach(() => resetEditorHarness());
   afterEach(() => teardownEditorHarness());
 

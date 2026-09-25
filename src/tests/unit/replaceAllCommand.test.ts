@@ -9,15 +9,10 @@ import { parseMarkdown } from '@renderer/lib/vault/vaultIndex';
 import { ReplaceAllCommand, runReplaceAllCommand } from '@renderer/commands/replaceAllCommand';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
-import { documentStore } from '@renderer/stores/document.svelte';
-import {
-  registerForceWriter,
-  scheduleMarkdownWrite,
-  runSerializedMarkdownWrite,
-  __resetMarkdownFileWriterForTests,
-  type WriteArgs,
-} from '@renderer/lib/vault/markdownFileWriter';
-import { isPathPending } from '@renderer/lib/boards/boardSaver';
+import { noteStore } from '@renderer/stores/notes.svelte';
+import { setActiveVaultPath } from '@renderer/lib/vault/activeVaultPath';
+import { beginVaultGeneration, __resetVaultIdentityForTests } from '@renderer/lib/vault/vaultIdentity';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 
 // ── Stubs ──
 
@@ -27,9 +22,18 @@ interface FileMap {
   [path: string]: string;
 }
 
-function installFiloStub(filesystem: FileMap, options: { readOnlyPaths?: Set<string> } = {}): { writes: Array<{ path: string; content: string }> } {
+function installFiloStub(
+  filesystem: FileMap,
+  options: { readOnlyPaths?: Set<string>; beforeWrite?: (path: string) => Promise<void> } = {},
+): { writes: Array<{ path: string; content: string }> } {
   const readOnly = options.readOnlyPaths ?? new Set<string>();
   const writes: Array<{ path: string; content: string }> = [];
+  // Every write bumps the file's mtime, as the OS does; reads and stats agree.
+  const mtimes: Record<string, number> = {};
+  const identity = (p: string): { mtimeMs: number; size: number } => ({
+    mtimeMs: mtimes[p] ?? 1,
+    size: new TextEncoder().encode(filesystem[p] ?? '').length,
+  });
 
   const routes: Record<string, InvokeHandler> = {
     'vault:read-file-text': async (_vaultRoot: unknown, relPath: unknown) => {
@@ -38,18 +42,27 @@ function installFiloStub(filesystem: FileMap, options: { readOnlyPaths?: Set<str
       if (content === undefined) {
         return { success: false, error: 'ENOENT', code: 'ENOENT' };
       }
-      return { success: true, content };
+      return { success: true, content, ...identity(p) };
     },
     'vault:write-existing-file-text': async (_vaultRoot: unknown, relPath: unknown, content: unknown) => {
       const p = String(relPath);
       if (readOnly.has(p)) {
         return { success: false, error: 'EACCES', code: 'EACCES' };
       }
+      await options.beforeWrite?.(p);
       filesystem[p] = String(content);
+      mtimes[p] = (mtimes[p] ?? 1) + 1;
       writes.push({ path: p, content: String(content) });
       return { success: true };
     },
-    'vault:stat': async () => ({ success: true, mtimeMs: 0, sizeBytes: 0 }),
+    'vault:stat': async (_vaultRoot: unknown, relPath: unknown) => {
+      const p = String(relPath);
+      if (filesystem[p] === undefined) return { success: false, error: 'ENOENT', code: 'ENOENT' };
+      return { success: true, ...identity(p) };
+    },
+    // The crash-recovery sentinel under .filo/ (not a note).
+    'vault:write-file-text': async () => ({ success: true }),
+    'vault:delete': async () => ({ success: true }),
   };
 
   (window as unknown as Record<string, unknown>).filo = {
@@ -126,8 +139,12 @@ beforeEach(() => {
   boardCacheStore.clear();
   historyStore.clear();
   searchStore.reset();
-  documentStore.clear();
-  __resetMarkdownFileWriterForTests();
+  __resetDirtyTrackingForTests();
+  __resetVaultIdentityForTests();
+  beginVaultGeneration('/test/vault');
+  setActiveVaultPath('/test/vault');
+  noteStore.__resetForTests();
+  for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
   seedVaultStub();
   historyStore.setActiveBoard('mm');
 });
@@ -136,8 +153,8 @@ afterEach(() => {
   delete (vaultStore as unknown as Record<string, unknown>).path;
   delete (vaultStore as unknown as Record<string, unknown>).project;
   searchStore.reset();
-  documentStore.clear();
-  __resetMarkdownFileWriterForTests();
+  noteStore.__resetForTests();
+  setActiveVaultPath('');
 });
 
 // ── Tests ──
@@ -178,15 +195,23 @@ describe('ReplaceAllCommand — atomicity', () => {
     expect(filesystem['b.md']).toBe('# B\nfrodo elsewhere');
   });
 
-  it('Audit-10 M1 — serialises behind an in-flight write to the same .md path', async () => {
-    // A debounced TextTile / DocumentEditor save can be executing at the IPC
-    // layer when Replace All fires its own direct write to the SAME file. The
-    // fix enrols the bulk write on the per-path chain so it ORDERS behind that
-    // in-flight write instead of racing it (OS-arbitrated order, loser's bytes
-    // lost). Here we hold the chain for `a.md` with a gated write and prove
-    // Replace All's write does not land until the chain is released.
+  it('serialises behind an in-flight write to the same .md path, and never clobbers it', async () => {
+    // A note write can be executing at the IPC layer when Replace All fires
+    // for the SAME file. Replace All runs inside the note's write queue, so
+    // it ORDERS behind that write instead of racing it (OS-arbitrated order,
+    // loser's bytes lost); once it runs, the file no longer holds the bytes
+    // the plan was built from, so it is skipped rather than overwriting them.
     const filesystem: FileMap = { 'a.md': '# A\nfind frodo here' };
-    const { writes } = installFiloStub(filesystem);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let held = true;
+    const { writes } = installFiloStub(filesystem, {
+      beforeWrite: async () => {
+        if (held) await gate;
+      },
+    });
     vaultIndexStore.restoreMetadata('a.md', parseMarkdown('a.md', filesystem['a.md']));
     boardCacheStore.hydrate(
       { mm: makeMindMap('Board', 'mm', { ta: makeTextDef('ta', 'A', 'a.md') }) },
@@ -196,26 +221,26 @@ describe('ReplaceAllCommand — atomicity', () => {
     searchStore.setReplaceText('sam');
     expect(searchStore.matches.length).toBe(1);
 
-    // Occupy the per-path write chain for a.md with a gated op.
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const occupant = runSerializedMarkdownWrite('a.md', () => gate);
+    // A frontmatter write for a.md is in flight, held at the IPC layer.
+    noteStore.patchFrontmatter('a.md', { set: { status: 'in-flight' }, unset: [] });
+    const occupant = noteStore.flush('a.md');
+    await new Promise((resolve) => setTimeout(resolve, 10));
 
     // Kick off Replace All; its write must queue behind the occupant.
     const replaceP = runReplaceAllCommand();
-    // Let microtasks/timers settle — with serialization the write has NOT fired.
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(writes.some((w) => w.path === 'a.md')).toBe(false);
-    expect(filesystem['a.md']).toContain('frodo');
+    expect(filesystem['a.md']).toBe('# A\nfind frodo here');
 
-    // Release the chain; the queued Replace All write now lands.
+    // Release the in-flight write: it lands, and Replace All leaves it alone.
+    held = false;
     release();
     await occupant;
     await replaceP;
-    expect(writes.some((w) => w.path === 'a.md')).toBe(true);
-    expect(filesystem['a.md']).toContain('sam');
+    expect(writes.filter((w) => w.path === 'a.md')).toHaveLength(1);
+    expect(filesystem['a.md']).toContain('status: in-flight');
+    expect(filesystem['a.md']).toContain('find frodo here');
+    expect(uiStore.toasts.some((t) => t.text.includes('Replace skipped'))).toBe(true);
   });
 
   it('aborts when any file is unreadable (pre-flight failure → no writes)', async () => {
@@ -335,22 +360,17 @@ describe('ReplaceAllCommand — undo with hasFileSnapshots', () => {
   });
 });
 
-describe('ReplaceAllCommand — open-editor sync (audit 2.1)', () => {
-  // Registers an open document session for `relPath`, mirroring what a
-  // mounted TextTile / DocumentEditor does. The replace path must keep this
-  // in-memory copy in step with disk; otherwise the editor's next debounce
-  // re-saves its stale body and silently reverts the replace (or its undo).
-  function openEditorDoc(relPath: string, body: string): void {
-    documentStore.loadDocument({
-      filename: relPath,
-      title: relPath.replace(/\.md$/, ''),
-      body,
-      htmlContent: `<p>${body}</p>`,
-      richText: [],
-    });
+describe('ReplaceAllCommand — open views follow', () => {
+  // A mounted TextTile / DocumentEditor holds the note's model. The replace
+  // (and its undo) must reach that model; otherwise the editor would keep its
+  // stale body and a later edit would write it back over the replace.
+  async function openView(relPath: string) {
+    const m = noteStore.acquire(relPath, `tile:${relPath}`);
+    await m.loaded;
+    return m;
   }
 
-  it('syncs an open editor to disk after execute and after undo', async () => {
+  it('an open view shows the replaced text after execute and the original after undo', async () => {
     const filesystem: FileMap = { 'a.md': 'hello frodo' };
     installFiloStub(filesystem);
     vaultIndexStore.restoreMetadata('a.md', parseMarkdown('a.md', filesystem['a.md']));
@@ -358,7 +378,7 @@ describe('ReplaceAllCommand — open-editor sync (audit 2.1)', () => {
       { mm: makeMindMap('Board', 'mm', { ta: makeTextDef('ta', 'A', 'a.md') }) },
       { mm: 'a.board.json' },
     );
-    openEditorDoc('a.md', 'hello frodo');
+    const m = await openView('a.md');
 
     searchStore.setQuery('frodo');
     searchStore.setReplaceText('sam');
@@ -366,20 +386,42 @@ describe('ReplaceAllCommand — open-editor sync (audit 2.1)', () => {
 
     await runReplaceAllCommand();
 
-    // execute must sync the open in-memory document to the new disk content.
     expect(filesystem['a.md']).toBe('hello sam');
-    expect(documentStore.getDocument('a.md')?.body).toBe('hello sam');
-    expect(documentStore.getDocument('a.md')?.isDirty).toBe(false);
+    expect(m.body).toBe('hello sam');
+    expect(m.hasUnsavedBody).toBe(false);
 
     await historyStore.undo();
 
-    // undo restores disk AND the open editor symmetrically.
+    // undo restores disk AND the open view symmetrically.
     expect(filesystem['a.md']).toBe('hello frodo');
-    expect(documentStore.getDocument('a.md')?.body).toBe('hello frodo');
-    expect(documentStore.getDocument('a.md')?.isDirty).toBe(false);
+    expect(m.body).toBe('hello frodo');
+    expect(m.hasUnsavedBody).toBe(false);
+    // Nothing queued that could write a stale body back later.
+    expect(noteStore.hasPendingWrites('a.md')).toBe(false);
   });
 
-  it('cancels an armed editor write for an affected path so it cannot re-clobber', async () => {
+  it('execute → undo round-trip on the command itself, with a view open', async () => {
+    const filesystem: FileMap = { 'a.md': '---\ntitle: A\n---\nhello frodo\n' };
+    const { writes } = installFiloStub(filesystem);
+    const m = await openView('a.md');
+    const cmd = new ReplaceAllCommand('/test/vault', [
+      {
+        path: 'a.md',
+        originalContent: '---\ntitle: A\n---\nhello frodo\n',
+        nextContent: '---\ntitle: A\n---\nhello sam\n',
+        replacementCount: 1,
+      },
+    ]);
+    await cmd.execute();
+    expect(filesystem['a.md']).toBe('---\ntitle: A\n---\nhello sam\n');
+    expect(m.body).toBe('hello sam\n');
+    await cmd.undo();
+    expect(filesystem['a.md']).toBe('---\ntitle: A\n---\nhello frodo\n');
+    expect(m.body).toBe('hello frodo\n');
+    expect(writes.map((w) => w.path)).toEqual(['a.md', 'a.md']);
+  });
+
+  it('an unsaved editor body lands first; the replace then skips the file instead of overwriting it', async () => {
     const filesystem: FileMap = { 'a.md': 'hello frodo' };
     installFiloStub(filesystem);
     vaultIndexStore.restoreMetadata('a.md', parseMarkdown('a.md', filesystem['a.md']));
@@ -387,31 +429,20 @@ describe('ReplaceAllCommand — open-editor sync (audit 2.1)', () => {
       { mm: makeMindMap('Board', 'mm', { ta: makeTextDef('ta', 'A', 'a.md') }) },
       { mm: 'a.board.json' },
     );
-    openEditorDoc('a.md', 'hello frodo');
-
-    // The editor has a debounced write armed carrying its own (soon-to-be
-    // stale) body, registered as a force-writer for the doc — exactly as a
-    // mounted TextTile does.
-    const callerId = 'text-tile:a.md';
-    const args: WriteArgs = {
-      vaultRoot: '/test/vault',
-      relPath: 'a.md',
-      frontmatter: {},
-      body: 'hello frodo',
-      callerId,
-      notePath: 'a.md',
-    };
-    registerForceWriter(callerId, 'a.md', () => args);
-    scheduleMarkdownWrite(args);
-    expect(isPathPending('a.md')).toBe(true);
+    const m = await openView('a.md');
+    // Typed in the editor, still waiting out the debounce.
+    noteStore.setBody('a.md', 'hello frodo, typed', 'tile:a.md');
+    expect(noteStore.hasPendingWrites('a.md')).toBe(true);
 
     searchStore.setQuery('frodo');
     searchStore.setReplaceText('sam');
     await runReplaceAllCommand();
 
-    // The armed write would have fired 'hello frodo' back over 'hello sam'.
-    expect(isPathPending('a.md')).toBe(false);
-    expect(documentStore.getDocument('a.md')?.body).toBe('hello sam');
+    // The typing reached disk; the replace, planned on the older bytes, left it.
+    expect(filesystem['a.md']).toBe('hello frodo, typed');
+    expect(m.body).toBe('hello frodo, typed');
+    expect(noteStore.hasPendingWrites('a.md')).toBe(false);
+    expect(uiStore.toasts.some((t) => t.text.includes('Replace skipped'))).toBe(true);
   });
 });
 

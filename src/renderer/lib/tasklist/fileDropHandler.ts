@@ -9,7 +9,7 @@ import { uiStore } from '../../stores/ui.svelte';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import { vaultStore } from '../../stores/vault.svelte';
 import { AddTaskCommand } from '../../commands/index';
-import { createUniqueMdFile } from '../vault/createMdExclusive';
+import { noteStore } from '../../stores/notes.svelte';
 import { reportError } from '../utils/errorBus';
 import { buildTextTileDefForNote } from '../canvas/markdownTileSeed';
 import { vaultRelativeFromAbsolute } from '../canvas/vaultPath';
@@ -147,13 +147,7 @@ export function makeFileDropHandler(deps: FileDropDeps): FileDropHandler {
     let relPath = nextFreeMdPath(boardCacheStore.cache, folder, safeBase);
 
     try {
-      const created = await createUniqueMdFile({
-        vaultRoot,
-        folder,
-        baseName: safeBase,
-        firstCandidate: relPath,
-        buildContent: () => rawContent,
-      });
+      const created = await noteStore.createUnique(relPath, () => rawContent);
       relPath = created.relPath;
     } catch (err) {
       reportError(

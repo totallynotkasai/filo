@@ -2,8 +2,8 @@
  * Undoable title edit.
  *
  * - A text tile's title is its note's frontmatter `title:`. The edit is a
- *   frontmatter change `{ title }` written through the delta path (a fresh
- *   disk read, only that key rewritten); the file is never renamed. Undo
+ *   frontmatter change `{ title }` sent to the note writer as a delta (applied
+ *   to a fresh read, only that key rewritten); the file is never renamed. Undo
  *   restores the prior `title:`, or removes the key when the note had none.
  * - Every other tile owns its title on the board, so the edit is a board
  *   update.
@@ -43,12 +43,11 @@ export class UpdateTitleCommand extends Command {
     this.targetBoardId = args.boardId;
     this.description = `Rename to "${args.newTitle}"`;
     if (args.notePath && args.newTitle !== args.oldTitle) {
-      // The inverse is recaptured from a fresh disk read on first execute; this
-      // one only covers the case where that read can't run.
+      // The inverse is recaptured from the note on first execute; this one
+      // only covers the case where that read can't run.
       const priorTitle = titleFromFrontmatter(noteFrontmatter(args.notePath));
       this.field = new UpdateCardFieldCommand(
         args.boardId,
-        args.notePath,
         args.notePath,
         { title: args.newTitle },
         { title: priorTitle ?? '' },

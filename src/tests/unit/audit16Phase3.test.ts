@@ -8,7 +8,7 @@ import {
 } from '@renderer/lib/boards/writeStateTracking';
 import { onError, __resetErrorBusForTests, type ReportedError } from '@renderer/lib/utils/errorBus';
 import { __runRecoverySequencerForTests, vaultStore } from '@renderer/stores/vault.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
@@ -75,7 +75,7 @@ function resetAll(): void {
   __resetDirtyTrackingForTests();
   __resetRenameCascadeSentinelForTests();
   __resetTagRewriteSentinelForTests();
-  documentStore.clear();
+  noteStore.__resetForTests();
   vaultIndexStore.clear();
   boardCacheStore.clear();
   boardStore.clearBoard();

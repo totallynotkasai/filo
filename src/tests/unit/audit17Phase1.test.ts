@@ -1,9 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
-import { historyStore } from '@renderer/stores/history.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import {
   UpdateCardFieldCommand,
@@ -11,44 +10,29 @@ import {
   UpdatePropertiesCommand,
 } from '@renderer/commands/index';
 import { applyFrontmatterPatchRebased } from '@renderer/commands/frontmatterRebase';
-import {
-  resetFrontmatterScheduler,
-  flushAllPendingFrontmatterWrites,
-} from '@renderer/lib/boards/frontmatterWriteScheduler';
-import { cancelAllMarkdownWrites } from '@renderer/lib/vault/markdownFileWriter';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { __resetVaultIdentityForTests } from '@renderer/lib/vault/vaultIdentity';
-import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TaskListBoard, KanbanBoard } from '@renderer/schema/index';
 
 /**
- * Audit-17 Phase 1 behavioral matrix. Each test reds when its fix is
- * temp-reverted (the A8 discipline):
+ * Undo/redo and "Apply anyway" behaviour of field and Properties edits:
  *
- *   - 1.1 (HIGH) — `applyFrontmatterPatchRebased`'s `current === undefined`
- *     branch re-reads FRESH disk as the compare base instead of the old blind
- *     `commit(applying)`: an undo/redo of a field edit on a never-opened doc
- *     (seeded cache dropped by `dropStaleSeededFrontmatterCache` after a
- *     classified external FM edit) must NOT silently clobber an external
- *     same-field edit. Both legs (undo + isRedo-execute) are covered, plus the
- *     no-conflict counter-case and the nothing-visible legacy corner.
- *   - 1.2 — `UpdatePropertiesCommand`'s "Apply anyway" toast re-resolves the
- *     body at CLICK time: the old conflict-time `body`/`bodyIsLive` freeze
- *     reverted every editor save made between conflict and click (and a doc
- *     CLOSED in the interim still claimed its frozen body was live).
- *   - 1.3 — the rebase conflict-toast handlers bail via `isStillSameVault`
- *     when the vault swapped between arming and click (the write scheduler
- *     resolves its vaultRoot live at fire time).
- *   - 1.4 — `applySnapshot` rethrows a failed gateway write so historyStore's
- *     rollback drops the never-applied command from the stack, and the display
- *     cache is stamped only AFTER a successful write.
+ *   - Undo/redo of a field edit on a never-opened note rebases against the
+ *     note as it stands on disk: an external same-field edit is kept (with a
+ *     conflict toast), never blindly clobbered. Both legs (undo + redo) are
+ *     covered, plus the no-conflict counter-case and the nothing-readable
+ *     corner.
+ *   - The rebase conflict-toast handlers bail via `isStillSameVault` when the
+ *     vault swapped between arming and click.
+ *   - The Properties "Apply anyway" toast writes whatever the note's body is
+ *     at CLICK time (an editor's later keystrokes, or disk once it closed),
+ *     never a body frozen when the conflict appeared.
  */
 
-interface Captured {
-  channel: string;
-  args: unknown[];
-}
+let vault: MemoryVault;
 
 function makeTaskListFixture(): V7BoardFileData {
   return {
@@ -87,11 +71,11 @@ function makeKanbanFixture(): V7BoardFileData {
   };
 }
 
-function existingWritesAfter(captured: Captured[], from: number): string[] {
-  return captured
+function mdWritesAfter(from: number): string[] {
+  return vault.writes
     .slice(from)
-    .filter((c) => c.channel === 'vault:write-existing-file-text')
-    .map((c) => c.args[2] as string);
+    .filter(([, rel]) => rel.endsWith('.md'))
+    .map(([, , text]) => text);
 }
 
 function conflictToast() {
@@ -101,42 +85,21 @@ function conflictToast() {
 function resetAll(): void {
   __resetVaultIdentityForTests();
   __resetDirtyTrackingForTests();
-  cancelAllMarkdownWrites();
-  resetFrontmatterScheduler();
-  documentStore.clear();
+  noteStore.__resetForTests();
   boardCacheStore.clear();
   vaultIndexStore.clear();
   for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
 }
 
-// ── A17-1.1 — never-opened doc: rebase re-reads disk instead of blind-committing ──
-describe('A17-1.1 — undo/redo on a never-opened doc rebases against FRESH disk (no blind clobber)', () => {
-  let captured: Captured[];
-  let disk: string;
+// ── never-opened note: undo/redo rebases on disk ─────────────────────────────
 
-  /** mtime/size deliberately CONSTANT so the drift gate never trips while the
-   * test mutates `disk` content between command legs (the fixture simulates
-   * external edits the watcher classified, not unobserved drift). */
-  function installMutableDiskMock(): void {
-    captured = [];
-    installFiloMock((channel: string, ...args: unknown[]) => {
-      captured.push({ channel, args });
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: disk, mtimeMs: 1, size: 50 };
-      }
-      if (channel === 'vault:stat') return { success: true, mtimeMs: 1, size: 50 };
-      if (channel === 'vault:write-existing-file-text') {
-        disk = args[2] as string; // writes land on the simulated disk
-        return { success: true };
-      }
-      return { success: true };
-    });
-  }
-
+describe('undo/redo on a never-opened note rebases against FRESH disk (no blind clobber)', () => {
   beforeEach(() => {
     resetAll();
-    disk = '---\npriority: normal\n---\nbody\n';
-    installMutableDiskMock();
+    vault = installMemoryVault({
+      'card.md': '---\npriority: normal\n---\nbody\n',
+      'task.md': '---\npriority: normal\n---\nbody\n',
+    });
     vaultStore.setPath('/vault');
     boardCacheStore.hydrate(
       { tl: makeTaskListFixture(), kb: makeKanbanFixture() },
@@ -149,34 +112,26 @@ describe('A17-1.1 — undo/redo on a never-opened doc rebases against FRESH disk
     vaultStore.setPath('');
   });
 
-  it('undo keeps an external same-field edit when the seeded cache was dropped (kanban)', async () => {
-    const cmd = new UpdateCardFieldCommand(
-      'kb',
-      'card.md',
-      'card.md',
-      { priority: 'high' },
-      { priority: 'normal' },
-    );
+  it('undo keeps an external same-field edit (kanban)', async () => {
+    const cmd = new UpdateCardFieldCommand('kb', 'card.md', { priority: 'high' }, { priority: 'normal' });
     await cmd.execute();
-    await flushAllPendingFrontmatterWrites(); // forward write lands → disk has 'high'
-    expect(disk).toContain('priority: high');
+    await noteStore.flushAll(); // forward write lands → disk has 'high'
+    expect(vault.read('card.md')).toContain('priority: high');
 
-    // External editor changes the SAME field on disk; the classifier's
-    // dropStaleSeededFrontmatterCache clears the not-open seeded entry.
-    disk = '---\npriority: urgent\n---\nbody\n';
-    documentStore.clearFrontmatter('card.md');
-    expect(documentStore.getFrontmatter('card.md')).toBeUndefined();
+    // An external editor changes the SAME field on disk.
+    vault.writeExternally('card.md', '---\npriority: urgent\n---\nbody\n');
+    // The watcher re-indexes the file.
+    await vaultIndexStore.applyChanges(['card.md']);
 
-    const mark = captured.length;
+    const mark = vault.writes.length;
     await cmd.undo();
-    await flushAllPendingFrontmatterWrites();
+    await noteStore.flushAll();
 
-    // Pre-fix: the blind commit scheduled 'normal' over 'urgent' with no
-    // conflict detection. Now the fresh disk read ('urgent' ≠ expected 'high')
-    // keeps the external value and prompts.
-    expect(documentStore.getFrontmatter('card.md')?.priority).toBe('urgent');
-    expect(disk).toContain('priority: urgent');
-    for (const w of existingWritesAfter(captured, mark)) {
+    // The fresh disk read ('urgent' ≠ expected 'high') keeps the external
+    // value and prompts.
+    expect(noteStore.frontmatter('card.md').priority).toBe('urgent');
+    expect(vault.read('card.md')).toContain('priority: urgent');
+    for (const w of mdWritesAfter(mark)) {
       expect(w).not.toContain('priority: normal');
     }
     const toast = conflictToast();
@@ -184,102 +139,67 @@ describe('A17-1.1 — undo/redo on a never-opened doc rebases against FRESH disk
     expect(toast?.actions?.[0]?.label).toBe('Apply anyway');
   });
 
-  it('redo keeps an external same-field edit when the seeded cache was dropped (task)', async () => {
-    const cmd = new UpdateTaskFieldCommand(
-      'tl',
-      'task.md',
-      'task.md',
-      { priority: 'high' },
-      { priority: 'normal' },
-    );
+  it('redo keeps an external same-field edit (task)', async () => {
+    const cmd = new UpdateTaskFieldCommand('tl', 'task.md', { priority: 'high' }, { priority: 'normal' });
     await cmd.execute();
-    await flushAllPendingFrontmatterWrites();
-    await cmd.undo(); // cache still seeded → clean rebase back to 'normal'
-    await flushAllPendingFrontmatterWrites();
-    expect(disk).toContain('priority: normal');
+    await noteStore.flushAll();
+    await cmd.undo(); // clean rebase back to 'normal'
+    await noteStore.flushAll();
+    expect(vault.read('task.md')).toContain('priority: normal');
 
-    disk = '---\npriority: urgent\n---\nbody\n';
-    documentStore.clearFrontmatter('task.md');
+    vault.writeExternally('task.md', '---\npriority: urgent\n---\nbody\n');
+    await vaultIndexStore.applyChanges(['task.md']);
 
-    const mark = captured.length;
-    await cmd.execute(); // isRedo leg
-    await flushAllPendingFrontmatterWrites();
+    const mark = vault.writes.length;
+    await cmd.execute(); // redo leg
+    await noteStore.flushAll();
 
-    expect(documentStore.getFrontmatter('task.md')?.priority).toBe('urgent');
-    expect(disk).toContain('priority: urgent');
-    for (const w of existingWritesAfter(captured, mark)) {
+    expect(noteStore.frontmatter('task.md').priority).toBe('urgent');
+    expect(vault.read('task.md')).toContain('priority: urgent');
+    for (const w of mdWritesAfter(mark)) {
       expect(w).not.toContain('priority: high');
     }
     expect(conflictToast()).toBeTruthy();
   });
 
   it('redo with NO external edit still applies normally (no false conflict)', async () => {
-    const cmd = new UpdateCardFieldCommand(
-      'kb',
-      'card.md',
-      'card.md',
-      { priority: 'high' },
-      { priority: 'normal' },
-    );
+    const cmd = new UpdateCardFieldCommand('kb', 'card.md', { priority: 'high' }, { priority: 'normal' });
     await cmd.execute();
-    await flushAllPendingFrontmatterWrites();
+    await noteStore.flushAll();
     await cmd.undo();
-    await flushAllPendingFrontmatterWrites();
-    expect(disk).toContain('priority: normal');
-
-    // A reload dropped the seeded cache, but disk holds exactly what the undo
-    // wrote — the redo must apply cleanly, not phantom-conflict.
-    documentStore.clearFrontmatter('card.md');
+    await noteStore.flushAll();
+    expect(vault.read('card.md')).toContain('priority: normal');
 
     await cmd.execute();
-    await flushAllPendingFrontmatterWrites();
-    expect(documentStore.getFrontmatter('card.md')?.priority).toBe('high');
-    expect(disk).toContain('priority: high');
+    await noteStore.flushAll();
+    expect(noteStore.frontmatter('card.md').priority).toBe('high');
+    expect(vault.read('card.md')).toContain('priority: high');
     expect(conflictToast()).toBeFalsy();
   });
 
-  it('nothing visible anywhere (unreadable file, empty index) preserves the legacy blind merge', async () => {
-    documentStore.setFrontmatter('task.md', { priority: 'normal' });
-    const cmd = new UpdateTaskFieldCommand(
-      'tl',
-      'task.md',
-      'task.md',
-      { priority: 'high' },
-      { priority: 'normal' },
-    );
+  it('nothing readable (file gone) applies the inverse without a conflict prompt', async () => {
+    const cmd = new UpdateTaskFieldCommand('tl', 'task.md', { priority: 'high' }, { priority: 'normal' });
     await cmd.execute();
-    await flushAllPendingFrontmatterWrites();
+    await noteStore.flushAll();
 
-    documentStore.clearFrontmatter('task.md');
-    // File becomes unreadable AND it was never indexed — no baseline exists.
-    installFiloMock((channel: string, ...args: unknown[]) => {
-      captured.push({ channel, args });
-      if (channel === 'vault:read-file-text') return { success: false, code: 'ENOENT' };
-      return { success: true };
-    });
+    // The file becomes unreadable: there is no baseline to detect a conflict
+    // against, and nothing visible to clobber.
+    vault.remove('task.md');
 
     await cmd.undo();
-    // The narrow legacy corner: with no baseline obtainable the inverse still
-    // applies (there is nothing visible to clobber) and no conflict prompt fires.
-    expect(documentStore.getFrontmatter('task.md')?.priority).toBe('normal');
+    expect(noteStore.frontmatter('task.md').priority).toBe('normal');
     expect(conflictToast()).toBeFalsy();
   });
 });
 
-// ── A17-1.3 — conflict-toast "Apply anyway" bails after a vault swap ──────────
-describe('A17-1.3 — "Apply anyway" clicked after a vault swap is a no-op', () => {
-  let captured: Captured[];
+// ── conflict-toast "Apply anyway" bails after a vault swap ────────────────────
 
+describe('"Apply anyway" clicked after a vault swap is a no-op', () => {
   beforeEach(() => {
     resetAll();
-    captured = [];
-    installFiloMock((channel: string, ...args: unknown[]) => {
-      captured.push({ channel, args });
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: '---\npriority: high\n---\nbody\n', mtimeMs: 1, size: 50 };
-      }
-      if (channel === 'vault:stat') return { success: true, mtimeMs: 1, size: 50 };
-      return { success: true };
+    vault = installMemoryVault({
+      'task.md': '---\npriority: normal\n---\nbody\n',
+      'recur.md': '---\ncompleted: true\ndueDate: 2026-01-08\n---\nbody\n',
     });
     vaultStore.setPath('/vault');
     boardCacheStore.hydrate({ tl: makeTaskListFixture() }, { tl: 'tasks.board.json' });
@@ -291,35 +211,28 @@ describe('A17-1.3 — "Apply anyway" clicked after a vault swap is a no-op', () 
   });
 
   it('per-key handler: no merge, no write after the swap', async () => {
-    documentStore.setFrontmatter('task.md', { priority: 'normal' });
-    const cmd = new UpdateTaskFieldCommand(
-      'tl',
-      'task.md',
-      'task.md',
-      { priority: 'high' },
-      { priority: 'normal' },
-    );
+    const cmd = new UpdateTaskFieldCommand('tl', 'task.md', { priority: 'high' }, { priority: 'normal' });
     await cmd.execute();
-    documentStore.setFrontmatter('task.md', { priority: 'urgent' }); // external edit
+    await noteStore.flushAll();
+    vault.writeExternally('task.md', '---\npriority: urgent\n---\nbody\n'); // external edit
     await cmd.undo(); // conflict → toast armed against THIS vault generation
     const toast = conflictToast();
     expect(toast).toBeTruthy();
 
     vaultStore.setPath('/other-vault'); // swap bumps the vault generation
-    const mark = captured.length;
+    const mark = vault.writes.length;
     uiStore.invokeToastAction(toast!.id, 0);
-    await flushAllPendingFrontmatterWrites();
+    await noteStore.flushAll();
 
-    // Pre-fix the handler committed: cache merged 'normal' + a write scheduled
-    // against the NEW vault's same-named file. Now it bails outright.
-    expect(documentStore.getFrontmatter('task.md')?.priority).toBe('urgent');
-    expect(existingWritesAfter(captured, mark)).toEqual([]);
+    // The handler bails outright: nothing queued for, or written to, the new
+    // vault's same-named file.
+    expect(noteStore.hasPendingWrites('task.md')).toBe(false);
+    expect(mdWritesAfter(mark)).toEqual([]);
+    expect(vault.read('task.md')).toContain('priority: urgent');
   });
 
   it('atomic handler: whole-patch force is also swallowed after the swap', async () => {
-    documentStore.setFrontmatter('recur.md', { completed: true, dueDate: '2026-01-08' });
     await applyFrontmatterPatchRebased({
-      notePath: 'recur.md',
       relPath: 'recur.md',
       targetBoardId: 'tl',
       applying: { completed: false, dueDate: '2026-01-15' },
@@ -331,39 +244,21 @@ describe('A17-1.3 — "Apply anyway" clicked after a vault swap is a no-op', () 
     expect(toast).toBeTruthy();
 
     vaultStore.setPath('/other-vault');
-    const mark = captured.length;
+    const mark = vault.writes.length;
     uiStore.invokeToastAction(toast!.id, 0);
-    await flushAllPendingFrontmatterWrites();
+    await noteStore.flushAll();
 
-    expect(documentStore.getFrontmatter('recur.md')).toMatchObject({
-      completed: true,
-      dueDate: '2026-01-08',
-    });
-    expect(existingWritesAfter(captured, mark)).toEqual([]);
+    expect(noteStore.hasPendingWrites('recur.md')).toBe(false);
+    expect(mdWritesAfter(mark)).toEqual([]);
+    expect(vault.read('recur.md')).toBe('---\ncompleted: true\ndueDate: 2026-01-08\n---\nbody\n');
   });
 });
 
-// ── A17-1.2 — Properties "Apply anyway" re-resolves the body at click time ────
-describe('A17-1.2 — Properties conflict toast writes the click-time body, not the conflict-time freeze', () => {
-  let captured: Captured[];
-  let disk: string;
+// ── Properties "Apply anyway" writes the click-time body ──────────────────────
 
+describe('Properties conflict toast writes the click-time body, not a conflict-time freeze', () => {
   beforeEach(() => {
     resetAll();
-    captured = [];
-    disk = '---\npriority: external\n---\noriginal body\n';
-    installFiloMock((channel: string, ...args: unknown[]) => {
-      captured.push({ channel, args });
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: disk, mtimeMs: 1, size: 50 };
-      }
-      if (channel === 'vault:stat') return { success: true, mtimeMs: 1, size: 50 };
-      if (channel === 'vault:write-existing-file-text') {
-        disk = args[2] as string;
-        return { success: true };
-      }
-      return { success: true };
-    });
     vaultStore.setPath('/vault');
   });
   afterEach(() => {
@@ -372,20 +267,12 @@ describe('A17-1.2 — Properties conflict toast writes the click-time body, not 
     vaultStore.setPath('');
   });
 
-  /** Arms the conflict toast: the live cache holds an external value for the
-   * owned key, so applySnapshot skips it and offers "Apply anyway". */
+  /** Arms the conflict toast: disk holds an external value for the owned key,
+   * so applySnapshot skips it and offers "Apply anyway". */
   async function armConflict(relPath: string): Promise<{ id: string }> {
-    documentStore.loadDocument({
-      filename: relPath,
-      title: 'P',
-      body: 'original body',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter(relPath, { priority: 'external' });
     const cmd = new UpdatePropertiesCommand(
-      { kind: 'frontmatter', relPath, notePath: relPath, fm: { priority: 'low' } },
-      { kind: 'frontmatter', relPath, notePath: relPath, fm: { priority: 'high' } },
+      { kind: 'frontmatter', relPath, fm: { priority: 'low' } },
+      { kind: 'frontmatter', relPath, fm: { priority: 'high' } },
       'mm',
     );
     await cmd.execute();
@@ -394,121 +281,43 @@ describe('A17-1.2 — Properties conflict toast writes the click-time body, not 
     return toast!;
   }
 
-  it('an editor body edited between conflict and click wins over the frozen body', async () => {
+  it('an editor body edited between conflict and click is what gets written', async () => {
+    vault = installMemoryVault({ 'P.md': '---\npriority: external\n---\noriginal body\n' });
+    const m = noteStore.acquire('P.md', 'text-tile:p');
+    await m.loaded;
     const toast = await armConflict('P.md');
 
     // The user keeps typing after the conflict toast appeared.
-    documentStore.updateContent('P.md', '<p>x</p>', 'NEW EDITOR BODY');
+    noteStore.setBody('P.md', 'NEW EDITOR BODY', 'text-tile:p');
 
-    const mark = captured.length;
+    const mark = vault.writes.length;
     uiStore.invokeToastAction(toast.id, 0);
-    await vi.waitFor(() => {
-      expect(existingWritesAfter(captured, mark).length).toBeGreaterThan(0);
-    });
+    await noteStore.flushAll();
 
-    const written = existingWritesAfter(captured, mark).pop()!;
-    // Pre-fix the frozen conflict-time body ('original body') reverted the
-    // interim keystrokes; now the click-time live body travels with the delta.
+    const written = mdWritesAfter(mark).pop()!;
     expect(written).toContain('NEW EDITOR BODY');
     expect(written).not.toContain('original body');
     expect(written).toContain('priority: high');
+    noteStore.release('P.md', 'text-tile:p');
   });
 
-  it('an editor CLOSED between conflict and click defers to fresh disk for the body', async () => {
+  it('an editor CLOSED between conflict and click leaves the body to fresh disk', async () => {
+    vault = installMemoryVault({ 'Q.md': '---\npriority: external\n---\noriginal body\n' });
+    const m = noteStore.acquire('Q.md', 'text-tile:q');
+    await m.loaded;
     const toast = await armConflict('Q.md');
 
     // Editor closes; its (interim) saves landed on disk in the meantime.
-    documentStore.unloadDocument('Q.md');
-    disk = '---\npriority: external\n---\nDISK BODY AT CLICK\n';
+    noteStore.release('Q.md', 'text-tile:q');
+    vault.writeExternally('Q.md', '---\npriority: external\n---\nDISK BODY AT CLICK\n');
 
-    const mark = captured.length;
+    const mark = vault.writes.length;
     uiStore.invokeToastAction(toast.id, 0);
-    await vi.waitFor(() => {
-      expect(existingWritesAfter(captured, mark).length).toBeGreaterThan(0);
-    });
+    await noteStore.flushAll();
 
-    const written = existingWritesAfter(captured, mark).pop()!;
-    // Pre-fix the captured `docState != null` still claimed the frozen body was
-    // live and wrote 'original body' back. Now bodyIsLive is recomputed at
-    // click time (false) and the gateway's fresh in-chain read supplies the body.
+    const written = mdWritesAfter(mark).pop()!;
     expect(written).toContain('DISK BODY AT CLICK');
     expect(written).not.toContain('original body');
     expect(written).toContain('priority: high');
-  });
-});
-
-// ── A17-1.4 — failed Properties write rejects; history rolls back ─────────────
-describe('A17-1.4 — UpdatePropertiesCommand surfaces a failed write to the history rollback', () => {
-  let captured: Captured[];
-  let failWrites: boolean;
-
-  beforeEach(() => {
-    resetAll();
-    captured = [];
-    failWrites = false;
-    // Audit-19 MD-2 — the disk reflects successful writes (a static disk made
-    // undo's "back to low" look like an identical-bytes no-op the gateway skips).
-    let disk = '---\npriority: low\n---\nbody\n';
-    let mtime = 1;
-    installFiloMock((channel: string, ...args: unknown[]) => {
-      captured.push({ channel, args });
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: disk, mtimeMs: mtime, size: disk.length };
-      }
-      if (channel === 'vault:stat') return { success: true, mtimeMs: mtime, size: disk.length };
-      if (channel === 'vault:write-existing-file-text') {
-        if (failWrites) return { success: false, code: 'ENOSPC' };
-        disk = String(args[2]);
-        mtime += 1;
-        return { success: true };
-      }
-      return { success: true };
-    });
-    vaultStore.setPath('/vault');
-    historyStore.clear();
-    historyStore.setActiveBoard('mm');
-    // reportError (command) + reportError (history rollback) both breadcrumb to
-    // console.error; keep the strict runner's stderr clean.
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
-  });
-  afterEach(() => {
-    vi.restoreAllMocks();
-    resetAll();
-    restoreFiloDefault();
-    historyStore.clear();
-    historyStore.setActiveBoard(null);
-    vaultStore.setPath('');
-  });
-
-  function makeCmd(): UpdatePropertiesCommand {
-    return new UpdatePropertiesCommand(
-      { kind: 'frontmatter', relPath: 'F.md', notePath: 'F.md', fm: { priority: 'low' } },
-      { kind: 'frontmatter', relPath: 'F.md', notePath: 'F.md', fm: { priority: 'high' } },
-      'mm',
-    );
-  }
-
-  it('failed execute: command rolled off the stack, display cache stays at disk truth', async () => {
-    failWrites = true;
-    await expect(historyStore.execute(makeCmd())).rejects.toThrow();
-
-    // Pre-fix the swallow resolved execute() as success: the command sat on the
-    // stack as "applied" and the pre-write setFrontmatter stamp left the display
-    // cache showing 'high' while disk still said 'low'.
-    expect(historyStore.canUndo).toBe(false);
-    expect(documentStore.getFrontmatter('F.md')?.priority).toBe('low');
-  });
-
-  it('failed undo: command restored to the undo stack, redo stack not corrupted', async () => {
-    await historyStore.execute(makeCmd());
-    expect(historyStore.canUndo).toBe(true);
-
-    failWrites = true;
-    await expect(historyStore.undo()).rejects.toThrow();
-
-    // rollbackUndo put the command back on the undo stack and removed it from
-    // the redo stack — a follow-up Ctrl+Z retries it, Ctrl+Y has nothing stale.
-    expect(historyStore.canUndo).toBe(true);
-    expect(historyStore.canRedo).toBe(false);
   });
 });

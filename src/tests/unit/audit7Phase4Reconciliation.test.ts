@@ -1,9 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import {
-  makeExternalChangesSlice,
-  promptExternalEditOnSync,
-} from '@renderer/stores/vaultExternalChanges';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { makeExternalChangesSlice } from '@renderer/stores/vaultExternalChanges';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
@@ -11,16 +8,7 @@ import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
 import type { VaultContext } from '@renderer/stores/vaultStoreTypes';
-import {
-  getBaseline,
-  noteBaseline,
-  __resetBaselinesForTests,
-} from '@renderer/lib/vault/fileBaselineRegistry';
-import {
-  markRecentSelfWrite,
-  __clearRecentSelfWritesForTests,
-  __resetDirtyTrackingForTests,
-} from '@renderer/lib/boards/writeStateTracking';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import {
   beginVaultGeneration,
   __resetVaultIdentityForTests,
@@ -28,18 +16,16 @@ import {
 import { __resetRenameCascadeSentinelForTests } from '@renderer/lib/vault/renameCascadeSentinel';
 import { __resetDrainGuardForTests } from '@renderer/lib/vault/vaultOperations';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 
 /**
  * Audit-7 Phase 4 — external-edit reconciliation cluster.
  *
- *  - L13/L16: every reload entry point re-stamps the pre-write drift baseline
- *    to the disk identity it applied, so the next keystroke doesn't re-detect
- *    the absorbed external edit and re-prompt.
+ *  - L13/L16: a note that absorbed an external edit is built on the new bytes,
+ *    so the next keystroke saves without re-detecting that edit as a conflict.
  *  - L14: the reconcile defers while a full index rebuild is in flight, so it
- *    never captures a null `previousByPath` (which routes a dirty editor to a
- *    spurious prompt-user).
- *  - L15: recent self-writes are filtered inside the handler (single
- *    authority), covering the partial-read-retry timer that re-invokes it.
+ *    never reads a half-cleared index.
+ *  - L15: our own write coming back through the watcher changes nothing.
  *  - L17: the rename-cascade breadcrumb is laid down BEFORE the tag-flush bail,
  *    so a swap-interrupted cascade still leaves a recovery trail.
  */
@@ -62,6 +48,7 @@ function ctxFor(): VaultContext {
     setProject: () => {},
     getRecoveryPendingPaths: () => [],
     setRecoveryPendingPaths: () => {},
+    resolveRecoveryDismissed: () => {},
     markMetaDirty: () => {},
     refreshTree: async () => {},
     clearSelection: () => {},
@@ -69,128 +56,81 @@ function ctxFor(): VaultContext {
   };
 }
 
-function byteLen(text: string): number {
-  return new TextEncoder().encode(text).length;
-}
-
 function clearToasts(): void {
-  for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id);
+  for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
 }
 
-// ── L13 / L16 — reload re-stamps the drift baseline ──────────────────────
+async function settle(): Promise<void> {
+  for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+}
 
-describe('Audit-7 L13/L16 — reload re-stamps the drift baseline', () => {
+// ── L13 / L16 / L15 — a reload re-bases the note; our own write is ignored ──
+
+describe('Audit-7 L13/L15/L16 — watcher events on an open note', () => {
+  let vault: MemoryVault;
+  const bigBody = '# Note\n' + 'x'.repeat(2000) + '\n';
+
   beforeEach(() => {
-    documentStore.clear();
+    __resetDirtyTrackingForTests();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
-    __resetBaselinesForTests();
-    __clearRecentSelfWritesForTests();
     clearToasts();
     vaultStore.setPath('/vault');
+    vault = installMemoryVault({ 'Notes.md': bigBody });
   });
 
   afterEach(() => {
-    restoreFiloDefault();
-    documentStore.clear();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
-    __resetBaselinesForTests();
     clearToasts();
     vaultStore.setPath('');
+    restoreFiloDefault();
   });
 
-  it('applyReloadFromDisk stamps the baseline from diskIdentity (keyed by filename)', () => {
-    documentStore.loadDocument({
-      filename: 'Notes.md',
-      title: 'Notes',
-      body: 'old',
-      htmlContent: '<p>old</p>',
-      richText: [],
-    });
-    expect(getBaseline('Notes.md')).toBeUndefined();
-
-    documentStore.applyReloadFromDisk('Notes.md', 'new body', [], { tag: 'x' }, undefined, {
-      mtimeMs: 5000,
-      size: 42,
-    });
-
-    expect(getBaseline('Notes.md')).toEqual({ mtimeMs: 5000, size: 42 });
-  });
-
-  it('applyReloadFromDisk WITHOUT diskIdentity leaves the prior baseline untouched', () => {
-    documentStore.loadDocument({
-      filename: 'Notes.md',
-      title: 'Notes',
-      body: 'old',
-      htmlContent: '<p>old</p>',
-      richText: [],
-    });
-    noteBaseline('Notes.md', 1000, 10);
-
-    documentStore.applyReloadFromDisk('Notes.md', 'new body', []);
-
-    // Unchanged — in-memory reloads (no disk read) must not invent a baseline.
-    expect(getBaseline('Notes.md')).toEqual({ mtimeMs: 1000, size: 10 });
-  });
-
-  it('reload-silently (watcher event) re-anchors the baseline to the new disk identity', async () => {
+  it('a clean note absorbs an external edit, and the next keystroke saves without a conflict', async () => {
     const slice = makeExternalChangesSlice(ctxFor());
-    const bigBody = '# Note\n' + 'x'.repeat(2000) + '\n';
+    const m = noteStore.acquire('Notes.md', 'doc');
+    await m.loaded;
 
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') return { success: true, content: bigBody, mtimeMs: 1 };
-      return { success: true };
-    });
-    await vaultIndexStore.applyChanges(['Notes.md']);
-    documentStore.loadDocument({
-      filename: 'Notes.md',
-      title: 'Notes',
-      body: bigBody,
-      htmlContent: '',
-      richText: [],
-    });
-
-    // External edit: same length (no material shrink), fresh mtime.
     const newBody = '# Note\n' + 'y'.repeat(2000) + '\n';
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') return { success: true, content: newBody, mtimeMs: 2 };
-      return { success: true };
-    });
+    vault.writeExternally('Notes.md', newBody);
+    await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await settle();
+
+    expect(m.body).toBe(newBody);
+
+    noteStore.setBody('Notes.md', `${newBody}\nTyped after the reload`, 'doc');
+    expect(await noteStore.flush('Notes.md')).toBe(true);
+    expect(m.status).toBe('ready');
+    expect(uiStore.toasts).toHaveLength(0);
+    expect(vault.read('Notes.md')).toBe(`${newBody}\nTyped after the reload\n`);
+  });
+
+  it('our own write coming back through the watcher changes nothing and asks nothing', async () => {
+    const slice = makeExternalChangesSlice(ctxFor());
+    const m = noteStore.acquire('Notes.md', 'doc');
+    await m.loaded;
+    noteStore.setBody('Notes.md', 'Mine', 'doc');
+    await noteStore.flush('Notes.md');
+    const rev = m.bodyRevision;
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await settle();
 
-    // The clean editor absorbed the external body…
-    expect(documentStore.getDocument('Notes.md')?.body).toBe(newBody);
-    // …and the baseline now equals the just-read disk identity, so the next
-    // keystroke's pre-write stat (mtime 2, that size) won't re-detect drift.
-    expect(getBaseline('Notes.md')).toEqual({ mtimeMs: 2, size: byteLen(newBody) });
+    expect(m.bodyRevision).toBe(rev);
+    expect(m.body).toBe('Mine');
+    expect(m.status).toBe('ready');
+    expect(uiStore.toasts).toHaveLength(0);
   });
 
-  it('promptExternalEditOnSync Reload re-anchors the baseline (gateway-drift path)', async () => {
-    const reloadedBody = 'reloaded disk body';
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text')
-        return { success: true, content: reloadedBody, mtimeMs: 7 };
-      return { success: true };
-    });
-    documentStore.loadDocument({
-      filename: 'Drift.md',
-      title: 'Drift',
-      body: 'local',
-      htmlContent: '',
-      richText: [],
-    });
+  it('refreshes the index for every changed path', async () => {
+    const slice = makeExternalChangesSlice(ctxFor());
+    const applyChanges = vi.spyOn(vaultIndexStore, 'applyChanges').mockResolvedValue(undefined);
 
-    const choice = promptExternalEditOnSync({ path: 'Drift.md' });
-    const toast = uiStore.toasts.find(
-      (t) => typeof t.text === 'string' && t.text.includes('modified externally'),
-    );
-    expect(toast).toBeDefined();
-    const reloadIdx = toast!.actions?.findIndex((a) => a.label === 'Reload') ?? -1;
-    expect(reloadIdx).toBeGreaterThanOrEqual(0);
-    uiStore.invokeToastAction(toast!.id, reloadIdx);
+    await slice.handleExternalMarkdownChanges(['Fresh.md']);
 
-    await expect(choice).resolves.toBe('reload');
-    expect(getBaseline('Drift.md')).toEqual({ mtimeMs: 7, size: byteLen(reloadedBody) });
+    expect(applyChanges).toHaveBeenCalledWith(['Fresh.md']);
+    applyChanges.mockRestore();
   });
 });
 
@@ -198,9 +138,9 @@ describe('Audit-7 L13/L16 — reload re-stamps the drift baseline', () => {
 
 describe('Audit-7 L14 — reconcile defers while the index rebuilds', () => {
   beforeEach(() => {
-    documentStore.clear();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
-    __clearRecentSelfWritesForTests();
+    __resetDirtyTrackingForTests();
     clearToasts();
     vaultStore.setPath('/vault');
   });
@@ -208,7 +148,7 @@ describe('Audit-7 L14 — reconcile defers while the index rebuilds', () => {
   afterEach(() => {
     restoreFiloDefault();
     vi.restoreAllMocks();
-    documentStore.clear();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
     clearToasts();
     vaultStore.setPath('');
@@ -223,7 +163,7 @@ describe('Audit-7 L14 — reconcile defers while the index rebuilds', () => {
       .mockImplementation(async () => {
         order.push('whenBuildComplete');
       });
-    const applyChanges = vi
+    vi
       .spyOn(vaultIndexStore, 'applyChanges')
       .mockImplementation(async () => {
         order.push('applyChanges');
@@ -238,47 +178,6 @@ describe('Audit-7 L14 — reconcile defers while the index rebuilds', () => {
   });
 });
 
-// ── L15 — self-write filtering is internal (single authority) ────────────
-
-describe('Audit-7 L15 — self-write filter inside the handler', () => {
-  beforeEach(() => {
-    documentStore.clear();
-    vaultIndexStore.clear();
-    __resetDirtyTrackingForTests();
-    clearToasts();
-    vaultStore.setPath('/vault');
-  });
-
-  afterEach(() => {
-    restoreFiloDefault();
-    vi.restoreAllMocks();
-    __resetDirtyTrackingForTests();
-    documentStore.clear();
-    vaultIndexStore.clear();
-    clearToasts();
-    vaultStore.setPath('');
-  });
-
-  it('drops a recent self-write before any reconcile work (covers the retry-timer path)', async () => {
-    const slice = makeExternalChangesSlice(ctxFor());
-    markRecentSelfWrite('Self.md');
-    const applyChanges = vi.spyOn(vaultIndexStore, 'applyChanges').mockResolvedValue(undefined);
-
-    await slice.handleExternalMarkdownChanges(['Self.md']);
-
-    expect(applyChanges).not.toHaveBeenCalled();
-  });
-
-  it('still reconciles a path that is NOT a recent self-write', async () => {
-    const slice = makeExternalChangesSlice(ctxFor());
-    const applyChanges = vi.spyOn(vaultIndexStore, 'applyChanges').mockResolvedValue(undefined);
-
-    await slice.handleExternalMarkdownChanges(['Fresh.md']);
-
-    expect(applyChanges).toHaveBeenCalledWith(['Fresh.md']);
-  });
-});
-
 // ── L17 — rename-cascade breadcrumb survives a swap-during-flush ──────────
 
 describe('Audit-7 L17 — rename-cascade sentinel laid before the tag-flush bail', () => {
@@ -289,7 +188,7 @@ describe('Audit-7 L17 — rename-cascade sentinel laid before the tag-flush bail
     __resetRenameCascadeSentinelForTests();
     __resetVaultIdentityForTests();
     __resetDrainGuardForTests();
-    documentStore.clear();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
     boardCacheStore.clear();
     boardStore.clearBoard();
@@ -321,7 +220,7 @@ describe('Audit-7 L17 — rename-cascade sentinel laid before the tag-flush bail
     __resetRenameCascadeSentinelForTests();
     __resetVaultIdentityForTests();
     __resetDrainGuardForTests();
-    documentStore.clear();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
     boardCacheStore.clear();
     boardStore.clearBoard();

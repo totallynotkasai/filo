@@ -15,7 +15,7 @@ import {
 } from '@renderer/stores/vaultExternalChanges';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
@@ -100,7 +100,7 @@ describe('handleExternalAttachmentChanges — D.4 grace window', () => {
 
   beforeEach(() => {
     _resetAttachmentDeleteGraceForTests();
-    documentStore.clear();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
     boardCacheStore.clear();
     boardStore.clearBoard();
@@ -113,7 +113,7 @@ describe('handleExternalAttachmentChanges — D.4 grace window', () => {
   afterEach(() => {
     restoreFiloDefault();
     vaultStore.setPath('');
-    documentStore.clear();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
     boardCacheStore.clear();
     boardStore.clearBoard();

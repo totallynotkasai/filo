@@ -76,7 +76,7 @@
     UpdateKanbanColumnCommand,
     SetAllKanbanColumnsCollapsedCommand,
   } from '../../commands/index';
-  import { flushAllPendingFrontmatterWrites } from '../../lib/boards/frontmatterWriteScheduler';
+  import { noteStore } from '../../stores/notes.svelte';
 
   let board = $derived(boardStore.current as KanbanBoardType | null);
   let columns = $derived(board?.columns ?? []);
@@ -555,9 +555,8 @@
   //
   // Extracted into `lib/kanban/kanbanFrontmatterWriter.ts` as a factory that
   // closes over `getBoard` / `getAllTilesById` so it tracks the live reactive
-  // board state. Mutations land in documentStore.mergeFrontmatter (shared
-  // live cache), then a 300ms debounce assembles the .md and writes via
-  // trackComponentWrite so the save-error pipeline catches failures.
+  // board state. Each field edit is an undoable command that sends a
+  // frontmatter delta to the note writer.
 
   const fmWriter = makeKanbanFrontmatterWriter({
     getBoard: () => board,
@@ -795,11 +794,6 @@
   }
 
   onMount(() => {
-    // The board no longer registers its own flusher — `flushAllMarkdownWrites`
-    // (in the gateway) drains `flushAllPendingFrontmatterWrites` as part of
-    // its parallel drain step. Ctrl+S / tab close / vault swap all funnel
-    // through the gateway flush and pick up kanban field updates without
-    // this component participating in the registry.
     window.addEventListener('keydown', handleBoardKeydown);
     unregisterAddTile = registerCommandWithShortcut({
       name: 'kanban:add-tile',
@@ -829,7 +823,7 @@
     announcer.dispose();
     // Drain any queued frontmatter writes so a board close during the
     // 300ms debounce window doesn't lose the user's last field edit.
-    void flushAllPendingFrontmatterWrites();
+    void noteStore.flushAll();
     // Flush the pending lastView on a true unmount. The persist $effect
     // cleanup flushes only on a real board switch, so without this the last
     // filter/sort change within the 300 ms window before a board close / vault

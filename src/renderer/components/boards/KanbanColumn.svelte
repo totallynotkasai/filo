@@ -235,8 +235,7 @@
     onBulkContextMenu: (e: MouseEvent, tileId: string) => void;
     /**
      * Opens the tile's backing `.md` file as a Document board in a new tab.
-     * Provided by the parent so the open path (documentStore.loadDocument
-     * + tabStore.open) stays in one place. Only meaningful for text tiles;
+     * Provided by the parent so the open path stays in one place. Only meaningful for text tiles;
      * the column hides the menu item for non-text tiles before dispatch.
      */
     onOpenAsDocument: (tileId: string) => void;

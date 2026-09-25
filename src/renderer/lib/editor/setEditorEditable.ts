@@ -4,7 +4,7 @@ import type { Editor } from '@tiptap/core';
  * Toggle a TipTap editor's editability WITHOUT emitting an `update` event.
  *
  * TipTap's `editor.setEditable(editable, emitUpdate = true)` emits `update` by
- * default, which runs Filo's `onUpdate` handlers → `documentStore.updateContent`
+ * default, which runs Filo's `onUpdate` handlers → the note view's edit hook
  * + a debounced markdown write of whatever the editor currently holds. Called
  * from a `$effect` (the close-drain gate), that store read+write inside the
  * effect is an `effect_update_depth_exceeded` loop that can turn into a phantom

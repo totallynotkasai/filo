@@ -11,28 +11,19 @@ import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { reportError } from '../utils/errorBus';
 import { uiStore } from '../../stores/ui.svelte';
 import { noteReadEncoding } from './nonUtf8Paths.svelte';
-import { readMarkdownForHydrate } from './markdownFileWriter';
 import { captureVaultIdentity, isStillSameVault } from './vaultIdentity';
-import { documentStore } from '../../stores/document.svelte';
+import { noteStore } from '../../stores/notes.svelte';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 
 /**
- * Re-reads the converted note (fresh drift baseline + UTF-8 flag) and reloads
- * every open view of it: their text still holds the U+FFFD-decoded version.
+ * Re-reads the converted note (UTF-8 flag, vault index) and reloads its note
+ * model, so every open view drops the U+FFFD-decoded text.
  */
-async function reloadConvertedNote(vaultRoot: string, relPath: string): Promise<void> {
+async function reloadConvertedNote(relPath: string): Promise<void> {
   const identity = captureVaultIdentity();
-  const fresh = await readMarkdownForHydrate(vaultRoot, relPath);
-  if (!isStillSameVault(identity)) return;
   await vaultIndexStore.applyChanges([relPath]);
   if (!isStillSameVault(identity)) return;
-  const doc = documentStore.findByFilename(relPath);
-  if (doc) {
-    documentStore.applyReloadFromDisk(doc.filename, fresh.body, doc.richText, fresh.frontmatter, fresh.rawFrontmatter, {
-      mtimeMs: fresh.mtimeMs,
-      size: fresh.size,
-    });
-  }
+  await noteStore.reload(relPath);
 }
 
 export function confirmConvertToUtf8(vaultRoot: string, relPath: string, onConverted?: () => void): void {
@@ -48,7 +39,7 @@ export function confirmConvertToUtf8(vaultRoot: string, relPath: string, onConve
         try {
           await invokeOk('vault:convert-to-utf8', vaultRoot, relPath);
           noteReadEncoding(relPath, 'utf-8');
-          await reloadConvertedNote(vaultRoot, relPath);
+          await reloadConvertedNote(relPath);
           uiStore.pushToast({ text: `Converted "${relPath}" to UTF-8. The original is in .filo/recovery/.`, type: 'success', duration: 6000 });
           onConverted?.();
         } catch (err) {

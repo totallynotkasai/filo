@@ -7,7 +7,7 @@ import type {
 import { defaultTileStyleSnapshot } from '../../constants/defaults';
 import { defaultTaskFontSizes } from '../styles/defaultFontSizes';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
-import { documentStore } from '../../stores/document.svelte';
+import { noteStore } from '../../stores/notes.svelte';
 import { historyStore } from '../../stores/history.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
@@ -15,9 +15,7 @@ import { vaultStore } from '../../stores/vault.svelte';
 import { AddTaskCommand } from '../../commands/index';
 import type { SeededFile } from '../../commands/taskCommands';
 import { createId } from '../utils/ids';
-import { assembleMarkdownFile } from '../editor/markdownSync';
-import { markHydrated } from '../vault/markdownFileWriter';
-import { createUniqueMdFile } from '../vault/createMdExclusive';
+import { newNoteText } from '../notes/noteFile';
 import { noteTitle } from '../../stores/noteMeta';
 import { reportError } from '../utils/errorBus';
 import { sectionIdForPlacementIndex } from './sectionMath';
@@ -141,47 +139,27 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     return sortedLive[idx + 1]?.position ?? placements.length;
   }
 
-  // Shared seed routine: writes the `.md` (with `title:` first), hydrates the
-  // documentStore, and caches the frontmatter so the row builder doesn't lag
-  // the watcher. Resolves the path it ACTUALLY created (the create-exclusive
-  // helper bumps to ` (n)` if the pre-pick exists).
+  // Shared seed routine: writes the `.md` (with `title:` first) and warms the
+  // vault index so the row builder doesn't lag the watcher. Resolves the path
+  // it ACTUALLY created (the create is exclusive and bumps to ` (n)` if the
+  // pre-pick exists).
   async function seedMdFile(args: SeedFileArgs, kindForError: string): Promise<SeededFile | void> {
     const vaultRoot = vaultStore.path;
     if (!vaultRoot) return;
-    const { title, folder } = args;
+    const { title } = args;
     const fm: Record<string, unknown> = { title, ...(args.fm ?? { completed: false }) };
-    const seedFile = assembleMarkdownFile(fm, '');
+    const seedFile = newNoteText(fm, '');
     // The backing `.md` write is CRITICAL: let a failure PROPAGATE so the
     // chained `AddTaskCommand.execute()` rolls its placement back (no orphan
     // board row referencing a missing file). The helper routes the failure
     // through the save-error pipeline before rethrowing. Create-EXCLUSIVE: an
     // existing off-board file with the same name is never overwritten.
-    const created = await createUniqueMdFile({
-      vaultRoot,
-      folder,
-      baseName: fileNameSafe(title),
-      firstCandidate: args.relPath,
-      buildContent: () => seedFile,
-    });
+    const created = await noteStore.createUnique(args.relPath, () => seedFile);
     const relPath = created.relPath;
     // Post-write hydration is best-effort — the file IS on disk now, so the row
     // is valid; a lagging index / doc-load just hydrates lazily on the next edit.
     // A failure here must NOT roll the placement back (hence its own try/catch).
     try {
-      // Orphan-fm semantics: file just created on disk. Mark hydrated so the
-      // gateway accepts subsequent writes (from TextTile, PropertiesPopup,
-      // etc.) without throwing — the file existed before the next edit.
-      markHydrated(relPath, false);
-      // `DocumentState.body` is body-only; the seed is a frontmatter-only FILE
-      // with an empty body, so the store body is ''.
-      documentStore.loadDocument({
-        filename: relPath,
-        title,
-        body: '',
-        htmlContent: '',
-        richText: [],
-      });
-      documentStore.setFrontmatter(relPath, fm);
       // Pre-warm the vault index so the row builder (which sources fields
       // via vaultIndexStore) doesn't lag behind the watcher debounce.
       await vaultIndexStore.applyChanges([relPath]);

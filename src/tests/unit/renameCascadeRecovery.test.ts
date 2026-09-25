@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { __runRecoverySequencerForTests, vaultStore } from '@renderer/stores/vault.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
@@ -16,9 +16,9 @@ import type { MindMapBoard } from '@renderer/schema/index';
 /**
  * Phase 4.4 / 4.5 (2026-05-30) — rename-cascade recovery sentinel handlers.
  *
- * 4.4: the Retry handler repaired board JSON + tags.json but not the
- *      in-memory document filename pointer, unlike the normal rename path.
- *      A doc already open when an in-session retry fires kept writing to the
+ * 4.4: the Retry handler must repair board JSON + tags.json AND move an open
+ *      note to the new path, like the normal rename path; a note already open
+ *      when an in-session retry fires would otherwise keep writing to the
  *      OLD path.
  * 4.5: the Discard handler just cleared the breadcrumb — leaving any board
  *      whose flush had failed pointing at the old path with no repair.
@@ -95,7 +95,7 @@ function boardWithFileRef(boardId: string, filePath: string): V7BoardFileData {
 function resetAll(): void {
   __resetDirtyTrackingForTests();
   __resetRenameCascadeSentinelForTests();
-  documentStore.clear();
+  noteStore.__resetForTests();
   vaultIndexStore.clear();
   boardCacheStore.clear();
   boardStore.clearBoard();
@@ -104,18 +104,31 @@ function resetAll(): void {
   for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id);
 }
 
-describe('rename-cascade recovery — Retry repoints open documents (Phase 4.4)', () => {
+describe('rename-cascade recovery — Retry repoints open notes', () => {
+  /** Where the note's file is on disk; the rename already happened before the crash. */
+  let notePathOnDisk: string;
+  let noteWrites: string[];
+
   beforeEach(() => {
     resetAll();
     vaultStore.setPath('/vault');
+    notePathOnDisk = 'Notes/old.md';
+    noteWrites = [];
     installFiloMock((channel: string, ...args: unknown[]) => {
       if (channel === 'vault:read-file-text') {
         const p = String(args[1]);
         if (p === sentinel()) {
           return { success: true, content: sentinelJson('Notes/old.md', 'Notes/new.md') };
         }
+        if (p === notePathOnDisk) {
+          return { success: true, content: '---\ntitle: old\n---\nbody\n', mtimeMs: 1, size: 25 };
+        }
         return { success: false, code: 'ENOENT' };
       }
+      if (channel === 'vault:stat') {
+        return String(args[1]) === notePathOnDisk ? { success: true, mtimeMs: 1, size: 25 } : { success: false, code: 'ENOENT' };
+      }
+      if (channel === 'vault:write-existing-file-text') noteWrites.push(String(args[1]));
       if (channel === 'tags:load') return null;
       if (channel === 'vault:read-tree') return { ok: true, tree: [] };
       return { success: true };
@@ -128,47 +141,46 @@ describe('rename-cascade recovery — Retry repoints open documents (Phase 4.4)'
     vaultStore.setPath('');
   });
 
-  it('updates an open document filename from old to new on Retry', async () => {
-    documentStore.loadDocument({
-      filename: 'Notes/old.md',
-      title: 'old',
-      body: '',
-      htmlContent: '',
-      richText: [],
-    });
+  /** A note open (and loaded) at the old path, whose file has since moved. */
+  async function openNoteThenMoveFile(): Promise<void> {
+    const m = noteStore.acquire('Notes/old.md', 'doc');
+    await m.loaded;
+    notePathOnDisk = 'Notes/new.md';
+  }
+
+  it('moves an open note from old to new on Retry, and its next write lands on the new file', async () => {
+    await openNoteThenMoveFile();
 
     const seq = __runRecoverySequencerForTests('/vault');
     await fireDialog('confirm');
     await seq;
-    await waitFor(() => documentStore.findByFilename('Notes/new.md') !== null);
+    await waitFor(() => noteStore.get('Notes/new.md') !== undefined);
 
-    expect(documentStore.findByFilename('Notes/new.md')?.filename).toBe('Notes/new.md');
-    expect(documentStore.findByFilename('Notes/old.md')).toBeNull();
+    expect(noteStore.get('Notes/new.md')?.relPath).toBe('Notes/new.md');
+    expect(noteStore.get('Notes/old.md')).toBeUndefined();
+
+    noteStore.setBody('Notes/new.md', 'edited after the repair', 'doc');
+    await noteStore.flush('Notes/new.md');
+    expect(noteWrites).toEqual(['Notes/new.md']);
   });
 
-  // Phase 4.5 — "Discard" now repairs too (the renamed file is already on
+  // "Discard" repairs too (the renamed file is already on
   // disk; abandoning the cascade would strand boards with broken refs).
-  it('repairs board refs + open documents and confirms on Discard', async () => {
+  it('repairs board refs + open notes and confirms on Discard', async () => {
     boardCacheStore.hydrate({ b1: boardWithFileRef('b1', 'Notes/old.md') }, { b1: 'b1.board.json' });
-    documentStore.loadDocument({
-      filename: 'Notes/old.md',
-      title: 'old',
-      body: '',
-      htmlContent: '',
-      richText: [],
-    });
+    await openNoteThenMoveFile();
 
     const toastsBefore = uiStore.toasts.length;
     const seq = __runRecoverySequencerForTests('/vault');
     await fireDialog('cancel');
     await seq;
     // The confirmation toast is the last observable step of the repair IIFE,
-    // so waiting for it guarantees the board + doc repairs already ran.
+    // so waiting for it guarantees the board + note repairs already ran.
     await waitFor(() => uiStore.toasts.some((t) => /[Rr]epair/.test(t.text)));
 
-    // Open document repointed (Discard ran the same repair as Retry).
-    expect(documentStore.findByFilename('Notes/new.md')?.filename).toBe('Notes/new.md');
-    expect(documentStore.findByFilename('Notes/old.md')).toBeNull();
+    // Open note repointed (Discard ran the same repair as Retry).
+    expect(noteStore.get('Notes/new.md')?.relPath).toBe('Notes/new.md');
+    expect(noteStore.get('Notes/old.md')).toBeUndefined();
 
     // Board file-ref rewritten old → new.
     const def = boardCacheStore.cache.b1.tileDefs.t1 as unknown as { filePath: string };

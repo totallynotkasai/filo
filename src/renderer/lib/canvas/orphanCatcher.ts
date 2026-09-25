@@ -21,7 +21,7 @@ export interface OrphanCatcherInput {
    *
    * A text tile does NOT carry its body on the tile object — `tile.content` is
    * hard-coded to `''` by `buildTileDefinition` (the body lives in the backing
-   * `.md` / `documentStore`). Without this resolver, `isEmptyTextTile` would
+   * `.md`, shown by its note model). Without this resolver, `isEmptyTextTile` would
    * read that empty field and flag EVERY text tile as empty.
    *
    * Returns the body string (Markdown or HTML), or `undefined` when the body
@@ -58,7 +58,7 @@ function isEmptyTextTile(
   resolveTextBody?: (tile: Tile) => string | undefined,
 ): boolean {
   if (tile.type !== 'text') return false;
-  // The body lives in the backing .md / documentStore, never on the tile
+  // The body lives in the backing .md (its note model), never on the tile
   // object (`tile.content` is always '' — see buildTileDefinition). Resolve
   // the real body; if it can't be resolved, the tile is NOT empty (absence ≠
   // empty).

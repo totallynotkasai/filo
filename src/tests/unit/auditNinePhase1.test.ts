@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
@@ -9,13 +9,11 @@ import {
   UpdateCardFieldCommand,
   UpdateTaskFieldCommand,
 } from '@renderer/commands/index';
-import { makeFrontmatterWriter } from '@renderer/lib/tasklist/frontmatterWriter';
 import { KanbanMultiSelect } from '@renderer/lib/kanban/kanbanMultiSelect.svelte';
 import { createSelectionScope } from '@renderer/stores/selection.svelte';
-import { flushAllPendingFrontmatterWrites } from '@renderer/lib/boards/frontmatterWriteScheduler';
-import { cancelAllMarkdownWrites } from '@renderer/lib/vault/markdownFileWriter';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { __resetVaultIdentityForTests } from '@renderer/lib/vault/vaultIdentity';
+import { parseMarkdown } from '@renderer/lib/vault/vaultIndex';
 import type {
   KanbanBoard as KanbanBoardType,
   TaskListBoard as TaskListBoardType,
@@ -23,15 +21,13 @@ import type {
   TileDefinition,
   Tile,
 } from '@renderer/schema/index';
-import type { TaskRow } from '@renderer/lib/tasks/taskListModel';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Audit-9 Phase 1 behavioral matrix. Each test reds when its fix is
- * temp-reverted (the A8 discipline):
- *   - A9-H1: the field command's `isStillSameVault` bail across the seed await.
- *   - A9-M2: the synchronous index placeholder before the early arm.
+ * Audit-9 Phase 1 behavioral matrix:
+ *   - A9-H1: a field command whose first read spans a vault swap writes nothing.
  *   - A9-M3: the seed thunk folded into AddTaskCommand.execute() (+ rollback).
+ *   - A9-L1: the Kanban bulk tag-add is one undoable, chained BatchCommand.
  */
 
 interface Captured {
@@ -43,21 +39,13 @@ function writesIn(captured: Captured[]): Captured[] {
   return captured.filter(
     (c) =>
       c.channel === 'vault:write-existing-file-text' ||
-      c.channel === 'vault:write-file-text',
+      c.channel === 'vault:write-file-text' ||
+      c.channel === 'vault:create-file-text',
   );
 }
 
-function lastExistingWrite(captured: Captured[]): string | undefined {
-  for (let i = captured.length - 1; i >= 0; i--) {
-    if (captured[i].channel === 'vault:write-existing-file-text') {
-      return captured[i].args[2] as string;
-    }
-  }
-  return undefined;
-}
-
 // ── A9-H1 — cross-vault frontmatter write suppression ────────────────────────
-describe('A9-H1 — first-touch field edit + vault swap mid-seed never writes the old vault FM onto the new vault', () => {
+describe('A9-H1 — first-touch field edit + vault swap mid-read never writes the old vault FM onto the new vault', () => {
   let captured: Captured[];
   let releaseRead: () => void;
   let readReachedP: Promise<void>;
@@ -76,12 +64,13 @@ describe('A9-H1 — first-touch field edit + vault swap mid-seed never writes th
       captured.push({ channel, args });
       if (channel === 'vault:read-file-text') {
         readReached();
-        // Vault A's bytes, captured against vaultStore.path at call time.
+        // Vault A's bytes.
         return gate.then(() => ({
           success: true,
           content: '---\ncompleted: false\npriority: high\n---\nbody A',
           mtimeMs: 5,
           size: 50,
+          encoding: 'utf-8',
         }));
       }
       if (channel === 'vault:stat') return { success: true, mtimeMs: 5, size: 50 };
@@ -92,8 +81,7 @@ describe('A9-H1 — first-touch field edit + vault swap mid-seed never writes th
   beforeEach(() => {
     __resetVaultIdentityForTests();
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
+    noteStore.__resetForTests();
     boardCacheStore.clear();
     vaultIndexStore.clear();
     vaultStore.setPath('/vaultA');
@@ -104,175 +92,42 @@ describe('A9-H1 — first-touch field edit + vault swap mid-seed never writes th
     restoreFiloDefault();
     __resetVaultIdentityForTests();
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
+    noteStore.__resetForTests();
     boardCacheStore.clear();
     vaultIndexStore.clear();
     vaultStore.setPath('');
   });
 
-  it('Kanban UpdateCardFieldCommand bails — no cross-vault write, no FM entry for the note', async () => {
+  it('Kanban UpdateCardFieldCommand bails — no cross-vault write, nothing queued for the note', async () => {
     installGatedMock();
-    const cmd = new UpdateCardFieldCommand(
-      'kb',
-      'Inbox.md',
-      'Inbox.md',
-      { completed: true },
-      { completed: false },
-    );
+    const cmd = new UpdateCardFieldCommand('kb', 'Inbox.md', { completed: true }, { completed: false });
     const execP = cmd.execute();
-    // Suspended at the seed's gated read; identity captured against vault A.
+    // Suspended at the gated read; identity captured against vault A.
     await readReachedP;
-    // File > Open Vault (B) → "Don't Save": clear the doc store + commit the new
-    // vault generation, exactly as the pre-swap handler + commitVaultCandidate do.
-    documentStore.clear('/vaultB');
+    // File > Open Vault (B) → "Don't Save": the new vault generation commits.
     vaultStore.setPath('/vaultB');
     releaseRead();
     await execP;
-    await flushAllPendingFrontmatterWrites();
+    await noteStore.flushAll();
 
     expect(writesIn(captured)).toHaveLength(0);
-    expect(documentStore.getFrontmatter('Inbox.md')).toBeUndefined();
+    expect(noteStore.hasPendingWrites('Inbox.md')).toBe(false);
+    expect(noteStore.frontmatter('Inbox.md').completed).toBeUndefined();
   });
 
-  it('Task UpdateTaskFieldCommand bails — no cross-vault write, no FM entry for the note', async () => {
+  it('Task UpdateTaskFieldCommand bails — no cross-vault write, nothing queued for the note', async () => {
     installGatedMock();
-    const cmd = new UpdateTaskFieldCommand(
-      'tl',
-      'Inbox.md',
-      'Inbox.md',
-      { completed: true },
-      { completed: false },
-    );
+    const cmd = new UpdateTaskFieldCommand('tl', 'Inbox.md', { completed: true }, { completed: false });
     const execP = cmd.execute();
     await readReachedP;
-    documentStore.clear('/vaultB');
     vaultStore.setPath('/vaultB');
     releaseRead();
     await execP;
-    await flushAllPendingFrontmatterWrites();
+    await noteStore.flushAll();
 
     expect(writesIn(captured)).toHaveLength(0);
-    expect(documentStore.getFrontmatter('Inbox.md')).toBeUndefined();
-  });
-});
-
-// ── A9-M2 — notes-body edit survives a quit-flush during the FM seed ──────────
-describe('A9-M2 — Task notes body is not lost when a quit flush lands during the FM seed', () => {
-  let captured: Captured[];
-  let releaseRead: () => void;
-  let readCount: number;
-
-  beforeEach(() => {
-    __resetVaultIdentityForTests();
-    __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
-    boardCacheStore.clear();
-    vaultIndexStore.clear();
-    vaultStore.setPath('/vault');
-    captured = [];
-    readCount = 0;
-    let release!: () => void;
-    const gate = new Promise<void>((r) => {
-      release = r;
-    });
-    releaseRead = release;
-    installFiloMock(async (channel: string, ...args: unknown[]) => {
-      captured.push({ channel, args });
-      if (channel === 'vault:read-file-text') {
-        readCount++;
-        // Gate ONLY the first read — the setNotesBody refresh seed — so it is
-        // still in flight when flushAll fires the early-armed write.
-        if (readCount === 1) await gate;
-        return {
-          success: true,
-          content: '---\ncompleted: false\n---\ntask body',
-          mtimeMs: 7,
-          size: 40,
-        };
-      }
-      if (channel === 'vault:stat') return { success: true, mtimeMs: 7, size: 40 };
-      if (channel === 'vault:write-existing-file-text') return { success: true };
-      return { success: true };
-    });
-    vaultIndexStore.restoreMetadata('Task.md', {
-      path: 'Task.md',
-      title: 'Task',
-      headings: [],
-      tags: [],
-      frontmatter: { completed: false },
-      links: [],
-      content: 'task body',
-      lastModified: 0,
-    });
-  });
-  afterEach(() => {
-    releaseRead?.();
-    restoreFiloDefault();
-    __resetVaultIdentityForTests();
-    __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
-    boardCacheStore.clear();
-    vaultIndexStore.clear();
-    vaultStore.setPath('');
-  });
-
-  function makeWriter() {
-    return makeFrontmatterWriter({
-      getBoard: () =>
-        ({
-          id: 'tl',
-          type: 'tasklist',
-          name: 'T',
-          emoji: '',
-          createdAt: 0,
-          updatedAt: 0,
-          settings: {},
-          tasks: [],
-          sections: [],
-        }) as unknown as TaskListBoardType,
-      vaultPathForTile: () => 'Task.md',
-      readFrontmatter: () => ({ completed: false }),
-      bumpCacheVersion: () => {},
-    });
-  }
-
-  function makeRow(): TaskRow {
-    return {
-      placement: { tileId: 't2', position: 0 },
-      tile: { id: 't2', type: 'text', filePath: 'Task.md', title: 'Task', tags: [] } as unknown as Tile,
-      completed: false,
-      priority: 'none',
-      dueDate: '',
-      dueTime: '',
-      startDate: '',
-      status: '',
-      tags: [],
-      parent: '',
-      recurrence: '',
-      recurrenceMode: 'schedule',
-      category: '',
-    };
-  }
-
-  it('the early-armed write carries the typed body even though the FM seed is still in flight', async () => {
-    const writer = makeWriter();
-    const p = writer.setNotesBody(makeRow(), 'typed notes here');
-    // Let setNotesBody reach (and gate on) the refresh seed's disk read (#1).
-    await vi.waitFor(() => expect(readCount).toBe(1));
-    // A quit drains the pending writes WHILE the seed read is still suspended.
-    await flushAllPendingFrontmatterWrites();
-
-    const written = lastExistingWrite(captured);
-    expect(written, 'early-armed write must not no-op on empty FM (A9-M2)').toBeDefined();
-    expect(written).toContain('typed notes here'); // body persisted
-    expect(written).toContain('completed: false'); // placeholder FM seeded synchronously
-
-    // cleanup — release the gated seed so setNotesBody finishes.
-    releaseRead();
-    await p;
+    expect(noteStore.hasPendingWrites('Inbox.md')).toBe(false);
+    expect(noteStore.frontmatter('Inbox.md').completed).toBeUndefined();
   });
 });
 
@@ -321,7 +176,6 @@ describe('A9-M3 — backing-.md seed runs inside the chained AddTaskCommand', ()
 
   beforeEach(() => {
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
     vaultStore.setPath('/vault');
     installFiloMock(() => ({ success: true }));
     hydrateBoard();
@@ -331,7 +185,6 @@ describe('A9-M3 — backing-.md seed runs inside the chained AddTaskCommand', ()
   afterEach(() => {
     restoreFiloDefault();
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
     boardCacheStore.clear();
     historyStore.clear();
     historyStore.setActiveBoard(null);
@@ -383,8 +236,7 @@ describe('A9-L1 — Kanban bulk tag-add routes through an undoable, chained Batc
   beforeEach(() => {
     __resetVaultIdentityForTests();
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
+    noteStore.__resetForTests();
     boardCacheStore.clear();
     vaultIndexStore.clear();
     vaultStore.setPath('/vault');
@@ -402,8 +254,7 @@ describe('A9-L1 — Kanban bulk tag-add routes through an undoable, chained Batc
     restoreFiloDefault();
     __resetVaultIdentityForTests();
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
+    noteStore.__resetForTests();
     boardCacheStore.clear();
     vaultIndexStore.clear();
     historyStore.clear();
@@ -463,8 +314,8 @@ describe('A9-L1 — Kanban bulk tag-add routes through an undoable, chained Batc
 
   it('does not dispatch a command (or toast success) when every card already has the tag', async () => {
     // Pre-seed both cards with the tag so the additive loop produces no commands.
-    documentStore.setFrontmatter('a.md', { tags: ['urgent'] });
-    documentStore.setFrontmatter('b.md', { tags: ['urgent'] });
+    vaultIndexStore.restoreMetadata('a.md', parseMarkdown('a.md', '---\ntags: [urgent]\n---\n'));
+    vaultIndexStore.restoreMetadata('b.md', parseMarkdown('b.md', '---\ntags: [urgent]\n---\n'));
     const selection = createSelectionScope();
     selection.addMultiple(['a', 'b']);
     const ms = makeMultiSelect(selection, 'urgent');

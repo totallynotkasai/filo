@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
+import { vaultStore } from '@renderer/stores/vault.svelte';
 import { editorMarkdown } from '@renderer/lib/editor/markdownSync';
 import {
   recordingFilo,
@@ -7,29 +8,26 @@ import {
   drainDebounce,
   resetEditorHarness,
   teardownEditorHarness,
+  VAULT,
 } from './helpers/mountEditor';
 
 /**
- * Audit-19 MD-5 — TextTile must not load just any existing DocumentState for
- * its note into a writable editor. An unhydrated placeholder (body '', e.g.
- * from a DocumentEditor whose read failed, or from Kanban's
- * `openTileAsDocument`) would produce an empty editable body; the next
- * keystroke would write the real FM plus an empty body over the real note.
+ * A TextTile must only ever edit the note's real body. An editor that became
+ * writable over an empty or unread body would write the real frontmatter plus
+ * an empty body over the note on the next keystroke. So the tile shows what
+ * the note model read from disk, stays frozen while that read fails, and a
+ * frontmatter change queued for a note nobody has loaded (a Kanban field edit)
+ * doesn't stand in for the body.
  */
-function placeholder(filename: string, body = ''): void {
-  documentStore.loadDocument({ filename, title: 'X', body, htmlContent: '', richText: [] });
-}
-
-describe('TextTile never adopts an unread placeholder body (MD-5)', () => {
+describe('TextTile never edits a body it has not read', () => {
   beforeEach(() => resetEditorHarness());
   afterEach(() => teardownEditorHarness());
 
-  it('(a) placeholder with no FM → reads disk, shows + keeps the real body', async () => {
+  it('(a) reads disk, shows + keeps the real body and frontmatter on the first edit', async () => {
     const fs = recordingFilo({ 'X.md': '---\na: 1\n---\nReal body\n' });
-    placeholder('X.md');
     const m = await mountTextTile({ tile: { id: 't1', title: 'X' } });
     expect(m.proseMirror().textContent).toContain('Real body');
-    expect(documentStore.getDocument('X.md')?.body).toBe('Real body\n');
+    expect(noteStore.get('X.md')?.body).toBe('Real body\n');
     const ed = m.editor();
     ed.commands.focus('end');
     ed.commands.insertContent('!');
@@ -41,11 +39,11 @@ describe('TextTile never adopts an unread placeholder body (MD-5)', () => {
     await m.unmount();
   });
 
-  it('(b) placeholder + a failed read → no write, Retry banner', async () => {
+  it('(b) a failed read → no write, Retry banner', async () => {
     const fs = recordingFilo({ 'X.md': '---\na: 1\n---\nReal body\n' });
     fs.failReads('X.md', 'EBUSY');
-    placeholder('X.md');
     const m = await mountTextTile({ tile: { id: 't1', title: 'X' } });
+    expect(noteStore.get('X.md')?.status).toBe('unreadable');
     expect(m.editor().isEditable).toBe(false);
     expect(m.target.textContent).toContain('Retry');
     m.editor().commands.insertContent('typed');
@@ -55,23 +53,31 @@ describe('TextTile never adopts an unread placeholder body (MD-5)', () => {
     expect(fs.writesTo('X.md')).toEqual([]);
   });
 
-  it('(c) placeholder with FM seeded but body "" (Kanban variant) still reads disk', async () => {
+  it('(c) a frontmatter change queued before the tile mounts still reads the disk body', async () => {
     const fs = recordingFilo({ 'X.md': '---\na: 1\n---\nReal body\n' });
-    placeholder('X.md');
-    documentStore.setFrontmatter('X.md', { a: 1 });
+    noteStore.patchFrontmatter('X.md', { set: { b: 2 }, unset: [] });
     const m = await mountTextTile({ tile: { id: 't1', title: 'X' } });
     expect(fs.calls).toContain('vault:read-file-text');
     expect(editorMarkdown(m.editor())).toContain('Real body');
+    await drainDebounce();
+    const last = fs.writesTo('X.md').at(-1)?.content ?? '';
+    expect(last).toContain('a: 1');
+    expect(last).toContain('b: 2');
+    expect(last).toContain('Real body');
     await m.unmount();
   });
 
-  it('(d) a genuinely hydrated document for the note is reused without a second read', async () => {
+  it('(d) a note another view already loaded is shown without a second read', async () => {
     const fs = recordingFilo({ 'X.md': '---\na: 1\n---\nSibling body\n' });
-    placeholder('X.md', 'Sibling body\n');
-    documentStore.setFrontmatter('X.md', { a: 1 });
+    vaultStore.setPath(VAULT);
+    const sibling = noteStore.acquire('X.md', 'doc:sibling');
+    await sibling.loaded;
+    const readsBefore = fs.calls.filter((c) => c === 'vault:read-file-text').length;
     const m = await mountTextTile({ tile: { id: 't1', title: 'X' } });
-    expect(fs.calls).not.toContain('vault:read-file-text');
+    expect(fs.calls.filter((c) => c === 'vault:read-file-text').length).toBe(readsBefore);
+    expect(noteStore.get('X.md')).toBe(sibling);
     expect(m.proseMirror().textContent).toContain('Sibling body');
     await m.unmount();
+    noteStore.release('X.md', 'doc:sibling');
   });
 });

@@ -96,7 +96,7 @@
     const vaultPath = vaultStore.path;
     if (!vaultPath) return null;
     try {
-      const result = await invokeOk('vault:read-file-text', vaultPath, TOOLBAR_POS_FILE);
+      const result = await invokeOk('vault:read-file-text', vaultPath, TOOLBAR_POS_FILE); // allow-raw-read: .filo/ position file, not a note
       const p = JSON.parse(result.content) as { x?: unknown; y?: unknown };
       if (typeof p.x !== 'number' || typeof p.y !== 'number') return null;
       return { x: Math.max(0, Math.min(window.innerWidth - 60, p.x)), y: Math.max(0, Math.min(window.innerHeight - 60, p.y)) };

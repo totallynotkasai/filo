@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import TextTile from '@renderer/components/tiles/TextTile.svelte';
 import { BOARD_SCOPE_KEY, getActiveScope } from '@renderer/lib/boards/boardScope.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { editorMarkdown, parseMarkdownFile } from '@renderer/lib/editor/markdownSync';
 import type { TextTile as TextTileDef } from '@renderer/schema/index';
 import {
@@ -87,7 +87,7 @@ describe('TextTile lifecycle (editor integration)', () => {
     const fs = recordingFilo({ 'Note.md': 'Before reload\n' });
     const t = await mountTile();
     fs.setExternal('Note.md', 'After reload\n');
-    documentStore.applyReloadFromDisk(t.notePath, 'After reload\n', [], {}, '', { mtimeMs: 2000, size: 13 });
+    await noteStore.onDiskChanged(t.notePath);
     await settle();
     expect(t.pm.textContent).toContain('After reload');
     ctrlZ(t.pm);
@@ -121,5 +121,22 @@ describe('TextTile lifecycle (editor integration)', () => {
     const writes = fs.writesTo('Note.md');
     expect(writes.length).toBe(1);
     expect(writes[0].content).toBe('Hello world!');
+  });
+
+  it('(f) an edit to a BOM + CRLF note keeps the BOM and CRLF throughout', async () => {
+    const raw = '﻿---\r\ntitle: x\r\n---\r\nFirst line\r\n\r\nSecond line\r\n';
+    const fs = recordingFilo({ 'Note.md': raw });
+    const t = await mountTile();
+    t.editor.commands.focus('end');
+    t.editor.commands.insertContent('!');
+    await drainDebounce();
+    await unmount(t.component);
+    await drainDebounce();
+    const writes = fs.writesTo('Note.md');
+    expect(writes.length).toBe(1);
+    const out = writes[0].content;
+    expect(out.startsWith('﻿---\r\ntitle: x\r\n---\r\n')).toBe(true);
+    expect(out).toContain('Second line!');
+    expect(out.replace(/\r\n/g, '')).not.toContain('\n');
   });
 });

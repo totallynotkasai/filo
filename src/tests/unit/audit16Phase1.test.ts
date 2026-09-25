@@ -1,56 +1,33 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import type { TaskListBoard as TaskListBoardType, Tile } from '@renderer/schema/index';
 import type { TaskRow } from '@renderer/lib/tasks/taskListModel';
-import { __resetBaselinesForTests } from '@renderer/lib/vault/fileBaselineRegistry';
-import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
+import { __resetDirtyTrackingForTests, isPathPending } from '@renderer/lib/boards/writeStateTracking';
 import { makeFrontmatterWriter } from '@renderer/lib/tasklist/frontmatterWriter';
-import {
-  scheduleFrontmatterWrite,
-  flushAllPendingFrontmatterWrites,
-  resetFrontmatterScheduler,
-} from '@renderer/lib/boards/frontmatterWriteScheduler';
-import { seedDocumentFrontmatterFromDisk } from '@renderer/lib/boards/seedFrontmatterFromDisk';
-import { cancelAllMarkdownWrites } from '@renderer/lib/vault/markdownFileWriter';
 import { patchToFrontmatterDelta } from '@renderer/lib/vault/frontmatterDelta';
-import { onError, type ReportedError } from '@renderer/lib/utils/errorBus';
-import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Audit-16 Phase 1 — silent data loss in the frontmatter scheduler.
+ * Silent data loss around Task notes and field edits.
  *
- *  1.1 (CRITICAL) — the version-token guard only covered FRONTMATTER
- *      mutations, so a delta-less body write (Task notes) fired with
- *      `scheduledVersion <= lastFlushedVersion`, bare-returned as SUCCESS,
- *      and every second-and-later notes edit (or the first after a field
- *      toggle had flushed at that version) silently died on quit.
- *      Fix: `documentStore.updateContent` bumps the shared token.
- *  4.3 (folded in) — `lastFlushedVersion` was bumped to the POST-IPC
- *      mutation version, so a mutation landing mid-write was marked flushed
- *      while the pre-mutation bytes landed. Fix: record the version captured
- *      when the write's content was read (fire time).
- *  1.2 (HIGH) — field edits on a read-only (lossy round-trip) doc were
- *      silently dropped as SUCCESS. Fix: the delta path proceeds (FM
- *      round-trips cleanly; body sourced from DISK, never the lossy editor
- *      body); the delta-less path refuses LOUDLY (toast + markPathFailed +
- *      throw).
+ *  - Every Task notes edit reaches disk: the second and later edits, the
+ *    first one after a field edit already flushed, and one typed while a
+ *    write is in flight.
+ *  - A change that lands while a write IPC is stalled is not counted as
+ *    written by it; the next flush writes it.
+ *  - Field edits on a read-only (lossy round-trip) note proceed with the body
+ *    from DISK (never the lossy editor body), while a body the note can't
+ *    write fails LOUDLY instead of being reported saved.
+ *  - A note's first read never clobbers a field edit queued while it ran.
  */
 
-interface Captured {
-  channel: string;
-  args: unknown[];
-}
+let vault: MemoryVault;
 
-function byteLen(text: string): number {
-  return new TextEncoder().encode(text).length;
-}
-
-function markdownWrites(captured: Captured[]): string[] {
-  return captured
-    .filter((c) => c.channel === 'vault:write-existing-file-text')
-    .map((c) => c.args[2] as string);
+function mdWrites(): string[] {
+  return vault.writes.filter(([, rel]) => rel.endsWith('.md')).map(([, , text]) => text);
 }
 
 function makeWriter() {
@@ -83,318 +60,205 @@ function makeRow(): TaskRow {
 
 function resetAll(): void {
   __resetDirtyTrackingForTests();
-  resetFrontmatterScheduler();
-  cancelAllMarkdownWrites();
-  documentStore.clear();
+  noteStore.__resetForTests();
   vaultIndexStore.clear();
-  __resetBaselinesForTests();
 }
 
-describe('Audit-16 1.1 — body edits bump the write-staleness token', () => {
-  let captured: Captured[];
+beforeEach(() => {
+  resetAll();
+  vaultStore.setPath('/vault');
+});
+
+afterEach(() => {
+  resetAll();
+  restoreFiloDefault();
+  vaultStore.setPath('');
+});
+
+describe('every Task notes edit reaches disk', () => {
   const DISK = '---\ntitle: T\npriority: high\n---\nold body';
 
   beforeEach(() => {
-    resetAll();
-    vaultStore.setPath('/vault');
-    captured = [];
-    installFiloMock(async (channel: string, ...args: unknown[]) => {
-      captured.push({ channel, args });
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: DISK, mtimeMs: 5, size: byteLen(DISK) };
-      }
-      if (channel === 'vault:stat') return { success: true, mtimeMs: 5, size: byteLen(DISK) };
-      return { success: true };
-    });
+    vault = installMemoryVault({ 'Task.md': DISK });
   });
 
-  afterEach(() => {
-    restoreFiloDefault();
-    resetAll();
-    vaultStore.setPath('');
-  });
-
-  it('the SECOND sequential setNotesBody reaches the gateway (was skipped as stale)', async () => {
+  it('the SECOND sequential setNotesBody reaches disk', async () => {
     const writer = makeWriter();
 
     await writer.setNotesBody(makeRow(), 'first note');
-    const res1 = await flushAllPendingFrontmatterWrites();
+    const res1 = await noteStore.flushAll();
     expect(res1.failed).toEqual([]);
-    const afterFirst = markdownWrites(captured);
+    const afterFirst = mdWrites();
     expect(afterFirst.length).toBe(1);
     expect(afterFirst[0]).toContain('first note');
 
-    // The second edit. Pre-1.1 the FM cache is already seeded so nothing bumps
-    // the mutation version; the scheduled flush compared
-    // `scheduledVersion <= lastFlushedVersion`, bare-returned as SUCCESS, and
-    // the note existed only in documentStore — dead on quit.
     await writer.setNotesBody(makeRow(), 'second note');
-    const res2 = await flushAllPendingFrontmatterWrites();
+    const res2 = await noteStore.flushAll();
     expect(res2.failed).toEqual([]);
 
-    const writes = markdownWrites(captured);
+    const writes = mdWrites();
     expect(writes.length).toBe(2);
     expect(writes[1]).toContain('second note');
     // The untouched disk FM key still survives the body-only write.
     expect(writes[1]).toContain('priority: high');
   });
 
-  it('a FIRST notes edit after a field edit already flushed at that version still lands', async () => {
-    // Field edit on an un-opened task: seed the FM cache from disk, merge the
-    // field, flush the delta write — lastFlushedVersion now records the
-    // current mutation version for this note.
-    await seedDocumentFrontmatterFromDisk('Task.md', '/vault', 'Task.md');
-    documentStore.mergeFrontmatter('Task.md', { completed: true });
-    scheduleFrontmatterWrite('Task.md', 'Task.md', patchToFrontmatterDelta({ completed: true }));
-    const resField = await flushAllPendingFrontmatterWrites();
+  it('a FIRST notes edit after a field edit already flushed still lands', async () => {
+    // Field edit on an un-opened task, flushed.
+    noteStore.patchFrontmatter('Task.md', patchToFrontmatterDelta({ completed: true }));
+    const resField = await noteStore.flushAll();
     expect(resField.failed).toEqual([]);
-    const afterField = markdownWrites(captured).length;
+    const afterField = mdWrites().length;
     expect(afterField).toBeGreaterThan(0);
 
-    // Now the user expands the task and types a note. Pre-1.1 this scheduled
-    // with the SAME version the field flush recorded → skipped → first note
-    // dropped (the plan's "toggle the checkbox first" variant).
+    // Now the user expands the task and types a note.
     const writer = makeWriter();
     await writer.setNotesBody(makeRow(), 'my first note');
-    const res = await flushAllPendingFrontmatterWrites();
+    const res = await noteStore.flushAll();
     expect(res.failed).toEqual([]);
 
-    const writes = markdownWrites(captured);
+    const writes = mdWrites();
     expect(writes.length).toBe(afterField + 1);
     expect(writes[writes.length - 1]).toContain('my first note');
+    expect(writes[writes.length - 1]).toContain('completed: true');
   });
 
   it('a notes edit landing while a write is in flight is not skipped by the next flush', async () => {
     const writer = makeWriter();
     await writer.setNotesBody(makeRow(), 'first note');
-    const flushP = flushAllPendingFrontmatterWrites();
+    const flushP = noteStore.flushAll();
     // Edit again while the first flush is (possibly) mid-write.
-    documentStore.updateContent('Task.md', '', 'edited during flight');
+    await writer.setNotesBody(makeRow(), 'edited during flight');
     await flushP;
 
-    scheduleFrontmatterWrite('Task.md', 'Task.md');
-    const res = await flushAllPendingFrontmatterWrites();
+    const res = await noteStore.flushAll();
     expect(res.failed).toEqual([]);
-    const writes = markdownWrites(captured);
+    const writes = mdWrites();
     expect(writes[writes.length - 1]).toContain('edited during flight');
+    expect(vault.read('Task.md')).toContain('edited during flight');
   });
 });
 
-describe('Audit-16 4.3 — flushed-version records the capture-time version, not post-IPC', () => {
-  let captured: Captured[];
-  const DISK_V = '---\ntitle: V\n---\nb1';
-
-  beforeEach(() => {
-    resetAll();
-    vaultStore.setPath('/vault');
-    captured = [];
-  });
-
-  afterEach(() => {
-    restoreFiloDefault();
-    resetAll();
-    vaultStore.setPath('');
-  });
-
-  it('a mergeFrontmatter landing during a stalled write IPC is not marked flushed', async () => {
+describe('a change landing during a stalled write IPC is not counted as written', () => {
+  it('a frontmatter change queued mid-IPC lands on the next flush', async () => {
+    vault = installMemoryVault({ 'V.md': '---\ntitle: V\n---\nb1' });
     let writeCalls = 0;
     let releaseWrite: () => void = () => {};
     const writeGate = new Promise<void>((resolve) => {
       releaseWrite = resolve;
     });
-    installFiloMock(async (channel: string, ...args: unknown[]) => {
-      captured.push({ channel, args });
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: DISK_V, mtimeMs: 5, size: byteLen(DISK_V) };
-      }
-      if (channel === 'vault:stat') return { success: true, mtimeMs: 5, size: byteLen(DISK_V) };
-      if (channel === 'vault:write-existing-file-text') {
-        writeCalls++;
-        if (writeCalls === 1) await writeGate; // stall the FIRST write only
-        return { success: true };
-      }
-      return { success: true };
-    });
+    vault.beforeWrite = async (rel) => {
+      if (!rel.endsWith('.md')) return;
+      writeCalls++;
+      if (writeCalls === 1) await writeGate; // stall the FIRST write only
+    };
 
-    documentStore.loadDocument({
-      filename: 'V.md',
-      title: 'V',
-      body: 'b1',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter('V.md', { title: 'V' });
-
-    scheduleFrontmatterWrite('V.md', 'V.md');
-    const flushP = flushAllPendingFrontmatterWrites();
+    noteStore.patchFrontmatter('V.md', { set: { priority: 'high' }, unset: [] });
+    const flushP = noteStore.flushAll();
     // Wait until the first write IPC is actually in flight (stalled on the gate).
     await vi.waitFor(() => expect(writeCalls).toBe(1), { timeout: 2000, interval: 5 });
 
-    // An FM mutation lands mid-IPC. Its bytes are NOT in the in-flight write
-    // (the FM was read before the IPC); pre-4.3 the success bookkeeping read
-    // the CURRENT version after the await and recorded this mutation as
-    // flushed — the follow-up scheduled write then skipped as "stale" and the
-    // mutation never reached disk.
-    documentStore.mergeFrontmatter('V.md', { status: 'fresh' });
+    // A mutation lands mid-IPC. Its bytes are NOT in the in-flight write.
+    noteStore.patchFrontmatter('V.md', { set: { status: 'fresh' }, unset: [] });
     releaseWrite();
     await flushP;
 
-    scheduleFrontmatterWrite('V.md', 'V.md');
-    const res = await flushAllPendingFrontmatterWrites();
+    const res = await noteStore.flushAll();
     expect(res.failed).toEqual([]);
 
-    const writes = markdownWrites(captured);
+    const writes = mdWrites();
     expect(writes.length).toBe(2);
     expect(writes[0]).not.toContain('status: fresh');
     expect(writes[1]).toContain('status: fresh');
+    expect(writes[1]).toContain('priority: high');
   });
 });
 
-describe('Audit-16 1.2 — field edits on a read-only (lossy round-trip) doc', () => {
-  let captured: Captured[];
+describe('field edits on a read-only (lossy round-trip) note', () => {
   const LOSSY_DISK_BODY = '==highlight== %%comment%% body the editor cannot round-trip';
   const DISK_RO = `---\ntitle: RO\n---\n${LOSSY_DISK_BODY}`;
 
   beforeEach(() => {
-    resetAll();
-    vaultStore.setPath('/vault');
-    captured = [];
-    installFiloMock(async (channel: string, ...args: unknown[]) => {
-      captured.push({ channel, args });
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: DISK_RO, mtimeMs: 7, size: byteLen(DISK_RO) };
-      }
-      if (channel === 'vault:stat') return { success: true, mtimeMs: 7, size: byteLen(DISK_RO) };
-      return { success: true };
-    });
-    documentStore.loadDocument({
-      filename: 'RO.md',
-      title: 'RO',
-      body: 'LOSSY ROUND-TRIPPED EDITOR BODY',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter('RO.md', { title: 'RO' });
-    documentStore.setReadOnly('RO.md', true);
-  });
-
-  afterEach(() => {
-    restoreFiloDefault();
-    resetAll();
-    vaultStore.setPath('');
+    vault = installMemoryVault({ 'RO.md': DISK_RO });
   });
 
   it('a pending DELTA proceeds, sourcing the body from disk (never the lossy editor body)', async () => {
-    scheduleFrontmatterWrite('RO.md', 'RO.md', patchToFrontmatterDelta({ priority: 'high' }));
-    const res = await flushAllPendingFrontmatterWrites();
-    // Pre-1.2 the bare `isReadOnly → return` resolved as SUCCESS with no
-    // write; the delta stayed orphaned in pendingDeltas forever.
+    const m = noteStore.acquire('RO.md', 'text-tile:ro');
+    await m.loaded;
+    noteStore.setLossy('RO.md', true);
+    // A lossy note refuses editor bodies outright.
+    noteStore.setBody('RO.md', 'LOSSY ROUND-TRIPPED EDITOR BODY', 'text-tile:ro');
+
+    noteStore.patchFrontmatter('RO.md', patchToFrontmatterDelta({ priority: 'high' }));
+    const res = await noteStore.flushAll();
     expect(res.failed).toEqual([]);
 
-    const writes = markdownWrites(captured);
+    const writes = mdWrites();
     expect(writes.length).toBe(1);
     // The field edit landed…
     expect(writes[0]).toContain('priority: high');
     // …the untouched disk FM survived…
     expect(writes[0]).toContain('title: RO');
     // …and the BODY is the on-disk bytes, byte-for-byte — never the lossy
-    // round-tripped editor body (the whole reason the doc is read-only).
+    // round-tripped editor body (the whole reason the note is read-only).
     expect(writes[0]).toContain(LOSSY_DISK_BODY);
     expect(writes[0]).not.toContain('LOSSY ROUND-TRIPPED EDITOR BODY');
+    noteStore.release('RO.md', 'text-tile:ro');
   });
 
-  it('a delta-less write refuses LOUDLY: flushAll().failed + errorBus, no silent success', async () => {
-    const errors: ReportedError[] = [];
-    const unsubscribe = onError((e) => errors.push(e));
+  it('a body the note can no longer write fails LOUDLY: flushAll().failed, no silent success', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
-      scheduleFrontmatterWrite('RO.md', 'RO.md');
-      const res = await flushAllPendingFrontmatterWrites();
-      // Pre-1.2 this resolved as SUCCESS (failed: []) and markClean wiped the
-      // recovery sentinel while nothing reached disk.
+      const m = noteStore.acquire('RO.md', 'text-tile:ro');
+      await m.loaded;
+      // A body queued before the note turned out lossy.
+      noteStore.setBody('RO.md', 'typed before the lossy check', 'text-tile:ro');
+      noteStore.setLossy('RO.md', true);
+
+      const res = await noteStore.flushAll();
       expect(res.failed).toContain('RO.md');
-      expect(markdownWrites(captured).length).toBe(0);
-      expect(errors.some((e) => e.context === 'frontmatter.readOnly')).toBe(true);
+      expect(mdWrites().length).toBe(0);
+      expect(vault.read('RO.md')).toBe(DISK_RO);
+      // Kept failed, so the recovery sentinel survives and save/quit report it.
+      expect(isPathPending('RO.md')).toBe(true);
+      noteStore.release('RO.md', 'text-tile:ro');
     } finally {
       errSpy.mockRestore();
-      unsubscribe();
     }
   });
 });
 
-describe('Audit-16 1.1 — disk-FM refresh seed tolerates racing BODY bumps (A9-M2 preserved for FM)', () => {
-  const DISK_S = '---\ntitle: T\nexternal: added-by-editor\n---\ndisk body';
-  let releaseRead: () => void;
-
-  beforeEach(() => {
-    resetAll();
-    vaultStore.setPath('/vault');
-    releaseRead = () => {};
+describe('a note\'s first read never clobbers a field edit queued while it ran', () => {
+  it('a racing FIELD edit survives the load', async () => {
+    const DISK_S = '---\ntitle: T\nexternal: added-by-editor\n---\ndisk body';
+    vault = installMemoryVault({ 'S.md': DISK_S });
+    let releaseRead: () => void = () => {};
     const readGate = new Promise<void>((resolve) => {
       releaseRead = resolve;
     });
-    installFiloMock(async (channel: string) => {
-      if (channel === 'vault:read-file-text') {
+    let reading = false;
+    const invoke = window.filo.invoke;
+    window.filo.invoke = (async (channel: string, ...args: unknown[]) => {
+      if (channel === 'vault:read-file-text' && !reading) {
+        reading = true;
         await readGate;
-        return { success: true, content: DISK_S, mtimeMs: 3, size: byteLen(DISK_S) };
       }
-      if (channel === 'vault:stat') return { success: true, mtimeMs: 3, size: byteLen(DISK_S) };
-      return { success: true };
-    });
-    documentStore.loadDocument({
-      filename: 'S.md',
-      title: 'S',
-      body: 'old',
-      htmlContent: '',
-      richText: [],
-    });
-  });
+      return (invoke as (c: string, ...a: unknown[]) => Promise<unknown>)(channel, ...args);
+    }) as typeof window.filo.invoke;
 
-  afterEach(() => {
+    const m = noteStore.acquire('S.md', 'text-tile:s');
+    await new Promise((r) => setTimeout(r, 0)); // the load reaches the gated read
+
+    noteStore.patchFrontmatter('S.md', { set: { completed: true }, unset: [] });
     releaseRead();
-    restoreFiloDefault();
-    resetAll();
-    vaultStore.setPath('');
-  });
+    await m.loaded;
 
-  it('a notes keystroke during the refresh read does NOT block the disk-FM refresh', async () => {
-    documentStore.setFrontmatter('S.md', { title: 'T' }); // index placeholder
-    const placeholderVersion = documentStore.getFrontmatterOnlyMutationVersion('S.md');
-
-    const seedP = seedDocumentFrontmatterFromDisk('S.md', '/vault', 'S.md', {
-      refreshSeedVersion: placeholderVersion,
-    });
-    await new Promise((r) => setTimeout(r, 0)); // let the seed reach the gated read
-
-    // Second rapid notes keystroke — bumps the shared write-staleness token
-    // but must not be mistaken for an FM mutation (the refresh replaces only
-    // the FM cache, never the body).
-    documentStore.updateContent('S.md', '', 'typed note');
-    releaseRead();
-    await seedP;
-
-    // The refresh applied: the externally-added key + source baseline landed.
-    expect(documentStore.getFrontmatter('S.md')).toHaveProperty('external', 'added-by-editor');
-    // The body bump was untouched by the refresh.
-    expect(documentStore.getDocument('S.md')?.body).toBe('typed note');
-  });
-
-  it('a racing FIELD edit still blocks the refresh (A9-M2 semantics intact)', async () => {
-    documentStore.setFrontmatter('S.md', { title: 'T' });
-    const placeholderVersion = documentStore.getFrontmatterOnlyMutationVersion('S.md');
-
-    const seedP = seedDocumentFrontmatterFromDisk('S.md', '/vault', 'S.md', {
-      refreshSeedVersion: placeholderVersion,
-    });
-    await new Promise((r) => setTimeout(r, 0));
-
-    documentStore.mergeFrontmatter('S.md', { completed: true }); // FM mutation
-    releaseRead();
-    await seedP;
-
-    // The stale disk bytes must NOT clobber the racing field edit.
-    const fm = documentStore.getFrontmatter('S.md');
-    expect(fm).toHaveProperty('completed', true);
-    expect(fm).not.toHaveProperty('external');
+    // The disk bytes (with the externally-added key) and the racing field
+    // edit are both in the model.
+    expect(m.frontmatter).toHaveProperty('completed', true);
+    expect(m.frontmatter).toHaveProperty('external', 'added-by-editor');
+    await noteStore.flushAll();
+    expect(vault.read('S.md')).toMatch(/^---\ntitle: T\nexternal: added-by-editor\ncompleted: true\n---\ndisk body\n?$/);
+    noteStore.release('S.md', 'text-tile:s');
   });
 });

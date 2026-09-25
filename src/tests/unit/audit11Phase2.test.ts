@@ -3,17 +3,12 @@ import {
   handleFlushAndQuit,
   __resetQuitDrainingForTests,
 } from '@renderer/lib/vault/handleFlushAndQuit';
-import {
-  scheduleFrontmatterWrite,
-  flushAllPendingFrontmatterWrites,
-  resetFrontmatterScheduler,
-} from '@renderer/lib/boards/frontmatterWriteScheduler';
 import { patchToFrontmatterDelta } from '@renderer/lib/vault/frontmatterDelta';
 import {
   isPathPending,
   __resetDirtyTrackingForTests,
 } from '@renderer/lib/boards/writeStateTracking';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
@@ -38,11 +33,11 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 const handshakeOf = (sent: readonly string[]): string[] =>
   sent.filter((c) => c !== 'app:drain-heartbeat');
 
-describe('Audit-11 WC-1 — frontmatter scheduler bounds a wedged write', () => {
+
+describe('Audit-11 WC-1 — the note writer bounds a wedged write', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
-    resetFrontmatterScheduler();
-    documentStore.clear();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
     restoreFiloDefault();
     vaultStore.setPath('/vault');
@@ -50,40 +45,35 @@ describe('Audit-11 WC-1 — frontmatter scheduler bounds a wedged write', () => 
   afterEach(() => {
     vi.useRealTimers();
     __resetDirtyTrackingForTests();
-    resetFrontmatterScheduler();
-    documentStore.clear();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
     restoreFiloDefault();
     vaultStore.setPath('');
   });
 
-  it('flushAllPendingFrontmatterWrites aborts at writeTimeoutMs instead of hanging on a wedged IPC', async () => {
-    // The hydrate read never resolves (a dropped network volume). The FM
-    // scheduler awaits the whole `writeFrontmatter` chain, so WITHOUT the
-    // `writeTimeoutMs` bound this flush — and `save()`/quit that fold it in —
-    // would freeze forever. The sentinel write resolves so markDirty stays quiet.
+  it('noteStore.flushAll aborts at the write timeout instead of hanging on a wedged IPC', async () => {
+    // The fresh read never resolves (a dropped network volume). Without the
+    // writer's timeout this flush, and `save()`/quit that fold it in, would
+    // freeze forever. The sentinel write resolves so markDirty stays quiet.
     installFiloMock({
       'vault:read-file-text': () => new Promise(() => {}), // never settles
       'vault:write-file-text': () => ({ success: true }),
     });
 
     vi.useFakeTimers();
-    // notePath=null + a delta: the delta skips the `!fm` early-abort, so the
-    // write proceeds to the (wedged) hydrate read.
-    scheduleFrontmatterWrite('Wedged.md', null, patchToFrontmatterDelta({ priority: 'high' }));
+    noteStore.patchFrontmatter('Wedged.md', patchToFrontmatterDelta({ priority: 'high' }));
 
-    const flushed = flushAllPendingFrontmatterWrites();
-    // Cross the 60 s bound — the scheduler's Promise.race resolves to its
-    // timeout sentinel, marks the path failed, and attributes the failure.
+    const flushed = noteStore.flushAll();
+    // Cross the 60 s bound: the flush resolves to its timeout, marks the path
+    // failed, and attributes the failure.
     await vi.advanceTimersByTimeAsync(60_000);
     const result = await flushed;
 
     expect(result.failed).toContain('Wedged.md');
-    // The path is recorded failed (sentinel stays dirty) — not silently cleaned.
+    // The path is recorded failed (sentinel stays dirty), not silently cleaned.
     expect(isPathPending('Wedged.md')).toBe(true);
   }, 10_000);
 });
-
 describe('Audit-11 WC-1 (half 2) / QC-3 / QC-4 — quit drain cap', () => {
   beforeEach(() => {
     __resetQuitDrainingForTests();

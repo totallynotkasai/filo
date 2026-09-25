@@ -5,13 +5,11 @@ import type {
 } from '../../schema/index';
 import { defaultTileStyleSnapshot } from '../../constants/defaults';
 import { defaultKanbanCardFontSizes } from '../styles/defaultFontSizes';
-import { documentStore } from '../../stores/document.svelte';
 import { historyStore } from '../../stores/history.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { vaultStore } from '../../stores/vault.svelte';
 import { AddCardCommand } from '../../commands/index';
 import { createId } from '../utils/ids';
-import { markHydrated } from '../vault/markdownFileWriter';
 import { createNoteFile } from '../notes/createNote';
 import { reportError } from '../utils/errorBus';
 import {
@@ -120,17 +118,6 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
         reportError('kanban.seed-md', err, `Failed to create a file for "${tileTitle}" — the card was not added`);
         return;
       }
-      // The file was just created by the create channel. Mark hydrated so the
-      // next gateway write (a TextTile that hasn't run its own hydrate yet, or
-      // a PropertiesPopup opened on this card) can proceed.
-      markHydrated(relPath, false);
-      documentStore.loadDocument({
-        filename: relPath,
-        title: tileTitle,
-        body: '',
-        htmlContent: '',
-        richText: [],
-      });
       def = { ...baseDefFields, type: 'text', filePath: relPath };
     } else if (type === 'audio') {
       def = {
@@ -190,9 +177,6 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
     let relPath: string;
     try {
       ({ relPath } = await createNoteFile({ vaultRoot, folder, title, frontmatter: templateFm, body }));
-      // The file was just created by the create channel; subsequent edits flow
-      // through the gateway, which requires hydration. Templates carry no BOM.
-      markHydrated(relPath, false);
       await vaultStore.refreshTree();
     } catch (err) {
       reportError(
@@ -212,14 +196,6 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
       updatedAt: now,
       filePath: relPath,
     };
-
-    documentStore.loadDocument({
-      filename: relPath,
-      title,
-      body,
-      htmlContent: body,
-      richText: [],
-    });
 
     const columns = board.columns;
     const placements = (columns.find((c) => c.id === targetColumnId)?.tilePlacements ?? []) as KanbanTilePlacement[];

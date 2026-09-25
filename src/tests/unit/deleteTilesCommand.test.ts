@@ -3,6 +3,8 @@ import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
+import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { DeleteTilesCommand } from '@renderer/commands/index';
 import {
   setWriteErrorListener,
@@ -102,11 +104,16 @@ function setupActiveBoardWithTiles(tiles: Tile[]): void {
 
 describe('DeleteTilesCommand — snapshot/restore (P0-18)', () => {
   beforeEach(() => {
-    vaultStore.setPath('/vault');
     boardCacheStore.clear();
     boardStore.clearBoard();
     __resetDirtyTrackingForTests();
     __resetErrorBusForTests();
+    noteStore.__resetForTests();
+    // A restore refreshes the index; a later test's missing-file check must not see it.
+    vaultIndexStore.clear();
+    // After the tracking reset, which clears the active vault path the note
+    // writer resolves its root from.
+    vaultStore.setPath('/vault');
     vi.spyOn(uiStore, 'toast').mockImplementation(() => {});
   });
   afterEach(() => {

@@ -1,18 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { detectType, valueForRow, type PropType } from '@renderer/lib/utils/propertyRowTypes';
 import { diffToFrontmatterDelta } from '@renderer/lib/vault/frontmatterDelta';
-import {
-  markHydrated,
-  scheduleMarkdownWrite,
-  flushMarkdownWrite,
-  cancelAllMarkdownWrites,
-} from '@renderer/lib/vault/markdownFileWriter';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
-import { __resetBaselinesForTests } from '@renderer/lib/vault/fileBaselineRegistry';
-import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
  * Audit-10 B1 — the Properties popup coerced every frontmatter value through the
@@ -23,25 +17,11 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
  * verbatim, so they stay out of the delta and survive on disk byte-for-byte.
  *
  * These tests reproduce the popup's exact row round-trip with the SHARED pure
- * helpers, build the same delta the popup builds, then drive the real write
- * gateway (`assembleMarkdownFile`) and assert the bytes on disk. Reverting
- * `detectType`'s `raw` branch turns the "nested map / numeric list survived"
- * assertions red.
+ * helpers, build the same delta the popup builds, then queue it on the note
+ * store (which applies it to a fresh read of the file) and assert the bytes on
+ * disk. Reverting `detectType`'s `raw` branch turns the "nested map / numeric
+ * list survived" assertions red.
  */
-
-interface Captured {
-  channel: string;
-  args: unknown[];
-}
-
-function lastWrite(captured: Captured[]): string | undefined {
-  for (let i = captured.length - 1; i >= 0; i--) {
-    if (captured[i].channel === 'vault:write-existing-file-text') {
-      return captured[i].args[2] as string; // (vaultRoot, relPath, fileText)
-    }
-  }
-  return undefined;
-}
 
 interface Row {
   key: string;
@@ -98,49 +78,35 @@ describe('Audit-10 B1 — Properties popup round-trip preserves non-scalar FM (d
   });
 });
 
-describe('Audit-10 B1 — popup edit → gateway write preserves nested map + numeric array (disk bytes)', () => {
-  let captured: Captured[];
+describe('Audit-10 B1 — popup edit → note write preserves nested map + numeric array (disk bytes)', () => {
+  let vault: MemoryVault;
 
   beforeEach(() => {
     __resetDirtyTrackingForTests();
-    __resetBaselinesForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
     vaultIndexStore.clear();
     vaultStore.setPath('/vault');
-    captured = [];
+    noteStore.__resetForTests();
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
   afterEach(() => {
+    noteStore.__resetForTests();
     restoreFiloDefault();
     __resetDirtyTrackingForTests();
-    __resetBaselinesForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
     vaultIndexStore.clear();
     vaultStore.setPath('');
     vi.restoreAllMocks();
   });
 
-  function installDisk(content: string): void {
-    installFiloMock((channel: string, ...args: unknown[]) => {
-      captured.push({ channel, args });
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content, mtimeMs: 5, size: content.length };
-      }
-      if (channel === 'vault:stat') return { success: true, mtimeMs: 5, size: content.length };
-      if (channel === 'vault:write-existing-file-text') return { success: true };
-      return { success: true };
-    });
+  function lastWrite(rel: string): string | undefined {
+    return vault.writes.filter(([, r]) => r === rel).at(-1)?.[2];
   }
 
   it('a status edit keeps a nested map + numeric list byte-for-byte on disk', async () => {
     const relPath = 'Place.md';
     const disk =
       '---\ncoordinates:\n  lat: 5\n  lng: 6\nyears:\n  - 2024\n  - 2025\nstatus: todo\n---\nbody\n';
-    installDisk(disk);
-    markHydrated(relPath, false);
+    vault = installMemoryVault({ [relPath]: disk });
 
     // The parsed-from-disk FM the popup would load.
     const diskFm = {
@@ -154,18 +120,10 @@ describe('Audit-10 B1 — popup edit → gateway write preserves nested map + nu
     const after = rowsToObject(rows);
     const delta = diffToFrontmatterDelta(before, after);
 
-    scheduleMarkdownWrite({
-      vaultRoot: '/vault',
-      relPath,
-      frontmatter: after, // legacy fallback (ignored when a delta is present)
-      body: 'body',
-      callerId: `properties-popup:${relPath}`,
-      notePath: relPath,
-      frontmatterDelta: delta,
-    });
-    await flushMarkdownWrite(`properties-popup:${relPath}`);
+    noteStore.patchFrontmatter(relPath, delta);
+    await noteStore.flush(relPath);
 
-    const written = lastWrite(captured)!;
+    const written = lastWrite(relPath)!;
     expect(written).toContain('status: done'); // the edit landed
     expect(written).not.toContain('status: todo');
     // The untouched structured values survived on disk, uncoerced.
@@ -179,8 +137,7 @@ describe('Audit-10 B1 — popup edit → gateway write preserves nested map + nu
 
   it('adding a new scalar key preserves an untouched numeric array', async () => {
     const relPath = 'Nums.md';
-    installDisk('---\nyears:\n  - 2024\n  - 2025\n---\nbody\n');
-    markHydrated(relPath, false);
+    vault = installMemoryVault({ [relPath]: '---\nyears:\n  - 2024\n  - 2025\n---\nbody\n' });
 
     const diskFm = { years: [2024, 2025] };
     const rows = rowsFromObject(diskFm);
@@ -189,18 +146,10 @@ describe('Audit-10 B1 — popup edit → gateway write preserves nested map + nu
     const after = rowsToObject(rows);
     const delta = diffToFrontmatterDelta(before, after);
 
-    scheduleMarkdownWrite({
-      vaultRoot: '/vault',
-      relPath,
-      frontmatter: after,
-      body: 'body',
-      callerId: `properties-popup:${relPath}`,
-      notePath: relPath,
-      frontmatterDelta: delta,
-    });
-    await flushMarkdownWrite(`properties-popup:${relPath}`);
+    noteStore.patchFrontmatter(relPath, delta);
+    await noteStore.flush(relPath);
 
-    const written = lastWrite(captured)!;
+    const written = lastWrite(relPath)!;
     expect(written).toContain('reviewed: yes');
     expect(written).toContain('- 2024');
     expect(written).toContain('- 2025');

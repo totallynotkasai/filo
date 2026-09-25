@@ -83,9 +83,11 @@ const REL = 'Tasks/Task.md';
 
 describe('Audit 5.7 — DeleteTaskCommand optional backing-file delete', () => {
   beforeEach(() => {
-    vaultStore.setPath('/vault');
     boardCacheStore.clear();
+    // Runs the test-reset callbacks, which clear the active vault path the
+    // note store restores into, so it goes before setPath.
     __resetDirtyTrackingForTests();
+    vaultStore.setPath('/vault');
     __resetErrorBusForTests();
     vi.spyOn(uiStore, 'toast').mockImplementation(() => '');
   });

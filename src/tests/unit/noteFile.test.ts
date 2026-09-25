@@ -96,6 +96,11 @@ describe('assembleNoteText', () => {
     expect(out).toBe('Monday Tuesday\n');
   });
 
+  it('a frontmatter change keeps a body without a final newline byte-exact', () => {
+    const out = assembleNoteText(readNoteText('---\ntitle: T\n---\nreal body'), { delta: { set: { a: 1 }, unset: [] } });
+    expect(out).toBe('---\ntitle: T\na: 1\n---\nreal body');
+  });
+
   it('a note without frontmatter and without a final newline stays that way', () => {
     const out = assembleNoteText(readNoteText('Monday'), { body: 'Monday Tuesday' });
     expect(out).toBe('Monday Tuesday');

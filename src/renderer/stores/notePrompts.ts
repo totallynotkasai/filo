@@ -14,9 +14,13 @@
  * Each prompt is sticky and keyed per note, so one note never shows two.
  */
 import { uiStore } from './ui.svelte';
+import { fileTagsStore } from './fileTags.svelte';
+import { boardCacheStore } from './boardCache.svelte';
+import { promptClosedBoardFileMissing } from './vaultExternalPrompts';
 import { noteStore, setNotePromptHandlers, type NoteModel } from './notes.svelte';
 import { noteTitle } from './noteMeta';
 import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
+import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { backupExternalVersion } from '../lib/vault/keepLocalBackup';
 import { assembleNoteText, newNoteText, readNoteText } from '../lib/notes/noteFile';
 import { reportError } from '../lib/utils/errorBus';
@@ -51,10 +55,11 @@ function promptConflict(m: NoteModel): void {
         label: 'Keep mine',
         handler: async () => {
           const vaultRoot = getActiveVaultPath();
+          const identity = captureVaultIdentity();
           // Back up the other program's version before overwriting it; a
           // declined overwrite leaves both sides as they are.
           if (!vaultRoot || !(await backupExternalVersion(vaultRoot, m.relPath))) return;
-          if (getActiveVaultPath() !== vaultRoot) return;
+          if (!isStillSameVault(identity)) return;
           await noteStore.resolveConflict(m.relPath, 'keep-mine');
         },
       },
@@ -75,16 +80,27 @@ function promptDeleted(m: NoteModel): void {
         label: 'Keep mine',
         handler: async () => {
           const vaultRoot = getActiveVaultPath();
+          const identity = captureVaultIdentity();
           // Nothing to back up when the path is empty; if a file came back,
           // its version is backed up before it's compared with ours.
           if (!vaultRoot || !(await backupExternalVersion(vaultRoot, m.relPath))) return;
+          if (!isStillSameVault(identity)) return;
           const outcome = await noteStore.recreate(m.relPath, recreatedText(m));
           if (outcome === 'exists') void noteStore.onDiskChanged(m.relPath);
         },
       },
       {
         label: 'Discard',
-        handler: () => noteStore.discardDeleted(m.relPath),
+        handler: () => {
+          // The deletion is accepted: forget the note, its tags entry, and offer
+          // to remove the tiles that now point at nothing.
+          const rel = m.relPath;
+          noteStore.discardDeleted(rel);
+          fileTagsStore.dropFile(rel);
+          const tiles = boardCacheStore.findCascadeDeleteTargets(rel).tileIds.length;
+          const vaultRoot = getActiveVaultPath();
+          if (tiles > 0 && vaultRoot) promptClosedBoardFileMissing(rel, tiles, vaultRoot);
+        },
       },
     ],
   });
@@ -100,7 +116,9 @@ function promptReloadShrank(m: NoteModel, priorBody: string): void {
         label: 'Undo reload',
         handler: async () => {
           const vaultRoot = getActiveVaultPath();
+          const identity = captureVaultIdentity();
           if (!vaultRoot || !(await backupExternalVersion(vaultRoot, m.relPath))) return;
+          if (!isStillSameVault(identity)) return;
           noteStore.restoreBody(m.relPath, priorBody);
         },
       },

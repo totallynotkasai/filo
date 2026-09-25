@@ -1,35 +1,34 @@
 /**
- * Phase 4 / 4.2 — `tabStore.close` / `closeOthers` must NOT silently
- * destroy an editor when its flush failed. Closing a tab whose backing
- * IPC is rejecting (disk full, permission revoked, antivirus quarantine)
- * previously dropped the user's last edits with zero UI feedback.
+ * `tabStore.close` / `closeOthers` must NOT silently destroy an editor when
+ * its flush failed. Closing a tab whose backing IPC is rejecting (disk full,
+ * permission revoked, antivirus quarantine) would otherwise drop the user's
+ * last edits with zero UI feedback.
  *
- * The fix: on non-empty `failed[]` from any of the three drain calls
- * (markdown / frontmatter / board), tabStore opens a confirm dialog
- * ("Save failed — close anyway?"). Confirm proceeds with the close
- * (data is lost but the user asked for it). Cancel keeps the tab open
- * so the user can retry.
+ * On a failed note write the closing tab shows (or one no other tab can
+ * claim), tabStore opens a confirm dialog ("Save failed — close anyway?").
+ * Confirm proceeds with the close (data is lost but the user asked for it).
+ * Cancel keeps the tab open so the user can retry. A failure that belongs to
+ * a note another open tab shows is reported with a toast and doesn't gate
+ * this close.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { tabStore } from '@renderer/stores/tabs.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
-import {
-  __testRegisterFlusher as registerMarkdownFlusher,
-  __resetMarkdownFileWriterForTests as __resetMarkdownFlushersForTests,
-} from '@renderer/lib/vault/markdownFileWriter';
+import { vaultStore } from '@renderer/stores/vault.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import {
   cancelAllPendingWrites,
   __resetDirtyTrackingForTests,
 } from '@renderer/lib/boards/boardSaver';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
  * Polls until `uiStore.confirmDialog` becomes non-null or the timeout
- * expires. Needed because `tabStore.close` opens the dialog after at
- * least three sequential awaits (flushAllMarkdownWriters,
- * flushAllPendingFrontmatterWrites, flushDirty) and the exact microtask
- * count isn't stable.
+ * expires. `tabStore.close` opens the dialog after several sequential
+ * awaits (the note drain's read, write and board flush) and the exact
+ * microtask count isn't stable.
  */
 async function waitForConfirmDialog(): Promise<void> {
   for (let i = 0; i < 50; i++) {
@@ -39,29 +38,40 @@ async function waitForConfirmDialog(): Promise<void> {
   throw new Error('confirm dialog did not open within 50 ticks');
 }
 
-describe('tabStore.close — Phase 4 / 4.2 confirm on save failure', () => {
+const NOTE = '---\ntitle: Note\n---\nBody\n';
+
+describe('tabStore.close — confirm on save failure', () => {
+  let vault: MemoryVault;
+
+  /** Queues a frontmatter change on `rel` whose write will fail once. */
+  function failingEdit(rel: string): void {
+    vault.failNextWrite(rel, 'ENOSPC');
+    noteStore.patchFrontmatter(rel, { set: { status: 'edited' }, unset: [] });
+  }
+
   beforeEach(() => {
     restoreFiloDefault();
-    __resetMarkdownFlushersForTests();
+    // Runs the test-reset callbacks, which clear the active vault path.
     __resetDirtyTrackingForTests();
+    vaultStore.setPath('/vault');
+    noteStore.__resetForTests();
+    vault = installMemoryVault({ 'Note.md': NOTE, 'Other.md': NOTE });
     tabStore.closeAll();
     uiStore.closeConfirm();
   });
   afterEach(() => {
     cancelAllPendingWrites();
+    noteStore.__resetForTests();
     restoreFiloDefault();
-    __resetMarkdownFlushersForTests();
     __resetDirtyTrackingForTests();
     tabStore.closeAll();
     uiStore.closeConfirm();
+    vi.restoreAllMocks();
   });
 
-  it('opens a confirm dialog when a registered markdown flusher rejects', async () => {
-    registerMarkdownFlusher('text-tile:t1', async () => {
-      throw new Error('disk full');
-    });
-
-    const tab = tabStore.open('board-1', 'Board One', 'mindmap', '');
+  it('opens a confirm dialog when the write of a note the tab shows fails', async () => {
+    const tab = tabStore.openNote('Note.md', 'Note');
+    failingEdit('Note.md');
     const closePromise = tabStore.close(tab.id);
 
     await waitForConfirmDialog();
@@ -75,14 +85,13 @@ describe('tabStore.close — Phase 4 / 4.2 confirm on save failure', () => {
     await closePromise;
 
     expect(tabStore.tabs.some((t) => t.id === tab.id)).toBe(true);
+    expect(noteStore.hasPendingWrites('Note.md')).toBe(true);
   });
 
   it('completes the close when the user picks "Close anyway"', async () => {
-    registerMarkdownFlusher('text-tile:t1', async () => {
-      throw new Error('disk full');
-    });
-
     const tab = tabStore.open('board-1', 'Board One', 'mindmap', '');
+    // A failure no open tab can claim still gates the close.
+    failingEdit('Note.md');
     const closePromise = tabStore.close(tab.id);
 
     await waitForConfirmDialog();
@@ -98,22 +107,33 @@ describe('tabStore.close — Phase 4 / 4.2 confirm on save failure', () => {
   });
 
   it('does NOT open the confirm when all flushes succeed', async () => {
-    registerMarkdownFlusher('text-tile:t1', async () => {});
-    const tab = tabStore.open('board-1', 'Board One', 'mindmap', '');
+    const tab = tabStore.openNote('Note.md', 'Note');
+    noteStore.patchFrontmatter('Note.md', { set: { status: 'edited' }, unset: [] });
     await tabStore.close(tab.id);
 
     expect(uiStore.confirmDialog).toBeNull();
     expect(tabStore.tabs.length).toBe(0);
+    expect(vault.read('Note.md')).toContain('status: edited');
+  });
+
+  it('a failure in a note another tab shows is a toast, not a confirm on this close', async () => {
+    const toast = vi.spyOn(uiStore, 'toast');
+    const closing = tabStore.openNote('Note.md', 'Note');
+    const other = tabStore.openNote('Other.md', 'Other');
+    failingEdit('Other.md');
+
+    await tabStore.close(closing.id);
+
+    expect(uiStore.confirmDialog).toBeNull();
+    expect(tabStore.tabs.map((t) => t.id)).toEqual([other.id]);
+    expect(toast).toHaveBeenCalledWith(expect.stringContaining('other tabs'), 'warning', 6000);
   });
 
   it('closeOthers also surfaces a confirm when any flush rejects', async () => {
-    registerMarkdownFlusher('text-tile:fail', async () => {
-      throw new Error('EACCES');
-    });
-
     const t1 = tabStore.open('board-a', 'A', 'mindmap', '');
-    const t2 = tabStore.open('board-b', 'B', 'mindmap', '');
+    const t2 = tabStore.openNote('Note.md', 'Note');
     expect(tabStore.tabs.length).toBe(2);
+    failingEdit('Note.md');
 
     const closePromise = tabStore.closeOthers(t1.id);
 

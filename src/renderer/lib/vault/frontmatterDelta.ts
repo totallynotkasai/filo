@@ -11,7 +11,7 @@
  * from disk. The full object cache is a read/display cache only.
  *
  * Pure module — no store / IPC / DOM access — so it unit-tests in isolation and
- * `lib/vault/markdownFileWriter` (gateway) + `lib/boards/frontmatterWriteScheduler`
+ * `lib/notes/noteFile` + `lib/notes/noteWriter` + the field commands
  * can both depend on it without a cycle.
  */
 
@@ -42,7 +42,7 @@ export function isEmptyFrontmatterDelta(delta: FrontmatterDelta): boolean {
 }
 
 /**
- * Converts a field `patch` (the shape `documentStore.mergeFrontmatter` consumes)
+ * Converts a field `patch` (a command's key → value map)
  * into a delta. Mirrors `mergeFrontmatter`'s cleaning rule exactly: an empty
  * string / `null` / `undefined` value means "clear this key", so it becomes an
  * `unset`; every other value is a `set`. So a `{ priority: 'high' }` patch is a

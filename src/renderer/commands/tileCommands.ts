@@ -10,7 +10,7 @@ import type { Tile, Connection } from '../schema/index';
 import { cloneTile } from '../lib/utils/cloneTile';
 import { DeleteCardCommand } from './kanbanCommands';
 import { reportError } from '../lib/utils/errorBus';
-import { writeMarkdownAndReconcile } from '../lib/vault/syncOpenEditorsAfterDiskMutation';
+import { noteStore } from '../stores/notes.svelte';
 import { deleteVaultPath } from '../lib/vault/vaultOperations';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 
@@ -314,7 +314,7 @@ export class DeleteTilesCommand extends Command {
     // relies on it); `lastUndoCompletion` also lets a redo sequence behind a
     // pending undo.
     if (this.vaultRoot && this.fileSnapshots.length > 0) {
-      this.lastUndoCompletion = this.undoWithSnapshot(this.vaultRoot);
+      this.lastUndoCompletion = this.undoWithSnapshot();
       await this.lastUndoCompletion;
     } else {
       this.restorePlacements();
@@ -323,22 +323,14 @@ export class DeleteTilesCommand extends Command {
     }
   }
 
-  private async undoWithSnapshot(vaultRoot: string): Promise<void> {
+  private async undoWithSnapshot(): Promise<void> {
     const writePromises: Promise<unknown>[] = [];
     for (const snap of this.fileSnapshots) {
       const rel = snap.rel;
       const content = snap.content;
-      // Route through the coupled write+reconcile helper: the restored `.md`
-      // may be open in an editor elsewhere whose stale cache would invert this
-      // restore on its next save. `mode: 'full'` reloads that editor for the
-      // SAME path; `create: true` recreates the deleted file.
-      const writeP = writeMarkdownAndReconcile({
-        vaultRoot,
-        path: rel,
-        content,
-        mode: 'full',
-        create: true,
-      }).catch((err) => {
+      // Through the note writer, which recreates the file; a view of the note
+      // that is still open follows the restored bytes.
+      const writeP = noteStore.restore(rel, content).catch((err) => {
         uiStore.toast(
           `Tile restored but file content could not be recovered: ${rel}`,
           'error',

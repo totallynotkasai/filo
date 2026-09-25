@@ -7,94 +7,52 @@ import type { Board, WorkspaceState } from '../schema/index';
 import { boardCacheStore } from './boardCache.svelte';
 import { historyStore } from './history.svelte';
 import { uiStore } from './ui.svelte';
-import { flushAllMarkdownWriters } from '../lib/vault/markdownFileWriter';
-import { flushAllPendingFrontmatterWrites } from '../lib/boards/frontmatterWriteScheduler';
+import { noteStore } from './notes.svelte';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { runWithCloseDrain } from '../lib/editor/closeDrainGate.svelte';
 
 /**
- * Partitions a `flushAllMarkdownWriters` failure list into
- * (a) failures attributable to editors inside `boardId`'s board and
- * (b) failures we can POSITIVELY attribute to another board.
- *
- * Attribution rules:
- *   - `text-tile:${tileId}` is "other tabs" only when the tile is found in
- *     a different board's cached tiles. If the tile is in the closing
- *     board, or in no board at all (cache miss / not yet hydrated), treat
- *     as in-tab so the confirm still gates the close. Silently swallowing
- *     a failure is worse than surfacing a false positive.
- *   - `document-editor:${notePath}` is in-tab when the closing tab shows
- *     that note (a Document tab's `notePath`, or a Document board's
- *     `filePath`). Otherwise it is other-tabs only on a positive match
- *     against another open Document tab or board.
- *   - Any unknown owner shape stays in-tab.
+ * The notes a board shows: its text tiles' paths, or a Document board's note.
  */
-function partitionMarkdownFailuresByBoard(
-  failures: Array<{ ownerId: string; error: unknown }>,
-  boardId: string | null,
-): { inTab: Array<{ ownerId: string; error: unknown }>; otherTabs: Array<{ ownerId: string; error: unknown }> } {
-  if (!boardId) return { inTab: failures, otherTabs: [] };
+function notesOfBoard(boardId: string): VaultPath[] {
+  const entry = boardCacheStore.cache[boardId];
+  const out: VaultPath[] = [];
+  if (!entry) return out;
+  for (const def of Object.values(entry.tileDefs ?? {})) {
+    if (def.type === 'text' && def.filePath) out.push(vaultPath(def.filePath));
+  }
+  if (entry.board?.type === 'document' && entry.board.filePath) out.push(vaultPath(entry.board.filePath));
+  return out;
+}
 
-  // Read-only attribution maps built from a non-reactive cache snapshot.
-  // No `$state` mutation here, so SvelteSet / SvelteMap aren't required.
-  // Disabling the rule per-block is cleaner than pulling reactive
-  // collections into a pure helper.
+/**
+ * Partitions the note writer's failed paths into (a) notes the closing tab
+ * shows and (b) notes we can POSITIVELY attribute to another open tab. A
+ * failure attributable to nothing stays in-tab, so the confirm still gates
+ * the close: silently swallowing a failure is worse than a false positive.
+ */
+function partitionNoteFailuresByTab(
+  failed: string[],
+  closing: TabData | undefined,
+): { inTab: string[]; otherTabs: string[] } {
+  if (!closing) return { inTab: failed, otherTabs: [] };
+  // Read-only lookups built from a non-reactive snapshot.
   /* eslint-disable svelte/prefer-svelte-reactivity */
-  const cache = boardCacheStore.cache;
-  const closing = cache[boardId];
-  const closingTileIds = new Set<string>();
-  if (closing) {
-    for (const tileId of Object.keys(closing.tileDefs ?? {})) {
-      closingTileIds.add(tileId);
-    }
-  }
-  const closingTabNote = tabs.find((t) => t.boardId === boardId && t.notePath)?.notePath;
-  const closingDocPath: VaultPath | undefined = closing?.board?.type === 'document' && closing.board.filePath
-    ? vaultPath(closing.board.filePath)
-    : closingTabNote ? vaultPath(closingTabNote) : undefined;
-
-  // Build the global "tile id → owning boardId" and "note path → owning boardId"
-  // maps so we can positively attribute owners we don't see in the closing
-  // board's cache. Iterates the cache once per partition call; the cache
-  // size is bounded by the number of open boards (a few dozen at most).
-  const tileToBoard = new Map<string, string>();
-  const docToBoard = new Map<VaultPath, string>();
-  for (const [bid, entry] of Object.entries(cache)) {
-    for (const tileId of Object.keys(entry.tileDefs ?? {})) {
-      tileToBoard.set(tileId, bid);
-    }
-    if (entry.board?.type === 'document') {
-      if (entry.board.filePath) docToBoard.set(vaultPath(entry.board.filePath), bid);
-    }
-  }
+  const inClosing = new Set<VaultPath>(notesOfBoard(closing.boardId));
+  if (closing.notePath) inClosing.add(vaultPath(closing.notePath));
+  const elsewhere = new Set<VaultPath>();
   for (const t of tabs) {
-    if (t.notePath) docToBoard.set(vaultPath(t.notePath), t.boardId);
+    if (t.id === closing.id) continue;
+    for (const n of notesOfBoard(t.boardId)) elsewhere.add(n);
+    if (t.notePath) elsewhere.add(vaultPath(t.notePath));
   }
   /* eslint-enable svelte/prefer-svelte-reactivity */
-
-  const inTab: typeof failures = [];
-  const otherTabs: typeof failures = [];
-  for (const f of failures) {
-    if (f.ownerId.startsWith('text-tile:')) {
-      const tileId = f.ownerId.slice('text-tile:'.length);
-      if (closingTileIds.has(tileId)) { inTab.push(f); continue; }
-      const owningBoard = tileToBoard.get(tileId);
-      if (owningBoard && owningBoard !== boardId) { otherTabs.push(f); continue; }
-      // Not positively attributed elsewhere — surface in the closing tab's
-      // prompt so the user has at least one chance to see the failure.
-      inTab.push(f);
-      continue;
-    }
-    if (f.ownerId.startsWith('document-editor:')) {
-      const notePath = vaultPath(f.ownerId.slice('document-editor:'.length));
-      if (closingDocPath && closingDocPath === notePath) { inTab.push(f); continue; }
-      const owningBoard = docToBoard.get(notePath);
-      if (owningBoard && owningBoard !== boardId) { otherTabs.push(f); continue; }
-      inTab.push(f);
-      continue;
-    }
-    // Unknown owner shape — always surface so we never silently swallow a failure.
-    inTab.push(f);
+  const inTab: string[] = [];
+  const otherTabs: string[] = [];
+  for (const path of failed) {
+    const key = vaultPath(path);
+    if (!inClosing.has(key) && elsewhere.has(key)) otherTabs.push(path);
+    else inTab.push(path);
   }
   return { inTab, otherTabs };
 }
@@ -105,17 +63,13 @@ function partitionMarkdownFailuresByBoard(
  * it succeeded). `boardFailedCount` is passed for the multi-tab path.
  */
 function buildFailureDetails(
-  markdownFailed: number,
-  fmFailed: string[],
+  notesFailed: number,
   boardOk: boolean,
   boardFailedCount: number = 0,
 ): string {
   const parts: string[] = [];
-  if (markdownFailed > 0) {
-    parts.push(`${markdownFailed} text document${markdownFailed === 1 ? '' : 's'}`);
-  }
-  if (fmFailed.length > 0) {
-    parts.push(`${fmFailed.length} frontmatter write${fmFailed.length === 1 ? '' : 's'}`);
+  if (notesFailed > 0) {
+    parts.push(`${notesFailed} note${notesFailed === 1 ? '' : 's'}`);
   }
   const boardCount = boardFailedCount > 0 ? boardFailedCount : (boardOk ? 0 : 1);
   if (boardCount > 0) {
@@ -263,36 +217,28 @@ export const tabStore = {
     const proceed = await runWithCloseDrain(async () => {
       // Drain pending writes before unmount, collecting failures so we can
       // confirm before destroying the editor's in-memory edits (e.g. disk full).
-      const mdResult = await flushAllMarkdownWriters();
-      const fmResult = await flushAllPendingFrontmatterWrites();
+      const noteResult = await noteStore.flushAll();
       let boardOk = true;
       if (closing) {
         const result = await boardCacheStore.flushDirty(closing.boardId);
         boardOk = result.ok;
       }
 
-      // Only block the close on failures attributable to editors inside the
-      // closing tab. Failures in OTHER tabs are surfaced
-      // via a non-blocking toast so the user knows about them, but they
-      // don't gate this tab's close (the user has no recourse to retry a
-      // foreign tab's editor from this dialog).
-      const { inTab, otherTabs } = partitionMarkdownFailuresByBoard(
-        mdResult.failed,
-        closing?.boardId ?? null,
-      );
+      // Only block the close on failures of notes the closing tab shows.
+      // Failures in OTHER tabs are surfaced via a non-blocking toast so the
+      // user knows about them, but they don't gate this tab's close (the
+      // user has no recourse to retry a foreign tab's note from this dialog).
+      const { inTab, otherTabs } = partitionNoteFailuresByTab(noteResult.failed, closing);
       if (otherTabs.length > 0) {
         uiStore.toast(
-          `Pending writes failed for ${otherTabs.length} editor${otherTabs.length === 1 ? '' : 's'} in other tabs. Retry from those tabs.`,
+          `Pending writes failed for ${otherTabs.length} note${otherTabs.length === 1 ? '' : 's'} in other tabs. Retry from those tabs.`,
           'warning',
           6000,
         );
       }
-      const failed =
-        inTab.length > 0 ||
-        fmResult.failed.length > 0 ||
-        !boardOk;
+      const failed = inTab.length > 0 || !boardOk;
       if (failed) {
-        const details = buildFailureDetails(inTab.length, fmResult.failed, boardOk);
+        const details = buildFailureDetails(inTab.length, boardOk);
         const ok = await confirmCloseAnyway(details);
         if (!ok) return false;
       }
@@ -301,8 +247,7 @@ export const tabStore = {
       // engaged. A failure here is not re-confirmed (no loop) — the writers'
       // trackComponentWrite pipeline surfaces it (toast + `.filo/.dirty`
       // sentinel), so the bytes are recoverable.
-      await flushAllMarkdownWriters();
-      await flushAllPendingFrontmatterWrites();
+      await noteStore.flushAll();
       if (closing) {
         await boardCacheStore.flushDirty(closing.boardId);
       }
@@ -357,8 +302,7 @@ export const tabStore = {
     const proceed = await runWithCloseDrain(async () => {
       // Same save-failure gate as `close()`: if any drain failed, prompt
       // before destroying the editors.
-      const mdResult = await flushAllMarkdownWriters();
-      const fmResult = await flushAllPendingFrontmatterWrites();
+      const noteResult = await noteStore.flushAll();
 
       // Await every closing board's flush before mutating the tab list.
       let boardFailedCount = 0;
@@ -367,14 +311,10 @@ export const tabStore = {
         if (!result.ok) boardFailedCount++;
       }
 
-      const failed =
-        mdResult.failed.length > 0 ||
-        fmResult.failed.length > 0 ||
-        boardFailedCount > 0;
+      const failed = noteResult.failed.length > 0 || boardFailedCount > 0;
       if (failed) {
         const details = buildFailureDetails(
-          mdResult.failed.length,
-          fmResult.failed,
+          noteResult.failed.length,
           boardFailedCount === 0,
           boardFailedCount,
         );
@@ -383,8 +323,7 @@ export const tabStore = {
       }
 
       // Belt-and-suspenders re-flush before the bulk unmount.
-      await flushAllMarkdownWriters();
-      await flushAllPendingFrontmatterWrites();
+      await noteStore.flushAll();
       for (const boardId of closingBoardIds) {
         await boardCacheStore.flushDirty(boardId);
       }

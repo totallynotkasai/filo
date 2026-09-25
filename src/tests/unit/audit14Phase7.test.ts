@@ -1,10 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { DeleteTaskCommand } from '@renderer/commands/taskCommands';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
-import { markHydrated, cancelAllMarkdownWrites } from '@renderer/lib/vault/markdownFileWriter';
 import { __resetDirtyTrackingForTests, trackComponentWrite } from '@renderer/lib/boards/writeStateTracking';
 import {
   checkRecovery,
@@ -25,8 +24,8 @@ import type { TaskListBoard, TileDefinition } from '@renderer/schema/index';
  *
  * 7.3 — DeleteTaskCommand.undo reconciles a Document still open on the restored
  *       task `.md` (the task twin of the 2.3 DeleteTilesCommand fix). The
- *       file-level RECONCILE_EXEMPT for `taskCommands.ts` was removed in 7.3, so
- *       the snapshot-restore write must route through `writeMarkdownAndReconcile`
+ *       snapshot-restore write goes through the note store, so every open view
+ *       of the note follows the restored bytes
  *       — otherwise a Document open on a second pane keeps its stale frontmatter
  *       cache and its next debounced body save silently inverts the restore (#4).
  */
@@ -69,16 +68,14 @@ function makeTaskListWithTask(boardId: string, tileId: string, filePath: string)
 describe('Audit-14 7.3 — DeleteTaskCommand.undo reconciles open editors', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
+    noteStore.__resetForTests();
     boardCacheStore.clear();
     boardStore.clearBoard();
     vaultStore.setPath('/vault');
   });
   afterEach(() => {
-    cancelAllMarkdownWrites();
+    noteStore.__resetForTests();
     __resetDirtyTrackingForTests();
-    documentStore.clear();
     boardCacheStore.clear();
     boardStore.clearBoard();
     vaultStore.setPath('');
@@ -88,14 +85,23 @@ describe('Audit-14 7.3 — DeleteTaskCommand.undo reconciles open editors', () =
   it('reloads a Document open on the restored task .md so its next save cannot invert the restore', async () => {
     const relPath = 'Tasks/Buy milk.md';
     const restoredBytes = '---\ncompleted: false\npriority: high\n---\nbuy milk\n';
-    const writtenPaths = new Set<string>();
+    const disk = new Map<string, string>([[relPath, '---\ncompleted: true\n---\nstale pre-delete body\n']]);
     installFiloMock((channel: string, ...args: unknown[]) => {
-      if (channel === 'vault:delete') return { success: true };
-      if (channel === 'vault:write-file-text') {
-        writtenPaths.add(args[1] as string);
-        return { success: true, path: `${args[0]}/${args[1]}` };
+      const rel = String(args[1] ?? '');
+      if (channel === 'vault:delete') {
+        disk.delete(rel.replace(/^\/vault\//, ''));
+        return { success: true };
       }
-      if (channel === 'vault:file-exists') return writtenPaths.has(args[1] as string);
+      if (channel === 'vault:read-file-text') {
+        const content = disk.get(rel);
+        if (content === undefined) return { success: false, code: 'ENOENT', error: 'ENOENT' };
+        return { success: true, content, mtimeMs: 1, size: content.length };
+      }
+      if (channel === 'vault:write-file-text') {
+        disk.set(rel, String(args[2]));
+        return { success: true, path: `${args[0]}/${rel}` };
+      }
+      if (channel === 'vault:file-exists') return disk.has(rel);
       if (channel === 'vault:stat') return { ok: true, mtimeMs: 1, size: 1 };
       return { ok: true, success: true };
     });
@@ -104,17 +110,11 @@ describe('Audit-14 7.3 — DeleteTaskCommand.undo reconciles open editors', () =
     const fixture = makeTaskListWithTask('board-tl', 't_1', relPath);
     boardCacheStore.hydrate({ 'board-tl': fixture }, { 'board-tl': 'board-tl.board.json' });
 
-    // …and the SAME file is open as a Document on a second pane, holding a stale
-    // pre-delete in-memory body + frontmatter.
-    documentStore.loadDocument({
-      filename: relPath,
-      title: 'Buy milk',
-      body: 'stale pre-delete body',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter(relPath, { completed: true }, '---\ncompleted: true\n---');
-    markHydrated(relPath, false);
+    // …and the SAME file is open as a Document on a second pane, holding the
+    // pre-delete body + frontmatter.
+    const model = noteStore.acquire(relPath, 'document-editor:pane2');
+    await model.loaded;
+    expect(model.frontmatter).toEqual({ completed: true });
 
     const cmd = new DeleteTaskCommand('board-tl', 't_1', {
       vaultRoot: '/vault',
@@ -122,19 +122,23 @@ describe('Audit-14 7.3 — DeleteTaskCommand.undo reconciles open editors', () =
     });
     await cmd.execute();
     await cmd.lastExecuteCompletion;
+    expect(disk.has(relPath)).toBe(false);
 
     await cmd.undo();
     await cmd.lastUndoCompletion;
 
-    // 7.3 — the open editor reflects the restored bytes. Under a raw write it
-    // would stay pinned to the stale body, and its next debounced save would
-    // invert the restore (#4).
-    expect(documentStore.getDocument(relPath)?.body).toBe('buy milk\n');
-    expect(documentStore.getFrontmatter(relPath)).toEqual({ completed: false, priority: 'high' });
+    // The open editor's model reflects the restored bytes: a view pinned to
+    // the stale body would invert the restore on its next save.
+    expect(disk.get(relPath)).toBe(restoredBytes);
+    expect(noteStore.get(relPath)).toBe(model);
+    expect(model.body).toBe('buy milk\n');
+    expect(model.frontmatter).toEqual({ completed: false, priority: 'high' });
+    expect(model.hasUnsavedBody).toBe(false);
 
     // The task placement was also restored (full undo round-trip).
     const tasks = (boardCacheStore.cache['board-tl']?.board as TaskListBoard).tasks ?? [];
     expect(tasks.some((t) => t.tileId === 't_1')).toBe(true);
+    noteStore.release(relPath, 'document-editor:pane2');
   });
 });
 

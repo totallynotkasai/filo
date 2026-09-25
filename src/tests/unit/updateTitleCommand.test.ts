@@ -12,14 +12,9 @@ import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { UpdateTitleCommand } from '@renderer/commands/index';
-import {
-  flushAllPendingFrontmatterWrites,
-  resetFrontmatterScheduler,
-} from '@renderer/lib/boards/frontmatterWriteScheduler';
-import { cancelAllMarkdownWrites } from '@renderer/lib/vault/markdownFileWriter';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
@@ -72,26 +67,22 @@ function kanbanFixture(): V7BoardFileData {
 describe('UpdateTitleCommand', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    resetFrontmatterScheduler();
     vaultStore.setPath('/vault');
     boardCacheStore.clear();
     boardStore.clearBoard();
     vaultIndexStore.clear();
-    documentStore.clear();
+    noteStore.__resetForTests();
     boardCacheStore.hydrate({ kb: kanbanFixture() }, { kb: 'Board.board.json' });
   });
   afterEach(() => {
     for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
     restoreFiloDefault();
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    resetFrontmatterScheduler();
     vaultStore.setPath('');
     boardCacheStore.clear();
     boardStore.clearBoard();
     vaultIndexStore.clear();
-    documentStore.clear();
+    noteStore.__resetForTests();
   });
 
   it("a note's title edit rewrites only title:, never renames the file, and undo restores it", async () => {
@@ -108,7 +99,7 @@ describe('UpdateTitleCommand', () => {
     });
 
     await cmd.execute();
-    await flushAllPendingFrontmatterWrites();
+    await noteStore.flushAll();
     expect(disk.get()).toBe(original.replace('title: Errand', 'title: Weekly errand'));
     expect(disk.renames).toEqual([]);
     const def = boardCacheStore.cache.kb.tileDefs.t1 as Record<string, unknown>;
@@ -116,7 +107,7 @@ describe('UpdateTitleCommand', () => {
     expect(def.title).toBeUndefined();
 
     await cmd.undo();
-    await flushAllPendingFrontmatterWrites();
+    await noteStore.flushAll();
     expect(disk.get()).toBe(original);
     expect((boardCacheStore.cache.kb.tileDefs.t1 as Record<string, unknown>).titleHtml).toBeUndefined();
   });
@@ -135,12 +126,12 @@ describe('UpdateTitleCommand', () => {
     });
 
     await cmd.execute();
-    await flushAllPendingFrontmatterWrites();
+    await noteStore.flushAll();
     expect(disk.get()).toContain('title: Named');
     expect(disk.get()).toContain('priority: low');
 
     await cmd.undo();
-    await flushAllPendingFrontmatterWrites();
+    await noteStore.flushAll();
     expect(disk.get()).toBe(original);
   });
 

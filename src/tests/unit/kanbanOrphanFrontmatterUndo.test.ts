@@ -1,76 +1,39 @@
 /**
- * Undo works for a kanban card whose note has no open document.
+ * Undo works for a kanban card whose note no view holds.
  *
- * The shared frontmatter scheduler builds its bytes from vaultIndexStore, not
- * from a patch, so it cannot carry an edit for a note with no document state.
- * `UpdateOrphanFrontmatterCommand` writes directly via
- * `vault:write-existing-file-text` and supports undo.
- *
- * FILO-UR-1 (Audit-11) — the orphan write now threads a FrontmatterDelta, so the
- * gateway reads disk in-chain and applies only the changed keys (preserving
- * untouched keys, incl. present-but-empty ones). The mock therefore models a real
- * mutable file (reads return current disk, writes mutate it), and a genuinely
- * failed disk read is a LOUD failure — no silent resurrection from the stale
- * index. See the read-fail test below.
+ * `UpdateCardFieldCommand` sends its patch to the note writer as a frontmatter
+ * delta, which lands on a fresh read of the file: untouched keys and the body
+ * on disk are kept, and a stale vault index is never the write source. A file
+ * that can't be read fails loudly instead of being recreated from the index.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
-import { UpdateOrphanFrontmatterCommand } from '@renderer/commands/index';
-import { cancelAllMarkdownWrites } from '@renderer/lib/vault/markdownFileWriter';
+import { UpdateCardFieldCommand } from '@renderer/commands/index';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
-import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { restoreFiloDefault } from '../helpers/filoBridge';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 
-interface FiloRecorder {
-  calls: Array<{ channel: string; args: unknown[] }>;
-}
+const DISK = '---\npriority: low\nstatus: active\n---\nbody content';
 
-/**
- * Mutable-disk mock. The orphan write routes through the gateway DELTA branch
- * (FILO-UR-1), which reads `vault:read-file-text` in-chain and applies the delta
- * to those fresh bytes — so the recorder models a real file: reads return the
- * current disk and a write mutates it (so an execute→undo round-trip observes its
- * own prior write). `vault:stat` mirrors the same (mtime,size) so the pre-write
- * drift check sees no external change.
- */
-function installRecorder(
-  initialDisk = '---\npriority: low\nstatus: active\n---\nbody content',
-): FiloRecorder {
-  const calls: FiloRecorder['calls'] = [];
-  let disk = initialDisk;
-  installFiloMock((channel: unknown, ...args: unknown[]) => {
-    calls.push({ channel: channel as string, args });
-    if (channel === 'vault:read-file-text') {
-      return { success: true, content: disk, mtimeMs: 1, size: disk.length };
-    }
-    if (channel === 'vault:stat') {
-      return { success: true, mtimeMs: 1, size: disk.length };
-    }
-    if (channel === 'vault:write-existing-file-text') {
-      disk = args[2] as string;
-      return { success: true };
-    }
-    return undefined;
-  });
-  return { calls };
-}
+describe('UpdateCardFieldCommand on a note no view holds', () => {
+  let vault: MemoryVault;
 
-describe('UpdateOrphanFrontmatterCommand', () => {
-  let recorder: FiloRecorder;
+  const mdWrites = (): string[] => vault.writes.filter(([, rel]) => rel.endsWith('.md')).map(([, , t]) => t);
 
   beforeEach(() => {
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    recorder = installRecorder();
     vaultStore.setPath('/vault');
+    noteStore.__resetForTests();
+    vault = installMemoryVault({ 'Card.md': DISK });
     boardCacheStore.clear();
     boardStore.clearBoard();
     vaultIndexStore.clear();
-    // Seed vaultIndex with a known FM + body. With the disk read succeeding this
-    // is only the degraded fallback the read-fail test exercises.
+    // A stale index entry: never the write source.
     vaultIndexStore.restoreMetadata('Card.md', {
       path: 'Card.md',
       title: 'Card',
@@ -79,154 +42,89 @@ describe('UpdateOrphanFrontmatterCommand', () => {
       frontmatter: { priority: 'low' },
       rawFrontmatter: 'priority: low',
       links: [],
-      content: 'body content',
+      content: 'stale index body',
       lastModified: 0,
     });
   });
   afterEach(() => {
-    restoreFiloDefault();
+    noteStore.__resetForTests();
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
     vaultStore.setPath('');
     boardCacheStore.clear();
     boardStore.clearBoard();
     vaultIndexStore.clear();
+    restoreFiloDefault();
   });
 
-  it('execute writes the patched frontmatter via vault:write-existing-file-text', async () => {
-    const cmd = new UpdateOrphanFrontmatterCommand(
-      'kb',
-      'Card.md',
-      { priority: 'high' },
-      { priority: 'low' },
-    );
+  it('execute writes the patched frontmatter and keeps the body and untouched keys', async () => {
+    const cmd = new UpdateCardFieldCommand('kb', 'Card.md', { priority: 'high' }, { priority: 'low' });
     await cmd.execute();
-    const writeCall = recorder.calls.find((c) => c.channel === 'vault:write-existing-file-text');
-    expect(writeCall).toBeDefined();
-    expect(writeCall?.args[1]).toBe('Card.md');
-    expect(writeCall?.args[2]).toContain('priority: high');
-    expect(writeCall?.args[2]).toContain('body content');
+    await noteStore.flushAll();
+    expect(vault.read('Card.md')).toBe('---\npriority: high\nstatus: active\n---\nbody content');
   });
 
-  it('undo writes the inverse patch back through the same channel', async () => {
-    const cmd = new UpdateOrphanFrontmatterCommand(
-      'kb',
-      'Card.md',
-      { priority: 'high' },
-      { priority: 'low' },
-    );
+  it('undo writes the inverse patch back', async () => {
+    const cmd = new UpdateCardFieldCommand('kb', 'Card.md', { priority: 'high' }, { priority: 'low' });
     await cmd.execute();
+    await noteStore.flushAll();
     await cmd.undo();
-    const writes = recorder.calls.filter((c) => c.channel === 'vault:write-existing-file-text');
-    expect(writes.length).toBeGreaterThanOrEqual(2);
-    // Last write reflects the inverse patch (priority: low).
-    expect(writes[writes.length - 1]?.args[2]).toContain('priority: low');
+    await noteStore.flushAll();
+    expect(mdWrites().length).toBeGreaterThanOrEqual(2);
+    expect(vault.read('Card.md')).toContain('priority: low');
+    expect(vault.read('Card.md')).toContain('status: active');
   });
 
-  it('handles missing vault gracefully (no-op)', async () => {
+  it('handles a missing vault gracefully (nothing written)', async () => {
     vaultStore.setPath('');
-    const cmd = new UpdateOrphanFrontmatterCommand(
-      'kb',
-      'Card.md',
-      { priority: 'high' },
-      { priority: 'low' },
-    );
+    const cmd = new UpdateCardFieldCommand('kb', 'Card.md', { priority: 'high' }, { priority: 'low' });
     await cmd.execute();
-    expect(recorder.calls.find((c) => c.channel === 'vault:write-existing-file-text')).toBeUndefined();
+    await noteStore.flushAll();
+    expect(mdWrites()).toEqual([]);
+    expect(vault.read('Card.md')).toBe(DISK);
   });
 
   it('deep-clones the patch so caller-side mutation cannot poison', async () => {
     const patch: Record<string, unknown> = { priority: 'high' };
     const inverse: Record<string, unknown> = { priority: 'low' };
-    const cmd = new UpdateOrphanFrontmatterCommand('kb', 'Card.md', patch, inverse);
+    const cmd = new UpdateCardFieldCommand('kb', 'Card.md', patch, inverse);
     patch.priority = 'poisoned';
 
     await cmd.execute();
-    const writeCall = recorder.calls.find((c) => c.channel === 'vault:write-existing-file-text');
-    expect(writeCall?.args[2]).toContain('priority: high');
-    expect(writeCall?.args[2]).not.toContain('poisoned');
+    await noteStore.flushAll();
+    expect(vault.read('Card.md')).toContain('priority: high');
+    expect(vault.read('Card.md')).not.toContain('poisoned');
   });
 
   it('clears a field via an unset delta (empty value → key removed)', async () => {
-    const cmd = new UpdateOrphanFrontmatterCommand(
-      'kb',
-      'Card.md',
-      { priority: '' }, // clears
-      { priority: 'low' },
-    );
+    const cmd = new UpdateCardFieldCommand('kb', 'Card.md', { priority: '' }, { priority: 'low' });
     await cmd.execute();
-    const writeCall = recorder.calls.find((c) => c.channel === 'vault:write-existing-file-text');
-    // priority field should be absent now (no `priority:` line in YAML).
-    expect(writeCall?.args[2]).not.toContain('priority:');
+    await noteStore.flushAll();
+    expect(vault.read('Card.md')).not.toContain('priority:');
+    expect(vault.read('Card.md')).toContain('status: active');
   });
 
-  /**
-   * D.8 — when an external edit landed on disk between the last index rebuild and
-   * the orphan-frontmatter command running, the command must assemble the patched
-   * FM over the *fresh* disk body, not the stale index snapshot.
-   */
-  it('reads body fresh from disk so external edits do not get clobbered', async () => {
-    const freshDiskContent = '---\npriority: low\n---\nfresh disk body — index is stale';
-    installFiloMock((channel: unknown, ...args: unknown[]) => {
-      recorder.calls.push({ channel: channel as string, args });
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content: freshDiskContent, mtimeMs: 1, size: freshDiskContent.length };
-      }
-      if (channel === 'vault:stat') {
-        return { success: true, mtimeMs: 1, size: freshDiskContent.length };
-      }
-      if (channel === 'vault:write-existing-file-text') {
-        return { success: true };
-      }
-      return undefined;
-    });
+  it('assembles over the fresh disk body, not the stale index', async () => {
+    vault.writeExternally('Card.md', '---\npriority: low\n---\nfresh disk body — index is stale');
 
-    const cmd = new UpdateOrphanFrontmatterCommand(
-      'kb',
-      'Card.md',
-      { priority: 'high' },
-      { priority: 'low' },
-    );
+    const cmd = new UpdateCardFieldCommand('kb', 'Card.md', { priority: 'high' }, { priority: 'low' });
     await cmd.execute();
+    await noteStore.flushAll();
 
-    const writeCall = recorder.calls.find((c) => c.channel === 'vault:write-existing-file-text');
-    expect(writeCall).toBeDefined();
-    // Body came from the fresh disk read, not the (stale) index entry.
-    expect(writeCall?.args[2]).toContain('fresh disk body');
-    expect(writeCall?.args[2]).not.toContain('body content');
-    expect(writeCall?.args[2]).toContain('priority: high');
+    const written = vault.read('Card.md') ?? '';
+    expect(written).toContain('fresh disk body');
+    expect(written).not.toContain('stale index body');
+    expect(written).toContain('priority: high');
   });
 
-  /**
-   * FILO-UR-1 (Audit-11) — a genuinely failed disk read is a LOUD failure.
-   * Pre-fix, the orphan write fell back to the (possibly stale) vault index and
-   * WROTE it, resurrecting a file the user may have deleted externally. The delta
-   * path reads disk in-chain; a read failure rejects (markPathFailed + throw)
-   * rather than committing stale bytes — matching the gateway's "never resurrect
-   * from a stale snapshot" rule.
-   */
-  it('surfaces a loud failure when the disk read fails (no silent resurrection)', async () => {
-    installFiloMock((channel: unknown, ...args: unknown[]) => {
-      recorder.calls.push({ channel: channel as string, args });
-      if (channel === 'vault:read-file-text') {
-        return { success: false, code: 'ENOENT' };
-      }
-      if (channel === 'vault:write-existing-file-text') {
-        return { success: true };
-      }
-      return undefined;
-    });
+  it('a note that cannot be read fails loudly and is not recreated from the index', async () => {
+    vault.remove('Card.md');
 
-    const cmd = new UpdateOrphanFrontmatterCommand(
-      'kb',
-      'Card.md',
-      { priority: 'high' },
-      { priority: 'low' },
-    );
-    await expect(cmd.execute()).rejects.toThrow();
+    const cmd = new UpdateCardFieldCommand('kb', 'Card.md', { priority: 'high' }, { priority: 'low' });
+    await cmd.execute();
+    const result = await noteStore.flushAll();
 
-    // No bytes were written — the stale index was NOT resurrected to disk.
-    const writeCall = recorder.calls.find((c) => c.channel === 'vault:write-existing-file-text');
-    expect(writeCall).toBeUndefined();
+    expect(result.failed).toContain('Card.md');
+    expect(mdWrites()).toEqual([]);
+    expect(vault.read('Card.md')).toBeUndefined();
   });
 });

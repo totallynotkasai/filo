@@ -4,7 +4,7 @@ import type {
   KanbanTilePlacement,
   Tile,
 } from '../../schema/index';
-import { documentStore } from '../../stores/document.svelte';
+import { noteStore } from '../../stores/notes.svelte';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import { vaultPathForTile } from './kanbanFrontmatterWriter';
 
@@ -84,7 +84,7 @@ export class KanbanFiltersAndSort {
       for (const t of tags) haystack.push(String(t).toLowerCase());
       const notePath = resolveTextTileVaultPath(tile);
       if (notePath) {
-        const body = documentStore.getDocument(notePath)?.body ?? '';
+        const body = noteStore.get(notePath)?.body ?? '';
         if (body) haystack.push(body.toLowerCase());
       }
       const path = vaultPathForTile(tile);

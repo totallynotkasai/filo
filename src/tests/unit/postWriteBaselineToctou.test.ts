@@ -1,152 +1,79 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { documentStore } from '@renderer/stores/document.svelte';
-import {
-  scheduleMarkdownWrite,
-  flushMarkdownWrite,
-  markHydrated,
-  cancelAllMarkdownWrites,
-  type WriteArgs,
-} from '@renderer/lib/vault/markdownFileWriter';
-import { getBaseline, __resetBaselinesForTests } from '@renderer/lib/vault/fileBaselineRegistry';
-import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
-import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
-
 /**
- * Audit-7 L5 — post-write baseline re-stat TOCTOU.
- *
- * The gateway writes the file, then runs a SEPARATE `vault:stat` to refresh the
- * drift baseline. An external edit landing between the write IPC resolving and
- * the stat IPC resolving would make `postStat` reflect FOREIGN (mtime,size);
- * stamping that poisons the baseline so the NEXT write's drift check matches and
- * silently overwrites the external edit. The fix compares the post-write stat's
- * size against the exact UTF-8 byte length just written: a mismatch means the
- * stat observed someone else's write, so the baseline is NOT stamped (kept,
- * per DI-14) and the next write re-detects the drift instead.
+ * After a write, the note's base (what the next drift check compares) is the
+ * bytes we wrote, never a later look at the disk. Another program's write that
+ * lands right after ours, even one of exactly the same byte count, is
+ * therefore not mistaken for ours: a clean note follows it, and an unsaved
+ * edit meets it as a conflict instead of silently overwriting it.
  */
-function bodyWriteArgs(relPath: string, body: string): WriteArgs {
-  return {
-    vaultRoot: '/vault',
-    relPath,
-    frontmatter: documentStore.getFrontmatter(relPath) ?? {},
-    body,
-    callerId: `text-tile:${relPath}`,
-    notePath: relPath,
-  };
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { noteStore, setNotePromptHandlers } from '@renderer/stores/notes.svelte';
+import { setActiveVaultPath } from '@renderer/lib/vault/activeVaultPath';
+import { beginVaultGeneration, __resetVaultIdentityForTests } from '@renderer/lib/vault/vaultIdentity';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
+import { noteTextHash } from '@renderer/lib/notes/noteFile';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
+
+let vault: MemoryVault;
+const prompts = { conflict: vi.fn(), deletedWithUnsavedBody: vi.fn(), reloadShrank: vi.fn(), dismiss: vi.fn() };
+
+beforeEach(() => {
+  __resetDirtyTrackingForTests();
+  __resetVaultIdentityForTests();
+  beginVaultGeneration('/vault');
+  setActiveVaultPath('/vault');
+  vault = installMemoryVault({ 'Notes/L5.md': '---\ntitle: T\n---\norig\n' });
+  noteStore.__resetForTests();
+  for (const fn of Object.values(prompts)) fn.mockReset();
+  setNotePromptHandlers(prompts);
+});
+
+afterEach(() => {
+  noteStore.__resetForTests();
+  setActiveVaultPath('');
+  restoreFiloDefault();
+});
+
+async function writeOurs(): Promise<string> {
+  const m = noteStore.acquire('Notes/L5.md', 'tile');
+  await m.loaded;
+  noteStore.setBody('Notes/L5.md', 'edited body', 'tile');
+  await noteStore.flush('Notes/L5.md');
+  return vault.read('Notes/L5.md') ?? '';
 }
 
-describe('Audit-7 L5 — post-write baseline TOCTOU guard', () => {
-  beforeEach(() => {
-    __resetDirtyTrackingForTests();
-    __resetBaselinesForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
-  });
-  afterEach(() => {
-    cancelAllMarkdownWrites();
-    __resetDirtyTrackingForTests();
-    __resetBaselinesForTests();
-    documentStore.clear();
-    restoreFiloDefault();
+/** Different bytes of exactly the same UTF-8 length. */
+function sameSizeForeign(ours: string): string {
+  return ours.replace('edited body', 'edited BODY');
+}
+
+describe('the base after our write', () => {
+  it('is the bytes we wrote', async () => {
+    const ours = await writeOurs();
+    expect(ours).toBe('---\ntitle: T\n---\nedited body\n');
+    expect(noteStore.get('Notes/L5.md')?.base?.hash).toBe(noteTextHash(ours));
   });
 
-  function setup(relPath: string): void {
-    documentStore.loadDocument({
-      filename: relPath,
-      title: 'T',
-      body: 'orig',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter(relPath, { title: 'T' }, 'title: T');
-    // No mtime → no baseline seeded, so the ONLY vault:stat is the post-write one.
-    markHydrated(relPath, false);
-  }
+  it('a same-size foreign write landing right after ours is taken as theirs by a clean note', async () => {
+    const ours = await writeOurs();
+    const theirs = sameSizeForeign(ours);
+    expect(theirs.length).toBe(ours.length);
+    vault.writeExternally('Notes/L5.md', theirs);
 
-  it('does NOT stamp the baseline when the post-write stat size differs from the bytes written', async () => {
-    const relPath = 'Notes/L5A.md';
-    const callerId = `text-tile:${relPath}`;
-    setup(relPath);
-
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:write-existing-file-text') return { ok: true, success: true };
-      if (channel === 'vault:stat') {
-        // Post-write stat observed a FOREIGN edit that grew the file — its
-        // size can't match the small note we wrote.
-        return { ok: true, mtimeMs: 999, size: 10_000_000 };
-      }
-      return { ok: true, success: true };
-    });
-
-    documentStore.updateContent(relPath, '<p>x</p>', 'edited body', callerId);
-    scheduleMarkdownWrite(bodyWriteArgs(relPath, 'edited body'));
-    await flushMarkdownWrite(callerId);
-
-    // Size mismatch → the foreign (mtime,size) is rejected. No prior baseline
-    // existed (markHydrated had no mtime), so it stays absent — NOT poisoned.
-    expect(getBaseline(relPath)).toBeUndefined();
+    await noteStore.onDiskChanged('Notes/L5.md');
+    const m = noteStore.get('Notes/L5.md');
+    expect(m?.body).toBe('edited BODY\n');
+    expect(m?.base?.hash).toBe(noteTextHash(theirs));
   });
 
-  it('stamps the baseline to the post-write stat when the read-back is byte-identical to what we wrote', async () => {
-    const relPath = 'Notes/L5B.md';
-    const callerId = `text-tile:${relPath}`;
-    setup(relPath);
+  it('the next edit meets that foreign write as a conflict, never overwriting it', async () => {
+    const ours = await writeOurs();
+    const theirs = sameSizeForeign(ours);
+    vault.writeExternally('Notes/L5.md', theirs);
 
-    let writtenBytes = 0;
-    let writtenText = '';
-    installFiloMock((channel: string, ...args: unknown[]) => {
-      if (channel === 'vault:write-existing-file-text') {
-        writtenText = String(args[2]);
-        writtenBytes = new TextEncoder().encode(writtenText).length;
-        return { ok: true, success: true };
-      }
-      // Clean self-write: the post-write stat reflects exactly our bytes…
-      if (channel === 'vault:stat') return { ok: true, mtimeMs: 4242, size: writtenBytes };
-      // …and the Audit-17 5.3 read-back returns exactly what we wrote.
-      if (channel === 'vault:read-file-text') {
-        return { ok: true, success: true, content: writtenText, mtimeMs: 4242, size: writtenBytes };
-      }
-      return { ok: true, success: true };
-    });
-
-    documentStore.updateContent(relPath, '<p>x</p>', 'edited body', callerId);
-    scheduleMarkdownWrite(bodyWriteArgs(relPath, 'edited body'));
-    await flushMarkdownWrite(callerId);
-
-    expect(getBaseline(relPath)).toMatchObject({ mtimeMs: 4242, size: writtenBytes });
-    expect(writtenBytes).toBeGreaterThan(0);
-  });
-
-  it('Audit-17 5.3 — does NOT stamp when a SAME-byte-count foreign write landed in the gap', async () => {
-    const relPath = 'Notes/L5C.md';
-    const callerId = `text-tile:${relPath}`;
-    setup(relPath);
-
-    let writtenBytes = 0;
-    installFiloMock((channel: string, ...args: unknown[]) => {
-      if (channel === 'vault:write-existing-file-text') {
-        writtenBytes = new TextEncoder().encode(String(args[2])).length;
-        return { ok: true, success: true };
-      }
-      // The post-write stat's SIZE matches our bytes (the size-only guard would
-      // have been fooled)…
-      if (channel === 'vault:stat') return { ok: true, mtimeMs: 777, size: writtenBytes };
-      // …but the read-back is FOREIGN content of the same byte length — a
-      // different edit landed in the write→stat gap. Pad/truncate to writtenBytes
-      // so the size matches but the bytes differ.
-      if (channel === 'vault:read-file-text') {
-        const foreign = 'Z'.repeat(writtenBytes);
-        return { ok: true, success: true, content: foreign, mtimeMs: 777, size: writtenBytes };
-      }
-      return { ok: true, success: true };
-    });
-
-    documentStore.updateContent(relPath, '<p>x</p>', 'edited body', callerId);
-    scheduleMarkdownWrite(bodyWriteArgs(relPath, 'edited body'));
-    await flushMarkdownWrite(callerId);
-
-    // Content mismatch → the foreign (mtime,size) is rejected; no prior baseline
-    // existed (markHydrated had no mtime), so it stays absent — NOT poisoned.
-    expect(getBaseline(relPath)).toBeUndefined();
-    expect(writtenBytes).toBeGreaterThan(0);
+    noteStore.setBody('Notes/L5.md', 'second edit', 'tile');
+    expect(await noteStore.flush('Notes/L5.md')).toBe(false);
+    expect(prompts.conflict).toHaveBeenCalledOnce();
+    expect(vault.read('Notes/L5.md')).toBe(theirs);
   });
 });

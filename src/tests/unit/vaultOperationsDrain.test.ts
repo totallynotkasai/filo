@@ -1,12 +1,12 @@
 /**
- * Phase R2 — `withDrainedWrites` contract tests.
+ * `withDrainedWrites` contract tests.
  *
- * Covers the three acceptance criteria the audit's silent-data-loss paths
- * pointed at:
+ * Covers the three acceptance criteria the silent-data-loss paths pointed
+ * at:
  *
- *  1. Pending markdown writes drain BEFORE the op runs (so a dirty
- *     editor's body lands on the OLD path before the rename moves it).
- *  2. Pending writers that REJECT during drain produce a
+ *  1. Pending note writes drain BEFORE the op runs (so an open note's body
+ *     lands on the OLD path before the rename moves it).
+ *  2. Pending writes that FAIL during the drain produce a
  *     `PendingWritesFailedError`, surface an aggregated toast, and the
  *     op is NOT invoked.
  *  3. The re-entrancy guard collapses nested `withDrainedWrites` calls
@@ -29,108 +29,99 @@ import {
   __resetDrainGuardForTests,
 } from '@renderer/lib/vault/vaultOperations';
 import {
-  scheduleMarkdownWrite,
-  markHydrated,
-  __resetMarkdownFileWriterForTests,
-} from '@renderer/lib/vault/markdownFileWriter';
-import {
   __resetDirtyTrackingForTests,
 } from '@renderer/lib/boards/writeStateTracking';
 import { scheduleMiscWrite } from '@renderer/lib/boards/miscWriteScheduler';
 import { scheduleConfigWrite } from '@renderer/lib/boards/configWriteScheduler';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { installMemoryVault } from '../helpers/memoryVault';
 import { uiStore } from '@renderer/stores/ui.svelte';
+import { vaultStore } from '@renderer/stores/vault.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 
 beforeEach(() => {
-  __resetMarkdownFileWriterForTests();
+  // Runs the test-reset callbacks, which clear the active vault path.
   __resetDirtyTrackingForTests();
+  vaultStore.setPath('/vault');
+  noteStore.__resetForTests();
   __resetDrainGuardForTests();
   restoreFiloDefault();
   // Clear any toasts left over from a prior test so we can assert on the
   // first toast pushed during this test cleanly.
-  for (const t of uiStore.toasts) uiStore.dismissToast(t.id, { silent: true });
+  for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
 });
 
 afterEach(() => {
-  __resetMarkdownFileWriterForTests();
+  noteStore.__resetForTests();
   __resetDirtyTrackingForTests();
   __resetDrainGuardForTests();
   restoreFiloDefault();
+  vaultStore.setPath('');
   vi.useRealTimers();
 });
 
 describe('withDrainedWrites — drain ordering', () => {
-  it('flushes pending markdown writes BEFORE running op (acceptance #1)', async () => {
-    vi.useFakeTimers();
+  it('flushes pending note writes BEFORE running op (acceptance #1)', async () => {
     const events: string[] = [];
+    const vault = installMemoryVault({ 'Notes.md': '---\ntitle: Notes\n---\nBody\n' });
+    vault.beforeWrite = (rel) => {
+      if (rel.endsWith('.md')) events.push(`write:${rel}`);
+    };
 
-    installFiloMock({
-      'vault:write-existing-file-text': async (...args) => {
-        const [, relPath] = args as [string, string];
-        events.push(`write:${relPath}`);
-        return { success: true };
-      },
-    });
-
-    // Hydrate the file so the markdownFileWriter accepts the write.
-    markHydrated('Notes.md', false);
-
-    // Arm a debounced write. Without the drain, the op runs first.
-    scheduleMarkdownWrite({
-      vaultRoot: '/vault',
-      relPath: 'Notes.md',
-      frontmatter: {},
-      body: 'Pending edit',
-      callerId: 'caller-1',
-    });
-
-    // Trigger the debounce so the write enters in-flight.
-    vi.advanceTimersByTime(400);
-    vi.useRealTimers();
+    const m = noteStore.acquire('Notes.md', 'editor');
+    await m.loaded;
+    noteStore.setBody('Notes.md', 'Pending edit\n', 'editor');
 
     await withDrainedWrites(async () => {
       events.push('op');
     });
 
-    // Order: write must precede op. The drain guarantees the markdown
-    // write IPC completed before the op callback ran.
+    // Order: write must precede op. The drain guarantees the note write
+    // IPC completed before the op callback ran.
     expect(events).toEqual(['write:Notes.md', 'op']);
+    expect(vault.read('Notes.md')).toBe('---\ntitle: Notes\n---\nPending edit\n');
   });
 
-  it('does NOT invoke op when a pending write rejects, surfaces an error toast (acceptance #2)', async () => {
-    vi.useFakeTimers();
+  it('does NOT invoke op when a pending write fails, surfaces an error toast (acceptance #2)', async () => {
     const opSpy = vi.fn(async () => 'op-ran');
-
-    installFiloMock({
-      'vault:write-existing-file-text': async () => {
-        return { success: false, error: 'EACCES: permission denied' };
-      },
-    });
-
-    markHydrated('Locked.md', false);
-    scheduleMarkdownWrite({
-      vaultRoot: '/vault',
-      relPath: 'Locked.md',
-      frontmatter: {},
-      body: 'will fail',
-      callerId: 'caller-locked',
-    });
-
-    vi.advanceTimersByTime(400);
-    vi.useRealTimers();
+    const vault = installMemoryVault({ 'Locked.md': '---\ntitle: Locked\n---\nBody\n' });
+    vault.failNextWrite('Locked.md', 'EACCES');
+    noteStore.patchFrontmatter('Locked.md', { set: { status: 'will fail' }, unset: [] });
 
     await expect(withDrainedWrites(opSpy)).rejects.toBeInstanceOf(
       PendingWritesFailedError,
     );
     expect(opSpy).not.toHaveBeenCalled();
 
-    // The error toast names the failed caller so the user can see which
+    // The error toast names the failed note so the user can see which
     // write blocked the disk-shape change.
-    const toasts = uiStore.toasts;
-    const errorToast = toasts.find((t) => t.type === 'error');
+    const errorToast = uiStore.toasts.find((t) => t.type === 'error');
     expect(errorToast).toBeDefined();
     expect(errorToast!.text).toMatch(/pending write/);
+    expect(errorToast!.text).toContain('Locked.md');
   });
+
+  it('deleteVaultPath lands a queued note edit before the delete IPC', async () => {
+    const events: string[] = [];
+    const vault = installMemoryVault({ 'Notes.md': '---\ntitle: Notes\n---\nBody\n' });
+    vault.beforeWrite = (rel) => {
+      if (rel.endsWith('.md')) events.push(`write:${rel}`);
+    };
+    const invoke = window.filo.invoke;
+    window.filo.invoke = (async (channel: string, ...args: unknown[]) => {
+      if (channel === 'vault:delete' && !String(args[1]).includes('.filo/')) {
+        events.push('delete');
+        return { success: true };
+      }
+      return (invoke as (c: string, ...a: unknown[]) => Promise<unknown>)(channel, ...args);
+    }) as typeof window.filo.invoke;
+    noteStore.patchFrontmatter('Notes.md', { set: { status: 'edited' }, unset: [] });
+
+    await deleteVaultPath('/vault', '/vault/Notes.md');
+
+    expect(events).toEqual(['write:Notes.md', 'delete']);
+  });
+
 
   // Phase 6.4.M1 — withDrainedWrites must also drain misc + config writers.
   // Otherwise a debounced sidebar-order / viewport / tags / workspace.json
@@ -313,16 +304,14 @@ describe('withDrainedWrites — IPC convenience wrappers', () => {
 describe('PendingWritesFailedError', () => {
   it('aggregates per-pipeline failure counts in its message', () => {
     const err = new PendingWritesFailedError({
-      md: { ok: 0, failed: [{ ownerId: 'a', error: new Error('x') }] },
-      fm: { failed: ['b.md', 'c.md'] },
+      notes: { failed: ['a.md', 'b.md', 'c.md'] },
       board: { failed: ['d.board.json'] },
       misc: { failed: ['.filo/tags.json'] },
       config: { failed: ['defaults.json'] },
     });
     expect(err.message).toMatch(/6 file/);
     expect(err.name).toBe('PendingWritesFailedError');
-    expect(err.results.md.failed).toHaveLength(1);
-    expect(err.results.fm.failed).toHaveLength(2);
+    expect(err.results.notes.failed).toHaveLength(3);
     expect(err.results.board.failed).toHaveLength(1);
     expect(err.results.misc.failed).toHaveLength(1);
     expect(err.results.config.failed).toHaveLength(1);

@@ -19,9 +19,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { tabStore } from '@renderer/stores/tabs.svelte';
-import {
-  __resetMarkdownFileWriterForTests as __resetMarkdownFlushersForTests,
-} from '@renderer/lib/vault/markdownFileWriter';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import {
   cancelAllPendingWrites,
   __resetDirtyTrackingForTests,
@@ -41,7 +39,7 @@ function uninstallFiloStub(): void {
 
 beforeEach(() => {
   installFiloStub();
-  __resetMarkdownFlushersForTests();
+  noteStore.__resetForTests();
   __resetDirtyTrackingForTests();
   tabStore.closeAll();
 });
@@ -49,7 +47,7 @@ beforeEach(() => {
 afterEach(() => {
   cancelAllPendingWrites();
   uninstallFiloStub();
-  __resetMarkdownFlushersForTests();
+  noteStore.__resetForTests();
   __resetDirtyTrackingForTests();
   tabStore.closeAll();
 });

@@ -5,10 +5,9 @@ import { uiStore } from '@renderer/stores/ui.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
 import { DeleteTilesCommand, RemoveTileTagCommand } from '@renderer/commands/index';
-import { markHydrated, cancelAllMarkdownWrites } from '@renderer/lib/vault/markdownFileWriter';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { ACCENT_COLOR } from '@renderer/constants/defaults';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
@@ -202,16 +201,14 @@ function makeMindMapWithTextTile(boardId: string, tileId: string, filePath: stri
 describe('Audit-14 2.3 — DeleteTilesCommand.undo reconciles open editors', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
+    noteStore.__resetForTests();
     boardCacheStore.clear();
     boardStore.clearBoard();
     vaultStore.setPath('/vault');
   });
   afterEach(() => {
-    cancelAllMarkdownWrites();
+    noteStore.__resetForTests();
     __resetDirtyTrackingForTests();
-    documentStore.clear();
     boardCacheStore.clear();
     boardStore.clearBoard();
     vaultStore.setPath('');
@@ -221,14 +218,23 @@ describe('Audit-14 2.3 — DeleteTilesCommand.undo reconciles open editors', () 
   it('reloads an editor still open on the restored .md so its next save cannot invert the restore', async () => {
     const relPath = 'Notes.md';
     const restoredBytes = '---\ntitle: Notes\n---\nrestored body\n';
-    const writtenPaths = new Set<string>();
+    const disk = new Map<string, string>([[relPath, '---\ntitle: Old\n---\nstale pre-delete body\n']]);
     installFiloMock((channel: string, ...args: unknown[]) => {
-      if (channel === 'vault:delete') return { success: true };
-      if (channel === 'vault:write-file-text') {
-        writtenPaths.add(args[1] as string);
-        return { success: true, path: `${args[0]}/${args[1]}` };
+      const rel = String(args[1] ?? '');
+      if (channel === 'vault:delete') {
+        disk.delete(rel.replace(/^\/vault\//, ''));
+        return { success: true };
       }
-      if (channel === 'vault:file-exists') return writtenPaths.has(args[1] as string);
+      if (channel === 'vault:read-file-text') {
+        const content = disk.get(rel);
+        if (content === undefined) return { success: false, code: 'ENOENT', error: 'ENOENT' };
+        return { success: true, content, mtimeMs: 1, size: content.length };
+      }
+      if (channel === 'vault:write-file-text') {
+        disk.set(rel, String(args[2]));
+        return { success: true, path: `${args[0]}/${rel}` };
+      }
+      if (channel === 'vault:file-exists') return disk.has(rel);
       if (channel === 'vault:stat') return { ok: true, mtimeMs: 1, size: 1 };
       if (channel === 'vault:read-tree') return { ok: true, tree: [] };
       return { ok: true, success: true };
@@ -240,17 +246,11 @@ describe('Audit-14 2.3 — DeleteTilesCommand.undo reconciles open editors', () 
     const tiles = boardCacheStore.getFullTilesForBoard('board-1');
     boardStore.setBoard(fixture.board, tiles, {}, []);
 
-    // The SAME file is open as a Document on a second pane, holding a stale
-    // pre-delete in-memory body + frontmatter.
-    documentStore.loadDocument({
-      filename: relPath,
-      title: 'Notes',
-      body: 'stale pre-delete body',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter(relPath, { title: 'Old' }, '---\ntitle: Old\n---');
-    markHydrated(relPath, false);
+    // The SAME file is open as a Document on a second pane, holding the
+    // pre-delete body + frontmatter.
+    const model = noteStore.acquire(relPath, 'document-editor:pane2');
+    await model.loaded;
+    expect(model.body).toBe('stale pre-delete body\n');
 
     const cmd = new DeleteTilesCommand(['t_1'], {
       vaultRoot: '/vault',
@@ -258,15 +258,20 @@ describe('Audit-14 2.3 — DeleteTilesCommand.undo reconciles open editors', () 
     });
     cmd.execute();
     await cmd.lastExecuteCompletion;
+    expect(disk.has(relPath)).toBe(false);
 
     cmd.undo();
     await cmd.lastUndoCompletion;
 
-    // 2.3 — the open editor reflects the restored bytes (a raw write left it
-    // pinned to the stale body, whose next debounced save would invert the
-    // restore — the #4 class).
-    expect(documentStore.getDocument(relPath)?.body).toBe('restored body\n');
-    expect(documentStore.getFrontmatter(relPath)).toEqual({ title: 'Notes' });
+    // The open editor's model reflects the restored bytes: a view pinned to the
+    // stale body would invert the restore on its next save.
+    expect(disk.get(relPath)).toBe(restoredBytes);
+    expect(noteStore.get(relPath)).toBe(model);
+    expect(model.body).toBe('restored body\n');
+    expect(model.frontmatter).toEqual({ title: 'Notes' });
+    expect(model.status).toBe('ready');
+    expect(model.hasUnsavedBody).toBe(false);
+    noteStore.release(relPath, 'document-editor:pane2');
   });
 });
 

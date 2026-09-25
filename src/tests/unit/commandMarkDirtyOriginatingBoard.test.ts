@@ -2,14 +2,13 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import {
   UpdatePropertiesCommand,
-  UpdateOrphanFrontmatterCommand,
+  UpdateCardFieldCommand,
 } from '@renderer/commands/index';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, KanbanBoard } from '@renderer/schema/index';
-import { markHydrated, cancelAllMarkdownWrites } from '@renderer/lib/vault/markdownFileWriter';
 import { cancelAllPendingWrites } from '@renderer/lib/boards/boardSaver';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
@@ -28,10 +27,8 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
  * runtime board, advance the debounce window, then assert exactly one
  * `board:save` lands and its target path is A's `.board.json`.
  *
- * Two commands exercised — one frontmatter-snapshot (UpdateProperties)
- * and one orphan-FM (UpdateOrphanFrontmatter). Both used to call
- * `markDirty(boardStore.current?.id)` or `markDirty(this.boardId)`;
- * after R3 they call `markDirty(this.targetBoardId)`.
+ * Two commands exercised: a Properties snapshot (UpdateProperties) and a
+ * note field edit (UpdateCardField, execute and undo).
  */
 
 function makeMindMap(id: string): V7BoardFileData {
@@ -97,9 +94,8 @@ describe('Phase 6.1.R3 — commands dirty their originating board, not the activ
     vi.useFakeTimers();
     capture = { paths: [] };
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
     cancelAllPendingWrites();
-    documentStore.clear();
+    noteStore.__resetForTests();
     boardCacheStore.clear();
     boardStore.clearBoard();
     vaultStore.setPath('/vault');
@@ -108,9 +104,8 @@ describe('Phase 6.1.R3 — commands dirty their originating board, not the activ
 
   afterEach(() => {
     cancelAllPendingWrites();
-    cancelAllMarkdownWrites();
     __resetDirtyTrackingForTests();
-    documentStore.clear();
+    noteStore.__resetForTests();
     boardCacheStore.clear();
     boardStore.clearBoard();
     vaultStore.setPath('');
@@ -142,7 +137,7 @@ describe('Phase 6.1.R3 — commands dirty their originating board, not the activ
     expect(capture.paths).toEqual(['A.board.json']);
   });
 
-  it('UpdateOrphanFrontmatterCommand — saves A even when B is active', async () => {
+  it('UpdateCardFieldCommand — execute and undo save A even when B is active', async () => {
     const a = makeKanban('board-A');
     const b = makeKanban('board-B');
     boardCacheStore.hydrate({ 'board-A': a, 'board-B': b }, {
@@ -150,7 +145,7 @@ describe('Phase 6.1.R3 — commands dirty their originating board, not the activ
       'board-B': 'B.board.json',
     });
 
-    const cmd = new UpdateOrphanFrontmatterCommand(
+    const cmd = new UpdateCardFieldCommand(
       'board-A',
       'A.md',
       { tags: ['next'] },
@@ -158,9 +153,14 @@ describe('Phase 6.1.R3 — commands dirty their originating board, not the activ
     );
 
     boardStore.setBoard(b.board, {}, {}, []);
-    markHydrated('A.md', false);
 
     await cmd.execute();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(capture.paths).toContain('A.board.json');
+    expect(capture.paths).not.toContain('B.board.json');
+
+    capture.paths = [];
+    await cmd.undo();
     await vi.advanceTimersByTimeAsync(1000);
     expect(capture.paths).toContain('A.board.json');
     expect(capture.paths).not.toContain('B.board.json');

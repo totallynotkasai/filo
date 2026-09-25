@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { resolveTextTileVaultPath } from '@renderer/lib/boards/textTilePath';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import type { TextTile, Tile } from '@renderer/schema/index';
 
 function tile(overrides: Partial<TextTile> & Pick<TextTile, 'id'>): Tile {
@@ -23,10 +23,9 @@ function tile(overrides: Partial<TextTile> & Pick<TextTile, 'id'>): Tile {
 
 describe('textTilePath.resolveTextTileVaultPath', () => {
   afterEach(() => {
-    // documentStore is module-singleton — drop any docs we loaded so cases
-    // don't bleed into each other.
-    documentStore.unloadDocument('FromDoc.md');
-    documentStore.unloadDocument('Notes/Real.md');
+    // noteStore is a module singleton: drop any notes opened so cases don't
+    // bleed into each other.
+    noteStore.__resetForTests();
   });
 
   it('returns null for non-text tiles', () => {
@@ -34,22 +33,16 @@ describe('textTilePath.resolveTextTileVaultPath', () => {
     expect(resolveTextTileVaultPath(t)).toBeNull();
   });
 
-  it('returns the filePath, even when an open doc names a different file', () => {
-    documentStore.loadDocument({
-      filename: 'FromDoc.md', title: 'X',
-      body: '', htmlContent: '', richText: [],
-    });
+  it('returns the filePath, even when an open note names a different file', () => {
+    noteStore.acquire('FromDoc.md', 'doc');
     const t = tile({ id: 't1', title: 'X', filePath: 'Sub/Explicit.md' } as never);
     expect(resolveTextTileVaultPath(t)).toBe('Sub/Explicit.md');
   });
 
   // The path is the note's only identity: no title-derived guess exists, so
   // an unplaced tile has no path rather than a wrong one.
-  it('returns null for a text tile without a filePath, even when an open doc shares its title', () => {
-    documentStore.loadDocument({
-      filename: 'Notes/Real.md', title: 'Hello',
-      body: '', htmlContent: '', richText: [],
-    });
+  it('returns null for a text tile without a filePath, even when an open note shares its title', () => {
+    noteStore.acquire('Notes/Hello.md', 'doc');
     expect(resolveTextTileVaultPath(tile({ id: 't1', title: 'Hello' }))).toBeNull();
     expect(resolveTextTileVaultPath(tile({ id: 't2', title: '' }))).toBeNull();
   });

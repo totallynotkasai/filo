@@ -1,25 +1,25 @@
 /**
- * Phase A.3 — `syncTileMarkdown` mtime guard.
+ * `boardCacheStore.syncTile` never silently overwrites an external edit.
  *
- * The manual sync path reads disk frontmatter, assembles `liveBody +
- * disk frontmatter`, and writes. An external editor writing to the same
- * file between the read and the write would be silently overwritten —
- * Filo's worst class of data loss because the user never sees a prompt.
- *
- * The fix stats the file before the read AND before the write. A
- * different mtime means an external edit landed in the gap; the user is
- * routed through a Reload / Keep-local prompt. Reload skips the write;
- * Keep-local proceeds with a confirmation toast.
+ * The manual sync writes the open note's queued body. An external editor
+ * that changed the note's body since Filo read it would be silently
+ * overwritten — Filo's worst class of data loss because the user never sees
+ * a prompt. The note writer compares the body on disk with the one the local
+ * body was built on (bytes, not mtime, so a same-size overwrite on a
+ * coarse-clock volume is caught too): on a mismatch the write is held, the
+ * conflict prompt opens, and the sync reports it skipped. Keep mine writes
+ * the local body; Reload keeps theirs.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore, setNotePromptHandlers } from '@renderer/stores/notes.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
-import { uiStore } from '@renderer/stores/ui.svelte';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TileDefinition, KanbanBoard } from '@renderer/schema/index';
-import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
 function makeKanbanFixtureWithTextTile(): V7BoardFileData {
   const def: TileDefinition = {
@@ -64,220 +64,110 @@ function makeKanbanFixtureWithTextTile(): V7BoardFileData {
   };
 }
 
-function seedBoardAndDoc(body: string): void {
+const prompts = { conflict: vi.fn(), deletedWithUnsavedBody: vi.fn(), reloadShrank: vi.fn(), dismiss: vi.fn() };
+
+/** Hydrates the board and opens the note with `body` typed but not yet written. */
+async function seedBoardAndNote(body: string): Promise<void> {
   boardCacheStore.hydrate(
     { kb: makeKanbanFixtureWithTextTile() },
     { kb: 'tasks.board.json' },
   );
-  documentStore.loadDocument({
-    filename: 'note.md',
-    title: 'Note',
-    body,
-    htmlContent: '',
-    richText: [],
-  });
-  documentStore.markDirty('note.md');
+  const m = noteStore.acquire('note.md', 'tile');
+  await m.loaded;
+  noteStore.setBody('note.md', body, 'tile');
 }
 
-describe('boardCacheStore.syncTile — mtime guard (Phase A.3)', () => {
+describe('boardCacheStore.syncTile — external edit guard', () => {
+  let vault: MemoryVault;
+
+  const noteWrites = (): string[] =>
+    vault.writes.filter(([, rel]) => rel === 'note.md').map(([, , text]) => text);
+
   beforeEach(() => {
-    vaultStore.setPath('/vault');
-    boardCacheStore.clear();
     restoreFiloDefault();
+    // Runs the test-reset callbacks, which clear the active vault path.
+    __resetDirtyTrackingForTests();
+    vaultStore.setPath('/vault');
+    noteStore.__resetForTests();
+    boardCacheStore.clear();
+    vault = installMemoryVault({ 'note.md': '---\ntitle: Note\n---\nAAAA\n' });
+    for (const fn of Object.values(prompts)) fn.mockReset();
+    setNotePromptHandlers(prompts);
   });
   afterEach(() => {
+    noteStore.__resetForTests();
     vaultStore.setPath('');
     boardCacheStore.clear();
     restoreFiloDefault();
   });
 
-  it('unchanged mtime → write proceeds', async () => {
-    const writeCalls: Array<{ args: unknown[] }> = [];
-    installFiloMock({
-      'vault:stat': () => ({ success: true, mtimeMs: 1000, size: 100 }),
-      'vault:read-file-text': () => ({
-        success: true,
-        content: '---\ntitle: Note\n---\nOld disk body',
-      }),
-      'vault:write-existing-file-text': (...args) => {
-        writeCalls.push({ args });
-        return { success: true };
-      },
-      'vault:file-exists': () => true,
-      'board:save': () => ({ success: true }),
-    });
-
-    seedBoardAndDoc('Local body to write');
+  it('no external change → write proceeds', async () => {
+    await seedBoardAndNote('Local body to write\n');
 
     const result = await boardCacheStore.syncTile('t1');
     expect(result.wrote).toBe(true);
     expect(result.skippedReason).toBeUndefined();
-    expect(writeCalls.length).toBe(1);
+    expect(noteWrites()).toEqual(['---\ntitle: Note\n---\nLocal body to write\n']);
+    expect(prompts.conflict).not.toHaveBeenCalled();
   });
 
-  it('changed mtime → prompt fires; Reload skips write', async () => {
-    const writeCalls: Array<{ args: unknown[] }> = [];
-    let statCallCount = 0;
-    installFiloMock({
-      'vault:stat': () => {
-        statCallCount++;
-        // First stat (before-read): mtime 1000.
-        // Second stat (before-write): mtime 2000 — external edit landed.
-        return statCallCount === 1
-          ? { success: true, mtimeMs: 1000, size: 100 }
-          : { success: true, mtimeMs: 2000, size: 120 };
-      },
-      'vault:read-file-text': () => ({
-        success: true,
-        content: '---\ntitle: Note\n---\nDisk body',
-      }),
-      'vault:write-existing-file-text': (...args) => {
-        writeCalls.push({ args });
-        return { success: true };
-      },
-      'vault:file-exists': () => true,
-      'board:save': () => ({ success: true }),
-    });
+  it('external body edit → prompt fires and nothing is written; Reload keeps theirs', async () => {
+    await seedBoardAndNote('Local body to write\n');
+    vault.writeExternally('note.md', '---\ntitle: Note\n---\nDisk body from elsewhere\n');
 
-    seedBoardAndDoc('Local body to write');
-
-    // syncTile awaits the prompt's Promise — kick it off without await.
-    const syncPromise = boardCacheStore.syncTile('t1');
-
-    // Drain microtasks so syncTile's stat/read/stat chain runs and the
-    // prompt's toast lands in uiStore.
-    for (let i = 0; i < 20; i++) await Promise.resolve();
-
-    const promptToast = uiStore.toasts.find((t) =>
-      t.text.includes('modified externally between Filo'),
-    );
-    expect(promptToast).toBeDefined();
-    expect(promptToast!.actions?.length).toBe(2);
-    expect(promptToast!.actions?.[0].label).toBe('Reload');
-    expect(promptToast!.actions?.[1].label).toBe('Keep local');
-
-    // Invoke Reload — the action's handler resolves the prompt's Promise
-    // with 'reload'. syncTile then returns wrote:false.
-    uiStore.invokeToastAction(promptToast!.id, 0);
-
-    const result = await syncPromise;
+    const result = await boardCacheStore.syncTile('t1');
     expect(result.wrote).toBe(false);
-    expect(result.skippedReason).toBe('external-edit-reload');
-    expect(writeCalls.length).toBe(0);
+    expect(result.skippedReason).toBeDefined();
+    expect(noteWrites()).toEqual([]);
+    expect(prompts.conflict).toHaveBeenCalledOnce();
+
+    await noteStore.resolveConflict('note.md', 'reload');
+    await noteStore.flushAll();
+    expect(vault.read('note.md')).toBe('---\ntitle: Note\n---\nDisk body from elsewhere\n');
+    expect(noteStore.get('note.md')?.body).toBe('Disk body from elsewhere\n');
   });
 
-  it('changed mtime → Keep local writes and surfaces a confirmation toast', async () => {
-    const writeCalls: Array<{ args: unknown[] }> = [];
-    let statCallCount = 0;
-    installFiloMock({
-      'vault:stat': () => {
-        statCallCount++;
-        return statCallCount === 1
-          ? { success: true, mtimeMs: 1000, size: 100 }
-          : { success: true, mtimeMs: 2000, size: 120 };
-      },
-      'vault:read-file-text': () => ({
-        success: true,
-        content: '---\ntitle: Note\n---\nDisk body',
-      }),
-      'vault:write-existing-file-text': (...args) => {
-        writeCalls.push({ args });
-        return { success: true };
-      },
-      'vault:file-exists': () => true,
-      'board:save': () => ({ success: true }),
-    });
+  it('external body edit → Keep mine writes the local body', async () => {
+    await seedBoardAndNote('Local body to write\n');
+    vault.writeExternally('note.md', '---\ntitle: Note\n---\nDisk body from elsewhere\n');
 
-    seedBoardAndDoc('Local body to write');
-
-    const syncPromise = boardCacheStore.syncTile('t1');
-    for (let i = 0; i < 20; i++) await Promise.resolve();
-
-    const promptToast = uiStore.toasts.find((t) =>
-      t.text.includes('modified externally between Filo'),
-    );
-    expect(promptToast).toBeDefined();
-
-    // Invoke Keep local — write proceeds, confirmation toast surfaces.
-    uiStore.invokeToastAction(promptToast!.id, 1);
-
-    const result = await syncPromise;
-    expect(result.wrote).toBe(true);
-    expect(writeCalls.length).toBe(1);
-
-    const confirmToast = uiStore.toasts.find((t) =>
-      t.text.includes('overwritten with local changes'),
-    );
-    expect(confirmToast).toBeDefined();
-  });
-});
-
-describe('boardCacheStore.syncTile — L9 same-mtime/size content residual (Audit-13)', () => {
-  beforeEach(() => {
-    vaultStore.setPath('/vault');
-    boardCacheStore.clear();
-    restoreFiloDefault();
-  });
-  afterEach(() => {
-    vaultStore.setPath('');
-    boardCacheStore.clear();
-    restoreFiloDefault();
-  });
-
-  it('IDENTICAL mtime+size but DIFFERENT bytes → prompt fires; Reload skips write', async () => {
-    const writeCalls: Array<{ args: unknown[] }> = [];
-    let readCount = 0;
-    installFiloMock({
-      // Both stats report the SAME mtime AND size — a coarse-clock volume's
-      // same-length external overwrite that the mtime||size guard misses.
-      'vault:stat': () => ({ success: true, mtimeMs: 1000, size: 100 }),
-      'vault:read-file-text': () => {
-        readCount++;
-        // 1st read = the diskRaw baseline; 2nd read = the L9 write-time recheck
-        // returning DIFFERENT bytes (the external overwrite).
-        return readCount === 1
-          ? { success: true, content: '---\ntitle: Note\n---\nAAAA' }
-          : { success: true, content: '---\ntitle: Note\n---\nBBBB' };
-      },
-      'vault:write-existing-file-text': (...args) => {
-        writeCalls.push({ args });
-        return { success: true };
-      },
-      'vault:file-exists': () => true,
-      'board:save': () => ({ success: true }),
-    });
-
-    seedBoardAndDoc('Local body to write');
-    const syncPromise = boardCacheStore.syncTile('t1');
-    for (let i = 0; i < 20; i++) await Promise.resolve();
-
-    const promptToast = uiStore.toasts.find((t) => t.text.includes('modified externally between Filo'));
-    expect(promptToast).toBeDefined();
-    uiStore.invokeToastAction(promptToast!.id, 0); // Reload
-
-    const result = await syncPromise;
+    const result = await boardCacheStore.syncTile('t1');
     expect(result.wrote).toBe(false);
-    expect(result.skippedReason).toBe('external-edit-reload');
-    expect(writeCalls.length).toBe(0);
+    expect(prompts.conflict).toHaveBeenCalledOnce();
+
+    await noteStore.resolveConflict('note.md', 'keep-mine');
+    expect(vault.read('note.md')).toBe('---\ntitle: Note\n---\nLocal body to write\n');
   });
 
-  it('IDENTICAL mtime+size AND identical bytes → no prompt, write proceeds', async () => {
-    const writeCalls: Array<{ args: unknown[] }> = [];
-    installFiloMock({
-      'vault:stat': () => ({ success: true, mtimeMs: 1000, size: 100 }),
-      'vault:read-file-text': () => ({ success: true, content: '---\ntitle: Note\n---\nSAME' }),
-      'vault:write-existing-file-text': (...args) => {
-        writeCalls.push({ args });
-        return { success: true };
-      },
-      'vault:file-exists': () => true,
-      'board:save': () => ({ success: true }),
-    });
+  it('same-size external overwrite (what an mtime/size check misses) → still held', async () => {
+    await seedBoardAndNote('Local body to write\n');
+    // Same length as the original `AAAA` body.
+    vault.writeExternally('note.md', '---\ntitle: Note\n---\nBBBB\n');
 
-    seedBoardAndDoc('Local body to write');
+    const result = await boardCacheStore.syncTile('t1');
+    expect(result.wrote).toBe(false);
+    expect(noteWrites()).toEqual([]);
+    expect(vault.read('note.md')).toBe('---\ntitle: Note\n---\nBBBB\n');
+    expect(prompts.conflict).toHaveBeenCalledOnce();
+  });
+
+  it('an external rewrite with identical bytes → no prompt, write proceeds', async () => {
+    await seedBoardAndNote('Local body to write\n');
+    vault.writeExternally('note.md', '---\ntitle: Note\n---\nAAAA\n');
+
     const result = await boardCacheStore.syncTile('t1');
     expect(result.wrote).toBe(true);
-    expect(writeCalls.length).toBe(1);
-    expect(uiStore.toasts.find((t) => t.text.includes('modified externally between Filo'))).toBeUndefined();
+    expect(noteWrites()).toHaveLength(1);
+    expect(prompts.conflict).not.toHaveBeenCalled();
+  });
+
+  it('a tile whose note no view has open writes nothing', async () => {
+    boardCacheStore.hydrate(
+      { kb: makeKanbanFixtureWithTextTile() },
+      { kb: 'tasks.board.json' },
+    );
+    const result = await boardCacheStore.syncTile('t1');
+    expect(result.wrote).toBe(false);
+    expect(noteWrites()).toEqual([]);
   });
 });

@@ -7,7 +7,7 @@
  * emits the bytes to write:
  *  - the frontmatter source is patched key by key (CST engine), so untouched
  *    keys, comments and quoting survive, including keys another program added;
- *  - without a new body the disk body is kept verbatim;
+ *  - without a new body the disk body is kept byte-exact;
  *  - the fresh read's BOM and line ending are re-applied, and a CRLF note's
  *    body is written as CRLF throughout;
  *  - a note without frontmatter keeps its final newline.
@@ -150,6 +150,12 @@ export function assembleNoteText(
   // back from the assembler; one without would lose it on every edit.
   if (change.body !== undefined && endsWithNewline(fresh.raw) && !endsWithNewline(text) && text.length > 0) {
     text += eol;
+  }
+  // Without a new body the disk body is kept byte-exact: the assembler ends
+  // a frontmatter note with a newline, which a body without one (or an empty
+  // body) must not gain.
+  if (change.body === undefined && !endsWithNewline(fresh.body) && text.endsWith(fresh.body + eol)) {
+    text = text.slice(0, -eol.length);
   }
   return text;
 }

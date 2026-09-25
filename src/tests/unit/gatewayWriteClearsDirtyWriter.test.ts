@@ -1,107 +1,70 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { documentStore } from '@renderer/stores/document.svelte';
-import {
-  scheduleMarkdownWrite,
-  flushMarkdownWrite,
-  markHydrated,
-  cancelAllMarkdownWrites,
-  type WriteArgs,
-} from '@renderer/lib/vault/markdownFileWriter';
-import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
-import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
-
 /**
- * Audit-7 M1 — a successful gateway write clears THAT writer's dirty entry.
- *
- * Pre-fix the gateway never cleared `documentStore.dirtyWriters`, so a TextTile
- * that typed once stayed registered forever (only reload / unload / vault-swap
- * removed it). `DocumentState.isDirty` pinned true → the external-edit
- * classifier routed a now-saved file's edit to a spurious "modified externally"
- * prompt, and the reactive reload `$effect` (gated on `isWriterDirty`) never
- * picked up a sibling view's edits. The fix lives in `writeMarkdownFileImpl` so
- * it covers every gateway-backed editor write (TextTile + DocumentEditor) in one
- * place.
+ * A successful note write clears the note's unsaved state, but only for the
+ * edit it carried. A note left marked unsaved after its write landed would
+ * turn a later external edit into a spurious conflict and keep other views
+ * from following the disk; a note marked saved while a newer edit is still
+ * queued would let that edit be lost.
  */
-function bodyWriteArgs(relPath: string, body: string): WriteArgs {
-  return {
-    vaultRoot: '/vault',
-    relPath,
-    frontmatter: documentStore.getFrontmatter(relPath) ?? {},
-    body,
-    callerId: `text-tile:${relPath}`,
-    notePath: relPath,
-  };
-}
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { noteStore, type NoteModel } from '@renderer/stores/notes.svelte';
+import { vaultStore } from '@renderer/stores/vault.svelte';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
-describe('Audit-7 M1 — gateway clears the writer on a successful write', () => {
-  beforeEach(() => {
+describe('note writes clear the unsaved state they carried', () => {
+  let vault: MemoryVault;
+  let m: NoteModel;
+
+  beforeEach(async () => {
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:stat') return { ok: true, mtimeMs: 1, size: 1 };
-      return { ok: true, success: true };
-    });
+    vaultStore.setPath('/vault');
+    noteStore.__resetForTests();
+    vault = installMemoryVault({ 'Note.md': '---\ntitle: Note\n---\nBase\n' });
+    m = noteStore.acquire('Note.md', 'tile');
+    noteStore.acquire('Note.md', 'doc');
+    await m.loaded;
   });
   afterEach(() => {
-    cancelAllMarkdownWrites();
+    noteStore.__resetForTests();
     __resetDirtyTrackingForTests();
-    documentStore.clear();
+    vaultStore.setPath('');
     restoreFiloDefault();
   });
 
-  it('a keystroke-then-flush leaves the writer clean and the doc not dirty', async () => {
-    const relPath = 'Notes/M1A.md';
-    const callerId = `text-tile:${relPath}`;
-    documentStore.loadDocument({
-      filename: relPath,
-      title: 'M1A',
-      body: 'orig',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter(relPath, { title: 'M1A' }, 'title: M1A');
-    markHydrated(relPath, false);
-
-    // Keystroke registers the writer as dirty.
-    documentStore.updateContent(relPath, '<p>x</p>', 'edited body', callerId);
-    expect(documentStore.isWriterDirty(relPath, callerId)).toBe(true);
-    expect(documentStore.getDocument(relPath)?.isDirty).toBe(true);
-
-    // A normal debounced write lands.
-    scheduleMarkdownWrite(bodyWriteArgs(relPath, 'edited body'));
-    await flushMarkdownWrite(callerId);
-
-    // M1 — the gateway's success path cleared this writer; the doc is clean.
-    expect(documentStore.isWriterDirty(relPath, callerId)).toBe(false);
-    expect(documentStore.getDocument(relPath)?.isDirty).toBe(false);
+  it('a keystroke-then-flush leaves the note saved', async () => {
+    noteStore.setBody('Note.md', 'Typed', 'tile');
+    expect(m.hasUnsavedBody).toBe(true);
+    await noteStore.flush('Note.md');
+    expect(m.hasUnsavedBody).toBe(false);
+    expect(noteStore.hasPendingWrites('Note.md')).toBe(false);
+    expect(vault.read('Note.md')).toBe('---\ntitle: Note\n---\nTyped\n');
   });
 
-  it('clears only the writer that wrote — a dirty sibling keeps the doc dirty', async () => {
-    const relPath = 'Notes/M1B.md';
-    const textTile = `text-tile:${relPath}`;
-    const docEditor = `document-editor:${relPath}`;
-    documentStore.loadDocument({
-      filename: relPath,
-      title: 'M1B',
-      body: 'orig',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter(relPath, { title: 'M1B' }, 'title: M1B');
-    markHydrated(relPath, false);
+  it('an edit made while the write is in flight keeps the note unsaved until it lands too', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let entered!: () => void;
+    const inFlight = new Promise<void>((resolve) => { entered = resolve; });
+    vault.beforeWrite = async (rel) => {
+      if (!rel.endsWith('.md')) return;
+      vault.beforeWrite = null;
+      entered();
+      await gate;
+    };
 
-    // Both views are dirty; only the TextTile flushes.
-    documentStore.updateContent(relPath, '<p>x</p>', 'edited body', textTile);
-    documentStore.markDirty(relPath, docEditor);
-    expect(documentStore.getDocument(relPath)?.isDirty).toBe(true);
+    noteStore.setBody('Note.md', 'First', 'tile');
+    const first = noteStore.flush('Note.md');
+    await inFlight;
+    noteStore.setBody('Note.md', 'Second', 'doc');
+    release();
+    await first;
 
-    scheduleMarkdownWrite(bodyWriteArgs(relPath, 'edited body'));
-    await flushMarkdownWrite(textTile);
+    expect(vault.read('Note.md')).toBe('---\ntitle: Note\n---\nFirst\n');
+    expect(m.hasUnsavedBody).toBe(true);
 
-    // The flushing writer went clean; the still-dirty sibling keeps the doc dirty.
-    expect(documentStore.isWriterDirty(relPath, textTile)).toBe(false);
-    expect(documentStore.isWriterDirty(relPath, docEditor)).toBe(true);
-    expect(documentStore.getDocument(relPath)?.isDirty).toBe(true);
+    await noteStore.flush('Note.md');
+    expect(vault.read('Note.md')).toBe('---\ntitle: Note\n---\nSecond\n');
+    expect(m.hasUnsavedBody).toBe(false);
   });
 });

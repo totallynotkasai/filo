@@ -20,9 +20,9 @@
  * the unwritten files (the metadata of the succeeded files no longer
  * mentions the old tag).
  *
- * Lives in `lib/vault/` (not `stores/`) because it's pure rewrite logic
- * that pulls reactive state through parameters rather than store imports
- * — keeps the heavy logic out of the already-large fileTagsStore module.
+ * Lives in `lib/vault/` (not `stores/`) to keep the heavy logic out of the
+ * already-large fileTagsStore module. Each write goes through the note store,
+ * which rewrites the note from its fresh bytes inside its own write queue.
  */
 
 import { rewriteTagInMarkdown, removeTagFromMarkdown, tagsEqual } from './tagRewriter';
@@ -37,7 +37,10 @@ import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { onVaultSwap } from '../../core/vaultLifecycle';
 import { uiStore } from '../../stores/ui.svelte';
 import { PendingWritesFailedError, withDrainedWrites } from './vaultOperations';
-import { writeMarkdownAndReconcile } from './syncOpenEditorsAfterDiskMutation';
+import { noteStore } from '../../stores/notes.svelte';
+import { isMissingFileError } from '../notes/noteWriter';
+import { isNonUtf8 } from './nonUtf8Paths.svelte';
+import { getActiveVaultPath } from './activeVaultPath';
 import type { FileMetadata } from './vaultIndex';
 
 /**
@@ -225,60 +228,41 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
   try {
     await withDrainedWrites(async () => {
       for (const item of plan) {
+        // The note writer writes into whichever vault is open. After a swap the
+        // planned paths belong to the previous vault: stop, and leave the rest
+        // failed (the sentinel resumes them there).
+        if (getActiveVaultPath() !== vaultRoot) {
+          failed.push(item.path);
+          continue;
+        }
         try {
-          // Recompute the rewrite from a POST-DRAIN read instead of the Phase-1
-          // snapshot, since the drain may just have flushed a newer editor body
-          // and writing the older snapshot would roll those keystrokes back.
-          let freshRaw: string | null = null;
+          // Recompute the rewrite from the note's fresh bytes inside its queue
+          // (after anything queued for it, including an editor body, has
+          // landed), never from the Phase-1 snapshot. Tag rewrites edit EXISTING
+          // files: a file deleted since the scan throws ENOENT instead of being
+          // resurrected. An open view of the note follows the new bytes and
+          // keeps any keystrokes typed meanwhile. `notifyOnError: false` avoids
+          // one toast per file; the caller shows an aggregate retry toast.
+          let written: string | null;
           try {
-            const reread = await invokeOk('vault:read-file-text', vaultRoot, item.path);
-            if (reread.encoding === 'invalid-utf-8') {
-              skippedNonUtf8.push(item.path); // became non-UTF-8 since Phase 1
-              continue;
-            }
-            freshRaw = reread.content;
+            written = await noteStore.transform(
+              item.path,
+              (fresh) => (newName === null
+                ? removeTagFromMarkdown(fresh.raw, oldName)
+                : rewriteTagInMarkdown(fresh.raw, oldName, newName)),
+              { notifyOnError: false },
+            );
           } catch (err) {
-            // A non-envelope throw (programmer error, OOM) is unexpected — let
-            // the outer catch attribute the failure. An envelope failure means
-            // the file vanished or is unreadable; resolve it like Phase 1 did.
-            if (!(err instanceof IpcEnvelopeError)) throw err;
+            // Gone since the scan: the rewrite intent is moot.
+            if (isMissingFileError(err)) continue;
+            throw err;
           }
-          if (freshRaw === null) {
-            // Mirror the Phase-1 policy: a genuinely-missing file is dropped (the
-            // rewrite intent is moot), a present-but-unreadable file is a failure
-            // the caller retries.
-            const exists = await window.filo.invoke('vault:file-exists', vaultRoot, item.path);
-            if (exists) failed.push(item.path);
+          if (written === null) {
+            // Already without the old tag, or no longer UTF-8 (never rewritten
+            // from decoded text).
+            if (isNonUtf8(item.path)) skippedNonUtf8.push(item.path);
             continue;
           }
-          const freshNext = newName === null
-            ? removeTagFromMarkdown(freshRaw, oldName)
-            : rewriteTagInMarkdown(freshRaw, oldName, newName);
-          if (freshNext === freshRaw) {
-            // The post-drain bytes already lack the old tag (e.g. the flushed
-            // editor body had dropped it). The file is already in the desired
-            // state — skip the write; it's neither a failure nor a rewrite.
-            continue;
-          }
-          // Tag rewrites edit EXISTING files (create:false): a file deleted
-          // between scan and write surfaces as ENOENT (→ failed) instead of
-          // being resurrected. The coupled write+reconcile targets the SAME
-          // path; `mode: 'full'` reloads any open editor with the new bytes (its
-          // pre-rewrite body would otherwise re-clobber the rewrite).
-          // `notifyOnError: false` avoids one toast per file — the caller shows
-          // an aggregate retry toast. Bypasses the debounced gateway on purpose.
-          //
-          // Accepted limitation (KNOWN_LIMITATIONS.md #8): a keystroke typed into
-          // an editor during a large sweep, after the drain, can be lost for that
-          // one file by the `mode: 'full'` reload. Fixing it would couple this
-          // store-free module to scheduler state; undo restores the keystrokes.
-          await writeMarkdownAndReconcile({
-            vaultRoot,
-            path: item.path,
-            content: freshNext,
-            mode: 'full',
-            track: { notifyOnError: false },
-          });
           succeeded.push(item.path);
           // For REMOVALS, persist the per-path commit breadcrumb
           // incrementally so a crash mid-sweep leaves the partial state

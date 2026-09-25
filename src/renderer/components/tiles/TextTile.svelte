@@ -6,38 +6,20 @@
   import { closeDrainGate } from '../../lib/editor/closeDrainGate.svelte';
   import { setEditorEditable } from '../../lib/editor/setEditorEditable';
   import { tiptapToolbar } from '../../lib/editor/toolbarConfig';
-  import {
-    parseMarkdownFile,
-    loadMarkdownIntoEditor,
-    editorMarkdown,
-  } from '../../lib/editor/markdownSync';
+  import { NoteEditorView } from '../../lib/editor/noteEditorView';
   import { getContext } from 'svelte';
   import { vaultStore } from '../../stores/vault.svelte';
-
   import { boardRefIntegrityStore } from '../../stores/boardRefIntegrity.svelte';
-  import { documentStore } from '../../stores/document.svelte';
+  import { noteStore, type NoteModel } from '../../stores/notes.svelte';
   import { uiStore } from '../../stores/ui.svelte';
+  import { createId } from '../../lib/utils/ids';
   import type { ResolvedTileStyle } from '../../lib/styles/effectiveStyle';
   import {
     RESOLVED_TILE_STYLE_KEY,
     type ResolvedTileStyleHolder,
   } from '../../lib/styles/resolvedTileStyleContext';
-  import {
-    markHydrated,
-    isHydrated,
-    readMarkdownForHydrate,
-    scheduleMarkdownWrite as gatewayScheduleMarkdownWrite,
-    registerForceWriter,
-    unregisterForceWriter,
-    flushFinalWriteOnDestroy,
-    cancelMarkdownWrite,
-    hasPendingMarkdownWriteFor,
-    type WriteArgs,
-  } from '../../lib/vault/markdownFileWriter';
-  import { reportError } from '../../lib/utils/errorBus';
   import { isNonUtf8 } from '../../lib/vault/nonUtf8Paths.svelte';
   import { confirmConvertToUtf8 } from '../../lib/vault/convertToUtf8';
-  import { IpcEnvelopeError } from '@shared/ipcEnvelope';
   let {
     tile,
     resolved: resolvedOverride,
@@ -59,119 +41,38 @@
 
   let editorElement: HTMLElement;
   let editor: Editor | null = null;
-  let isUpdatingFromStore = false;
-  let lastLoadedBody: string | null = null;
-  // Set to `true` once the IPC reports the backing file no longer exists
-  // (deleted externally during a dirty edit). Subsequent debounced writes
-  // skip the IPC so we don't resurrect the file. The external-change prompt
-  // flow lets the user reload or re-create.
-  let backingFileMissing = false;
-  // Hydration gate is enforced inside the gateway. This local flag (for the
-  // "skip write before hydrate" check) flips true once `hydrateFromDisk`
-  // resolves and `markHydrated` runs.
-  let hydrated = false;
-  // Set when the on-mount disk read fails with a NON-ENOENT error (FILE_TOO_LARGE,
-  // or a transient EACCES/EBUSY from AV / OneDrive). While true the editor is
-  // non-writable and `buildWriteArgs` refuses to write, so a keystroke into the
-  // blank tile can't overwrite the real (unread) file with the stale board-JSON
-  // seed. ENOENT starts the editor empty instead. A successful retry clears it.
-  let hydrateReadFailed = $state(false);
-  // `tile.id` is reactive in Svelte 5; reading it inside `$derived` captures
-  // the live value so a tile-id rebind (rare but possible during cache
-  // mutation) re-keys the caller without re-mounting the component.
-  let callerId = $derived(`text-tile:${tile.id}`);
-  // Reactive IME-composition flag mirrored from the editor's composition
-  // events. `editor.view.composing` is set by prosemirror but not reactive
-  // on its own, so the reactive-reload effect needs this signal to know when
-  // to re-run after the user commits their IME input.
+  // One view per mount: two tiles of one note (or a tile and a Document tab)
+  // are separate views of the same note model.
+  const view = new NoteEditorView(`text-tile:${createId(8)}`, () => editor);
+  // Reactive IME-composition flag; `editor.view.composing` isn't reactive, so
+  // the reload effect below needs this to re-run once the user commits.
   let isComposing = $state(false);
-  // Set on the first real user edit (after the isUpdatingFromStore skip).
-  // onDestroy writes only when this view actually changed something.
-  let userEdited = false;
 
-  // The note this tile shows. `filePath` is its only identity: it keys the
-  // document store, and the rename cascade rewrites it on the board (and
-  // re-keys the store) when the file moves.
+  // The note this tile shows. `filePath` is its only identity; the rename
+  // cascade rewrites it on the board when the file moves.
   let notePath = $derived(tile.filePath ?? '');
-  function vaultRelativePath(): string | null {
-    if (!vaultStore.path) return null;
-    return tile.filePath || null;
-  }
+  // The model at that path, whichever object it is (a rename can move another
+  // one there).
+  let model = $derived<NoteModel | null>(notePath ? (noteStore.get(notePath) ?? null) : null);
 
-  /**
-   * Builds the WriteArgs snapshot the gateway needs from the current editor
-   * state. Returns null when the tile isn't writable yet (no editor mounted,
-   * no vault, no relPath, or hydrate hasn't completed). Shared between the
-   * schedule path (onUpdate) and the force-write path (Keep-local).
-   *
-   * Synchronous — captures FM from the documentStore live cache. The
-   * stale-cache re-read lives inside the gateway's `writeMarkdownFile` so every
-   * write path benefits from it without each call site re-implementing it.
-   */
-  function buildWriteArgs(): WriteArgs | null {
-    if (!editor || backingFileMissing || !hydrated) return null;
-    // The on-mount disk read failed and no real body is loaded, so the editor
-    // is blank for reasons unrelated to the file. Never write that emptiness /
-    // an empty editor over the file we couldn't read.
-    if (hydrateReadFailed && !lastLoadedBody) return null;
-    if (notePath && documentStore.isReadOnly(notePath)) return null;
-    const vaultRoot = vaultStore.path;
-    const relPath = vaultRelativePath();
-    if (!vaultRoot || !relPath) return null;
-    const fm: Record<string, unknown> = (notePath && documentStore.getFrontmatter(notePath)) || {};
-    return {
-      vaultRoot,
-      relPath,
-      frontmatter: fm,
-      body: editorMarkdown(editor),
-      callerId,
-      notePath: notePath || null,
-    };
-  }
-
-  function scheduleMarkdownWrite(): void {
-    const args = buildWriteArgs();
-    if (!args) return;
-    gatewayScheduleMarkdownWrite(args);
-  }
-
-  // No per-keystroke flush here: `onUpdate` arms the debounced gateway write,
-  // the gateway (`writeMarkdownFileImpl`) owns the markClean on success, and
-  // `onDestroy` drops this tile's writer via `documentStore.dropDirtyWriter`.
+  $effect(() => {
+    const path = notePath;
+    untrack(() => view.show(path));
+  });
 
   onMount(() => {
     const ed: Editor = createTiptapEditor({
       element: editorElement,
       content: '',
       onUpdate: () => {
-        if (isUpdatingFromStore) return;
-        // While the disk read failed the editor is frozen; a
-        // programmatic edit (toolbar command) must neither reach the store nor
-        // set `lastLoadedBody`, which would defeat buildWriteArgs'
-        // `hydrateReadFailed && !lastLoadedBody` refusal and write over the
-        // unread file.
-        if (hydrateReadFailed) return;
-        userEdited = true;
-        const md = editorMarkdown(ed);
-        const html = ed.getHTML();
-        // Track our own write so the reactive $effect below treats it as a
-        // no-op (otherwise the editor would reload itself on every keystroke
-        // and the cursor selection would be destroyed).
-        lastLoadedBody = md;
-
-        if (notePath) {
-          documentStore.updateContent(notePath, html, md, callerId);
-        }
-
-        // `documentStore.updateContent` above is the canonical body sync (the
-        // DocumentEditor's reactive `$effect` on `docState.body` picks it up).
-
-        scheduleMarkdownWrite();
+        view.edited();
       },
       onFocus: () => {
         tiptapToolbar.setActiveEditor(ed);
       },
       onBlur: () => {
+        // Another view may take over the note next; hand it every keystroke.
+        view.serialize();
         if (tiptapToolbar.activeEditor === ed) {
           tiptapToolbar.clearActiveEditor();
         }
@@ -185,230 +86,39 @@
     });
     editor = ed;
 
-    // Bridge prosemirror's composition state into a
-    // reactive flag so the reload `$effect` can defer mid-composition.
-    // Bound to the contenteditable DOM (editor.view.dom) so events bubble
-    // up cleanly regardless of selection state. Removed by editor.destroy()
-    // since the listener is anchored on its DOM.
+    // Anchored on the editor DOM, so editor.destroy() removes them.
     const composeEl = ed.view.dom;
-    const onCompositionStart = () => { isComposing = true; };
-    const onCompositionEnd = () => { isComposing = false; };
-    composeEl.addEventListener('compositionstart', onCompositionStart);
-    composeEl.addEventListener('compositionend', onCompositionEnd);
-
-    void hydrateFromDisk();
-    // Register a fresh-args build callback so `forceWriteForDocument`
-    // (Keep-local in vaultExternalChanges) can flush THIS tile's live editor
-    // body even when no schedule is armed. A rename carries the registered
-    // path along with the note.
-    registerForceWriter(callerId, notePath || null, buildWriteArgs);
+    composeEl.addEventListener('compositionstart', () => { isComposing = true; });
+    composeEl.addEventListener('compositionend', () => { isComposing = false; });
+    // The model may have loaded before the editor existed.
+    untrack(() => view.sync({ composing: false }));
   });
 
-  /** Applies the lossy-round-trip flag from a load result to this tile's note. */
-  function applyLoadResult(result: { lossy: boolean }): void {
-    if (!notePath) return;
-    documentStore.setReadOnly(notePath, result.lossy);
-  }
-
-  async function hydrateFromDisk() {
-    if (!editor) return;
-    // Wrap the whole body so every early-return path
-    // (cached body, missing-vault fallback, IPC
-    // read failure, empty-editor fallback) ends with `hydrated = true`.
-    // Without the try/finally the failure paths could leave a stale
-    // `false` and silently lock writes for the lifetime of the tile.
-    try {
-      const vaultRoot = vaultStore.path;
-      const relPath = vaultRelativePath();
-
-      // Every view of this path shares one document, so a sibling view that
-      // already read the note is found by the path alone.
-      const docState = notePath ? documentStore.getDocument(notePath) : null;
-      // Only adopt the in-memory (body-only) body as a hydrate
-      // source when this doc's frontmatter is already seeded (a sibling view
-      // read it from disk). Re-parsing FM from the body-only store body yields
-      // {}, and seeding that would clobber the real cached FM → a later
-      // body-only save erases the file's frontmatter block. When unseeded,
-      // fall through to the authoritative disk read below, which seeds FM
-      // correctly (and never erases).
-      if (docState?.body && notePath && documentStore.hasFrontmatter(notePath)) {
-        // Load the store body VERBATIM. It is body-only by contract; re-parsing
-        // would strip a leading `---…---` horizontal-rule pair as "frontmatter".
-        const body = docState.body;
-        lastLoadedBody = body;
-        isUpdatingFromStore = true;
-        applyLoadResult(loadMarkdownIntoEditor(editor, body));
-        isUpdatingFromStore = false;
-        // The body-only field carries no BOM. Inherit the existing `fileState`
-        // entry's hadBom when it exists; only mark with false as a fresh
-        // fallback. Sniff CRLF from the body so an adopt of a single-line-CRLF
-        // FM file doesn't emit LF fences on the first write.
-        if (relPath && !isHydrated(relPath)) {
-          const adoptEol = body.includes('\r\n') ? '\r\n' : undefined;
-          markHydrated(relPath, false, undefined, undefined, adoptEol);
-        }
-        return;
-      }
-
-      if (!vaultRoot || !relPath) {
-        const parsed = parseMarkdownFile('');
-        if (notePath) documentStore.setFrontmatter(notePath, parsed.frontmatter);
-        lastLoadedBody = parsed.body;
-        isUpdatingFromStore = true;
-        applyLoadResult(loadMarkdownIntoEditor(editor, parsed.body));
-        isUpdatingFromStore = false;
-        if (relPath) markHydrated(relPath, parsed.hadBom);
-        return;
-      }
-
-      try {
-        // The read gateway seeds the hydrate gate + drift baseline from
-        // the same read's mtime, so a later debounced write detects an
-        // external edit that lands after this hydrate.
-        const { body, frontmatter, rawFrontmatter } = await readMarkdownForHydrate(vaultRoot, relPath);
-        // A retry that succeeds lands here: clear the failed-read flag and
-        // re-enable editing (the close-drain $effect re-runs on the reactive
-        // flag, but flip it directly too so a non-frozen tile resumes immediately).
-        if (hydrateReadFailed) {
-          hydrateReadFailed = false;
-          setEditorEditable(editor, true);
-        }
-        // Seed the verbatim frontmatter bytes so a later body-only save
-        // emits them untouched (comments / key order / line endings preserved).
-        if (notePath) documentStore.setFrontmatter(notePath, frontmatter, rawFrontmatter);
-        lastLoadedBody = body;
-        isUpdatingFromStore = true;
-        applyLoadResult(loadMarkdownIntoEditor(editor, body));
-        isUpdatingFromStore = false;
-        if (notePath) {
-          documentStore.loadDocument({
-            filename: relPath,
-            title: tile.title || 'Untitled',
-            body,
-            htmlContent: editor.getHTML(),
-            richText: [],
-          });
-          // loadDocument is a no-op for an EXISTING entry, so an
-          // unhydrated placeholder (body '') would keep '' while the editor shows
-          // the disk body — and a later reactive reload would load '' back in.
-          // Upgrade the placeholder to what we actually read.
-          documentStore.adoptDiskBodyIfPlaceholder(notePath, body, editor.getHTML());
-        }
-        return;
-      } catch (err) {
-        // A genuinely-missing backing file (ENOENT) is an expected, already-
-        // surfaced state: `boardRefIntegrity` flags the placement with a
-        // "backing file missing" badge on load, and the empty-editor
-        // fallback below is the designed behaviour. Genuine, unexpected read
-        // failures (permissions, decode errors, a directory in the path) warn.
-        if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
-          // The on-load / tree-refresh recomputes normally set the
-          // "backing file missing" badge, but a file deleted AFTER load (before
-          // the tree caught up) can reach this re-hydrate with no badge yet. If
-          // this tile isn't already flagged, recompute against the live tree so
-          // the badge is immediate. The `isBrokenTile` guard keeps a board-open
-          // pass over many already-flagged broken tiles from triggering a
-          // recompute storm (the on-load recompute flagged them first).
-          if (!boardRefIntegrityStore.isBrokenTile(tile.id)) {
-            vaultStore.recomputeBrokenRefsNow();
-          }
-          // Debug breadcrumb rather than a full suppress — a silently-swallowed
-          // ENOENT is invisible when diagnosing a vanished backing file. The
-          // main process already skips its own stack trace for ENOENT reads.
-          console.debug('[TextTile] backing markdown missing (ENOENT); starting empty:', relPath);
-        } else {
-          // A NON-ENOENT failure is NOT a missing file: the bytes exist but
-          // couldn't be read (FILE_TOO_LARGE, transient EACCES/EBUSY). Falling
-          // through to the empty editor would let the next keystroke silently
-          // write that emptiness over the real file. Instead flag
-          // the failure (buildWriteArgs refuses to write), hold the editor
-          // non-writable. A retry re-reads disk.
-          console.warn('[TextTile] Failed to read markdown file; holding non-writable until retry:', err);
-          hydrateReadFailed = true;
-          if (relPath) markHydrated(relPath, false);
-          setEditorEditable(editor, false);
-          return;
-        }
-      }
-
-      // No backing file yet (or it went missing): start empty. Reached only on
-      // the ENOENT path; the non-ENOENT failure branch returns above so an
-      // empty editor never lands over an unread file. A brand-new note may be
-      // created while this read was in flight: its seed has already recorded
-      // the note's frontmatter (`title:`), which an empty one must not replace.
-      const parsed = parseMarkdownFile('');
-      if (notePath && !documentStore.hasFrontmatter(notePath)) documentStore.setFrontmatter(notePath, parsed.frontmatter);
-      lastLoadedBody = parsed.body;
-      isUpdatingFromStore = true;
-      applyLoadResult(loadMarkdownIntoEditor(editor, parsed.body));
-      isUpdatingFromStore = false;
-      if (relPath) markHydrated(relPath, parsed.hadBom);
-    } finally {
-      hydrated = true;
-    }
-  }
-
-  // Reactive reload — when another view (a sibling text tile or a document
-  // editor) writes to the same note, documentStore.body changes. We watch it
-  // and refresh this tile's editor to keep the views in sync. Gated on
-  // THIS view's own writer dirtiness so we don't reload mid-typing of OUR
-  // editor, yet a still-clean view DOES pick up a sibling's edits immediately
-  // (keying on the shared `isDirty` would freeze every view once any became
-  // dirty, and the last debounce flush would drop the other's keystrokes).
-  // Gated on `lastLoadedBody` so we don't echo our own writes.
+  // Follow the note: a body typed in another view, a change on disk or a
+  // reload loads here. Never mid-composition; the effect re-runs on
+  // compositionend and picks up whatever landed meanwhile.
   $effect(() => {
-    if (!editor) return;
-    const docState = notePath ? documentStore.getDocument(notePath) : undefined;
-    if (!docState) return;
-    const body = docState.body;
-    if (body === lastLoadedBody) return;
-    if (notePath && documentStore.isWriterDirty(notePath, callerId)) return;
-    // Skip the reload while the user is mid-IME-composition
-    // (CJK / dead-key flows). ProseMirror's `setContent` mid-composition
-    // both interrupts the composition window AND can produce a broken
-    // commit (the composing text disappears as the new doc lands). The
-    // reactive `isComposing` flag (driven by compositionstart/end on the
-    // editor DOM) lets the effect re-run automatically when typing
-    // settles, picking up any sibling-writer body that landed in the
-    // meantime.
-    if (isComposing) return;
-    // `docState.body` is body-only by contract; load it VERBATIM (a re-parse
-    // would strip a leading `---…---` rule pair as frontmatter). The live FM cache is
-    // refreshed elsewhere (applyReloadFromDisk on external edits, or the
-    // sibling writer's own setFrontmatter on hydrate); we don't re-seed it
-    // here. `preserveSelection` keeps the caret in place when an external
-    // edit replaces the body underneath an open editor.
-    lastLoadedBody = body ?? '';
-    isUpdatingFromStore = true;
-    applyLoadResult(loadMarkdownIntoEditor(editor, body ?? '', { preserveSelection: true }));
-    isUpdatingFromStore = false;
+    const m = model;
+    if (!m) return;
+    void m.bodyRevision;
+    void m.status;
+    const composing = isComposing;
+    untrack(() => view.sync({ composing }));
+  });
+
+  // A file deleted after the board loaded may not carry its "missing" badge
+  // yet; recompute against the live tree so it shows now.
+  $effect(() => {
+    if (model?.status !== 'missing') return;
+    untrack(() => {
+      if (!boardRefIntegrityStore.isBrokenTile(tile.id)) vaultStore.recomputeBrokenRefsNow();
+    });
   });
 
   onDestroy(() => {
-    // Capture the path synchronously up front: `tile.filePath` is reactive
-    // and could change during teardown; the dirty-writer drop and the final
-    // write must both target the note this tile actually held.
-    const heldPath = notePath;
-    const relPath = vaultRelativePath();
-
-    // Capture the latest write args SYNCHRONOUSLY from the live editor, then
-    // destroy the editor, then dispatch the IPC — so the TipTap instance isn't
-    // pinned alive for the duration of the disk write.
-    //
-    // Only when this writer has unsaved work: unmounts are routine (viewport
-    // culling, LOD switch, board/tab switch), and an unconditional final write
-    // would re-serialise every untouched note through the editor (`_x_` →
-    // `*x*`, mixed EOLs). A failed earlier write keeps the writer dirty (the
-    // gateway markCleans only on success), so destroy still retries it.
-    const hasUnsaved =
-      userEdited &&
-      (!heldPath || documentStore.isWriterDirty(heldPath, callerId) || hasPendingMarkdownWriteFor(callerId));
-    const finalArgs = hasUnsaved ? buildWriteArgs() : null;
-    // Cancel any debounced timer for this caller so the snapshot we're
-    // about to fire isn't shadowed by a slightly-older scheduled write
-    // landing afterwards.
-    if (finalArgs) cancelMarkdownWrite(callerId);
-
+    // Unsaved keystrokes go to the model first; the note writer saves them
+    // even though this view is gone.
+    view.close();
     if (editor) {
       if (tiptapToolbar.activeEditor === editor) {
         tiptapToolbar.clearActiveEditor();
@@ -416,99 +126,58 @@
       editor.destroy();
       editor = null;
     }
-    unregisterForceWriter(callerId);
-    // Note: don't clearHydrated(relPath) here — sibling text tiles for the
-    // same file may still be mounted (split-pane, multiple boards open),
-    // and clearing it would force them to re-hydrate before writing. The
-    // hydrate state is per-file, not per-tile; vault swap drops it via
-    // cancelAllMarkdownWrites.
-    void relPath;
-
-    // Drop THIS tile's dirty-writer entry even though the final write below is
-    // fire-and-forget. Unconditional: once unmounted no editor holds unsaved
-    // content, so a lingering writerId would pin `DocumentState.isDirty` true —
-    // routing a later external edit to a spurious Reload prompt and freezing a
-    // sibling's reload `$effect`.
-    if (heldPath) documentStore.dropDirtyWriter(heldPath, callerId);
-
-    if (finalArgs) {
-      // flushFinalWriteOnDestroy no-ops if the gateway was already
-      // reset by a vault swap (cancelAllMarkdownWrites cleared the hydrate
-      // state), so this teardown write respects the swap reset instead of
-      // firing a stray write / throwing "not hydrated".
-      void flushFinalWriteOnDestroy(finalArgs).catch((err) => {
-        if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
-          // Backing file vanished during the close gesture — surface the
-          // same toast the live flush path would have produced.
-          reportError(
-            'TextTile',
-            null,
-            `${relPath ?? 'File'} no longer exists on disk. Final edits couldn't be saved.`,
-          );
-          return;
-        }
-        reportError('TextTile', err, 'Failed to write markdown on unmount');
-      });
-    }
   });
 
-  /**
-   * Read-only state surfaced for the banner. Reactive via
-   * documentStore.isReadOnly which reads the SvelteSet under a version tick.
-   */
-  let readOnly = $derived(notePath ? documentStore.isReadOnly(notePath) : false);
+  let readOnly = $derived(model?.lossy ?? false);
   // A note whose bytes aren't UTF-8 is non-editable (a save would persist
   // U+FFFD for every non-ASCII byte) until converted.
-  let nonUtf8 = $derived(isNonUtf8(vaultRelativePath()));
+  let nonUtf8 = $derived(isNonUtf8(notePath));
+  // The read failed for a reason other than a missing file: nothing real is
+  // loaded, so typing would overwrite the unread file with an empty editor.
+  let unreadable = $derived(model?.status === 'unreadable');
+  let missing = $derived(model?.status === 'missing');
 
   // Freeze the editor while a tab-close drain is in flight (a keystroke would
-  // re-arm a debounce the unmount destroys), and while the note is lossy
-  // read-only (otherwise typed text is silently discarded). `readOnly` is
-  // reactive, so Take ownership re-enables editing automatically. Never
-  // re-enable while a hydrate read failed — that path holds the editor
-  // non-writable so a keystroke can't overwrite the unread file.
+  // be stranded by the unmount), while the note can't be written (lossy, not
+  // UTF-8, unreadable, missing) and until it has loaded.
   $effect(() => {
-    const frozen = closeDrainGate.draining || readOnly || nonUtf8;
-    if (!hydrateReadFailed) {
-      // Non-emitting + untracked: see setEditorEditable (avoids an effect loop).
-      untrack(() => setEditorEditable(editor, !frozen));
-    }
+    const status = model?.status;
+    const frozen =
+      closeDrainGate.draining || readOnly || nonUtf8 || unreadable || missing || status === 'loading';
+    // Non-emitting + untracked: see setEditorEditable (avoids an effect loop).
+    untrack(() => setEditorEditable(editor, !frozen));
   });
 
-  // Re-run the disk hydrate after a transient read failure (file lock released,
-  // OneDrive synced, AV finished). On success `hydrateFromDisk` clears
-  // `hydrateReadFailed` and re-enables editing.
-  function retryHydrate(): void {
-    void hydrateFromDisk();
+  function retryRead(): void {
+    if (notePath) void noteStore.reload(notePath);
   }
 
   function convertToUtf8(): void {
     const vaultRoot = vaultStore.path;
-    const relPath = vaultRelativePath();
-    if (vaultRoot && relPath) confirmConvertToUtf8(vaultRoot, relPath);
+    if (vaultRoot && notePath) confirmConvertToUtf8(vaultRoot, notePath);
   }
 
   function takeOwnership(): void {
     if (!notePath) return;
-    const cid = notePath;
+    const path = notePath;
     uiStore.openConfirm({
       title: 'Take ownership of this file?',
       body: "Filo will be able to edit and save this file, but formatting it can't preserve (for example hard-wrapped lines, callouts, wiki links, comments) will be rewritten or removed on the next save. Continue?",
       confirmLabel: 'Take ownership',
       cancelLabel: 'Cancel',
       danger: true,
-      onConfirm: () => documentStore.takeOwnership(cid),
+      onConfirm: () => noteStore.takeOwnership(path),
     });
   }
 </script>
 
 <div class="text-tile">
-  {#if hydrateReadFailed}
+  {#if unreadable}
     <!-- Read failed; editing is paused so a keystroke can't
          overwrite the real (unread) file with an empty editor. Retry re-reads disk. -->
     <div class="readonly-banner" role="alert">
       <span class="readonly-text">Filo couldn't read this file. Editing is paused so your changes can't overwrite it — retry once the file is readable.</span>
-      <button class="readonly-action" onclick={retryHydrate}>Retry</button>
+      <button class="readonly-action" onclick={retryRead}>Retry</button>
     </div>
   {/if}
   {#if nonUtf8}

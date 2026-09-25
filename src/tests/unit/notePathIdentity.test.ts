@@ -1,139 +1,158 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { tabStore } from '@renderer/stores/tabs.svelte';
+import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { renameAllPathKeys } from '@renderer/lib/vault/renamePathKeys';
-import {
-  registerForceWriter,
-  unregisterForceWriter,
-  forceWriteForDocument,
-  cancelAllMarkdownWrites,
-} from '@renderer/lib/vault/markdownFileWriter';
-import {
-  getLastFlushedFrontmatterVersion,
-  noteFrontmatterFlushedVersion,
-  resetFrontmatterScheduler,
-} from '@renderer/lib/boards/frontmatterWriteScheduler';
+import { setActiveVaultPath } from '@renderer/lib/vault/activeVaultPath';
+import { beginVaultGeneration, __resetVaultIdentityForTests } from '@renderer/lib/vault/vaultIdentity';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { assembleMarkdownFile } from '@renderer/lib/editor/markdownSync';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
  * A note's vault path is its only identity: every per-note map is keyed by
  * the case-folded path, and a rename moves each entry to the new key. These
- * pin the rename half, which a stable opaque id used to make unnecessary.
+ * pin the rename half, which a stable opaque id used to make unnecessary:
+ * the note model (with its unsaved body), the writer's queue for it, the
+ * frontmatter overlay of an unopened note, and a Document tab all follow.
  */
 
-function load(filename: string, body = ''): void {
-  documentStore.loadDocument({ filename, title: filename, body, htmlContent: '', richText: [] });
+let vault: MemoryVault;
+
+/** Moves a file on "disk" the way the in-app rename does, then runs the sweep. */
+function renameOnDisk(oldRel: string, newRel: string): void {
+  for (const [key, text] of [...vault.files]) {
+    const rel = key === oldRel.toLowerCase() ? newRel
+      : key.startsWith(`${oldRel.toLowerCase()}/`) ? newRel + key.slice(oldRel.length)
+        : null;
+    if (rel === null) continue;
+    vault.remove(key);
+    vault.writeExternally(rel, text);
+  }
+  renameAllPathKeys(oldRel, newRel);
 }
 
 beforeEach(() => {
-  documentStore.clear();
-  resetFrontmatterScheduler();
-  cancelAllMarkdownWrites();
+  __resetDirtyTrackingForTests();
+  __resetVaultIdentityForTests();
+  beginVaultGeneration('/vault');
+  setActiveVaultPath('/vault');
+  vault = installMemoryVault({
+    'Notes/Shopping.md': '---\ntitle: Shopping\n---\nmilk\n',
+    'Notes/Old.md': '---\ntitle: T\n---\nbody\n',
+    'Notes/2026/Daily Log.md': '---\ntitle: Daily\n---\nlog\n',
+    'Other/Keep.md': '---\ntitle: Keep\n---\nkeep\n',
+    'Notes/foo.md': '---\ntitle: foo\n---\nkept\n',
+  });
+  vaultIndexStore.clear();
+  noteStore.__resetForTests();
   tabStore.closeAll();
 });
 afterEach(() => {
-  documentStore.clear();
-  resetFrontmatterScheduler();
-  cancelAllMarkdownWrites();
+  noteStore.__resetForTests();
   tabStore.closeAll();
+  setActiveVaultPath('');
+  restoreFiloDefault();
 });
 
-describe('one document per path', () => {
-  it('any spelling of the path names the same document', () => {
-    load('Notes/Shopping.md', 'milk');
-    load('notes/shopping.md', 'ignored');
-    expect(documentStore.documents.size).toBe(1);
-    expect(documentStore.getDocument('NOTES\\Shopping.md')?.body).toBe('milk');
-    expect(documentStore.findByFilename('notes/SHOPPING.md')?.filename).toBe('Notes/Shopping.md');
+describe('one note per path', () => {
+  it('any spelling of the path names the same note', async () => {
+    const m = noteStore.acquire('Notes/Shopping.md', 'tile');
+    expect(noteStore.acquire('notes/shopping.md', 'doc')).toBe(m);
+    await m.loaded;
+    expect(noteStore.get('NOTES\\Shopping.md')).toBe(m);
+    expect(noteStore.get('notes/SHOPPING.md')?.relPath).toBe('Notes/Shopping.md');
+    expect(m.body).toBe('milk\n');
   });
 
-  it('every per-note cache is shared by the path', () => {
-    documentStore.setFrontmatter('Notes/A.md', { title: 'A' });
-    documentStore.setReadOnly('notes/a.md', true);
-    expect(documentStore.getFrontmatter('NOTES/A.MD')).toEqual({ title: 'A' });
-    expect(documentStore.isReadOnly('Notes/A.md')).toBe(true);
+  it('a queued frontmatter change is shared by the path', () => {
+    noteStore.patchFrontmatter('Notes/A.md', { set: { title: 'A' }, unset: [] });
+    expect(noteStore.frontmatter('NOTES/A.MD')).toEqual({ title: 'A' });
+    expect(noteStore.hasPendingWrites('notes/a.md')).toBe(true);
   });
 });
 
-describe('a rename re-keys the document store', () => {
-  it('moves the document, its caches and its counters to the new path', () => {
-    load('Notes/Old.md', 'body');
-    documentStore.setFrontmatter('Notes/Old.md', { title: 'T' }, 'title: T\n');
-    documentStore.updateContent('Notes/Old.md', '<p>x</p>', 'body 2', 'writer-1');
-    const version = documentStore.getFrontmatterMutationVersion('Notes/Old.md');
+describe('a rename re-keys the note store', () => {
+  it('moves the model with its unsaved body, and the next write lands on the new file', async () => {
+    const m = noteStore.acquire('Notes/Old.md', 'tile');
+    await m.loaded;
+    noteStore.setBody('Notes/Old.md', 'body 2', 'tile');
 
-    renameAllPathKeys('Notes/Old.md', 'Notes/New.md');
+    renameOnDisk('Notes/Old.md', 'Notes/New.md');
 
-    expect(documentStore.getDocument('Notes/Old.md')).toBeUndefined();
-    const moved = documentStore.getDocument('Notes/New.md');
-    expect(moved?.filename).toBe('Notes/New.md');
+    expect(noteStore.get('Notes/Old.md')).toBeUndefined();
+    const moved = noteStore.get('Notes/New.md');
+    expect(moved).toBe(m);
+    expect(moved?.relPath).toBe('Notes/New.md');
     expect(moved?.body).toBe('body 2');
-    expect(documentStore.getFrontmatter('Notes/New.md')).toEqual({ title: 'T' });
-    expect(documentStore.getOriginalFrontmatterSource('Notes/New.md')).toBe('title: T\n');
-    expect(documentStore.isWriterDirty('Notes/New.md', 'writer-1')).toBe(true);
-    expect(documentStore.getFrontmatterMutationVersion('Notes/New.md')).toBe(version);
-    expect(documentStore.getFrontmatterMutationVersion('Notes/Old.md')).toBe(0);
+    expect(moved?.frontmatter).toEqual({ title: 'T' });
+    expect(moved?.hasUnsavedBody).toBe(true);
+    expect(noteStore.hasPendingWrites('Notes/Old.md')).toBe(false);
+    expect(noteStore.hasPendingWrites('Notes/New.md')).toBe(true);
+
+    await noteStore.flushAll();
+    expect(vault.read('Notes/New.md')).toBe('---\ntitle: T\n---\nbody 2\n');
+    expect(vault.read('Notes/Old.md')).toBeUndefined();
   });
 
-  it('moves every note under a renamed folder, keeping each tail as spelled', () => {
-    load('Notes/2026/Daily Log.md');
-    load('Other/Keep.md');
-    renameAllPathKeys('Notes', 'Archive');
-    expect(documentStore.getDocument('Archive/2026/Daily Log.md')?.filename).toBe('Archive/2026/Daily Log.md');
-    expect(documentStore.getDocument('Notes/2026/Daily Log.md')).toBeUndefined();
-    expect(documentStore.getDocument('Other/Keep.md')?.filename).toBe('Other/Keep.md');
+  it('moves every note under a renamed folder, keeping each tail as spelled', async () => {
+    const daily = noteStore.acquire('Notes/2026/Daily Log.md', 'tile');
+    const keep = noteStore.acquire('Other/Keep.md', 'tile');
+    await Promise.all([daily.loaded, keep.loaded]);
+    renameOnDisk('Notes', 'Archive');
+    expect(noteStore.get('Archive/2026/Daily Log.md')?.relPath).toBe('Archive/2026/Daily Log.md');
+    expect(noteStore.get('Notes/2026/Daily Log.md')).toBeUndefined();
+    expect(noteStore.get('Other/Keep.md')?.relPath).toBe('Other/Keep.md');
   });
 
-  it('a case-only rename keeps the entry and takes the new spelling', () => {
-    load('Notes/foo.md', 'kept');
-    renameAllPathKeys('Notes/foo.md', 'Notes/Foo.md');
-    expect(documentStore.documents.size).toBe(1);
-    expect(documentStore.getDocument('notes/foo.md')?.filename).toBe('Notes/Foo.md');
-    expect(documentStore.getDocument('notes/foo.md')?.body).toBe('kept');
+  it('a case-only rename keeps the model and takes the new spelling', async () => {
+    const m = noteStore.acquire('Notes/foo.md', 'tile');
+    await m.loaded;
+    renameOnDisk('Notes/foo.md', 'Notes/Foo.md');
+    expect(noteStore.get('notes/foo.md')).toBe(m);
+    expect(m.relPath).toBe('Notes/Foo.md');
+    expect(m.body).toBe('kept\n');
   });
 
-  it('a counter never goes backwards when the new path already had one', () => {
-    for (let i = 0; i < 5; i++) documentStore.setFrontmatter('B.md', { n: i });
-    documentStore.setFrontmatter('A.md', { n: 0 });
-    renameAllPathKeys('A.md', 'B.md');
-    expect(documentStore.getFrontmatterMutationVersion('B.md')).toBe(5);
-    // The moved note's own frontmatter-only count survives; the jump is body churn.
-    expect(documentStore.getFrontmatterOnlyMutationVersion('B.md')).toBe(1);
+  it('a queued change of an unopened note follows it, overlay and all', async () => {
+    noteStore.patchFrontmatter('Notes/Old.md', { set: { status: 'done' }, unset: [] });
+    renameOnDisk('Notes/Old.md', 'Notes/New.md');
+    expect(noteStore.frontmatter('Notes/New.md').status).toBe('done');
+    expect(noteStore.hasPendingWrites('Notes/Old.md')).toBe(false);
+    expect(await noteStore.flushAll()).toEqual({ failed: [] });
+    expect(vault.read('Notes/New.md')).toBe('---\ntitle: T\nstatus: done\n---\nbody\n');
+  });
+
+  it('a new note at the freed path starts clean', async () => {
+    const m = noteStore.acquire('Notes/Old.md', 'tile');
+    await m.loaded;
+    noteStore.setBody('Notes/Old.md', 'moved body', 'tile');
+    renameOnDisk('Notes/Old.md', 'Notes/New.md');
+
+    expect(await noteStore.createExclusive('Notes/Old.md', '---\ntitle: Fresh\n---\n')).toBe('created');
+    const fresh = noteStore.acquire('Notes/Old.md', 'other');
+    await fresh.loaded;
+    expect(fresh).not.toBe(m);
+    expect(fresh.frontmatter).toEqual({ title: 'Fresh' });
+    await noteStore.flushAll();
+    // The moved note's body went to the moved file only.
+    expect(vault.read('Notes/Old.md')).toBe('---\ntitle: Fresh\n---\n');
+    expect(vault.read('Notes/New.md')).toContain('moved body');
   });
 });
 
-describe('the frontmatter scheduler follows the rename', () => {
-  it('moves the flushed-version mark, so a new note at the old path is never treated as stale', () => {
-    for (let i = 0; i < 5; i++) documentStore.setFrontmatter('A.md', { n: i });
-    noteFrontmatterFlushedVersion('A.md', 5);
-
-    renameAllPathKeys('A.md', 'B.md');
-
-    // The renamed note keeps its mark next to its counter.
-    expect(getLastFlushedFrontmatterVersion('b.md')).toBe(5);
-    expect(documentStore.getFrontmatterMutationVersion('B.md')).toBe(5);
-    // A note created at the freed path starts clean: a leftover mark of 5 would
-    // make its first four writes look stale and skip them.
-    expect(getLastFlushedFrontmatterVersion('A.md')).toBe(0);
-    documentStore.setFrontmatter('A.md', { title: 'new note' });
-    expect(documentStore.getFrontmatterMutationVersion('A.md')).toBeGreaterThan(getLastFlushedFrontmatterVersion('A.md'));
-  });
-});
-
-describe('registered editors follow the rename', () => {
-  it('Keep-local still reaches an editor whose note moved after it registered', async () => {
-    const build = vi.fn(() => null);
-    registerForceWriter('text-tile:t1', 'Notes/A.md', build);
-    try {
-      renameAllPathKeys('Notes', 'Archive');
-      await forceWriteForDocument('archive/a.md');
-      expect(build).toHaveBeenCalledTimes(1);
-      build.mockClear();
-      await forceWriteForDocument('Notes/A.md');
-      expect(build).not.toHaveBeenCalled();
-    } finally {
-      unregisterForceWriter('text-tile:t1');
-    }
+describe('views follow the rename', () => {
+  it('an editor whose note moved is still drained on save', async () => {
+    let typed = 'typed before the rename';
+    const m = noteStore.acquire('Notes/Old.md', 'tile', {
+      serialize: () => noteStore.setBody(m.relPath, typed, 'tile'),
+    });
+    await m.loaded;
+    renameOnDisk('Notes', 'Archive');
+    typed = 'typed after the rename';
+    await noteStore.flush('archive/old.md');
+    expect(vault.read('Archive/Old.md')).toBe('---\ntitle: T\n---\ntyped after the rename\n');
   });
 
   it('a Document tab follows its note, and reopening the new path focuses it', () => {

@@ -2,9 +2,10 @@
   /**
    * PropertiesPopup — type-detected key/value editor for a tile's metadata.
    *
-   * For text tiles: backed by the file's YAML frontmatter (the canonical source
-   * for tile metadata). Reads via `vault:read-file-text`, writes back via
-   * `vault:write-file-text`, debounced 300ms while typing.
+   * For text tiles: backed by the note's YAML frontmatter (the canonical source
+   * for tile metadata). Reads the note store; each change is sent as a delta
+   * (only the keys that changed) through `noteStore.patchFrontmatter`, so a key
+   * another program added since the popup opened is kept.
    *
    * For non-text tiles: backed by the tile's in-board `metadata` object.
    * Mutations go through `boardStore.updateTile`.
@@ -12,30 +13,14 @@
   import { onMount, onDestroy, getContext } from 'svelte';
   import type { Tile } from '../../schema/index';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
-  import { vaultStore } from '../../stores/vault.svelte';
 
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
   const boardStore = scope.board;
   import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
-  import { documentStore } from '../../stores/document.svelte';
+  import { noteStore } from '../../stores/notes.svelte';
   import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
-  import {
-    markHydrated,
-    isHydrated,
-    readMarkdownForHydrate,
-    scheduleMarkdownWrite as gatewayScheduleMarkdownWrite,
-    flushMarkdownWrite,
-    cancelMarkdownWrite,
-    type WriteArgs,
-  } from '../../lib/vault/markdownFileWriter';
-  import {
-    markPropertiesPopupDirty,
-    clearPropertiesPopupDirty,
-  } from '../../lib/vault/propertiesPopupTracker';
-  import { reportError } from '../../lib/utils/errorBus';
   import { type PropType, detectType, valueForRow } from '../../lib/utils/propertyRowTypes';
-  import { diffToFrontmatterDelta } from '../../lib/vault/frontmatterDelta';
-  import { IpcEnvelopeError } from '@shared/ipcEnvelope';
+  import { diffToFrontmatterDelta, isEmptyFrontmatterDelta } from '../../lib/vault/frontmatterDelta';
   import { createId } from '../../lib/utils/ids';
   import { historyStore } from '../../stores/history.svelte';
   import {
@@ -63,9 +48,9 @@
 
   let rows = $state<PropertyRow[]>([]);
   let initialised = $state(false);
-  // Same role as TextTile.backingFileMissing — set on ENOENT so subsequent
-  // debounced writes don't re-create a file the user just deleted on disk.
-  let backingFileMissing = false;
+  // The frontmatter as last sent to the note store. Each edit sends only what
+  // changed since, so removing a row after adding it also removes the key.
+  let lastSent: Record<string, unknown> = {};
 
   // Snapshot the canonical "before" state at popup mount so
   // popup-close can dispatch a single UpdatePropertiesCommand spanning every
@@ -105,31 +90,16 @@
 
   function loadFromBacking(): void {
     if (tile.type === 'text') {
-      const notePath = resolveTextTileVaultPath(tile);
       const relPath = vaultRelativePath(tile);
-      // Source order:
-      //   1. documentStore live cache — set by whichever writer last touched
-      //      the file (TextTile / DocumentEditor / TaskListBoard).
-      //   2. vaultIndexStore — the disk-canonical snapshot from the watcher.
-      //   3. Empty — a note that isn't on disk (yet).
-      // The popup is then the canonical authority during its open session;
-      // its writes overwrite the cache, so the user's view is always what
-      // gets persisted.
-      let fm: Record<string, unknown> | undefined;
-      if (notePath) fm = documentStore.getFrontmatter(notePath);
-      if (!fm && relPath) {
-        const indexed = vaultIndexStore.getMetadata(relPath)?.frontmatter;
-        if (indexed) {
-          fm = indexed;
-          if (notePath) documentStore.setFrontmatter(notePath, indexed);
-        }
-      }
+      // The note's frontmatter as the note store has it: the open note's model,
+      // else the vault index with any queued change laid over it.
+      const fm = relPath ? noteStore.frontmatter(relPath) : undefined;
       rows = rowsFromObject(fm ?? {});
+      lastSent = JSON.parse(JSON.stringify(fm ?? {})) as Record<string, unknown>;
       if (relPath) {
         beforeSnapshot = {
           kind: 'frontmatter',
           relPath,
-          notePath: notePath ?? null,
           fm: JSON.parse(JSON.stringify(fm ?? {})) as Record<string, unknown>,
         };
       }
@@ -146,116 +116,21 @@
   }
 
   /**
-   * Builds the gateway WriteArgs from the popup's current rows. Returns
-   * null for non-text tiles (those persist via `boardStore.updateTile`
-   * directly in `scheduleWrite`) or when the file isn't ready yet.
+   * Sends what changed since the last send. Non-text tiles persist their
+   * metadata into the board file via `boardStore.updateTile`.
    */
-  function buildFrontmatterWriteArgs(): WriteArgs | null {
-    if (tile.type !== 'text' || backingFileMissing) return null;
-    const vaultRoot = vaultStore.path;
-    const relPath = vaultRelativePath(tile);
-    if (!vaultRoot || !relPath) return null;
-    const notePath = resolveTextTileVaultPath(tile);
-    const obj = rowsToObject(rows);
-    // The popup is canonical during edit: overwrite the live cache so the
-    // next TextTile / DocumentEditor write assembles the file with the
-    // user's chosen properties rather than reverting to its own snapshot.
-    if (notePath) documentStore.setFrontmatter(notePath, obj);
-    // Body source: prefer the live in-memory body (an open TextTile or
-    // DocumentEditor keeps it current with un-debounced keystrokes), and
-    // fall back to the watcher-canonical disk content. Without this, a
-    // popup write while the user is typing would emit a stale body and
-    // truncate the last few keystrokes.
-    const docState = notePath ? documentStore.getDocument(notePath) : null;
-    const body = docState?.body ?? vaultIndexStore.getMetadata(relPath)?.content ?? '';
-    // Hydration is seeded by the disk read fired from onMount, which records
-    // the correct hadBom in `fileState` AND seeds the drift baseline (the
-    // index's body-only content is already BOM-stripped, so it can't be
-    // sniffed). If onMount's read failed (ENOENT / race), fall back to a
-    // no-BOM hydrate so the write below ENOENT-fails with the surfaced toast.
-    if (!isHydrated(relPath)) markHydrated(relPath, false);
-    // The popup edits in whole-object terms, so the write SOURCE is the delta of everything that
-    // changed since the popup opened (`beforeSnapshot.fm` → current rows). A key
-    // the popup never touched — including one an external editor added to disk
-    // since the popup opened, which is in NEITHER snapshot — is absent from the
-    // delta, so the gateway sources it from fresh disk and never reverts it.
-    // `frontmatter: obj` stays as the fallback the gateway ignores while a
-    // delta is present.
-    const openFm =
-      beforeSnapshot?.kind === 'frontmatter' ? beforeSnapshot.fm : {};
-    const delta = diffToFrontmatterDelta(openFm, obj);
-    return {
-      vaultRoot,
-      relPath,
-      frontmatter: obj,
-      body,
-      callerId: flusherId,
-      notePath: notePath ?? null,
-      frontmatterDelta: delta,
-      // Fire-time body-source decision (`body` above prefers
-      // the live `docState?.body`); the gateway must not re-derive it from
-      // the mutable documentStore at write time.
-      bodyIsLive: docState != null,
-    };
-  }
-
   function scheduleWrite(): void {
+    const obj = rowsToObject(rows);
     if (tile.type !== 'text') {
-      // Non-text tiles persist their metadata directly into board JSON via
-      // boardStore.updateTile — no gateway involvement. The in-memory
-      // mutation is debounced at the boardCache layer via its dirty flag.
-      const obj = rowsToObject(rows);
       boardStore.updateTile(tile.id, { metadata: obj } as Partial<Tile>);
       return;
     }
-    const args = buildFrontmatterWriteArgs();
-    if (!args) return;
-    // Flag the popup as dirty against the backing path so
-    // a concurrent external frontmatter edit gets routed to a Reload/Keep-
-    // local prompt instead of silently clobbering these pending rows.
-    // Cleared in flushPendingWrite's success branch + onDestroy.
-    if (flusherId && args.relPath) {
-      markPropertiesPopupDirty(flusherId, args.relPath);
-    }
-    gatewayScheduleMarkdownWrite(args);
-  }
-
-  function flushIfPending(): void {
-    if (!flusherId) return;
-    if (tile.type !== 'text') return;
-    void flushPendingWrite();
-  }
-
-  async function flushPendingWrite(): Promise<void> {
-    if (!flusherId) return;
-    // `flushMarkdownWrite` never rejects (failures resolve as `{ ok: false }`),
-    // so branch on the result: clearing the dirty flag on a FAILED flush would
-    // drop the popup-dirty conflict routing for rows that never landed.
-    const result = await flushMarkdownWrite(flusherId);
-    if (result.ok) {
-      // Write landed; the popup's tracked rows match disk
-      // now. Clear the dirty bit so the classifier stops routing future
-      // external frontmatter edits to the popup-dirty prompt path.
-      clearPropertiesPopupDirty(flusherId);
-      return;
-    }
-    const err = result.error;
-    if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
-      const relPath = vaultRelativePath(tile);
-      backingFileMissing = true;
-      // Backing file is gone — there is no path left to be dirty against.
-      clearPropertiesPopupDirty(flusherId);
-      reportError(
-        'PropertiesPopup',
-        null,
-        `"${relPath ?? 'File'}" no longer exists on disk. Further property changes won't be saved until the file is restored.`,
-      );
-      return;
-    }
-    // Don't clear on other failures — the next flush attempt (close, Ctrl+S)
-    // should still see the rows as dirty so the user's choice is honoured.
-    // No reportError: trackComponentWrite already surfaced the failure
-    // through the save-error pipeline; a second toast would double-report.
+    const relPath = vaultRelativePath(tile);
+    if (!relPath) return;
+    const delta = diffToFrontmatterDelta(lastSent, obj);
+    if (isEmptyFrontmatterDelta(delta)) return;
+    noteStore.patchFrontmatter(relPath, delta);
+    lastSent = JSON.parse(JSON.stringify(obj)) as Record<string, unknown>;
   }
 
   function addProperty(): void {
@@ -387,7 +262,6 @@
     updateRow(index, { value: 'todo' });
   }
 
-  let flusherId = '';
   // Capture the originating board at popup MOUNT, from the PANE-SCOPED
   // `scope.board` (the `boardStore` alias above), not the global facade at
   // destroy time. The deferred UpdatePropertiesCommand is built during
@@ -396,52 +270,16 @@
   let mountBoardId = '';
 
   onMount(() => {
-    flusherId = `properties-popup:${tile.id}:${createId(6)}`;
     mountBoardId = boardStore.current?.id ?? '';
     loadFromBacking();
-    // Async disk-read hydrate so the popup's first write
-    // assembles against the correct BOM byte AND a drift baseline seeded
-    // from the same read. Skip when a sibling editor already hydrated
-    // the file (its fileState entry is correct) or when there is no
-    // backing file (non-text tile / unresolved relPath). The promise is
-    // fire-and-forget — a failed read leaves `fileState` empty, and
-    // `buildFrontmatterWriteArgs` falls back to `markHydrated(false)`
-    // so the first write surfaces the ENOENT through the gateway's
-    // error path instead of crashing.
-    if (tile.type === 'text') {
-      const vaultRoot = vaultStore.path;
-      const relPath = vaultRelativePath(tile);
-      if (vaultRoot && relPath && !isHydrated(relPath)) {
-        void readMarkdownForHydrate(vaultRoot, relPath).catch(() => {
-          // Read failed (ENOENT, EACCES, …). buildFrontmatterWriteArgs's
-          // `if (!isHydrated) markHydrated(false)` fallback handles the
-          // write path; nothing to do here.
-        });
-      }
-    }
   });
 
   onDestroy(() => {
-    // Drain any pending debounced write before the popup unmounts. The
-    // gateway's flush awaits the in-flight write; the local fire-and-forget
-    // wrapper matches the popup's previous "drain on close" semantics
-    // (history entry is pushed after).
-    flushIfPending();
+    // Write what the popup queued now rather than after the debounce, then
+    // record the whole session as one undo step.
+    const relPath = tile.type === 'text' ? vaultRelativePath(tile) : null;
+    if (relPath) void noteStore.flush(relPath);
     pushHistoryEntry();
-    // Best-effort: cancel the gateway TIMER for this flusherId so a late
-    // schedule armed in the same tick as onDestroy doesn't fire against a
-    // popup that's already torn down. `pendingOnly: true` cancels ONLY an armed
-    // timer, never a PARKED fire: `flushIfPending()` above already owns the
-    // parked/in-flight write, so the plain cancel (which marks a parked fire
-    // cancelled) would silently drop the freshest edits.
-    if (flusherId) {
-      cancelMarkdownWrite(flusherId, true);
-      // Defence in depth: ensure the popup's tracker entry
-      // is gone even if flushPendingWrite never resolved (sync teardown
-      // before the promise settled). A stale entry would block the
-      // sync-frontmatter short-circuit on this path indefinitely.
-      clearPropertiesPopupDirty(flusherId);
-    }
   });
 
   /**
@@ -469,7 +307,6 @@
       return {
         kind: 'frontmatter',
         relPath: beforeSnapshot.relPath,
-        notePath: beforeSnapshot.notePath,
         fm: obj,
       };
     }

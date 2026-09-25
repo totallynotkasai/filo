@@ -383,7 +383,7 @@ export function createScheduler<TArgs>(
       // New pending — count it against the sentinel for the entire debounce
       // window, not just the eventual disk-I/O window. Schedulers whose
       // `performWrite` already wraps the IPC in `trackComponentWrite`
-      // (markdownFileWriter) opt out via `manageSentinel: false` to avoid
+      // (the note writer) opt out via `sentinelMode` to avoid
       // double-counting.
       safeBeginWrite(nextSentinel);
     }

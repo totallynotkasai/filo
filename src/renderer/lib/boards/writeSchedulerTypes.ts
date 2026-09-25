@@ -99,7 +99,7 @@ export interface CreateSchedulerOptions<TArgs> {
    * `endWrite` at fire/flush time. Defaults to `true`.
    *
    * Set `false` when the consumer's `performWrite` already wraps the IPC
-   * in a `trackComponentWrite` (markdownFileWriter does this), so the
+   * in a `trackComponentWrite` (the note writer does this), so the
    * primitive doesn't double-increment the inflight counter. The
    * consumer remains responsible for its own sentinel coverage.
    *
@@ -196,13 +196,9 @@ export interface ParkedEntry {
 }
 
 /**
- * Per-scheduler flush result. Intentionally distinct from the markdown
- * gateway/registry `FlushAllResult` (`{ ok: number; failed: {ownerId,error}[] }`):
- * here `failed` is a flat list of failure identifiers and `vaultRoot` carries
- * the last-seen root for post-drain sentinel sync. Do not unify the two.
- *
- * `ok` tracks the count of writes drained successfully so the gateway-side
- * `flushAllMarkdownWriters` reports a meaningful production count.
+ * Per-scheduler flush result: `failed` is a flat list of failure
+ * identifiers and `vaultRoot` carries the last-seen root for post-drain
+ * sentinel sync. `ok` counts the writes drained successfully.
  */
 export interface FlushAllResult {
   /** Identifiers (paths or failure ids) whose write failed. */
@@ -211,8 +207,8 @@ export interface FlushAllResult {
    * Count of writes drained (pending-timer-fired + already-in-flight)
    * whose `performWrite` resolved without surfacing a failure id. Always
    * equals `drainedTotal - failed.length` for any single `flushAll` call.
-   * Mirror of the gateway's `ok` field; production callers usually check
-   * `failed.length === 0` and ignore this count.
+   * Production callers usually check `failed.length === 0` and ignore this
+   * count.
    */
   ok: number;
   /**

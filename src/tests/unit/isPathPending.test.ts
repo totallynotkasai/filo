@@ -1,61 +1,51 @@
 /**
- * Phase 4 / E3 — `isPathPending` is the single authority both external-change
- * reconcilers consult ("does any scheduler have a pending/in-flight write for
- * path P?"). The ledger path (board / frontmatter schedulers, which mark
- * `beginWrite` at schedule time) is already covered by cardPendingWriteClobber
- * + the board reconciler tests; these tests pin the markdown-gateway probe,
- * which closes the `manageSentinel: false` gap so a debounced editor-body
- * write that hasn't fired yet still reports as pending.
+ * `isPathPending` is the single authority the external-change reconcilers and
+ * the dirty sentinel consult ("does any writer have a pending or in-flight
+ * write for path P?"). A note change still inside its debounce must already
+ * count, so a crash mid-typing leaves the sentinel dirty.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import {
-  scheduleMarkdownWrite,
-  cancelMarkdownWrite,
-  __resetMarkdownFileWriterForTests,
-} from '@renderer/lib/vault/markdownFileWriter';
-import { isPathPending, __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
+import { isPathPending, __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
+import { noteStore } from '@renderer/stores/notes.svelte';
+import { vaultStore } from '@renderer/stores/vault.svelte';
+import { installMemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
-function args(relPath: string, callerId: string) {
-  return {
-    vaultRoot: '/vault',
-    relPath,
-    frontmatter: {},
-    body: 'body',
-    callerId,
-    notePath: null,
-  };
-}
-
-describe('isPathPending — markdown-gateway probe (E3)', () => {
+describe('isPathPending — queued note writes', () => {
   beforeEach(() => {
-    __resetMarkdownFileWriterForTests();
     __resetDirtyTrackingForTests();
+    vaultStore.setPath('/vault');
+    noteStore.__resetForTests();
+    installMemoryVault({
+      'Notes/a.md': '---\ntitle: a\n---\nbody\n',
+      'Notes/Mixed.md': '---\ntitle: Mixed\n---\nbody\n',
+    });
   });
   afterEach(() => {
-    __resetMarkdownFileWriterForTests();
+    noteStore.__resetForTests();
     __resetDirtyTrackingForTests();
+    vaultStore.setPath('');
+    restoreFiloDefault();
   });
 
-  it('reports a scheduled (not-yet-fired) markdown write as pending', () => {
+  it('reports a queued (not-yet-fired) note write as pending until it lands', async () => {
     expect(isPathPending('Notes/a.md')).toBe(false);
-    // A long delay keeps the timer armed (and not fired) for the assertion.
-    scheduleMarkdownWrite(args('Notes/a.md', 'caller-1'), 100_000);
+    noteStore.patchFrontmatter('Notes/a.md', { set: { k: 1 }, unset: [] });
     expect(isPathPending('Notes/a.md')).toBe(true);
-    // Cancel so the armed timer doesn't fire after the test.
-    cancelMarkdownWrite('caller-1');
+    expect(await noteStore.flush('Notes/a.md')).toBe(true);
     expect(isPathPending('Notes/a.md')).toBe(false);
   });
 
-  it('matches case-insensitively / slash-normalised (vaultPath identity)', () => {
-    scheduleMarkdownWrite(args('Notes/Mixed.md', 'caller-2'), 100_000);
+  it('matches case-insensitively / slash-normalised (vaultPath identity)', async () => {
+    noteStore.patchFrontmatter('Notes/Mixed.md', { set: { k: 1 }, unset: [] });
     // A watcher event differing only in case still resolves to pending.
     expect(isPathPending('notes/mixed.md')).toBe(true);
-    cancelMarkdownWrite('caller-2');
+    await noteStore.flushAll();
   });
 
-  it('does not report an unrelated path as pending', () => {
-    scheduleMarkdownWrite(args('Notes/a.md', 'caller-3'), 100_000);
+  it('does not report an unrelated path as pending', async () => {
+    noteStore.patchFrontmatter('Notes/a.md', { set: { k: 1 }, unset: [] });
     expect(isPathPending('Notes/b.md')).toBe(false);
-    cancelMarkdownWrite('caller-3');
+    await noteStore.flushAll();
   });
 });

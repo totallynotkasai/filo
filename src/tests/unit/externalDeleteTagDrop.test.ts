@@ -1,27 +1,33 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { makeExternalChangesSlice } from '@renderer/stores/vaultExternalChanges';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
+import { registerNotePrompts } from '@renderer/stores/notePrompts';
+import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
+import { boardStore } from '@renderer/stores/board.svelte';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import type { VaultContext } from '@renderer/stores/vaultStoreTypes';
-import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import type { TaskListBoard as TaskListBoardType } from '@renderer/schema/index';
+import { boardDefaults } from '@renderer/core/boardDefaults';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Phase 4.2 (2026-05-30) — when a tagged `.md` file is deleted externally and
- * the user confirms the deletion (Reload / Reload-all / Mark broken refs),
- * its `.filo/tags.json:fileTags[path]` entry must be dropped. Otherwise the
- * orphan lingers until the next vault-open `pruneOrphanFileTags`, inflating
- * tag counts for the rest of the session.
+ * When a tagged `.md` file is deleted externally and the user confirms the
+ * deletion, its `.filo/tags.json:fileTags[path]` entry must be dropped.
+ * Otherwise the orphan lingers until the next vault-open `pruneOrphanFileTags`,
+ * inflating tag counts for the rest of the session.
  *
- * Per the chosen scope (confirmed paths only), the drop fires from the
- * user-confirmed deletion handlers — NOT eagerly from the `file-missing`
- * branch, which deliberately defers cleanup because an uncorrelated external
- * move can surface as delete-then-rename within ~500ms (an early drop would
- * lose the tags on the moved file). The "Keep local" recreate path must NOT
- * drop — the file (and its tags) come back.
+ * The drop fires only from a user-confirmed removal, never eagerly on the
+ * delete event: an uncorrelated external move can surface as delete-then-rename
+ * within ~500ms, and an early drop would lose the tags on the moved file.
+ * Keeping the tiles, or writing the note back ("Keep mine"), must NOT drop.
  */
+
+const NOTE = '---\ntitle: Notes\n---\nbody\n';
 
 function makeCtx(): VaultContext {
   return {
@@ -41,6 +47,7 @@ function makeCtx(): VaultContext {
     setProject: () => {},
     getRecoveryPendingPaths: () => [],
     setRecoveryPendingPaths: () => {},
+    resolveRecoveryDismissed: () => {},
     markMetaDirty: () => {},
     refreshTree: async () => {},
     clearSelection: () => {},
@@ -48,90 +55,150 @@ function makeCtx(): VaultContext {
   };
 }
 
-describe('vaultExternalChanges — external delete drops tags.json entry (Phase 4.2)', () => {
-  let slice: ReturnType<typeof makeExternalChangesSlice>;
+/** A closed Task List board with one row backed by `filePath`. */
+function hydrateBoardPointingAt(filePath: string): void {
+  const base = boardDefaults.tasklist('k1', 'T');
+  if (base.type !== 'tasklist') throw new Error('expected a Task List board');
+  const board: TaskListBoardType = { ...base, tasks: [{ tileId: 't1', position: 0 }] };
+  boardCacheStore.hydrate(
+    {
+      k1: {
+        version: 8,
+        board,
+        tileDefs: {
+          t1: {
+            id: 't1',
+            type: 'text',
+            filePath,
+            style: { headerColor: '', bodyColor: '', borderColor: '' },
+            createdAt: 0,
+            updatedAt: 0,
+          },
+        },
+        connections: {},
+        frames: [],
+      },
+    },
+    { k1: 'T.board.json' },
+  );
+}
 
-  beforeEach(() => {
-    documentStore.clear();
+async function settle(): Promise<void> {
+  for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
+}
+
+describe('vaultExternalChanges — external delete drops tags.json entry only when confirmed', () => {
+  let slice: ReturnType<typeof makeExternalChangesSlice>;
+  let vault: MemoryVault;
+
+  beforeEach(async () => {
+    __resetDirtyTrackingForTests();
+    vaultStore.setPath('/vault');
+    vault = installMemoryVault({ 'Notes.md': NOTE });
+    noteStore.__resetForTests();
+    registerNotePrompts();
     vaultIndexStore.clear();
+    boardCacheStore.clear();
+    boardStore.clearBoard();
     fileTagsStore.reset();
     for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id);
-    vaultStore.setPath('/vault');
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     slice = makeExternalChangesSlice(makeCtx());
+    await vaultIndexStore.applyChanges(['Notes.md']);
+    await fileTagsStore.hydrate('/vault');
+    fileTagsStore.setFileTags('Notes.md', ['mytag']);
+    expect(fileTagsStore.file.fileTags['notes.md']).toEqual(['mytag']);
   });
 
   afterEach(() => {
-    restoreFiloDefault();
     vi.restoreAllMocks();
-    documentStore.clear();
+    noteStore.__resetForTests();
     vaultIndexStore.clear();
+    boardCacheStore.clear();
+    boardStore.clearBoard();
     fileTagsStore.reset();
     for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id);
     vaultStore.setPath('');
+    restoreFiloDefault();
   });
 
-  async function primeTaggedFile(rel: string): Promise<void> {
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') return { success: true, content: '# Notes\nbody' };
-      if (channel === 'tags:load') return null;
-      return { success: true };
-    });
-    await vaultIndexStore.applyChanges([rel]);
-    await fileTagsStore.hydrate('/vault');
-    fileTagsStore.setFileTags(rel, ['mytag']);
+  function missingToast() {
+    return uiStore.toasts.find((t) => t.text.includes('Notes.md') && t.text.includes('missing from the vault'));
   }
 
-  function loadDirtyEditor(rel: string): void {
-    documentStore.loadDocument({
-      filename: rel,
-      title: 'Notes',
-      body: 'dirty',
-      htmlContent: '<p>dirty</p>',
-      richText: [],
-    });
-    documentStore.updateContent(rel, '<p>dirty</p>', 'dirty');
-  }
-
-  function installFileGoneMock(): void {
-    installFiloMock((channel: string) => {
-      if (channel === 'vault:read-file-text') return { success: false };
-      if (channel === 'tags:load') return null;
-      return { success: true };
-    });
-  }
-
-  it('drops the file from tags.json when the user picks Reload (accepts the delete)', async () => {
-    await primeTaggedFile('Notes.md');
-    expect(fileTagsStore.file.fileTags['notes.md']).toEqual(['mytag']);
-
-    loadDirtyEditor('Notes.md');
-    installFileGoneMock();
+  it('drops the file from tags.json when the user confirms removing its tiles', async () => {
+    hydrateBoardPointingAt('Notes.md');
+    vault.remove('Notes.md');
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
-    const toast = uiStore.toasts.find((t) => t.text.includes('deleted externally'));
-    expect(toast?.actions?.[0].label).toBe('Reload');
+    // Not dropped eagerly on the delete event.
+    expect(fileTagsStore.file.fileTags['notes.md']).toEqual(['mytag']);
 
-    await toast?.actions?.[0].handler();
+    const toast = missingToast();
+    const remove = toast?.actions?.find((a) => a.label.startsWith('Remove'));
+    expect(remove).toBeDefined();
+    await remove?.handler();
+    const dialog = uiStore.confirmDialog!;
+    expect(dialog.danger).toBe(true);
+    uiStore.closeConfirm();
+    dialog.onConfirm(false);
+    for (let i = 0; i < 20 && fileTagsStore.file.fileTags['notes.md']; i++) {
+      await new Promise((r) => setTimeout(r, 0));
+    }
 
-    // Reload accepted the deletion → the orphan fileTags entry is gone.
     expect(fileTagsStore.file.fileTags['notes.md']).toBeUndefined();
   });
 
-  it('keeps the tags.json entry when the user picks Keep local (re-creates the file)', async () => {
-    await primeTaggedFile('Notes.md');
-    documentStore.setFrontmatter('Notes.md', { tags: ['mytag'] });
-
-    loadDirtyEditor('Notes.md');
-    installFileGoneMock();
+  it('keeps the tags.json entry when the user keeps the tiles', async () => {
+    hydrateBoardPointingAt('Notes.md');
+    vault.remove('Notes.md');
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
-    const toast = uiStore.toasts.find((t) => t.text.includes('deleted externally'));
-    expect(toast?.actions?.[1].label).toBe('Keep local');
+    const keep = missingToast()?.actions?.find((a) => a.label.startsWith('Keep tiles'));
+    expect(keep).toBeDefined();
+    await keep?.handler();
+    await settle();
 
-    await toast?.actions?.[1].handler();
+    expect(fileTagsStore.file.fileTags['notes.md']).toEqual(['mytag']);
+  });
 
-    // Keep local re-creates the file → its tags are still valid, not dropped.
-    expect(fileTagsStore.file.fileTags['notes.md']).toBeDefined();
+  it('keeps the tags.json entry when the user writes an edited note back (Keep mine)', async () => {
+    const m = noteStore.acquire('Notes.md', 'view');
+    await m.loaded;
+    noteStore.setBody('Notes.md', 'unsaved edit', 'view');
+    vault.remove('Notes.md');
+
+    await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await settle();
+    const toast = uiStore.toasts.find((t) => t.text.includes('deleted by another program'));
+    const keepMine = toast?.actions?.find((a) => a.label === 'Keep mine');
+    expect(keepMine).toBeDefined();
+    await keepMine?.handler();
+    await settle();
+
+    // The note is back with the local body, so its tags are still valid.
+    expect(vault.read('Notes.md')).toBe('---\ntitle: Notes\n---\nunsaved edit\n');
+    expect(fileTagsStore.file.fileTags['notes.md']).toEqual(['mytag']);
+  });
+
+  it('drops the tags.json entry when the user discards an edited note deleted on disk', async () => {
+    hydrateBoardPointingAt('Notes.md');
+    const m = noteStore.acquire('Notes.md', 'view');
+    await m.loaded;
+    noteStore.setBody('Notes.md', 'unsaved edit', 'view');
+    vault.remove('Notes.md');
+
+    await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await settle();
+    const toast = uiStore.toasts.find((t) => t.text.includes('deleted by another program'));
+    const discard = toast?.actions?.find((a) => a.label === 'Discard');
+    expect(discard).toBeDefined();
+    await discard?.handler();
+    await settle();
+
+    // Discard accepted the deletion: the orphan fileTags entry is gone, and
+    // the tiles that point at nothing get the "remove tiles" offer.
+    expect(fileTagsStore.file.fileTags['notes.md']).toBeUndefined();
+    expect(uiStore.toasts.some((t) => t.dedupeKey === 'missing:Notes.md')).toBe(true);
   });
 });

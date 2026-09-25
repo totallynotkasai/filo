@@ -7,7 +7,7 @@
  * seed.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
@@ -15,7 +15,6 @@ import { historyStore } from '@renderer/stores/history.svelte';
 import { makeTaskCreator } from '@renderer/lib/tasklist/taskCreation';
 import { makeKanbanTileCreator } from '@renderer/lib/kanban/kanbanTileCreation';
 import { makeFileDropHandler } from '@renderer/lib/tasklist/fileDropHandler';
-import { cancelAllMarkdownWrites } from '@renderer/lib/vault/markdownFileWriter';
 import {
   __resetDirtyTrackingForTests,
   hasFailedWrites,
@@ -164,7 +163,7 @@ describe('Audit-19 BL-1 — seed writes are create-exclusive', () => {
     __resetDirtyTrackingForTests();
     __clearRecentSelfWritesForTests();
     restoreFiloDefault();
-    documentStore.clear();
+    noteStore.__resetForTests();
     boardCacheStore.clear();
     vaultIndexStore.clear();
     vaultStore.setPath(VAULT);
@@ -180,8 +179,7 @@ describe('Audit-19 BL-1 — seed writes are create-exclusive', () => {
     vi.restoreAllMocks();
     restoreFiloDefault();
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
+    noteStore.__resetForTests();
     boardCacheStore.clear();
     vaultIndexStore.clear();
     vaultStore.setTree([]);
@@ -279,14 +277,18 @@ describe('Audit-19 BL-1 — seed writes are create-exclusive', () => {
     expect(isRecentSelfWrite('Groceries (2).md')).toBe(true);
   });
 
-  it('(MD-3) a new task seeds the store with a body-only "" body, not the full FM file', async () => {
+  it('(MD-3) a new task opens with an empty body-only body, not the full FM file', async () => {
     installVault({});
     const { tl } = hydrateBoards();
     await taskCreator(tl).addTaskFromQuickAdd(quickAdd('Buy milk'));
     const [def] = textDefs('tl');
     const notePath = def.filePath ?? '';
     expect(files.get('Buy milk.md')).toContain('completed: false');
-    expect(documentStore.getDocument(notePath)?.body).toBe('');
+    const m = noteStore.acquire(notePath, 'row');
+    await m.loaded;
+    // Body only: the frontmatter never leaks into the body (blank lines aside).
+    expect(m.body.trim()).toBe('');
+    expect(m.frontmatter.completed).toBe(false);
   });
 
   it('(8) a non-EEXIST failure rolls the task back and does not add a Kanban card', async () => {

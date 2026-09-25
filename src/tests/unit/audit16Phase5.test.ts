@@ -1,233 +1,132 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  markHydrated,
-  writeMarkdownFile,
-  cancelAllMarkdownWrites,
-  __resetMarkdownFileWriterForTests,
-} from '@renderer/lib/vault/markdownFileWriter';
 import { __resetDirtyTrackingForTests, isPathPending } from '@renderer/lib/boards/boardSaver';
-import { __resetBaselinesForTests } from '@renderer/lib/vault/fileBaselineRegistry';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
-import { documentStore } from '@renderer/stores/document.svelte';
-import { parseMarkdown } from '@renderer/lib/vault/vaultIndex';
-import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { vaultStore } from '@renderer/stores/vault.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * AUDIT-16 Phase 5 — gateway torn/stale-read guards:
+ * Note writer torn/stale-read guards.
  *
- *   5.2 — the delta branch re-stats AFTER its in-chain read and verifies the
- *         file is still exactly the one the pre-write drift decision trusted.
- *         An external write landing in the stat→read gap was invisible to the
- *         drift check, and a torn/stale read of it would be written back
- *         VERBATIM as the delta body for the common no-live-editor case (the
- *         post-write baseline then adopts our bytes, suppressing detection).
+ *   - After its fresh read the writer re-stats the file and starts over if it
+ *     moved: an external write landing between the read and our write would
+ *     otherwise be overwritten unseen (its bytes replaced by a delta applied
+ *     to the stale read). A file that keeps moving is never written and the
+ *     failure is attributed.
+ *   - A body-only save on a note loaded from a complete read keeps its
+ *     frontmatter; a genuinely frontmatter-less note is not misclassified.
  *
- *   5.3 — the Audit-10 H2 empty-cache seed re-read gets the same torn-read
- *         guard the delta branch has (Audit-14 3.3): a partial read (opening
- *         fence, no closing fence) parses as "no frontmatter"; pre-guard the
- *         assemble stripped the on-disk YAML block AND the bogus `{}` seed was
- *         CACHED, poisoning every later save for the note.
- *
- * (5.1 / 5.4 corpus rows live in frontmatterInvariant.test.ts; 5.5 lives in
+ * (Corpus rows live in frontmatterInvariant.test.ts; tag rewriter edges in
  * tagRewriter.test.ts.)
  */
 
-interface Captured {
-  channel: string;
-  args: unknown[];
-}
+let vault: MemoryVault;
 
-function wroteFile(captured: Captured[]): boolean {
-  return captured.some((c) => c.channel === 'vault:write-existing-file-text');
-}
+const mdWrites = (): string[] => vault.writes.filter(([, rel]) => rel.endsWith('.md')).map(([, , t]) => t);
 
-function lastWriteBytes(captured: Captured[]): string | undefined {
-  for (let i = captured.length - 1; i >= 0; i--) {
-    if (captured[i].channel === 'vault:write-existing-file-text') {
-      return captured[i].args[2] as string;
+/**
+ * Makes an external program rewrite `rel` just before each of the writer's
+ * post-read stats (the read→write gap), `times` times.
+ */
+function externalWriteInGap(rel: string, times: number): void {
+  const invoke = window.filo.invoke;
+  let left = times;
+  let n = 0;
+  window.filo.invoke = (async (channel: string, ...args: unknown[]) => {
+    if (channel === 'vault:stat' && args[1] === rel && left > 0) {
+      left--;
+      n++;
+      vault.writeExternally(rel, `---\ntitle: t\n---\nexternal body ${n}\n`);
     }
-  }
-  return undefined;
+    return (invoke as (c: string, ...a: unknown[]) => Promise<unknown>)(channel, ...args);
+  }) as typeof window.filo.invoke;
 }
-
-let captured: Captured[];
 
 beforeEach(() => {
-  __resetMarkdownFileWriterForTests();
   __resetDirtyTrackingForTests();
-  __resetBaselinesForTests();
-  cancelAllMarkdownWrites();
-  documentStore.clear();
   vaultIndexStore.clear();
-  captured = [];
+  vaultStore.setPath('/vault');
+  noteStore.__resetForTests();
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 });
-afterEach(async () => {
-  await new Promise((resolve) => setTimeout(resolve, 0));
+afterEach(() => {
+  noteStore.__resetForTests();
   restoreFiloDefault();
-  cancelAllMarkdownWrites();
-  __resetMarkdownFileWriterForTests();
   __resetDirtyTrackingForTests();
-  __resetBaselinesForTests();
-  documentStore.clear();
   vaultIndexStore.clear();
   vi.restoreAllMocks();
 });
 
-describe('Audit-16 5.2 — delta write verifies the in-chain read against the drift stat', () => {
-  /**
-   * `stats` is consumed in call order: index 0 answers the PRE-WRITE drift
-   * stat, index 1 the POST-READ verify stat (later calls repeat the last).
-   */
-  function installDisk(content: string, stats: Array<{ mtimeMs: number; size: number }>): void {
-    let statCalls = 0;
-    installFiloMock((channel: string, ...args: unknown[]) => {
-      captured.push({ channel, args });
-      if (channel === 'vault:stat') {
-        const s = stats[Math.min(statCalls, stats.length - 1)];
-        statCalls++;
-        return { success: true, ...s };
-      }
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content, mtimeMs: 1, size: content.length };
-      }
-      if (channel === 'vault:write-existing-file-text') return { success: true };
-      return { success: true };
-    });
-  }
-
-  const DELTA_ARGS = {
-    vaultRoot: '/vault',
-    frontmatter: {},
-    body: 'body\n',
-    callerId: 'a16-5-2',
-    notePath: null,
-    frontmatterDelta: { set: { status: 'closed' }, unset: [] },
-  };
-
-  it('aborts loudly when the file changes between the pre-write stat and the in-chain read', async () => {
+describe('a delta write re-checks the file after its fresh read', () => {
+  it('an external write in the read→write gap is re-read, not overwritten', async () => {
     const relPath = 'GapWrite.md';
-    // Pre-write stat matches the baseline (no drift)…
-    // …but the post-read verify stat reports a DIFFERENT file state: an external
-    // write landed in the stat→read gap, so the read may be torn or stale.
-    installDisk('---\ntitle: t\n---\nbody\n', [
-      { mtimeMs: 1, size: 100 },
-      { mtimeMs: 9, size: 100 },
-    ]);
-    markHydrated(relPath, false, 1, 100); // seeds the drift baseline (1, 100)
+    vault = installMemoryVault({ [relPath]: '---\ntitle: t\n---\nbody\n' });
+    externalWriteInGap(relPath, 1);
 
-    await expect(writeMarkdownFile({ ...DELTA_ARGS, relPath })).rejects.toThrow(
-      /changed on disk between the pre-write drift check and the in-chain read/i,
-    );
+    noteStore.patchFrontmatter(relPath, { set: { status: 'closed' }, unset: [] });
+    expect(await noteStore.flush(relPath)).toBe(true);
 
-    // Never wrote, and the path is attributed as failed (sentinel stays dirty;
-    // the next debounced write retries against the settled file).
-    expect(wroteFile(captured)).toBe(false);
-    expect(isPathPending(relPath)).toBe(true);
+    // The delta landed on the external version, whose body survives.
+    expect(mdWrites()).toHaveLength(1);
+    expect(vault.read(relPath)).toBe('---\ntitle: t\nstatus: closed\n---\nexternal body 1\n');
+    expect(isPathPending(relPath)).toBe(false);
   });
 
-  it('control — stable stats across the gap write normally', async () => {
+  it('a file that keeps changing is never written, and the failure is attributed', async () => {
+    const relPath = 'Busy.md';
+    vault = installMemoryVault({ [relPath]: '---\ntitle: t\n---\nbody\n' });
+    externalWriteInGap(relPath, 100);
+
+    noteStore.patchFrontmatter(relPath, { set: { status: 'closed' }, unset: [] });
+    expect(await noteStore.flush(relPath)).toBe(false);
+
+    // Never wrote, and the path is attributed as failed (sentinel stays dirty;
+    // the change stays queued for a retry against the settled file).
+    expect(mdWrites()).toEqual([]);
+    expect(isPathPending(relPath)).toBe(true);
+    expect(noteStore.hasPendingWrites(relPath)).toBe(true);
+  });
+
+  it('control — a stable file writes normally', async () => {
     const relPath = 'Stable.md';
-    installDisk('---\ntitle: t\n---\nbody\n', [{ mtimeMs: 1, size: 100 }]);
-    markHydrated(relPath, false, 1, 100);
+    vault = installMemoryVault({ [relPath]: '---\ntitle: t\n---\nbody\n' });
 
-    await writeMarkdownFile({ ...DELTA_ARGS, relPath });
+    noteStore.patchFrontmatter(relPath, { set: { status: 'closed' }, unset: [] });
+    expect(await noteStore.flush(relPath)).toBe(true);
 
-    const written = lastWriteBytes(captured)!;
+    const written = mdWrites().at(-1)!;
     expect(written).toContain('status: closed'); // delta applied
     expect(written).toContain('title: t'); // untouched key preserved
     expect(isPathPending(relPath)).toBe(false);
   });
-
-  it('control — no drift baseline ⇒ no verify anchor ⇒ the write proceeds (legacy trust)', async () => {
-    const relPath = 'NoBaseline.md';
-    // Stats would diverge, but with no baseline the pre-write stat never ran,
-    // so there is no anchor to verify against — same trust level as before.
-    installDisk('---\ntitle: t\n---\nbody\n', [
-      { mtimeMs: 1, size: 100 },
-      { mtimeMs: 9, size: 100 },
-    ]);
-    markHydrated(relPath, false); // NO mtime ⇒ no baseline seeded
-
-    await writeMarkdownFile({ ...DELTA_ARGS, relPath });
-
-    expect(wroteFile(captured)).toBe(true);
-    expect(isPathPending(relPath)).toBe(false);
-  });
 });
 
-describe('Audit-16 5.3 — empty-cache seed re-read refuses a torn read (and never caches {})', () => {
-  function installDisk(content: string): void {
-    installFiloMock((channel: string, ...args: unknown[]) => {
-      captured.push({ channel, args });
-      if (channel === 'vault:read-file-text') {
-        return { success: true, content, mtimeMs: 5, size: content.length };
-      }
-      if (channel === 'vault:stat') return { success: true, mtimeMs: 5, size: content.length };
-      if (channel === 'vault:write-existing-file-text') return { success: true };
-      return { success: true };
-    });
-  }
-
-  const BODY_ONLY_ARGS = {
-    vaultRoot: '/vault',
-    frontmatter: {}, // body-only editor path: getFrontmatter() || {} → {}
-    body: 'new body\n',
-    callerId: 'a16-5-3',
-    // no frontmatterDelta — exercises the cache-FM branch's H2 seed re-read
-  };
-
-  it('refuses the write and does NOT seed {} when the seed read is torn mid-frontmatter', async () => {
-    const relPath = 'TornSeed.md';
-    // The index knows this file HAS a frontmatter block…
-    vaultIndexStore.restoreMetadata(
-      relPath,
-      parseMarkdown(relPath, '---\ntitle: real\nstatus: open\n---\nold body\n'),
-    );
-    // …but the seed read returns TRUNCATED bytes: opening fence, no closing fence.
-    installDisk('---\ntitle: rea');
-    markHydrated(relPath, false);
-    expect(documentStore.hasFrontmatter(relPath)).toBe(false); // adoption shape: never seeded
-
-    await expect(
-      writeMarkdownFile({ ...BODY_ONLY_ARGS, relPath, notePath: relPath }),
-    ).rejects.toThrow(/closing fence|partial read/i);
-
-    // Never wrote (the on-disk YAML block is not stripped)…
-    expect(wroteFile(captured)).toBe(false);
-    // …the bogus {} was NOT cached (pre-fix it poisoned every later save)…
-    expect(documentStore.hasFrontmatter(relPath)).toBe(false);
-    // …and the failure is attributed so `.filo/.dirty` stays set.
-    expect(isPathPending(relPath)).toBe(true);
-  });
-
-  it('control — a complete seed read still seeds the cache and preserves the FM (Audit-10 H2)', async () => {
+describe('a body-only save on a freshly loaded note', () => {
+  it('a complete read keeps the frontmatter', async () => {
     const relPath = 'CleanSeed.md';
-    const disk = '---\ntitle: Keep\n---\nold body\n';
-    vaultIndexStore.restoreMetadata(relPath, parseMarkdown(relPath, disk));
-    installDisk(disk);
-    markHydrated(relPath, false);
+    vault = installMemoryVault({ [relPath]: '---\ntitle: Keep\n---\nold body\n' });
+    const m = noteStore.acquire(relPath, 'v');
+    await m.loaded;
+    noteStore.setBody(relPath, 'new body', 'v');
+    expect(await noteStore.flush(relPath)).toBe(true);
 
-    await writeMarkdownFile({ ...BODY_ONLY_ARGS, relPath, notePath: relPath });
-
-    const written = lastWriteBytes(captured)!;
-    expect(written).toContain('title: Keep'); // FM preserved via the seeded cache
-    expect(written).toContain('new body');
-    expect(documentStore.hasFrontmatter(relPath)).toBe(true);
+    expect(vault.read(relPath)).toBe('---\ntitle: Keep\n---\nnew body\n');
+    expect(m.frontmatter).toEqual({ title: 'Keep' });
     expect(isPathPending(relPath)).toBe(false);
+    noteStore.release(relPath, 'v');
   });
 
-  it('control — a genuinely frontmatter-less file is not misclassified (no false positive)', async () => {
+  it('a genuinely frontmatter-less file is not misclassified (no false positive)', async () => {
     const relPath = 'PlainSeed.md';
-    // Index records NO frontmatter for this path (rawFrontmatter empty), so the
-    // guard must not fire even though the parse reports hasFrontmatter:false.
-    vaultIndexStore.restoreMetadata(relPath, parseMarkdown(relPath, 'just a body\n'));
-    installDisk('just a body\n');
-    markHydrated(relPath, false);
+    vault = installMemoryVault({ [relPath]: 'just a body\n' });
+    const m = noteStore.acquire(relPath, 'v');
+    await m.loaded;
+    noteStore.setBody(relPath, 'new body', 'v');
+    expect(await noteStore.flush(relPath)).toBe(true);
 
-    await writeMarkdownFile({ ...BODY_ONLY_ARGS, relPath, notePath: relPath });
-
-    expect(wroteFile(captured)).toBe(true);
+    expect(vault.read(relPath)).toBe('new body\n');
     expect(isPathPending(relPath)).toBe(false);
+    noteStore.release(relPath, 'v');
   });
 });

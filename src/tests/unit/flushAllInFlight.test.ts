@@ -1,25 +1,11 @@
 /**
- * Phase 4 / 4.1 — `flushAll*` must await writes whose timer fired but
- * whose IPC promise is still pending.
- *
- * The bug: prior to this phase, each scheduler's `flushAll*` only
- * drained its `pending`/`pendingBoardWrites`/`pendingMiscWrites` map.
- * A user pressing Ctrl+S in the gap between (timer-fire → set inflight,
- * IPC awaiting) and (IPC resolves → endWrite) returned `{ failed: [] }`
- * immediately — even if the actual IPC ultimately rejected.
- *
- * The fix: each scheduler tracks an `inFlight` map populated at timer
- * fire time and consulted by `flushAll*`. `flushAll*` snapshots the
- * in-flight set up-front, awaits each tracked promise, and reads
- * `inFlightFailures` to attribute rejected paths into its `failed[]`.
+ * `flushAll*` must await writes whose timer fired but whose IPC promise is
+ * still pending. A Ctrl+S in the gap between (timer fires, write IPC awaiting)
+ * and (IPC settles) must not report `{ failed: [] }` for a write that then
+ * rejects: each flush awaits what is in flight and attributes its failure.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import {
-  scheduleFrontmatterWrite,
-  flushAllPendingFrontmatterWrites,
-  resetFrontmatterScheduler,
-} from '@renderer/lib/boards/frontmatterWriteScheduler';
 import {
   scheduleBoardWrite,
   cancelAllPendingWrites,
@@ -29,9 +15,10 @@ import {
   type V7BoardFileData,
 } from '@renderer/lib/boards/boardSaver';
 import { flushAllScheduledBoards } from '@renderer/lib/boards/boardWriteScheduler';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import type { MindMapBoard } from '@renderer/schema/index';
 
 function emptyMindmapBoard(id: string): V7BoardFileData {
@@ -54,97 +41,57 @@ function emptyMindmapBoard(id: string): V7BoardFileData {
   };
 }
 
-describe('flushAllPendingFrontmatterWrites — awaits in-flight writes', () => {
+describe('noteStore.flushAll — awaits in-flight writes', () => {
+  let vault: MemoryVault;
+  let release!: () => void;
+  let entered!: Promise<void>;
+
   beforeEach(() => {
     __resetDirtyTrackingForTests();
-    resetFrontmatterScheduler();
-    restoreFiloDefault();
     vaultStore.setPath('/vault');
+    vault = installMemoryVault({ 'Notes.md': '---\ntitle: Notes\n---\nhello\n' });
+    noteStore.__resetForTests();
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    entered = new Promise<void>((resolve) => {
+      vault.beforeWrite = async (rel) => {
+        if (!rel.endsWith('.md')) return;
+        resolve();
+        await gate;
+      };
+    });
   });
   afterEach(() => {
+    release();
+    noteStore.__resetForTests();
     __resetDirtyTrackingForTests();
-    resetFrontmatterScheduler();
+    vaultStore.setPath('');
     restoreFiloDefault();
-    vi.useRealTimers();
   });
 
   it('returns failed[] when an in-flight write rejects mid-flush', async () => {
-    vi.useFakeTimers();
+    noteStore.patchFrontmatter('Notes.md', { set: { status: 'done' }, unset: [] });
+    // The debounce fires and the write IPC starts, but does not settle yet.
+    await entered;
 
-    // Slow + failing IPC: the timer fires, the write starts, but the
-    // IPC doesn't resolve (rejects) until after the flush is invoked.
-    let rejectIpc!: (err: unknown) => void;
-    const ipcPromise = new Promise<unknown>((_, rej) => {
-      rejectIpc = rej;
-    });
-    installFiloMock({
-      'vault:file-exists': () => true,
-      // 3.3 (Audit-18) — writeFrontmatter hydrates on demand + fails loud on a
-      // read error; supply a working read mock so the docState write proceeds to
-      // the controllable in-flight write IPC this test drives.
-      'vault:read-file-text': () => ({ success: true, content: 'x', mtimeMs: 1, size: 1 }),
-      'vault:write-existing-file-text': () => ipcPromise,
-    });
-
-    documentStore.loadDocument({
-      filename: 'Notes.md',
-      title: 'Notes',
-      body: 'hello',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter('Notes.md', { title: 'Notes' });
-
-    scheduleFrontmatterWrite('Notes.md', 'Notes.md');
-
-    // Fire the timer — the write enters in-flight but does NOT resolve.
-    vi.advanceTimersByTime(400);
-    vi.useRealTimers();
-
-    // Start flush — it should block waiting for the in-flight write.
-    const flushPromise = flushAllPendingFrontmatterWrites();
-
-    // Reject the IPC. flush must catch this and aggregate into failed[].
-    rejectIpc(new Error('disk full'));
+    const flushPromise = noteStore.flushAll();
+    vault.failNextWrite('Notes.md', 'EIO');
+    release();
 
     const result = await flushPromise;
     expect(result.failed).toEqual(['Notes.md']);
+    expect(vault.read('Notes.md')).toBe('---\ntitle: Notes\n---\nhello\n');
   });
 
   it('returns failed[] empty when in-flight writes resolve successfully', async () => {
-    vi.useFakeTimers();
+    noteStore.patchFrontmatter('Notes.md', { set: { status: 'done' }, unset: [] });
+    await entered;
 
-    let resolveIpc!: (val: unknown) => void;
-    const ipcPromise = new Promise((res) => {
-      resolveIpc = res;
-    });
-    installFiloMock({
-      'vault:file-exists': () => true,
-      // 3.3 (Audit-18) — writeFrontmatter hydrates on demand + fails loud on a
-      // read error; supply a working read mock so the docState write proceeds to
-      // the controllable in-flight write IPC this test drives.
-      'vault:read-file-text': () => ({ success: true, content: 'x', mtimeMs: 1, size: 1 }),
-      'vault:write-existing-file-text': () => ipcPromise,
-    });
-
-    documentStore.loadDocument({
-      filename: 'Notes.md',
-      title: 'Notes',
-      body: 'hello',
-      htmlContent: '',
-      richText: [],
-    });
-    documentStore.setFrontmatter('Notes.md', { title: 'Notes' });
-
-    scheduleFrontmatterWrite('Notes.md', 'Notes.md');
-    vi.advanceTimersByTime(400);
-    vi.useRealTimers();
-
-    const flushPromise = flushAllPendingFrontmatterWrites();
-    resolveIpc({ success: true });
+    const flushPromise = noteStore.flushAll();
+    release();
 
     const result = await flushPromise;
     expect(result.failed).toEqual([]);
+    expect(vault.read('Notes.md')).toBe('---\ntitle: Notes\nstatus: done\n---\nhello\n');
   });
 });
 

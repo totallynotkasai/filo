@@ -6,12 +6,12 @@
  * that clone; task creation stamped `def.filePath = relPath` in `seedMdFile` —
  * AFTER the clone had already entered the cache — so the persisted `.board.json`
  * row carried NO `filePath`. On a cold load (boards don't preload docs →
- * documentStore empty) a subfolder task's field/tag edit then fell through the
+ * no note loaded) a subfolder task's field/tag edit then fell through the
  * per-board folder cascade / vault root and hit the WRONG file.
  *
  * The fix stamps `filePath` inside `buildTaskDef` (pre-clone). These tests assert
  * the persisted cache def carries `Tasks/<title>.md`, and that a cold-load resolve
- * (documentStore cleared, folder cascade since diverged) returns that persisted
+ * (no note loaded, folder cascade since diverged) returns that persisted
  * path — not the diverged cascade path.
  *
  * Bite-verify: revert the `buildTaskDef` stamp → the persisted `filePath` is
@@ -19,14 +19,13 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { documentStore } from '@renderer/stores/document.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { historyStore } from '@renderer/stores/history.svelte';
 import { makeTaskCreator } from '@renderer/lib/tasklist/taskCreation';
 import { resolveTextTileVaultPath } from '@renderer/lib/boards/textTilePath';
-import { cancelAllMarkdownWrites } from '@renderer/lib/vault/markdownFileWriter';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import type { TaskListBoard as TaskListBoardType, Tile, TileDefinition } from '@renderer/schema/index';
@@ -80,7 +79,7 @@ describe('Audit-12 H1 — Task List creation persists filePath', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     restoreFiloDefault();
-    documentStore.clear();
+    noteStore.__resetForTests();
     boardCacheStore.clear();
     vaultIndexStore.clear();
     vaultStore.setPath('/vault');
@@ -104,8 +103,7 @@ describe('Audit-12 H1 — Task List creation persists filePath', () => {
     vi.restoreAllMocks();
     restoreFiloDefault();
     __resetDirtyTrackingForTests();
-    cancelAllMarkdownWrites();
-    documentStore.clear();
+    noteStore.__resetForTests();
     boardCacheStore.clear();
     vaultIndexStore.clear();
     vaultStore.setPath('');
@@ -139,9 +137,9 @@ describe('Audit-12 H1 — Task List creation persists filePath', () => {
       filePath: created!.filePath,
     } as unknown as Tile & { filePath?: string };
 
-    // Cold load: documentStore is empty (boards don't preload docs on restart) AND
+    // Cold load: no note is loaded (boards don't preload notes on restart) AND
     // the board's default folder has since diverged (user re-pointed it).
-    documentStore.clear();
+    noteStore.__resetForTests();
     hydrate(makeBoard('Archive'), { [persisted.id]: persisted as unknown as TileDefinition });
 
     // The persisted explicit filePath wins → resolves to the REAL subfolder path.

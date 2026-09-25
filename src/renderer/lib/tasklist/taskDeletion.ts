@@ -5,7 +5,6 @@ import type {
 import { historyStore, type Command } from '../../stores/history.svelte';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { uiStore } from '../../stores/ui.svelte';
-import { documentStore } from '../../stores/document.svelte';
 import { vaultStore } from '../../stores/vault.svelte';
 import {
   BatchCommand,
@@ -18,7 +17,6 @@ import { withDrainedWrites, PendingWritesFailedError } from '../vault/vaultOpera
 import { normalizePath } from '../utils/path';
 import type { TaskRow } from '../tasks/taskListModel';
 
-import { resolveTextTileVaultPath } from '../boards/textTilePath';
 /**
  * Task-deletion slice for TaskListBoard. Owns single-row deletion (with the
  * subtask cascade context menu), the "delete all completed" bulk path, and
@@ -175,7 +173,7 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
     const board = getBoard();
     if (!board) return;
     // Derive the completed set from the already-projected `rows`, whose
-    // `completed` flag is read documentStore-first (live, set synchronously by
+    // `completed` flag is read note-store-first (live, set synchronously by
     // toggleCompleted) with a vaultIndex fallback. `vaultIndexStore` alone lags
     // ~300 ms behind a just-checked task, so a check-then-bulk-delete could
     // silently skip it. `rows` is
@@ -237,7 +235,6 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
 
   async function performTaskFileDelete(boardId: string, tileId: string, tile: Tile): Promise<void> {
     const vaultRoot = normalizePath(vaultStore.path);
-    const notePath = resolveTextTileVaultPath(tile);
     try {
       // Drain pending editor writes BEFORE snapshotting so the captured body
       // reflects post-flush disk state (mirrors TileHeader's delete path).
@@ -256,8 +253,6 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
           );
           await historyStore.execute(new DeleteTaskCommand(boardId, tileId));
         } else {
-          // Unload the doc so an open editor can't rewrite the file we delete.
-          if (notePath) documentStore.unloadDocument(notePath);
           await historyStore.execute(
             new DeleteTaskCommand(boardId, tileId, { fileSnapshot: snapshot, vaultRoot }),
           );

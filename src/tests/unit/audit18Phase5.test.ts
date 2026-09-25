@@ -18,10 +18,6 @@
  *      N×60 s latency cliff + duplicate toasts. Fix: siblings share the outer
  *      drain's verdict (throw, no re-drain) and re-validate the vault
  *      generation after the park.
- *  5.4 The A17-5.3 post-write content read-back doubled per-write IO inside the
- *      bounded window; multi-MB notes on slow volumes could flap on timeout.
- *      Fix: size-gate the read-back at `MARKDOWN_READBACK_BYTE_THRESHOLD`
- *      (1 MB) — small notes read back, large notes accept size-only.
  *
  * The jsdom suite has no Svelte component-mount harness, so component wiring is
  * pinned via source-shape assertions (same pattern as audit17Phase4); the
@@ -46,19 +42,8 @@ import {
   PendingWritesFailedError,
   __resetDrainGuardForTests,
 } from '@renderer/lib/vault/vaultOperations';
-import {
-  scheduleMarkdownWrite,
-  markHydrated,
-  writeMarkdownFile,
-  setExternalEditPromptHandler,
-  MARKDOWN_READBACK_BYTE_THRESHOLD,
-  __resetMarkdownFileWriterForTests,
-} from '@renderer/lib/vault/markdownFileWriter';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import { scheduleMiscWrite } from '@renderer/lib/boards/miscWriteScheduler';
-import {
-  getBaseline,
-  __resetBaselinesForTests,
-} from '@renderer/lib/vault/fileBaselineRegistry';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import {
   beginVaultGeneration,
@@ -274,7 +259,7 @@ describe('Audit-18 5.2 — teardown title commit pushes onto the HOME board stac
 
 describe('Audit-18 5.3 — withDrainedWrites siblings share the drain verdict', () => {
   beforeEach(() => {
-    __resetMarkdownFileWriterForTests();
+    noteStore.__resetForTests();
     __resetDirtyTrackingForTests();
     __resetDrainGuardForTests();
     __resetVaultIdentityForTests();
@@ -282,7 +267,7 @@ describe('Audit-18 5.3 — withDrainedWrites siblings share the drain verdict', 
     for (const t of uiStore.toasts) uiStore.dismissToast(t.id, { silent: true });
   });
   afterEach(() => {
-    __resetMarkdownFileWriterForTests();
+    noteStore.__resetForTests();
     __resetDirtyTrackingForTests();
     __resetDrainGuardForTests();
     __resetVaultIdentityForTests();
@@ -295,25 +280,21 @@ describe('Audit-18 5.3 — withDrainedWrites siblings share the drain verdict', 
     const writeGate = new Promise<void>((r) => { releaseWrite = r; });
     let writeCalls = 0;
 
+    const disk = '---\ntitle: Slow\n---\nbody\n';
     installFiloMock({
+      'vault:read-file-text': () => ({ success: true, content: disk, mtimeMs: 1, size: disk.length }),
+      'vault:stat': () => ({ success: true, mtimeMs: 1, size: disk.length }),
       'vault:write-existing-file-text': async () => {
         writeCalls++;
         await writeGate; // park the drain in flight
         return { success: false, error: 'EACCES: permission denied' };
       },
     });
+    vaultStore.setPath('/vault');
+    // The failing note write breadcrumbs to console.error.
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    markHydrated('Slow.md', false);
-    scheduleMarkdownWrite({
-      vaultRoot: '/vault',
-      relPath: 'Slow.md',
-      frontmatter: {},
-      body: 'pending',
-      callerId: 'c1',
-    });
-    vi.useFakeTimers();
-    vi.advanceTimersByTime(400); // fire the debounce → write in flight (parked)
-    vi.useRealTimers();
+    noteStore.patchFrontmatter('Slow.md', { set: { status: 'pending' }, unset: [] });
 
     const outerOp = vi.fn(async () => 'outer');
     const sib1Op = vi.fn(async () => 's1');
@@ -323,6 +304,8 @@ describe('Audit-18 5.3 — withDrainedWrites siblings share the drain verdict', 
     await Promise.resolve(); // let the outer drain enter flight + arm drainPromise
     const s1 = withDrainedWrites(sib1Op);
     const s2 = withDrainedWrites(sib2Op);
+    // The drain's note flush is in flight (parked on the gate).
+    await vi.waitFor(() => expect(writeCalls).toBe(1));
 
     releaseWrite(); // write resolves (failure) → drain fails
     const results = await Promise.allSettled([outer, s1, s2]);
@@ -342,6 +325,7 @@ describe('Audit-18 5.3 — withDrainedWrites siblings share the drain verdict', 
     expect(writeCalls).toBe(1);
     // Exactly ONE aggregated error toast (not one per sibling).
     expect(uiStore.toasts.filter((t) => t.type === 'error').length).toBe(1);
+    errSpy.mockRestore();
   });
 
   it('positive control: a successful drain lets a parked sibling proceed', async () => {
@@ -404,144 +388,5 @@ describe('Audit-18 5.3 — withDrainedWrites siblings share the drain verdict', 
     // The sibling re-validated the generation after the park and bailed.
     expect(sibRes.status).toBe('rejected');
     expect(sibOp).not.toHaveBeenCalled();
-  });
-});
-
-// ── 5.4 — markdown post-write read-back size-gate ─────────────────────────
-
-interface Captured { channel: string; args: unknown[] }
-
-function installSizeGateStub(opts: { intercept?: (channel: string, args: unknown[]) => unknown } = {}): Captured[] {
-  const captured: Captured[] = [];
-  let lastWrittenText: string | null = null;
-  let lastWrittenBytes: number | null = null;
-  (window as unknown as Record<string, unknown>).filo = {
-    invoke: async (channel: string, ...args: unknown[]) => {
-      captured.push({ channel, args });
-      if (channel === 'vault:write-existing-file-text') {
-        lastWrittenText = String(args[2]);
-        lastWrittenBytes = new TextEncoder().encode(lastWrittenText).length;
-      }
-      if (opts.intercept) {
-        const r = opts.intercept(channel, args);
-        if (r !== undefined) return r;
-      }
-      if (channel === 'vault:read-file-text' && lastWrittenText !== null) {
-        return { success: true, content: lastWrittenText, mtimeMs: 1, size: lastWrittenBytes };
-      }
-      if (channel === 'vault:stat') {
-        // Post-write stat reports exactly the bytes we wrote (clean self-write).
-        if (lastWrittenBytes !== null) {
-          return { success: true, mtimeMs: 1100, size: lastWrittenBytes };
-        }
-        return { success: true, mtimeMs: 1000, size: 100 };
-      }
-      return { success: true, ok: true };
-    },
-    on: () => () => {},
-    send: () => {},
-  };
-  return captured;
-}
-
-describe('Audit-18 5.4 — post-write read-back is size-gated', () => {
-  beforeEach(() => {
-    __resetMarkdownFileWriterForTests();
-    __resetDirtyTrackingForTests();
-    __resetBaselinesForTests();
-    __resetVaultIdentityForTests();
-    setExternalEditPromptHandler(null);
-  });
-  afterEach(() => {
-    __resetMarkdownFileWriterForTests();
-    __resetDirtyTrackingForTests();
-    __resetBaselinesForTests();
-    __resetVaultIdentityForTests();
-    setExternalEditPromptHandler(null);
-    restoreFiloDefault();
-  });
-
-  it('exports a 1 MB threshold', () => {
-    expect(MARKDOWN_READBACK_BYTE_THRESHOLD).toBe(1_000_000);
-  });
-
-  it('SMALL note (< 1 MB): reads the bytes back AND stamps the baseline', async () => {
-    const invokes = installSizeGateStub();
-    const relPath = 'small.md';
-    markHydrated(relPath, false, 1000, 100);
-
-    await writeMarkdownFile({
-      vaultRoot: '/vault',
-      relPath,
-      frontmatter: {},
-      body: 'tiny body',
-      callerId: 'small',
-      notePath: null,
-    });
-
-    expect(invokes.some((i) => i.channel === 'vault:write-existing-file-text')).toBe(true);
-    // The post-write read-back ran for the small note.
-    expect(invokes.filter((i) => i.channel === 'vault:read-file-text').length).toBe(1);
-    // Baseline stamped to the post-write stat (size = the bytes we wrote).
-    expect(getBaseline(relPath)?.mtimeMs).toBe(1100);
-  });
-
-  it('LARGE note (>= 1 MB): SKIPS the read-back but still stamps the baseline (size-only)', async () => {
-    const invokes = installSizeGateStub();
-    const relPath = 'large.md';
-    markHydrated(relPath, false, 1000, 100);
-
-    await writeMarkdownFile({
-      vaultRoot: '/vault',
-      relPath,
-      frontmatter: {},
-      body: 'x'.repeat(1_500_000), // > 1 MB
-      callerId: 'large',
-      notePath: null,
-    });
-
-    expect(invokes.some((i) => i.channel === 'vault:write-existing-file-text')).toBe(true);
-    // No post-write read-back for the large note (the IO-doubling we avoid).
-    expect(invokes.filter((i) => i.channel === 'vault:read-file-text').length).toBe(0);
-    // Size-only confirmation still stamped the baseline (NOT a missed stamp).
-    expect(getBaseline(relPath)?.mtimeMs).toBe(1100);
-  });
-
-  it('SMALL note same-byte-count foreign write is STILL rejected (read-back protection intact)', async () => {
-    // The post-write read-back returns DIFFERENT content of the same byte
-    // count (a foreign write that landed in the write→stat gap).
-    const invokes = installSizeGateStub({
-      intercept: (channel) => {
-        if (channel === 'vault:read-file-text') {
-          return { success: true, content: 'DIFFERENT', mtimeMs: 1, size: 9 };
-        }
-        return undefined;
-      },
-    });
-    const relPath = 'foreign.md';
-    markHydrated(relPath, false, 1000, 100);
-
-    await writeMarkdownFile({
-      vaultRoot: '/vault',
-      relPath,
-      frontmatter: {},
-      body: 'mybody!!', // small → read-back runs
-      callerId: 'foreign',
-      notePath: null,
-    });
-
-    expect(invokes.filter((i) => i.channel === 'vault:read-file-text').length).toBe(1);
-    // Content mismatch → baseline KEPT (not stamped to the foreign write), so
-    // the drift gate re-detects + prompts on the next write.
-    expect(getBaseline(relPath)).toEqual({ mtimeMs: 1000, size: 100 });
-  });
-
-  it('source: the read-back is gated by writtenByteLength < MARKDOWN_READBACK_BYTE_THRESHOLD', () => {
-    const src = readFileSync(
-      // Audit-19 MD-2 — the post-write tail moved to markdownPostWrite.ts.
-      join(ROOT, 'src/renderer/lib/vault/markdownPostWrite.ts'),
-      'utf8',
-    );
-    expect(src).toContain('if (writtenByteLength < MARKDOWN_READBACK_BYTE_THRESHOLD) {');
   });
 });

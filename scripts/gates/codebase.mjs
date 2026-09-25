@@ -32,6 +32,7 @@ const CHARACTERISATION_SPECS = {
   'bytesOnDisk.test.ts': 4,
   'noteModel.test.ts': 13,
   'oneModel.test.ts': 4,
+  'trash.test.ts': 9,
 };
 
 // Board format v8: a def names its file and stores only visuals. These are

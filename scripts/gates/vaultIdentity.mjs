@@ -34,10 +34,13 @@ const TRIGGER_RES = {
 // Functions that take a captured identity/root param or live where the sweep
 // can't reach (anonymous handlers inside), pinned by name.
 const GUARD_PINNED = [
-  { file: 'src/renderer/stores/vaultFolderOps.ts', names: ['runRename', 'performDelete'] },
+  { file: 'src/renderer/stores/vaultFolderOps.ts', names: ['runRename'] },
+  { file: 'src/renderer/stores/vaultDeleteOps.ts', names: ['performDelete'] },
+  { file: 'src/renderer/stores/trash.svelte.ts', names: ['syncAfterRestore', 'handlePurge', 'offerPermanentDelete'] },
+  { file: 'src/renderer/commands/trashedFiles.ts', names: ['trashFiles', 'restoreFiles'] },
   { file: 'src/renderer/lib/vault/renameCascadeRepair.ts', names: ['repairRenameCascade'] },
   { file: 'src/renderer/stores/vault.svelte.ts', names: ['runRecoverySequencer'] },
-  { file: 'src/renderer/commands/frontmatterRebase.ts', names: ['applyFrontmatterPatchRebased'] },
+  { file: 'src/renderer/commands/frontmatterInverse.ts', names: ['applyDeltaChecked'] },
   { file: 'src/renderer/stores/boardDiscovery.ts', names: ['adoptOnce', 'adoptAndFindBoard'] },
   { file: 'src/renderer/stores/boardProvisionalMissing.ts', names: ['recheckProvisionalBoard'] },
   { file: 'src/renderer/stores/fileTags.svelte.ts', names: ['scheduleSave'] },
@@ -141,7 +144,10 @@ const DISK_SHAPE_ALLOWLIST = new Set([
   'src/renderer/lib/vault/quitFailureRecovery.ts',
   'src/renderer/lib/vault/machineSentinels.ts',
 ]);
-const DISK_SHAPE_CHANNELS = ['vault:rename', 'vault:delete', 'vault:create-folder', 'vault:copy-file'];
+const DISK_SHAPE_CHANNELS = [
+  'vault:rename', 'vault:delete', 'vault:create-folder', 'vault:copy-file',
+  'vault:trash-move', 'vault:trash-restore', 'vault:trash-purge', 'vault:trash-delete-permanently',
+];
 
 // ── board-path-casefold helpers ───────────────────────────────────────────
 function firstForLoopBody(code) {

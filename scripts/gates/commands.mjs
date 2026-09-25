@@ -285,4 +285,33 @@ export const checks = [
       return out;
     },
   },
+  {
+    id: 'no-note-body-in-commands',
+    title: 'no command keeps a copy of a note body or writes one back',
+    hint:
+      "Undo of a delete moves the file back from Filo's trash (commands/trashedFiles.ts); undo of a note field " +
+      'sends an inverse FrontmatterDelta (commands/frontmatterInverse.ts); Replace All keeps only the replaced text. ' +
+      'A command never reads a note to keep its text, and never restores a body from memory.',
+    run(ctx) {
+      const out = [];
+      const BODY_WRITES = /\bnoteStore\.(?:restore|restoreBody|writeBody|setBody|recreate|createExclusive)\s*\(/g;
+      const OLD_SHAPES = /\b(?:fileSnapshots?|mediaSnapshots|originalContent|nextContent|DeletedFileSnapshot)\b/g;
+      const READS = /\binvoke(?:Ok)?\s*\(\s*['"`](?:vault:read-file-text|media:read-file)['"`]|\breadNoteFresh\s*\(/g;
+      for (const rel of ctx.files(COMMANDS, { ext: ['.ts'], recursive: false })) {
+        const raw = ctx.read(rel);
+        const code = blank(raw);
+        const withStrings = blank(raw, { strings: false });
+        for (const m of code.matchAll(BODY_WRITES)) out.push(fail(rel, lineAt(raw, m.index), `a command writes a note body back (${m[0].trim()}…)`));
+        for (const m of code.matchAll(OLD_SHAPES)) out.push(fail(rel, lineAt(raw, m.index), `'${m[0]}' — a command keeps note content`));
+        // A file read inside a command class body is a snapshot in the making.
+        for (const cls of withStrings.matchAll(/class\s+\w+\s+extends\s+\w*Command\b[^{]*\{/g)) {
+          const open = cls.index + cls[0].length - 1;
+          const end = skipBlock(withStrings, open);
+          const body = withStrings.slice(open, end < 0 ? withStrings.length : end);
+          for (const m of body.matchAll(READS)) out.push(fail(rel, lineAt(raw, open + m.index), 'a command reads a note\'s text; keep the change, not the note'));
+        }
+      }
+      return out;
+    },
+  },
 ];

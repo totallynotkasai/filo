@@ -158,10 +158,11 @@ const NOTE_WRITER_CONTRACT = [
   },
   { file: 'src/renderer/commands/noteFieldCommand.ts', required: [{ token: /patchToFrontmatterDelta\s*\(/, why: 'field commands send a delta' }] },
   {
-    file: 'src/renderer/commands/frontmatterRebase.ts',
-    required: [{ token: /noteStore\.patchFrontmatter\s*\([^)]*patchToFrontmatterDelta\s*\(/, why: 'the undo/redo rebase sends a delta' }],
+    file: 'src/renderer/commands/frontmatterInverse.ts',
+    within: 'applyDeltaChecked',
+    required: [{ token: /noteStore\.patchFrontmatter\s*\(/, why: 'undo/redo send a delta through the note store' }],
   },
-  { file: 'src/renderer/commands/propertiesCommands.ts', required: [{ token: /noteStore\.patchFrontmatter\s*\(/, why: 'UpdatePropertiesCommand sends a delta' }] },
+  { file: 'src/renderer/commands/propertiesCommands.ts', required: [{ token: /applyDeltaChecked\s*\(/, why: 'UpdatePropertiesCommand sends a checked delta' }] },
   {
     file: 'src/renderer/components/tiles/PropertiesPopup.svelte',
     required: [
@@ -175,6 +176,21 @@ const NOTE_WRITER_CONTRACT = [
     required: [{ token: /writer\.createExclusive\s*\(/, why: 'a note deleted on disk is written back exclusively (never over a file that came back)' }],
   },
 ];
+
+// ── deletes-go-to-trash ───────────────────────────────────────────────────
+// Every user-facing delete moves the item into Filo's trash; these are the
+// places that do it, and the function that must.
+const TRASH_CALLERS = [
+  { file: 'src/renderer/stores/vaultDeleteOps.ts', fn: 'performDelete', why: 'the sidebar delete of a file or folder' },
+  { file: 'src/renderer/stores/boardCacheDelete.ts', fn: 'deleteBoard', why: 'a board delete' },
+  { file: 'src/renderer/commands/trashedFiles.ts', fn: 'trashFiles', why: '"delete tile/task and file" and the cascade redo' },
+];
+// The only renderer code that may name the unlink channel: crash-sentinel
+// clean-ups inside .filo/, which are never user content.
+const VAULT_DELETE_ALLOWED = new Set(['src/renderer/lib/vault/machineSentinels.ts']);
+const TRASH_OPS = 'src/main/vault/trashOps.ts';
+const TRASH_IPC = 'src/main/ipc/vaultTrash.ipc.ts';
+const TRASH_STORE = 'src/renderer/stores/trash.svelte.ts';
 
 // ── keep-local-backup ─────────────────────────────────────────────────────
 const KEEP_LOCAL_CHOKEPOINTS = [
@@ -271,11 +287,11 @@ export const checks = [
   },
   {
     id: 'note-queue-per-path',
-    title: 'a note file is renamed or deleted only while its write queue is held',
+    title: 'a note file is renamed, trashed or restored only while its write queue is held',
     hint:
       "A write that starts while its file moves lands on the old path (or recreates it). vaultOperations' " +
-      'renameVaultPath / deleteVaultPath run the IPC inside noteStore.hold(...), and noteWriter.hold enters every ' +
-      "path's queue before the operation runs.",
+      'renameVaultPath / trashVaultPath / restoreTrashed run the IPC inside noteStore.hold(...), and noteWriter.hold ' +
+      "enters every path's queue before the operation runs.",
     run(ctx) {
       const out = [];
       const OPS = 'src/renderer/lib/vault/vaultOperations.ts';
@@ -283,7 +299,7 @@ export const checks = [
       if (raw === null) return [fail(OPS, undefined, 'file missing')];
       const code = blank(raw);
       const text = blank(raw, { strings: false });
-      for (const [fn, channel] of [['renameVaultPath', 'vault:rename'], ['deleteVaultPath', 'vault:delete']]) {
+      for (const [fn, channel] of [['renameVaultPath', 'vault:rename'], ['trashVaultPath', 'vault:trash-move'], ['restoreTrashed', 'vault:trash-restore']]) {
         const b = functionBody(code, fn, { fnKeyword: true });
         if (!b) { out.push(fail(OPS, undefined, `${fn}() not found`)); continue; }
         const body = text.slice(b.start, b.end);
@@ -508,6 +524,69 @@ export const checks = [
         }
       }
       if (sites < 4) out.push(fail(RENDERER, undefined, `tripwire: only ${sites} Keep-local action sites found (expected >= 4)`));
+      return out;
+    },
+  },
+  {
+    id: 'deletes-go-to-trash',
+    title: "user deletes move items to Filo's trash; only a confirmed fallback deletes for good",
+    hint:
+      "Delete through trashVaultPath(...) (lib/vault/vaultOperations.ts) so undo and Settings → Trash can move it back. " +
+      'vault:delete is for .filo/ sentinel clean-ups only. A purge hands items to the Recycle Bin (shell.trashItem) and ' +
+      'never deletes them itself; only offerPermanentDelete, after its confirm, may. Confirm text never promises "permanent" elsewhere.',
+    run(ctx) {
+      const out = [];
+      for (const { file, fn, why } of TRASH_CALLERS) {
+        const raw = ctx.read(file);
+        if (raw === null) { out.push(fail(file, undefined, 'file missing')); continue; }
+        const body = functionBody(blank(raw), fn);
+        if (!body) { out.push(fail(file, undefined, `${fn}() not found`)); continue; }
+        if (!/\btrashVaultPath\s*\(/.test(body.text)) out.push(fail(file, lineAt(raw, body.start), `${fn}() (${why}) must call trashVaultPath(...)`));
+      }
+      for (const rel of ctx.files(RENDERER, { ext: TS_SVELTE })) {
+        const raw = ctx.read(rel);
+        const code = blank(raw, { strings: false });
+        for (const m of code.matchAll(/['"`]vault:delete['"`]/g)) {
+          if (!VAULT_DELETE_ALLOWED.has(rel)) out.push(fail(rel, lineAt(raw, m.index), "'vault:delete' outside the .filo/ sentinel clean-up; move the item to Filo's trash instead"));
+        }
+        for (const m of code.matchAll(/\bdeleteTrashPermanently\s*\(/g)) {
+          if (rel === 'src/renderer/lib/vault/vaultOperations.ts') continue;
+          const fnBody = rel === TRASH_STORE ? functionBody(blank(raw), 'offerPermanentDelete', { fnKeyword: true }) : null;
+          const inside = fnBody && m.index > fnBody.start && m.index < fnBody.end;
+          if (!inside) out.push(fail(rel, lineAt(raw, m.index), 'deleteTrashPermanently(...) is only for offerPermanentDelete, after its confirm'));
+        }
+        // Confirm and hint text: "permanent" only in the fallback dialog.
+        for (const m of code.matchAll(/\b(?:body|hint|title|confirmLabel|text)\s*:\s*(['"`])((?:\\.|(?!\1)[\s\S])*?)\1/g)) {
+          if (!/permanent/i.test(m[2])) continue;
+          const fnBody = rel === TRASH_STORE ? functionBody(blank(raw), 'offerPermanentDelete', { fnKeyword: true }) : null;
+          if (fnBody && m.index > fnBody.start && m.index < fnBody.end) continue;
+          out.push(fail(rel, lineAt(raw, m.index), 'user-facing delete text says "permanent"; deletes go to Filo\'s trash'));
+        }
+      }
+      const opsRaw = ctx.read(TRASH_OPS);
+      if (opsRaw === null) return [...out, fail(TRASH_OPS, undefined, 'file missing')];
+      const ops = blank(opsRaw);
+      for (const fn of ['purgeTrash', 'removeBookkeeping']) {
+        const b = functionBody(ops, fn, { fnKeyword: true });
+        if (!b) { out.push(fail(TRASH_OPS, undefined, `${fn}() not found`)); continue; }
+        if (/\bfs\.rm\s*\(|\brecursive\s*:\s*true|\brimraf\b/.test(b.text)) {
+          out.push(fail(TRASH_OPS, lineAt(opsRaw, b.start), `${fn}() must not delete recursively; items leave through the Recycle Bin`));
+        }
+        const withStrings = blank(opsRaw, { strings: false }).slice(b.start, b.end);
+        for (const u of withStrings.matchAll(/\bunlink\s*\(([^)]*)\)/g)) {
+          if (!/MANIFEST/.test(u[1])) out.push(fail(TRASH_OPS, lineAt(opsRaw, b.start + u.index), `${fn}() may only unlink the manifest`));
+        }
+      }
+      const purge = functionBody(ops, 'purgeTrash', { fnKeyword: true });
+      if (purge && !/\bopts\.trashItem\s*\(/.test(purge.text)) out.push(fail(TRASH_OPS, lineAt(opsRaw, purge.start), 'purgeTrash() must hand items to opts.trashItem (the OS Recycle Bin)'));
+      const ipcRaw = ctx.read(TRASH_IPC);
+      if (ipcRaw === null) return [...out, fail(TRASH_IPC, undefined, 'file missing')];
+      const ipc = blank(ipcRaw, { strings: false });
+      const start = ipc.indexOf("'vault:trash-purge'");
+      const end = ipc.indexOf("ipcMain.handle(", start + 1);
+      const handler = start < 0 ? '' : ipc.slice(start, end < 0 ? ipc.length : end);
+      if (!/shell\.trashItem\s*\(/.test(handler)) out.push(fail(TRASH_IPC, undefined, "the 'vault:trash-purge' handler must purge through shell.trashItem"));
+      if (/deleteTrashedPermanently|\bfs(?:Promises)?\.(?:rm|unlink)\s*\(/.test(handler)) out.push(fail(TRASH_IPC, undefined, "the 'vault:trash-purge' handler must never delete on its own"));
       return out;
     },
   },

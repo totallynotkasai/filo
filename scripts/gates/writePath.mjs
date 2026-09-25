@@ -7,6 +7,7 @@ import {
 const RENDERER = 'src/renderer';
 const TS_SVELTE = ['.ts', '.svelte'];
 const GATEWAY = 'src/renderer/lib/vault/markdownFileWriter.ts';
+const NOTE_WRITER = 'src/renderer/lib/notes/noteWriter.ts';
 // A real invoke of a markdown write channel (comments/docstrings don't have the `invoke(` prefix).
 const MD_WRITE_RE = /\binvoke(?:Ok)?\s*\(\s*['"`]vault:(?:write-(?:existing-)?|create-)file-text['"`]/gs;
 
@@ -14,6 +15,7 @@ const MD_WRITE_RE = /\binvoke(?:Ok)?\s*\(\s*['"`]vault:(?:write-(?:existing-)?|c
 const COUPLED_HELPER = 'src/renderer/lib/vault/syncOpenEditorsAfterDiskMutation.ts';
 const RECONCILE_EXEMPT = new Map([
   [GATEWAY, 'the gateway owns the editor write + frontmatter cache'],
+  [NOTE_WRITER, 'reports every write to the note store, which updates the model'],
   ['src/renderer/lib/boards/seedTextFileForNewTile.ts', 'seeds a brand-new tile backing .md'],
   ['src/renderer/lib/kanban/kanbanTileCreation.ts', 'creates a new Kanban card backing .md'],
   ['src/renderer/lib/tasklist/taskCreation.ts', 'creates a new task backing .md'],
@@ -250,7 +252,7 @@ export const checks = [
     run(ctx) {
       const out = [];
       for (const rel of ctx.files(RENDERER, { ext: TS_SVELTE })) {
-        if (rel === GATEWAY) continue;
+        if (rel === GATEWAY || rel === NOTE_WRITER) continue;
         const text = ctx.read(rel);
         const lines = text.split('\n');
         for (const m of text.matchAll(MD_WRITE_RE)) {

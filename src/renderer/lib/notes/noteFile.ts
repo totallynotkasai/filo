@@ -1,0 +1,167 @@
+/**
+ * noteFile — pure read and assemble of one `.md` note file.
+ *
+ * `readNoteText` splits the raw bytes into frontmatter and body and records
+ * the file's encoding traits (BOM, line ending). `assembleNoteText` applies
+ * one change (a new body, a frontmatter delta, or both) to a FRESH read and
+ * emits the bytes to write:
+ *  - the frontmatter source is patched key by key (CST engine), so untouched
+ *    keys, comments and quoting survive, including keys another program added;
+ *  - without a new body the disk body is kept verbatim;
+ *  - the fresh read's BOM and line ending are re-applied, and a CRLF note's
+ *    body is written as CRLF throughout;
+ *  - a note without frontmatter keeps its final newline.
+ *
+ * No IPC, store or DOM access, so the writer and the disk-change handler share
+ * one definition of "what the file says".
+ */
+import { assembleMarkdownFile, parseMarkdownFile } from '../editor/markdownSync';
+import {
+  applyFrontmatterDelta,
+  isEmptyFrontmatterDelta,
+  type FrontmatterDelta,
+} from '../vault/frontmatterDelta';
+
+export type Eol = '\n' | '\r\n';
+
+/** One `.md` file as read from disk. */
+export interface NoteText {
+  /** The raw text, BOM included. */
+  raw: string;
+  frontmatter: Record<string, unknown>;
+  /** The verbatim YAML between the fences ('' without a block). */
+  rawFrontmatter: string;
+  hasFrontmatter: boolean;
+  /** Markdown after the frontmatter block, in the file's own line endings. */
+  body: string;
+  hadBom: boolean;
+  eol: Eol;
+}
+
+/** What the local state of a note was built on: the bytes last known on disk. */
+export interface DiskSnapshot {
+  rawText: string;
+  hash: string;
+  /** Undefined when the read wasn't coherent or the bytes came from our own write. */
+  mtimeMs?: number;
+  size?: number;
+  hadBom: boolean;
+  eol: Eol;
+}
+
+/** Splits raw file text into frontmatter, body and encoding traits. */
+export function readNoteText(raw: string): NoteText {
+  const parsed = parseMarkdownFile(raw);
+  return {
+    raw,
+    frontmatter: parsed.frontmatter,
+    rawFrontmatter: parsed.rawFrontmatter,
+    hasFrontmatter: parsed.hasFrontmatter,
+    body: parsed.body,
+    hadBom: parsed.hadBom,
+    eol: raw.includes('\r\n') ? '\r\n' : '\n',
+  };
+}
+
+const utf8 = new TextEncoder();
+
+/** UTF-8 byte length of `text` (its size on disk). */
+export function utf8ByteLength(text: string): number {
+  return utf8.encode(text).length;
+}
+
+/**
+ * FNV-1a (32-bit) over the UTF-8 bytes, as 8 hex digits. It is the same digest
+ * the main-process watcher computes over the file, so a UTF-8 note's hash can
+ * be compared with a watcher event's. Used to recognise our own writes coming
+ * back and to tell whether disk still holds the bytes a model was built on.
+ */
+export function noteTextHash(text: string): string {
+  const bytes = utf8.encode(text);
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < bytes.length; i++) {
+    hash ^= bytes[i] ?? 0;
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+/** A snapshot of `text` as the bytes on disk. */
+export function snapshotOf(text: NoteText, mtimeMs?: number, size?: number): DiskSnapshot {
+  return {
+    rawText: text.raw,
+    hash: noteTextHash(text.raw),
+    mtimeMs,
+    size,
+    hadBom: text.hadBom,
+    eol: text.eol,
+  };
+}
+
+/** The body the snapshot's bytes hold (what a drift check compares). */
+export function snapshotBody(snapshot: DiskSnapshot): string {
+  return parseMarkdownFile(snapshot.rawText).body;
+}
+
+/**
+ * True when two bodies hold the same text, ignoring line-ending style and
+ * final newlines. The editor serialises LF without a final newline, and the
+ * assembler adds one on write, so a note compared with its own editor body
+ * must not look changed.
+ */
+export function sameBody(a: string, b: string): boolean {
+  if (a === b) return true;
+  const norm = (s: string): string => s.replace(/\r\n/g, '\n').replace(/\n+$/, '');
+  return norm(a) === norm(b);
+}
+
+export interface NoteChange {
+  /** The new body (editor markdown, LF). Omitted: keep the disk body. */
+  body?: string;
+  /** Frontmatter keys to set or remove. Omitted or empty: frontmatter unchanged. */
+  delta?: FrontmatterDelta;
+}
+
+/**
+ * The bytes to write for `change` applied to the fresh read `fresh`.
+ * `onFrontmatterRefused` fires when the disk YAML can't be parsed, so the
+ * frontmatter part of the change is dropped (the block is kept verbatim).
+ */
+export function assembleNoteText(
+  fresh: NoteText,
+  change: NoteChange,
+  onFrontmatterRefused?: () => void,
+): string {
+  const delta = change.delta;
+  const fmChanged = delta !== undefined && !isEmptyFrontmatterDelta(delta);
+  const nextFm = fmChanged ? applyFrontmatterDelta(fresh.frontmatter, delta) : fresh.frontmatter;
+  const body = change.body ?? fresh.body;
+  // An empty file carries no line-ending signal; the body then decides.
+  const eol: Eol = fresh.raw.length === 0 ? (body.includes('\r\n') ? '\r\n' : '\n') : fresh.eol;
+  let text = assembleMarkdownFile(nextFm, body, {
+    bom: fresh.hadBom,
+    rawFrontmatter: fresh.rawFrontmatter,
+    frontmatterDirty: fmChanged,
+    originalFrontmatter: fresh.rawFrontmatter,
+    eol,
+    onFrontmatterRefused,
+  });
+  // The editor drops a body's final newline. A note with frontmatter gets one
+  // back from the assembler; one without would lose it on every edit.
+  if (change.body !== undefined && endsWithNewline(fresh.raw) && !endsWithNewline(text) && text.length > 0) {
+    text += eol;
+  }
+  return text;
+}
+
+function endsWithNewline(text: string): boolean {
+  return text.endsWith('\n');
+}
+
+/**
+ * The text of a brand-new note: `title:` (and any other keys) as frontmatter
+ * over `body`. LF, no BOM.
+ */
+export function newNoteText(frontmatter: Record<string, unknown>, body: string): string {
+  return assembleMarkdownFile(frontmatter, body);
+}

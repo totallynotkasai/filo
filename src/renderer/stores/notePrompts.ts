@@ -1,0 +1,123 @@
+/**
+ * notePrompts — the questions the note store asks the user.
+ *
+ * - Conflict: an unsaved body edit met a body change made by another program.
+ *   "Reload" shows the file's version; "Keep mine" backs the file's version
+ *   up to `.filo/recovery/` and then writes the local one.
+ * - Deleted: a note with an unsaved edit was deleted by another program.
+ *   "Keep mine" writes it back (only if nothing is at the path again);
+ *   "Discard" lets it go.
+ * - Reload shrank: a clean note reloaded from a much shorter version on disk
+ *   (a sync client's truncation looks like this); "Undo reload" writes the
+ *   previous body back after backing the short version up.
+ *
+ * Each prompt is sticky and keyed per note, so one note never shows two.
+ */
+import { uiStore } from './ui.svelte';
+import { noteStore, setNotePromptHandlers, type NoteModel } from './notes.svelte';
+import { noteTitle } from './noteMeta';
+import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
+import { backupExternalVersion } from '../lib/vault/keepLocalBackup';
+import { assembleNoteText, newNoteText, readNoteText } from '../lib/notes/noteFile';
+import { reportError } from '../lib/utils/errorBus';
+
+const conflictKey = (rel: string): string => `ext-mod:${rel}`;
+const deletedKey = (rel: string): string => `ext-deleted:${rel}`;
+
+/** The text to write back for a note deleted on disk: its last frontmatter over the local body. */
+function recreatedText(m: NoteModel): string {
+  if (m.base) return assembleNoteText(readNoteText(m.base.rawText), { body: m.body });
+  return newNoteText({ ...m.frontmatter }, m.body);
+}
+
+function promptConflict(m: NoteModel): void {
+  const rel = m.relPath;
+  uiStore.pushToast({
+    text: `"${noteTitle(rel)}" was changed by another program while you were editing it. Reload that version, or keep yours?`,
+    type: 'warning',
+    duration: 0,
+    sticky: true,
+    dedupeKey: conflictKey(rel),
+    actions: [
+      {
+        label: 'Reload',
+        handler: () => {
+          void noteStore.resolveConflict(m.relPath, 'reload').catch((err) =>
+            reportError('notePrompts.reload', err, `Couldn't reload "${m.relPath}"`),
+          );
+        },
+      },
+      {
+        label: 'Keep mine',
+        handler: async () => {
+          const vaultRoot = getActiveVaultPath();
+          // Back up the other program's version before overwriting it; a
+          // declined overwrite leaves both sides as they are.
+          if (!vaultRoot || !(await backupExternalVersion(vaultRoot, m.relPath))) return;
+          if (getActiveVaultPath() !== vaultRoot) return;
+          await noteStore.resolveConflict(m.relPath, 'keep-mine');
+        },
+      },
+    ],
+  });
+}
+
+function promptDeleted(m: NoteModel): void {
+  const rel = m.relPath;
+  uiStore.pushToast({
+    text: `"${noteTitle(rel)}" was deleted by another program, but it has edits that weren't saved. Keep your version, or discard it?`,
+    type: 'warning',
+    duration: 0,
+    sticky: true,
+    dedupeKey: deletedKey(rel),
+    actions: [
+      {
+        label: 'Keep mine',
+        handler: async () => {
+          const vaultRoot = getActiveVaultPath();
+          // Nothing to back up when the path is empty; if a file came back,
+          // its version is backed up before it's compared with ours.
+          if (!vaultRoot || !(await backupExternalVersion(vaultRoot, m.relPath))) return;
+          const outcome = await noteStore.recreate(m.relPath, recreatedText(m));
+          if (outcome === 'exists') void noteStore.onDiskChanged(m.relPath);
+        },
+      },
+      {
+        label: 'Discard',
+        handler: () => noteStore.discardDeleted(m.relPath),
+      },
+    ],
+  });
+}
+
+function promptReloadShrank(m: NoteModel, priorBody: string): void {
+  uiStore.pushToast({
+    text: `"${noteTitle(m.relPath)}" was reloaded from disk and is much shorter than before.`,
+    type: 'warning',
+    dedupeKey: conflictKey(m.relPath),
+    actions: [
+      {
+        label: 'Undo reload',
+        handler: async () => {
+          const vaultRoot = getActiveVaultPath();
+          if (!vaultRoot || !(await backupExternalVersion(vaultRoot, m.relPath))) return;
+          noteStore.restoreBody(m.relPath, priorBody);
+        },
+      },
+      { label: 'Keep reloaded', handler: () => undefined },
+    ],
+  });
+}
+
+/** Installs the prompts. Called once at startup (App.svelte). */
+export function registerNotePrompts(): void {
+  setNotePromptHandlers({
+    conflict: promptConflict,
+    deletedWithUnsavedBody: promptDeleted,
+    reloadShrank: promptReloadShrank,
+    dismiss: (rel) => {
+      uiStore.dismissToastsByKey(conflictKey(rel), { silent: true });
+      uiStore.dismissToastsByKey(deletedKey(rel), { silent: true });
+    },
+  });
+}

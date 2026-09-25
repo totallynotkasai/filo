@@ -11,7 +11,7 @@ note rather than a quick fix — each entry lists why it is the way it is.
 
 ---
 
-## 1. Frontmatter full re-dump — only for files Filo hasn't read (and a few narrow cases)
+## 1. Frontmatter full re-dump — only for new files (and a few narrow cases)
 
 **What (Phase 6 — root cause deleted, not patched):** Filo's frontmatter writes
 go through a single-parser, source-preserving **CST-operations engine**
@@ -20,8 +20,9 @@ the on-disk frontmatter source, rewrites ONLY the keys whose value actually
 changed, and emits every UNTOUCHED key from its own source tokens —
 byte-for-byte. Comments, key order, quote/indent style, exotic scalars (`02134`,
 `0xFF00FF`, `1_000`), AND untouched folded `>` block scalars all survive a
-metadata edit verbatim. This is the path taken by every open document's metadata
-save (Text Tile / Document Board) and by the tag rewriter's fallback.
+metadata edit verbatim. Every note write takes this path: the note writer reads
+the file fresh at each flush and patches that source, and the tag rewriter's
+fallback uses the same engine.
 
 Six audits fought a recurring corruption class here (DI-01 unquoted date→ISO,
 DI-05 destroyed `<<` merge keys, R1/M2 canonicalised untouched scalars, C1
@@ -37,9 +38,8 @@ frontmatter read).
 **Residual full re-dump (lossless by nature):** When the engine has no on-disk
 source to preserve, or can't safely patch the source, it emits a full dump
 (`new Document(fm).toString()` — the `yaml` package, no js-yaml). This fires for:
-a brand-new file (no baseline exists, so there are no comments to lose); a write
-whose backing file Filo never read into the document store (no baseline
-captured); a block the engine can't parse as a block mapping; or a CHANGED /
+a brand-new file, or the first keys added to a file with no frontmatter (there
+are no comments to lose); a block the engine can't parse as a block mapping; or a CHANGED /
 DELETED key carrying a YAML anchor/alias (the engine refuses the splice rather
 than dangle an alias — L27, and the dump expands the anchor to a concrete value).
 In each case there is either nothing to preserve, or the structure is expanded
@@ -58,8 +58,8 @@ loss):**
   comment on the old value is dropped (a scalar→scalar value change keeps it, via
   the value-only splice).
 - **A9-L6 — deleted key's documenting comment.** Deleting a frontmatter key
-  (clearing a field in the Properties popup, or an orphan-card edit that empties a
-  value) also drops a standalone comment line immediately ABOVE that key. A
+  (clearing a field in the Properties popup, or a card/task field edit that
+  empties a value) also drops a standalone comment line immediately ABOVE that key. A
   comment conventionally documents the key it precedes, so it is removed WITH the
   key rather than relocated onto the next surviving key — where it would
   mis-document an unrelated field — or left dangling at the document end.
@@ -72,21 +72,21 @@ loss):**
 - **Touched anchored key.** Changing or deleting a key carrying `&a`/`*a`
   full-dumps (structure expanded, data exact); an anchor/alias confined to
   UNTOUCHED keys is spliced verbatim and survives (DI-05's `<<: *base`).
-- **New-file / no-baseline.** Emitted in the `yaml` package's default style
+- **New file.** Emitted in the `yaml` package's default style
   (nothing prior to preserve).
 
 **Where:** [src/renderer/lib/vault/frontmatterCstModel.ts](src/renderer/lib/vault/frontmatterCstModel.ts)
 (the engine) + [src/renderer/lib/vault/frontmatterEngine.ts](src/renderer/lib/vault/frontmatterEngine.ts)
-(shared value helpers); the disk-baseline source is retained per-doc in
-[src/renderer/stores/document.svelte.ts](src/renderer/stores/document.svelte.ts)
-(`originalFrontmatterCache`) and threaded through
-[src/renderer/lib/vault/markdownFileWriter.ts](src/renderer/lib/vault/markdownFileWriter.ts)
+(shared value helpers). The note writer
+([src/renderer/lib/notes/noteWriter.ts](src/renderer/lib/notes/noteWriter.ts))
+reads the file fresh at each flush and passes its frontmatter source through
+`assembleNoteText` ([src/renderer/lib/notes/noteFile.ts](src/renderer/lib/notes/noteFile.ts))
 → `assembleMarkdownFile` in
 [src/renderer/lib/editor/markdownSync.ts](src/renderer/lib/editor/markdownSync.ts).
 
 **Impact:** Negligible — hand-authored YAML comments/formatting (including
-untouched folded scalars) now survive a metadata edit on any file Filo has open.
-Only a never-before-read file's first rewrite, a changed nested block's inner
+untouched folded scalars) survive a metadata edit on any note. Only a new
+file's first keys, a changed nested block's inner
 comment, or a touched anchored key is emitted in the package's default style, and
 deleting a key also drops the comment line that documented it. File *content* is
 never lost.
@@ -95,14 +95,16 @@ never lost.
 
 ## 2. Attachment tags are vault-local
 
-**What:** Text-tile tags live in two synced places — the `.board.json` tile def
-**and** the file's YAML frontmatter (`tags: [...]`) — so they travel with the
-`.md` file. Attachment-tile tags (image / video / audio / generic file) have
-nowhere to write into the file itself, so they live in `.board.json` plus
-`.filo/tags.json` (`fileTags[mediaPath]`) only.
+**What:** A note's tags live only in its YAML frontmatter (`tags: [...]`), so
+they travel with the `.md` file. Attachment tags (image / video / audio /
+generic file) have nowhere to write into the file itself, so their only copy is
+`.filo/tags.json` (`fileTags[mediaPath]`). Board files hold no copy of either.
+The attachment's tags follow the file across boards, and follow in-app renames
+and moves.
 
 **Where:** Persistence boundary documented in
 [CLAUDE.md](CLAUDE.md); tag storage in
+[src/renderer/stores/fileTags.svelte.ts](src/renderer/stores/fileTags.svelte.ts) and
 [src/renderer/lib/vault/tagsStorage.ts](src/renderer/lib/vault/tagsStorage.ts).
 
 **Why accepted:** Writing a sidecar file next to each media file would violate
@@ -132,7 +134,7 @@ directory entry, not file contents.
 
 **Impact:** A power loss in the instant after a rename could *theoretically*
 lose a just-renamed file's directory entry on NTFS. Extremely narrow; the
-`.filo/.dirty` sentinel + recovery flow covers the broader crash case.
+`.filo/.dirty.<machineId>` sentinel + recovery flow covers the broader crash case.
 
 **Audit-4 DI-10 (confirmed, accepted).** Re-verified: the file-handle `fsync`
 (data durability) always runs before the rename; only the containing-directory
@@ -155,7 +157,7 @@ writes, but waits at most `FLUSH_TIMEOUT_MS = 5000` ms.
 quitting indefinitely. Five seconds is generous for a normal flush.
 
 **Impact:** A renderer still wedged past the timeout loses its pending writes.
-This is exactly the case the `.filo/.dirty` sentinel detects — recovery is
+This is exactly the case the `.filo/.dirty.<machineId>` sentinel detects — recovery is
 offered on next launch.
 
 **Audit-19 EXT-5 — the 5 s bounds inter-beat SILENCE, not the drain:** the
@@ -169,12 +171,23 @@ anyway** or **Stay open**.
 
 ---
 
-## 5. Self-write suppression window can misfire on a very slow disk
+## 5. Self-write suppression window can misfire on a very slow disk (board and `.filo/` files)
 
-**What:** When Filo writes a file, it suppresses its own file-watcher echo so it
-isn't reclassified as an external edit. Two layers: the main-process watcher
-suppresses for ~500–2000 ms (`FileWatcher.suppress`), and a renderer-side
-registry holds each path for `RECENT_SELF_WRITE_TTL_MS = 1500` ms (or
+**Notes are no longer affected.** The note writer remembers the content hash of
+each write it makes, and the note store ignores a watcher event whose bytes
+match one of those hashes or the note's current base
+([src/renderer/lib/notes/noteWriter.ts](src/renderer/lib/notes/noteWriter.ts)
+`isOwnWrite`, [src/renderer/lib/notes/noteDiskChange.ts](src/renderer/lib/notes/noteDiskChange.ts)).
+A late echo of a note write is therefore recognised however late it arrives
+while the note is open; for a closed note it only re-indexes the same metadata.
+Moving this hash check into the main-process watcher (so the echo is never sent
+at all) was not done; it would only save work, not change behaviour.
+
+**What (still open):** For `.board.json` and `.filo/` config files, Filo
+suppresses its own file-watcher echo with time windows so it isn't reclassified
+as an external edit. Two layers: the main-process watcher suppresses for
+~500–2000 ms (`FileWatcher.suppress`), and a renderer-side registry holds each
+path for `RECENT_SELF_WRITE_TTL_MS = 1500` ms (or
 `RECENT_SELF_WRITE_TTL_BULK_MS = 5000` ms while a bulk write is in flight).
 
 **Where:** [src/renderer/lib/boards/writeStateTracking.ts](src/renderer/lib/boards/writeStateTracking.ts)
@@ -185,9 +198,9 @@ rename) workloads. Widening them unconditionally would slow genuine external-edi
 detection.
 
 **Audit-13 M4 — in-window handling is content-aware, not time-only:** A watcher
-event for a recently self-written path is no longer suppressed by the timer
-alone. `handleExternalMarkdownChanges`
-([src/renderer/stores/vaultExternalChanges.ts](src/renderer/stores/vaultExternalChanges.ts))
+event for a recently self-written board path is not suppressed by the timer
+alone. The board reconciler
+([src/renderer/stores/vaultExternalReconcilers.ts](src/renderer/stores/vaultExternalReconcilers.ts))
 drops it ONLY when the file's fresh disk stat still matches the baseline Filo
 wrote (`selfWriteDivergedFromBaseline` → `hasBaselineDrifted`); a diverged
 mtime/size means a *second* writer touched the file inside the window, so the
@@ -195,18 +208,19 @@ event is kept and reconciled. So a genuine external edit that lands inside the
 suppression window is **not** dropped — only the benign direction below remains.
 
 **Impact:** On a pathologically slow disk or under aggressive antivirus, a
-self-write's OS echo can arrive *after* the recent-self-write window has expired
-(`isRecentSelfWrite` already false), so the app's own write is classified as an
-external edit — surfacing a spurious "Reload / Keep local" toast. This is a UX
+board or config self-write's OS echo can arrive *after* the recent-self-write
+window has expired (`isRecentSelfWrite` already false), so the app's own write
+is classified as an external edit — surfacing a spurious "Reload / Keep local"
+board toast. This is a UX
 annoyance, **not** data loss (and, per M4 above, never a *dropped* external
 edit). Monitor; widen the window only if it bites in practice.
 
 **Audit-19 EXT-5 — slower renames:** a write whose rename waits out a Windows
 file lock can land up to ~5 s late. Main's pre-write suppression now covers that
 (`LOCK_AWARE_SUPPRESS_MS` = the lock budget + 2 s), but the renderer's
-recent-self-write TTL can still expire first; the baseline-divergence tie-break
-(Audit-13 M4 for `.md`, Audit-15 P2.4 for boards) then drops the echo because
-the disk stat matches what Filo wrote.
+recent-self-write TTL can still expire first; for boards the baseline-divergence
+tie-break (Audit-15 P2.4) then drops the echo because the disk stat matches what
+Filo wrote. Notes use the content-hash check above.
 
 ---
 
@@ -293,66 +307,28 @@ relinks it. No data loss; the file and its content are intact. A proactive
 "did you rename X? relink N tiles" prompt for a large delete+create of matching
 size+extension is a possible future enhancement, not a correctness fix.
 
-## 8. Vault-wide tag rename can drop keystrokes typed *during* the sweep
+## 8. (Closed) Vault-wide tag rename could drop keystrokes typed *during* the sweep
 
-**What:** A vault-wide tag rename / removal
+**Closed.** The sweep
 ([src/renderer/lib/vault/tagRewriteSweep.ts](src/renderer/lib/vault/tagRewriteSweep.ts))
-drains all pending writes, then walks every `.md`, re-reads it fresh, rewrites
-the tag, and reloads any open editor on that file (`mode: 'full'`). On a large
-vault the walk takes long enough that a user could keep typing. If they type
-into an editor for a file the sweep has *not yet* reached, the sweep's fresh
-re-read sees disk *without* those just-typed (still-debouncing) keystrokes, and
-the `mode: 'full'` reload then cancels the editor's armed write and swaps in the
-rewritten body — losing those in-flight keystrokes for that one file.
+now writes each note through `noteStore.transform`. That first asks every open
+view of the note to hand over its current text, writes anything queued for the
+note, and only then rewrites the tag on a fresh read of the file, inside the
+note's own write queue. The rewrite touches only frontmatter, and an open
+editor never loads over keystrokes it hasn't handed over yet, so text typed
+while the sweep runs is kept. Pinned by
+`src/tests/unit/noteTransformViews.test.ts` ("writes a view's unsaved typing
+first, so the rewrite never reverts it").
 
-**Where:** the `writeMarkdownAndReconcile({ mode: 'full' })` call inside the
-`withDrainedWrites` loop in `tagRewriteSweep.ts` (the `Audit-11 T2` comment).
+## 9. (Closed) Field/FM delta write read body and frontmatter from two separate disk reads
 
-**Why accepted (Audit-11 T2):** Closing it in code means switching that file's
-reconcile to frontmatter-only (body-preserving) when `isPathPending(path)` —
-which would couple this deliberately store-free, pure-rewrite module to live
-scheduler state, the exact dependency its module docstring avoids. The race is
-narrow (it needs simultaneous typing into an unreached file *and* a vault-wide
-tag rename), the `.md` tag rewrite itself still lands on disk correctly, and the
-lost keystrokes were never committed (Ctrl+Z in the editor restores them).
-
-**Impact:** A few unsaved keystrokes in one note can be lost if the user keeps
-editing that note while a vault-wide tag rename is mid-sweep. No committed data
-is lost; the tag rename completes correctly. Doing the rename when not actively
-typing avoids it entirely.
-
-## 9. Field/FM delta write reads body and frontmatter from two separate disk reads
-
-**What:** A field edit (Kanban card / Task row) or a Properties edit writes its
-frontmatter through the gateway's *delta* branch
-([src/renderer/lib/vault/markdownFileWriter.ts](src/renderer/lib/vault/markdownFileWriter.ts)).
-That branch applies the delta to a FRESH in-chain disk read (so untouched /
-external frontmatter keys survive by construction — the Phase-4 fix), but the
-`body` it assembles with came from a *separate, earlier* read (the scheduler's
-no-editor hydrate read, or the orphan-card read). There is therefore a micro-TOCTOU
-window between those two reads.
-
-**Where:** the `args.frontmatterDelta` branch of `writeMarkdownFileImpl` (the
-`Audit-11 N2` comment) — `nextFm` derives from `parsedFresh` (the in-chain read)
-while `body` is the value threaded in by the caller.
-
-**Why accepted (Audit-11 N2):** The delta write path only ever carries FIELD /
-frontmatter edits — none of them touch the body — so the body is identical
-between the two reads in every real case. Reading the body from `parsedFresh`
-instead would also be *wrong* for the one case that matters: when a Document
-editor is open on the file, its LIVE (possibly-unsaved) body must win, so the
-gateway can't blanket-swap in the just-read disk body without clobbering the
-editor. And if an external editor genuinely changed the body between the two
-reads, the file-watcher reclassifies it and the open editor reconciles — the
-edit self-heals rather than being lost.
-
-**Impact:** None in practice. The only way to exercise the window is an external
-process rewriting the file's BODY in the few milliseconds between the body read
-and the frontmatter read of a field/Properties edit — and even then the
-watcher-driven reconcile recovers it. Frontmatter is always correct (it comes
-from the in-chain read). Documented rather than closed because closing it
-(threading a single combined read) would entangle the gateway's body-source
-policy with the open-editor-wins rule for no real-world benefit.
+**Closed.** Every note write now reads the file once, inside the path's write
+queue, and applies the queued change to that one read
+([src/renderer/lib/notes/noteWriter.ts](src/renderer/lib/notes/noteWriter.ts)).
+A frontmatter-only change keeps the body exactly as it is on disk; a body
+change is written only if the body on disk still matches the one the edit was
+built on, and otherwise becomes the Reload / Keep mine prompt. There is no
+second, earlier read left to disagree with.
 
 ## 10. CSP `frame-src https:` permits any third-party iframe origin
 
@@ -385,20 +361,27 @@ notifications, clipboard, …). Only the app document itself may request
 microphone audio, for the Audio tile
 ([src/main/utils/permissionPolicy.ts](src/main/utils/permissionPolicy.ts)).
 
-## 11. Partial-read guard can refuse a save for a body that legitimately starts with `---`
+## 11. Partial-read guard can briefly refuse a save for a body that legitimately starts with `---`
 
-**What:** The delta-write gateway's truncation guard
-([src/renderer/lib/vault/markdownFileWriter.ts](src/renderer/lib/vault/markdownFileWriter.ts),
-Audit-14 3.3) refuses to write when a file that *previously had* frontmatter is
-read back with an opening `---` fence but no closing fence — it assumes a
-non-atomic external writer was caught mid-write, and refusing protects the
-on-disk frontmatter from being stripped. If frontmatter is instead *legitimately*
-removed by an external editor AND the new body's first line happens to be a `---`
-thematic break (a horizontal rule), the guard mis-reads that stable shape as a
-partial read and refuses the next field/Properties save. Because the shape is
-stable, the refusal repeats on retry rather than clearing.
+**What:** The note writer's torn-read guard (`looksTorn` in
+[src/renderer/lib/notes/noteWriter.ts](src/renderer/lib/notes/noteWriter.ts))
+refuses to write when a note last known to have frontmatter is read back with
+an opening `---` fence but no closing fence. It assumes a non-atomic external
+writer was caught mid-write, and refusing protects the on-disk frontmatter from
+being stripped. The writer re-reads three times (40 / 120 / 300 ms) and then
+fails the save loudly. If frontmatter was instead *legitimately* removed by an
+external editor AND the new body's first line happens to be a `---` thematic
+break (a horizontal rule), the guard mis-reads that stable shape as a partial
+read.
 
-**Where:** the `!parsedFresh.hasFrontmatter` branch in `writeMarkdownFileImpl`.
+"Last known to have frontmatter" comes from the open note's base, else the vault
+index. Both catch up with the external change: an open note re-reads after
+500 / 1,500 / 3,000 ms and then takes a still-torn-looking file as it is, and
+the vault index re-reads a closed note on the watcher event. After that the
+guard no longer applies and saves go through.
+
+**Where:** `looksTorn` and its callers in `noteWriter.ts`; the disk-change retry
+(`TORN_RETRY_MS`) in [src/renderer/stores/notes.svelte.ts](src/renderer/stores/notes.svelte.ts).
 
 **Why accepted (Audit-15 P2.3):** It fails **safe** — the refusal is loud
 (`markPathFailed` + a "save failed" surface), no data is lost, and the on-disk
@@ -411,10 +394,10 @@ HIGH-severity Audit-14 3.3 silent-frontmatter-drop (the `audit14Phase3` "refuses
 guard, "never silently drop frontmatter" correctly wins over "never show a
 spurious toast."
 
-**Impact:** A field/Properties edit on a card whose backing `.md` had its
-frontmatter externally deleted *and* whose body's first line is `---` will keep
-failing to save until the user adds a non-`---` first line (e.g. a heading) or
-re-adds a frontmatter block. Rare; surfaced loudly; never silent loss.
+**Impact:** A save made in the first few seconds after another program removed a
+note's frontmatter, on a note whose body now starts with `---`, can fail with a
+"save failed" message. The edit stays queued and a later save or Retry goes
+through. Rare; surfaced loudly; never silent loss.
 
 ## 12. Empty "Unsectioned" leading bucket is not a drop target
 
@@ -461,11 +444,10 @@ first toggle; never data loss — only a display mismatch.
 **What:** After a successful `.board.json` self-write,
 [src/renderer/lib/boards/boardWriteScheduler.ts](src/renderer/lib/boards/boardWriteScheduler.ts)
 (`writeBoardFile`) refreshes the pre-write drift baseline only when the
-post-write `vault:stat` **size** equals the bytes it wrote. The markdown gateway
-(Audit-17 5.3, for notes below the 1 MB read-back threshold — see #15) and the
-`.filo/` config scheduler (Audit-18 3.6) go further and read the bytes **back** to
-also reject a *same-byte-count* foreign write that landed in the save→stat gap;
-the board writer deliberately does **not**.
+post-write `vault:stat` **size** equals the bytes it wrote. The `.filo/` config
+scheduler (Audit-18 3.6) goes further and reads the bytes **back** to also reject
+a *same-byte-count* foreign write that landed in the save→stat gap; the board
+writer deliberately does **not**. (Notes work differently: see #15.)
 
 **Where:** the post-write `refreshBaselineAfterWrite` block in `writeBoardFile`.
 
@@ -482,73 +464,43 @@ save. The main-process watcher's **content-hash** reconcile pass (which compares
 hashes, not just mtime/size) remains the backstop and re-surfaces such an edit.
 Upgrade to a size-gated or hashed read-back if this ever bites in practice.
 
-**Board encoding (Audit-19 ERR-1):** boards written by builds after Audit-19 are
-plain JSON objects (main writes the renderer's serialised payload verbatim, so the
-size check above actually matches). Builds from before Audit-19 double-encoded the
-file as a JSON string literal and **cannot open** a plain-JSON board — update every
-machine that opens a synced vault before using the new build on any of them. The
-new build still loads legacy double-encoded boards and migrates each one on its
-next save.
+**Board encoding:** boards are plain JSON objects (main writes the renderer's
+serialised payload verbatim, so the size check above actually matches). A
+double-encoded board (a JSON string literal) is not loaded; see #29.
 
-## 15. Markdown post-write read-back is skipped for notes ≥ 1 MB
+## 15. A note write can overwrite a foreign write that lands in the last milliseconds before it
 
-**What:** After a successful `.md` self-write, the markdown gateway
-([src/renderer/lib/vault/markdownFileWriter.ts](src/renderer/lib/vault/markdownFileWriter.ts))
-refreshes the post-write drift baseline by reading the bytes **back** for notes
-*below* `MARKDOWN_READBACK_BYTE_THRESHOLD` (1 MB) to reject a *same-byte-count*
-foreign write that landed in the save→stat gap (Audit-17 5.3). For a note at or
-above that threshold the read-back is skipped and only the post-write **size** is
-checked, mirroring the board scheduler's whole-file decision (#14).
+**What:** Each note-writer flush reads the file fresh, builds the new bytes, then
+re-stats the file and starts over if its mtime or size changed since the read
+([src/renderer/lib/notes/noteWriter.ts](src/renderer/lib/notes/noteWriter.ts),
+`writePending`). A foreign write that lands *after* that re-stat and *before* the
+atomic rename of Filo's write is overwritten. Its watcher event then carries
+Filo's own bytes, so nothing is prompted. There is no post-write read-back of
+notes.
 
-**Where:** the post-write `refreshBaselineAfterWrite` block in
-`writeMarkdownFileImpl` (the `MARKDOWN_READBACK_BYTE_THRESHOLD` size-gate).
+**Where:** the `vault:stat` re-check just before `vault:write-existing-file-text`
+in `writePending`.
 
-**Why accepted (Audit-18 5.4):** A markdown write is 300 ms idle-debounced and
-bound by a 60-second timeout (`MARKDOWN_WRITE_TIMEOUT_MS`). A full content
-read-back on every write doubles write-path IO; for multi-MB notes on a slow
-volume (OneDrive/SMB/AV) that doubling can push a write past the timeout into
-timeout-then-self-heal flapping. The 1 MB threshold keeps the read-back's
-protection for the overwhelming majority of notes (typical task/note tiles) while
-sparing large notes the IO doubling. The triggering case — a foreign tool writing
-the *exact same byte count* to a ≥ 1 MB note within the ~millisecond save→stat gap
-— is extraordinarily rare.
+**Why accepted:** The window is the time between one stat and one rename on the
+same machine, typically well under a millisecond. Closing it fully would need a
+compare-and-swap write in the main process. Everything outside that window is
+covered: a change that lands before the read is part of what Filo patches, a
+change between the read and the re-stat restarts the flush, and a change after
+the write shows up as a new disk change (a body change meeting an unsaved edit
+becomes the Reload / Keep mine prompt).
 
-**Impact:** In that (extraordinarily narrow) case, a foreign edit to a ≥ 1 MB note
-could be adopted as Filo's own baseline and overwritten without a drift prompt on
-the next save. The main-process watcher's **content-hash** reconcile pass remains
-the backstop and re-surfaces such an edit. Upgrade to a hashed read-back (no IO
-doubling) if this ever bites in practice.
+**Impact:** Extraordinarily narrow. A sync client or editor would have to write
+the same note within that sub-millisecond gap. If it ever bites, move the
+compare-and-swap into the main-process write handler.
 
-## 16. `documentStore` mutation-version maps grow per-docId until vault swap
+## 16. (Closed) `documentStore` mutation-version maps grew per note until vault swap
 
-**What:** The document store keeps two staleness-token maps,
-`mutationVersions` and `bodyMutationVersions`
-([src/renderer/stores/document.svelte.ts](src/renderer/stores/document.svelte.ts),
-Audit-16 1.1), keyed by `docId`. They are **deliberately NOT pruned** when a
-document is unloaded — only `clear()` (vault swap) empties them. A docId's entry
-therefore survives `unloadDocument`, so an early write after the same file is
-reopened still compares its scheduled version against the pre-unload high-water
-mark and can't be mistaken for stale (the silent-drop class 1.1 closes). The
-trade-off is that the maps accumulate one small `number` entry per distinct docId
-touched during a session and only shrink on a vault swap.
-
-**Where:** `mutationVersions` / `bodyMutationVersions` in
-[src/renderer/stores/document.svelte.ts](src/renderer/stores/document.svelte.ts)
-(declared with the `// allow-module-state` annotation; cleared together in
-`clear()`).
-
-**Why accepted (Audit-18 6.2):** Pruning an entry on unload would re-open the
-post-reopen staleness hole 1.1 was written to close — a reopened doc's first
-write would have no high-water mark to compare against, or worse, compare against
-a reset-to-zero token and be skipped. Each entry is a single integer, growth is
-bounded by the number of distinct documents opened in one vault session (already
-bounded by the vault's file count), and every entry is released on the next vault
-swap. There is no real-world session large enough for this to matter.
-
-**Impact:** Negligible. Two `Map<string, number>` entries per distinct docId
-opened this session, fully released on vault swap. No code change unless a real
-memory complaint surfaces — at which point an LRU-with-floor (keep the last N
-high-water marks) would close it without re-opening the 1.1 class.
+**Closed.** The document store is gone. Notes are held by `noteStore`
+([src/renderer/stores/notes.svelte.ts](src/renderer/stores/notes.svelte.ts)),
+one reference-counted `NoteModel` per open note; a model is dropped once its
+last view releases it and nothing for it is left to write, and staleness is decided by comparing file content
+(the model's base) rather than by per-note version counters that had to outlive
+the document.
 
 ## 17. Lossy notes open read-only (and bare URLs are plain text)
 
@@ -585,6 +537,10 @@ open-format principle forbids; making it honest (non-editable) is the safe
 default, and Take ownership is an explicit, confirmed opt-in. Users with many
 hard-wrapped notes will see more read-only banners than before — that is the
 behaviour being honest, not a regression.
+
+**Raw view:** a lossy note can still be edited without Take ownership through
+the Document tab's **Raw** toggle. The raw view edits the file's text directly
+and never passes it through the editor, so it can't lose formatting (see #30).
 
 **Bare URLs:** with linkify off, a bare `https://…` already on disk round-trips as
 plain text and is no longer rendered as a clickable link; wrap it as `<url>` or
@@ -638,30 +594,32 @@ relink limits.
 
 ## 20. Run the same Filo version on every machine that opens a synced vault
 
-**What:** Since Audit-19 the crash-recovery sentinels in `.filo/` are per machine
+**What:** The crash-recovery sentinels in `.filo/` are per machine
 (`.filo/.dirty.<machineId>`, `rename-cascade-pending.<machineId>.json`,
 `tag-rewrite-pending.<machineId>.json`, `quit-failure.<machineId>.json`), so two
 machines syncing one vault never clear, prompt for or resume each other's
-recovery state. The legacy shared names are read and consumed once on the first
-launch of the new build, never written.
+recovery state. A bare shared name (`.filo/.dirty`) is not a sentinel: nothing
+reads or writes it. The trash purge is per machine too: each machine only purges
+the `.filo/trash` items it trashed itself (`machineId` in the manifest).
 
 **Where:** [src/shared/sentinelPaths.ts](src/shared/sentinelPaths.ts),
 `assertNotInFiloDir` in [src/main/utils/pathSecurity.ts](src/main/utils/pathSecurity.ts).
 
-**Why accepted:** An OLDER build on another machine still writes and deletes the
-bare `.filo/.dirty` (etc.), so it can still trample the legacy file. The new build
-never deletes a per-machine file it doesn't own, but it can't stop an old build.
+**Why accepted:** An older Filo build on another machine uses other file and
+board formats. It can't open v8 boards (#29) and may write shared sentinel names
+this build ignores. There is no cross-version coordination, because Filo hasn't
+shipped a stable format before this one.
 
-**Impact:** Update every machine before relying on crash recovery in a synced
-vault (the ERR-1 board-format change already requires this).
+**Impact:** Update every machine before opening a synced vault with this build.
 
 ## 21. Non-UTF-8 notes are read-only; conversion assumes Windows-1252
 
 Filo reads every note as UTF-8. A file whose bytes aren't valid UTF-8 (a legacy
 Windows-1252 note, a "Unicode" UTF-16 Notepad file) is shown with replacement
 characters for the bad bytes, is frozen read-only with a "Convert to UTF-8…"
-banner, and main refuses every generic text write to it (`NOT_UTF8`). A vault-wide
-tag rename skips it and names it in a toast.
+banner, and main refuses every generic text write to it (`NOT_UTF8`). The note
+writer never writes it either, the Document tab's Raw view shows it read-only,
+and a vault-wide tag rename skips it and names it in a toast.
 
 **Where:** `readFileWithCoherentStat` in [src/main/vault/fileOps.ts](src/main/vault/fileOps.ts),
 [src/main/services/nonUtf8Registry.ts](src/main/services/nonUtf8Registry.ts),
@@ -690,8 +648,11 @@ on every read, write and rename.
 real folder structure. Windows MAX_PATH (260) does not apply, because Node uses
 `\?\` paths for its own file IO. Separately, a single name is limited to 255
 characters: long names still save, because the temporary file of an atomic
-write shortens its base name to fit (`tmpSiblingPath` in
-[src/main/vault/filenameUtils.ts](src/main/vault/filenameUtils.ts)).
+write shortens its base name to fit, within 255 UTF-16 units and 255 UTF-8
+bytes (`tmpSiblingPath` in
+[src/main/vault/filenameUtils.ts](src/main/vault/filenameUtils.ts)). Names that
+main generates itself (new board files, new folders, imported fonts) are
+trimmed to 200 characters (`sanitizeFilename`).
 
 **Impact:** none for normal vaults. A tree nested more than 64 levels deep
 shows in the sidebar but can't be opened from Filo.
@@ -719,3 +680,160 @@ has them.
 **Impact:** the board is refused on load (`schema-invalid`): its bytes are copied
 into `.filo/recovery/` and a toast names the file, and Filo never writes to it.
 Fix the number in a text editor and reopen the vault.
+
+## 24. Filo's trash lives in the vault, so it syncs
+
+**What:** Every user-facing delete moves the item into
+`.filo/trash/<trashId>/files/<originalPath>` inside the vault, next to a
+`manifest.json`. A vault kept in OneDrive, Dropbox or another sync client
+therefore uploads trashed items like any other file, and they count against the
+sync quota and bandwidth until they leave the trash. Items leave it when you
+Restore or Empty trash in Settings → Trash, or through the 30-day purge on vault
+open. The purge only takes items the *current* machine trashed (`machineId` in
+the manifest), so an item trashed on a machine that never opens the vault again
+stays until someone empties the trash by hand.
+
+**Where:** [src/main/vault/trashOps.ts](src/main/vault/trashOps.ts)
+(`TRASH_RETENTION_MS`, `purgeTrash`),
+[src/renderer/stores/trash.svelte.ts](src/renderer/stores/trash.svelte.ts)
+(`purgeExpiredTrash`), [src/renderer/components/settings/TrashSettings.svelte](src/renderer/components/settings/TrashSettings.svelte).
+
+**Why accepted:** Keeping the trash inside the vault makes undo a plain rename
+on the same volume: atomic, any file type or size, no copies held in memory. A
+trash outside the vault would need a cross-volume copy and would not travel
+with the vault. The watcher ignores `.filo/trash/`, so trashed items never show
+as vault files.
+
+**Impact:** Large deleted files keep using sync space for up to 30 days. Empty
+the trash from Settings → Trash to free it sooner.
+
+## 25. The Recycle Bin hand-off has not been tested on every kind of drive
+
+**What:** Emptying Filo's trash and the 30-day purge hand each item to the OS
+Recycle Bin (`shell.trashItem`). On some volumes the Recycle Bin may refuse, or
+may delete permanently without saying so. The planned probe has **not been run
+yet**: it needs the packaged build, on a OneDrive vault (including an
+online-only placeholder file), a mapped network share and a FAT32 USB stick.
+The results will be recorded here.
+
+**What Filo does today:** if `trashItem` throws for an item, that item stays in
+Filo's trash and Filo shows one confirm listing every such file, titled
+"Delete permanently?". Cancel keeps them in Filo's trash (the purge asks again
+at the next vault open). Only a confirmed answer deletes them for good, through
+a channel that accepts nothing but trash ids.
+
+**Where:** `purgeTrash` in [src/main/vault/trashOps.ts](src/main/vault/trashOps.ts),
+`vault:trash-purge` / `vault:trash-delete-permanently` in
+[src/main/ipc/vaultTrash.ipc.ts](src/main/ipc/vaultTrash.ipc.ts), the confirm in
+[src/renderer/stores/trash.svelte.ts](src/renderer/stores/trash.svelte.ts).
+
+**Impact:** Unknown until the probe runs. If a volume makes `trashItem` succeed
+while actually deleting, emptying Filo's trash on it is permanent. Undo and
+Restore are not affected: they only move items within the vault.
+
+## 26. A tag merge can't be undone
+
+**What:** Renaming a tag into one that already exists merges the two. The
+confirm says so ("This can't be undone"), and no Undo is offered afterwards.
+Undo of a plain rename is refused too if a tag with the old name has appeared
+again in the meantime, because renaming back would merge.
+
+**Where:** `renameTagWithUndo` / `undoRename` in
+[src/renderer/stores/tagUndo.svelte.ts](src/renderer/stores/tagUndo.svelte.ts);
+the confirm in [src/renderer/lib/tags/tagEditConfirm.ts](src/renderer/lib/tags/tagEditConfirm.ts).
+
+**Why accepted:** After a merge, nothing records which notes, attachments and
+tiles carried which of the two tags, so they can't be split apart again.
+Recording it would mean a per-item snapshot of every merge for a rare action
+that is already confirmed.
+
+**Impact:** Check the name before confirming a merge. To reverse one by hand,
+re-tag the affected items.
+
+## 27. Undoing a tag delete may reorder or re-style a note's tag list
+
+**What:** Undo of a vault-wide tag delete re-adds the tag to exactly the notes
+the delete rewrote, on a fresh read of each note (so edits made in between are
+kept). The tag goes back at the *end* of the note's `tags:` list, not where it
+was. A flow-style list (`tags: [a, b]`) can come back in block style
+(`- a` on separate lines).
+
+**Where:** `undoRemoval` in
+[src/renderer/stores/tagUndo.svelte.ts](src/renderer/stores/tagUndo.svelte.ts)
+(uses `addTagToMarkdown` from
+[src/renderer/lib/vault/tagRewriter.ts](src/renderer/lib/vault/tagRewriter.ts)).
+
+**Why accepted:** Re-adding through the normal tag rewriter keeps the undo safe
+against edits made after the delete; restoring the original bytes would
+overwrite them. Tag order carries no meaning in Filo. Board-only tile tags do go
+back at their original position.
+
+**Impact:** Cosmetic. A note's frontmatter may look slightly different after
+delete + undo; the set of tags is the same.
+
+## 28. The undo toast for tag delete and rename lasts 15 seconds
+
+**What:** Vault-wide tag delete and rename touch many files and belong to no
+board, so their undo is an **Undo** button on the toast that reports them, not a
+board Ctrl+Z step. Like every toast, it closes after at most 15 seconds.
+
+**Where:** `TAG_UNDO_TOAST_MS` in
+[src/renderer/stores/tagUndo.svelte.ts](src/renderer/stores/tagUndo.svelte.ts);
+the toast cap in [src/renderer/stores/ui.svelte.ts](src/renderer/stores/ui.svelte.ts).
+
+**Why accepted:** Putting a vault-wide action on one board's history would file
+it under whichever board happened to be active, where Ctrl+Z on that board
+would unexpectedly rewrite notes elsewhere.
+
+**Impact:** After the toast closes, a deleted tag has to be re-added by hand
+(a rename can be reversed by renaming back).
+
+## 29. Only current-format (v8) board files load
+
+**What:** The board loader accepts exactly `version: 8`. A board from an older
+Filo (no version, a lower version, or a double-encoded file) or from a newer
+one is refused: it is listed as failed with a toast, its bytes are copied to
+`.filo/recovery/`, and Filo never writes to it. Notes are unaffected; only the
+`.board.json` is refused.
+
+**Where:** `migrateBoardFile` in
+[src/renderer/schema/migrations.ts](src/renderer/schema/migrations.ts) (no
+migration steps), `CURRENT_BOARD_FILE_VERSION` in
+[src/renderer/schema/boardFile.ts](src/renderer/schema/boardFile.ts), the
+`no-migration-path` / `from-future` branches in
+[src/renderer/lib/boards/boardLoader.ts](src/renderer/lib/boards/boardLoader.ts).
+Pinned by gate `no-legacy-board-migration`.
+
+**Why accepted:** Filo hasn't shipped, so there are no user boards in older
+formats to carry forward, and each migration step is code that could corrupt a
+board. Tolerance for notes written by other apps (no `title:`, CRLF, BOM, odd
+YAML, non-UTF-8) stays, because those are user content rather than a Filo
+format.
+
+**Impact:** Boards made by earlier development builds must be rebuilt. The notes
+they showed are still in the vault.
+
+## 30. The raw view saves the whole file
+
+**What:** The Document tab's **Raw** toggle shows the note's full text,
+frontmatter included, and saves it as one whole-file replacement (on blur,
+Ctrl+S, switching back, or closing). A save lands only if the file still holds
+exactly the bytes the raw view started from. If another program (or another
+Filo view) changed the file meanwhile, nothing is written and a banner offers
+**Show the new version** or **Keep mine**. Keep mine first backs the other
+version up to `.filo/recovery/`, then replaces it with the raw text.
+
+**Where:** `readRaw` / `writeRaw` in
+[src/renderer/stores/notes.svelte.ts](src/renderer/stores/notes.svelte.ts),
+`rawTextForDisk` in [src/renderer/lib/notes/noteFile.ts](src/renderer/lib/notes/noteFile.ts),
+[src/renderer/components/boards/NoteRawView.svelte](src/renderer/components/boards/NoteRawView.svelte).
+
+**Why accepted:** The raw view exists to edit the file exactly as it is on disk,
+so it can't merge key by key the way metadata edits do. The hash check means a
+conflicting change is never overwritten unseen, and Keep mine keeps a copy. The
+file's BOM and line endings are re-applied on save. Because the text never
+passes through the rich editor, the raw view is also allowed on lossy notes
+(#17); it is read-only for non-UTF-8 notes (#21).
+
+**Impact:** Choosing Keep mine replaces the other version in the note itself;
+it survives only as the backup in `.filo/recovery/`.

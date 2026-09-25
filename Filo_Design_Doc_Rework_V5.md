@@ -25,25 +25,27 @@ Filo is a highly customizable, PKM (Personal Knowledge Management) tool. It util
 
 * **Tile** — A tile is a container for content that can be placed on any board. A tile can be moved, resized, and deleted. A tile can be of any type, such as a Text Tile, Image Tile, Video Tile, Audio Tile, File Tile, Link Tile or Iframe(Embed) Tile. Tiles default to the Text type, which is a rich Markdown editor and also corresponds to the Document board type — meaning the user can expand any text tile into a full Document board if necessary. Most tile types are backed by a file in the vault; the exceptions are Link, Iframe, and Timer tiles, which store their data entirely in the board JSON (see **Tile Storage** in the Data Model section for how each tile type maps to vault files). See **File Deletion Handling** in the Architecture section for how tile and file deletions propagate.
 
-* **Properties (Frontmatter)** — Every text tile's underlying Markdown file supports YAML frontmatter enclosed in `---` delimiters. Properties store structured metadata: tags, custom fields (status, priority, due date, etc.). Properties are indexed by the VaultIndex and are queryable via search operators and the Tags Browser. Properties defined in frontmatter are the canonical source of truth for tile metadata — the UI reads from and writes to this frontmatter. For non-text tile types that lack a Markdown file (Link, Iframe, Timer) or that have a non-Markdown vault file (Image, Video, Audio, File), metadata is stored in the board JSON tile entry under a `metadata` object and is indexed identically by the VaultIndex. Properties can be edited directly in the Markdown frontmatter or via the Properties popup accessible from the tile header (see Tiles section).
+* **Properties (Frontmatter)** — Every text tile's underlying Markdown file supports YAML frontmatter enclosed in `---` delimiters. Properties store structured metadata: tags, custom fields (status, priority, due date, etc.). Properties are indexed by the VaultIndex and are queryable via search operators and the Tags Browser. Properties defined in frontmatter are the canonical source of truth for tile metadata — the UI reads from and writes to this frontmatter. For non-text tile types that lack a Markdown file (Link, Iframe, Timer) or that have a non-Markdown vault file (Image, Video, Audio, File), metadata is stored in the board JSON tile entry under a `metadata` object and is indexed identically by the VaultIndex. (Tags are the exception for Image, Video, Audio and File tiles: they live in `.filo/tags.json`, so they follow the file onto every board.) Properties can be edited directly in the Markdown frontmatter or via the Properties popup accessible from the tile header (see Tiles section).
 
-* **Tags** — A tag is a label that can be applied to a tile either inline in content (prefixed with `#`) or in frontmatter properties. Tags support nesting (`#project/active`). Tags can be used to organize tiles, filter views, and navigate between related content across all boards.
+* **Tags** — A tag is a label on a note, a media file or a board-only tile. A note's tags live in its frontmatter `tags:` list; `#tag` written in body text is styled as a chip but is decorative (see **Tag System** in the Data Model). Tags support nesting (`#project/active`). Tags can be used to organize tiles, filter views, and navigate between related content across all boards.
 
 * **Tabs** — Tabs are used to organize boards and can be used to switch between boards. There is a Tab Browser button for the user to quickly open and close tabs. The Tab Bar is located at the bottom of the screen.
 
 ## Data Model
 
-**Frontmatter Source-of-Truth Rule:** For any file-backed tile, YAML frontmatter in the `.md` file is the canonical source of truth for metadata (status, dates, priority, etc.). Board JSON fields that duplicate frontmatter values (e.g., a task's `completed` flag) are derived caches. On any conflict — such as an external edit to the `.md` file — the frontmatter value wins and the board JSON is updated to match.
+**Frontmatter Source-of-Truth Rule:** The `.md` file is the only copy of a note's title, tags, metadata (completed, due date, priority, status, recurrence, etc.) and body. Board JSON never copies them: a board refers to a note by its vault path (`filePath`) and stores only what is visual (position, size, style, lock/fade, which column or section it sits in and its order there, and optional title formatting). Because there is no second copy, there is nothing to reconcile: an external edit to the `.md` file shows on every board at once.
+
+**Note titles.** A note's title is its frontmatter `title:` value. A note without a `title:` key (for example one written by another app) shows its filename without `.md`. Filo always writes `title:` when it creates a note. Editing a title — in a tile header, a card, a task row or a Document tab — changes only the `title:` line; the file is **never renamed** by a title edit. The filename is derived from the title once, at creation: characters that aren't allowed in filenames become `-`, and ` (2)`, ` (3)`… is added if the name is taken. After that, titles and filenames are independent. The Vault Sidebar shows filenames, and its right-click menu offers **Rename file to match title** when you want them aligned (undoable). Formatting applied to a tile title (bold, colour…) is stored on the board as `titleHtml` and shown only while its text still matches the note's title.
 
 ### Tile Storage
 
-Every tile on a board is either backed by a file in the vault or stores its data directly in the board JSON. The board JSON references file-backed tiles via a `file` field (a vault-relative path) and stores data for non-file tiles inline. How that storage works depends on the tile type:
+Every tile on a board is either backed by a file in the vault or stores its data directly in the board JSON. The board JSON references file-backed tiles via a `filePath` field (a vault-relative path) and stores data for non-file tiles inline. How that storage works depends on the tile type:
 
-* **Text Tile** — Stored as a Markdown file (`.md`) in the vault. The same `.md` file can be opened as a standalone Document board (see Text Tile / Document Board relationship below). Supports YAML frontmatter for properties.
-* **Image Tile** — The image file (`.png`, `.jpg`, `.gif`, `.webp`, etc.) is stored as-is in the vault. The board JSON `file` field points to the image path. No sidecar `.md` file is created; tile metadata (tags, properties) is stored in the board JSON's tile entry under a `metadata` object.
-* **Video Tile** — The video file (`.mp4`, `.webm`, etc.) is stored as-is in the vault. The board JSON `file` field points to the local file.
-* **Audio Tile** — Recordings are stored as `.mp3` files in the vault. The board JSON `file` field points to the audio file path.
-* **File Tile** — The original file is stored as-is in the vault in whatever format it was provided (`.pdf`, `.docx`, `.zip`, etc.). The board JSON `file` field points to the file path. Opening a File Tile hands the file to the OS default app only for document, image, audio and video types. Scripts, macro-enabled Office files, archives, disk images and HTML-like files are never launched. For those, and for unknown types, Filo offers **Show in folder** instead.
+* **Text Tile** — Stored as a Markdown file (`.md`) in the vault. The same `.md` file can be opened as a standalone Document board (see Text Tile / Document Board relationship below). Its title, tags and properties are YAML frontmatter in that file; the board stores only `filePath` and visuals.
+* **Image Tile** — The image file (`.png`, `.jpg`, `.gif`, `.webp`, etc.) is stored as-is in the vault. The board JSON `filePath` field points to the image path. No sidecar `.md` file is created. Its tags live in `.filo/tags.json` (`fileTags[path]`), so they follow the file onto every board; other properties are stored in the board JSON's tile entry under a `metadata` object.
+* **Video Tile** — The video file (`.mp4`, `.webm`, etc.) is stored as-is in the vault. The board JSON `filePath` field points to the local file.
+* **Audio Tile** — Recordings are stored as `.mp3` files in the vault. The board JSON `filePath` field points to the audio file path.
+* **File Tile** — The original file is stored as-is in the vault in whatever format it was provided (`.pdf`, `.docx`, `.zip`, etc.). The board JSON `filePath` field points to the file path; the displayed name and extension come from that path. Opening a File Tile hands the file to the OS default app only for document, image, audio and video types. Scripts, macro-enabled Office files, archives, disk images and HTML-like files are never launched. For those, and for unknown types, Filo offers **Show in folder** instead.
 * **Link Tile** — No file is stored in the vault. The board JSON tile entry stores the URL directly in a `url` field. The tile renders a clickable link with an optional preview fetched at display time.
 * **Iframe (Embed) Tile** — No file is stored in the vault. The board JSON tile entry stores the embed URL in a `url` field. The tile renders the URL inside an `<iframe>`.
 * **Timer Tile** — No file is stored in the vault. Timer configuration (mode, duration) is stored entirely within the board JSON tile entry under a `config` object. Timers are ephemeral UI widgets and do not persist state between sessions.
@@ -52,7 +54,7 @@ For tile types that store a file in the vault (Text, Image, Video, Audio, File),
 
 ### Text Tile / Document Board Relationship
 
-A Text Tile and a Document Board are two views of the same underlying `.md` file. When a user creates a Text Tile on a Mind Map board, the tile content is written to a `.md` file in the vault. The "Expand to Document" button opens that same `.md` file as a full-page Document board in a new tab. Any edits made in either view are reflected immediately in the other, because both read from and write to the same file. A Document board can also be created independently (without originating from a tile) — in this case Filo still creates a backing `.md` file in the vault. If that file is later referenced as a tile on a Mind Map board, the same bidirectional sync applies.
+A Text Tile and a Document Board are two views of the same underlying `.md` file. When a user creates a Text Tile on a Mind Map board, the tile content is written to a `.md` file in the vault. The "Expand to Document" button opens that same `.md` file as a full-page Document board in a new tab. Any edits made in either view are reflected immediately in the other: every open view of a note shares one in-memory copy of it, and the view being typed in owns it while the others follow. All writes to the file go through a single writer that re-reads the file before each save, so a change made elsewhere (another view, another app, a sync client) is never overwritten unseen. The expanded view of a text tile *is* its Document tab; there is no separate expanded-tile mode. A Document board can also be created independently (without originating from a tile) — in this case Filo still creates a backing `.md` file in the vault. If that file is later referenced as a tile on a Mind Map board, the same bidirectional sync applies.
 
 ### Tiles on Multiple Boards
 
@@ -72,7 +74,7 @@ On disk, every `.board.json` is wrapped in a versioned envelope:
 
 ```json
 {
-  "version": 7,
+  "version": 8,
   "board": { /* board-type-specific shape, see below */ },
   "tileDefs": { /* tileId → tile definition */ },
   "connections": { /* connectionId → connection */ },
@@ -80,10 +82,11 @@ On disk, every `.board.json` is wrapped in a versioned envelope:
 }
 ```
 
-* **`version`** — A pinned integer literal (`7` for the current shape — `CURRENT_BOARD_FILE_VERSION` in `src/renderer/schema/boardFile.ts`). When the on-disk shape changes in a way that requires structural migration, this is bumped and a matching branch is added to `migrateBoardFile` in `src/renderer/schema/migrations.ts`. A `.board.json` whose `version` is *higher* than the running binary supports must fail to load loudly rather than be misinterpreted by code that doesn't know the new shape; the loader surfaces a "from-future board" toast and skips the file.
-* **`board` / `tileDefs` / `connections` / `frames`** — V7 stores tile definitions, connections, and frames as side-bag records alongside the board rather than nested inside it (older shapes embedded them). Tile *placements* — position, size, per-board style overrides — still live inside `board`; the side-bag records carry the *definitions* those placements reference. The schemas listed in the per-board-type sections below describe the resolved in-memory shape (placements + their definitions merged) rather than the raw envelope; the envelope itself is validated by `V7BoardFileDataSchema`.
+* **`version`** — A pinned integer literal (`8` for the current shape — `CURRENT_BOARD_FILE_VERSION` in `src/renderer/schema/boardFile.ts`). The loader accepts exactly this version. A board with any other version — older, missing, or *higher* than the running binary supports — fails to load loudly rather than being misinterpreted: it is listed as failed with a toast, its bytes are copied to `.filo/recovery/`, and Filo never writes to it. Filo has not shipped, so there are no migration steps (`migrateBoardFile` in `src/renderer/schema/migrations.ts` is only the version gate). A future format change would add a step there and bump the version.
+* **v8 = visuals only.** A text tile's definition holds `filePath` and board-owned visuals (style, optional `titleHtml`), never the note's title, tags or body. Media and file tile definitions hold no tags (those are in `.filo/tags.json`) and no file name or extension (derived from `filePath`). Board-only tiles (Link, Iframe, Timer) keep their own `title` and `tags`, because they have no file.
+* **`board` / `tileDefs` / `connections` / `frames`** — Tile definitions, connections, and frames are stored as side-bag records alongside the board rather than nested inside it. Tile *placements* — position, size, per-board style overrides — still live inside `board`; the side-bag records carry the *definitions* those placements reference. The schemas listed in the per-board-type sections below describe the resolved in-memory shape (placements + their definitions merged) rather than the raw envelope; the envelope itself is validated by `V7BoardFileDataSchema`.
 
-The runtime `V7BoardFileData` type used by the renderer cache deliberately *omits* the `version` field — the literal is stamped at parse time and re-injected on save, so in-memory consumers never read it. This is documented at the type declaration site (`src/renderer/lib/boards/tileDefBuilder.ts`).
+The runtime `V7BoardFileData` type used by the renderer cache makes `version` optional (typed as the literal `8`): the saver stamps it on every write, and in-memory consumers never read it, because every loaded board is the current version. This is documented at the type declaration site (`src/renderer/lib/boards/tileDefBuilder.ts`).
 
 #### Mind Map Board
 
@@ -100,7 +103,7 @@ The runtime `V7BoardFileData` type used by the renderer cache deliberately *omit
     {
       "id": "tile_a1b2c3",
       "tileType": "text",
-      "file": "Notes.md",
+      "filePath": "Notes.md",
       "x": 120, "y": 80,
       "width": 300, "height": 200,
       "style": {
@@ -116,11 +119,10 @@ The runtime `V7BoardFileData` type used by the renderer cache deliberately *omit
     {
       "id": "tile_img001",
       "tileType": "image",
-      "file": "assets/diagram.png",
+      "filePath": "assets/diagram.png",
       "x": 500, "y": 80,
       "width": 250, "height": 200,
       "style": { "borderStyle": "solid", "borderWidth": 1, "shadowIntensity": 0.2 },
-      "metadata": { "tags": ["reference"] },
       "locked": false
     },
     {
@@ -194,7 +196,7 @@ The runtime `V7BoardFileData` type used by the renderer cache deliberately *omit
         {
           "id": "tile_001",
           "tileType": "text",
-          "file": "Task - Design review.md",
+          "filePath": "Task - Design review.md",
           "position": 0,
           "style": {
             "backgroundColour": "#ffffff",
@@ -232,9 +234,8 @@ Kanban columns contain tiles from the same tile system used by Mind Map boards. 
   "tasks": [
     {
       "id": "task_001",
-      "file": "Task - Write tests.md",
+      "filePath": "Task - Write tests.md",
       "position": 0,
-      "completed": false,
       "style": {
         "headerColour": "#2d3436",
         "bodyColour": "#ffffff",
@@ -247,7 +248,9 @@ Kanban columns contain tiles from the same tile system used by Mind Map boards. 
 }
 ```
 
-Task list items reference `.md` files in the vault. Unlike Mind Map and Kanban boards, the Task List does not use the tile UI system — tasks are displayed as flat list rows rather than spatial tile containers. However, each task's content is still a full Markdown document with metadata (status, priority, due date, assignee) stored in YAML frontmatter. The `completed` field in the board JSON is a derived cache — see the **Frontmatter Source-of-Truth Rule** above. Grouping and sorting is driven by frontmatter property values.
+Task list items reference `.md` files in the vault. Unlike Mind Map and Kanban boards, the Task List does not use the tile UI system — tasks are displayed as flat list rows rather than spatial tile containers. However, each task's content is still a full Markdown document with metadata (status, priority, due date, assignee) stored in YAML frontmatter. The board JSON holds only the task's `filePath`, its position and its style; `completed` and every other field are read from the note's frontmatter (see the **Frontmatter Source-of-Truth Rule** above). Grouping and sorting is driven by frontmatter property values.
+
+**Recurring tasks.** A recurring task stores its rule in frontmatter (`recurrence`, with a mode). In schedule mode, a monthly task due on the 29th–31st, or a yearly task due on 29 February, also gets an optional `recurrenceAnchor: YYYY-MM-DD` key. The next due date is then stepped from that anchor in whole periods, so Jan 31 → Feb 28 → Mar 31 → Apr 30 rather than drifting to the 28th. The key is written only in those cases. It is removed when the recurrence changes or is cleared, and when it no longer matches the due date (the date was moved by hand).
 
 #### Document Board
 
@@ -258,7 +261,7 @@ Task list items reference `.md` files in the vault. Unlike Mind Map and Kanban b
     "background": "#ffffff",
     "accentColour": "#3a86ff"
   },
-  "file": "Project Overview.md"
+  "filePath": "Project Overview.md"
 }
 ```
 
@@ -308,18 +311,30 @@ Stores the UI layout state so it can be restored on next launch.
 
 ### External Edit Conflict Resolution
 
-When the VaultIndex detects an external change to a `.md` file that is currently open in the TipTap editor with unflushed in-memory edits, Filo displays a non-blocking toast notification offering two choices: **"Reload from disk"** (discards in-memory edits and loads the externally modified file) or **"Keep local"** (first copies the external version into `.filo/recovery/`, then keeps the in-memory edits and flushes them to disk; if that backup fails, Filo asks before overwriting without one). The prompt stays on screen until the user chooses; while it is open nothing is overwritten. For frontmatter-only conflicts on files not currently being edited, the **Frontmatter Source-of-Truth Rule** applies automatically with no user prompt.
+When another program changes an open note, Filo decides from what changed:
+
+* **The note has no unsaved edits** — the views simply show the new version.
+* **Only the frontmatter changed** (a sync client updated tags or a field), even while the user is typing — Filo takes the new frontmatter and keeps the unsaved body. No prompt.
+* **The body changed while the user has unsaved edits** — one non-blocking prompt per note: **"Reload"** (discards the unsaved edits and shows the other version) or **"Keep mine"** (first copies the other version into `.filo/recovery/`, then writes the local edits; if that backup fails, Filo asks before overwriting without one). The prompt stays on screen until the user chooses; while it is open nothing is overwritten, and the unsaved edit stays queued.
+* **The file was deleted while the user has unsaved edits** — **"Keep mine"** recreates the file with the local text, or **"Discard"**.
+
+Filo's own writes coming back through the file watcher are recognised by their content and ignored. Board files use a separate **"Reload" / "Keep local"** prompt when a board changed on disk between load and save.
 
 ### Tag System — Frontmatter Canonical, Body Decorative
 
 Tags have two distinct surfaces in Filo, and only one of them is canonical:
 
-* **Frontmatter `tags:` (canonical).** The array under a file's YAML frontmatter is the authoritative tag list for that file. VaultIndex indexes it, the tag browser reads it, rename/delete sweeps rewrite it, and `.filo/tags.json:fileTags[path]` mirrors it. Tile entries on `.board.json` cache the same names for offline reads but defer to frontmatter on conflict.
+* **Frontmatter `tags:` (canonical).** The array under a note's YAML frontmatter is the note's only tag list. VaultIndex indexes it, the tag browser reads it, and rename/delete sweeps rewrite it. Board files hold no copy.
+* **Where other things keep their tags.** Media and other non-Markdown files (image, video, audio, generic file) have no frontmatter, so their tags live only in `.filo/tags.json:fileTags[path]`; they follow the file onto every board. Board-only tiles (Link, Iframe, Timer) keep their tags on the tile in their board file.
 * **Body `#tag` chips (decorative).** TipTap's tag extension recognises `#tag` and `#tag/subtag` runs in body text and styles them as chips for readability. These chips are *not* indexed and *not* rewritten by rename/delete operations. They survive a markdown round-trip as bare `#tag` text so external editors see exactly what the user typed, but they have no presence in the tag registry.
 
 This split is intentional. Body chips give users the freedom to mention a tag in a sentence without changing the file's canonical tag set; frontmatter is the single, structured surface where tag identity lives. Hovering a body chip surfaces a tooltip explaining the distinction so users aren't surprised when a rename leaves body mentions untouched.
 
 Tags are global to the vault (their colour definitions live in `.filo/tags.json:tags`) and may be hierarchical (`parent/child`). Renaming a parent does *not* cascade to children — the tag browser warns the user when a rename would orphan child tags so they can decide explicitly.
+
+**Editing a note's tags.** A note's tags can be edited from the tile header's Tags popup, a card or task row, the Properties popup, or the **tag row** at the top of the note in its Document tab. The tag row shows the tags as chips (click a chip for the tag menu, × to remove it) followed by an input that takes comma-separated tags with autocomplete from the tag registry; Enter, a comma or leaving the field adds them, and Backspace in the empty input removes the last tag. Every one of these writes the note's frontmatter `tags:` and is one board-undo step; removing the last tag removes the `tags:` key.
+
+**Vault-wide delete and rename (Tags Browser).** Deleting a tag removes it from every note, attachment, board-only tile and saved filter; renaming rewrites it everywhere. Both are confirmed first, and both can be undone from the **Undo** button on the toast that reports them (15 seconds). They are not on a board's Ctrl+Z stack, because they touch many files and belong to no board. Undoing a delete puts the tag back in exactly the places it was removed from, re-reading each note first so edits made in between are kept (in a note it comes back at the end of the list). Undoing a rename renames it back, unless a tag with the old name exists again. Renaming a tag into one that already exists **merges** them; the confirm warns that a merge can't be undone, and no Undo is offered.
 
 ## Architecture
 
@@ -333,18 +348,28 @@ Tags are global to the vault (their colour definitions live in `.filo/tags.json:
 ### Data Layer
 
 * **File System** — The vault folder is the single source of truth. Text tiles and document boards are `.md` files, non-text tiles are stored as their native file type (`.png`, `.mp3`, `.svg`, etc.) or have no vault file at all (Link, Iframe, Timer tiles store data in the board JSON). Boards are `.board.json` files. Configuration lives in `.filo/`.
-* **VaultIndex** — An in-memory index that parses and caches metadata from all vault files: headings, tags, and frontmatter properties. Markdown files are parsed using the unified/remark pipeline (remark-parse + remark-frontmatter) for metadata extraction. Full-text search is powered by a MiniSearch instance that is updated alongside the metadata index. The index rebuilds incrementally on file changes via file system watchers (Node.js `fs.watch`). File change events are debounced (300ms) to batch rapid saves. When a change is detected, only the affected file is re-parsed and its MiniSearch entry updated — a full rebuild is only performed on vault open. External edits to vault files (e.g., from another text editor) are detected by the same watcher and trigger re-parsing; frontmatter conflicts are resolved per the **Frontmatter Source-of-Truth Rule** (see Data Model). Validated with Zod schemas.
+* **VaultIndex** — An in-memory index that parses and caches metadata from all vault files: headings, tags, and frontmatter properties. Markdown files are parsed using the unified/remark pipeline (remark-parse + remark-frontmatter) for metadata extraction. Full-text search is powered by a MiniSearch instance that is updated alongside the metadata index. The index rebuilds incrementally on file changes via file system watchers (Node.js `fs.watch`). File change events are debounced (300ms) to batch rapid saves. When a change is detected, only the affected file is re-parsed and its MiniSearch entry updated — a full rebuild is only performed on vault open. External edits to vault files (e.g., from another text editor) are detected by the same watcher and trigger re-parsing; open notes follow the rules in **External Edit Conflict Resolution** (see Data Model). The index is read-only: nothing is ever written from it. A note's title in the index is its frontmatter `title:`, or its filename stem when there is none. Validated with Zod schemas.
 * **Vault API** — Programmatic interface for file CRUD operations. When a tile or file is renamed, the Vault API updates all board JSON references to the old file path. Broken file references (pointing to deleted or non-existent files) are detected during board loading and flagged. This is the single system responsible for all file reference resolution and renaming propagation.
 
 ### File Sync Model
 
-Filo uses a debounced write strategy to keep vault files up to date without hammering the file system. Content edits (tile text, frontmatter changes) are held in memory and flushed to disk after 300ms of idle — this prevents every keystroke from triggering a file write and an accompanying file watcher event that would need to be distinguished from external edits. Layout changes (tile moves, resizes, connection updates) to `.board.json` files use the same 300ms debounce. Configuration changes to `.filo/` files are written on confirmation or panel close. If the application is closed or crashes with unflushed edits, a dirty flag in `.filo/workspace.json` triggers a recovery flush on next launch. The source of truth hierarchy is defined in the **Data Layer** section above; the file system watcher (Node.js `fs.watch`, debounced at 300ms) detects external changes and updates in-memory state accordingly.
+Filo uses a debounced write strategy to keep vault files up to date without hammering the file system. Content edits (tile text, frontmatter changes) are held in memory and flushed to disk after 300ms of idle — this prevents every keystroke from triggering a file write and an accompanying file watcher event that would need to be distinguished from external edits. (The editor hands its text to the shared note after 150ms of idle, and at once on blur, closing, save and quit.) Each note has one write queue: every save re-reads the file and applies the change to what is on disk, so frontmatter keys or text added by another program are kept. Layout changes (tile moves, resizes, connection updates) to `.board.json` files use the same 300ms debounce. Configuration changes to `.filo/` files are written on confirmation or panel close. While writes are pending, Filo keeps a per-machine dirty flag, `.filo/.dirty.<machineId>`; if the application is closed or crashes with unflushed edits, the flag is still there on the next launch and Filo tells the user the last session ended mid-write. (A separate file is used rather than a flag inside `workspace.json`, because `workspace.json` is itself written on a debounce and would race with it.) Each machine only reads and clears its own flag, so machines syncing one vault never act on each other's crash state. The source of truth hierarchy is defined in the **Data Layer** section above; the file system watcher (Node.js `fs.watch`, debounced at 300ms) detects external changes and updates in-memory state accordingly.
 
 ### File Deletion Handling
 
-* **Deleting a tile from a board** removes only that board's placement entry in the `.board.json` file. The underlying vault file is never deleted by this action, regardless of tile type. To permanently delete a file, the user must remove it from the vault via the Vault Sidebar or an external file explorer.
-* **Deleting a file from the vault** (via the Vault Sidebar or externally) triggers the file system watcher, which propagates the deletion by automatically removing all placements referencing that file from every `.board.json` in the vault. The VaultIndex is also updated to remove the file's indexed metadata.
-* **Deleting a `.board.json` file** removes the board from the vault. Any open tabs referencing that board are closed. Vault files referenced by tiles on the deleted board are not affected — they remain in the vault.
+**Filo's trash.** Nothing Filo deletes is deleted outright. Every delete made in Filo — a file or folder from the Vault Sidebar, a board, "delete tile and file", "Delete Task & File" — moves the item into `.filo/trash/<trashId>/` inside the vault (the item under `files/`, plus a `manifest.json` recording its original path, when it was deleted and which machine deleted it). The move is a rename on the same drive, so it is atomic: if any part of a folder is locked, nothing moves. Confirm dialogs say so plainly, e.g. *"X" will be moved to Filo's trash. Undo, or restore it from Settings → Trash.*
+
+* **Undo** of a delete moves the item back (a rename, never a rewrite), so it works for any file type and size. If the original name has been taken again in the meantime, the item comes back beside it as `… (restored)`, and the restored tiles point at the restored copy.
+* **Settings → Trash** lists trashed items, newest first, each with **Restore**, plus **Empty trash**.
+* **Emptying** the trash sends items to the operating system's Recycle Bin. On vault open, items older than **30 days** are sent there too, but only by the machine that trashed them. If the Recycle Bin refuses an item, a confirm lists every such file and asks **"Delete permanently?"**; Cancel keeps them in Filo's trash.
+* Filo's trash is inside the vault, so a cloud-synced vault syncs it too (see KNOWN_LIMITATIONS).
+
+**What each delete does:**
+
+* **Deleting a tile from a board** removes only that board's placement. The underlying vault file stays, unless — for a text tile — the user ticks "Delete associated file from vault as well?" in the confirm, in which case the `.md` file goes to Filo's trash and any other tile showing it becomes a broken link. Undo brings back both.
+* **Deleting a file or folder from the Vault Sidebar** moves it to Filo's trash and removes every placement that referenced it (or anything inside the folder) from every board. One undo restores the file and all of those tiles. If no open board can hold the undo step, the "moved to Filo's trash" toast offers Undo instead.
+* **Deleting a `.board.json` file** (Board Browser or sidebar) moves the board to Filo's trash. Any open tabs showing it are closed. Its notes and media stay in the vault. Because a board's undo history goes with the board, undo is offered on the toast, and later from Settings → Trash.
+* **A file deleted outside Filo** (another app, a sync client) is detected by the watcher. Its tiles are kept and shown as missing; removing them from every board is a separate, confirmed action. The VaultIndex drops the file's metadata.
 
 ### Modular Architecture
 
@@ -371,7 +396,7 @@ Filo's codebase is organized into self-contained feature modules with clear boun
           read(path: string): Promise<string>;
           write(path: string, content: string): Promise<void>;
           create(path: string, content?: string): Promise<string>; // returns created path
-          delete(path: string): Promise<void>;  // removes file + cleans all .board.json references
+          delete(path: string): Promise<void>;  // moves to .filo/trash + removes tile references (undoable)
           rename(oldPath: string, newPath: string): Promise<void>; // updates all board JSON references
           exists(path: string): Promise<boolean>;
           copy(sourcePath: string, destPath: string): Promise<string>;
@@ -462,9 +487,10 @@ The frontend uses Svelte 5 Runes (`$state`, `$derived`, `SvelteSet`) for all rea
 | **tabs** | Open board tabs, active tab tracking. Switching tabs loads the corresponding board |
 | **connections** | Connection management: creation, deletion, visibility toggling |
 | **frames** | Frame management: creation, deletion, collapse/expand, child tile tracking |
-| **tags** | Tag definitions: create, rename, recolour, delete |
+| **fileTags** | Tag definitions (create, rename, recolour, delete) and media-file tags, in `.filo/tags.json` |
 | **templates** | In-memory cache of Layout Templates from `.filo/templates/` plus the pending insertion anchor; save / rename / delete actions |
-| **document** | Loaded Markdown documents mapped by content ID. Handles read/write to `.md` files |
+| **notes** | One shared model per open note, keyed by its vault path, used by every view of it. Owns the note writer, the only code that writes `.md` files, and the external-change handling |
+| **trash** | Filo's trash: Settings → Trash list, restore, empty, the 30-day purge |
 | **ui** | Transient UI state: open modals, active toast messages, context menu position, toolbar state |
 | **theme** | Active theme name and CSS variable values |
 | **spatial** | RBush spatial index for viewport culling — only tiles within the visible viewport are rendered |
@@ -478,7 +504,11 @@ The frontend uses Svelte 5 Runes (`$state`, `$derived`, `SvelteSet`) for all rea
 
 Filo uses a **command pattern** for undo/redo. Every undoable action is encapsulated as a command object with `execute()` and `undo()` methods. Executed commands are pushed onto the active board's undo stack; the redo stack is cleared on any new action.
 
-**Per-board stacks:** Each board maintains its own independent undo and redo stack. Switching tabs changes which stack is active. This means undoing on Board A never affects Board B.
+**Per-board stacks:** Each board maintains its own independent undo and redo stack. Switching tabs changes which stack is active. This means undoing on Board A never affects Board B. A Document tab has its own stack too, so a title or tag edit made there is undone there.
+
+**What board undo covers:** layout (tiles, connections, frames, columns, sections, styles, settings) **plus edits to note metadata** (title, tags, task and card fields, Properties). A metadata edit is undone by applying the *opposite change* to the note's frontmatter, on a fresh read of the file, so edits made to other keys in between are kept. If another program changed the same key since, undo keeps that value and offers "Apply anyway". Board undo never restores a note's body from a saved copy: undo of a delete moves the file back out of Filo's trash, and Replace All undoes only the text it replaced, and only while the file is unchanged since.
+
+**Outside board history:** vault-wide tag delete and rename are undone from their toast (see **Tag System**), and a board delete from its toast or Settings → Trash.
 
 **Command types:**
 * `AddTileCommand` / `DeleteTilesCommand` — Creating or removing tile placements
@@ -489,6 +519,9 @@ Filo uses a **command pattern** for undo/redo. Every undoable action is encapsul
 * `AlignTilesCommand` — Aligning selected tiles (left, right, top, bottom)
 * `LayoutTilesCommand` — Auto-layout (tree horizontal, tree vertical, radial)
 * Style change commands — Tile, connection, and frame style modifications
+* `UpdateTitleCommand`, the tag commands, the card/task field commands and `UpdatePropertiesCommand` — note metadata, undone as the opposite frontmatter change
+* `RenameFileCommand` — undo of "Rename file to match title" (renames back)
+* `CascadeDeleteCommand` — a sidebar delete and the tiles it removed; undo restores both from Filo's trash
 
 **Text editing integration:** Text content changes within the Tiptap editor use Tiptap's built-in ProseMirror undo/redo (Ctrl+Z / Ctrl+Y while the editor is focused). Board-level undo (Ctrl+Z while no editor is focused) operates on the board's command stack. These two undo systems are independent.
 
@@ -601,6 +634,8 @@ The Global Toolbar consists of the following buttons:
                 * **Custom Themes** — Lists custom themes the user has created.
                 * **Save Current Settings as Theme** — Saves the current Global Defaults as a new named theme JSON file in `.filo/themes/`.
 
+            * **Trash** — Lists everything in Filo's trash (`.filo/trash/`), newest first, with its original path and when it was deleted. **Restore** moves an item back to where it was (or beside it as `… (restored)` if that name is taken again). A restored board reappears; tiles that a delete removed from boards come back only through Undo of that delete, not through Restore. **Empty trash** sends every item to the operating system's Recycle Bin; if the Recycle Bin refuses any, one confirm lists them and asks "Delete permanently?". Items older than 30 days are emptied automatically on vault open, by the machine that trashed them. See **File Deletion Handling** in Architecture.
+
         * **Current Board Settings** — Per-board overrides that apply only to the active board. Stored in the `settings` object within the board's `.board.json` file. These override Global Defaults for the current board only. Accessed via Settings > Current Board tab, or via a "Board Settings" button in each board's side toolbar. The available options mirror the Global Defaults for the active board's type:
 
             * **Mind Map Board Settings** — Board Background Colour, Board Background Pattern, Semantic Zoom (Toggle), Dynamic Contrast Text (Toggle), and all Tile/Connection/Frame default overrides.
@@ -622,8 +657,8 @@ The Global Toolbar consists of the following buttons:
     * `type:image` — Search by tile type (`text|image|video|audio|file|link|iframe|timer`)
     * Regex support with `/pattern/` or `/pattern/flags` syntax (the global flag is added automatically; user flags are preserved)
     * Find / Find All buttons sit next to the find box. **Find** cycles through matches in order — board name → tile title → match offset — and highlights the active tile via the existing `navigateToTile` flow (board switch, viewport centre, 2 s highlight pulse). **Find All** opens a popup listing every match with its tile title, owning board, tags, and a snippet; click-to-jump.
-    * **Replace** (single match) and **Replace All** sit next to the replace box. Replace All is **atomic in its pre-flight phase**: if any candidate file fails to read, no writes occur. Once writes begin, per-write failures are surfaced via toast but already-committed writes remain on disk (the filesystem can't be atomically rolled back across files). Both Replace and Replace All push a `ReplaceAllCommand` so Ctrl+Z restores every modified file from in-memory snapshots — the command implements `hasFileSnapshots()` so a history truncation that drops it escalates the standard "earlier actions are no longer reversible" toast to the stronger "deleted/replaced file content older than this point cannot be restored" form.
-    * **Replace scope:** body matches only. Title-only matches surface in Find / Find All but are skipped by Replace because renaming a tile title also has implications for the backing file rename — that's the `renameTitleCommand` flow, not Replace.
+    * **Replace** (single match) and **Replace All** sit next to the replace box. Replace All is **atomic in its pre-flight phase**: if any candidate file fails to read, no writes occur. Once writes begin, per-write failures are surfaced via toast but already-committed writes remain on disk (the filesystem can't be atomically rolled back across files). Both Replace and Replace All push a `ReplaceAllCommand`, so Ctrl+Z puts each replaced match's original text back. The command keeps only the replacements and a hash of each file before and after, never a copy of the note, and it rewrites a file only while its bytes are exactly what the replace left — an edit made to the file in between is never overwritten.
+    * **Replace scope:** body matches only. Title-only matches surface in Find / Find All but are skipped by Replace, because a title edit is its own undoable command (`UpdateTitleCommand`, a frontmatter `title:` change).
     * **Match cap:** the engine returns at most 5 000 matches; a truncation indicator surfaces in the panel header so the user knows to refine the query.
     * **Hotkeys inside the panel:** Enter / F3 cycles to the next match, Shift+Enter to the previous; Escape closes the panel; Ctrl+Shift+F opens or closes from anywhere in the app (including inside a TipTap editor).
     * **Search indexing:** Structured queries (tags, properties, tile type) walk the live board cache + VaultIndex frontmatter directly. Full-text and regex queries scan `FileMetadata.content` from the VaultIndex (built on vault open, updated incrementally on file change events). Tile titles are searched alongside body content so non-text tiles (image, link, iframe, etc.) participate in the result set even though they have no backing file body.
@@ -758,12 +793,21 @@ The Vault Sidebar displays the contents of the current vault as a file and folde
 * **Collapse All** — Collapses all folders and subfolders in the vault.
 * **Expand All** — Expands all folders and subfolders in the vault.
 
+The sidebar shows **filenames**, not note titles (see **Note titles** in the Data Model). Right-clicking an item offers, among others:
+
+* **Rename** — Renames the file or folder. Characters that aren't allowed in filenames are blocked with an inline message. Renaming a note's file never changes its title, and every board tile pointing at it follows the new path.
+* **Rename file to match title** *(notes only)* — Renames the `.md` file to its current title (with the same character rules as creation). Undoable.
+* **Delete file / Delete folder** — Moves the item to Filo's trash and removes the tiles that showed it from every board; undoable. See **File Deletion Handling** in Architecture.
+
 ## Boards
 
 * **Mind Map** — An "infinite" canvas that the user can navigate by clicking and dragging their mouse. The user can also zoom in and out of the board by scrolling on their mouse wheel. The user can make selections by holding Ctrl and clicking on tiles or by dragging a selection box around tiles.
 * **Kanban** — A column-based board for managing workflows. The board displays a horizontal row of columns (e.g., Backlog, In Progress, Review, Done). Each column contains vertically stacked tiles that can be dragged between columns. Kanban boards support Text, Audio, Image, File, and Link tile types. Users can add, rename, reorder, and delete columns. Text tiles display their title, tags, and a content preview. Tiles can be opened as a Document board for full editing.
 * **Task List** — A structured list view for tracking tasks. Unlike Mind Map and Kanban boards, the Task List does not use the spatial tile UI — tasks are displayed as flat rows in a list. Each task row shows a checkbox, title, tags, due date, and priority. Tasks can be grouped by frontmatter properties (status, priority, category) and sorted by any property or date. Clicking a task opens it as a Document board for full Markdown editing. Tasks are backed by `.md` files with metadata stored in YAML frontmatter.
 * **Document** — The Document board is a maximised view of a single `.md` file using the same Tiptap editor as text tiles. It provides a distraction-free writing environment with the full formatting toolbar and seperates text with a purely visual page layout. See the **Text Tile / Document Board Relationship** section in the Data Model.
+    * **Tag row** — At the top of the note, above the text, the note's tags show as chips with an input for adding more (comma-separated, with autocomplete). See **Tag System** in the Data Model.
+    * **Raw view** — A **Raw** toggle shows the whole file as plain text, frontmatter included, for editing exactly what is on disk; **Formatted** switches back. It saves when the text box loses focus, on Ctrl+S, when switching back and when the tab closes. While it has no unsaved changes it follows changes made elsewhere. A save lands only if the file hasn't changed since the raw view loaded it; otherwise nothing is written and a banner offers **Show the new version** or **Keep mine** (which first backs the other version up to `.filo/recovery/`). The file's BOM and line endings are kept. The raw view is read-only for a non-UTF-8 note. It stays editable for a note the rich editor opens read-only because it can't reproduce its formatting, since raw text never passes through the rich editor.
+    * **Title** — Renaming the Document tab edits the note's `title:`; it never renames the file.
 
 ### Tiles
 
@@ -777,9 +821,9 @@ Tiles are the main way that the user interacts with the tool. Tiles can be creat
 * Expand to Document (Button(Text Tile Exclusive))
 * Delete Tile (Button)
 
-* **Tile Title** — The Tile Title is a text field that can be edited by the user. It is located in the top left corner of the tile header. The Tile Title can be edited with the Toolbar's text formatting options. It is what the tile will be called within the vault. The default tile title is "New Tile" it iterates by a one if the user creates multiple tiles without renaming them. Renaming a tile triggers the Vault API to update all board JSON file references pointing to it.
+* **Tile Title** — The Tile Title is a text field that can be edited by the user. It is located in the top left corner of the tile header. The Tile Title can be edited with the Toolbar's text formatting options. For a text tile it is the note's title: frontmatter `title:`, or the filename stem if the note has none (see **Note titles** in the Data Model). When a new note is created, its filename is derived from the title once. Editing the title later changes only the note's `title:` line and never renames the file, so no board references change; the new title shows on every board at once. Use **Rename file to match title** in the Vault Sidebar to align the filename. Formatting on the title is stored per board and hidden once the title text changes elsewhere. Board-only tiles (Link, Iframe, Timer) keep their title in the board file.
 
-* **Tags (Button)** — When the tags button is clicked by the user it opens a pop-up with a text field where the user can input the tags they want a tile to have this is comma separated. Tags are written to the tile's frontmatter properties. When submitted tags are put in the bottom left corner of a tile, they can be clicked which opens the **Tag Context Menu**.
+* **Tags (Button)** — When the tags button is clicked by the user it opens a pop-up with a text field where the user can input the tags they want a tile to have this is comma separated. For a text tile, tags are written to the note's frontmatter `tags:`; for a media or file tile, to `.filo/tags.json`; for a Link, Iframe or Timer tile, to the tile in the board file. When submitted tags are put in the bottom left corner of a tile, they can be clicked which opens the **Tag Context Menu**.
     * **Tag Context Menu** — Clicking a tag displayed on a tile opens a contextual menu showing all other tiles that share that tag. The menu lists each tile's Title, Board Name, and all tags on that tile. Clicking an entry navigates directly to that tile. This is a lightweight, contextual version of the full Tags Browser (accessible from the Side Toolbar's View dropdown), which offers additional management features such as renaming, recolouring, fading, and deleting tags across the entire vault.
 
 * **Properties (Menu Pop-up)** — Opens a form view for editing the tile's YAML frontmatter. Shows all properties with type-appropriate inputs (text, date picker, tag selector, dropdown for status, etc.). Users can add custom properties, remove existing ones, and see all metadata at a glance. Changes are written directly to the tile's `.md` file frontmatter. For non-text tile types without a Markdown file, properties are stored in the board JSON's tile entry under a `metadata` object.
@@ -790,7 +834,7 @@ Tiles are the main way that the user interacts with the tool. Tiles can be creat
 
 * **Expand to Document (Button(Text Tile Exclusive))** — Opens the tile's backing `.md` file as a full-page Document board in a new tab. See the **Text Tile / Document Board Relationship** section in the Data Model.
 
-* **Delete Tile (Button)** — Removes the tile from the current board. See **File Deletion Handling** in Architecture for how deletions propagate.
+* **Delete Tile (Button)** — Removes the tile from the current board. For a text tile, the confirm also offers "Delete associated file from vault as well?", which moves the `.md` file to Filo's trash. (A media file is deleted from the Vault Sidebar.) See **File Deletion Handling** in Architecture for how deletions propagate.
 
 * **Basic Tile Types** — Created by drag-and-drop only (cannot be created via the "+ New Tile" button). See **Data Model > Tile Storage** for file storage details.
     * **Image** — Displays an uploaded image within the tile. The user can remove the media.
@@ -851,7 +895,7 @@ Templates capture reusable structure that can be inserted into the current board
 
 * **Layout Templates** — Capture the *structure* of a selection of Mind Map tiles: each tile's type, size, position (relative to the selection's bounding box), and full style settings. They deliberately do **not** capture content: titles, body content, tags, lock state, file references (`src` / `url` / `filePath`), and the contents of any backing `.md` file are all stripped. Layout templates persist as `.template.json` files inside `<vault>/.filo/templates/`.
     * **Save as Template** — Right-click a tile or multi-tile selection on the Mind Map and choose **Save as Template**. Filo prompts for a name (uniqueness-checked) and saves the layout. Type-specific configuration that isn't content — for example a Timer tile's `duration` and `mode` — is preserved.
-    * **Insert** — Right-click empty canvas and choose **Insert Template**, or press **Ctrl+T**, to open the Template Browser. Inserting a layout template re-creates the structure with fresh tiles: every tile gets a new id, Text tiles get a fresh `contentId` and a new empty `.md` file named via the normal tile-naming sequence, and the whole batch lands as a single undo step. When invoked from the canvas right-click, the layout anchors to the click position; when invoked via Ctrl+T, it lands centred in the viewport.
+    * **Insert** — Right-click empty canvas and choose **Insert Template**, or press **Ctrl+T**, to open the Template Browser. Inserting a layout template re-creates the structure with fresh tiles: every tile gets a new id, and each Text tile (or group of tiles that shared one note) gets a new empty `.md` file at a fresh path, named via the normal tile-naming sequence with `title:` in its frontmatter, and the whole batch lands as a single undo step. When invoked from the canvas right-click, the layout anchors to the click position; when invoked via Ctrl+T, it lands centred in the viewport.
 * **Markdown Templates** — Plain Markdown files in a configurable vault folder (default `Templates/`) with `{{title}}`, `{{date}}`, `{{time}}`, `{{datetime}}`, `{{year}}`, `{{month}}`, `{{day}}` variable substitution. A Markdown template may also embed a fenced ```` ```filo-board ```` block carrying a `.board.json` skeleton; instantiating such a template creates an entirely new board.
 * **Template Browser (Ctrl+T)** — Unified picker with two sections. The **Layout Templates** section is a grid of cards showing an SVG mini-preview of each layout (rectangles coloured to match each tile's style), along with rename and delete actions. The **Markdown Templates** section lists `.md` templates from the vault. A single search input filters both sections.
 
@@ -863,7 +907,7 @@ Tabs are used to organize the user's boards. Each tab represents a different boa
 
 * **Split Panes** — Users can drag a tab to the left or right edge of the workspace to create a side-by-side split view. This allows referencing one board while working on another, or dragging tiles between boards. Splits can be horizontal or vertical and are resizable. A maximum of 3 panes can be open simultaneously. The same board can be opened in multiple panes. Undo/redo applies to whichever pane the user is actively editing — each pane targets its board's independent undo stack. If a board displayed in a split pane is deleted from the Vault Sidebar, that pane is automatically closed. Split layout state is persisted in `.filo/workspace.json` and restored on next launch.
 
-* **Board Browser** — The board browser is a button that opens a pop-up menu from which the user can view all of their boards. It is located in the bottom left corner of the screen and in line with the Tab Bar. The Board Browser is a list of all the boards that currently exist in the user's vault. From this list the user can open a new tab for a board, rename boards, create new board and delete boards. The user can also drag and drop boards to re-organize them in the browser, they can also CTRL + Click to select multiple boards. There is a search bar at the top of the board browser that allows the user to search for boards by name, the board browser also has a scroll bar if the user has more boards than can fit in the browser window. The Board Type is listed next to the name of the board in the browser.
+* **Board Browser** — The board browser is a button that opens a pop-up menu from which the user can view all of their boards. It is located in the bottom left corner of the screen and in line with the Tab Bar. The Board Browser is a list of all the boards that currently exist in the user's vault. From this list the user can open a new tab for a board, rename boards, create new board and delete boards (a deleted board moves to Filo's trash; its notes stay in the vault, and it can be restored from the toast's Undo or Settings → Trash). The user can also drag and drop boards to re-organize them in the browser, they can also CTRL + Click to select multiple boards. There is a search bar at the top of the board browser that allows the user to search for boards by name, the board browser also has a scroll bar if the user has more boards than can fit in the browser window. The Board Type is listed next to the name of the board in the browser.
 
 ## General Features
 
@@ -879,7 +923,11 @@ Tabs are used to organize the user's boards. Each tab represents a different boa
 * **Dynamic Contrast Text** — When enabled, Filo automatically calculates the perceived brightness of a tile's (or column's, task's, event's) background colour using relative luminance and swaps the text colour to white (for dark backgrounds) or black (for light backgrounds). This ensures WCAG AA contrast compliance without manual intervention. The setting is toggleable at three levels following the override cascade: Global Defaults, Current Board Settings, and per-element Tile Style popup. Defaults to on.
 * **Smart Guides** — When the user drags a tile on the Mind Map canvas, real-time visual alignment guides appear showing when the tile's edges or centre align with other tiles' edges or centres. Guide lines are rendered as thin coloured lines spanning the relevant axis. When a tile is within a configurable snap distance (default: 8px at current zoom) of an alignment, it snaps to the guide position. Smart guides make it easy to create visually tidy layouts without enabling snap-to-grid. *(Mind Map only)*
 * **Orphan Catcher / Canvas Cleanup** — See Side Toolbar — Mind Map > Orphan Catcher for full description. Also accessible from the canvas right-click menu. *(Mind Map only)*
-* **Toast Notifications** — Non-blocking notification messages used for confirmations (save, export), errors, and user prompts (e.g., external edit conflicts). Toasts display at the top centre of the board workspace, directly below the Global Toolbar. They auto-dismiss after a few seconds unless they require user action. A conflict prompt that is not blocking a save (e.g. "Reload from disk" / "Keep local" on an open note) is sticky: it stays until the user acts, and a newer prompt for the same file replaces the older one. A prompt that is blocking a pending save auto-dismisses after 15 seconds and defers that save (nothing is written; it re-prompts on the next save). Toasts stack vertically in a column — newer toasts appear below existing ones. A maximum of 8 toasts are visible at once; if the limit is reached, the oldest plain notification is dismissed first. See the **Animations** section for entrance/exit transitions.
+* **Toast Notifications** — Non-blocking notification messages used for confirmations (save, export), errors, and user prompts (e.g., external edit conflicts). Toasts display at the top centre of the board workspace, directly below the Global Toolbar. Every toast closes on its own after **at most 15 seconds** (a shorter duration can be set; a longer one is capped), with two exceptions that stay until the user acts:
+    * **Sticky decision prompts** that aren't holding up a write — the note prompts ("Reload" / "Keep mine" on a changed note, "Keep mine" / "Discard" on a deleted one). A newer prompt for the same file replaces the older one, so they can't stack.
+    * **Error toasts** without an explicit duration (e.g. a failed save, or where a recovery copy was put), because the failure outlasts any timer.
+
+  A **promise-backed** decision — one a pending write is waiting on, such as the board "Reload" / "Keep local" prompt — can never be sticky. It closes after 15 seconds and resolves as "defer": nothing is written, and it asks again on the next save. Toasts that offer **Undo** use the cap too: 15 seconds for tag delete or rename, 10 seconds for "moved to Filo's trash" (which Settings → Trash backs up). Toasts stack vertically in a column — newer toasts appear below existing ones. A maximum of 8 toasts are visible at once; if the limit is reached, the oldest plain notification is dismissed first. See the **Animations** section for entrance/exit transitions.
 
 ## Keyboard Shortcuts
 
@@ -1085,7 +1133,8 @@ Right-clicking on a **task row**:
 | ─── | Divider | |
 | Toggle Complete | `icon-check` | Toggles the task's completed state |
 | ─── | Divider | |
-| Delete | `icon-trash` | Removes the task from the list (danger action) |
+| Delete Task | `icon-trash` | Removes the task from the list (danger action); its `.md` file stays in the vault |
+| Delete Task & File… | `icon-trash` | Removes the task and moves its `.md` file to Filo's trash (danger action, confirmed; undoable) |
 
 ### Menu Items — Document Board
 
@@ -1154,7 +1203,7 @@ Right-clicking on a **tab**:
 * **Storage:** File system (vault folder on user's disk) — Node.js fs
 * **Data Formats:** Markdown (.md) for tiles/documents, JSON (.board.json) for boards, JSON for configuration
 * **Canvas:** Custom infinite canvas with rbush spatial indexing. Pan, zoom, drag, resize, and edge-pan are implemented as raw pointer-event handlers in `src/renderer/lib/canvas/`.
-* **Markdown Processing:** unified + remark ecosystem (remark-parse, remark-frontmatter) for Markdown parsing and frontmatter extraction in the VaultIndex pipeline; gray-matter for inline frontmatter read/write at file-edit time. Not used by the TipTap editor, which uses tiptap-markdown for round-tripping. dompurify for HTML sanitisation.
+* **Markdown Processing:** unified + remark ecosystem (remark-parse, remark-frontmatter) for Markdown parsing in the VaultIndex pipeline; the `yaml` package is the one frontmatter parser, and writes patch the frontmatter source key by key through its CST, so untouched keys, comments and quoting survive byte-for-byte. Not used by the TipTap editor, which uses tiptap-markdown for round-tripping. dompurify for HTML sanitisation.
 * **Full-Text Search:** MiniSearch — lightweight in-memory full-text search engine. Integrated with the VaultIndex and updated incrementally on file change events. Powers plain-text and regex vault-wide search queries with sub-millisecond response times.
 * **Drag-and-Drop:** svelte-dnd-action — Svelte-native sortable list library for Kanban column reordering, tile ordering within columns, task list reordering, and cross-container dragging. Canvas-level tile dragging uses the custom canvas implementation (not svelte-dnd-action).
 * **Metadata Indexing:** Custom VaultIndex with Zod schema validation

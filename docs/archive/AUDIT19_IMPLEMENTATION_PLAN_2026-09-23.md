@@ -1,6 +1,6 @@
 # Audit-19 Implementation Plan (2026-09-23)
 
-> **SUPERSEDED 2026-09-24** by [MASTER_IMPLEMENTATION_PLAN_2026-09-24.md](../MASTER_IMPLEMENTATION_PLAN_2026-09-24.md). Phases 0–1 below are done; Phases 2–5 were re-sequenced, absorbed or made obsolete there (see its Part D). Keep this file for the per-line specs of carried-over items.
+> **SUPERSEDED 2026-09-24** by [MASTER_IMPLEMENTATION_PLAN_2026-09-24.md](MASTER_IMPLEMENTATION_PLAN_2026-09-24.md). Phases 0–1 below are done; Phases 2–5 were re-sequenced, absorbed or made obsolete there (see its Part D). Keep this file for the per-line specs of carried-over items.
 
 **Source:** [AUDIT19_REPORT_AND_REMEDIATION_PLAN_2026-09-23.md](AUDIT19_REPORT_AND_REMEDIATION_PLAN_2026-09-23.md). That file holds the findings, scores and evidence; this file is the build plan.
 **Branch:** `chore/dependency-majors` @ `28d3063`. All line anchors were re-verified on 2026-09-23 by four read-only planners, each covering one group: editor layer, files/paths/boards, cloud sync, deletes/security/CI.

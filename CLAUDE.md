@@ -12,6 +12,7 @@ Filo is a local-first, visual-first Personal Knowledge Management (PKM) desktop 
 
 ```
 Run dev:        npm run dev
+Lint:           npm run lint             (eslint, --max-warnings 0: a warning fails CI)
 Type-check:     npm run check            (renderer + shared, svelte-check)
                 npm run typecheck:main   (main process)
                 npm run ci:test-typecheck (test sources, per-file ratchet)
@@ -25,19 +26,19 @@ Package:        npm run package
 
 `npm run ci:verify` mirrors the GitHub Actions `verify` job: **lint → check (svelte-check) → typecheck:main → test:unit:strict → build → ci:gates**. A second job, `verify-windows`, runs `test:unit:strict` and `typecheck:main` on `windows-latest`.
 
-`ci:gates` runs `node scripts/gates/run.mjs`: ~55 small static checks that pin invariants which past data-loss bugs broke. They share one helper module ([scripts/gates/lib.mjs](scripts/gates/lib.mjs)) and are grouped by subsystem. `--list` shows every check, `--only <id,id>` / `--group <name>` narrow a run, and each failure prints `file:line` plus a fix hint.
+`ci:gates` runs `node scripts/gates/run.mjs`: 55 small static checks that pin invariants which past data-loss bugs broke. They share one helper module ([scripts/gates/lib.mjs](scripts/gates/lib.mjs)) and are grouped by subsystem. `--list` shows every check, `--only <id,id>` / `--group <name>` narrow a run, and each failure prints `file:line` plus a fix hint.
 
 | Group | Protects |
 |---|---|
-| `writePath` | Every `.md` write goes through the gateway ([markdownFileWriter.ts](src/renderer/lib/vault/markdownFileWriter.ts)) or `writeMarkdownAndReconcile` (write + open-editor reconcile for the same path); writes are time-bounded and never silently abort; field/Properties edits write a **delta on a fresh disk read**, never a cached whole FM object; new files are created exclusively (never overwrite an existing note); Keep-local takes a backup. |
+| `writePath` | Only the note writer ([noteWriter.ts](src/renderer/lib/notes/noteWriter.ts)) writes a `.md`, and it applies every change to a **fresh read of the file**; a note is renamed, trashed or restored only while its write queue is held; writes are time-bounded, failed writes are kept and re-fired, and nothing silently aborts; new files are created exclusively (never overwrite an existing note); "Keep mine" / "Keep local" first backs up the other version; user deletes move items to `.filo/trash` (only a confirmed fallback deletes for good). |
 | `markdownFormat` | Byte fidelity: BOM, UTF-8 validation (non-UTF-8 notes are read-only), EOL re-application, a single YAML parser (no js-yaml / gray-matter on frontmatter), editor load/undo/unmount discipline, and that the frontmatter-invariant and markdown body round-trip suites exist and aren't skipped. |
 | `vaultIdentity` | A vault swap mid-`await` can't apply the outgoing vault's data to the new one (`isStillSameVault`); vault-scoped state resets on swap; path-keyed stores use `VaultPath` keys, case-fold compares, and follow renames; crash sentinels are per-machine; disk-shape IPC goes through `vaultOperations.ts`. |
 | `ipcSecurity` | Every `ipcMain` channel is in the `IpcChannel` union (and vice versa); envelope usage; untrusted values pass an `asSafe*` validator before a sink; `vault:copy-file` only copies approved sources; renderer reads can't reach `.filo/`; config loaders migrate before parsing. |
-| `commands` | Undo/redo: high-value mutations go through Commands, which snapshot their slice, carry a `targetBoardId`, and have an execute→undo round-trip test; Task List section positions are clamped. |
-| `components` | Component timers are cleared, `flush*` functions are actually called, no dead `$derived`, DocumentEditor / drag-drop are pane-scoped, pointer capture + spatial batches handle `pointercancel`, z-index tokens, and every `var(--x)` without a fallback is defined. |
-| `codebase` | No file in `src/main` / `src/renderer` over 1000 lines except the allowlisted ones, which may only shrink (**split an over-limit file, don't raise its ceiling**); no `as any` / `as unknown as`; test sources type-check under `tsconfig.tests.json`, with a per-file error baseline (`scripts/gates/testTypecheckBaseline.json`) that may only go down; the refactor characterisation suite stays whole, un-skipped and black-box. |
+| `commands` | Undo/redo: high-value mutations go through Commands, which snapshot their slice, carry a `targetBoardId`, and have an execute→undo round-trip test; no command keeps a copy of a note body; Task List section positions are clamped. |
+| `components` | Component timers are cleared, `flush*` functions are actually called, no dead `$derived`, DocumentEditor / drag-drop are pane-scoped, pointer capture + spatial batches handle `pointercancel`, z-index tokens, every `var(--x)` without a fallback is defined, and views read notes from the note store (nothing keeps its own copy of a note). |
+| `codebase` | No file in `src/main` / `src/renderer` over 1000 lines except the allowlisted ones, which may only shrink (**split an over-limit file, don't raise its ceiling**); no `as any` / `as unknown as`; test sources type-check under `tsconfig.tests.json`, with a per-file error baseline (`scripts/gates/testTypecheckBaseline.json`) that may only go down; board tile defs never store a note's title, tags or body; the board loader accepts only the current format; a note is named only by its vault path (no `contentId` / `docId`); the characterisation suite stays whole, un-skipped and black-box. |
 
-**Escape hatches** are same-line comments with a reason, e.g. `// allow-cast: <reason>`, `// reconcile-elsewhere: <reason>`, `// allow-module-state: <reason>`. Keep the marker text exact; the checks look for it.
+**Escape hatches** are same-line comments with a reason, e.g. `// allow-cast: <reason>`, `// allow-direct-write: <reason>`, `// allow-module-state: <reason>`. Keep the marker text exact; the checks look for it.
 
 **Adding a check:** put it in the matching group module as `{ id, title, run(ctx) }` using the shared lib. Don't add a standalone `scripts/check-*.mjs`. Before relying on it, prove it bites: introduce the violation in real source, confirm the check fails, then revert.
 
@@ -57,7 +58,7 @@ The a11y axe-core scan and full Electron E2E are manual-only (Actions tab → CI
 | Frontend           | Svelte 5 (runes: `$state`, `$derived`, `SvelteSet`), TypeScript, Vite |
 | Rich text editor   | TipTap (ProseMirror) + tiptap-markdown for MD round-tripping          |
 | Canvas             | Custom pointer-event handlers + rbush (spatial index)                  |
-| Markdown parsing   | unified + remark-parse + remark-frontmatter, gray-matter for FM        |
+| Markdown parsing   | unified + remark-parse + remark-frontmatter; `yaml` package for FM     |
 | Full-text search   | MiniSearch                                                             |
 | Schema validation  | Zod                                                                    |
 | List drag-and-drop | svelte-dnd-action                                                      |
@@ -93,7 +94,8 @@ filo/
 │   │   ├── ipc/                       # IPC handler registrations
 │   │   │   ├── index.ts               # Aggregated registration entry point
 │   │   │   ├── vault.ipc.ts           # File CRUD, directory ops
-│   │   │   ├── board.ipc.ts           # Board file create/delete, config + theme
+│   │   │   ├── vaultTrash.ipc.ts      # .filo/trash move / restore / list / purge
+│   │   │   ├── board.ipc.ts           # Board file list/load/save/create, config + theme
 │   │   │   ├── dialog.ipc.ts          # Native open dialogs
 │   │   │   ├── shell.ipc.ts           # External URL opening, reveal-in-folder
 │   │   │   ├── media.ipc.ts           # Media save/copy helpers
@@ -108,6 +110,7 @@ filo/
 │   │   │   ├── vaultRegistry.ts       # Active vault tracker (gates IPC)
 │   │   │   ├── recoverySnapshot.ts    # `.filo/recovery/` snapshot helper
 │   │   │   ├── renameCorrelation.ts   # Pairs missing+present events into renames
+│   │   │   ├── rendererCrashHandler.ts # Renderer crash → breadcrumb + Reload/Quit dialog
 │   │   │   ├── recentVaults.ts        # Persisted recent vault list
 │   │   │   ├── windowState.ts         # Window size/position (userData)
 │   │   │   └── sidebarState.ts        # Sidebar width/floating bounds (userData)
@@ -117,9 +120,11 @@ filo/
 │   │   │   ├── fileOps.ts
 │   │   │   ├── boardFileOps.ts
 │   │   │   ├── configOps.ts
-│   │   │   └── filenameUtils.ts       # atomicWriteFile, assertSafeFilename
+│   │   │   ├── trashOps.ts            # .filo/trash/<id>/ entries: move in, restore, purge to Recycle Bin
+│   │   │   └── filenameUtils.ts       # atomicWriteFile, tmpSiblingPath
 │   │   └── utils/
-│   │       ├── pathSecurity.ts        # assertWithinVault, assertSafeRelativePath
+│   │       ├── pathSecurity.ts        # assertWithinVault, assertSafeRelativePath (depth/length caps), assertSafeFilename
+│   │       ├── permissionPolicy.ts    # decidePermission: only app-frame audio capture is allowed
 │   │       ├── activeVaultCheck.ts    # assertActiveVault (gates IPC handlers)
 │   │       ├── mainLogger.ts          # Structured main-process logger
 │   │       └── mime.ts                # MIME-type sniffing for media tiles
@@ -141,9 +146,14 @@ filo/
 │   │   ├── stores/                    # Svelte 5 rune stores (.svelte.ts files)
 │   │   │   ├── vault.svelte.ts        # Vault lifecycle, file tree, virtual project
 │   │   │   ├── vaultIndex.svelte.ts   # In-memory metadata index + MiniSearch
-│   │   │   ├── vaultExternalChanges.ts  # External-edit classifier consumer
-│   │   │   ├── vaultRecovery.ts       # `.filo/.dirty` sentinel + recovery modal
-│   │   │   ├── vaultFolderOps.ts      # In-app rename/delete/move
+│   │   │   ├── notes.svelte.ts        # noteStore: one NoteModel per open note (by VaultPath), owns the note writer
+│   │   │   ├── noteMeta.ts            # noteTitle / noteTags / noteFrontmatter selectors (model, else vault index)
+│   │   │   ├── notePrompts.ts         # The note conflict prompt (Reload / Keep mine) + deleted-note prompt
+│   │   │   ├── vaultExternalChanges.ts  # Watcher events → vault index + noteStore.onDiskChanged
+│   │   │   ├── vaultRecovery.ts       # `.filo/.dirty.<machineId>` sentinel + recovery modal
+│   │   │   ├── vaultFolderOps.ts      # In-app rename/move
+│   │   │   ├── vaultDeleteOps.ts      # Sidebar delete → .filo/trash + tile cascade (undoable)
+│   │   │   ├── trash.svelte.ts        # Settings → Trash list, restore, empty, 30-day purge
 │   │   │   ├── vaultStoreTypes.ts     # Shared store types
 │   │   │   ├── vaultTree.ts           # File-tree projection helpers
 │   │   │   ├── vaultProject.ts        # Per-vault virtual project bootstrap
@@ -154,13 +164,14 @@ filo/
 │   │   │   ├── boardCacheKanban.ts    # Kanban cache writers
 │   │   │   ├── boardCacheTaskList.ts  # Task-list cache writers
 │   │   │   ├── boardCacheConnectionsFrames.ts
-│   │   │   ├── boardCacheFrontmatter.ts
+│   │   │   ├── boardCacheFrontmatter.ts # Path-field rewrites on rename + cascade-delete planning
+│   │   │   ├── boardCacheDelete.ts    # Board delete → .filo/trash
 │   │   │   ├── boardCacheTypes.ts
 │   │   │   ├── boardConnections.ts    # Active-board connection facade
 │   │   │   ├── boardFrames.ts         # Active-board frames facade
 │   │   │   ├── boardTiles.ts          # Active-board tiles facade
 │   │   │   ├── boardWaypointsGroups.ts
-│   │   │   ├── boardFrontmatterSync.ts  # Frontmatter→cache writer
+│   │   │   ├── boardFrontmatterSync.ts  # Rename propagation + cascade delete (history dispatch)
 │   │   │   ├── boardHistory.ts        # Per-board history facade for boardStore
 │   │   │   ├── boardRefIntegrity.svelte.ts  # Broken file-reference tracking
 │   │   │   ├── boardStoreTypes.ts
@@ -171,9 +182,9 @@ filo/
 │   │   │   ├── workspace.svelte.ts    # Split-pane layout
 │   │   │   ├── connections.svelte.ts
 │   │   │   ├── frames.svelte.ts
-│   │   │   ├── fileTags.svelte.ts     # `.filo/tags.json` + tile-def sync
+│   │   │   ├── fileTags.svelte.ts     # `.filo/tags.json`: tag registry + media-file tags; vault-wide rename/remove
+│   │   │   ├── tagUndo.svelte.ts      # Undo toast for vault-wide tag delete / rename
 │   │   │   ├── templates.svelte.ts    # Layout-template store
-│   │   │   ├── document.svelte.ts
 │   │   │   ├── ui.svelte.ts           # Modals, toasts, context menu state
 │   │   │   ├── theme.svelte.ts
 │   │   │   ├── spatial.svelte.ts      # rbush index wrapper
@@ -189,7 +200,7 @@ filo/
 │   │   │   ├── index.ts               # Re-exports
 │   │   │   ├── project.ts              # Virtual Project (in-memory only — no file on disk)
 │   │   │   ├── board.ts
-│   │   │   ├── boardFile.ts           # V7 .board.json file shape + boardId cross-checks
+│   │   │   ├── boardFile.ts           # v8 .board.json file shape (visuals only) + boardId cross-checks
 │   │   │   ├── tile.ts
 │   │   │   ├── placement.ts
 │   │   │   ├── connection.ts
@@ -199,26 +210,30 @@ filo/
 │   │   │   ├── tagsFile.ts             # .filo/tags.json envelope + migration scaffold
 │   │   │   ├── layoutTemplate.ts       # .filo/templates/*.json envelope + migration scaffold
 │   │   │   ├── link.ts                 # filo:// link encode/decode + DecodedFiloLinkSchema
-│   │   │   ├── migrations.ts
+│   │   │   ├── migrations.ts          # Board version gate: only the current version loads (no steps today)
 │   │   │   └── schemaUtils.ts          # uniqueBy / uniqueStrings / idString (NANOID_REGEX)
 │   │   │
 │   │   ├── commands/                  # Command pattern objects (undo/redo)
 │   │   │   ├── index.ts               # Re-export shim — every import path still works
 │   │   │   ├── Command.ts             # Base Command interface + abstract class (targetBoardId)
 │   │   │   ├── tileCommands.ts        # tile add/delete/move/resize/style/lock
-│   │   │   ├── tileTagCommands.ts     # tile/path tag add/remove + fade-by-tag (via fileTagsStore)
+│   │   │   ├── trashedFiles.ts        # trashFiles / restoreFiles: shared by the delete commands' undo
+│   │   │   ├── noteFieldCommand.ts    # Base of the card/task field commands: forward + inverse FrontmatterDelta
+│   │   │   ├── frontmatterInverse.ts  # inverseDelta, applyDeltaChecked (same-key conflict check on undo)
+│   │   │   ├── updateTitleCommand.ts  # Title edit = frontmatter `title:` delta (+ board titleHtml)
+│   │   │   ├── renameFileCommand.ts   # Undo of "Rename file to match title"
+│   │   │   ├── tileTagCommands.ts     # tile/path tag add/remove + fade-by-tag
 │   │   │   ├── connectionCommands.ts  # connection add/delete/update
 │   │   │   ├── frameCommands.ts       # frame add/update/move/delete
 │   │   │   ├── sectionCommands.ts     # Task List section add/delete/rename/reorder
-│   │   │   ├── taskCommands.ts        # Task List add/delete/move/field/lock/style + snapshots
+│   │   │   ├── taskCommands.ts        # Task List add/delete/move/field/lock/style
 │   │   │   ├── kanbanCommands.ts      # Kanban card + column add/delete/move/rename
 │   │   │   ├── waypointCommands.ts    # Mind Map waypoint add/remove/rename/move/icon/lock
 │   │   │   ├── groupAndBoardCommands.ts # BatchCommand, ToggleGroupCommand, CascadeDeleteCommand, UpdateBoardSettingsCommand
 │   │   │   ├── styleCommands.ts       # Style-popup commands (Frame/Card/Column/Task/Section/Connection)
 │   │   │   ├── propertiesCommands.ts  # UpdatePropertiesCommand
 │   │   │   ├── attachmentSrcCommand.ts# Image/Video/Audio/File swap
-│   │   │   ├── renameTitleCommand.ts  # Tile title rename (cache + doc + .md file)
-│   │   │   ├── replaceAllCommand.ts   # Vault-wide find-and-replace (history-tracked)
+│   │   │   ├── replaceAllCommand.ts   # Vault-wide find-and-replace (keeps splices + hashes, never whole notes)
 │   │   │   └── savedViewsCommand.ts   # UpdateSavedViewsCommand
 │   │   │
 │   │   ├── constants/
@@ -227,23 +242,32 @@ filo/
 │   │   │   └── taskPriorities.ts      # Task / Kanban priority display metadata (color + label)
 │   │   │
 │   │   ├── lib/                       # Pure logic, no UI
+│   │   │   ├── notes/                 # The note model's pure half + note flows
+│   │   │   │   ├── noteWriter.ts      # THE only .md writer: one queue per path, fresh read per flush, body-drift → conflict
+│   │   │   │   ├── noteFile.ts        # Pure parse/assemble: frontmatter, body, BOM, EOL, content hash
+│   │   │   │   ├── noteDiskChange.ts  # decideDiskChange: what a watcher event does to a loaded note
+│   │   │   │   ├── createNote.ts      # createNoteFile: exclusive create with `title:`, ` (n)` on collision
+│   │   │   │   ├── openNote.ts        # openNoteInDocumentTab
+│   │   │   │   ├── renameToTitle.ts   # "Rename file to match title"
+│   │   │   │   └── setNoteTitle.ts    # Document-tab title edit → frontmatter `title:`
 │   │   │   ├── vault/                 # Vault-side helpers (renderer)
 │   │   │   │   ├── vaultIndex.ts      # Metadata indexing + MiniSearch wiring
-│   │   │   │   ├── fileRefIntegrity.ts# Rename propagation, broken-ref detection
-│   │   │   │   ├── frontmatterSync.ts # External-edit reconciliation
-│   │   │   │   ├── conflictResolver.ts# External-vs-dirty editor classifier
-│   │   │   │   ├── dirtyFlagRecovery.ts # `.filo/.dirty` sentinel read/write
-│   │   │   │   ├── conventionPaths.ts # Default attachment/board paths
+│   │   │   │   ├── vaultOperations.ts # Disk-shape IPC: withDrainedWrites, rename, trash/restore, folder, copy
+│   │   │   │   ├── fileRefIntegrity.ts# Board path rewrites on rename, cascade-delete targets, broken refs
+│   │   │   │   ├── dirtyFlagRecovery.ts # `.filo/.dirty.<machineId>` sentinel read/write
+│   │   │   │   ├── conventionPaths.ts # Default folders + free-name helpers for new files
 │   │   │   │   ├── extension.ts
 │   │   │   │   ├── moveIntoFolder.ts
 │   │   │   │   ├── tagsStorage.ts     # `.filo/tags.json` mutators
-│   │   │   │   ├── tagRewriteSweep.ts # Two-phase tag rename across .md
-│   │   │   │   ├── tagRewriter.ts     # Frontmatter tag rename/remove/add (line-level fast path; dump fallback now routes through frontmatterEngine)
-│   │   │   │   ├── frontmatterEngine.ts # Source-preserving FM serializer — `yaml` Document/CST API
-│   │   │   │   ├── markdownFileWriter.ts # CANONICAL markdown write gateway: per-caller debounce, BOM-preserving hydrate, unified drain
-│   │   │   │   ├── tagRewriteSentinel.ts # `.filo/tag-rewrite-pending.json` crash-recovery
-│   │   │   │   ├── renameCascadeSentinel.ts # Rename-cascade crash-recovery sentinel
-│   │   │   │   ├── fileBaselineRegistry.ts # Pre-write drift baselines (mtime/size)
+│   │   │   │   ├── tagRewriteSweep.ts # Two-phase tag rename/remove across .md (each write via noteStore.transform)
+│   │   │   │   ├── tagRewriter.ts     # Frontmatter tag rename/remove/add (line-level fast path, CST-patch fallback)
+│   │   │   │   ├── frontmatterCstModel.ts # patchFrontmatterSourceCst: source-preserving FM patch on the `yaml` CST
+│   │   │   │   ├── frontmatterEngine.ts # Shared FM value helpers for the CST engine
+│   │   │   │   ├── frontmatterDelta.ts  # FrontmatterDelta { set / unset } + merge
+│   │   │   │   ├── frontmatterRead.ts # The one FM read path (`yaml` package)
+│   │   │   │   ├── tagRewriteSentinel.ts # `.filo/tag-rewrite-pending.<machineId>.json` crash-recovery
+│   │   │   │   ├── renameCascadeSentinel.ts # Rename-cascade crash-recovery sentinel (path rewrites only)
+│   │   │   │   ├── fileBaselineRegistry.ts # Pre-write drift baselines (mtime/size) for board + `.filo/` files
 │   │   │   │   ├── externalChangeWindows.ts # Self-write / attachment-delete timing windows
 │   │   │   │   └── vaultTreeSort.ts   # Sidebar sort/group helpers
 │   │   │   ├── boards/                # Board file load/save logic
@@ -255,7 +279,7 @@ filo/
 │   │   │   │   ├── boardWriteDebounce.ts
 │   │   │   │   ├── configWriteScheduler.ts
 │   │   │   │   ├── miscWriteScheduler.ts
-│   │   │   │   ├── frontmatterWriteScheduler.ts
+│   │   │   │   ├── writeScheduler.ts  # createScheduler: the shared debounce/retry/timeout primitive
 │   │   │   │   ├── seedTextFileForNewTile.ts # Creates the backing .md for a new text tile
 │   │   │   │   ├── tileDefBuilder.ts
 │   │   │   │   ├── textTilePath.ts
@@ -263,26 +287,28 @@ filo/
 │   │   │   │   └── writeStateTracking.ts # trackComponentWrite + counters
 │   │   │   ├── canvas/                # Canvas engine (custom pointer events)
 │   │   │   │   ├── coordinates.ts     # screenToCanvas, getCanvasPointFromEvent
-│   │   │   │   ├── viewport.ts
 │   │   │   │   ├── gestures.ts        # Pan/zoom pointer-event bindings
 │   │   │   │   ├── edgePan.ts         # Edge-panning on drag
 │   │   │   │   ├── tileDrag.ts
 │   │   │   │   ├── tileResize.ts
 │   │   │   │   ├── dragDrop.ts        # OS file drop → tile factory
 │   │   │   │   ├── markdownTileSeed.ts
-│   │   │   │   ├── textTileDropPlan.ts
 │   │   │   │   ├── layout.ts          # Auto-layout algorithms
 │   │   │   │   ├── orphanCatcher.ts
 │   │   │   │   ├── vaultPath.ts
 │   │   │   │   └── smartGuides.ts     # Alignment guide calculations
 │   │   │   ├── connections/           # Connection path routing
 │   │   │   │   ├── pathRouter.ts      # Curved, Straight, Elbow, Smart routing
-│   │   │   │   ├── connectionSelection.ts
 │   │   │   │   └── bubblePositions.ts
 │   │   │   ├── editor/                # TipTap setup
 │   │   │   │   ├── createEditor.ts    # Editor factory with all extensions
 │   │   │   │   ├── markdownSync.ts    # MD ↔ ProseMirror round-trip
+│   │   │   │   ├── noteEditorView.ts  # Editor ↔ noteStore bridge (150 ms idle serialise; never reloads its own body)
 │   │   │   │   └── tagExtension.ts
+│   │   │   ├── tags/                  # Tag editing helpers
+│   │   │   │   ├── noteTagWriter.ts   # Tile/path tag add/remove on a note (fresh-read rewrite)
+│   │   │   │   ├── tagEditConfirm.ts  # Tags-browser delete/rename confirms → tagUndo
+│   │   │   │   └── tagRowInput.ts     # Tag-row parsing: comma list, autocomplete
 │   │   │   ├── kanban/                # Kanban-board logic
 │   │   │   ├── tasklist/              # Task List logic
 │   │   │   ├── tasks/                 # Task-frontmatter helpers, recurrence, quickAddParser (shared)
@@ -327,7 +353,7 @@ filo/
 │   │   └── components/                # Svelte components (UI only)
 │   │       ├── shared/                # Shared UI primitives
 │   │       │   ├── Modal.svelte
-│   │       │   ├── Dropdown.svelte
+│   │       │   ├── ConfirmDialog.svelte
 │   │       │   ├── ContextMenu.svelte
 │   │       │   ├── Toast.svelte
 │   │       │   ├── ColorPicker.svelte
@@ -338,6 +364,7 @@ filo/
 │   │       ├── layout/                # App shell layout
 │   │       │   ├── AppShell.svelte    # Sidebar + workspace + tab bar
 │   │       │   ├── GlobalToolbar.svelte
+│   │       │   ├── Dropdown.svelte
 │   │       │   ├── TabBar.svelte
 │   │       │   ├── Tab.svelte
 │   │       │   ├── SplitPaneContainer.svelte
@@ -358,8 +385,8 @@ filo/
 │   │       │   ├── TaskListSideToolbar.svelte
 │   │       │   ├── SmartListTabs.svelte # Task List smart-list filter tabs
 │   │       │   ├── TaskQuickAddInput.svelte # Task List quick-add (natural-language) input
-│   │       │   ├── DocumentBoard.svelte
-│   │       │   ├── DocumentEditor.svelte
+│   │       │   ├── DocumentEditor.svelte # A note in a Document tab: tag row, editor, Raw toggle
+│   │       │   ├── NoteRawView.svelte # Raw view: the whole file (frontmatter included) in a textarea
 │   │       │   └── SideToolbar.svelte # Mind-map side toolbar (move/new/etc.)
 │   │       ├── canvas/                # Canvas rendering layer
 │   │       │   ├── BoardBackground.svelte
@@ -379,6 +406,7 @@ filo/
 │   │       │   ├── TileContainer.svelte
 │   │       │   ├── TileHeader.svelte  # Title, tags, lock, style, delete
 │   │       │   ├── TileStylePopup.svelte
+│   │       │   ├── PropertiesPopup.svelte # Frontmatter form (writes deltas via UpdatePropertiesCommand)
 │   │       │   ├── TextTile.svelte
 │   │       │   ├── ImageTile.svelte
 │   │       │   ├── VideoTile.svelte
@@ -393,6 +421,7 @@ filo/
 │   │       │   ├── BoardDefaults.svelte
 │   │       │   ├── LivePreview.svelte
 │   │       │   ├── ThemeManager.svelte
+│   │       │   ├── TrashSettings.svelte # Settings → Trash: Restore / Empty trash
 │   │       │   └── KeyboardShortcuts.svelte
 │   │       ├── modals/                # Other modal dialogs
 │   │       │   ├── ProjectSettings.svelte  # Tabbed wrapper around settings/
@@ -403,6 +432,7 @@ filo/
 │   │       │   ├── OrphanCatcher.svelte
 │   │       │   └── RecoveryFiles.svelte
 │   │       └── tags/                  # Tag UI
+│   │           ├── NoteTagRow.svelte  # Tag row at the top of a note in a Document tab
 │   │           ├── TagBadge.svelte
 │   │           ├── TagEditor.svelte
 │   │           ├── TagsBrowser.svelte
@@ -414,6 +444,9 @@ filo/
 │   │
 │   ├── shared/                        # Shared between main + renderer
 │   │   ├── types.ts                   # IpcChannel union, file-tree types
+│   │   ├── vaultPath.ts               # VaultPath: the case-folded key every path-keyed map uses
+│   │   ├── sentinelPaths.ts           # Per-machine sentinel names (`.filo/.dirty.<machineId>` …)
+│   │   ├── fileNames.ts               # fileStemFromTitle, fileNameProblem (shared filename rules)
 │   │   ├── ipcSchemas.ts              # Per-channel Zod payload validation
 │   │   ├── ipcContracts.ts            # Per-channel arg/result TYPE contracts (ChannelResult<C>, etc.)
 │   │   ├── untrusted.ts               # Branded `Untrusted<T>` + asSafe* validators (untrusted-sink discipline)
@@ -421,6 +454,8 @@ filo/
 │   │
 │   └── tests/
 │       ├── unit/                      # Vitest unit tests
+│       ├── component/                 # Vitest: real components mounted in jsdom
+│       ├── characterisation/          # Vitest: whole App against a real temp vault + real IPC handlers
 │       └── e2e/                       # Playwright E2E tests
 │
 ├── static/                            # Static assets bundled by Vite
@@ -431,7 +466,7 @@ filo/
 
 ### Structure Rules
 
-1. **One concern per file.** If a file grows past ~300 lines, split it. Existing larger files (board.svelte.ts, boardCache.svelte.ts, MindMapBoard.svelte) are tracked for further splitting; new code should not exceed the threshold.
+1. **One concern per file.** If a file grows past ~300 lines, split it. The files over the 1000-line gate limit (TaskListBoard, TaskItem, KanbanBoard, KanbanColumn, KanbanSideToolbar, vault.svelte.ts) are allowlisted at their current size and may only shrink; new code should not exceed the threshold.
 2. **`lib/` holds non-UI logic.** It may use DOM globals and import from `stores/`, but must NOT contain Svelte component definitions (`.svelte` files) or import from `components/`. Must be testable with Vitest + jsdom alone.
 3. **`components/` is UI only.** Components read from stores and call into `lib/`. Minimal logic in `<script>` blocks.
 4. **`stores/` bridges the two.** Stores import from `lib/` for heavy logic and expose reactive state to components.
@@ -504,9 +539,10 @@ External file change → fs.watch (main) → IPC → Store update → Reactive U
 ### Source of Truth Hierarchy
 
 1. **File system** is the ultimate source of truth.
-2. **YAML frontmatter** in `.md` files is the canonical source for metadata.
-3. **Board JSON** fields that duplicate frontmatter (e.g., `completed`, `date`) are derived caches. On conflict, frontmatter wins.
-4. **In-memory stores** reflect the file system state. They are caches, not sources.
+2. **The `.md` file is the only copy of a note's title, tags, fields and body.** The title is frontmatter `title:`, or the filename stem when there is no `title:`. Tags are frontmatter `tags:`. Task and card fields (`completed`, due date, priority, status, recurrence…) are frontmatter keys.
+3. **Board JSON holds visuals only.** A note-backed tile def stores its `filePath` (vault-relative) plus position, size, style, lock/fade, column or section and order, and optional `titleHtml` (formatting, shown only while its text matches the note's title). It never stores a note's title, tags or body, so there is nothing to keep in sync (gate `board-schema-no-note-copies`). Board-only tiles (link, iframe, timer) keep their own `title` and `tags`, because they have no file.
+4. **Media and other non-Markdown files** keep their tags in `.filo/tags.json:fileTags[path]`, their only copy.
+5. **In-memory stores** reflect the file system state. They are caches, not sources. One note open in several views is one `NoteModel` in `noteStore`; closed notes are read from the vault index.
 
 ### Persistence Boundary
 
@@ -523,7 +559,7 @@ The only state that lives in Electron `userData` (i.e. outside any vault) is the
 
 Anything else — including overlay positions (Kanban side toolbar etc.), open tabs, viewports, themes, defaults — goes in `.filo/`.
 
-**Tag persistence — note for attachments.** Text-tile tags live in two synced places: `.board.json` tile defs and the file's YAML frontmatter (`tags: [...]`). Attachment-tile tags (image / video / audio / generic file) have nowhere to write into the file itself, so they live in `.board.json` plus `.filo/tags.json:fileTags[mediaPath]`. The trade-off: tags on attachments are **vault-local** — copying or moving an attachment outside the vault without `.filo/` will lose its tags, whereas text-tile tags travel with the `.md` file. This is a deliberate consequence of the open-format principle (no sidecar files next to media). Don't add a sidecar without a separate design discussion.
+**Tag persistence — note for attachments.** A note's tags live only in its YAML frontmatter (`tags: [...]`). Attachment tags (image / video / audio / generic file) have nowhere to write into the file itself, so they live only in `.filo/tags.json:fileTags[mediaPath]`. The trade-off: tags on attachments are **vault-local** — copying or moving an attachment outside the vault without `.filo/` will lose its tags, whereas text-tile tags travel with the `.md` file. This is a deliberate consequence of the open-format principle (no sidecar files next to media). Don't add a sidecar without a separate design discussion.
 
 ### The Vault API Contract
 
@@ -532,26 +568,45 @@ across a few owners, all of which call IPC to the main process — the renderer
 NEVER touches `fs` directly (Electron context isolation; see "Persistence
 Boundary").
 
-- **Reads / generic writes** go through the `window.filo` preload bridge
-  (`src/main/preload.ts` → `src/main/ipc/*`). The renderer calls `window.filo.*`,
-  never `require('fs')`.
-- **Disk-shape mutations** (rename / delete / create-folder / copy-file) go
-  through `lib/vault/vaultOperations.ts`. `withDrainedWrites(op)` first drains the
-  writer pipelines, then runs the op via the thin IPC wrappers (`renameVaultPath`,
-  `deleteVaultPath`, `createVaultFolder`, `copyFileIntoVault`). The CI gate
-  gate `no-raw-disk-shape-ipc` (scripts/gates) forbids raw renderer invokes of those
-  four channels outside this module.
-- **On file rename:** `lib/vault/fileRefIntegrity.ts` scans and updates ALL
-  `.board.json` file references. The in-app rename/delete/move entry point is
-  `stores/vaultFolderOps.ts`.
-- **On file delete (from vault):** the same cascade removes every tile placement
-  referencing that file from each `.board.json`.
+- **Reads and board / config writes** go through the `window.filo` preload
+  bridge (`src/main/preload.ts` → `src/main/ipc/*`). The renderer calls
+  `window.filo.invoke(channel, ...args)` (or the envelope-checking `invokeOk`
+  in `lib/utils/invokeOk.ts`), never `require('fs')`.
+- **`.md` notes are written only by the note writer** (`lib/notes/noteWriter.ts`),
+  reached through `noteStore` (`stores/notes.svelte.ts`): `setBody`,
+  `patchFrontmatter`, `transform`, `writeRaw`, `createUnique`/`createExclusive`.
+  There is one queue per note path. Each flush reads the file fresh inside that
+  queue and applies the change to what it read, so nothing is written from a
+  stale copy. Gate `single-note-writer` forbids any other module from invoking
+  the `.md` write or create channels.
+- **Disk-shape mutations** (rename / trash / restore / create-folder /
+  copy-file) go through `lib/vault/vaultOperations.ts`. `withDrainedWrites(op)`
+  first drains every writer pipeline, then runs the op. `renameVaultPath`,
+  `trashVaultPath` and `restoreTrashed` also hold the affected notes' write
+  queues (`noteStore.hold`) so no write can land on the old path mid-move.
+  Gate `no-raw-disk-shape-ipc` forbids raw renderer invokes of these channels
+  outside this module.
+- **Deletes go to Filo's trash.** Every user-facing delete (sidebar file or
+  folder, board, "delete tile and file", "delete task and file") calls
+  `trashVaultPath`, which moves the item to
+  `.filo/trash/<trashId>/files/<originalPath>` next to a `manifest.json`. Undo
+  and Settings → Trash call `restoreTrashed`, a rename back (or beside the
+  original as `… (restored)` if the name is taken again). Emptying the trash
+  and the 30-day purge send items to the OS Recycle Bin; only if that refuses
+  does a confirm ask "Delete permanently?" (gate `deletes-go-to-trash`).
+- **On file rename:** `lib/vault/fileRefIntegrity.ts` rewrites every
+  `.board.json` path field that pointed at the old path. Titles and tags are
+  never touched, because boards don't hold them. The in-app rename/move entry
+  point is `stores/vaultFolderOps.ts`; the sidebar delete is
+  `stores/vaultDeleteOps.ts`.
+- **On file delete (from vault):** the cascade removes every tile placement
+  referencing that file from each `.board.json`; undo puts them back.
 - **Broken file references** are detected on board load and tracked via
   `stores/boardRefIntegrity.svelte.ts` — flagged, not silently ignored.
 
 ### Debouncing
 
-- Content edits (tile text, frontmatter): 300ms idle debounce before disk write.
+- Content edits (tile text, frontmatter): the editor serialises its Markdown into the note model after 150ms idle (at once on blur, unmount, save and quit), then the note writer waits a 300ms idle debounce before the disk write. Within that window the latest body wins and frontmatter deltas merge.
 - Layout changes (tile move/resize, connections): 300ms idle debounce.
 - Config changes (`.filo/` files): write on panel close or confirmation.
 - File watcher events: 300ms debounce to batch rapid changes.
@@ -569,9 +624,11 @@ When adding a new tile type or board type: register it, implement the interface,
 ### Undo/Redo
 
 - Uses command pattern. Every undoable action implements `{ execute(): void; undo(): void }`.
-- Each board has its own independent undo/redo stack.
-- Text editing undo is handled by TipTap/ProseMirror internally (separate from board undo).
-- Board-level Ctrl+Z fires when no TipTap editor is focused.
+- Each board has its own independent undo/redo stack. A Document tab has its own stack too, keyed by the tab's id (PaneView makes it the active history board); `boardCacheStore.markDirty` ignores such ids, since no board file carries them.
+- **Board undo covers layout plus inverse frontmatter deltas.** A command that changes a note (title, tags, task/card fields, Properties) records a forward and an inverse `FrontmatterDelta`. Undo sends the inverse through `noteStore.patchFrontmatter`, so it lands on a fresh read of the file and keeps unrelated edits made in between. If another program changed the same key since, undo keeps that value and offers "Apply anyway" on a toast (`applyDeltaChecked`), because a blind inverse would overwrite the newer value.
+- **No command keeps a note body.** Delete undo is a restore from `.filo/trash` (a rename back); Replace All keeps only the replaced snippets and before/after hashes, and applies only while the file's bytes match. Gate `no-note-body-in-commands`.
+- Text editing undo is handled by TipTap/ProseMirror internally (separate from board undo). Board-level Ctrl+Z fires when no TipTap editor is focused.
+- **Vault-wide tag delete and rename are undone from their toast** (`stores/tagUndo.svelte.ts`, 15 s), not from board history, because they touch many files and belong to no board. A merge (rename into an existing tag) has no undo. A board delete, and a sidebar delete that no open board's stack can hold, also offer Undo on their "moved to Filo's trash" toast.
 
 ### Override Cascade (Styles)
 
@@ -590,7 +647,7 @@ Themes overwrite Global Defaults. They are not a separate layer.
 3. **File-backed tiles.** Text, Image, Video, Audio, and File tiles point to real files in the vault. Link, Iframe, and Timer tiles store data inline in board JSON.
 4. **One `.md` file = one document.** A Text Tile and a Document Board are two views of the same `.md` file. Edits in either view reflect immediately in the other.
 5. **Same file on multiple boards.** Board JSON stores placement (position, size, style). Content comes from the shared vault file.
-6. **Frontmatter is canonical.** Board JSON caches metadata but frontmatter wins on conflict.
+6. **Frontmatter is canonical.** A note's title, tags and fields live only in its frontmatter; board JSON never copies them.
 7. **No external state management libraries.** Svelte 5 runes only.
 8. **Vanilla CSS only.** CSS custom properties for theming. No Tailwind, no preprocessors.
 9. **SVG icons only.** No emojis as icons.
@@ -603,12 +660,17 @@ Themes overwrite Global Defaults. They are not a separate layer.
 - **svelte-dnd-action** — This is for Kanban column/tile reordering and Task List reordering. Canvas tile dragging is custom (raw pointer-event handlers + manual transform).
 - **`$effect` vs `$derived`** — Use `$derived` for computed values. Use `$effect` only for side effects (IPC calls, DOM manipulation, subscriptions). Overuse of `$effect` is a code smell.
 - **Store file extension** — Must be `.svelte.ts` for runes to work. Plain `.ts` files cannot use `$state`.
-- **Electron context isolation** — `contextBridge` exposes a limited API object on `window`. The renderer calls `window.api.vault.read(path)`, NOT `require('fs')`.
-- **Board JSON `file` field** — Vault-relative paths, not absolute. e.g., `"Notes.md"` or `"subfolder/Notes.md"`.
-- **Frontmatter writes are source-preserving.** `assembleMarkdownFile` (`lib/editor/markdownSync.ts`) routes through `patchFrontmatterSourceCst` (`lib/vault/frontmatterCstModel.ts`), a CST engine on the `yaml` package. It rewrites only the keys whose value changed and emits every untouched key byte-for-byte from the on-disk source: comments, key order, quoting, and exotic scalars (`02134`, `0xFF00FF`, `1_000`) all survive. A full re-dump (`new Document(fm).toString()`) happens only for a never-read file, a block that isn't a block mapping, or a changed/deleted key carrying an anchor/alias. Remaining narrow losses: KNOWN_LIMITATIONS #1.
-  - **One parser.** Reads (`parseMarkdownFile`, the vault index via `lib/vault/frontmatterRead.ts`), the tag rewriter and the engine's value-compare all use the `yaml` package. js-yaml and gray-matter are banned on frontmatter (a second parser coerces unquoted dates / `0b1010` / `<<` merges differently). The one exception, a tag-name validator in `tagsStorage`, carries `// allow-jsyaml:`.
-  - **Line endings.** The engine works in LF, so the file's real EOL (sniffed at hydrate, `FileState.eol`) is re-applied to the FM block and fences. Without it, a CRLF note flips to LF on its first metadata edit.
-  - **Write source = delta on fresh disk.** Field edits (Kanban/Task) and Properties edits record a `FrontmatterDelta` (`lib/vault/frontmatterDelta.ts`). The gateway applies it to a fresh disk read at write time, so keys added externally are never dropped. The `documentStore` FM cache is display-only, never a write source. Body-only editor saves are the one path that still assembles from the open editor's reconciled cache.
+- **Electron context isolation** — `contextBridge` exposes a small API object as `window.filo` (`invoke`, `on`, `send`, `getPathForFile`, `systemLocale`). The renderer calls `window.filo.invoke('vault:read-file-text', vaultRoot, relPath)`, NOT `require('fs')`. The preload validates every payload against `ipcSchemas.ts` before it reaches main.
+- **Board JSON `filePath` field** — Vault-relative paths, not absolute. e.g., `"Notes.md"` or `"subfolder/Notes.md"`. The path is a note's only identity (no `contentId` / `docId`); path-keyed maps use the case-folded `VaultPath` and follow renames.
+- **Titles are not filenames.** A title edit writes frontmatter `title:` and never renames the file. The filename is derived from the title once, at creation (illegal characters become `-`, ` (n)` on collision). The sidebar shows filenames; its context menu offers "Rename file to match title".
+- **Only v8 board files load.** The loader accepts exactly `version: 8`. An older or newer board is listed as failed and never written.
+- **Frontmatter writes are source-preserving.** `assembleNoteText` (`lib/notes/noteFile.ts`) hands the fresh frontmatter source to `assembleMarkdownFile` (`lib/editor/markdownSync.ts`), which patches it with `patchFrontmatterSourceCst` (`lib/vault/frontmatterCstModel.ts`), a CST engine on the `yaml` package. It rewrites only the keys whose value changed and emits every untouched key byte-for-byte from the on-disk source: comments, key order, quoting, and exotic scalars (`02134`, `0xFF00FF`, `1_000`) all survive. A full re-dump (`new Document(fm).toString()`) happens only for a new file, a block that isn't a block mapping, or a changed/deleted key carrying an anchor/alias. Remaining narrow losses: KNOWN_LIMITATIONS #1.
+  - **One parser.** Reads (`readNoteText`, the vault index via `lib/vault/frontmatterRead.ts`), the tag rewriter and the engine's value-compare all use the `yaml` package. js-yaml and gray-matter are banned on frontmatter (a second parser coerces unquoted dates / `0b1010` / `<<` merges differently). The one exception, a tag-name validator in `tagsStorage`, carries `// allow-jsyaml:`.
+  - **Line endings and BOM.** The engine works in LF, so the file's real EOL and BOM, read fresh at each flush, are re-applied to the whole file. Without it, a CRLF note flips to LF on its first metadata edit.
+  - **Every write is a change applied to a fresh read.** Each note-writer flush reads the file inside the path's queue, then applies the queued change: a `FrontmatterDelta` (`lib/vault/frontmatterDelta.ts`) patches the fresh frontmatter, and a body replaces the fresh body. A batch without a body keeps the body on disk. So keys or text added by another program are never dropped, and no write is assembled from a cached whole file.
+  - **Body drift is a conflict, frontmatter drift is not.** If the batch carries a body and the body on disk no longer matches the one the edit was built on (`NoteModel.base`), the writer holds the body and the note store shows one prompt: **Reload** or **Keep mine** (which first backs the other version up to `.filo/recovery/`). A change on disk that only touched frontmatter is taken silently and the local body is kept (`lib/notes/noteDiskChange.ts`).
+  - **Own-write echoes are recognised by content hash.** The writer remembers the hashes of its recent writes, and a watcher event whose bytes match one (or the model's base) is ignored.
+  - **Before the write**, the writer re-stats the file and starts over if it changed since the read, and skips the write when the assembled bytes equal what is on disk.
 
 ---
 
@@ -616,7 +678,7 @@ Themes overwrite Global Defaults. They are not a separate layer.
 
 - **Unit tests (Vitest):** Cover all `lib/` modules. Stores should have unit tests for their logic. Target: every function in `lib/` has at least one test.
 - **Component tests (jsdom + Vitest):** `vitest.config.mts` has three projects: `unit` (`src/tests/unit/`), `component` (`src/tests/component/`, resolved with the `browser` export condition so Svelte 5 client `mount()` works) and `characterisation` (below). Component tests mount the REAL components with [src/tests/component/helpers/mountEditor.ts](src/tests/component/helpers/mountEditor.ts) (`recordingFilo`, `mountTextTile`, `mountDocumentEditor`, `pressUndo`, `settle`, `drainDebounce`). All three projects run in `test:unit:strict`. Heavy interaction coverage still lives in Playwright E2E.
-- **Characterisation suite:** `src/tests/characterisation/` mounts the whole `App.svelte` against a real temp vault, with the real main-process IPC handlers behind `window.filo` (only the Electron shell is faked). The specs pin what the user sees (views, frontmatter edits, renames, disk changes, delete + undo, bytes never written by looking) and call only the `harness/` adapter. When an internal API moves, update the harness, not the specs; the `characterisation-suite` gate enforces this. `npm run scratch-vault` uses the same harness to build the dogfooding vault.
+- **Characterisation suite:** `src/tests/characterisation/` mounts the whole `App.svelte` against a real temp vault, with the real main-process IPC handlers behind `window.filo` (only the Electron shell is faked). The specs pin what the user sees (views, one model across views, frontmatter edits, renames, disk changes, delete + undo through the trash, tag undo, the tag row and raw view, bytes never written by looking) and call only the `harness/` adapter. When an internal API moves, update the harness, not the specs; the `characterisation-suite` gate enforces this. `npm run scratch-vault` uses the same harness to build the dogfooding vault.
 - **E2E tests (Playwright):** Cover critical user flows — create vault, create board, add tile, edit content, delete tile, switch tabs, undo/redo.
 - **Test file location:** Mirror `src/` structure under `tests/unit/`. E2E tests go in `tests/e2e/`.
 

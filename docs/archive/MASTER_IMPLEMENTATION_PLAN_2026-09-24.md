@@ -6,7 +6,7 @@
 
 **Findings source:** [AUDIT19_REPORT_AND_REMEDIATION_PLAN_2026-09-23.md](AUDIT19_REPORT_AND_REMEDIATION_PLAN_2026-09-23.md).
 
-**Status:** Phase 1 done on 2026-09-24 (commits `512adfa`..`65683eb` on `chore/dependency-majors`; see "Phase 1 — status and deviations"). Phase 2 done on 2026-09-24 (commits `f6d01ae`..`02c14f7` on `master-plan/phase-2`, branched from `main` after the merge; see "Phase 2 — status and deviations"). Phase 3 done on 2026-09-24 (branch `master-plan/phase-3`; see "Phase 3 — status and deviations"). Phase 4 done on 2026-09-25 (branch `master-plan/phase-4`, on top of Phase 3; see "Phase 4 — status and deviations"). Phase 5 done on 2026-09-25 (branch `master-plan/phase-5`, branched from `main` at `7205e55`; see "Phase 5 — status and deviations"). Phase 6 done on 2026-09-25 (same branch, on top of Phase 5; see "Phase 6 — status and deviations"). Phase 7 not started. **Base:** `main`; nothing is pushed yet.
+**Status:** Phase 1 done on 2026-09-24 (commits `512adfa`..`65683eb` on `chore/dependency-majors`; see "Phase 1 — status and deviations"). Phase 2 done on 2026-09-24 (commits `f6d01ae`..`02c14f7` on `master-plan/phase-2`, branched from `main` after the merge; see "Phase 2 — status and deviations"). Phase 3 done on 2026-09-24 (branch `master-plan/phase-3`; see "Phase 3 — status and deviations"). Phase 4 done on 2026-09-25 (branch `master-plan/phase-4`, on top of Phase 3; see "Phase 4 — status and deviations"). Phase 5 done on 2026-09-25 (branch `master-plan/phase-5`, branched from `main` at `7205e55`; see "Phase 5 — status and deviations"). Phase 6 done on 2026-09-25 (same branch, on top of Phase 5; see "Phase 6 — status and deviations"). Phase 7 done on 2026-09-25 (same branch, on top of Phase 6; see "Phase 7 — status and deviations"). All seven phases are done, and this plan is archived. **Base:** `main`; nothing is pushed yet.
 
 **Goal:** make the `.md` file the only copy of a note's title, tags and content. The board files keep only what is visual. There is one in-memory model per file and one writer per file. The audit fixes that still matter land along the way.
 
@@ -991,6 +991,102 @@ Delete the tests that only exercise legacy formats. Record each removal in the c
      - add: `.filo/trash` syncs through OneDrive, the Recycle Bin probe results, the path depth and length limits, the Zod safe-integer limit, tag merge can't be undone, v8 boards only.
    - Archive this plan to `docs/archive/`.
 
+#### Phase 7 — status and deviations (2026-09-25)
+
+**Done** on branch `master-plan/phase-5`, on top of the Phase 5 and 6 commits, as the owner asked. Nothing is pushed. `ci:verify` is green:
+- lint with `--max-warnings 0`: 0 errors, 0 warnings;
+- svelte-check: 742 files, 0 errors;
+- `typecheck:main`;
+- 535 test files (5,330 tests, 1 skipped) under `test:unit:strict` (unit, component and characterisation);
+- build;
+- 55/55 gates.
+
+The test type-check baseline is unchanged at 119 errors in 45 files.
+
+**Exit check.**
+- **Tag row:** `components/tags/NoteTagRow.svelte`, at the top of every Document tab.
+- **Raw view:** `components/boards/NoteRawView.svelte`, the Document tab's Raw toggle.
+- **Tag undo:** `stores/tagUndo.svelte.ts`.
+- **BL-5 recurrence anchor:** `lib/tasks/recurrence.ts` and `lib/tasklist/frontmatterWriter.ts`.
+- **Dead code:** removed; `lint` fails on any warning.
+- **Docs:** CLAUDE.md, the design doc and KNOWN_LIMITATIONS were updated last.
+
+**How it works now**
+- **Tag row.** It reads the note's tags from its frontmatter (`noteTags`).
+  - An edit is one `UpdatePropertiesCommand` over the `tags` key. It goes through `noteStore.patchFrontmatter` and is one board-undo step. An empty list removes the key; it never writes `tags: []`.
+  - Typing: tags separated by commas; Enter, a comma or leaving the field adds them. Suggestions come from the tag registry. Backspace in an empty field removes the last tag, and each chip has a ×. Clicking a chip opens the tag's menu, as before.
+  - A typed tag that matches a known one, ignoring case, takes the vault's casing. A new name must pass the same check as the Tags browser (`isSafeNewTagName`).
+  - The parsing is pure, in `lib/tags/tagRowInput.ts`.
+- **Raw view.** It shows the file's full text in a textarea.
+  - `noteStore.readRaw(path)` writes anything queued for the note, then reads the disk.
+  - `noteStore.writeRaw(path, text, basedOnHash)` rewrites the file through the writer's `transform`, inside the note's queue. It writes only while the file still hashes to what the view started from. It returns `written`, `unchanged` or `conflict`.
+  - `rawTextForDisk` re-applies the file's BOM and line ending.
+  - The view saves on blur, on Ctrl+S, when switching back to Formatted, and on unmount.
+  - While nothing is typed in it, it follows changes made elsewhere, after 150 ms of idle.
+  - On a conflict nothing is written. A banner offers **Show the new version** or **Keep mine**; Keep mine first backs the other version up to `.filo/recovery/` (`backupExternalVersion`).
+  - The rich editor stays mounted, hidden, and keeps following the note.
+- **Tag undo.** `removeTagWithUndo` and `renameTagWithUndo` are called from `lib/tags/tagEditConfirm.ts`. `fileTagsStore.removeTagEverywhere` and `renameTagEverywhere` now return `{ committed, writtenPaths }`.
+  - A removal records the notes it rewrote, the tag's colour, the attachments in `tags.json`, board-only tiles with the tag's position in each list, and the Kanban / Task List filter chips. The toast offers Undo for 15 s.
+  - Undo re-adds the tag to exactly those notes. Each note is re-read inside its queue (`noteStore.transform` + `addTagToMarkdown`), so an edit made in between is kept. It then restores the rest and flushes in the same order as the forward operation.
+  - Undoing a rename is the reverse rename, plus the colour. It refuses when the old name exists again, since that would merge.
+  - A merge offers no Undo.
+  - The delete confirm no longer says "This can't be undone". It says the delete can be undone from the notification.
+- **BL-5.** `nextDueDate(…, anchor?)` steps whole multiples from the due month and clamps each step to the anchor day. `recurrenceAnchorToRecord` decides when the key is worth storing: monthly on the 29th–31st, or yearly on Feb 29.
+  - `completionPatchForRow` adds the key when needed and removes it once it no longer applies.
+  - `recurrenceChangePatch` unsets the key whenever the recurrence changes or is cleared.
+  - The reader lists (`FIELD_READERS`, `TaskRow`, the view model) carry `recurrenceAnchor`.
+
+**Deviations from the plan**
+- **The tag row is chips plus an inline comma-separated input,** not one plain text field. The chips keep tag colours and the tag menu (the files and tiles with that tag), which a plain field would lose. Typing still takes comma-separated tags.
+- **The tag row is only in the Document tab.** There is no "expanded" `TextTile` mode. The expanded view of a text tile *is* its Document tab ("Expand to Document"). A canvas tile's header already shows its tags and opens the tag editor.
+- **The tag row writes through `UpdatePropertiesCommand`** rather than a new command. That gives one undo step, the inverse-delta undo, and the same-key conflict check, with no new Command subclass to cover.
+- **The raw view is writable for lossy notes.** The plan said read-only for lossy and non-UTF-8 notes. A lossy note is one the rich editor can't round-trip. Raw text never goes through the editor, so a raw save is lossless, and it is the one way to edit such a note without "Take ownership". Non-UTF-8 notes stay read-only (the writer refuses them anyway).
+- **The raw view's drift check compares the whole file,** not only the body. The raw text includes the frontmatter, so any change made elsewhere since the view read the file is a conflict. The view follows the disk while nothing is typed in it, so this only fires when both sides changed.
+- **The tag row and the raw view are hidden from each other.** While the raw view is open the tag row is hidden, because the raw text already contains `tags:` and editing both would conflict.
+- **No `{ kind: 'raw' }` mutation type.** The writer never had a `NoteMutation` union (Phase 5 built named methods). The raw save is `noteStore.writeRaw` over the existing `transform`, which already reads fresh inside the path's queue.
+- **Tag-delete undo re-adds tags through the tag rewriter, not a frontmatter delta.** `FrontmatterDelta` can only set a whole `tags` list. The rewriter adds one entry to the list as it stands on disk, which is what "keep edits made in between" needs. The re-added tag goes at the end of the list, and a flow list (`[a, b]`) can come back in block style. KNOWN_LIMITATIONS records this.
+- **A bug found and fixed on the way: board undo in a Document tab went to a hidden board.** A Document tab doesn't load a board into its pane's scope, so history's active board stayed as whatever board the pane showed before. Ctrl+Z in a Document tab (with no editor focused) could undo an action on that board, out of sight.
+  - `PaneView` now sets history to the Document tab's own id.
+  - `boardCacheStore.markDirty` ignores ids that have no board file. Before, an undoable edit in such a tab armed a board write that reported a lost save and left the crash sentinel dirty.
+  - The characterisation spec for tag-row undo goes red without the fix.
+- **BL-5 goes slightly beyond the spec.** A stored anchor that no longer applies (the date was moved to an ordinary day, or the rule is no longer monthly or yearly) is removed on the next completion. Otherwise it could come back into effect later: a move to 06-30 would jump the next date to 07-31. The recurrence-change patch always unsets the key, which is harmless on a fresh read. `TASK_METADATA_FIELDS` no longer exists, and Kanban has no recurrence roll-forward, so neither needed changes.
+- **DEAD-1 went further than listed.** `__baselineCountForTests` had not gone with its module, so it was deleted. Three more exports had no references anywhere and were deleted too: `utf8ByteLength` (`noteFile.ts`), `trashedItemPath` (`trashOps.ts`) and `SENTINEL_KINDS` (`sentinelPaths.ts`). The unused `tabId` props of the three board components are kept as `_tabId`, so Svelte doesn't warn about an unknown prop. The warning count before the ratchet was 14; it is now 0.
+- **Most of the item-6 clean-up had already happened.** Phases 3–6 had already cut the files down. `fileRefIntegrity.ts` was 449 lines, not the 804 the plan expected, and is now 443 (the dead scan of mind-map `inlineTiles`, which can't carry a path, was removed). `renameCascadeSentinel.ts` went from 305 to 295: its last tag field, `tagsAffected`, was dropped, and repair now always re-applies the `tags.json` path keys, which is idempotent. `vaultFolderOps.ts` went from 513 to 509 (the sentinel flag was removed and the comments were corrected). The only file-size ceiling that moved is `TaskListBoard.svelte`, from 2070 to 2069. Nothing dropped under 1000 lines.
+- **Gates: still 55; no new gate ids.**
+  - `reconciler-vault-guard` pins `removeTagWithUndo`, `undoRemoval`, `renameTagWithUndo` and `undoRename`. Removing the guards from `undoRemoval` makes it fail.
+  - `characterisation-suite` lists `tagUndo.test.ts` (4) and `tagRowAndRawView.test.ts` (7).
+  - The `lint` ratchet was shown to bite with a temporary unused import.
+  - The raw helpers carry `// allow-bom-sniff:` markers, because they handle raw file bytes.
+- **The Audit-19 report was archived with this plan.** Every finding in it is now done or explicitly dropped (Part D), and both archived plans already linked to it as a file next to them.
+- **The docs pass found and fixed claims that no longer matched the code:** gray-matter for frontmatter, `window.api.vault.read`, a `reconcile-elsewhere` marker that no longer exists, the dirty flag in `workspace.json`, v7 boards with a migration chain, and board-cached `completed`. KNOWN_LIMITATIONS #8, #9 and #16 are closed, #5 is narrowed, and #24–#30 are new.
+- **Main-process hash matching (Phase 5 step 7) is still not done.** So KNOWN_LIMITATIONS #5 is narrowed, not closed.
+
+**Tests**
+- New unit tests:
+  - `recurrenceAnchor.test.ts` (32): the Audit-19 table, leap years, overdue catch-up and re-anchoring. Chained stepping turns 5 of them red.
+  - `tagUndo.test.ts` (5): exactly the written notes, an edit in between kept, a note deleted since, a vault swap before Undo, and a rename undo that would merge.
+  - `tagRowInput.test.ts` (9).
+  - `noteRawView.test.ts` (7).
+- New characterisation specs:
+  - `tagUndo.test.ts` (4). It goes red when the Tags browser calls `removeTagEverywhere` directly.
+  - `tagRowAndRawView.test.ts` (7). It needed new harness actions only; no existing spec changed.
+- Changed:
+  - `tagEditConfirm.test.ts`: the confirm wording.
+  - The rename-sentinel tests: the `tagsAffected` field is gone.
+  - The tests that mock the tag sweeps now return `{ committed, writtenPaths }`.
+  - The `UpdatePlacementStyleCommand` describe block was deleted.
+
+**Still open (needs the owner)**
+- Merge `master-plan/phase-5` (Phases 5, 6 and 7) into `main` and push; the Windows CI job runs on that push.
+- **The `trashItem` probe** on the packaged build: OneDrive with an online-only placeholder, a mapped share, and a FAT32 USB stick. KNOWN_LIMITATIONS says the results aren't recorded yet.
+- **A.6 dogfood** in the scratch vault:
+  - type comma-separated tags in a Document tab's tag row, remove one, then Ctrl+Z;
+  - edit frontmatter and body in the raw view, then switch back;
+  - edit the same note in another program while the raw view has unsaved text, then choose Keep mine and look in `.filo/recovery/`;
+  - delete a tag in the Tags browser and click Undo, then rename a tag and click Undo;
+  - complete a monthly task due on the 31st three times.
+- The Phase 1 manual checks on the packaged build are still open.
+
 ---
 
 ## Part F — Impact, gates, risks, timeline
@@ -1028,7 +1124,7 @@ Delete the tests that only exercise legacy formats. Record each removal in the c
 | `codebase` | `board-schema-no-note-copies`, `no-content-id`, `no-legacy-board-migration`, `test-typecheck` (ratchet) | — |
 | (CI chain) | `typecheck:main`, the widened strict runner, lint `--max-warnings` | — |
 
-Every addition has to be proven to bite (Part A.1). Recount the gates in Phase 7.
+Every addition has to be proven to bite (Part A.1). Recount the gates in Phase 7 (done: 55).
 
 ### F.3 Risks
 

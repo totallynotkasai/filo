@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { applyFrontmatterPatchRebased } from '@renderer/commands/frontmatterRebase';
+import { applyDeltaChecked } from '@renderer/commands/frontmatterInverse';
+import { patchToFrontmatterDelta } from '@renderer/lib/vault/frontmatterDelta';
 import { noteStore } from '@renderer/stores/notes.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { setActiveVaultPath } from '@renderer/lib/vault/activeVaultPath';
@@ -10,7 +11,7 @@ import { restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
  * A recurrence roll-forward writes `{ completed: false, dueDate: next }` as a
- * semantically COUPLED pair. On undo/redo, `applyFrontmatterPatchRebased`'s
+ * semantically COUPLED pair. On undo/redo, `applyDeltaChecked`'s
  * default per-key rebase could apply one key and keep the other external,
  * producing a `completed: true` + advanced-`dueDate` state the roll-forward
  * invariant must never create. The `atomic` flag (set by
@@ -42,11 +43,11 @@ describe('recurrence roll-forward rebase is atomic', () => {
   const EXPECTED = { completed: false, dueDate: '2026-05-15' }; // inverse = pre-roll state
 
   async function redo(atomic?: boolean): Promise<void> {
-    await applyFrontmatterPatchRebased({
+    await applyDeltaChecked({
       relPath: 'T.md',
       targetBoardId: 'b',
-      applying: PATCH,
-      expectedCurrent: EXPECTED,
+      delta: patchToFrontmatterDelta(PATCH),
+      expected: patchToFrontmatterDelta(EXPECTED),
       label: 'T.md',
       atomic,
     });

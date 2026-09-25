@@ -3,8 +3,8 @@
  *
  * The `Command` *interface* is the public contract used by callers
  * (`historyStore.execute / undo / redo / pushWithoutExecute`). It lists
- * the four members every command exposes: `description`, `execute`,
- * `undo`, and the optional `targetBoardId` / `hasFileSnapshots`.
+ * the members every command exposes: `description`, `execute`, `undo` and
+ * `targetBoardId`.
  *
  * The `Command` *abstract class* implements that interface and adds the
  * `this.snapshot(...)` deep-clone helper. Concrete commands extend the
@@ -39,19 +39,6 @@ export interface Command {
    * which the dispatcher treats as "no guard required".
    */
   readonly targetBoardId: string;
-  /**
-   * Opt-in flag declaring that this command carries
-   * pre-delete file body snapshots whose loss on history truncation
-   * means file content becomes irrecoverable. The history truncation
-   * notification escalates from the standard "earlier actions are no
-   * longer reversible" toast to the more pointed "deleted files older
-   * than this point cannot be restored" toast when a dropped command
-   * returns `true` here.
-   *
-   * Optional so commands without file-snapshot semantics don't have
-   * to implement it.
-   */
-  hasFileSnapshots?(): boolean;
 }
 
 /**
@@ -67,8 +54,6 @@ export interface Command {
  *   - declare `description` (typed string) as an instance field set in the
  *     constructor (TypeScript structural typing satisfies the interface),
  *   - implement `execute()` and `undo()`,
- *   - optionally override `hasFileSnapshots()` to return `true` when they
- *     carry file body snapshots,
  *   - declare `readonly targetBoardId: string` and assign it in the
  *     constructor. The typical assignment is
  *     `this.targetBoardId = boardId ?? boardStore.current?.id ?? '';` —
@@ -94,16 +79,6 @@ export function cloneForSnapshot<T>(value: T): T {
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export abstract class Command {
-  // Note: `hasFileSnapshots()` lives on the merged interface as an
-  // optional method (so callers reach it via `command.hasFileSnapshots?.()`
-  // and absence implies false). Concrete subclasses that DO carry file
-  // bodies (DeleteTilesCommand, CascadeDeleteCommand, ReplaceAllCommand)
-  // override it on the subclass directly. We deliberately don't declare
-  // a default-returning-false implementation on the class because
-  // TypeScript's "Overload signatures must all be optional or required"
-  // rule forbids a class method overlapping with the interface's optional
-  // declaration.
-
   /**
    * Deep-clone helper. Every snapshot field on a command MUST go through
    * this method. The CI gate `scripts/gates:command-snapshot-discipline`

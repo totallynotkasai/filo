@@ -16,11 +16,10 @@
   import { tiptapToolbar } from '../../lib/editor/toolbarConfig';
   import { sanitizeInlineHtml } from '../../lib/utils/sanitizeHtml';
   import { getAnchorBelow } from '../../lib/utils/popupAnchor';
-  import { buildDeleteSnapshots, TILE_DELETE_SNAPSHOT_MAX_BYTES } from '../../lib/canvas/deleteTileSnapshots';
   import { resolveTitleCommitValues, visibleTitleHtml, type ResolvedTitleCommit } from '../../lib/editor/titleCommit';
   import { historyStore } from '../../stores/history.svelte';
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
-  import { UpdateTitleCommand, ToggleFramelessCommand } from '../../commands/index';
+  import { UpdateTitleCommand, ToggleFramelessCommand, textTileNotePaths } from '../../commands/index';
   import {
     PendingWritesFailedError,
     withDrainedWrites,
@@ -355,7 +354,7 @@
       extraOption: hasVaultFile
         ? {
             label: 'Delete associated file from vault as well?',
-            hint: 'The .md file is removed from disk and any other tile referencing it becomes a broken link. This can\'t be undone from inside Filo.',
+            hint: 'The .md file moves to Filo\'s trash, and any other tile showing it becomes a broken link. Undo, or restore it from Settings → Trash.',
             initial: false,
           }
         : undefined,
@@ -400,32 +399,14 @@
     const tileId = tile.id;
     const tileRef = tile;
 
-    // Drain pending writers BEFORE `buildDeleteSnapshots` so
-    // the captured .md body reflects post-flush disk state. Without the
-    // drain, a debounced editor write armed seconds ago could land
-    // *after* the snapshot read but *before* the IPC delete, producing
-    // an undo snapshot that's a version behind the just-deleted file.
+    // Drain pending writers first, so no debounced write can recreate the note
+    // after it moved to the trash.
     try {
       await withDrainedWrites(async () => {
-        let fileSnapshots: { rel: string; content: string }[] | undefined;
-        let vaultRoot: string | undefined;
-        if (deleteWithFile && hasVaultFile) {
-          vaultRoot = normalizePath(vaultStore.path);
-          // Same flow as AppShell's multi-tile delete: pre-read the backing .md
-          // so DeleteTilesCommand.undo() can rewrite it. The command itself
-          // owns the disk-delete; we just snapshot first.
-          const result = await buildDeleteSnapshots([tileRef], vaultRoot);
-          fileSnapshots = result.fileSnapshots;
-          if (result.oversizedPaths.length > 0) {
-            uiStore.toast(
-              `Backing file over ${TILE_DELETE_SNAPSHOT_MAX_BYTES / (1024 * 1024)}MB was deleted without an undo snapshot. Ctrl+Z will restore the tile but not the file body.`,
-              'warning',
-              7000,
-            );
-          }
-        }
+        const filePaths = deleteWithFile && hasVaultFile ? textTileNotePaths([tileRef]) : [];
+        const vaultRoot = filePaths.length > 0 ? normalizePath(vaultStore.path) : undefined;
         selectionStore.deselect(tileId);
-        boardStore.removeTilesWithHistory([tileId], { fileSnapshots, vaultRoot });
+        boardStore.removeTilesWithHistory([tileId], { filePaths, vaultRoot });
       });
     } catch (err) {
       if (err instanceof PendingWritesFailedError) {

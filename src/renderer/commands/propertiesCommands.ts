@@ -18,13 +18,9 @@
 import { Command } from './Command';
 import { boardStore } from '../stores/board.svelte';
 import { boardCacheStore } from '../stores/boardCache.svelte';
-import { noteStore } from '../stores/notes.svelte';
 import type { Tile } from '../schema/index';
-import { reportError } from '../lib/utils/errorBus';
-import { uiStore } from '../stores/ui.svelte';
-import { fmValueEqual } from './frontmatterRebase';
+import { applyDeltaChecked, fmValueEqual } from './frontmatterInverse';
 import { type FrontmatterDelta } from '../lib/vault/frontmatterDelta';
-import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 
 export type PropertiesSnapshot =
   | { kind: 'frontmatter'; relPath: string; fm: Record<string, unknown> }
@@ -99,14 +95,14 @@ function deltaForKeys(fm: Record<string, unknown>, keys: string[]): FrontmatterD
  *
  * `target` is the snapshot this leg wants; `other` is the opposite leg. The
  * metadata kind (non-text tiles, board file) is applied wholesale. The
- * frontmatter kind (a note's YAML) is REBASED:
+ * frontmatter kind (a note's YAML) sends a delta:
  *
  *   - The keys this command OWNS = those that differ between the two legs.
  *     Only those go to the note writer, so every other key (including one
  *     another program added since) stays.
- *   - Conflicts: if an external edit moved an owned field away from what the
- *     opposite leg left it at, KEEP the external value and offer "Apply
- *     anyway" (no silent clobber).
+ *   - A key an external edit moved away from what the opposite leg left keeps
+ *     the external value, with "Apply anyway" (no silent clobber).
+ *   - A note that can't be read rejects, so history drops the command.
  */
 async function applySnapshot(
   target: PropertiesSnapshot,
@@ -117,48 +113,19 @@ async function applySnapshot(
     boardStore.updateTile(target.tileId, { metadata: { ...target.metadata } } as Partial<Tile>);
     return;
   }
-  const identity = captureVaultIdentity();
-  const { relPath } = target;
   const targetFm = target.fm;
   const otherFm = other.kind === 'frontmatter' ? other.fm : {};
-
   const ownedKeys: string[] = [];
   for (const k of new Set([...Object.keys(targetFm), ...Object.keys(otherFm)])) {
     if (!fmValueEqual(otherFm[k], targetFm[k])) ownedKeys.push(k);
   }
-
-  const base = await noteStore.currentFrontmatter(relPath);
-  if (!isStillSameVault(identity)) return;
-  if (base === null) {
-    // The note is gone or unreadable: nothing to rebase on, and the change
-    // can't land. Reject so history drops the command.
-    const err = new Error(`Could not read ${relPath} to apply properties.`);
-    reportError('updateProperties', err, `Failed to apply properties to ${relPath}`);
-    throw err;
-  }
-
-  const conflicts = ownedKeys.filter((k) => !fmValueEqual(base[k], otherFm[k]));
-  const safe = ownedKeys.filter((k) => !conflicts.includes(k));
-  if (safe.length > 0) noteStore.patchFrontmatter(relPath, deltaForKeys(targetFm, safe));
-
-  if (conflicts.length > 0) {
-    uiStore.pushToast({
-      text: `External edit changed ${conflicts.join(', ')} in ${relPath}. Kept the external value — that field's undo/redo was skipped.`,
-      type: 'warning',
-      duration: 0,
-      actions: [
-        {
-          label: 'Apply anyway',
-          handler: () => {
-            // The toast can be clicked after a vault swap; bail so the outgoing
-            // vault's patch never lands on the new vault's same-named file.
-            if (!isStillSameVault(identity)) return;
-            noteStore.patchFrontmatter(relPath, deltaForKeys(targetFm, conflicts));
-            // allow-non-target-markdirty: module helper, callers pass this.targetBoardId per the CI gate
-            boardCacheStore.markDirty(targetBoardId);
-          },
-        },
-      ],
-    });
-  }
+  if (ownedKeys.length === 0) return;
+  await applyDeltaChecked({
+    relPath: target.relPath,
+    targetBoardId,
+    delta: deltaForKeys(targetFm, ownedKeys),
+    expected: deltaForKeys(otherFm, ownedKeys),
+    label: target.relPath,
+    whenUnreadable: 'throw',
+  });
 }

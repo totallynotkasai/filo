@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fmValueEqual } from '@renderer/commands/frontmatterRebase';
+import { fmValueEqual } from '@renderer/commands/frontmatterInverse';
 
 /**
  * L8 (Audit-7) — `fmValueEqual` decides whether an external edit changed a

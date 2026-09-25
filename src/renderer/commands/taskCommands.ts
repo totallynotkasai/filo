@@ -1,6 +1,5 @@
 import { Command, cloneForSnapshot } from './Command';
 import { boardCacheStore } from '../stores/boardCache.svelte';
-import { uiStore } from '../stores/ui.svelte';
 import { defTitle } from '../stores/noteMeta';
 import type {
   TaskListBoard,
@@ -12,11 +11,7 @@ import type {
   PartialTaskStyle,
 } from '../schema/placement';
 import { NoteFieldCommand } from './noteFieldCommand';
-import { noteStore } from '../stores/notes.svelte';
-import { reportError } from '../lib/utils/errorBus';
-import { deleteVaultPath } from '../lib/vault/vaultOperations';
-import { IpcEnvelopeError } from '@shared/ipcEnvelope';
-import type { DeletedFileSnapshot } from './tileCommands';
+import { restoreFiles, trashFiles, type TrashedItem } from './trashedFiles';
 
 // ── Task List Commands ──
 //
@@ -176,16 +171,14 @@ export class AddTaskCommand extends Command {
 }
 
 /**
- * Opt-in backing-file delete. When the user picks "Delete task &
- * file", the caller pre-reads the `.md` body (so undo can restore it) and
- * passes it here. Absent these options the command is placement-only and the
- * file is left on disk — the default, undo-safe behaviour.
+ * Opt-in backing-file delete. When the user picks "Delete task & file", the
+ * note moves into Filo's trash with the task and undo moves it back. Absent
+ * these options the command is placement-only and the file stays on disk.
  */
 export interface DeleteTaskFileOptions {
-  /** Pre-read backing-.md snapshot; present only when the user opted in and
-   *  the body was small enough to snapshot. */
-  fileSnapshot?: DeletedFileSnapshot;
-  /** Vault root; required when `fileSnapshot` is set. */
+  /** Vault-relative note to move into Filo's trash with the task. */
+  filePath?: string;
+  /** Vault root; required when `filePath` is set. */
   vaultRoot?: string;
 }
 
@@ -206,15 +199,16 @@ export class DeleteTaskCommand extends Command {
   private snapshotDef: TileDefinition | null;
   private snapshotPlacement: TaskPlacement | null;
   private sectionsBefore: TaskListSection[] | null;
-  // When set, execute() also deletes the backing .md and undo()
-  // writes the snapshotted body back BEFORE restoring the placement, mirroring
-  // DeleteTilesCommand. Null on the default placement-only path.
-  private fileSnapshot: DeletedFileSnapshot | null;
+  // When set, execute() also moves the note into Filo's trash and undo()
+  // moves it back BEFORE restoring the placement, as DeleteTilesCommand does.
+  // Null on the default placement-only path.
+  private filePath: string | null;
+  private trashed: TrashedItem[] = [];
   private vaultRoot: string | undefined;
-  /** Last execute()'s file-delete IPC (Promise.allSettled-wrapped; resolves
-   *  immediately on the placement-only path). Awaited by tests / redo. */
+  /** Last execute()'s move into the trash (resolves at once on the
+   *  placement-only path). Awaited by tests / redo. */
   lastExecuteCompletion: Promise<unknown> = Promise.resolve();
-  /** Last undo()'s file-restore IPC. Awaited by tests / a sequencing redo. */
+  /** Last undo()'s restore from the trash. Awaited by tests / a sequencing redo. */
   lastUndoCompletion: Promise<unknown> = Promise.resolve();
 
   constructor(boardId: string, tileId: string, fileOpts: DeleteTaskFileOptions = {}) {
@@ -222,9 +216,8 @@ export class DeleteTaskCommand extends Command {
     this.targetBoardId = boardId;
     this.boardId = boardId;
     this.tileId = tileId;
-    this.description = fileOpts.fileSnapshot ? `Delete task and file` : `Delete task`;
-    // allow-shallow: DeletedFileSnapshot is flat { rel, content } primitives.
-    this.fileSnapshot = fileOpts.fileSnapshot ? { ...fileOpts.fileSnapshot } : null;
+    this.description = fileOpts.filePath ? `Delete task and file` : `Delete task`;
+    this.filePath = fileOpts.filePath ?? null;
     this.vaultRoot = fileOpts.vaultRoot;
     const cached = boardCacheStore.cache[boardId];
     this.snapshotDef = null;
@@ -249,60 +242,50 @@ export class DeleteTaskCommand extends Command {
     // — and the placement-only path used by cascade / bulk delete — are
     // unaffected.
     boardCacheStore.removeTaskPlacement(this.boardId, this.tileId);
-    if (this.vaultRoot && this.fileSnapshot) {
+    if (this.vaultRoot && this.filePath) {
       const vaultRoot = this.vaultRoot;
-      const rel = this.fileSnapshot.rel;
-      // Sequence behind any prior execute/undo IPC so a rapid Ctrl+Y / Ctrl+Z
-      // can't let this delete race the prior undo's restore write (the same
-      // guard DeleteTilesCommand uses). Both priors are allSettled wrappers,
-      // so awaiting them never rejects.
+      const rel = this.filePath;
+      // Sequence behind any prior execute/undo so a rapid Ctrl+Y / Ctrl+Z
+      // can't let this move race the prior undo's restore (the same guard
+      // DeleteTilesCommand uses). Both priors are allSettled wrappers, so
+      // awaiting them never rejects.
       const prior = Promise.allSettled([this.lastExecuteCompletion, this.lastUndoCompletion]);
-      this.lastExecuteCompletion = prior.then(() => this.deleteBackingFile(vaultRoot, rel));
+      this.lastExecuteCompletion = prior.then(async () => {
+        this.trashed = await trashFiles(vaultRoot, [rel], 'deleteTask.execute');
+      });
       await this.lastExecuteCompletion;
     } else {
       this.lastExecuteCompletion = Promise.resolve();
     }
   }
 
-  private async deleteBackingFile(vaultRoot: string, rel: string): Promise<void> {
-    // vault:delete takes (vaultRoot, absoluteItemPath).
-    const absPath = `${vaultRoot}/${rel}`;
-    try {
-      const result = await deleteVaultPath(vaultRoot, absPath);
-      // ENOENT is the desired end state (file already gone) — suppress.
-      if (!result.success && result.code !== 'ENOENT') {
-        reportError(
-          'deleteTask.execute',
-          new Error(result.error ?? 'vault:delete returned !success'),
-          `Failed to delete ${rel}`,
-        );
-      }
-    } catch (err) {
-      if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') return;
-      reportError('deleteTask.execute', err, `Failed to delete ${rel}`);
-    }
-  }
-
   async undo() {
-    // File-first: write the snapshotted body back BEFORE restoring the
-    // placement so `persistAddTaskPlacement`'s seed-check sees the file we
-    // just wrote and skips the empty-seed path (mirrors DeleteTilesCommand).
-    if (this.vaultRoot && this.fileSnapshot) {
-      const { rel, content } = this.fileSnapshot;
-      // Through the note writer: a view of the note that is still open
-      // follows the restored bytes.
-      this.lastUndoCompletion = noteStore.restore(rel, content).catch((err) => {
-        uiStore.toast(
-          `Task restored but file content could not be recovered: ${rel}`,
-          'error',
-          6000,
-        );
-        reportError('deleteTask.undo', err, `Failed to restore ${rel}`);
-      });
-      await this.lastUndoCompletion;
-    } else {
+    if (!this.vaultRoot || !this.filePath) {
+      // Placement-only: nothing on disk to wait for.
       this.lastUndoCompletion = Promise.resolve();
+      this.restorePlacement();
+      return;
     }
+    // File first: the note comes back before the placement so
+    // `persistAddTaskPlacement`'s seed-check finds it and never seeds an
+    // empty note (as DeleteTilesCommand does).
+    const prior = Promise.allSettled([this.lastExecuteCompletion, this.lastUndoCompletion]);
+    this.lastUndoCompletion = prior.then(async () => {
+      if (this.vaultRoot && this.trashed.length > 0) {
+        const restored = await restoreFiles(this.vaultRoot, this.trashed, 'deleteTask.undo');
+        this.trashed = [];
+        const moved = restored.find((r) => r.restoredPath !== r.rel);
+        if (moved) {
+          // The task follows the restored copy, and a redo trashes it, not a
+          // newer file that took the old name meanwhile.
+          this.filePath = moved.restoredPath;
+          if (this.snapshotDef && this.snapshotDef.type === 'text') {
+            this.snapshotDef = { ...this.snapshotDef, filePath: moved.restoredPath };
+          }
+        }
+      }
+    });
+    await this.lastUndoCompletion;
     this.restorePlacement();
   }
 

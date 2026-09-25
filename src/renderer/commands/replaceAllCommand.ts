@@ -4,8 +4,8 @@
  * Mirrors the two-phase atomic pattern from
  * `lib/vault/tagRewriteSweep.ts`:
  *
- *   Phase 1 — Read every candidate `.md` file, compute its rewritten
- *   content, capture the original content snapshot for undo. If ANY read
+ *   Phase 1 — Read every candidate `.md` file and work out its replacements
+ *   (where each match starts, its text and the replacement). If ANY read
  *   fails, abort before writing anything.
  *
  *   Phase 2 — Write each file in turn. Per-write failures are reported
@@ -17,10 +17,10 @@
  * are surfaced via the find/find-all UI but skipped by Replace — a title
  * edit is its own undoable command (`UpdateTitleCommand`).
  *
- * Undo: restores every file's pre-replace snapshot. Snapshots live on the
- * command instance, so dropping the command off the history stack drops the
- * recovery breadcrumb — `hasFileSnapshots()` lets the history truncation
- * toast escalate appropriately.
+ * Undo: puts each match's original text back. The command keeps only the
+ * replacements and a hash of the file before and after, never a copy of the
+ * note: a file is rewritten only while its bytes are exactly what the command
+ * left (or found), so an edit made in between is never overwritten.
  */
 
 import { Command } from './Command';
@@ -34,16 +34,68 @@ import { reportError } from '../lib/utils/errorBus';
 import { noteStore } from '../stores/notes.svelte';
 import { isMissingFileError } from '../lib/notes/noteWriter';
 import { splitFrontmatterSource } from '../lib/vault/frontmatterRead';
+import { noteTextHash } from '../lib/notes/noteFile';
 
-interface FilePlan {
+/** One replacement: at `start` (in the file before the replace), `before` became `after`. */
+export interface Splice {
+  start: number;
+  before: string;
+  after: string;
+}
+
+export interface FilePlan {
   /** Vault-relative path of the .md file. */
   path: string;
-  /** Original on-disk content snapshot (for undo). */
-  originalContent: string;
-  /** New content with every body match replaced. */
-  nextContent: string;
-  /** Number of matches that were replaced in this file. */
-  replacementCount: number;
+  /** The file's bytes before and after the replace, as length + hash. */
+  beforeHash: string;
+  beforeLength: number;
+  afterHash: string;
+  afterLength: number;
+  /** The replacements, in ascending `start` order. */
+  splices: Splice[];
+}
+
+/**
+ * The file's text with `plan`'s replacements applied (`forward`) or taken
+ * back, when `text` is exactly the text the plan starts from in that
+ * direction; otherwise null.
+ */
+export function applyPlan(text: string, plan: FilePlan, forward: boolean): string | null {
+  const expectLength = forward ? plan.beforeLength : plan.afterLength;
+  const expectHash = forward ? plan.beforeHash : plan.afterHash;
+  if (text.length !== expectLength || noteTextHash(text) !== expectHash) return null;
+  // Offsets are into the pre-replace text; going backward, shift each by the
+  // growth of the replacements before it.
+  let shift = 0;
+  const positioned = plan.splices.map((s) => {
+    const at = forward ? s.start : s.start + shift;
+    shift += s.after.length - s.before.length;
+    return { at, from: forward ? s.before : s.after, to: forward ? s.after : s.before };
+  });
+  let out = text;
+  for (let i = positioned.length - 1; i >= 0; i--) {
+    const p = positioned[i]!;
+    if (out.slice(p.at, p.at + p.from.length) !== p.from) return null;
+    out = out.slice(0, p.at) + p.to + out.slice(p.at + p.from.length);
+  }
+  return out;
+}
+
+/** A plan for turning `content` into the result of `splices` (ascending, non-overlapping). */
+export function planFor(path: string, content: string, splices: Splice[]): FilePlan {
+  let next = content;
+  for (let i = splices.length - 1; i >= 0; i--) {
+    const s = splices[i]!;
+    next = next.slice(0, s.start) + s.after + next.slice(s.start + s.before.length);
+  }
+  return {
+    path,
+    beforeHash: noteTextHash(content),
+    beforeLength: content.length,
+    afterHash: noteTextHash(next),
+    afterLength: next.length,
+    splices: splices.map((s) => ({ ...s })),
+  };
 }
 
 /**
@@ -101,25 +153,21 @@ async function buildPlans(
     const { body: indexedBody } = splitFrontmatterSource(content);
     const fmEnd = content.length - indexedBody.length;
 
-    // Sort matches by descending start offset so each splice doesn't
-    // shift the offsets of later matches.
-    const sorted = [...matchesInFile].sort((a, b) => b.matchStart - a.matchStart);
-    let next = content;
-    let replacementCount = 0;
-    for (const m of sorted) {
+    const splices: Splice[] = [];
+    let lastEnd = -1;
+    for (const m of [...matchesInFile].sort((a, b) => a.matchStart - b.matchStart)) {
       const rawStart = fmEnd + m.matchStart;
       const rawEnd = fmEnd + m.matchEnd;
-      // Guard: confirm the slice we're about to replace still equals the
-      // match text (the on-disk file could have changed since the vault
-      // index last refreshed). When it doesn't match, skip this single
-      // match rather than the whole file — best-effort.
-      if (next.slice(rawStart, rawEnd) !== m.matchText) continue;
-      next = next.slice(0, rawStart) + replaceText + next.slice(rawEnd);
-      replacementCount++;
+      // Guard: the slice must still equal the match text (the file could
+      // have changed since the vault index last refreshed), and matches
+      // never overlap. A stale match is skipped, not the whole file.
+      if (rawStart < lastEnd || content.slice(rawStart, rawEnd) !== m.matchText) continue;
+      splices.push({ start: rawStart, before: m.matchText, after: replaceText });
+      lastEnd = rawEnd;
     }
 
-    if (replacementCount === 0) continue;
-    plans.push({ path, originalContent: content, nextContent: next, replacementCount });
+    if (splices.length === 0) continue;
+    plans.push(planFor(path, content, splices));
   }
 
   if (failedPaths.length > 0) {
@@ -142,43 +190,33 @@ export class ReplaceAllCommand extends Command {
     super();
     this.targetBoardId = '';
     this.vaultRoot = vaultRoot;
-    // allow-shallow: FilePlan members (path, content strings, replacement
-    // count number) are all primitive — the per-entry shallow spread plus
-    // outer slice is enough.
-    this.plans = plans.map((p) => ({ ...p }));
-    const totalCount = plans.reduce((n, p) => n + p.replacementCount, 0);
+    this.plans = this.snapshot(plans);
+    const totalCount = plans.reduce((n, p) => n + p.splices.length, 0);
     this.description = `Replace ${totalCount} occurrence(s) across ${plans.length} file(s)`;
-  }
-
-  hasFileSnapshots(): boolean {
-    return this.plans.length > 0;
   }
 
   async execute(): Promise<void> {
     // On a redo the disk may have moved: a file is rewritten only while it
-    // still holds exactly the planned `originalContent`; otherwise it is
-    // skipped (a blind write would clobber the intervening edit and desync the
-    // undo snapshot) and named in the aggregate toast.
-    const skipped = await this.swapAll('originalContent', 'nextContent');
+    // still holds exactly what the search found; otherwise it is skipped (a
+    // blind write would clobber the intervening edit) and named in the
+    // aggregate toast.
+    const skipped = await this.swapAll(true);
     this.toastSkipped(skipped, 'Replace skipped', 'changed since the search');
   }
 
   async undo(): Promise<void> {
     // Symmetric: a file edited after the replace (or gone) is left alone.
-    const skipped = await this.swapAll('nextContent', 'originalContent');
+    const skipped = await this.swapAll(false);
     this.toastSkipped(skipped, 'Undo skipped', 'changed since the replace');
   }
 
   /**
-   * Rewrites every planned file from `from` to `to` through the note store:
-   * inside each note's write queue, after anything queued for it (an editor
-   * body) has landed, and only when the fresh bytes still equal `from`. Any
-   * open view of the note follows. Returns the files that didn't match.
+   * Applies (or takes back) every plan through the note store: inside each
+   * note's write queue, after anything queued for it (an editor body) has
+   * landed, and only when the fresh bytes are exactly what the plan expects.
+   * Any open view of the note follows. Returns the files that didn't match.
    */
-  private async swapAll(
-    from: 'originalContent' | 'nextContent',
-    to: 'originalContent' | 'nextContent',
-  ): Promise<string[]> {
+  private async swapAll(forward: boolean): Promise<string[]> {
     const skipped: string[] = [];
     const failed: string[] = [];
     for (const plan of this.plans) {
@@ -187,9 +225,10 @@ export class ReplaceAllCommand extends Command {
         await noteStore.transform(
           plan.path,
           (fresh) => {
-            if (fresh.raw !== plan[from]) return null;
+            const next = applyPlan(fresh.raw, plan, forward);
+            if (next === null) return null;
             matched = true;
-            return plan[to];
+            return next;
           },
           // One aggregate toast below, not one per file.
           { notifyOnError: false },
@@ -271,7 +310,7 @@ export async function runReplaceAllCommand(): Promise<void> {
   await historyStore.execute(command);
 
   const fileCount = result.plans.length;
-  const total = result.plans.reduce((n, p) => n + p.replacementCount, 0);
+  const total = result.plans.reduce((n, p) => n + p.splices.length, 0);
   uiStore.toast(
     `Replaced ${total} occurrence(s) across ${fileCount} file(s). Ctrl+Z to undo.`,
     'success',

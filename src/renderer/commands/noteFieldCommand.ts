@@ -1,9 +1,9 @@
 import { Command } from './Command';
 import { boardCacheStore } from '../stores/boardCache.svelte';
 import { noteStore } from '../stores/notes.svelte';
-import { patchToFrontmatterDelta } from '../lib/vault/frontmatterDelta';
+import { patchToFrontmatterDelta, type FrontmatterDelta } from '../lib/vault/frontmatterDelta';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
-import { applyFrontmatterPatchRebased, inverseOfPatch } from './frontmatterRebase';
+import { applyDeltaChecked, inverseDelta } from './frontmatterInverse';
 
 /**
  * An undoable change to fields in a note's frontmatter (a card's due date, a
@@ -11,11 +11,12 @@ import { applyFrontmatterPatchRebased, inverseOfPatch } from './frontmatterRebas
  * goes to the note writer as a delta, so it lands on a fresh read of the file
  * and keys it doesn't name are kept.
  *
- * - First execute: the user's own action. The inverse is recomputed from the
+ * - First execute: the user's own action. The inverse delta is taken from the
  *   note as it stands, so undo restores the true prior value even when the
  *   caller built the command from a stale index.
- * - Undo and redo: rebased on the note as it stands then. A field another
- *   program changed meanwhile keeps that value, with an "Apply anyway" toast.
+ * - Undo and redo: the inverse (or forward) delta, checked against the note as
+ *   it stands then. A field another program changed meanwhile keeps that
+ *   value, with an "Apply anyway" toast.
  *
  * An empty value in the patch clears the key (see `patchToFrontmatterDelta`).
  */
@@ -23,11 +24,11 @@ export abstract class NoteFieldCommand extends Command {
   description: string;
   readonly targetBoardId: string;
   protected readonly relPath: string;
-  private patch: Record<string, unknown>;
-  private inversePatch: Record<string, unknown>;
+  private forward: FrontmatterDelta;
+  private inverse: FrontmatterDelta;
   private hasExecuted = false;
   /**
-   * Treat the patch as one unit on a conflict (a recurrence roll-forward
+   * Treat the change as one unit on a conflict (a recurrence roll-forward
    * writes `completed` and `dueDate` together and must never half-apply).
    */
   private atomic: boolean;
@@ -45,15 +46,15 @@ export abstract class NoteFieldCommand extends Command {
     this.relPath = relPath;
     // Deep-cloned so nested values (`tags: [...]`) can't change through the
     // caller's reference after the command is pushed.
-    this.patch = this.snapshot(patch);
-    this.inversePatch = this.snapshot(inversePatch);
+    this.forward = this.snapshot(patchToFrontmatterDelta(patch));
+    this.inverse = this.snapshot(patchToFrontmatterDelta(inversePatch));
     this.description = description;
     this.atomic = atomic;
   }
 
   async execute(): Promise<void> {
     if (this.hasExecuted) {
-      await this.rebase(this.patch, this.inversePatch);
+      await this.apply(this.forward, this.inverse);
       return;
     }
     this.hasExecuted = true;
@@ -61,21 +62,21 @@ export abstract class NoteFieldCommand extends Command {
     const before = await noteStore.currentFrontmatter(this.relPath);
     // A vault swap landed during the read: the note belongs to the old vault.
     if (!isStillSameVault(identity)) return;
-    if (before) this.inversePatch = this.snapshot(inverseOfPatch(before, this.patch));
-    noteStore.patchFrontmatter(this.relPath, patchToFrontmatterDelta(this.patch));
+    if (before) this.inverse = this.snapshot(inverseDelta(before, this.forward));
+    noteStore.patchFrontmatter(this.relPath, this.forward);
     boardCacheStore.markDirty(this.targetBoardId);
   }
 
   async undo(): Promise<void> {
-    await this.rebase(this.inversePatch, this.patch);
+    await this.apply(this.inverse, this.forward);
   }
 
-  private rebase(applying: Record<string, unknown>, expectedCurrent: Record<string, unknown>): Promise<void> {
-    return applyFrontmatterPatchRebased({
+  private apply(delta: FrontmatterDelta, expected: FrontmatterDelta): Promise<void> {
+    return applyDeltaChecked({
       relPath: this.relPath,
       targetBoardId: this.targetBoardId,
-      applying,
-      expectedCurrent,
+      delta,
+      expected,
       label: this.relPath,
       atomic: this.atomic,
     });

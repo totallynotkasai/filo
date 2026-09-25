@@ -28,9 +28,6 @@ export type IpcChannel =
   | 'vault:write-existing-file-text'
   // Create-exclusive new-file seed (O_EXCL), typed EEXIST on a clash.
   | 'vault:create-file-text'
-  // Used by CascadeDeleteCommand.undo to restore captured media bodies
-  // (base64-encoded). Atomic + size-capped at the handler.
-  | 'vault:write-file-binary'
   | 'vault:file-exists'
   // Returns stat shape with success, optional mtimeMs and size for an
   // external-edit guard during manual sync (syncTileMarkdown).
@@ -61,7 +58,6 @@ export type IpcChannel =
   | 'board:load'
   | 'board:save'
   | 'board:create'
-  | 'board:delete'
   // Board files forked by a sync client (Plan.board-HOST.json)
   | 'board:list-conflicts'
   // Recovery snapshot (defensive backup of vault files before overwrite)
@@ -76,6 +72,14 @@ export type IpcChannel =
   | 'vault:convert-to-utf8'
   // Move orphaned atomic-write temps into .filo/recovery/orphan-tmp
   | 'vault:sweep-orphan-tmp'
+  // Filo trash in .filo/trash: every user-facing delete moves the item there
+  | 'vault:trash-move'
+  | 'vault:trash-restore'
+  | 'vault:trash-list'
+  // Hands trashed items to the OS Recycle Bin (never deletes on its own)
+  | 'vault:trash-purge'
+  // Permanent delete of trashed items, only after the user confirmed it
+  | 'vault:trash-delete-permanently'
   // Config operations (.filo/ directory)
   | 'config:load'
   | 'config:save'

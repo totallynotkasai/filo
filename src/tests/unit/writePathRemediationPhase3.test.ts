@@ -22,7 +22,7 @@ import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { makeExternalChangesSlice } from '@renderer/stores/vaultExternalChanges';
 import { ReorderColumnCommand } from '@renderer/commands/index';
-import { ReplaceAllCommand } from '@renderer/commands/replaceAllCommand';
+import { ReplaceAllCommand, planFor } from '@renderer/commands/replaceAllCommand';
 import {
   markPathFailed,
   hasFailedWrites,
@@ -305,8 +305,8 @@ describe('ReplaceAll undo skips files changed since the replace', () => {
 
   it('undo reverts an untouched file but preserves one externally edited after the replace', async () => {
     const cmd = new ReplaceAllCommand('/vault', [
-      { path: 'a.md', originalContent: 'hello frodo', nextContent: 'hello sam', replacementCount: 1 },
-      { path: 'b.md', originalContent: 'hello frodo', nextContent: 'hello sam', replacementCount: 1 },
+      planFor('a.md', 'hello frodo', [{ start: 6, before: 'frodo', after: 'sam' }]),
+      planFor('b.md', 'hello frodo', [{ start: 6, before: 'frodo', after: 'sam' }]),
     ]);
 
     await cmd.execute();

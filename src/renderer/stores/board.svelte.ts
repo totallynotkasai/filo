@@ -14,6 +14,7 @@ import { historyStore, type Command } from './history.svelte';
 import { boardCacheStore } from './boardCache.svelte';
 import { boardRefIntegrityStore } from './boardRefIntegrity.svelte';
 import { tabStore } from './tabs.svelte';
+import { restoreTrashedItem, toastMovedToTrash } from './trash.svelte';
 import type { V7BoardFileData } from '../lib/boards/boardSaver';
 import {
   buildBoardSettingsFromGlobal,
@@ -544,10 +545,17 @@ export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
       return boardCacheStore.persistNewBoard(board);
     },
 
+    /**
+     * Moves the board's file into Filo's trash and closes it everywhere. The
+     * toast offers Undo; Settings → Trash can restore it later.
+     */
     async deleteBoard(boardId: string): Promise<boolean> {
-      const ok = await boardCacheStore.deleteBoard(boardId);
-      if (ok) await cleanupAfterBoardRemoved(boardId);
-      return ok;
+      const name = boardCacheStore.cache[boardId]?.board.name ?? 'Board';
+      const trashed = await boardCacheStore.deleteBoard(boardId);
+      if (!trashed) return false;
+      await cleanupAfterBoardRemoved(boardId);
+      toastMovedToTrash(name, () => restoreTrashedItem(name, trashed.boardPath, trashed.trashId));
+      return true;
     },
 
     /**

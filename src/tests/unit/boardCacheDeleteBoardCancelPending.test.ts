@@ -9,9 +9,9 @@ import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard } from '@renderer/schema/index';
 
 /**
- * Phase 1.3 regression — deleteBoard now cancels any pending debounced write
- * BEFORE the delete IPC fires. Previously a 300ms-old write would fire after
- * the main process unlinked the file and resurrect it on disk.
+ * deleteBoard cancels any pending debounced write BEFORE the board file moves
+ * to Filo's trash. Otherwise a 300ms-old write would fire after the move
+ * and recreate the file on disk.
  */
 
 type InvokeHandler = (...args: unknown[]) => unknown | Promise<unknown>;
@@ -64,7 +64,7 @@ describe('boardCacheStore.deleteBoard cancels pending write', () => {
   });
 
   it('does not fire a board:save when the debounce window elapses mid-delete', async () => {
-    // Hold board:delete in-flight until we manually resolve it, so the
+    // Hold the trash move in-flight until we manually resolve it, so the
     // 300ms debounce can fire DURING the await — this is the exact race
     // the resurrection bug exploits.
     let resolveDelete!: () => void;
@@ -74,9 +74,9 @@ describe('boardCacheStore.deleteBoard cancels pending write', () => {
 
     const { calls } = installFiloStub({
       'board:save': async () => ({ success: true }),
-      'board:delete': async () => {
+      'vault:trash-move': async () => {
         await deleteHeld;
-        return { success: true };
+        return { success: true, trashId: 'tid', kind: 'file' };
       },
     });
 
@@ -100,15 +100,17 @@ describe('boardCacheStore.deleteBoard cancels pending write', () => {
     // with the doomed board's snapshot.
     await vi.advanceTimersByTimeAsync(500);
 
-    // Now resolve board:delete and let removeBoardFromCache run.
+    // Now resolve the move and let removeBoardFromCache run.
     resolveDelete();
-    const deletedOk = await deletePromise;
-    expect(deletedOk).toBe(true);
+    const deleted = await deletePromise;
+    expect(deleted).toEqual({ boardPath: 'tasks.board.json', trashId: 'tid' });
 
     // Final flush — also covers any stray write scheduled after the cancel.
     await vi.advanceTimersByTimeAsync(500);
 
     const saveCalls = calls.filter((c) => c.channel === 'board:save');
     expect(saveCalls.length).toBe(0);
+    const moves = calls.filter((c) => c.channel === 'vault:trash-move');
+    expect(moves.map((c) => c.args)).toEqual([['/vault', 'tasks.board.json']]);
   });
 });

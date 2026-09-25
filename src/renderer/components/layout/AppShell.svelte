@@ -36,10 +36,10 @@
   import { registerCommandWithShortcut } from '../../core/commandRegistry';
   import { createTile } from '../../stores/tiles.svelte';
   import { type TextTile, type Tile } from '../../schema/index';
+  import { textTileNotePaths } from '../../commands/index';
   import { isEditableTextTarget } from '../../lib/utils/editableTarget';
   import { asSafeOpenExternal } from '../../../shared/untrusted';
   import { normalizePath } from '../../lib/utils/path';
-  import { buildDeleteSnapshots, TILE_DELETE_SNAPSHOT_MAX_BYTES } from '../../lib/canvas/deleteTileSnapshots';
   import { tiptapToolbar } from '../../lib/editor/toolbarConfig';
   import {
     PendingWritesFailedError,
@@ -130,7 +130,7 @@
       extraOption: showFileOption
         ? {
             label: 'Delete associated files from vault as well?',
-            hint: 'Ctrl+Z will restore both the tile and its file content. Files over 25MB cannot be restored.',
+            hint: 'The files move to Filo\'s trash. Ctrl+Z restores the tiles and their files, or restore the files from Settings → Trash.',
             initial: false,
           }
         : undefined,
@@ -138,52 +138,26 @@
     });
   }
 
-  // Snapshot cap — backing files larger than this aren't read into memory
-  // for the undo snapshot. Restoring a 25 MB+ markdown via Ctrl+Z is rare and
-  // copying it twice (delete-time read + undo-time write) on the hot path
-  // would spike memory. Skipped files are surfaced via toast so the user
-  // knows their delete is one-way.
   async function performDeleteSelected(deleteWithFile: boolean) {
     const selectedIds = [...selectionStore.selectedIds];
 
-    // When capturing undo snapshots, the pre-IPC `.md` reads
-    // must reflect the post-flush disk state, NOT the pre-flush editor
-    // body. Without the drain, a 300ms-debounced keystroke that landed
-    // after the user clicked "Delete with files" would still be sitting
-    // in-memory; the snapshot would capture the pre-keystroke disk
-    // bytes, then DeleteTilesCommand.executeFileDeletes would delete
-    // the file, and Ctrl+Z would restore the stale (pre-keystroke)
-    // snapshot — silently dropping the keystroke.
-    //
-    // Wrap the snapshot build + command queue in `withDrainedWrites` so
-    // the entire sequence runs against a known-quiescent disk.
+    // Drain pending writes first, so a debounced keystroke can't land after
+    // its note moved to the trash (recreating the file there).
     try {
       await withDrainedWrites(async () => {
-        let fileSnapshots: { rel: string; content: string }[] | undefined;
+        let filePaths: string[] = [];
         let vaultRoot: string | undefined;
         if (deleteWithFile && selectionHasVaultFiles()) {
           vaultRoot = normalizePath(vaultStore.path);
-          // Pre-read each backing .md so undo can write it back. Reads run before
-          // the placement-removal command so any read failure (file already gone,
-          // ENOENT race) drops out cleanly without leaving a half-restored undo
-          // snapshot. The file is also deleted by the command itself, not here —
-          // see DeleteTilesCommand.execute().
-          const tilesToRead = selectedIds
-            .map((id) => boardStore.getTile(id))
-            .filter((t): t is NonNullable<typeof t> => !!t);
-          const result = await buildDeleteSnapshots(tilesToRead, vaultRoot);
-          fileSnapshots = result.fileSnapshots;
-          if (result.oversizedPaths.length > 0) {
-            const sample = result.oversizedPaths.slice(0, 3).join(', ');
-            const more = result.oversizedPaths.length > 3 ? `, +${result.oversizedPaths.length - 3} more` : '';
-            uiStore.toast(
-              `${result.oversizedPaths.length} file(s) over ${TILE_DELETE_SNAPSHOT_MAX_BYTES / (1024 * 1024)}MB were deleted without an undo snapshot (${sample}${more}). Ctrl+Z will restore the tile but not the file body.`,
-              'warning',
-              7000,
-            );
-          }
+          // The notes behind the selected text tiles move to Filo's trash with
+          // them; DeleteTilesCommand owns the move and its undo.
+          filePaths = textTileNotePaths(
+            selectedIds
+              .map((id) => boardStore.getTile(id))
+              .filter((t): t is NonNullable<typeof t> => !!t),
+          );
         }
-        boardStore.removeTilesWithHistory(selectedIds, { fileSnapshots, vaultRoot });
+        boardStore.removeTilesWithHistory(selectedIds, { filePaths, vaultRoot });
         selectionStore.clear();
       });
     } catch (err) {

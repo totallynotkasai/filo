@@ -6,7 +6,13 @@ import { searchStore } from '@renderer/stores/search.svelte';
 import { historyStore } from '@renderer/stores/history.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { parseMarkdown } from '@renderer/lib/vault/vaultIndex';
-import { ReplaceAllCommand, runReplaceAllCommand } from '@renderer/commands/replaceAllCommand';
+import {
+  ReplaceAllCommand,
+  applyPlan,
+  planFor,
+  runReplaceAllCommand,
+  type Splice,
+} from '@renderer/commands/replaceAllCommand';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { noteStore } from '@renderer/stores/notes.svelte';
@@ -15,6 +21,15 @@ import { beginVaultGeneration, __resetVaultIdentityForTests } from '@renderer/li
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 
 // ── Stubs ──
+
+/** One splice per occurrence of `needle` in `content`, in ascending order. */
+function splicesFor(content: string, needle: string, after: string): Splice[] {
+  const out: Splice[] = [];
+  for (let at = content.indexOf(needle); at !== -1; at = content.indexOf(needle, at + needle.length)) {
+    out.push({ start: at, before: needle, after });
+  }
+  return out;
+}
 
 type InvokeHandler = (...args: unknown[]) => unknown | Promise<unknown>;
 
@@ -189,7 +204,7 @@ describe('ReplaceAllCommand — atomicity', () => {
     expect(filesystem['a.md']).not.toContain('frodo');
     expect(filesystem['b.md']).toBe('# B\nsam elsewhere');
 
-    // Undo restores the originals from the in-memory snapshot.
+    // Undo puts each replaced match back.
     await historyStore.undo();
     expect(filesystem['a.md']).toBe('# A\nhello frodo and frodo again');
     expect(filesystem['b.md']).toBe('# B\nfrodo elsewhere');
@@ -304,20 +319,16 @@ describe('ReplaceAllCommand — atomicity', () => {
   });
 });
 
-describe('ReplaceAllCommand — L4 execute-time drift skip', () => {
-  it('skips a file whose disk content diverged from the planned snapshot (no clobber)', async () => {
-    // Disk no longer equals the plan's `originalContent` (an edit landed since
-    // the plan was built / before this redo). execute() must re-read, detect
-    // the divergence, and skip the write rather than clobber the newer bytes.
+describe('ReplaceAllCommand — execute-time drift skip', () => {
+  it('skips a file whose disk content diverged from the plan (no clobber)', async () => {
+    // Disk no longer holds the bytes the plan was built from (an edit landed
+    // since the plan was built / before this redo). execute() must re-read,
+    // detect the divergence, and skip the write rather than clobber the newer bytes.
     const filesystem: FileMap = { 'a.md': 'EXTERNALLY CHANGED SINCE PLAN' };
     const { writes } = installFiloStub(filesystem);
+    const planned = 'original planned content';
     const cmd = new ReplaceAllCommand('/test/vault', [
-      {
-        path: 'a.md',
-        originalContent: 'original planned content',
-        nextContent: 'replaced content',
-        replacementCount: 1,
-      },
+      planFor('a.md', planned, splicesFor(planned, 'original planned', 'replaced')),
     ]);
 
     await cmd.execute();
@@ -327,16 +338,28 @@ describe('ReplaceAllCommand — L4 execute-time drift skip', () => {
     expect(uiStore.toasts.some((t) => t.text.includes('Replace skipped'))).toBe(true);
   });
 
-  it('writes when disk still equals the planned originalContent', async () => {
-    const filesystem: FileMap = { 'a.md': 'original planned content' };
+  it('skips a same-length edit that keeps the splice text but changes other bytes', async () => {
+    // The hash, not just the length or the splice text, gates the write.
+    const planned = 'frodo went east';
+    const filesystem: FileMap = { 'a.md': 'frodo went west' };
     const { writes } = installFiloStub(filesystem);
     const cmd = new ReplaceAllCommand('/test/vault', [
-      {
-        path: 'a.md',
-        originalContent: 'original planned content',
-        nextContent: 'replaced content',
-        replacementCount: 1,
-      },
+      planFor('a.md', planned, splicesFor(planned, 'frodo', 'sam')),
+    ]);
+
+    await cmd.execute();
+
+    expect(writes).toHaveLength(0);
+    expect(filesystem['a.md']).toBe('frodo went west');
+    expect(uiStore.toasts.some((t) => t.text.includes('Replace skipped'))).toBe(true);
+  });
+
+  it('writes when disk still equals the planned original', async () => {
+    const planned = 'original planned content';
+    const filesystem: FileMap = { 'a.md': planned };
+    const { writes } = installFiloStub(filesystem);
+    const cmd = new ReplaceAllCommand('/test/vault', [
+      planFor('a.md', planned, splicesFor(planned, 'original planned', 'replaced')),
     ]);
 
     await cmd.execute();
@@ -346,17 +369,49 @@ describe('ReplaceAllCommand — L4 execute-time drift skip', () => {
   });
 });
 
-describe('ReplaceAllCommand — undo with hasFileSnapshots', () => {
-  it('reports hasFileSnapshots so history truncation escalates', () => {
-    const command = new ReplaceAllCommand('/test/vault', [
-      { path: 'a.md', originalContent: 'old', nextContent: 'new', replacementCount: 1 },
-    ]);
-    expect(command.hasFileSnapshots()).toBe(true);
+describe('ReplaceAllCommand — keeps no copy of the note', () => {
+  it('plans hold only the replaced snippets and the before/after hashes', () => {
+    const original = '# Private heading\nsecret-body-text frodo more-secret-text frodo tail\n';
+    const plan = planFor('a.md', original, splicesFor(original, 'frodo', 'sam'));
+    const cmd = new ReplaceAllCommand('/test/vault', [plan]);
+
+    expect(Object.keys(plan).sort()).toEqual(
+      ['afterHash', 'afterLength', 'beforeHash', 'beforeLength', 'path', 'splices'],
+    );
+    expect(plan.splices.map((s) => s.before)).toEqual(['frodo', 'frodo']);
+    expect(plan.splices.every((s) => s.after === 'sam')).toBe(true);
+
+    // Nothing but the matches themselves survives on the command.
+    const held = JSON.stringify(cmd);
+    expect(held).not.toContain('secret-body-text');
+    expect(held).not.toContain('more-secret-text');
+    expect(held).not.toContain('Private heading');
   });
 
-  it('reports no snapshots when the plan is empty', () => {
-    const command = new ReplaceAllCommand('/test/vault', []);
-    expect(command.hasFileSnapshots()).toBe(false);
+  it('undo of a multi-match file restores the exact original bytes', async () => {
+    // Replacements of a different length shift every later offset: undo must
+    // map each splice back to where it now sits.
+    const original = '---\r\ntitle: A\r\n---\r\nfrodo, frodo\r\nand frodo again\r\n';
+    const filesystem: FileMap = { 'a.md': original };
+    installFiloStub(filesystem);
+    const plan = planFor('a.md', original, splicesFor(original, 'frodo', 'Samwise Gamgee'));
+    expect(plan.splices).toHaveLength(3);
+    const cmd = new ReplaceAllCommand('/test/vault', [plan]);
+
+    await cmd.execute();
+    expect(filesystem['a.md']).toBe(original.split('frodo').join('Samwise Gamgee'));
+
+    await cmd.undo();
+    expect(filesystem['a.md']).toBe(original);
+  });
+
+  it('applyPlan refuses text that is not what the plan starts from, in either direction', () => {
+    const original = 'frodo and frodo';
+    const plan = planFor('a.md', original, splicesFor(original, 'frodo', 'sam'));
+    expect(applyPlan(original, plan, true)).toBe('sam and sam');
+    expect(applyPlan('sam and sam', plan, false)).toBe(original);
+    expect(applyPlan('sam and sam', plan, true)).toBeNull();
+    expect(applyPlan(original, plan, false)).toBeNull();
   });
 });
 
@@ -404,13 +459,9 @@ describe('ReplaceAllCommand — open views follow', () => {
     const filesystem: FileMap = { 'a.md': '---\ntitle: A\n---\nhello frodo\n' };
     const { writes } = installFiloStub(filesystem);
     const m = await openView('a.md');
+    const original = '---\ntitle: A\n---\nhello frodo\n';
     const cmd = new ReplaceAllCommand('/test/vault', [
-      {
-        path: 'a.md',
-        originalContent: '---\ntitle: A\n---\nhello frodo\n',
-        nextContent: '---\ntitle: A\n---\nhello sam\n',
-        replacementCount: 1,
-      },
+      planFor('a.md', original, splicesFor(original, 'frodo', 'sam')),
     ]);
     await cmd.execute();
     expect(filesystem['a.md']).toBe('---\ntitle: A\n---\nhello sam\n');

@@ -12,7 +12,6 @@ import {
   UpdateTaskFieldCommand,
 } from '../../commands/index';
 import { collectDescendantIds } from './blockMove';
-import { buildDeleteSnapshots } from '../canvas/deleteTileSnapshots';
 import { withDrainedWrites, PendingWritesFailedError } from '../vault/vaultOperations';
 import { normalizePath } from '../utils/path';
 import type { TaskRow } from '../tasks/taskListModel';
@@ -211,10 +210,10 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
   }
 
   /**
-   * Opt-in "delete the backing file too" path. The default delete
-   * keeps the `.md` (and is instant + one-click); this confirms first because
-   * removing the file is the heavy, broken-ref-causing action. It pre-reads the
-   * body so a DeleteTaskCommand that owns the disk delete can restore it on undo.
+   * Opt-in "delete the backing file too" path. The default delete keeps the
+   * `.md` (and is instant + one-click); this confirms first because removing
+   * the file breaks every other tile showing it. The note moves to Filo's
+   * trash, and undo moves it back.
    */
   function deleteTaskWithFile(tileId: string): void {
     const board = getBoard();
@@ -224,7 +223,7 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
     const title = tile.title || 'task';
     uiStore.openConfirm({
       title: 'Delete task and file',
-      body: `Delete "${title}" and its backing .md file from the vault? Any other tile or board referencing it becomes a broken link. Ctrl+Z restores both.`,
+      body: `"${title}" is removed and its .md file moves to Filo's trash. Any other tile showing the note becomes a broken link. Undo restores both, or restore the file from Settings → Trash.`,
       confirmLabel: 'Delete task & file',
       danger: true,
       onConfirm: () => {
@@ -236,27 +235,11 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
   async function performTaskFileDelete(boardId: string, tileId: string, tile: Tile): Promise<void> {
     const vaultRoot = normalizePath(vaultStore.path);
     try {
-      // Drain pending editor writes BEFORE snapshotting so the captured body
-      // reflects post-flush disk state (mirrors TileHeader's delete path).
+      // Drain pending writes first, so nothing queued for the note can
+      // recreate it after it moved to the trash.
       await withDrainedWrites(async () => {
-        const { fileSnapshots, oversizedPaths } = await buildDeleteSnapshots([tile], vaultRoot);
-        const snapshot = fileSnapshots[0];
-        if (!snapshot) {
-          // Never delete a file we can't restore on undo: fall back to a
-          // placement-only delete and tell the user the file was kept.
-          uiStore.toast(
-            oversizedPaths.length > 0
-              ? 'Backing file is too large for an undo snapshot — removed the task only (file kept).'
-              : 'Backing file not found — removed the task only.',
-            'warning',
-            6000,
-          );
-          await historyStore.execute(new DeleteTaskCommand(boardId, tileId));
-        } else {
-          await historyStore.execute(
-            new DeleteTaskCommand(boardId, tileId, { fileSnapshot: snapshot, vaultRoot }),
-          );
-        }
+        const filePath = tile.type === 'text' && tile.filePath ? tile.filePath : undefined;
+        await historyStore.execute(new DeleteTaskCommand(boardId, tileId, filePath ? { filePath, vaultRoot } : {}));
         tickAndPersist();
         pruneSelection?.([tileId]);
         announce(`Task removed: ${tile.title || 'task'}`);

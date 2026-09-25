@@ -6,7 +6,6 @@ import {
   loadBoardFile,
   saveBoardFile,
   createBoardFile,
-  deleteBoardFile,
   scanBoardFiles,
   resolveBoardPath,
   scanBoardConflicts,
@@ -230,8 +229,8 @@ export function registerBoardHandlers(): void {
       // `board:save` is a CREATING channel (the first save writes a brand-new
       // `.board.json`), so validate with `forCreation: true`: a POSIX user
       // must not author a board path that breaks the vault on Windows.
-      // (`board:load`/`board:delete` stay creation-free — they operate on
-      // paths that already exist; see gates:no-forcreation-on-read-delete.)
+      // (`board:load` stays creation-free — it operates on a path that
+      // already exists; see gates:no-forcreation-on-read-delete.)
       assertSafeRelativePath(relativePath, { forCreation: true });
       assertPayloadByteSize(jsonPayloadByteSize(data), PAYLOAD_LIMITS.BOARD, 'board:save');
       const fullPath = resolveBoardPath(vaultRoot, relativePath);
@@ -279,23 +278,6 @@ export function registerBoardHandlers(): void {
       return { ok: true, path: relativePath };
     } catch (err) {
       logMainError(`board:create ${name}`, err);
-      return { ok: false, error: String(err) };
-    }
-  });
-
-  /**
-   * Deletes a .board.json file.
-   */
-  ipcMain.handle('board:delete', async (_event, vaultRoot: string, relativePath: string) => {
-    try {
-      assertActiveVault(vaultRoot);
-      assertSafeRelativePath(relativePath);
-      const fullPath = resolveBoardPath(vaultRoot, relativePath);
-      assertWithinVault(vaultRoot, fullPath);
-      await deleteBoardFile(fullPath);
-      return { ok: true };
-    } catch (err) {
-      logMainError(`board:delete ${relativePath}`, err);
       return { ok: false, error: String(err) };
     }
   });

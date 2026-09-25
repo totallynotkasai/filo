@@ -30,7 +30,7 @@ const IGNORE_RULES = {
   exactNames: new Set<string>(['Thumbs.db', '.DS_Store', 'desktop.ini']),
   folderNames: new Set<string>(['node_modules', '.git']),
   suffixes: ['.tmp', '.bak'] as const,
-  prefixedPaths: ['.filo/cache/'] as const,
+  prefixedPaths: ['.filo/cache/', '.filo/trash/'] as const,
 };
 
 export function shouldIgnorePath(normalized: string): boolean {

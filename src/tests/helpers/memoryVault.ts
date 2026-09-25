@@ -5,6 +5,10 @@
  * missing file, `create` refuses an existing one, and every write bumps the
  * mtime. Tests reach in to change a file "from another program", count
  * writes, or hold a write open.
+ *
+ * It also keeps a Filo trash: `vault:trash-move` takes a file (or every file
+ * under a folder path) out of `files`, `vault:trash-restore` puts it back
+ * (beside the original, as `… (restored).ext`, when that path is taken).
  */
 import { vi } from 'vitest';
 
@@ -25,6 +29,10 @@ export interface MemoryVault {
   afterRead: ((rel: string) => void) | null;
   /** Fail the next write of `rel` with `code`. */
   failNextWrite(rel: string, code: string): void;
+  /** What is in the trash: id, the path it had, and its files (path → text). */
+  trash: Map<string, { originalPath: string; files: Map<string, string> }>;
+  /** Fail the next trash move of `rel` with `code` (e.g. a locked file). */
+  failNextTrashMove(rel: string, code: string): void;
 }
 
 const key = (rel: string): string => rel.replace(/\\/g, '/').toLowerCase();
@@ -35,6 +43,8 @@ export function installMemoryVault(initial: Record<string, string> = {}, root = 
   const spelling = new Map<string, string>();
   let clock = 1000;
   const failures = new Map<string, string>();
+  const trashFailures = new Map<string, string>();
+  let trashSeq = 0;
   const enc = new TextEncoder();
   const put = (rel: string, text: string): void => {
     files.set(key(rel), text);
@@ -57,6 +67,18 @@ export function installMemoryVault(initial: Record<string, string> = {}, root = 
     },
     read: (rel) => files.get(key(rel)),
     failNextWrite: (rel, code) => failures.set(key(rel), code),
+    trash: new Map(),
+    failNextTrashMove: (rel, code) => trashFailures.set(key(rel), code),
+  };
+
+  const under = (k: string): string[] => [...files.keys()].filter((f) => f === k || f.startsWith(`${k}/`));
+  const restoredName = (rel: string): string => {
+    const slash = rel.lastIndexOf('/');
+    const name = rel.slice(slash + 1);
+    const dot = name.toLowerCase().endsWith('.board.json') ? name.length - '.board.json'.length : name.lastIndexOf('.');
+    const stem = dot > 0 ? name.slice(0, dot) : name;
+    const ext = dot > 0 ? name.slice(dot) : '';
+    return `${rel.slice(0, slash + 1)}${stem} (restored)${ext}`;
   };
 
   const write = async (channel: string, rel: string, text: string, mode: 'existing' | 'any' | 'create') => {
@@ -76,7 +98,7 @@ export function installMemoryVault(initial: Record<string, string> = {}, root = 
 
   const invoke = vi.fn(async (channel: string, ...args: unknown[]) => {
     const rel = args[1] as string;
-    const k = rel ? key(rel) : '';
+    const k = typeof rel === 'string' ? key(rel) : '';
     switch (channel) {
       case 'vault:read-file-text': {
         if (!files.has(k)) return { success: false, code: 'ENOENT', error: 'ENOENT' };
@@ -101,6 +123,57 @@ export function installMemoryVault(initial: Record<string, string> = {}, root = 
         return write(channel, rel, args[2] as string, 'create');
       case 'vault:file-exists':
         return files.has(k);
+      case 'vault:trash-move': {
+        const fail = trashFailures.get(k);
+        if (fail) {
+          trashFailures.delete(k);
+          return { success: false, code: fail, error: fail };
+        }
+        const moving = under(k);
+        if (moving.length === 0) return { success: false, code: 'ENOENT', error: 'ENOENT' };
+        const trashId = `20260925T000000Z-${(++trashSeq).toString(16).padStart(6, '0')}`;
+        const kept = new Map<string, string>();
+        for (const f of moving) {
+          kept.set(spelling.get(f) ?? f, files.get(f) ?? '');
+          vault.remove(f);
+        }
+        vault.trash.set(trashId, { originalPath: rel, files: kept });
+        return { success: true, trashId, kind: moving.length === 1 && moving[0] === k ? 'file' : 'folder' };
+      }
+      case 'vault:trash-restore': {
+        const entry = vault.trash.get(rel);
+        if (!entry) return { success: false, code: 'TRASH_ITEM_MISSING', error: 'gone' };
+        vault.trash.delete(rel);
+        const taken = under(key(entry.originalPath)).length > 0;
+        const restoredPath = taken ? restoredName(entry.originalPath) : entry.originalPath;
+        for (const [path, text] of entry.files) put(restoredPath + path.slice(entry.originalPath.length), text);
+        return {
+          success: true,
+          restoredPath,
+          originalPath: entry.originalPath,
+          kind: entry.files.size === 1 && entry.files.has(entry.originalPath) ? 'file' : 'folder',
+          alongside: taken,
+        };
+      }
+      case 'vault:trash-list':
+        return {
+          success: true,
+          machineId: 'aaaaaaaaaaaa',
+          entries: [...vault.trash].map(([trashId, t]) => ({
+            trashId,
+            originalPath: t.originalPath,
+            deletedAt: '2026-09-25T00:00:00.000Z',
+            machineId: 'aaaaaaaaaaaa',
+            kind: 'file',
+            present: true,
+          })),
+        };
+      case 'vault:trash-purge':
+      case 'vault:trash-delete-permanently': {
+        const ids = Array.isArray(args[1]) ? (args[1] as string[]) : [...vault.trash.keys()];
+        for (const id of ids) vault.trash.delete(id);
+        return channel === 'vault:trash-purge' ? { success: true, purged: ids } : { success: true, deleted: ids };
+      }
       default:
         return undefined;
     }

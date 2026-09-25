@@ -1,5 +1,6 @@
 import { registerVaultHandlers } from './vault.ipc';
 import { registerVaultCopyHandlers } from './vaultCopy.ipc';
+import { registerVaultTrashHandlers } from './vaultTrash.ipc';
 import { registerBoardHandlers } from './board.ipc';
 import { registerDialogHandlers } from './dialog.ipc';
 import { registerMediaHandlers } from './media.ipc';
@@ -19,6 +20,7 @@ import { registerVaultEncodingHandlers } from './vaultEncoding.ipc';
 export function registerAllHandlers(): void {
   registerVaultHandlers();
   registerVaultCopyHandlers();
+  registerVaultTrashHandlers();
   registerBoardHandlers();
   registerDialogHandlers();
   registerMediaHandlers();

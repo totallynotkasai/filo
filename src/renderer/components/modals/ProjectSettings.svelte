@@ -4,6 +4,7 @@
   import BoardDefaults from '../settings/BoardDefaults.svelte';
   import CurrentBoardSettings from '../settings/CurrentBoardSettings.svelte';
   import ThemeManager from '../settings/ThemeManager.svelte';
+  import TrashSettings from '../settings/TrashSettings.svelte';
   import LivePreview from '../settings/LivePreview.svelte';
   import { pendingSettingsStore } from '../../stores/pendingSettings.svelte';
   import { boardStore } from '../../stores/board.svelte';
@@ -13,7 +14,7 @@
   import { handleListKeyNav } from '../../lib/utils/listKeyNav';
   import { reportError } from '../../lib/utils/errorBus';
 
-  type SettingsTab = 'general' | 'defaults' | 'current-board' | 'themes';
+  type SettingsTab = 'general' | 'defaults' | 'current-board' | 'themes' | 'trash';
   let activeTab = $state<SettingsTab>('general');
 
   // Current Board tab is only meaningful when a board is active.
@@ -118,6 +119,7 @@
     { id: 'defaults', label: 'Global Defaults', saveMode: 'apply', icon: 'M12 3v18M3 12h18M5.5 5.5l13 13M18.5 5.5l-13 13' },
     { id: 'current-board', label: 'Current Board', saveMode: 'apply', icon: 'M3 3h18v18H3zM9 3v18M3 9h18' },
     { id: 'themes', label: 'Themes', saveMode: 'auto', icon: 'M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z' },
+    { id: 'trash', label: 'Trash', saveMode: 'auto', icon: 'M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6' },
   ];
 
   // Begin a pending-edit session on mount; cancel anything still in
@@ -201,6 +203,8 @@
         <CurrentBoardSettings />
       {:else if activeTab === 'themes'}
         <ThemeManager />
+      {:else if activeTab === 'trash'}
+        <TrashSettings />
       {/if}
     </div>
 

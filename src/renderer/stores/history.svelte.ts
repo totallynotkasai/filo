@@ -121,17 +121,6 @@ function getOrCreateActiveStack(): HistoryStack | null {
 }
 
 /**
- * Second truncation notification flag, fired when the
- * dropped command carried `fileSnapshots` (CascadeDeleteCommand,
- * DeleteTilesCommand). The standard toast says "earlier actions are no
- * longer reversible" — fine for pure cache mutations, misleading when
- * the dropped action also held the only copy of a deleted file's body.
- * The escalated toast surfaces that file content is irrecoverable so
- * the user can back up before the next destructive op.
- */
-const truncationLossNotified: Record<string, true> = {};
-
-/**
  * Serialisation chain for the async side of every command. Stack mutations
  * (push/pop, redo clear, markDirty) always stay synchronous so callers and
  * tests can inspect `canUndo` / `canRedo` immediately after calling
@@ -201,69 +190,31 @@ function runChained(op: () => Promise<void> | void): Promise<void> {
 }
 
 /**
- * Does the command carry pre-delete file body snapshots? Commands opt in by
- * implementing the optional `Command.hasFileSnapshots()`; `false` otherwise.
- */
-function hasFileSnapshots(command: Command): boolean {
-  return command.hasFileSnapshots?.() ?? false;
-}
-
-/**
- * Generalised stack mutator with mandatory file-snapshot scan.
+ * Runs `mutate(stack)` and counts the commands it dropped from either the
+ * undo or the redo stack. Every path that may drop commands goes through it,
+ * so the caller can decide on its "no longer reversible" toast from the count.
  *
- * Runs `mutate(stack)` and detects commands dropped from EITHER the undo
- * or redo stack. If any dropped command carries file snapshots
- * (`hasFileSnapshots()` returns true), the escalated "deleted files cannot
- * be restored" toast fires — once per board per session.
- *
- * Every code path that may drop a command from a history stack
- * (`pushBoundedAndNotify`, redo-clear inside `commitExecute`,
- * `setMaxHistory`) MUST go through this helper, so file-snapshot escalation
- * is mandatory by construction.
- *
- * The non-escalated "earlier actions are no longer reversible" info toast
- * is emitted by the caller (only `pushBoundedAndNotify` /
- * `setMaxHistory` know whether the stack actually shrank from the head
- * vs. just a redo-clear). The redo-clear path is expected and shouldn't
- * toast unless a file-snapshot command was sitting there.
- *
- * Returns `{ droppedCount, lostFile }` so the caller can chain its own
- * info-toast decision off the same scan.
+ * Dropping a delete never loses a file: deleted files wait in Filo's trash,
+ * restorable from Settings → Trash, whatever happens to the undo history.
  */
 function mutateStack(
   stack: HistoryStack,
-  boardId: string | null,
   mutate: (s: HistoryStack) => void,
-): { droppedCount: number; lostFile: boolean } {
+): { droppedCount: number } {
   const beforeIds = new Set<Command>([...stack.undoStack, ...stack.redoStack]);
   mutate(stack);
   const afterIds = new Set<Command>([...stack.undoStack, ...stack.redoStack]);
   let droppedCount = 0;
-  let lostFile = false;
   for (const c of beforeIds) {
-    if (afterIds.has(c)) continue;
-    droppedCount++;
-    if (!lostFile && hasFileSnapshots(c)) lostFile = true;
+    if (!afterIds.has(c)) droppedCount++;
   }
-  if (lostFile && boardId && !truncationLossNotified[boardId]) {
-    truncationLossNotified[boardId] = true;
-    // Mark the regular flag too so the lighter toast doesn't fire later
-    // on the same board for the same session — escalation supersedes.
-    truncationNotified[boardId] = true;
-    uiStore.toast(
-      'Older undo history dropped — deleted files older than this point cannot be restored.',
-      'warning',
-      6000,
-    );
-  }
-  return { droppedCount, lostFile };
+  return { droppedCount };
 }
 
 /**
  * Pushes `command` onto the stack with the current `maxHistory` cap, emitting
  * a one-shot info toast the first time the cap drops the oldest entry for
- * this board. Re-truncation in the same session is silent. File-snapshot
- * escalation is handled by `mutateStack`.
+ * this board. Re-truncation in the same session is silent.
  */
 function pushBoundedAndNotify(
   stack: HistoryStack,
@@ -271,13 +222,13 @@ function pushBoundedAndNotify(
   boardId: string | null = activeBoardId,
 ): void {
   // `pushWithoutExecuteOnBoard` passes an explicit `boardId` so a teardown
-  // commit attributes the cap/file-snapshot toast to the tile's HOME board,
-  // not whichever board the switch made active.
+  // commit attributes the cap toast to the tile's HOME board, not whichever
+  // board the switch made active.
   const willTruncate = stack.undoStack.length + 1 > maxHistory;
-  const { lostFile } = mutateStack(stack, boardId, (s) => {
+  mutateStack(stack, (s) => {
     s.undoStack = [...s.undoStack, command].slice(-maxHistory);
   });
-  if (willTruncate && boardId && !lostFile && !truncationNotified[boardId]) {
+  if (willTruncate && boardId && !truncationNotified[boardId]) {
     truncationNotified[boardId] = true;
     uiStore.toast(
       'Undo history limit reached — earlier actions are no longer reversible.',
@@ -288,15 +239,10 @@ function pushBoundedAndNotify(
 }
 
 /**
- * Clears the redo stack via `mutateStack` so any redo entry
- * with file snapshots triggers the escalated toast. Called from
- * `commitExecute` after a new command lands on the undo stack (the new
- * command invalidates pending redos).
+ * Clears the redo stack. Called from `commitExecute` after a new command
+ * lands on the undo stack (the new command invalidates pending redos).
  */
-function clearRedoStackAndNotify(
-  stack: HistoryStack,
-  boardId: string | null = activeBoardId,
-): void {
+function clearRedoStack(stack: HistoryStack): void {
   // Always hand out a FRESH array reference, even when the redo stack is
   // already empty. `rollbackExecute` uses reference identity to detect whether
   // a concurrent commit/undo/redo replaced the redo stack while an async body
@@ -306,9 +252,7 @@ function clearRedoStackAndNotify(
     stack.redoStack = [];
     return;
   }
-  // The home-board push passes an explicit `boardId` so a swept file-snapshot redo attributes its toast
-  // to that board.
-  mutateStack(stack, boardId, (s) => {
+  mutateStack(stack, (s) => {
     s.redoStack = [];
   });
 }
@@ -329,7 +273,7 @@ function commitExecute(command: Command): { preRedoStack: Command[]; redoStackRe
   // reference (the contents are immutable from this scope).
   const preRedoStack = [...stack.redoStack];
   pushBoundedAndNotify(stack, command);
-  clearRedoStackAndNotify(stack);
+  clearRedoStack(stack);
   // Capture the post-clear redo array reference. `rollbackExecute`
   // restores `preRedoStack` only if `stack.redoStack` is STILL this exact
   // array — i.e. no other command's commitExecute / undo / redo replaced it
@@ -664,16 +608,12 @@ export const historyStore = {
    * Pushes a command onto the undo stack WITHOUT executing it.
    * Used when the mutation has already been applied (e.g., during drag/resize
    * where changes happen in real-time and we only need the command for undo/redo).
-   *
-   * Redo-clear routes through `clearRedoStackAndNotify` so a pending
-   * DeleteTilesCommand on the redo stack fires the escalated file-snapshot
-   * loss toast.
    */
   pushWithoutExecute(command: Command) {
     const stack = getOrCreateActiveStack();
     if (stack) {
       pushBoundedAndNotify(stack, command);
-      clearRedoStackAndNotify(stack);
+      clearRedoStack(stack);
     }
     if (activeBoardId) boardStore.markDirty(activeBoardId);
   },
@@ -697,7 +637,7 @@ export const historyStore = {
       stacks[boardId] = stack;
     }
     pushBoundedAndNotify(stack, command, boardId);
-    clearRedoStackAndNotify(stack, boardId);
+    clearRedoStack(stack);
     boardStore.markDirty(boardId);
   },
 
@@ -707,7 +647,6 @@ export const historyStore = {
   clear() {
     stacks = {};
     for (const k of Object.keys(truncationNotified)) delete truncationNotified[k];
-    for (const k of Object.keys(truncationLossNotified)) delete truncationLossNotified[k];
     staleToastShown = false;
   },
 
@@ -757,27 +696,15 @@ export const historyStore = {
    * `targetBoardId`, so a command mutating board B can sit on board A's stack.
    * Left there after B is gone, it would wedge A's undo behind a switch-back
    * toast forever — so every surviving stack is swept of commands targeting
-   * the removed board. All drops route through `mutateStack` so a command
-   * carrying file snapshots still fires the escalated toast.
+   * the removed board.
    */
   clearBoard(boardId: string) {
-    // Drop the closed board's OWN stack through `mutateStack` first — a raw
-    // `delete` would skip the file-snapshot scan and silently discard the only
-    // in-memory copy of a deleted .md body.
-    const own = stacks[boardId];
-    if (own) {
-      mutateStack(own, boardId, (s) => {
-        s.undoStack = [];
-        s.redoStack = [];
-      });
-    }
     delete stacks[boardId];
     delete truncationNotified[boardId];
-    delete truncationLossNotified[boardId];
     for (const id of Object.keys(stacks)) {
       const stack = stacks[id];
       if (!stack) continue;
-      mutateStack(stack, id, (s) => {
+      mutateStack(stack, (s) => {
         s.undoStack = s.undoStack.filter((c) => c.targetBoardId !== boardId);
         s.redoStack = s.redoStack.filter((c) => c.targetBoardId !== boardId);
       });
@@ -790,10 +717,6 @@ export const historyStore = {
    * truncates every existing stack to the new length so the new ceiling
    * applies immediately — the truncationNotified guard resets per board so
    * the first push past the new cap can still emit one info toast.
-   *
-   * Each per-stack truncation routes through `mutateStack` so a dropped
-   * command with file snapshots fires the escalated
-   * "deleted-files-cannot-be-restored" toast.
    */
   setMaxHistory(next: number) {
     const clamped = Math.max(10, Math.min(5000, Math.floor(next)));
@@ -803,7 +726,7 @@ export const historyStore = {
     for (const id of Object.keys(stacks)) {
       const stack = stacks[id];
       if (!stack) continue;
-      const { droppedCount } = mutateStack(stack, id, (st) => {
+      const { droppedCount } = mutateStack(stack, (st) => {
         if (st.undoStack.length > clamped) {
           st.undoStack = st.undoStack.slice(-clamped);
         }
@@ -815,12 +738,8 @@ export const historyStore = {
     }
     if (truncated) {
       // Reset the per-board info-toast flag so the next push past the
-      // new cap can still emit one "limit reached" toast. The
-      // `mutateStack` calls above have already surfaced the loss-of-file
-      // escalation where applicable; that flag also resets so subsequent
-      // drops on the same board can re-toast in the new regime.
+      // new cap can still emit one "limit reached" toast.
       for (const k of Object.keys(truncationNotified)) delete truncationNotified[k];
-      for (const k of Object.keys(truncationLossNotified)) delete truncationLossNotified[k];
     }
   },
 };
@@ -831,6 +750,10 @@ export const historyStore = {
 // behind a chain still tethered to the outgoing vault's commands.
 onVaultSwap('pre-swap', 'history', () => {
   historyStore.clear();
+  // The outgoing vault's board is no longer shown. Left set, a vault opened
+  // with no board on screen would file its commands under that board's id,
+  // where no undo can reach them. The next board shown sets it again.
+  activeBoardId = null;
   pendingChain = Promise.resolve();
   chainInflightDepth = 0;
   // Orphan any settle handler still tethered to an

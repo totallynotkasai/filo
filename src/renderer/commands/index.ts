@@ -18,10 +18,12 @@
  *  - propertiesCommands    — UpdatePropertiesCommand
  *  - attachmentSrcCommand  — Image/Video/Audio/File source swap
  *  - updateTitleCommand    — tile title edit (note frontmatter or board title)
+ *  - renameFileCommand     — undo of "Rename file to match title" (the reverse rename)
  *  - savedViewsCommand     — UpdateSavedViewsCommand
  *
- * Not re-exported here: `Command.ts` (the base interface + abstract class) is
- * imported directly by each command module, and `replaceAllCommand.ts`
+ * Not re-exported here: `Command.ts` (the base interface + abstract class) and
+ * `trashedFiles.ts` (moving a delete's files into Filo's trash and back) are
+ * imported directly by the command modules, and `replaceAllCommand.ts`
  * (vault-wide find-and-replace) is dynamically imported by the search panel.
  */
 
@@ -38,4 +40,5 @@ export * from './styleCommands';
 export * from './propertiesCommands';
 export * from './attachmentSrcCommand';
 export * from './updateTitleCommand';
+export * from './renameFileCommand';
 export * from './savedViewsCommand';

@@ -1,18 +1,19 @@
 import { uiStore } from '../stores/ui.svelte';
 import { boardCacheStore } from '../stores/boardCache.svelte';
 import { noteStore } from '../stores/notes.svelte';
-import { patchToFrontmatterDelta } from '../lib/vault/frontmatterDelta';
+import type { FrontmatterDelta } from '../lib/vault/frontmatterDelta';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 
 /**
- * Apply a frontmatter-field patch on undo/redo, rebased onto the live
- * (disk-synced) frontmatter instead of blindly clobbering it.
+ * Board undo of a note's frontmatter (a title, tags, a task or card field,
+ * Properties). A command records the change as a `FrontmatterDelta` and the
+ * delta that undoes it, taken from the note as it stood. Undo and redo send a
+ * delta through the note writer, which applies it to a fresh read of the file,
+ * so every key the command didn't touch keeps whatever it holds by then.
  *
- * Edits to OTHER fields survive a plain `mergeFrontmatter` spread; the hazard
- * is the SAME field changed externally since the command ran. On such a
- * conflict we KEEP the external value (no silent data loss), apply only the
- * non-conflicting fields, and offer an "Apply anyway" toast so the user can
- * still force the undo/redo.
+ * One more check covers the keys it did touch: if another program changed
+ * one of them since, the external value is kept (no silent clobber), the
+ * other keys still apply, and an "Apply anyway" toast lets the user force it.
  */
 
 /** Empty-equivalent under mergeFrontmatter's cleaning rule (absent === '' === null === undefined). */
@@ -72,8 +73,8 @@ function fmDeepEqual(a: unknown, b: unknown, depth = 0): boolean {
  * arrays/objects structurally — and order-independently — so a re-emitted or
  * externally-reordered `tags: [...]` doesn't read as a spurious conflict.
  *
- * Exported so the orphan-FM rebase (`kanbanCommands.applyOrphanPatchRebased`)
- * shares this exact predicate with the open-editor path.
+ * Exported for the Properties command, which works out the keys it owns
+ * with the same predicate.
  */
 export function fmValueEqual(a: unknown, b: unknown): boolean {
   if (isEmptyish(a) && isEmptyish(b)) return true;
@@ -86,77 +87,95 @@ export function fmValueEqual(a: unknown, b: unknown): boolean {
 }
 
 /**
- * The inverse of `patch` against `before` (the note's frontmatter just before
- * the patch applies): each patched key's prior value, with an absent key as
- * '' so undo removes it. The field commands compute it on first execute from
- * the note as it stands, so undo restores the true prior value even when the
- * caller's construction-time inverse came from a stale index. The caller wraps
- * the result in `this.snapshot(...)`.
+ * The delta that undoes `delta` on a note whose frontmatter was `before`:
+ * each key it touches goes back to its prior value, or is removed when it had
+ * none (an empty value counts as none, as in `patchToFrontmatterDelta`).
  */
-export function inverseOfPatch(
+export function inverseDelta(
   before: Readonly<Record<string, unknown>>,
-  patch: Record<string, unknown>,
-): Record<string, unknown> {
-  const inverse: Record<string, unknown> = {};
-  for (const key of Object.keys(patch)) {
-    inverse[key] = key in before ? before[key] : '';
+  delta: FrontmatterDelta,
+): FrontmatterDelta {
+  const inverse: FrontmatterDelta = { set: {}, unset: [] };
+  for (const key of deltaKeys(delta)) {
+    const prior = before[key];
+    if (key in before && !isEmptyish(prior)) inverse.set[key] = prior;
+    else inverse.unset.push(key);
   }
   return inverse;
 }
 
-export interface RebaseFrontmatterArgs {
+/** Every key `delta` touches. */
+export function deltaKeys(delta: FrontmatterDelta): string[] {
+  return [...Object.keys(delta.set), ...delta.unset];
+}
+
+/** The value `key` has once `delta` is applied (`undefined` when removed). */
+function valueAfter(delta: FrontmatterDelta, key: string): unknown {
+  return Object.prototype.hasOwnProperty.call(delta.set, key) ? delta.set[key] : undefined;
+}
+
+/** The part of `delta` that touches `keys`. */
+function pick(delta: FrontmatterDelta, keys: string[]): FrontmatterDelta {
+  const wanted = new Set(keys);
+  const set: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(delta.set)) if (wanted.has(k)) set[k] = v;
+  return { set, unset: delta.unset.filter((k) => wanted.has(k)) };
+}
+
+export interface ApplyDeltaArgs {
   relPath: string;
   /**
    * Callers pass the command's `this.targetBoardId` verbatim (the
    * `scripts/gates:command-targets-self` gate verifies it); the helper dirties
-   * that originating board after the merge.
+   * that originating board after the change.
    */
   targetBoardId: string;
-  /** The patch applied this leg — the forward patch on execute/redo, the inverse on undo. */
-  applying: Record<string, unknown>;
+  /** The delta applied this leg: the forward delta on redo, the inverse on undo. */
+  delta: FrontmatterDelta;
   /**
-   * What each touched field should currently hold if no external edit occurred —
-   * i.e. the value this command wrote on the opposite leg. For undo pass the
-   * forward `patch`; for execute/redo pass the `inversePatch`.
+   * The opposite leg: what each touched key holds if nothing external changed
+   * it (the forward delta for undo, the inverse for redo).
    */
-  expectedCurrent: Record<string, unknown>;
-  /** Label for the conflict toast (the backing file path). */
+  expected: FrontmatterDelta;
+  /** Label for the conflict toast (the note path). */
   label: string;
   /**
-   * Treat `applying` as a semantically-ATOMIC unit on a conflict. A
-   * recurrence roll-forward writes `{ completed: false, dueDate: next }`
-   * together; the default per-key rebase could apply one key and keep the other
-   * external, producing a `completed: true` + advanced-`dueDate` state the
-   * roll-forward invariant must never create. When true, ANY conflict skips the
-   * WHOLE patch (applies nothing) and offers an all-or-nothing "Apply anyway".
-   * Omitted/false ⇒ the per-key safe-merge below (correct for independent
-   * multi-field edits like a Properties popup).
+   * Treat the delta as one unit on a conflict. A recurrence roll-forward
+   * writes `{ completed: false, dueDate: next }` together; applying one key
+   * and keeping the other external could produce `completed: true` with an
+   * advanced `dueDate`, a state the roll-forward must never create. When true,
+   * ANY conflict skips the WHOLE delta and offers an all-or-nothing "Apply
+   * anyway". Omitted/false: the per-key merge below (right for independent
+   * multi-field edits like the Properties popup).
    */
   atomic?: boolean;
+  /**
+   * When the note can't be read (gone or unreadable): `apply` sends the delta
+   * anyway (the writer reports a write it can't land); `throw` rejects so
+   * history drops the command. Default `apply`.
+   */
+  whenUnreadable?: 'apply' | 'throw';
 }
 
 /**
- * Apply `applying` to the note's frontmatter, but skip (and prompt about) any
- * field an external edit changed out from under the command. The change goes
- * to the note writer as a delta and the board is marked dirty for whatever was
- * actually applied.
+ * Applies `delta` to the note, except any key another program changed since
+ * the opposite leg left it (that one keeps the external value, with an "Apply
+ * anyway" toast). The change goes to the note writer as a delta and the
+ * command's board is marked dirty.
  *
  * The compare base is the note as it stands (its model, or a fresh read of the
- * file), never a cache that could lag the disk. Async since that read.
+ * file), never a cache that could lag the disk.
  */
-export async function applyFrontmatterPatchRebased(args: RebaseFrontmatterArgs): Promise<void> {
-  const { relPath, targetBoardId, applying, expectedCurrent, label, atomic } = args;
+export async function applyDeltaChecked(args: ApplyDeltaArgs): Promise<void> {
+  const { relPath, targetBoardId, delta, expected, label, atomic } = args;
 
-  // Captured ONCE and consulted by the "Apply anyway" toast handlers: a click
-  // after a vault swap must not queue this patch onto the NEW vault's
-  // same-named file (the writer resolves its vault root live). Also guards
-  // the read below.
+  // Captured ONCE and consulted by the "Apply anyway" handlers: a click after
+  // a vault swap must not queue this delta onto the NEW vault's same-named
+  // file (the writer resolves its vault root live). Also guards the read.
   const identity = captureVaultIdentity();
 
-  const commit = (patch: Record<string, unknown>): void => {
-    // A delta, applied by the writer to a fresh read, so an untouched external
-    // key can't be dropped.
-    noteStore.patchFrontmatter(relPath, patchToFrontmatterDelta(patch));
+  const commit = (part: FrontmatterDelta): void => {
+    noteStore.patchFrontmatter(relPath, part);
     // allow-non-target-markdirty: shared helper, callers pass this.targetBoardId per the CI gate
     boardCacheStore.markDirty(targetBoardId);
   };
@@ -164,26 +183,25 @@ export async function applyFrontmatterPatchRebased(args: RebaseFrontmatterArgs):
   const current = await noteStore.currentFrontmatter(relPath);
   if (!isStillSameVault(identity)) return;
   if (current === null) {
-    // Nothing readable (file gone or unreadable): no baseline to detect a
-    // conflict against, and nothing visible to lose. The writer reports a
-    // write it can't land.
-    commit(applying);
+    if (args.whenUnreadable === 'throw') {
+      throw new Error(`Could not read ${relPath} to apply the change.`);
+    }
+    // Nothing readable: no baseline to detect a conflict against, and nothing
+    // visible to lose. The writer reports a write it can't land.
+    commit(delta);
     return;
   }
 
-  const conflicts = Object.keys(applying).filter(
-    (key) => !fmValueEqual(current[key], expectedCurrent[key]),
-  );
-
+  const keys = deltaKeys(delta);
+  const conflicts = keys.filter((key) => !fmValueEqual(current[key], valueAfter(expected, key)));
   if (conflicts.length === 0) {
-    commit(applying);
+    commit(delta);
     return;
   }
 
   if (atomic) {
-    // The patch is a coupled pair (recurrence roll-forward). Don't split
-    // it: a partial apply could leave `completed: true` with an advanced
-    // `dueDate`. Apply NOTHING and offer to force the whole patch.
+    // A coupled pair (recurrence roll-forward): apply NOTHING and offer to
+    // force the whole delta.
     uiStore.pushToast({
       text: `External edit changed ${conflicts.join(', ')} in ${label}. Skipped this undo/redo to keep the recurring task consistent.`,
       type: 'warning',
@@ -192,10 +210,8 @@ export async function applyFrontmatterPatchRebased(args: RebaseFrontmatterArgs):
         {
           label: 'Apply anyway',
           handler: () => {
-            // The toast can be clicked after a vault swap; bail so
-            // the outgoing vault's patch never lands on the new vault's file.
             if (!isStillSameVault(identity)) return;
-            commit(applying);
+            commit(delta);
           },
         },
       ],
@@ -203,12 +219,9 @@ export async function applyFrontmatterPatchRebased(args: RebaseFrontmatterArgs):
     return;
   }
 
-  // Keep the external value(s); apply only the fields nothing external touched.
-  const safe: Record<string, unknown> = {};
-  for (const key of Object.keys(applying)) {
-    if (!conflicts.includes(key)) safe[key] = applying[key];
-  }
-  if (Object.keys(safe).length > 0) commit(safe);
+  // Keep the external value(s); apply only the keys nothing external touched.
+  const safe = keys.filter((key) => !conflicts.includes(key));
+  if (safe.length > 0) commit(pick(delta, safe));
 
   uiStore.pushToast({
     text: `External edit changed ${conflicts.join(', ')} in ${label}. Kept the external value — that field's undo/redo was skipped.`,
@@ -218,12 +231,8 @@ export async function applyFrontmatterPatchRebased(args: RebaseFrontmatterArgs):
       {
         label: 'Apply anyway',
         handler: () => {
-          // See the atomic handler above: bail after a vault swap.
           if (!isStillSameVault(identity)) return;
-          // The user insists — replay the patch over the conflicting fields too.
-          const forced: Record<string, unknown> = {};
-          for (const key of conflicts) forced[key] = applying[key];
-          commit(forced);
+          commit(pick(delta, conflicts));
         },
       },
     ],

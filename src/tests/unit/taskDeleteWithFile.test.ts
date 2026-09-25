@@ -1,16 +1,17 @@
 /**
- * Audit 5.7 — DeleteTaskCommand's opt-in backing-file delete.
+ * DeleteTaskCommand's opt-in backing-file delete.
  *
  * The default task delete is placement-only (the .md stays in the vault). When
- * the user explicitly picks "Delete task & file", the deleter pre-reads the
- * body and passes it as a snapshot so the command can OWN the disk delete and
- * restore the body on undo — mirroring Mind Map's DeleteTilesCommand.
+ * the user explicitly picks "Delete task & file", the command moves the note
+ * into Filo's trash and, on undo, moves it back before the placement returns —
+ * mirroring Mind Map's DeleteTilesCommand. No note body is kept in memory.
  *
- * These tests pin the three contracts:
- *   1. with file options: execute() removes the placement AND deletes the .md.
- *   2. with file options: undo() restores the placement AND rewrites the body.
- *   3. without file options: neither execute() nor undo() touches the disk
- *      (the long-standing default — proves backward-compatibility).
+ * These tests pin the contracts:
+ *   1. with file options: execute() removes the placement AND trashes the .md.
+ *   2. with file options: undo() restores the .md (bytes intact) and then the
+ *      placement; redo trashes it again.
+ *   3. with file options: a failed trash move leaves the .md where it is.
+ *   4. without file options: neither execute() nor undo() touches the disk.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
@@ -20,9 +21,10 @@ import { DeleteTaskCommand } from '@renderer/commands/index';
 import {
   __resetDirtyTrackingForTests,
 } from '@renderer/lib/boards/boardSaver';
-import { __resetErrorBusForTests } from '@renderer/lib/utils/errorBus';
+import { __resetErrorBusForTests, onError, type ReportedError } from '@renderer/lib/utils/errorBus';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TaskListBoard, TaskPlacement, TileDefinition } from '@renderer/schema/index';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 
 type InvokeRoute = (...args: unknown[]) => unknown | Promise<unknown>;
 type InvokeRecord = { channel: string; args: unknown[] };
@@ -40,6 +42,30 @@ function installFiloStub(routes: Record<string, InvokeRoute>): InvokeRecord[] {
     send: () => {},
   };
   return calls;
+}
+
+type Hook = (channel: string, args: unknown[]) => void;
+
+interface Harness {
+  vault: MemoryVault;
+  calls: InvokeRecord[];
+  setHook(hook: Hook | null): void;
+}
+
+/** The memory vault plus a call log, a hook, and the tree read a restore refreshes. */
+function installVault(initial: Record<string, string>): Harness {
+  const vault = installMemoryVault(initial);
+  const filo = (window as unknown as { filo: { invoke: (channel: string, ...args: unknown[]) => Promise<unknown> } }).filo;
+  const inner = filo.invoke;
+  const calls: InvokeRecord[] = [];
+  let hook: Hook | null = null;
+  filo.invoke = async (channel: string, ...args: unknown[]) => {
+    calls.push({ channel, args });
+    hook?.(channel, args);
+    if (channel === 'vault:read-tree') return { ok: true, tree: [] };
+    return inner(channel, ...args);
+  };
+  return { vault, calls, setHook: (h) => { hook = h; } };
 }
 
 function mkDef(id: string): TileDefinition {
@@ -81,7 +107,7 @@ function placementIds(): string[] {
 
 const REL = 'Tasks/Task.md';
 
-describe('Audit 5.7 — DeleteTaskCommand optional backing-file delete', () => {
+describe('DeleteTaskCommand optional backing-file delete', () => {
   beforeEach(() => {
     boardCacheStore.clear();
     // Runs the test-reset callbacks, which clear the active vault path the
@@ -90,6 +116,7 @@ describe('Audit 5.7 — DeleteTaskCommand optional backing-file delete', () => {
     vaultStore.setPath('/vault');
     __resetErrorBusForTests();
     vi.spyOn(uiStore, 'toast').mockImplementation(() => '');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -99,54 +126,92 @@ describe('Audit 5.7 — DeleteTaskCommand optional backing-file delete', () => {
     __resetErrorBusForTests();
   });
 
-  it('with file options: execute removes the placement and deletes the .md', async () => {
+  it('with file options: execute removes the placement and moves the .md to the trash', async () => {
     hydrateTaskBoard();
-    const calls = installFiloStub({ 'vault:delete': async () => ({ success: true }) });
+    const h = installVault({ [REL]: 'body' });
 
-    const cmd = new DeleteTaskCommand('tl', 't1', {
-      fileSnapshot: { rel: REL, content: 'body' },
-      vaultRoot: '/vault',
-    });
+    const cmd = new DeleteTaskCommand('tl', 't1', { filePath: REL, vaultRoot: '/vault' });
     await cmd.execute();
     await cmd.lastExecuteCompletion;
 
     expect(placementIds()).not.toContain('t1');
-    // Exclude the `.filo/` sentinel deletes a write-drain may emit.
-    const deletes = calls.filter(
-      (c) => c.channel === 'vault:delete' && !((c.args[1] as string) ?? '').includes('.filo/'),
+    const moves = h.calls.filter((c) => c.channel === 'vault:trash-move');
+    expect(moves.map((c) => c.args)).toEqual([['/vault', REL]]);
+    expect(h.vault.read(REL)).toBeUndefined();
+    expect([...h.vault.trash.values()].map((t) => t.originalPath)).toEqual([REL]);
+    // Nothing is deleted outright (`.filo/` sentinel clean-up aside).
+    const deletes = h.calls.filter(
+      (c) => c.channel === 'vault:delete' && !String(c.args[1] ?? '').includes('.filo/'),
     );
-    expect(deletes.length).toBe(1);
-    expect(deletes[0].args[0]).toBe('/vault');
-    expect(deletes[0].args[1]).toBe(`/vault/${REL}`);
+    expect(deletes).toEqual([]);
   });
 
-  it('with file options: undo restores the placement and rewrites the body', async () => {
+  it('with file options: undo restores the .md from the trash before the placement, bytes intact', async () => {
     hydrateTaskBoard();
-    const calls = installFiloStub({
-      'vault:delete': async () => ({ success: true }),
-      'vault:write-file-text': async () => ({ success: true }),
-      'vault:file-exists': async () => true,
-      'vault:read-tree': async () => ({ ok: true, tree: [] }),
-    });
+    const bytes = '---\ndone: false\n---\nrestored body\n';
+    const h = installVault({ [REL]: bytes });
 
-    const cmd = new DeleteTaskCommand('tl', 't1', {
-      fileSnapshot: { rel: REL, content: 'restored body' },
-      vaultRoot: '/vault',
-    });
+    const cmd = new DeleteTaskCommand('tl', 't1', { filePath: REL, vaultRoot: '/vault' });
     await cmd.execute();
-    await cmd.lastExecuteCompletion;
     expect(placementIds()).not.toContain('t1');
 
+    let placedAtRestore: boolean | null = null;
+    h.setHook((channel) => {
+      if (channel === 'vault:trash-restore') placedAtRestore = placementIds().includes('t1');
+    });
     await cmd.undo();
     await cmd.lastUndoCompletion;
 
+    expect(placedAtRestore).toBe(false);
     expect(placementIds()).toContain('t1');
-    // Isolate the snapshot write from board-JSON / `.filo/.dirty` writes.
-    const writes = calls.filter(
-      (c) => c.channel === 'vault:write-file-text' && c.args[1] === REL,
-    );
-    expect(writes.length).toBe(1);
-    expect(writes[0].args).toEqual(['/vault', REL, 'restored body']);
+    expect(h.vault.read(REL)).toBe(bytes);
+    expect(h.vault.trash.size).toBe(0);
+    // No seed or rewrite of the note: the file itself came back.
+    expect(h.vault.writes.filter(([, rel]) => rel === REL)).toEqual([]);
+
+    // Redo trashes it again.
+    await cmd.execute();
+    expect(placementIds()).not.toContain('t1');
+    expect(h.vault.read(REL)).toBeUndefined();
+    expect(h.vault.trash.size).toBe(1);
+  });
+
+  it('with file options: restored beside a newer note, redo trashes the restored copy, not the newer note', async () => {
+    hydrateTaskBoard();
+    const h = installVault({ [REL]: 'original\n' });
+    const cmd = new DeleteTaskCommand('tl', 't1', { filePath: REL, vaultRoot: '/vault' });
+    await cmd.execute();
+    h.vault.writeExternally(REL, 'newcomer\n');
+
+    await cmd.undo();
+    const beside = REL.replace(/\.md$/, ' (restored).md');
+    expect(h.vault.read(REL)).toBe('newcomer\n');
+    expect(h.vault.read(beside)).toBe('original\n');
+
+    await cmd.execute();
+    expect(h.vault.read(REL)).toBe('newcomer\n');
+    expect(h.vault.read(beside)).toBeUndefined();
+    expect([...h.vault.trash.values()].map((t) => t.originalPath)).toEqual([beside]);
+  });
+
+  it('with file options: a failed trash move leaves the .md in place and reports it', async () => {
+    hydrateTaskBoard();
+    const h = installVault({ [REL]: 'kept' });
+    h.vault.failNextTrashMove(REL, 'EBUSY');
+    const errors: ReportedError[] = [];
+    onError((e) => { errors.push(e); });
+
+    const cmd = new DeleteTaskCommand('tl', 't1', { filePath: REL, vaultRoot: '/vault' });
+    await cmd.execute();
+
+    expect(placementIds()).not.toContain('t1');
+    expect(h.vault.read(REL)).toBe('kept');
+    expect(errors.length).toBe(1);
+    expect(errors[0].message).toContain("Filo's trash");
+
+    await cmd.undo();
+    expect(placementIds()).toContain('t1');
+    expect(h.vault.read(REL)).toBe('kept');
   });
 
   it('without file options: neither execute nor undo touches the filesystem', async () => {
@@ -165,10 +230,10 @@ describe('Audit 5.7 — DeleteTaskCommand optional backing-file delete', () => {
     await cmd.lastUndoCompletion;
     expect(placementIds()).toContain('t1');
 
-    // No user-file delete or write (sentinel `.filo/` traffic excluded).
+    // No user-file delete, write or trash move (sentinel `.filo/` traffic excluded).
     const fsCalls = calls.filter(
       (c) =>
-        (c.channel === 'vault:delete' || c.channel === 'vault:write-file-text') &&
+        (c.channel === 'vault:delete' || c.channel === 'vault:write-file-text' || c.channel.startsWith('vault:trash-')) &&
         !((c.args[1] as string) ?? '').includes('.filo/'),
     );
     expect(fsCalls.length).toBe(0);

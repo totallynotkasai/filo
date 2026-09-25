@@ -56,8 +56,7 @@ export const PAYLOAD_LIMITS = {
   /** `media:save-audio` — base64-decoded audio bytes. */
   AUDIO: 100 * MB,
   /**
-   * Single-file binary IPC cap shared by `vault:write-file-binary`
-   * (cascade-delete restore) and `export:save` (PNG/SVG/PDF export
+   * Single-file binary IPC cap for `export:save` (PNG/SVG/PDF export
    * payloads). 200 MB allows a 4K screen capture or a long high-bitrate
    * recording to survive an export round-trip without false rejection.
    *

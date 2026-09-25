@@ -2,7 +2,7 @@ import type { Tile, Connection } from '../schema/index';
 import { boardCacheStore } from './boardCache.svelte';
 import type { BoardContext } from './boardStoreTypes';
 import { historyStore } from './history.svelte';
-import { CascadeDeleteCommand } from '../commands/index';
+import { CascadeDeleteCommand, type CascadeDeleteOptions } from '../commands/index';
 
 /**
  * Board slice — file-reference changes from outside the board (renames and
@@ -28,11 +28,11 @@ export function makeFrontmatterSyncSlice(_ctx: BoardContext) {
 
     cascadeDeleteByVaultPath(
       deletedRelPath: string,
-      fileSnapshots: Record<string, string> = {},
-      vaultRoot: string = '',
-      mediaSnapshots: Record<string, string> = {},
+      opts: Omit<CascadeDeleteOptions, 'styleClears'> = {},
     ): {
       removedTileIds: string[]; changedBoardIds: string[];
+      /** The undoable command, when there was anything to undo. */
+      command: CascadeDeleteCommand | null;
     } {
       // Pure scan. Style-clears are returned alongside the tile plan so the
       // cascade command can replay them on undo.
@@ -44,16 +44,16 @@ export function makeFrontmatterSyncSlice(_ctx: BoardContext) {
       const hasStyleClears = Object.values(targets.styleClears).some(
         (s) => s !== undefined && Object.keys(s).length > 0,
       );
-      if (targets.tileIds.length === 0 && !hasStyleClears) {
-        return { removedTileIds, changedBoardIds: Object.keys(targets.byBoard) };
+      // Nothing to undo at all: no tile, no style field, nothing in the trash.
+      // A trashed item on no board still gets a command, so Ctrl+Z brings it
+      // back.
+      if (targets.tileIds.length === 0 && !hasStyleClears && !opts.trashed) {
+        return { removedTileIds, changedBoardIds: Object.keys(targets.byBoard), command: null };
       }
 
       // Snapshot the tiles + connections about to be removed so undo can
-      // restore them. The caller may also pass `fileSnapshots`
-      // (vault-relative .md path → body bytes captured BEFORE the delete IPC),
-      // which the command writes back on undo so restored tiles point at
-      // content instead of broken refs. External deletes that bypass this
-      // path still surface a broken-ref badge.
+      // restore them. The file itself, when the caller moved it into Filo's
+      // trash (`opts.trashed`), comes back from there on undo.
       const byBoardTiles: Record<string, Tile[]> = {};
       const tileIdSet = new Set<string>(targets.tileIds);
       for (const [boardId, tileIds] of Object.entries(targets.byBoard)) {
@@ -91,12 +91,13 @@ export function makeFrontmatterSyncSlice(_ctx: BoardContext) {
         boardCacheStore.applyCascadeStyleClears(targets.styleClears);
       }
 
-      // Dispatch through history so Ctrl+Z restores placements + bodies + styles.
-      historyStore.execute(new CascadeDeleteCommand(byBoardTiles, conns, fileSnapshots, vaultRoot, styleClearsSnapshot, mediaSnapshots));
+      // Dispatch through history so Ctrl+Z restores the file, placements and styles.
+      const command = new CascadeDeleteCommand(byBoardTiles, conns, { ...opts, styleClears: styleClearsSnapshot });
+      historyStore.execute(command);
       for (const arr of Object.values(byBoardTiles)) {
         for (const t of arr) removedTileIds.push(t.id);
       }
-      return { removedTileIds, changedBoardIds: Object.keys(targets.byBoard) };
+      return { removedTileIds, changedBoardIds: Object.keys(targets.byBoard), command };
     },
   };
 }

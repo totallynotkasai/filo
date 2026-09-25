@@ -24,6 +24,7 @@ import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { reportError } from '../utils/errorBus';
 import { uiStore } from '../../stores/ui.svelte';
 import { surveyForeignSentinels } from '../../stores/foreignSentinels.svelte';
+import { purgeExpiredTrash } from '../../stores/trash.svelte';
 import { isStillSameVault, type VaultIdentity } from './vaultIdentity';
 import { readOwnSentinel, clearOwnSentinel } from './machineSentinels';
 
@@ -136,11 +137,16 @@ export async function sweepOrphanTempFiles(vaultRoot: string, captured: VaultIde
 
 /**
  * The vault-open checks that run right AFTER the quit-failure breadcrumb was
- * surfaced: move orphaned save temps out of the synced vault, then list other
- * machines' crash sentinels (informational).
+ * surfaced: move orphaned save temps out of the synced vault, list other
+ * machines' crash sentinels (informational), then send this machine's trashed
+ * items older than 30 days to the Recycle Bin.
  */
 export async function runPostBreadcrumbChecks(vaultRoot: string, captured: VaultIdentity): Promise<void> {
   await sweepOrphanTempFiles(vaultRoot, captured);
   if (!isStillSameVault(captured)) return;
   await surveyForeignSentinels(vaultRoot, captured);
+  if (!isStillSameVault(captured)) return;
+  // Not awaited: the purge may ask "Delete permanently?", and the rest of the
+  // open sequence must not wait on that answer.
+  void purgeExpiredTrash(vaultRoot, captured);
 }

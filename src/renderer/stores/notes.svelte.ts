@@ -633,6 +633,20 @@ export const noteStore = {
     }
   },
 
+  /**
+   * `relPath` (a note, or a folder of them) is back on disk after a restore
+   * from Filo's trash: every open view of a note there that went missing
+   * reads it again. The watcher doesn't report our own restores.
+   */
+  restoredFromTrash(relPath: string): void {
+    const key = vaultPath(relPath);
+    const prefix = `${key}/`;
+    for (const [path, m] of models) {
+      if (path !== key && !path.startsWith(prefix)) continue;
+      if (m.status === 'missing' || m.status === 'loading') m.loaded = load(m, true);
+    }
+  },
+
   /** The unsaved body of a note deleted on disk is dropped. */
   discardDeleted(relPath: string): void {
     const m = models.get(vaultPath(relPath));

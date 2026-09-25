@@ -47,6 +47,18 @@ export type IpcSuccess<T = Record<never, never>> =
   | { success: false; code?: string; error?: string };
 
 // Per-channel structured types (kept inline below for greppability).
+// Mirrors `TrashEntry` in `src/main/vault/trashOps.ts`.
+export type TrashKind = 'file' | 'folder';
+export interface TrashEntryInfo {
+  trashId: string;
+  originalPath: string;
+  deletedAt: string;
+  machineId: string;
+  kind: TrashKind;
+  /** False when the manifest is there but the item never arrived (a crash mid-move). */
+  present: boolean;
+}
+
 // `RecentVault` mirrors the main-side definition in
 // `src/main/services/recentVaults.ts:7`. Keep these two in sync — the
 // handlers serialise this shape directly to / from disk.
@@ -151,10 +163,6 @@ export interface IpcChannelMap {
     args: [vaultRoot: string, relPath: string, content: string];
     result: IpcSuccess<{ path: string }>;
   };
-  'vault:write-file-binary': {
-    args: [vaultRoot: string, relPath: string, base64Data: string];
-    result: IpcSuccess<{ path: string }>;
-  };
   'vault:file-exists': {
     args: [vaultRoot: string, relPath: string];
     result: boolean;
@@ -223,10 +231,6 @@ export interface IpcChannelMap {
       | [vaultRoot: string, name: string, data: unknown, subfolder: string | undefined];
     result: IpcOk<{ path: string }>;
   };
-  'board:delete': {
-    args: [vaultRoot: string, relPath: string];
-    result: IpcOk;
-  };
   // Sync-client forks of a board (never in board:list).
   'board:list-conflicts': {
     args: [vaultRoot: string];
@@ -274,6 +278,35 @@ export interface IpcChannelMap {
   'vault:sweep-orphan-tmp': {
     args: [vaultRoot: string];
     result: IpcSuccess<{ moved: Array<{ from: string; to: string }> }>;
+  };
+  // Moves a vault file or folder into .filo/trash/<trashId>/. Nothing moves
+  // on failure (a locked child fails the whole folder).
+  'vault:trash-move': {
+    args: [vaultRoot: string, relPath: string];
+    result: IpcSuccess<{ trashId: string; kind: TrashKind }>;
+  };
+  // Moves a trashed item back; beside its original path (`alongside`) when
+  // that path is taken. `TRASH_ITEM_MISSING` when it was restored or purged.
+  'vault:trash-restore': {
+    args: [vaultRoot: string, trashId: string];
+    result: IpcSuccess<{ restoredPath: string; originalPath: string; kind: TrashKind; alongside: boolean }>;
+  };
+  'vault:trash-list': {
+    args: [vaultRoot: string];
+    result: IpcSuccess<{ entries: TrashEntryInfo[]; machineId: string }>;
+  };
+  // Sends items to the OS Recycle Bin. Items it refuses stay trashed and come
+  // back as `TRASH_FAILED` with the list; nothing is deleted for good here.
+  'vault:trash-purge': {
+    args: [vaultRoot: string, which: string[] | 'olderThan30d'];
+    result:
+      | { success: true; purged: string[] }
+      | { success: false; code: 'TRASH_FAILED'; purged: string[]; failed: Array<{ trashId: string; originalPath: string }> }
+      | { success: false; code?: string; error?: string };
+  };
+  'vault:trash-delete-permanently': {
+    args: [vaultRoot: string, trashIds: string[]];
+    result: IpcSuccess<{ deleted: string[] }>;
   };
 
   // ── Config ───────────────────────────────────────────────────────

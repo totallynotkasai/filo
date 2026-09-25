@@ -55,7 +55,7 @@ describe('Audit-19 EXT-4 — missing-file toast never removes tiles on one click
       { a: 'Alpha.board.json', b: 'Beta.board.json' },
     );
     installFiloMock({ 'vault:file-exists': () => false });
-    cascade = vi.spyOn(boardStore, 'cascadeDeleteByVaultPath').mockImplementation(() => {});
+    cascade = vi.spyOn(boardStore, 'cascadeDeleteByVaultPath').mockImplementation(() => ({ removedTileIds: [], changedBoardIds: [], command: null }));
     dropFile = vi.spyOn(fileTagsStore, 'dropFile').mockImplementation(() => {});
   });
   afterEach(() => {
@@ -104,7 +104,7 @@ describe('Audit-19 EXT-4 — missing-file toast never removes tiles on one click
     uiStore.closeConfirm();
     dialog.onConfirm(false);
     await settle();
-    expect(cascade).toHaveBeenCalledWith('Notes.md', {}, '/vault');
+    expect(cascade).toHaveBeenCalledWith('Notes.md', { vaultRoot: '/vault' });
     expect(dropFile).toHaveBeenCalledWith('Notes.md');
   });
 

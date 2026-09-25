@@ -5,6 +5,8 @@
  * moves an internal API, only this adapter changes.
  */
 import type { Editor } from '@tiptap/core';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { settle, waitFor, quiesce, type CharApp } from './app';
 
 export type BoardKind = 'mindmap' | 'kanban' | 'tasklist';
@@ -443,6 +445,61 @@ export async function answerConfirm(app: CharApp, opts: { tickExtra?: boolean; c
 export async function deleteTileAndFile(app: CharApp, tileRoot: HTMLElement): Promise<void> {
   click($(tileRoot, 'button[aria-label="Delete tile"]'));
   await answerConfirm(app, { tickExtra: true, confirm: true });
+}
+
+// ── Sidebar delete and Filo's trash ──────────────────────────────────────────
+
+/** Sidebar: right-click a file or folder → Delete → confirm. */
+export async function deleteInSidebar(app: CharApp, rel: string): Promise<void> {
+  contextMenu(await revealInSidebar(app, rel));
+  await settle();
+  const folder = findByText(app.el, '.context-menu .menu-item, .context-menu [role="menuitem"]', 'Delete folder');
+  await chooseMenuItem(app, folder ? 'Delete folder' : 'Delete file');
+  await answerConfirm(app, { confirm: true });
+  await quiesce(800);
+}
+
+/** The paths things in Filo's trash had, read from disk (`.filo/trash/<id>/manifest.json`). */
+export function trashedPaths(app: CharApp): string[] {
+  const dir = join(app.root, '.filo', 'trash');
+  if (!existsSync(dir)) return [];
+  const out: string[] = [];
+  for (const id of readdirSync(dir)) {
+    const manifest = join(dir, id, 'manifest.json');
+    if (!existsSync(manifest)) continue;
+    out.push((JSON.parse(readFileSync(manifest, 'utf-8')) as { originalPath: string }).originalPath);
+  }
+  return out.sort();
+}
+
+/** Project menu → Project Settings → Trash. */
+export async function openTrashSettings(app: CharApp): Promise<void> {
+  const trigger = $$(app.el, 'button.dropdown-trigger').find((b) => b.closest('.global-toolbar, header, nav') !== null) ?? $(app.el, 'button.dropdown-trigger');
+  click(trigger);
+  await settle();
+  const item = $$(document, 'button.dropdown-item').find((b) => (b.textContent ?? '').trim() === 'Project Settings');
+  if (!item) throw new Error('no Project Settings item');
+  click(item);
+  await waitFor(() => $$(document, '.settings-tab').length > 0, 'settings modal');
+  const tab = $$(document, '.settings-tab').find((b) => (b.textContent ?? '').includes('Trash'));
+  if (!tab) throw new Error('no Trash tab');
+  click(tab);
+  await waitFor(() => document.querySelector('.trash-settings .trash-list, .trash-settings .empty-text') !== null, 'trash list');
+  await quiesce(300);
+}
+
+/** Settings → Trash: Restore on the row of the item that was at `rel`. */
+export async function restoreFromTrashSettings(rel: string): Promise<void> {
+  await waitFor(() => document.querySelector(`button.restore-btn[aria-label="Restore ${rel}"]`) !== null, `trash row for ${rel}`);
+  click(document.querySelector(`button.restore-btn[aria-label="Restore ${rel}"]`) as HTMLElement);
+  await quiesce(1200);
+}
+
+/** Close whatever modal is open. */
+export async function closeModal(): Promise<void> {
+  const close = document.querySelector('button.modal-close') as HTMLElement | null;
+  if (close) click(close);
+  await quiesce(300);
 }
 
 /** Ctrl+Z with nothing focused (board undo). */

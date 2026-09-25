@@ -10,11 +10,11 @@
  *     `PendingWritesFailedError`, surface an aggregated toast, and the
  *     op is NOT invoked.
  *  3. The re-entrancy guard collapses nested `withDrainedWrites` calls
- *     so a complex sequence (e.g. delete-with-snapshots calling
- *     `deleteVaultPath` internally) only drains once.
+ *     so a complex sequence (e.g. a delete cascade calling
+ *     `trashVaultPath` internally) only drains once.
  *
- *  Plus structural smoke for the four IPC convenience wrappers:
- *  - renameVaultPath / deleteVaultPath / createVaultFolder /
+ *  Plus structural smoke for the IPC convenience wrappers:
+ *  - renameVaultPath / trashVaultPath / restoreTrashed / createVaultFolder /
  *    copyFileIntoVault all flush before the IPC fires.
  */
 
@@ -23,7 +23,8 @@ import {
   PendingWritesFailedError,
   withDrainedWrites,
   renameVaultPath,
-  deleteVaultPath,
+  trashVaultPath,
+  restoreTrashed,
   createVaultFolder,
   copyFileIntoVault,
   __resetDrainGuardForTests,
@@ -101,7 +102,7 @@ describe('withDrainedWrites — drain ordering', () => {
     expect(errorToast!.text).toContain('Locked.md');
   });
 
-  it('deleteVaultPath lands a queued note edit before the delete IPC', async () => {
+  it('trashVaultPath lands a queued note edit before the trash move', async () => {
     const events: string[] = [];
     const vault = installMemoryVault({ 'Notes.md': '---\ntitle: Notes\n---\nBody\n' });
     vault.beforeWrite = (rel) => {
@@ -109,17 +110,19 @@ describe('withDrainedWrites — drain ordering', () => {
     };
     const invoke = window.filo.invoke;
     window.filo.invoke = (async (channel: string, ...args: unknown[]) => {
-      if (channel === 'vault:delete' && !String(args[1]).includes('.filo/')) {
-        events.push('delete');
-        return { success: true };
-      }
+      if (channel === 'vault:trash-move') events.push('trash-move');
       return (invoke as (c: string, ...a: unknown[]) => Promise<unknown>)(channel, ...args);
     }) as typeof window.filo.invoke;
     noteStore.patchFrontmatter('Notes.md', { set: { status: 'edited' }, unset: [] });
 
-    await deleteVaultPath('/vault', '/vault/Notes.md');
+    const result = await trashVaultPath('/vault', 'Notes.md');
 
-    expect(events).toEqual(['write:Notes.md', 'delete']);
+    expect(result.success).toBe(true);
+    expect(events).toEqual(['write:Notes.md', 'trash-move']);
+    // The edit went to the trash with the note, not lost and not left behind.
+    expect(vault.read('Notes.md')).toBeUndefined();
+    const [entry] = [...vault.trash.values()];
+    expect(entry.files.get('Notes.md')).toContain('status: edited');
   });
 
 
@@ -238,19 +241,35 @@ describe('withDrainedWrites — IPC convenience wrappers', () => {
     expect(calls).toEqual([['/vault', 'old.md', 'new.md']]);
   });
 
-  it('deleteVaultPath forwards args to vault:delete and returns the envelope', async () => {
+  it('trashVaultPath forwards the vault-relative path to vault:trash-move and returns the envelope', async () => {
     const calls: unknown[][] = [];
     installFiloMock({
-      'vault:delete': async (...args) => {
+      'vault:trash-move': async (...args) => {
         calls.push(args);
-        return { success: true };
+        return { success: true, trashId: 'tid', kind: 'file' };
       },
     });
 
-    const result = await deleteVaultPath('/vault', '/vault/Notes.md');
+    const result = await trashVaultPath('/vault', 'Notes.md');
 
-    expect(result).toEqual({ success: true });
-    expect(calls).toEqual([['/vault', '/vault/Notes.md']]);
+    expect(result).toEqual({ success: true, trashId: 'tid', kind: 'file' });
+    expect(calls).toEqual([['/vault', 'Notes.md']]);
+  });
+
+  it('restoreTrashed forwards the trash id to vault:trash-restore and returns the envelope', async () => {
+    const calls: unknown[][] = [];
+    const envelope = { success: true, restoredPath: 'Notes.md', originalPath: 'Notes.md', kind: 'file', alongside: false };
+    installFiloMock({
+      'vault:trash-restore': async (...args) => {
+        calls.push(args);
+        return envelope;
+      },
+    });
+
+    const result = await restoreTrashed('/vault', 'tid', 'Notes.md');
+
+    expect(result).toEqual(envelope);
+    expect(calls).toEqual([['/vault', 'tid']]);
   });
 
   it('createVaultFolder forwards args to vault:create-folder', async () => {

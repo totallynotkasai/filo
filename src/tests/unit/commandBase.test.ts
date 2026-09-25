@@ -1,21 +1,16 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from 'vitest';
 import { Command } from '@renderer/commands/Command';
 import { historyStore } from '@renderer/stores/history.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 
 /**
- * Phase R3 — Command base class + history-store mutateStack tests.
- *
- * Covers the four acceptance criteria from REFACTOR_PLAN_2026-05-26 Phase R3:
+ * Command base class + history-store stack tests:
  *  1. Patches/snapshots stored on a command instance never share inner
  *     references with the caller-side value — a post-construction mutation
  *     of the caller-side object cannot leak into the snapshot.
- *  2. A new command executed after Ctrl+Z'ing a DeleteTilesCommand with file
- *     snapshots fires the escalated "deleted files cannot be restored" toast
- *     (file-snapshot loss via redo-clear).
- *  3. `setMaxHistory(small)` while a command with file snapshots sits in the
- *     about-to-be-dropped head of the stack fires the same toast.
- *  4. BatchCommand whose 2nd child throws does NOT land on the undo stack,
+ *  2. Dropping history (redo-clear, a lowered cap) shows at most the plain
+ *     "limit reached" toast: deleted files sit in the trash, so nothing is lost.
+ *  3. BatchCommand whose 2nd child throws does NOT land on the undo stack,
  *     so a subsequent Ctrl+Z is a no-op (not a double-undo of the rolled-back
  *     children).
  */
@@ -30,16 +25,6 @@ class SnapshotProbe extends Command {
   }
   execute(): void {}
   undo(): void {}
-}
-
-/** Minimal Command with a `hasFileSnapshots() => true` override. */
-class FakeFileSnapshotCommand extends Command {
-  description = 'fake-file-snapshot';
-  execute(): void {}
-  undo(): void {}
-  hasFileSnapshots(): boolean {
-    return true;
-  }
 }
 
 class NoopCommand extends Command {
@@ -74,114 +59,56 @@ describe('Command.snapshot — deep-clone helper', () => {
 
     expect(taken.items).toEqual([{ foo: 'bar' }]);
   });
-
-  it('subclasses without a `hasFileSnapshots()` override default to absent — callers reach it via optional chaining', () => {
-    const probe = new SnapshotProbe({});
-    // The interface declares `hasFileSnapshots?(): boolean` as optional;
-    // subclasses that don't override it have no implementation. Callers
-    // always use `command.hasFileSnapshots?.() ?? false` (see
-    // history.svelte.ts), so the contract is "absent === false".
-    expect(probe.hasFileSnapshots?.() ?? false).toBe(false);
-  });
 });
 
-describe('UpdateCardFieldCommand / UpdateTaskFieldCommand — patch deep-clone (Phase R3 acceptance #1)', () => {
+describe('UpdateCardFieldCommand / UpdateTaskFieldCommand — patch deep-clone', () => {
   it('inverse patches never share references with the caller-side patch', async () => {
     // Import after vitest setup so the mocks below are picked up.
     const { UpdateCardFieldCommand } = await import('@renderer/commands/kanbanCommands');
     const { UpdateTaskFieldCommand } = await import('@renderer/commands/taskCommands');
 
     // Construct each command with a patch / inversePatch whose nested
-    // `tags` array we'll mutate post-construction. Phase R3's headline
-    // fix is that the constructor deep-clones via `this.snapshot(...)`,
-    // so a post-mutation of the caller-side array can NOT leak into the
-    // command's stored snapshot.
+    // `tags` array we'll mutate post-construction. The constructor
+    // deep-clones via `this.snapshot(...)`, so a post-mutation of the
+    // caller-side array can NOT leak into the command's stored deltas.
     const patch = { tags: ['old-tag'] };
     const inversePatch = { tags: ['restored'] };
 
     const cardCmd = new UpdateCardFieldCommand('b1', 'a.md', patch, inversePatch);
     const taskCmd = new UpdateTaskFieldCommand('b1', 'a.md', patch, inversePatch);
 
-    // Mutate the caller-side arrays AFTER construction. Pre-R3, the
-    // commands held shallow `{ ...patch }` so the inner `tags` ref was
-    // shared with the live caller; the mutation here would silently
-    // appear inside the command's stored inverse on undo.
+    // Mutate the caller-side arrays AFTER construction. A shallow copy
+    // would share the inner `tags` ref with the live caller, and the
+    // mutation here would silently appear inside the stored inverse on undo.
     patch.tags.push('post-construction-leak');
     inversePatch.tags.push('post-construction-leak');
 
-    // Probe the private fields via JSON serialisation to verify
-    // detachment without exposing internals.
+    // Probe the private `forward` / `inverse` deltas via JSON serialisation
+    // to verify detachment without exposing internals.
     const cardSnapshot = JSON.parse(JSON.stringify(cardCmd));
     const taskSnapshot = JSON.parse(JSON.stringify(taskCmd));
 
-    expect(cardSnapshot.patch.tags).toEqual(['old-tag']);
-    expect(cardSnapshot.inversePatch.tags).toEqual(['restored']);
-    expect(taskSnapshot.patch.tags).toEqual(['old-tag']);
-    expect(taskSnapshot.inversePatch.tags).toEqual(['restored']);
+    expect(cardSnapshot.forward.set.tags).toEqual(['old-tag']);
+    expect(cardSnapshot.inverse.set.tags).toEqual(['restored']);
+    expect(taskSnapshot.forward.set.tags).toEqual(['old-tag']);
+    expect(taskSnapshot.inverse.set.tags).toEqual(['restored']);
   });
 });
 
-describe('historyStore — redo-clear file-snapshot escalation (Phase R3 acceptance #2)', () => {
-  let toastSpy: ReturnType<typeof vi.spyOn>;
+describe('historyStore — dropping history of a delete shows only the ordinary limit toast', () => {
+  // Deleted files wait in Filo's trash, so a delete command falling off the
+  // history loses nothing: there is no escalated "cannot be restored" warning,
+  // only the plain one-shot limit toast when the cap first drops an entry.
+  let toastSpy: MockInstance<typeof uiStore.toast>;
+
+  function toastTexts(): string[] {
+    return toastSpy.mock.calls.map((args) => String(args[0]));
+  }
 
   beforeEach(() => {
     historyStore.clear();
     historyStore.setMaxHistory(500);
-    historyStore.setActiveBoard('b-file');
-    toastSpy = vi.spyOn(uiStore, 'toast');
-  });
-  afterEach(() => {
-    historyStore.clear();
-    historyStore.setActiveBoard(null);
-    toastSpy.mockRestore();
-  });
-
-  it('fires the escalated toast when a redo-clear drops a file-snapshot command', async () => {
-    // 1. Execute a file-snapshot command (lands on undoStack).
-    const fileCmd = new FakeFileSnapshotCommand();
-    await historyStore.execute(fileCmd);
-    expect(historyStore.canUndo).toBe(true);
-
-    // 2. Ctrl+Z it (moves to redoStack).
-    await historyStore.undo();
-    expect(historyStore.canUndo).toBe(false);
-    expect(historyStore.canRedo).toBe(true);
-
-    // 3. Execute a new command — the redoStack is cleared, dropping the
-    //    file-snapshot command. The escalation toast should fire.
-    await historyStore.execute(new NoopCommand());
-
-    const lossCalls = toastSpy.mock.calls.filter((args) =>
-      typeof args[0] === 'string'
-      && args[0].includes('deleted files older than this point cannot be restored'),
-    );
-    expect(lossCalls.length).toBe(1);
-  });
-
-  it('does NOT fire the escalated toast when the cleared redo entry has no file snapshots', async () => {
-    await historyStore.execute(new NoopCommand());
-    await historyStore.undo();
-    expect(historyStore.canRedo).toBe(true);
-
-    // Push a fresh command — clears the redo stack. The cleared entry
-    // is a NoopCommand (no file snapshots), so no escalation.
-    await historyStore.execute(new NoopCommand());
-
-    const lossCalls = toastSpy.mock.calls.filter((args) =>
-      typeof args[0] === 'string'
-      && args[0].includes('deleted files older than this point cannot be restored'),
-    );
-    expect(lossCalls.length).toBe(0);
-  });
-});
-
-describe('historyStore.setMaxHistory — truncation file-snapshot escalation (Phase R3 acceptance #3)', () => {
-  let toastSpy: ReturnType<typeof vi.spyOn>;
-
-  beforeEach(() => {
-    historyStore.clear();
-    historyStore.setMaxHistory(500);
-    historyStore.setActiveBoard('b-trunc');
+    historyStore.setActiveBoard('b-drop');
     toastSpy = vi.spyOn(uiStore, 'toast');
   });
   afterEach(() => {
@@ -191,39 +118,36 @@ describe('historyStore.setMaxHistory — truncation file-snapshot escalation (Ph
     toastSpy.mockRestore();
   });
 
-  it('fires the escalated toast when setMaxHistory drops a file-snapshot command', async () => {
-    // The audit example: a 15-deep stack with a file-snapshot command at
-    // index 0; lower the cap to 10 — drops the 5 oldest entries, one of
-    // which carries file snapshots. (10 is the minimum the slider clamps
-    // to, matching the production cap floor.)
-    await historyStore.execute(new FakeFileSnapshotCommand());
-    for (let i = 0; i < 14; i++) await historyStore.execute(new NoopCommand());
+  it('a redo-clear that drops an undone command toasts nothing', async () => {
+    await historyStore.execute(new NoopCommand());
+    await historyStore.undo();
+    expect(historyStore.canRedo).toBe(true);
 
-    expect(historyStore.canUndo).toBe(true);
+    await historyStore.execute(new NoopCommand());
 
-    historyStore.setMaxHistory(10);
-
-    const lossCalls = toastSpy.mock.calls.filter((args) =>
-      typeof args[0] === 'string'
-      && args[0].includes('deleted files older than this point cannot be restored'),
-    );
-    expect(lossCalls.length).toBe(1);
+    expect(historyStore.canRedo).toBe(false);
+    expect(toastTexts()).toEqual([]);
   });
 
-  it('does NOT fire the escalated toast when truncated entries have no file snapshots', async () => {
+  it('lowering the cap drops old entries without any loss toast', async () => {
     for (let i = 0; i < 15; i++) await historyStore.execute(new NoopCommand());
 
     historyStore.setMaxHistory(10);
 
-    const lossCalls = toastSpy.mock.calls.filter((args) =>
-      typeof args[0] === 'string'
-      && args[0].includes('deleted files older than this point cannot be restored'),
-    );
-    expect(lossCalls.length).toBe(0);
+    expect(toastTexts().some((t) => /cannot be restored/i.test(t))).toBe(false);
+  });
+
+  it('pushing past the cap shows the plain limit toast once', async () => {
+    historyStore.setMaxHistory(10);
+    for (let i = 0; i < 12; i++) await historyStore.execute(new NoopCommand());
+
+    const limit = toastTexts().filter((t) => t.includes('Undo history limit reached'));
+    expect(limit.length).toBe(1);
+    expect(toastTexts().some((t) => /cannot be restored/i.test(t))).toBe(false);
   });
 });
 
-describe('historyStore.execute — push-after-settle (Phase R3 acceptance #4)', () => {
+describe('historyStore.execute — push-after-settle', () => {
   beforeEach(() => {
     historyStore.clear();
     historyStore.setMaxHistory(500);
@@ -308,7 +232,7 @@ describe('historyStore.execute — sync commands still commit synchronously', ()
   it('canUndo is true immediately after a sync execute(), without awaiting', () => {
     historyStore.execute(new NoopCommand());
     // No await — the assertion runs in the SAME microtask as the execute
-    // call. Phase R3 preserves this contract: sync commands commit on the
+    // call. This contract holds: sync commands commit on the
     // same tick so callers + tests don't have to switch to async.
     expect(historyStore.canUndo).toBe(true);
   });

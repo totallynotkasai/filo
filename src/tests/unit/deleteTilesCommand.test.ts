@@ -6,46 +6,47 @@ import { uiStore } from '@renderer/stores/ui.svelte';
 import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { DeleteTilesCommand } from '@renderer/commands/index';
-import {
-  setWriteErrorListener,
-  setWriteStateListener,
-  __resetDirtyTrackingForTests,
-  type WriteErrorInfo,
-} from '@renderer/lib/boards/boardSaver';
-import { __resetErrorBusForTests } from '@renderer/lib/utils/errorBus';
+import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
+import { __resetErrorBusForTests, onError, type ReportedError } from '@renderer/lib/utils/errorBus';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, TextTile, Tile } from '@renderer/schema/index';
+import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 
 /**
- * P0-18 — "Delete associated files" path is now undoable. The dialog reads
- * each backing .md before construction and passes the snapshot to the
- * Command; execute() removes placements then deletes files; undo() writes
- * the snapshot back first so the placement re-resolves against real content.
- *
- * Two failure surfaces matter for the user trust contract:
- *   1. write failure on undo → tiles still restored, toast fires, the failed
- *      path is recorded in writeStateTracking's failedVaultPaths.
- *   2. no-snapshot delete (old path, deleteFiles=false) still emits the
- *      "restored tiles reference missing files" toast — that detection
- *      stays for out-of-band file deletion.
+ * "Delete associated files" is undoable because the files go to Filo's trash,
+ * not away: execute removes the placements, then moves each file into
+ * `.filo/trash`; undo moves the files back BEFORE the placements return, so a
+ * re-added text tile finds its note on disk and never seeds an empty one over
+ * it. The command keeps only trash ids, never a note body.
  */
 
-type InvokeRoute = (...args: unknown[]) => unknown | Promise<unknown>;
-type InvokeRecord = { channel: string; args: unknown[] };
+type Hook = (channel: string, args: unknown[]) => Promise<void> | void;
 
-function installFiloStub(routes: Record<string, InvokeRoute>): InvokeRecord[] {
-  const calls: InvokeRecord[] = [];
-  (window as unknown as Record<string, unknown>).filo = {
-    invoke: async (channel: string, ...args: unknown[]) => {
-      calls.push({ channel, args });
-      const handler = routes[channel];
-      if (!handler) return null;
-      return handler(...args);
-    },
-    on: () => () => {},
-    send: () => {},
+interface Harness {
+  vault: MemoryVault;
+  /** Every invoke, in order. */
+  calls: Array<{ channel: string; args: unknown[] }>;
+  /** Runs before a call reaches the memory vault; await inside to hold it open. */
+  setHook(hook: Hook | null): void;
+}
+
+/**
+ * The memory vault, plus the sidebar tree read a restore refreshes and a call
+ * log / hook for ordering assertions.
+ */
+function installVault(initial: Record<string, string>): Harness {
+  const vault = installMemoryVault(initial);
+  const filo = (window as unknown as { filo: { invoke: (channel: string, ...args: unknown[]) => Promise<unknown> } }).filo;
+  const inner = filo.invoke;
+  const calls: Harness['calls'] = [];
+  let hook: Hook | null = null;
+  filo.invoke = async (channel: string, ...args: unknown[]) => {
+    calls.push({ channel, args });
+    await hook?.(channel, args);
+    if (channel === 'vault:read-tree') return { ok: true, tree: [] };
+    return inner(channel, ...args);
   };
-  return calls;
+  return { vault, calls, setHook: (h) => { hook = h; } };
 }
 
 function makeMindMapFixture(tiles: Record<string, TextTile>): V7BoardFileData {
@@ -102,489 +103,315 @@ function setupActiveBoardWithTiles(tiles: Tile[]): void {
   boardStore.setBoard(fixture.board, map as unknown as Record<string, Tile>, {}, []);
 }
 
-describe('DeleteTilesCommand — snapshot/restore (P0-18)', () => {
+const userCalls = (h: Harness, channel: string): Array<{ channel: string; args: unknown[] }> =>
+  h.calls.filter((c) => c.channel === channel && !String(c.args[1] ?? '').includes('.filo/'));
+
+describe('DeleteTilesCommand — files go to the trash and come back on undo', () => {
+  let errors: ReportedError[];
   beforeEach(() => {
     boardCacheStore.clear();
     boardStore.clearBoard();
     __resetDirtyTrackingForTests();
     __resetErrorBusForTests();
     noteStore.__resetForTests();
-    // A restore refreshes the index; a later test's missing-file check must not see it.
+    // A restore refreshes the index; a later test must not see it.
     vaultIndexStore.clear();
     // After the tracking reset, which clears the active vault path the note
     // writer resolves its root from.
     vaultStore.setPath('/vault');
-    vi.spyOn(uiStore, 'toast').mockImplementation(() => {});
+    vi.spyOn(uiStore, 'toast').mockImplementation(() => '');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    errors = [];
+    onError((e) => { errors.push(e); });
   });
   afterEach(() => {
     vi.restoreAllMocks();
     vaultStore.setPath('');
     boardCacheStore.clear();
     boardStore.clearBoard();
+    noteStore.__resetForTests();
     __resetDirtyTrackingForTests();
     __resetErrorBusForTests();
-    setWriteErrorListener(null);
-    setWriteStateListener(null);
   });
 
-  it('execute removes placements and invokes vault:delete for every snapshot path', async () => {
-    const tile = makeTextTile('t1', 'Foo');
-    setupActiveBoardWithTiles([tile]);
-    const calls = installFiloStub({ 'vault:delete': async () => ({ success: true }) });
+  it('execute removes placements, then moves each file to the trash by its vault-relative path', async () => {
+    setupActiveBoardWithTiles([makeTextTile('t1', 'Foo')]);
+    const h = installVault({ 'Foo.md': 'hello world' });
 
-    const cmd = new DeleteTilesCommand(['t1'], {
-      vaultRoot: '/vault',
-      fileSnapshots: [{ rel: 'Foo.md', content: 'hello world' }],
-    });
-
-    cmd.execute();
+    const cmd = new DeleteTilesCommand(['t1'], { vaultRoot: '/vault', filePaths: ['Foo.md'] });
+    const done = cmd.execute();
 
     // Placement removal stays synchronous — observable before awaiting.
     expect(boardStore.getTile('t1')).toBeUndefined();
-    // Phase 3 / 3.2 — IPC dispatch is queued behind prior in-flight work.
+    await done;
     await cmd.lastExecuteCompletion;
-    // Phase R2 — `deleteVaultPath` drains pending writers before the
-    // IPC, which can trigger `markClean` to delete `.filo/.dirty.a1b2c3d4e5f6` as a
-    // side effect of the drain. Filter sentinel deletes out so we count
-    // only user-file deletes for the assertion.
-    const deletes = calls.filter(
-      (c) => c.channel === 'vault:delete' && !((c.args[1] as string) ?? '').includes('.filo/'),
-    );
-    expect(deletes.length).toBe(1);
-    // Phase 25 L6 — vault:delete now takes (vaultRoot, itemPath).
-    expect(deletes[0].args[0]).toBe('/vault');
-    expect(deletes[0].args[1]).toBe('/vault/Foo.md');
+
+    const moves = userCalls(h, 'vault:trash-move');
+    expect(moves.map((c) => c.args)).toEqual([['/vault', 'Foo.md']]);
+    expect(h.vault.read('Foo.md')).toBeUndefined();
+    expect([...h.vault.trash.values()].map((t) => t.originalPath)).toEqual(['Foo.md']);
+    // Nothing is deleted outright.
+    expect(userCalls(h, 'vault:delete')).toEqual([]);
   });
 
-  it('undo restores the tile and writes the snapshot back to disk', async () => {
-    const tile = makeTextTile('t1', 'Foo');
-    setupActiveBoardWithTiles([tile]);
-    // Track which paths have been "written" so vault:file-exists can simulate
-    // post-snapshot disk state. Without this, persistAddTile's empty-seed
-    // path would fire on top of our snapshot write and double-count.
-    const writtenPaths = new Set<string>();
-    const calls = installFiloStub({
-      'vault:delete': async () => ({ success: true }),
-      'vault:write-file-text': async (vaultRoot, relPath) => {
-        writtenPaths.add(relPath as string);
-        return { success: true, path: `${vaultRoot}/${relPath}` };
-      },
-      'vault:file-exists': async (_vaultRoot, relPath) =>
-        writtenPaths.has(relPath as string),
-      'vault:read-tree': async () => ({ ok: true, tree: [] }),
-    });
+  it('undo restores the file from the trash before the tile comes back, and the bytes round-trip', async () => {
+    setupActiveBoardWithTiles([makeTextTile('t1', 'Foo')]);
+    const bytes = '---\ntitle: Foo\n---\nhello world\r\n';
+    const h = installVault({ 'Foo.md': bytes });
 
-    const cmd = new DeleteTilesCommand(['t1'], {
-      vaultRoot: '/vault',
-      fileSnapshots: [{ rel: 'Foo.md', content: 'hello world' }],
-    });
-    cmd.execute();
-    expect(boardStore.getTile('t1')).toBeUndefined();
+    const cmd = new DeleteTilesCommand(['t1'], { vaultRoot: '/vault', filePaths: ['Foo.md'] });
+    await cmd.execute();
+    expect(h.vault.read('Foo.md')).toBeUndefined();
 
-    cmd.undo();
+    let tileBackAtRestore: boolean | null = null;
+    h.setHook((channel) => {
+      if (channel === 'vault:trash-restore') tileBackAtRestore = boardStore.getTile('t1') !== undefined;
+    });
+    await cmd.undo();
     await cmd.lastUndoCompletion;
 
+    expect(tileBackAtRestore).toBe(false);
     expect(boardStore.getTile('t1')).toBeDefined();
-    // Filter out the `.filo/.dirty.a1b2c3d4e5f6` sentinel writes that the
-    // writeStateTracking pipeline emits as a side-effect.
-    const writes = calls.filter(
-      (c) => c.channel === 'vault:write-file-text' && c.args[1] !== '.filo/.dirty.a1b2c3d4e5f6',
-    );
-    expect(writes.length).toBe(1);
-    expect(writes[0].args).toEqual(['/vault', 'Foo.md', 'hello world']);
+    const restores = userCalls(h, 'vault:trash-restore');
+    expect(restores.length).toBe(1);
+    expect(restores[0].args[0]).toBe('/vault');
+    expect(h.vault.read('Foo.md')).toBe(bytes);
+    expect(h.vault.trash.size).toBe(0);
+    // The re-added tile found its note: no empty seed, no body rewrite.
+    expect(h.vault.writes.filter(([, rel]) => rel === 'Foo.md')).toEqual([]);
   });
 
-  it('multi-tile undo restores all tiles and writes all snapshots', async () => {
-    setupActiveBoardWithTiles([
-      makeTextTile('t1', 'A'),
-      makeTextTile('t2', 'B'),
-      makeTextTile('t3', 'C'),
-    ]);
-    const writtenPaths = new Set<string>();
-    const calls = installFiloStub({
-      'vault:delete': async () => ({ success: true }),
-      'vault:write-file-text': async (_vaultRoot, relPath) => {
-        writtenPaths.add(relPath as string);
-        return { success: true };
-      },
-      'vault:file-exists': async (_vaultRoot, relPath) =>
-        writtenPaths.has(relPath as string),
-      'vault:read-tree': async () => ({ ok: true, tree: [] }),
-    });
+  it('multi-tile undo restores every file and every tile', async () => {
+    setupActiveBoardWithTiles([makeTextTile('t1', 'A'), makeTextTile('t2', 'B'), makeTextTile('t3', 'C')]);
+    const h = installVault({ 'A.md': 'a-body', 'B.md': 'b-body', 'C.md': 'c-body' });
 
     const cmd = new DeleteTilesCommand(['t1', 't2', 't3'], {
       vaultRoot: '/vault',
-      fileSnapshots: [
-        { rel: 'A.md', content: 'a-body' },
-        { rel: 'B.md', content: 'b-body' },
-        { rel: 'C.md', content: 'c-body' },
-      ],
+      filePaths: ['A.md', 'B.md', 'C.md'],
     });
+    await cmd.execute();
+    for (const id of ['t1', 't2', 't3']) expect(boardStore.getTile(id)).toBeUndefined();
+    expect(userCalls(h, 'vault:trash-move').map((c) => c.args[1])).toEqual(['A.md', 'B.md', 'C.md']);
+    expect(h.vault.trash.size).toBe(3);
 
-    cmd.execute();
+    await cmd.undo();
+
+    for (const id of ['t1', 't2', 't3']) expect(boardStore.getTile(id)).toBeDefined();
+    expect(h.vault.read('A.md')).toBe('a-body');
+    expect(h.vault.read('B.md')).toBe('b-body');
+    expect(h.vault.read('C.md')).toBe('c-body');
+    expect(h.vault.trash.size).toBe(0);
+  });
+
+  it('redo moves the file to the trash again', async () => {
+    setupActiveBoardWithTiles([makeTextTile('t1', 'Foo')]);
+    const h = installVault({ 'Foo.md': 'body' });
+
+    const cmd = new DeleteTilesCommand(['t1'], { vaultRoot: '/vault', filePaths: ['Foo.md'] });
+    await cmd.execute();
+    await cmd.undo();
+    expect(h.vault.read('Foo.md')).toBe('body');
+
+    await cmd.execute();
     expect(boardStore.getTile('t1')).toBeUndefined();
-    expect(boardStore.getTile('t2')).toBeUndefined();
-    expect(boardStore.getTile('t3')).toBeUndefined();
+    expect(h.vault.read('Foo.md')).toBeUndefined();
+    expect(userCalls(h, 'vault:trash-move').length).toBe(2);
+    expect([...h.vault.trash.values()].map((t) => t.originalPath)).toEqual(['Foo.md']);
 
-    cmd.undo();
-    await cmd.lastUndoCompletion;
-
+    // And a second undo still brings the same bytes back.
+    await cmd.undo();
+    expect(h.vault.read('Foo.md')).toBe('body');
     expect(boardStore.getTile('t1')).toBeDefined();
-    expect(boardStore.getTile('t2')).toBeDefined();
-    expect(boardStore.getTile('t3')).toBeDefined();
-    const writes = calls.filter(
-      (c) => c.channel === 'vault:write-file-text' && c.args[1] !== '.filo/.dirty.a1b2c3d4e5f6',
-    );
-    expect(writes.length).toBe(3);
-    const payloads = writes.map((w) => ({ rel: w.args[1], content: w.args[2] }));
-    expect(payloads).toEqual([
-      { rel: 'A.md', content: 'a-body' },
-      { rel: 'B.md', content: 'b-body' },
-      { rel: 'C.md', content: 'c-body' },
-    ]);
   });
 
-  it('undo write failure surfaces a toast and records the path in failedVaultPaths', async () => {
-    const tile = makeTextTile('t1', 'Foo');
-    setupActiveBoardWithTiles([tile]);
-    installFiloStub({
-      'vault:delete': async () => ({ success: true }),
-      'vault:write-file-text': (_vaultRoot, relPath) => {
-        // Only fail for the actual snapshot write; let the sentinel write
-        // (`.filo/.dirty.a1b2c3d4e5f6`) succeed so it doesn't get incorrectly counted as
-        // a tracked failure.
-        if (relPath === '.filo/.dirty.a1b2c3d4e5f6') return { success: true };
-        return { success: false, error: 'disk full' };
-      },
-      'vault:file-exists': async () => false,
-      'vault:read-tree': async () => ({ ok: true, tree: [] }),
-    });
+  it('a failed trash move leaves the file where it is and reports the error', async () => {
+    setupActiveBoardWithTiles([makeTextTile('t1', 'Foo')]);
+    const h = installVault({ 'Foo.md': 'kept' });
+    h.vault.failNextTrashMove('Foo.md', 'EBUSY');
 
-    // Track the max `failed` value the listener observes — the listener
-    // fires multiple times (beginWrite=0, endWrite=1) and we care about
-    // the peak, not the most recent.
-    let maxFailed = 0;
-    setWriteStateListener((info) => {
-      if (info.failed > maxFailed) maxFailed = info.failed;
-    });
+    const cmd = new DeleteTilesCommand(['t1'], { vaultRoot: '/vault', filePaths: ['Foo.md'] });
+    await cmd.execute();
 
-    const cmd = new DeleteTilesCommand(['t1'], {
-      vaultRoot: '/vault',
-      fileSnapshots: [{ rel: 'Foo.md', content: 'hello' }],
-    });
-    cmd.execute();
-    cmd.undo();
-    await cmd.lastUndoCompletion;
-
-    // Tile still restored even though write failed
-    expect(boardStore.getTile('t1')).toBeDefined();
-    // Error toast fired
-    expect(uiStore.toast).toHaveBeenCalledWith(
-      expect.stringContaining('Tile restored but file content could not be recovered'),
-      'error',
-      expect.any(Number),
-    );
-    // failedVaultPaths picked up the path via trackComponentWrite
-    expect(maxFailed).toBeGreaterThanOrEqual(1);
-  });
-
-  it('write-error listener is notified on undo write failure', async () => {
-    const tile = makeTextTile('t1', 'Foo');
-    setupActiveBoardWithTiles([tile]);
-    installFiloStub({
-      'vault:delete': async () => ({ success: true }),
-      'vault:write-file-text': (_vaultRoot, relPath) => {
-        if (relPath === '.filo/.dirty.a1b2c3d4e5f6') return { success: true };
-        return { success: false, error: 'EACCES' };
-      },
-      // Audit-19 BL-1 — the re-added tile's empty seed now goes through the
-      // create-exclusive channel; let it land so only the RESTORE failure reports.
-      'vault:create-file-text': async () => ({ success: true }),
-      'vault:file-exists': async () => false,
-      'vault:read-tree': async () => ({ ok: true, tree: [] }),
-    });
-
-    const errors: WriteErrorInfo[] = [];
-    setWriteErrorListener((info) => { errors.push(info); });
-
-    const cmd = new DeleteTilesCommand(['t1'], {
-      vaultRoot: '/vault',
-      fileSnapshots: [{ rel: 'Foo.md', content: 'hello' }],
-    });
-    cmd.execute();
-    cmd.undo();
-    await cmd.lastUndoCompletion;
-
+    expect(h.vault.read('Foo.md')).toBe('kept');
+    expect(h.vault.trash.size).toBe(0);
     expect(errors.length).toBe(1);
-    expect(errors[0].path).toBe('Foo.md');
+    expect(errors[0].message).toContain("Filo's trash");
+    expect(errors[0].message).toContain('Foo.md');
+
+    // Undo has nothing to restore; the tile simply comes back over the kept file.
+    await cmd.undo();
+    expect(boardStore.getTile('t1')).toBeDefined();
+    expect(userCalls(h, 'vault:trash-restore')).toEqual([]);
+    expect(h.vault.read('Foo.md')).toBe('kept');
   });
 
-  it('no snapshot path keeps the legacy missing-file toast for out-of-band deletes', () => {
-    const tile = makeTextTile('t1', 'Foo');
-    setupActiveBoardWithTiles([tile]);
-    installFiloStub({
-      'vault:file-exists': async () => false,
-      'vault:read-tree': async () => ({ ok: true, tree: [] }),
-    });
+  it('a restore that fails still brings the tile back and reports the error', async () => {
+    setupActiveBoardWithTiles([makeTextTile('t1', 'Foo')]);
+    const h = installVault({ 'Foo.md': 'body' });
+
+    const cmd = new DeleteTilesCommand(['t1'], { vaultRoot: '/vault', filePaths: ['Foo.md'] });
+    await cmd.execute();
+    // Emptied from the trash meanwhile, and nothing at the old path.
+    h.vault.trash.clear();
+
+    await cmd.undo();
+
+    expect(boardStore.getTile('t1')).toBeDefined();
+    expect(errors.some((e) => (e.message ?? '').includes("Couldn't restore \"Foo.md\""))).toBe(true);
+  });
+
+  it('an item restored from Settings → Trash meanwhile counts as restored', async () => {
+    setupActiveBoardWithTiles([makeTextTile('t1', 'Foo')]);
+    const h = installVault({ 'Foo.md': 'body' });
+
+    const cmd = new DeleteTilesCommand(['t1'], { vaultRoot: '/vault', filePaths: ['Foo.md'] });
+    await cmd.execute();
+    h.vault.trash.clear();
+    h.vault.writeExternally('Foo.md', 'body');
+
+    await cmd.undo();
+
+    expect(boardStore.getTile('t1')).toBeDefined();
+    expect(errors).toEqual([]);
+    expect(h.vault.read('Foo.md')).toBe('body');
+  });
+
+  it('a file restored beside a new one at its old path re-targets the tile', async () => {
+    setupActiveBoardWithTiles([makeTextTile('t1', 'Foo')]);
+    const h = installVault({ 'Foo.md': 'original' });
+
+    const cmd = new DeleteTilesCommand(['t1'], { vaultRoot: '/vault', filePaths: ['Foo.md'] });
+    await cmd.execute();
+    // Another note took the name while the original sat in the trash.
+    h.vault.writeExternally('Foo.md', 'newcomer');
+
+    await cmd.undo();
+
+    expect(h.vault.read('Foo.md')).toBe('newcomer');
+    expect(h.vault.read('Foo (restored).md')).toBe('original');
+    const tile = boardStore.getTile('t1') as TextTile | undefined;
+    expect(tile?.filePath).toBe('Foo (restored).md');
+
+    // Redo trashes the restored copy, never the newer file that has the old name.
+    await cmd.execute();
+    expect(h.vault.read('Foo.md')).toBe('newcomer');
+    expect(h.vault.read('Foo (restored).md')).toBeUndefined();
+    expect([...h.vault.trash.values()].map((t) => t.originalPath)).toEqual(['Foo (restored).md']);
+  });
+
+  it('placement-only delete never touches the disk and undoes synchronously', () => {
+    setupActiveBoardWithTiles([makeTextTile('t1', 'Foo')]);
+    const h = installVault({ 'Foo.md': 'body' });
 
     const cmd = new DeleteTilesCommand(['t1']);
-    cmd.execute();
-
-    // tile cleared
+    void cmd.execute();
     expect(boardStore.getTile('t1')).toBeUndefined();
-    // Snapshot path-aware: with no snapshots provided, the legacy detection
-    // still runs. The vaultIndex is empty, so 'Foo.md' will be reported.
-    cmd.undo();
+
+    void cmd.undo();
     expect(boardStore.getTile('t1')).toBeDefined();
-    expect(uiStore.toast).toHaveBeenCalledWith(
-      expect.stringContaining('restored tile(s) reference missing files'),
-      'warning',
-      expect.any(Number),
-    );
+    expect(userCalls(h, 'vault:trash-move')).toEqual([]);
+    expect(userCalls(h, 'vault:trash-restore')).toEqual([]);
+    expect(h.vault.read('Foo.md')).toBe('body');
+    // No "missing files" toast: nothing was deleted.
+    const toasts = (uiStore.toast as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(toasts.find((c) => String(c[0]).includes('missing'))).toBeUndefined();
   });
 
-  it('snapshot path suppresses the legacy missing-file toast', async () => {
-    const tile = makeTextTile('t1', 'Foo');
-    setupActiveBoardWithTiles([tile]);
-    const writtenPaths = new Set<string>();
-    installFiloStub({
-      'vault:delete': async () => ({ success: true }),
-      'vault:write-file-text': async (_vaultRoot, relPath) => {
-        writtenPaths.add(relPath as string);
-        return { success: true };
-      },
-      'vault:file-exists': async (_vaultRoot, relPath) =>
-        writtenPaths.has(relPath as string),
-      'vault:read-tree': async () => ({ ok: true, tree: [] }),
-    });
+  it('empty filePaths with a vaultRoot is placement-only too', () => {
+    setupActiveBoardWithTiles([makeTextTile('t1', 'Foo')]);
+    const h = installVault({ 'Foo.md': 'body' });
 
-    const cmd = new DeleteTilesCommand(['t1'], {
-      vaultRoot: '/vault',
-      fileSnapshots: [{ rel: 'Foo.md', content: 'restored' }],
-    });
-    cmd.execute();
-    cmd.undo();
-    await cmd.lastUndoCompletion;
-
-    // No "missing files" toast — the snapshot restored the body, the legacy
-    // detection is conditional on fileSnapshots being empty.
-    const calls = (uiStore.toast as unknown as { mock: { calls: unknown[][] } }).mock.calls;
-    const missingFileToast = calls.find((c) =>
-      typeof c[0] === 'string' && c[0].includes('restored tile(s) reference missing files'),
-    );
-    expect(missingFileToast).toBeUndefined();
-  });
-
-  it('empty fileSnapshots with vaultRoot still skips legacy missing-file toast guard', () => {
-    // Defensive: a caller could pass `fileSnapshots: []` with a vaultRoot
-    // (means "snapshot path but nothing to restore"). The legacy toast
-    // should still fire for missing refs because no file body was restored.
-    const tile = makeTextTile('t1', 'Foo');
-    setupActiveBoardWithTiles([tile]);
-    installFiloStub({
-      'vault:file-exists': async () => false,
-      'vault:read-tree': async () => ({ ok: true, tree: [] }),
-    });
-
-    const cmd = new DeleteTilesCommand(['t1'], {
-      vaultRoot: '/vault',
-      fileSnapshots: [],
-    });
-    cmd.execute();
-    cmd.undo();
+    const cmd = new DeleteTilesCommand(['t1'], { vaultRoot: '/vault', filePaths: [] });
+    void cmd.execute();
+    void cmd.undo();
 
     expect(boardStore.getTile('t1')).toBeDefined();
-    expect(uiStore.toast).toHaveBeenCalledWith(
-      expect.stringContaining('restored tile(s) reference missing files'),
-      'warning',
-      expect.any(Number),
-    );
+    expect(userCalls(h, 'vault:trash-move')).toEqual([]);
   });
 
-  it('snapshots are copied — mutating the input array after construction does not leak', async () => {
-    const tile = makeTextTile('t1', 'Foo');
-    setupActiveBoardWithTiles([tile]);
-    const calls = installFiloStub({
-      'vault:delete': async () => ({ success: true }),
-      'vault:write-file-text': async () => ({ success: true }),
-      'vault:file-exists': async () => false,
-      'vault:read-tree': async () => ({ ok: true, tree: [] }),
-    });
+  it('filePaths are copied — mutating the input array after construction does not leak', async () => {
+    setupActiveBoardWithTiles([makeTextTile('t1', 'Foo')]);
+    const h = installVault({ 'Foo.md': 'foo', 'Bar.md': 'bar' });
 
-    const snaps = [{ rel: 'Foo.md', content: 'frozen' }];
-    const cmd = new DeleteTilesCommand(['t1'], {
-      vaultRoot: '/vault',
-      fileSnapshots: snaps,
-    });
-    // Mutate after construction
-    snaps[0].content = 'leaked';
-    snaps.push({ rel: 'Bar.md', content: 'extra' });
+    const paths = ['Foo.md'];
+    const cmd = new DeleteTilesCommand(['t1'], { vaultRoot: '/vault', filePaths: paths });
+    paths.push('Bar.md');
 
-    cmd.execute();
-    // Phase 3 / 3.2 — IPC dispatch is queued; await before asserting IPC calls.
-    await cmd.lastExecuteCompletion;
-    // Execute should only DELETE, not WRITE. The sentinel writes (path
-    // `.filo/.dirty.a1b2c3d4e5f6`) emitted by the write-tracking pipeline are unrelated
-    // to the command's intended writes — exclude those.
-    const writePayload = calls.find(
-      (c) => c.channel === 'vault:write-file-text' && c.args[1] !== '.filo/.dirty.a1b2c3d4e5f6',
-    );
-    expect(writePayload).toBeUndefined();
-    // Phase R2 — same `.filo/` sentinel-delete filter as the basic
-    // execute test; the drain inside `deleteVaultPath` can cleanup
-    // `.filo/.dirty.a1b2c3d4e5f6` after the board flush.
-    const deletes = calls.filter(
-      (c) => c.channel === 'vault:delete' && !((c.args[1] as string) ?? '').includes('.filo/'),
-    );
-    // Original snapshot list had only Foo.md; Bar.md leaked in after copy
-    expect(deletes.length).toBe(1);
-    // Phase 25 L6 — vault:delete now takes (vaultRoot, itemPath).
-    expect(deletes[0].args[0]).toBe('/vault');
-    expect(deletes[0].args[1]).toBe('/vault/Foo.md');
+    await cmd.execute();
+
+    expect(userCalls(h, 'vault:trash-move').map((c) => c.args[1])).toEqual(['Foo.md']);
+    expect(h.vault.read('Bar.md')).toBe('bar');
   });
 
-  it('awaited undo() writes the snapshot to disk before restoring placements (polish 2.1)', async () => {
-    // Polish phase 2.1 — `undo()` was previously sync and assigned the
-    // `undoWithSnapshot` Promise to `lastUndoCompletion` without awaiting
-    // it. So `await cmd.undo()` returned immediately and the snapshot
-    // write raced the placement restore — persistAddTile's empty-seed
-    // branch could fire AHEAD of the actual snapshot write and clobber
-    // the recovered content with an empty file.
-    //
-    // With the fix, awaiting `cmd.undo()` blocks until the snapshot
-    // write fully settles, so by the time the placement re-enters the
-    // store, `vault:file-exists` returns true and persistAddTile skips
-    // the empty-seed entirely.
-    const tile = makeTextTile('t1', 'Restored');
-    setupActiveBoardWithTiles([tile]);
+  it('awaited undo() finishes the restore before restoring placements', async () => {
+    setupActiveBoardWithTiles([makeTextTile('t1', 'Restored')]);
+    const h = installVault({ 'Restored.md': 'preserved body' });
 
-    // Track the order of (write, file-exists) probes. persistAddTile
-    // probes vault:file-exists when boardStore.addTile fires during
-    // restorePlacements; the write must land before that probe.
-    const order: string[] = [];
-    let resolveWrite: (() => void) | null = null;
-    const writePromise = new Promise<void>((res) => { resolveWrite = res; });
-
-    installFiloStub({
-      'vault:delete': async () => ({ success: true }),
-      'vault:write-file-text': async (_vaultRoot, relPath) => {
-        if (relPath === 'Restored.md') {
-          order.push('write:start');
-          await writePromise;
-          order.push('write:end');
-        }
-        return { success: true };
-      },
-      'vault:file-exists': async (_vaultRoot, relPath) => {
-        if (relPath === 'Restored.md') order.push('file-exists:probe');
-        // Returning true after the snapshot write lets persistAddTile skip
-        // the empty-seed branch — matches the post-write reality.
-        return order.includes('write:end');
-      },
-      'vault:read-tree': async () => ({ ok: true, tree: [] }),
-    });
-
-    const cmd = new DeleteTilesCommand(['t1'], {
-      vaultRoot: '/vault',
-      fileSnapshots: [{ rel: 'Restored.md', content: 'preserved body' }],
-    });
+    const cmd = new DeleteTilesCommand(['t1'], { vaultRoot: '/vault', filePaths: ['Restored.md'] });
     await cmd.execute();
     expect(boardStore.getTile('t1')).toBeUndefined();
 
-    // Kick off undo but don't await yet — give the write a chance to begin.
-    const undoPromise = cmd.undo();
-    // Let the write handler enter and queue on writePromise.
-    for (let i = 0; i < 5; i++) await Promise.resolve();
+    const order: string[] = [];
+    let release!: () => void;
+    const held = new Promise<void>((res) => { release = res; });
+    h.setHook(async (channel, args) => {
+      if (channel === 'vault:trash-restore') {
+        order.push('restore:start');
+        await held;
+        order.push('restore:end');
+      }
+      if (channel === 'vault:file-exists' && args[1] === 'Restored.md') order.push('file-exists:probe');
+    });
 
-    // The tile must NOT be back yet — restorePlacements is gated behind
-    // the snapshot write completing.
-    expect(order).toEqual(['write:start']);
+    const undoPromise = cmd.undo();
+    for (let i = 0; i < 20 && order.length === 0; i++) await new Promise((r) => setTimeout(r, 0));
+
+    // The tile must NOT be back yet — the placements wait for the restore.
+    expect(order).toEqual(['restore:start']);
     expect(boardStore.getTile('t1')).toBeUndefined();
 
-    // Resolve the write; undo's awaited inner promise unblocks and the
-    // placement restore runs.
-    resolveWrite!();
+    release();
     await undoPromise;
 
-    // Now the tile is back AND the file-exists probe fired AFTER write:end.
     expect(boardStore.getTile('t1')).toBeDefined();
-    const writeEndIdx = order.indexOf('write:end');
+    expect(h.vault.read('Restored.md')).toBe('preserved body');
     const probeIdx = order.indexOf('file-exists:probe');
-    if (probeIdx >= 0) {
-      expect(writeEndIdx).toBeLessThan(probeIdx);
-    }
+    if (probeIdx >= 0) expect(order.indexOf('restore:end')).toBeLessThan(probeIdx);
   });
 
-  it('redo serialises behind a pending undo snapshot write (no IPC interleaving)', async () => {
-    // Phase 3 / 3.2 — A rapid Ctrl+Z → Ctrl+Y could otherwise issue
-    // `vault:delete` while the undo's `vault:write-file-text` is still
-    // in flight on the same path. The expected order is:
-    //   1. execute → vault:delete
-    //   2. undo → vault:write-file-text (snapshot restore)
-    //   3. redo → MUST wait for #2 to settle, then vault:delete again
-    // Without serialisation, #3 could fire before #2 resolves and the
-    // snapshot write would resurrect the file the redo just deleted.
-    const tile = makeTextTile('t1', 'Foo');
-    setupActiveBoardWithTiles([tile]);
+  it('redo serialises behind a pending undo restore (no IPC interleaving)', async () => {
+    // A rapid Ctrl+Z → Ctrl+Y must not move the file to the trash while the
+    // undo's restore is still in flight: the restore would then bring back a
+    // file the redo meant to remove.
+    setupActiveBoardWithTiles([makeTextTile('t1', 'Foo')]);
+    const h = installVault({ 'Foo.md': 'body' });
 
-    // Track when each IPC was called and resolved — but only for the
-    // snapshot path. Sentinel writes (.filo/.dirty) and board-file writes
-    // also hit `vault:write-file-text` via trackComponentWrite; ignoring
-    // them keeps the assertion focused on the race we care about.
     const log: string[] = [];
-    let resolveWrite: (() => void) | null = null;
-    installFiloStub({
-      'vault:delete': async (_vaultRoot, absPath) => {
-        if (typeof absPath === 'string' && absPath.endsWith('Foo.md')) {
-          log.push('delete:start');
-          await Promise.resolve();
-          log.push('delete:end');
-        }
-        return { success: true };
-      },
-      // Snapshot write blocks until externally resolved so we can observe
-      // whether redo waits. Other write targets resolve immediately.
-      'vault:write-file-text': (_vaultRoot, relPath) => {
-        if (relPath !== 'Foo.md') return Promise.resolve({ success: true });
-        log.push('write:start');
-        return new Promise((res) => {
-          resolveWrite = () => {
-            log.push('write:end');
-            res({ success: true });
-          };
-        });
-      },
-      'vault:file-exists': async () => false,
-      'vault:read-tree': async () => ({ ok: true, tree: [] }),
+    let release: (() => void) | null = null;
+    h.setHook(async (channel, args) => {
+      if (channel === 'vault:trash-move' && args[1] === 'Foo.md') log.push('move');
+      if (channel === 'vault:trash-restore') {
+        log.push('restore:start');
+        await new Promise<void>((res) => { release = res; });
+        log.push('restore:end');
+      }
     });
 
-    const cmd = new DeleteTilesCommand(['t1'], {
-      vaultRoot: '/vault',
-      fileSnapshots: [{ rel: 'Foo.md', content: 'body' }],
-    });
+    const cmd = new DeleteTilesCommand(['t1'], { vaultRoot: '/vault', filePaths: ['Foo.md'] });
+    await cmd.execute();
+    void cmd.undo();
+    for (let i = 0; i < 20 && release === null; i++) await new Promise((r) => setTimeout(r, 0));
 
-    cmd.execute();
-    await cmd.lastExecuteCompletion;
-    cmd.undo();
-    // Don't await undo's completion yet — the write is intentionally
-    // blocked so we can race a redo against it.
-    // Give the microtask a chance to enter the write handler.
-    await Promise.resolve();
-    await Promise.resolve();
-
-    // Now invoke execute() again (simulates a redo before undo settles).
+    // Redo before the undo settles.
     void cmd.execute();
-    // Yield a few microtasks so any unblocked work could race ahead.
-    for (let i = 0; i < 5; i++) await Promise.resolve();
+    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
 
-    // The redo's delete must NOT have started while the write is pending.
-    expect(log).toEqual(['delete:start', 'delete:end', 'write:start']);
+    expect(log).toEqual(['move', 'restore:start']);
 
-    // Resolve the write; redo's delete should now follow.
-    resolveWrite!();
+    release!();
     await cmd.lastExecuteCompletion;
-    expect(log).toContain('write:end');
-    // After write resolves, the queued redo delete fires.
-    expect(log.indexOf('write:end')).toBeLessThan(log.lastIndexOf('delete:start'));
+    expect(log).toEqual(['move', 'restore:start', 'restore:end', 'move']);
+    expect(h.vault.read('Foo.md')).toBeUndefined();
+    expect(h.vault.trash.size).toBe(1);
   });
 });

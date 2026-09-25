@@ -14,7 +14,7 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import { CascadeDeleteCommand } from '@renderer/commands/index';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { CascadeStyleClears } from '@renderer/stores/boardCacheFrontmatter';
-import type { KanbanBoard, MindMapBoard, Tile } from '@renderer/schema/index';
+import type { KanbanBoard, MindMapBoard } from '@renderer/schema/index';
 
 function installEmptyFiloStub(): void {
   (window as unknown as Record<string, unknown>).filo = {
@@ -60,15 +60,10 @@ function makeKanban(id: string, cardTileId: string, coverImage: string): V7Board
       [cardTileId]: {
         id: cardTileId,
         type: 'text',
-        title: 'Card',
-        boardId: id,
-        position: { x: 0, y: 0 },
-        size: { width: 100, height: 100 },
-        tags: [],
+        style: { headerColor: '', bodyColor: '', borderColor: '' },
         createdAt: 0,
         updatedAt: 0,
-        locked: false,
-        faded: false,
+        filePath: 'Card.md',
       },
     },
     connections: {},
@@ -138,6 +133,7 @@ describe('CascadeDeleteCommand — styleClears undo (Sprint 35.2)', () => {
       coverImage: {
         kb: [{ columnId: 'col1', tileId: cardId, matchedPath: deletedPath }],
       },
+      columnCoverImage: {},
       frameBackground: {},
       boardSettings: {},
     };
@@ -150,7 +146,7 @@ describe('CascadeDeleteCommand — styleClears undo (Sprint 35.2)', () => {
 
     // No tile was removed in this scenario — the card itself stays, only the
     // cover image goes. byBoardTiles is empty.
-    const cmd = new CascadeDeleteCommand({}, [], {}, '', styleClears);
+    const cmd = new CascadeDeleteCommand({}, [], { styleClears });
     await cmd.undo();
     await flushAsync();
 
@@ -166,6 +162,7 @@ describe('CascadeDeleteCommand — styleClears undo (Sprint 35.2)', () => {
 
     const styleClears: CascadeStyleClears = {
       coverImage: {},
+      columnCoverImage: {},
       frameBackground: {
         mm: [{ frameId, matchedPath: deletedPath }],
       },
@@ -176,7 +173,7 @@ describe('CascadeDeleteCommand — styleClears undo (Sprint 35.2)', () => {
     const beforeFrame = boardCacheStore.cache.mm.frames[0] as { style?: { backgroundImage?: string } };
     expect(beforeFrame.style?.backgroundImage).toBe('');
 
-    const cmd = new CascadeDeleteCommand({}, [], {}, '', styleClears);
+    const cmd = new CascadeDeleteCommand({}, [], { styleClears });
     await cmd.undo();
     await flushAsync();
 
@@ -191,6 +188,7 @@ describe('CascadeDeleteCommand — styleClears undo (Sprint 35.2)', () => {
 
     const styleClears: CascadeStyleClears = {
       coverImage: {},
+      columnCoverImage: {},
       frameBackground: {},
       boardSettings: {
         mm: [{ path: 'defaults.frame.backgroundImage', matchedPath: deletedPath }],
@@ -203,7 +201,7 @@ describe('CascadeDeleteCommand — styleClears undo (Sprint 35.2)', () => {
     };
     expect(settingsBefore.defaults?.frame?.backgroundImage).toBeUndefined();
 
-    const cmd = new CascadeDeleteCommand({}, [], {}, '', styleClears);
+    const cmd = new CascadeDeleteCommand({}, [], { styleClears });
     await cmd.undo();
     await flushAsync();
 
@@ -223,12 +221,13 @@ describe('CascadeDeleteCommand — styleClears undo (Sprint 35.2)', () => {
       coverImage: {
         kb: [{ columnId: 'col1', tileId: cardId, matchedPath: deletedPath }],
       },
+      columnCoverImage: {},
       frameBackground: {},
       boardSettings: {},
     };
     boardCacheStore.applyCascadeStyleClears(styleClears);
 
-    const cmd = new CascadeDeleteCommand({}, [], {}, '', styleClears);
+    const cmd = new CascadeDeleteCommand({}, [], { styleClears });
 
     // Undo to restore.
     await cmd.undo();
@@ -237,7 +236,7 @@ describe('CascadeDeleteCommand — styleClears undo (Sprint 35.2)', () => {
     expect(placementsAfterUndo[0].coverImage).toBe(deletedPath);
 
     // Redo to re-clear.
-    cmd.execute();
+    await cmd.execute();
     await flushAsync();
     const placementsAfterRedo = (boardCacheStore.cache.kb.board as KanbanBoard).columns[0].tilePlacements;
     expect(placementsAfterRedo[0].coverImage).toBeUndefined();
@@ -253,11 +252,12 @@ describe('CascadeDeleteCommand — styleClears undo (Sprint 35.2)', () => {
       coverImage: {
         kb: [{ columnId: 'col1', tileId: cardId, matchedPath: deletedPath }],
       },
+      columnCoverImage: {},
       frameBackground: {},
       boardSettings: {},
     };
     boardCacheStore.applyCascadeStyleClears(styleClears);
-    const cmd = new CascadeDeleteCommand({}, [], {}, '', styleClears);
+    const cmd = new CascadeDeleteCommand({}, [], { styleClears });
 
     // Mutate the original after construction.
     styleClears.coverImage.kb[0].matchedPath = 'totally/different.png';
@@ -333,6 +333,7 @@ describe('boardCacheStore.findCascadeDeleteTargets / applyCascadeStyleClears (Sp
       coverImage: {
         kb: [{ columnId: 'col1', tileId: 'card-1', matchedPath: targetPath }],
       },
+      columnCoverImage: {},
       frameBackground: {},
       boardSettings: {},
     });
@@ -357,6 +358,7 @@ describe('boardCacheStore.findCascadeDeleteTargets / applyCascadeStyleClears (Sp
       coverImage: {
         kb: [{ columnId: 'col1', tileId: 'card-1', matchedPath: cachedPath }],
       },
+      columnCoverImage: {},
       frameBackground: {},
       boardSettings: {},
     });
@@ -400,6 +402,7 @@ describe('restoreCascadeStyleClears — manual-edit guard (polish phase 3.2)', (
       coverImage: {
         kb: [{ columnId: 'col1', tileId: cardId, matchedPath: deletedPath }],
       },
+      columnCoverImage: {},
       frameBackground: {},
       boardSettings: {},
     };
@@ -413,7 +416,7 @@ describe('restoreCascadeStyleClears — manual-edit guard (polish phase 3.2)', (
       .tilePlacements[0] as Record<string, unknown>;
     placement.coverImage = manualPath;
 
-    const cmd = new CascadeDeleteCommand({}, [], {}, '', styleClears);
+    const cmd = new CascadeDeleteCommand({}, [], { styleClears });
     await cmd.undo();
     await flushAsync();
 
@@ -433,6 +436,7 @@ describe('restoreCascadeStyleClears — manual-edit guard (polish phase 3.2)', (
       coverImage: {
         kb: [{ columnId: 'col1', tileId: cardId, matchedPath: deletedPath }],
       },
+      columnCoverImage: {},
       frameBackground: {},
       boardSettings: {},
     };
@@ -440,7 +444,7 @@ describe('restoreCascadeStyleClears — manual-edit guard (polish phase 3.2)', (
     boardCacheStore.applyCascadeStyleClears(styleClears);
     // No manual edit between cascade and undo.
 
-    const cmd = new CascadeDeleteCommand({}, [], {}, '', styleClears);
+    const cmd = new CascadeDeleteCommand({}, [], { styleClears });
     await cmd.undo();
     await flushAsync();
 
@@ -457,6 +461,7 @@ describe('restoreCascadeStyleClears — manual-edit guard (polish phase 3.2)', (
 
     const styleClears: CascadeStyleClears = {
       coverImage: {},
+      columnCoverImage: {},
       frameBackground: {
         mm: [{ frameId, matchedPath: deletedPath }],
       },
@@ -470,7 +475,7 @@ describe('restoreCascadeStyleClears — manual-edit guard (polish phase 3.2)', (
     const frame = boardCacheStore.cache.mm.frames[0] as { style: Record<string, unknown> };
     frame.style.backgroundImage = manualPath;
 
-    const cmd = new CascadeDeleteCommand({}, [], {}, '', styleClears);
+    const cmd = new CascadeDeleteCommand({}, [], { styleClears });
     await cmd.undo();
     await flushAsync();
 
@@ -485,6 +490,7 @@ describe('restoreCascadeStyleClears — manual-edit guard (polish phase 3.2)', (
 
     const styleClears: CascadeStyleClears = {
       coverImage: {},
+      columnCoverImage: {},
       frameBackground: {},
       boardSettings: {
         mm: [{ path: 'defaults.frame.backgroundImage', matchedPath: deletedPath }],
@@ -499,7 +505,7 @@ describe('restoreCascadeStyleClears — manual-edit guard (polish phase 3.2)', (
     const settings = board.settings as { defaults?: { frame?: Record<string, unknown> } };
     settings.defaults = { ...(settings.defaults ?? {}), frame: { backgroundImage: manualPath } };
 
-    const cmd = new CascadeDeleteCommand({}, [], {}, '', styleClears);
+    const cmd = new CascadeDeleteCommand({}, [], { styleClears });
     await cmd.undo();
     await flushAsync();
 

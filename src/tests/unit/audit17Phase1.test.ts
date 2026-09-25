@@ -9,7 +9,8 @@ import {
   UpdateTaskFieldCommand,
   UpdatePropertiesCommand,
 } from '@renderer/commands/index';
-import { applyFrontmatterPatchRebased } from '@renderer/commands/frontmatterRebase';
+import { applyDeltaChecked } from '@renderer/commands/frontmatterInverse';
+import { patchToFrontmatterDelta } from '@renderer/lib/vault/frontmatterDelta';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { __resetVaultIdentityForTests } from '@renderer/lib/vault/vaultIdentity';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
@@ -232,11 +233,11 @@ describe('"Apply anyway" clicked after a vault swap is a no-op', () => {
   });
 
   it('atomic handler: whole-patch force is also swallowed after the swap', async () => {
-    await applyFrontmatterPatchRebased({
+    await applyDeltaChecked({
       relPath: 'recur.md',
       targetBoardId: 'tl',
-      applying: { completed: false, dueDate: '2026-01-15' },
-      expectedCurrent: { completed: false, dueDate: '2026-01-01' },
+      delta: patchToFrontmatterDelta({ completed: false, dueDate: '2026-01-15' }),
+      expected: patchToFrontmatterDelta({ completed: false, dueDate: '2026-01-01' }),
       label: 'recur.md',
       atomic: true,
     });

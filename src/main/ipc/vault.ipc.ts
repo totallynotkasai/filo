@@ -716,46 +716,6 @@ export function registerVaultHandlers(): void {
   );
 
   /**
-   * Writes a binary file in the vault from a base64-encoded
-   * payload. Used by `CascadeDeleteCommand.undo` to restore media files
-   * (images, video, audio, pdf) that were captured before an external or
-   * sidebar folder delete. Mirrors `vault:write-file-text`:
-   *  - assertActiveVault / assertSafeRelativePath / assertNotInFiloDir
-   *  - atomic write through `atomicWriteFile(Buffer)`
-   *  - watcher suppression bracketing the rename
-   *  - payload cap derived from PAYLOAD_LIMITS.MEDIA (post-decode bytes)
-   *
-   * The renderer captures media at most `TILE_DELETE_MEDIA_SNAPSHOT_MAX_BYTES`
-   * (5 MB) per file, well under the MEDIA cap, so this handler primarily
-   * serves the cascade-delete restore path. Other binary writers
-   * (audio recordings) still go through `media:save-audio` which carries
-   * a wider set of preconditions specific to that surface.
-   */
-  ipcMain.handle(
-    'vault:write-file-binary',
-    async (_event, vaultRoot: string, relativePath: string, base64: string) => {
-      try {
-        assertActiveVault(vaultRoot);
-        // `forCreation: true`; binary writes create new files.
-        assertSafeRelativePath(relativePath, { forCreation: true });
-        assertNotInFiloDir(relativePath);
-        const buffer = Buffer.from(base64, 'base64');
-        assertPayloadByteSize(buffer.length, PAYLOAD_LIMITS.MEDIA, 'vault:write-file-binary');
-        const fullPath = join(vaultRoot, relativePath);
-        assertWithinVault(vaultRoot, fullPath);
-        await fsPromises.mkdir(dirname(fullPath), { recursive: true });
-        activeWatcher?.suppress(relativePath, LOCK_AWARE_SUPPRESS_MS);
-        await atomicWriteFile(fullPath, buffer);
-        activeWatcher?.suppress(relativePath, 1000);
-        return { success: true, path: fullPath };
-      } catch (err) {
-        logMainError('vault:write-file-binary', err);
-        return { success: false, code: ipcErrorCode(err), error: String(err) };
-      }
-    },
-  );
-
-  /**
    * Returns the "open last vault on launch" preference. The preference lives
    * in the userData dir so it's reachable before any vault is open.
    */

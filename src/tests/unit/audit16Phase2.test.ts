@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from 'vitest';
 import { Command } from '@renderer/commands/Command';
 import { historyStore } from '@renderer/stores/history.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
@@ -13,10 +13,9 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
  *     body rejecting after a tab switch rolled back the WRONG board's stack
  *     (never-applied command left on the origin stack; a later Ctrl+Z
  *     replayed its inverse over state it never changed).
- * 2.4 `clearBoard` raw-deleted the closed board's OWN stack, bypassing the
- *     mandatory `mutateStack` file-snapshot scan — closing the last tab of a
- *     board whose history held the only copy of a deleted .md body discarded
- *     it with no escalated toast.
+ * 2.4 `clearBoard` drops the closed board's OWN stack (and its commands on
+ *     other stacks). Deleted files wait in Filo's trash, so this loses
+ *     nothing and needs no warning toast.
  * 2.5 The pre-swap reset zeroed `chainInflightDepth` while a command body
  *     was still in flight; the body's settle handler then decremented the
  *     fresh counter to -1, permanently deferring every later command body
@@ -66,21 +65,6 @@ class DeferredExecuteCommand extends Command {
     return this.bodyPromise;
   }
   undo(): void {}
-}
-
-/** Carries file body snapshots (CascadeDelete/DeleteTiles shape). */
-class SnapshotCarryingCommand extends Command {
-  description = 'carries file snapshots';
-  readonly targetBoardId: string;
-  constructor(boardId: string) {
-    super();
-    this.targetBoardId = boardId;
-  }
-  execute(): void {}
-  undo(): void {}
-  hasFileSnapshots(): boolean {
-    return true;
-  }
 }
 
 // ── 2.1 — rejected async execute rolls back the ORIGIN board's stack ─────────
@@ -140,10 +124,10 @@ describe('Audit-16 2.1 — rollbackExecute resolves the origin board stack', () 
   });
 });
 
-// ── 2.4 — clearBoard routes the closed board's OWN stack through mutateStack ─
+// ── 2.4 — clearBoard drops the closed board's history quietly ──────────────
 
-describe('Audit-16 2.4 — clearBoard scans the closed board\'s own stack for file snapshots', () => {
-  let toastSpy: ReturnType<typeof vi.spyOn>;
+describe('Audit-16 2.4 — clearBoard drops the closed board\x27s own stack', () => {
+  let toastSpy: MockInstance<typeof uiStore.toast>;
   beforeEach(() => {
     historyStore.clear();
     historyStore.setActiveBoard(null);
@@ -156,31 +140,30 @@ describe('Audit-16 2.4 — clearBoard scans the closed board\'s own stack for fi
     toastSpy.mockRestore();
   });
 
-  const escalatedToasts = () =>
-    toastSpy.mock.calls.filter(
-      (args) => typeof args[0] === 'string' && args[0].includes('cannot be restored'),
-    );
-
-  it('fires the escalated "deleted files cannot be restored" toast when the dropped own-stack held snapshots', () => {
-    historyStore.setActiveBoard('board-A');
-    historyStore.pushWithoutExecute(new SnapshotCarryingCommand('board-A'));
-    toastSpy.mockClear();
-
-    // The board's last tab closes — its own stack is dropped. Pre-fix this
-    // was a raw `delete stacks[boardId]` that skipped the snapshot scan.
-    historyStore.clearBoard('board-A');
-
-    expect(escalatedToasts().length).toBe(1);
-  });
-
-  it('stays silent when the dropped own-stack carried no file snapshots', () => {
+  it('empties the board\x27s undo history and shows no toast', () => {
     historyStore.setActiveBoard('board-A');
     historyStore.pushWithoutExecute(new ScopedCommand('board-A'));
+    expect(historyStore.canUndo).toBe(true);
     toastSpy.mockClear();
+
+    // The board's last tab closes — its own stack is dropped.
+    historyStore.clearBoard('board-A');
+
+    historyStore.setActiveBoard('board-A');
+    expect(historyStore.canUndo).toBe(false);
+    expect(toastSpy).not.toHaveBeenCalled();
+  });
+
+  it('leaves other boards\x27 own commands in place', () => {
+    historyStore.setActiveBoard('board-B');
+    historyStore.pushWithoutExecute(new ScopedCommand('board-B'));
+    historyStore.setActiveBoard('board-A');
+    historyStore.pushWithoutExecute(new ScopedCommand('board-A'));
 
     historyStore.clearBoard('board-A');
 
-    expect(escalatedToasts().length).toBe(0);
+    historyStore.setActiveBoard('board-B');
+    expect(historyStore.canUndo).toBe(true);
   });
 });
 

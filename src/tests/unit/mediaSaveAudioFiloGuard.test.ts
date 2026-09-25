@@ -8,7 +8,7 @@ import { tmpdir } from 'os';
  * vault-writing IPC handler without `assertNotInFiloDir`, so a buggy renderer
  * passing `destFolder: '.filo'` could drop arbitrary bytes into the config dir
  * (`.filo` itself passes `assertSafeRelativePath` — the stem before the dot is
- * empty — so nothing else stopped it). The fix mirrors `vault:write-file-binary`.
+ * empty — so nothing else stopped it). The fix mirrors the other vault-writing handlers.
  */
 
 const handlers = new Map<string, (...args: unknown[]) => unknown | Promise<unknown>>();

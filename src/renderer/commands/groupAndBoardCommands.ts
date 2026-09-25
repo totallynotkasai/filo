@@ -7,9 +7,8 @@ import type { CascadeStyleClears } from '../stores/boardCacheFrontmatter';
 import type { Tile, Connection, TileGroup } from '../schema/index';
 import { cloneTile } from '../lib/utils/cloneTile';
 import { reportError } from '../lib/utils/errorBus';
-import { trackComponentWrite } from '../lib/boards/boardSaver';
-import { invokeOk } from '../lib/utils/invokeOk';
-import { noteStore } from '../stores/notes.svelte';
+import { fileTagsStore } from '../stores/fileTags.svelte';
+import { restoreFiles, retargetPath, trashFiles, type TrashedItem } from './trashedFiles';
 
 /**
  * Opens the inconsistent-state modal when one or more rollback children threw
@@ -226,6 +225,25 @@ export class ToggleGroupCommand extends Command {
  *     history model — but restoring placements on inactive boards is still
  *     correct, and switching to that board after undo will show them.
  */
+export interface CascadeDeleteOptions {
+  /** Anchors the vault-swap guard; defaults to the open vault. */
+  vaultRoot?: string;
+  styleClears?: CascadeStyleClears;
+  /** The file or folder the delete moved into Filo's trash, when it did. */
+  trashed?: TrashedItem | null;
+  /** `.filo/tags.json` file tags the delete dropped (path → tags). */
+  fileTags?: Record<string, string[]>;
+}
+
+/**
+ * Undo for a delete of a vault file or folder (the sidebar delete) and for
+ * "remove the tiles of a missing file": every tile placement on every board
+ * that pointed at it, their connections and the style fields that referenced
+ * it, plus the item itself, which waits in Filo's trash.
+ *
+ * Undo moves the item back from the trash (a rename, whatever its type or
+ * size), then restores the placements. Redo moves it to the trash again.
+ */
 export class CascadeDeleteCommand extends Command {
   description: string;
   /**
@@ -236,20 +254,6 @@ export class CascadeDeleteCommand extends Command {
   readonly targetBoardId: string;
   private byBoard: Record<string, Tile[]>;
   private connections: Connection[];
-  /**
-   * Vault-relative .md path → file body captured BEFORE the delete removed
-   * the file. Undo writes each back so restored placements point at content
-   * instead of a broken-ref badge. Files over the 25 MB cap (enforced in
-   * `vaultFolderOps.delete`) are absent; the user was already warned.
-   */
-  private fileSnapshots: Record<string, string>;
-  /**
-   * Vault-relative media path → base64 body captured BEFORE the delete,
-   * written back on undo via `vault:write-file-binary`. Capped at
-   * `TILE_DELETE_MEDIA_SNAPSHOT_MAX_BYTES` (5 MB) per file upstream;
-   * oversized media are absent and the user was already warned.
-   */
-  private mediaSnapshots: Record<string, string>;
   private vaultRoot: string;
   /**
    * Style-clears applied when the cascade ran (Kanban `coverImage`, frame
@@ -258,55 +262,68 @@ export class CascadeDeleteCommand extends Command {
    * restores the placements but the style fields stay wiped.
    */
   private styleClears: CascadeStyleClears;
+  /** In the trash now (null once undo brought it back, until a redo). */
+  private trashed: TrashedItem | null;
+  /** Where the item is when not in the trash: what a redo after undo moves. */
+  private itemRel: string | null;
+  private fileTags: Record<string, string[]>; // allow-string-path-key: tags.json fileTags keys, put back verbatim
+  private hasRun = false;
 
   constructor(
     byBoard: Record<string, Tile[]>,
     connections: Connection[],
-    fileSnapshots: Record<string, string> = {},
-    vaultRoot: string = '',
-    styleClears: CascadeStyleClears = { coverImage: {}, columnCoverImage: {}, frameBackground: {}, boardSettings: {} },
-    mediaSnapshots: Record<string, string> = {},
+    opts: CascadeDeleteOptions = {},
   ) {
     super();
     // Board-spanning command; empty string skips the history-store guard.
     this.targetBoardId = '';
     this.byBoard = {};
     for (const [boardId, tiles] of Object.entries(byBoard)) {
-      // cloneTile shares large string references for body content but
-      // detaches every nested object — the snapshot contract we want here.
+      // cloneTile shares large string references but detaches every nested
+      // object — the snapshot contract we want here.
       this.byBoard[boardId] = tiles.map((t) => cloneTile(t));
     }
     this.connections = this.snapshot(connections);
-    // allow-shallow: file/media snapshot maps hold primitive strings.
-    this.fileSnapshots = { ...fileSnapshots };
-    this.mediaSnapshots = { ...mediaSnapshots };
     // Capture the vault root so undo/redo can refuse to run against a
-    // different vault. Falls back to the live store path so callers that omit
-    // the arg still anchor the command to the active vault.
-    this.vaultRoot = vaultRoot || vaultStore.path || '';
+    // different vault.
+    this.vaultRoot = opts.vaultRoot || vaultStore.path || '';
     // Deep-clone via `this.snapshot(...)` so a later mutation against the
-    // originating styleClears object (or its plain-data subfields) can't
-    // leak through the reference and corrupt the undo plan.
-    this.styleClears = this.snapshot(styleClears);
+    // originating objects can't leak into the undo plan.
+    this.styleClears = this.snapshot(
+      opts.styleClears ?? { coverImage: {}, columnCoverImage: {}, frameBackground: {}, boardSettings: {} },
+    );
+    this.trashed = opts.trashed ? { ...opts.trashed } : null;
+    this.itemRel = opts.trashed?.rel ?? null;
+    this.fileTags = this.snapshot(opts.fileTags ?? {});
     const totalTiles = Object.values(byBoard).reduce((sum, t) => sum + t.length, 0);
-    this.description = `Cascade-delete ${totalTiles} tile(s)`;
+    this.description = this.itemRel
+      ? `Delete "${this.itemRel}"`
+      : `Cascade-delete ${totalTiles} tile(s)`;
   }
 
-  execute() {
-    // Vault-swap guard (mirrors `undo()`): replaying the delete against a
-    // different vault would target unrelated boards/files. `historyStore.clear()`
-    // fires on vault open but not on close-without-reopen.
-    //
+  private vaultChanged(verb: string): boolean {
     // A path-STRING compare (not the generation-aware `isStillSameVault`) is
     // enough: a same-path new generation requires a vault OPEN, whose pre-swap
     // hook clears history, so this command can never observe one.
     if (this.vaultRoot && vaultStore.path && vaultStore.path !== this.vaultRoot) {
-      uiStore.toast(
-        'Cannot redo cascade-delete: the vault has changed since the delete ran.',
-        'warning',
-        5000,
-      );
-      return;
+      uiStore.toast(`Cannot ${verb} the delete: the vault has changed since it ran.`, 'warning', 5000);
+      return true;
+    }
+    return false;
+  }
+
+  async execute(): Promise<void> {
+    if (this.vaultChanged('redo')) return;
+    const redo = this.hasRun;
+    this.hasRun = true;
+    // A redo moves the item to the trash again first; the first run comes
+    // after the caller already moved it. If it can't go, nothing changes.
+    if (redo && this.itemRel && !this.trashed) {
+      const [item] = await trashFiles(this.vaultRoot, [this.itemRel], 'cascadeDelete.redo');
+      if (!item) return;
+      this.trashed = item;
+      for (const path of Object.keys(this.fileTags)) fileTagsStore.dropFile(path);
+      void vaultStore.enqueueRenameQueueWork(() => vaultStore.refreshTreeAndCleanup());
     }
 
     // allow-board-store-current: active-vs-cache pivot — the command operates across boards, so we route same-board mutations through the runtime facade and other-board mutations through the cache-only persist path
@@ -320,74 +337,38 @@ export class CascadeDeleteCommand extends Command {
         }
       }
     }
-    // Re-apply style clears on redo. First-execute path
-    // (initial dispatch) is a no-op because the caller already applied
-    // them before history.execute; subsequent redo calls go through
-    // applyCascadeStyleClears so the cache state stays consistent.
+    // Re-apply style clears on redo. The first run is a no-op because the
+    // caller already applied them before history.execute.
     boardCacheStore.applyCascadeStyleClears(this.styleClears);
   }
 
-  async undo() {
-    // Vault-swap guard (see `execute()`): writing file bodies into the
-    // captured path after a swap would resurrect them in the OLD vault while
-    // the user is looking at a different one.
-    if (this.vaultRoot && vaultStore.path && vaultStore.path !== this.vaultRoot) {
-      uiStore.toast(
-        'Cannot undo cascade-delete: the vault has changed since the delete ran.',
-        'warning',
-        5000,
-      );
-      return;
+  async undo(): Promise<void> {
+    if (this.vaultChanged('undo')) return;
+
+    // The item comes back BEFORE the placements, so a restored tile that
+    // reads its note during persistAddTile finds it, and nothing seeds an
+    // empty note over the path.
+    if (this.trashed) {
+      const [restored] = await restoreFiles(this.vaultRoot, [this.trashed], 'cascadeDelete.undo');
+      this.trashed = null;
+      if (restored && restored.restoredPath !== restored.rel) {
+        // Restored beside a file that took its old name: the tiles, the tags
+        // and a later redo all follow the restored copy.
+        this.followRestoredCopy(restored.rel, restored.restoredPath);
+      }
+    }
+    for (const [path, tags] of Object.entries(this.fileTags)) {
+      fileTagsStore.setFileTags(path, tags);
     }
 
-    // Restore the file bodies BEFORE the placements so a restored tile that
-    // reads frontmatter / body during persistAddTile sees the resurrected file.
-    // Each restore goes through `trackComponentWrite` (directly or via the
-    // helper) so it joins the inflight counter, `.filo/.dirty` sentinel and
-    // self-write registry — otherwise the watcher would classify our own
-    // resurrection as an external edit.
-    const restorePromises: Promise<unknown>[] = [];
-    for (const [relPath, content] of Object.entries(this.fileSnapshots)) {
-      if (!this.vaultRoot) break;
-      restorePromises.push(
-        // Through the note writer, which recreates the file; an editor still
-        // mounted on the same path follows the restored bytes.
-        noteStore.restore(relPath, content).catch((err) => {
-          // The writer already reported the failure and marked the path
-          // failed; this puts the undo in the error log too.
-          reportError('CascadeDeleteCommand', err, `Failed to restore ${relPath}`);
-        }),
-      );
-    }
-    // Restore captured media (base64) via the binary write channel.
-    for (const [relPath, base64] of Object.entries(this.mediaSnapshots)) {
-      if (!this.vaultRoot) break;
-      const vaultRoot = this.vaultRoot;
-      restorePromises.push(
-        trackComponentWrite(
-          vaultRoot,
-          relPath,
-          async () => {
-            await invokeOk('vault:write-file-binary', vaultRoot, relPath, base64);
-          },
-        ).catch((err) => {
-          reportError('CascadeDeleteCommand', err, `Failed to restore media ${relPath}`);
-        }),
-      );
-    }
-    await Promise.all(restorePromises);
-
-    // Restore the style fields BEFORE the placements so a
-    // restored kanban card sees its coverImage back at the same time as
-    // the rest of its placement. Frames are board-scope and survive the
-    // cascade, so order doesn't strictly matter for them — but doing all
-    // restores together keeps a single dirty-batch and a single redraw.
+    // Restore the style fields BEFORE the placements so a restored kanban
+    // card sees its coverImage back at the same time as the rest of its
+    // placement.
     boardCacheStore.restoreCascadeStyleClears(this.styleClears);
 
-    // `skipEmptySeed: true` so a text tile whose body was NOT snapshotted (the
-    // file is truly gone) doesn't get a blank `.md` seeded under it; the
-    // placement comes back pointing at a missing file and the broken-ref UX
-    // kicks in.
+    // `skipEmptySeed: true` so a text tile whose file did NOT come back
+    // doesn't get a blank `.md` seeded under it; the placement comes back
+    // pointing at a missing file and the broken-ref UX kicks in.
     // allow-board-store-current: active-vs-cache pivot, mirror of execute()
     const activeId = boardStore.current?.id ?? null;
     for (const [boardId, tiles] of Object.entries(this.byBoard)) {
@@ -423,18 +404,27 @@ export class CascadeDeleteCommand extends Command {
     }
   }
 
-  /**
-   * Opts the command into the escalated history-truncation
-   * toast. True when this command holds the only copy of one or more
-   * deleted file bodies (text OR media), so dropping the command off the
-   * undo stack means those file contents become irrecoverable.
-   */
-  hasFileSnapshots(): boolean {
-    return (
-      Object.keys(this.fileSnapshots).length > 0
-      || Object.keys(this.mediaSnapshots).length > 0
-    );
+  private followRestoredCopy(from: string, to: string): void {
+    const retarget = (path: string): string => retargetPath(path, from, to);
+    this.itemRel = to;
+    for (const [boardId, tiles] of Object.entries(this.byBoard)) {
+      this.byBoard[boardId] = tiles.map((t) => retargetTile(t, retarget));
+    }
+    const tags: Record<string, string[]> = {}; // allow-string-path-key: tags.json fileTags keys
+    for (const [path, list] of Object.entries(this.fileTags)) tags[retarget(path)] = list;
+    this.fileTags = tags;
   }
+}
+
+/** A copy of `tile` whose file reference goes through `retarget`. */
+function retargetTile(tile: Tile, retarget: (path: string) => string): Tile {
+  const copy = cloneTile(tile);
+  if ((copy.type === 'text' || copy.type === 'file') && copy.filePath) {
+    copy.filePath = retarget(copy.filePath);
+  } else if ((copy.type === 'image' || copy.type === 'video' || copy.type === 'audio') && copy.src) {
+    copy.src = retarget(copy.src);
+  }
+  return copy;
 }
 
 /**

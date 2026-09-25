@@ -86,7 +86,6 @@ export const IPC_PAYLOAD_SCHEMAS = {
   // `(vaultRoot, relativePath, base64Data)`. The base64
   // string can be empty for an empty file, so the third arg is plain
   // `z.string()` and the handler enforces the decoded byte cap.
-  'vault:write-file-binary': z.tuple([nonEmptyString, nonEmptyString, z.string()]),
   'vault:file-exists': z.tuple([nonEmptyString, nonEmptyString]),
   'vault:stat': z.tuple([nonEmptyString, nonEmptyString]),
   'vault:init-config': z.tuple([nonEmptyString]),
@@ -104,7 +103,6 @@ export const IPC_PAYLOAD_SCHEMAS = {
   'board:load': z.tuple([nonEmptyString, nonEmptyString]),
   'board:save': z.tuple([nonEmptyString, nonEmptyString, unknownArg]),
   'board:create': z.tuple([nonEmptyString, nonEmptyString, unknownArg]).rest(optionalString),
-  'board:delete': z.tuple([nonEmptyString, nonEmptyString]),
   'board:list-conflicts': z.tuple([nonEmptyString]),
 
   // ── Recovery snapshot ─────────────────────────────────────────────────
@@ -114,6 +112,14 @@ export const IPC_PAYLOAD_SCHEMAS = {
   'app:machine-identity': z.tuple([]),
   'vault:convert-to-utf8': z.tuple([nonEmptyString, nonEmptyString]),
   'vault:sweep-orphan-tmp': z.tuple([nonEmptyString]),
+  // (vaultRoot, vault-relative path).
+  'vault:trash-move': z.tuple([nonEmptyString, nonEmptyString]),
+  // (vaultRoot, trashId). The id format is checked main-side.
+  'vault:trash-restore': z.tuple([nonEmptyString, nonEmptyString]),
+  'vault:trash-list': z.tuple([nonEmptyString]),
+  // (vaultRoot, trash ids | the retention sweep).
+  'vault:trash-purge': z.tuple([nonEmptyString, z.union([z.array(nonEmptyString).max(10_000), z.literal('olderThan30d')])]),
+  'vault:trash-delete-permanently': z.tuple([nonEmptyString, z.array(nonEmptyString).max(10_000)]),
 
   // ── Config (.filo/) ───────────────────────────────────────────────────
   'config:load': z.tuple([nonEmptyString, nonEmptyString]),

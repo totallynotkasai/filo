@@ -15,7 +15,8 @@ import {
   __resetDirtyTrackingForTests,
   type V7BoardFileData,
 } from '@renderer/lib/boards/boardSaver';
-import type { DocumentBoard } from '@renderer/schema/index';
+import type { DocumentBoard, MindMapBoard } from '@renderer/schema/index';
+import { historyStore } from '@renderer/stores/history.svelte';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { restoreFiloDefault } from '../helpers/filoBridge';
 
@@ -31,6 +32,9 @@ import { restoreFiloDefault } from '../helpers/filoBridge';
  *
  * A vault swap during the post-delete awaits skips the in-memory cascade:
  * the outgoing vault's state belongs to the vault being torn down.
+ *
+ * The item itself moves into Filo's trash, and the delete pushes one
+ * CascadeDeleteCommand, so Ctrl+Z moves it back and restores its tiles.
  */
 
 type InvokeRoute = (...args: unknown[]) => unknown | Promise<unknown>;
@@ -38,24 +42,55 @@ type InvokeRoute = (...args: unknown[]) => unknown | Promise<unknown>;
 let vault: MemoryVault;
 
 /**
- * An in-memory vault holding `files`, with `routes` answering the other
- * channels. `vault:delete` removes the file or folder unless a route
- * overrides it.
+ * An in-memory vault holding `files` (its `vault:trash-move` takes the file or
+ * folder out of `files` into its trash), with `routes` answering the other
+ * channels. Every channel asked for is recorded in `channels`.
  */
+let channels: string[] = [];
 function installFiloStub(routes: Record<string, InvokeRoute>, files: Record<string, string> = {}): void {
   vault = installMemoryVault(files);
+  channels = [];
   const base = window.filo.invoke as (channel: string, ...args: unknown[]) => Promise<unknown>;
   window.filo.invoke = (async (channel: string, ...args: unknown[]) => {
+    channels.push(channel);
     const handler = routes[channel];
-    const result = handler ? await handler(...args) : await base(channel, ...args);
-    if (channel === 'vault:delete' && (result as { success?: boolean } | null)?.success) {
-      const rel = String(args[1]).replace(/^\/vault\//, '').toLowerCase();
-      for (const key of [...vault.files.keys()]) {
-        if (key === rel || key.startsWith(`${rel}/`)) vault.remove(key);
-      }
-    }
-    return result;
+    return handler ? await handler(...args) : await base(channel, ...args);
   }) as typeof window.filo.invoke;
+}
+
+function makeMindMapFixture(boardId: string, tileId: string, filePath: string): V7BoardFileData {
+  return {
+    board: {
+      id: boardId,
+      type: 'mindmap',
+      name: boardId,
+      emoji: '',
+      createdAt: 0,
+      updatedAt: 0,
+      settings: {},
+      placements: {
+        [tileId]: { x: 0, y: 0, width: 100, height: 100, locked: false, faded: false },
+      },
+      inlineTiles: {},
+      waypoints: [],
+    } as unknown as MindMapBoard,
+    tileDefs: {
+      [tileId]: {
+        id: tileId,
+        type: 'text',
+        style: { headerColor: '', bodyColor: '', borderColor: '' },
+        createdAt: 0,
+        updatedAt: 0,
+        filePath,
+      },
+    },
+    connections: {},
+    frames: [],
+  };
+}
+
+async function settle(): Promise<void> {
+  for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
 }
 
 async function open(rel: string): Promise<NoteModel> {
@@ -106,7 +141,6 @@ const FILES = {
 };
 
 const ROUTES: Record<string, InvokeRoute> = {
-  'vault:delete': async () => ({ success: true }),
   'vault:read-tree': async () => ({ ok: true, tree: [] }),
   'board:save': async () => ({ success: true }),
 };
@@ -159,7 +193,7 @@ describe('vaultStore.delete — open notes and Document Boards under the deleted
     await autoConfirm();
     expect(await pending).toBe(true);
 
-    // The drain wrote the edit before the delete (the undo snapshot has it).
+    // The drain wrote the edit before the move, so the trashed copy has it.
     expect(vault.writes.some(([, rel, text]) => rel === 'Notes/2026/foo.md' && text.includes('last words'))).toBe(true);
     expect(foo.hasUnsavedBody).toBe(false);
     expect(noteStore.hasPendingWrites('Notes/2026/foo.md')).toBe(false);
@@ -280,12 +314,8 @@ describe('vaultStore.delete — open notes and Document Boards under the deleted
     expect(vault.read('Notes/2026/bar.md')).toBe(FILES['Notes/2026/bar.md']);
   });
 
-  it('the cancel button returns false without invoking vault:delete', async () => {
-    let deleteCalls = 0;
-    installFiloStub({
-      ...ROUTES,
-      'vault:delete': async () => { deleteCalls++; return { success: true }; },
-    }, FILES);
+  it('the cancel button returns false without moving anything to the trash', async () => {
+    installFiloStub(ROUTES, FILES);
     const pending = vaultStore.delete('/vault/Notes/2026/foo.md');
     for (let i = 0; i < 50; i++) {
       if (uiStore.confirmDialog) {
@@ -298,7 +328,8 @@ describe('vaultStore.delete — open notes and Document Boards under the deleted
     }
     const ok = await pending;
     expect(ok).toBe(false);
-    expect(deleteCalls).toBe(0);
+    expect(channels).not.toContain('vault:trash-move');
+    expect(vault.trash.size).toBe(0);
     expect(vault.read('Notes/2026/foo.md')).toBe(FILES['Notes/2026/foo.md']);
   });
 
@@ -339,5 +370,126 @@ describe('vaultStore.delete — open notes and Document Boards under the deleted
     );
     expect(dailyWrites.length).toBeGreaterThanOrEqual(1);
     expect(dailyWrites.some((w) => w.filePath === '')).toBe(true);
+  });
+});
+
+describe('vaultStore.delete — the item goes to Filo\'s trash and Ctrl+Z brings it back', () => {
+  beforeEach(() => {
+    restoreFiloDefault();
+    uiStore.closeConfirm();
+    __resetDirtyTrackingForTests();
+    vaultStore.setPath('/vault');
+    noteStore.__resetForTests();
+    boardCacheStore.clear();
+    boardStore.clearBoard();
+    tabStore.closeAll();
+    historyStore.clear();
+  });
+  afterEach(() => {
+    cancelAllPendingWrites();
+    noteStore.__resetForTests();
+    restoreFiloDefault();
+    uiStore.closeConfirm();
+    __resetDirtyTrackingForTests();
+    boardCacheStore.clear();
+    boardStore.clearBoard();
+    tabStore.closeAll();
+    historyStore.clear();
+    historyStore.setActiveBoard(null);
+    vaultStore.setPath('');
+  });
+
+  async function deleteConfirmed(absPath: string): Promise<boolean> {
+    const pending = vaultStore.delete(absPath);
+    await autoConfirm();
+    return pending;
+  }
+
+  it('the deleted folder is in the trash under its old path, with every file in it', async () => {
+    installFiloStub(ROUTES, FILES);
+    expect(await deleteConfirmed('/vault/Notes/2026')).toBe(true);
+
+    expect(channels).toContain('vault:trash-move');
+    expect(channels).not.toContain('vault:delete');
+    const entries = [...vault.trash.values()];
+    expect(entries).toHaveLength(1);
+    expect(entries[0].originalPath).toBe('Notes/2026');
+    expect([...entries[0].files.keys()].sort()).toEqual(['Notes/2026/bar.md', 'Notes/2026/foo.md']);
+    expect(vault.read('Other/bar.md')).toBe(FILES['Other/bar.md']);
+  });
+
+  it('undo (the pushed CascadeDeleteCommand) moves the note back and restores its tiles', async () => {
+    installFiloStub(ROUTES, FILES);
+    const fixture = makeMindMapFixture('mm', 't_foo', 'Notes/2026/foo.md');
+    boardCacheStore.hydrate({ mm: fixture }, { mm: 'Boards/mm.board.json' });
+    boardStore.setBoard(fixture.board, boardCacheStore.getFullTilesForBoard('mm'), {}, []);
+    historyStore.setActiveBoard('mm');
+    const foo = await open('Notes/2026/foo.md');
+
+    expect(await deleteConfirmed('/vault/Notes/2026/foo.md')).toBe(true);
+    expect(vault.read('Notes/2026/foo.md')).toBeUndefined();
+    expect(boardCacheStore.cache.mm.tileDefs.t_foo).toBeUndefined();
+    expect(foo.status).toBe('missing');
+    expect(historyStore.canUndo).toBe(true);
+
+    await historyStore.undo();
+    await settle();
+    await foo.loaded;
+
+    expect(vault.read('Notes/2026/foo.md')).toBe(FILES['Notes/2026/foo.md']);
+    expect(vault.trash.size).toBe(0);
+    expect(boardCacheStore.cache.mm.tileDefs.t_foo).toBeDefined();
+    expect(foo.status).toBe('ready');
+    expect(foo.body).toBe('foo body\n');
+  });
+
+  it('undo of a folder delete brings every file back', async () => {
+    installFiloStub(ROUTES, FILES);
+    const fixture = makeMindMapFixture('mm', 't_foo', 'Notes/2026/foo.md');
+    boardCacheStore.hydrate({ mm: fixture }, { mm: 'Boards/mm.board.json' });
+    boardStore.setBoard(fixture.board, boardCacheStore.getFullTilesForBoard('mm'), {}, []);
+    historyStore.setActiveBoard('mm');
+
+    expect(await deleteConfirmed('/vault/Notes/2026')).toBe(true);
+    await historyStore.undo();
+    await settle();
+
+    expect(vault.read('Notes/2026/foo.md')).toBe(FILES['Notes/2026/foo.md']);
+    expect(vault.read('Notes/2026/bar.md')).toBe(FILES['Notes/2026/bar.md']);
+    expect(boardCacheStore.cache.mm.tileDefs.t_foo).toBeDefined();
+  });
+
+  it('a note on no board still gets an undoable command', async () => {
+    installFiloStub(ROUTES, FILES);
+    // A board is active (so history has a stack) but nothing on it shows the note.
+    const fixture = makeMindMapFixture('mm', 't_foo', 'Notes/2026/foo.md');
+    boardCacheStore.hydrate({ mm: fixture }, { mm: 'Boards/mm.board.json' });
+    boardStore.setBoard(fixture.board, boardCacheStore.getFullTilesForBoard('mm'), {}, []);
+    historyStore.setActiveBoard('mm');
+
+    expect(await deleteConfirmed('/vault/Other/bar.md')).toBe(true);
+    expect(vault.read('Other/bar.md')).toBeUndefined();
+    expect(historyStore.canUndo).toBe(true);
+
+    await historyStore.undo();
+    await settle();
+    expect(vault.read('Other/bar.md')).toBe(FILES['Other/bar.md']);
+    expect(vault.trash.size).toBe(0);
+    expect(boardCacheStore.cache.mm.tileDefs.t_foo).toBeDefined();
+  });
+
+  it('a failed move to the trash deletes nothing and says so', async () => {
+    installFiloStub(ROUTES, FILES);
+    const fixture = makeMindMapFixture('mm', 't_foo', 'Notes/2026/foo.md');
+    boardCacheStore.hydrate({ mm: fixture }, { mm: 'Boards/mm.board.json' });
+    const foo = await open('Notes/2026/foo.md');
+    vault.failNextTrashMove('Notes/2026/foo.md', 'EBUSY');
+
+    expect(await deleteConfirmed('/vault/Notes/2026/foo.md')).toBe(false);
+    expect(vault.read('Notes/2026/foo.md')).toBe(FILES['Notes/2026/foo.md']);
+    expect(vault.trash.size).toBe(0);
+    expect(boardCacheStore.cache.mm.tileDefs.t_foo).toBeDefined();
+    expect(foo.status).toBe('ready');
+    expect(uiStore.toasts.some((t) => t.text.includes("Couldn't move \"foo.md\" to Filo's trash"))).toBe(true);
   });
 });

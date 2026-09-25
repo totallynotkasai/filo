@@ -104,7 +104,6 @@ const BOARD_IPC_ENVELOPE_CHANNELS = [
   'vault:init-config',
   'board:save',
   'board:create',
-  'board:delete',
   'config:save',
   'config:save-workspace',
   'theme:save',
@@ -216,14 +215,6 @@ describe('Phase 0 characterization — IPC envelope contract (board.ipc.ts)', ()
     // vaultCandidate.ts:140 both use `invokeOk`; no bare callers remain.
     it('vault:init-config — every renderer caller has assertIpcOk in scope', () => {
       const callers = findCallers('vault:init-config');
-      const missing = callers.filter((c) => !c.hasNearbyAssertIpcOk);
-      expect(missing).toEqual([]);
-    });
-
-    // CONSOLIDATION_PLAN_2026-05-25 Phase 1 — boardCache.svelte.ts:671
-    // now uses `invokeOk('board:delete', ...)`.
-    it('board:delete — every renderer caller has assertIpcOk in scope', () => {
-      const callers = findCallers('board:delete');
       const missing = callers.filter((c) => !c.hasNearbyAssertIpcOk);
       expect(missing).toEqual([]);
     });

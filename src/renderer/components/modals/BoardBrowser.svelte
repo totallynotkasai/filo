@@ -212,14 +212,14 @@
     if (!board) return;
     uiStore.openConfirm({
       title: 'Delete board?',
-      body: `${board.name} and its placements are removed from the vault. The underlying note files stay (use the sidebar to delete those).`,
+      body: `"${board.name}" will be moved to Filo's trash. Its notes stay in the vault. Undo from the toast, or restore it from Settings → Trash.`,
       confirmLabel: 'Delete board',
       danger: true,
-      // Delete the .board.json file on disk. The store's deleteBoard runs the
-      // IPC and then routes through the shared post-removal cleanup (cache /
-      // project.boards / viewport / open tabs / undo history) — same path the
-      // external-delete reconciler and the sidebar `delete` use, so the three
-      // entry points can't drift out of sync.
+      // The store's deleteBoard moves the .board.json into Filo's trash, then
+      // runs the shared post-removal cleanup (cache / project.boards /
+      // viewport / open tabs / undo history) — the same path the
+      // external-delete reconciler and the sidebar delete use, so the entry
+      // points can't drift out of sync.
       onConfirm: () => { void boardStore.deleteBoard(boardId); },
     });
   }

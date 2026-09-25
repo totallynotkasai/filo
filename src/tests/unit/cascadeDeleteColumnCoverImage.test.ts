@@ -83,7 +83,7 @@ describe('cascadeDeleteByVaultPath — Phase 1.3 column coverImage', () => {
     expect((columnsBefore[0] as { coverImage?: string }).coverImage).toBe(deletedPath);
     const cacheBefore = boardCacheStore.cache;
 
-    boardStore.cascadeDeleteByVaultPath(deletedPath, {}, '', {});
+    boardStore.cascadeDeleteByVaultPath(deletedPath);
 
     // After the cascade the column's coverImage is empty — the bug-fix
     // gate now trips on `columnCoverImage` and `applyCascadeStyleClears`
@@ -104,9 +104,6 @@ describe('cascadeDeleteByVaultPath — Phase 1.3 column coverImage', () => {
 
     const result = boardStore.cascadeDeleteByVaultPath(
       'attachments/nothing-references-this.png',
-      {},
-      '',
-      {},
     );
 
     expect(result.removedTileIds).toEqual([]);

@@ -12,13 +12,11 @@ import { vaultStore } from './vault.svelte';
 import {
   type V7BoardFileData,
   scheduleBoardWrite,
-  cancelBoardWrite,
   flushBoardWrite,
   getViewportFromCache,
   setViewport,
-  removeViewport,
 } from '../lib/boards/boardSaver';
-import { flushAllScheduledBoards, markBoardPathDeleting, clearBoardPathDeleting } from '../lib/boards/boardWriteScheduler';
+import { flushAllScheduledBoards } from '../lib/boards/boardWriteScheduler';
 import { loadBoard } from '../lib/boards/boardLoader';
 import { reportError } from '../lib/utils/errorBus';
 import { invokeOk } from '../lib/utils/invokeOk';
@@ -31,6 +29,7 @@ import { makeTaskListSlice } from './boardCacheTaskList';
 import { makeKanbanSlice } from './boardCacheKanban';
 import { makeTilesSlice } from './boardCacheTiles';
 import { makeFrontmatterSlice } from './boardCacheFrontmatter';
+import { makeBoardDeleteSlice } from './boardCacheDelete';
 import { CURRENT_BOARD_FILE_VERSION } from '../schema/boardFile';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { boardDefaults } from '../core/boardDefaults';
@@ -300,6 +299,12 @@ const taskListSlice = makeTaskListSlice(cacheCtx);
 const kanbanSlice = makeKanbanSlice(cacheCtx);
 const tilesSlice = makeTilesSlice(cacheCtx);
 const frontmatterSlice = makeFrontmatterSlice(cacheCtx);
+const deleteSlice = makeBoardDeleteSlice({
+  getCache: () => boardCache,
+  setCache: (next) => { boardCache = next; },
+  getPaths: () => boardPaths,
+  setPaths: (next) => { boardPaths = next; },
+});
 
 export const boardCacheStore = {
   // ── Cache getters ──
@@ -640,72 +645,8 @@ export const boardCacheStore = {
     return ok ? board : null;
   },
 
-  /**
-   * Drops every cache-side trace of a board: paths, cache map entry, the
-   * Project's boards array entry, any pending debounced write, and the
-   * viewport map entry. Does NOT touch disk — caller is responsible for
-   * the `.board.json` file (either it never existed, was deleted via
-   * `deleteBoard`, or disappeared externally and this is the
-   * reconciliation path).
-   *
-   * Returns true when an entry was found and removed. False is a no-op
-   * (already gone) — not an error.
-   */
-  removeBoardFromCache(boardId: string): boolean {
-    if (!(boardId in boardPaths) && !(boardId in boardCache)) return false;
-
-    const { [boardId]: _path, ...restPaths } = boardPaths;
-    void _path;
-    boardPaths = restPaths;
-    const { [boardId]: _cache, ...restCache } = boardCache;
-    void _cache;
-    boardCache = restCache;
-
-    const project = vaultStore.getProject();
-    if (project) project.boards = project.boards.filter((b) => b.id !== boardId);
-
-    cancelBoardWrite(boardId);
-    // Drop the entry from the unified viewports map and schedule a
-    // debounced flush so .filo/viewports.json reflects the deletion.
-    removeViewport(boardId);
-    return true;
-  },
-
-  /** Deletes a board file from the vault and drops its cache entry. */
-  async deleteBoard(boardId: string): Promise<boolean> {
-    const vaultRoot = vaultStore.path;
-    if (!vaultRoot) return false;
-    const boardPath = boardPaths[boardId];
-    if (!boardPath) return false;
-
-    // Cancel any pending debounced write BEFORE the delete IPC,
-    // else a 300ms-old setTimeout fires after the unlink and resurrects the file.
-    cancelBoardWrite(boardId, boardPath);
-
-    // cancelBoardWrite only reaches pending/parked timers; an
-    // IN-FLIGHT board:save (e.g. suspended on the drift prompt) would resolve
-    // after this delete and resurrect the .board.json as a ghost. Mark the path
-    // so writeBoardFile bails before board:save; clear it once any in-flight
-    // write drains (so a board re-created here later isn't blocked).
-    markBoardPathDeleting(boardPath);
-
-    try {
-      await invokeOk('board:delete', vaultRoot, boardPath);
-      this.removeBoardFromCache(boardId);
-      // Drain the in-flight write (neutralised by the mark above), then clear —
-      // fire-and-forget so the delete returns promptly (getArgs null = no fire).
-      void flushBoardWrite(boardId, () => null).finally(() => clearBoardPathDeleting(boardPath));
-      return true;
-    } catch (err) {
-      clearBoardPathDeleting(boardPath); // delete failed — re-enable writes
-      reportError(
-        'boardCache.delete',
-        err,
-        `Failed to delete board file ${boardPath}`,
-      );
-      return false;
-    }
-  },
+  // ── Board delete (slice): the file goes to Filo's trash ──
+  ...deleteSlice,
 
   // ── Tile persistence — slice ──
   ...tilesSlice,

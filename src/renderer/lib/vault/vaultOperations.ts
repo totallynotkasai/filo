@@ -2,8 +2,8 @@
  * Single entry point for every disk-shape change.
  *
  * A disk-shape change that doesn't first flush pending writers loses data: a
- * debounced write fires after a rename/delete (ENOENT → silent loss), or an
- * undo snapshot reads `.md` from disk before pending edits land.
+ * debounced write fires after a rename/delete (ENOENT → silent loss), or
+ * recreates the path the change just removed.
  *
  * `withDrainedWrites(op)` enforces the contract by design: every disk-shape
  * change first drains the writer pipelines, then runs `op`. If any
@@ -11,12 +11,11 @@
  * naming the failed paths and throws `PendingWritesFailedError` so the
  * caller can bail before issuing the IPC.
  *
- * The thin IPC wrappers (`renameVaultPath`, `deleteVaultPath`,
- * `createVaultFolder`, `copyFileIntoVault`) are convenience helpers for
- * single-step sites: drain + IPC. Complex sites that need a pre-IPC
- * snapshot read (e.g. `vaultFolderOps.delete` capturing .md bodies for the
- * undoable cascade) wrap their full sequence in `withDrainedWrites(async
- * () => { ... })` so the snapshot reads happen post-flush.
+ * The thin IPC wrappers (`renameVaultPath`, `trashVaultPath`,
+ * `restoreTrashed`, `createVaultFolder`, `copyFileIntoVault`) are convenience
+ * helpers for single-step sites: drain + IPC. Complex sites (the sidebar
+ * rename and delete cascades) wrap their full sequence in
+ * `withDrainedWrites(async () => { ... })`.
  *
  * Re-entrancy: a nested `withDrainedWrites` call short-circuits its own
  * drain (the outer drain already covers it). The convenience IPC helpers
@@ -24,8 +23,8 @@
  * — no double-drain cost, no risk of a stale flush.
  *
  * CI gate: `scripts/gates:no-raw-disk-shape-ipc` forbids raw renderer
- * invokes of the four disk-shape channels (vault rename / delete /
- * create-folder / copy-file) outside this module, the main-process IPC
+ * invokes of the disk-shape channels (vault rename / delete / create-folder /
+ * copy-file and the trash channels) outside this module, the main-process IPC
  * handlers, and a small allowlist of `.filo/` sentinel cleanup sites
  * (which delete recovery breadcrumbs, not user files).
  */
@@ -87,7 +86,7 @@ export class PendingWritesFailedError extends Error {
  * Re-entrancy guard. Nested calls reuse the outer drain instead of running
  * their own — every IPC convenience helper calls `withDrainedWrites`, so a
  * complex sequence like `vaultFolderOps.delete` can wrap itself once and
- * still call `deleteVaultPath` for the IPC without paying a second drain.
+ * still call `trashVaultPath` for the IPC without paying a second drain.
  *
  * Keyed by the vault GENERATION rather than a bare boolean: otherwise a call
  * against a NEWLY-swapped vault (while an outer drain for the OLD vault is
@@ -293,34 +292,77 @@ export async function renameVaultPath(
 
 /** The vault-relative paths of `absPaths` that name notes (`.md`). */
 function notePathsOf(vaultRoot: string, absPaths: string[]): string[] {
-  const out: string[] = [];
+  const rels: string[] = [];
   for (const abs of absPaths) {
     const rel = toVaultRelative(abs, vaultRoot);
-    if (rel && /.(md|markdown)$/i.test(rel)) out.push(rel);
+    if (rel) rels.push(rel);
   }
-  return out;
+  return notePathsOfRel(rels);
+}
+
+function notePathsOfRel(rels: string[]): string[] {
+  return rels.filter((rel) => /\.(md|markdown)$/i.test(rel));
 }
 
 /**
- * Deletes a vault file or folder. Drains pending writers first so a
- * keystroke that landed in a TextTile within the 300 ms debounce window
- * doesn't fire after the file is gone (ENOENT) or — worse — get
- * resurrected by the writer's `mkdir-recursive` retry.
- *
- * The `itemPath` is the full vault-relative path; the main-process
- * handler resolves it against the captured `vaultRoot` and refuses any
- * relative path that escapes the tree.
+ * Moves a vault file or folder (vault-relative) into Filo's trash,
+ * `.filo/trash/<trashId>/`. Every user-facing delete removes things this way;
+ * undo and Settings → Trash move them back with `restoreTrashed`. Drains
+ * pending writers first so a debounced write can't recreate the path after it
+ * moved, and holds the note's write queue while it goes.
  */
-export async function deleteVaultPath(
+export async function trashVaultPath(
   vaultRoot: string,
-  itemPath: string,
-): Promise<ChannelResult<'vault:delete'>> {
+  relPath: string,
+): Promise<ChannelResult<'vault:trash-move'>> {
   return withDrainedWrites(async () => {
-    // The note's write queue stays idle while its file goes.
-    return noteStore.hold(notePathsOf(vaultRoot, [itemPath]), async () => {
-      return window.filo.invoke('vault:delete', vaultRoot, itemPath);
+    return noteStore.hold(notePathsOfRel([relPath]), async () => {
+      return window.filo.invoke('vault:trash-move', vaultRoot, relPath);
     });
   });
+}
+
+/**
+ * Moves a trashed item back to where it was, or beside it when that path is
+ * taken again (`alongside`). `originalPath` names the note whose write queue
+ * is held while it comes back.
+ */
+export async function restoreTrashed(
+  vaultRoot: string,
+  trashId: string,
+  originalPath: string,
+): Promise<ChannelResult<'vault:trash-restore'>> {
+  return withDrainedWrites(async () => {
+    return noteStore.hold(notePathsOfRel([originalPath]), async () => {
+      return window.filo.invoke('vault:trash-restore', vaultRoot, trashId);
+    });
+  });
+}
+
+/** What is in Filo's trash, newest first. */
+export async function listTrash(vaultRoot: string): Promise<ChannelResult<'vault:trash-list'>> {
+  return window.filo.invoke('vault:trash-list', vaultRoot);
+}
+
+/**
+ * Sends trashed items to the OS Recycle Bin: by id, or this machine's items
+ * older than 30 days. Items the Recycle Bin refuses stay in Filo's trash and
+ * come back as `TRASH_FAILED`; only `deleteTrashPermanently`, after the user
+ * confirmed, removes them for good.
+ */
+export async function purgeTrash(
+  vaultRoot: string,
+  which: string[] | 'olderThan30d',
+): Promise<ChannelResult<'vault:trash-purge'>> {
+  return window.filo.invoke('vault:trash-purge', vaultRoot, which);
+}
+
+/** Deletes trashed items for good, after the user answered "Delete permanently?". */
+export async function deleteTrashPermanently(
+  vaultRoot: string,
+  trashIds: string[],
+): Promise<ChannelResult<'vault:trash-delete-permanently'>> {
+  return window.filo.invoke('vault:trash-delete-permanently', vaultRoot, trashIds);
 }
 
 /**

@@ -17,6 +17,7 @@ import {
   openNoteFromSidebar,
   renameInSidebar,
   deleteTileAndFile,
+  trashedPaths,
   undo,
   renameTagEverywhere,
   kanbanCards,
@@ -128,11 +129,13 @@ describe('delete a tile and its file, then undo', () => {
     await deleteTileAndFile(app, kanbanCards(app)[0].el);
     expect(kanbanCards(app)).toHaveLength(0);
     expect(app.exists(note)).toBe(false);
+    expect(trashedPaths(app)).toEqual([note]);
 
     await undo(app);
     await waitFor(() => kanbanCards(app).length === 1, 'the card to come back');
     expect(kanbanCards(app)[0].title).toBe(title);
     expect(app.read(note)).toBe(bytes);
+    expect(trashedPaths(app)).toEqual([]);
   });
 
   it('Mind map: the file goes, and undo brings back the tile and its text', async () => {
@@ -144,6 +147,7 @@ describe('delete a tile and its file, then undo', () => {
     await deleteTileAndFile(app, mindMapTiles(app)[0].el);
     expect(mindMapTiles(app)).toHaveLength(0);
     expect(app.exists('Keep safe.md')).toBe(false);
+    expect(trashedPaths(app)).toEqual(['Keep safe.md']);
 
     await undo(app);
     await waitFor(() => mindMapTiles(app).length === 1, 'the tile to come back');

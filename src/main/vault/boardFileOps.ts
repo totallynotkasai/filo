@@ -82,15 +82,6 @@ export async function createBoardFile(
   return filePath;
 }
 
-// ── Delete ──
-
-/**
- * Deletes a .board.json file.
- */
-export async function deleteBoardFile(filePath: string): Promise<void> {
-  await fs.unlink(filePath);
-}
-
 // ── Scan ──
 
 /**

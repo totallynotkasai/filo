@@ -2,48 +2,13 @@ import { Command } from './Command';
 import { toastMissingUndoRedoTarget } from './missingTargetToast';
 import { boardStore } from '../stores/board.svelte';
 import { boardCacheStore } from '../stores/boardCache.svelte';
-import { vaultIndexStore } from '../stores/vaultIndex.svelte';
 import { vaultStore } from '../stores/vault.svelte';
 import { uiStore } from '../stores/ui.svelte';
 import { framesStore } from '../stores/frames.svelte';
 import type { Tile, Connection } from '../schema/index';
 import { cloneTile } from '../lib/utils/cloneTile';
 import { DeleteCardCommand } from './kanbanCommands';
-import { reportError } from '../lib/utils/errorBus';
-import { noteStore } from '../stores/notes.svelte';
-import { deleteVaultPath } from '../lib/vault/vaultOperations';
-import { IpcEnvelopeError } from '@shared/ipcEnvelope';
-
-/**
- * Snapshot of a single backing file captured at delete time so a subsequent
- * `undo()` can write the content back to disk before re-resolving placements.
- * `rel` is vault-relative. Snapshots are only captured for tiles whose
- * "Delete associated files" path runs — out-of-band file deletes are still
- * surfaced via the broken-ref toast at the bottom of `undo()`.
- */
-export interface DeletedFileSnapshot {
-  rel: string;
-  content: string;
-}
-
-/**
- * Returns the vault-relative file path a tile is backed by, if any.
- * Text and file tiles use `filePath`; image / video / audio tiles use `src`.
- */
-function getTileFileRef(tile: Tile): string | null {
-  const t = tile as Tile & Record<string, unknown>;
-  if (tile.type === 'text' || tile.type === 'file') {
-    return tile.filePath && tile.filePath.length > 0 ? tile.filePath : null;
-  }
-  if (tile.type === 'image' || tile.type === 'video' || tile.type === 'audio') {
-    const src = t.src as string | undefined;
-    if (!src || src.length === 0) return null;
-    // External URLs aren't vault refs; skip them.
-    if (/^https?:\/\//i.test(src) || /^data:/i.test(src)) return null;
-    return src;
-  }
-  return null;
-}
+import { restoreFiles, retargetPath, trashFiles, type RestoredItem, type TrashedItem } from './trashedFiles';
 
 // ── Tile Commands ──
 
@@ -163,13 +128,27 @@ export class AddTilesCommand extends Command {
 
 export interface DeleteTilesOptions {
   /**
-   * Pre-read snapshots of backing files. Provided only when the user opted
-   * into "Delete associated files from vault" — the dialog reads file
-   * contents before the command is constructed so undo can write them back.
+   * Vault-relative files to move into Filo's trash with the tiles. Given only
+   * when the user opted into "Delete associated files from vault"; undo moves
+   * them back.
    */
-  fileSnapshots?: DeletedFileSnapshot[];
-  /** Required if `fileSnapshots` is non-empty. */
+  filePaths?: string[];
+  /** Required if `filePaths` is non-empty. */
   vaultRoot?: string;
+}
+
+/** The vault-relative note paths behind the text tiles among `tiles`, once each. */
+export function textTileNotePaths(tiles: Tile[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const tile of tiles) {
+    if (tile.type !== 'text' || !tile.filePath) continue;
+    const key = tile.filePath.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(tile.filePath);
+  }
+  return out;
 }
 
 export class DeleteTilesCommand extends Command {
@@ -183,7 +162,9 @@ export class DeleteTilesCommand extends Command {
   readonly targetBoardId: string;
   private tiles: Tile[] = [];
   private connections: Connection[] = [];
-  private fileSnapshots: DeletedFileSnapshot[];
+  private filePaths: string[];
+  /** What the last execute moved into Filo's trash (empty after an undo). */
+  private trashed: TrashedItem[] = [];
   private vaultRoot: string | undefined;
   /**
    * On a Kanban board, one card snapshot per tile (column, neighbour anchor,
@@ -195,9 +176,8 @@ export class DeleteTilesCommand extends Command {
   constructor(tileIds: string[], options: DeleteTilesOptions = {}) {
     super();
     this.description = `Delete ${tileIds.length} tile(s)`;
-    // allow-shallow: DeletedFileSnapshot is flat { rel, content }; nested
-    // fields are primitives so the per-entry spread is sufficient.
-    this.fileSnapshots = options.fileSnapshots ? options.fileSnapshots.map((s) => ({ ...s })) : [];
+    // allow-shallow: primitive strings.
+    this.filePaths = options.filePaths ? [...options.filePaths] : [];
     this.vaultRoot = options.vaultRoot;
     this.targetBoardId = boardStore.current?.id ?? '';
     // Snapshot tiles using cloneTile (shares large string references to save memory)
@@ -248,110 +228,80 @@ export class DeleteTilesCommand extends Command {
       }
     }
 
-    // File deletes are owned by the command so the snapshot stored on the
-    // instance is the same one that gets restored by undo(). Sequenced after
-    // the synchronous placement removal so a write-error mid-execute can't
-    // leave the board referencing a half-deleted file. The combined promise is
-    // stored on `lastExecuteCompletion` so callers can await completion.
+    // The files go to Filo's trash after the placements are gone, so no board
+    // shows a tile over a file that is on its way out. The promise is kept on
+    // `lastExecuteCompletion` so callers can await it.
     //
-    // Queue behind any prior execute()/undo() IPC still in flight: a rapid
-    // Ctrl+Y / Ctrl+Z could otherwise let the prior undo's restore write land
-    // after this delete and resurrect the file. Both priors are allSettled
-    // wrappers, so awaiting them never rejects.
-    if (this.vaultRoot && this.fileSnapshots.length > 0) {
+    // Queue behind any prior execute()/undo() still in flight: a rapid
+    // Ctrl+Y / Ctrl+Z could otherwise let the prior undo's restore land after
+    // this move. Both priors are allSettled wrappers, so awaiting them never
+    // rejects.
+    if (this.vaultRoot && this.filePaths.length > 0) {
       const vaultRoot = this.vaultRoot;
       const prior = Promise.allSettled([this.lastExecuteCompletion, this.lastUndoCompletion]);
-      this.lastExecuteCompletion = prior.then(() => this.executeFileDeletes(vaultRoot));
+      this.lastExecuteCompletion = prior.then(async () => {
+        this.trashed = await trashFiles(vaultRoot, this.filePaths, 'deleteTiles.execute');
+      });
     } else {
       this.lastExecuteCompletion = Promise.resolve();
     }
     await this.lastExecuteCompletion;
   }
 
-  private async executeFileDeletes(vaultRoot: string): Promise<void> {
-    const promises = this.fileSnapshots.map((snap) => {
-      // vault:delete takes (vaultRoot, absoluteItemPath).
-      const absPath = `${vaultRoot}/${snap.rel}`;
-      // `deleteVaultPath` drains pending writers first so a debounced editor
-      // write can't fire against `snap.rel` after the delete (a no-op here if
-      // the caller already drained).
-      return deleteVaultPath(vaultRoot, absPath)
-        .then(
-          (result) => {
-            // `deleteVaultPath` returns the success envelope verbatim;
-            // ENOENT is reported as `{ success: false, code: 'ENOENT' }`
-            // — desired state, suppress.
-            if (!result.success && result.code !== 'ENOENT') {
-              reportError(
-                'deleteTiles.execute',
-                new Error(result.error ?? 'vault:delete returned !success'),
-                `Failed to delete ${snap.rel}`,
-              );
-            }
-          },
-          (err) => {
-            if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') return;
-            reportError('deleteTiles.execute', err, `Failed to delete ${snap.rel}`);
-          },
-        );
-    });
-    await Promise.allSettled(promises);
-  }
-
   async undo(): Promise<void> {
-    // Snapshots-present path: write file bodies BEFORE restoring placements.
-    // boardStore.addTile routes through `persistAddTile`, which seeds an
-    // empty `.md` when the backing file isn't on disk. If we restored
-    // placements first, the seed would race with (or overwrite) our snapshot
-    // write. Awaiting snapshot writes first guarantees `vault:file-exists`
-    // returns true by the time the seed-check runs. The cost is a ~50-200 ms
-    // delay before the tile reappears — better than corrupting the content
-    // the user pressed Ctrl+Z to recover.
-    //
-    // Snapshots-absent path: restore placements synchronously.
-    //
-    // `await command.undo()` covers the full restore (BatchCommand rollback
-    // relies on it); `lastUndoCompletion` also lets a redo sequence behind a
-    // pending undo.
-    if (this.vaultRoot && this.fileSnapshots.length > 0) {
-      this.lastUndoCompletion = this.undoWithSnapshot();
-      await this.lastUndoCompletion;
-    } else {
-      this.restorePlacements();
-      this.surfaceMissingFileToast();
+    if (!this.vaultRoot || this.filePaths.length === 0) {
+      // Placement-only: nothing on disk to wait for.
       this.lastUndoCompletion = Promise.resolve();
+      this.restorePlacements();
+      return;
     }
+    // Files first: they come back from Filo's trash before the placements, so
+    // `persistAddTile`'s file-exists check finds them and never seeds an empty
+    // note over the path. `await command.undo()` covers the full restore
+    // (BatchCommand rollback relies on it); `lastUndoCompletion` also lets a
+    // redo sequence behind a pending undo.
+    const prior = Promise.allSettled([this.lastExecuteCompletion, this.lastUndoCompletion]);
+    this.lastUndoCompletion = prior.then(async () => {
+      let restored: RestoredItem[] = [];
+      if (this.vaultRoot && this.trashed.length > 0) {
+        restored = await restoreFiles(this.vaultRoot, this.trashed, 'deleteTiles.undo');
+        this.trashed = [];
+        // A redo must trash the restored copy, not a newer file that took
+        // the old name meanwhile.
+        this.filePaths = this.filePaths.map((p) => {
+          const r = restored.find((x) => x.rel.toLowerCase() === p.toLowerCase());
+          return r ? r.restoredPath : p;
+        });
+      }
+      this.restorePlacements(restored);
+    });
+    await this.lastUndoCompletion;
   }
 
-  private async undoWithSnapshot(): Promise<void> {
-    const writePromises: Promise<unknown>[] = [];
-    for (const snap of this.fileSnapshots) {
-      const rel = snap.rel;
-      const content = snap.content;
-      // Through the note writer, which recreates the file; a view of the note
-      // that is still open follows the restored bytes.
-      const writeP = noteStore.restore(rel, content).catch((err) => {
-        uiStore.toast(
-          `Tile restored but file content could not be recovered: ${rel}`,
-          'error',
-          6000,
-        );
-        reportError('deleteTiles.undo', err, `Failed to restore ${rel}`);
-      });
-      writePromises.push(writeP);
+  private restorePlacements(restored: RestoredItem[] = []): void {
+    // A file restored beside a new one that took its name: the tile follows
+    // the restored file.
+    const retargeted: Tile[] = [];
+    for (const r of restored) {
+      if (r.restoredPath === r.rel) continue;
+      for (const tile of this.tiles) {
+        if (tile.type !== 'text' || !tile.filePath) continue;
+        const next = retargetPath(tile.filePath, r.rel, r.restoredPath);
+        if (next === tile.filePath) continue;
+        tile.filePath = next;
+        retargeted.push(tile);
+      }
     }
-    await Promise.allSettled(writePromises);
-    // Snapshot writes are done (or settled with failure). Restore the
-    // placements now — persistAddTile's file-exists check will see the
-    // file we just wrote and skip the empty-seed path.
-    this.restorePlacements();
-  }
-
-  private restorePlacements(): void {
     if (this.kanbanCards.length > 0) {
       // Last card first: each card's anchor is the sibling that followed it,
       // which may itself be one of the deleted cards.
       for (const card of [...this.kanbanCards].reverse()) card.undo();
+      // A card comes back from its own snapshot; point it at the restored copy.
+      for (const tile of retargeted) {
+        if (tile.type === 'text') {
+          boardCacheStore.persistUpdateTile(tile.id, { filePath: tile.filePath } as Partial<Tile>, this.targetBoardId);
+        }
+      }
     } else {
       for (const tile of this.tiles) {
         boardStore.addTile(tile);
@@ -386,62 +336,16 @@ export class DeleteTilesCommand extends Command {
     }
   }
 
-  private surfaceMissingFileToast(): void {
-    // Detect restored tiles whose backing files no longer exist. The user
-    // probably deleted the file out-of-band between the delete and the
-    // undo; we surface a single toast so the silent-restore-with-broken-ref
-    // doesn't go unnoticed. Only fires on the no-snapshot path — when
-    // snapshots are provided the body has already been restored (or the
-    // write-failure toast has fired), so re-flagging here would be noise.
-    const missing: string[] = [];
-    for (const tile of this.tiles) {
-      const ref = getTileFileRef(tile);
-      if (!ref) continue;
-      if (!vaultIndexStore.getMetadata(ref) && !boardStore.isBrokenTile(tile.id)) {
-        // For non-.md refs the index won't know; fall back to broken-ref
-        // tracking already maintained by boardRefIntegrity on the next
-        // tree refresh.
-        if (ref.toLowerCase().endsWith('.md')) {
-          missing.push(tile.title || tile.id);
-        }
-      }
-    }
-    if (missing.length > 0) {
-      const sample = missing.slice(0, 3).join(', ');
-      const more = missing.length > 3 ? `, +${missing.length - 3} more` : '';
-      uiStore.toast(
-        `${missing.length} restored tile(s) reference missing files (${sample}${more}). Check the broken-ref badge or Recovery Files.`,
-        'warning',
-        6000,
-      );
-    }
-  }
-
   /**
-   * Last `undo()`'s combined completion promise. Tests await this to
-   * observe `failedVaultPaths` / toast effects and the post-await
-   * placement restore. Settled when every snapshot's IPC has resolved
-   * (success or failure) and the placements have been re-added. Resolves
-   * immediately when no snapshots existed.
+   * Last `undo()`'s completion: settled once every trashed file is back (or
+   * reported) and the placements are re-added.
    */
   lastUndoCompletion: Promise<unknown> = Promise.resolve();
   /**
-   * Last `execute()`'s combined delete-IPC promise. Tests
-   * await this to observe that every `vault:delete` settled (success or
-   * failure surfaced through reportError) before redo/undo runs again.
-   * Resolves immediately when no snapshots were provided.
+   * Last `execute()`'s move into Filo's trash: settled once every file moved
+   * (or the failure was reported). Resolves at once when no files go.
    */
   lastExecuteCompletion: Promise<unknown> = Promise.resolve();
-
-  /**
-   * Opts the command into the escalated history-truncation
-   * toast. True when this command holds the only copy of one or more
-   * deleted file bodies, so dropping the command off the undo stack means
-   * those file contents become irrecoverable.
-   */
-  hasFileSnapshots(): boolean {
-    return this.fileSnapshots.length > 0;
-  }
 }
 
 export class MoveTilesCommand extends Command {

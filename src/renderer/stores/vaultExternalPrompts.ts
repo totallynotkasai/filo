@@ -93,8 +93,8 @@ function confirmRemoveTilesForMissingFile(rel: string, vaultRoot: string, dropTa
         } catch {
           // Probe failure → treat as still-missing; fall through.
         }
-        // The existing undoable cascade (fileSnapshots empty: the file is gone).
-        boardStore.cascadeDeleteByVaultPath(rel, {}, vaultRoot);
+        // The undoable cascade; the file itself is already gone.
+        boardStore.cascadeDeleteByVaultPath(rel, { vaultRoot });
         // The user confirmed the file is gone; drop its tags.json
         // membership so the orphan entry doesn't linger.
         if (dropTags) fileTagsStore.dropFile(rel);

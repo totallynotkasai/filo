@@ -280,7 +280,7 @@ describe('persistRemoveTile — exhaustive entry-point coverage (Phase 7)', () =
     boardStore.clearBoard();
     historyStore.setActiveBoard(null);
     historyStore.clear();
-    vi.spyOn(uiStore, 'toast').mockImplementation(() => {});
+    vi.spyOn(uiStore, 'toast').mockImplementation(() => '');
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -312,7 +312,7 @@ describe('persistRemoveTile — exhaustive entry-point coverage (Phase 7)', () =
       expectNoOrphans(fixture.boardId, 'tile_a');
     });
 
-    it('CascadeDeleteCommand.execute leaves no orphan (cascade entry path)', () => {
+    it('CascadeDeleteCommand.execute leaves no orphan (cascade entry path)', async () => {
       const fixture = makeFixture(kind, 'tile_a', 'tile_b');
       hydrateAndActivate(fixture);
 
@@ -328,10 +328,9 @@ describe('persistRemoveTile — exhaustive entry-point coverage (Phase 7)', () =
       const cmd = new CascadeDeleteCommand(
         { [fixture.boardId]: [snapshot as Tile] },
         connections,
-        {},
-        '/vault',
+        { vaultRoot: '/vault' },
       );
-      cmd.execute();
+      await cmd.execute();
 
       expectNoOrphans(fixture.boardId, 'tile_a');
     });

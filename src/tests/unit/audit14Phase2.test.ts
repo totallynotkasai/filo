@@ -11,6 +11,7 @@ import { DeleteTilesCommand, RemoveTileTagCommand } from '@renderer/commands/ind
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { ACCENT_COLOR } from '@renderer/constants/defaults';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { installMemoryVault } from '../helpers/memoryVault';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, TileDefinition } from '@renderer/schema/index';
 
@@ -18,7 +19,7 @@ import type { MindMapBoard, TileDefinition } from '@renderer/schema/index';
  * Audit-14 Phase 2 — undo/redo & command-pattern correctness.
  *
  * 2.1 Cross-board rollback restored onto the wrong stack.
- * 2.3 DeleteTilesCommand.undo restore write didn't reconcile open editors.
+ * 2.3 DeleteTilesCommand.undo must reconcile open editors on the restored note.
  * 2.4 A command targeting a closed board stranded on a sibling's stack (wedge).
  * 2.5 Tag-remove undo resurrected a deleted tag definition with the default colour.
  *
@@ -142,7 +143,7 @@ describe('Audit-14 2.4 — clearBoard sweeps stranded commands off sibling stack
     expect(aCmd.undoCount).toBe(1);
     expect(bCmd.undoCount).toBe(0);
     const switchToasts = toastSpy.mock.calls.filter(
-      (args) => typeof args[0] === 'string' && args[0].includes('Switch to the originating board'),
+      (args: unknown[]) => typeof args[0] === 'string' && args[0].includes('Switch to the originating board'),
     );
     expect(switchToasts.length).toBe(0);
   });
@@ -217,28 +218,13 @@ describe('Audit-14 2.3 — DeleteTilesCommand.undo reconciles open editors', () 
 
   it('reloads an editor still open on the restored .md so its next save cannot invert the restore', async () => {
     const relPath = 'Notes.md';
-    const restoredBytes = '---\ntitle: Notes\n---\nrestored body\n';
-    const disk = new Map<string, string>([[relPath, '---\ntitle: Old\n---\nstale pre-delete body\n']]);
-    installFiloMock((channel: string, ...args: unknown[]) => {
-      const rel = String(args[1] ?? '');
-      if (channel === 'vault:delete') {
-        disk.delete(rel.replace(/^\/vault\//, ''));
-        return { success: true };
-      }
-      if (channel === 'vault:read-file-text') {
-        const content = disk.get(rel);
-        if (content === undefined) return { success: false, code: 'ENOENT', error: 'ENOENT' };
-        return { success: true, content, mtimeMs: 1, size: content.length };
-      }
-      if (channel === 'vault:write-file-text') {
-        disk.set(rel, String(args[2]));
-        return { success: true, path: `${args[0]}/${rel}` };
-      }
-      if (channel === 'vault:file-exists') return disk.has(rel);
-      if (channel === 'vault:stat') return { ok: true, mtimeMs: 1, size: 1 };
-      if (channel === 'vault:read-tree') return { ok: true, tree: [] };
-      return { ok: true, success: true };
-    });
+    const bytes = '---\ntitle: Notes\n---\nrestored body\n';
+    const vault = installMemoryVault({ [relPath]: bytes });
+    // The sidebar tree read a restore refreshes; the memory vault has no tree.
+    const filo = (window as unknown as { filo: { invoke: (channel: string, ...args: unknown[]) => Promise<unknown> } }).filo;
+    const inner = filo.invoke;
+    filo.invoke = async (channel: string, ...args: unknown[]) =>
+      channel === 'vault:read-tree' ? { ok: true, tree: [] } : inner(channel, ...args);
 
     // The tile is on the active board (DeleteTilesCommand snapshots from boardStore).
     const fixture = makeMindMapWithTextTile('board-1', 't_1', relPath);
@@ -246,31 +232,30 @@ describe('Audit-14 2.3 — DeleteTilesCommand.undo reconciles open editors', () 
     const tiles = boardCacheStore.getFullTilesForBoard('board-1');
     boardStore.setBoard(fixture.board, tiles, {}, []);
 
-    // The SAME file is open as a Document on a second pane, holding the
-    // pre-delete body + frontmatter.
+    // The SAME file is open as a Document on a second pane.
     const model = noteStore.acquire(relPath, 'document-editor:pane2');
     await model.loaded;
-    expect(model.body).toBe('stale pre-delete body\n');
+    expect(model.body).toBe('restored body\n');
 
-    const cmd = new DeleteTilesCommand(['t_1'], {
-      vaultRoot: '/vault',
-      fileSnapshots: [{ rel: relPath, content: restoredBytes }],
-    });
-    cmd.execute();
+    const cmd = new DeleteTilesCommand(['t_1'], { vaultRoot: '/vault', filePaths: [relPath] });
+    await cmd.execute();
     await cmd.lastExecuteCompletion;
-    expect(disk.has(relPath)).toBe(false);
+    expect(vault.read(relPath)).toBeUndefined();
+    expect(model.status).toBe('missing');
 
-    cmd.undo();
+    await cmd.undo();
     await cmd.lastUndoCompletion;
+    await model.loaded;
 
-    // The open editor's model reflects the restored bytes: a view pinned to the
-    // stale body would invert the restore on its next save.
-    expect(disk.get(relPath)).toBe(restoredBytes);
+    // The open editor's model read the restored file again: a view still
+    // showing it as missing would invert the restore on its next save.
+    expect(vault.read(relPath)).toBe(bytes);
     expect(noteStore.get(relPath)).toBe(model);
     expect(model.body).toBe('restored body\n');
     expect(model.frontmatter).toEqual({ title: 'Notes' });
     expect(model.status).toBe('ready');
     expect(model.hasUnsavedBody).toBe(false);
+    expect(vault.writes.filter(([, rel]) => rel === relPath)).toEqual([]);
     noteStore.release(relPath, 'document-editor:pane2');
   });
 });

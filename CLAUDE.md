@@ -316,6 +316,11 @@ filo/
 │   │   │   │   ├── markdownSync.ts    # MD ↔ ProseMirror round-trip
 │   │   │   │   ├── blockLayout.ts     # Aligned / indented paragraph or heading → one HTML line
 │   │   │   │   ├── noteEditorView.ts  # Editor ↔ noteStore bridge (150 ms idle serialise; never reloads its own body)
+│   │   │   │   ├── toolbarConfig.ts   # Formatting toolbar ↔ active editor bridge (every command runs via chainIfEditable)
+│   │   │   │   ├── insertLink.ts      # Insert Link popup target + apply/remove (bare caret inserts the text as a link)
+│   │   │   │   ├── linkUrl.ts         # normaliseLinkUrl: bare domain → https://, address → mailto:
+│   │   │   │   ├── linkClicks.ts      # Link clicks: plain click edits in a focused editor, Ctrl/Cmd+click opens
+│   │   │   │   ├── blockTextStyle.ts  # Heading / Normal text clears the blocks' inline font size, family, colour
 │   │   │   │   └── tagExtension.ts
 │   │   │   ├── tags/                  # Tag editing helpers
 │   │   │   │   ├── noteTagWriter.ts   # Tile/path tag add/remove on a note (fresh-read rewrite)

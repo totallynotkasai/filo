@@ -4,6 +4,8 @@
   import { LINE_SPACING_CHOICES } from '../../stores/noteMeta';
   import { uiStore } from '../../stores/ui.svelte';
   import { tiptapToolbar, LINK_REFUSED_MESSAGE } from '../../lib/editor/toolbarConfig';
+  import { applyLink, linkTargetAt, removeLink, type LinkTarget } from '../../lib/editor/insertLink';
+  import { normaliseLinkUrl } from '../../lib/editor/linkUrl';
   import type { Editor } from '@tiptap/core';
   import IconButton from '../shared/IconButton.svelte';
   import ColorPicker from '../shared/ColorPicker.svelte';
@@ -38,13 +40,21 @@
       .catch(() => {});
   });
 
-  const headingMap: Record<string, 0 | 1 | 2 | 3 | 4 | 5> = {
-    normal: 0, h1: 1, h2: 2, h3: 3, h4: 4, h5: 5,
-  };
+  // Each option maps straight to its HTML heading level, so the file's `#`
+  // count matches the label. The option classes preview each size.
+  const HEADING_OPTIONS: ReadonlyArray<{ value: string; label: string; level: 0 | 1 | 2 | 3 | 4 | 5 | 6 }> = [
+    { value: 'normal', label: 'Normal text', level: 0 },
+    { value: 'h1', label: 'Heading 1', level: 1 },
+    { value: 'h2', label: 'Heading 2', level: 2 },
+    { value: 'h3', label: 'Heading 3', level: 3 },
+    { value: 'h4', label: 'Heading 4', level: 4 },
+    { value: 'h5', label: 'Heading 5', level: 5 },
+    { value: 'h6', label: 'Heading 6', level: 6 },
+  ];
 
   function handleStyleChange(e: Event) {
     const value = (e.target as HTMLSelectElement).value;
-    tiptapToolbar.setHeading(headingMap[value] ?? 0);
+    tiptapToolbar.setHeading(HEADING_OPTIONS.find((o) => o.value === value)?.level ?? 0);
   }
 
   function handleFontChange(e: Event) {
@@ -55,14 +65,12 @@
   let showLinkPopup = $state(false);
   let linkPopupX = $state(0);
   let linkPopupY = $state(0);
-  let linkInitialUrl = $state('');
   // Captured at the moment the user opens the popup. The popup's input
   // takes focus, which fires the editor's onBlur → schedules a 300ms
   // clearActiveEditor; if the user takes longer than that to type a URL,
   // tiptapToolbar.activeEditor is null at apply time. Holding our own
   // reference here keeps the editor reachable until the popup closes.
-  let linkSavedFrom = 0;
-  let linkSavedTo = 0;
+  let linkTarget = $state<LinkTarget>({ from: 0, to: 0, text: '', href: '' });
   let linkSavedEditor: Editor | null = null;
 
   function openInsertLinkPopupAt(x: number, y: number) {
@@ -72,14 +80,18 @@
       uiStore.toast('Click into a text tile or document first', 'info');
       return;
     }
+    if (!editor.isEditable) {
+      uiStore.toast("This note can't be edited right now", 'info');
+      return;
+    }
+    // Titles and connection labels have no link mark.
+    if (!editor.schema.marks.link) {
+      uiStore.toast("Links can't be added to a title or label", 'info');
+      return;
+    }
 
     linkSavedEditor = editor;
-    const { from, to } = editor.state.selection;
-    linkSavedFrom = from;
-    linkSavedTo = to;
-
-    const existing = editor.getAttributes('link').href;
-    linkInitialUrl = typeof existing === 'string' ? existing : '';
+    linkTarget = linkTargetAt(editor);
 
     linkPopupX = x;
     linkPopupY = y;
@@ -99,31 +111,18 @@
     return () => tiptapToolbar.setOpenInsertLinkPopup(null);
   });
 
-  function applyLink(url: string) {
+  /** Returns the error the popup shows, or null once the link is in. */
+  function handleApplyLink(text: string, url: string): string | null {
     const editor = linkSavedEditor;
-    // A non-editable (read-only / frozen) editor refuses edits.
-    if (!editor || !editor.isEditable) return;
-    const ok = editor
-      .chain()
-      .focus()
-      .setTextSelection({ from: linkSavedFrom, to: linkSavedTo })
-      .extendMarkRange('link')
-      .setLink({ href: url })
-      .run();
-    // Surface a refused href rather than failing silently.
-    if (!ok) uiStore.toast(LINK_REFUSED_MESSAGE, 'error');
+    if (!editor || !editor.isEditable) return "This note can't be edited right now.";
+    const href = normaliseLinkUrl(url);
+    // A refused href is said, never dropped silently.
+    if (!href || !applyLink(editor, linkTarget, text, href)) return LINK_REFUSED_MESSAGE;
+    return null;
   }
 
-  function removeLink() {
-    const editor = linkSavedEditor;
-    if (!editor || !editor.isEditable) return;
-    editor
-      .chain()
-      .focus()
-      .setTextSelection({ from: linkSavedFrom, to: linkSavedTo })
-      .extendMarkRange('link')
-      .unsetLink()
-      .run();
+  function handleRemoveLink() {
+    if (linkSavedEditor) removeLink(linkSavedEditor, linkTarget);
   }
 
   function closeLinkPopup() {
@@ -233,12 +232,9 @@
     onfocus={() => tiptapToolbar.keepActiveEditor()}
     onchange={handleStyleChange}
   >
-    <option value="normal">Normal text</option>
-    <option value="h1">Title</option>
-    <option value="h2">Subtitle</option>
-    <option value="h3">Heading 1</option>
-    <option value="h4">Heading 2</option>
-    <option value="h5">Heading 3</option>
+    {#each HEADING_OPTIONS as option (option.value)}
+      <option value={option.value} class="style-option-{option.value}">{option.label}</option>
+    {/each}
   </select>
 
   <div class="toolbar-divider"></div>
@@ -249,7 +245,7 @@
 
   <div class="toolbar-divider"></div>
 
-  <IconButton title="Insert Link (Ctrl+K)" size="small" onclick={handleInsertLink}>
+  <IconButton title={toolbarStore.link ? 'Edit Link (Ctrl+K)' : 'Insert Link (Ctrl+K)'} active={toolbarStore.link} pressed={toolbarStore.link} size="small" onclick={handleInsertLink}>
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
   </IconButton>
 
@@ -362,9 +358,10 @@
   <LinkInsertPopup
     x={linkPopupX}
     y={linkPopupY}
-    initialUrl={linkInitialUrl}
-    onApply={applyLink}
-    onRemove={removeLink}
+    initialText={linkTarget.text}
+    initialUrl={linkTarget.href}
+    onApply={handleApplyLink}
+    onRemove={handleRemoveLink}
     onClose={closeLinkPopup}
   />
 {/if}
@@ -429,6 +426,19 @@
   .style-select {
     width: 110px;
   }
+
+  /* Each option previews its level, on the same scale as `.tiptap h1…h6` in
+     style.css (a 13px base). The native popup honours font size and weight. */
+  .style-select option {
+    font-size: 13px;
+    font-weight: 400;
+  }
+  .style-select .style-option-h1 { font-size: 26px; font-weight: 700; }
+  .style-select .style-option-h2 { font-size: 21px; font-weight: 700; }
+  .style-select .style-option-h3 { font-size: 17.5px; font-weight: 600; }
+  .style-select .style-option-h4 { font-size: 15px; font-weight: 600; }
+  .style-select .style-option-h5 { font-size: 13px; font-weight: 700; }
+  .style-select .style-option-h6 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
 
   .font-size-control {
     display: flex;

@@ -29,8 +29,6 @@
   import { historyStore } from '../../stores/history.svelte';
   import { boardStore } from '../../stores/board.svelte';
   import { selectionStore } from '../../stores/selection.svelte';
-  import { linksStore } from '../../stores/links.svelte';
-  import { isFiloLink } from '../../schema/link';
   import { canvasStore } from '../../stores/canvas.svelte';
   import { initKeyboardShortcuts, loadHotkeyOverrides } from '../../core/hotkeys';
   import { registerCommandWithShortcut } from '../../core/commandRegistry';
@@ -38,9 +36,9 @@
   import { type TextTile, type Tile } from '../../schema/index';
   import { textTileNotePaths } from '../../commands/index';
   import { isEditableTextTarget } from '../../lib/utils/editableTarget';
-  import { asSafeOpenExternal } from '../../../shared/untrusted';
   import { normalizePath } from '../../lib/utils/path';
   import { tiptapToolbar } from '../../lib/editor/toolbarConfig';
+  import { installLinkClickHandling } from '../../lib/editor/linkClicks';
   import {
     PendingWritesFailedError,
     withDrainedWrites,
@@ -460,39 +458,9 @@
     void loadHotkeyOverrides(path);
   });
 
-  // Intercept clicks on filo:// internal links and http(s):// external links
-  // (from Tiptap editor content via the Insert Link toolbar action).
-  $effect(() => {
-    function handleLinkClick(e: MouseEvent) {
-      const anchor = (e.target as HTMLElement).closest('a');
-      if (!anchor) return;
-      const href = anchor.getAttribute('href');
-      if (!href) return;
-      if (isFiloLink(href)) {
-        e.preventDefault();
-        e.stopPropagation();
-        linksStore.handleLinkClick(href);
-      } else if (/^(https?:\/\/|mailto:|tel:)/i.test(href)) {
-        // External URLs: hand off to the OS default browser / mail client
-        // / dialler via the media:open-external IPC. `mailto:` / `tel:` must be
-        // matched too, or the link would try to navigate the renderer
-        // (potentially nuking unsaved state). Both schemes are in the
-        // sanitizeHtml allowlist and the main-side `ALLOWED_URL_PREFIXES`.
-        // `asSafeOpenExternal` is the renderer-side gate; the
-        // main handler re-checks (defence-in-depth) but rejecting here
-        // avoids an IPC roundtrip for obvious bad input.
-        const safe = asSafeOpenExternal(href);
-        if (!safe) return;
-        e.preventDefault();
-        e.stopPropagation();
-        // allow-envelope-bare: fire-and-forget click handler; failure is
-        // user-visible (browser doesn't open) and not worth a toast.
-        void window.filo.invoke('media:open-external', safe);
-      }
-    }
-    document.addEventListener('click', handleLinkClick, true);
-    return () => document.removeEventListener('click', handleLinkClick, true);
-  });
+  // Link clicks: plain click edits inside a note being edited, Ctrl+click
+  // opens; everywhere else a click opens (see linkClicks.ts).
+  $effect(() => installLinkClickHandling());
 
   // Vaults are opened via folder picker from the HomeScreen.
   // No .filo file association handling needed.

@@ -6,6 +6,8 @@
 let bold = $state(false);
 let italic = $state(false);
 let underline = $state(false);
+/** The caret or selection is inside a link. */
+let link = $state(false);
 let textColor = $state('#ffffff');
 let highlightColor = $state('transparent');
 let fontFamily = $state('Inter');
@@ -22,6 +24,7 @@ export const toolbarStore = {
   get bold() { return bold; },
   get italic() { return italic; },
   get underline() { return underline; },
+  get link() { return link; },
   get textColor() { return textColor; },
   get highlightColor() { return highlightColor; },
   get fontFamily() { return fontFamily; },
@@ -39,6 +42,7 @@ export const toolbarStore = {
     bold?: boolean;
     italic?: boolean;
     underline?: boolean;
+    link?: boolean;
     textColor?: string;
     highlightColor?: string;
     fontFamily?: string;
@@ -51,6 +55,7 @@ export const toolbarStore = {
     if (state.bold !== undefined) bold = state.bold;
     if (state.italic !== undefined) italic = state.italic;
     if (state.underline !== undefined) underline = state.underline;
+    if (state.link !== undefined) link = state.link;
     if (state.textColor !== undefined) textColor = state.textColor;
     if (state.highlightColor !== undefined) highlightColor = state.highlightColor;
     if (state.fontFamily !== undefined) fontFamily = state.fontFamily;
@@ -76,6 +81,7 @@ export const toolbarStore = {
     bold = false;
     italic = false;
     underline = false;
+    link = false;
     textColor = '#ffffff';
     highlightColor = 'transparent';
     fontFamily = 'Inter';

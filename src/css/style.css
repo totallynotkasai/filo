@@ -985,6 +985,23 @@ select:focus:not(:focus-visible) {
   margin-top: 0;
   margin-bottom: 0.25em;
   font-family: inherit;
+  line-height: 1.25;
+}
+/* One graded scale for every editor, in em so it follows the view's body size
+   (a tile's Tile Body setting, the Document view's 16px). Browser defaults
+   put h4 at body size and h5 / h6 below it. h5 and h6 never go below body
+   size: weight and letter case set them apart instead. */
+.tiptap h1 { font-size: 2em; font-weight: 700; }
+.tiptap h2 { font-size: 1.6em; font-weight: 700; }
+.tiptap h3 { font-size: 1.35em; font-weight: 600; }
+.tiptap h4 { font-size: 1.15em; font-weight: 600; }
+.tiptap h5 { font-size: 1em; font-weight: 700; }
+.tiptap h6 {
+  font-size: 1em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
 }
 .tiptap ul, .tiptap ol {
   padding-left: 1.5em;

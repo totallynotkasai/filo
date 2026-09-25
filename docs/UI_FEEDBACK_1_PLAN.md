@@ -155,6 +155,40 @@ Markdown is not a limitation here. A link is stored as `[text](https://…)`, wh
 
 **Tests:** a save → reload for each level; applying a heading removes an inline font-size span.
 
+### Status: done (2026-09-25)
+
+2a fix steps 1–6 and 2b fix steps 1–3 are implemented, with the deviations below.
+
+**Step 0 (reproduce).** A Playwright script drove the built Electron app against a scratch vault (`npm run scratch-vault`). It typed into a text tile, selected the text, clicked the toolbar's link button, typed a URL and pressed Enter. The same run was repeated on a build of the pre-Phase-1 commit (`0531f59`), with and without first opening and closing the Board Browser, and in a Document tab.
+
+- With text selected, the link **was** inserted on both builds, every time: the popup appeared, the URL input had focus and took typing, and the chain returned true. Suspect 1 (leaked focus traps) did not reproduce on this path, and nor did suspect 2 (the popup was the top element at its centre).
+- The failures that did reproduce:
+  - **With a collapsed caret, nothing is inserted and nothing is shown** (defect 1). One run's keyboard selection hadn't registered when the button was clicked, and the result was a silent no-op. This is the most likely cause of "no link could be inserted".
+  - **A scheme-less URL is saved dead:** `google.com` becomes `[text](google.com)`, and the click handler ignores it (defect 3).
+  - **Enter in the popup handed focus to the tile's title.** See deviation 4.
+- Suspect 3 (the chain refusing silently) is covered anyway: a refused URL now keeps the popup open with the reason.
+
+**Tests.**
+- `src/tests/component/insertLinkToolbar.test.ts` drives the real path: a mounted TextTile, the real TextFormattingToolbar, a click on its link button, typing into the popup, Enter, and the saved `.md`. It covers a selection with a bare domain, a bare caret, editing a link from a caret inside it, a refused URL, Enter and Escape not reaching window key handlers, and the popup being portalled. The first three cases and the key case fail against the old behaviour (proven by planting it and reverting).
+- `src/tests/component/linkClicks.test.ts` covers the click rules: a plain click opens when the note isn't being edited, doesn't open when it is, Ctrl+click and Cmd+click open, a read-only editor opens, and the hover tooltip. The "doesn't open while editing" case fails against the old rule.
+- `src/tests/unit/linkUrl.test.ts` covers scheme normalisation. `src/tests/unit/insertLink.test.ts` covers the target and apply/remove rules, clearing inline text style under a heading, and title/label editors.
+- `toolbarFormattingRoundTrip.test.ts` has save → reload cases for each heading level applied through the dropdown's chain over an inline font size, Normal text over one, a bare-caret insert, a selection kept with its bold, a selection given new text, and editing a link from a caret inside it. The `toolbar-formatting-saved` gate picks up the new `command()` step.
+
+**Real app.** The same script, on the Phase 2 build, checked the following: insert over a selection with `example.com` (saved as `https://example.com`); a bare-caret insert through Ctrl+K; focus returning to the editor after Apply; a plain click in the edited tile placing the caret without opening; the link button showing active there; Ctrl+click opening; the hover tooltip; a plain click on a tile not being edited opening; and headings h1 > h2 > h3 > h4 > body, with h5 and h6 not below body. Opens were counted through a stubbed `shell.openExternal`. With a tile body of 13px, the heading sizes were 26 / 20.8 / 17.55 / 14.95 / 13 (bold) / 13 (caps) px. A heading cleared a 30px inline size. The console had no errors or warnings.
+
+`npm run ci:verify` passes.
+
+### Deviations from the plan
+
+1. **A refused URL keeps the popup open and says why, instead of showing a toast.** The message is the same (`LINK_REFUSED_MESSAGE`) and is shown under the URL field, so the user can fix it without starting again. This also covers input that normalisation can't make openable. `tiptapToolbar.setLink` keeps its toast; the popup doesn't use it.
+2. **Normalisation does a little more than add `https://` to a domain.** A bare address (`a@b.com`) gets `mailto:`, and `//host` gets `https:`. `localhost[:port]` and IPv4 hosts count as domains. A `.md` / `.markdown` name (`Notes.md` looks like a domain) and text that is neither a domain nor has a scheme are refused, because the Link validator would otherwise save them as dead relative links. Notes are linked with `filo://`.
+3. **What the popup edits.** A caret inside a link, *including at either edge*, targets the whole link, matching the toolbar's link-active state (links are inclusive at their end). When Text is left empty or unchanged over a range, only the href is set, so the text keeps its bold/italic. New text replaces the range as one linked run. After a new link is inserted, the stored link mark is dropped, so typing on doesn't extend it. The target is clamped to the document's last text position in case the note reloads while the popup is open. **Remove** only appears when editing an existing link.
+4. **Found in the real app: Enter in the popup gave focus to the tile's title.** Apply closed the popup before the keydown reached the Mind Map's window-level Enter handler, which then saw no input focused and opened the selected tile's title editor. This was true before this phase too. The popup now stops Enter and Escape from propagating, and a test pins it.
+5. **Found in the real app: Ctrl+K or the heading dropdown in a tile title / connection label threw.** Those label editors have no link mark and no heading node, so `setLink` / `setHeading` don't exist on them. The link popup now shows a toast ("Links can't be added to a title or label"), `applyLink` refuses, and `setHeading` does nothing.
+6. **The click rules live in `lib/editor/linkClicks.ts`** (`installLinkClickHandling`), which AppShell installs, instead of staying inline in AppShell. "Being edited" means the editor held focus when the pointer went down, recorded on a capture-phase `pointerdown`, because focus has already moved by `click`. The tooltip shows the URL plus "Ctrl+click to open" (Cmd on macOS). It is set on the editor's parent, not on the `<a>`: a `title` rendered into the link would be copied into pasted links and saved as `[text](url "title")`, and an attribute change inside ProseMirror's DOM would be read back into the document.
+7. **The heading scale sits in `style.css` for every editor, and DocumentEditor's own sizes were dropped.** DocumentEditor keeps only its heading margins, so a Document's h1 is now 32px (2em of 16px) where it was 28px, h2 is 25.6px where it was 22px, and h3 is 21.6px where it was 18px. Every view now uses one scale. The final scale is 2 / 1.6 / 1.35 / 1.15 / 1 / 1em. h5 is bold; h6 is semibold, uppercase, letter-spaced and in the secondary text colour. None goes below body size, so the plan's example 0.9em for h6 wasn't used.
+8. **Dropdown previews** use per-option classes on the native `<select>` (sizes on a 13px base). Chromium's popup honours font size and weight per option. A custom listbox wasn't needed.
+
 ---
 
 ## Phase 3: Canvas

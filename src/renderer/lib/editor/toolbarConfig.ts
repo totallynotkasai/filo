@@ -3,6 +3,7 @@ import { toolbarStore } from '../../stores/toolbar.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { noteLineSpacing } from '../../stores/noteMeta';
 import { setNoteLineSpacing } from '../../stores/noteLayout';
+import { clearBlockTextStyle } from './blockTextStyle';
 
 /** Shown when TipTap's Link URI allowlist refuses a link. */
 export const LINK_REFUSED_MESSAGE = "That link couldn't be added. Use https://, mailto: or a filo:// link.";
@@ -79,6 +80,7 @@ function syncStateToToolbar(editor: Editor) {
     bold: editor.isActive('bold'),
     italic: editor.isActive('italic'),
     underline: editor.isActive('underline'),
+    link: editor.isActive('link'),
     textColor: editor.getAttributes('textStyle').color || '#ffffff',
     highlightColor: editor.getAttributes('highlight').color || 'transparent',
     fontFamily: editor.getAttributes('textStyle').fontFamily || 'Inter',
@@ -200,12 +202,19 @@ export const tiptapToolbar = {
     chainIfEditable()?.focus().setTextAlign(align).run();
   },
 
+  /**
+   * A heading level (or Normal text, 0) also clears the blocks' font size,
+   * family and colour, so the level's own size shows: an inline font size
+   * would otherwise override it.
+   */
   setHeading(level: 0 | 1 | 2 | 3 | 4 | 5 | 6) {
     this.keepActiveEditor();
+    // Title and label editors have no headings (nor a setHeading command).
+    if (!activeEditor?.schema.nodes.heading) return;
     if (level === 0) {
-      chainIfEditable()?.focus().setParagraph().run();
+      chainIfEditable()?.focus().command(clearBlockTextStyle).setParagraph().run();
     } else {
-      chainIfEditable()?.focus().setHeading({ level: level as 1 | 2 | 3 | 4 | 5 | 6 }).run();
+      chainIfEditable()?.focus().command(clearBlockTextStyle).setHeading({ level }).run();
     }
   },
 

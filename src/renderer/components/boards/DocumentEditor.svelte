@@ -476,28 +476,29 @@
     margin-top: 0.5em;
   }
 
+  /* Sizes and weights come from the shared `.tiptap h1…h6` scale in
+     style.css (em, so on the 16px body here); a document only adds room
+     around its headings. */
   .document-editor :global(.tiptap h1) {
-    font-size: 28px;
-    font-weight: 700;
     margin-bottom: 0.6em;
     margin-top: 1.2em;
-    color: var(--text-primary);
   }
 
   .document-editor :global(.tiptap h2) {
-    font-size: 22px;
-    font-weight: 600;
     margin-bottom: 0.5em;
     margin-top: 1em;
-    color: var(--text-primary);
   }
 
-  .document-editor :global(.tiptap h3) {
-    font-size: 18px;
-    font-weight: 600;
+  .document-editor :global(.tiptap h3),
+  .document-editor :global(.tiptap h4) {
     margin-bottom: 0.4em;
     margin-top: 0.8em;
-    color: var(--text-primary);
+  }
+
+  .document-editor :global(.tiptap h5),
+  .document-editor :global(.tiptap h6) {
+    margin-bottom: 0.35em;
+    margin-top: 0.7em;
   }
 
   .document-editor :global(.tiptap ul),

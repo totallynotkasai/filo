@@ -2,6 +2,8 @@ import { describe, it, expect, afterEach } from 'vitest';
 import type { Editor } from '@tiptap/core';
 import { createTiptapEditor } from '../../renderer/lib/editor/createEditor';
 import { editorMarkdown, loadMarkdownIntoEditor } from '../../renderer/lib/editor/markdownSync';
+import { clearBlockTextStyle } from '../../renderer/lib/editor/blockTextStyle';
+import { applyLink, linkTargetAt } from '../../renderer/lib/editor/insertLink';
 
 /**
  * No toolbar button may produce formatting the file can't hold. Each command
@@ -82,6 +84,54 @@ const CASES: Case[] = [
     run: (e) => e.chain().setHeading({ level: level as 1 | 2 | 3 | 4 | 5 | 6 }).run(),
     saved: `${'#'.repeat(level)} `,
   })),
+  // The heading dropdown's own chain: it clears the block's inline font size first.
+  ...[1, 2, 3, 4, 5, 6].map((level): Case => ({
+    name: `heading ${level} from the dropdown, over a font size`,
+    start: 'Alpha <span style="font-size: 20px">beta</span> **gamma**',
+    run: (e) => e.chain().command(clearBlockTextStyle).setHeading({ level: level as 1 | 2 | 3 | 4 | 5 | 6 }).run(),
+    saved: `${'#'.repeat(level)} Alpha beta **gamma**`,
+  })),
+  {
+    name: 'normal text from the dropdown, over a font size',
+    start: '## Alpha <span style="font-size: 20px">beta</span>',
+    run: (e) => e.chain().command(clearBlockTextStyle).setParagraph().run(),
+    saved: 'Alpha beta',
+  },
+  {
+    name: 'insert link at a bare caret',
+    run: (e) => {
+      e.commands.setTextSelection(e.state.doc.content.size - 1);
+      return applyLink(e, linkTargetAt(e), 'site', 'https://example.com');
+    },
+    saved: 'gamma[site](https://example.com)',
+  },
+  {
+    name: 'insert link over a selection, keeping its text and bold',
+    start: 'Alpha **beta** gamma',
+    run: (e) => {
+      e.commands.setTextSelection({ from: 7, to: 11 });
+      const target = linkTargetAt(e);
+      return applyLink(e, target, target.text, 'https://example.com');
+    },
+    saved: '[**beta**](https://example.com)',
+  },
+  {
+    name: 'insert link over a selection with new text',
+    run: (e) => {
+      e.commands.setTextSelection({ from: 7, to: 11 });
+      return applyLink(e, linkTargetAt(e), 'Example', 'https://example.com');
+    },
+    saved: 'Alpha [Example](https://example.com) gamma',
+  },
+  {
+    name: 'edit a link from a caret inside it',
+    start: 'Alpha [beta](https://old.example) gamma',
+    run: (e) => {
+      e.commands.setTextSelection(9);
+      return applyLink(e, linkTargetAt(e), 'Beta!', 'https://new.example');
+    },
+    saved: 'Alpha [Beta!](https://new.example) gamma',
+  },
   {
     name: 'centred heading',
     run: (e) => e.chain().setHeading({ level: 2 }).setTextAlign('center').run(),

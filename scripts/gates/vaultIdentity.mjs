@@ -10,14 +10,10 @@ const GUARD_TARGETS = [
   { file: 'src/renderer/stores/vaultExternalReconcilers.ts', triggers: { vaultStorePath: true, vaultRootParam: true } },
   { file: 'src/renderer/stores/vaultExternalChanges.ts', triggers: { vaultStorePath: true, getVaultPath: true, applyChanges: true } },
   { file: 'src/renderer/stores/vaultExternalPrompts.ts', triggers: { vaultStorePath: true, getVaultPath: true, applyChanges: true } },
-  {
-    file: 'src/renderer/stores/vaultExternalDriftPrompts.ts',
-    triggers: { vaultStorePath: true, getVaultPath: true, applyChanges: true },
-    exempt: new Map([
-      ['recreateDeletedFile', 'user-initiated Keep-local recreate; main-side assertActiveVault rejects the captured root after a swap'],
-    ]),
-  },
-  { file: 'src/renderer/lib/boards/seedFrontmatterFromDisk.ts', triggers: { vaultRootParam: true } },
+  { file: 'src/renderer/stores/vaultExternalDriftPrompts.ts', triggers: { vaultStorePath: true, getVaultPath: true, applyChanges: true } },
+  { file: 'src/renderer/stores/notes.svelte.ts', triggers: { activeVaultPath: true } },
+  { file: 'src/renderer/stores/notePrompts.ts', triggers: { activeVaultPath: true } },
+  { file: 'src/renderer/lib/notes/noteWriter.ts', triggers: { hostVaultRoot: true } },
   { file: 'src/renderer/commands/kanbanCommands.ts', triggers: { vaultStorePath: true } },
   { file: 'src/renderer/commands/taskCommands.ts', triggers: { vaultStorePath: true } },
   { file: 'src/renderer/stores/fileTags.svelte.ts', triggers: { vaultStorePath: true } },
@@ -32,6 +28,8 @@ const TRIGGER_RES = {
   allMetadata: (u) => /\bvaultIndexStore\.allMetadata\s*\(/.test(u.body),
   getCache: (u) => /\bgetCache\s*\(/.test(u.body),
   applyChanges: (u) => /\bvaultIndexStore\.applyChanges\s*\(/.test(u.body),
+  activeVaultPath: (u) => /\bgetActiveVaultPath\s*\(/.test(u.body),
+  hostVaultRoot: (u) => /\bhost\.vaultRoot\s*\(/.test(u.body),
 };
 // Functions that take a captured identity/root param or live where the sweep
 // can't reach (anonymous handlers inside), pinned by name.
@@ -109,12 +107,12 @@ const RESET_COVERAGE = [
   { module: 'src/renderer/stores/vaultRecovery.ts', test: 'src/tests/unit/vaultRecovery.test.ts', token: /acknowledgeRecovery/ },
   { module: 'src/renderer/lib/vault/dirtyFlagRecovery.ts', test: 'src/tests/unit/dirtyFlagRecovery.test.ts', token: /checkRecovery/ },
   { module: 'src/renderer/lib/boards/writeStateTracking.ts', test: 'src/tests/unit/audit14Phase1.test.ts', token: /__resetDirtyTrackingForTests/ },
-  { module: 'src/renderer/lib/vault/markdownFileWriter.ts', test: 'src/tests/unit/gatewayDeltaWrite.test.ts', token: /__resetMarkdownFileWriterForTests/ },
+  { module: 'src/renderer/stores/notes.svelte.ts', test: 'src/tests/unit/noteStore.test.ts', token: /a vault swap drops every model/ },
   { module: 'src/renderer/stores/fileTags.svelte.ts', test: 'src/tests/unit/fileTagsCascade.test.ts', token: /fileTagsStore\.reset\s*\(/ },
 ];
 
 // ── relpath-rename-transfer config ────────────────────────────────────────
-const RENAME_SCAN = ['src/renderer/stores', 'src/renderer/lib/vault', 'src/renderer/lib/boards'];
+const RENAME_SCAN = ['src/renderer/stores', 'src/renderer/lib/vault', 'src/renderer/lib/boards', 'src/renderer/lib/notes'];
 const RENAME_EXEMPT_OWNERS = new Map([
   ['src/renderer/stores/vaultIndex.svelte.ts', 'vaultIndexStore.renameKey'],
   ['src/renderer/stores/boardCache.svelte.ts', 'boardCacheStore.renameBoardPath'],

@@ -5,7 +5,6 @@ import {
 } from './lib.mjs';
 
 const BOM_ALLOWED = new Set([
-  'src/renderer/lib/vault/markdownFileWriter.ts', // owns the raw disk read + hydrate
   'src/renderer/lib/editor/markdownSync.ts', // parseMarkdownFile sees raw bytes
   'src/renderer/lib/vault/tagRewriter.ts', // splits/reassembles raw file content
 ]);
@@ -38,13 +37,21 @@ const EOL_CHECKS = [
     ],
   },
   {
-    file: 'src/renderer/components/boards/DocumentEditor.svelte',
+    file: 'src/renderer/lib/notes/noteFile.ts',
     required: [
-      { token: /const\s+adoptEol\s*=\s*docState\.body\.includes/, why: 'the adopt path sniffs CRLF from the adopted body' },
-      { token: /markHydrated\([^)]*adoptEol/, why: 'the sniffed eol is threaded into markHydrated' },
+      { token: /eol:\s*raw\.includes\(\s*'\\r\\n'\s*\)/, why: "a note's line ending is sniffed from the whole raw file" },
+      { token: /\bfresh\.eol\b/, why: "every write re-applies the fresh read's line ending" },
+    ],
+  },
+  {
+    file: 'src/tests/unit/noteFile.test.ts',
+    required: [
+      { token: /writes a CRLF note back as CRLF throughout/, why: 'the CRLF-body write case exists' },
+      { token: /one-line frontmatter keeps CRLF on a metadata edit/, why: 'the single-line-frontmatter CRLF case exists' },
     ],
   },
 ];
+
 
 const ROUNDTRIP_TEST = 'src/tests/unit/markdownBodyRoundTrip.test.ts';
 const ROUNDTRIP_FIXTURES = 'src/tests/unit/fixtures/markdown-body-roundtrip';
@@ -139,7 +146,7 @@ export const checks = [
     title: 'the BOM is only sniffed where raw disk bytes are seen',
     hint:
       'In-memory content is already BOM-stripped, so a sniff there is always false and the next save drops the BOM. ' +
-      'Hydrate through readMarkdownForHydrate. Escape: `// allow-bom-sniff: <reason>` (same or preceding line).',
+      'Read notes through the note store (readNoteFresh). Escape: `// allow-bom-sniff: <reason>` (same or preceding line).',
     run(ctx) {
       const out = [];
       for (const rel of ctx.files(['src/renderer', 'src/main'], { ext: ['.ts', '.svelte', '.mjs'] })) {
@@ -194,7 +201,7 @@ export const checks = [
   },
   {
     id: 'eol-preservation',
-    title: 'frontmatter rewrites and adopt-path hydrates keep the file’s line endings',
+    title: 'frontmatter rewrites and note writes keep the file’s line endings',
     hint: 'The CST engine emits LF; without re-applying the file eol a CRLF note flips (partly or wholly) to LF on edit.',
     run(ctx) {
       const out = [];
@@ -238,6 +245,8 @@ export const checks = [
       };
       const slice = (f, s) => f.text.slice(s.start, s.end);
       const SYNC = 'src/renderer/lib/editor/markdownSync.ts';
+      const VIEW = 'src/renderer/lib/editor/noteEditorView.ts';
+      const STORE = 'src/renderer/stores/notes.svelte.ts';
       const DOC_EDITOR = 'src/renderer/components/boards/DocumentEditor.svelte';
       const TEXT_TILE = 'src/renderer/components/tiles/TextTile.svelte';
       const TASK_CREATION = 'src/renderer/lib/tasklist/taskCreation.ts';
@@ -262,47 +271,49 @@ export const checks = [
             if (!escapedAt(g.raw, m.index, 'allow-raw-setcontent:')) out.push(fail(rel, lineAt(g.raw, m.index), 'raw .setContent( — load through loadMarkdownIntoEditor'));
           }
         }
-        // C: a body-only store body is never re-parsed as a whole file.
-        for (const m of g.code.matchAll(/\bparseMarkdownFile\s*\(\s*(?:existing|docState|body)\b/g)) {
-          if (!escapedAt(g.raw, m.index, 'allow-body-reparse:')) out.push(fail(rel, lineAt(g.raw, m.index), 're-parses a body-only store body (would strip a leading --- rule pair)'));
+        // C: a body-only model body is never re-parsed as a whole file.
+        for (const m of g.code.matchAll(/\bparseMarkdownFile\s*\(\s*(?:existing|docState|body|m\.body|model\.body|note\.body)\b/g)) {
+          if (!escapedAt(g.raw, m.index, 'allow-body-reparse:')) out.push(fail(rel, lineAt(g.raw, m.index), 're-parses a body-only model body (would strip a leading --- rule pair)'));
         }
       }
       const tc = view(TASK_CREATION);
-      if (tc && /\bbody\s*:\s*seedBody\b/.test(tc.code)) out.push(fail(TASK_CREATION, undefined, 'seeds documentStore with the full seed file as its body'));
+      if (tc && /\bbody\s*:\s*seedBody\b/.test(tc.code)) out.push(fail(TASK_CREATION, undefined, 'seeds a note model with the full seed file as its body'));
 
-      // B: DocumentEditor does not reload its own autosave.
-      const de = view(DOC_EDITOR);
-      if (de) {
-        const upd = arrowBodies(de, 'onUpdate:')[0];
-        if (!upd || !/\blastLoadedBody\s*=\s*md\b/.test(slice(de, upd))) out.push(fail(DOC_EDITOR, undefined, 'onUpdate must set lastLoadedBody = md'));
-        const reload = arrowBodies(de, '$effect(').find((s) => /preserveSelection/.test(slice(de, s)));
-        if (!reload || !/\bisComposing\b/.test(slice(de, reload))) out.push(fail(DOC_EDITOR, undefined, 'the reload $effect must honour isComposing'));
+      // B: a load into the editor is not an edit; a view never reloads its own
+      // keystrokes; it never loads mid-composition or over unserialised typing.
+      const v = view(VIEW);
+      if (v) {
+        const need = (fn, re, why) => {
+          const b = functionBody(v.code, fn);
+          if (!b) out.push(fail(VIEW, undefined, `${fn}() not found`));
+          else if (!re.test(slice(v, b))) out.push(fail(VIEW, undefined, `${fn}(): ${why}`));
+        };
+        need('edited', /if\s*\(\s*this\.loading\s*\)\s*return\s+false/, 'an update caused by loading the model is not a user edit');
+        need('serialize', /if\s*\(\s*!\s*this\.unserialised\b/, 'serialises only keystrokes typed since the last serialise (an unedited note is never set)');
+        need('sync', /bodySource\s*===\s*this\.viewId/, "the view never reloads its own body (caret and undo history stay put)");
+        need('sync', /this\.unserialised\s*\|\|\s*opts\.composing/, 'never loads over unserialised keystrokes or mid-IME composition');
+        need('sync', /loadMarkdownIntoEditor\s*\([^)]*preserveSelection/, 'a reload keeps the caret where it was');
+        need('close', /this\.serialize\s*\(\s*\)/, 'unmount keeps unsaved keystrokes (and writes nothing else)');
       }
-
-      const tt = view(TEXT_TILE);
-      if (tt) {
-        // D: load the shared in-memory body only when a view really read disk
-        // (its frontmatter is seeded); upgrade placeholders.
-        const at = tt.code.indexOf('documentStore.getDocument(notePath)');
-        const ret = at < 0 ? -1 : tt.code.indexOf('return;', at);
-        const block = at < 0 || ret < 0 ? '' : tt.text.slice(at, ret);
-        if (!/hasFrontmatter\(\s*notePath\s*\)/.test(block)) out.push(fail(TEXT_TILE, undefined, 'the in-memory body adopt must require hasFrontmatter(notePath)'));
-        if (!/\badoptDiskBodyIfPlaceholder\s*\(/.test(tt.code)) out.push(fail(TEXT_TILE, undefined, 'must upgrade a placeholder via adoptDiskBodyIfPlaceholder('));
-        // E: onDestroy writes only unsaved work.
-        const destroy = arrowBodies(tt, 'onDestroy(')[0];
-        if (!destroy) out.push(fail(TEXT_TILE, undefined, 'onDestroy not found'));
-        else {
-          const body = slice(tt, destroy);
-          if (!/\bisWriterDirty\s*\(/.test(body) || !/\bhasPendingMarkdownWriteFor\s*\(/.test(body)) {
-            out.push(fail(TEXT_TILE, undefined, 'onDestroy must gate its final write on isWriterDirty( + hasPendingMarkdownWriteFor('));
-          }
-          if (/const\s+finalArgs\s*=\s*buildWriteArgs\(\s*\)\s*;/.test(body)) out.push(fail(TEXT_TILE, undefined, 'onDestroy builds its final write unconditionally'));
+      const st = view(STORE);
+      if (st) {
+        const b = functionBody(st.code, 'setBody');
+        if (!b) out.push(fail(STORE, undefined, 'setBody() not found'));
+        else if (!/m\.body\s*===\s*markdown\s*&&\s*!\s*m\.hasUnsavedBody\)\s*return/.test(slice(st, b))) {
+          out.push(fail(STORE, undefined, 'setBody() must not queue a body identical to the one shown'));
         }
       }
-
-      // F: a lossy (read-only) note is truly non-editable.
-      for (const [rel, f] of [[TEXT_TILE, tt], [DOC_EDITOR, de]]) {
+      for (const [rel, f] of [[TEXT_TILE, view(TEXT_TILE)], [DOC_EDITOR, view(DOC_EDITOR)]]) {
         if (!f) continue;
+        const upd = arrowBodies(f, 'onUpdate:')[0];
+        if (!upd || !/\bview\.edited\s*\(/.test(slice(f, upd)) || /\bnoteStore\b/.test(slice(f, upd))) {
+          out.push(fail(rel, undefined, 'onUpdate must only report the edit to the view (view.edited()), never write'));
+        }
+        const follow = arrowBodies(f, '$effect(').find((s) => /view\.sync\s*\(/.test(slice(f, s)));
+        if (!follow || !/\bisComposing\b/.test(slice(f, follow))) out.push(fail(rel, undefined, 'the follow $effect (view.sync) must pass isComposing'));
+        const destroy = arrowBodies(f, 'onDestroy(')[0];
+        if (!destroy || !/\bview\.close\s*\(/.test(slice(f, destroy))) out.push(fail(rel, undefined, 'onDestroy must close the view (view.close())'));
+        // F: a lossy (read-only) note is truly non-editable.
         const eff = arrowBodies(f, '$effect(').find((s) => /closeDrainGate\.draining/.test(slice(f, s)));
         if (!eff) out.push(fail(rel, undefined, 'the editability $effect (closeDrainGate.draining) not found'));
         else if (!/\breadOnly\b/.test(slice(f, eff))) out.push(fail(rel, undefined, 'the editability $effect must also freeze on readOnly'));

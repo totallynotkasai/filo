@@ -6,26 +6,12 @@ import {
 
 const RENDERER = 'src/renderer';
 const TS_SVELTE = ['.ts', '.svelte'];
-const GATEWAY = 'src/renderer/lib/vault/markdownFileWriter.ts';
+// The one module allowed to write a note (.md), and the pieces of its contract.
 const NOTE_WRITER = 'src/renderer/lib/notes/noteWriter.ts';
+const NOTE_FILE = 'src/renderer/lib/notes/noteFile.ts';
+const NOTE_STORE = 'src/renderer/stores/notes.svelte.ts';
 // A real invoke of a markdown write channel (comments/docstrings don't have the `invoke(` prefix).
 const MD_WRITE_RE = /\binvoke(?:Ok)?\s*\(\s*['"`]vault:(?:write-(?:existing-)?|create-)file-text['"`]/gs;
-
-// Direct `.md` writers that never target a possibly-open editor.
-const COUPLED_HELPER = 'src/renderer/lib/vault/syncOpenEditorsAfterDiskMutation.ts';
-const RECONCILE_EXEMPT = new Map([
-  [GATEWAY, 'the gateway owns the editor write + frontmatter cache'],
-  [NOTE_WRITER, 'reports every write to the note store, which updates the model'],
-  ['src/renderer/lib/boards/seedTextFileForNewTile.ts', 'seeds a brand-new tile backing .md'],
-  ['src/renderer/lib/kanban/kanbanTileCreation.ts', 'creates a new Kanban card backing .md'],
-  ['src/renderer/lib/tasklist/taskCreation.ts', 'creates a new task backing .md'],
-  ['src/renderer/lib/tasklist/fileDropHandler.ts', 'writes a freshly OS-dropped file'],
-  ['src/renderer/lib/vault/createMdExclusive.ts', 'creates a brand-new .md (EEXIST otherwise)'],
-  ['src/renderer/lib/vault/renameCascadeSentinel.ts', '.filo/ sentinel'],
-  ['src/renderer/lib/vault/tagRewriteSentinel.ts', '.filo/ sentinel'],
-  ['src/renderer/lib/vault/dirtyFlagRecovery.ts', '.filo/.dirty sentinel'],
-  ['src/renderer/components/boards/KanbanSideToolbar.svelte', '.filo/ overlay geometry config'],
-]);
 
 // Every scheduler whose write can wedge (drift prompt / stalled volume) must race a finite timeout.
 const TIMEOUT_FINITE = { token: /writeTimeoutMs\s*:\s*[A-Z_][A-Z0-9_]*\b/, why: 'writeTimeoutMs is a finite SCREAMING_SNAKE constant' };
@@ -47,8 +33,7 @@ const BOUNDED_FILES = [
       { token: /clearFailedPathAfterLateSuccess\s*\(/, why: 'a timed-out write that later succeeds clears its failed mark' },
     ],
   },
-  { file: GATEWAY, required: [TIMEOUT_FINITE], forbidden: [TIMEOUT_UNBOUNDED] },
-  { file: 'src/renderer/lib/boards/frontmatterWriteScheduler.ts', required: [TIMEOUT_FINITE], forbidden: [TIMEOUT_UNBOUNDED] },
+  { file: NOTE_WRITER, required: [TIMEOUT_FINITE], forbidden: [TIMEOUT_UNBOUNDED] },
   { file: 'src/renderer/lib/boards/boardWriteScheduler.ts', required: [TIMEOUT_FINITE], forbidden: [TIMEOUT_UNBOUNDED] },
   {
     file: 'src/renderer/lib/boards/boardWriteDebounce.ts',
@@ -135,13 +120,13 @@ function selfTest() {
     'function w() { if (!delta && !fm) return; markPathFailed(v, p); throw e; }']) if (unscopedSilentFm(blank(s))) out.push(`scoped !fm wrongly flagged: ${s}`);
   return out;
 }
-const HYDRATE_FAIL_TOKENS = [
-  { token: /hydrateReadFailed\s*=\s*true/, why: 'a failed hydrate read is flagged instead of leaving a blank, writable editor' },
-  { token: /hydrateReadFailed\s*&&\s*!\s*lastLoadedBody/, why: 'buildWriteArgs refuses to write over a file it could not read' },
+const EDITOR_FREEZE_TOKENS = [
+  { token: /unreadable\s*=\s*\$derived\(\s*model\?\.status\s*===\s*'unreadable'\s*\)/, why: 'a failed read is flagged instead of leaving a blank, writable editor' },
+  { token: /frozen\s*=[^;]*\bunreadable\b/, why: 'the editor stays non-editable while the note could not be read' },
 ];
 
-// ── frontmatter-delta-write ───────────────────────────────────────────────
-const DELTA_CHECKS = [
+// ── single-note-writer: the writer's contract and its callers ────────────
+const NOTE_WRITER_CONTRACT = [
   {
     file: 'src/renderer/lib/vault/frontmatterDelta.ts',
     required: [
@@ -151,44 +136,50 @@ const DELTA_CHECKS = [
     ],
   },
   {
-    file: GATEWAY,
+    file: NOTE_FILE,
+    within: 'assembleNoteText',
     required: [
-      { token: /args\.frontmatterDelta/, why: 'the delta is threaded into the write' },
-      { token: /vault:read-file-text/, why: 'the in-chain fresh disk read' },
-      { token: /applyFrontmatterDelta\s*\(\s*parsedFresh\.frontmatter/, why: 'the written FM derives from the fresh read' },
-      { token: /originalFrontmatter\s*:\s*parsedFresh\.rawFrontmatter/, why: 'the source-preserving baseline comes from the same read' },
+      { token: /applyFrontmatterDelta\s*\(\s*fresh\.frontmatter/, why: 'the written frontmatter derives from the fresh read' },
+      { token: /originalFrontmatter\s*:\s*fresh\.rawFrontmatter/, why: 'the source-preserving baseline comes from the same read' },
+      { token: /bom\s*:\s*fresh\.hadBom/, why: 'the BOM follows the fresh read' },
+      { token: /change\.body\s*\?\?\s*fresh\.body/, why: 'without a new body the disk body is kept' },
     ],
   },
+  {
+    file: NOTE_WRITER,
+    within: 'writePending',
+    required: [
+      { token: /readNoteFresh\s*\(/, why: 'every flush reads the file fresh' },
+      { token: /assembleNoteText\s*\(\s*fresh\.text/, why: 'the change applies to that fresh read' },
+      { token: /sameBody\s*\(\s*fresh\.text\.body\s*,\s*snapshotBody\s*\(\s*base\s*\)\s*\)/, why: 'a body change on disk is detected against the base' },
+      { token: /onBodyConflict\s*\(/, why: 'a drifted body is handed to the store, never written over' },
+      { token: /text\s*!==\s*fresh\.text\.raw/, why: 'identical bytes are not written' },
+    ],
+  },
+  { file: 'src/renderer/commands/noteFieldCommand.ts', required: [{ token: /patchToFrontmatterDelta\s*\(/, why: 'field commands send a delta' }] },
   {
     file: 'src/renderer/commands/frontmatterRebase.ts',
-    required: [{ token: /scheduleFrontmatterWrite\s*\([^)]*patchToFrontmatterDelta\s*\(/, why: 'the undo/redo rebase schedules a delta' }],
+    required: [{ token: /noteStore\.patchFrontmatter\s*\([^)]*patchToFrontmatterDelta\s*\(/, why: 'the undo/redo rebase sends a delta' }],
   },
-  { file: 'src/renderer/commands/kanbanCommands.ts', required: [{ token: /patchToFrontmatterDelta\s*\(/, why: 'UpdateCardFieldCommand builds a delta' }] },
-  {
-    file: 'src/renderer/commands/kanbanCommands.ts',
-    within: 'applyOrphanPatchRebased',
-    required: [
-      { token: /patchToFrontmatterDelta\s*\(/, why: 'the orphan write builds a delta' },
-      { token: /frontmatterDelta\s*:/, why: 'the orphan write threads frontmatterDelta' },
-    ],
-    forbidden: [{ token: /\bfrontmatter\s*:\s*\{/, why: 'a whole-object frontmatter write drops present-but-empty disk keys' }],
-  },
-  { file: 'src/renderer/commands/taskCommands.ts', required: [{ token: /patchToFrontmatterDelta\s*\(/, why: 'UpdateTaskFieldCommand builds a delta' }] },
-  { file: 'src/renderer/commands/propertiesCommands.ts', required: [{ token: /frontmatterDelta\s*:/, why: 'UpdatePropertiesCommand writes via a delta' }] },
+  { file: 'src/renderer/commands/propertiesCommands.ts', required: [{ token: /noteStore\.patchFrontmatter\s*\(/, why: 'UpdatePropertiesCommand sends a delta' }] },
   {
     file: 'src/renderer/components/tiles/PropertiesPopup.svelte',
     required: [
-      { token: /diffToFrontmatterDelta\s*\(/, why: 'the popup diffs its open-time snapshot' },
-      { token: /frontmatterDelta\s*:/, why: 'the popup write threads the delta' },
+      { token: /diffToFrontmatterDelta\s*\(/, why: 'the popup sends only what changed' },
+      { token: /noteStore\.patchFrontmatter\s*\(/, why: 'through the note store' },
     ],
+  },
+  {
+    file: NOTE_STORE,
+    within: 'recreate',
+    required: [{ token: /writer\.createExclusive\s*\(/, why: 'a note deleted on disk is written back exclusively (never over a file that came back)' }],
   },
 ];
 
 // ── keep-local-backup ─────────────────────────────────────────────────────
 const KEEP_LOCAL_CHOKEPOINTS = [
-  { file: 'src/renderer/lib/vault/preWriteDriftGate.ts', fn: 'runPreWriteDriftGate' },
   { file: 'src/renderer/lib/boards/boardWriteScheduler.ts', fn: 'writeBoardFile' },
-  { file: 'src/renderer/stores/boardCache.svelte.ts', fn: 'syncTileMarkdown' },
+  { file: 'src/renderer/stores/notePrompts.ts', fn: 'promptConflict' },
 ];
 
 /** Index of the `{` enclosing `pos` (nearest unmatched), or -1. */
@@ -244,15 +235,16 @@ function setTimeoutBody(src, at) {
 
 export const checks = [
   {
-    id: 'markdown-gateway',
-    title: 'markdown write channels are only invoked by the gateway (or a justified direct write)',
+    id: 'single-note-writer',
+    title: 'only noteWriter writes a note, applying each change to a fresh read of the file',
     hint:
-      'Route through writeMarkdownFile / scheduleMarkdownWrite (BOM, race guards, flushed-version bookkeeping). ' +
-      'A one-shot seed/sentinel may use `// allow-direct-write: <reason>` on the call, channel or up to 4 lines above.',
+      'Route every .md change through noteStore (setBody / patchFrontmatter / transform / createUnique / restore). ' +
+      'A write of a non-note file (a .filo/ sentinel or config) may use `// allow-direct-write: <reason>` on the call, ' +
+      'the channel line or up to 4 lines above.',
     run(ctx) {
       const out = [];
       for (const rel of ctx.files(RENDERER, { ext: TS_SVELTE })) {
-        if (rel === GATEWAY || rel === NOTE_WRITER) continue;
+        if (rel === NOTE_WRITER) continue;
         const text = ctx.read(rel);
         const lines = text.split('\n');
         for (const m of text.matchAll(MD_WRITE_RE)) {
@@ -260,64 +252,51 @@ export const checks = [
           const endLine = lineAt(text, m.index + m[0].length - 1);
           const ESC = /\/\/ allow-direct-write:/;
           const escaped = [line, endLine, line - 1, line - 2, line - 3, line - 4].some((n) => n >= 1 && ESC.test(lines[n - 1] ?? ''));
-          if (!escaped) out.push(fail(rel, line, `direct markdown write outside the gateway: ${(lines[line - 1] ?? '').trim()}`));
+          if (!escaped) out.push(fail(rel, line, `a text write outside noteWriter: ${(lines[line - 1] ?? '').trim()}`));
         }
+      }
+      for (const c of NOTE_WRITER_CONTRACT) {
+        const raw = ctx.read(c.file);
+        if (raw === null) { out.push(fail(c.file, undefined, 'file missing')); continue; }
+        let scope = stripComments(raw);
+        if (c.within) {
+          const fn = functionBody(blank(raw), c.within, { fnKeyword: true }) ?? functionBody(blank(raw), c.within);
+          if (!fn) { out.push(fail(c.file, undefined, `${c.within}() not found`)); continue; }
+          scope = blank(raw, { strings: false }).slice(fn.start, fn.end);
+        }
+        out.push(...tokenChecks(c.file, scope, c, c.within ? `${c.within}()` : ''));
       }
       return out;
     },
   },
   {
-    id: 'md-writers-reconcile-editors',
-    title: 'direct .md writes go through writeMarkdownAndReconcile (same-path editor reconcile)',
+    id: 'note-queue-per-path',
+    title: 'a note file is renamed or deleted only while its write queue is held',
     hint:
-      "A direct write under an open editor leaves its FM cache stale and the next body save inverts it. Use " +
-      'writeMarkdownAndReconcile({ vaultRoot, path, content, mode }), list a never-open-editor writer in ' +
-      'RECONCILE_EXEMPT, or mark the site `// reconcile-elsewhere: <reason>`.',
+      "A write that starts while its file moves lands on the old path (or recreates it). vaultOperations' " +
+      'renameVaultPath / deleteVaultPath run the IPC inside noteStore.hold(...), and noteWriter.hold enters every ' +
+      "path's queue before the operation runs.",
     run(ctx) {
       const out = [];
-      for (const rel of ctx.files(RENDERER, { ext: TS_SVELTE })) {
-        if (rel === COUPLED_HELPER || RECONCILE_EXEMPT.has(rel)) continue;
-        const text = ctx.read(rel);
-        if (!text.match(MD_WRITE_RE)) continue;
-        const blanked = blank(text);
-        const lines = text.split('\n');
-        for (const m of text.matchAll(MD_WRITE_RE)) {
-          if (blanked.slice(m.index, m.index + 6) !== 'invoke') continue;
-          const line = lineAt(text, m.index);
-          if ([0, 1, 2, 3, 4].some((j) => /\/\/ reconcile-elsewhere:/.test(lines[line - 1 - j] ?? ''))) continue;
-          out.push(fail(rel, line, 'direct .md write outside writeMarkdownAndReconcile'));
-        }
+      const OPS = 'src/renderer/lib/vault/vaultOperations.ts';
+      const raw = ctx.read(OPS);
+      if (raw === null) return [fail(OPS, undefined, 'file missing')];
+      const code = blank(raw);
+      const text = blank(raw, { strings: false });
+      for (const [fn, channel] of [['renameVaultPath', 'vault:rename'], ['deleteVaultPath', 'vault:delete']]) {
+        const b = functionBody(code, fn, { fnKeyword: true });
+        if (!b) { out.push(fail(OPS, undefined, `${fn}() not found`)); continue; }
+        const body = text.slice(b.start, b.end);
+        const hold = body.indexOf('noteStore.hold(');
+        const ipc = body.indexOf(`'${channel}'`);
+        if (hold < 0 || ipc < 0 || ipc < hold) out.push(fail(OPS, undefined, `${fn}() must run '${channel}' inside noteStore.hold(...)`));
       }
-      // A "Keep local" re-create of an externally deleted file must be O_EXCL: sync may have re-created it.
-      const DRIFT = 'src/renderer/stores/vaultExternalDriftPrompts.ts';
-      const src = ctx.read(DRIFT);
-      if (src === null) return [...out, fail(DRIFT, undefined, 'file missing')];
-      const noComments = src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' ')).replace(/\/\/[^\n]*/g, '');
-      const fn = functionBody(noComments, 'recreateDeletedFile', { fnKeyword: true });
-      if (!fn) out.push(fail(DRIFT, undefined, 'recreateDeletedFile() not found'));
-      else if (!/create\s*:\s*['"]exclusive['"]/.test(fn.text) || /create\s*:\s*true\b/.test(fn.text)) {
-        out.push(fail(DRIFT, lineAt(src, fn.start), "recreateDeletedFile() must re-create with create: 'exclusive', never create: true"));
-      }
-      return out;
-    },
-  },
-  {
-    id: 'markdown-read-gateway',
-    title: 'files that mark docs hydrated read .md through readMarkdownForHydrate',
-    hint:
-      'A disk-read hydrate must seed the drift baseline from the same read, or an external edit is later overwritten. ' +
-      'Use readMarkdownForHydrate(vaultRoot, relPath), or `// allow-hydrate-read: <reason>` on the read line.',
-    run(ctx) {
-      const out = [];
-      for (const rel of ctx.files(RENDERER, { ext: ['.svelte', '.svelte.ts', '.ts'] })) {
-        if (rel === GATEWAY) continue;
-        const src = ctx.read(rel);
-        if (!/\bmarkHydrated\s*\(/.test(src)) continue;
-        src.split('\n').forEach((line, i) => {
-          if (/\binvoke(?:Ok)?\s*\(\s*['"`]vault:read-file-text['"`]/.test(line) && !/\/\/ allow-hydrate-read:/.test(line)) {
-            out.push(fail(rel, i + 1, `hydrate-site read bypasses the gateway: ${line.trim()}`));
-          }
-        });
+      const writerRaw = ctx.read(NOTE_WRITER);
+      if (writerRaw === null) return [...out, fail(NOTE_WRITER, undefined, 'file missing')];
+      const hold = functionBody(blank(writerRaw), 'hold');
+      if (!hold) out.push(fail(NOTE_WRITER, undefined, 'hold() not found'));
+      else if (!/onPath\s*\(/.test(blank(writerRaw).slice(hold.start, hold.end))) {
+        out.push(fail(NOTE_WRITER, undefined, "hold() must enter each path's queue (onPath)"));
       }
       return out;
     },
@@ -395,14 +374,14 @@ export const checks = [
   },
   {
     id: 'no-silent-write-abort',
-    title: 'frontmatter/body write paths fail loudly instead of resolving an abort as success',
+    title: 'note and frontmatter write paths fail loudly instead of resolving an abort as success',
     hint:
       'A bare `if (!docState) return` / `if (!fm) return` / read-only return resolves the write as SUCCESS (the dirty ' +
       'sentinel is cleared) while the edit never reaches disk. Read disk instead, or markPathFailed + throw. ' +
       'Escape (non-write path only): `// allow-silent-abort: <reason>` in the file.',
     run(ctx) {
       const out = selfTest().map((s) => fail('scripts/gates/writePath.mjs', undefined, `self-test: ${s}`));
-      for (const rel of ctx.files(['src/renderer/lib/boards', 'src/renderer/lib/kanban', 'src/renderer/lib/tasklist'], {
+      for (const rel of ctx.files(['src/renderer/lib/boards', 'src/renderer/lib/kanban', 'src/renderer/lib/tasklist', 'src/renderer/lib/notes'], {
         ext: ['.ts'],
         name: /(riter|scheduler)/i,
       })) {
@@ -413,64 +392,28 @@ export const checks = [
         if (SILENT_READONLY.test(code)) out.push(fail(rel, undefined, 'bare read-only abort — a delta must still be written; a delta-less write must refuse loudly'));
         if (unscopedSilentFm(code)) out.push(fail(rel, undefined, 'bare `if (!fm) return` with no markPathFailed in the same function'));
       }
-      const need = (file, tokens, label) => {
+      const need = (file, tokens, label, within) => {
         const raw = ctx.read(file);
         if (raw === null) { out.push(fail(file, undefined, 'required file missing')); return; }
-        out.push(...tokenChecks(file, stripComments(raw), { required: tokens }, label));
-      };
-      need('src/renderer/lib/boards/frontmatterWriteScheduler.ts', [
-        { token: /markPathFailed\s*\(/, why: 'a no-editor read failure is attributed (markPathFailed)' },
-        { token: /readMarkdownForHydrate\s*\(/, why: 'the no-docState branch reads the body from disk' },
-        { token: /readOnlyDoc\s*&&\s*!\s*delta/, why: 'only delta-LESS writes are refused on a read-only doc' },
-        { token: /!\s*readOnlyDoc\s*\?/, why: "a read-only doc's delta write takes its body from disk, never the lossy docState.body" },
-      ]);
-      need(GATEWAY, [
-        { token: /hasFrontmatter\s*\(/, why: 'the cache-FM branch detects a never-seeded FM cache' },
-        { token: /argsFmEmpty/, why: 'a body-only save with no FM re-reads disk instead of assembling against {}' },
-      ]);
-      need('src/renderer/components/boards/DocumentEditor.svelte', HYDRATE_FAIL_TOKENS, 'DocumentEditor');
-      need('src/renderer/components/tiles/TextTile.svelte', HYDRATE_FAIL_TOKENS, 'TextTile');
-
-      const STORE = 'src/renderer/stores/document.svelte.ts';
-      const storeRaw = ctx.read(STORE);
-      if (storeRaw === null) return [...out, fail(STORE, undefined, 'required file missing')];
-      const update = functionBody(blank(storeRaw), 'updateContent');
-      if (!update) out.push(fail(STORE, undefined, 'updateContent() not found'));
-      else {
-        out.push(
-          ...tokenChecks(STORE, update.text, {
-            required: [
-              { token: /bumpMutationVersion\s*\(/, why: 'a body change bumps the shared staleness token (else a notes write no-ops as stale)' },
-              { token: /bodyMutationVersions\.set\s*\(/, why: 'the body bump is mirrored so FM-only consumers can subtract it' },
-            ],
-          }, 'updateContent()'),
-        );
-      }
-      if (!/getFrontmatterOnlyMutationVersion/.test(stripComments(storeRaw))) {
-        out.push(fail(STORE, undefined, 'getFrontmatterOnlyMutationVersion is gone (FM-only staleness API)'));
-      }
-      return out;
-    },
-  },
-  {
-    id: 'frontmatter-delta-write',
-    title: 'field/popup frontmatter writes apply a delta to a fresh disk read',
-    hint:
-      'Serialising a cached full FM object silently drops keys it never saw. Build a FrontmatterDelta and let the ' +
-      'gateway apply it to the same in-chain read that supplies originalFrontmatter.',
-    run(ctx) {
-      const out = [];
-      for (const c of DELTA_CHECKS) {
-        const raw = ctx.read(c.file);
-        if (raw === null) { out.push(fail(c.file, undefined, 'file missing')); continue; }
         let scope = stripComments(raw);
-        if (c.within) {
-          const fn = functionBody(blank(raw), c.within, { fnKeyword: true });
-          if (!fn) { out.push(fail(c.file, undefined, `${c.within}() not found`)); continue; }
-          scope = fn.text;
+        if (within) {
+          const fn = functionBody(blank(raw), within, { fnKeyword: true }) ?? functionBody(blank(raw), within);
+          if (!fn) { out.push(fail(file, undefined, `${within}() not found`)); return; }
+          scope = blank(raw, { strings: false }).slice(fn.start, fn.end);
         }
-        out.push(...tokenChecks(c.file, scope, c, c.within ? `${c.within}()` : ''));
-      }
+        out.push(...tokenChecks(file, scope, { required: tokens }, label));
+      };
+      need(NOTE_WRITER, [
+        { token: /markPathFailed\s*\(/, why: 'a note that is gone, unreadable or not UTF-8 keeps its change queued and is attributed' },
+        { token: /failHeldBody\s*\(/, why: 'a body that can\'t be written (conflict, lossy) fails the flush instead of reporting saved' },
+        { token: /fresh\.nonUtf8/, why: 'a non-UTF-8 note is never written from decoded text' },
+      ], 'writePending()', 'writePending');
+      need(NOTE_STORE, [
+        { token: /m\.views\.has\s*\(\s*viewId\s*\)/, why: 'only a view holding the note may write its body (a leftover view from a closed vault cannot)' },
+        { token: /m\.status\s*===\s*'unreadable'/, why: 'a body is never taken from a view of a note that could not be read' },
+      ], 'setBody()', 'setBody');
+      need('src/renderer/components/boards/DocumentEditor.svelte', EDITOR_FREEZE_TOKENS, 'DocumentEditor');
+      need('src/renderer/components/tiles/TextTile.svelte', EDITOR_FREEZE_TOKENS, 'TextTile');
       return out;
     },
   },
@@ -478,8 +421,8 @@ export const checks = [
     id: 'seed-writes-exclusive',
     title: 'new-file seeds are create-exclusive (never overwrite an existing vault file)',
     hint:
-      'Seed through createNoteFile / createUniqueMdFile / createMdFileExclusive (O_EXCL vault:create-file-text). The helper must not ' +
-      "use trackComponentWrite: a losing EEXIST attempt targets the user's existing file.",
+      'Seed through createNoteFile / noteStore.createUnique / noteStore.createExclusive (O_EXCL vault:create-file-text). ' +
+      "The writer's exclusive create must not use trackComponentWrite: a losing EEXIST attempt targets the user's existing file.",
     run(ctx) {
       const out = [];
       for (const rel of [
@@ -493,14 +436,17 @@ export const checks = [
         if (raw === null) { out.push(fail(rel, undefined, 'listed file is missing')); continue; }
         const src = stripCommentsStateful(raw);
         if (/\binvoke(?:Ok)?\s*\(\s*['"`]vault:write-file-text['"`]/.test(src)) out.push(fail(rel, undefined, "seeds via overwrite-capable 'vault:write-file-text'"));
-        if (!/\b(?:createUniqueMdFile|createMdFileExclusive|createNoteFile)\s*\(/.test(src)) out.push(fail(rel, undefined, 'does not call createNoteFile / createUniqueMdFile / createMdFileExclusive'));
+        if (!/\b(?:noteStore\.createUnique|noteStore\.createExclusive|createNoteFile)\s*\(/.test(src)) {
+          out.push(fail(rel, undefined, 'does not call createNoteFile / noteStore.createUnique / noteStore.createExclusive'));
+        }
       }
-      const HELPER = 'src/renderer/lib/vault/createMdExclusive.ts';
-      const raw = ctx.read(HELPER);
-      if (raw === null) return [...out, fail(HELPER, undefined, 'file missing')];
-      const src = stripCommentsStateful(raw);
-      if (!/['"`]vault:create-file-text['"`]/.test(src)) out.push(fail(HELPER, undefined, "must invoke 'vault:create-file-text'"));
-      if (/\btrackComponentWrite\s*\(/.test(src)) out.push(fail(HELPER, undefined, 'must not use trackComponentWrite('));
+      const raw = ctx.read(NOTE_WRITER);
+      if (raw === null) return [...out, fail(NOTE_WRITER, undefined, 'file missing')];
+      const fn = functionBody(blank(raw), 'createExclusive', { fnKeyword: true });
+      if (!fn) return [...out, fail(NOTE_WRITER, undefined, 'function createExclusive() not found')];
+      const body = blank(raw, { strings: false }).slice(fn.start, fn.end);
+      if (!/['"`]vault:create-file-text['"`]/.test(body)) out.push(fail(NOTE_WRITER, undefined, "createExclusive() must invoke 'vault:create-file-text'"));
+      if (/\btrackComponentWrite\s*\(/.test(body)) out.push(fail(NOTE_WRITER, undefined, 'createExclusive() must not use trackComponentWrite('));
       return out;
     },
   },
@@ -529,52 +475,10 @@ export const checks = [
     },
   },
   {
-    id: 'no-prod-md-test-flushers',
-    title: 'the gateway’s test-only flusher hooks are not used by app code',
-    hint: 'Use scheduleMarkdownWrite + registerForceWriter. Escape: `// allow-test-flusher: <reason>` on the line.',
-    run(ctx) {
-      const out = [];
-      const SYMBOLS = ['__testRegisterFlusher', '__testUnregisterFlusher'];
-      for (const rel of ctx.files([RENDERER, 'src/main', 'src/shared'], { ext: ['.svelte', '.svelte.ts', '.ts'] })) {
-        if (rel === GATEWAY) continue;
-        const src = ctx.read(rel);
-        if (!SYMBOLS.some((s) => src.includes(s))) continue;
-        src.split('\n').forEach((line, i) => {
-          const hit = SYMBOLS.find((s) => line.includes(s));
-          if (hit && !/\/\/\s*allow-test-flusher:/.test(line)) out.push(fail(rel, i + 1, `${hit}: ${line.trim()}`));
-        });
-      }
-      return out;
-    },
-  },
-  {
-    id: 'reload-cancels-writes',
-    title: 'only the gateway and applyReloadFromDisk call cancelMarkdownWritesForDocument',
-    hint:
-      'Sync open editors via syncOpenEditorsAfterDiskMutation → applyReloadFromDisk, which cancels armed writes ' +
-      'itself; a stale armed write would otherwise invert the reload.',
-    run(ctx) {
-      const ALLOWED = new Set([GATEWAY, 'src/renderer/stores/document.svelte.ts']);
-      const CALL = /\bcancelMarkdownWritesForDocument\s*\(/;
-      const out = [];
-      const hits = new Set();
-      for (const rel of ctx.files(RENDERER, { ext: TS_SVELTE })) {
-        const raw = ctx.read(rel);
-        const code = stripCommentsKeepLines(raw);
-        if (!CALL.test(code)) continue;
-        if (ALLOWED.has(rel)) { hits.add(rel); continue; }
-        const rawLines = raw.split(/\r?\n/);
-        code.split(/\r?\n/).forEach((l, i) => { if (CALL.test(l)) out.push(fail(rel, i + 1, (rawLines[i] ?? '').trim())); });
-      }
-      for (const rel of ALLOWED) if (!hits.has(rel)) out.push(fail(rel, undefined, 'allowed site no longer calls cancelMarkdownWritesForDocument — remove it from the list'));
-      return out;
-    },
-  },
-  {
     id: 'keep-local-backup',
     title: 'every "Keep local" overwrite first backs up the external version',
     hint:
-      "Keeping Filo's version destroys the other device's edit unless it is copied to .filo/recovery/ first " +
+      "Keeping Filo's version destroys the other program's edit unless it is copied to .filo/recovery/ first " +
       '(backupExternalVersion). Escape inside the action object: `// allow-keep-local-no-backup: <reason>`.',
     run(ctx) {
       const out = [];
@@ -582,10 +486,10 @@ export const checks = [
       let sites = 0;
       for (const rel of ctx.files(RENDERER, { ext: TS_SVELTE })) {
         const raw = ctx.read(rel);
-        if (!/Keep (local|all|your edits)/.test(raw)) continue;
+        if (!/Keep (local|all|mine|your edits)/.test(raw)) continue;
         const noComments = blank(raw, { strings: false });
         const code = blank(raw);
-        for (const m of noComments.matchAll(/label\s*:\s*(['"`])(Keep local|Keep all|Keep your edits)\1/g)) {
+        for (const m of noComments.matchAll(/label\s*:\s*(['"`])(Keep local|Keep all|Keep mine|Keep your edits)\1/g)) {
           sites++;
           const open = enclosingOpen(code, m.index);
           const close = open < 0 ? -1 : matchBrace(code, open, '{', '}');
@@ -603,7 +507,7 @@ export const checks = [
           out.push(fail(file, undefined, `${fn}() keep-local branch must call backupExternalVersion(...)`));
         }
       }
-      if (sites < 9) out.push(fail(RENDERER, undefined, `tripwire: only ${sites} Keep-local action sites found (expected >= 9)`));
+      if (sites < 4) out.push(fail(RENDERER, undefined, `tripwire: only ${sites} Keep-local action sites found (expected >= 4)`));
       return out;
     },
   },

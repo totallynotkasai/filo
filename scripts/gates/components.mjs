@@ -320,4 +320,42 @@ export const checks = [
       return out;
     },
   },
+  {
+    id: 'views-read-note-store',
+    title: 'views read notes from the note store; nothing keeps its own copy of a note',
+    hint:
+      'Every view of a note shares its one NoteModel (noteStore.acquire / get / frontmatter). A second copy — ' +
+      'a document store, a component parsing the file itself, a component talking to the writer — is how two ' +
+      'views came to disagree and the wrong one won.',
+    run(ctx) {
+      const out = [];
+      const GONE = 'src/renderer/stores/document.svelte.ts';
+      if (ctx.exists(GONE)) out.push(fail(GONE, undefined, 'the document store is back — views read noteStore'));
+      for (const rel of ctx.files('src/renderer', { ext: ['.ts', '.svelte'] })) {
+        const raw = ctx.read(rel);
+        const code = blank(rel.endsWith('.svelte') ? scriptBlocks(raw).map((b) => b.content).join('\n') : raw, { strings: false });
+        if (/from\s+['"][^'"]*\/document\.svelte['"]/.test(code)) out.push(fail(rel, undefined, 'imports the removed document store'));
+        if (/\bdocumentStore\b/.test(blank(code))) out.push(fail(rel, undefined, 'refers to documentStore — read noteStore'));
+        if (!rel.startsWith(`${COMPONENTS}/`)) continue;
+        if (/from\s+['"][^'"]*lib\/notes\/noteWriter['"]/.test(code)) out.push(fail(rel, undefined, 'a component imports the note writer — go through noteStore'));
+        const rawLines = raw.split('\n');
+        const escaped = (i) => [0, 1, 2, 3].some((j) => /\/\/ allow-raw-read:/.test(rawLines[i - j] ?? ''));
+        for (const [re, what] of [
+          [/\bparseMarkdownFile\s*\(/, 'parseMarkdownFile('],
+          [/\breadNoteText\s*\(/, 'readNoteText('],
+          [/\bassembleMarkdownFile\s*\(/, 'assembleMarkdownFile('],
+          [/['"]vault:read-file-text['"]/, "'vault:read-file-text'"],
+        ]) {
+          if (!re.test(code)) continue;
+          // Report by the file's own lines (script offsets differ from the file's).
+          rawLines.forEach((line, i) => {
+            if (re.test(line) && !escaped(i)) {
+              out.push(fail(rel, i + 1, `a component parses or reads a note itself (${what}) — read noteStore, or mark a non-note read \`// allow-raw-read: <reason>\``));
+            }
+          });
+        }
+      }
+      return out;
+    },
+  },
 ];

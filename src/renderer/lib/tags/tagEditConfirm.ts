@@ -1,5 +1,6 @@
 import { uiStore } from '../../stores/ui.svelte';
 import { fileTagsStore } from '../../stores/fileTags.svelte';
+import { removeTagWithUndo, renameTagWithUndo } from '../../stores/tagUndo.svelte';
 
 /**
  * Confirm-then-run wrappers for the vault-wide tag actions in the Tags
@@ -23,12 +24,12 @@ export async function deleteTagWithConfirm(name: string): Promise<boolean> {
     title: `Delete tag "#${name}"?`,
     body:
       `Removes the tag from ${plural(files, 'file')} and ${plural(tiles, 'tile')} across every board. ` +
-      "This can't be undone.",
+      "You can undo it from the notification that follows.",
     confirmLabel: 'Delete tag',
     danger: true,
   });
   if (!ok) return false;
-  await fileTagsStore.removeTagEverywhere(name);
+  await removeTagWithUndo(name);
   return true;
 }
 
@@ -38,7 +39,7 @@ export async function deleteTagWithConfirm(name: string): Promise<boolean> {
  *   - `newName` already exists → the two tags MERGE, and renaming back won't
  *     split them again;
  *   - `oldName` has child tags (`old/…`), which don't follow the rename.
- * A plain rename to a new name runs without a dialog.
+ * A plain rename to a new name runs without a dialog; its toast offers Undo.
  */
 export async function renameTagWithConfirm(oldName: string, newName: string): Promise<boolean> {
   const all = fileTagsStore.allTagNames();
@@ -67,6 +68,6 @@ export async function renameTagWithConfirm(oldName: string, newName: string): Pr
     });
     if (!ok) return false;
   }
-  await fileTagsStore.renameTagEverywhere(oldName, newName);
+  await renameTagWithUndo(oldName, newName);
   return true;
 }

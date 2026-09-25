@@ -8,6 +8,7 @@ import { readdirSync, readFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
+import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { deleteTagWithConfirm, renameTagWithConfirm } from '@renderer/lib/tags/tagEditConfirm';
 
 describe('Tags browser confirms', () => {
@@ -18,8 +19,9 @@ describe('Tags browser confirms', () => {
   beforeEach(() => {
     nativeConfirm = vi.fn(() => true);
     vi.stubGlobal('confirm', nativeConfirm);
-    remove = vi.spyOn(fileTagsStore, 'removeTagEverywhere').mockResolvedValue(undefined);
-    rename = vi.spyOn(fileTagsStore, 'renameTagEverywhere').mockResolvedValue(undefined);
+    remove = vi.spyOn(fileTagsStore, 'removeTagEverywhere').mockResolvedValue({ committed: true, writtenPaths: [] });
+    rename = vi.spyOn(fileTagsStore, 'renameTagEverywhere').mockResolvedValue({ committed: true, writtenPaths: [] });
+    vi.spyOn(boardCacheStore, 'ensureAllLoaded').mockResolvedValue(undefined);
     vi.spyOn(fileTagsStore, 'filesForTag').mockReturnValue(['a.md', 'b.md', 'c.png']);
     vi.spyOn(fileTagsStore, 'getTilesWithTag').mockReturnValue([
       { id: 't1', type: 'link', title: 'x', tags: ['work'], path: null },
@@ -49,6 +51,8 @@ describe('Tags browser confirms', () => {
     expect(cfg.title).toBe('Delete tag "#work"?');
     expect(cfg.body).toContain('3 files and 1 tile');
     expect(cfg.confirmLabel).toBe('Delete tag');
+    expect(cfg.body).toMatch(/undo it from the notification/);
+    expect(cfg.body).not.toMatch(/can't be undone/);
     await answer(true);
     expect(await done).toBe(true);
     expect(remove).toHaveBeenCalledWith('work');

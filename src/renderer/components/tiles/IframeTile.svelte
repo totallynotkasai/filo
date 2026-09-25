@@ -1,10 +1,5 @@
 <script lang="ts">
   import type { IframeTile } from '../../schema/index';
-  import { getContext } from 'svelte';
-  import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
-
-  const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
-  const boardStore = scope.board;
   import { isSafeIframeUrl } from '../../lib/utils/urlSafety';
   import { asSafeIframeSrc, asSafeOpenExternal } from '../../../shared/untrusted';
   import IconButton from '../shared/IconButton.svelte';

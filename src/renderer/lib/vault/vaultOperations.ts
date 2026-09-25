@@ -30,7 +30,7 @@
  */
 
 import { noteStore } from '../../stores/notes.svelte';
-import { toVaultRelative } from './vaultTreeSort';
+import { toVaultRelative } from '../utils/path';
 import { flushAllMisc } from '../boards/miscWriteScheduler';
 import { flushScheduledConfig } from '../boards/configWriteScheduler';
 import { isBoardPathHeld } from '../boards/boardWriteScheduler';

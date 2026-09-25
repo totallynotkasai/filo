@@ -139,6 +139,66 @@ export async function openNoteFromSidebar(app: CharApp, rel: string): Promise<vo
   await settle(200);
 }
 
+// ── The note's tag row and raw view (Document tab) ─────────────────────────
+
+/** The tags the open Document tab's tag row shows. */
+export function tagRowTags(app: CharApp): string[] {
+  return $$(app.el, '.document-board .note-tag .tag-name').map((el) => (el.textContent ?? '').trim());
+}
+
+/** Type `text` (comma-separated tags) into the tag row and press Enter. */
+export async function typeInTagRow(app: CharApp, text: string): Promise<void> {
+  const input = $(app.el, '.document-board .note-tag-input') as HTMLInputElement;
+  typeInto(input, text);
+  key(input, 'Enter');
+  await quiesce(800);
+}
+
+/** The x on a tag in the tag row. */
+export async function removeFromTagRow(app: CharApp, tag: string): Promise<void> {
+  click($(app.el, `.document-board button[aria-label="Remove tag ${tag}"]`));
+  await quiesce(800);
+}
+
+/** The Raw / Formatted toggle of the open Document tab. */
+export async function toggleRawView(app: CharApp): Promise<void> {
+  click($(app.el, '.document-board .raw-toggle'));
+  await quiesce(600);
+}
+
+/** The raw view's text area, once it has loaded. */
+export async function rawTextArea(app: CharApp): Promise<HTMLTextAreaElement> {
+  await waitFor(() => {
+    const ta = app.el.querySelector('.document-board .raw-text') as HTMLTextAreaElement | null;
+    return ta !== null && !ta.disabled;
+  }, 'raw view text');
+  return $(app.el, '.document-board .raw-text') as HTMLTextAreaElement;
+}
+
+/** Replace the raw view's text, then leave the field (which saves). */
+export async function editRawText(app: CharApp, text: string): Promise<void> {
+  const ta = await rawTextArea(app);
+  ta.focus();
+  ta.value = text;
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+  await settle();
+  ta.blur();
+  await quiesce(800);
+}
+
+/** The raw view's "the note changed elsewhere" banner. */
+export function rawConflictShown(app: CharApp): boolean {
+  return app.el.querySelector('.document-board .raw-banner') !== null;
+}
+
+/** A button on the raw view's conflict banner. */
+export async function chooseRawConflict(app: CharApp, label: 'Show the new version' | 'Keep mine'): Promise<void> {
+  const btn = $$(app.el, '.document-board .raw-banner-action').find((b) => (b.textContent ?? '').trim() === label);
+  if (!btn) throw new Error(`no raw conflict action "${label}"`);
+  click(btn);
+  await quiesce(1000);
+}
+
 /** Close the active tab from its close button. */
 export async function closeActiveTab(app: CharApp): Promise<void> {
   const active = $(app.el, '.tab.active, .tab[aria-selected="true"]');
@@ -523,6 +583,18 @@ export async function renameTagEverywhere(app: CharApp, from: string, to: string
   typeInto(input, to);
   key(input, 'Enter');
   await quiesce(1500);
+}
+
+/** Ctrl+Shift+T → Tags browser → Delete on the tag's row → confirm, then close the browser. */
+export async function deleteTagEverywhere(app: CharApp, tag: string): Promise<void> {
+  if ($$(document, '.tag-row').length === 0) pressShortcut('T', { ctrlKey: true, shiftKey: true });
+  await waitFor(() => $$(document, '.tag-row').length > 0, 'tags browser rows');
+  const row = $$(document, '.tag-row').find((r) => (r.querySelector('.tag-name')?.textContent ?? '').trim().replace(/^#/, '') === tag);
+  if (!row) throw new Error(`tags browser has no row for ${tag}`);
+  click($(row, 'button[aria-label="Delete tag"], button[title="Delete tag"]'));
+  await answerConfirm(app, { confirm: true });
+  await quiesce(1500);
+  await closeModal();
 }
 
 // ── Canvas ───────────────────────────────────────────────────────────────────

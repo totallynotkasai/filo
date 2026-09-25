@@ -1,5 +1,4 @@
 import type { KanbanBoard as KanbanBoardType, Tile } from '../../schema/index';
-import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { noteFrontmatter } from '../../stores/noteMeta';
 import type { SelectionScope } from '../../stores/selection.svelte';
 import { uiStore } from '../../stores/ui.svelte';

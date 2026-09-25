@@ -16,7 +16,7 @@
 
   // Per-pane scope; aliases preserve existing call sites. See boardScope.svelte.ts.
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
-  let { tabId }: { tabId?: string } = $props(); // pane-correct via scope; accepted + ignored
+  let { tabId: _tabId }: { tabId?: string } = $props(); // pane-correct via scope; accepted + ignored
   const boardStore = scope.board;
   const selectionStore = scope.selection;
   import { createId } from '../../lib/utils/ids';

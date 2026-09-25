@@ -40,8 +40,6 @@ export const TagsFileSchema = z.object({
 
 export type TagsFile = z.infer<typeof TagsFileSchema>;
 
-export const TAGS_FILE_RELATIVE_PATH = '.filo/tags.json';
-
 /**
  * Migration scaffold for `.filo/tags.json`. Mirrors
  * `migrateBoardFile` shape so a future V2 bump can land without

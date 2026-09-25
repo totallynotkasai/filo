@@ -74,3 +74,19 @@ export function samePath(a: string | null | undefined, b: string | null | undefi
   if (!a || !b) return false;
   return sharedNormalizeVaultRelative(a) === sharedNormalizeVaultRelative(b);
 }
+
+/**
+ * Absolute path → vault-relative POSIX path, or `null` when the path is
+ * outside the vault (or no vault is open). The prefix match is
+ * case-insensitive and requires a separator boundary, so `/vault-other`
+ * never counts as inside `/vault`; the returned slice keeps the original
+ * casing because it becomes a stored key. The vault root itself maps to `''`.
+ */
+export function toVaultRelative(absolutePath: string, vaultPath: string): string | null {
+  if (!vaultPath) return null;
+  const root = normalizePath(vaultPath).toLowerCase();
+  const candidate = toPosix(absolutePath).toLowerCase();
+  if (candidate === root) return '';
+  if (!candidate.startsWith(root + '/')) return null;
+  return toPosix(absolutePath).slice(root.length + 1);
+}

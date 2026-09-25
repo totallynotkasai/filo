@@ -27,7 +27,7 @@
  * (boardFile.ts:60-69).
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it } from 'vitest';
 import fc from 'fast-check';
 import {
   MindMapBoardSchema,

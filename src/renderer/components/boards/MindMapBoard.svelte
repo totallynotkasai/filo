@@ -25,7 +25,7 @@
   // BoardRouter passes every board the pane's `tabId`. This board
   // is pane-correct via BoardScope, so it declares + ignores it (silences Svelte's
   // dev-mode "unknown prop" warning).
-  let { tabId }: { tabId?: string } = $props();
+  let { tabId: _tabId }: { tabId?: string } = $props();
   const boardStore = scope.board;
   const canvasStore = scope.canvas;
   const selectionStore = scope.selection;

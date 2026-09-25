@@ -14,8 +14,6 @@
 
 export type SentinelKind = 'dirty' | 'rename-cascade' | 'tag-rewrite' | 'quit-failure';
 
-export const SENTINEL_KINDS: readonly SentinelKind[] = ['dirty', 'rename-cascade', 'tag-rewrite', 'quit-failure'];
-
 /** A machine id: 12 lowercase hex characters. */
 export const MACHINE_ID_RE = /^[0-9a-f]{12}$/;
 

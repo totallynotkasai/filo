@@ -102,13 +102,12 @@ describe('copyFileToVault — Phase 1.2 O_EXCL contract', () => {
       const handle = await (realOpen as typeof fs.open)(path, flags, mode);
       if (flags === 'wx') {
         // First write through the dest fd throws EACCES.
-        const origWrite = handle.write.bind(handle) as FileHandle['write'];
         handle.write = (async () => {
           const err: NodeJS.ErrnoException = Object.assign(new Error('Simulated EACCES'), {
             code: 'EACCES',
           });
           throw err;
-        }) as typeof origWrite;
+        }) as FileHandle['write'];
       }
       return handle;
     });

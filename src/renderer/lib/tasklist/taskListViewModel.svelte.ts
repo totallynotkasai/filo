@@ -133,6 +133,7 @@ export class TaskListViewModel {
         parent: FIELD_READERS.parent(fm),
         recurrence: FIELD_READERS.recurrence(fm),
         recurrenceMode: FIELD_READERS.recurrenceMode(fm),
+        recurrenceAnchor: FIELD_READERS.recurrenceAnchor(fm),
         category: FIELD_READERS.category(fm),
       });
     }

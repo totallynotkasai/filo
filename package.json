@@ -16,7 +16,7 @@
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "typecheck:main": "tsc -p tsconfig.main.json --noEmit",
     "format": "prettier --write src/",
-    "lint": "eslint .",
+    "lint": "eslint . --max-warnings 0",
     "ci:gates": "node scripts/gates/run.mjs",
     "ci:test-typecheck": "node scripts/gates/run.mjs --only test-typecheck",
     "scratch-vault": "vitest run --config vitest.scratch-vault.config.mts",

@@ -22,7 +22,9 @@
  *
  * Month-end semantics: adding N months preserves the day-of-month when
  * possible and clamps to the last day of the target month otherwise.
- * Jan 31 + 1m = Feb 28 (or Feb 29 in a leap year).
+ * Jan 31 + 1m = Feb 28 (or Feb 29 in a leap year). In schedule mode the
+ * original day is kept via `recurrenceAnchor`, so the next step returns to
+ * Mar 31 rather than repeating the clamp.
  */
 
 import { addMonthsClamped } from './dateMath';
@@ -114,16 +116,44 @@ function addInterval(from: Date, unit: RecurrenceUnit): Date {
   return addMonthsClamped(from, unit.count);
 }
 
+/** `day` in the month `monthIdx` months after January of `year`, clamped to its last day. */
+function clampedMonthDate(year: number, monthIdx: number, day: number): Date {
+  // A day-1 constructor absorbs year wraparound without overflowing the month.
+  const wrap = new Date(year, monthIdx, 1);
+  const lastDay = new Date(wrap.getFullYear(), wrap.getMonth() + 1, 0).getDate();
+  return new Date(wrap.getFullYear(), wrap.getMonth(), Math.min(day, lastDay));
+}
+
+/**
+ * The date whose day-of-month (and month, for yearly) a month-based schedule
+ * repeats on. A clamped due date (Feb 28 from a Jan 31 task) cannot say which
+ * day it stands for, so the original is stored as `recurrenceAnchor`. The
+ * stored anchor only counts while the due date is what the anchor would clamp
+ * to in that month; any other due date means the user moved it by hand, and
+ * the schedule re-anchors on the new date.
+ */
+function resolveAnchor(due: Date, unit: 'm' | 'y', anchor: string | undefined): Date {
+  const stored = anchor ? parseIsoDate(anchor) : null;
+  if (!stored) return due;
+  if (unit === 'y' && stored.getMonth() !== due.getMonth()) return due;
+  const expected = clampedMonthDate(due.getFullYear(), due.getMonth(), stored.getDate());
+  return expected.getDate() === due.getDate() ? stored : due;
+}
+
 /**
  * Returns the next due date as YYYY-MM-DD, or `null` if `recurrence` cannot
  * be parsed or required inputs are missing (e.g. `schedule` mode without a
  * `currentDue`).
+ *
+ * `anchor` is the task's `recurrenceAnchor` (see `resolveAnchor`); it only
+ * affects month- and year-based schedule mode.
  */
 export function nextDueDate(
   currentDue: string | undefined,
   recurrence: string,
   mode: RecurrenceMode,
   completedOn: Date,
+  anchor?: string,
 ): string | null {
   const parsed = parseRecurrence(recurrence);
   if (!parsed) return null;
@@ -143,9 +173,51 @@ export function nextDueDate(
   if (!parsedDue) return null;
 
   const today = startOfDay(completedOn);
+
+  if (parsed.kind === 'fixed' && (parsed.unit === 'm' || parsed.unit === 'y')) {
+    // Step whole multiples from the due month and clamp each candidate to the
+    // anchor day. Chaining from the previous candidate would inherit its clamp
+    // (Jan 31 → Feb 28 → Mar 28 …) and never recover the original day.
+    const anchorDay = resolveAnchor(parsedDue, parsed.unit, anchor).getDate();
+    const step = parsed.count * (parsed.unit === 'y' ? 12 : 1);
+    let k = 1;
+    let next = clampedMonthDate(parsedDue.getFullYear(), parsedDue.getMonth() + step, anchorDay);
+    while (next.getTime() <= today.getTime()) {
+      k += 1;
+      next = clampedMonthDate(parsedDue.getFullYear(), parsedDue.getMonth() + k * step, anchorDay);
+    }
+    return fmtDate(next);
+  }
+
   let next = addInterval(parsedDue, parsed);
   while (next.getTime() <= today.getTime()) {
     next = addInterval(next, parsed);
   }
   return fmtDate(next);
+}
+
+/**
+ * The `recurrenceAnchor` a task should carry after rolling forward, or
+ * `undefined` when it needs none. Only an anchor that can actually clamp is
+ * worth storing: a monthly day 29–31, or Feb 29 for yearly. Every other day
+ * recurs exactly, so ordinary monthly tasks never gain the key.
+ */
+export function recurrenceAnchorToRecord(
+  currentDue: string | undefined,
+  recurrence: string,
+  mode: RecurrenceMode,
+  anchor?: string,
+): string | undefined {
+  if (mode !== 'schedule' || !currentDue) return undefined;
+  const parsed = parseRecurrence(recurrence);
+  if (!parsed || parsed.kind !== 'fixed' || (parsed.unit !== 'm' && parsed.unit !== 'y')) {
+    return undefined;
+  }
+  const due = parseIsoDate(currentDue);
+  if (!due) return undefined;
+  const resolved = resolveAnchor(due, parsed.unit, anchor);
+  const canClamp = parsed.unit === 'm'
+    ? resolved.getDate() >= 29
+    : resolved.getMonth() === 1 && resolved.getDate() === 29;
+  return canClamp ? fmtDate(resolved) : undefined;
 }

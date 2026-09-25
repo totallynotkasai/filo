@@ -261,6 +261,10 @@ function updateProjectConnectionsFrames(
 }
 
 function markDirty(boardId: string): void {
+  // Nothing to write for an id with no board file: a Document tab opened on a
+  // note has its own undo stack under an id no `.board.json` carries. Arming
+  // a write for it would report a lost save and leave the crash sentinel dirty.
+  if (!boardCache[boardId]) return;
   scheduleBoardWrite(boardId, () => getBoardWriteArgs(boardId));
 }
 

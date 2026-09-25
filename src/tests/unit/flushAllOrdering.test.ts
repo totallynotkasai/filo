@@ -20,7 +20,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createScheduler } from '@renderer/lib/boards/writeScheduler';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
-import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { restoreFiloDefault } from '../helpers/filoBridge';
 
 interface TArgs {
   vaultRoot: string;

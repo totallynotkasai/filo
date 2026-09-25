@@ -229,6 +229,19 @@ function tagFileOfTile(tile: Tile): string | null {
   return resolveTileMediaPath(tile);
 }
 
+/**
+ * What a vault-wide tag rename or removal did. `committed` is false when it
+ * stopped before changing the registry and boards (a failed flush or sweep,
+ * which offers its own retry); `writtenPaths` are the notes it rewrote.
+ */
+export interface TagSweepOutcome {
+  committed: boolean;
+  writtenPaths: string[];
+}
+function notCommitted(): TagSweepOutcome {
+  return { committed: false, writtenPaths: [] };
+}
+
 export const fileTagsStore = {
   get file(): TagsFile { return file; },
   get isHydrated(): boolean { return isHydrated; },
@@ -691,9 +704,9 @@ export const fileTagsStore = {
    * naturally targets only those, since the metadata of the succeeded
    * files no longer mentions `oldName`.
    */
-  async renameTagEverywhere(oldName: string, newName: string): Promise<void> {
+  async renameTagEverywhere(oldName: string, newName: string): Promise<TagSweepOutcome> {
     const trimmed = newName.trim();
-    if (!oldName || !trimmed || oldName === trimmed) return;
+    if (!oldName || !trimmed || oldName === trimmed) return notCommitted();
 
     // Capture identity up-front; threaded into the sweep (writes anchored to
     // the outgoing root → main-side rejected) + the retry toast closure, and
@@ -712,7 +725,7 @@ export const fileTagsStore = {
         type: 'error',
         duration: 0,
       });
-      return;
+      return notCommitted();
     }
 
     const result = await runTagRewriteSweep(oldName, trimmed, identity.path);
@@ -724,20 +737,22 @@ export const fileTagsStore = {
         attempted: result.attempted,
         retry: () => rewriteAndCommitRetry(this, oldName, trimmed, failedSet, identity),
       });
-      return;
+      return notCommitted();
     }
 
     // A swap during the sweep above must not mutate the new vault's
     // boardStore/registry with this vault's rename.
-    if (!isStillSameVault(identity)) return;
+    if (!isStillSameVault(identity)) return notCommitted();
     commitTagRenameInMemory(this, oldName, trimmed);
     // Flush the registry write before the board flush so a crash can't strand
     // the renamed tag on disk without its tags.json definition.
     await this.flushPendingSave();
     // Flush the cascaded board writes so a `.board.json` failure is reported
     // through the same toast surface as the .md failures above.
-    if (!isStillSameVault(identity)) return; // swap during flushPendingSave
+    const committed = { committed: true, writtenPaths: result.succeeded };
+    if (!isStillSameVault(identity)) return committed; // swap during flushPendingSave
     await flushTagRewriteBoardWrites('Tag rename');
+    return committed;
   },
 
   /**
@@ -747,8 +762,8 @@ export const fileTagsStore = {
    * See {@link renameTagEverywhere} for the atomicity rationale — same
    * shape applies here.
    */
-  async removeTagEverywhere(tagName: string): Promise<void> {
-    if (!tagName) return;
+  async removeTagEverywhere(tagName: string): Promise<TagSweepOutcome> {
+    if (!tagName) return notCommitted();
 
     // See renameTagEverywhere: capture identity so a vault swap mid-sweep/commit
     // can't apply this vault's tag removal to the swapped-in one.
@@ -763,7 +778,7 @@ export const fileTagsStore = {
         type: 'error',
         duration: 0,
       });
-      return;
+      return notCommitted();
     }
 
     const result = await runTagRewriteSweep(tagName, null, identity.path);
@@ -775,16 +790,18 @@ export const fileTagsStore = {
         attempted: result.attempted,
         retry: () => rewriteAndCommitRetry(this, tagName, null, failedSet, identity),
       });
-      return;
+      return notCommitted();
     }
 
     // A swap during the sweep must not mutate the new vault's state.
-    if (!isStillSameVault(identity)) return;
+    if (!isStillSameVault(identity)) return notCommitted();
     commitTagRemovalInMemory(this, tagName);
     // See renameTagEverywhere: flush the registry, then the board writes.
     await this.flushPendingSave();
-    if (!isStillSameVault(identity)) return; // swap during flushPendingSave
+    const committed = { committed: true, writtenPaths: result.succeeded };
+    if (!isStillSameVault(identity)) return committed; // swap during flushPendingSave
     await flushTagRewriteBoardWrites('Tag removal');
+    return committed;
   },
 
   /**

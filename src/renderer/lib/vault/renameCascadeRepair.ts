@@ -9,8 +9,9 @@ import { renameAllPathKeys } from './renamePathKeys';
 
 /**
  * Shared repair for the rename-cascade recovery
- * sentinel. Re-applies the board-ref + open-document + `.filo/tags.json`
- * cascade for every pending entry and clears the breadcrumb on full success.
+ * sentinel. Re-applies the path rewrites (board refs, path-keyed stores,
+ * media tags in `.filo/tags.json`) for every pending entry and clears the
+ * breadcrumb on full success.
  *
  * Both the recovery prompt's Retry and Discard handlers run this. Discard
  * repairs too rather than abandoning the boards with broken refs — the
@@ -83,28 +84,24 @@ export async function repairRenameCascade(
     });
     return null;
   }
-  // Re-assert the `.filo/tags.json` sink for every rename that touched it,
-  // then flush. renameFile/renameFolder are idempotent (no-op when the key
-  // already moved before the crash), so this closes the window between the
-  // disk rename and the original tag flush. Keep the sentinel if the
-  // tag write fails so the next open retries the whole cascade.
-  let tagsReasserted = false;
+  // Re-assert the media-tag keys in `.filo/tags.json` for every rename, then
+  // flush. renameFile/renameFolder are idempotent (no-op when the key already
+  // moved before the crash) and the flush is a no-op when nothing changed, so
+  // this closes the window between the disk rename and the original tag
+  // flush. Keep the sentinel if the tag write fails so the next open retries
+  // the whole cascade.
   for (const entry of entries) {
-    if (!entry.tagsAffected) continue;
     fileTagsStore.renameFile(entry.oldPath, entry.newPath);
     fileTagsStore.renameFolder(entry.oldPath, entry.newPath);
-    tagsReasserted = true;
   }
-  if (tagsReasserted) {
-    const tagFlush = await fileTagsStore.flushPendingSave();
-    if (!tagFlush.ok) {
-      uiStore.pushToast({
-        text: `${verb} updated the board files but failed to persist tag membership to .filo/tags.json. Reopen the vault to retry.`,
-        type: 'error',
-        duration: 0,
-      });
-      return null;
-    }
+  const tagFlush = await fileTagsStore.flushPendingSave();
+  if (!tagFlush.ok) {
+    uiStore.pushToast({
+      text: `${verb} updated the board files but failed to persist tag membership to .filo/tags.json. Reopen the vault to retry.`,
+      type: 'error',
+      duration: 0,
+    });
+    return null;
   }
   // Re-check before clearing the OLD vault's sentinel: a swap landed
   // during the tag flush, so keep the breadcrumb (the next open of that vault

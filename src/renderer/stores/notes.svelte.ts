@@ -44,6 +44,7 @@ import {
   snapshotBody,
   snapshotOf,
   readNoteText,
+  rawTextForDisk,
   type DiskSnapshot,
   type NoteText,
 } from '../lib/notes/noteFile';
@@ -678,6 +679,44 @@ export const noteStore = {
   ): Promise<string | null> {
     serializeViews(vaultPath(relPath));
     return writer.transform(relPath, fn, track);
+  },
+
+  /**
+   * The file's full text as it is on disk, for the raw view, once every
+   * queued change to it has been written. Null when it can't be read.
+   */
+  async readRaw(relPath: string): Promise<{ raw: string; hash: string; nonUtf8: boolean } | null> {
+    const identity = captureVaultIdentity();
+    await noteStore.flush(relPath);
+    const vaultRoot = getActiveVaultPath();
+    if (!vaultRoot || !isStillSameVault(identity)) return null;
+    try {
+      const fresh = await readNoteFresh(vaultRoot, relPath);
+      if (!isStillSameVault(identity)) return null;
+      return { raw: fresh.text.raw, hash: noteTextHash(fresh.text.raw), nonUtf8: fresh.nonUtf8 };
+    } catch {
+      return null;
+    }
+  },
+
+  /**
+   * Replaces the whole file with `text` from the raw view. It lands only if
+   * the file still holds the bytes the raw view started from (`basedOnHash`);
+   * otherwise nothing is written and the result is `conflict`, so a change
+   * made elsewhere meanwhile is never overwritten unseen. The file's BOM and
+   * line ending are kept. A note that isn't UTF-8 is never written.
+   */
+  async writeRaw(relPath: string, text: string, basedOnHash: string): Promise<'written' | 'unchanged' | 'conflict'> {
+    let conflict = false;
+    const written = await noteStore.transform(relPath, (fresh) => {
+      if (noteTextHash(fresh.raw) !== basedOnHash) {
+        conflict = true;
+        return null;
+      }
+      return rawTextForDisk(text, fresh);
+    });
+    if (conflict) return 'conflict';
+    return written === null ? 'unchanged' : 'written';
   },
 
   /** Writes a deleted note back (undo of a delete). */

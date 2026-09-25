@@ -44,21 +44,6 @@ export function defaultTileFontSizes(): { fontSizeTitle?: number; fontSizeBody?:
   };
 }
 
-/** Mind Map connection label. */
-export function defaultConnectionLabelFontSize(): number | undefined {
-  return getDefaultBoardFontSize()?.connectionLabel;
-}
-
-/** Mind Map frame title. */
-export function defaultFrameFontSize(): { fontSizeTitle?: number } {
-  return { fontSizeTitle: getDefaultBoardFontSize()?.frameTitle };
-}
-
-/** Kanban column title. */
-export function defaultKanbanColumnFontSize(): { fontSizeTitle?: number } {
-  return { fontSizeTitle: getDefaultBoardFontSize()?.kanbanColumnTitle };
-}
-
 /** Kanban card title + body — applied to a card tile's per-tile style. */
 export function defaultKanbanCardFontSizes(): { fontSizeTitle?: number; fontSizeBody?: number } {
   const bfs = getDefaultBoardFontSize();
@@ -71,11 +56,6 @@ export function defaultKanbanCardFontSizes(): { fontSizeTitle?: number; fontSize
 /** Task List task body (rendered as a row). */
 export function defaultTaskFontSizes(): { fontSizeTitle?: number } {
   return { fontSizeTitle: getDefaultBoardFontSize()?.taskItem };
-}
-
-/** Task List board title (stored on `board.settings.titleFontSize`). */
-export function defaultTaskListTitleFontSize(): number | undefined {
-  return getDefaultBoardFontSize()?.taskListTitle;
 }
 
 /**

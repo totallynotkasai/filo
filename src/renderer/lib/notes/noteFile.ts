@@ -65,9 +65,25 @@ export function readNoteText(raw: string): NoteText {
 
 const utf8 = new TextEncoder();
 
-/** UTF-8 byte length of `text` (its size on disk). */
-export function utf8ByteLength(text: string): number {
-  return utf8.encode(text).length;
+/**
+ * The file's full text as the raw view shows it: without the BOM and with LF
+ * line endings (a textarea reports LF whatever it was given).
+ */
+export function rawTextForView(raw: string): string {
+  // allow-bom-sniff: `raw` is the file's bytes as read, BOM included
+  return (raw.startsWith('\uFEFF') ? raw.slice(1) : raw).replace(/\r\n?/g, '\n');
+}
+
+/**
+ * Text typed in the raw view, as the bytes to write over `fresh`: the file's
+ * BOM and line ending are re-applied, so editing in the raw view never flips
+ * either.
+ */
+export function rawTextForDisk(edited: string, fresh: Pick<NoteText, 'hadBom' | 'eol'>): string {
+  // allow-bom-sniff: a pasted BOM is dropped; the file's own comes from the fresh read
+  const lf = edited.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  // allow-bom-sniff: re-applies the BOM the fresh read found
+  return (fresh.hadBom ? '\uFEFF' : '') + (fresh.eol === '\r\n' ? lf.replace(/\n/g, '\r\n') : lf);
 }
 
 /**

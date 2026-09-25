@@ -12,7 +12,7 @@ import { noteStore } from '@renderer/stores/notes.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
-import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
+import { fileTagsStore, type TagSweepOutcome } from '@renderer/stores/fileTags.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
 import { __resetRenameCascadeSentinelForTests } from '@renderer/lib/vault/renameCascadeSentinel';
@@ -113,8 +113,8 @@ describe('Audit-16 3.2 — recovery sequencer step-2 handlers are vault-identity
     // convergeForward (removal) → removeTagEverywhere; park it on a deferred
     // so the vault can swap while the cancel handler is mid-await.
     let resolveConverge!: () => void;
-    const converge = new Promise<void>((r) => {
-      resolveConverge = r;
+    const converge = new Promise<TagSweepOutcome>((r) => {
+      resolveConverge = () => r({ committed: true, writtenPaths: [] });
     });
     const remove = vi.spyOn(fileTagsStore, 'removeTagEverywhere').mockReturnValue(converge);
     const prune = vi.spyOn(fileTagsStore, 'pruneOrphanFileTags').mockImplementation(() => []);
@@ -135,7 +135,7 @@ describe('Audit-16 3.2 — recovery sequencer step-2 handlers are vault-identity
   });
 
   it('a swap that lands before the auto-cancel makes the whole handler a no-op', async () => {
-    const remove = vi.spyOn(fileTagsStore, 'removeTagEverywhere').mockResolvedValue(undefined);
+    const remove = vi.spyOn(fileTagsStore, 'removeTagEverywhere').mockResolvedValue({ committed: true, writtenPaths: [] });
     const prune = vi.spyOn(fileTagsStore, 'pruneOrphanFileTags').mockImplementation(() => []);
 
     const seq = __runRecoverySequencerForTests('/vault');
@@ -152,7 +152,7 @@ describe('Audit-16 3.2 — recovery sequencer step-2 handlers are vault-identity
   });
 
   it('positive control: without a swap, Discard converges and prunes as before', async () => {
-    const remove = vi.spyOn(fileTagsStore, 'removeTagEverywhere').mockResolvedValue(undefined);
+    const remove = vi.spyOn(fileTagsStore, 'removeTagEverywhere').mockResolvedValue({ committed: true, writtenPaths: [] });
     const prune = vi.spyOn(fileTagsStore, 'pruneOrphanFileTags').mockImplementation(() => []);
 
     const seq = __runRecoverySequencerForTests('/vault');

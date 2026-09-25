@@ -40,7 +40,7 @@
 
   // Per-pane scope; alias `boardStore` so call sites stay unchanged. See boardScope.svelte.ts.
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
-  let { tabId }: { tabId?: string } = $props(); // pane-correct via scope; accepted + ignored
+  let { tabId: _tabId }: { tabId?: string } = $props(); // pane-correct via scope; accepted + ignored
   const boardStore = scope.board;
   import TaskItemStylePopup from './TaskItemStylePopup.svelte';
   import TaskSectionStylePopup from './TaskSectionStylePopup.svelte';

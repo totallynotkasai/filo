@@ -23,12 +23,10 @@
 
   const MODAL_ID = 'relink-tile';
 
+  const isOpen = $derived(uiStore.isModalOpen(MODAL_ID));
   // Stored on the uiStore as a side-channel so we don't need to thread the
   // tile object through the modal API (`uiStore.openModal` is keyed by
   // string alone).
-  type RelinkContext = { tileId: string; expectedTypes: string[] };
-
-  const isOpen = $derived(uiStore.isModalOpen(MODAL_ID));
   const ctx = $derived(uiStore.relinkContext);
   let filter = $state('');
   let filterInputEl = $state<HTMLInputElement | null>(null);

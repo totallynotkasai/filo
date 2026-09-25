@@ -143,7 +143,6 @@ describe('repairRenameCascade bails on a vault swap', () => {
         oldPath: 'b1.board.json',
         newPath: 'sub/b1.board.json',
         affectedBoardIds: ['b1'],
-        tagsAffected: false,
       },
     ];
     const result = await repairRenameCascade(entries, '/vaultA', 'Retry', captured);

@@ -4,7 +4,6 @@ import { sectionIdForPlacementIndex } from '@renderer/lib/tasklist/sectionMath';
 import {
   AddTaskCommand,
   TogglePlacementLockCommand,
-  UpdatePlacementStyleCommand,
   ReorderTaskWithinSectionCommand,
 } from '@renderer/commands/index';
 import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
@@ -18,7 +17,6 @@ import type {
 /**
  * Phase 4 placement-level commands. Round-trip coverage:
  *   - TogglePlacementLockCommand  → flips placement.locked
- *   - UpdatePlacementStyleCommand → patch then wipe-and-restore on undo
  *   - ReorderTaskWithinSectionCommand → delegates to MoveTaskBlockCommand
  */
 
@@ -111,57 +109,6 @@ describe('TogglePlacementLockCommand', () => {
   it('description reflects the target state', () => {
     expect(new TogglePlacementLockCommand('tl', 't2', false, true).description).toBe('Lock task');
     expect(new TogglePlacementLockCommand('tl', 't2', true, false).description).toBe('Unlock task');
-  });
-});
-
-describe('UpdatePlacementStyleCommand', () => {
-  beforeEach(() => {
-    installFiloStub();
-    boardCacheStore.clear();
-    boardCacheStore.hydrate(
-      { tl: makeFixture() },
-      { tl: 'tasks.board.json' },
-    );
-  });
-  afterEach(() => boardCacheStore.clear());
-
-  it('execute applies the patch; undo restores absent style', () => {
-    const cmd = new UpdatePlacementStyleCommand(
-      'tl',
-      't1',
-      null,
-      { headerColor: '#fff', borderWidth: 2 } as never,
-    );
-    cmd.execute();
-    expect(placement('t1')?.style).toEqual({ headerColor: '#fff', borderWidth: 2 });
-    cmd.undo();
-    expect(placement('t1')?.style).toBeUndefined();
-  });
-
-  it('undo restores prior partial style after a merge patch', () => {
-    boardCacheStore.updateTaskPlacementStyle('tl', 't1', { headerColor: '#aaa' } as never);
-    const cmd = new UpdatePlacementStyleCommand(
-      'tl',
-      't1',
-      { headerColor: '#aaa' } as never,
-      { borderWidth: 4 } as never,
-    );
-    cmd.execute();
-    expect(placement('t1')?.style).toEqual({ headerColor: '#aaa', borderWidth: 4 });
-    cmd.undo();
-    expect(placement('t1')?.style).toEqual({ headerColor: '#aaa' });
-  });
-
-  it('snapshots inputs so post-construction mutation does not leak in', () => {
-    const before = { headerColor: '#aaa' };
-    const patch = { borderWidth: 3 };
-    const cmd = new UpdatePlacementStyleCommand('tl', 't1', before as never, patch as never);
-    (before as { headerColor: string }).headerColor = '#zzz';
-    (patch as { borderWidth: number }).borderWidth = 99;
-    cmd.execute();
-    expect(placement('t1')?.style).toEqual({ borderWidth: 3 });
-    cmd.undo();
-    expect(placement('t1')?.style).toEqual({ headerColor: '#aaa' });
   });
 });
 

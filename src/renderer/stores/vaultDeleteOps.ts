@@ -14,9 +14,8 @@ import { fileTagsStore } from './fileTags.svelte';
 import { uiStore } from './ui.svelte';
 import { historyStore } from './history.svelte';
 import { reindexUnder, toastMovedToTrash } from './trash.svelte';
-import { toVaultRelative } from '../lib/vault/vaultTreeSort';
 import { markRecentSelfWrite } from '../lib/boards/writeStateTracking';
-import { normalizePath, toPosix } from '../lib/utils/path';
+import { normalizePath, toPosix, toVaultRelative } from '../lib/utils/path';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import {
   PendingWritesFailedError,

@@ -58,10 +58,15 @@
   // undo/redo from the GlobalToolbar / hotkeys operate against the active
   // pane's board — the per-board stack stays valid because two panes
   // showing the same board share the same stack.
+  //
+  // A Document tab doesn't load a board into the scope (it reads the note
+  // store), so `scope.board.current` still names whatever board the pane
+  // showed before. Its undo stack is the tab's own id instead; otherwise
+  // Ctrl+Z in the Document tab would undo on that hidden board.
   $effect(() => {
     if (isActive) {
       setActiveScope(scope);
-      const id = scope.board.current?.id ?? null;
+      const id = tab?.boardType === 'document' ? tab.boardId : (scope.board.current?.id ?? null);
       historyStore.setActiveBoard(id);
     }
   });

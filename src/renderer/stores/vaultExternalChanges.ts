@@ -209,7 +209,6 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
                 oldPath: oldRel,
                 newPath: newRel,
                 affectedBoardIds: [],
-                tagsAffected: true,
               });
             } catch (sentinelErr) {
               reportError(
@@ -341,7 +340,6 @@ async function runExternalRenameCascade(
         // Include renamed boards (own .board.json moved), not just
         // reference-changed boards, so the breadcrumb names the full set.
         affectedBoardIds: [...new Set([...changedBoardIds, ...renamedBoardIds])],
-        tagsAffected: true,
       });
     } catch (err) {
       reportError(
@@ -429,15 +427,14 @@ async function runExternalRenameCascade(
   if (!hasCascadeWork) {
     // If the tag flush above failed, a tags-only rename has no board cascade
     // to carry a recovery sentinel. Lay down a minimal tags-only sentinel so
-    // reopen re-asserts the tag rename (`renameCascadeRepair` handles
-    // `tagsAffected` independently of `affectedBoardIds`).
+    // reopen re-asserts the tag rename (`renameCascadeRepair` always
+    // re-asserts tags.json keys, independently of `affectedBoardIds`).
     if (!tagsFlushOk && vaultRoot && oldRel && newRel) {
       try {
         await writePendingRenameCascade(vaultRoot, {
           oldPath: oldRel,
           newPath: newRel,
           affectedBoardIds: [],
-          tagsAffected: true,
         });
       } catch (err) {
         reportError(
@@ -461,9 +458,6 @@ async function runExternalRenameCascade(
         oldPath: oldRel,
         newPath: newRel,
         affectedBoardIds: [...changedBoardIds],
-        // Record the tags.json sink so recovery re-asserts the tag
-        // rename idempotently alongside the board cascade (see entry docs).
-        tagsAffected: true,
       });
     } catch (err) {
       reportError(

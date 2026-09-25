@@ -72,6 +72,16 @@ export const FIELD_READERS = {
     return v === 'completion' ? 'completion' : 'schedule';
   },
 
+  /**
+   * The original day a month-based schedule repeats on (see
+   * `recurrence.ts`). Only a well-formed `YYYY-MM-DD` counts; anything else
+   * reads as absent so the schedule re-anchors on the due date.
+   */
+  recurrenceAnchor(fm: Frontmatter): string | undefined {
+    const v = fm.recurrenceAnchor;
+    return typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v.trim()) ? v.trim() : undefined;
+  },
+
   category(fm: Frontmatter): string {
     const v = fm.category;
     return typeof v === 'string' ? v.trim() : '';

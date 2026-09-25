@@ -61,9 +61,3 @@ export async function runWithCloseDrain<T>(fn: () => Promise<T>): Promise<T> {
     }
   }
 }
-
-/** Test-only — force the gate back to idle (per-test cleanup). */
-export function __resetCloseDrainGateForTests(): void {
-  depth = 0;
-  draining = false;
-}

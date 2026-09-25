@@ -62,8 +62,9 @@ function rewritePath(current: string, oldPath: string, newPath: string): string 
 }
 
 /**
- * Iterates every "tile-like" object in a board file (placements, inlineTiles,
- * kanban cards, task data) and invokes `visit` for each.
+ * Iterates every object in a board file that can hold a file path (tile defs,
+ * frame styles, the mind-map frame defaults, Kanban columns and placements,
+ * a Document board) and invokes `visit` for each.
  * The visitor mutates the object in place; callers decide whether to write
  * the result back.
  *
@@ -74,9 +75,8 @@ function forEachTileLike(
   board: V7BoardFileData,
   visit: (tileId: string, tile: Record<string, unknown>) => void,
 ): void {
-  // Vault-backed tile definitions (image/video/audio/file) carry src/filePath.
-  // TileDefinition is .passthrough(), so its inferred type already carries
-  // an index signature compatible with Record<string, unknown>.
+  // Text defs name their note by `filePath`; media and file defs carry
+  // `src` / `filePath`.
   if (board.tileDefs) {
     for (const [id, def] of Object.entries(board.tileDefs)) {
       visit(id, def);
@@ -112,14 +112,10 @@ function forEachTileLike(
   }
 
   switch (b.type) {
-    case 'mindmap': {
-      // Inline tiles (link/iframe/timer) rarely hold file refs but scan
-      // anyway so future tile types extend here for free.
-      for (const [id, tile] of Object.entries(b.inlineTiles ?? {})) {
-        visit(id, tile);
-      }
+    case 'mindmap':
+      // Inline tiles (link/iframe/timer) have no file; their schema has no
+      // path field to scan.
       return;
-    }
     case 'kanban': {
       // Kanban placements carry a placement-level `coverImage` path that the
       // visitor needs to see for rename propagation and broken-ref detection.
@@ -298,11 +294,9 @@ export function findTilesToCascadeDelete(
   const boardSettingsClears: Record<string, BoardSettingsBackgroundClear[]> = {};
   let totalCount = 0;
 
-  // Track field names that should NOT trigger tile-removal when matched on a
-  // tile def. backgroundImage lands on tile defs only via passthrough leak —
-  // there's no tile type that legitimately stores it — but if a future
-  // version does, we don't want to nuke the whole tile because of a missing
-  // background. The frame-bg scan below handles the legitimate carriers.
+  // Only the fields that ARE the tile's file remove the tile. A cover or
+  // background image is decoration: its carrier stays and just the field is
+  // cleared (the scans below).
   const REMOVE_TILE_ON_MATCH_FIELDS = ['src', 'filePath'] as const;
 
   for (const [boardId, data] of Object.entries(boards)) {

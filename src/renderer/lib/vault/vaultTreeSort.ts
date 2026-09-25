@@ -175,15 +175,6 @@ export function treesEqual(a: FileTreeNode[], b: FileTreeNode[]): boolean {
   return true;
 }
 
-export function toVaultRelative(absolutePath: string, vaultPath: string): string | null {
-  if (!vaultPath) return null;
-  const root = normalizePath(vaultPath).toLowerCase();
-  const candidate = toPosix(absolutePath).toLowerCase();
-  if (candidate === root) return '';
-  if (!candidate.startsWith(root + '/')) return null;
-  return toPosix(absolutePath).slice(root.length + 1);
-}
-
 export function flattenTreePaths(nodes: FileTreeNode[], rootAbs: string): Set<string> {
   const out = new Set<string>();
   const root = normalizePath(rootAbs).toLowerCase();

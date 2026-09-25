@@ -34,7 +34,7 @@ const sentinel = (): string => ownSentinelPath('rename-cascade');
 function sentinelJson(oldPath: string, newPath: string): string {
   return JSON.stringify({
     entries: [
-      { id: 'r1', timestamp: 1, oldPath, newPath, affectedBoardIds: [], tagsAffected: false },
+      { id: 'r1', timestamp: 1, oldPath, newPath, affectedBoardIds: [] },
     ],
   });
 }
@@ -245,8 +245,8 @@ describe('recovery sequencer — 6.2.H2: awaitConfirm awaits onConfirm', () => {
     // dialog because `void convergeForward()` fires-and-forgets; the
     // deferred staying pending would NOT block `await seq`.
     let resolveDeferred!: () => void;
-    const deferred = new Promise<void>((r) => {
-      resolveDeferred = r;
+    const deferred = new Promise<{ committed: boolean; writtenPaths: string[] }>((r) => {
+      resolveDeferred = () => r({ committed: true, writtenPaths: [] });
     });
     vi.spyOn(fileTagsStore, 'renameTagEverywhere').mockReturnValue(deferred);
 

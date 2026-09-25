@@ -4,11 +4,10 @@ import { fileTagsStore } from './fileTags.svelte';
 import { uiStore } from './ui.svelte';
 import { vaultIndexStore } from './vaultIndex.svelte';
 import { computeMoveIntoFolderTarget } from '../lib/vault/moveIntoFolder';
-import { toVaultRelative } from '../lib/vault/vaultTreeSort';
 import { cancelBoardWrite } from '../lib/boards/boardSaver';
 import { markRecentSelfWrite } from '../lib/boards/writeStateTracking';
 import { reportError } from '../lib/utils/errorBus';
-import { normalizePath, stripLeadingSlash } from '../lib/utils/path';
+import { normalizePath, stripLeadingSlash, toVaultRelative } from '../lib/utils/path';
 import {
   writePendingRenameCascade,
   clearPendingRenameCascade,
@@ -309,11 +308,6 @@ async function runRename(
             // alongside reference-changed boards so the breadcrumb names the
             // full affected set, regardless of how boards are rediscovered.
             affectedBoardIds: [...new Set([...changedBoardIds, ...renamedBoardIds])],
-            // A file/folder rename always touches the tags.json sink
-            // (idempotently re-asserted on recovery). Recorded so a crash in
-            // the disk-rename → tag-flush window is fully recoverable, not
-            // just the board half.
-            tagsAffected: true,
           });
         } catch (err) {
           reportError(
@@ -386,10 +380,12 @@ async function runRename(
         // The peer calls (renameFile, renameKey, propagateRename, …) aren't
         // migrated to the registry; the gate's EXEMPT_OWNERS list documents them.
         renameAllPathKeys(oldRel, newRel);
-        // Mirror the rename into `.filo/tags.json`. The exact-match call
-        // covers the file-rename case (`Notes.md` → `Bar.md`) and the
-        // folder-prefix call covers the folder-rename case (`Sub` → `New`,
-        // which rewrites every `Sub/foo.md` key). The two helpers don't
+        // Media tags live in `.filo/tags.json` keyed by path, so they follow
+        // the rename here. A note's title and tags are in its frontmatter and
+        // move with the bytes: a rename never writes the note. The exact-match
+        // call covers a file rename (`a.png` → `b.png`) and the folder-prefix
+        // call covers a folder rename (`Sub` → `New`, which rewrites every
+        // `Sub/…` key). The two helpers don't
         // overlap — a file's exact-match key never starts with `oldRel/`
         // and a folder never has an exact-match key — so calling both is
         // safe and avoids a "is this a folder?" tree lookup at the call
@@ -408,10 +404,10 @@ async function runRename(
         // `{ ok:false }` on the realistic write-failure path (the misc
         // scheduler catches the IPC error internally) and only throws on the
         // narrow synchronous-getArgs path, so guard both. On failure we KEEP
-        // the rename-cascade sentinel below (it already carries
-        // `tagsAffected:true`) so the next vault open re-asserts the tag rename
-        // — without this, the full-success branch would clear the sentinel and
-        // a failed tag rename would be silently unrecoverable.
+        // the rename-cascade sentinel below, whose recovery always re-asserts
+        // the tags.json keys — without this, the full-success branch would
+        // clear the sentinel and a failed tag rename would be silently
+        // unrecoverable.
         let tagsFlushOk = true;
         try {
           const tagsFlush = await fileTagsStore.flushPendingSave();
@@ -490,11 +486,11 @@ async function runRename(
           }
         } else if (sentinelId && tagsFlushOk) {
           // Full success path: drop the sentinel so the recovery prompt
-          // doesn't surface on next open. Gated on `tagsFlushOk`: if the board cascade flushed cleanly but the
-          // tag-membership flush above FAILED, we deliberately leave the
-          // sentinel (it carries `tagsAffected:true`) so the next vault open
-          // re-asserts the tag rename. Recovery handles `tagsAffected`
-          // idempotently and independently of the (already-flushed) board IDs.
+          // doesn't surface on next open. Gated on `tagsFlushOk`: if the
+          // board cascade flushed cleanly but the tag-membership flush above
+          // FAILED, we deliberately leave the sentinel so the next vault open
+          // re-asserts the tag rename (idempotently, independently of the
+          // already-flushed board IDs).
           await clearPendingRenameCascade(vaultPath, sentinelId).catch((err) => {
             reportError('vault.rename.sentinel', err, "Couldn't clear completed rename-cascade sentinel");
           });

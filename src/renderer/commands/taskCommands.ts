@@ -439,52 +439,6 @@ export class TogglePlacementLockCommand extends Command {
 }
 
 /**
- * Applies a partial style patch to a Task List placement. The cache method
- * *merges* the patch onto any existing style, so to restore the prior state
- * exactly we wipe the placement style (pass `null`) and then re-apply the
- * full snapshot. The wipe round-trips cleanly because `null` / `{}` deletes
- * `placement.style` in `boardCacheStore.updateTaskPlacementStyle`.
- */
-export class UpdatePlacementStyleCommand extends Command {
-  description: string;
-  readonly targetBoardId: string;
-  private boardId: string;
-  private tileId: string;
-  private beforeStyle: PartialTaskStyle | null;
-  private afterPatch: PartialTaskStyle;
-
-  constructor(
-    boardId: string,
-    tileId: string,
-    beforeStyle: PartialTaskStyle | null,
-    afterPatch: PartialTaskStyle,
-    description?: string,
-  ) {
-    super();
-    this.targetBoardId = boardId;
-    this.boardId = boardId;
-    this.tileId = tileId;
-    // Deep-clone the style payloads so nested colour / font
-    // overrides can't leak through caller-side reference mutation.
-    this.beforeStyle = beforeStyle ? this.snapshot(beforeStyle) : null;
-    this.afterPatch = this.snapshot(afterPatch);
-    this.description = description ?? 'Update task style';
-  }
-
-  execute() {
-    boardCacheStore.updateTaskPlacementStyle(this.boardId, this.tileId, { ...this.afterPatch });
-  }
-
-  undo() {
-    // Wipe first so the cache method's merge becomes a wholesale replace.
-    boardCacheStore.updateTaskPlacementStyle(this.boardId, this.tileId, null);
-    if (this.beforeStyle && Object.keys(this.beforeStyle).length > 0) {
-      boardCacheStore.updateTaskPlacementStyle(this.boardId, this.tileId, { ...this.beforeStyle });
-    }
-  }
-}
-
-/**
  * Alt+Up / Alt+Down within a Task List section. Delegates to
  * `MoveTaskBlockCommand` so the actual replay path is the same proven
  * snapshot/restore that drag-reorder uses — this class is the entry point

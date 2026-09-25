@@ -253,7 +253,6 @@ describe('Audit-7 L17 — rename-cascade sentinel laid before the tag-flush bail
     expect(entry.oldPath).toBe('Old.md');
     expect(entry.newPath).toBe('New.md');
     expect(entry.affectedBoardIds).toEqual(['b1']);
-    expect(entry.tagsAffected).toBe(true);
 
     // …and the swap actually triggered the post-flush bail.
     expect(renameKey).not.toHaveBeenCalled();

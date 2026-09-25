@@ -311,8 +311,3 @@ export async function deleteTrashedPermanently(vaultRoot: string, trashIds: stri
   }
   return deleted;
 }
-
-/** Where an entry's item sits inside the trash (absolute). */
-export function trashedItemPath(vaultRoot: string, trashId: string, originalPath: string): string {
-  return itemPathOf(vaultRoot, trashId, originalPath);
-}

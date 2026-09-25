@@ -7,7 +7,6 @@ import {
   createFolder,
   renameItem,
   deleteItem,
-  readFileContents,
   readFileWithCoherentStat,
   VaultTooLargeError,
   VaultTreeTooLargeError,

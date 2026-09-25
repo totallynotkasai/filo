@@ -6,7 +6,7 @@ import { historyStore, type Command } from '../../stores/history.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { noteStore } from '../../stores/notes.svelte';
 import { BatchCommand, UpdateTaskFieldCommand } from '../../commands/index';
-import { nextDueDate } from '../tasks/recurrence';
+import { nextDueDate, recurrenceAnchorToRecord } from '../tasks/recurrence';
 import type { Priority } from '../tasks/frontmatterReaders';
 import type { TaskRow } from '../tasks/taskListModel';
 
@@ -46,15 +46,38 @@ export function completionPatchForRow(
   now: Date = new Date(),
 ): Record<string, unknown> {
   if (row.recurrence) {
-    let next = nextDueDate(row.dueDate || undefined, row.recurrence, row.recurrenceMode, now);
+    const due = row.dueDate || undefined;
+    let next = nextDueDate(due, row.recurrence, row.recurrenceMode, now, row.recurrenceAnchor);
     // Schedule mode with no anchor date returns null; fall back to
     // completion-mode (next = completion day + interval) so recurrence survives.
     if (!next && row.recurrenceMode !== 'completion') {
-      next = nextDueDate(row.dueDate || undefined, row.recurrence, 'completion', now);
+      next = nextDueDate(due, row.recurrence, 'completion', now);
     }
-    if (next) return { completed: false, dueDate: next };
+    if (next) {
+      const patch: Record<string, unknown> = { completed: false, dueDate: next };
+      // The new due date may be a month-end clamp that forgets the original
+      // day, so remember it in the same delta. A stale anchor (the due date
+      // was moved by hand) is dropped so it can't be revived by a later move
+      // onto a day it happens to match.
+      const anchor = recurrenceAnchorToRecord(due, row.recurrence, row.recurrenceMode, row.recurrenceAnchor);
+      if (anchor) {
+        if (anchor !== row.recurrenceAnchor) patch.recurrenceAnchor = anchor;
+      } else if (row.recurrenceAnchor) {
+        patch.recurrenceAnchor = '';
+      }
+      return patch;
+    }
   }
   return { completed: true };
+}
+
+/**
+ * The frontmatter patch for setting or clearing a task's recurrence. The
+ * anchor belongs to the old rule, so it is unset in the same delta (an empty
+ * value deletes the key).
+ */
+export function recurrenceChangePatch(recurrence: string): Record<string, unknown> {
+  return { recurrence, recurrenceAnchor: '' };
 }
 
 export interface FrontmatterWriterDeps {
@@ -168,7 +191,7 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
   function setRecurrence(row: TaskRow, recurrence: string): Promise<void> {
     // Clearing recurrence intentionally leaves `recurrenceMode` in place so
     // a later re-add picks up the user's last-chosen mode.
-    return updateRowField(row, { recurrence });
+    return updateRowField(row, recurrenceChangePatch(recurrence));
   }
 
   function cyclePriority(row: TaskRow): Promise<void> {

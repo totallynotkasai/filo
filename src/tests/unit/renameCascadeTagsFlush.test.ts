@@ -212,7 +212,6 @@ describe('rename cascade — synchronous tags.json flush (F3)', () => {
     expect(sentinelWrites.length).toBeGreaterThanOrEqual(1);
     const payload = JSON.parse(sentinelWrites[sentinelWrites.length - 1]);
     const entry = payload.entries[payload.entries.length - 1];
-    expect(entry.tagsAffected).toBe(true);
     expect(entry.affectedBoardIds).toEqual([]);
     expect(entry.oldPath).toBe('Old.md');
     expect(entry.newPath).toBe('New.md');

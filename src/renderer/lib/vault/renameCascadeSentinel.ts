@@ -20,6 +20,15 @@
  * cascade against the freshly-loaded cache. The retry is idempotent: a
  * board that already flushed simply has no propagateRename matches left.
  *
+ * An entry is path rewrites only: old path, new path, and which boards to
+ * re-save. Everything a retry repairs is keyed by path — board file refs,
+ * the path-keyed stores, and media tags in `.filo/tags.json` — so nothing
+ * else needs recording. A rename never writes the note itself (its title
+ * and tags are in its frontmatter and move with the bytes).
+ *
+ * A file that doesn't parse as this shape reads as `unreadable`: it is kept
+ * on disk and surfaced to the user, never overwritten or replayed.
+ *
  * Mirrors the tag-rewrite-sweep pattern. Lives in `lib/vault/`
  * because it's pure I/O orchestration (no UI). The store layer
  * (vaultRecovery) reads the sentinel on vault open and wires the retry
@@ -63,23 +72,6 @@ export interface RenameCascadeEntry {
    * specific files the user needs to know about.
    */
   failedBoardIds?: string[];
-  /**
-   * True when the rename also touched the `.filo/tags.json` tag-membership
-   * sink (a file/folder rename moves `fileTags[oldPath]` → `fileTags[newPath]`).
-   * Recovery re-asserts the tag rename (idempotently) alongside the board
-   * cascade, so a crash between the disk rename and the tag flush can't leave
-   * `tags.json` keyed by the OLD path.
-   *
-   * Optional + defaults to `false` on read so older board-only sentinels
-   * still parse (their recovery skips the tag re-assert).
-   *
-   * Note on the "frontmatter" sink: a file rename does NOT write the renamed
-   * file's frontmatter — the OS moves the bytes as-is and frontmatter
-   * encodes no self-path, so there is no frontmatter sink to record for a
-   * rename. (Tag *renames*, a different operation, rewrite frontmatter via
-   * the separate `tagRewriteSentinel`.)
-   */
-  tagsAffected?: boolean;
 }
 
 interface SentinelFile {
@@ -141,30 +133,28 @@ async function readSentinelInternal(vaultRoot: string): Promise<ReadResult> {
     const parsed = JSON.parse(content) as Partial<SentinelFile>;
     if (!Array.isArray(parsed.entries)) return { unreadable: true };
     const entries: RenameCascadeEntry[] = [];
-    for (const raw of parsed.entries) {
+    for (const raw of parsed.entries as unknown[]) {
+      if (!raw || typeof raw !== 'object') return { unreadable: true };
+      const e = raw as Partial<RenameCascadeEntry>;
       if (
-        !raw ||
-        typeof raw !== 'object' ||
-        typeof (raw as RenameCascadeEntry).id !== 'string' ||
-        typeof (raw as RenameCascadeEntry).timestamp !== 'number' ||
-        typeof (raw as RenameCascadeEntry).oldPath !== 'string' ||
-        typeof (raw as RenameCascadeEntry).newPath !== 'string' ||
-        !Array.isArray((raw as RenameCascadeEntry).affectedBoardIds) ||
-        !(raw as RenameCascadeEntry).affectedBoardIds.every((b) => typeof b === 'string')
+        typeof e.id !== 'string' ||
+        typeof e.timestamp !== 'number' ||
+        typeof e.oldPath !== 'string' ||
+        typeof e.newPath !== 'string' ||
+        !Array.isArray(e.affectedBoardIds) ||
+        !e.affectedBoardIds.every((b) => typeof b === 'string')
       ) {
         return { unreadable: true };
       }
       entries.push({
-        id: (raw as RenameCascadeEntry).id,
-        timestamp: (raw as RenameCascadeEntry).timestamp,
-        oldPath: (raw as RenameCascadeEntry).oldPath,
-        newPath: (raw as RenameCascadeEntry).newPath,
-        affectedBoardIds: (raw as RenameCascadeEntry).affectedBoardIds,
-        failedBoardIds: Array.isArray((raw as RenameCascadeEntry).failedBoardIds)
-          ? (raw as RenameCascadeEntry).failedBoardIds!.filter((b) => typeof b === 'string')
+        id: e.id,
+        timestamp: e.timestamp,
+        oldPath: e.oldPath,
+        newPath: e.newPath,
+        affectedBoardIds: e.affectedBoardIds,
+        failedBoardIds: Array.isArray(e.failedBoardIds)
+          ? e.failedBoardIds.filter((b) => typeof b === 'string')
           : undefined,
-        // Defaults to false for older board-only sentinels.
-        tagsAffected: (raw as RenameCascadeEntry).tagsAffected === true,
       });
     }
     return { entries };

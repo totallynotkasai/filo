@@ -15,8 +15,6 @@ import {
   __resetRenameCascadeSentinelForTests,
 } from '@renderer/lib/vault/renameCascadeSentinel';
 
-const SENTINEL_PATH = '.filo/rename-cascade-pending.a1b2c3d4e5f6.json';
-
 type InvokeHandler = (...args: unknown[]) => unknown | Promise<unknown>;
 
 function installStub(routes: Record<string, InvokeHandler>): void {
@@ -179,7 +177,7 @@ describe('renameCascadeSentinel (Sprint 35.3)', () => {
     expect(res.entries![0].affectedBoardIds).toEqual(['b1', 'b2', 'b3']);
   });
 
-  it('E5 — round-trips the tagsAffected sink flag', async () => {
+  it('an entry holds only path rewrites (no title or tag repair fields)', async () => {
     const { routes } = buildFsStub();
     installStub(routes);
 
@@ -187,35 +185,27 @@ describe('renameCascadeSentinel (Sprint 35.3)', () => {
       oldPath: 'Notes/old.md',
       newPath: 'Notes/new.md',
       affectedBoardIds: ['boardA'],
-      tagsAffected: true,
     });
 
     const res = await readPendingRenameCascades('/vault');
-    expect(res.entries![0].tagsAffected).toBe(true);
+    expect(Object.keys(res.entries![0]).sort()).toEqual(
+      ['affectedBoardIds', 'failedBoardIds', 'id', 'newPath', 'oldPath', 'timestamp'],
+    );
   });
 
-  it('E5 — defaults tagsAffected to false for a board-only (pre-E5) sentinel', async () => {
-    // A sentinel written by an older build has no `tagsAffected` field; the
-    // reader must treat it as false so its recovery skips the tag re-assert.
+  it('returns unreadable (never replayed) for an entry missing a path field', async () => {
     installStub({
       'vault:read-file-text': () => ({
         success: true,
         content: JSON.stringify({
-          entries: [
-            {
-              id: 'legacy1',
-              timestamp: 1,
-              oldPath: 'a',
-              newPath: 'a2',
-              affectedBoardIds: ['b1'],
-            },
-          ],
+          entries: [{ id: 'e1', timestamp: 1, oldPath: 'a', affectedBoardIds: [] }],
         }),
       }),
     });
 
     const res = await readPendingRenameCascades('/vault');
-    expect(res.entries![0].tagsAffected).toBe(false);
+    expect(res.unreadable).toBe(true);
+    expect(res.entries).toBeUndefined();
   });
 
   it('returns unreadable when the file content is invalid JSON', async () => {

@@ -38,6 +38,7 @@ export interface TaskRow {
   parent: string;
   recurrence: string;
   recurrenceMode: RecurrenceMode;
+  recurrenceAnchor?: string;
   category: string;
 }
 

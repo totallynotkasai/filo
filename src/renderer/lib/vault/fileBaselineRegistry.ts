@@ -267,15 +267,6 @@ export function assertBaselinesSeeded(paths: Iterable<string>, label: string): v
 registerPathRenamable('fileBaselineRegistry', renameBaselinePath);
 
 /**
- * Test-only — exposes the internal Map size so unit tests can assert
- * the registry was populated / drained as expected. Production code
- * should never need this.
- */
-export function __baselineCountForTests(): number {
-  return baselines.size;
-}
-
-/**
  * Test-only — wipes every entry. Production callers route through
  * `resetAllBaselines` (named for the vault-swap intent).
  */

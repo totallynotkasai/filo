@@ -1,11 +1,6 @@
 <script lang="ts">
   import type { ImageTile } from '../../schema/index';
-  import { getContext } from 'svelte';
-  import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
-
-  const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
-  const boardStore = scope.board;
   import { toMediaUrl } from '../../lib/utils/mediaUrl';
   import IconButton from '../shared/IconButton.svelte';
   import { historyStore } from '../../stores/history.svelte';

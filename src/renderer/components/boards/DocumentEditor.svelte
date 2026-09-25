@@ -1,10 +1,9 @@
 <script lang="ts">
   /**
    * DocumentEditor — full-page Tiptap rich text editor for a single .md
-   * document. Reads/writes from the document store; the backing file lives
-   * in the vault. Renders the per-board styling cascade + frontmatter tags
-   * + vault-file drop ergonomics that the old V2 DocumentBoard provided,
-   * but persists via the disk-backed document store.
+   * note. Every view of the note shares its model in the note store; the
+   * backing file lives in the vault. Renders the per-board styling cascade,
+   * the note's tag row and vault-file drop handling.
    */
   import { onMount, onDestroy, untrack } from 'svelte';
   import { tabStore } from '../../stores/tabs.svelte';
@@ -16,7 +15,6 @@
   import { isNonUtf8 } from '../../lib/vault/nonUtf8Paths.svelte';
   import { confirmConvertToUtf8 } from '../../lib/vault/convertToUtf8';
   import { uiStore } from '../../stores/ui.svelte';
-  import { fileTagsStore } from '../../stores/fileTags.svelte';
   import { boardCacheStore } from '../../stores/boardCache.svelte';
   import { tiptapToolbar } from '../../lib/editor/toolbarConfig';
   import { createTiptapEditor } from '../../lib/editor/createEditor';
@@ -25,13 +23,10 @@
   import { reportError } from '../../lib/utils/errorBus';
   import { effectiveDocumentStyle } from '../../lib/styles/effectiveStyle';
   import { vaultRelativeFromAbsolute } from '../../lib/canvas/vaultPath';
-  import { portal } from '../../lib/utils/portal';
-  import { getAnchorBelow } from '../../lib/utils/popupAnchor';
   import { ACCENT_COLOR } from '../../constants/defaults';
   import BoardBackground from '../canvas/BoardBackground.svelte';
-  import TagBadge from '../tags/TagBadge.svelte';
-  import TagEditor from '../tags/TagEditor.svelte';
-  import TagsPopupMenu from '../tags/TagsPopupMenu.svelte';
+  import NoteTagRow from '../tags/NoteTagRow.svelte';
+  import NoteRawView from './NoteRawView.svelte';
   import type { DocumentBoard } from '../../schema/index';
   import type { Editor } from '@tiptap/core';
 
@@ -151,37 +146,6 @@
     }
   }
 
-  // ── Frontmatter tags strip ──
-  //
-  // A Document board edits a `.md` file. Its frontmatter `tags:` list is
-  // canonical, but the editor doesn't surface those tags anywhere — surface
-  // a chip strip above the editor backed by `fileTagsStore.tagsForFile`
-  // (the note's frontmatter); the file-path mode of TagEditor adds/removes
-  // tags in that frontmatter.
-  let documentTags = $derived.by<string[]>(() => {
-    const path = docPath;
-    if (!path) return [];
-    return fileTagsStore.tagsForFile(path);
-  });
-
-  let tagEditorPopup = $state<{ x: number; y: number } | null>(null);
-  let tagPopup = $state<{ tagName: string; x: number; y: number } | null>(null);
-
-  function openDocumentTagEditor(e: MouseEvent) {
-    e.stopPropagation();
-    tagEditorPopup = getAnchorBelow(e.currentTarget as HTMLElement);
-  }
-
-  function handleTagClick(tagName: string, e: MouseEvent) {
-    e.stopPropagation();
-    if (tagPopup?.tagName === tagName) {
-      tagPopup = null;
-    } else {
-      tagPopup = { tagName, x: e.clientX, y: e.clientY };
-    }
-  }
-  function closeTagPopup() { tagPopup = null; }
-
   onMount(() => {
     if (!editorElement) return;
 
@@ -263,6 +227,22 @@
     untrack(() => setEditorEditable(editor, !frozen));
   });
 
+  // The raw view shows the whole file as text. The rich editor stays mounted
+  // underneath (hidden) so it keeps following the note.
+  let rawMode = $state(false);
+  let rawView: NoteRawView | undefined = $state();
+
+  async function toggleRaw(): Promise<void> {
+    if (rawMode) {
+      await rawView?.save();
+      rawMode = false;
+      return;
+    }
+    // Hand the model every keystroke, so the raw text includes them.
+    view.serialize();
+    rawMode = true;
+  }
+
   function retryRead(): void {
     if (docPath) void noteStore.reload(docPath);
   }
@@ -320,62 +300,33 @@
         </div>
       {/if}
       {#if docPath}
-        <div class="document-tags-bar" aria-label="Document tags">
-          {#each documentTags as name (name)}
-            <TagBadge tagName={name} size="sm" onClick={(e) => handleTagClick(name, e)} />
-          {/each}
+        <div class="document-header">
+          <div class="document-tags-bar">
+            {#if !rawMode}
+              <NoteTagRow path={docPath} boardId={tab?.boardId ?? ''} readOnly={nonUtf8 || unreadable || missing} />
+            {/if}
+          </div>
           <button
             type="button"
-            class="document-tags-edit"
-            onclick={openDocumentTagEditor}
-            title={documentTags.length > 0 ? 'Edit tags' : 'Add tags'}
-            aria-label={documentTags.length > 0 ? 'Edit document tags' : 'Add document tags'}
+            class="raw-toggle"
+            aria-pressed={rawMode}
+            title={rawMode ? 'Back to the formatted view' : 'View raw Markdown'}
+            aria-label={rawMode ? 'Back to the formatted view' : 'View raw Markdown'}
+            disabled={unreadable || missing}
+            onclick={() => void toggleRaw()}
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
-              <line x1="7" y1="7" x2="7.01" y2="7"/>
-              {#if documentTags.length === 0}
-                <line x1="14" y1="11" x2="20" y2="11" stroke-width="2.5"/>
-                <line x1="17" y1="8" x2="17" y2="14" stroke-width="2.5"/>
-              {/if}
-            </svg>
-            {#if documentTags.length === 0}<span>Add tags</span>{/if}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            <span>{rawMode ? 'Formatted' : 'Raw'}</span>
           </button>
         </div>
       {/if}
-      <div class="document-editor" bind:this={editorElement}></div>
+      {#if rawMode && docPath}
+        <NoteRawView bind:this={rawView} path={docPath} readOnly={nonUtf8} />
+      {/if}
+      <div class="document-editor" class:raw-hidden={rawMode} bind:this={editorElement}></div>
     </div>
   </div>
 </div>
-
-{#if tagEditorPopup && docPath}
-  <div
-    class="document-tag-popup-overlay"
-    role="presentation"
-    onclick={() => tagEditorPopup = null}
-    onkeydown={(e) => { if (e.key === 'Escape') tagEditorPopup = null; }}
-  ></div>
-  <div class="document-tag-popup-anchor" style="position: fixed; left: {tagEditorPopup.x}px; top: {tagEditorPopup.y}px;">
-    <TagEditor filePath={docPath} onClose={() => tagEditorPopup = null} />
-  </div>
-{/if}
-
-{#if tagPopup}
-  <div
-    use:portal
-    class="tag-popup-overlay"
-    onclick={closeTagPopup}
-    onkeydown={(e) => { if (e.key === 'Escape') closeTagPopup(); }}
-    role="presentation"
-  ></div>
-  <div
-    use:portal
-    class="tag-popup-anchor"
-    style="position: fixed; left: {tagPopup.x}px; top: {tagPopup.y}px; z-index: var(--z-tile-popup);"
-  >
-    <TagsPopupMenu tagName={tagPopup.tagName} onClose={closeTagPopup} />
-  </div>
-{/if}
 
 <style>
   .document-board {
@@ -402,40 +353,46 @@
     min-height: 100%;
   }
 
-  .document-tags-bar {
+  .document-header {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--tag-row-gap);
+    align-items: flex-start;
+    gap: 12px;
     margin-bottom: 16px;
   }
 
-  .document-tags-edit {
+  .document-tags-bar {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .raw-toggle {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 2px 8px;
+    flex-shrink: 0;
+    padding: 3px 8px;
+    border: 1px solid var(--ui-border);
     border-radius: 4px;
     background: transparent;
-    border: 1px dashed var(--ui-border);
     color: var(--text-tertiary);
-    cursor: pointer;
     font-size: 11px;
-    transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
-  }
-  .document-tags-edit:hover {
-    background: var(--ui-surface-hover);
-    color: var(--text-primary);
-    border-color: var(--text-tertiary);
+    cursor: pointer;
+    transition: background-color 0.12s ease, color 0.12s ease;
   }
 
-  .document-tag-popup-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: var(--z-tile-popup-overlay);
+  .raw-toggle:hover:not(:disabled),
+  .raw-toggle[aria-pressed='true'] {
+    background: var(--ui-surface-hover);
+    color: var(--text-primary);
   }
-  .document-tag-popup-anchor {
-    z-index: var(--z-tile-popup);
+
+  .raw-toggle:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .document-editor.raw-hidden {
+    display: none;
   }
 
   .document-paper {

@@ -217,7 +217,6 @@ describe('A9-L9 — repairRenameCascade re-applies the moved board path key', ()
         oldPath: 'b1.board.json',
         newPath: 'sub/b1.board.json',
         affectedBoardIds: ['b1'],
-        tagsAffected: false,
       },
     ];
 
@@ -230,5 +229,24 @@ describe('A9-L9 — repairRenameCascade re-applies the moved board path key', ()
     expect(markDirtySpy).toHaveBeenCalledWith('b1');
     expect(flushSpy).toHaveBeenCalled();
     expect(repaired).toBe(1);
+  });
+
+  it('re-asserts the media-tag keys in tags.json for every entry and keeps the sentinel if that flush fails', async () => {
+    vi.spyOn(boardCacheStore, 'ensureAllLoaded').mockResolvedValue(undefined);
+    vi.spyOn(boardCacheStore, 'flushAllDirty').mockResolvedValue({ failed: [] });
+    const renameFile = vi.spyOn(fileTagsStore, 'renameFile').mockImplementation(() => {});
+    const renameFolder = vi.spyOn(fileTagsStore, 'renameFolder').mockImplementation(() => {});
+    vi.spyOn(fileTagsStore, 'flushPendingSave').mockResolvedValue({ ok: false });
+
+    const entries: RenameCascadeEntry[] = [
+      { id: 'e1', timestamp: 1, oldPath: 'img/a.png', newPath: 'img/b.png', affectedBoardIds: [] },
+      { id: 'e2', timestamp: 2, oldPath: 'Media', newPath: 'Assets', affectedBoardIds: [] },
+    ];
+    const repaired = await repairRenameCascade(entries, '/vault', 'Retry', captureVaultIdentity());
+
+    expect(renameFile).toHaveBeenCalledWith('img/a.png', 'img/b.png');
+    expect(renameFolder).toHaveBeenCalledWith('Media', 'Assets');
+    // A failed tags.json write keeps the breadcrumb (null = not cleared).
+    expect(repaired).toBeNull();
   });
 });

@@ -11,11 +11,11 @@ import {
   sortTree,
   filterTree,
   treesEqual,
-  toVaultRelative,
   flattenTreePaths,
   directoryExistsInTree,
   type SortConfig,
 } from '@renderer/lib/vault/vaultTreeSort';
+import { toVaultRelative } from '@renderer/lib/utils/path';
 
 function file(name: string, opts: Partial<FileTreeNode> = {}): FileTreeNode {
   return {

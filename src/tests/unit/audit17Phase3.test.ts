@@ -4,7 +4,6 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import {
   withDrainedWrites,
-  PendingWritesFailedError,
   __resetDrainGuardForTests,
 } from '@renderer/lib/vault/vaultOperations';
 import { scheduleMiscWrite } from '@renderer/lib/boards/miscWriteScheduler';
@@ -451,13 +450,12 @@ describe('Audit-17 3.6 — external rename drain failure writes the rename-casca
     // next-open recovery replays it — including the tags.json re-assert.
     expect(sentinelWrites).toHaveLength(1);
     const parsed = JSON.parse(sentinelWrites[0] ?? '{}') as {
-      entries: Array<{ oldPath: string; newPath: string; tagsAffected?: boolean }>;
+      entries: Array<{ oldPath: string; newPath: string }>;
     };
     expect(parsed.entries).toHaveLength(1);
     expect(parsed.entries[0]).toMatchObject({
       oldPath: 'Old.md',
       newPath: 'New.md',
-      tagsAffected: true,
     });
   });
 });

@@ -14,7 +14,7 @@ const LOC_LIMIT = 1000;
 // Files over LOC_LIMIT, each pinned at its current LOC. They may shrink, not
 // grow; the remedy for an over-limit file is to split it, not to raise its row.
 const FILE_SIZE_ALLOWLIST = {
-  'src/renderer/components/boards/TaskListBoard.svelte': 2070,
+  'src/renderer/components/boards/TaskListBoard.svelte': 2069,
   'src/renderer/components/boards/KanbanSideToolbar.svelte': 1503,
   'src/renderer/components/boards/TaskItem.svelte': 1522,
   'src/renderer/components/boards/KanbanBoard.svelte': 1450,
@@ -33,6 +33,8 @@ const CHARACTERISATION_SPECS = {
   'noteModel.test.ts': 13,
   'oneModel.test.ts': 4,
   'trash.test.ts': 9,
+  'tagUndo.test.ts': 4,
+  'tagRowAndRawView.test.ts': 7,
 };
 
 // Board format v8: a def names its file and stores only visuals. These are

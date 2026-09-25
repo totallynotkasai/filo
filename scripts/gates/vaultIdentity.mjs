@@ -44,6 +44,7 @@ const GUARD_PINNED = [
   { file: 'src/renderer/stores/boardDiscovery.ts', names: ['adoptOnce', 'adoptAndFindBoard'] },
   { file: 'src/renderer/stores/boardProvisionalMissing.ts', names: ['recheckProvisionalBoard'] },
   { file: 'src/renderer/stores/fileTags.svelte.ts', names: ['scheduleSave'] },
+  { file: 'src/renderer/stores/tagUndo.svelte.ts', names: ['removeTagWithUndo', 'undoRemoval', 'renameTagWithUndo', 'undoRename'] },
 ];
 const RESERVED = new Set([
   'if', 'for', 'while', 'switch', 'catch', 'with', 'return', 'throw', 'typeof', 'void', 'delete', 'await', 'yield',

@@ -6,7 +6,7 @@
 
 **Findings source:** [AUDIT19_REPORT_AND_REMEDIATION_PLAN_2026-09-23.md](AUDIT19_REPORT_AND_REMEDIATION_PLAN_2026-09-23.md).
 
-**Status:** Phase 1 done on 2026-09-24 (commits `512adfa`..`65683eb` on `chore/dependency-majors`; see "Phase 1 — status and deviations"). Phase 2 done on 2026-09-24 (commits `f6d01ae`..`02c14f7` on `master-plan/phase-2`, branched from `main` after the merge; see "Phase 2 — status and deviations"). Phase 3 done on 2026-09-24 (branch `master-plan/phase-3`; see "Phase 3 — status and deviations"). Phase 4 done on 2026-09-25 (branch `master-plan/phase-4`, on top of Phase 3; see "Phase 4 — status and deviations"). Phases 5–7 not started. **Base:** `main`; nothing is pushed yet.
+**Status:** Phase 1 done on 2026-09-24 (commits `512adfa`..`65683eb` on `chore/dependency-majors`; see "Phase 1 — status and deviations"). Phase 2 done on 2026-09-24 (commits `f6d01ae`..`02c14f7` on `master-plan/phase-2`, branched from `main` after the merge; see "Phase 2 — status and deviations"). Phase 3 done on 2026-09-24 (branch `master-plan/phase-3`; see "Phase 3 — status and deviations"). Phase 4 done on 2026-09-25 (branch `master-plan/phase-4`, on top of Phase 3; see "Phase 4 — status and deviations"). Phase 5 done on 2026-09-25 (branch `master-plan/phase-5`, branched from `main` at `7205e55`; see "Phase 5 — status and deviations"). Phases 6–7 not started. **Base:** `main`; nothing is pushed yet.
 
 **Goal:** make the `.md` file the only copy of a note's title, tags and content. The board files keep only what is visual. There is one in-memory model per file and one writer per file. The audit fixes that still matter land along the way.
 
@@ -776,6 +776,57 @@ Delete the tests that only exercise legacy formats. Record each removal in the c
    - 1,000 rapid toggles on one note: one write per debounce window, and the final bytes are correct.
 
 **Exit:** exactly one module writes `.md`. One note open in three views means one model. KNOWN_LIMITATIONS #9 (two separate reads) is closed.
+
+#### Phase 5 — status and deviations (2026-09-25)
+
+**Done** on branch `master-plan/phase-5`, branched from `main` at `7205e55` (Phases 1–4 merged and pushed); nothing is pushed. `ci:verify` is green: lint, svelte-check, `typecheck:main`, 524 test files (5,217 tests, 1 skipped), build, and 53/53 gates.
+
+| Step | Commit(s) |
+|---|---|
+| 1. `noteFile`, `noteWriter`, `noteStore` + unit tests (not wired) | `b6710a7` |
+| 2–6. Callers moved, old modules deleted, tests migrated | `15fc204` |
+| 8. Gates | `5c162d6` |
+
+**Exit check.**
+- **Exactly one module writes `.md`.** `lib/notes/noteWriter.ts` is the only renderer file that invokes `vault:write-existing-file-text`, `vault:write-file-text` for a note, or `vault:create-file-text` (gate `single-note-writer`; the three `.filo/` sentinel writers and the Kanban toolbar's position file keep their `allow-direct-write:` markers).
+- **One note in three views is one model.** Every view acquires the note's `NoteModel` by path; a tile, a Document tab and a split pane of the same note share it (characterisation `oneModel.test.ts`, `editingAndViews.test.ts`).
+- **KNOWN_LIMITATIONS #9 (two separate reads) is closed:** a write now reads the file once, inside the path's queue, and applies the change to that read. Updating the KNOWN_LIMITATIONS text is Phase 7 (DOC-1).
+
+**How it works now**
+- `lib/notes/noteFile.ts` — pure: `readNoteText` (frontmatter, body, BOM, line ending), `assembleNoteText(fresh, { body?, delta? })` (CST patch of the fresh frontmatter source, disk body kept when no new body, fresh BOM and EOL re-applied, CRLF body per MD-10), `newNoteText`, FNV-1a `noteTextHash` (the same digest the main-process watcher computes).
+- `lib/notes/noteWriter.ts` — `createNoteWriter(host)`. One queue per path on the existing `createScheduler` primitive (300 ms debounce, `pending-path` sentinel mode, `NOTE_WRITE_TIMEOUT_MS` bound, retained retries). Each flush runs inside the path's promise chain: fresh read (re-read when the read overlapped another writer), torn-frontmatter check, body-drift check against the model's `base` (conflict → the body stays queued and the flush fails, so save/quit report it), assemble, skip identical bytes, re-stat and start over if the file moved since the read, `trackComponentWrite` + write, then report to the store. Also: exclusive create with ` (n)` bumps, `transform` (rewrite from fresh bytes), `restore`, `hold` (rename/delete), `renamePath`, and a short own-write hash memory.
+- `stores/notes.svelte.ts` — `noteStore`: one `NoteModel` per open note keyed by `VaultPath`; `acquire`/`release` reference-counted by view id; `setBody` (only a view holding the model may write; D7 owner = the view that typed); `patchFrontmatter` (delta, shown at once; for an unloaded note laid over the vault index until it lands); `currentFrontmatter`; `onDiskChanged` (the C.5 table, in `lib/notes/noteDiskChange.ts`); `resolveConflict`; rename sweep; vault-swap reset.
+- `stores/notePrompts.ts` — the one conflict prompt (**Reload** / **Keep mine**, the latter backs the other version up to `.filo/recovery/` first), a deleted-with-unsaved-edit prompt (**Keep mine** recreates exclusively / **Discard**), and "reloaded and much shorter" (**Undo reload**).
+- `lib/editor/noteEditorView.ts` — the editor side, shared by `TextTile` and `DocumentEditor`: serialise after 150 ms idle and on blur/unmount/store request; never reload the view's own body; never load mid-IME or over unserialised keystrokes; a load is not an edit.
+- `commands/noteFieldCommand.ts` — the shared base of `UpdateCardFieldCommand` / `UpdateTaskFieldCommand` (first execute recomputes the inverse from the note as it stands; undo/redo rebase through `frontmatterRebase.ts`, which now sends deltas to the store).
+
+**Deviations from the plan**
+- **Callers moved in one change, not family by family (steps 2–6).** Moving one family at a time would have meant keeping the old gateway and the new writer running side by side, with a shim to keep the document store and the note store in step. That shim would be a new sync guard, which rule A.7 forbids. So `b6710a7` built and tested the new modules on their own, and `15fc204` moved every caller and deleted the old stack together. The characterisation suite was green before and after.
+- **The orphan-card command was folded into `UpdateCardFieldCommand`.** With one writer there is no difference between an open and an unopened card note, so `UpdateOrphanFrontmatterCommand` and `applyOrphanPatchRebased` went. Both field commands now share `commands/noteFieldCommand.ts`, and their `notePath` argument was dropped (the note's path is the only identity since Phase 4).
+- **`conflictResolver.ts` was deleted rather than shrunk (step 5).** The C.5 table lives in `lib/notes/noteDiskChange.ts` (`decideDiskChange`: ignore / retry / missing / replace / take-frontmatter / conflict). `vaultExternalDriftPrompts.ts` keeps only the board-file prompt; the note prompts moved to `stores/notePrompts.ts`.
+- **`status` is separate from `readOnly`, and there is an `unreadable` status.** A note whose first read stays torn after three retries (500 / 1,500 / 3,000 ms) is `unreadable` and read-only, so nothing is written over the half-written file. A `missing` note is read-only too, until the deleted-note prompt recreates it.
+- **Reload drops only the body.** Queued frontmatter deltas still land on the reloaded file, since they are deltas on a fresh read and never conflict.
+- **Prompts dropped:** the Properties-popup prompt, the bulk "many files changed" prompt and the partial-read retry prompt. With one model there is one conflict prompt per note (the new spec pins that one conflict shows one prompt; the old code showed two), a frontmatter-only change is taken silently, and a torn read is retried by the store, not the user.
+- **`notePossiblyStale` is no longer raised for `.md` changes.** The note store decides for loaded notes; unloaded notes are re-read from the index.
+- **Up to 150 ms of typing can be lost on a crash.** The editor serialises after 150 ms of idle (and at once on blur, unmount, save and quit), so a hard crash mid-burst loses at most that window. Save and quit are unaffected.
+- **Trash is Phase 6.** Undo of a delete writes the snapshot back through `noteStore.restore` (exclusive create), as before; `note-queue-per-path` covers rename and delete through `noteStore.hold` until trash lands.
+- **Two additions to the store API:**
+  - `writeBody(path, body)`: for the Task List notes box, which edits a note's body without an editor view.
+  - `transform(path, fn)`: rewrites from the fresh bytes inside the path's queue. Tag writes and Replace All use it; Replace All only applies while the bytes still match what the user previewed.
+- **Step 7 (main-process hash matching) was not done.** The renderer writer remembers the hashes of its own recent writes and ignores their echo, which closes the practical half of KNOWN_LIMITATIONS #5; moving the check into main is left open.
+- **Docs are Phase 7.** `CLAUDE.md` and KNOWN_LIMITATIONS still describe the gateway. KNOWN_LIMITATIONS #8 and #9 are effectively closed by this phase and should be rewritten in DOC-1.
+- **`// allow-raw-read:` escape.** `views-read-note-store` forbids components from reading or parsing files themselves; `KanbanSideToolbar`, `KanbanTemplatePicker` and `TemplateBrowser` read non-note files and carry the marker.
+- **`vaultStore.setPath` now also sets the active vault path** used by the identity guards, so tests and the app agree on which vault a write belongs to.
+- **The tag-rename sweep stops on a vault swap.** It checks the active vault before each file; before, a sweep running during a swap could write into the new vault.
+- **A frontmatter-only edit is byte-exact at the end of the file.** A note with no final newline keeps none; before, the gateway added one.
+- **Profile:** serialising a 50 KB note takes a median 12.5 ms (max 21.6 ms) in jsdom, well inside the 150 ms idle window. Kanban cards still mount a full editor per card, as before this phase.
+- **Gates:** 56 → 53. Added `single-note-writer`, `note-queue-per-path` and `views-read-note-store`; retired `markdown-gateway`, `md-writers-reconcile-editors`, `reload-cancels-writes`, `markdown-read-gateway` and `no-prod-md-test-flushers`; folded `frontmatter-delta-write` into `single-note-writer`. `keep-local-backup` now matches "Keep mine" and checks the `notePrompts.promptConflict` chokepoint. Every new or changed arm was shown to bite in a scratch copy. File-size ceilings went down (TaskListBoard 2070, TaskItem 1522, KanbanBoard 1450, KanbanColumn 1197; `markdownFileWriter` removed). The test type-check baseline went from 174 errors in 69 files to 149 in 55.
+- **Bugs found while migrating, fixed with tests:** Task List notes typed while the note loads were missed by a quit drain; a failed Keep-mine recreate lost the edit; Discard after an external delete kept the tags entry and skipped the remove-tiles offer; a tag write that couldn't read the note didn't mark the path failed; a torn read of a note no view had loaded could be written over; a model could stay `loading` across a vault change; a frontmatter-only edit added a final newline; the tag sweep kept writing after a vault swap.
+
+**Still open (needs the owner)**
+- Merge `master-plan/phase-5` into `main` and push; the Windows CI job runs on that push.
+- **A.6 dogfood:** open the scratch vault in the real app: type in a tile and a Document tab of the same note, split a pane, edit a note in another program while it is open (clean, typing, frontmatter only), rename and delete open notes.
+- The Phase 1 manual checks on the packaged build are still open.
 
 ---
 

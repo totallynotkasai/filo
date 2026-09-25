@@ -66,6 +66,10 @@ export type IpcChannel =
   | 'recovery:list'
   // Per-machine crash sentinels in .filo (this machine and others)
   | 'recovery:list-sentinels'
+  // Rescue copies of unsaved work when the user closes or quits anyway
+  | 'recovery:keep-unsaved'
+  // How many partial .tmp files a failed write preserved this session
+  | 'recovery:preserved-tmp'
   // This machine id (userData) and hostname
   | 'app:machine-identity'
   // Rewrite a Windows-1252 note as UTF-8 after backing up the original

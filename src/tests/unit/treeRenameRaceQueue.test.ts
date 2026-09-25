@@ -3,7 +3,7 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { __resetRenameCascadeSentinelForTests } from '@renderer/lib/vault/renameCascadeSentinel';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import {
@@ -22,7 +22,7 @@ import {
  * before any reconcile gets to walk `boardStore.paths`.
  */
 
-function makeMindMap(boardId: string): V7BoardFileData {
+function makeMindMap(boardId: string): BoardFileData {
   return {
     board: {
       id: boardId,

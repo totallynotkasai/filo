@@ -457,6 +457,9 @@ export class VaultIndex {
     }
     if (this.search.has(oldId)) this.search.discard(oldId);
     this.metadata.delete(oldId);
+    // The new path may be indexed already (a write that landed in the moved
+    // file, or its create event came first). That entry is newer; keep it.
+    if (this.metadata.has(newId)) return;
     const next: FileMetadata = { ...existing, path: newDisplay };
     this.metadata.set(newId, next);
     this.search.add({

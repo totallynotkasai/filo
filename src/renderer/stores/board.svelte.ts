@@ -15,7 +15,7 @@ import { boardCacheStore } from './boardCache.svelte';
 import { boardRefIntegrityStore } from './boardRefIntegrity.svelte';
 import { tabStore } from './tabs.svelte';
 import { restoreTrashedItem, toastMovedToTrash } from './trash.svelte';
-import type { V7BoardFileData } from '../lib/boards/boardSaver';
+import type { BoardFileData } from '../lib/boards/boardSaver';
 import {
   buildBoardSettingsFromGlobal,
   buildBoardSettingsFromTheme,
@@ -67,7 +67,7 @@ export interface BoardScopeBoardDeps {
 }
 
 /**
- * Builds a minimal `V7BoardFileData` from the legacy `setBoard(board, tiles,
+ * Builds a minimal `BoardFileData` from the legacy `setBoard(board, tiles,
  * conns, frames)` arguments. Used by `setBoard` as a fallback when the caller
  * didn't hydrate the cache upstream (the legacy test pattern). Production
  * code always hydrates via `boardCacheStore.hydrate(loaderResult)` before
@@ -83,7 +83,7 @@ function synthesizeCacheEntry(
   tiles?: Record<string, Tile>,
   conns?: Record<string, Connection>,
   frames?: Frame[],
-): V7BoardFileData {
+): BoardFileData {
   const tileDefs: Record<string, TileDefinition> = {};
   const placements: Record<
     string,
@@ -275,7 +275,7 @@ export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
      * ```
      *
      * When `boardTiles` contains at least one entry the args are
-     * synthesised into a fresh `V7BoardFileData` and **replace** any
+     * synthesised into a fresh `BoardFileData` and **replace** any
      * existing cache entry for `board.id`. This gives tests a single
      * deterministic seed point without a separate `boardCacheStore.hydrate`
      * step and keeps the per-test state isolated even when an earlier test
@@ -347,13 +347,13 @@ export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
 
     // ── Cache delegation ──
 
-    hydrateCache(cache: Record<string, V7BoardFileData>, paths: Record<string, string>) {
+    hydrateCache(cache: Record<string, BoardFileData>, paths: Record<string, string>) {
       boardCacheStore.hydrate(cache, paths);
     },
 
     clearCache() { boardCacheStore.clear(); },
 
-    updateCacheEntry(boardId: string, updates: Partial<V7BoardFileData>) {
+    updateCacheEntry(boardId: string, updates: Partial<BoardFileData>) {
       boardCacheStore.updateEntry(boardId, updates);
     },
 

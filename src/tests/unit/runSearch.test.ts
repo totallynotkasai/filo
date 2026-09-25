@@ -5,7 +5,7 @@ import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { parseMarkdown } from '@renderer/lib/vault/vaultIndex';
 import { parseQuery } from '@renderer/lib/search/queryParser';
 import { runVaultSearch } from '@renderer/lib/search/runSearch';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 
 function installFiloStub(): void {
   (window as unknown as Record<string, unknown>).filo = {
@@ -15,7 +15,7 @@ function installFiloStub(): void {
   };
 }
 
-function makeMindMap(name: string, id: string, tileDefs: Record<string, unknown> = {}): V7BoardFileData {
+function makeMindMap(name: string, id: string, tileDefs: Record<string, unknown> = {}): BoardFileData {
   return {
     board: {
       id,
@@ -31,7 +31,7 @@ function makeMindMap(name: string, id: string, tileDefs: Record<string, unknown>
     tileDefs: tileDefs as never,
     connections: {},
     frames: [],
-  } as V7BoardFileData;
+  } as BoardFileData;
 }
 
 function makeTextDef(id: string, title: string, filePath?: string): Record<string, unknown> {
@@ -245,7 +245,7 @@ describe('runVaultSearch — operator filtering', () => {
               toBubbleIndex: 0,
             } as never,
           },
-        } as V7BoardFileData,
+        } as BoardFileData,
       },
       { mm: 'a.board.json' },
     );

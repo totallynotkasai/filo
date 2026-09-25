@@ -8,7 +8,7 @@ import { logMainError } from '../utils/mainLogger';
 import { atomicWriteFile, LOCK_AWARE_SUPPRESS_MS } from '../vault/filenameUtils';
 import { snapshotForRecovery } from '../services/recoverySnapshot';
 import { clearNonUtf8 } from '../services/nonUtf8Registry';
-import { getActiveWatcher } from './vault.ipc';
+import { getActiveWatcher, noteOwnWrite } from './vault.ipc';
 import { ipcErrorCode } from './ipcErrorCode';
 
 /**
@@ -40,10 +40,9 @@ export function registerVaultEncodingHandlers(): void {
       }
       const backup = await snapshotForRecovery(vaultRoot, relativePath);
       const text = new TextDecoder('windows-1252').decode(bytes);
-      const watcher = getActiveWatcher();
-      watcher?.suppress(relativePath, LOCK_AWARE_SUPPRESS_MS);
+      getActiveWatcher()?.suppressWrite(relativePath, LOCK_AWARE_SUPPRESS_MS);
       await atomicWriteFile(fullPath, text);
-      watcher?.suppress(relativePath, 1000);
+      noteOwnWrite(relativePath, text);
       clearNonUtf8(fullPath);
       return { success: true, converted: true, backupPath: backup };
     } catch (err) {

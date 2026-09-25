@@ -28,7 +28,7 @@ import {
 import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { createScheduler } from './writeScheduler';
-import { getBaseline, noteBaseline, hasBaselineDrifted, refreshBaselineAfterWrite } from '../vault/fileBaselineRegistry';
+import { baselineSeq, getBaseline, noteBaseline, hasBaselineDrifted, refreshBaselineAfterWrite } from '../vault/fileBaselineRegistry';
 
 export interface ConfigWriteArgs {
   vaultRoot: string;
@@ -311,6 +311,7 @@ export async function writeConfigs(
     // so the drift check compares against the rebased value.
     let baseline = getBaseline(sentinelPath);
     if (baseline !== undefined) {
+      const seq = baselineSeq(sentinelPath);
       let preWriteStat: { mtimeMs: number; size: number } | undefined;
       try {
         preWriteStat = await invokeOk('vault:stat', vaultRoot, sentinelPath);
@@ -382,7 +383,7 @@ export async function writeConfigs(
                 // than perpetually re-aborting against the stale load-time
                 // baseline.
                 lastWrittenConfigs.delete(target);
-                noteBaseline(sentinelPath, preWriteStat.mtimeMs, preWriteStat.size);
+                noteBaseline(sentinelPath, preWriteStat.mtimeMs, preWriteStat.size, { ifUnchangedSince: seq });
                 continue;
               }
               if (reappearedVerifiedOurs) {
@@ -391,7 +392,7 @@ export async function writeConfigs(
                 // a rebase the drift check would abort every later write for
                 // the session. The bytes are ours, so adopt the recreated stat
                 // and fall through; the armed write proceeds normally.
-                noteBaseline(sentinelPath, preWriteStat.mtimeMs, preWriteStat.size);
+                noteBaseline(sentinelPath, preWriteStat.mtimeMs, preWriteStat.size, { ifUnchangedSince: seq });
                 const rebased = getBaseline(sentinelPath);
                 if (rebased !== undefined) baseline = rebased;
               }
@@ -479,7 +480,7 @@ export async function writeConfigs(
         refreshBaselineAfterWrite(sentinelPath, undefined, undefined);
       }
     } catch (err) {
-      console.error(`[V7] Failed to save config file (${target}):`, err);
+      console.error(`[config] Failed to save config file (${target}):`, err);
       notifyWriteError({ kind: 'config', path: target, error: err });
       failed.push(target);
     }

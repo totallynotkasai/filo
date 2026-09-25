@@ -20,7 +20,7 @@ import {
   snapshotTaskListSlice,
   restoreTaskListSlice,
 } from '@renderer/commands/taskCommands';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard, TaskListBoard, TileDefinition } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
@@ -38,7 +38,7 @@ function textDef(id: string, title: string): TileDefinition {
   } as unknown as TileDefinition;
 }
 
-function makeKanbanWithStyledCard(): V7BoardFileData {
+function makeKanbanWithStyledCard(): BoardFileData {
   return {
     board: {
       id: 'kb',
@@ -66,7 +66,7 @@ function makeKanbanWithStyledCard(): V7BoardFileData {
   };
 }
 
-function makeTaskListWithStyledTask(): V7BoardFileData {
+function makeTaskListWithStyledTask(): BoardFileData {
   return {
     board: {
       id: 'tl',

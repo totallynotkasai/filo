@@ -19,7 +19,7 @@ const FILE_SIZE_ALLOWLIST = {
   'src/renderer/components/boards/TaskItem.svelte': 1522,
   'src/renderer/components/boards/KanbanBoard.svelte': 1450,
   'src/renderer/components/boards/KanbanColumn.svelte': 1197,
-  'src/renderer/stores/vault.svelte.ts': 1668,
+  'src/renderer/stores/vault.svelte.ts': 1613,
 };
 
 // The refactor characterisation suite: user-visible behaviour the file-model
@@ -36,6 +36,12 @@ const CHARACTERISATION_SPECS = {
   'tagUndo.test.ts': 4,
   'tagRowAndRawView.test.ts': 7,
   'undoAcrossRenames.test.ts': 6,
+  'externalRenames.test.ts': 6,
+  'newBoards.test.ts': 4,
+  'closeVault.test.ts': 5,
+  'blockLayout.test.ts': 2,
+  'lineSpacing.test.ts': 3,
+  'newNotesInSidebar.test.ts': 3,
 };
 
 // Board format v8: a def names its file and stores only visuals. These are

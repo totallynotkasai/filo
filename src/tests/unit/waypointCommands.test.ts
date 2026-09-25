@@ -10,7 +10,7 @@ import {
   UpdateWaypointIconCommand,
   ToggleWaypointLockCommand,
 } from '@renderer/commands/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 
 /**
@@ -28,7 +28,7 @@ function installEmptyFiloStub(): void {
   };
 }
 
-function makeMindMapFixture(): V7BoardFileData {
+function makeMindMapFixture(): BoardFileData {
   return {
     board: {
       id: 'mm',

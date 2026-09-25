@@ -432,6 +432,57 @@ export function hasFailedWrites(): boolean {
 }
 
 /**
+ * Extra sources of unsaved paths that the ledger can't see: a note body held
+ * in memory with no write armed (a conflict waits for its answer). The note
+ * store registers one; it can't be imported here without a cycle.
+ */
+const unsavedSources: Array<() => string[]> = [];
+
+/** Registers a source consulted by {@link unsavedWork}. Register once, at module load. */
+export function registerUnsavedSource(source: () => string[]): void {
+  unsavedSources.push(source);
+}
+
+/** What {@link unsavedWork} reports. Paths are case-folded vault paths. */
+export interface UnsavedWork {
+  /** Queued or being written, not (yet) failed. */
+  pending: VaultPath[];
+  /** The last write failed, or the change is held (a conflict, a missing file). */
+  failed: VaultPath[];
+  /** Writes in flight, including ones with no path (an exclusive create). */
+  inflight: number;
+}
+
+/**
+ * THE answer to "is anything unsaved?", for close, open-another-vault and
+ * quit. Empty (no paths, nothing in flight) means leaving the vault loses
+ * nothing.
+ */
+export function unsavedWork(): UnsavedWork {
+  const failed = new Set<VaultPath>(failedVaultPaths);
+  const pending = new Set<VaultPath>();
+  for (const p of pendingVaultPaths) if (!failed.has(p)) pending.add(p);
+  for (const source of unsavedSources) {
+    let paths: string[] = [];
+    try {
+      paths = source();
+    } catch (err) {
+      console.error('[writeStateTracking] unsaved source threw:', err);
+    }
+    for (const rel of paths) {
+      const key = vaultPath(rel);
+      if (!failed.has(key)) pending.add(key);
+    }
+  }
+  return { pending: [...pending], failed: [...failed], inflight: inflightWriteCount };
+}
+
+/** True when {@link unsavedWork} has nothing to report. */
+export function isUnsavedWorkEmpty(work: UnsavedWork): boolean {
+  return work.pending.length === 0 && work.failed.length === 0 && work.inflight === 0;
+}
+
+/**
  * Records a path as out-of-sync with disk without going through a full
  * begin/endWrite pair. Used when a writer can't even begin (e.g. the
  * upstream read failed) but the user-visible state — "I asked Filo to

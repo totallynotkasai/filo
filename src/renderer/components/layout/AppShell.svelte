@@ -499,7 +499,7 @@
     return () => document.removeEventListener('click', handleLinkClick, true);
   });
 
-  // V7: Vaults are opened via folder picker from the HomeScreen.
+  // Vaults are opened via folder picker from the HomeScreen.
   // No .filo file association handling needed.
 
   // Prevent native context menu on the app — except inside editable text,

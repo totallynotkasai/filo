@@ -302,7 +302,7 @@ describe('Audit-16 3.5 — a concurrent swap window survives the first swap\'s f
     entered = new Map();
     enteredSignals = new Map();
     installFiloMock((channel: string, ...args: unknown[]) => {
-      if (channel === 'dialog:choice') return 1; // "Don't Save"
+      if (channel === 'dialog:choice') return 1; // "Cancel": nothing is unsaved, so no leave dialog should appear
       if (channel === 'vault:close') return { success: true };
       if (channel === 'vault:init-config') return { ok: true };
       if (channel === 'config:load-all') return {};
@@ -341,11 +341,17 @@ describe('Audit-16 3.5 — a concurrent swap window survives the first swap\'s f
 
     const p1 = vaultStore.openVault('/vault/B');
     await entered.get('/vault/B'); // p1 parked inside loadVaultCandidate(B)
+    // p2 saves before leaving, and that save waits out p1's window, so p2's
+    // own window opens only once p1 has settled.
+    let cEntered = false;
+    void entered.get('/vault/C')!.then(() => { cEntered = true; });
     const p2 = vaultStore.openVault('/vault/C');
-    await entered.get('/vault/C'); // p2 parked too — its window owns the slot
+    await new Promise((r) => setTimeout(r, 30));
+    expect(cEntered).toBe(false);
 
     releases.get('/vault/B')!();
     await p1; // first swap settles; its finally must NOT null p2's window
+    await entered.get('/vault/C'); // p2 parked inside loadVaultCandidate(C): its window owns the slot
 
     let saveSettled = false;
     const savePromise = vaultStore.save().then(() => { saveSettled = true; });

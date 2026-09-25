@@ -13,7 +13,10 @@ let fontSize = $state(14);
 let textAlign = $state<'left' | 'center' | 'right' | 'justify'>('left');
 let heading = $state<'normal' | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6'>('normal');
 let spellcheck = $state(true);
-let lineSpacing = $state(1.5);
+/** The active note's saved line spacing; null when it has none (the view's default). */
+let lineSpacing = $state<number | null>(null);
+/** False when the focused editor isn't a note (a label or a title). */
+let lineSpacingAvailable = $state(false);
 
 export const toolbarStore = {
   get bold() { return bold; },
@@ -27,6 +30,7 @@ export const toolbarStore = {
   get heading() { return heading; },
   get spellcheck() { return spellcheck; },
   get lineSpacing() { return lineSpacing; },
+  get lineSpacingAvailable() { return lineSpacingAvailable; },
 
   /**
    * Updates all formatting state at once (called by the active Tiptap editor).
@@ -41,6 +45,8 @@ export const toolbarStore = {
     fontSize?: number;
     textAlign?: 'left' | 'center' | 'right' | 'justify';
     heading?: 'normal' | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
+    lineSpacing?: number | null;
+    lineSpacingAvailable?: boolean;
   }) {
     if (state.bold !== undefined) bold = state.bold;
     if (state.italic !== undefined) italic = state.italic;
@@ -51,6 +57,8 @@ export const toolbarStore = {
     if (state.fontSize !== undefined) fontSize = state.fontSize;
     if (state.textAlign !== undefined) textAlign = state.textAlign;
     if (state.heading !== undefined) heading = state.heading;
+    if (state.lineSpacing !== undefined) lineSpacing = state.lineSpacing;
+    if (state.lineSpacingAvailable !== undefined) lineSpacingAvailable = state.lineSpacingAvailable;
   },
 
   toggleSpellcheck() {
@@ -59,10 +67,6 @@ export const toolbarStore = {
     document.querySelectorAll('.tiptap').forEach((el) => {
       (el as HTMLElement).setAttribute('spellcheck', String(spellcheck));
     });
-  },
-
-  setLineSpacing(value: number) {
-    lineSpacing = value;
   },
 
   /**
@@ -78,5 +82,7 @@ export const toolbarStore = {
     fontSize = 14;
     textAlign = 'left';
     heading = 'normal';
+    lineSpacing = null;
+    lineSpacingAvailable = false;
   },
 };

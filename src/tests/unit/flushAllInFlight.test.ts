@@ -12,7 +12,7 @@ import {
   scheduleMiscWrite,
   flushAllMisc,
   __resetDirtyTrackingForTests,
-  type V7BoardFileData,
+  type BoardFileData,
 } from '@renderer/lib/boards/boardSaver';
 import { flushAllScheduledBoards } from '@renderer/lib/boards/boardWriteScheduler';
 import { noteStore } from '@renderer/stores/notes.svelte';
@@ -21,7 +21,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import type { MindMapBoard } from '@renderer/schema/index';
 
-function emptyMindmapBoard(id: string): V7BoardFileData {
+function emptyMindmapBoard(id: string): BoardFileData {
   return {
     board: {
       id,

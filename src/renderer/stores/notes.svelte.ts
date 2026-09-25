@@ -27,6 +27,7 @@ import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { registerPathRenamable } from '../lib/vault/renamePathKeys';
+import { NOTE_RENAME_GRACE_MS } from '../lib/vault/externalChangeWindows';
 import { vaultIndexStore } from './vaultIndex.svelte';
 import { parseMarkdown } from '../lib/vault/vaultIndex';
 import { isNonUtf8 } from '../lib/vault/nonUtf8Paths.svelte';
@@ -45,14 +46,18 @@ import {
   snapshotOf,
   readNoteText,
   rawTextForDisk,
+  localNoteText,
+  newNoteText,
   type DiskSnapshot,
   type NoteText,
 } from '../lib/notes/noteFile';
 import { looksTorn } from '../lib/notes/noteWriter';
 import { decideDiskChange } from '../lib/notes/noteDiskChange';
+import { backupThenRead } from '../lib/vault/keepLocalBackup';
 import {
   dropPendingPath,
   noteAdditionalPendingPath,
+  registerUnsavedSource,
   type TrackComponentWriteOptions,
 } from '../lib/boards/writeStateTracking';
 
@@ -150,6 +155,15 @@ export function setNotePromptHandlers(handlers: NotePromptHandlers): void {
   prompts = handlers;
 }
 
+/**
+ * Told about every note Filo creates. The main process hides our own creates
+ * from the watcher, so without this the sidebar lists a new note late.
+ */
+let noteCreated: (relPath: string) => void = () => undefined;
+export function setNoteCreatedListener(listener: (relPath: string) => void): void {
+  noteCreated = listener;
+}
+
 const writer: NoteWriter = createNoteWriter({
   vaultRoot: () => getActiveVaultPath() || null,
   baseOf: (path) => models.get(path)?.base,
@@ -167,10 +181,60 @@ const writer: NoteWriter = createNoteWriter({
     afterWrite(path, relPath, written, snapshot, consumed);
   },
   onTargetMissing: (path, relPath, hasBody) => {
-    const m = models.get(path);
-    prompts.writeTargetMissing(relPath, hasBody && m ? m : undefined);
+    askUnlessMoved(
+      relPath,
+      () => writer.isQueued(path),
+      () => {
+        const m = models.get(path);
+        prompts.writeTargetMissing(relPath, hasBody && m ? m : undefined);
+      },
+      () => writer.schedule(relPath),
+    );
   },
 });
+
+/**
+ * A note whose file just vanished may be mid-rename by another program: the
+ * rename arrives as its own event, after the note's write already failed on
+ * the old path or its "missing" event was handled. Waits the grace, then asks
+ * only if `stillHere()` (the note hasn't been re-keyed, discarded or saved)
+ * and the file is still gone; if it came back, `onBack` runs instead.
+ */
+function askUnlessMoved(relPath: string, stillHere: () => boolean, ask: () => void, onBack: () => void): void {
+  const identity = captureVaultIdentity();
+  const check = async (): Promise<void> => {
+    if (!isStillSameVault(identity) || !stillHere()) return;
+    const vaultRoot = getActiveVaultPath();
+    if (!vaultRoot) return;
+    let back = false;
+    try {
+      back = (await window.filo.invoke('vault:file-exists', vaultRoot, relPath)) === true;
+    } catch {
+      back = false;
+    }
+    if (!isStillSameVault(identity) || !stillHere()) return;
+    if (back) onBack();
+    else ask();
+  };
+  const entry = {
+    timer: setTimeout(() => {
+      graceChecks.delete(entry);
+      void check();
+    }, NOTE_RENAME_GRACE_MS),
+    check,
+  };
+  graceChecks.add(entry);
+}
+
+/** Checks waiting out `NOTE_RENAME_GRACE_MS`; dropped on a vault swap. */
+// allow-module-state: cleared by the noteStore pre-swap handler and __resetForTests
+// eslint-disable-next-line svelte/prefer-svelte-reactivity
+const graceChecks = new Set<{ timer: ReturnType<typeof setTimeout>; check: () => Promise<void> }>();
+
+function dropGraceChecks(): void {
+  for (const e of graceChecks) clearTimeout(e.timer);
+  graceChecks.clear();
+}
 
 function afterWrite(
   path: VaultPath,
@@ -459,6 +523,42 @@ export const noteStore = {
     return loadingBodyPaths.has(vaultPath(relPath)) || writer.hasWork(relPath);
   },
 
+  /**
+   * Every note with a change that hasn't reached disk, as the text a rescue
+   * copy holds: the note's last frontmatter with the queued change applied,
+   * over the local body. A change to a note no model holds is laid over a
+   * fresh read of the file (only the changed keys when it can't be read).
+   */
+  async unsavedTexts(): Promise<Array<{ relPath: string; text: string }>> {
+    serializeViews();
+    const out: Array<{ relPath: string; text: string }> = [];
+    // A local scratch set, never read reactively.
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity
+    const seen = new Set<VaultPath>();
+    for (const m of models.values()) {
+      if (!m.hasUnsavedBody && !writer.hasPendingBody(m.path)) continue;
+      seen.add(m.path);
+      out.push({ relPath: m.relPath, text: localNoteText(m.base, m.frontmatter, m.body, writer.pendingDelta(m.path)) });
+    }
+    const vaultRoot = getActiveVaultPath();
+    for (const relPath of writer.queuedPaths()) {
+      const key = vaultPath(relPath);
+      const delta = writer.pendingDelta(key);
+      if (seen.has(key) || !delta) continue;
+      let text = newNoteText(applyFrontmatterDelta({}, delta), '');
+      if (vaultRoot) {
+        try {
+          const fresh = await readNoteFresh(vaultRoot, relPath);
+          if (!fresh.nonUtf8) text = localNoteText(snapshotOf(fresh.text), {}, undefined, delta);
+        } catch {
+          // Gone or unreadable: the copy holds the changed keys alone.
+        }
+      }
+      out.push({ relPath, text });
+    }
+    return out;
+  },
+
   /** The editor found the body can't round-trip; it's shown but not written. */
   setLossy(relPath: string, lossy: boolean): void {
     const m = models.get(vaultPath(relPath));
@@ -527,17 +627,28 @@ export const noteStore = {
       case 'conflict':
         if (fresh) enterConflict(m, fresh);
         return;
-      case 'missing':
-        if (m.hasUnsavedBody || writer.hasPendingBody(key)) prompts.deletedWithUnsavedBody(m);
-        else m.status = 'missing';
+      case 'missing': {
+        const unsaved = (): boolean => m.hasUnsavedBody || writer.hasPendingBody(key);
+        if (!unsaved()) {
+          m.status = 'missing';
+          return;
+        }
+        askUnlessMoved(
+          m.relPath,
+          () => models.get(key) === m && unsaved(),
+          () => prompts.deletedWithUnsavedBody(m),
+          () => void noteStore.onDiskChanged(m.relPath),
+        );
         return;
+      }
     }
   },
 
   /**
-   * The user's answer to a conflict. `keep-mine` backs nothing up itself (the
-   * prompt does that first) and writes the local body over the disk version;
-   * `reload` drops the unsaved body and shows the disk version.
+   * The user's answer to a conflict. `keep-mine` backs up the version on disk
+   * and writes the local body over exactly the bytes it backed up (a later
+   * body change on disk is a new conflict, see the writer); `reload` drops
+   * the unsaved body and shows the disk version.
    */
   async resolveConflict(relPath: string, choice: 'keep-mine' | 'reload'): Promise<void> {
     const key = vaultPath(relPath);
@@ -547,7 +658,18 @@ export const noteStore = {
     const identity = captureVaultIdentity();
     let fresh: FreshRead;
     try {
-      fresh = await readNoteFresh(vaultRoot, m.relPath);
+      if (choice === 'reload') {
+        fresh = await readNoteFresh(vaultRoot, m.relPath);
+      } else {
+        const got = await backupThenRead(vaultRoot, m.relPath, () => readNoteFresh(vaultRoot, m.relPath));
+        if (!got.ok) {
+          // Declined, or still being written: nothing is overwritten, and the
+          // conflict stays open to be answered again.
+          if (models.get(key) === m && isStillSameVault(identity)) prompts.conflict(m);
+          return;
+        }
+        fresh = got.value;
+      }
     } catch (err) {
       if (!isStillSameVault(identity)) return;
       if (!isMissingFileError(err)) throw err;
@@ -605,6 +727,7 @@ export const noteStore = {
     // Something is back at the path: keep the local body pending so the
     // conflict check compares it with what's there now.
     if (outcome === 'exists') keepPending();
+    else noteCreated(relPath);
     return outcome;
   },
 
@@ -684,16 +807,20 @@ export const noteStore = {
   },
 
   /** Creates `relPath` exclusively (never overwrites). */
-  createExclusive(relPath: string, text: string): Promise<'created' | 'exists'> {
-    return writer.createExclusive(relPath, text);
+  async createExclusive(relPath: string, text: string): Promise<'created' | 'exists'> {
+    const outcome = await writer.createExclusive(relPath, text);
+    if (outcome === 'created') noteCreated(relPath);
+    return outcome;
   },
 
   /** Creates a note at the first free name from `firstCandidate` on. */
-  createUnique(
+  async createUnique(
     firstCandidate: string,
     buildText: (finalStem: string) => string,
   ): Promise<{ relPath: string; stem: string; text: string }> {
-    return writer.createUnique(firstCandidate, buildText);
+    const created = await writer.createUnique(firstCandidate, buildText);
+    noteCreated(created.relPath);
+    return created;
   },
 
   /** Rewrites a note from its fresh bytes, inside its queue. */
@@ -761,6 +888,20 @@ export const noteStore = {
     models.clear();
     overlays.clear();
     loadingBodyPaths.clear();
+    dropGraceChecks();
+  },
+
+  /**
+   * Runs every "is it really gone?" check now instead of after the grace, and
+   * waits for the ones a disk change or failed write is still about to start.
+   */
+  async __settleGraceChecksForTests(): Promise<void> {
+    for (let round = 0; round < 5; round++) {
+      await new Promise((r) => setTimeout(r, 0));
+      const due = [...graceChecks];
+      dropGraceChecks();
+      await Promise.all(due.map((e) => e.check()));
+    }
   },
 };
 
@@ -789,6 +930,9 @@ function renameNotePaths(oldRel: string, newRel: string): void {
     else if (key.startsWith(oldPrefix)) rel = newRel + m.relPath.slice(oldRel.length);
     if (rel === null) continue;
     models.delete(key);
+    // A "deleted" or "couldn't save" prompt for the old name is answered: the
+    // note moved. A conflict prompt still needs its answer.
+    if (m.status !== 'conflict') prompts.dismiss(m.relPath);
     m.relPath = rel;
     const displaced = models.get(vaultPath(rel));
     if (displaced && displaced !== m) {
@@ -798,8 +942,12 @@ function renameNotePaths(oldRel: string, newRel: string): void {
     moved.add(m);
   }
   for (const [key, m] of models) {
-    if (moved.has(m) || (key !== newKey && !key.startsWith(newPrefix))) continue;
-    if (m.status === 'missing' || m.status === 'loading') m.loaded = load(m, true);
+    if (key !== newKey && !key.startsWith(newPrefix)) continue;
+    // A moved note the watcher had already called missing (the delete came
+    // before the rename) is read again at its new path.
+    if (moved.has(m) ? m.status === 'missing' && !m.hasUnsavedBody : m.status === 'missing' || m.status === 'loading') {
+      m.loaded = load(m, true);
+    }
   }
   for (const [key, delta] of [...overlays]) {
     if (key === oldKey || key.startsWith(oldPrefix)) {
@@ -811,9 +959,18 @@ function renameNotePaths(oldRel: string, newRel: string): void {
 
 registerPathRenamable('noteStore', renameNotePaths);
 
+// A body held in memory with no write armed (a conflict waiting for its
+// answer) is unsaved work the write ledger can't see.
+registerUnsavedSource(() => [
+  ...[...models.values()].filter((m) => m.hasUnsavedBody || writer.hasPendingBody(m.path)).map((m) => m.relPath),
+  ...writer.queuedPaths(),
+  ...loadingBodyPaths,
+]);
+
 onVaultSwap('pre-swap', 'noteStore', () => {
   writer.reset();
   models.clear();
   overlays.clear();
   loadingBodyPaths.clear();
+  dropGraceChecks();
 });

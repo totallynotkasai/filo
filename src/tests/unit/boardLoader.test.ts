@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { loadBoard, loadAllBoards } from '@renderer/lib/boards/boardLoader';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { __resetErrorBusForTests } from '@renderer/lib/utils/errorBus';
 
 type InvokeHandler = (...args: unknown[]) => unknown | Promise<unknown>;
@@ -24,7 +24,7 @@ function uninstallFiloStub(): void {
 /** Main's `board:load` failure envelope for a file whose JSON doesn't parse. */
 const PARSE_FAILURE = { success: false, code: 'PARSE', error: 'SyntaxError: Unexpected end of JSON input' };
 
-function validBoardFile(boardId = 'mindmap-1'): V7BoardFileData {
+function validBoardFile(boardId = 'mindmap-1'): BoardFileData {
   const now = Date.now();
   return {
     version: 8,
@@ -55,7 +55,7 @@ function validBoardFile(boardId = 'mindmap-1'): V7BoardFileData {
       },
       createdAt: now,
       updatedAt: now,
-    } as V7BoardFileData['board'],
+    } as BoardFileData['board'],
     tileDefs: {
       tile_a: {
         id: 'tile_a',
@@ -64,7 +64,7 @@ function validBoardFile(boardId = 'mindmap-1'): V7BoardFileData {
         style: { headerColor: '#fff', bodyColor: '#fff' },
         createdAt: now,
         updatedAt: now,
-      } as V7BoardFileData['tileDefs'][string],
+      } as BoardFileData['tileDefs'][string],
     },
     connections: {},
     frames: [],
@@ -108,7 +108,7 @@ describe('boardLoader', () => {
 
     it('preserves unknown top-level envelope keys on load (DI-11 passthrough)', async () => {
       // A forward-compat top-level key a future Filo wrote.
-      // `V7BoardFileDataSchema.passthrough()` keeps it through the parse and
+      // `BoardFileDataSchema.passthrough()` keeps it through the parse and
       // the loader's normalised reconstruction spreads it back in, so it
       // survives load → cache → save.
       const file = validBoardFile();

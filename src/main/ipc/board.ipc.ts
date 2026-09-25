@@ -67,7 +67,7 @@ function classifyError(err: unknown): 'NO_ACTIVE_VAULT' | 'FILE_TOO_LARGE' | und
 }
 
 /**
- * Registers IPC handlers for the vault-centric (V7) architecture.
+ * Registers IPC handlers for the vault-centric architecture.
  *
  * These handlers support the design doc's .board.json file model
  * and .filo/ config directory structure.
@@ -275,7 +275,24 @@ export function registerBoardHandlers(): void {
       const fullPath = await createBoardFile(vaultRoot, name, data, subfolder);
       assertWithinVault(vaultRoot, fullPath);
       const relativePath = toPosix(fullPath.replace(vaultRoot, '')).replace(/^\/+/, '');
-      return { ok: true, path: relativePath };
+      // The name is picked inside `createBoardFile`, so the echo can only be
+      // hidden after the write; the watcher's debounce still holds the event
+      // then. Unhidden, the create reaches the renderer as an external change
+      // to a board the user may already be editing, and asks "modified
+      // externally".
+      getActiveWatcher()?.suppress(relativePath, LOCK_AWARE_SUPPRESS_MS);
+      // The new file's stat seeds the renderer's drift baseline, so the first
+      // save has an anchor without waiting for a load. Best-effort: without
+      // it the first save simply runs unchecked, as before.
+      let stat: { mtimeMs: number; size: number } | undefined;
+      try {
+        const { promises: fs } = await import('fs');
+        const s = await fs.stat(fullPath);
+        stat = { mtimeMs: s.mtimeMs, size: s.size };
+      } catch {
+        stat = undefined;
+      }
+      return { ok: true, path: relativePath, ...stat };
     } catch (err) {
       logMainError(`board:create ${name}`, err);
       return { ok: false, error: String(err) };

@@ -14,15 +14,19 @@
   import { retryAllFailedWrites } from './lib/boards/writeSchedulerFailures';
   import { listenForSyncConflicts } from './lib/vault/syncConflictNotices';
   import { handleFlushAndQuit } from './lib/vault/handleFlushAndQuit';
+  import { describeUnsaved, keepRescueCopies, preservedTmpCount } from './stores/unsavedRescue';
   import { flushDirtyFlagSentinel } from './lib/vault/dirtyFlagRecovery';
   import { historyStore } from './stores/history.svelte';
   import { tabStore } from './stores/tabs.svelte';
   import { workspaceStore } from './stores/workspace.svelte';
   import { registerDriftPromptHandlers } from './stores/vaultExternalDriftPrompts';
+  import { registerNewNotesInTree } from './stores/newNotesInTree';
 
   // The markdown and board writers ask before overwriting a file another
   // program changed; without this they keep the local version silently.
   registerDriftPromptHandlers();
+  // The watcher never reports our own creates, so a new note re-reads the tree.
+  registerNewNotesInTree();
 
   // Apply the default theme to the DOM on startup. Routing through
   // themeStore.setBuiltin keeps every theme switch on a single code path.
@@ -112,6 +116,9 @@
       flushSentinel: () => flushDirtyFlagSentinel(),
       // "Retry now" re-fires every retained failed write.
       retryFailed: () => retryAllFailedWrites(),
+      describeUnsaved: () => describeUnsaved(),
+      preservedTmpCount: () => preservedTmpCount(),
+      keepRescueCopies: () => keepRescueCopies(),
     });
   });
 

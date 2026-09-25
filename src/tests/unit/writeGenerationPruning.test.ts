@@ -27,7 +27,7 @@ import {
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard, ProjectSettings } from '@renderer/schema/index';
 import type { WorkspaceState } from '@renderer/schema/index';
 import type { WorkspaceLayout } from '@renderer/stores/workspace.svelte';
@@ -466,7 +466,7 @@ describe('Audit-16 4.7 — partial-failure ids are pruned by the same key\'s lat
 describe('Audit-16 4.8 — a self-write echo diverging under a newer queued write is dropped', () => {
   const REL = 'k.board.json';
 
-  function makeBoard(name: string): V7BoardFileData {
+  function makeBoard(name: string): BoardFileData {
     return {
       board: {
         id: 'kb',

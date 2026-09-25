@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   CURRENT_BOARD_FILE_VERSION,
-  V7BoardFileDataSchema,
+  BoardFileDataSchema,
   migrateBoardFile,
 } from '@renderer/schema';
 
@@ -70,14 +70,14 @@ describe('migrateBoardFile', () => {
     // Schema parse on the future-version output still fails because the
     // schema pins the current version literal — the loader's `fromFuture`
     // short-circuit runs first and surfaces a friendlier message.
-    const parsed = V7BoardFileDataSchema.safeParse(out.data);
+    const parsed = BoardFileDataSchema.safeParse(out.data);
     expect(parsed.success).toBe(false);
   });
 
   it('round-trips a current envelope through migrate + parse without losing fields', () => {
     const input = validBoardEnvelope(CURRENT_BOARD_FILE_VERSION);
     const migration = migrateBoardFile(input);
-    const parsed = V7BoardFileDataSchema.safeParse(migration.data);
+    const parsed = BoardFileDataSchema.safeParse(migration.data);
     expect(parsed.success).toBe(true);
     if (parsed.success) {
       expect(parsed.data.version).toBe(CURRENT_BOARD_FILE_VERSION);
@@ -88,7 +88,7 @@ describe('migrateBoardFile', () => {
   it('the schema itself rejects a versionless envelope (version has no default)', () => {
     const input = validBoardEnvelope(undefined);
     const migration = migrateBoardFile(input);
-    expect(V7BoardFileDataSchema.safeParse(migration.data).success).toBe(false);
+    expect(BoardFileDataSchema.safeParse(migration.data).success).toBe(false);
   });
 
   it('Sprint C / C9 — returns noMigrationPath: true for an old version, not fromFuture', () => {

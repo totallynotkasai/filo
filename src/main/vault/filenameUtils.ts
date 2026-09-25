@@ -1,6 +1,6 @@
 import { promises as fs } from 'fs';
 import { randomBytes } from 'crypto';
-import { dirname, join } from 'path';
+import { basename, dirname, join } from 'path';
 import { RESERVED_WINDOWS_NAMES } from '../utils/pathSecurity';
 import {
   recordPreservedEmergencyFile,
@@ -151,6 +151,25 @@ export async function pathExists(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * `fullPath` with its file name spelled the way the volume has it. On a
+ * case-insensitive volume the atomic rename names the file after the path it
+ * is given, so a write by a stale spelling (a note still known as `Draft.md`
+ * just after another program renamed it to `draft.md`) would put the old
+ * spelling back. Unchanged when the file is missing or only the case of a
+ * folder differs.
+ */
+export async function withOnDiskSpelling(fullPath: string): Promise<string> {
+  try {
+    const onDisk = basename(await fs.realpath(fullPath));
+    const asked = basename(fullPath);
+    if (onDisk !== asked && onDisk.toLowerCase() === asked.toLowerCase()) return join(dirname(fullPath), onDisk);
+  } catch {
+    // Missing or unreadable: there is no other spelling to keep.
+  }
+  return fullPath;
 }
 
 /**

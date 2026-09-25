@@ -71,9 +71,8 @@ export function registerDialogHandlers(): void {
    * Multi-button choice dialog. Returns the 0-based index of the button the
    * user clicked, or -1 if the dialog closed without a selection (Esc / X).
    *
-   * Backs the three-way "Save / Don't Save / Cancel" prompt
-   * on vault swap so each branch can be wired distinctly (Save: flush;
-   * Don't Save: preserve sentinel; Cancel: abort the swap entirely).
+   * Backs the "N changes couldn't be saved: Close anyway / Cancel" prompt
+   * on vault close or swap.
    */
   ipcMain.handle(
     'dialog:choice',

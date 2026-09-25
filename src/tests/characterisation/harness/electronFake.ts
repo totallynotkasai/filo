@@ -5,8 +5,8 @@
  * so the renderer under test talks to the same file operations the app does.
  * Only the Electron shell is faked: handler registration is captured,
  * `webContents.send` is routed back to the renderer's `window.filo.on`
- * listeners, file pickers are cancelled, and a message box takes its first
- * button (for "Save / Don't Save / Cancel" on a vault swap: Save).
+ * listeners, file pickers are cancelled, and a message box is recorded and
+ * takes the next scripted answer (its first button when none is scripted).
  */
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -23,6 +23,16 @@ export const mainListeners = new Map<string, MainListener[]>();
 export const rendererSink: { send: (channel: string, ...args: unknown[]) => void } = {
   send: () => {},
 };
+
+/** One message box the app showed. */
+export interface MessageBoxCall {
+  message: string;
+  detail?: string;
+  buttons: string[];
+}
+
+/** Every message box shown, in order, and the answers (button labels) queued for the next ones. */
+export const messageBoxes: { shown: MessageBoxCall[]; answers: string[] } = { shown: [], answers: [] };
 
 const userData = mkdtempSync(join(tmpdir(), 'filo-char-userdata-'));
 // This machine is the one the renderer-side test setup pins, so main and the
@@ -78,7 +88,14 @@ export const electronFake = {
   dialog: {
     showOpenDialog: async () => ({ canceled: true, filePaths: [] }),
     showSaveDialog: async () => ({ canceled: true }),
-    showMessageBox: async () => ({ response: 0 }),
+    showMessageBox: async (_win: unknown, opts: { message: string; detail?: string; buttons?: string[] }) => {
+      const buttons = opts.buttons ?? ['OK'];
+      messageBoxes.shown.push({ message: opts.message, detail: opts.detail, buttons });
+      const answer = messageBoxes.answers.shift();
+      const index = answer === undefined ? 0 : buttons.indexOf(answer);
+      if (index < 0) throw new Error(`message box has no "${answer}" button: ${buttons.join(', ')}`);
+      return { response: index };
+    },
   },
   shell: {
     openExternal: async () => {},

@@ -23,7 +23,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type {
   KanbanBoard,
   TaskListBoard,
@@ -46,7 +46,7 @@ function mkDef(id: string): TileDefinition {
   } as unknown as TileDefinition;
 }
 
-function makeMindMapWith(tileId: string): V7BoardFileData {
+function makeMindMapWith(tileId: string): BoardFileData {
   return {
     board: {
       id: 'mm',
@@ -71,7 +71,7 @@ function makeMindMapWith(tileId: string): V7BoardFileData {
   };
 }
 
-function makeKanbanWith(tileId: string): V7BoardFileData {
+function makeKanbanWith(tileId: string): BoardFileData {
   return {
     board: {
       id: 'kb',
@@ -97,7 +97,7 @@ function makeKanbanWith(tileId: string): V7BoardFileData {
   };
 }
 
-function makeTaskListWith(tileId: string): V7BoardFileData {
+function makeTaskListWith(tileId: string): BoardFileData {
   return {
     board: {
       id: 'tl',
@@ -127,7 +127,7 @@ interface PostCondition {
 }
 
 function checkPostConditions(
-  cache: V7BoardFileData,
+  cache: BoardFileData,
   tileId: string,
 ): PostCondition {
   const tileGoneFromDefs = !(tileId in cache.tileDefs);
@@ -143,7 +143,7 @@ function checkPostConditions(
 function freshBoard(
   type: 'mindmap' | 'kanban' | 'tasklist',
   tileId: string,
-): { boardId: string; envelope: V7BoardFileData } {
+): { boardId: string; envelope: BoardFileData } {
   if (type === 'mindmap') return { boardId: 'mm', envelope: makeMindMapWith(tileId) };
   if (type === 'kanban') return { boardId: 'kb', envelope: makeKanbanWith(tileId) };
   return { boardId: 'tl', envelope: makeTaskListWith(tileId) };
@@ -239,7 +239,7 @@ describe('Phase 0 characterization — delete-tile entry-point parity', () => {
         label: { text: '', textColor: '', backgroundColor: '', position: 0.5, locked: false },
         createdAt: 0,
         updatedAt: 0,
-      } as V7BoardFileData['connections'][string];
+      } as BoardFileData['connections'][string];
       boardCacheStore.hydrate({ mm: env }, { mm: 'm.board.json' });
 
       boardCacheStore.persistRemoveTile('tile_a');

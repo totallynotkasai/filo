@@ -6,7 +6,7 @@ import { parseDocument } from 'yaml';
  * note writer, so there is one parser for all frontmatter — a second
  * parser (e.g. gray-matter's js-yaml, which coerces `date:` → `Date`,
  * `1_000` → `1000`) would disagree and cause "looks changed but isn't" drift.
- * `gates:no-jsyaml-in-frontmatter` forbids js-yaml / gray-matter here.
+ * Gate `no-jsyaml` forbids js-yaml / gray-matter anywhere in the app.
  *
  * The editor read/write path uses the richer `parseMarkdownFile`
  * (`lib/editor/markdownSync.ts`: BOM flag + `hasFrontmatter` surface,

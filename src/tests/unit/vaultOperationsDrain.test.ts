@@ -374,6 +374,7 @@ describe('withDrainedWrites — scoped to the paths an operation touches', () =>
     await failedWriteAt('Card.md');
     // Drain again so the prompt is raised on a toast we can see.
     await expect(withDrainedWrites(async () => undefined, { paths: ['Card.md'] })).rejects.toBeInstanceOf(PendingWritesFailedError);
+    await noteStore.__settleGraceChecksForTests();
     const prompt = uiStore.toasts.find((t) => t.text.includes('the file no longer exists'));
     expect(prompt?.actions?.map((a) => a.label)).toEqual(['Discard change']);
     await prompt!.actions![0].handler();
@@ -391,6 +392,7 @@ describe('withDrainedWrites — scoped to the paths an operation touches', () =>
     vault.remove('Card.md');
     noteStore.setBody('Card.md', 'Typed text\n', 'editor');
     await expect(withDrainedWrites(async () => undefined, { paths: ['Card.md'] })).rejects.toBeInstanceOf(PendingWritesFailedError);
+    await noteStore.__settleGraceChecksForTests();
     const prompt = uiStore.toasts.find((t) => t.text.includes('the file no longer exists'));
     expect(prompt?.actions?.map((a) => a.label)).toEqual(['Save as new file', 'Discard change']);
     await prompt!.actions![0].handler();

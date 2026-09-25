@@ -6,7 +6,7 @@ import { noteStore } from '@renderer/stores/notes.svelte';
 import { makeKanbanFrontmatterWriter } from '@renderer/lib/kanban/kanbanFrontmatterWriter';
 import { parseMarkdown } from '@renderer/lib/vault/vaultIndex';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard as KanbanBoardType, Tile } from '@renderer/schema/index';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { restoreFiloDefault } from '../helpers/filoBridge';
@@ -50,10 +50,10 @@ function hydrateBoardWithTextTile(
       settings: {},
       columns: [],
     },
-    tileDefs: tileDefs as V7BoardFileData['tileDefs'],
+    tileDefs: tileDefs as BoardFileData['tileDefs'],
     connections: {},
     frames: [],
-  } as unknown as V7BoardFileData;
+  } as unknown as BoardFileData;
   boardCacheStore.hydrate({ [boardId]: data }, { [boardId]: `${boardId}.board.json` });
 }
 

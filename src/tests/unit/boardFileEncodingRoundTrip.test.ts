@@ -7,7 +7,7 @@ import { writtenByteLength } from '@renderer/lib/boards/boardWriteDebounce';
 import { loadBoard } from '@renderer/lib/boards/boardLoader';
 import { writeBoardFile, setBoardExternalEditHandler } from '@renderer/lib/boards/boardWriteScheduler';
 import { getBaseline, __resetBaselinesForTests } from '@renderer/lib/vault/fileBaselineRegistry';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
@@ -22,7 +22,7 @@ import { restoreFiloDefault } from '../helpers/filoBridge';
  * (a) and (e) go red (the external-edit handler fires on save #2).
  */
 
-function board(name = 'Alpha'): V7BoardFileData {
+function board(name = 'Alpha'): BoardFileData {
   const now = 1_700_000_000_000;
   return {
     version: 8,
@@ -36,11 +36,11 @@ function board(name = 'Alpha'): V7BoardFileData {
       inlineTiles: {},
       createdAt: now,
       updatedAt: now,
-    } as V7BoardFileData['board'],
+    } as BoardFileData['board'],
     tileDefs: {},
     connections: {},
     frames: [],
-  } as V7BoardFileData;
+  } as BoardFileData;
 }
 
 let root: string;
@@ -144,13 +144,13 @@ describe('board file encoding (real fs)', () => {
     await writeBoardFile(root, rel, structuredClone(data));
 
     expect(handler).not.toHaveBeenCalled();
-    const final = JSON.parse(await fs.readFile(abs, 'utf-8')) as V7BoardFileData;
+    const final = JSON.parse(await fs.readFile(abs, 'utf-8')) as BoardFileData;
     expect(final.board.name).toBe('Edit 3');
   });
 
   it.each([
-    ['a double-encoded file', (d: V7BoardFileData) => JSON.stringify(JSON.stringify(d, null, 2), null, 2)],
-    ['a version 7 file', (d: V7BoardFileData) => JSON.stringify({ ...d, version: 7 }, null, 2)],
+    ['a double-encoded file', (d: BoardFileData) => JSON.stringify(JSON.stringify(d, null, 2), null, 2)],
+    ['a version 7 file', (d: BoardFileData) => JSON.stringify({ ...d, version: 7 }, null, 2)],
   ])('(f) %s is refused by the renderer and never written', async (_label, encode) => {
     const rel = 'Old.board.json';
     const abs = join(root, rel);

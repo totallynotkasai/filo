@@ -670,7 +670,7 @@ describe('Audit-17 3.1 — a failed FIRST open does not lock out other vaults', 
 
   function buildRoutes(registry: RegistryState, readTreeFails: (root: string) => boolean) {
     return {
-      'dialog:choice': async () => 1, // "Don't Save" — skip the flush flow.
+      'dialog:choice': async () => 1, // "Cancel" if asked: nothing is unsaved, so no leave dialog appears.
       'vault:close': async () => {
         registry.current = null;
         return { success: true };

@@ -5,7 +5,7 @@ import { boardStore } from '@renderer/stores/board.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { historyStore } from '@renderer/stores/history.svelte';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { BoardContext } from '@renderer/stores/boardStoreTypes';
 import type { MindMapBoard, TileDefinition } from '@renderer/schema/index';
 
@@ -17,7 +17,7 @@ import type { MindMapBoard, TileDefinition } from '@renderer/schema/index';
  * no-op path, and the rename delegation.
  */
 
-function makeMindMapWithFileTile(boardId: string, tileId: string, filePath: string): V7BoardFileData {
+function makeMindMapWithFileTile(boardId: string, tileId: string, filePath: string): BoardFileData {
   return {
     board: {
       id: boardId,

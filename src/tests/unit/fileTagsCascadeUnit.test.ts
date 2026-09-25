@@ -8,7 +8,7 @@ import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard, MindMapBoard } from '@renderer/schema/index';
 
 /**
@@ -19,7 +19,7 @@ import type { KanbanBoard, MindMapBoard } from '@renderer/schema/index';
  * regression in one can't be masked by the surrounding sweep.
  */
 
-function makeKanbanWithViews(boardId: string, filterTags: string[]): V7BoardFileData {
+function makeKanbanWithViews(boardId: string, filterTags: string[]): BoardFileData {
   return {
     version: 8,
     board: {
@@ -104,7 +104,7 @@ describe('fileTagsCascade.iterateBoardOnlyTiles (direct)', () => {
   afterEach(() => boardCacheStore.clear());
 
   it('yields every board-only tile (link / iframe / timer defs and mind-map inline tiles) across every loaded board', () => {
-    const mindMap: V7BoardFileData = {
+    const mindMap: BoardFileData = {
       version: 8,
       board: {
         id: 'b1',
@@ -122,14 +122,14 @@ describe('fileTagsCascade.iterateBoardOnlyTiles (direct)', () => {
         l1: { id: 'l1', type: 'link', title: 'L', tags: ['y'], url: 'https://e.x', style: STYLE, createdAt: 0, updatedAt: 0 },
         // A note's tags live in its frontmatter, so a text tile is not board-only.
         t1: { id: 't1', type: 'text', filePath: 'Note.md', style: STYLE, createdAt: 0, updatedAt: 0 },
-      } as unknown as V7BoardFileData['tileDefs'],
+      } as unknown as BoardFileData['tileDefs'],
       connections: {},
       frames: [],
     };
     const kanban = makeKanbanWithViews('b2', []);
     kanban.tileDefs = {
       tm: { id: 'tm', type: 'timer', title: 'T', style: STYLE, createdAt: 0, updatedAt: 0 },
-    } as unknown as V7BoardFileData['tileDefs'];
+    } as unknown as BoardFileData['tileDefs'];
     boardCacheStore.hydrate({ b1: mindMap, b2: kanban }, { b1: 'm.board.json', b2: 'k.board.json' });
 
     const yielded = [...iterateBoardOnlyTiles()].sort((a, b) => a.id.localeCompare(b.id));

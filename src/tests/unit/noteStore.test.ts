@@ -9,6 +9,7 @@ import { setActiveVaultPath } from '../../renderer/lib/vault/activeVaultPath';
 import { beginVaultGeneration, __resetVaultIdentityForTests } from '../../renderer/lib/vault/vaultIdentity';
 import { __resetDirtyTrackingForTests } from '../../renderer/lib/boards/writeStateTracking';
 import { renameAllPathKeys } from '../../renderer/lib/vault/renamePathKeys';
+import { NOTE_RENAME_GRACE_MS } from '../../renderer/lib/vault/externalChangeWindows';
 import { fireVaultSwap } from '../../renderer/core/vaultLifecycle';
 import { parseMarkdown } from '../../renderer/lib/vault/vaultIndex';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
@@ -203,9 +204,61 @@ describe('disk changes', () => {
     expect(prompts.deletedWithUnsavedBody).not.toHaveBeenCalled();
 
     const c = await loaded('Card.md');
-    noteStore.setBody('Card.md', 'Unsaved', 'v1');
-    vault.remove('Card.md');
-    await noteStore.onDiskChanged('Card.md');
-    expect(prompts.deletedWithUnsavedBody).toHaveBeenCalledWith(c);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      noteStore.setBody('Card.md', 'Unsaved', 'v1');
+      vault.remove('Card.md');
+      await noteStore.onDiskChanged('Card.md');
+      // It may be a rename by another program whose event is still coming.
+      expect(prompts.deletedWithUnsavedBody).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(NOTE_RENAME_GRACE_MS + 10);
+      expect(prompts.deletedWithUnsavedBody).toHaveBeenCalledWith(c);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a note with an unsaved edit that turns out to be renamed asks nothing and saves at the new name', async () => {
+    const c = await loaded('Card.md');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      noteStore.setBody('Card.md', 'Unsaved', 'v1');
+      const bytes = vault.read('Card.md') ?? '';
+      vault.remove('Card.md');
+      await noteStore.onDiskChanged('Card.md');
+      // Another program's rename, as the watcher reports it after the delete.
+      vault.writeExternally('Moved.md', bytes);
+      renameAllPathKeys('Card.md', 'Moved.md');
+      await vi.advanceTimersByTimeAsync(NOTE_RENAME_GRACE_MS + 10);
+      expect(prompts.deletedWithUnsavedBody).not.toHaveBeenCalled();
+      expect(prompts.writeTargetMissing).not.toHaveBeenCalled();
+      expect(noteStore.get('Moved.md')).toBe(c);
+    } finally {
+      vi.useRealTimers();
+    }
+    await noteStore.flush('Moved.md');
+    expect(vault.read('Moved.md')).toBe('---\ntitle: Card\npriority: low\n---\nUnsaved\n');
+    expect(vault.read('Card.md')).toBeUndefined();
+  });
+
+  it('a write that fails on a moved note waits, and the rename re-points it', async () => {
+    const c = await loaded('Card.md');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      noteStore.setBody('Card.md', 'Unsaved', 'v1');
+      const bytes = vault.read('Card.md') ?? '';
+      vault.remove('Card.md');
+      await noteStore.flush('Card.md');
+      vault.writeExternally('Moved.md', bytes);
+      renameAllPathKeys('Card.md', 'Moved.md');
+      await vi.advanceTimersByTimeAsync(NOTE_RENAME_GRACE_MS + 10);
+      expect(prompts.writeTargetMissing).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+    await noteStore.flush('Moved.md');
+    expect(vault.read('Moved.md')).toContain('Unsaved');
+    expect(noteStore.get('Moved.md')).toBe(c);
+    expect(vault.read('Card.md')).toBeUndefined();
   });
 });

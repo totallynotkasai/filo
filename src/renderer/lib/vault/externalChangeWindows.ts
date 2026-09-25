@@ -47,6 +47,16 @@ import { vaultPath, type VaultPath } from '../../../shared/vaultPath';
  * seconds ago by the time they're looking at the toast".
  */
 export const ATTACHMENT_DELETE_GRACE_MS = 500;
+
+/**
+ * How long a note with a change that isn't on disk yet may look deleted
+ * before the user is asked about it. A rename by another program reaches the
+ * app as its own event, after the watcher's debounce (up to 1 s) and its hold
+ * for an unpaired missing note (`MISSING_NOTE_HOLD_MS`, 1.5 s, main process).
+ * Meanwhile the note's write can fail on the old path or its "missing" event
+ * can arrive first; once the rename re-keys the note there is nothing to ask.
+ */
+export const NOTE_RENAME_GRACE_MS = 3000;
 // allow-module-state: reset via clearRecentRenames called from vaultExternalChanges's pre-swap handler
 const recentRenamedOldPaths = new Map<VaultPath, number>();
 

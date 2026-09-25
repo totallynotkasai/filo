@@ -10,7 +10,7 @@ import { uiStore } from '@renderer/stores/ui.svelte';
 import { captureVaultIdentity, beginVaultGeneration } from '@renderer/lib/vault/vaultIdentity';
 import { isBoardPathHeld } from '@renderer/lib/boards/boardWriteScheduler';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
@@ -22,7 +22,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
  * new path once the reconcile rename rebinds it.
  */
 
-function makeBoard(id: string, name: string): V7BoardFileData {
+function makeBoard(id: string, name: string): BoardFileData {
   return {
     board: {
       id, type: 'mindmap', name, emoji: '', createdAt: 0, updatedAt: 0, settings: {},
@@ -31,7 +31,7 @@ function makeBoard(id: string, name: string): V7BoardFileData {
     tileDefs: {},
     connections: {},
     frames: [],
-  } as unknown as V7BoardFileData;
+  } as unknown as BoardFileData;
 }
 
 const OLD = 'Projects/Plan.board.json';

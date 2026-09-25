@@ -180,6 +180,10 @@ export interface NoteWriter {
   hasPendingBody(path: string): boolean;
   /** True while anything for `path` is queued, being written or failed. */
   hasWork(path: string): boolean;
+  /** True while a change for `path` waits to be written (including one that failed and is kept). */
+  isQueued(path: string): boolean;
+  /** Every note with a change waiting to be written (including failed and held ones), in its on-disk spelling. */
+  queuedPaths(): string[];
   /** Drops the queued body (a Reload discarded it). */
   dropBody(path: string): void;
   /** Drops everything queued for `path` (the user deleted the note). */
@@ -449,6 +453,14 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
       return pending.has(key) || scheduler.hasWork(key);
     },
 
+    isQueued(path) {
+      return pending.has(vaultPath(path));
+    },
+
+    queuedPaths() {
+      return [...pending.values()].map((e) => e.relPath);
+    },
+
     dropBody(path) {
       const key = vaultPath(path);
       const entry = pending.get(key);
@@ -612,8 +624,12 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
         }
       }
       for (const [from, to, entry] of moves) {
+        const fromRel = pending.get(from)?.relPath;
         pending.delete(from);
         scheduler.cancel(from, undefined, true);
+        // A write that failed because the file had moved away is retried at
+        // the new path below, so the old path is no longer failed.
+        if (fromRel) settled(fromRel);
         const existing = pending.get(to);
         pending.set(to, existing
           ? { relPath: entry.relPath, body: entry.body ?? existing.body, delta: existing.delta && entry.delta ? mergeFrontmatterDelta(entry.delta, existing.delta) : (entry.delta ?? existing.delta) }

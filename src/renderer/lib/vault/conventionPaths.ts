@@ -9,7 +9,7 @@
  * root. They read `vaultStore` reactively so callers in templates / $derived
  * stay live; the rest of the file remains pure for unit-test reuse.
  */
-import type { V7BoardFileData } from '../boards/boardSaver';
+import type { BoardFileData } from '../boards/boardSaver';
 import type { Board } from '../../schema/index';
 import { vaultStore } from '../../stores/vault.svelte';
 import { normalizePath, normalizeVaultRelative, stripLeadingSlash } from '../utils/path';
@@ -39,7 +39,7 @@ export function fileNameSafe(name: string): string {
  * authority, and `noteStore.createUnique` bumps again on EEXIST.
  */
 export function nextUniqueMdPath(
-  cache: Record<string, V7BoardFileData>,
+  cache: Record<string, BoardFileData>,
   folder: string,
   baseName: string,
   extraTaken: Iterable<string> = [],
@@ -68,7 +68,7 @@ export function nextUniqueMdPath(
  * cycle. `noteStore.createUnique` still re-checks exclusively.
  */
 export function nextFreeMdPath(
-  cache: Record<string, V7BoardFileData>,
+  cache: Record<string, BoardFileData>,
   folder: string,
   baseName: string,
 ): string {

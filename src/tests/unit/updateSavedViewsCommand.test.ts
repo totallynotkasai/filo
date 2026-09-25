@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { UpdateSavedViewsCommand } from '@renderer/commands/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard, TaskListBoard } from '@renderer/schema/index';
 
 function installEmptyFiloStub(): void {
@@ -18,7 +18,7 @@ function installEmptyFiloStub(): void {
   };
 }
 
-function makeKanbanFixture(): V7BoardFileData {
+function makeKanbanFixture(): BoardFileData {
   return {
     board: {
       id: 'kb',
@@ -36,7 +36,7 @@ function makeKanbanFixture(): V7BoardFileData {
   };
 }
 
-function makeTaskListFixture(): V7BoardFileData {
+function makeTaskListFixture(): BoardFileData {
   return {
     board: {
       id: 'tl',

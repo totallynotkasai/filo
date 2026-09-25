@@ -61,21 +61,40 @@ function normaliseKey(path: string): string {
 export interface FileBaseline {
   mtimeMs: number;
   size: number;
-  /**
-   * The exact bytes last CONFIRMED on disk for this baseline
-   * (a hydrate read, or a post-write read-back that matched), when small enough
-   * to keep (callers pass it only under the 1 MB read-back threshold). Lets the
-   * gateway skip a write whose assembled bytes are identical. Any re-stamp
-   * WITHOUT text (external reload, Keep-local re-anchor, a large note) drops it,
-   * so a stale copy can never justify a skip. Roughly doubles memory for
-   * hydrated notes under 1 MB — accepted.
-   */
-  text?: string;
 }
 
 /** Vault-relative path -> last-observed (mtime, size) baseline. */
 // allow-module-state: reset on vault swap (resetAllBaselines, registered below)
 const baselines = new Map<string, FileBaseline>();
+
+/**
+ * A reader's ticket from `baselineSeq`: which self-write the path had seen
+ * when the read began. Opaque to callers.
+ */
+export type BaselineSeq = number;
+
+/**
+ * Path -> the sequence number of the last self-write that refreshed (or tried
+ * to refresh) its baseline. The numbers come from one counter that never
+ * resets, so a ticket taken before a vault swap or a rename can never match a
+ * later path's entry by accident.
+ */
+// allow-module-state: reset on vault swap (resetAllBaselines, registered below)
+const writeSeqs = new Map<string, BaselineSeq>();
+// allow-module-state: a monotonic counter; values stay unique across vault swaps
+let writeCounter = 0;
+
+/**
+ * Take a ticket before reading a file whose stat will become its baseline.
+ * Pass it back as `noteBaseline(…, { ifUnchangedSince })`: if one of Filo's
+ * own writes refreshed the baseline while the read was in flight, the reader's
+ * older stat is dropped instead of rolling the baseline back. A rolled-back
+ * baseline makes the next write see its own previous write as an external
+ * edit and prompt.
+ */
+export function baselineSeq(path: string): BaselineSeq {
+  return writeSeqs.get(normaliseKey(path)) ?? 0;
+}
 
 /**
  * Transfer the baseline from `oldRel` to `newRel` so a
@@ -90,22 +109,29 @@ export function renameBaselinePath(oldRel: string, newRel: string): void {
   const oldKey = normaliseKey(oldRel);
   const newKey = normaliseKey(newRel);
   if (oldKey === newKey) return;
-  const exact = baselines.get(oldKey);
+  // The write sequence moves with the baseline: a read of the new path that
+  // began before the move must still yield to a write made after it.
+  rekey(baselines, oldKey, newKey);
+  rekey(writeSeqs, oldKey, newKey);
+}
+
+function rekey<V>(map: Map<string, V>, oldKey: string, newKey: string): void {
+  const exact = map.get(oldKey);
   if (exact !== undefined) {
-    baselines.delete(oldKey);
-    baselines.set(newKey, exact);
+    map.delete(oldKey);
+    map.set(newKey, exact);
   }
   // Folder-prefix sweep — re-key every descendant.
   const oldChildPrefix = oldKey + '/';
   const newChildPrefix = newKey + '/';
-  const transfers: Array<[string, FileBaseline]> = [];
-  for (const [key, value] of baselines) {
+  const transfers: Array<[string, V]> = [];
+  for (const [key, value] of map) {
     if (key.startsWith(oldChildPrefix)) {
       transfers.push([newChildPrefix + key.slice(oldChildPrefix.length), value]);
-      baselines.delete(key);
+      map.delete(key);
     }
   }
-  for (const [k, v] of transfers) baselines.set(k, v);
+  for (const [k, v] of transfers) map.set(k, v);
 }
 
 /**
@@ -123,11 +149,15 @@ export function hasBaselineDrifted(
 }
 
 /**
- * Stamps `path`'s baseline (mtime + size). Called from:
- *   - load paths (after a fresh read, which returns both mtime and size)
- *   - successful self-write completion (post-write `vault:stat`)
+ * Stamps `path`'s baseline (mtime + size) from a reader's stat: a load, a
+ * create, or a re-anchor after a prompt. Self-writes go through
+ * `refreshBaselineAfterWrite` instead.
  *
- * Idempotent — re-stamping an existing entry just overwrites the value.
+ * `ifUnchangedSince` is the reader's `baselineSeq(path)` ticket, taken before
+ * its read. When a self-write refreshed the baseline after that, the stamp is
+ * skipped: the reader's stat is older than the baseline already recorded.
+ * Production callers always pass it (gate `baseline-stamp-forward-only`).
+ *
  * No-op when `path` is empty or either `mtimeMs` / `size` is not a finite
  * number (the caller's stat failed); the next successful stat will
  * populate a complete baseline.
@@ -136,7 +166,7 @@ export function noteBaseline(
   path: string,
   mtimeMs: number | undefined | null,
   size: number | undefined | null,
-  text?: string,
+  opts: { ifUnchangedSince?: BaselineSeq } = {},
 ): void {
   if (!path) return;
   if (mtimeMs === undefined || mtimeMs === null || !Number.isFinite(mtimeMs)) return;
@@ -147,8 +177,8 @@ export function noteBaseline(
   if (size === undefined || size === null || !Number.isFinite(size)) return;
   const key = normaliseKey(path);
   if (!key) return;
-  // REPLACES the entry: a re-stamp without `text` drops any previous text.
-  baselines.set(key, text === undefined ? { mtimeMs, size } : { mtimeMs, size, text });
+  if (opts.ifUnchangedSince !== undefined && (writeSeqs.get(key) ?? 0) !== opts.ifUnchangedSince) return;
+  baselines.set(key, { mtimeMs, size });
 }
 
 /**
@@ -197,26 +227,21 @@ export function refreshBaselineAfterWrite(
   path: string,
   mtimeMs: number | undefined | null,
   size: number | undefined | null,
-  text?: string,
 ): void {
   if (!path) return;
+  // Bumped even when the stat is unusable: the write still happened, so a
+  // read that began before it must not stamp the pre-write stat.
+  const key = normaliseKey(path);
+  if (key) writeSeqs.set(key, ++writeCounter);
   if (
     typeof mtimeMs === 'number' &&
     Number.isFinite(mtimeMs) &&
     typeof size === 'number' &&
     Number.isFinite(size)
   ) {
-    noteBaseline(path, mtimeMs, size, text);
-    return;
+    noteBaseline(path, mtimeMs, size);
   }
   // Else: keep the prior baseline. Deliberately NO clearBaseline call.
-  // But drop its confirmed TEXT: a write was issued whose bytes
-  // we could not confirm, so the old text no longer proves what disk holds (on a
-  // coarse-mtime volume a same-size write could otherwise leave mtime+size
-  // "unchanged" and let a later write back to the old bytes be skipped).
-  const key = normaliseKey(path);
-  const prior = baselines.get(key);
-  if (prior?.text !== undefined) baselines.set(key, { mtimeMs: prior.mtimeMs, size: prior.size });
 }
 
 /**
@@ -226,6 +251,7 @@ export function refreshBaselineAfterWrite(
  */
 export function resetAllBaselines(): void {
   baselines.clear();
+  writeSeqs.clear();
 }
 
 vaultSwapResettable('fileBaselineRegistry', resetAllBaselines);
@@ -272,4 +298,5 @@ registerPathRenamable('fileBaselineRegistry', renameBaselinePath);
  */
 export function __resetBaselinesForTests(): void {
   baselines.clear();
+  writeSeqs.clear();
 }

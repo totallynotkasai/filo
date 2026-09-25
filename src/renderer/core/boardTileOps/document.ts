@@ -1,5 +1,5 @@
 import type { DocumentBoard, Tile } from '../../schema/index';
-import type { CacheContext, V7BoardFileData } from '../../stores/boardCacheTypes';
+import type { CacheContext, BoardFileData } from '../../stores/boardCacheTypes';
 import type { AddTileOpts, BoardTileOps } from '../boardTileOps';
 
 /**
@@ -16,7 +16,7 @@ export const documentTileOps: BoardTileOps<DocumentBoard> = {
 
   async addTile(
     _ctx: CacheContext,
-    _cached: V7BoardFileData,
+    _cached: BoardFileData,
     boardId: string,
     tile: Tile,
     _opts?: AddTileOpts,
@@ -28,7 +28,7 @@ export const documentTileOps: BoardTileOps<DocumentBoard> = {
 
   removeTile(
     _ctx: CacheContext,
-    _cached: V7BoardFileData,
+    _cached: BoardFileData,
     boardId: string,
     tileId: string,
   ): void {
@@ -39,7 +39,7 @@ export const documentTileOps: BoardTileOps<DocumentBoard> = {
 
   updateTile(
     _ctx: CacheContext,
-    _cached: V7BoardFileData,
+    _cached: BoardFileData,
     boardId: string,
     tileId: string,
     _updates: Partial<Tile>,
@@ -49,11 +49,11 @@ export const documentTileOps: BoardTileOps<DocumentBoard> = {
     );
   },
 
-  getFullTiles(_cached: V7BoardFileData, _boardId: string): Record<string, Tile> {
+  getFullTiles(_cached: BoardFileData, _boardId: string): Record<string, Tile> {
     return {};
   },
 
-  listPlacementIds(_cached: V7BoardFileData): string[] {
+  listPlacementIds(_cached: BoardFileData): string[] {
     return [];
   },
 };

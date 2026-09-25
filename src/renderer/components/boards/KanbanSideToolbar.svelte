@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * KanbanSideToolbar — V7 toolbar.
+   * KanbanSideToolbar — the Kanban side toolbar.
    *
    * Buttons:
    *   - Manage Columns      (Reorder / Per-column width / Collapse All / Expand All)

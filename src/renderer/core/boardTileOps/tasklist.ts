@@ -10,7 +10,7 @@ import {
   seedTextFileForNewTile,
   stampTextTileSeedPath,
 } from '../../lib/boards/seedTextFileForNewTile';
-import type { CacheContext, V7BoardFileData } from '../../stores/boardCacheTypes';
+import type { CacheContext, BoardFileData } from '../../stores/boardCacheTypes';
 import { projectDef } from './projectTile';
 import type { AddTileOpts, BoardTileOps } from '../boardTileOps';
 
@@ -41,7 +41,7 @@ export const tasklistTileOps: BoardTileOps<TaskListBoard> = {
 
   async addTile(
     ctx: CacheContext,
-    cached: V7BoardFileData,
+    cached: BoardFileData,
     boardId: string,
     tile: Tile,
     opts?: AddTileOpts,
@@ -58,7 +58,7 @@ export const tasklistTileOps: BoardTileOps<TaskListBoard> = {
 
   removeTile(
     ctx: CacheContext,
-    cached: V7BoardFileData,
+    cached: BoardFileData,
     boardId: string,
     tileId: string,
   ): void {
@@ -111,7 +111,7 @@ export const tasklistTileOps: BoardTileOps<TaskListBoard> = {
 
   updateTile(
     ctx: CacheContext,
-    cached: V7BoardFileData,
+    cached: BoardFileData,
     boardId: string,
     tileId: string,
     updates: Partial<Tile>,
@@ -133,7 +133,7 @@ export const tasklistTileOps: BoardTileOps<TaskListBoard> = {
     ctx.markDirty(boardId);
   },
 
-  getFullTiles(cached: V7BoardFileData, boardId: string): Record<string, Tile> {
+  getFullTiles(cached: BoardFileData, boardId: string): Record<string, Tile> {
     const b = cached.board;
     if (b.type !== 'tasklist') return {};
     const tl = b as TaskListBoard;
@@ -155,7 +155,7 @@ export const tasklistTileOps: BoardTileOps<TaskListBoard> = {
     return result;
   },
 
-  listPlacementIds(cached: V7BoardFileData): string[] {
+  listPlacementIds(cached: BoardFileData): string[] {
     const b = cached.board;
     if (b.type !== 'tasklist') return [];
     const tl = b as TaskListBoard;

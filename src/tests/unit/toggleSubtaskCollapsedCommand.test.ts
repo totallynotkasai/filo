@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { ToggleSubtaskCollapsedCommand } from '@renderer/commands/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TaskListBoard } from '@renderer/schema/index';
 
 /**
@@ -26,7 +26,7 @@ function installFiloStub(routes: Record<string, InvokeHandler> = {}): void {
   };
 }
 
-function makeTaskListFixture(): V7BoardFileData {
+function makeTaskListFixture(): BoardFileData {
   return {
     board: {
       id: 'tl',

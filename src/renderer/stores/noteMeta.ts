@@ -73,3 +73,20 @@ export function defTitle(def: { type: string; filePath?: string; title?: string 
   if (def.type === 'text') return noteTitle(def.filePath ?? '');
   return def.title ?? '';
 }
+
+/** Line spacings the toolbar offers; a note may hold any value in the sane range. */
+export const LINE_SPACING_CHOICES: readonly number[] = [1.0, 1.15, 1.5, 2.0];
+const MIN_LINE_SPACING = 0.8;
+const MAX_LINE_SPACING = 4;
+
+/**
+ * The note's line spacing from frontmatter `lineSpacing:` (a number, or a
+ * numeric string written by hand), or `null` when it has none or the value is
+ * out of range. `null` means every view uses its own default spacing.
+ */
+export function noteLineSpacing(path: string): number | null {
+  if (!path) return null;
+  const raw = noteFrontmatter(path).lineSpacing;
+  const value = typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() ? Number(raw) : NaN;
+  return Number.isFinite(value) && value >= MIN_LINE_SPACING && value <= MAX_LINE_SPACING ? value : null;
+}

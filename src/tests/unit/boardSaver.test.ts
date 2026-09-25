@@ -14,7 +14,7 @@ import {
   __resetDirtyTrackingForTests,
   type WriteErrorInfo,
   type WriteStateInfo,
-  type V7BoardFileData,
+  type BoardFileData,
 } from '@renderer/lib/boards/boardSaver';
 import type { ProjectSettings, WorkspaceState } from '@renderer/schema/index';
 import {
@@ -42,7 +42,7 @@ describe('boardSaver.writeBoardFile', () => {
   it('writes a media tile def verbatim (caption title, src)', async () => {
     installFiloMock({ 'board:save': captureBoardSave() });
 
-    const cached: V7BoardFileData = {
+    const cached: BoardFileData = {
       board: {
         id: 'mm',
         type: 'mindmap',
@@ -57,7 +57,7 @@ describe('boardSaver.writeBoardFile', () => {
         frames: [],
         waypoints: [],
         groups: [],
-      } as unknown as V7BoardFileData['board'],
+      } as unknown as BoardFileData['board'],
       tileDefs: {
         i1: {
           id: 'i1',
@@ -67,7 +67,7 @@ describe('boardSaver.writeBoardFile', () => {
           style: {} as never,
           createdAt: 0,
           updatedAt: 0,
-        } as unknown as V7BoardFileData['tileDefs'][string],
+        } as unknown as BoardFileData['tileDefs'][string],
       },
       connections: {},
       frames: [],
@@ -81,7 +81,7 @@ describe('boardSaver.writeBoardFile', () => {
   it('writes mind-map boards intact (placements, inlineTiles)', async () => {
     installFiloMock({ 'board:save': captureBoardSave() });
 
-    const cached: V7BoardFileData = {
+    const cached: BoardFileData = {
       board: {
         id: 'mm',
         type: 'mindmap',
@@ -96,7 +96,7 @@ describe('boardSaver.writeBoardFile', () => {
         frames: [],
         waypoints: [],
         groups: [],
-      } as unknown as V7BoardFileData['board'],
+      } as unknown as BoardFileData['board'],
       tileDefs: {},
       connections: {},
       frames: [],
@@ -127,8 +127,8 @@ describe('boardSaver write error propagation', () => {
     const observed: WriteErrorInfo[] = [];
     setWriteErrorListener((info) => observed.push(info));
 
-    const cached: V7BoardFileData = {
-      board: { id: 'b', type: 'mindmap', name: 'B', emoji: '', createdAt: 0, updatedAt: 0, settings: {}, placements: {}, inlineTiles: {}, connections: [], frames: [], waypoints: [], groups: [] } as unknown as V7BoardFileData['board'],
+    const cached: BoardFileData = {
+      board: { id: 'b', type: 'mindmap', name: 'B', emoji: '', createdAt: 0, updatedAt: 0, settings: {}, placements: {}, inlineTiles: {}, connections: [], frames: [], waypoints: [], groups: [] } as unknown as BoardFileData['board'],
       tileDefs: {},
       connections: {},
       frames: [],
@@ -409,7 +409,7 @@ describe('boardSaver.flushAll — Phase 31 A1.1 aggregate failure surfacing', ()
       'config:save': () => ({ ok: true }),
     });
 
-    const cached = (path: string): V7BoardFileData => ({
+    const cached = (path: string): BoardFileData => ({
       board: {
         id: path,
         type: 'mindmap',
@@ -424,7 +424,7 @@ describe('boardSaver.flushAll — Phase 31 A1.1 aggregate failure surfacing', ()
         frames: [],
         waypoints: [],
         groups: [],
-      } as unknown as V7BoardFileData['board'],
+      } as unknown as BoardFileData['board'],
       tileDefs: {},
       connections: {},
       frames: [],

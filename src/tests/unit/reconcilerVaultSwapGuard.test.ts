@@ -34,7 +34,7 @@ import {
   __resetDirtyTrackingForTests,
   __clearRecentSelfWritesForTests,
 } from '@renderer/lib/boards/writeStateTracking';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard } from '@renderer/schema/index';
 
 function installRoutes(routes: Record<string, (...args: unknown[]) => unknown>): void {
@@ -45,7 +45,7 @@ function installRoutes(routes: Record<string, (...args: unknown[]) => unknown>):
   };
 }
 
-function makeBoard(name: string): V7BoardFileData {
+function makeBoard(name: string): BoardFileData {
   return {
     version: 8,
     board: {

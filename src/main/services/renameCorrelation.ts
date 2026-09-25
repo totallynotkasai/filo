@@ -26,6 +26,12 @@ function basenameKey(filename: string, caseInsensitive: boolean): string {
  * has a much higher prior of being a true rename. Matters most on sync
  * vaults, where a mispairing would silently rewrite tile references /
  * `.filo/tags.json` onto the wrong file.
+ *
+ * With a hash probe, a smaller file still pairs on a whole-content SHA-1
+ * match. // DECISION: two different non-empty files with identical bytes,
+ * one deleted and one created in the same moment, are indistinguishable from
+ * a move; following it moves tile references onto an identical note, which is
+ * less harmful than treating every renamed small note as deleted.
  */
 const CROSS_BASENAME_MIN_SIZE_BYTES = 256;
 
@@ -140,9 +146,9 @@ async function sameBasenameBytesPreserved(
  *      pair and both are suppressed from the residual feed.
  *   2. **Cross-basename pass.** Among events the first pass did NOT pair,
  *      group by file size. When exactly one missing event and one present
- *      event share a size, the same `type`, AND the same file extension
- *      AND the size is ≥ {@link CROSS_BASENAME_MIN_SIZE_BYTES}, attempt
- *      to pair them. Below `CROSS_BASENAME_HASH_REQUIRED_BELOW` the pair
+ *      event share a non-zero size, the same `type`, AND the same file
+ *      extension, attempt to pair them. Without a hash probe the size must
+ *      be ≥ {@link CROSS_BASENAME_MIN_SIZE_BYTES}. Below `CROSS_BASENAME_HASH_REQUIRED_BELOW` the pair
  *      MUST also have matching `relPathHash` values (missing side from the
  *      cache, present side hashed from disk), so two unrelated same-size
  *      files never silently merge tile references.
@@ -276,8 +282,9 @@ export async function correlateRenames(
   // Cross-basename pass: bucket leftover events by size and pair when each
   // bucket has exactly one missing + one present of the same type. Two
   // additional guards suppress the most common false positives on sync
-  // vaults: (a) skip files smaller than CROSS_BASENAME_MIN_SIZE_BYTES
-  // because tiny files frequently share sizes by coincidence, and (b) require
+  // vaults: (a) files smaller than CROSS_BASENAME_MIN_SIZE_BYTES pair only on
+  // a content-hash match, because tiny files frequently share sizes by
+  // coincidence, and (b) require
   // the missing + present pair to share a file extension — a `.png` deletion
   // pairing with a `.jpg` creation of the same size is never a true rename.
   if (relPathSize) {
@@ -287,7 +294,12 @@ export async function correlateRenames(
       if (suppressedKeys.has(`${c.type}:${c.filename}`)) continue;
       const sz = relPathSize(c.filename);
       if (sz === null) continue;
-      if (sz < CROSS_BASENAME_MIN_SIZE_BYTES) continue;
+      // Below the floor only a content-hash match can pair (the hash gate
+      // below always applies at this size when the probe is given). A typical
+      // note is under 256 bytes, so without this a renamed note never pairs.
+      // Two empty files match on anything, so they never pair.
+      if (sz === 0) continue;
+      if (sz < CROSS_BASENAME_MIN_SIZE_BYTES && !relPathHash) continue;
       if (relPathExists(c.filename)) {
         const b = presentBySize.get(sz) ?? [];
         b.push(c);

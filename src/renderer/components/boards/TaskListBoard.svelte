@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * TaskListBoard — V7 placement-based task list.
+   * TaskListBoard — placement-based task list.
    *
    * Each entry in `board.tasks` is a placement that points at a `text` tile
    * def in `boardCacheStore.cache[boardId].tileDefs`. The task's reactive

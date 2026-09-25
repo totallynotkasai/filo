@@ -2,20 +2,20 @@
  * boardLoader — reads and validates .board.json files from disk via IPC.
  *
  * Provides a single entry point for loading board files. Handles schema
- * validation via Zod and returns typed V7BoardFileData. Broken file-reference
+ * validation via Zod and returns typed BoardFileData. Broken file-reference
  * detection runs in `boardRefIntegrityStore.recompute(knownVaultPaths)` once
  * the vault file tree is known — keeping the load path stateless avoids
  * shipping a `fileExists` callback into every caller.
  */
 
 import type { Board, Connection, Frame } from '../../schema/index';
-import { V7BoardFileDataSchema, migrateBoardFile, CURRENT_BOARD_FILE_VERSION } from '../../schema/index';
+import { BoardFileDataSchema, migrateBoardFile, CURRENT_BOARD_FILE_VERSION } from '../../schema/index';
 import { TILE_TYPES } from '../../schema/tile';
-import type { V7BoardFileData } from './boardSaver';
+import type { BoardFileData } from './boardSaver';
 import { reportError } from '../utils/errorBus';
 import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
-import { noteBaseline } from '../vault/fileBaselineRegistry';
+import { baselineSeq, noteBaseline } from '../vault/fileBaselineRegistry';
 import { loadVersionedFile } from '../vault/loadVersionedFile';
 import { detectConflictCopyPath } from '@shared/conflictCopy';
 
@@ -106,7 +106,7 @@ function orphanReportHasFindings(r: OrphanPruneReport): boolean {
 /**
  * Set of tile IDs that are valid connection /
  * frame.tileIds targets on this envelope. Mirrors the validity set used by
- * `V7BoardFileDataSchema`'s superRefine so the loader's pre-parse prune and
+ * `BoardFileDataSchema`'s superRefine so the loader's pre-parse prune and
  * the schema's cross-check stay in lockstep.
  *
  * - All board types: `tileDefs` keys are valid (vault-backed tiles).
@@ -294,7 +294,7 @@ function pruneOrphanRefsAndDuplicates(raw: unknown): OrphanPruneReport {
 
 export interface LoadBoardResult {
   ok: true;
-  data: V7BoardFileData;
+  data: BoardFileData;
   /**
    * The version on the raw input when a migration step ran, else `null`.
    * Always `null` today: only the current format loads.
@@ -418,6 +418,12 @@ export async function loadBoard(
   // write in the read→stat gap would otherwise become "our" baseline and the
   // next save would clobber it with no drift prompt. Best-effort — a failed
   // pre-stat just skips the baseline (no drift check for this board).
+  //
+  // The ticket is taken before the first stat: a save of this board that lands
+  // while the load is in flight refreshes the baseline, and this load's older
+  // stat must not then roll it back (the next save would see its own previous
+  // write as an external edit).
+  const seq = baselineSeq(relPath);
   let preStat: { mtimeMs: number; size: number } | null = null;
   try {
     preStat = await invokeOk('vault:stat', vaultRoot, relPath);
@@ -450,7 +456,7 @@ export async function loadBoard(
   try {
     const stat = await invokeOk('vault:stat', vaultRoot, relPath);
     if (preStat && preStat.mtimeMs === stat.mtimeMs && preStat.size === stat.size) {
-      noteBaseline(relPath, stat.mtimeMs, stat.size);
+      noteBaseline(relPath, stat.mtimeMs, stat.size, { ifUnchangedSince: seq });
     }
   } catch {
     // Non-fatal — no baseline, no pre-write drift check for this board.
@@ -478,7 +484,7 @@ export async function loadBoard(
   let droppedTileTypes: string[] = [];
   let orphanReport: OrphanPruneReport = emptyOrphanReport();
   const loaded = loadVersionedFile(
-    V7BoardFileDataSchema,
+    BoardFileDataSchema,
     migrateBoardFile,
     rawJson,
     (data) => {
@@ -610,11 +616,11 @@ export async function loadBoard(
   warnUndersizedFrames(data.frames, data.board.name || relPath);
 
   // Spread the parsed envelope FIRST so unknown top-level keys preserved by
-  // `V7BoardFileDataSchema.passthrough()` survive the load → cache → save
+  // `BoardFileDataSchema.passthrough()` survive the load → cache → save
   // round-trip (the cache stores this object and the writer serialises it), so
   // a forward-compat key a newer Filo wrote isn't dropped. The explicit fields
   // below still pin the validated shape.
-  const normalised: V7BoardFileData = {
+  const normalised: BoardFileData = {
     ...data,
     board: data.board,
     tileDefs: data.tileDefs,
@@ -735,7 +741,7 @@ export async function loadAllBoards(
   vaultRoot: string,
 ): Promise<{
   boards: Board[];
-  cache: Record<string, V7BoardFileData>;
+  cache: Record<string, BoardFileData>;
   paths: Record<string, string>;
   connections: Record<string, Connection>;
   frames: Frame[];
@@ -759,7 +765,7 @@ export async function loadAllBoards(
   const relList = (await window.filo.invoke('board:list', vaultRoot)) as string[];
 
   const boards: Board[] = [];
-  const cache: Record<string, V7BoardFileData> = {};
+  const cache: Record<string, BoardFileData> = {};
   const paths: Record<string, string> = {};
   const connections: Record<string, Connection> = {};
   const frames: Frame[] = [];

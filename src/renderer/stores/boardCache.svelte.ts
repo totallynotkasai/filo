@@ -10,14 +10,16 @@ import type {
 import { noteStore } from './notes.svelte';
 import { vaultStore } from './vault.svelte';
 import {
-  type V7BoardFileData,
+  type BoardFileData,
   scheduleBoardWrite,
   flushBoardWrite,
   getViewportFromCache,
   setViewport,
+  markRecentSelfWrite,
 } from '../lib/boards/boardSaver';
 import { flushAllScheduledBoards } from '../lib/boards/boardWriteScheduler';
 import { loadBoard } from '../lib/boards/boardLoader';
+import { baselineSeq, noteBaseline } from '../lib/vault/fileBaselineRegistry';
 import { reportError } from '../lib/utils/errorBus';
 import { invokeOk } from '../lib/utils/invokeOk';
 import { normalizePath, toPosix, normalizeVaultRelative, stripLeadingSlash } from '../lib/utils/path';
@@ -42,7 +44,7 @@ import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdenti
  * runtime state (that lives in `board.svelte.ts`).
  */
 
-let boardCache = $state<Record<string, V7BoardFileData>>({});
+let boardCache = $state<Record<string, BoardFileData>>({});
 let boardPaths = $state<Record<string, string>>({});
 
 /**
@@ -81,7 +83,7 @@ function resetUnresolvedWarnState(): void {
 
 function getBoardWriteArgs(
   boardId: string,
-): { vaultRoot: string; boardPath: string; cached: V7BoardFileData } | null {
+): { vaultRoot: string; boardPath: string; cached: BoardFileData } | null {
   const vaultRoot = vaultStore.path;
   if (!vaultRoot) return null;
   const boardPath = boardPaths[boardId];
@@ -93,7 +95,7 @@ function getBoardWriteArgs(
 /**
  * Reverse-index memos (id → owning boardId) for the keyless
  * persist paths. A tile / connection / frame / kanban column / task is created
- * on exactly one board and never re-parented (V7 invariant), so a successful
+ * on exactly one board and never re-parented (an invariant), so a successful
  * scan result stays valid for the entity's life. `resolveOwnerCached` caches
  * scan hits and verifies-on-hit (O(1)) before trusting the memo — on a miss
  * OR a stale hit it falls back to a full scan — so the memo can NEVER return
@@ -123,7 +125,7 @@ function resetBoardOwnerMemos(): void {
 function resolveOwnerCached(
   memo: Map<string, string>,
   id: string,
-  owns: (data: V7BoardFileData) => boolean,
+  owns: (data: BoardFileData) => boolean,
 ): string | null {
   const cached = memo.get(id);
   if (cached !== undefined) {
@@ -143,7 +145,7 @@ function resolveOwnerCached(
 /**
  * Resolves a tile's owning board ID.
  *
- * V7 invariant: a `tile.id` is unique across all boards. When the same `.md`
+ * Invariant: a `tile.id` is unique across all boards. When the same `.md`
  * file appears on multiple boards each placement creates a fresh tile def
  * with its own `tile.id`; cross-board sharing is via the note's path (which
  * keys the shared `DocumentState`), never via a shared `tile.id`.
@@ -156,7 +158,7 @@ function findBoardIdForTile(tileId: string): string | null {
       const mm = b as MindMapBoard;
       return Boolean((mm.placements ?? {})[tileId] || (mm.inlineTiles ?? {})[tileId]);
     }
-    // V7: non-mind-map boards have no placements/inlineTiles. Tile
+    // Non-mind-map boards have no placements/inlineTiles. Tile
     // identity is the tileDefs key; whichever board owns the def owns the tile.
     return Boolean((data.tileDefs ?? {})[tileId]);
   });
@@ -275,7 +277,7 @@ function touchBoard(boardId: string): void {
   markDirty(boardId);
 }
 
-function updateEntry(boardId: string, updates: Partial<V7BoardFileData>): void {
+function updateEntry(boardId: string, updates: Partial<BoardFileData>): void {
   const existing = boardCache[boardId];
   if (!existing) return;
   boardCache = { ...boardCache, [boardId]: { ...existing, ...updates } };
@@ -327,7 +329,7 @@ export const boardCacheStore = {
   // ── Cache lifecycle ──
 
   /** Seeds the cache from a freshly-opened vault. */
-  hydrate(cache: Record<string, V7BoardFileData>, paths: Record<string, string>) {
+  hydrate(cache: Record<string, BoardFileData>, paths: Record<string, string>) {
     boardCache = cache;
     boardPaths = paths;
   },
@@ -400,7 +402,7 @@ export const boardCacheStore = {
    * mark dirty / schedule writes — the caller is responsible for cancelling
    * any debounced writes that captured the renamed snapshot.
    */
-  replaceCache(snapshot: Record<string, V7BoardFileData>): void {
+  replaceCache(snapshot: Record<string, BoardFileData>): void {
     boardCache = snapshot;
   },
 
@@ -559,10 +561,10 @@ export const boardCacheStore = {
     this.markDirty(boardId);
   },
 
-  // ── Kanban (V7) — slice ──
+  // ── Kanban — slice ──
   ...kanbanSlice,
 
-  // ── Task List (V7) — slice ──
+  // ── Task List — slice ──
   ...taskListSlice,
 
   // ── External-edit reconciliation — slice ──
@@ -590,7 +592,7 @@ export const boardCacheStore = {
 
     // Stamp the version on the very first write: the loader accepts only the
     // current format, so a version-less file would be refused on reload.
-    const fileData: V7BoardFileData = {
+    const fileData: BoardFileData = {
       version: CURRENT_BOARD_FILE_VERSION,
       board,
       tileDefs: {},
@@ -605,6 +607,15 @@ export const boardCacheStore = {
         board.name,
         JSON.stringify(fileData, null, 2),
       );
+
+      // The create is Filo's own write: its watcher echo is not an external
+      // edit, and its stat is the first save's drift anchor. Unmarked, the echo
+      // of a board edited within a second or two of its creation reads as an
+      // external edit and asks "modified externally". No save of the new path
+      // can have run yet (it had no path until now), so the ticket is taken
+      // here.
+      markRecentSelfWrite(result.path);
+      noteBaseline(result.path, result.mtimeMs, result.size, { ifUnchangedSince: baselineSeq(result.path) });
 
       boardPaths = { ...boardPaths, [board.id]: result.path };
       boardCache = { ...boardCache, [board.id]: fileData };

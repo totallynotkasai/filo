@@ -116,19 +116,22 @@ export function sidebarRow(app: CharApp, rel: string): HTMLElement {
   return row;
 }
 
-/** Expand each collapsed folder above `rel` in the sidebar, then return its row. */
-export async function revealInSidebar(app: CharApp, rel: string): Promise<HTMLElement> {
+/**
+ * Expand each collapsed folder above `rel` in the sidebar, then return its row.
+ * `timeoutMs` bounds each wait for a row to appear.
+ */
+export async function revealInSidebar(app: CharApp, rel: string, timeoutMs?: number): Promise<HTMLElement> {
   const parts = rel.split('/');
   for (let i = 1; i < parts.length; i++) {
     const folder = parts.slice(0, i).join('/');
-    await waitFor(() => { sidebarRow(app, folder); return true; }, `sidebar folder ${folder}`);
+    await waitFor(() => { sidebarRow(app, folder); return true; }, `sidebar folder ${folder}`, timeoutMs);
     const row = sidebarRow(app, folder);
     if (row.getAttribute('aria-expanded') !== 'true') {
       click(row);
       await settle(100);
     }
   }
-  await waitFor(() => { sidebarRow(app, rel); return true; }, `sidebar row ${rel}`);
+  await waitFor(() => { sidebarRow(app, rel); return true; }, `sidebar row ${rel}`, timeoutMs);
   return sidebarRow(app, rel);
 }
 
@@ -206,6 +209,12 @@ export async function closeActiveTab(app: CharApp): Promise<void> {
   if (!btn) throw new Error('active tab has no close button');
   click(btn);
   await quiesce(500);
+}
+
+/** The name the active tab shows. */
+export function activeTabName(app: CharApp): string {
+  const active = $(app.el, '.tab.active, .tab[aria-selected="true"]');
+  return (active.getAttribute('title') ?? '').replace(/ \([a-z]+\) — .*$/, '');
 }
 
 /** Right-click the active tab → Split Right. */
@@ -532,6 +541,11 @@ export function trashedPaths(app: CharApp): string[] {
   return out.sort();
 }
 
+/** The text of every board file in the vault, read from disk. */
+export function boardFilesText(app: CharApp): string[] {
+  return app.userFiles().filter((rel) => rel.endsWith('.board.json')).map((rel) => app.read(rel));
+}
+
 /** Project menu → Project Settings → Trash. */
 export async function openTrashSettings(app: CharApp): Promise<void> {
   const trigger = $$(app.el, 'button.dropdown-trigger').find((b) => b.closest('.global-toolbar, header, nav') !== null) ?? $(app.el, 'button.dropdown-trigger');
@@ -684,4 +698,49 @@ export async function typeAtEnd(ed: Editor, text: string): Promise<void> {
   ed.commands.focus('end');
   ed.commands.insertContent(text);
   await settle();
+}
+
+/** Put the cursor in the editor's first block, then pick an alignment in the toolbar's Text Align menu. */
+export async function alignFirstBlock(app: CharApp, ed: Editor, align: 'left' | 'center' | 'right' | 'justify'): Promise<void> {
+  ed.commands.focus('start');
+  await settle();
+  const select = $(app.el, 'select.align-select') as unknown as HTMLSelectElement;
+  select.dispatchEvent(new Event('focus'));
+  select.value = align;
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+  await settle();
+}
+
+/** Put the cursor in the editor's first block, then click the toolbar's Increase Indent button. */
+export async function indentFirstBlock(app: CharApp, ed: Editor): Promise<void> {
+  ed.commands.focus('start');
+  await settle();
+  click($(app.el, 'button[aria-label="Increase Indent"]'));
+  await settle();
+}
+
+/**
+ * With the cursor in `ed`, open the toolbar's Line Spacing menu and pick
+ * `choice` ("Default", "1", "1.15", "1.5" or "2").
+ */
+export async function chooseLineSpacing(app: CharApp, ed: Editor, choice: string): Promise<void> {
+  ed.commands.focus('start');
+  await settle();
+  const btn = $$(app.el, 'button.icon-btn').find((b) => (b.getAttribute('aria-label') ?? '').startsWith('Line Spacing'));
+  if (!btn) throw new Error('no Line Spacing button');
+  if ((btn as HTMLButtonElement).disabled) throw new Error('Line Spacing is disabled');
+  click(btn);
+  await settle();
+  const option = findByText(app.el, '.line-spacing-panel button', choice);
+  if (!option) throw new Error(`Line Spacing menu has no "${choice}"`);
+  click(option);
+  await quiesce(600);
+}
+
+/** The line height a view applies to its note, or null when it uses its default. */
+export function viewLineSpacing(editorRoot: HTMLElement): string | null {
+  const doc = editorRoot.querySelector('.document-editor') as HTMLElement | null;
+  if (doc) return doc.style.getPropertyValue('--note-line-height') || null;
+  const tile = editorRoot.querySelector('.editor-container') as HTMLElement | null;
+  return tile?.style.lineHeight || null;
 }

@@ -23,7 +23,7 @@
  *   3. A frame whose `tileIds[]` contains an unknown id.
  *
  * Mind Map's `board.inlineTiles` keys count as valid IDs for (2) / (3) —
- * mirroring `V7BoardFileDataSchema.superRefine`'s validIds set
+ * mirroring `BoardFileDataSchema.superRefine`'s validIds set
  * (boardFile.ts:60-69).
  */
 
@@ -34,17 +34,17 @@ import {
   KanbanBoardSchema,
   TaskListBoardSchema,
   DocumentBoardSchema,
-  V7BoardFileDataSchema,
+  BoardFileDataSchema,
   CURRENT_BOARD_FILE_VERSION,
   type Board,
 } from '@renderer/schema/index';
 import type { BoardType } from '@shared/types';
 import { createId } from '@renderer/lib/utils/ids';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 
 // ── Envelope factories (mirror boardRegistry, see boardRoundTrip.property.test.ts) ──
 
-function makeMindMap(): V7BoardFileData {
+function makeMindMap(): BoardFileData {
   const now = 0; // deterministic for property tests
   return {
     version: CURRENT_BOARD_FILE_VERSION,
@@ -69,7 +69,7 @@ function makeMindMap(): V7BoardFileData {
   };
 }
 
-function makeKanban(): V7BoardFileData {
+function makeKanban(): BoardFileData {
   const now = 0;
   return {
     version: CURRENT_BOARD_FILE_VERSION,
@@ -89,7 +89,7 @@ function makeKanban(): V7BoardFileData {
   };
 }
 
-function makeTaskList(): V7BoardFileData {
+function makeTaskList(): BoardFileData {
   const now = 0;
   return {
     version: CURRENT_BOARD_FILE_VERSION,
@@ -109,7 +109,7 @@ function makeTaskList(): V7BoardFileData {
   };
 }
 
-function makeDocument(): V7BoardFileData {
+function makeDocument(): BoardFileData {
   const now = 0;
   return {
     version: CURRENT_BOARD_FILE_VERSION,
@@ -129,7 +129,7 @@ function makeDocument(): V7BoardFileData {
   };
 }
 
-const FACTORIES: Record<BoardType, () => V7BoardFileData> = {
+const FACTORIES: Record<BoardType, () => BoardFileData> = {
   mindmap: makeMindMap,
   kanban: makeKanban,
   tasklist: makeTaskList,
@@ -150,7 +150,7 @@ type Op =
   | { tag: 'addFrame' }
   | { tag: 'removeFrame' };
 
-function mkDef(id: string): V7BoardFileData['tileDefs'][string] {
+function mkDef(id: string): BoardFileData['tileDefs'][string] {
   return {
     id,
     type: 'text',
@@ -158,10 +158,10 @@ function mkDef(id: string): V7BoardFileData['tileDefs'][string] {
     style: { headerColor: '#fff', bodyColor: '#fff', borderColor: '' },
     createdAt: 0,
     updatedAt: 0,
-  } as V7BoardFileData['tileDefs'][string];
+  } as BoardFileData['tileDefs'][string];
 }
 
-function applyOp(env: V7BoardFileData, op: Op): void {
+function applyOp(env: BoardFileData, op: Op): void {
   const board = env.board;
   const type = board.type;
   switch (op.tag) {
@@ -249,7 +249,7 @@ function applyOp(env: V7BoardFileData, op: Op): void {
         label: { text: '', textColor: '', backgroundColor: '', position: 0.5, locked: false },
         createdAt: 0,
         updatedAt: 0,
-      } as V7BoardFileData['connections'][string];
+      } as BoardFileData['connections'][string];
       return;
     }
     case 'removeConnection': {
@@ -323,7 +323,7 @@ function applyOp(env: V7BoardFileData, op: Op): void {
         tileIds: [],
         createdAt: 0,
         updatedAt: 0,
-      } as V7BoardFileData['frames'][number]);
+      } as BoardFileData['frames'][number]);
       return;
     }
     case 'removeFrame': {
@@ -336,7 +336,7 @@ function applyOp(env: V7BoardFileData, op: Op): void {
 
 // ── Orphan-free invariant ──────────────────────────────────────────────
 
-export function findOrphans(env: V7BoardFileData): {
+export function findOrphans(env: BoardFileData): {
   orphanPlacements: string[];
   orphanConnections: string[];
   orphanFrameIds: string[];
@@ -385,7 +385,7 @@ export function findOrphans(env: V7BoardFileData): {
   return { orphanPlacements, orphanConnections, orphanFrameIds };
 }
 
-function expectNoOrphans(env: V7BoardFileData, ctx: string): void {
+function expectNoOrphans(env: BoardFileData, ctx: string): void {
   const report = findOrphans(env);
   if (
     report.orphanPlacements.length === 0 &&
@@ -448,7 +448,7 @@ describe('Phase 0 characterization — no-orphan invariant under random ops', ()
     }
   });
 
-  describe('after every op, the envelope still parses through V7BoardFileDataSchema', () => {
+  describe('after every op, the envelope still parses through BoardFileDataSchema', () => {
     // Stronger property — not only does the in-memory shape look orphan-
     // free by our hand-written checker, the schema's own cross-check also
     // passes. Catches the case where our checker and the schema disagree.
@@ -458,7 +458,7 @@ describe('Phase 0 characterization — no-orphan invariant under random ops', ()
           fc.property(opSeqArb, (ops) => {
             const env = FACTORIES[type]();
             ops.forEach((op) => applyOp(env, op));
-            const parsed = V7BoardFileDataSchema.safeParse(JSON.parse(JSON.stringify(env)));
+            const parsed = BoardFileDataSchema.safeParse(JSON.parse(JSON.stringify(env)));
             if (!parsed.success) {
               throw new Error(
                 `${type} envelope rejected after ${ops.length} op(s):\n${parsed.error.issues

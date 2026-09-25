@@ -17,7 +17,7 @@ import {
   RenameSectionCommand,
   MoveTaskBlockCommand,
 } from '@renderer/commands/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TaskListBoard, TaskListSection, TileDefinition } from '@renderer/schema/index';
 import type { TaskPlacement } from '@renderer/schema/placement';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
@@ -37,7 +37,7 @@ function textDef(id: string, title: string): TileDefinition {
 }
 
 /** Section A (start 0, owns t1+t2), section B (start 2, owns t3). */
-function makeBoard(): V7BoardFileData {
+function makeBoard(): BoardFileData {
   return {
     board: {
       id: 'tl',

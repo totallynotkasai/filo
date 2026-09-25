@@ -4,7 +4,7 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import { historyStore } from '@renderer/stores/history.svelte';
 import { createBoardScope } from '@renderer/lib/boards/boardScopeFactory';
 import { setActiveScope } from '@renderer/lib/boards/boardScope.svelte';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 
 /**
@@ -38,7 +38,7 @@ function installEmptyFiloStub(): void {
   };
 }
 
-function makeMindMapFixture(id: string): V7BoardFileData {
+function makeMindMapFixture(id: string): BoardFileData {
   return {
     board: {
       id,

@@ -10,7 +10,7 @@ import {
 } from '@renderer/commands/index';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { restoreFiloDefault } from '../helpers/filoBridge';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TaskListBoard, KanbanBoard } from '@renderer/schema/index';
 
 /**
@@ -21,7 +21,7 @@ import type { TaskListBoard, KanbanBoard } from '@renderer/schema/index';
  * same-field conflict KEEPS the external value and prompts ("Apply anyway").
  * An edit to a DIFFERENT field, or no external edit at all, still applies.
  */
-function makeTaskListFixture(): V7BoardFileData {
+function makeTaskListFixture(): BoardFileData {
   return {
     board: {
       id: 'tl',
@@ -39,7 +39,7 @@ function makeTaskListFixture(): V7BoardFileData {
   };
 }
 
-function makeKanbanFixture(): V7BoardFileData {
+function makeKanbanFixture(): BoardFileData {
   return {
     board: {
       id: 'kb',

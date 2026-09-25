@@ -3,7 +3,7 @@ import {
   scheduleBoardWrite,
   cancelAllPendingWrites,
   __resetDirtyTrackingForTests,
-  type V7BoardFileData,
+  type BoardFileData,
 } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
@@ -14,7 +14,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
  * is never lost to an earlier snapshot.
  */
 
-function emptyMindmapBoard(id: string, label = 'b'): V7BoardFileData {
+function emptyMindmapBoard(id: string, label = 'b'): BoardFileData {
   return {
     board: {
       id,

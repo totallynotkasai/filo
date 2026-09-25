@@ -14,7 +14,7 @@
   import { noteStore } from '../../stores/notes.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
   import { rawTextForView } from '../../lib/notes/noteFile';
-  import { backupExternalVersion } from '../../lib/vault/keepLocalBackup';
+  import { backupThenRead } from '../../lib/vault/keepLocalBackup';
   import { reportError } from '../../lib/utils/errorBus';
 
   let {
@@ -89,8 +89,10 @@
 
   async function keepMine(): Promise<void> {
     const vaultRoot = vaultStore.path;
-    if (!vaultRoot || !(await backupExternalVersion(vaultRoot, path))) return;
-    const latest = await noteStore.readRaw(path);
+    if (!vaultRoot) return;
+    // The hash the save is checked against must be of the bytes backed up.
+    const got = await backupThenRead(vaultRoot, path, () => noteStore.readRaw(path));
+    const latest = got.ok ? got.value : null;
     if (destroyed || !latest) return;
     baseHash = latest.hash;
     conflict = false;

@@ -104,7 +104,7 @@ describe('A9-H1 — first-touch field edit + vault swap mid-read never writes th
     const execP = cmd.execute();
     // Suspended at the gated read; identity captured against vault A.
     await readReachedP;
-    // File > Open Vault (B) → "Don't Save": the new vault generation commits.
+    // File > Open Vault (B), nothing unsaved: the new vault generation commits.
     vaultStore.setPath('/vaultB');
     releaseRead();
     await execP;

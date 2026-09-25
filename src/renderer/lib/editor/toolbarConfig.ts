@@ -1,6 +1,8 @@
 import type { Editor } from '@tiptap/core';
 import { toolbarStore } from '../../stores/toolbar.svelte';
 import { uiStore } from '../../stores/ui.svelte';
+import { noteLineSpacing } from '../../stores/noteMeta';
+import { setNoteLineSpacing } from '../../stores/noteLayout';
 
 /** Shown when TipTap's Link URI allowlist refuses a link. */
 export const LINK_REFUSED_MESSAGE = "That link couldn't be added. Use https://, mailto: or a filo:// link.";
@@ -12,6 +14,18 @@ export const LINK_REFUSED_MESSAGE = "That link couldn't be added. Use https://, 
  */
 
 let activeEditor: Editor | null = null;
+
+/**
+ * The note an editor shows, for toolbar settings that belong to the whole note
+ * (line spacing). A getter, so a rename or a tab switch is followed.
+ */
+export interface ActiveNote {
+  /** The note's vault path. */
+  path: string;
+  /** The board or Document tab whose undo stack records the edit. */
+  historyBoardId: string;
+}
+let activeNote: (() => ActiveNote | null) | null = null;
 let blurTimeout: ReturnType<typeof setTimeout> | null = null;
 
 /**
@@ -58,7 +72,10 @@ function syncStateToToolbar(editor: Editor) {
     : editor.isActive({ textAlign: 'justify' }) ? 'justify'
     : 'left') as 'left' | 'center' | 'right' | 'justify';
 
+  const note = activeNote?.() ?? null;
   const next = {
+    lineSpacing: note ? noteLineSpacing(note.path) : null,
+    lineSpacingAvailable: note !== null,
     bold: editor.isActive('bold'),
     italic: editor.isActive('italic'),
     underline: editor.isActive('underline'),
@@ -79,13 +96,14 @@ export const tiptapToolbar = {
   /**
    * Registers an editor as the active one (called on focus).
    */
-  setActiveEditor(editor: Editor) {
+  setActiveEditor(editor: Editor, note?: () => ActiveNote | null) {
     // Cancel any pending blur clear — the editor is refocused
     if (blurTimeout) {
       clearTimeout(blurTimeout);
       blurTimeout = null;
     }
     activeEditor = editor;
+    activeNote = note ?? null;
     syncStateToToolbar(editor);
   },
 
@@ -97,6 +115,7 @@ export const tiptapToolbar = {
     if (blurTimeout) clearTimeout(blurTimeout);
     blurTimeout = setTimeout(() => {
       activeEditor = null;
+      activeNote = null;
       toolbarStore.reset();
       blurTimeout = null;
     }, 300);
@@ -280,10 +299,18 @@ export const tiptapToolbar = {
     chainIfEditable()?.focus().toggleCodeBlock().run();
   },
 
-  setLineSpacing(value: number) {
-    if (!activeEditor) return;
-    const editorEl = activeEditor.view.dom as HTMLElement;
-    editorEl.style.lineHeight = String(value);
-    toolbarStore.setLineSpacing(value);
+  /**
+   * Line spacing belongs to the whole note: it is saved in the note's
+   * frontmatter (`lineSpacing:`), and every view of the note shows it.
+   * `null` goes back to each view's default. Editors that don't show a note
+   * (connection labels, titles) have no line spacing.
+   */
+  setLineSpacing(value: number | null) {
+    this.keepActiveEditor();
+    const note = activeNote?.();
+    if (!note || !activeEditor?.isEditable) return;
+    setNoteLineSpacing(note.historyBoardId, note.path, value);
+    toolbarStore.updateFromEditor({ lineSpacing: value, lineSpacingAvailable: true });
+    activeEditor.commands.focus();
   },
 };

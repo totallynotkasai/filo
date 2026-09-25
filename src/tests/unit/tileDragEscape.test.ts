@@ -10,7 +10,7 @@ import { tileDragAction } from '@renderer/lib/canvas/tileDrag';
 // stores these tests assert through resolve to `getActiveScope()`, so passing
 // it keeps the action operating on the same active scope.
 import { getActiveScope } from '@renderer/lib/boards/boardScope.svelte';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Tile, TileDefinition } from '@renderer/schema/index';
 
 /**
@@ -30,7 +30,7 @@ function installEmptyFiloStub(): void {
   };
 }
 
-function makeMindMapWithTile(): V7BoardFileData {
+function makeMindMapWithTile(): BoardFileData {
   return {
     board: {
       id: 'mm',

@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * KanbanNewTileModal — type picker shown when the user adds a new tile to
-   * a Kanban column. Lists the tile types V7 supports inside a Kanban column
+   * a Kanban column. Lists the tile types Filo supports inside a Kanban column
    * (Text / Audio / Link); File / Image arrive via drag-drop only, and
    * Video / Iframe / Timer are intentionally not allowed in Kanban.
    *

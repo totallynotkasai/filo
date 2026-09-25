@@ -16,12 +16,12 @@ import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { noteStore, setNotePromptHandlers } from '@renderer/stores/notes.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TileDefinition, KanbanBoard } from '@renderer/schema/index';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { restoreFiloDefault } from '../helpers/filoBridge';
 
-function makeKanbanFixtureWithTextTile(): V7BoardFileData {
+function makeKanbanFixtureWithTextTile(): BoardFileData {
   const def: TileDefinition = {
     id: 't1',
     type: 'text',

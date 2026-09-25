@@ -102,7 +102,7 @@
     document: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z',
   };
 
-  // Document board type isn't directly creatable in V7 — use "Expand to Document" on a text tile.
+  // Document board type isn't directly creatable — use "Expand to Document" on a text tile.
   const { document: _docLabel, ...boardTypeLabels } = allBoardTypeLabels as Record<string, string>;
   const { document: _docIcon, ...boardTypeIcons } = allBoardTypeIcons as Record<string, string>;
   void _docLabel; void _docIcon;

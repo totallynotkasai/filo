@@ -26,7 +26,7 @@ export const TilePlacementSchema = z.object({
 
 export type TilePlacement = z.infer<typeof TilePlacementSchema>;
 
-// ── V7 placement-based shapes for Kanban / Task List ──
+// ── Placement-based shapes for Kanban / Task List ──
 //
 // Every non-mindmap board now references content via `tileId → tileDefs[tileId]`,
 // just like Mind Map. Per-element style overrides cascade through the existing

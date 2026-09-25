@@ -11,7 +11,7 @@ import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, TextTile } from '@renderer/schema/index';
 
 function setupTile(): void {
@@ -31,7 +31,7 @@ function setupTile(): void {
     createdAt: 0,
     updatedAt: 0,
   } as unknown as TextTile;
-  const fixture: V7BoardFileData = {
+  const fixture: BoardFileData = {
     board: {
       id: 'mm',
       type: 'mindmap',
@@ -61,7 +61,7 @@ function setupTile(): void {
         createdAt: 0,
         updatedAt: 0,
         filePath: 'Old.md',
-      } as unknown as V7BoardFileData['tileDefs'][string],
+      } as unknown as BoardFileData['tileDefs'][string],
     },
     connections: {},
     frames: [],

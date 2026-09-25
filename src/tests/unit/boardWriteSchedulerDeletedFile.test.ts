@@ -5,7 +5,7 @@ import {
   __resetBaselinesForTests,
 } from '@renderer/lib/vault/fileBaselineRegistry';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 
 /**
  * Audit 4.5 — a debounced `.board.json` write that fires AFTER the file has
@@ -42,7 +42,7 @@ function installFiloStub(calls: InvokeRecord[]): void {
   };
 }
 
-function makeCached(): V7BoardFileData {
+function makeCached(): BoardFileData {
   return {
     board: {
       id: 'b',
@@ -59,7 +59,7 @@ function makeCached(): V7BoardFileData {
     tileDefs: {},
     connections: {},
     frames: [],
-  } as unknown as V7BoardFileData;
+  } as unknown as BoardFileData;
 }
 
 describe('writeBoardFile — externally-deleted file is not resurrected (audit 4.5)', () => {

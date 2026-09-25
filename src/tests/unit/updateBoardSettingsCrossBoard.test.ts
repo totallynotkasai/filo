@@ -3,7 +3,7 @@ import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { UpdateBoardSettingsCommand } from '@renderer/commands/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 
 /**
@@ -29,7 +29,7 @@ import type { MindMapBoard } from '@renderer/schema/index';
  * is active.
  */
 
-function makeBoard(id: string, settings: Record<string, unknown>): V7BoardFileData {
+function makeBoard(id: string, settings: Record<string, unknown>): BoardFileData {
   return {
     board: {
       id,

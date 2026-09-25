@@ -11,6 +11,7 @@
   import { vaultStore } from '../../stores/vault.svelte';
   import { boardRefIntegrityStore } from '../../stores/boardRefIntegrity.svelte';
   import { noteStore, type NoteModel } from '../../stores/notes.svelte';
+  import { noteLineSpacing } from '../../stores/noteMeta';
   import { uiStore } from '../../stores/ui.svelte';
   import { createId } from '../../lib/utils/ids';
   import type { ResolvedTileStyle } from '../../lib/styles/effectiveStyle';
@@ -54,6 +55,9 @@
   // The model at that path, whichever object it is (a rename can move another
   // one there).
   let model = $derived<NoteModel | null>(notePath ? (noteStore.get(notePath) ?? null) : null);
+  // The note's own line spacing (frontmatter `lineSpacing:`); none keeps the tile default.
+  let lineSpacing = $derived(noteLineSpacing(notePath));
+  let editorStyle = $derived(`${bodyFontStyle}${lineSpacing !== null ? `line-height: ${lineSpacing};` : ''}`);
 
   $effect(() => {
     const path = notePath;
@@ -68,7 +72,7 @@
         view.edited();
       },
       onFocus: () => {
-        tiptapToolbar.setActiveEditor(ed);
+        tiptapToolbar.setActiveEditor(ed, () => (notePath ? { path: notePath, historyBoardId: tile.boardId } : null));
       },
       onBlur: () => {
         // Another view may take over the note next; hand it every keystroke.
@@ -191,7 +195,7 @@
       <button class="readonly-action" onclick={takeOwnership}>Take ownership</button>
     </div>
   {/if}
-  <div class="editor-container" style={bodyFontStyle} bind:this={editorElement}></div>
+  <div class="editor-container" style={editorStyle} bind:this={editorElement}></div>
 </div>
 
 <style>

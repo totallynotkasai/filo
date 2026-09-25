@@ -8,7 +8,7 @@ import {
   removeViewport,
   seedViewportsCache,
   setViewport,
-  type V7BoardFileData,
+  type BoardFileData,
   type ViewportEntry,
 } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, KanbanBoard } from '@renderer/schema/index';
@@ -43,7 +43,7 @@ function installFiloStub(routes: Record<string, InvokeHandler> = {}): void {
   };
 }
 
-function makeMindMapFixture(): V7BoardFileData {
+function makeMindMapFixture(): BoardFileData {
   return {
     board: {
       id: 'mm',
@@ -63,7 +63,7 @@ function makeMindMapFixture(): V7BoardFileData {
   };
 }
 
-function makeKanbanFixture(): V7BoardFileData {
+function makeKanbanFixture(): BoardFileData {
   return {
     board: {
       id: 'kb',
@@ -212,7 +212,7 @@ describe('canvas viewport persistence', () => {
     boardCacheStore.hydrate(
       {
         mm1: makeMindMapFixture(),
-        mm2: { ...makeMindMapFixture(), board: { ...makeMindMapFixture().board, id: 'mm2' } } as V7BoardFileData,
+        mm2: { ...makeMindMapFixture(), board: { ...makeMindMapFixture().board, id: 'mm2' } } as BoardFileData,
       },
       { mm1: 'a.board.json', mm2: 'b.board.json' },
     );

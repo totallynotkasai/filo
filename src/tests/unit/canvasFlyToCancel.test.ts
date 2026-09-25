@@ -28,13 +28,13 @@ import {
   clearViewportsCache,
   getViewportFromCache,
   seedViewportsCache,
-  type V7BoardFileData,
+  type BoardFileData,
 } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 
 const TEST_VAULT = '/tmp/vault';
 
-function makeMindMap(id: string): V7BoardFileData {
+function makeMindMap(id: string): BoardFileData {
   return {
     board: {
       id,

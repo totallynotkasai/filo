@@ -9,7 +9,7 @@ import { uiStore } from '@renderer/stores/ui.svelte';
 import { __resetRenameCascadeSentinelForTests } from '@renderer/lib/vault/renameCascadeSentinel';
 import type { VaultContext } from '@renderer/stores/vaultStoreTypes';
 import type { Project, ProjectSettings } from '@renderer/schema/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
@@ -25,7 +25,7 @@ function clearToasts(): void {
   }
 }
 
-function makeMindMap(boardId: string, defaultFolder?: string): V7BoardFileData {
+function makeMindMap(boardId: string, defaultFolder?: string): BoardFileData {
   return {
     board: {
       id: boardId,

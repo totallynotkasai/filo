@@ -15,7 +15,7 @@ import { historyStore, type Command } from '@renderer/stores/history.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { MultiSelectController } from '@renderer/lib/tasklist/multiSelectController.svelte';
 import { makeTaskDeleter, orderForBatchDelete } from '@renderer/lib/tasklist/taskDeletion';
 import type { TaskRow } from '@renderer/lib/tasks/taskListModel';
@@ -44,7 +44,7 @@ function mkDef(id: string): TileDefinition {
 }
 
 function hydrate(): void {
-  const fixture: V7BoardFileData = {
+  const fixture: BoardFileData = {
     board: {
       id: 'tl',
       type: 'tasklist',

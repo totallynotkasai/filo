@@ -10,7 +10,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { z } from 'zod';
-import { V7BoardFileDataSchema } from '@renderer/schema/boardFile';
+import { BoardFileDataSchema } from '@renderer/schema/boardFile';
 import { BoardSchema, TileGroupSchema } from '@renderer/schema/board';
 import {
   KanbanTilePlacementSchema,
@@ -100,9 +100,9 @@ describe('A6 — canvas transform mutators reject non-finite inputs', () => {
   });
 });
 
-// ── A12: V7BoardFileDataSchema envelope passthrough ───────────────────
+// ── A12: BoardFileDataSchema envelope passthrough ───────────────────
 
-describe('A12 — V7BoardFileDataSchema preserves forward-compat envelope fields', () => {
+describe('A12 — BoardFileDataSchema preserves forward-compat envelope fields', () => {
   it('round-trips an unknown top-level field', () => {
     const envelope = {
       version: 8 as const,
@@ -114,7 +114,7 @@ describe('A12 — V7BoardFileDataSchema preserves forward-compat envelope fields
       futureField: 'some-value',
       anotherFutureField: { nested: true },
     };
-    const parsed = V7BoardFileDataSchema.parse(envelope) as Record<string, unknown>;
+    const parsed = BoardFileDataSchema.parse(envelope) as Record<string, unknown>;
     expect(parsed.futureField).toBe('some-value');
     expect(parsed.anotherFutureField).toEqual({ nested: true });
   });

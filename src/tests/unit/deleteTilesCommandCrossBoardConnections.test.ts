@@ -6,7 +6,7 @@ import { uiStore } from '@renderer/stores/ui.svelte';
 import { DeleteTilesCommand } from '@renderer/commands/index';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
 import { __resetErrorBusForTests } from '@renderer/lib/utils/errorBus';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { Connection, MindMapBoard, TextTile, Tile } from '@renderer/schema/index';
 
 /**
@@ -89,7 +89,7 @@ function makeMindMapFixture(
   name: string,
   tiles: Record<string, TextTile>,
   connections: Record<string, Connection> = {},
-): V7BoardFileData {
+): BoardFileData {
   const placements: Record<string, unknown> = {};
   for (const id of Object.keys(tiles)) {
     placements[id] = { x: 0, y: 0, width: 200, height: 100, locked: false, faded: false };
@@ -107,8 +107,8 @@ function makeMindMapFixture(
       inlineTiles: {},
       waypoints: [],
     } as unknown as MindMapBoard,
-    tileDefs: tiles as unknown as V7BoardFileData['tileDefs'],
-    connections: connections as unknown as V7BoardFileData['connections'],
+    tileDefs: tiles as unknown as BoardFileData['tileDefs'],
+    connections: connections as unknown as BoardFileData['connections'],
     frames: [],
   };
 }

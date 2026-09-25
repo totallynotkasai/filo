@@ -22,7 +22,7 @@ import {
   __resetDirtyTrackingForTests,
 } from '@renderer/lib/boards/boardSaver';
 import { __resetErrorBusForTests, onError, type ReportedError } from '@renderer/lib/utils/errorBus';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TaskListBoard, TaskPlacement, TileDefinition } from '@renderer/schema/index';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 
@@ -80,7 +80,7 @@ function mkDef(id: string): TileDefinition {
 }
 
 function hydrateTaskBoard(): void {
-  const fixture: V7BoardFileData = {
+  const fixture: BoardFileData = {
     board: {
       id: 'tl',
       type: 'tasklist',

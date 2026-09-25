@@ -151,7 +151,7 @@ export function applyFontDefaultsToAllExisting(): {
     }
 
     // Frames and connections also live inside .board.json (see
-    // V7BoardFileData), so they're walked per-owning-board here and
+    // BoardFileData), so they're walked per-owning-board here and
     // counted into this board's `touched` flag (`vaultStore.markMetaDirty()`
     // only flushes `.filo/` configs, so these edits would be dropped).
     if (cacheEntry) {

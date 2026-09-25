@@ -1,6 +1,6 @@
 /**
  * A read of the outgoing vault's note that is still in flight when a vault
- * swap commits (File > Open Vault + "Don't Save") must not land in the new
+ * swap commits (File > Open Vault with nothing unsaved) must not land in the new
  * vault: neither as a loaded model's frontmatter, nor as a field edit whose
  * "before" read spanned the swap and would then write into the new vault's
  * same-named file.

@@ -20,7 +20,7 @@ import {
   MoveCardsCommand,
   DeleteCardCommand,
 } from '@renderer/commands/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard, TileDefinition } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
@@ -28,7 +28,7 @@ function column(id: string, title: string, position: number) {
   return { id, title, position, collapsed: false, tilePlacements: [] as unknown[] };
 }
 
-function makeKanban(): V7BoardFileData {
+function makeKanban(): BoardFileData {
   return {
     board: {
       id: 'kb',
@@ -140,7 +140,7 @@ describe('Audit-6 Phase 5.5 — Kanban structure command round-trips', () => {
 // drive an intervening mutation — the exact case the roundtrip-coverage gate's
 // plain construct→execute→undo never exercises.
 
-function makeKanbanWithCards(): V7BoardFileData {
+function makeKanbanWithCards(): BoardFileData {
   const cards = ['A', 'B', 'C', 'D', 'E'];
   return {
     board: {
@@ -164,7 +164,7 @@ function makeKanbanWithCards(): V7BoardFileData {
     } as unknown as KanbanBoard,
     tileDefs: Object.fromEntries(
       cards.map((id) => [id, cardDef(id, id)]),
-    ) as unknown as V7BoardFileData['tileDefs'],
+    ) as unknown as BoardFileData['tileDefs'],
     connections: {},
     frames: [],
   };

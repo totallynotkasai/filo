@@ -6,7 +6,7 @@ import { UpdateTaskFieldCommand } from '@renderer/commands/index';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { restoreFiloDefault } from '../helpers/filoBridge';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TaskListBoard } from '@renderer/schema/index';
 
 /**
@@ -16,7 +16,7 @@ import type { TaskListBoard } from '@renderer/schema/index';
  * redo right behind the undo.
  */
 
-function makeTaskListFixture(): V7BoardFileData {
+function makeTaskListFixture(): BoardFileData {
   return {
     board: {
       id: 'tl',

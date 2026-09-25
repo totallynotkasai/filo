@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { MoveCardCommand } from '@renderer/commands/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard, TileDefinition } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
@@ -28,7 +28,7 @@ function def(id: string): TileDefinition {
   } as unknown as TileDefinition;
 }
 
-function makeKanban(): V7BoardFileData {
+function makeKanban(): BoardFileData {
   return {
     board: {
       id: 'kb',
@@ -64,7 +64,7 @@ function makeKanban(): V7BoardFileData {
     } as unknown as KanbanBoard,
     tileDefs: Object.fromEntries(
       ['X', 'Y', 'Z', 'P', 'Q'].map((id) => [id, def(id)]),
-    ) as unknown as V7BoardFileData['tileDefs'],
+    ) as unknown as BoardFileData['tileDefs'],
     connections: {},
     frames: [],
   };

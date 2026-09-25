@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { Tile, MindMapBoard } from '@renderer/schema/index';
 
 /**
@@ -57,7 +57,7 @@ function makeNonTextTile(id: string, boardId: string): Tile {
 function makeMindMapFixture(
   initialDefs: Record<string, unknown> = {},
   initialPlacements: Record<string, unknown> = {},
-): V7BoardFileData {
+): BoardFileData {
   return {
     board: {
       id: 'mm',
@@ -71,7 +71,7 @@ function makeMindMapFixture(
       inlineTiles: {},
       waypoints: [],
     } as unknown as MindMapBoard,
-    tileDefs: initialDefs as V7BoardFileData['tileDefs'],
+    tileDefs: initialDefs as BoardFileData['tileDefs'],
     connections: {},
     frames: [],
   };

@@ -159,19 +159,28 @@ describe('plain Markdown is unaffected by html mode (regression guard)', () => {
   });
 });
 
-describe('known limitation — block indent is not serialised (accepted scope)', () => {
-  // The `html: true` switch (audit 2.5/2.6) round-trips every *mark* without a
-  // Markdown token and non-GFM *nodes* via inline HTML. Paragraph / heading
-  // *indent* is a global attribute on nodes that DO have a Markdown serialiser
-  // (the GFM paragraph/heading writers), so it never reaches the HTML fallback
-  // and is still dropped on save. Pinned here so the residual is explicit
-  // rather than silent; revisit if block indent ever needs to persist.
-  it('paragraph indent does not survive a round-trip', () => {
+describe('block alignment and indent are saved as an HTML line', () => {
+  // Paragraph / heading alignment and indent are attributes of nodes that have
+  // a Markdown writer, and Markdown has no syntax for them, so such a block is
+  // written as one HTML line (`blockLayout.ts`). Every toolbar command is
+  // covered in `toolbarFormattingRoundTrip.test.ts`.
+  it('paragraph indent survives a round-trip', () => {
     const r = roundTrip({
       type: 'doc',
       content: [{ type: 'paragraph', attrs: { indent: 2 }, content: [text('indented')] }],
     });
-    expect(r.disk).not.toContain('margin-left');
-    expect(r.html).not.toContain('margin-left');
+    expect(r.disk).toBe('<p style="margin-left: 48px;">indented</p>');
+    expect(r.html).toContain('margin-left: 48px');
+    expect(r.disk2).toBe(r.disk);
+  });
+
+  it('a centred heading survives a round-trip', () => {
+    const r = roundTrip({
+      type: 'doc',
+      content: [{ type: 'heading', attrs: { level: 2, textAlign: 'center' }, content: [text('Title')] }],
+    });
+    expect(r.disk).toBe('<h2 style="text-align: center;">Title</h2>');
+    expect(r.html).toContain('<h2 style="text-align: center;">');
+    expect(r.disk2).toBe(r.disk);
   });
 });

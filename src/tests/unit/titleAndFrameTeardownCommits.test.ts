@@ -13,7 +13,7 @@ import {
   TIMER_COARSE_PERSIST_MS,
 } from '@renderer/lib/utils/coarsePersistGate';
 import { TaskListFiltersAndViews } from '@renderer/lib/tasklist/filtersAndViews.svelte';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Frame, Tile } from '@renderer/schema/index';
 
 /**
@@ -78,7 +78,7 @@ function installEmptyFiloStub(): void {
   };
 }
 
-function makeMindMapFixture(id: string, name: string): V7BoardFileData {
+function makeMindMapFixture(id: string, name: string): BoardFileData {
   return {
     board: {
       id,
@@ -100,8 +100,8 @@ function makeMindMapFixture(id: string, name: string): V7BoardFileData {
 
 /** Hydrates two boards; activates `activeId`. The other stays cache-only. */
 function activateTwoBoards(activeId: 'mm' | 'other'): {
-  mm: V7BoardFileData;
-  other: V7BoardFileData;
+  mm: BoardFileData;
+  other: BoardFileData;
 } {
   const mm = makeMindMapFixture('mm', 'Map');
   const other = makeMindMapFixture('other', 'Other');

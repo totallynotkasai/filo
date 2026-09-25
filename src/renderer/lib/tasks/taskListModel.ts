@@ -130,7 +130,7 @@ export function smartListMatch(r: TaskRow, list: SmartListId, today: Date): bool
  * an `Array.prototype.sort` comparator after currying — see usage in
  * TaskListBoard.svelte's `sortedRows` derivation.
  *
- * `manual` sort falls through to `placement.position`, which is the V7
+ * `manual` sort falls through to `placement.position`, which is the
  * canonical ordering and reflects user drag-drop reorders.
  */
 export function compareRows(a: TaskRow, b: TaskRow, sortBy: SortBy): number {

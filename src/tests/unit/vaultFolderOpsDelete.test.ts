@@ -13,7 +13,7 @@ import {
 import {
   cancelAllPendingWrites,
   __resetDirtyTrackingForTests,
-  type V7BoardFileData,
+  type BoardFileData,
 } from '@renderer/lib/boards/boardSaver';
 import type { DocumentBoard, MindMapBoard } from '@renderer/schema/index';
 import { historyStore } from '@renderer/stores/history.svelte';
@@ -58,7 +58,7 @@ function installFiloStub(routes: Record<string, InvokeRoute>, files: Record<stri
   }) as typeof window.filo.invoke;
 }
 
-function makeMindMapFixture(boardId: string, tileId: string, filePath: string): V7BoardFileData {
+function makeMindMapFixture(boardId: string, tileId: string, filePath: string): BoardFileData {
   return {
     board: {
       id: boardId,
@@ -99,7 +99,7 @@ async function open(rel: string): Promise<NoteModel> {
   return m;
 }
 
-function makeDocumentBoardFixture(boardPath: string, filePath: string): V7BoardFileData {
+function makeDocumentBoardFixture(boardPath: string, filePath: string): BoardFileData {
   return {
     board: {
       id: boardPath.replace(/[^a-z0-9]/gi, '_'),

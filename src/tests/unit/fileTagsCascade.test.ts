@@ -10,7 +10,7 @@ import {
   setWriteStateListener,
   __resetDirtyTrackingForTests,
   type WriteStateInfo,
-  type V7BoardFileData,
+  type BoardFileData,
 } from '@renderer/lib/boards/boardSaver';
 import { onError, __resetErrorBusForTests, type ReportedError } from '@renderer/lib/utils/errorBus';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
@@ -37,7 +37,7 @@ const STYLE = { headerColor: '', bodyColor: '', borderColor: '' };
  * a card backed by `Tasks/A.md`, whose tags live only in that note's
  * frontmatter.
  */
-function makeKanbanFixture(): V7BoardFileData {
+function makeKanbanFixture(): BoardFileData {
   return {
     version: 8,
     board: {
@@ -71,7 +71,7 @@ function makeKanbanFixture(): V7BoardFileData {
   };
 }
 
-function makeMindMapWithInlineTile(): V7BoardFileData {
+function makeMindMapWithInlineTile(): BoardFileData {
   return {
     version: 8,
     board: {

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TileDefinition, KanbanBoard } from '@renderer/schema/index';
 
 /**
@@ -26,7 +26,7 @@ function installFiloStub(routes: Record<string, InvokeHandler> = {}): void {
   };
 }
 
-function makeKanbanFixture(): V7BoardFileData {
+function makeKanbanFixture(): BoardFileData {
   return {
     board: {
       id: 'kb',

@@ -207,30 +207,100 @@ async function freeRestorePath(vaultRoot: string, originalPath: string, kind: Tr
   throw new Error(`No free name to restore ${originalPath} to`);
 }
 
+function targetTaken(target: string): NodeJS.ErrnoException {
+  const err: NodeJS.ErrnoException = new Error(`"${target}" appeared before the restore; not replacing it`);
+  err.code = 'EEXIST';
+  return err;
+}
+
+/** Test seams: a racing create just before the move, and a volume without hard links. */
+export interface RestoreHooks {
+  beforeMove?: (target: string) => Promise<void>;
+  link?: (existing: string, created: string) => Promise<void>;
+}
+
+/**
+ * Moves `item` to `target` only if nothing is at `target`. On Windows `rename`
+ * replaces an existing file, so a file a sync client created there since the
+ * free-name check would be overwritten.
+ *
+ * - A file is hard-linked into place (the link fails with EEXIST when the
+ *   target exists, atomically), then unlinked from the trash.
+ * - Where hard links aren't supported (FAT32, some network shares), and for
+ *   a folder, the target is re-checked just before each rename attempt; that
+ *   leaves only the gap between that check and the rename.
+ *
+ * Throws EEXIST when the target is taken.
+ */
+async function moveWithoutReplacing(
+  item: string,
+  target: string,
+  kind: TrashKind,
+  hooks: RestoreHooks,
+): Promise<void> {
+  await hooks.beforeMove?.(target);
+  if (kind === 'file') {
+    let linked = false;
+    try {
+      await (hooks.link ?? fs.link)(item, target);
+      linked = true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') throw targetTaken(target);
+      // No hard links here: fall back to the re-checked rename below.
+    }
+    if (linked) {
+      // The item is in place. A trash copy that can't be unlinked (locked) is
+      // only a duplicate; the bookkeeping clean-up leaves it in the trash.
+      await retryOnWindowsLock(() => fs.unlink(item)).catch(() => undefined);
+      return;
+    }
+  }
+  await retryOnWindowsLock(() => fs.rename(item, target), {
+    beforeAttempt: async () => {
+      if (await exists(target)) throw targetTaken(target);
+    },
+  });
+}
+
+/** How many free names a restore tries while other programs keep taking them. */
+const RESTORE_ATTEMPTS = 5;
+
 /**
  * Moves a trashed item back. When its original path is taken, it goes beside
- * it (`… (restored).md`) and `alongside` is true.
+ * it (`… (restored).md`) and `alongside` is true. It never replaces a file:
+ * a path taken during the restore moves it to the next free name.
  */
 export async function restoreFromTrash(
   vaultRoot: string,
   trashId: string,
+  hooks: RestoreHooks = {},
 ): Promise<{ restoredPath: string; originalPath: string; kind: TrashKind; alongside: boolean }> {
   const manifest = await readManifest(vaultRoot, trashId);
   if (!manifest) throw new TrashItemMissingError(trashId);
   const item = itemPathOf(vaultRoot, trashId, manifest.originalPath);
   if (!(await exists(item))) throw new TrashItemMissingError(trashId);
-  const restoredPath = await freeRestorePath(vaultRoot, manifest.originalPath, manifest.kind);
-  const target = join(vaultRoot, ...restoredPath.split('/'));
-  // The item's folder may have been deleted since.
-  await fs.mkdir(dirname(target), { recursive: true });
-  await retryOnWindowsLock(() => fs.rename(item, target));
-  await removeBookkeeping(vaultRoot, trashId, manifest.originalPath);
-  return {
-    restoredPath,
-    originalPath: manifest.originalPath,
-    kind: manifest.kind,
-    alongside: restoredPath !== manifest.originalPath,
-  };
+  for (let attempt = 0; ; attempt++) {
+    const restoredPath = await freeRestorePath(vaultRoot, manifest.originalPath, manifest.kind);
+    const target = join(vaultRoot, ...restoredPath.split('/'));
+    // The item's folder may have been deleted since.
+    await fs.mkdir(dirname(target), { recursive: true });
+    try {
+      await moveWithoutReplacing(item, target, manifest.kind, hooks);
+    } catch (err) {
+      // A rename onto a folder that appeared fails with its own code on some
+      // systems; what counts is that the path is taken now.
+      const taken = (err as NodeJS.ErrnoException).code === 'EEXIST' || (await exists(target));
+      if (taken && attempt + 1 < RESTORE_ATTEMPTS) continue;
+      throw err;
+    }
+    await removeBookkeeping(vaultRoot, trashId, manifest.originalPath);
+    return {
+      restoredPath,
+      originalPath: manifest.originalPath,
+      kind: manifest.kind,
+      alongside: restoredPath !== manifest.originalPath,
+    };
+  }
 }
 
 /** Every entry in the trash, newest first. Unreadable entries are skipped. */

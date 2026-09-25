@@ -188,9 +188,14 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
       // Root captured pre-drain for the drain-failure breadcrumb below.
       const preDrainVaultRoot = ctx.getVaultPath();
 
-      // Drain pending writers before the cascade. A debounced write armed
-      // against `oldRel` firing after the cascade rebinds tile defs would
-      // target a path that no longer exists (ENOENT — silent loss).
+      // The file has already moved, so re-key every path-keyed piece of state
+      // (note models and their write queues, tabs, undo history, baselines)
+      // BEFORE the drain: a note's queued edit then lands in the moved file,
+      // on the base it was built on, instead of failing on the old path.
+      renameAllPathKeys(oldRel, newRel);
+
+      // Drain pending writers before the cascade, so the board and tag
+      // rewrites below don't race a write still in flight.
       try {
         await withDrainedWrites(
           () => runExternalRenameCascade(ctx, oldRel, newRel, captured),
@@ -313,10 +318,8 @@ async function runExternalRenameCascade(
   // synchronous cache mutations below corrupt the new vault's cache with the
   // old vault's rename paths. Bail if the vault changed.
   if (captured && !isStillSameVault(captured)) return;
-  // Fire every registered path-keyed sweep before the peer rename calls so
-  // the hydrate gate and drift baseline move in lock-step with the cache
-  // mutation. Mirrors `vaultFolderOps.runRename`.
-  renameAllPathKeys(oldRel, newRel);
+  // The path-keyed sweeps (`renameAllPathKeys`) already ran in
+  // `handleExternalRename`, before the drain.
   const renamedBoardIds = boardCacheStore.renameBoardPath(oldRel, newRel);
   const changedBoardIds = boardStore.propagateRename(oldRel, newRel);
   fileTagsStore.renameFile(oldRel, newRel);

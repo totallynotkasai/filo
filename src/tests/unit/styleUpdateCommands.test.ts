@@ -25,7 +25,7 @@ import {
   UpdateTaskSectionStyleCommand,
   UpdateConnectionCommand,
 } from '@renderer/commands/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type {
   KanbanBoard,
   TaskListBoard,
@@ -41,7 +41,7 @@ function installSilentBridge(): void {
 
 // ── Frame fixture ──
 
-function makeMindMapWithFrame(frameStyle: Frame['style']): V7BoardFileData {
+function makeMindMapWithFrame(frameStyle: Frame['style']): BoardFileData {
   return {
     board: {
       id: 'mm',
@@ -124,7 +124,7 @@ describe('UpdateFrameStyleCommand', () => {
 
 // ── Kanban card fixture ──
 
-function makeKanbanWithCardStyle(style: Record<string, unknown> | undefined): V7BoardFileData {
+function makeKanbanWithCardStyle(style: Record<string, unknown> | undefined): BoardFileData {
   return {
     board: {
       id: 'kb',
@@ -157,7 +157,7 @@ function makeKanbanWithCardStyle(style: Record<string, unknown> | undefined): V7
         tags: [],
         createdAt: 0,
         updatedAt: 0,
-      } as unknown as V7BoardFileData['tileDefs'][string],
+      } as unknown as BoardFileData['tileDefs'][string],
     },
     connections: {},
     frames: [],
@@ -246,7 +246,7 @@ describe('UpdateKanbanColumnStyleCommand', () => {
   it('execute + undo round-trip', () => {
     const before = { headerColor: '#aaa' };
     const after = { headerColor: '#bbb', accent: '#ff0' };
-    const fixture: V7BoardFileData = {
+    const fixture: BoardFileData = {
       board: {
         id: 'kb',
         type: 'kanban',
@@ -277,7 +277,7 @@ describe('UpdateKanbanColumnStyleCommand', () => {
 
 // ── Task list placement + section ──
 
-function makeTaskListBoard(taskStyle?: Record<string, unknown>, sectionStyle?: Record<string, unknown>): V7BoardFileData {
+function makeTaskListBoard(taskStyle?: Record<string, unknown>, sectionStyle?: Record<string, unknown>): BoardFileData {
   return {
     board: {
       id: 'tl',
@@ -307,7 +307,7 @@ function makeTaskListBoard(taskStyle?: Record<string, unknown>, sectionStyle?: R
         tags: [],
         createdAt: 0,
         updatedAt: 0,
-      } as unknown as V7BoardFileData['tileDefs'][string],
+      } as unknown as BoardFileData['tileDefs'][string],
     },
     connections: {},
     frames: [],
@@ -436,7 +436,7 @@ describe('UpdateConnectionCommand (reused for ConnectionStylePopup)', () => {
       createdAt: 0,
       updatedAt: 0,
     } as unknown as Connection;
-    const fixture: V7BoardFileData = {
+    const fixture: BoardFileData = {
       board: {
         id: 'mm',
         type: 'mindmap',

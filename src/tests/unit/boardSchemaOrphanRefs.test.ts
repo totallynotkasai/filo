@@ -2,7 +2,7 @@
  * IMPL_PLAN_2026-05-23_v2 P1.6 — schema cross-check for orphan
  * connection / frame refs.
  *
- * `V7BoardFileDataSchema` gains a `.superRefine` that gathers the valid
+ * `BoardFileDataSchema` gains a `.superRefine` that gathers the valid
  * tile-ID set (tileDefs ∪ mindmap.inlineTiles) and flags any
  * `connection.fromTileId` / `connection.toTileId` / `frame.tileIds[]`
  * entry that doesn't resolve. Pure schema-level defence in depth — the
@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { V7BoardFileDataSchema } from '@renderer/schema/index';
+import { BoardFileDataSchema } from '@renderer/schema/index';
 
 function mindmapEnvelope() {
   return {
@@ -64,7 +64,7 @@ function mindmapEnvelope() {
   };
 }
 
-describe('V7BoardFileDataSchema — orphan-ref cross-check (P1.6)', () => {
+describe('BoardFileDataSchema — orphan-ref cross-check (P1.6)', () => {
   it('accepts a connection pointing at a real tile in tileDefs', () => {
     const env = mindmapEnvelope();
     env.connections = {
@@ -79,7 +79,7 @@ describe('V7BoardFileDataSchema — orphan-ref cross-check (P1.6)', () => {
         updatedAt: 0,
       },
     };
-    const result = V7BoardFileDataSchema.safeParse(env);
+    const result = BoardFileDataSchema.safeParse(env);
     expect(result.success).toBe(true);
   });
 
@@ -100,7 +100,7 @@ describe('V7BoardFileDataSchema — orphan-ref cross-check (P1.6)', () => {
         updatedAt: 0,
       },
     };
-    const result = V7BoardFileDataSchema.safeParse(env);
+    const result = BoardFileDataSchema.safeParse(env);
     expect(result.success).toBe(true);
   });
 
@@ -118,7 +118,7 @@ describe('V7BoardFileDataSchema — orphan-ref cross-check (P1.6)', () => {
         updatedAt: 0,
       },
     };
-    const result = V7BoardFileDataSchema.safeParse(env);
+    const result = BoardFileDataSchema.safeParse(env);
     expect(result.success).toBe(false);
     if (!result.success) {
       const msg = result.error.issues.map((i) => i.message).join(' ');
@@ -141,7 +141,7 @@ describe('V7BoardFileDataSchema — orphan-ref cross-check (P1.6)', () => {
         updatedAt: 0,
       },
     ];
-    const result = V7BoardFileDataSchema.safeParse(env);
+    const result = BoardFileDataSchema.safeParse(env);
     expect(result.success).toBe(false);
     if (!result.success) {
       const msg = result.error.issues.map((i) => i.message).join(' ');
@@ -164,7 +164,7 @@ describe('V7BoardFileDataSchema — orphan-ref cross-check (P1.6)', () => {
         updatedAt: 0,
       },
     ];
-    const result = V7BoardFileDataSchema.safeParse(env);
+    const result = BoardFileDataSchema.safeParse(env);
     expect(result.success).toBe(true);
   });
 
@@ -216,7 +216,7 @@ describe('V7BoardFileDataSchema — orphan-ref cross-check (P1.6)', () => {
       },
       frames: [],
     };
-    const result = V7BoardFileDataSchema.safeParse(env);
+    const result = BoardFileDataSchema.safeParse(env);
     expect(result.success).toBe(false);
   });
 });

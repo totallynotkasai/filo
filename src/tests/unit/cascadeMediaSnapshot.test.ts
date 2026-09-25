@@ -10,7 +10,7 @@ import { historyStore } from '@renderer/stores/history.svelte';
 import {
   cancelAllPendingWrites,
   __resetDirtyTrackingForTests,
-  type V7BoardFileData,
+  type BoardFileData,
 } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
@@ -40,7 +40,7 @@ function installVault(files: Record<string, string>): void {
   }) as typeof window.filo.invoke;
 }
 
-function makeMindMapWithImage(boardId: string, tileId: string, src: string): V7BoardFileData {
+function makeMindMapWithImage(boardId: string, tileId: string, src: string): BoardFileData {
   return {
     board: {
       id: boardId,

@@ -4,7 +4,7 @@ import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { canvasStore } from '@renderer/stores/canvas.svelte';
 import { tileResizeAction } from '@renderer/lib/canvas/tileResize';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, TileDefinition } from '@renderer/schema/index';
 
 /**
@@ -26,7 +26,7 @@ function installEmptyFiloStub(): void {
   };
 }
 
-function makeMindMapWithTile(): V7BoardFileData {
+function makeMindMapWithTile(): BoardFileData {
   return {
     board: {
       id: 'mm',

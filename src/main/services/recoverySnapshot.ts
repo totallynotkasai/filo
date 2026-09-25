@@ -121,11 +121,9 @@ export async function snapshotForRecovery(
   const sourceAbs = join(vaultRoot, relativePath);
   assertWithinVault(vaultRoot, sourceAbs);
 
-  // ISO timestamp with ms-resolution and `:` swapped for `-` (illegal on
-  // Windows filenames). The `.SSS` fractional segment keeps two snapshots
-  // taken in the same second in distinct subdirectories.
-  const timestamp = new Date().toISOString().replace(/[:]/g, '-').replace(/Z$/, '');
-  const destDir = join(vaultRoot, RECOVERY_DIR, timestamp);
+  // The timestamp's `.SSS` fractional segment keeps two snapshots taken in the
+  // same second in distinct subdirectories.
+  const destDir = join(vaultRoot, RECOVERY_DIR, recoveryTimestamp());
   await ensureDir(destDir);
 
   // Flattened rel path, not the bare basename (see flattenSnapshotName).
@@ -198,7 +196,7 @@ async function pruneOldSnapshotsForBasename(
 
   const matches: Array<{ filePath: string; subdirPath: string; mtime: number }> = [];
   for (const entry of entries) {
-    if (!entry.isDirectory) continue;
+    if (!entry.isDirectory || isRescueDir(entry.name)) continue;
     const subdirPath = join(recoveryRoot, entry.name);
     const filePath = join(subdirPath, targetName);
     try {
@@ -265,7 +263,7 @@ async function pruneOldSnapshotsGlobal(vaultRoot: string): Promise<void> {
 
   const allFiles: Array<{ filePath: string; subdirPath: string; mtime: number }> = [];
   for (const entry of entries) {
-    if (!entry.isDirectory) continue;
+    if (!entry.isDirectory || isRescueDir(entry.name)) continue;
     const subdirPath = join(recoveryRoot, entry.name);
     let subEntries: string[];
     try {
@@ -310,6 +308,75 @@ async function pruneOldSnapshotsGlobal(vaultRoot: string): Promise<void> {
       // Same swallow-on-error contract as the per-basename pruner.
     }
   }
+}
+
+/**
+ * Rescue copies (unsaved work kept when the user closes or quits anyway) go in
+ * `<timestamp>${RESCUE_SUFFIX}` directories. The prunes skip them: they hold
+ * text that exists nowhere else, so only the user removes them.
+ */
+const RESCUE_SUFFIX = '-unsaved';
+
+function isRescueDir(name: string): boolean {
+  return name.endsWith(RESCUE_SUFFIX);
+}
+
+/** Recovery-directory timestamp: ISO with ms, `:` swapped for `-` (illegal on Windows). */
+function recoveryTimestamp(): string {
+  return new Date().toISOString().replace(/[:]/g, '-').replace(/Z$/, '');
+}
+
+/** What {@link keepUnsavedCopies} wrote. */
+export interface KeptUnsavedCopies {
+  /** Vault-relative directory the copies are in (forward-slashed). */
+  dir: string;
+  /** Vault paths whose copy was written. */
+  kept: string[];
+  /** Vault paths whose copy couldn't be written. */
+  failed: string[];
+}
+
+/**
+ * Writes each item's `text` (unsaved work the renderer holds) to
+ * `.filo/recovery/<timestamp>-unsaved/<flattened-path>`, one directory per
+ * call. A copy that can't be written (too large, a disk error) is reported in
+ * `failed` and the rest still go ahead; the caller then asks the user again
+ * before dropping it. The paths are only names here: nothing is read from
+ * or written to them.
+ */
+export async function keepUnsavedCopies(
+  vaultRoot: string,
+  items: ReadonlyArray<{ relPath: string; text: string }>,
+): Promise<KeptUnsavedCopies> {
+  const name = `${recoveryTimestamp()}${RESCUE_SUFFIX}`;
+  const destDir = join(vaultRoot, RECOVERY_DIR, name);
+  assertWithinVault(vaultRoot, destDir);
+  const out: KeptUnsavedCopies = {
+    dir: [RECOVERY_DIR.split(/[\\/]/).join('/'), name].join('/'),
+    kept: [],
+    failed: [],
+  };
+  if (items.length === 0) return out;
+  await ensureDir(destDir);
+  const used = new Set<string>();
+  for (const { relPath, text } of items) {
+    try {
+      const bytes = Buffer.from(text, 'utf-8');
+      if (bytes.length > MAX_SNAPSHOT_BYTES) throw new Error(`${relPath}: ${bytes.length} bytes exceeds the copy cap`);
+      // Two paths can flatten to one name (a deep tail truncated); number the second.
+      let file = flattenSnapshotName(relPath);
+      for (let n = 2; used.has(file.toLowerCase()); n++) file = `${n} - ${flattenSnapshotName(relPath)}`;
+      used.add(file.toLowerCase());
+      const destAbs = join(destDir, file);
+      assertWithinVault(vaultRoot, destAbs);
+      await atomicWriteFile(destAbs, bytes);
+      out.kept.push(relPath);
+    } catch (err) {
+      logMainError(`recovery:keep-unsaved ${relPath}`, err);
+      out.failed.push(relPath);
+    }
+  }
+  return out;
 }
 
 /** One preserved snapshot, surfaced to the renderer on vault open. */

@@ -6,7 +6,7 @@ import { noteStore } from '@renderer/stores/notes.svelte';
 import {
   cancelAllPendingWrites,
   __resetDirtyTrackingForTests,
-  type V7BoardFileData,
+  type BoardFileData,
 } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, ImageTile, Tile } from '@renderer/schema/index';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
@@ -66,7 +66,7 @@ function moveFile(_root: unknown, oldAbs: unknown, newAbs: unknown): { success: 
   return { success: true };
 }
 
-function makeImageBoardFixture(srcPath: string): V7BoardFileData {
+function makeImageBoardFixture(srcPath: string): BoardFileData {
   return {
     board: {
       id: 'mm',
@@ -249,8 +249,8 @@ describe('vaultStore.rename — transactional flow', () => {
     // but the cascade mutates both. An inverse-only revert
     // could leave the inactive board half-mutated when the inverse threw;
     // the snapshot-based revert restores every entry unconditionally.
-    const fixtureA: V7BoardFileData = makeImageBoardFixture(oldRel);
-    const fixtureB: V7BoardFileData = makeImageBoardFixture(oldRel);
+    const fixtureA: BoardFileData = makeImageBoardFixture(oldRel);
+    const fixtureB: BoardFileData = makeImageBoardFixture(oldRel);
     (fixtureB.board as { id: string }).id = 'mm-b';
     (fixtureB.tileDefs.i1 as { id: string }).id = 'i1-b';
     fixtureB.tileDefs['i1-b'] = fixtureB.tileDefs.i1 as never;

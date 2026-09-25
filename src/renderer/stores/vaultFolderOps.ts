@@ -23,7 +23,7 @@ import {
   withDrainedWrites,
 } from '../lib/vault/vaultOperations';
 import { performDelete } from './vaultDeleteOps';
-import type { V7BoardFileData } from '../lib/boards/boardSaver';
+import type { BoardFileData } from '../lib/boards/boardSaver';
 import type { VaultContext } from './vaultStoreTypes';
 
 export type VaultRenameResult = {
@@ -238,7 +238,7 @@ async function runRename(
       // revert sites.
       const renameIdentity = captureVaultIdentity();
       let cascadeApplied = false;
-      let cacheSnapshot: Record<string, V7BoardFileData> | null = null;
+      let cacheSnapshot: Record<string, BoardFileData> | null = null;
       let changedBoardIds: string[] = [];
       // Snapshot boardPaths before the rename so we can
       // revert the renameBoardPath mutation on IPC failure.
@@ -253,7 +253,7 @@ async function runRename(
           await boardCacheStore.ensureAllLoaded();
           cacheSnapshot = JSON.parse(
             JSON.stringify(boardCacheStore.cache),
-          ) as Record<string, V7BoardFileData>;
+          ) as Record<string, BoardFileData>;
           boardPathsSnapshot = { ...boardCacheStore.paths };
           // Rebind any board whose .board.json (or whose
           // parent folder) just moved. Must run BEFORE propagateRename so

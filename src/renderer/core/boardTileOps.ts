@@ -1,5 +1,5 @@
 import type { Board, Tile } from '../schema/index';
-import type { CacheContext, V7BoardFileData } from '../stores/boardCacheTypes';
+import type { CacheContext, BoardFileData } from '../stores/boardCacheTypes';
 import { mindmapTileOps } from './boardTileOps/mindmap';
 import { kanbanTileOps } from './boardTileOps/kanban';
 import { tasklistTileOps } from './boardTileOps/tasklist';
@@ -38,7 +38,7 @@ export interface BoardTileOps<B extends Board = Board> {
    */
   addTile(
     ctx: CacheContext,
-    cached: V7BoardFileData,
+    cached: BoardFileData,
     boardId: string,
     tile: Tile,
     opts?: AddTileOpts,
@@ -51,7 +51,7 @@ export interface BoardTileOps<B extends Board = Board> {
    */
   removeTile(
     ctx: CacheContext,
-    cached: V7BoardFileData,
+    cached: BoardFileData,
     boardId: string,
     tileId: string,
   ): void;
@@ -63,7 +63,7 @@ export interface BoardTileOps<B extends Board = Board> {
    */
   updateTile(
     ctx: CacheContext,
-    cached: V7BoardFileData,
+    cached: BoardFileData,
     boardId: string,
     tileId: string,
     updates: Partial<Tile>,
@@ -75,7 +75,7 @@ export interface BoardTileOps<B extends Board = Board> {
    * Kanban fuses `tileDefs` with column `tilePlacements`; Task List fuses
    * `tileDefs` with `tasks`; Document is always `{}`.
    */
-  getFullTiles(cached: V7BoardFileData, boardId: string): Record<string, Tile>;
+  getFullTiles(cached: BoardFileData, boardId: string): Record<string, Tile>;
 
   /**
    * List every tileId that holds a placement on this board (the on-disk
@@ -83,7 +83,7 @@ export interface BoardTileOps<B extends Board = Board> {
    * `tileDefs` keys). Used by orphan-detection passes that need to compare
    * placement IDs against def IDs.
    */
-  listPlacementIds(cached: V7BoardFileData): string[];
+  listPlacementIds(cached: BoardFileData): string[];
 }
 
 type OpsRegistry = {

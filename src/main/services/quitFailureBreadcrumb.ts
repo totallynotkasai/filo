@@ -18,7 +18,7 @@ import { join, relative, isAbsolute } from 'path';
 import { assertWithinVault } from '../utils/pathSecurity';
 import { atomicWriteFile, ensureDir } from '../vault/filenameUtils';
 import { logMainError } from '../utils/mainLogger';
-import { listPreservedEmergencyFiles } from './emergencyFileRegistry';
+import { listPreservedEmergencyFiles, type PreservedEmergencyFile } from './emergencyFileRegistry';
 import { getMachineIdentity } from './machineIdentity';
 import { machineSentinelPath } from '../../shared/sentinelPaths';
 
@@ -35,6 +35,11 @@ export const QUIT_FAILURE_VERSION = 1;
 function isWithin(root: string, p: string): boolean {
   const rel = relative(root, p);
   return rel.length > 0 && !rel.startsWith('..') && !isAbsolute(rel);
+}
+
+/** The emergency files preserved this session that live in `vaultRoot`. */
+export function preservedEmergencyFilesIn(vaultRoot: string): PreservedEmergencyFile[] {
+  return listPreservedEmergencyFiles().filter((f) => isWithin(vaultRoot, f.preservedPath));
 }
 
 interface BreadcrumbEntry {
@@ -93,7 +98,7 @@ export async function writeQuitFailureBreadcrumb(vaultRoot: string | null): Prom
   if (!vaultRoot) return;
   // Only include partials that actually live in this vault — the registry is
   // process-wide and may carry entries from a vault the user swapped away from.
-  const files = listPreservedEmergencyFiles().filter((f) => isWithin(vaultRoot, f.preservedPath));
+  const files = preservedEmergencyFilesIn(vaultRoot);
   if (files.length === 0) return;
   try {
     const destAbs = join(vaultRoot, quitFailureRelPath());

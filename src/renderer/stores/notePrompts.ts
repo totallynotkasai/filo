@@ -25,7 +25,7 @@ import { noteTitle } from './noteMeta';
 import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { backupExternalVersion } from '../lib/vault/keepLocalBackup';
-import { assembleNoteText, newNoteText, readNoteText } from '../lib/notes/noteFile';
+import { localNoteText } from '../lib/notes/noteFile';
 import { reportError } from '../lib/utils/errorBus';
 
 const conflictKey = (rel: string): string => `ext-mod:${rel}`;
@@ -33,8 +33,7 @@ const deletedKey = (rel: string): string => `ext-deleted:${rel}`;
 
 /** The text to write back for a note deleted on disk: its last frontmatter over the local body. */
 function recreatedText(m: NoteModel): string {
-  if (m.base) return assembleNoteText(readNoteText(m.base.rawText), { body: m.body });
-  return newNoteText({ ...m.frontmatter }, m.body);
+  return localNoteText(m.base, m.frontmatter, m.body);
 }
 
 function promptConflict(m: NoteModel): void {
@@ -56,14 +55,13 @@ function promptConflict(m: NoteModel): void {
       },
       {
         label: 'Keep mine',
+        // allow-keep-local-no-backup: resolveConflict backs up the very bytes it then overwrites
         handler: async () => {
-          const vaultRoot = getActiveVaultPath();
-          const identity = captureVaultIdentity();
-          // Back up the other program's version before overwriting it; a
-          // declined overwrite leaves both sides as they are.
-          if (!vaultRoot || !(await backupExternalVersion(vaultRoot, m.relPath))) return;
-          if (!isStillSameVault(identity)) return;
-          await noteStore.resolveConflict(m.relPath, 'keep-mine');
+          try {
+            await noteStore.resolveConflict(m.relPath, 'keep-mine');
+          } catch (err) {
+            reportError('notePrompts.keepMine', err, `Couldn't keep your version of "${m.relPath}"`);
+          }
         },
       },
     ],

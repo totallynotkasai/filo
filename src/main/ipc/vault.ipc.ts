@@ -12,7 +12,7 @@ import {
   VaultTreeTooLargeError,
   CaseRenameStrandedError,
 } from '../vault/fileOps';
-import { atomicWriteFile, uniqueFolderPath, LOCK_AWARE_SUPPRESS_MS } from '../vault/filenameUtils';
+import { atomicWriteFile, uniqueFolderPath, withOnDiskSpelling, LOCK_AWARE_SUPPRESS_MS } from '../vault/filenameUtils';
 import { FileWatcher } from '../services/fileWatcher';
 import {
   assertWithinVault,
@@ -58,6 +58,17 @@ export function getVaultRoot(): string | null {
 
 export function getActiveWatcher(): FileWatcher | null {
   return activeWatcher;
+}
+
+/**
+ * After a note write: keep its echo out of the watcher (while the file is
+ * there) and tell the watcher the bytes now on disk, so a rename of the note
+ * by another program straight after still pairs as a rename.
+ */
+export function noteOwnWrite(relativePath: string, content: string): void {
+  if (!activeWatcher) return;
+  activeWatcher.suppressWrite(relativePath, 1000);
+  activeWatcher.recordOwnWrite(relativePath, Buffer.from(content, 'utf-8'));
 }
 
 /**
@@ -597,9 +608,9 @@ export function registerVaultHandlers(): void {
         assertWithinVault(vaultRoot, fullPath);
         if (isRegisteredNonUtf8(fullPath)) return notUtf8Refusal(relativePath);
         await fsPromises.mkdir(dirname(fullPath), { recursive: true });
-        activeWatcher?.suppress(relativePath, LOCK_AWARE_SUPPRESS_MS);
-        await atomicWriteFile(fullPath, content);
-        activeWatcher?.suppress(relativePath, 1000);
+        activeWatcher?.suppressWrite(relativePath, LOCK_AWARE_SUPPRESS_MS);
+        await atomicWriteFile(await withOnDiskSpelling(fullPath), content);
+        noteOwnWrite(relativePath, content);
         return { success: true, path: fullPath };
       } catch (err) {
         logMainError('vault:write-file-text', err);
@@ -642,7 +653,7 @@ export function registerVaultHandlers(): void {
           }
           throw openErr;
         }
-        activeWatcher?.suppress(relativePath, LOCK_AWARE_SUPPRESS_MS);
+        activeWatcher?.suppressWrite(relativePath, LOCK_AWARE_SUPPRESS_MS);
         try {
           await atomicWriteFile(fullPath, content);
         } catch (writeErr) {
@@ -650,7 +661,7 @@ export function registerVaultHandlers(): void {
           await fsPromises.unlink(fullPath).catch(() => undefined);
           throw writeErr;
         }
-        activeWatcher?.suppress(relativePath, 1000);
+        noteOwnWrite(relativePath, content);
         return { success: true, path: fullPath };
       } catch (err) {
         logMainError('vault:create-file-text', err);
@@ -698,14 +709,14 @@ export function registerVaultHandlers(): void {
         // Never overwrite a file whose bytes aren't UTF-8 with text decoded
         // from them (every non-ASCII byte would become U+FFFD).
         if (isRegisteredNonUtf8(fullPath)) return notUtf8Refusal(relativePath);
-        activeWatcher?.suppress(relativePath, LOCK_AWARE_SUPPRESS_MS);
+        activeWatcher?.suppressWrite(relativePath, LOCK_AWARE_SUPPRESS_MS);
         // `expectExisting` re-verifies the destination right
         // before the rename so a delete landing in the stat-precheck→rename
         // gap aborts (ENOENT) instead of resurrecting the file with stale
         // editor bytes. The pre-stat above still short-circuits the common
         // already-deleted case before staging a tmp.
-        await atomicWriteFile(fullPath, content, { expectExisting: true });
-        activeWatcher?.suppress(relativePath, 1000);
+        await atomicWriteFile(await withOnDiskSpelling(fullPath), content, { expectExisting: true });
+        noteOwnWrite(relativePath, content);
         return { success: true, path: fullPath };
       } catch (err) {
         logMainError('vault:write-existing-file-text', err);

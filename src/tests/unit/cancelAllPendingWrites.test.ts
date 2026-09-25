@@ -3,7 +3,7 @@ import {
   scheduleBoardWrite,
   scheduleConfigWrite,
   cancelAllPendingWrites,
-  type V7BoardFileData,
+  type BoardFileData,
 } from '@renderer/lib/boards/boardSaver';
 import type {
   MindMapBoard,
@@ -53,7 +53,7 @@ function makeBoardArgs() {
       tileDefs: {},
       connections: {},
       frames: [],
-    } as V7BoardFileData,
+    } as BoardFileData,
   };
 }
 

@@ -8,7 +8,7 @@ import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { DeleteTilesCommand } from '@renderer/commands/index';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
 import { __resetErrorBusForTests, onError, type ReportedError } from '@renderer/lib/utils/errorBus';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, TextTile, Tile } from '@renderer/schema/index';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 
@@ -49,7 +49,7 @@ function installVault(initial: Record<string, string>): Harness {
   return { vault, calls, setHook: (h) => { hook = h; } };
 }
 
-function makeMindMapFixture(tiles: Record<string, TextTile>): V7BoardFileData {
+function makeMindMapFixture(tiles: Record<string, TextTile>): BoardFileData {
   const placements: Record<string, unknown> = {};
   for (const id of Object.keys(tiles)) {
     placements[id] = { x: 0, y: 0, width: 200, height: 100, locked: false, faded: false };
@@ -67,7 +67,7 @@ function makeMindMapFixture(tiles: Record<string, TextTile>): V7BoardFileData {
       inlineTiles: {},
       waypoints: [],
     } as unknown as MindMapBoard,
-    tileDefs: tiles as unknown as V7BoardFileData['tileDefs'],
+    tileDefs: tiles as unknown as BoardFileData['tileDefs'],
     connections: {},
     frames: [],
   };

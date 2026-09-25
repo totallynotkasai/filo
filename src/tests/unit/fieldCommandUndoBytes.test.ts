@@ -31,7 +31,7 @@ import {
 } from '@renderer/commands/index';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TaskListBoard, KanbanBoard } from '@renderer/schema/index';
 
 /** Mutable-disk mock — reads return the current file; writes mutate it. */
@@ -53,7 +53,7 @@ function installDisk(initial: string): { get: () => string } {
   return { get: () => disk };
 }
 
-function makeTaskListFixture(): V7BoardFileData {
+function makeTaskListFixture(): BoardFileData {
   return {
     board: {
       id: 'tl',
@@ -71,7 +71,7 @@ function makeTaskListFixture(): V7BoardFileData {
   };
 }
 
-function makeKanbanFixture(): V7BoardFileData {
+function makeKanbanFixture(): BoardFileData {
   return {
     board: {
       id: 'kb',

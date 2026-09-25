@@ -46,7 +46,7 @@ export const CURRENT_BOARD_FILE_VERSION = 8;
  * constructs an envelope outside the loader (tests, migration tooling,
  * hand-built JSON) and asks Zod to validate it.
  */
-export const V7BoardFileDataSchema = z.object({
+export const BoardFileDataSchema = z.object({
   version: z.literal(CURRENT_BOARD_FILE_VERSION),
   board: BoardSchema,
   // Record keys are validated against the nanoid pattern
@@ -134,12 +134,12 @@ export const V7BoardFileDataSchema = z.object({
     // Diagnostic only — does NOT call `ctx.addIssue` so the parse
     // still succeeds. The loader normalises these on the way in.
     console.warn(
-      `[V7BoardFileDataSchema] boardId mismatch in board ${envelope.board.id}: ${seenMismatch.join('; ')}`,
+      `[BoardFileDataSchema] boardId mismatch in board ${envelope.board.id}: ${seenMismatch.join('; ')}`,
     );
   }
 });
 
-// Note: the runtime `V7BoardFileData` type lives in `lib/boards/tileDefBuilder.ts`
+// Note: the runtime `BoardFileData` type lives in `lib/boards/tileDefBuilder.ts`
 // and carries `version?: 8` as the literal type so the saver can stamp it
 // before serialise. In-memory consumers never need to read `version`: every
 // loaded envelope is current because the loader refuses every other version.

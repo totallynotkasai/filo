@@ -3,7 +3,7 @@ import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { BoardSchema } from '@renderer/schema/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 
 /**
@@ -12,7 +12,7 @@ import type { MindMapBoard } from '@renderer/schema/index';
  * the board-scoped equivalent introduced by the per-board-default plan.
  */
 
-function makeFixture(boardId: string, defaultFolder = ''): V7BoardFileData {
+function makeFixture(boardId: string, defaultFolder = ''): BoardFileData {
   return {
     board: {
       id: boardId,

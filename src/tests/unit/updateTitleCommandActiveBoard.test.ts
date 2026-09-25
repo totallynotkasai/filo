@@ -21,7 +21,7 @@ import { uiStore } from '@renderer/stores/ui.svelte';
 import { UpdateTitleCommand } from '@renderer/commands/index';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 
 /** Mutable-disk mock: reads return the current file; writes mutate it; renames are recorded. */
@@ -46,7 +46,7 @@ function installDisk(initial: string): { get: () => string; renames: unknown[][]
 
 const STYLE = { headerColor: '', bodyColor: '', borderColor: '' };
 
-function mindMapFixture(): V7BoardFileData {
+function mindMapFixture(): BoardFileData {
   return {
     version: 8,
     board: {
@@ -75,7 +75,7 @@ function mindMapFixture(): V7BoardFileData {
         style: STYLE,
         createdAt: 0,
         updatedAt: 0,
-      } as unknown as V7BoardFileData['tileDefs'][string],
+      } as unknown as BoardFileData['tileDefs'][string],
     },
     connections: {},
     frames: [],

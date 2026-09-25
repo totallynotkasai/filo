@@ -3,7 +3,7 @@ import { pendingSettingsStore } from '@renderer/stores/pendingSettings.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Project } from '@renderer/schema/index';
 import { ProjectSettingsSchema } from '@renderer/schema/settings';
 
@@ -36,7 +36,7 @@ function installFiloStub(routes: Record<string, InvokeHandler> = {}): void {
   };
 }
 
-function makeMindMapFixture(): V7BoardFileData {
+function makeMindMapFixture(): BoardFileData {
   return {
     board: {
       id: 'mm',

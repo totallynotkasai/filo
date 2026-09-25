@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * TaskItem — V7 task row.
+   * TaskItem — a task row.
    *
    * Pure presentational: receives the underlying `Tile` plus the frontmatter-
    * derived fields (`completed`, `priority`, `dueDate`) and emits intent

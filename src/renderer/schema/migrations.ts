@@ -18,7 +18,7 @@
 import { CURRENT_BOARD_FILE_VERSION } from './boardFile';
 
 export interface MigrateBoardFileResult {
-  /** The input, ready for `V7BoardFileDataSchema` when the version is current. */
+  /** The input, ready for `BoardFileDataSchema` when the version is current. */
   data: unknown;
   /**
    * The version declared by a refused file (`null` when the file is current).

@@ -8,7 +8,7 @@ import {
   findTilesToCascadeDelete,
   collectFileRefs,
 } from '@renderer/lib/vault/fileRefIntegrity';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { Frame } from '@renderer/schema/index';
 import {
   markDirty,
@@ -51,7 +51,7 @@ function makeFrame(id: string, backgroundImage: string): Frame {
 function makeMindmapBoardWithFrames(
   frames: Frame[],
   options?: { defaultFrameBg?: string },
-): V7BoardFileData {
+): BoardFileData {
   return {
     board: {
       id: 'b1',
@@ -69,7 +69,7 @@ function makeMindmapBoardWithFrames(
       frames: [],
       waypoints: [],
       groups: [],
-    } as unknown as V7BoardFileData['board'],
+    } as unknown as BoardFileData['board'],
     tileDefs: {},
     connections: {},
     frames,

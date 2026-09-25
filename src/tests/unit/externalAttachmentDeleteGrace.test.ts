@@ -20,7 +20,7 @@ import { uiStore } from '@renderer/stores/ui.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import type { VaultContext } from '@renderer/stores/vaultStoreTypes';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
@@ -32,7 +32,7 @@ function makeMindMapWithImage(
   boardId: string,
   tileId: string,
   src: string,
-): V7BoardFileData {
+): BoardFileData {
   return {
     board: {
       id: boardId,

@@ -12,11 +12,11 @@ import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
-function boardWithNote(boardId: string, name: string, tileId: string): V7BoardFileData {
+function boardWithNote(boardId: string, name: string, tileId: string): BoardFileData {
   return {
     board: {
       id: boardId, type: 'mindmap', name, emoji: '', createdAt: 0, updatedAt: 0, settings: {},
@@ -32,7 +32,7 @@ function boardWithNote(boardId: string, name: string, tileId: string): V7BoardFi
     },
     connections: {},
     frames: [],
-  } as unknown as V7BoardFileData;
+  } as unknown as BoardFileData;
 }
 
 function clearToasts(): void {

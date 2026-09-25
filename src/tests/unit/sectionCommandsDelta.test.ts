@@ -17,7 +17,7 @@ import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { sectionIdForPlacementIndex } from '@renderer/lib/tasklist/sectionMath';
 import { AddSectionCommand, DeleteSectionCommand, ReorderSectionCommand } from '@renderer/commands/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TaskListBoard, TaskListSection, TileDefinition } from '@renderer/schema/index';
 import type { TaskPlacement } from '@renderer/schema/placement';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
@@ -39,7 +39,7 @@ function textDef(id: string, title: string): TileDefinition {
  * Board: section A (start index 0, owns t1+t2), section B (start index 2,
  * owns t3). Section `position` is the absolute index into the flat task array.
  */
-function makeBoard(): V7BoardFileData {
+function makeBoard(): BoardFileData {
   return {
     board: {
       id: 'tl',
@@ -246,7 +246,7 @@ describe('Audit5 2.5 — ReorderSectionCommand (delta-aware)', () => {
  */
 describe('Audit-6 H1 — ReorderSectionCommand (general N-section reorder)', () => {
   /** Board: A@0 owns t1, B@1 owns t2, C@2 owns t3. */
-  function make3SectionBoard(): V7BoardFileData {
+  function make3SectionBoard(): BoardFileData {
     return {
       board: {
         id: 'tl',
@@ -396,7 +396,7 @@ describe('Audit-16 2.2 — DeleteSectionCommand.undo restores a tied section\'s 
    * Board: A@0 owns t1,t2; E@2 EMPTY, tied with B@2 (E listed before B, so B —
    * last in array order — owns the slice [2, end) = t3).
    */
-  function makeTiedBoard(): V7BoardFileData {
+  function makeTiedBoard(): BoardFileData {
     return {
       board: {
         id: 'tl',

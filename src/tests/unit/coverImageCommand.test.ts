@@ -11,7 +11,7 @@ import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { UpdateCoverImageCommand } from '@renderer/commands/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
@@ -19,7 +19,7 @@ function installSilentBridge(): void {
   installFiloMock(() => null);
 }
 
-function makeKanban(coverImage?: string): V7BoardFileData {
+function makeKanban(coverImage?: string): BoardFileData {
   return {
     board: {
       id: 'kb',
@@ -52,7 +52,7 @@ function makeKanban(coverImage?: string): V7BoardFileData {
         tags: [],
         createdAt: 0,
         updatedAt: 0,
-      } as unknown as V7BoardFileData['tileDefs'][string],
+      } as unknown as BoardFileData['tileDefs'][string],
     },
     connections: {},
     frames: [],

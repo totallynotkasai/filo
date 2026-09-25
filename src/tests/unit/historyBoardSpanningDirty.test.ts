@@ -6,7 +6,7 @@ import { uiStore } from '@renderer/stores/ui.svelte';
 import { historyStore } from '@renderer/stores/history.svelte';
 import { CascadeDeleteCommand } from '@renderer/commands/index';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Tile } from '@renderer/schema/index';
 
 /**
@@ -56,7 +56,7 @@ async function flushAsync(): Promise<void> {
   for (let i = 0; i < 8; i++) await Promise.resolve();
 }
 
-function makeMindMap(id: string, tileId: string): V7BoardFileData {
+function makeMindMap(id: string, tileId: string): BoardFileData {
   return {
     board: {
       id,

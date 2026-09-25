@@ -112,6 +112,48 @@ export async function backupExternalVersion(vaultRoot: string, rel: string): Pro
   return proceed;
 }
 
+/** `'missing'` for no file, else the file's mtime and size. */
+async function diskStamp(vaultRoot: string, rel: string): Promise<string> {
+  try {
+    const stat = await invokeOk('vault:stat', vaultRoot, rel);
+    return `${stat.mtimeMs}|${stat.size}`;
+  } catch (err) {
+    if (errorCode(err) === 'ENOENT') return 'missing';
+    throw err;
+  }
+}
+
+/** How many times `backupThenRead` starts over while another program keeps writing. */
+const BACKUP_READ_ATTEMPTS = 3;
+
+export type BackupThenRead<T> =
+  | { ok: true; value: T }
+  | { ok: false; reason: 'cancelled' | 'changing' };
+
+/**
+ * Backs up the version on disk, then runs `read`, and hands back what `read`
+ * saw only when the file didn't change from before the backup to after the
+ * read. The caller then builds its overwrite on exactly the bytes that were
+ * backed up: backing up and reading separately would let a third write land
+ * in between and be overwritten with no copy kept.
+ *
+ * `cancelled`: the backup failed and the user declined to overwrite anyway.
+ * `changing`: another program kept writing the file on every attempt.
+ */
+export async function backupThenRead<T>(
+  vaultRoot: string,
+  rel: string,
+  read: () => Promise<T>,
+): Promise<BackupThenRead<T>> {
+  for (let attempt = 0; attempt < BACKUP_READ_ATTEMPTS; attempt++) {
+    const before = await diskStamp(vaultRoot, rel);
+    if (!(await backupExternalVersion(vaultRoot, rel))) return { ok: false, reason: 'cancelled' };
+    const value = await read();
+    if ((await diskStamp(vaultRoot, rel)) === before) return { ok: true, value };
+  }
+  return { ok: false, reason: 'changing' };
+}
+
 /** Test-only. */
 export function __resetKeepLocalBackupForTests(): void {
   decided.clear();

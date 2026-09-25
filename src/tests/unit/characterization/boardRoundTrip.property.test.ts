@@ -2,8 +2,8 @@
  * Phase 0 characterization — board file round-trip parity.
  *
  * Property: for every Board of every type produced by the schema factories,
- * the full V7 envelope serialised with `JSON.stringify` and re-parsed through
- * `V7BoardFileDataSchema` round-trips to a structurally equivalent envelope.
+ * the full v8 envelope serialised with `JSON.stringify` and re-parsed through
+ * `BoardFileDataSchema` round-trips to a structurally equivalent envelope.
  * The envelope's `version` is required (no default), and a tile def keeps only
  * the fields the board owns.
  *
@@ -24,7 +24,7 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import {
-  V7BoardFileDataSchema,
+  BoardFileDataSchema,
   CURRENT_BOARD_FILE_VERSION,
 } from '@renderer/schema/boardFile';
 import {
@@ -36,7 +36,7 @@ import {
 } from '@renderer/schema/index';
 import type { BoardType } from '@shared/types';
 import { createId } from '@renderer/lib/utils/ids';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 
 // ── Schema-direct factories — mirror `boardRegistry.createDefault` ──
 
@@ -116,7 +116,7 @@ const FACTORIES: Record<BoardType, (id: string, name: string) => Board> = {
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
-function makeDefaultEnvelope(type: BoardType): V7BoardFileData {
+function makeDefaultEnvelope(type: BoardType): BoardFileData {
   const board = FACTORIES[type](`board_${createId()}`, 'Test');
   return {
     version: CURRENT_BOARD_FILE_VERSION,
@@ -127,24 +127,24 @@ function makeDefaultEnvelope(type: BoardType): V7BoardFileData {
   };
 }
 
-function roundTrip(envelope: V7BoardFileData): V7BoardFileData {
+function roundTrip(envelope: BoardFileData): BoardFileData {
   const json = JSON.stringify(envelope, null, 2);
-  const parsed = V7BoardFileDataSchema.safeParse(JSON.parse(json));
+  const parsed = BoardFileDataSchema.safeParse(JSON.parse(json));
   if (!parsed.success) {
     throw new Error(
-      `V7BoardFileDataSchema rejected serialised envelope:\n${parsed.error.issues
+      `BoardFileDataSchema rejected serialised envelope:\n${parsed.error.issues
         .map((i) => `  ${i.path.join('.')}: ${i.message}`)
         .join('\n')}\nInput:\n${json}`,
     );
   }
-  return parsed.data as V7BoardFileData;
+  return parsed.data as BoardFileData;
 }
 
 /**
  * JSON-clone to drop undefineds + flatten Svelte 5 proxies if any so a
  * deep-equality comparison sees plain structures.
  */
-function normalise(env: V7BoardFileData): unknown {
+function normalise(env: BoardFileData): unknown {
   return JSON.parse(JSON.stringify(env));
 }
 
@@ -153,7 +153,7 @@ function normalise(env: V7BoardFileData): unknown {
 describe('Phase 0 characterization — board round-trip parity', () => {
   describe('defaults round-trip per board type', () => {
     for (const type of BOARD_TYPES) {
-      it(`${type} default board → JSON.stringify → V7BoardFileDataSchema → equivalent envelope`, () => {
+      it(`${type} default board → JSON.stringify → BoardFileDataSchema → equivalent envelope`, () => {
         const before = makeDefaultEnvelope(type);
         const after = roundTrip(before);
         expect(normalise(after)).toEqual(normalise(before));
@@ -191,7 +191,7 @@ describe('Phase 0 characterization — board round-trip parity', () => {
               createdAt: 0,
               updatedAt: 0,
               __future_field__: 'dropped-on-def',
-            } as unknown as V7BoardFileData['tileDefs'][string],
+            } as unknown as BoardFileData['tileDefs'][string],
           };
         }
         env.frames = [
@@ -205,7 +205,7 @@ describe('Phase 0 characterization — board round-trip parity', () => {
             createdAt: 0,
             updatedAt: 0,
             __future_field__: 'preserved-on-frame',
-          } as unknown as V7BoardFileData['frames'][number],
+          } as unknown as BoardFileData['frames'][number],
         ];
 
         const after = roundTrip(env);
@@ -224,7 +224,7 @@ describe('Phase 0 characterization — board round-trip parity', () => {
   describe('property — random envelope decorations always round-trip', () => {
     // Property: any envelope produced from a factory default + a JSON-safe
     // sprinkling of extra fields (passthrough territory) round-trips through
-    // JSON.stringify + V7BoardFileDataSchema without structural drift.
+    // JSON.stringify + BoardFileDataSchema without structural drift.
     const passthroughValue = fc.oneof(
       fc.string({ maxLength: 32 }),
       fc.integer({ min: -1000, max: 1000 }),

@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  V7BoardFileDataSchema,
+  BoardFileDataSchema,
   TileDefinitionSchema,
   migrateBoardFile,
   CURRENT_BOARD_FILE_VERSION,
@@ -59,8 +59,8 @@ describe('board format v8', () => {
   it('loads and re-saves a v8 file Filo wrote byte for byte', () => {
     // The saver writes the parsed cache object, so what Filo writes is the
     // schema's output; loading that again must give back the same bytes.
-    const written = JSON.stringify(V7BoardFileDataSchema.parse(v8File()), null, 2);
-    const resaved = JSON.stringify(V7BoardFileDataSchema.parse(JSON.parse(written)), null, 2);
+    const written = JSON.stringify(BoardFileDataSchema.parse(v8File()), null, 2);
+    const resaved = JSON.stringify(BoardFileDataSchema.parse(JSON.parse(written)), null, 2);
     expect(resaved).toBe(written);
     const defs = (JSON.parse(written) as { tileDefs: Record<string, Record<string, unknown>> }).tileDefs;
     expect(defs.t1).toEqual(v8File().tileDefs && (v8File().tileDefs as Record<string, unknown>).t1);

@@ -10,7 +10,7 @@ import {
   seedTextFileForNewTile,
   stampTextTileSeedPath,
 } from '../../lib/boards/seedTextFileForNewTile';
-import type { CacheContext, V7BoardFileData } from '../../stores/boardCacheTypes';
+import type { CacheContext, BoardFileData } from '../../stores/boardCacheTypes';
 import { projectDef } from './projectTile';
 import type { AddTileOpts, BoardTileOps } from '../boardTileOps';
 
@@ -42,7 +42,7 @@ export const kanbanTileOps: BoardTileOps<KanbanBoard> = {
 
   async addTile(
     ctx: CacheContext,
-    cached: V7BoardFileData,
+    cached: BoardFileData,
     boardId: string,
     tile: Tile,
     opts?: AddTileOpts,
@@ -59,7 +59,7 @@ export const kanbanTileOps: BoardTileOps<KanbanBoard> = {
 
   removeTile(
     ctx: CacheContext,
-    cached: V7BoardFileData,
+    cached: BoardFileData,
     boardId: string,
     tileId: string,
   ): void {
@@ -107,7 +107,7 @@ export const kanbanTileOps: BoardTileOps<KanbanBoard> = {
 
   updateTile(
     ctx: CacheContext,
-    cached: V7BoardFileData,
+    cached: BoardFileData,
     boardId: string,
     tileId: string,
     updates: Partial<Tile>,
@@ -129,7 +129,7 @@ export const kanbanTileOps: BoardTileOps<KanbanBoard> = {
     ctx.markDirty(boardId);
   },
 
-  getFullTiles(cached: V7BoardFileData, boardId: string): Record<string, Tile> {
+  getFullTiles(cached: BoardFileData, boardId: string): Record<string, Tile> {
     const b = cached.board;
     if (b.type !== 'kanban') return {};
     const kb = b as KanbanBoard;
@@ -158,7 +158,7 @@ export const kanbanTileOps: BoardTileOps<KanbanBoard> = {
     return result;
   },
 
-  listPlacementIds(cached: V7BoardFileData): string[] {
+  listPlacementIds(cached: BoardFileData): string[] {
     const b = cached.board;
     if (b.type !== 'kanban') return [];
     const kb = b as KanbanBoard;

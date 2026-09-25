@@ -39,7 +39,7 @@
   ];
 
   // Document board type isn't directly creatable — documents are opened via
-  // "Expand to Document" on text tiles in the V7 vault flow.
+  // "Expand to Document" on text tiles.
   const boardTypes = allBoardTypes.filter(b => b.type !== 'document');
 
   function openBoardBrowser() {

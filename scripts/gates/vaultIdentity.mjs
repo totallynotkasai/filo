@@ -110,7 +110,7 @@ const LIFECYCLE_EXEMPT = new Map([
 const RESET_COVERAGE = [
   { module: 'src/renderer/stores/vaultRecovery.ts', test: 'src/tests/unit/vaultRecovery.test.ts', token: /acknowledgeRecovery/ },
   { module: 'src/renderer/lib/vault/dirtyFlagRecovery.ts', test: 'src/tests/unit/dirtyFlagRecovery.test.ts', token: /checkRecovery/ },
-  { module: 'src/renderer/lib/boards/writeStateTracking.ts', test: 'src/tests/unit/audit14Phase1.test.ts', token: /__resetDirtyTrackingForTests/ },
+  { module: 'src/renderer/lib/boards/writeStateTracking.ts', test: 'src/tests/unit/writeFlushParkedAndGenerations.test.ts', token: /__resetDirtyTrackingForTests/ },
   { module: 'src/renderer/stores/notes.svelte.ts', test: 'src/tests/unit/noteStore.test.ts', token: /a vault swap drops every model/ },
   { module: 'src/renderer/stores/fileTags.svelte.ts', test: 'src/tests/unit/fileTagsCascade.test.ts', token: /fileTagsStore\.reset\s*\(/ },
 ];

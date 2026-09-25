@@ -1,4 +1,4 @@
-import type { V7BoardFileData } from '../boards/boardSaver';
+import type { BoardFileData } from '../boards/boardSaver';
 import type { Board } from '../../schema/index';
 import { normalizeVaultRelative } from '../utils/path';
 import { rebasePath } from './renamePathKeys';
@@ -63,7 +63,7 @@ function rewritePath(current: string, oldPath: string, newPath: string): string 
  * to that board type, forcing the union to be re-narrowed in one place.
  */
 function forEachTileLike(
-  board: V7BoardFileData,
+  board: BoardFileData,
   visit: (tileId: string, tile: Record<string, unknown>) => void,
 ): void {
   // Text defs name their note by `filePath`; media and file defs carry
@@ -144,7 +144,7 @@ function forEachTileLike(
  * place. Returns the number of fields updated on this board.
  */
 export function rewriteRenameInBoard(
-  board: V7BoardFileData,
+  board: BoardFileData,
   oldPath: string,
   newPath: string,
 ): number {
@@ -171,7 +171,7 @@ export function rewriteRenameInBoard(
  * boards via `boardSaver.scheduleBoardWrite()`.
  */
 export function propagateRenameAcrossBoards(
-  boards: Record<string, V7BoardFileData>,
+  boards: Record<string, BoardFileData>,
   oldPath: string,
   newPath: string,
 ): RenameResult {
@@ -275,7 +275,7 @@ export interface DeleteCascadeResult {
  *     dead cover image reference is cleared.
  */
 export function findTilesToCascadeDelete(
-  boards: Record<string, V7BoardFileData>,
+  boards: Record<string, BoardFileData>,
   deletedPath: string,
 ): DeleteCascadeResult {
   const byBoard: Record<string, string[]> = {};
@@ -382,7 +382,7 @@ export function findTilesToCascadeDelete(
  * board's external dependencies.
  */
 export function collectFileRefs(
-  board: V7BoardFileData,
+  board: BoardFileData,
 ): Array<{ tileId: string; field: string; path: string }> {
   const out: Array<{ tileId: string; field: string; path: string }> = [];
   forEachTileLike(board, (tileId, tile) => {
@@ -405,7 +405,7 @@ export function collectFileRefs(
  * or deleted outside Filo is caught here too.
  */
 export function detectBrokenRefs(
-  board: V7BoardFileData,
+  board: BoardFileData,
   knownPaths: ReadonlySet<string> | Iterable<string>,
 ): BrokenReference[] {
   const known =

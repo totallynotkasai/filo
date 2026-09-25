@@ -448,7 +448,7 @@ export const MindMapBoardSchema = BaseBoardSchema.extend({
 }).passthrough();
 
 /**
- * Kanban column. V7 placement-only shape — content lives in `tileDefs`.
+ * Kanban column. Placement-only shape — content lives in `tileDefs`.
  *
  * `wipLimit` is the optional work-in-progress cap for the column. `0` and
  * `undefined` both mean "no limit"; the rendering layer only flags overflow
@@ -492,7 +492,7 @@ export const KanbanBoardSchema = BaseBoardSchema.extend({
  * consecutive section positions). When `sections.length > 0` the runtime
  * disables the `groupBy` view to avoid double-grouping.
  *
- * Backward-compat: `sections` defaults to `[]`, so every existing V7
+ * Backward-compat: `sections` defaults to `[]`, so every existing
  * .board.json file loads without migration.
  */
 const TaskListSectionSchema = z.object({

@@ -34,7 +34,7 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import { historyStore } from '@renderer/stores/history.svelte';
 import { Command } from '@renderer/commands/Command';
 import { TaskListFiltersAndViews } from '@renderer/lib/tasklist/filtersAndViews.svelte';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 
 import {
@@ -66,7 +66,7 @@ const TILE_HEADER_SRC = readFileSync(
   'utf8',
 );
 
-function makeMindMapFixture(id: string, name: string): V7BoardFileData {
+function makeMindMapFixture(id: string, name: string): BoardFileData {
   return {
     board: {
       id,

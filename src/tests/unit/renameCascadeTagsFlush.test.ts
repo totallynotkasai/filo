@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { makeExternalChangesSlice } from '@renderer/stores/vaultExternalChanges';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
@@ -133,7 +133,7 @@ describe('rename cascade — synchronous tags.json flush (F3)', () => {
   // scheduler's internal catch, so it never reaches here; this exercises the
   // narrow rejection path — getArgs throw / future regression — via a spy.)
   it('a flushPendingSave rejection does not abort the board cascade', async () => {
-    const makeBoard = (): V7BoardFileData =>
+    const makeBoard = (): BoardFileData =>
       ({
         board: {
           id: 'b1',
@@ -149,7 +149,7 @@ describe('rename cascade — synchronous tags.json flush (F3)', () => {
         tileDefs: {},
         connections: {},
         frames: [],
-      }) as unknown as V7BoardFileData;
+      }) as unknown as BoardFileData;
     // Board b1 lives at b1.board.json; renaming it makes renamedBoardIds
     // non-empty → hasCascadeWork true → the sentinel + flushAllDirty must run.
     boardCacheStore.hydrate({ b1: makeBoard() }, { b1: 'b1.board.json' });

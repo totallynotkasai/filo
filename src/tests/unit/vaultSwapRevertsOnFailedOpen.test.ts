@@ -44,7 +44,7 @@ function buildRoutes(
   readTreeFails: (root: string) => boolean,
 ) {
   return {
-    'dialog:choice': async () => 1, // "Don't Save" — skip the flush flow.
+    'dialog:choice': async () => 1, // "Cancel" if asked: nothing is unsaved, so no leave dialog appears.
     'vault:close': async () => {
       calls.push({ channel: 'vault:close', args: [] });
       registry.current = null;

@@ -30,12 +30,12 @@ import {
   noteBaseline,
   __resetBaselinesForTests,
 } from '@renderer/lib/vault/fileBaselineRegistry';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard } from '@renderer/schema/index';
 
 const REL = 'k.board.json';
 
-function makeBoard(name: string): V7BoardFileData {
+function makeBoard(name: string): BoardFileData {
   return {
     version: 8,
     board: {

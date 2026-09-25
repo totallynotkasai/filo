@@ -21,7 +21,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { MoveCardsCommand } from '@renderer/commands/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard, TileDefinition } from '@renderer/schema/index';
 import { restoreFiloDefault } from '../helpers/filoBridge';
 
@@ -48,7 +48,7 @@ function col(id: string, tileIds: string[]) {
 }
 
 function hydrate(columns: ReturnType<typeof col>[], tileIds: string[]): void {
-  const fixture: V7BoardFileData = {
+  const fixture: BoardFileData = {
     board: {
       id: 'kb',
       type: 'kanban',

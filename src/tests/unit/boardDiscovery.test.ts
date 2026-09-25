@@ -4,7 +4,7 @@ import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { captureVaultIdentity, beginVaultGeneration } from '@renderer/lib/vault/vaultIdentity';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
@@ -31,7 +31,7 @@ describe('runtime board discovery (Audit-19 EXT-1)', () => {
     vaultStore.setPath('/vault');
     beginVaultGeneration('/vault');
     boardCacheStore.hydrate(
-      { b1: envelope('b1', 'Existing') as unknown as V7BoardFileData },
+      { b1: envelope('b1', 'Existing') as unknown as BoardFileData },
       { b1: 'Existing.board.json' },
     );
     for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });

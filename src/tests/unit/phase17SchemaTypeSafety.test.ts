@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { loadBoard, loadAllBoards } from '@renderer/lib/boards/boardLoader';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import {
   TilePlacementSchema,
   InlineTileSchema,
@@ -28,7 +28,7 @@ function uninstallFiloStub(): void {
   delete (window as unknown as Record<string, unknown>).filo;
 }
 
-function validBoardFile(boardId = 'mindmap-1'): V7BoardFileData {
+function validBoardFile(boardId = 'mindmap-1'): BoardFileData {
   const now = Date.now();
   return {
     version: 8,
@@ -44,7 +44,7 @@ function validBoardFile(boardId = 'mindmap-1'): V7BoardFileData {
       inlineTiles: {},
       createdAt: now,
       updatedAt: now,
-    } as V7BoardFileData['board'],
+    } as BoardFileData['board'],
     tileDefs: {
       tile_a: {
         id: 'tile_a',
@@ -53,7 +53,7 @@ function validBoardFile(boardId = 'mindmap-1'): V7BoardFileData {
         style: { headerColor: '#fff', bodyColor: '#fff', borderColor: '' },
         createdAt: now,
         updatedAt: now,
-      } as V7BoardFileData['tileDefs'][string],
+      } as BoardFileData['tileDefs'][string],
     },
     connections: {},
     frames: [],

@@ -20,6 +20,7 @@
  *  - updateTitleCommand    — tile title edit (note frontmatter or board title)
  *  - renameFileCommand     — undo of "Rename file to match title" (the reverse rename)
  *  - savedViewsCommand     — UpdateSavedViewsCommand
+ *  - noteLayoutCommands    — SetLineSpacingCommand (note frontmatter `lineSpacing:`)
  *
  * Not re-exported here: `Command.ts` (the base interface + abstract class) and
  * `trashedFiles.ts` (moving a delete's files into Filo's trash and back) are
@@ -42,3 +43,4 @@ export * from './attachmentSrcCommand';
 export * from './updateTitleCommand';
 export * from './renameFileCommand';
 export * from './savedViewsCommand';
+export * from './noteLayoutCommands';

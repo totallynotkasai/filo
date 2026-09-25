@@ -187,3 +187,19 @@ function endsWithNewline(text: string): boolean {
 export function newNoteText(frontmatter: Record<string, unknown>, body: string): string {
   return assembleMarkdownFile(frontmatter, body);
 }
+
+/**
+ * The note as this session holds it, for a copy written somewhere other than
+ * the note itself (the file is gone, or can't be written): the frontmatter it
+ * last had on disk with any queued change applied, over the local body.
+ * Without a known disk version, `frontmatter` is used as it is.
+ */
+export function localNoteText(
+  base: DiskSnapshot | undefined,
+  frontmatter: Record<string, unknown>,
+  body: string | undefined,
+  delta?: FrontmatterDelta,
+): string {
+  if (base) return assembleNoteText(readNoteText(base.rawText), { body, delta });
+  return newNoteText({ ...frontmatter }, body ?? '');
+}

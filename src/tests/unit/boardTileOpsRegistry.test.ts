@@ -21,7 +21,7 @@ import {
   boardFramesOpsRegistry,
   framesOpsFor,
 } from '@renderer/core/boardFramesOps';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type {
   Connection,
   Frame,
@@ -44,7 +44,7 @@ function mkDef(id: string, title = id): TileDefinition {
   } as unknown as TileDefinition;
 }
 
-function mindmapEnv(tileId: string): V7BoardFileData {
+function mindmapEnv(tileId: string): BoardFileData {
   return {
     board: {
       id: 'mm',
@@ -69,7 +69,7 @@ function mindmapEnv(tileId: string): V7BoardFileData {
   };
 }
 
-function kanbanEnv(tileId: string): V7BoardFileData {
+function kanbanEnv(tileId: string): BoardFileData {
   return {
     board: {
       id: 'kb',
@@ -101,7 +101,7 @@ function kanbanEnv(tileId: string): V7BoardFileData {
   };
 }
 
-function tasklistEnv(tileId: string): V7BoardFileData {
+function tasklistEnv(tileId: string): BoardFileData {
   return {
     board: {
       id: 'tl',
@@ -130,7 +130,7 @@ function tasklistEnv(tileId: string): V7BoardFileData {
   };
 }
 
-function documentEnv(): V7BoardFileData {
+function documentEnv(): BoardFileData {
   return {
     board: {
       id: 'doc',
@@ -309,7 +309,7 @@ describe('boardTileOpsRegistry — exhaustive coverage', () => {
           label: { text: '', textColor: '', backgroundColor: '', position: 0.5, locked: false },
           createdAt: 0,
           updatedAt: 0,
-        } as V7BoardFileData['connections'][string],
+        } as BoardFileData['connections'][string],
       };
       boardCacheStore.hydrate({ mm: env }, { mm: 'm.board.json' });
 
@@ -441,7 +441,7 @@ describe('boardConnectionsOpsRegistry — exhaustive coverage', () => {
   });
 
   it('kanban / tasklist / document ops apply identical cache writes', () => {
-    // Connections live in the V7 file shape for every board type. The
+    // Connections live in the board file shape for every board type. The
     // registry promotes the writes to a typed home so a future per-type
     // divergence has somewhere to land; today every body is uniform.
     for (const [name, env] of [

@@ -62,6 +62,7 @@ beforeEach(async () => {
   noteStore.setBody('Notes.md', 'local body', 'tile');
   vault.remove('Notes.md');
   await noteStore.onDiskChanged('Notes.md');
+  await noteStore.__settleGraceChecksForTests();
 });
 
 afterEach(() => {

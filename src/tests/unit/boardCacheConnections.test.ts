@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { Connection, MindMapBoard } from '@renderer/schema/index';
 
 /**
@@ -28,7 +28,7 @@ function installFiloStub(routes: Record<string, InvokeHandler> = {}): void {
   };
 }
 
-function makeMindMapFixture(): V7BoardFileData {
+function makeMindMapFixture(): BoardFileData {
   return {
     board: {
       id: 'mm',

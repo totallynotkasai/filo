@@ -30,7 +30,7 @@ import { restoreFiloDefault } from '../helpers/filoBridge';
  *         editor open, its typed body and the delta land together.
  *   P1.5  a deny-by-default permission handler is installable on the session.
  *
- * P1.1 (scheduler parked early-return) lives in `audit14Phase1.test.ts` beside
+ * P1.1 (scheduler parked early-return) lives in `writeFlushParkedAndGenerations.test.ts` beside
  * its 1.1 siblings; P1.2 is CSS-only (no unit cover — see P0.1).
  */
 

@@ -49,12 +49,12 @@ export interface VaultSwapEvent {
    */
   nextVault: string | null;
   /**
-   * True when the user chose "Save" in the open-vault confirm dialog AND
-   * the save succeeded. False on "Don't Save" or when no confirm was
-   * shown (initial open). Drives the sentinel-clear branch in
-   * `writeStateTracking.resetWriteTracking` — only confirmed saves earn
-   * a `.filo/.dirty` clear; "Don't Save" preserves the sentinel so a
-   * later reopen surfaces the Recovery modal.
+   * True when the save before leaving left nothing unsaved. False when the
+   * user left anyway with work that couldn't be saved (rescue copies were
+   * kept). Drives the sentinel-clear branch in
+   * `writeStateTracking.resetWriteTracking`: only a clean save earns a
+   * `.filo/.dirty` clear; otherwise the sentinel stays so a later reopen
+   * surfaces the Recovery modal.
    */
   saveOutgoing: boolean;
 }

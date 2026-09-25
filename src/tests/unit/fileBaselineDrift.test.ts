@@ -10,6 +10,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   noteBaseline,
+  baselineSeq,
   getBaseline,
   hasBaselineDrifted,
   refreshBaselineAfterWrite,
@@ -86,5 +87,60 @@ describe('fileBaselineRegistry — contract', () => {
     noteBaseline('b.board.json', 1000, 100);
     await fireVaultSwap({ phase: 'pre-swap', previousVault: '/vault', nextVault: '/other', saveOutgoing: false });
     expect(getBaseline('b.board.json')).toBeUndefined();
+  });
+});
+
+describe('fileBaselineRegistry — a reader never rolls the baseline back', () => {
+  beforeEach(() => __resetBaselinesForTests());
+  afterEach(() => __resetBaselinesForTests());
+
+  it('a load that began before a self-write does not replace the baseline that write stamped', () => {
+    // The load takes its ticket and stats the file as the create left it...
+    const seq = baselineSeq('K.board.json');
+    // ...a save lands and stamps the bytes it wrote...
+    refreshBaselineAfterWrite('K.board.json', 2000, 300);
+    // ...then the load's older stat arrives. Stamping it would make the next
+    // save see its own previous write as an external edit.
+    noteBaseline('K.board.json', 1000, 100, { ifUnchangedSince: seq });
+    expect(getBaseline('K.board.json')).toMatchObject({ mtimeMs: 2000, size: 300 });
+  });
+
+  it('a load with no self-write in between stamps as usual', () => {
+    refreshBaselineAfterWrite('K.board.json', 2000, 300);
+    const seq = baselineSeq('K.board.json');
+    noteBaseline('K.board.json', 3000, 310, { ifUnchangedSince: seq });
+    expect(getBaseline('K.board.json')).toMatchObject({ mtimeMs: 3000, size: 310 });
+  });
+
+  it('a self-write whose stat failed still invalidates an in-flight reader', () => {
+    noteBaseline('K.board.json', 1000, 100);
+    const seq = baselineSeq('K.board.json');
+    refreshBaselineAfterWrite('K.board.json', undefined, undefined);
+    noteBaseline('K.board.json', 1500, 200, { ifUnchangedSince: seq });
+    expect(getBaseline('K.board.json')).toMatchObject({ mtimeMs: 1000, size: 100 });
+  });
+
+  it('the ticket follows a rename: with no write since, the stamp lands on the new path', () => {
+    refreshBaselineAfterWrite('Old/K.board.json', 2000, 300);
+    const seq = baselineSeq('Old/K.board.json');
+    renameAllPathKeys('Old', 'New');
+    noteBaseline('New/K.board.json', 3000, 310, { ifUnchangedSince: seq });
+    expect(getBaseline('New/K.board.json')).toMatchObject({ mtimeMs: 3000, size: 310 });
+  });
+
+  it('the ticket follows a rename: a write to the new path after the ticket still wins', () => {
+    refreshBaselineAfterWrite('Old/K.board.json', 1500, 200);
+    const seq = baselineSeq('Old/K.board.json');
+    renameAllPathKeys('Old', 'New');
+    refreshBaselineAfterWrite('New/K.board.json', 2000, 300);
+    noteBaseline('New/K.board.json', 1000, 100, { ifUnchangedSince: seq });
+    expect(getBaseline('New/K.board.json')).toMatchObject({ mtimeMs: 2000, size: 300 });
+  });
+
+  it('a write to another path does not block the stamp', () => {
+    const seq = baselineSeq('K.board.json');
+    refreshBaselineAfterWrite('Other.board.json', 2000, 300);
+    noteBaseline('K.board.json', 1000, 100, { ifUnchangedSince: seq });
+    expect(getBaseline('K.board.json')).toMatchObject({ mtimeMs: 1000, size: 100 });
   });
 });

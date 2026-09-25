@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * KanbanBoard — V7 column-based layout backed by `tileDefs` + per-column
+   * KanbanBoard — column-based layout backed by `tileDefs` + per-column
    * `tilePlacements`. Each placement points at a tile def in
    * `boardCacheStore.cache[boardId].tileDefs`; per-element style overrides
    * cascade through `effectiveStyle`. Tiles' frontmatter (tags, properties)

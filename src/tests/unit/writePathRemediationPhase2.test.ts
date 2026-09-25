@@ -7,7 +7,7 @@ import { noteStore } from '@renderer/stores/notes.svelte';
 import { makeKanbanFrontmatterWriter } from '@renderer/lib/kanban/kanbanFrontmatterWriter';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import type { VaultContext } from '@renderer/stores/vaultStoreTypes';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard as KanbanBoardType, Tile } from '@renderer/schema/index';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { restoreFiloDefault } from '../helpers/filoBridge';
@@ -25,7 +25,7 @@ import { restoreFiloDefault } from '../helpers/filoBridge';
  * by `Card.md`, and returns the card's runtime tile.
  */
 function hydrateBoardWithCard(boardId: string): Tile {
-  const data: V7BoardFileData = {
+  const data: BoardFileData = {
     version: 8,
     board: {
       id: boardId,

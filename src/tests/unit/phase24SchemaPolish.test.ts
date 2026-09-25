@@ -3,7 +3,7 @@ import { loadBoard } from '@renderer/lib/boards/boardLoader';
 import { historyStore } from '@renderer/stores/history.svelte';
 import type { Command } from '@renderer/stores/history.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { FrameSchema, ConnectionSchema, TileDefinitionSchema } from '@renderer/schema/index';
 import { uniqueBy } from '@renderer/schema/schemaUtils';
 import { __resetErrorBusForTests, onError, type ReportedError } from '@renderer/lib/utils/errorBus';
@@ -40,7 +40,7 @@ function uninstallFiloStub(): void {
   delete (window as unknown as Record<string, unknown>).filo;
 }
 
-function validBoardFile(boardId = 'mindmap-1'): V7BoardFileData {
+function validBoardFile(boardId = 'mindmap-1'): BoardFileData {
   const now = Date.now();
   return {
     version: 8,
@@ -56,7 +56,7 @@ function validBoardFile(boardId = 'mindmap-1'): V7BoardFileData {
       inlineTiles: {},
       createdAt: now,
       updatedAt: now,
-    } as V7BoardFileData['board'],
+    } as BoardFileData['board'],
     tileDefs: {
       tile_a: {
         id: 'tile_a',
@@ -65,7 +65,7 @@ function validBoardFile(boardId = 'mindmap-1'): V7BoardFileData {
         style: { headerColor: '#fff', bodyColor: '#fff', borderColor: '' },
         createdAt: now,
         updatedAt: now,
-      } as V7BoardFileData['tileDefs'][string],
+      } as BoardFileData['tileDefs'][string],
     },
     connections: {},
     frames: [],
@@ -194,7 +194,7 @@ describe('Phase 24 — schema polish & history', () => {
           style: {},
           createdAt: now,
           updatedAt: now,
-        } as V7BoardFileData['frames'][number],
+        } as BoardFileData['frames'][number],
         {
           id: 'f-ok',
           boardId: 'm-small',
@@ -206,7 +206,7 @@ describe('Phase 24 — schema polish & history', () => {
           style: {},
           createdAt: now,
           updatedAt: now,
-        } as V7BoardFileData['frames'][number],
+        } as BoardFileData['frames'][number],
       ];
       installFiloStub({ 'board:load': () => structuredClone(file) });
 

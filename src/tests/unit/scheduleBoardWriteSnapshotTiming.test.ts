@@ -3,7 +3,7 @@ import {
   scheduleBoardWrite,
   cancelAllPendingWrites,
   __resetDirtyTrackingForTests,
-  type V7BoardFileData,
+  type BoardFileData,
 } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 
@@ -45,7 +45,7 @@ function uninstallFiloStub(): void {
   delete (window as unknown as Record<string, unknown>).filo;
 }
 
-function emptyMindmapBoard(id: string, name: string): V7BoardFileData {
+function emptyMindmapBoard(id: string, name: string): BoardFileData {
   return {
     board: {
       id,

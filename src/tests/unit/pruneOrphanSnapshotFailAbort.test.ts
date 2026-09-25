@@ -17,7 +17,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { loadBoard, loadAllBoards } from '@renderer/lib/boards/boardLoader';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { __resetErrorBusForTests } from '@renderer/lib/utils/errorBus';
 
 type InvokeHandler = (...args: unknown[]) => unknown | Promise<unknown>;
@@ -38,7 +38,7 @@ function uninstallFiloStub(): void {
   delete (window as unknown as Record<string, unknown>).filo;
 }
 
-function makeBoardWithOrphanRef(): V7BoardFileData {
+function makeBoardWithOrphanRef(): BoardFileData {
   const now = 0;
   return {
     version: 8,
@@ -54,7 +54,7 @@ function makeBoardWithOrphanRef(): V7BoardFileData {
       inlineTiles: {},
       createdAt: now,
       updatedAt: now,
-    } as V7BoardFileData['board'],
+    } as BoardFileData['board'],
     tileDefs: {
       tile_a: {
         id: 'tile_a',
@@ -63,7 +63,7 @@ function makeBoardWithOrphanRef(): V7BoardFileData {
         style: { headerColor: '#fff', bodyColor: '#fff' },
         createdAt: now,
         updatedAt: now,
-      } as V7BoardFileData['tileDefs'][string],
+      } as BoardFileData['tileDefs'][string],
     },
     connections: {
       c_orphan: {
@@ -81,7 +81,7 @@ function makeBoardWithOrphanRef(): V7BoardFileData {
   };
 }
 
-function makeCleanBoard(): V7BoardFileData {
+function makeCleanBoard(): BoardFileData {
   const now = 0;
   return {
     version: 8,
@@ -97,7 +97,7 @@ function makeCleanBoard(): V7BoardFileData {
       inlineTiles: {},
       createdAt: now,
       updatedAt: now,
-    } as V7BoardFileData['board'],
+    } as BoardFileData['board'],
     tileDefs: {
       tile_a: {
         id: 'tile_a',
@@ -106,7 +106,7 @@ function makeCleanBoard(): V7BoardFileData {
         style: { headerColor: '#fff', bodyColor: '#fff' },
         createdAt: now,
         updatedAt: now,
-      } as V7BoardFileData['tileDefs'][string],
+      } as BoardFileData['tileDefs'][string],
     },
     connections: {},
     frames: [],

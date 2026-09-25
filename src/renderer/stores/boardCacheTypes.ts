@@ -1,7 +1,7 @@
-import type { V7BoardFileData } from '../lib/boards/boardSaver';
+import type { BoardFileData } from '../lib/boards/boardSaver';
 import type { Connection, Frame, KanbanBoard, TaskListBoard } from '../schema/index';
 
-export type { V7BoardFileData };
+export type { BoardFileData };
 
 /**
  * Closure handed to each cache slice so it can mutate cache state, schedule
@@ -9,11 +9,11 @@ export type { V7BoardFileData };
  * (single source of truth lives in `boardCache.svelte.ts`).
  */
 export interface CacheContext {
-  getCache(): Record<string, V7BoardFileData>;
-  setCache(next: Record<string, V7BoardFileData>): void;
+  getCache(): Record<string, BoardFileData>;
+  setCache(next: Record<string, BoardFileData>): void;
   markDirty(boardId: string): void;
   touchBoard(boardId: string): void;
-  updateEntry(boardId: string, updates: Partial<V7BoardFileData>): void;
+  updateEntry(boardId: string, updates: Partial<BoardFileData>): void;
   findBoardIdForTile(tileId: string): string | null;
   findBoardIdForConnection(connId: string): string | null;
   findBoardIdForFrame(frameId: string): string | null;

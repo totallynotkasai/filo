@@ -3,7 +3,7 @@ import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { UpdateBoardSettingsCommand } from '@renderer/commands/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 
 /**
@@ -21,7 +21,7 @@ function installEmptyFiloStub(): void {
   };
 }
 
-function makeMindMapFixture(settings: Record<string, unknown> = {}): V7BoardFileData {
+function makeMindMapFixture(settings: Record<string, unknown> = {}): BoardFileData {
   return {
     board: {
       id: 'mm',

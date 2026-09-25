@@ -45,5 +45,5 @@ export type { RichTextAnnotation } from './document';
 export { LayoutTemplateSchema, LayoutTemplateTileSchema, LayoutTemplateConnectionSchema } from './layoutTemplate';
 export type { LayoutTemplate, LayoutTemplateTile, LayoutTemplateConnection } from './layoutTemplate';
 
-export { V7BoardFileDataSchema, CURRENT_BOARD_FILE_VERSION } from './boardFile';
+export { BoardFileDataSchema, CURRENT_BOARD_FILE_VERSION } from './boardFile';
 export { migrateBoardFile, type MigrateBoardFileResult } from './migrations';

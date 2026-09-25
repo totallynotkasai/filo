@@ -18,7 +18,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard } from '@renderer/schema/index';
 
 function installEmptyFiloStub(): void {
@@ -33,7 +33,7 @@ function makeKanbanWithColumnCover(
   id: string,
   columnId: string,
   columnCoverImage: string,
-): V7BoardFileData {
+): BoardFileData {
   return {
     board: {
       id,

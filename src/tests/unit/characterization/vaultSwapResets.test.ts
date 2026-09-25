@@ -143,12 +143,12 @@ describe('Vault-swap reset chain — lifecycle contract', () => {
       expect(OPEN_VAULT_BODY).toContain("phase: 'pre-swap'");
     });
 
-    it('passes saveOutgoing based on the Save / Don\'t-Save / Cancel choice', () => {
-      // The Save branch sets `saveOutgoing: true`; the Don't-Save branch
-      // sets `saveOutgoing: false`. The lifecycle handler in
-      // writeStateTracking branches on this to clear or preserve the
-      // outgoing vault's `.filo/.dirty` sentinel.
-      expect(OPEN_VAULT_BODY).toMatch(/saveOutgoing:\s*choice\s*===\s*0/);
+    it('passes saveOutgoing only when the save before leaving left nothing unsaved', () => {
+      // A clean save sets `saveOutgoing: true`; leaving anyway (rescue copies
+      // kept) sets it false. The lifecycle handler in writeStateTracking
+      // branches on this to clear or preserve the outgoing vault's
+      // `.filo/.dirty` sentinel.
+      expect(OPEN_VAULT_BODY).toMatch(/saveOutgoing:\s*leave\s*===\s*'saved'/);
     });
 
     it('reports the outgoing vault path so handlers can flush against it', () => {

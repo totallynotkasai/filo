@@ -1,6 +1,7 @@
 import { Editor, Extension, type CommandProps } from '@tiptap/core';
 import { StarterKit } from '@tiptap/starter-kit';
 import { Paragraph } from '@tiptap/extension-paragraph';
+import { Heading } from '@tiptap/extension-heading';
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 
 /**
@@ -35,8 +36,9 @@ import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight';
 import { Markdown } from 'tiptap-markdown';
 import { common, createLowlight } from 'lowlight';
 import { Tag } from './tagExtension';
-import { FiloTaskListTight } from './taskListTight';
+import { FiloListTight, FiloTaskListTight } from './taskListTight';
 import { isFiloLink } from '../../schema/link';
+import { blockLayoutHtml, hasBlockLayout } from './blockLayout';
 
 const lowlight = createLowlight(common);
 
@@ -117,8 +119,9 @@ interface MarkdownSerializeState {
   /** Block delimiter prefix — empty at the top level, `> `/indent when nested. */
   delim: string;
   out: string;
+  write(content?: string): void;
   flushClose(size?: number): void;
-  renderInline(node: ProseMirrorNode): void;
+  renderInline(node: ProseMirrorNode, fromBlockStart?: boolean): void;
   closeBlock(node: ProseMirrorNode): void;
 }
 
@@ -148,7 +151,35 @@ const ParagraphWithBlankLines = Paragraph.extend({
             state.out += '\n';
             return;
           }
+          if (hasBlockLayout(node)) {
+            state.write(blockLayoutHtml(node));
+            state.closeBlock(node);
+            return;
+          }
           state.renderInline(node);
+          state.closeBlock(node);
+        },
+        parse: {},
+      },
+    };
+  },
+});
+
+/**
+ * Heading whose alignment and indent are saved: an aligned or indented heading
+ * is written as an HTML line (see `blockLayout.ts`), any other as `## text`.
+ */
+const HeadingWithLayout = Heading.extend({
+  addStorage() {
+    return {
+      markdown: {
+        serialize(state: MarkdownSerializeState, node: ProseMirrorNode): void {
+          if (hasBlockLayout(node)) {
+            state.write(blockLayoutHtml(node));
+          } else {
+            state.write(`${'#'.repeat(Number(node.attrs.level) || 1)} `);
+            state.renderInline(node, false);
+          }
           state.closeBlock(node);
         },
         parse: {},
@@ -188,6 +219,7 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
       StarterKit.configure({
         codeBlock: false, // replaced by CodeBlockLowlight
         paragraph: false, // replaced by ParagraphWithBlankLines (empty-para serialiser)
+        heading: false, // replaced by HeadingWithLayout (saves alignment / indent)
         // TipTap 3 bundles these into StarterKit. Link + Underline are registered
         // below with Filo's own config (a duplicate registration would shadow it).
         // TrailingNode MUST stay off: it appends an empty paragraph after a doc
@@ -200,6 +232,7 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
         trailingNode: false,
       }),
       ParagraphWithBlankLines,
+      HeadingWithLayout,
       TextAlign.configure({
         types: ['heading', 'paragraph'],
         alignments: ['left', 'center', 'right', 'justify'],
@@ -258,10 +291,9 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
         // destroying every cell's contents on the next write.
         // ProseMirror's schema-constrained parse keeps the inbound HTML safe:
         // unknown nodes/attrs (scripts, event handlers) are dropped, and
-        // TextStyle only re-reads colour / fontSize / fontFamily. Block indent
-        // (a global attr on paragraph/heading, which keep their GFM serialisers)
-        // is the one toolbar feature this does NOT persist — see
-        // `markdownHtmlMode.test.ts`.
+        // TextStyle only re-reads colour / fontSize / fontFamily. Alignment and
+        // indent are block attributes, saved by the paragraph and heading
+        // serialisers as an HTML line (`blockLayout.ts`).
         html: true,
         tightLists: true,
         // `linkify: true` would turn filenames, bare domains and emails in
@@ -272,6 +304,8 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
         transformPastedText: true,
         transformCopiedText: true,
       }),
+      // After Markdown: replaces its list `tight` parse rule (see taskListTight.ts).
+      FiloListTight,
       Tag,
     ],
 

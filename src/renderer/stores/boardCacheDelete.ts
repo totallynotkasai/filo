@@ -1,6 +1,6 @@
 import { vaultStore } from './vault.svelte';
 import {
-  type V7BoardFileData,
+  type BoardFileData,
   cancelBoardWrite,
   flushBoardWrite,
   removeViewport,
@@ -11,8 +11,8 @@ import { reportError } from '../lib/utils/errorBus';
 
 /** The board cache's own state, handed to this slice. */
 export interface BoardDeleteContext {
-  getCache(): Record<string, V7BoardFileData>;
-  setCache(next: Record<string, V7BoardFileData>): void;
+  getCache(): Record<string, BoardFileData>;
+  setCache(next: Record<string, BoardFileData>): void;
   getPaths(): Record<string, string>;
   setPaths(next: Record<string, string>): void;
 }

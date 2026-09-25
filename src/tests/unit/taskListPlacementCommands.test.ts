@@ -6,7 +6,7 @@ import {
   TogglePlacementLockCommand,
   ReorderTaskWithinSectionCommand,
 } from '@renderer/commands/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type {
   TaskListBoard,
   TaskListSection,
@@ -34,7 +34,7 @@ function installFiloStub(routes: Record<string, InvokeHandler> = {}): void {
   };
 }
 
-function makeFixture(): V7BoardFileData {
+function makeFixture(): BoardFileData {
   const defs: Record<string, TileDefinition> = {
     t1: { id: 't1', type: 'text', filePath: 'One.md' } as unknown as TileDefinition,
     t2: { id: 't2', type: 'text', filePath: 'Two.md' } as unknown as TileDefinition,
@@ -121,7 +121,7 @@ describe('AddTaskCommand targetSectionId disambiguation', () => {
   // the new task gets assigned to a neighbour. Threading the target id
   // through AddTaskCommand → persistAddTaskPlacement fixes this.
 
-  function makeMultiSectionFixture(): V7BoardFileData {
+  function makeMultiSectionFixture(): BoardFileData {
     const defs: Record<string, TileDefinition> = {
       t1: { id: 't1', type: 'text', filePath: 'One.md' } as unknown as TileDefinition,
       t2: { id: 't2', type: 'text', filePath: 'Two.md' } as unknown as TileDefinition,

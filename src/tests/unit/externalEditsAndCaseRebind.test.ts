@@ -15,7 +15,7 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
 import type { VaultContext } from '@renderer/stores/vaultStoreTypes';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard } from '@renderer/schema/index';
 import {
   __clearRecentSelfWritesForTests,
@@ -140,7 +140,7 @@ describe('external note edits flow into later saves', () => {
 
 // ── Board reload rebinds boardPaths to the OS casing ────────────────
 
-function makeBoard(name: string): V7BoardFileData {
+function makeBoard(name: string): BoardFileData {
   return {
     version: 8,
     board: {

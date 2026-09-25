@@ -18,11 +18,11 @@ import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { historyStore } from '@renderer/stores/history.svelte';
 import { DeleteCardCommand } from '@renderer/commands/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
-function makeKanban(coverImage: string): V7BoardFileData {
+function makeKanban(coverImage: string): BoardFileData {
   return {
     board: {
       id: 'kb',
@@ -50,7 +50,7 @@ function makeKanban(coverImage: string): V7BoardFileData {
         style: { headerColor: '', bodyColor: '', borderColor: '' } as never,
         createdAt: 0,
         updatedAt: 0,
-      } as unknown as V7BoardFileData['tileDefs'][string],
+      } as unknown as BoardFileData['tileDefs'][string],
     },
     connections: {},
     frames: [],

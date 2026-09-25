@@ -9,6 +9,7 @@
   import { tabStore } from '../../stores/tabs.svelte';
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
   import { noteStore, type NoteModel } from '../../stores/notes.svelte';
+  import { noteLineSpacing } from '../../stores/noteMeta';
   import { NoteEditorView } from '../../lib/editor/noteEditorView';
   import { createId } from '../../lib/utils/ids';
   import { vaultStore } from '../../stores/vault.svelte';
@@ -84,6 +85,9 @@
   let model = $derived<NoteModel | null>(notePath ? (noteStore.get(notePath) ?? null) : null);
   // The note's path in its on-disk spelling, once acquired.
   let docPath = $derived(model?.relPath ?? '');
+  // The note's own line spacing (frontmatter `lineSpacing:`); none keeps the
+  // Document default (the `--note-line-height` fallback below).
+  let lineSpacing = $derived(noteLineSpacing(docPath));
   // Reactive IME-composition flag (see onMount / the follow effect).
   let isComposing = $state(false);
 
@@ -146,6 +150,11 @@
     }
   }
 
+  /** The note this tab shows, for whole-note toolbar settings (line spacing). */
+  function activeNote(): { path: string; historyBoardId: string } | null {
+    return docPath && tab?.boardId ? { path: docPath, historyBoardId: tab.boardId } : null;
+  }
+
   onMount(() => {
     if (!editorElement) return;
 
@@ -159,7 +168,7 @@
       },
       onFocus: () => {
         if (editor) {
-          tiptapToolbar.setActiveEditor(editor);
+          tiptapToolbar.setActiveEditor(editor, activeNote);
         }
       },
       onBlur: () => {
@@ -175,7 +184,7 @@
       },
     });
 
-    tiptapToolbar.setActiveEditor(editor);
+    tiptapToolbar.setActiveEditor(editor, activeNote);
 
     // Anchored on the editor DOM, so editor.destroy() removes them.
     const composeEl = editor.view.dom;
@@ -323,7 +332,12 @@
       {#if rawMode && docPath}
         <NoteRawView bind:this={rawView} path={docPath} readOnly={nonUtf8} />
       {/if}
-      <div class="document-editor" class:raw-hidden={rawMode} bind:this={editorElement}></div>
+      <div
+        class="document-editor"
+        class:raw-hidden={rawMode}
+        style:--note-line-height={lineSpacing ?? undefined}
+        bind:this={editorElement}
+      ></div>
     </div>
   </div>
 </div>
@@ -446,7 +460,7 @@
     min-height: 400px;
     color: var(--text-primary);
     font-size: 16px;
-    line-height: 1.75;
+    line-height: var(--note-line-height, 1.75);
     font-family: var(--font-system);
   }
 

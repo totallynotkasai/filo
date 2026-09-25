@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import jsyaml from 'js-yaml';
 import {
   emptyTagsFile,
   parseTagsFile,
@@ -64,6 +65,29 @@ describe('isSafeNewTagName (1.5a — strict create/rename input guard)', () => {
       '[bracket', '{brace', ',comma',
     ]) {
       expect(isSafeNewTagName(name)).toBe(false);
+    }
+  });
+
+  it('rejects dates and binary integers, which other YAML readers take as non-strings', () => {
+    for (const name of ['2024-01-01', '2024-01-01T10:00:00Z', '0b1010', '0x1F', '.inf', '~']) {
+      expect(isSafeNewTagName(name)).toBe(false);
+    }
+  });
+
+  it('agrees with js-yaml (an independent reader, as Obsidian uses) on which bare names read as strings', () => {
+    const names = [
+      'project', 'v2', '2024-q1', 'a:b', 'on', 'yes', 'no', 'y', 'off', '123', '3.14', 'true', 'True', 'NULL', '~',
+      '0x1F', '0o17', '0b1010', '1_000', '.inf', '.NaN', '1e3', '+12', '-5', '2024-01-01', '<<', '-', 'x-', '12:30',
+      '0777', 'Infinity', '.5', '1,000', 'é', '日本', 'a,b', 'a]', 'a}', 'a"b', "a'b",
+    ];
+    for (const name of names) {
+      let independent: boolean;
+      try {
+        independent = jsyaml.load(name) === name;
+      } catch {
+        independent = false;
+      }
+      expect({ name, safe: isSafeNewTagName(name) }).toEqual({ name, safe: independent && !/^[@`*&!%|>:?]/.test(name) });
     }
   });
 

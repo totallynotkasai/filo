@@ -48,14 +48,14 @@ import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError, assertIpcOk } from '@shared/ipcEnvelope';
 import { reportError } from '../utils/errorBus';
 import type {
-  V7BoardFileData,
+  BoardFileData,
   ViewportEntry,
 } from '../boards/boardSaver';
 import type { ThemeFile } from '../themes/themeManager';
 import type { TagsFile } from '../../schema/tagsFile';
 import { loadTagsFile } from './tagsStorage';
 import { normalizePath, toPosix } from '../utils/path';
-import { noteBaseline } from './fileBaselineRegistry';
+import { baselineSeq, noteBaseline } from './fileBaselineRegistry';
 import { stashRecoveryStatusBeforeCommit } from './dirtyFlagRecovery';
 import { loadMachineIdentity } from './machineIdentity';
 
@@ -109,7 +109,7 @@ export interface VaultCandidate {
   path: string;
   project: Project;
   manualOrder: Record<string, string[]>;
-  boardCache: Record<string, V7BoardFileData>;
+  boardCache: Record<string, BoardFileData>;
   // allow-string-path-key: keys are boardId (nanoid), not vault-relative paths
   boardPaths: Record<string, string>;
   prunedBoardIds: string[];
@@ -497,6 +497,10 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
   // failures (EACCES, NO_ACTIVE_VAULT after a fast swap) are non-fatal.
   const seededConfigBaselinePaths: string[] = [];
   for (const sentinelPath of CONFIG_SENTINEL_PATHS) {
+    // No write to the new vault's configs can run before it commits, so a
+    // ticket taken here, before the stat, is as good as one taken before the
+    // reads above.
+    const seq = baselineSeq(sentinelPath);
     try {
       const stat = await invokeOk('vault:stat', newVaultPath, sentinelPath);
       // Defensive: a bare-result IPC mock (test fixture that doesn't
@@ -506,7 +510,7 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
       if (!stat || typeof stat.mtimeMs !== 'number' || typeof stat.size !== 'number') {
         continue;
       }
-      noteBaseline(sentinelPath, stat.mtimeMs, stat.size);
+      noteBaseline(sentinelPath, stat.mtimeMs, stat.size, { ifUnchangedSince: seq });
       seededConfigBaselinePaths.push(sentinelPath);
     } catch (err) {
       if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {

@@ -30,7 +30,7 @@ import {
   __resetDirtyTrackingForTests,
   type WriteErrorInfo,
   type WriteStateInfo,
-  type V7BoardFileData,
+  type BoardFileData,
 } from '@renderer/lib/boards/boardSaver';
 import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
@@ -96,7 +96,7 @@ describe('writeBoardFile — envelope failure', () => {
     __resetDirtyTrackingForTests();
   });
 
-  const emptyBoard: V7BoardFileData = {
+  const emptyBoard: BoardFileData = {
     board: {
       id: 'b',
       type: 'mindmap',
@@ -111,7 +111,7 @@ describe('writeBoardFile — envelope failure', () => {
       frames: [],
       waypoints: [],
       groups: [],
-    } as unknown as V7BoardFileData['board'],
+    } as unknown as BoardFileData['board'],
     tileDefs: {},
     connections: {},
     frames: [],

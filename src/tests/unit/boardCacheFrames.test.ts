@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { Frame, MindMapBoard } from '@renderer/schema/index';
 
 /**
@@ -51,7 +51,7 @@ function makeFrame(id: string, boardId: string, overrides: Partial<Frame> = {}):
   } as Frame;
 }
 
-function makeMindMapFixture(initialFrames: Frame[] = []): V7BoardFileData {
+function makeMindMapFixture(initialFrames: Frame[] = []): BoardFileData {
   return {
     board: {
       id: 'mm',

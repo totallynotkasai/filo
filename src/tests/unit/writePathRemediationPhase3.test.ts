@@ -34,7 +34,7 @@ import {
   __resetVaultIdentityForTests,
 } from '@renderer/lib/vault/vaultIdentity';
 import type { VaultContext } from '@renderer/stores/vaultStoreTypes';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard, MindMapBoard } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
@@ -74,7 +74,7 @@ describe('save() consults failedVaultPaths', () => {
 
 // ── rename revert vault-identity guard ──────────────────────────────────
 
-function makeMiniMindMap(id: string): V7BoardFileData {
+function makeMiniMindMap(id: string): BoardFileData {
   return {
     board: {
       id,
@@ -220,7 +220,7 @@ describe('conflict Reload applies current disk, not a snapshot from detection ti
 
 // ── Kanban column reorder keeps out-of-band survivors ────────────────────
 
-function makeKanbanThreeColumns(): V7BoardFileData {
+function makeKanbanThreeColumns(): BoardFileData {
   return {
     board: {
       id: 'kb',

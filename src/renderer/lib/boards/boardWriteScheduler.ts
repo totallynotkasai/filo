@@ -18,7 +18,7 @@
  *    (e.g. rename happened between two `scheduleBoardWrite` calls).
  */
 
-import type { V7BoardFileData } from './tileDefBuilder';
+import type { BoardFileData } from './tileDefBuilder';
 import { CURRENT_BOARD_FILE_VERSION } from '../../schema/boardFile';
 import { BOARD_WRITE_DEBOUNCE_MS, WRITE_TIMEOUT_MS, ENOENT_RESTAT_DELAY_MS, writtenByteLength } from './boardWriteDebounce';
 import {
@@ -136,7 +136,7 @@ export function retryFailedBoardWrite(boardId: string): Promise<{ failed: string
 export interface BoardWriteArgs {
   vaultRoot: string;
   boardPath: string;
-  cached: V7BoardFileData;
+  cached: BoardFileData;
 }
 
 /**
@@ -160,7 +160,7 @@ const boardScheduler = createScheduler<BoardWriteArgs>({
   // `writeBoardFile` to serialise it.
   snapshotArgs: (args) => ({
     ...args,
-    cached: JSON.parse(JSON.stringify(args.cached)) as V7BoardFileData,
+    cached: JSON.parse(JSON.stringify(args.cached)) as BoardFileData,
   }),
   performWrite: async (args, ctx) => {
     // Thread the per-fire currency check so a superseded write that lands late
@@ -214,7 +214,7 @@ export function scheduleBoardWrite(
 export async function writeBoardFile(
   vaultRoot: string,
   boardPath: string,
-  cached: V7BoardFileData,
+  cached: BoardFileData,
   // Optional currency check from the scheduler. When a later write superseded
   // this one, the post-write baseline stamp is SKIPPED so it can't anchor the
   // drift baseline to stale bytes. Defaults to "latest" for direct callers.

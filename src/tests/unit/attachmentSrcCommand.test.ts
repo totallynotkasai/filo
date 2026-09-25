@@ -11,7 +11,7 @@ import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { UpdateAttachmentSrcCommand } from '@renderer/commands/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Tile } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
@@ -19,7 +19,7 @@ function installSilentBridge(): void {
   installFiloMock(() => null);
 }
 
-function makeFixture(tile: Tile): V7BoardFileData {
+function makeFixture(tile: Tile): BoardFileData {
   return {
     board: {
       id: 'mm',
@@ -43,7 +43,7 @@ function makeFixture(tile: Tile): V7BoardFileData {
         createdAt: 0,
         updatedAt: 0,
         ...(tile as unknown as Record<string, unknown>),
-      } as unknown as V7BoardFileData['tileDefs'][string],
+      } as unknown as BoardFileData['tileDefs'][string],
     },
     connections: {},
     frames: [],

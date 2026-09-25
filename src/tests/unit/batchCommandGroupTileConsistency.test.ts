@@ -5,7 +5,7 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { BatchCommand, ToggleGroupCommand } from '@renderer/commands/index';
 import type { Command } from '@renderer/stores/history.svelte';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Tile, TileGroup } from '@renderer/schema/index';
 
 /**
@@ -46,7 +46,7 @@ async function flushAsync(): Promise<void> {
   for (let i = 0; i < 8; i++) await Promise.resolve();
 }
 
-function makeMindMapFixture(): V7BoardFileData {
+function makeMindMapFixture(): BoardFileData {
   return {
     board: {
       id: 'mm',

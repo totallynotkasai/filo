@@ -137,9 +137,6 @@ describe('undo on a note that is gone', () => {
       'Other.md': '---\ntitle: Other\n---\nOther body\n',
     });
     await createBoard(app, 'kanban');
-    // Let the new board settle before editing it: this spec is about the
-    // missing note, not about editing a board in its first seconds.
-    await quiesce(3000);
     await addKanbanColumn(app);
     await placeNoteOnBoard(app, 'kanban', 'Card.md');
     await setCardDueDate(kanbanCards(app)[0].el, '2026-11-05');

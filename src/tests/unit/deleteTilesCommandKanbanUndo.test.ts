@@ -5,7 +5,7 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { DeleteTilesCommand } from '@renderer/commands/index';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard, Tile, TileDefinition } from '@renderer/schema/index';
 
 /**
@@ -33,7 +33,7 @@ function def(id: string): TileDefinition {
   } as unknown as TileDefinition;
 }
 
-function kanbanFixture(): V7BoardFileData {
+function kanbanFixture(): BoardFileData {
   const board = {
     id: 'kb',
     type: 'kanban',

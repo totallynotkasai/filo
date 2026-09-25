@@ -13,7 +13,7 @@ import {
   runReplaceAllCommand,
   type Splice,
 } from '@renderer/commands/replaceAllCommand';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { noteStore } from '@renderer/stores/notes.svelte';
 import { setActiveVaultPath } from '@renderer/lib/vault/activeVaultPath';
@@ -99,7 +99,7 @@ function installFiloStub(
   return { writes };
 }
 
-function makeMindMap(name: string, id: string, tileDefs: Record<string, unknown> = {}): V7BoardFileData {
+function makeMindMap(name: string, id: string, tileDefs: Record<string, unknown> = {}): BoardFileData {
   return {
     board: {
       id,
@@ -115,7 +115,7 @@ function makeMindMap(name: string, id: string, tileDefs: Record<string, unknown>
     tileDefs: tileDefs as never,
     connections: {},
     frames: [],
-  } as V7BoardFileData;
+  } as BoardFileData;
 }
 
 function makeTextDef(id: string, title: string, filePath: string): Record<string, unknown> {

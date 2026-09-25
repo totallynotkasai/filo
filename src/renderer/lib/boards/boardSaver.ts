@@ -1,10 +1,10 @@
 /**
- * boardSaver — facade aggregating the V7 write pipeline.
+ * boardSaver — facade aggregating the board write pipeline.
  *
  * The renderer's entry point; the real implementations live in sibling
  * modules:
  *
- *   - `tileDefBuilder`     — pure builders + `V7BoardFileData`.
+ *   - `tileDefBuilder`     — pure builders + `BoardFileData`.
  *   - `writeStateTracking` — inflight counter, sentinel paths, listener
  *                            slots, `trackComponentWrite`, reset.
  *   - `boardWriteScheduler` — `.board.json` debounced writes.
@@ -32,7 +32,7 @@ import { onVaultSwap } from '../../core/vaultLifecycle';
 
 // ── Re-exports of the public write-pipeline surface ──
 
-export type { V7BoardFileData } from './tileDefBuilder';
+export type { BoardFileData } from './tileDefBuilder';
 export {
   isInlineTileType,
   buildTileDefinition,
@@ -110,7 +110,7 @@ export function cancelAllPendingWrites(): void {
 }
 
 /**
- * Flushes all pending V7 writes immediately. Called on manual save.
+ * Flushes all pending board and config writes immediately. Called on manual save.
  *
  * Returns `{ boardFailed, configFailed }` so callers (notably
  * `vaultStore.save()`) can surface an honest pass/fail to the Ctrl+S toast.
@@ -142,10 +142,10 @@ export async function flushAll(
 //     fire after the new vault opens (its closure would otherwise write
 //     to the OLD vaultRoot).
 //   - `writeStateTracking` resets the inflight counter + pending / failed
-//     sets. Honours `event.saveOutgoing`: when the user confirmed a save
-//     for the outgoing vault, the handler schedules a `markClean` against
-//     the previous vault's `.filo/.dirty` sentinel. "Don't Save" preserves
-//     the sentinel so a later reopen surfaces the Recovery modal.
+//     sets. Honours `event.saveOutgoing`: when the save before leaving left
+//     nothing unsaved, the handler schedules a `markClean` against the
+//     previous vault's `.filo/.dirty` sentinel. Leaving anyway preserves the
+//     sentinel so a later reopen surfaces the Recovery modal.
 //
 // Scheduler cancellation runs before tracking reset so the in-flight
 // counter on the tracking side reflects only writes that actually fired.

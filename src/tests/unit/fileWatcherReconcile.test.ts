@@ -25,7 +25,17 @@ vi.mock('electron', () => ({
   },
 }));
 
-import { FileWatcher } from '../../main/services/fileWatcher';
+import { FileWatcher, MISSING_NOTE_HOLD_MS } from '../../main/services/fileWatcher';
+
+function changedNames(): string[] {
+  return sentEvents
+    .filter((e) => e.channel === 'vault:files-changed')
+    .flatMap((e) => (e.payload[0] as Array<{ filename: string }>).map((c) => c.filename));
+}
+
+function renames(): unknown[] {
+  return sentEvents.filter((e) => e.channel === 'vault:file-renamed').map((e) => e.payload[0]);
+}
 
 /**
  * Phase 19 S2 — reconciliation walker tests. The walker diffs a vault
@@ -75,12 +85,65 @@ describe('FileWatcher.reconcileNow', () => {
     await watcher.reconcileNow({ seedOnly: true });
     await fs.unlink(join(dir, 'GoingAway.md'));
     await watcher.reconcileNow();
+    // A missing note is held for its other half before it goes out as a delete.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(changedNames()).not.toContain('GoingAway.md');
+    await new Promise((resolve) => setTimeout(resolve, MISSING_NOTE_HOLD_MS));
+    expect(changedNames()).toContain('GoingAway.md');
+  });
+
+  it('a missing note pairs with a create in a later batch as a rename', async () => {
+    await fs.writeFile(join(dir, 'Old.md'), 'the same small note', 'utf-8');
+    await watcher.reconcileNow({ seedOnly: true });
+    await fs.unlink(join(dir, 'Old.md'));
+    await watcher.reconcileNow();
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await fs.writeFile(join(dir, 'New.md'), 'the same small note', 'utf-8');
+    await watcher.reconcileNow();
     await new Promise((resolve) => setTimeout(resolve, 400));
 
-    const filesChanged = sentEvents
-      .filter((e) => e.channel === 'vault:files-changed')
-      .flatMap((e) => e.payload[0] as Array<{ filename: string; type: string }>);
-    expect(filesChanged.some((c) => c.filename === 'GoingAway.md')).toBe(true);
+    expect(renames()).toEqual([{ oldPath: 'Old.md', newPath: 'New.md' }]);
+    await new Promise((resolve) => setTimeout(resolve, MISSING_NOTE_HOLD_MS));
+    expect(changedNames()).not.toContain('Old.md');
+  });
+
+  it('a write suppression still lets a delete of the file through; a plain one does not', async () => {
+    await fs.writeFile(join(dir, 'Written.md'), 'a', 'utf-8');
+    await fs.writeFile(join(dir, 'Moved.md'), 'b', 'utf-8');
+    await watcher.reconcileNow({ seedOnly: true });
+    watcher.suppressWrite('Written.md', 7000);
+    watcher.suppress('Moved.md', 7000);
+    await fs.unlink(join(dir, 'Written.md'));
+    await fs.unlink(join(dir, 'Moved.md'));
+    await watcher.reconcileNow();
+    await new Promise((resolve) => setTimeout(resolve, MISSING_NOTE_HOLD_MS + 400));
+
+    expect(changedNames()).toContain('Written.md');
+    expect(changedNames()).not.toContain('Moved.md');
+  });
+
+  it.runIf(process.platform === 'win32' || process.platform === 'darwin')('the reconcile pass reports a case-only rename the live watcher dropped', async () => {
+    await fs.writeFile(join(dir, 'Draft.md'), 'text', 'utf-8');
+    await watcher.reconcileNow({ seedOnly: true });
+    await fs.rename(join(dir, 'Draft.md'), join(dir, 'draft.md'));
+    await watcher.reconcileNow();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    expect(renames()).toEqual([{ oldPath: 'Draft.md', newPath: 'draft.md' }]);
+  });
+
+  it('a rename straight after an own write pairs, using the bytes that write left', async () => {
+    await fs.writeFile(join(dir, 'Draft.md'), 'before', 'utf-8');
+    await watcher.reconcileNow({ seedOnly: true });
+    const after = 'after our write';
+    watcher.suppressWrite('Draft.md', 7000);
+    await fs.writeFile(join(dir, 'Draft.md'), after, 'utf-8');
+    watcher.recordOwnWrite('Draft.md', Buffer.from(after, 'utf-8'));
+    await fs.rename(join(dir, 'Draft.md'), join(dir, 'Moved.md'));
+    await watcher.reconcileNow();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    expect(renames()).toEqual([{ oldPath: 'Draft.md', newPath: 'Moved.md' }]);
   });
 
   it('synthesises a change event when mtime+size differs', async () => {

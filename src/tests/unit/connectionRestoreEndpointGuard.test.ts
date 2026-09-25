@@ -4,7 +4,7 @@ import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { CascadeDeleteCommand, DeleteTilesCommand } from '@renderer/commands/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Tile, Connection } from '@renderer/schema/index';
 
 /**
@@ -46,7 +46,7 @@ function makeConn(id: string, from: string, to: string): Connection {
   } as Connection;
 }
 
-function makeBoard(tileIds: string[], connections: Connection[]): V7BoardFileData {
+function makeBoard(tileIds: string[], connections: Connection[]): BoardFileData {
   const placements: Record<string, unknown> = {};
   const tileDefs: Record<string, unknown> = {};
   for (const id of tileIds) {
@@ -82,7 +82,7 @@ function makeBoard(tileIds: string[], connections: Connection[]): V7BoardFileDat
       inlineTiles: {},
       waypoints: [],
     } as unknown as MindMapBoard,
-    tileDefs: tileDefs as unknown as V7BoardFileData['tileDefs'],
+    tileDefs: tileDefs as unknown as BoardFileData['tileDefs'],
     connections: connRecord,
     frames: [],
   };
@@ -93,7 +93,7 @@ async function flushAsync(): Promise<void> {
   for (let i = 0; i < 5; i++) await Promise.resolve();
 }
 
-function hydrateActive(fixture: V7BoardFileData): Record<string, Tile> {
+function hydrateActive(fixture: BoardFileData): Record<string, Tile> {
   boardCacheStore.hydrate({ mm: fixture }, { mm: 'mm.board.json' });
   const tiles = boardCacheStore.getFullTilesForBoard('mm');
   boardStore.setBoard(fixture.board, tiles, fixture.connections, []);

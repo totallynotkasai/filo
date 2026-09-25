@@ -1,4 +1,5 @@
 import { uiStore } from '../../stores/ui.svelte';
+import { quitFailureBody, rescueFailedDialog, type RescueResult, type UnsavedItem } from './unsavedMessages';
 
 /**
  * Flush-and-quit handler, extracted from `App.svelte` for testability.
@@ -6,8 +7,10 @@ import { uiStore } from '../../stores/ui.svelte';
  * The happy path (save succeeded and the save-state store reports no
  * lingering error) sends `app:ready-to-quit` immediately, no UI. On a
  * failure, a Confirm dialog blocks the quit with "Retry now" / "Quit anyway"
- * / "Stay open" — never a silent quit. Retry now
- * re-fires the retained failed writes and drains again;
+ * / "Stay open" — never a silent quit. Its text names each unsaved file and
+ * why it isn't on disk. Retry now re-fires the retained failed writes and
+ * drains again; Quit anyway first keeps a rescue copy of each unsaved change
+ * in `.filo/recovery/` (and asks once more for any it couldn't copy);
  * Stay open sends `app:cancel-quit` so main can rewind `isFlushingForQuit`
  * and the user keeps editing.
  *
@@ -37,6 +40,12 @@ export interface QuitFlushDeps {
    * before the "Retry now" drain. Production wires `retryAllFailedWrites`.
    */
   retryFailed?: () => Promise<unknown>;
+  /** Each unsaved path and why, for the dialog. Production wires `describeUnsaved`. */
+  describeUnsaved?: () => Promise<UnsavedItem[]>;
+  /** Partial `.tmp` files a failed write preserved. Production wires `preservedTmpCount`. */
+  preservedTmpCount?: () => Promise<number>;
+  /** Rescue copies before "Quit anyway". Production wires `keepRescueCopies`. */
+  keepRescueCopies?: () => Promise<RescueResult>;
 }
 
 /**
@@ -151,22 +160,18 @@ async function drainAndQuit(deps: QuitFlushDeps): Promise<void> {
     }
     // Save failed (or the save-state store still carries an unresolved error
     // from an earlier debounced write). Block the quit until the user
-    // explicitly chooses: Retry now, Quit anyway (accept data loss; the user
-    // can recover .tmp files from disk) or Stay open.
+    // explicitly chooses: Retry now, Quit anyway (rescue copies first) or
+    // Stay open.
     //
     // Tell main a human is now in the loop BEFORE the open-ended confirm, so it
     // clears its 5 s auto-destroy timer (which would otherwise vanish the
     // dialog and discard the choice). The ready/cancel reply drives the quit.
     deps.send('app:quit-awaiting-user');
+    const body = quitFailureBody(await settledOr(deps.describeUnsaved, []), await settledOr(deps.preservedTmpCount, 0));
     const choice = await new Promise<'quit' | 'stay' | 'retry'>((resolve) => {
       uiStore.openConfirm({
         title: 'Save failed',
-        body:
-          "Filo couldn't write your latest changes to disk (another program, such as " +
-          'OneDrive or antivirus, may be holding the file). Quitting now will lose ' +
-          'those edits — Filo preserved emergency .tmp files in the vault that you ' +
-          'can recover manually if you do. Pick "Retry now" to try again, or ' +
-          '"Stay open" to keep editing.',
+        body,
         confirmLabel: 'Quit anyway',
         cancelLabel: 'Stay open',
         secondaryAction: { label: 'Retry now', onClick: () => resolve('retry') },
@@ -180,6 +185,10 @@ async function drainAndQuit(deps: QuitFlushDeps): Promise<void> {
       continue;
     }
     if (choice === 'quit') {
+      if (!(await keepRescueCopiesOrAsk(deps))) {
+        deps.send('app:cancel-quit');
+        return;
+      }
       // On "Quit anyway" the sentinel is (correctly) DIRTY: failed writes
       // enqueued a markDirty. Flush it (bounded) so the next launch's
       // recovery prompt accurately names the lost paths instead of racing the
@@ -191,6 +200,40 @@ async function drainAndQuit(deps: QuitFlushDeps): Promise<void> {
     }
     return;
   }
+}
+
+/** `fn()`'s value, or `fallback` when there is no `fn` or it throws. */
+async function settledOr<T>(fn: (() => Promise<T>) | undefined, fallback: T): Promise<T> {
+  if (!fn) return fallback;
+  try {
+    return await fn();
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Keeps a rescue copy of every unsaved change before "Quit anyway" lets it go.
+ * True to go on quitting: every copy was written, or the user confirmed losing
+ * the ones that couldn't be.
+ */
+async function keepRescueCopiesOrAsk(deps: QuitFlushDeps): Promise<boolean> {
+  if (!deps.keepRescueCopies) return true;
+  const rescue = await settledOr<RescueResult | null>(deps.keepRescueCopies, null);
+  const notKept = rescue ? rescue.notKept : ['your unsaved changes'];
+  if (notKept.length === 0) return true;
+  const again = rescueFailedDialog(notKept, 'Quit anyway');
+  return new Promise<boolean>((resolve) => {
+    uiStore.openConfirm({
+      title: again.message,
+      body: again.detail,
+      confirmLabel: again.anyway,
+      cancelLabel: 'Stay open',
+      danger: true,
+      onConfirm: () => resolve(true),
+      onCancel: () => resolve(false),
+    });
+  });
 }
 
 /**

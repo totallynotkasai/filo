@@ -16,7 +16,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type {
   KanbanBoard,
   MindMapBoard,
@@ -37,7 +37,7 @@ function mkDef(id: string): TileDefinition {
   } as unknown as TileDefinition;
 }
 
-function makeMindMapWith(tileId: string): V7BoardFileData {
+function makeMindMapWith(tileId: string): BoardFileData {
   return {
     board: {
       id: 'mm',
@@ -62,7 +62,7 @@ function makeMindMapWith(tileId: string): V7BoardFileData {
   };
 }
 
-function makeKanbanWith(tileId: string): V7BoardFileData {
+function makeKanbanWith(tileId: string): BoardFileData {
   return {
     board: {
       id: 'kb',
@@ -88,7 +88,7 @@ function makeKanbanWith(tileId: string): V7BoardFileData {
   };
 }
 
-function makeTaskListWith(tileId: string): V7BoardFileData {
+function makeTaskListWith(tileId: string): BoardFileData {
   return {
     board: {
       id: 'tl',

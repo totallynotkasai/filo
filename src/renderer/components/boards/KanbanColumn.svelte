@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * KanbanColumn — V7 Kanban column.
+   * KanbanColumn — a Kanban column.
    *
    * Receives the resolved `Tile` objects (def + style + boardId) for each
    * placement and mounts the matching tile body inside a flow-layout

@@ -140,6 +140,71 @@ describe('vault:trash-move and vault:trash-restore', () => {
     expect(b.restoredPath).toBe('Plan (restored).board.json');
   });
 
+  describe('a file created at the target during the restore is never replaced', () => {
+    /** Just before the move to `targetRel`, another program (a sync client) creates `rel`, once. */
+    const racingCreate = (targetRel: string, rel: string, text: string) => {
+      let done = false;
+      return async (target: string): Promise<void> => {
+        if (done || target !== join(vault, ...targetRel.split('/'))) return;
+        done = true;
+        await write(rel, text);
+      };
+    };
+
+    it('with hard links: the restore goes beside the new file', async () => {
+      await write('Plan.md', 'original');
+      const moved = await call('vault:trash-move', vault, 'Plan.md');
+      const restored = await trashOps.restoreFromTrash(vault, moved.trashId as string, {
+        beforeMove: racingCreate('Plan.md', 'Plan.md', 'synced in'),
+      });
+      expect(restored).toMatchObject({ restoredPath: 'Plan (restored).md', alongside: true });
+      expect((await read('Plan.md')).toString()).toBe('synced in');
+      expect((await read('Plan (restored).md')).toString()).toBe('original');
+      expect(await trashDirEntries()).toEqual([]);
+    });
+
+    it('without hard links (FAT32, some shares): the re-check before the rename catches it', async () => {
+      await write('Plan.md', 'original');
+      const moved = await call('vault:trash-move', vault, 'Plan.md');
+      const unsupported = async (): Promise<void> => {
+        throw Object.assign(new Error('link not supported'), { code: 'EPERM' });
+      };
+      const restored = await trashOps.restoreFromTrash(vault, moved.trashId as string, {
+        beforeMove: racingCreate('Plan.md', 'Plan.md', 'synced in'),
+        link: unsupported,
+      });
+      expect(restored).toMatchObject({ restoredPath: 'Plan (restored).md', alongside: true });
+      expect((await read('Plan.md')).toString()).toBe('synced in');
+      expect((await read('Plan (restored).md')).toString()).toBe('original');
+    });
+
+    it('a folder: a folder that appears at the target is left alone', async () => {
+      await write('Projects/A.md', '# A\n');
+      const moved = await call('vault:trash-move', vault, 'Projects');
+      const restored = await trashOps.restoreFromTrash(vault, moved.trashId as string, {
+        beforeMove: racingCreate('Projects', 'Projects/Other.md', 'synced in'),
+      });
+      expect(restored).toMatchObject({ restoredPath: 'Projects (restored)', alongside: true });
+      expect((await read('Projects/Other.md')).toString()).toBe('synced in');
+      expect(await exists('Projects/A.md')).toBe(false);
+      expect((await read('Projects (restored)/A.md')).toString()).toBe('# A\n');
+    });
+
+    it('a path taken on every attempt fails the restore and leaves the item in the trash', async () => {
+      await write('Plan.md', 'original');
+      const moved = await call('vault:trash-move', vault, 'Plan.md');
+      let n = 0;
+      const alwaysTaken = async (target: string): Promise<void> => {
+        await fs.writeFile(target, `taken ${++n}`);
+      };
+      await expect(
+        trashOps.restoreFromTrash(vault, moved.trashId as string, { beforeMove: alwaysTaken }),
+      ).rejects.toMatchObject({ code: 'EEXIST' });
+      expect(await exists(`.filo/trash/${moved.trashId as string}/files/Plan.md`)).toBe(true);
+      expect((await read('Plan.md')).toString()).toBe('taken 1');
+    });
+  });
+
   it('a second restore of the same item reports it missing', async () => {
     await write('X.md', 'x');
     const moved = await call('vault:trash-move', vault, 'X.md');

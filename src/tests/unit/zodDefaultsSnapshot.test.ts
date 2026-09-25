@@ -33,7 +33,7 @@ import {
   ConnectionLabelSchema,
   FrameSchema,
   LayoutTemplateConnectionSchema,
-  V7BoardFileDataSchema,
+  BoardFileDataSchema,
   defaultProjectSettings,
 } from '../../renderer/schema';
 
@@ -997,8 +997,8 @@ describe('zod default trees (pinned on v3 before the v4 migration)', () => {
     `);
   });
 
-  it('representative V7BoardFileDataSchema parse', () => {
-    expect(V7BoardFileDataSchema.parse(boardFileInput())).toMatchInlineSnapshot(`
+  it('representative BoardFileDataSchema parse', () => {
+    expect(BoardFileDataSchema.parse(boardFileInput())).toMatchInlineSnapshot(`
       {
         "board": {
           "connections": [
@@ -1142,7 +1142,7 @@ describe('zod mutable defaults are fresh per parse', () => {
     ['ConnectionLabelSchema.parse({})', () => ConnectionLabelSchema.parse({})],
     ['minimal boards', () => minimalBoards().map((b) => BoardSchema.parse(b))],
     ['partial boards', () => partialBoards().map((b) => BoardSchema.parse(b))],
-    ['V7BoardFileDataSchema.parse', () => V7BoardFileDataSchema.parse(boardFileInput())],
+    ['BoardFileDataSchema.parse', () => BoardFileDataSchema.parse(boardFileInput())],
   ];
 
   for (const [name, parse] of cases) {

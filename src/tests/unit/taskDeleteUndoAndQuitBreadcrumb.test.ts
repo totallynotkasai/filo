@@ -11,7 +11,7 @@ import {
 } from '@renderer/lib/vault/dirtyFlagRecovery';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import { installMemoryVault } from '../helpers/memoryVault';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TaskListBoard, TileDefinition } from '@renderer/schema/index';
 
 /**
@@ -31,7 +31,7 @@ import type { TaskListBoard, TileDefinition } from '@renderer/schema/index';
  *       could invert the restore.
  */
 
-function makeTaskListWithTask(boardId: string, tileId: string, filePath: string): V7BoardFileData {
+function makeTaskListWithTask(boardId: string, tileId: string, filePath: string): BoardFileData {
   return {
     board: {
       id: boardId,

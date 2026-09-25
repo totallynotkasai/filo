@@ -10,7 +10,7 @@ import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
 import { __resetRenameCascadeSentinelForTests } from '@renderer/lib/vault/renameCascadeSentinel';
 import { ownSentinelPath } from '@renderer/lib/vault/machineIdentity';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 
 /**
@@ -62,7 +62,7 @@ async function waitFor(pred: () => boolean): Promise<boolean> {
 }
 
 /** A board carrying a single file-ref tile def that propagateRename rewrites. */
-function boardWithFileRef(boardId: string, filePath: string): V7BoardFileData {
+function boardWithFileRef(boardId: string, filePath: string): BoardFileData {
   return {
     board: {
       id: boardId,

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { vaultStore } from '../../stores/vault.svelte';
   import { toolbarStore } from '../../stores/toolbar.svelte';
+  import { LINE_SPACING_CHOICES } from '../../stores/noteMeta';
   import { uiStore } from '../../stores/ui.svelte';
   import { tiptapToolbar, LINK_REFUSED_MESSAGE } from '../../lib/editor/toolbarConfig';
   import type { Editor } from '@tiptap/core';
@@ -267,12 +268,28 @@
   </select>
 
   <div class="align-dropdown-wrapper" bind:this={lineSpacingBtnRef}>
-    <IconButton title="Line Spacing" size="small" active={showLineSpacingMenu} pressed={showLineSpacingMenu} onclick={() => showLineSpacingMenu = !showLineSpacingMenu}>
+    <IconButton
+      title={toolbarStore.lineSpacingAvailable ? 'Line Spacing (whole note)' : 'Line Spacing (click in a note first)'}
+      size="small"
+      active={showLineSpacingMenu}
+      pressed={showLineSpacingMenu}
+      disabled={!toolbarStore.lineSpacingAvailable}
+      onclick={() => showLineSpacingMenu = !showLineSpacingMenu}
+    >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="21" y1="6" x2="11" y2="6"/><line x1="21" y1="12" x2="11" y2="12"/><line x1="21" y1="18" x2="11" y2="18"/><polyline points="4 6 7 3 7 21 4 18"/></svg>
     </IconButton>
     {#if showLineSpacingMenu}
       <div class="align-panel line-spacing-panel">
-        {#each [1.0, 1.15, 1.5, 2.0] as spacing (spacing)}
+        <button
+          class="align-option"
+          class:active={toolbarStore.lineSpacing === null}
+          onmousedown={(e) => e.preventDefault()}
+          onclick={() => { tiptapToolbar.setLineSpacing(null); showLineSpacingMenu = false; }}
+          title="The view's default spacing"
+        >
+          Default
+        </button>
+        {#each LINE_SPACING_CHOICES as spacing (spacing)}
           <button
             class="align-option"
             class:active={toolbarStore.lineSpacing === spacing}

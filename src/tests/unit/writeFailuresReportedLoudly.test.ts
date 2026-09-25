@@ -21,7 +21,7 @@ import { noteStore, setNotePromptHandlers } from '@renderer/stores/notes.svelte'
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { onError, __resetErrorBusForTests, type ReportedError } from '@renderer/lib/utils/errorBus';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
@@ -196,7 +196,7 @@ describe('Audit-17 2.2 — atomicWriteFile preserves the fsynced tmp on EPERM/EB
 
 type InvokeRecord = { channel: string; args: unknown[] };
 
-function makeCachedBoard(): V7BoardFileData {
+function makeCachedBoard(): BoardFileData {
   return {
     board: {
       id: 'b',
@@ -213,7 +213,7 @@ function makeCachedBoard(): V7BoardFileData {
     tileDefs: {},
     connections: {},
     frames: [],
-  } as unknown as V7BoardFileData;
+  } as unknown as BoardFileData;
 }
 
 /**

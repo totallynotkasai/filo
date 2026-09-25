@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TileDefinition, TaskListBoard } from '@renderer/schema/index';
 
 /**
@@ -21,7 +21,7 @@ function installFiloStub(): void {
   };
 }
 
-function makeTaskList(boardId: string): V7BoardFileData {
+function makeTaskList(boardId: string): BoardFileData {
   return {
     board: {
       id: boardId,

@@ -48,6 +48,8 @@ const ENVELOPE_CHANNELS = new Set([
   'board:load',
   'board:list-conflicts',
   'recovery:list-sentinels',
+  'recovery:keep-unsaved',
+  'recovery:preserved-tmp',
   'vault:convert-to-utf8',
   'media:save-audio',
   'media:read-file',
@@ -93,7 +95,7 @@ const FILO_READ_EXEMPT = new Map([
 ]);
 const MIN_SWEPT_READ_CHANNELS = 2;
 
-const VERSIONED_SCHEMAS = ['V7BoardFileDataSchema', 'TagsFileSchema', 'LayoutTemplateSchema'];
+const VERSIONED_SCHEMAS = ['BoardFileDataSchema', 'TagsFileSchema', 'LayoutTemplateSchema'];
 const VERSION_GUARDS = ['loadVersionedFile', 'migrateBoardFile', 'migrateTagsFile', 'migrateLayoutTemplate'];
 
 /** `ipcMain.handle('<channel>', …)` registrations split into segments up to the next one. */

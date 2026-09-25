@@ -15,7 +15,7 @@ import {
   MindMapBoardSchema,
   KanbanBoardSchema,
   TaskListBoardSchema,
-  V7BoardFileDataSchema,
+  BoardFileDataSchema,
   ProjectSchema,
   decodeFiloLink,
   migrateBoardFile,
@@ -243,7 +243,7 @@ describe('Sprint C / C7 — record keys must match nanoid pattern', () => {
   });
 
   it('rejects empty-string tileDef key', () => {
-    const r = V7BoardFileDataSchema.safeParse(
+    const r = BoardFileDataSchema.safeParse(
       makeEnvelope({
         tileDefs: {
           '': {
@@ -261,7 +261,7 @@ describe('Sprint C / C7 — record keys must match nanoid pattern', () => {
   });
 
   it('rejects whitespace-only connection key', () => {
-    const r = V7BoardFileDataSchema.safeParse(
+    const r = BoardFileDataSchema.safeParse(
       makeEnvelope({
         connections: {
           '   ': {
@@ -281,7 +281,7 @@ describe('Sprint C / C7 — record keys must match nanoid pattern', () => {
   });
 });
 
-describe('Sprint C / C8 — boardId cross-check in V7BoardFileDataSchema', () => {
+describe('Sprint C / C8 — boardId cross-check in BoardFileDataSchema', () => {
   // Note: cross-check is warn-only (logged via console.warn) — rejecting
   // at the schema layer would routinely fail loosely-tagged test
   // fixtures through `failedBoards`. The signal is preserved through the
@@ -289,7 +289,7 @@ describe('Sprint C / C8 — boardId cross-check in V7BoardFileDataSchema', () =>
   it('logs (but does not reject) when a connection.boardId differs from board.id', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      const r = V7BoardFileDataSchema.safeParse({
+      const r = BoardFileDataSchema.safeParse({
         version: 8 as const,
         board: {
           id: 'b1',

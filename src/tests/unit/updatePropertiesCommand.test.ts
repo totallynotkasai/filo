@@ -21,12 +21,12 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import { noteStore } from '@renderer/stores/notes.svelte';
 import { UpdatePropertiesCommand } from '@renderer/commands/index';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Tile, TextTile, ImageTile } from '@renderer/schema/index';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { restoreFiloDefault } from '../helpers/filoBridge';
 
-function makeMindMapWithTiles(tiles: Tile[]): V7BoardFileData {
+function makeMindMapWithTiles(tiles: Tile[]): BoardFileData {
   const placements: Record<string, unknown> = {};
   const tileDefs: Record<string, unknown> = {};
   for (const t of tiles) {
@@ -56,7 +56,7 @@ function makeMindMapWithTiles(tiles: Tile[]): V7BoardFileData {
       inlineTiles: {},
       waypoints: [],
     } as unknown as MindMapBoard,
-    tileDefs: tileDefs as V7BoardFileData['tileDefs'],
+    tileDefs: tileDefs as BoardFileData['tileDefs'],
     connections: {},
     frames: [],
   };

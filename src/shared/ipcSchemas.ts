@@ -109,6 +109,12 @@ export const IPC_PAYLOAD_SCHEMAS = {
   'recovery:snapshot': z.tuple([nonEmptyString, nonEmptyString]),
   'recovery:list': z.tuple([nonEmptyString]),
   'recovery:list-sentinels': z.tuple([nonEmptyString]),
+  // (vaultRoot, [{ relPath, text }]): the unsaved text to keep in .filo/recovery.
+  'recovery:keep-unsaved': z.tuple([
+    nonEmptyString,
+    z.array(z.object({ relPath: nonEmptyString, text: z.string() }).strict()).max(1000),
+  ]),
+  'recovery:preserved-tmp': z.tuple([nonEmptyString]),
   'app:machine-identity': z.tuple([]),
   'vault:convert-to-utf8': z.tuple([nonEmptyString, nonEmptyString]),
   'vault:sweep-orphan-tmp': z.tuple([nonEmptyString]),

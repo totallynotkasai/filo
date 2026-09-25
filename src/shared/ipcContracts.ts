@@ -229,7 +229,8 @@ export interface IpcChannelMap {
     args:
       | [vaultRoot: string, name: string, data: unknown]
       | [vaultRoot: string, name: string, data: unknown, subfolder: string | undefined];
-    result: IpcOk<{ path: string }>;
+    /** `mtimeMs` / `size`: the new file's stat, absent when it failed. */
+    result: IpcOk<{ path: string; mtimeMs?: number; size?: number }>;
   };
   // Sync-client forks of a board (never in board:list).
   'board:list-conflicts': {
@@ -241,6 +242,15 @@ export interface IpcChannelMap {
   'recovery:snapshot': {
     args: [vaultRoot: string, relPath: string];
     result: IpcOk<{ path: string }>;
+  };
+  // Rescue copies of unsaved work (close / quit anyway). `dir` is vault-relative.
+  'recovery:keep-unsaved': {
+    args: [vaultRoot: string, items: Array<{ relPath: string; text: string }>];
+    result: IpcOk<{ dir: string; kept: string[]; failed: string[] }>;
+  };
+  'recovery:preserved-tmp': {
+    args: [vaultRoot: string];
+    result: IpcOk<{ count: number }>;
   };
   // Bare channel (like theme:load) — returns the snapshot list directly;
   // a real scan failure rejects (so the renderer can toast) rather than

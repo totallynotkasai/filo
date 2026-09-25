@@ -6,10 +6,10 @@ import {
   getActiveContentFolder,
   getActiveContentFolderAbs,
 } from '@renderer/lib/vault/conventionPaths';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { Board } from '@renderer/schema/index';
 
-function cacheWithPaths(paths: string[]): Record<string, V7BoardFileData> {
+function cacheWithPaths(paths: string[]): Record<string, BoardFileData> {
   const tileDefs: Record<string, Record<string, unknown>> = {};
   paths.forEach((filePath, i) => {
     tileDefs[`t${i}`] = {

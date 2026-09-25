@@ -16,7 +16,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { DeleteColumnCommand } from '@renderer/commands/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard, TileDefinition } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
@@ -34,7 +34,7 @@ function textDef(id: string, title: string): TileDefinition {
 }
 
 /** Board: columns A (card c1), B (card c2), C (card c3) at positions 0,1,2. */
-function makeBoard(): V7BoardFileData {
+function makeBoard(): BoardFileData {
   return {
     board: {
       id: 'kb',
@@ -138,7 +138,7 @@ describe('Audit5 Phase 4 — DeleteColumnCommand (delta-aware)', () => {
 
 describe('DeleteColumnCommand drops the defs of the cards it removes', () => {
   /** col-A holds c1 + c5; col-B holds c2 + c5 (c5 is placed in two columns). */
-  function boardWithSharedCard(): V7BoardFileData {
+  function boardWithSharedCard(): BoardFileData {
     const data = makeBoard();
     const kb = data.board as unknown as { columns: { id: string; tilePlacements: { tileId: string; position: number }[] }[] };
     kb.columns[0]!.tilePlacements.push({ tileId: 'c5', position: 1 });

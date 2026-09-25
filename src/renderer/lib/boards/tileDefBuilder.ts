@@ -14,9 +14,9 @@ import type {
   Frame,
 } from '../../schema/index';
 
-// ── V7 Board File Data ──
+// ── Board File Data ──
 
-export interface V7BoardFileData {
+export interface BoardFileData {
   /**
    * Envelope version stamped at write time. Narrowed to the literal `8` so
    * accidental writes of a stale or future version are caught at the type

@@ -21,7 +21,7 @@ import {
   MoveCardsCommand,
   BatchCommand,
 } from '@renderer/commands/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type {
   Frame,
   KanbanBoard,
@@ -63,7 +63,7 @@ describe('historyStore.clear (H6 — vault swap)', () => {
 
 /** A link tile owns its tags on the board def, so its tag edits are pure
  *  cache writes (a note's tags live in its frontmatter instead). */
-function makeMindMapWithLinkTile(tags: string[] = []): V7BoardFileData {
+function makeMindMapWithLinkTile(tags: string[] = []): BoardFileData {
   return {
     board: {
       id: 'mm',
@@ -151,7 +151,7 @@ describe('AddTileTagCommand / RemoveTileTagCommand (H2)', () => {
 
 // ── H4: Frame commands ──
 
-function makeMindMapWithFrame(): V7BoardFileData {
+function makeMindMapWithFrame(): BoardFileData {
   return {
     board: {
       id: 'mm',
@@ -279,7 +279,7 @@ describe('UpdateFrameCommand / MoveFrameCommand (H4)', () => {
 
 // ── H5: Kanban bulk delete / move (BatchCommand of DeleteCardCommand) ──
 
-function makeKanbanWithCards(): V7BoardFileData {
+function makeKanbanWithCards(): BoardFileData {
   return {
     board: {
       id: 'kb',

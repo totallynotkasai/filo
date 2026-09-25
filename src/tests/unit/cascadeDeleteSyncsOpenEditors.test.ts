@@ -9,7 +9,7 @@ import { trashFiles } from '@renderer/commands/trashedFiles';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { restoreFiloDefault } from '../helpers/filoBridge';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Tile } from '@renderer/schema/index';
 
 /**
@@ -20,7 +20,7 @@ import type { MindMapBoard, Tile } from '@renderer/schema/index';
  * whatever the file really contained.
  */
 
-function makeMindMap(boardId: string, tileId: string, filePath: string): V7BoardFileData {
+function makeMindMap(boardId: string, tileId: string, filePath: string): BoardFileData {
   return {
     board: {
       id: boardId,

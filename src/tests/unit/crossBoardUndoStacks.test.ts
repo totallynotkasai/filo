@@ -12,7 +12,7 @@ import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTra
 import { ACCENT_COLOR } from '@renderer/constants/defaults';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import { installMemoryVault } from '../helpers/memoryVault';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, TileDefinition } from '@renderer/schema/index';
 
 /**
@@ -161,7 +161,7 @@ describe('Audit-14 2.4 — clearBoard sweeps stranded commands off sibling stack
 
 // ── 2.3 — DeleteTilesCommand.undo reconciles an open editor on the restored file
 
-function makeMindMapWithTextTile(boardId: string, tileId: string, filePath: string): V7BoardFileData {
+function makeMindMapWithTextTile(boardId: string, tileId: string, filePath: string): BoardFileData {
   return {
     board: {
       id: boardId,
@@ -263,7 +263,7 @@ describe('Audit-14 2.3 — DeleteTilesCommand.undo reconciles open editors', () 
 // ── 2.5 — tag-remove undo preserves the global tag colour ─────────────────────
 
 /** A link tile owns its tags on the board def, so the tag edit is a cache write. */
-function makeMindMapLinkTileWithTags(tags: string[]): V7BoardFileData {
+function makeMindMapLinkTileWithTags(tags: string[]): BoardFileData {
   return {
     board: {
       id: 'mm',
@@ -291,7 +291,7 @@ function makeMindMapLinkTileWithTags(tags: string[]): V7BoardFileData {
     },
     connections: {},
     frames: [],
-  } as unknown as V7BoardFileData;
+  } as unknown as BoardFileData;
 }
 
 /** The link tile's tags as stored on its board def. */

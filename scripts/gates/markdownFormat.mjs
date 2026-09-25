@@ -59,7 +59,7 @@ const ROUNDTRIP_MIN_FIXTURES = 15;
 const ROUNDTRIP_REQUIRED_FIXTURES = [
   'ends-heading.md', 'ends-list.md', 'ends-table.md', 'ends-code-block.md', 'tables.md', 'task-lists.md',
   'nested-lists.md', 'inline-html-spans.md', 'tags.md', 'blank-line-paragraphs.md', 'code-blocks.md',
-  'links-underline.md', 'hr-leading-body.md', 'bare-names-and-domains.md', 'filo-links.md',
+  'links-underline.md', 'hr-leading-body.md', 'bare-names-and-domains.md', 'filo-links.md', 'aligned-blocks.md',
 ];
 const ROUNDTRIP_TOKENS = [
   { token: /\bcreateTiptapEditor\s*\(/, why: 'drives the real editor factory' },
@@ -105,6 +105,11 @@ const EDITOR_SUITE = [
   },
 ];
 const SKIPPED_TEST_RE = /\b(?:it|describe)\.skip\b|\bit\.todo\b/;
+
+// Every formatting command the toolbar runs must have a save → reload case, so
+// no button can produce formatting the file can't hold.
+const TOOLBAR_CONFIG = 'src/renderer/lib/editor/toolbarConfig.ts';
+const TOOLBAR_ROUNDTRIP_TEST = 'src/tests/unit/toolbarFormattingRoundTrip.test.ts';
 
 const INVARIANT_TEST = 'src/tests/unit/frontmatterInvariant.test.ts';
 
@@ -214,20 +219,25 @@ export const checks = [
     },
   },
   {
-    id: 'no-jsyaml-in-frontmatter',
-    title: 'the `yaml` package is the only frontmatter parser (no js-yaml / gray-matter)',
+    id: 'no-jsyaml',
+    title: 'the `yaml` package is the only YAML parser in the app (no js-yaml / gray-matter anywhere)',
     hint:
       'js-yaml (also bundled in gray-matter) disagrees with `yaml` on dates, `<<`, `1_000`, `0b1010`… — that ' +
-      'disagreement was the recurring corruption class. Non-frontmatter use: `// allow-jsyaml: <reason>` (same or line above).',
+      'disagreement was the recurring corruption class. Use the `yaml` package; tests may keep js-yaml as an independent oracle.',
     run(ctx) {
       const out = [];
-      for (const rel of ctx.files(['src/renderer', 'src/main'], { ext: ['.ts', '.svelte'] })) {
-        const lines = ctx.read(rel).split(/\r?\n/);
-        lines.forEach((line, i) => {
-          const lib = /(?:from|require\()\s*['"]js-yaml['"]/.test(line) ? 'js-yaml' : /(?:from|require\()\s*['"]gray-matter['"]/.test(line) ? 'gray-matter' : null;
-          if (lib && !/\/\/\s*allow-jsyaml:\s*\S+/.test(`${lines[i - 1] ?? ''}\n${line}`)) out.push(fail(rel, i + 1, `imports ${lib}`));
+      const files = ctx.files(['src/renderer', 'src/main', 'src/shared'], { ext: ['.ts', '.svelte', '.mts', '.mjs'] });
+      for (const rel of files) {
+        ctx.read(rel).split(/\r?\n/).forEach((line, i) => {
+          const lib = /(?:from|require\(|import\()\s*['"]js-yaml['"]/.test(line) ? 'js-yaml' : /(?:from|require\(|import\()\s*['"]gray-matter['"]/.test(line) ? 'gray-matter' : null;
+          if (lib) out.push(fail(rel, i + 1, `imports ${lib}`));
         });
       }
+      const pkg = JSON.parse(ctx.read('package.json') ?? '{}');
+      for (const lib of ['js-yaml', 'gray-matter']) {
+        if (pkg.dependencies?.[lib]) out.push(fail('package.json', undefined, `${lib} is a runtime dependency`));
+      }
+      if (files.length < 150) out.push(fail('src', undefined, `tripwire: only ${files.length} files scanned (expected >= 150)`));
       return out;
     },
   },
@@ -350,6 +360,41 @@ export const checks = [
         const src = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
         out.push(...tokenChecks(s.file, src, s));
         if (SKIPPED_TEST_RE.test(src)) out.push(fail(s.file, undefined, 'contains a skipped/todo test'));
+      }
+      return out;
+    },
+  },
+  {
+    id: 'toolbar-formatting-saved',
+    title: "every formatting toolbar command has a save → reload case (no button makes formatting the file can't hold)",
+    hint:
+      'Add a case to toolbarFormattingRoundTrip.test.ts that runs the command, saves, reloads and compares. If the reload ' +
+      'differs or is flagged lossy, give the formatting a Markdown or HTML form first (see blockLayout.ts).',
+    run(ctx) {
+      const out = [];
+      const toolbar = ctx.read(TOOLBAR_CONFIG);
+      const toolbarTest = ctx.read(TOOLBAR_ROUNDTRIP_TEST);
+      if (toolbar === null) out.push(fail(TOOLBAR_CONFIG, undefined, 'missing'));
+      if (toolbarTest === null) out.push(fail(TOOLBAR_ROUNDTRIP_TEST, undefined, 'missing (toolbar save → reload suite)'));
+      if (toolbar !== null && toolbarTest !== null) {
+        out.push(...tokenChecks(TOOLBAR_ROUNDTRIP_TEST, toolbarTest, {
+          required: [
+            { token: /\bcreateTiptapEditor\s*\(/, why: 'drives the real editor factory' },
+            { token: /\bloadMarkdownIntoEditor\s*\(/, why: 'reloads through the production load path' },
+            { token: /expect\(lossy\)\.toBe\(false\)/, why: 'a reloaded note must not open read-only' },
+          ],
+        }));
+        if (SKIPPED_TEST_RE.test(toolbarTest)) out.push(fail(TOOLBAR_ROUNDTRIP_TEST, undefined, 'contains a skipped/todo test'));
+        const commands = new Set();
+        for (const m of toolbar.matchAll(/chainIfEditable\(\)\?\.focus\(\)((?:\.\w+\([^)]*\))+)\.run\(\)/g)) {
+          for (const c of m[1].matchAll(/\.(\w+)\(/g)) commands.add(c[1]);
+        }
+        if (commands.size === 0) out.push(fail(TOOLBAR_CONFIG, undefined, 'found no toolbar commands to check (did the chain shape change?)'));
+        for (const name of commands) {
+          if (!new RegExp(`\\.${name}\\(`).test(toolbarTest)) {
+            out.push(fail(TOOLBAR_ROUNDTRIP_TEST, undefined, `no save → reload case runs the toolbar command ${name}()`));
+          }
+        }
       }
       return out;
     },

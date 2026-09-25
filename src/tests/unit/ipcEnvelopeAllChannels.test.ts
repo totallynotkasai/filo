@@ -45,6 +45,8 @@ const OK_DISCRIMINATED: readonly string[] = [
   'board:save',
   'board:create',
   'recovery:snapshot',
+  'recovery:keep-unsaved',
+  'recovery:preserved-tmp',
   'config:save',
   'config:save-workspace',
   'theme:save',

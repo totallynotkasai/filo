@@ -20,7 +20,7 @@ import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { selectionStore } from '@renderer/stores/selection.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { DeleteConnectionCommand } from '@renderer/commands/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Connection } from '@renderer/schema/index';
 
 function installEmptyFiloStub(): void {
@@ -31,7 +31,7 @@ function installEmptyFiloStub(): void {
   };
 }
 
-function makeFixture(): V7BoardFileData {
+function makeFixture(): BoardFileData {
   return {
     board: {
       id: 'mm',

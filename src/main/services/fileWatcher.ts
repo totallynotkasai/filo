@@ -18,6 +18,7 @@ import {
   type WatcherState,
 } from './watcherSupervisor';
 import { shouldIgnorePath, classifyChange } from './fileWatcherClassify';
+import { SuppressionWindows } from './watcherSuppression';
 
 export { correlateRenames } from './renameCorrelation';
 export type { FileChangeEvent, FileChangeType } from './fileWatcherTypes';
@@ -44,6 +45,17 @@ interface ReconcileEntry {
  */
 const RECONCILE_INTERVAL_MS = 30_000;
 
+/**
+ * How long an unpaired "note is gone" event waits for its other half. A move
+ * can arrive as a delete and a create in separate debounce batches (Explorer
+ * across volumes, a sync client that downloads the new name before it removes
+ * the old one), and the correlator only pairs events it sees together. A held
+ * delete joins the next batch; if nothing pairs it by the deadline, it goes
+ * out as a delete. Only `.md` notes are held: attachments and boards have
+ * their own grace windows in the renderer.
+ */
+export const MISSING_NOTE_HOLD_MS = 1500;
+
 // The supervisor state machine + reopen backoff schedule live in
 // watcherSupervisor.ts; `FileWatcher` owns one `WatcherSupervisor` per vault.
 
@@ -69,7 +81,7 @@ const RECONCILE_INTERVAL_MS = 30_000;
  * watcher.
  */
 /**
- * Every key under `suppressedPaths` / `suppressedPrefixes` /
+ * Every key under the suppression windows /
  * `lastKnownSizes` / `lastKnownHashes` goes through `vaultPath()`, which
  * case-folds unconditionally so suppression and size/hash caches agree on
  * key identity on every platform. Trade-off (accepted codebase-wide): a
@@ -87,21 +99,16 @@ export class FileWatcher {
   private debounceFirstQueuedAt: number | null = null;
   private readonly maxDebounceWaitMs = 1000;
 
-  /** Vault-relative path -> expiry timestamp (ms since epoch). */
-  private suppressedPaths = new Map<VaultPath, number>();
+  /** Self-write suppression windows (see `watcherSuppression.ts`). */
+  private readonly suppression = new SuppressionWindows();
 
   /**
-   * Vault-relative directory prefix -> expiry. Set by {@link suppressTree}
-   * before a recursive folder delete; without it each descendant unlink
-   * event would show a dirty editor under the folder a "deleted externally"
-   * prompt for a delete the user initiated.
-   *
-   * Map keys are stored WITH a trailing slash (e.g. `notes/old/`) so
-   * `isSuppressed`'s `startsWith` check can't accidentally match a
-   * sibling folder whose name happens to share a prefix
-   * (`notes/old-archive/` won't match `notes/old/`).
+   * Unpaired "note is gone" events waiting for their other half, keyed by
+   * `type:filename`, with the time each was first seen. See
+   * {@link MISSING_NOTE_HOLD_MS}.
    */
-  private suppressedPrefixes = new Map<VaultPath, number>();
+  private heldMissing = new Map<string, { event: FileChangeEvent; since: number }>();
+  private heldTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
    * Vault-relative path -> last observed file size in bytes. Populated each
@@ -185,13 +192,33 @@ export class FileWatcher {
    * let the rename event slip through on slow disks.
    */
   suppress(relativePath: string, durationMs: number = 500): void {
-    // `vaultPath()` case-folds + slash-normalises the key so suppression of
-    // `Notes.md` matches an OS-emitted event with `notes.md` casing.
-    const normalized = vaultPath(relativePath);
-    if (!normalized) return;
-    const next = Date.now() + durationMs;
-    const current = this.suppressedPaths.get(normalized) ?? 0;
-    this.suppressedPaths.set(normalized, Math.max(current, next));
+    this.suppression.suppress(relativePath, durationMs);
+  }
+
+  /**
+   * Like {@link suppress}, for a file Filo is WRITING (not moving or
+   * deleting). An event for the path is dropped only while the file exists:
+   * the write's own echo always finds it there, whereas another program's
+   * rename or delete of it right after our write must still get through. A
+   * plain `suppress` of the same path in the window wins.
+   */
+  suppressWrite(relativePath: string, durationMs: number): void {
+    this.suppression.suppressWrite(relativePath, durationMs);
+  }
+
+  /**
+   * Records the bytes Filo just wrote to `relativePath` as its last-known size
+   * and content hash. Without it the cache keeps the bytes from before our
+   * write, so a rename of the file shortly after (whose old side is answered
+   * from the cache) never matches the renamed file and arrives as a delete
+   * plus a create.
+   */
+  recordOwnWrite(relativePath: string, bytes: Buffer): void {
+    const key = vaultPath(relativePath);
+    if (!key) return;
+    this.lastKnownSizes.set(key, bytes.length);
+    if (bytes.length <= WATCHER_HASH_MAX_BYTES) this.lastKnownHashes.set(key, sha1Hex(bytes));
+    else this.lastKnownHashes.delete(key);
   }
 
   /**
@@ -201,73 +228,7 @@ export class FileWatcher {
    * "deleted externally" prompts. Extend-only, like {@link suppress}.
    */
   suppressTree(relativePath: string, durationMs: number = 2000): void {
-    // Case-fold so the prefix sweep in `isSuppressed` matches OS-emitted
-    // casing; the trailing slash is stripped here and re-added below.
-    const normalized = vaultPath(relativePath).replace(/\/+$/, '') as VaultPath;
-    if (!normalized) return;
-    const next = Date.now() + durationMs;
-    // Suppress the folder itself (the watcher may emit an event for the
-    // folder entry too on some platforms).
-    const currentExact = this.suppressedPaths.get(normalized) ?? 0;
-    this.suppressedPaths.set(normalized, Math.max(currentExact, next));
-    // Suppress everything beneath it. Trailing slash guards against
-    // sibling-prefix collisions (see field-level comment on
-    // `suppressedPrefixes`).
-    const prefix = (normalized + '/') as VaultPath;
-    const currentPrefix = this.suppressedPrefixes.get(prefix) ?? 0;
-    this.suppressedPrefixes.set(prefix, Math.max(currentPrefix, next));
-  }
-
-  private isSuppressed(relativePath: string): boolean {
-    // Symmetric `vaultPath()` so an OS-emitted `notes.md` event still
-    // matches a `suppress('Notes.md')` entry.
-    const normalized = vaultPath(relativePath);
-    const expiry = this.suppressedPaths.get(normalized);
-    if (expiry !== undefined) {
-      if (Date.now() > expiry) {
-        this.suppressedPaths.delete(normalized);
-      } else {
-        return true;
-      }
-    }
-    // Prefix sweep: check every active tree-suppress entry. The map is typically tiny (one entry per in-flight folder
-    // delete), so an O(N) scan is cheaper than maintaining a sorted
-    // structure.
-    const now = Date.now();
-    for (const [prefix, exp] of this.suppressedPrefixes.entries()) {
-      if (now > exp) {
-        this.suppressedPrefixes.delete(prefix);
-        continue;
-      }
-      if (normalized.startsWith(prefix)) return true;
-    }
-    return false;
-  }
-
-  /**
-   * True when `relativePath` is under an active TREE-suppress
-   * prefix (`suppressTree`, i.e. an in-flight folder DELETE). The reconcile
-   * delete carry-forward (below) uses this to EXCLUDE intentional self-deletes
-   * from re-surfacing as external deletes once suppression lifts.
-   */
-  private isTreeSuppressed(relativePath: string): boolean {
-    const normalized = vaultPath(relativePath);
-    const now = Date.now();
-    for (const [prefix, exp] of this.suppressedPrefixes.entries()) {
-      if (now > exp) continue;
-      if (normalized.startsWith(prefix)) return true;
-    }
-    return false;
-  }
-
-  private gcSuppressedPaths(): void {
-    const now = Date.now();
-    for (const [path, expiry] of this.suppressedPaths.entries()) {
-      if (now > expiry) this.suppressedPaths.delete(path);
-    }
-    for (const [prefix, expiry] of this.suppressedPrefixes.entries()) {
-      if (now > expiry) this.suppressedPrefixes.delete(prefix);
-    }
+    this.suppression.suppressTree(relativePath, durationMs);
   }
 
   /**
@@ -400,6 +361,10 @@ export class FileWatcher {
       this.debounceTimer = null;
     }
     this.debounceFirstQueuedAt = null; // drop the max-wait marker
+    if (this.heldTimer) {
+      clearTimeout(this.heldTimer);
+      this.heldTimer = null;
+    }
     if (this.reconcileTimer) {
       clearInterval(this.reconcileTimer);
       this.reconcileTimer = null;
@@ -437,8 +402,8 @@ export class FileWatcher {
       }
     }
     this.pendingChanges = [];
-    this.suppressedPaths.clear();
-    this.suppressedPrefixes.clear();
+    this.suppression.clear();
+    this.heldMissing.clear();
     this.lastKnownSizes.clear();
     this.lastKnownHashes.clear();
     this.reconcileSnapshot = null;
@@ -483,10 +448,10 @@ export class FileWatcher {
         if (
           previous !== null
           && !options.seedOnly
-          && (this.suppressedPaths.size > 0 || this.suppressedPrefixes.size > 0)
+          && this.suppression.any()
         ) {
           for (const path of [...current.keys()]) {
-            if (!this.isSuppressed(path)) continue;
+            if (!this.suppression.isSuppressed(path)) continue;
             const priorEntry = previous.get(path);
             if (priorEntry !== undefined) current.set(path, priorEntry);
             else current.delete(path);
@@ -497,8 +462,8 @@ export class FileWatcher {
           // intentional folder self-delete, so they're excluded.
           for (const [path, priorEntry] of previous) {
             if (current.has(path)) continue;
-            if (!this.isSuppressed(path)) continue;
-            if (this.isTreeSuppressed(path)) continue;
+            if (!this.suppression.isSuppressed(path, false)) continue;
+            if (this.suppression.isTreeSuppressed(path)) continue;
             current.set(path, priorEntry);
           }
         }
@@ -506,10 +471,23 @@ export class FileWatcher {
         if (options.seedOnly || previous === null) return;
 
         const synthesised: FileChangeEvent[] = [];
+        // Vanished paths go first: the correlator pairs a case-only rename by
+        // event order (earlier = old spelling), as the OS reports it live.
+        for (const [path] of previous) {
+          if (this.aborted) return;
+          if (current.has(path)) continue;
+          if (shouldIgnorePath(path)) continue;
+          if (this.suppression.isSuppressed(path, false)) continue;
+          synthesised.push({
+            type: classifyChange(path),
+            filename: path,
+            eventType: 'rename',
+          });
+        }
         for (const [path, entry] of current) {
           if (this.aborted) return;
           if (shouldIgnorePath(path)) continue;
-          if (this.isSuppressed(path)) continue;
+          if (this.suppression.isSuppressed(path)) continue;
           const prior = previous.get(path);
           if (prior === undefined) {
             synthesised.push({
@@ -531,17 +509,6 @@ export class FileWatcher {
               eventType: 'change',
             });
           }
-        }
-        for (const [path] of previous) {
-          if (this.aborted) return;
-          if (current.has(path)) continue;
-          if (shouldIgnorePath(path)) continue;
-          if (this.isSuppressed(path)) continue;
-          synthesised.push({
-            type: classifyChange(path),
-            filename: path,
-            eventType: 'rename',
-          });
         }
         if (synthesised.length === 0) return;
         // Final abort check before pushing into the live queue — without
@@ -669,6 +636,9 @@ export class FileWatcher {
             try {
               if (stat.size <= WATCHER_HASH_MAX_BYTES) {
                 const buf = await fsPromises.readFile(full);
+                // The size too: the cross-basename pass answers a now-missing
+                // file's size from this cache.
+                this.lastKnownSizes.set(vaultPath(rel), buf.length);
                 hash = fnv1a32(buf);
                 this.lastKnownHashes.set(vaultPath(rel), sha1Hex(buf));
               } else {
@@ -722,6 +692,23 @@ export class FileWatcher {
     }, delay);
   }
 
+  /** Runs a notify pass when the oldest held missing note's wait is over. */
+  private armHeldTimer(): void {
+    if (this.heldTimer) {
+      clearTimeout(this.heldTimer);
+      this.heldTimer = null;
+    }
+    if (this.aborted || this.heldMissing.size === 0) return;
+    let due = Infinity;
+    for (const h of this.heldMissing.values()) due = Math.min(due, h.since + MISSING_NOTE_HOLD_MS);
+    this.heldTimer = setTimeout(() => {
+      this.heldTimer = null;
+      this.notifyRenderers().catch((err) => {
+        logMainError('fileWatcher.notifyRenderers', err);
+      });
+    }, Math.max(0, due - Date.now()) + 10);
+  }
+
   private async notifyRenderers(): Promise<void> {
     // Publish the in-flight handle so `stop()` can await the pass. Cleared
     // only when THIS pass is still the published one, so an overlapping pass
@@ -740,7 +727,7 @@ export class FileWatcher {
   private async notifyRenderersImpl(): Promise<void> {
     // Defence in depth: no events are ever emitted from an aborted watcher.
     if (this.aborted) return;
-    this.gcSuppressedPaths();
+    this.suppression.gc();
     const changes = [...this.pendingChanges];
     this.pendingChanges = [];
 
@@ -752,15 +739,6 @@ export class FileWatcher {
     // A user-initiated rename of the same path landing inside the 500ms
     // window is vanishingly unlikely; outside the window everything
     // propagates as normal.
-    const seen = new Set<string>();
-    const unique = changes.filter(c => {
-      const key = `${c.type}:${c.filename}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      if (this.isSuppressed(c.filename)) return false;
-      return true;
-    });
-
     const exists = (relPath: string): boolean => {
       try {
         statSync(join(this.vaultPath, relPath));
@@ -769,6 +747,24 @@ export class FileWatcher {
         return false;
       }
     };
+
+    // Missing notes held back by earlier passes come first (they are older),
+    // so a create arriving in this batch can pair with them.
+    const held = this.heldMissing;
+    this.heldMissing = new Map();
+    const seen = new Set<string>();
+    const unique: FileChangeEvent[] = [];
+    for (const [key, h] of held) {
+      seen.add(key);
+      unique.push(h.event);
+    }
+    for (const c of changes) {
+      const key = `${c.type}:${c.filename}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (this.suppression.isSuppressed(c.filename, exists(c.filename))) continue;
+      unique.push(c);
+    }
     const sizeOf = (relPath: string): number | null => {
       const key = vaultPath(relPath);
       try {
@@ -832,7 +828,7 @@ export class FileWatcher {
         return cached ?? null;
       }
     };
-    const { filtered, renames, conflicts } = await correlateRenames(unique, exists, sizeOf, hashAsync, undefined, knownHostsFor(this.vaultPath));
+    const { filtered: correlated, renames, conflicts } = await correlateRenames(unique, exists, sizeOf, hashAsync, undefined, knownHostsFor(this.vaultPath));
     // Re-check after the only await: a vault swap inside the hash-probe
     // window must not send the OLD vault's events — the renderer's rename
     // queue captures vault identity at ARRIVAL, so a late send would drive
@@ -855,6 +851,23 @@ export class FileWatcher {
         this.lastKnownHashes.set(newKey, cachedHash);
       }
     }
+
+    // An unpaired missing note waits (up to MISSING_NOTE_HOLD_MS from when it
+    // was first seen) for a create in a later batch to pair with.
+    const now = Date.now();
+    const filtered: FileChangeEvent[] = [];
+    for (const c of correlated) {
+      const key = `${c.type}:${c.filename}`;
+      if (c.type === 'document' && !exists(c.filename)) {
+        const since = held.get(key)?.since ?? now;
+        if (now - since < MISSING_NOTE_HOLD_MS) {
+          this.heldMissing.set(key, { event: c, since });
+          continue;
+        }
+      }
+      filtered.push(c);
+    }
+    this.armHeldTimer();
 
     if (filtered.length === 0 && renames.length === 0) return;
 

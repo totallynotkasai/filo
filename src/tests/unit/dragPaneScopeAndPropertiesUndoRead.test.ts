@@ -42,13 +42,13 @@ import {
 } from '@renderer/lib/boards/writeStateTracking';
 import { noteStore } from '@renderer/stores/notes.svelte';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, TileDefinition } from '@renderer/schema/index';
 
 
 // ── 6.1 helpers ──────────────────────────────────────────────────────────
 
-function makeMindMapWithTile(): V7BoardFileData {
+function makeMindMapWithTile(): BoardFileData {
   return {
     board: {
       id: 'mm',

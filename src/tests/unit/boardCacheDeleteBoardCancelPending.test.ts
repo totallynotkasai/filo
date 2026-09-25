@@ -5,7 +5,7 @@ import {
   scheduleBoardWrite,
   type BoardWriteArgs,
 } from '@renderer/lib/boards/boardWriteScheduler';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard } from '@renderer/schema/index';
 
 /**
@@ -33,7 +33,7 @@ function installFiloStub(routes: Record<string, InvokeHandler> = {}): {
   return { calls };
 }
 
-function makeKanbanFixture(): V7BoardFileData {
+function makeKanbanFixture(): BoardFileData {
   return {
     board: {
       id: 'kb',

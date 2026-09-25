@@ -22,7 +22,7 @@ export type KanbanFileTileType = 'text' | 'image' | 'audio' | 'file';
 /**
  * Infers the Kanban-compatible tile type from a file's MIME and extension.
  * Returns `null` for unsupported types (video/iframe/timer are rejected per
- * V7 Kanban rules).
+ * Kanban rules).
  *
  * Callers supply either dotted (vault sidebar's `extname()` output, e.g.
  * `.md`) or dotless (OS-file split-on-dot) forms — `normalizeExtension`
@@ -36,7 +36,7 @@ export function inferKanbanTileType(
   if (mime.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'].includes(e)) return 'image';
   if (mime.startsWith('audio/') || ['mp3', 'wav', 'ogg', 'aac', 'flac', 'm4a'].includes(e)) return 'audio';
   if (mime === 'text/markdown' || isMarkdownExtension(e)) return 'text';
-  // Reject Video / Iframe / Timer per V7 Kanban rules.
+  // Reject Video / Iframe / Timer per the Kanban rules.
   if (mime.startsWith('video/') || ['mp4', 'webm', 'ogv', 'mov', 'avi', 'mkv'].includes(e)) return null;
   return 'file';
 }

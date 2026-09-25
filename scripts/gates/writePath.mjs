@@ -193,9 +193,13 @@ const TRASH_IPC = 'src/main/ipc/vaultTrash.ipc.ts';
 const TRASH_STORE = 'src/renderer/stores/trash.svelte.ts';
 
 // ── keep-local-backup ─────────────────────────────────────────────────────
+// A note's Keep mine backs up inside `resolveConflict`, through
+// `backupThenRead`, so the overwrite is built on the bytes that were backed up.
 const KEEP_LOCAL_CHOKEPOINTS = [
-  { file: 'src/renderer/lib/boards/boardWriteScheduler.ts', fn: 'writeBoardFile' },
-  { file: 'src/renderer/stores/notePrompts.ts', fn: 'promptConflict' },
+  { file: 'src/renderer/lib/boards/boardWriteScheduler.ts', fn: 'writeBoardFile', fnKeyword: true, token: 'backupExternalVersion(' },
+  { file: 'src/renderer/stores/notes.svelte.ts', fn: 'resolveConflict', fnKeyword: false, token: 'backupThenRead(' },
+  { file: 'src/renderer/lib/vault/keepLocalBackup.ts', fn: 'backupThenRead', fnKeyword: true, token: 'backupExternalVersion(' },
+  { file: 'src/renderer/components/boards/NoteRawView.svelte', fn: 'keepMine', fnKeyword: true, token: 'backupThenRead(' },
 ];
 
 /** Index of the `{` enclosing `pos` (nearest unmatched), or -1. */
@@ -467,6 +471,149 @@ export const checks = [
     },
   },
   {
+    id: 'note-write-suppression',
+    title: "a note write hides only its own echo: another program's rename or delete right after it still gets through",
+    hint:
+      'The .md write handlers in vault.ipc.ts suppress with suppressWrite (never a plain suppress, which also drops a delete or ' +
+      'rename of the file for ~7 s) and call noteOwnWrite so the watcher knows the bytes on disk; the two overwrite handlers ' +
+      'write through withOnDiskSpelling. The watcher passes whether the file exists into isSuppressed.',
+    run(ctx) {
+      const out = [];
+      const IPC = 'src/main/ipc/vault.ipc.ts';
+      const raw = ctx.read(IPC);
+      if (raw === null) return [fail(IPC, undefined, 'file missing')];
+      const code = blank(raw, { strings: false });
+      for (const ch of ['vault:write-file-text', 'vault:create-file-text', 'vault:write-existing-file-text']) {
+        const start = code.indexOf(`'${ch}'`);
+        if (start < 0) { out.push(fail(IPC, undefined, `the '${ch}' handler is missing`)); continue; }
+        const end = code.indexOf('ipcMain.handle(', start);
+        const body = code.slice(start, end < 0 ? code.length : end);
+        const line = lineAt(raw, start);
+        if (/\.suppress\s*\(/.test(body)) out.push(fail(IPC, line, `'${ch}' uses a plain suppress(); use suppressWrite()`));
+        if (!/\.suppressWrite\s*\(/.test(body)) out.push(fail(IPC, line, `'${ch}' must suppressWrite() before the write`));
+        if (!/\bnoteOwnWrite\s*\(/.test(body)) out.push(fail(IPC, line, `'${ch}' must call noteOwnWrite() after the write`));
+        if (ch !== 'vault:create-file-text' && !/atomicWriteFile\s*\(\s*await\s+withOnDiskSpelling\s*\(/.test(body)) {
+          out.push(fail(IPC, line, `'${ch}' must write through withOnDiskSpelling()`));
+        }
+      }
+      const W = 'src/main/services/fileWatcher.ts';
+      const wRaw = ctx.read(W);
+      if (wRaw === null) return [...out, fail(W, undefined, 'file missing')];
+      const w = stripComments(wRaw);
+      if (!/isSuppressed\(\s*c\.filename\s*,\s*exists\(\s*c\.filename\s*\)\s*\)/.test(w)) {
+        out.push(fail(W, undefined, 'the live notify pass must pass exists(c.filename) into isSuppressed'));
+      }
+      if ((w.match(/isSuppressed\(\s*path\s*,\s*false\s*\)/g) ?? []).length < 2) {
+        out.push(fail(W, undefined, 'the reconcile pass must treat a vanished path as not present (isSuppressed(path, false)) in both delete loops'));
+      }
+      return out;
+    },
+  },
+  {
+    id: 'baseline-stamp-forward-only',
+    title: "a drift baseline only moves forward: a reader's stat never replaces one a newer self-write stamped, and a new board's create is Filo's own write",
+    hint:
+      'Take `const seq = baselineSeq(path)` before the read and pass `noteBaseline(path, mtime, size, { ifUnchangedSince: seq })`; ' +
+      "self-writes use refreshBaselineAfterWrite. A rolled-back baseline makes the next save see its own write as an external edit. " +
+      "board:create suppresses the new file's watcher echo, and persistNewBoard marks it as a recent self-write and seeds the baseline.",
+    run(ctx) {
+      const out = [];
+      const REGISTRY = 'src/renderer/lib/vault/fileBaselineRegistry.ts';
+      for (const rel of ctx.files(RENDERER, { ext: TS_SVELTE })) {
+        if (rel === REGISTRY) continue;
+        const raw = ctx.read(rel);
+        if (!raw.includes('noteBaseline(')) continue;
+        const code = stripCommentsKeepLines(raw);
+        for (const m of code.matchAll(/\bnoteBaseline\s*\(/g)) {
+          const close = matchBrace(code, m.index + m[0].length - 1, '(', ')');
+          const args = code.slice(m.index, close < 0 ? code.length : close);
+          if (!/\bifUnchangedSince\s*:/.test(args)) {
+            out.push(fail(rel, lineAt(code, m.index), 'noteBaseline() without { ifUnchangedSince }'));
+          }
+        }
+      }
+      const IPC = 'src/main/ipc/board.ipc.ts';
+      const ipcRaw = ctx.read(IPC);
+      if (ipcRaw === null) return [...out, fail(IPC, undefined, 'file missing')];
+      const ipc = stripComments(ipcRaw);
+      const start = ipc.indexOf("'board:create'");
+      const end = start < 0 ? -1 : ipc.indexOf('ipcMain.handle(', start);
+      const createBody = start < 0 ? '' : ipc.slice(start, end < 0 ? ipc.length : end);
+      if (!/\.suppress\s*\(\s*relativePath\b/.test(createBody)) {
+        out.push(fail(IPC, undefined, "board:create must suppress the new file's watcher echo"));
+      }
+      const STORE = 'src/renderer/stores/boardCache.svelte.ts';
+      const storeRaw = ctx.read(STORE);
+      if (storeRaw === null) return [...out, fail(STORE, undefined, 'file missing')];
+      const persist = functionBody(stripComments(storeRaw), 'persistNewBoard')?.text ?? '';
+      if (!/\bmarkRecentSelfWrite\s*\(\s*result\.path\s*\)/.test(persist)) {
+        out.push(fail(STORE, undefined, 'persistNewBoard must markRecentSelfWrite(result.path)'));
+      }
+      if (!/\bnoteBaseline\s*\(\s*result\.path\b/.test(persist)) {
+        out.push(fail(STORE, undefined, "persistNewBoard must seed the baseline from board:create's stat"));
+      }
+      return out;
+    },
+  },
+  {
+    id: 'close-keeps-rescue-copy',
+    title: 'close, open-another-vault and quit save first, and never let unsaved work go without a rescue copy',
+    hint:
+      'closeVault / openVault call saveBeforeLeaving() before fireVaultSwap and clear the sentinel only when it returns "saved"; ' +
+      'saveBeforeLeaving returns "rescued" only after keepRescueCopies(); the quit dialog\'s "Quit anyway" runs ' +
+      'keepRescueCopiesOrAsk() before app:ready-to-quit. There is no "Don\'t Save".',
+    run(ctx) {
+      const out = [];
+      const VAULT = 'src/renderer/stores/vault.svelte.ts';
+      const vaultRaw = ctx.read(VAULT);
+      if (vaultRaw === null) return [fail(VAULT, undefined, 'file missing')];
+      const vault = stripComments(vaultRaw);
+      if (/Don't Save/.test(vault)) out.push(fail(VAULT, undefined, `a "Don't Save" choice drops queued edits`));
+      for (const name of ['openVault', 'closeVault']) {
+        const body = functionBody(vault, name)?.text ?? '';
+        const guard = body.search(/\bsaveBeforeLeaving\s*\(/);
+        const swap = body.search(/\bfireVaultSwap\s*\(/);
+        if (guard < 0 || swap < 0 || guard > swap) {
+          out.push(fail(VAULT, undefined, `${name} must call saveBeforeLeaving() before fireVaultSwap()`));
+        }
+        if (!/saveOutgoing:\s*leave\s*===\s*'saved'/.test(body)) {
+          out.push(fail(VAULT, undefined, `${name}: saveOutgoing must be true only for a clean save (leave === 'saved')`));
+        }
+      }
+      const GUARD = 'src/renderer/stores/vaultLeaveGuard.ts';
+      const guardRaw = ctx.read(GUARD);
+      if (guardRaw === null) return [...out, fail(GUARD, undefined, 'file missing')];
+      const leave = functionBody(stripComments(guardRaw), 'saveBeforeLeaving')?.text ?? '';
+      const rescue = leave.search(/\bkeepRescueCopies\s*\(/);
+      const rescued = leave.search(/return\s+'rescued'/);
+      if (rescue < 0 || rescued < 0 || rescue > rescued) {
+        out.push(fail(GUARD, undefined, 'saveBeforeLeaving must keepRescueCopies() before returning "rescued"'));
+      }
+      const saved = leave.search(/return\s+'saved'/);
+      if (saved < 0 || !/\bisUnsavedWorkEmpty\s*\([^)]*\)\s*\)\s*return\s+'saved'/.test(leave)) {
+        out.push(fail(GUARD, undefined, 'saveBeforeLeaving may return "saved" only when unsavedWork() is empty'));
+      }
+      const QUIT = 'src/renderer/lib/vault/handleFlushAndQuit.ts';
+      const quitRaw = ctx.read(QUIT);
+      if (quitRaw === null) return [...out, fail(QUIT, undefined, 'file missing')];
+      const quit = stripComments(quitRaw);
+      const drain = functionBody(quit, 'drainAndQuit', { fnKeyword: true })?.text ?? '';
+      const quitBranch = drain.indexOf("if (choice === 'quit')");
+      const branch = quitBranch < 0 ? '' : drain.slice(quitBranch);
+      const ask = branch.search(/\bkeepRescueCopiesOrAsk\s*\(/);
+      const ready = branch.indexOf("'app:ready-to-quit'");
+      if (ask < 0 || ready < 0 || ask > ready) {
+        out.push(fail(QUIT, undefined, '"Quit anyway" must run keepRescueCopiesOrAsk() before app:ready-to-quit'));
+      }
+      const APP = 'src/renderer/App.svelte';
+      const app = stripComments(ctx.read(APP) ?? '');
+      if (!/\bkeepRescueCopies\s*:\s*\(\)\s*=>\s*keepRescueCopies\s*\(/.test(app)) {
+        out.push(fail(APP, undefined, 'the quit handler must be given keepRescueCopies'));
+      }
+      return out;
+    },
+  },
+  {
     id: 'no-adhoc-schedulers',
     title: 'debounced IPC writes use createScheduler, not a hand-rolled setTimeout',
     hint: 'A hand-rolled timer-around-IPC drops failure attribution and flush/quit draining. Use createScheduler (writeScheduler.ts).',
@@ -514,13 +661,13 @@ export const checks = [
           out.push(fail(rel, lineAt(raw, m.index), `'${m[2]}' action overwrites without backupExternalVersion(...)`));
         }
       }
-      for (const { file, fn } of KEEP_LOCAL_CHOKEPOINTS) {
+      for (const { file, fn, fnKeyword, token } of KEEP_LOCAL_CHOKEPOINTS) {
         const raw = ctx.read(file);
         if (raw === null) { out.push(fail(file, undefined, 'chokepoint file missing')); continue; }
-        const body = functionBody(blank(raw), fn, { fnKeyword: true });
+        const body = functionBody(blank(raw), fn, { fnKeyword });
         if (!body) { out.push(fail(file, undefined, `${fn}() not found`)); continue; }
-        if (!blank(raw, { strings: false }).slice(body.start, body.end).includes(TOKEN)) {
-          out.push(fail(file, undefined, `${fn}() keep-local branch must call backupExternalVersion(...)`));
+        if (!blank(raw, { strings: false }).slice(body.start, body.end).includes(token)) {
+          out.push(fail(file, undefined, `${fn}() keep-local branch must call ${token}...)`));
         }
       }
       if (sites < 4) out.push(fail(RENDERER, undefined, `tripwire: only ${sites} Keep-local action sites found (expected >= 4)`));

@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * TaskListSideToolbar — V7 toolbar for the Task List board.
+   * TaskListSideToolbar — the side toolbar for the Task List board.
    *
    * Buttons:
    *   - Add Task

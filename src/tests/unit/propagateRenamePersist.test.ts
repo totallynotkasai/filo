@@ -5,7 +5,7 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import {
   cancelAllPendingWrites,
   __resetDirtyTrackingForTests,
-  type V7BoardFileData,
+  type BoardFileData,
 } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Tile, ImageTile } from '@renderer/schema/index';
 
@@ -49,7 +49,7 @@ function uninstallFiloStub(): void {
   delete (window as unknown as Record<string, unknown>).filo;
 }
 
-function makeImageBoardFixture(srcPath: string): V7BoardFileData {
+function makeImageBoardFixture(srcPath: string): BoardFileData {
   return {
     board: {
       id: 'mm',

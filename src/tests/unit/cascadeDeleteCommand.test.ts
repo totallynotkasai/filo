@@ -4,7 +4,7 @@ import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { CascadeDeleteCommand } from '@renderer/commands/index';
-import { cancelAllPendingWrites, resetWriteTracking, type V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import { cancelAllPendingWrites, resetWriteTracking, type BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Tile, Connection } from '@renderer/schema/index';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 
@@ -25,7 +25,7 @@ function installEmptyFiloStub(): void {
   };
 }
 
-function makeMindMap(id: string, tileId: string, filePath: string): V7BoardFileData {
+function makeMindMap(id: string, tileId: string, filePath: string): BoardFileData {
   return {
     board: {
       id,

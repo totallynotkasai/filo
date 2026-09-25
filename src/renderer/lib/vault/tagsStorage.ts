@@ -10,8 +10,7 @@
  * `fileTags` to keep references consistent.
  */
 
-// allow-jsyaml: tag-name minting guard (isSafeNewTagName) — intentional YAML-1.1 coercion, NOT a frontmatter read
-import yaml from 'js-yaml';
+import { parse as parseYaml } from 'yaml';
 import type { TagsFile, TagDefinition } from '../../schema/tagsFile';
 import {
   TagsFileSchema,
@@ -252,19 +251,21 @@ export function isValidTagName(name: string): boolean {
 export function isSafeNewTagName(name: string): boolean {
   if (!isValidTagName(name)) return false;
   const stripped = name.trim().replace(/^#/, '');
-  // js-yaml throws on most leading indicators, but `:` / `?` load as plain
-  // strings — reject the whole set explicitly. (`#` is
+  // A YAML parser throws on most leading indicators, but `:` / `?` load as
+  // plain strings — reject the whole set explicitly. (`#` is
   // already stripped above as the tag-syntax convenience.)
   if (/^[@`*&!%|>:?]/.test(stripped)) return false;
+  // Other YAML readers (Obsidian's among them) take a binary integer as a
+  // number; the core schema below reads it as a string.
+  if (/^[-+]?0b[01_]+$/.test(stripped)) return false;
   let loaded: unknown;
   try {
     // This validates a single bare tag-name token, NOT a frontmatter block.
-    // DEFAULT_SCHEMA's YAML-1.1 coercion is the intent here: we WANT `2024` /
-    // `true` / `null` to read as non-strings so the guard rejects them as
-    // confusing new tag names. (Contrast the frontmatter readers, which are on
-    // the `yaml` package and resolve no such 1.1 tags — see the import's
-    // `// allow-jsyaml:` note and the `gates:no-jsyaml-in-frontmatter` gate.)
-    loaded = yaml.load(stripped);
+    // The core schema plus timestamps reads `2024`, `true`, `null` and
+    // `2024-01-01` as non-strings, so the guard rejects them as confusing new
+    // tag names, while `on` / `yes` / `no` (booleans only in YAML 1.1) stay
+    // allowed.
+    loaded = parseYaml(stripped, { customTags: ['timestamp'] });
   } catch {
     return false;
   }

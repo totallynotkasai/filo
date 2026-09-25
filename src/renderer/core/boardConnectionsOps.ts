@@ -1,5 +1,5 @@
 import type { Board, Connection } from '../schema/index';
-import type { CacheContext, V7BoardFileData } from '../stores/boardCacheTypes';
+import type { CacheContext, BoardFileData } from '../stores/boardCacheTypes';
 
 /**
  * Strategy contract for "mutate a connection on a board of type B". Each board
@@ -33,7 +33,7 @@ export interface BoardConnectionsOps<B extends Board = Board> {
    */
   addConnection(
     ctx: CacheContext,
-    cached: V7BoardFileData,
+    cached: BoardFileData,
     boardId: string,
     conn: Connection,
   ): void;
@@ -44,7 +44,7 @@ export interface BoardConnectionsOps<B extends Board = Board> {
    */
   removeConnection(
     ctx: CacheContext,
-    cached: V7BoardFileData,
+    cached: BoardFileData,
     boardId: string,
     connId: string,
   ): void;
@@ -55,7 +55,7 @@ export interface BoardConnectionsOps<B extends Board = Board> {
    */
   updateConnection(
     ctx: CacheContext,
-    cached: V7BoardFileData,
+    cached: BoardFileData,
     boardId: string,
     connId: string,
     updated: Connection,
@@ -73,7 +73,7 @@ export interface BoardConnectionsOps<B extends Board = Board> {
 const sharedConnectionsBody = {
   addConnection(
     ctx: CacheContext,
-    cached: V7BoardFileData,
+    cached: BoardFileData,
     boardId: string,
     conn: Connection,
   ): void {
@@ -86,7 +86,7 @@ const sharedConnectionsBody = {
 
   removeConnection(
     ctx: CacheContext,
-    cached: V7BoardFileData,
+    cached: BoardFileData,
     boardId: string,
     connId: string,
   ): void {
@@ -101,7 +101,7 @@ const sharedConnectionsBody = {
 
   updateConnection(
     ctx: CacheContext,
-    cached: V7BoardFileData,
+    cached: BoardFileData,
     boardId: string,
     connId: string,
     updated: Connection,

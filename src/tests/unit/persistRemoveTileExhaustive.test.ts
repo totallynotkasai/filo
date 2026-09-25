@@ -40,7 +40,7 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { DeleteTilesCommand } from '@renderer/commands/index';
 import { CascadeDeleteCommand } from '@renderer/commands/groupAndBoardCommands';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type {
   Connection,
   DocumentBoard,
@@ -113,7 +113,7 @@ function mkConnection(id: string, boardId: string, from: string, to: string): Co
   } as Connection;
 }
 
-function mindmapEnvWithLinks(tileA: string, tileB: string): V7BoardFileData {
+function mindmapEnvWithLinks(tileA: string, tileB: string): BoardFileData {
   return {
     board: {
       id: 'mm',
@@ -134,7 +134,7 @@ function mindmapEnvWithLinks(tileA: string, tileB: string): V7BoardFileData {
       groups: [],
     } as unknown as MindMapBoard,
     tileDefs: { [tileA]: mkDef(tileA), [tileB]: mkDef(tileB) },
-    connections: { c1: mkConnection('c1', 'mm', tileA, tileB) as V7BoardFileData['connections'][string] },
+    connections: { c1: mkConnection('c1', 'mm', tileA, tileB) as BoardFileData['connections'][string] },
     // Empty frames: frame `tileIds` sweep is owned by the framesStore
     // containment observer, not the per-type tile-ops contract. Adding a
     // frame here would surface that separate (latent) responsibility in
@@ -143,7 +143,7 @@ function mindmapEnvWithLinks(tileA: string, tileB: string): V7BoardFileData {
   };
 }
 
-function kanbanEnvWithLinks(tileA: string, tileB: string): V7BoardFileData {
+function kanbanEnvWithLinks(tileA: string, tileB: string): BoardFileData {
   return {
     board: {
       id: 'kb',
@@ -167,12 +167,12 @@ function kanbanEnvWithLinks(tileA: string, tileB: string): V7BoardFileData {
       ],
     } as unknown as KanbanBoard,
     tileDefs: { [tileA]: mkDef(tileA), [tileB]: mkDef(tileB) },
-    connections: { c1: mkConnection('c1', 'kb', tileA, tileB) as V7BoardFileData['connections'][string] },
+    connections: { c1: mkConnection('c1', 'kb', tileA, tileB) as BoardFileData['connections'][string] },
     frames: [],
   };
 }
 
-function tasklistEnvWithLinks(tileA: string, tileB: string): V7BoardFileData {
+function tasklistEnvWithLinks(tileA: string, tileB: string): BoardFileData {
   return {
     board: {
       id: 'tl',
@@ -190,12 +190,12 @@ function tasklistEnvWithLinks(tileA: string, tileB: string): V7BoardFileData {
       collapsedSubtasks: [],
     } as unknown as TaskListBoard,
     tileDefs: { [tileA]: mkDef(tileA), [tileB]: mkDef(tileB) },
-    connections: { c1: mkConnection('c1', 'tl', tileA, tileB) as V7BoardFileData['connections'][string] },
+    connections: { c1: mkConnection('c1', 'tl', tileA, tileB) as BoardFileData['connections'][string] },
     frames: [],
   };
 }
 
-function documentEnv(): V7BoardFileData {
+function documentEnv(): BoardFileData {
   return {
     board: {
       id: 'doc',
@@ -220,7 +220,7 @@ type BoardKind = 'mindmap' | 'kanban' | 'tasklist';
 interface BoardFixture {
   kind: BoardKind;
   boardId: string;
-  envelope: V7BoardFileData;
+  envelope: BoardFileData;
 }
 
 function makeFixture(kind: BoardKind, tileA: string, tileB: string): BoardFixture {

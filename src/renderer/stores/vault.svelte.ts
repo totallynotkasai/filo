@@ -58,7 +58,7 @@ import {
   seedViewportsCache,
   markCorruptConfigTarget,
   hasFailedWrites,
-  type V7BoardFileData,
+  type BoardFileData,
 } from '../lib/boards/boardSaver';
 import {
   dispatchExternalChangeBatch,
@@ -86,6 +86,7 @@ import { makeRecoverySlice } from './vaultRecovery';
 import { makeRootFolderSlice } from './vaultRootFolder';
 import { makeFolderOpsSlice } from './vaultFolderOps';
 import { makeExternalChangesSlice } from './vaultExternalChanges';
+import { saveBeforeLeaving, type LeaveOutcome } from './vaultLeaveGuard';
 
 /**
  * Vault store — owns the open vault's lifecycle (open/close/save), the
@@ -209,7 +210,7 @@ function awaitConfirm(config: {
 
 function getBoardWriteArgs(
   boardId: string,
-): { vaultRoot: string; boardPath: string; cached: V7BoardFileData } | null {
+): { vaultRoot: string; boardPath: string; cached: BoardFileData } | null {
   if (!vaultPath) return null;
   const boardPath = boardStore.paths[boardId];
   const cached = boardStore.cache[boardId];
@@ -555,8 +556,9 @@ async function releaseRegistryBestEffort(): Promise<void> {
  * Rather than strand the user on an empty-looking "still vault A" (where a
  * follow-up save could clobber A's `.filo/` layout), reopen the outgoing vault
  * from disk. `vault:close` first drops any registry the half-opened new vault
- * left armed. Saved edits are read back; "Don't Save" edits stay discarded; a
- * preserved `.filo/.dirty` resurfaces the Recovery modal. If the outgoing vault
+ * left armed. Saved edits are read back; edits left behind with "Open anyway"
+ * are in `.filo/recovery/`, and the preserved `.filo/.dirty` resurfaces the
+ * Recovery modal. If the outgoing vault
  * is also unreadable, fall to a clean no-vault home state.
  */
 async function revertToOutgoingVault(
@@ -990,48 +992,13 @@ export const vaultStore = {
     // Capture the outgoing vault path so a failed candidate load can revert to
     // it. See `revertToOutgoingVault`.
     const outgoingVaultPath: string | null = currentProject ? vaultPath || null : null;
-    // Save any existing work — three-way Save / Don't Save / Cancel dialog.
-    //
-    // Branches:
-    //  - Save (button 0): flush; if the flush returns false (any write
-    //    rejected) abort the swap with a toast so the user can act on the
-    //    per-file errors first.
-    //  - Don't Save (button 1): skip the flush AND skip the sentinel
-    //    cleanup, so the old vault's `.filo/.dirty` survives. Reopening
-    //    the old vault will surface the Recovery modal.
-    //  - Cancel (button 2): return early. No flush, no sentinel touch,
-    //    no in-memory state cleanup. Pending timers continue to run
-    //    against the still-active old vault.
-    // Function scope so the swap-lifecycle block below can read it for
-    // `saveOutgoing`.
-    let choice: -1 | 0 | 1 | 2 = 2;
+    // Save the outgoing vault first; ask only if something is still unsaved
+    // (see `saveBeforeLeaving`). `rescued` keeps the outgoing `.filo/.dirty`
+    // so reopening that vault offers recovery.
+    let leave: LeaveOutcome = 'saved';
     if (currentProject) {
-      try {
-        const raw = await window.filo.invoke(
-          'dialog:choice',
-          'You have unsaved changes. Save before opening a new vault?',
-          ['Save', "Don't Save", 'Cancel'],
-          { title: 'Open Vault', defaultId: 0, cancelId: 2 },
-        );
-        choice = (raw === 0 || raw === 1 || raw === 2 ? raw : 2) as 0 | 1 | 2;
-      } catch {
-        // Dialog itself failed — treat as Cancel to avoid silent data loss.
-        choice = 2;
-      }
-      if (choice === 2) {
-        return false;
-      }
-      if (choice === 0) {
-        const ok = await this.save();
-        if (!ok) {
-          uiStore.toast(
-            'Save failed — open-vault cancelled. Check the error toasts above, then try again.',
-            'error',
-            7000,
-          );
-          return false;
-        }
-      }
+      leave = await saveBeforeLeaving(() => this.save(), 'open');
+      if (leave === 'cancelled') return false;
     }
 
     // Mark the swap "in progress" for the window during which the main-side
@@ -1057,17 +1024,16 @@ export const vaultStore = {
         //   - boardWriteScheduler cancels every queued debounced timer so a
         //     closure armed against the outgoing vault can't fire after the
         //     new vault opens.
-        //   - writeStateTracking honours `saveOutgoing`: the Save branch
-        //     (choice === 0) clears the `.filo/.dirty` sentinel; the Don't
-        //     Save branch (choice === 1) preserves it so reopening the
-        //     outgoing vault surfaces the Recovery modal.
+        //   - writeStateTracking honours `saveOutgoing`: a clean save clears
+        //     the `.filo/.dirty` sentinel; leaving with rescue copies keeps
+        //     it, so reopening the outgoing vault surfaces the Recovery modal.
         //   - history / vaultIndex / tabs / workspace / etc. drop their local
         //     state so the new vault hydrates against a clean slate.
         await fireVaultSwap({
           phase: 'pre-swap',
           previousVault: vaultPath || null,
           nextVault: newVaultPath,
-          saveOutgoing: choice === 0,
+          saveOutgoing: leave === 'saved',
         });
         // Drop the rename queue's chain head (this module owns the swap event,
         // so it can't subscribe to it). Otherwise a stale watcher event queued
@@ -1122,39 +1088,18 @@ export const vaultStore = {
 
   /**
    * Closes the active vault and returns the renderer to
-   * the home screen. Mirrors `openVault`'s save-or-discard prompt, fires
+   * the home screen. Saves first like `openVault` (asking only if something
+   * couldn't be saved), fires
    * the same `pre-swap` lifecycle so every per-vault store resets, then
    * tells main to release the watcher + drop the vault-registry pointer.
    *
    * Returns true on success (or no-op when nothing was open), false when
-   * the user cancelled the save prompt.
+   * the user chose to stay.
    */
   async closeVault(): Promise<boolean> {
     if (!currentProject) return true;
-    let choice: -1 | 0 | 1 | 2 = 2;
-    try {
-      const raw = await window.filo.invoke(
-        'dialog:choice',
-        'You have unsaved changes. Save before closing the vault?',
-        ['Save', "Don't Save", 'Cancel'],
-        { title: 'Close Vault', defaultId: 0, cancelId: 2 },
-      );
-      choice = (raw === 0 || raw === 1 || raw === 2 ? raw : 2) as 0 | 1 | 2;
-    } catch {
-      choice = 2;
-    }
-    if (choice === 2) return false;
-    if (choice === 0) {
-      const ok = await this.save();
-      if (!ok) {
-        uiStore.toast(
-          'Save failed — close cancelled. Check the error toasts above, then try again.',
-          'error',
-          7000,
-        );
-        return false;
-      }
-    }
+    const leave = await saveBeforeLeaving(() => this.save(), 'close');
+    if (leave === 'cancelled') return false;
     // Same swap-window guard as `openVault`: defer a concurrent quit's drain
     // until the close has settled so it doesn't write against the released
     // registry. Owner-checked clear as in openVault.
@@ -1166,7 +1111,7 @@ export const vaultStore = {
         phase: 'pre-swap',
         previousVault: vaultPath || null,
         nextVault: null,
-        saveOutgoing: choice === 0,
+        saveOutgoing: leave === 'saved',
       });
       renameQueue = Promise.resolve();
       try {

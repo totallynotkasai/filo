@@ -11,7 +11,7 @@ import { __resetErrorBusForTests } from '@renderer/lib/utils/errorBus';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { beginVaultGeneration } from '@renderer/lib/vault/vaultIdentity';
 import { __resetKeepLocalBackupForTests } from '@renderer/lib/vault/keepLocalBackup';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard } from '@renderer/schema/index';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { restoreFiloDefault } from '../helpers/filoBridge';
@@ -105,6 +105,7 @@ describe('vaultExternalChanges — external delete of a note with an unsaved edi
     vault.remove('Notes.md');
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await noteStore.__settleGraceChecksForTests();
     await vi.waitFor(() => expect(deletedToast()).toBeDefined());
 
     vault.failNextWrite('Notes.md', 'EROFS');
@@ -121,6 +122,7 @@ describe('vaultExternalChanges — external delete of a note with an unsaved edi
     vault.remove('Notes.md');
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await noteStore.__settleGraceChecksForTests();
 
     await vi.waitFor(() => expect(deletedToast()).toBeDefined());
     const toast = deletedToast();
@@ -134,6 +136,7 @@ describe('vaultExternalChanges — external delete of a note with an unsaved edi
     vault.remove('Notes.md');
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await noteStore.__settleGraceChecksForTests();
     await vi.waitFor(() => expect(deletedToast()).toBeDefined());
     await noteStore.flushAll();
 
@@ -146,6 +149,7 @@ describe('vaultExternalChanges — external delete of a note with an unsaved edi
     vault.remove('Notes.md');
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await noteStore.__settleGraceChecksForTests();
     await vi.waitFor(() => expect(deletedToast()).toBeDefined());
 
     await deletedToast()?.actions?.[1].handler();
@@ -161,6 +165,7 @@ describe('vaultExternalChanges — external delete of a note with an unsaved edi
     vault.remove('Notes.md');
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await noteStore.__settleGraceChecksForTests();
     await vi.waitFor(() => expect(deletedToast()).toBeDefined());
 
     await deletedToast()?.actions?.[0].handler();
@@ -176,12 +181,14 @@ describe('vaultExternalChanges — external delete of a note with an unsaved edi
 describe('vaultExternalChanges — changes that ask nothing', () => {
   it('a change to a file nobody has open and no tile uses surfaces no toast', async () => {
     await slice.handleExternalMarkdownChanges(['Phantom.md']);
+    await noteStore.__settleGraceChecksForTests();
     expect(uiStore.toasts).toHaveLength(0);
   });
 
   it('a new file first seen by the watcher surfaces no toast', async () => {
     vault.writeExternally('NewTile.md', '---\ntags: []\n---\nfresh body\n');
     await slice.handleExternalMarkdownChanges(['NewTile.md']);
+    await noteStore.__settleGraceChecksForTests();
     expect(uiStore.toasts).toHaveLength(0);
     expect(vaultIndexStore.getMetadata('NewTile.md')).toBeDefined();
   });
@@ -196,6 +203,7 @@ describe('vaultExternalChanges — a clean open note follows a frontmatter edit'
     // External editor flips priority and keeps the inline comment.
     vault.writeExternally('Note.md', '---\ntitle: Hello\npriority: high   # inline note\n---\nbody\n');
     await slice.handleExternalMarkdownChanges(['Note.md']);
+    await noteStore.__settleGraceChecksForTests();
     await vi.waitFor(() => expect(m.frontmatter.priority).toBe('high'));
 
     // A body-only save must not re-emit the changed line and lose its comment.
@@ -207,7 +215,7 @@ describe('vaultExternalChanges — a clean open note follows a frontmatter edit'
 });
 
 describe('vaultExternalChanges — a deleted file that tiles still use', () => {
-  function kanbanWithTileOn(rel: string): V7BoardFileData {
+  function kanbanWithTileOn(rel: string): BoardFileData {
     return {
       board: {
         id: 'kb',
@@ -232,6 +240,7 @@ describe('vaultExternalChanges — a deleted file that tiles still use', () => {
     vault.remove('Notes.md');
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await noteStore.__settleGraceChecksForTests();
 
     const toast = uiStore.toasts.find((t) => t.text.includes('is missing from the vault'));
     expect(toast).toBeDefined();
@@ -245,6 +254,7 @@ describe('vaultExternalChanges — a deleted file that tiles still use', () => {
     vault.remove('Notes.md');
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await noteStore.__settleGraceChecksForTests();
     await vi.waitFor(() => expect(deletedToast()).toBeDefined());
     expect(uiStore.toasts.find((t) => t.text.includes('is missing from the vault'))).toBeUndefined();
   });
@@ -272,6 +282,7 @@ describe('vaultExternalChanges — vault swap during the index refresh bails bef
     };
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await noteStore.__settleGraceChecksForTests();
     await new Promise((r) => setTimeout(r, 20));
 
     expect(swapped).toBe(true);
@@ -285,6 +296,7 @@ describe('vaultExternalChanges — vault swap during the index refresh bails bef
 
     vault.writeExternally('Notes.md', '---\ntags: [a]\n---\nEXTERNAL CLOBBER\n');
     await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await noteStore.__settleGraceChecksForTests();
 
     await vi.waitFor(() => expect(m.body).toBe('EXTERNAL CLOBBER\n'));
   });

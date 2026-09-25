@@ -7,7 +7,7 @@ import {
   UpdatePropertiesCommand,
   UpdateCardFieldCommand,
 } from '@renderer/commands/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, KanbanBoard } from '@renderer/schema/index';
 import { cancelAllPendingWrites } from '@renderer/lib/boards/boardSaver';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
@@ -31,7 +31,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
  * note field edit (UpdateCardField, execute and undo).
  */
 
-function makeMindMap(id: string): V7BoardFileData {
+function makeMindMap(id: string): BoardFileData {
   return {
     board: {
       id,
@@ -51,7 +51,7 @@ function makeMindMap(id: string): V7BoardFileData {
   };
 }
 
-function makeKanban(id: string): V7BoardFileData {
+function makeKanban(id: string): BoardFileData {
   return {
     board: {
       id,

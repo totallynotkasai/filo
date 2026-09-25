@@ -1,5 +1,5 @@
 import type { Board, Frame } from '../schema/index';
-import type { CacheContext, V7BoardFileData } from '../stores/boardCacheTypes';
+import type { CacheContext, BoardFileData } from '../stores/boardCacheTypes';
 
 /**
  * Strategy contract for "mutate a frame on a board of type B". Each board
@@ -31,7 +31,7 @@ export interface BoardFramesOps<B extends Board = Board> {
    */
   addFrame(
     ctx: CacheContext,
-    cached: V7BoardFileData,
+    cached: BoardFileData,
     boardId: string,
     frame: Frame,
   ): void;
@@ -42,7 +42,7 @@ export interface BoardFramesOps<B extends Board = Board> {
    */
   removeFrame(
     ctx: CacheContext,
-    cached: V7BoardFileData,
+    cached: BoardFileData,
     boardId: string,
     frameId: string,
   ): void;
@@ -53,7 +53,7 @@ export interface BoardFramesOps<B extends Board = Board> {
    */
   updateFrame(
     ctx: CacheContext,
-    cached: V7BoardFileData,
+    cached: BoardFileData,
     boardId: string,
     frameId: string,
     updated: Frame,
@@ -70,7 +70,7 @@ export interface BoardFramesOps<B extends Board = Board> {
 const sharedFramesBody = {
   addFrame(
     ctx: CacheContext,
-    cached: V7BoardFileData,
+    cached: BoardFileData,
     boardId: string,
     frame: Frame,
   ): void {
@@ -83,7 +83,7 @@ const sharedFramesBody = {
 
   removeFrame(
     ctx: CacheContext,
-    cached: V7BoardFileData,
+    cached: BoardFileData,
     boardId: string,
     frameId: string,
   ): void {
@@ -97,7 +97,7 @@ const sharedFramesBody = {
 
   updateFrame(
     ctx: CacheContext,
-    cached: V7BoardFileData,
+    cached: BoardFileData,
     boardId: string,
     frameId: string,
     updated: Frame,

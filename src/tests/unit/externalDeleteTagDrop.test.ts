@@ -131,6 +131,7 @@ describe('vaultExternalChanges — external delete drops tags.json entry only wh
     vault.remove('Notes.md');
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await noteStore.__settleGraceChecksForTests();
     // Not dropped eagerly on the delete event.
     expect(fileTagsStore.file.fileTags['notes.md']).toEqual(['mytag']);
 
@@ -154,6 +155,7 @@ describe('vaultExternalChanges — external delete drops tags.json entry only wh
     vault.remove('Notes.md');
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await noteStore.__settleGraceChecksForTests();
     const keep = missingToast()?.actions?.find((a) => a.label.startsWith('Keep tiles'));
     expect(keep).toBeDefined();
     await keep?.handler();
@@ -169,6 +171,7 @@ describe('vaultExternalChanges — external delete drops tags.json entry only wh
     vault.remove('Notes.md');
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await noteStore.__settleGraceChecksForTests();
     await settle();
     const toast = uiStore.toasts.find((t) => t.text.includes('deleted by another program'));
     const keepMine = toast?.actions?.find((a) => a.label === 'Keep mine');
@@ -189,6 +192,7 @@ describe('vaultExternalChanges — external delete drops tags.json entry only wh
     vault.remove('Notes.md');
 
     await slice.handleExternalMarkdownChanges(['Notes.md']);
+    await noteStore.__settleGraceChecksForTests();
     await settle();
     const toast = uiStore.toasts.find((t) => t.text.includes('deleted by another program'));
     const discard = toast?.actions?.find((a) => a.label === 'Discard');

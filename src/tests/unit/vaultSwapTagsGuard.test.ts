@@ -53,7 +53,7 @@ const TAGS_JSON: Record<string, string> = {
 function buildRoutes(tagsSaves: TagsSaveCall[]) {
   const rootArg = (root: unknown): string => (typeof root === 'string' ? root : '');
   return {
-    'dialog:choice': async () => 1, // "Don't Save" — skip the flush prompt.
+    'dialog:choice': async () => 1, // "Cancel" if asked: nothing is unsaved, so no leave dialog appears.
     'vault:close': async () => ({ success: true }),
     'vault:init-config': async () => ({ ok: true }),
     'config:load-all': async () => ({}),
@@ -185,7 +185,7 @@ describe('Audit-8 H2(b) — close→reopen same path bails via the generation gu
       fileTags: { 'photo.png': ['topic'] },
     });
     installFiloMock({
-      'dialog:choice': async () => 1, // "Don't Save" — skip the flush prompt.
+      'dialog:choice': async () => 1, // "Cancel" if asked: nothing is unsaved, so no leave dialog appears.
       'vault:close': async () => ({ success: true }),
       'vault:init-config': async () => ({ ok: true }),
       'config:load-all': async () => ({}),

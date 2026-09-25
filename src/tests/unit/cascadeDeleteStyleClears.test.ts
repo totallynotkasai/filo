@@ -12,7 +12,7 @@ import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { CascadeDeleteCommand } from '@renderer/commands/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { CascadeStyleClears } from '@renderer/stores/boardCacheFrontmatter';
 import type { KanbanBoard, MindMapBoard } from '@renderer/schema/index';
 
@@ -30,7 +30,7 @@ async function flushAsync(): Promise<void> {
   }
 }
 
-function makeKanban(id: string, cardTileId: string, coverImage: string): V7BoardFileData {
+function makeKanban(id: string, cardTileId: string, coverImage: string): BoardFileData {
   return {
     board: {
       id,
@@ -76,7 +76,7 @@ function makeMindMapWithFrame(
   frameId: string,
   frameBackgroundImage: string,
   defaultsBackgroundImage: string,
-): V7BoardFileData {
+): BoardFileData {
   return {
     board: {
       id,
@@ -106,7 +106,7 @@ function makeMindMapWithFrame(
         title: 'F',
         style: { backgroundImage: frameBackgroundImage },
       },
-    ] as unknown as V7BoardFileData['frames'],
+    ] as unknown as BoardFileData['frames'],
   };
 }
 

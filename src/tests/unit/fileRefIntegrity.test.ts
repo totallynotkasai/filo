@@ -6,9 +6,9 @@ import {
   collectFileRefs,
   detectBrokenRefs,
 } from '@renderer/lib/vault/fileRefIntegrity';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 
-function makeBoard(defs: Record<string, Record<string, unknown>>): V7BoardFileData {
+function makeBoard(defs: Record<string, Record<string, unknown>>): BoardFileData {
   return {
     board: {
       id: 'b1',
@@ -79,7 +79,7 @@ describe('fileRefIntegrity.rewriteRenameInBoard', () => {
 
 describe('fileRefIntegrity.propagateRenameAcrossBoards', () => {
   it('updates multiple boards and reports changed board ids', () => {
-    const boards: Record<string, V7BoardFileData> = {
+    const boards: Record<string, BoardFileData> = {
       b1: makeBoard({ t1: { id: 't1', type: 'image', src: 'images/a.png' } }),
       b2: makeBoard({ t2: { id: 't2', type: 'image', src: 'other/b.png' } }),
       b3: makeBoard({ t3: { id: 't3', type: 'file', filePath: 'images/a.png' } }),
@@ -92,7 +92,7 @@ describe('fileRefIntegrity.propagateRenameAcrossBoards', () => {
 
 describe('fileRefIntegrity.findTilesToCascadeDelete', () => {
   it('flags tiles by file-ref field exact match', () => {
-    const boards: Record<string, V7BoardFileData> = {
+    const boards: Record<string, BoardFileData> = {
       b1: makeBoard({
         t1: { id: 't1', type: 'image', src: 'images/a.png' },
         t2: { id: 't2', type: 'image', src: 'images/b.png' },
@@ -104,7 +104,7 @@ describe('fileRefIntegrity.findTilesToCascadeDelete', () => {
   });
 
   it('flags every tile under a deleted folder', () => {
-    const boards: Record<string, V7BoardFileData> = {
+    const boards: Record<string, BoardFileData> = {
       b1: makeBoard({
         t1: { id: 't1', type: 'image', src: 'images/a.png' },
         t2: { id: 't2', type: 'file', filePath: 'images/sub/b.pdf' },
@@ -116,7 +116,7 @@ describe('fileRefIntegrity.findTilesToCascadeDelete', () => {
   });
 
   it('flags a text tile by its filePath', () => {
-    const boards: Record<string, V7BoardFileData> = {
+    const boards: Record<string, BoardFileData> = {
       b1: makeBoard({
         t1: { id: 't1', type: 'text', filePath: 'Notes.md' },
         t2: { id: 't2', type: 'text', filePath: 'Other.md' },
@@ -127,7 +127,7 @@ describe('fileRefIntegrity.findTilesToCascadeDelete', () => {
   });
 
   it('a text tile is matched by its path, not by a file named after it elsewhere', () => {
-    const boards: Record<string, V7BoardFileData> = {
+    const boards: Record<string, BoardFileData> = {
       b1: makeBoard({
         t1: { id: 't1', type: 'text', filePath: 'sub/Notes.md' },
       }),
@@ -209,7 +209,7 @@ function makeKanbanBoard(opts: {
   name?: string;
   defs: Record<string, Record<string, unknown>>;
   columns?: Array<{ id: string; tilePlacements: Array<{ tileId: string; position?: number }> }>;
-}): V7BoardFileData {
+}): BoardFileData {
   return {
     board: {
       id: 'k1',
@@ -230,7 +230,7 @@ function makeKanbanBoard(opts: {
 function makeTaskListBoard(opts: {
   defs: Record<string, Record<string, unknown>>;
   tasks?: Array<{ tileId: string; position?: number }>;
-}): V7BoardFileData {
+}): BoardFileData {
   return {
     board: {
       id: 'tl1',
@@ -251,7 +251,7 @@ function makeTaskListBoard(opts: {
 function makeMindMapBoardWithPlacements(opts: {
   defs: Record<string, Record<string, unknown>>;
   placements?: Record<string, unknown>;
-}): V7BoardFileData {
+}): BoardFileData {
   return {
     board: {
       id: 'mm1',
@@ -275,7 +275,7 @@ function makeMindMapBoardWithPlacements(opts: {
   };
 }
 
-function makeDocumentBoard(filePath: string): V7BoardFileData {
+function makeDocumentBoard(filePath: string): BoardFileData {
   return {
     board: {
       id: 'd1',
@@ -295,7 +295,7 @@ function makeDocumentBoard(filePath: string): V7BoardFileData {
 
 describe('fileRefIntegrity — note renames rewrite filePath on every board type', () => {
   it('rewrites a Task List text tile when its note is renamed, leaving other notes alone', () => {
-    const boards: Record<string, V7BoardFileData> = {
+    const boards: Record<string, BoardFileData> = {
       tl1: makeTaskListBoard({
         defs: {
           t1: { id: 't1', type: 'text', filePath: 'Tasks/Buy milk.md' },
@@ -311,7 +311,7 @@ describe('fileRefIntegrity — note renames rewrite filePath on every board type
   });
 
   it('rewrites the same note on several boards (Kanban card and Mind Map tile)', () => {
-    const boards: Record<string, V7BoardFileData> = {
+    const boards: Record<string, BoardFileData> = {
       k1: makeKanbanBoard({
         defs: { t1: { id: 't1', type: 'text', filePath: 'Kanban/Spec.md' } },
         columns: [{ id: 'c1', tilePlacements: [{ tileId: 't1' }] }],
@@ -327,7 +327,7 @@ describe('fileRefIntegrity — note renames rewrite filePath on every board type
   });
 
   it('follows a folder move for every note inside it', () => {
-    const boards: Record<string, V7BoardFileData> = {
+    const boards: Record<string, BoardFileData> = {
       tl1: makeTaskListBoard({
         defs: {
           t1: { id: 't1', type: 'text', filePath: 'Tasks/A.md' },
@@ -347,7 +347,7 @@ describe('fileRefIntegrity — note renames rewrite filePath on every board type
   // The title lives in the note's frontmatter, so a rename only moves the
   // path: nothing title-shaped is written onto the board.
   it('a rename writes only filePath on the def', () => {
-    const boards: Record<string, V7BoardFileData> = {
+    const boards: Record<string, BoardFileData> = {
       mm1: makeMindMapBoardWithPlacements({
         defs: { t1: { id: 't1', type: 'text', filePath: 'Notes.md' } },
       }),
@@ -357,7 +357,7 @@ describe('fileRefIntegrity — note renames rewrite filePath on every board type
   });
 
   it("rewrites a Document board's filePath", () => {
-    const boards: Record<string, V7BoardFileData> = { d1: makeDocumentBoard('Docs/Plan.md') };
+    const boards: Record<string, BoardFileData> = { d1: makeDocumentBoard('Docs/Plan.md') };
     const r = propagateRenameAcrossBoards(boards, 'Docs/Plan.md', 'Docs/Roadmap.md');
     expect(r.changedBoardIds).toEqual(['d1']);
     expect((boards.d1.board as any).filePath).toBe('Docs/Roadmap.md');
@@ -366,7 +366,7 @@ describe('fileRefIntegrity — note renames rewrite filePath on every board type
 
 describe('fileRefIntegrity.findTilesToCascadeDelete — text tiles and covers', () => {
   it('flags a Task List tile when its note is deleted', () => {
-    const boards: Record<string, V7BoardFileData> = {
+    const boards: Record<string, BoardFileData> = {
       tl1: makeTaskListBoard({
         defs: {
           t1: { id: 't1', type: 'text', filePath: 'Tasks/Buy milk.md' },
@@ -380,7 +380,7 @@ describe('fileRefIntegrity.findTilesToCascadeDelete — text tiles and covers', 
   });
 
   it('flags every tile whose note sits under a deleted folder, on every board', () => {
-    const boards: Record<string, V7BoardFileData> = {
+    const boards: Record<string, BoardFileData> = {
       tl1: makeTaskListBoard({
         defs: {
           t1: { id: 't1', type: 'text', filePath: 'Tasks/A.md' },
@@ -401,7 +401,7 @@ describe('fileRefIntegrity.findTilesToCascadeDelete — text tiles and covers', 
   });
 
   it('flags a Kanban card when its note is deleted', () => {
-    const boards: Record<string, V7BoardFileData> = {
+    const boards: Record<string, BoardFileData> = {
       k1: makeKanbanBoard({
         name: 'Project',
         defs: { t1: { id: 't1', type: 'text', filePath: 'Kanban/Project/Spec.md' } },
@@ -413,7 +413,7 @@ describe('fileRefIntegrity.findTilesToCascadeDelete — text tiles and covers', 
   });
 
   it('returns coverImage clears for Kanban placements pointing at the deleted file', () => {
-    const boards: Record<string, V7BoardFileData> = {
+    const boards: Record<string, BoardFileData> = {
       k1: makeKanbanBoard({
         name: 'Project',
         defs: {
@@ -440,7 +440,7 @@ describe('fileRefIntegrity.findTilesToCascadeDelete — text tiles and covers', 
   });
 
   it('reports coverImage clears for every placement under a deleted folder', () => {
-    const boards: Record<string, V7BoardFileData> = {
+    const boards: Record<string, BoardFileData> = {
       k1: makeKanbanBoard({
         defs: {
           t1: { id: 't1', type: 'text', filePath: 'A.md' },
@@ -462,7 +462,7 @@ describe('fileRefIntegrity.findTilesToCascadeDelete — text tiles and covers', 
   });
 
   it('does not double-report a cover-image clear when the tile is also queued for removal', () => {
-    const boards: Record<string, V7BoardFileData> = {
+    const boards: Record<string, BoardFileData> = {
       k1: makeKanbanBoard({
         defs: {
           // Tile points at the same image AND uses it as its file ref → the
@@ -484,7 +484,7 @@ describe('fileRefIntegrity.findTilesToCascadeDelete — text tiles and covers', 
   });
 
   it('leaves unrelated cover images untouched', () => {
-    const boards: Record<string, V7BoardFileData> = {
+    const boards: Record<string, BoardFileData> = {
       k1: makeKanbanBoard({
         defs: { t1: { id: 't1', type: 'text', filePath: 'A.md' } },
         columns: [

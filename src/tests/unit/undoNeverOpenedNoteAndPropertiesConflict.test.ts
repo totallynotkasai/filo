@@ -16,7 +16,7 @@ import { __resetVaultIdentityForTests } from '@renderer/lib/vault/vaultIdentity'
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { restoreFiloDefault } from '../helpers/filoBridge';
 import { NoteGoneError } from '@renderer/commands/noteGoneError';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TaskListBoard, KanbanBoard } from '@renderer/schema/index';
 
 /**
@@ -36,7 +36,7 @@ import type { TaskListBoard, KanbanBoard } from '@renderer/schema/index';
 
 let vault: MemoryVault;
 
-function makeTaskListFixture(): V7BoardFileData {
+function makeTaskListFixture(): BoardFileData {
   return {
     board: {
       id: 'tl',
@@ -54,7 +54,7 @@ function makeTaskListFixture(): V7BoardFileData {
   };
 }
 
-function makeKanbanFixture(): V7BoardFileData {
+function makeKanbanFixture(): BoardFileData {
   return {
     board: {
       id: 'kb',

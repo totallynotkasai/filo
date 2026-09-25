@@ -16,7 +16,7 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { AddCardCommand } from '@renderer/commands/index';
 import { toastMissingUndoRedoTarget } from '@renderer/commands/missingTargetToast';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard, TileDefinition } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
@@ -24,7 +24,7 @@ function column(id: string, title: string, position: number) {
   return { id, title, position, collapsed: false, tilePlacements: [] as unknown[] };
 }
 
-function makeKanban(): V7BoardFileData {
+function makeKanban(): BoardFileData {
   return {
     version: 8,
     board: {

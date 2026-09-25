@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeBoardFile, type V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import { writeBoardFile, type BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { CURRENT_BOARD_FILE_VERSION } from '@renderer/schema';
 import {
   installFiloMock,
@@ -29,7 +29,7 @@ describe('writeBoardFile — envelope version', () => {
       'config:save': () => null,
     });
 
-    const cached: V7BoardFileData = {
+    const cached: BoardFileData = {
       board: {
         id: 'v-stamp',
         type: 'mindmap',
@@ -44,7 +44,7 @@ describe('writeBoardFile — envelope version', () => {
         frames: [],
         waypoints: [],
         groups: [],
-      } as unknown as V7BoardFileData['board'],
+      } as unknown as BoardFileData['board'],
       tileDefs: {},
       connections: {},
       frames: [],

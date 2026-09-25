@@ -15,7 +15,7 @@ import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { historyStore } from '@renderer/stores/history.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { DeleteTilesCommand } from '@renderer/commands/index';
-import type { V7BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, TextTile, Tile } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
@@ -56,7 +56,7 @@ function activate(tiles: TextTile[]): void {
       updatedAt: 0,
     };
   }
-  const fixture: V7BoardFileData = {
+  const fixture: BoardFileData = {
     board: {
       id: 'mm',
       type: 'mindmap',
@@ -69,7 +69,7 @@ function activate(tiles: TextTile[]): void {
       inlineTiles: {},
       waypoints: [],
     } as unknown as MindMapBoard,
-    tileDefs: tileDefs as V7BoardFileData['tileDefs'],
+    tileDefs: tileDefs as BoardFileData['tileDefs'],
     connections: {},
     frames: [],
   };

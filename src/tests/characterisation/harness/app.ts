@@ -11,6 +11,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, readdi
 import { dirname, join, relative, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mainBridge, type MainBridge } from './mainBridge';
+import { messageBoxes, type MessageBoxCall } from './electronFake';
 
 export interface CharApp {
   /** Absolute vault root. */
@@ -199,6 +200,74 @@ export async function quitApp(app: CharApp): Promise<number> {
   return Date.now() - started;
 }
 
+/** What happened when the user closed the vault or opened another one. */
+export interface LeaveVaultResult {
+  /** False when the app stayed on the vault (the user cancelled). */
+  done: boolean;
+  /** Every message box shown on the way, in order. */
+  dialogs: MessageBoxCall[];
+}
+
+async function leaveVault(answers: string[], go: () => Promise<boolean>): Promise<LeaveVaultResult> {
+  mainBridge().attach();
+  messageBoxes.shown.length = 0;
+  messageBoxes.answers.splice(0, messageBoxes.answers.length, ...answers);
+  try {
+    const done = await go();
+    await settle(100);
+    return { done, dialogs: [...messageBoxes.shown] };
+  } finally {
+    messageBoxes.answers.length = 0;
+  }
+}
+
+/**
+ * File → Close Vault, straight away (no waiting for debounces). A dialog, if
+ * one appears, is answered with the button labelled `answer` (its first button
+ * when none is given).
+ */
+export async function closeVault(_app: CharApp, answer?: string): Promise<LeaveVaultResult> {
+  const { vaultStore } = await import('@renderer/stores/vault.svelte');
+  return leaveVault(answer ? [answer] : [], () => vaultStore.closeVault());
+}
+
+/** File → Open Vault on a second, new vault seeded with `files`, straight away. */
+export async function openOtherVault(
+  app: CharApp,
+  files: Record<string, string> = {},
+  answer?: string,
+): Promise<LeaveVaultResult & { other: string }> {
+  const other = mkdtempSync(join(tmpdir(), 'filo-char-vault-'));
+  for (const [rel, text] of Object.entries(files)) {
+    const p = join(other, rel);
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, text);
+  }
+  const { vaultStore } = await import('@renderer/stores/vault.svelte');
+  extraRoots.push(other);
+  const result = await leaveVault(answer ? [answer] : [], () => vaultStore.openVault(other));
+  return { ...result, other };
+}
+
+/** Second vaults a test opened, removed by `stopApp` with the first. */
+const extraRoots: string[] = [];
+
+/** Every file under `.filo/recovery/` (vault-relative path → text). */
+export function recoveryCopies(app: CharApp): Map<string, string> {
+  const out = new Map<string, string>();
+  const base = join(app.root, '.filo', 'recovery');
+  const visit = (dir: string): void => {
+    if (!existsSync(dir)) return;
+    for (const name of readdirSync(dir)) {
+      const p = join(dir, name);
+      if (statSync(p).isDirectory()) visit(p);
+      else out.set(relative(app.root, p).split(sep).join('/'), readFileSync(p, 'utf-8'));
+    }
+  };
+  visit(base);
+  return out;
+}
+
 /** Close the vault (saving, as a user quitting normally would) and delete it, unless `keep`. */
 export async function stopApp(opts: { keep?: boolean } = {}): Promise<void> {
   const app = current;
@@ -210,9 +279,11 @@ export async function stopApp(opts: { keep?: boolean } = {}): Promise<void> {
   await vaultStore.closeVault();
   await settle(100);
   if (opts.keep) return;
-  try {
-    rmSync(app.root, { recursive: true, force: true });
-  } catch {
-    // A watcher handle can hold the dir briefly on Windows; the OS temp sweep gets it.
+  for (const root of [app.root, ...extraRoots.splice(0)]) {
+    try {
+      rmSync(root, { recursive: true, force: true });
+    } catch {
+      // A watcher handle can hold the dir briefly on Windows; the OS temp sweep gets it.
+    }
   }
 }

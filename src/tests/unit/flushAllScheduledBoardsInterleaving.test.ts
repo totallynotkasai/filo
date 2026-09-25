@@ -3,7 +3,7 @@ import {
   scheduleBoardWrite,
   cancelAllPendingWrites,
   __resetDirtyTrackingForTests,
-  type V7BoardFileData,
+  type BoardFileData,
 } from '@renderer/lib/boards/boardSaver';
 import { flushAllScheduledBoards } from '@renderer/lib/boards/boardWriteScheduler';
 import type { MindMapBoard } from '@renderer/schema/index';
@@ -55,7 +55,7 @@ function uninstallFiloStub(): void {
   delete (window as unknown as Record<string, unknown>).filo;
 }
 
-function emptyMindmapBoard(id: string, name: string): V7BoardFileData {
+function emptyMindmapBoard(id: string, name: string): BoardFileData {
   return {
     board: {
       id,
@@ -100,7 +100,7 @@ describe('flushAllScheduledBoards — captures path + snapshot upfront', () => {
       A: 'A.board.json',
       B: 'B.board.json',
     };
-    const livePayloads: Record<string, V7BoardFileData> = { A: liveA, B: liveB };
+    const livePayloads: Record<string, BoardFileData> = { A: liveA, B: liveB };
 
     function getArgs(boardId: string) {
       const path = livePaths[boardId];
@@ -158,7 +158,7 @@ describe('flushAllScheduledBoards — captures path + snapshot upfront', () => {
       A: 'A.board.json',
       B: 'B.board.json',
     };
-    const livePayloads: Record<string, V7BoardFileData> = { A: liveA, B: liveB };
+    const livePayloads: Record<string, BoardFileData> = { A: liveA, B: liveB };
 
     function getArgs(boardId: string) {
       const path = livePaths[boardId];

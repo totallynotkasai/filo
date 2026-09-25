@@ -6,7 +6,7 @@
 
 **Findings source:** [AUDIT19_REPORT_AND_REMEDIATION_PLAN_2026-09-23.md](AUDIT19_REPORT_AND_REMEDIATION_PLAN_2026-09-23.md).
 
-**Status:** Phase 1 done on 2026-09-24 (commits `512adfa`..`65683eb` on `chore/dependency-majors`; see "Phase 1 — status and deviations"). Phase 2 done on 2026-09-24 (commits `f6d01ae`..`02c14f7` on `master-plan/phase-2`, branched from `main` after the merge; see "Phase 2 — status and deviations"). Phase 3 done on 2026-09-24 (branch `master-plan/phase-3`; see "Phase 3 — status and deviations"). Phase 4 done on 2026-09-25 (branch `master-plan/phase-4`, on top of Phase 3; see "Phase 4 — status and deviations"). Phase 5 done on 2026-09-25 (branch `master-plan/phase-5`, branched from `main` at `7205e55`; see "Phase 5 — status and deviations"). Phases 6–7 not started. **Base:** `main`; nothing is pushed yet.
+**Status:** Phase 1 done on 2026-09-24 (commits `512adfa`..`65683eb` on `chore/dependency-majors`; see "Phase 1 — status and deviations"). Phase 2 done on 2026-09-24 (commits `f6d01ae`..`02c14f7` on `master-plan/phase-2`, branched from `main` after the merge; see "Phase 2 — status and deviations"). Phase 3 done on 2026-09-24 (branch `master-plan/phase-3`; see "Phase 3 — status and deviations"). Phase 4 done on 2026-09-25 (branch `master-plan/phase-4`, on top of Phase 3; see "Phase 4 — status and deviations"). Phase 5 done on 2026-09-25 (branch `master-plan/phase-5`, branched from `main` at `7205e55`; see "Phase 5 — status and deviations"). Phase 6 done on 2026-09-25 (same branch, on top of Phase 5; see "Phase 6 — status and deviations"). Phase 7 not started. **Base:** `main`; nothing is pushed yet.
 
 **Goal:** make the `.md` file the only copy of a note's title, tags and content. The board files keep only what is visual. There is one in-memory model per file and one writer per file. The audit fixes that still matter land along the way.
 
@@ -880,6 +880,72 @@ Delete the tests that only exercise legacy formats. Record each removal in the c
 - Every user-facing delete is recoverable, for every file type and size.
 - No command keeps a copy of a note body.
 - `vaultFolderOps.ts` and `boardCache.svelte.ts` are off the allowlist or have lowered ceilings.
+
+#### Phase 6 — status and deviations (2026-09-25)
+
+**Done** on branch `master-plan/phase-5` (on top of the Phase 5 commits, as the owner asked; Phase 5 isn't merged yet); nothing is pushed. `ci:verify` is green: lint (0 errors; the 14 pre-existing unused-variable warnings are Phase 7 DEAD-1), svelte-check, `typecheck:main`, 529 test files (5,269 tests, 1 skipped) under `test:unit:strict` (unit, component and characterisation), build, and 55/55 gates. The test type-check baseline went from 149 errors in 55 files to 119 in 45.
+
+**Exit check.**
+- **Every user-facing delete is recoverable, for every file type and size.** The sidebar delete of a file or folder, a board delete, "delete tile and file" and "delete task and file" all move the item into `.filo/trash` (gate `deletes-go-to-trash`). Undo moves it back with a rename. The characterisation suite deletes a `.docx`, a 40 MB video, a folder and a board file from the sidebar, then undoes, and gets back the same bytes and every tile (`trash.test.ts`).
+- **No command keeps a copy of a note body** (gate `no-note-body-in-commands`). Delete undo is a restore from the trash; note-field undo is an inverse `FrontmatterDelta`; Replace All keeps only the replaced snippets.
+- **`vaultFolderOps.ts`** went from 923 to 513 lines, with the sidebar delete now in `stores/vaultDeleteOps.ts`. **`boardCache.svelte.ts`** went from 793 to 734, with the board delete now in `stores/boardCacheDelete.ts`. Neither is on the size allowlist.
+
+**How it works now**
+- **Main process.** `src/main/vault/trashOps.ts` + `src/main/ipc/vaultTrash.ipc.ts`.
+  - Each entry is `.filo/trash/<trashId>/manifest.json` (`{ originalPath, deletedAt, machineId, kind }`) plus the item at `.filo/trash/<trashId>/files/<originalPath>`. The id looks like `20260925T101500Z-a1b2c3`.
+  - A move writes the manifest first, then renames the item in, with the Windows lock retry. A failure removes the bookkeeping and nothing moves. On this Windows machine, a folder holding an open file fails with EPERM and stays whole; there is a Windows-only test for this.
+  - A restore goes to the original path, or beside it as `… (restored).md` / `Plan (restored).board.json` when that path is taken. It recreates missing parent folders.
+  - A purge calls `shell.trashItem` for each item. Items it refuses come back as `TRASH_FAILED` with the list; the purge only ever `rmdir`s empty folders and unlinks the manifest.
+  - A manifest is synced data, so one naming a path outside the vault or inside `.filo/` is ignored.
+  - The watcher ignores `.filo/trash/`. Moves and restores suppress the watcher for the paths (the whole tree for a folder).
+- **Renderer access.** Only through `lib/vault/vaultOperations.ts`: `trashVaultPath` and `restoreTrashed` drain the writers and hold the note's write queue, as `renameVaultPath` does. `listTrash`, `purgeTrash` and `deleteTrashPermanently` complete the set.
+- **Commands.** `commands/trashedFiles.ts` (`trashFiles` / `restoreFiles`) is shared by `DeleteTilesCommand` (`{ filePaths }`), `DeleteTaskCommand` (`{ filePath }`) and `CascadeDeleteCommand` (`{ trashed, fileTags, styleClears }`).
+  - After a restore, `stores/trash.svelte.ts: syncAfterRestore` refreshes the tree (which re-adopts a restored board), re-reads the search index under the path, and reloads any open note that had gone missing (`noteStore.restoredFromTrash`).
+  - A file restored beside a newer one re-targets the restored tiles to the restored copy.
+- **Settings → Trash** (`components/settings/TrashSettings.svelte`) lists items newest first with Restore, plus "Empty trash" (to the Recycle Bin). If the Recycle Bin refuses, one confirm lists every file and asks "Delete permanently?"; Cancel keeps them in Filo's trash.
+- **Vault open.** This machine's items older than 30 days go to the Recycle Bin (`purgeExpiredTrash`, run after the other open checks).
+- **Board undo of frontmatter (6.2).** `commands/frontmatterRebase.ts` became `commands/frontmatterInverse.ts`.
+  - `NoteFieldCommand` records a forward and an inverse `FrontmatterDelta`, the inverse taken from the note as it stands on first execute. Undo sends the inverse through `noteStore.patchFrontmatter`, so the writer applies it to a fresh read of the file.
+  - `UpdatePropertiesCommand` uses the same `applyDeltaChecked`, so its duplicate conflict code is gone.
+  - Undo of "Rename file to match title" is `RenameFileCommand`: the reverse rename through `vaultStore.rename`, which holds the queue and makes the boards follow.
+
+**Deviations from the plan**
+- **Trash layout.** The item sits under `files/` inside its entry (`.filo/trash/<id>/files/<rel>`), not at `.filo/trash/<id>/<rel>`, so a vault-root file named `manifest.json` can't collide with the manifest.
+- **Two extra channels.** `vault:trash-list` feeds Settings → Trash. `vault:trash-delete-permanently` is the confirmed fallback. The plan had the fallback use `vault:delete`, but `vault:delete` refuses `.filo/` paths by design; a dedicated channel that only accepts trash ids is narrower than loosening that guard. `vault:delete` is now used only by the `.filo/` sentinel clean-ups (gate).
+- **Two channels removed.** `board:delete` (boards go to the trash) and `vault:write-file-binary`, whose only caller was the media-snapshot undo. `deleteVaultPath` is gone from `vaultOperations.ts`.
+- **Board delete undo is a toast.** A board's undo history goes with the board, so its Ctrl+Z has nowhere to live. The "moved to Filo's trash" toast offers Undo; Settings → Trash covers it later. The same toast appears for a sidebar delete that no reachable undo stack holds: when no board is open, or when the active board's own file goes. Its Undo runs that delete's `CascadeDeleteCommand.undo`.
+- **The 30-day purge is not awaited on open.** It may ask "Delete permanently?", and the rest of the vault-open sequence must not wait for that answer. Cancelling asks again at the next open.
+- **The same-key conflict check stays in 6.2.** The plan calls inverse deltas "safe against edits made in between, by construction". That holds for keys the command didn't touch. For a key it did touch, a blind inverse would overwrite another program's newer value, so the "keep the external value / Apply anyway" check from Phase 5 stays, now on deltas.
+- **Only "Rename file to match title" got undo.** Sidebar renames still aren't on board undo, as before this phase.
+- **Replace All no longer keeps whole notes.** It kept each file's text before and after for undo. Each plan now holds the file's before/after hash and length and the replaced snippets. Undo and redo apply only when the bytes are exactly what the plan expects.
+- **`Command.hasFileSnapshots` is removed.** So is the history store's "deleted files … cannot be restored" toast: dropping undo history no longer loses a file.
+- **The zero-tile early return in `cascadeDeleteByVaultPath` is kept for the case with nothing to undo** (no tile, no style field, nothing trashed). A trashed item always gets a command, so a note on no board can be undone.
+- **Behaviour fixed along the way**, each with a test:
+  - redo of a sidebar delete now moves the item to the trash again (before, it removed the tiles and left the file on disk);
+  - undo now puts back an attachment's `.filo/tags.json` file tags (before, they were dropped for good);
+  - a vault swap now clears history's active board. Before, a vault opened with no board showing filed its commands under the previous vault's board, where no undo could reach them;
+  - when undo restores a file beside a newer one that took its name, a later redo moves the restored copy to the trash again, not the newer file. The tiles (Kanban cards included) and file tags follow the restored copy.
+- **Not done here (needs the packaged build).** The `trashItem` probe on the OneDrive vault (including an online-only placeholder), a mapped share and a FAT32 USB stick. Its results, and "`.filo/trash` syncs through OneDrive", go into KNOWN_LIMITATIONS with Phase 7 DOC-1.
+- **Gates: 53 → 55.** Each new or changed arm was shown to bite in a scratch copy.
+  - Added `deletes-go-to-trash` (writePath) and `no-note-body-in-commands` (commands).
+  - Extended `no-raw-disk-shape-ipc` (the trash channels), `note-queue-per-path` (trash move and restore) and the `reconciler-vault-guard` pins (the delete, trash and inverse-delta helpers).
+  - Re-pointed `single-note-writer` at `frontmatterInverse.ts`.
+  - `characterisation-suite` gained `trash.test.ts` (minimum 9).
+- **Tests.**
+  - New: `trashMain.test.ts` (17 cases: round-trip bytes, locked child, restore beside, `.filo/` refused, a tampered manifest, `TRASH_FAILED`, the 30-day sweep, no `fs.rm` in a purge); `trashStore.test.ts` (6); `renameFileCommand.test.ts` (3); `historyVaultSwapActiveBoard.test.ts` (1).
+  - Characterisation: `trash.test.ts` (9). `renamesAndDiskChanges.test.ts` gained only the listed expected change (the file is in `.filo/trash` after "delete tile and file", and gone from it after undo).
+  - About 22 existing test files were migrated by three parallel agents under a shared brief with no production edits allowed. They found no production bugs.
+- **Size.** Tracked production files: +707 / −1,505 lines. The new modules add about 1,500 (the trash module, IPC, store, Settings tab, delete slices and helpers). Removed: the snapshot capture and caps, the body and media restores in three commands, the snapshot escalation, and Properties' duplicate conflict code.
+
+**Still open (needs the owner)**
+- Merge `master-plan/phase-5` (Phases 5 and 6) into `main` and push; the Windows CI job runs on that push.
+- **The `trashItem` probe** on the packaged build: OneDrive (with an online-only placeholder), a mapped share, and a FAT32 USB stick.
+- **A.6 dogfood.** In the scratch vault:
+  - delete a note, a media file, a folder and a board from the sidebar, then undo each;
+  - restore from Settings → Trash, including over a name that is taken again;
+  - Empty trash;
+  - "Rename file to match title", then undo.
+- The Phase 1 manual checks on the packaged build are still open.
 
 ---
 

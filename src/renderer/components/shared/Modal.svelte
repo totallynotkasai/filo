@@ -35,40 +35,41 @@
   let { id, title, width = '480px', showKeyHints = true, beforeClose, children }: Props = $props();
 
   let dialogEl = $state<HTMLDialogElement | null>(null);
-  let trap: FocusTrap | null = null;
 
   const isOpen = $derived(uiStore.isModalOpen(id));
 
   // Native <dialog showModal()> intercepts Tab loosely; focus-trap enforces
   // a strict cycle through the modal's tabbable descendants and restores
   // focus to the previously-focused element when the modal closes.
+  // The cleanup releases the trap on close AND when a parent `{#if}`
+  // destroys the Modal: a trap left on focus-trap's global stack throws on
+  // the next Tab or click anywhere in the app.
   $effect(() => {
-    if (isOpen && dialogEl && !dialogEl.open) {
-      dialogEl.showModal();
-      trap = createFocusTrap(dialogEl, {
-        // Esc/backdrop click are handled by our own listeners below; let
-        // focus-trap stay agnostic and avoid double-deactivating.
-        escapeDeactivates: false,
-        clickOutsideDeactivates: false,
-        allowOutsideClick: true,
-        returnFocusOnDeactivate: true,
-        // Body remains scrollable to support multi-pane layouts behind the modal.
-        preventScroll: true,
-      });
-      try {
-        trap.activate();
-      } catch {
-        // No tabbable descendants yet (rare race) — focus the dialog itself.
-        dialogEl.focus();
-      }
-    } else if (!isOpen && dialogEl?.open) {
-      // See lib/utils/focusTrapSafe.ts. The helper short-circuits on
-      // a detached host (focus-trap's updateTabbableNodes throws and would
-      // freeze Svelte 5's flush) and logs the diagnostic.
-      safeDeactivateTrap(trap, { host: dialogEl, name: 'Modal' });
-      trap = null;
-      dialogEl.close();
+    const el = dialogEl;
+    if (!isOpen || !el) return;
+    if (!el.open) el.showModal();
+    const trap: FocusTrap = createFocusTrap(el, {
+      // Esc/backdrop click are handled by our own listeners below; let
+      // focus-trap stay agnostic and avoid double-deactivating.
+      escapeDeactivates: false,
+      clickOutsideDeactivates: false,
+      allowOutsideClick: true,
+      returnFocusOnDeactivate: true,
+      // The dialog itself (tabindex=-1) takes focus when nothing inside is
+      // tabbable, so the trap can never throw on Tab.
+      fallbackFocus: el,
+      // Body remains scrollable to support multi-pane layouts behind the modal.
+      preventScroll: true,
+    });
+    try {
+      trap.activate();
+    } catch {
+      el.focus();
     }
+    return () => {
+      safeDeactivateTrap(trap, { name: 'Modal' });
+      if (el.open) el.close();
+    };
   });
 
   // Re-entrancy guard for `tryClose`. Without it a held-down Esc key could
@@ -115,6 +116,7 @@
     bind:this={dialogEl}
     onclick={handleBackdropClick}
     onkeydown={handleKeydown}
+    tabindex="-1"
     aria-modal="true"
     aria-labelledby={`modal-title-${id}`}
   >

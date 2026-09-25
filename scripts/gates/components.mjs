@@ -1,6 +1,6 @@
 // Svelte component / UI ratchets.
 import {
-  fail, blank, blankMatches, blankHtmlComments, scriptBlocks, matchBrace, lineAt, markerNear,
+  fail, blank, blankMatches, blankHtmlComments, scriptBlocks, scriptOnly, matchBrace, lineAt, markerNear,
 } from './lib.mjs';
 
 const COMPONENTS = 'src/renderer/components';
@@ -317,6 +317,44 @@ export const checks = [
       if (defined.size < CSS_MIN_DEFINED) {
         out.push(fail('src', undefined, `tripwire: only ${defined.size} custom properties defined (expected >= ${CSS_MIN_DEFINED}) — collectors went stale`));
       }
+      return out;
+    },
+  },
+  {
+    id: 'focus-trap-release',
+    title: 'every focus trap has a fallbackFocus and is released in a teardown, whatever the host state',
+    hint:
+      'All traps share focus-trap\'s global stack. A trap that is never deactivated (or whose container has ' +
+      'no tabbable node and no fallbackFocus) throws on the next Tab or click anywhere in the app. Pass ' +
+      '`fallbackFocus: <container>`, call `safeDeactivateTrap(trap)` from an effect cleanup, and never pass `host:`.',
+    run(ctx) {
+      const out = [];
+      let traps = 0;
+      for (const rel of ctx.files('src/renderer', { ext: ['.ts', '.svelte'] })) {
+        const raw = ctx.read(rel);
+        const code = blank(rel.endsWith('.svelte') ? scriptOnly(raw) : raw);
+        for (const m of code.matchAll(/\bcreateFocusTrap\s*\(/g)) {
+          traps++;
+          const open = m.index + m[0].length - 1;
+          const close = matchBrace(code, open, '(', ')');
+          const args = code.slice(open, close < 0 ? code.length : close + 1);
+          if (!/\bfallbackFocus\s*:/.test(args)) {
+            out.push(fail(rel, lineAt(raw, m.index), 'createFocusTrap( without `fallbackFocus` — Tab throws once nothing inside is tabbable'));
+          }
+        }
+        for (const m of code.matchAll(/\bsafeDeactivateTrap\s*\(/g)) {
+          const open = m.index + m[0].length - 1;
+          const close = matchBrace(code, open, '(', ')');
+          const args = code.slice(open, close < 0 ? code.length : close + 1);
+          if (/\bhost\s*:/.test(args)) {
+            out.push(fail(rel, lineAt(raw, m.index), 'safeDeactivateTrap( with `host:` — a detached host must still be deactivated'));
+          }
+        }
+        if (/\bcreateFocusTrap\s*\(/.test(code) && !/\bsafeDeactivateTrap\s*\(/.test(teardownText(code))) {
+          out.push(fail(rel, undefined, 'creates a focus trap but no teardown (`return () => …` / onDestroy) calls safeDeactivateTrap'));
+        }
+      }
+      if (traps < 10) out.push(fail('src/renderer', undefined, `tripwire: only ${traps} createFocusTrap( calls (expected >= 10) — pattern went stale`));
       return out;
     },
   },

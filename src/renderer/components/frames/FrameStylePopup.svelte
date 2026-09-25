@@ -192,7 +192,8 @@
     // Capture board id at popup mount so the deferred push lands
     // on the originating board even if the user switched boards in the
     // meantime.
-    const mountBoardId = boardStore.current?.id ?? '';
+    // Untracked: a board switch must not rebuild the trap or push the command early.
+    const mountBoardId = untrack(() => boardStore.current?.id ?? '');
     if (popupEl) {
       try {
         trap = createFocusTrap(popupEl, {

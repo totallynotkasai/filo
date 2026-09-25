@@ -266,7 +266,8 @@
     // the cleanup below) targets the originating board, not whichever board
     // is active when the popup destroys — otherwise switching boards while
     // the popup is open would push the style command onto the wrong stack.
-    const mountBoardId = boardStore.current?.id ?? '';
+    // Untracked: a board switch must not rebuild the trap or push the command early.
+    const mountBoardId = untrack(() => boardStore.current?.id ?? '');
     if (popupEl) {
       try {
         trap = createFocusTrap(popupEl, {

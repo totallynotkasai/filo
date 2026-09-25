@@ -235,28 +235,26 @@
   $effect(() => { if (sortMenuOpen) void focusMenuOnOpen(sortMenuEl); });
   $effect(() => { if (viewsMenuOpen) void focusMenuOnOpen(viewsMenuEl); });
 
-  // Focus-trap for the Reorder Columns modal. Same pattern as Modal.svelte
-  // (createFocusTrap on open, deactivate guarded by `isConnected`).
+  // Focus-trap for the Reorder Columns modal. Same pattern as Modal.svelte:
+  // the cleanup releases the trap on close and on unmount.
   let reorderBackdropEl: HTMLElement | null = $state(null);
-  let reorderTrap: FocusTrap | null = null;
   $effect(() => {
-    if (reorderOpen && reorderBackdropEl && !reorderTrap) {
-      reorderTrap = createFocusTrap(reorderBackdropEl, {
-        escapeDeactivates: false,
-        clickOutsideDeactivates: false,
-        allowOutsideClick: true,
-        returnFocusOnDeactivate: true,
-        preventScroll: true,
-      });
-      try {
-        reorderTrap.activate();
-      } catch {
-        reorderBackdropEl?.focus();
-      }
-    } else if (!reorderOpen && reorderTrap) {
-      safeDeactivateTrap(reorderTrap, { host: reorderBackdropEl, name: 'KanbanSideToolbar' });
-      reorderTrap = null;
+    const el = reorderBackdropEl;
+    if (!reorderOpen || !el) return;
+    const reorderTrap: FocusTrap = createFocusTrap(el, {
+      escapeDeactivates: false,
+      clickOutsideDeactivates: false,
+      allowOutsideClick: true,
+      returnFocusOnDeactivate: true,
+      fallbackFocus: el,
+      preventScroll: true,
+    });
+    try {
+      reorderTrap.activate();
+    } catch {
+      el.focus();
     }
+    return () => safeDeactivateTrap(reorderTrap, { name: 'KanbanSideToolbar' });
   });
 
   function openSavePrompt() {

@@ -107,8 +107,11 @@
   // user lands somewhere meaningful. Mirrors ConfirmDialog's pattern.
   $effect(() => {
     if (!errorPopoverOpen) return;
+    // A close before the tick lands must not leave a trap created after
+    // its own cleanup ran.
+    let disposed = false;
     void tick().then(() => {
-      if (!errorPopoverOpen || !popoverEl) return;
+      if (disposed || !errorPopoverOpen || !popoverEl) return;
       // Focus Retry by default; fall back to the popover root if Retry is
       // disabled (e.g. mid-retry) so focus still lands inside the trap.
       if (retryBtn && !retryBtn.disabled) {
@@ -135,7 +138,8 @@
       }
     });
     return () => {
-      safeDeactivateTrap(popoverTrap, { host: popoverEl, name: 'GlobalToolbar/save-error-popover' });
+      disposed = true;
+      safeDeactivateTrap(popoverTrap, { name: 'GlobalToolbar/save-error-popover' });
       popoverTrap = null;
     };
   });

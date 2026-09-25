@@ -12,6 +12,19 @@
   import type { Board } from '../../schema/index';
   import { boardRegistry } from '../../core/boardRegistry';
 
+  interface Props {
+    /** Called when a board was opened, just before the browser closes. */
+    onBoardOpened?: () => void;
+  }
+  let { onBoardOpened }: Props = $props();
+
+  // Every open path closes the browser through here so the host knows focus
+  // now belongs to the opened board.
+  function closeAfterOpening(): void {
+    onBoardOpened?.();
+    uiStore.closeModal();
+  }
+
   let searchQuery = $state('');
   let showNewBoard = $state(false);
   let newBoardName = $state('');
@@ -127,7 +140,7 @@
         if (activeLeaf) workspaceStore.splitLeaf(activeLeaf.id, tab.id, 'right');
         else workspaceStore.splitRoot(tab.id, 'right');
       }
-      uiStore.closeModal();
+      closeAfterOpening();
       return;
     }
 
@@ -143,13 +156,13 @@
         }
       }
       selectedBoardIds.clear();
-      uiStore.closeModal();
+      closeAfterOpening();
       return;
     }
 
     // Normal click: open single board
     tabStore.open(board.id, board.name, board.type, board.emoji);
-    uiStore.closeModal();
+    closeAfterOpening();
   }
 
   async function createBoard() {
@@ -177,7 +190,7 @@
 
     // Open it in a new tab
     tabStore.open(board.id, board.name, board.type);
-    uiStore.closeModal();
+    closeAfterOpening();
 
     // Reset form
     showNewBoard = false;

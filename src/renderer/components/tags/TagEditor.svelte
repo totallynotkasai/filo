@@ -212,21 +212,23 @@
   // already moved into the dialog.
   let popupRoot: HTMLDivElement | null = $state(null);
   $effect(() => {
-    if (!popupRoot) return;
+    const root = popupRoot;
+    if (!root) return;
     let trap: FocusTrap | null = null;
     try {
-      trap = createFocusTrap(popupRoot, {
+      trap = createFocusTrap(root, {
         escapeDeactivates: false,
         clickOutsideDeactivates: true,
         allowOutsideClick: true,
         returnFocusOnDeactivate: false,
         initialFocus: false,
+        fallbackFocus: root,
       });
       trap.activate();
     } catch (err) {
       console.warn('[TagEditor] focus trap failed to activate:', err);
     }
-    return () => { safeDeactivateTrap(trap); };
+    return () => { safeDeactivateTrap(trap, { name: 'TagEditor' }); };
   });
 </script>
 

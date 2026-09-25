@@ -28,26 +28,26 @@
 
   let dialogEl = $state<HTMLDivElement | null>(null);
   let bodyEl = $state<HTMLDivElement | null>(null);
-  let trap: FocusTrap | null = null;
 
+  // The cleanup releases the trap on close and on unmount, so it never
+  // lingers on focus-trap's global stack.
   $effect(() => {
-    if (open && dialogEl && !trap) {
-      trap = createFocusTrap(dialogEl, {
-        escapeDeactivates: false,
-        clickOutsideDeactivates: false,
-        allowOutsideClick: true,
-        returnFocusOnDeactivate: true,
-        preventScroll: true,
-      });
-      try {
-        trap.activate();
-      } catch {
-        dialogEl?.focus();
-      }
-    } else if (!open && trap) {
-      safeDeactivateTrap(trap, { host: dialogEl, name: 'KanbanNewTileModal' });
-      trap = null;
+    const el = dialogEl;
+    if (!open || !el) return;
+    const trap: FocusTrap = createFocusTrap(el, {
+      escapeDeactivates: false,
+      clickOutsideDeactivates: false,
+      allowOutsideClick: true,
+      returnFocusOnDeactivate: true,
+      fallbackFocus: el,
+      preventScroll: true,
+    });
+    try {
+      trap.activate();
+    } catch {
+      el.focus();
     }
+    return () => safeDeactivateTrap(trap, { name: 'KanbanNewTileModal' });
   });
 
   function handleBackdropClick(e: MouseEvent) {

@@ -1,22 +1,24 @@
 import type { FocusTrap } from 'focus-trap';
 
 /**
- * Safely deactivate a `focus-trap`. The library throws from
- * `updateTabbableNodes` when its host element has been unmounted before the
- * teardown runs — uncaught inside Svelte 5's flush microtask, that throw
- * corrupts the batch processor and freezes the app. Wrapping every call
- * site in try/catch is repetitive; this helper centralises it.
+ * Deactivate a `focus-trap`, whether or not its container is still in the
+ * DOM. Every trap shares focus-trap's global stack, so a trap that is never
+ * deactivated stays on it with live document keydown / mousedown / focusin
+ * listeners and a detached container: the next Tab or click then throws
+ * "must have at least one tabbable node" from that leaked trap. Hosts sit
+ * inside `{#if}` blocks and are usually detached by the time teardown runs,
+ * so deactivation must never be skipped for that reason.
  *
- * Pass `host` when the caller wants to skip deactivation entirely if the
- * host element is already detached (e.g. Modal.svelte's dialog element).
- * Pass `name` to surface the non-fatal warning in dev logs.
+ * Deactivating can still throw when a trap below this one leaked (unpausing
+ * it runs `updateTabbableNodes` on a dead container). Uncaught inside Svelte
+ * 5's flush microtask that throw would stall the batch, hence the try/catch.
+ * Pass `name` to surface that non-fatal warning in dev logs.
  */
 export function safeDeactivateTrap(
   trap: FocusTrap | null | undefined,
-  opts?: { host?: Element | null; name?: string },
+  opts?: { name?: string },
 ): void {
   if (!trap) return;
-  if (opts?.host && !opts.host.isConnected) return;
   try {
     trap.deactivate();
   } catch (err) {

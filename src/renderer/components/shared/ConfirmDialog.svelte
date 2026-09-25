@@ -26,13 +26,19 @@
   // Local toggle state for `extraOption`. Re-seeded each time a new config
   // arrives so the previous dialog's choice doesn't leak across opens.
   let extraChecked = $state(false);
-  let trap: FocusTrap | null = null;
 
+  // One run per config: a confirm that displaces another re-seeds the
+  // checkbox and focus. The cleanup releases the trap and closes the dialog
+  // whether the config cleared or the dialog unmounted, so no trap is left
+  // on focus-trap's global stack.
   $effect(() => {
-    if (config && dialogEl && !dialogEl.open) {
-      extraChecked = config.extraOption?.initial ?? false;
+    const c = config;
+    const el = dialogEl;
+    if (!c || !el) return;
+    extraChecked = c.extraOption?.initial ?? false;
+    if (!el.open) {
       try {
-        dialogEl.showModal();
+        el.showModal();
       } catch (err) {
         // Defence-in-depth: if showModal() throws (e.g. the dialog is
         // already in an open state because of a flush race), drop the
@@ -41,34 +47,35 @@
         uiStore.closeConfirm();
         return;
       }
-      // Focus the safer button after the dialog is in the DOM. Cancel for
-      // destructive actions, Confirm otherwise. `tick()` waits for Svelte's
-      // bind:this to populate `cancelBtn` / `confirmBtn`.
-      void tick().then(() => {
-        if (!dialogEl?.open) return;
-        const target = config?.danger ? cancelBtn : confirmBtn;
-        target?.focus();
-      });
-      // Strict focus trap. Wrap activation so a missing tabbable doesn't
-      // freeze Svelte's flush.
-      try {
-        trap = createFocusTrap(dialogEl, {
-          escapeDeactivates: false,
-          clickOutsideDeactivates: false,
-          allowOutsideClick: true,
-          returnFocusOnDeactivate: true,
-          preventScroll: true,
-        });
-        trap.activate();
-      } catch (err) {
-        console.warn('[ConfirmDialog] focus-trap activate failed:', err);
-        trap = null;
-      }
-    } else if (!config && dialogEl?.open) {
-      safeDeactivateTrap(trap, { host: dialogEl, name: 'ConfirmDialog' });
-      trap = null;
-      dialogEl.close();
     }
+    // Focus the safer button after the dialog is in the DOM. Cancel for
+    // destructive actions, Confirm otherwise. `tick()` waits for Svelte's
+    // bind:this to populate `cancelBtn` / `confirmBtn`.
+    void tick().then(() => {
+      if (!el.open) return;
+      const target = c.danger ? cancelBtn : confirmBtn;
+      target?.focus();
+    });
+    // Strict focus trap. Wrap activation so a failure can't freeze
+    // Svelte's flush.
+    let trap: FocusTrap | null = null;
+    try {
+      trap = createFocusTrap(el, {
+        escapeDeactivates: false,
+        clickOutsideDeactivates: false,
+        allowOutsideClick: true,
+        returnFocusOnDeactivate: true,
+        fallbackFocus: el,
+        preventScroll: true,
+      });
+      trap.activate();
+    } catch (err) {
+      console.warn('[ConfirmDialog] focus-trap activate failed:', err);
+    }
+    return () => {
+      safeDeactivateTrap(trap, { name: 'ConfirmDialog' });
+      if (el.open) el.close();
+    };
   });
 
   function confirm() {
@@ -124,6 +131,7 @@
     bind:this={dialogEl}
     onclick={handleBackdropClick}
     onkeydown={handleKeydown}
+    tabindex="-1"
     aria-modal="true"
     aria-labelledby="confirm-title"
   >

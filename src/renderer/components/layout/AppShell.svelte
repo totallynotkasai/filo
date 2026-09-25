@@ -55,37 +55,32 @@
 
   // ── Board Browser focus trap (non-Modal slide-up panel) ──
   let boardBrowserPanelEl = $state<HTMLDivElement | null>(null);
-  let boardBrowserTrap: FocusTrap | null = null;
   const isBoardBrowserOpen = $derived(uiStore.isModalOpen('board-browser'));
+  // Set by BoardBrowser just before it closes itself after opening a board:
+  // focus then belongs to that board, not to the button that opened the
+  // browser.
+  let boardOpenedFromBrowser = false;
 
   $effect(() => {
-    if (isBoardBrowserOpen && boardBrowserPanelEl) {
-      boardBrowserTrap = createFocusTrap(boardBrowserPanelEl, {
-        escapeDeactivates: false,
-        clickOutsideDeactivates: true,
-        allowOutsideClick: true,
-        returnFocusOnDeactivate: true,
-      });
-      try {
-        boardBrowserTrap.activate();
-      } catch {
-        boardBrowserPanelEl.focus();
-      }
-      // Snapshot the panel reference at activation time so the teardown can
-      // tell whether the panel is still in the DOM when it runs. Reading
-      // the live `boardBrowserPanelEl` from the cleanup is unreliable —
-      // bind:this may have already nulled it by the time we run.
-      const trappedPanel = boardBrowserPanelEl;
-      return () => {
-        // See lib/utils/focusTrapSafe.ts. The helper short-circuits on
-        // a detached host (a click inside the panel that both closes the
-        // browser AND opens a board unmounts the panel before this teardown
-        // runs; focus-trap's updateTabbableNodes would otherwise throw and
-        // freeze Svelte 5's flush).
-        safeDeactivateTrap(boardBrowserTrap, { host: trappedPanel, name: 'AppShell' });
-        boardBrowserTrap = null;
-      };
+    const panel = boardBrowserPanelEl;
+    if (!isBoardBrowserOpen || !panel) return;
+    boardOpenedFromBrowser = false;
+    const trap: FocusTrap = createFocusTrap(panel, {
+      escapeDeactivates: false,
+      // The backdrop's own click closes the browser; letting the trap
+      // deactivate itself on outside clicks as well would double-deactivate.
+      clickOutsideDeactivates: false,
+      allowOutsideClick: true,
+      returnFocusOnDeactivate: true,
+      setReturnFocus: (previous) => (boardOpenedFromBrowser ? false : previous),
+      fallbackFocus: panel,
+    });
+    try {
+      trap.activate();
+    } catch {
+      panel.focus();
     }
+    return () => safeDeactivateTrap(trap, { name: 'AppShell' });
   });
 
   // ── Multi-tile delete confirmation ──
@@ -587,48 +582,45 @@
 
   <!--
     Board Browser: slide-up panel above TabBar.
-    Transparent click-outside backdrop wraps the panel.
-    Clicks outside the panel close the modal (matching `Modal.svelte`'s
-    `e.target === dialogEl` pattern via a target-equality check on the
-    backdrop). Clicks inside the panel bubble normally so buttons, the
-    inline rename input, and BoardBrowser's own handlers keep working —
+    A transparent click-catcher backdrop sits BEHIND the panel as an empty
+    sibling, never its parent: a dialog inside an aria-hidden ancestor
+    hides its focused controls from assistive tech. A click on the backdrop
+    closes the browser. Clicks inside the panel bubble normally so buttons,
+    the inline rename input, and BoardBrowser's own handlers keep working —
     the in-flight rename's onblur commit still fires when the panel
     unmounts, so a partial rename isn't lost.
   -->
   {#if uiStore.isModalOpen('board-browser')}
     <div
       class="board-browser-backdrop"
-      onclick={(e) => { if (e.target === e.currentTarget) uiStore.closeModal(); }}
-      onkeydown={(e) => { if (e.key === 'Escape') uiStore.closeModal(); }}
+      onclick={() => uiStore.closeModal()}
       role="presentation"
-      aria-hidden="true"
+    ></div>
+    <div
+      class="board-browser-panel"
+      bind:this={boardBrowserPanelEl}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Board Browser"
+      tabindex="-1"
+      onkeydown={(e) => { if (e.key === 'Escape') uiStore.closeModal(); }}
     >
-      <div
-        class="board-browser-panel"
-        bind:this={boardBrowserPanelEl}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Board Browser"
-        tabindex="-1"
-        onkeydown={(e) => { if (e.key === 'Escape') uiStore.closeModal(); }}
-      >
-        <div class="board-browser-panel-header">
-          <h2 class="board-browser-panel-title">Board Browser</h2>
-          <button
-            class="board-browser-panel-close"
-            onclick={() => uiStore.closeModal()}
-            title="Close"
-            aria-label="Close Board Browser"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <line x1="18" y1="6" x2="6" y2="18"/>
-              <line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-          </button>
-        </div>
-        <div class="board-browser-panel-body">
-          <BoardBrowserModal />
-        </div>
+      <div class="board-browser-panel-header">
+        <h2 class="board-browser-panel-title">Board Browser</h2>
+        <button
+          class="board-browser-panel-close"
+          onclick={() => uiStore.closeModal()}
+          title="Close"
+          aria-label="Close Board Browser"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="board-browser-panel-body">
+        <BoardBrowserModal onBoardOpened={() => { boardOpenedFromBrowser = true; }} />
       </div>
     </div>
   {/if}

@@ -11,6 +11,7 @@
    * Selection emits `(ref, content)` upstream so the caller can interpolate
    * the body, write the new `.md`, and add a placement to the target column.
    */
+  import { untrack } from 'svelte';
   import { createFocusTrap, type FocusTrap } from 'focus-trap';
   import { safeDeactivateTrap } from '../../lib/utils/focusTrapSafe';
   import { vaultStore } from '../../stores/vault.svelte';
@@ -41,8 +42,6 @@
   let parsedByPath = $state<Record<string, { content: TemplateContent; raw: string }>>({});
   let cardEl = $state<HTMLDivElement | null>(null);
   let searchInputEl = $state<HTMLInputElement | null>(null);
-  let trap: FocusTrap | null = null;
-  let previouslyFocused: HTMLElement | null = null;
 
   const mdRefs = $derived<TemplateRef[]>(
     collectTemplateRefs(vaultStore.rawTree, vaultStore.path, defaultTemplatesFolder()),
@@ -107,35 +106,40 @@
     onSelect(ref, parsed.content, parsed.raw);
   }
 
+  // The cleanup releases the trap on close and on unmount, so it never
+  // lingers on focus-trap's global stack.
   $effect(() => {
-    if (open && cardEl && !trap) {
-      previouslyFocused = (document.activeElement as HTMLElement | null) ?? null;
-      trap = createFocusTrap(cardEl, {
-        escapeDeactivates: false,
-        clickOutsideDeactivates: false,
-        allowOutsideClick: true,
-        returnFocusOnDeactivate: false,
-        initialFocus: () => searchInputEl ?? cardEl ?? false,
-        preventScroll: true,
-      });
+    const el = cardEl;
+    if (!open || !el) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const trap: FocusTrap = createFocusTrap(el, {
+      escapeDeactivates: false,
+      clickOutsideDeactivates: false,
+      allowOutsideClick: true,
+      returnFocusOnDeactivate: false,
+      initialFocus: () => searchInputEl ?? el,
+      fallbackFocus: el,
+      preventScroll: true,
+    });
+    // `initialFocus` reads `searchInputEl` during activation; keep it out
+    // of this effect's dependencies so a re-bind doesn't rebuild the trap.
+    untrack(() => {
       try {
         trap.activate();
       } catch {
         searchInputEl?.focus();
       }
-    } else if (!open && trap) {
-      safeDeactivateTrap(trap, { host: cardEl, name: 'KanbanTemplatePicker' });
-      trap = null;
-      const toRestore = previouslyFocused;
-      previouslyFocused = null;
+    });
+    return () => {
+      safeDeactivateTrap(trap, { name: 'KanbanTemplatePicker' });
       // Defer to next microtask so the picker has time to unmount before
       // refocusing — otherwise focus-trap can fight us for the focus ring.
-      if (toRestore && toRestore.isConnected) {
+      if (previouslyFocused && previouslyFocused.isConnected) {
         queueMicrotask(() => {
-          if (toRestore.isConnected) toRestore.focus();
+          if (previouslyFocused.isConnected) previouslyFocused.focus();
         });
       }
-    }
+    };
   });
 </script>
 
@@ -149,7 +153,7 @@
     onclick={handleBackdropClick}
     onkeydown={handleKeydown}
   >
-    <div class="ktp-card" bind:this={cardEl}>
+    <div class="ktp-card" bind:this={cardEl} tabindex="-1">
       <div class="ktp-header">
         <h2 class="ktp-title">Pick a Template</h2>
         <button class="ktp-close" onclick={onClose} title="Close" aria-label="Close">

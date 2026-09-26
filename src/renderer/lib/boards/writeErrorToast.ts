@@ -125,6 +125,27 @@ export function buildWriteErrorToast(info: WriteErrorInfo): WriteErrorToastSpec 
       retryable: false,
     };
   }
+  // Another program changed the file, and Filo held its change back rather
+  // than write over theirs. Nothing is wrong with the disk, and Retry can't
+  // help: the user's choice on the prompt (or their next change) decides.
+  if (errorCode(info.error) === 'EXTERNAL_EDIT') {
+    const shown = info.path === 'config:save-workspace' ? '.filo/workspace.json'
+      : info.kind === 'config' && info.path && !info.path.includes('/') ? `.filo/${info.path}`
+        : (info.path ?? 'The file');
+    return info.kind === 'board'
+      ? {
+          context: 'Board not saved',
+          message: `${shown} was changed outside Filo, so Filo didn't save over it. Your changes are kept in Filo until you choose Reload or Keep local.`,
+          coalesceKey: `external-edit::${info.path ?? ''}`,
+          retryable: false,
+        }
+      : {
+          context: 'Settings not saved',
+          message: `${shown} was changed outside Filo, so your change wasn't saved over it. Change the setting again to choose which version to keep.`,
+          coalesceKey: `external-edit::${info.path ?? ''}`,
+          retryable: false,
+        };
+  }
   const context =
     info.kind === 'board'
       ? 'Board save failed'

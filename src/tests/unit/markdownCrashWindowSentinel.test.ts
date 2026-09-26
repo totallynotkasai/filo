@@ -118,9 +118,9 @@ describe('note writer — a queued edit arms the crash-recovery sentinel window'
     expect(last?.pending).toBeGreaterThan(0);
     expect(last?.inflight).toBe(0);
     expect(isPathPending('Notes/A.md')).toBe(true);
-    // The sentinel on disk names the note while its text is unwritten.
+    // The sentinel on disk names the note, as spelled on disk, while its text is unwritten.
     await new Promise((r) => setTimeout(r, 0));
-    expect(sentinelPayloads().some((p) => p.pendingPaths?.includes('notes/a.md'))).toBe(true);
+    expect(sentinelPayloads().some((p) => p.pendingPaths?.includes('Notes/A.md'))).toBe(true);
     // Nothing has reached the note itself yet.
     expect(vault.read('Notes/A.md')).toBe('---\ntitle: A\n---\nBody\n');
   });

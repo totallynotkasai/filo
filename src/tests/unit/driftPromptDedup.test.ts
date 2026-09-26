@@ -17,7 +17,7 @@ import { restoreFiloDefault } from '../helpers/filoBridge';
 function findOpenDriftToast(pathSubstr?: string) {
   return uiStore.toasts.find((t) => {
     if (typeof t.text !== 'string') return false;
-    if (!t.text.includes('modified externally')) return false;
+    if (!t.text.includes('was changed outside Filo')) return false;
     if (pathSubstr && !t.text.includes(pathSubstr)) return false;
     return true;
   });
@@ -65,7 +65,7 @@ describe('promptBoardExternalEdit — per-path dedup', () => {
 
     // Only ONE drift toast was pushed.
     const driftToasts = uiStore.toasts.filter(
-      (t) => typeof t.text === 'string' && t.text.includes('modified externally'),
+      (t) => typeof t.text === 'string' && t.text.includes('was changed outside Filo'),
     );
     expect(driftToasts).toHaveLength(1);
 
@@ -88,7 +88,7 @@ describe('promptBoardExternalEdit — per-path dedup', () => {
     expect(__inFlightDriftPromptsForTests().size).toBe(2);
 
     const driftToasts = uiStore.toasts.filter(
-      (t) => typeof t.text === 'string' && t.text.includes('modified externally'),
+      (t) => typeof t.text === 'string' && t.text.includes('was changed outside Filo'),
     );
     expect(driftToasts).toHaveLength(2);
 

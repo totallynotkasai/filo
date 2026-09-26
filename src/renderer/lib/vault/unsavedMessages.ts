@@ -117,3 +117,22 @@ export function quitFailureBody(items: readonly UnsavedItem[], preservedTmp: num
   parts.push('"Quit anyway" keeps a copy of each unsaved note in .filo/recovery. "Stay open" lets you keep editing.');
   return parts.join('\n\n');
 }
+
+/**
+ * Closing a tab whose files still have unsaved changes. Closing loses
+ * nothing (the changes stay in memory and keep being retried), so this only
+ * says so: the real decision comes at quit or close vault.
+ */
+export function closeTabDialog(paths: readonly string[]): { title: string; body: string; confirmLabel: string; cancelLabel: string } {
+  const names = paths.length <= 3
+    ? paths.map((p) => `"${p}"`).join(', ')
+    : `${paths.slice(0, 3).map((p) => `"${p}"`).join(', ')} and ${paths.length - 3} more`;
+  return {
+    title: 'Unsaved changes',
+    body:
+      `${names} still ${paths.length === 1 ? 'has' : 'have'} unsaved changes. ` +
+      'Filo will keep trying, and will ask again when you quit or close the vault.',
+    confirmLabel: 'Close tab',
+    cancelLabel: 'Cancel',
+  };
+}

@@ -150,6 +150,7 @@ describe('workspaceStore', () => {
       paneTree: split,
       activePaneId: 'leaf_1',
       sidebarWidth: 320,
+      kanbanToolbar: { x: 40, y: 80 },
     };
 
     workspaceStore.hydrate(before);

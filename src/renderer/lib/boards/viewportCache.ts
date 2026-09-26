@@ -118,6 +118,7 @@ function scheduleViewportsWrite(): void {
       return {
         vaultRoot,
         path: VIEWPORTS_PATH,
+        json: payload,
         write: async () => {
           await invokeOk('config:save', vaultRoot, 'viewports.json', payload);
         },

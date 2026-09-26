@@ -243,3 +243,23 @@ describe('A9-L10 — distinct preserved-tmp locations keep separate toasts', () 
     expect(pushed).toHaveLength(1);
   });
 });
+
+describe('buildWriteErrorToast — a change made outside Filo', () => {
+  const external = (message: string): Error => Object.assign(new Error(message), { code: 'EXTERNAL_EDIT' });
+
+  it('a board: says what happened and that the choice is still to come, with no Retry', () => {
+    const spec = buildWriteErrorToast({ kind: 'board', path: 'Plan.board.json', error: external('drift') });
+    expect(spec.context).toBe('Board not saved');
+    expect(spec.message).toContain('Plan.board.json was changed outside Filo');
+    expect(spec.message).not.toMatch(/disk space|permissions/);
+    expect(spec.retryable).toBe(false);
+  });
+
+  it('a settings file: names it under .filo/, with no Retry', () => {
+    const spec = buildWriteErrorToast({ kind: 'config', path: 'config:save-workspace', error: external('drift') });
+    expect(spec.context).toBe('Settings not saved');
+    expect(spec.message).toContain('.filo/workspace.json was changed outside Filo');
+    expect(spec.retryable).toBe(false);
+    expect(buildWriteErrorToast({ kind: 'config', path: 'app.json', error: external('drift') }).message).toContain('.filo/app.json');
+  });
+});

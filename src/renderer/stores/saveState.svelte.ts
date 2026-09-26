@@ -6,6 +6,10 @@
  *   - 'saved'  (green): nothing pending, in flight or failed.
  *   - 'saving' (yellow): something is queued or being written.
  *   - 'error'  (red): a write failed; clickable, lists the failed paths.
+ *   - 'attention' (blue): nothing failed, but a change is held for the user's
+ *     decision (Reload / Keep mine, a note deleted or missing); clickable,
+ *     each row re-opens its prompt. Held changes aren't "saving": no write
+ *     will happen until the user answers.
  *
  * Also tracks the most recent failed paths (capped + dedup'd) for the error
  * popover's list and Retry button. A clean drain clears them.
@@ -13,7 +17,14 @@
 
 import { onVaultSwap } from '../core/vaultLifecycle';
 
-export type SaveState = 'saving' | 'saved' | 'error';
+export type SaveState = 'saving' | 'saved' | 'error' | 'attention';
+
+/** A change held for the user's decision, as the save popover lists it. */
+export interface HeldDecisionRow {
+  key: string;
+  relPath: string;
+  text: string;
+}
 
 const MAX_TRACKED_FAILED_PATHS = 50;
 
@@ -25,6 +36,10 @@ export const SAVING_SHOW_DELAY_MS = 150;
 
 let state = $state<SaveState>('saved');
 let failedPaths = $state<string[]>([]);
+let decisions = $state<HeldDecisionRow[]>([]);
+let reportedPaths = $state<string[]>([]);
+/** Bumped to ask the toolbar to open the save popover (a toast's Details). */
+let detailsRequest = $state(0);
 
 let showSavingTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -39,6 +54,25 @@ export const saveStateStore = {
   get state() { return state; },
   /** Most recent failed paths (newest first). Capped at MAX_TRACKED_FAILED_PATHS. */
   get failedPaths() { return failedPaths; },
+  /** Changes held for the user's decision. */
+  get decisions() { return decisions; },
+  /** Failures their owner already reported (nothing queued to retry). */
+  get reportedPaths() { return reportedPaths; },
+
+  get detailsRequest() { return detailsRequest; },
+
+  /** Asks the toolbar to open the save popover. */
+  requestDetails(): void {
+    detailsRequest++;
+  },
+
+  setDecisions(next: HeldDecisionRow[]): void {
+    decisions = next;
+  },
+
+  setReportedPaths(next: string[]): void {
+    reportedPaths = next;
+  },
 
   /**
    * Push the ledger's counts:
@@ -55,17 +89,24 @@ export const saveStateStore = {
    * settles, so inflight-first ordering would show a perpetual "saving"
    * spinner for a genuinely failed write.
    */
-  setStatus(inflight: number, failed: number, pending: number = 0): void {
+  setStatus(inflight: number, failed: number, pending: number = 0, held: number = 0): void {
     if (failed > 0) {
       cancelShowSaving();
       state = 'error';
       return;
     }
+    // A held change isn't counted in `pending`: nothing will write it until
+    // the user answers, so "saving" would never end.
+    if (held > 0 && inflight === 0 && pending === 0) {
+      cancelShowSaving();
+      state = 'attention';
+      return;
+    }
     if (inflight > 0 || pending > 0) {
       if (state === 'saving' || showSavingTimer) return;
-      // Leaving red: the failure has cleared, but work remains, so there is
-      // no green moment to wait for.
-      if (state === 'error') {
+      // Leaving red (or blue): the failure has cleared, but work remains, so
+      // there is no green moment to wait for.
+      if (state === 'error' || state === 'attention') {
         state = 'saving';
         return;
       }
@@ -108,6 +149,8 @@ export const saveStateStore = {
     cancelShowSaving();
     state = 'saved';
     failedPaths = [];
+    decisions = [];
+    reportedPaths = [];
   },
 };
 
@@ -118,4 +161,6 @@ onVaultSwap('pre-swap', 'saveState', () => {
   cancelShowSaving();
   state = 'saved';
   if (failedPaths.length > 0) failedPaths = [];
+  decisions = [];
+  reportedPaths = [];
 });

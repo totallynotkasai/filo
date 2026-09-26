@@ -16,6 +16,13 @@
  * would overwrite the first's path). Reports without a `coalesceKey` (the
  * common case) coalesce by `context`.
  *
+ * A toast that comes to cover more than one file names them all ("3 files
+ * couldn't be saved: A, B, C") rather than only the newest, and drops the
+ * buttons that were about the first file alone: a per-file action on a toast
+ * naming another file would act on the wrong one. `sharedActions` (Retry,
+ * which re-fires every failed write) stay, and `details` adds a Details
+ * button that opens the full list.
+ *
  * Separated from the `App.svelte` wiring so the aggregation behaviour can be
  * unit-tested without mounting the component.
  */
@@ -33,8 +40,17 @@ export interface AggregatedReport extends ReportedError {
    * The DISPLAY prefix always remains `context`.
    */
   coalesceKey?: string;
-  /** Action buttons for a freshly pushed toast (e.g. Retry). */
-  actions?: Array<{ label: string; handler: () => void | Promise<void> }>;
+  /** The file the report is about. */
+  path?: string;
+  /** Buttons about this report's file only; kept while the toast covers one file. */
+  actions?: ToastButton[];
+  /** Buttons that act on every report the toast covers (e.g. Retry all). */
+  sharedActions?: ToastButton[];
+}
+
+export interface ToastButton {
+  label: string;
+  handler: () => void | Promise<void>;
 }
 
 export interface AggregatorToastApi {
@@ -48,7 +64,7 @@ export interface AggregatorToastApi {
     type: 'error';
     duration: 0;
     onDismiss: () => void;
-    actions?: Array<{ label: string; handler: () => void | Promise<void> }>;
+    actions?: ToastButton[];
   }): string;
   /**
    * Updates the text of an existing toast. Returns true if the toast was
@@ -56,17 +72,31 @@ export interface AggregatorToastApi {
    * aggregator falls through and pushes a fresh toast.
    */
   updateToastText(id: string, text: string): boolean;
+  /** Replaces a toast's buttons. Optional: without it the buttons stay as pushed. */
+  updateToastActions?(id: string, actions: ToastButton[]): boolean;
 }
 
 interface AggregatedToast {
   toastId: string;
   count: number;
   expiryTimer: ReturnType<typeof setTimeout>;
+  /** Distinct files the toast covers, first report first. */
+  paths: string[];
 }
 
 export interface ErrorToastAggregatorOptions {
   /** Silence window after which the next same-context error opens a fresh toast. */
   windowMs?: number;
+  /** Opens the full list; offered once a toast covers more than one file. */
+  details?: () => void;
+}
+
+/** How many file names a toast spells out before "…". */
+const NAMED_PATHS = 3;
+
+function fileList(paths: readonly string[]): string {
+  const named = paths.slice(0, NAMED_PATHS).join(', ');
+  return paths.length > NAMED_PATHS ? `${named}…` : named;
 }
 
 export function createErrorToastAggregator(
@@ -76,7 +106,7 @@ export function createErrorToastAggregator(
   const windowMs = options.windowMs ?? 1000;
   const recent = new Map<string, AggregatedToast>();
 
-  return ({ context, message, error, coalesceKey, actions }) => {
+  return ({ context, message, error, coalesceKey, path, actions, sharedActions }) => {
     // Coalesce by `coalesceKey` when supplied, else by `context`. The
     // display prefix below always stays `context`, so the count badge reads per
     // write KIND while distinct recovery locations keep separate toasts.
@@ -85,12 +115,20 @@ export function createErrorToastAggregator(
     const existing = recent.get(key);
 
     if (existing) {
-      const updated = api.updateToastText(
-        existing.toastId,
-        `${context} (${existing.count + 1}×): ${detail}`,
-      );
+      const newFile = path !== undefined && !existing.paths.includes(path);
+      const paths = newFile ? [...existing.paths, path] : existing.paths;
+      const text = paths.length > 1
+        ? `${context}: ${paths.length} files couldn't be saved: ${fileList(paths)}`
+        : `${context} (${existing.count + 1}×): ${detail}`;
+      const updated = api.updateToastText(existing.toastId, text);
       if (updated) {
         existing.count++;
+        if (newFile && paths.length === 2) {
+          // The first file's own buttons no longer fit a toast about several.
+          const buttons = [...(sharedActions ?? []), ...(options.details ? [{ label: 'Details', handler: options.details }] : [])];
+          api.updateToastActions?.(existing.toastId, buttons);
+        }
+        existing.paths = paths;
         clearTimeout(existing.expiryTimer);
         existing.expiryTimer = setTimeout(() => recent.delete(key), windowMs);
         return;
@@ -100,11 +138,12 @@ export function createErrorToastAggregator(
       recent.delete(key);
     }
 
+    const buttons = [...(actions ?? []), ...(sharedActions ?? [])];
     const toastId = api.pushToast({
       text: `${context}: ${detail}`,
       type: 'error',
       duration: 0,
-      ...(actions && actions.length > 0 ? { actions } : {}),
+      ...(buttons.length > 0 ? { actions: buttons } : {}),
       onDismiss: () => {
         const entry = recent.get(key);
         if (entry?.toastId === toastId) {
@@ -114,6 +153,6 @@ export function createErrorToastAggregator(
       },
     });
     const expiryTimer = setTimeout(() => recent.delete(key), windowMs);
-    recent.set(key, { toastId, count: 1, expiryTimer });
+    recent.set(key, { toastId, count: 1, expiryTimer, paths: path !== undefined ? [path] : [] });
   };
 }

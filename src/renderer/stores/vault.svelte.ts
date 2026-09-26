@@ -250,12 +250,9 @@ function readSortConfig(): SortConfig {
 
 function scheduleSidebarOrderWrite(): void {
   if (!vaultPath) return;
-  // Route through `scheduleMiscWrite` so the write inherits sentinel
-  // tracking, IPC envelope assertion, and the `flushAllMisc` drain on
-  // Ctrl+S / quit. The args getter re-reads `manualOrder` + `vaultPath`
-  // at fire time so the snapshot reflects the latest drag, not the
-  // schedule-time state. Corruption gating lives inside scheduleMiscWrite
-  // via `isConfigPathCorrupt`.
+  // Route through `scheduleMiscWrite` for sentinel tracking, the envelope
+  // check, the Ctrl+S / quit drain and the corruption gate. The getter
+  // re-reads `manualOrder` + `vaultPath` at fire time (the latest drag).
   scheduleMiscWrite(SIDEBAR_ORDER_KEY, () => {
     if (!vaultPath) return null;
     const vaultRoot = vaultPath;
@@ -263,6 +260,7 @@ function scheduleSidebarOrderWrite(): void {
     return {
       vaultRoot,
       path: SIDEBAR_ORDER_PATH,
+      json: JSON.stringify(snapshot, null, 2),
       write: async () => {
         await invokeOk('config:save', vaultRoot, 'sidebar-order.json', snapshot);
       },

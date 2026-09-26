@@ -9,15 +9,11 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import type { ProjectSettings, WorkspaceState } from '@renderer/schema/index';
 
 /**
- * Audit2 5.1 — externally-deleted `.filo/` config must NOT be resurrected by
- * the next debounced write. The pre-write `vault:stat` probe was already in
- * place for drift detection, but its catch swallowed ENOENT and fell through
- * to the `config:save` IPC, which `mkdir -p`'d the parent and re-created the
- * file. The guard now mirrors `writeBoardFile`'s ENOENT short-circuit:
- * when the file was previously known to exist (`baseline !== undefined`) and
- * the pre-write stat says it's gone, skip the target as a clean no-op.
+ * A `.filo/` config deleted outside Filo is Filo's own file, so the next write
+ * creates it again rather than dropping every later change: exclusively
+ * (`createOnly`), so a copy put back meanwhile is never overwritten.
  *
- * Fresh configs (no baseline) are still allowed to write — initial
+ * Fresh configs (no baseline) are still written plainly — initial
  * `configOps.initVaultConfig` writes happen before any baseline is noted, so
  * the seed path is unaffected.
  */
@@ -55,7 +51,7 @@ describe('configWriteScheduler — ENOENT skip-on-resurrection (5.1)', () => {
     __resetBaselinesForTests();
   });
 
-  it('skips a target whose pre-write stat reports ENOENT (does not resurrect)', async () => {
+  it('recreates a target whose pre-write stat reports ENOENT, exclusively', async () => {
     // Seed a baseline for `.filo/defaults.json` so the writer takes the
     // drift-check branch. The actual values don't matter — only "baseline
     // exists" gates the stat probe.
@@ -86,13 +82,12 @@ describe('configWriteScheduler — ENOENT skip-on-resurrection (5.1)', () => {
       makeWorkspace(),
     );
 
-    // defaults.json must NOT have been written — the deleted file stays deleted.
+    // defaults.json is written again, as a create that never overwrites.
     const defaultsSaveCalls = calls.filter(
       (c) => c.channel === 'config:save' && c.args[1] === 'defaults.json',
     );
-    expect(defaultsSaveCalls).toHaveLength(0);
-
-    // The skip is a clean no-op, not a failure — `failed` does not include it.
+    expect(defaultsSaveCalls).toHaveLength(1);
+    expect(defaultsSaveCalls[0]?.args[3]).toEqual({ createOnly: true });
     expect(result.failed).not.toContain('defaults.json');
   });
 
@@ -154,11 +149,8 @@ describe('configWriteScheduler — ENOENT skip-on-resurrection (5.1)', () => {
   });
 });
 
-// 6.4.M12 — the ENOENT-skip respects an external delete, but it never updated
-// `lastWrittenConfigs`. That dedup cache kept asserting the deleted payload was
-// on disk, so once the in-memory payload returned to that value a legitimate
-// re-write was silently dedup-suppressed — the file could never be
-// re-established in-session. The skip now clears the target's dedup entry.
+// The dedup cache must never assert a payload is on disk when it isn't: after
+// an external delete, a payload that returns to an earlier value is written.
 describe('configWriteScheduler — ENOENT skip clears dedup cache (6.4.M12)', () => {
   beforeEach(() => {
     restoreFiloDefault();
@@ -176,7 +168,7 @@ describe('configWriteScheduler — ENOENT skip clears dedup cache (6.4.M12)', ()
   const settingsWith = (mindmap: Record<string, unknown>): ProjectSettings =>
     ({ general: { globalFont: 'fixed' }, mindmap, kanban: {}, tasklist: {}, document: {} } as ProjectSettings);
 
-  it('re-writes a reverted payload after an ENOENT-skip (no permanent dedupe)', async () => {
+  it('re-writes a reverted payload after an external delete (no permanent dedupe)', async () => {
     noteBaseline('.filo/defaults.json', 1000, 50);
 
     let statMode: 'ok' | 'enoent' = 'ok';
@@ -200,7 +192,7 @@ describe('configWriteScheduler — ENOENT skip clears dedup cache (6.4.M12)', ()
     statMode = 'ok';
     await writeConfigs(VAULT_ROOT, settingsWith({ x: 1 }), 'light', makeWorkspace());
 
-    // 2. External delete; a CHANGED payload arms a write → dedup miss → ENOENT-skip.
+    // 2. External delete; a CHANGED payload arms a write → the file is created again.
     statMode = 'enoent';
     await writeConfigs(VAULT_ROOT, settingsWith({ x: 2 }), 'light', makeWorkspace());
 
@@ -209,7 +201,6 @@ describe('configWriteScheduler — ENOENT skip clears dedup cache (6.4.M12)', ()
     calls.length = 0; // inspect only this call
     await writeConfigs(VAULT_ROOT, settingsWith({ x: 1 }), 'light', makeWorkspace());
 
-    // Pre-fix the stale dedup entry (still == P) suppressed this write entirely.
     const defaultsSaves = calls.filter(
       (c) => c.channel === 'config:save' && c.args[1] === 'defaults.json',
     );
@@ -217,10 +208,9 @@ describe('configWriteScheduler — ENOENT skip clears dedup cache (6.4.M12)', ()
   });
 });
 
-// L24 (Audit-6) — a OneDrive/AV/sync client can momentarily unlink-then-recreate
-// a `.filo/` config. The pre-write ENOENT now re-stats ONCE: if the file is back,
-// the armed write proceeds (no silent data loss); if it's still gone, the
-// deletion is respected (5.1 behaviour preserved).
+// A OneDrive/AV/sync client can momentarily unlink-then-recreate a `.filo/`
+// config. The pre-write ENOENT re-stats ONCE: if the file is back, the armed
+// write proceeds; if it's still gone, the file is created again.
 describe('configWriteScheduler — L24 re-stat disambiguates a transient unlink', () => {
   beforeEach(() => {
     restoreFiloDefault();
@@ -266,7 +256,7 @@ describe('configWriteScheduler — L24 re-stat disambiguates a transient unlink'
     expect(result.failed).not.toContain('defaults.json');
   });
 
-  it('still skips when the re-stat ALSO reports ENOENT (a real delete)', async () => {
+  it('recreates when the re-stat ALSO reports ENOENT (a real delete)', async () => {
     noteBaseline('.filo/defaults.json', 1000, 50);
     const calls: Array<{ channel: string; args: unknown[] }> = [];
     installFiloMock((channel: string, ...args: unknown[]) => {
@@ -289,7 +279,8 @@ describe('configWriteScheduler — L24 re-stat disambiguates a transient unlink'
     const defaultsSaves = calls.filter(
       (c) => c.channel === 'config:save' && c.args[1] === 'defaults.json',
     );
-    expect(defaultsSaves).toHaveLength(0); // still gone → deletion respected
+    expect(defaultsSaves).toHaveLength(1); // still gone → created again
+    expect(defaultsSaves[0]?.args[3]).toEqual({ createOnly: true });
     expect(result.failed).not.toContain('defaults.json');
   });
 });

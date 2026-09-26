@@ -43,6 +43,12 @@ export function isConfigFile(name: string): name is ConfigFile {
   return CONFIG_FILES.has(name as ConfigFile);
 }
 
+/** `.filo/<config file>`: a path Keep local may back up before overwriting it. */
+export function isBackupableConfigPath(relativePath: string): boolean {
+  const segments = relativePath.split(/[\\/]+/).filter(Boolean);
+  return segments.length === 2 && segments[0] === CONFIG_DIR && isConfigFile(segments[1] ?? '');
+}
+
 // ── Paths ──
 
 function configFilePath(vaultRoot: string, file: ConfigFile): string {
@@ -362,10 +368,25 @@ export async function saveConfig(
   vaultRoot: string,
   file: ConfigFile,
   data: unknown,
+  opts: { createOnly?: boolean } = {},
 ): Promise<void> {
   await ensureDir(configDirPath(vaultRoot));
   const filePath = configFilePath(vaultRoot, file);
   const json = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+  if (opts.createOnly) {
+    // Recreating a config deleted outside Filo: reserve the name first, so a
+    // copy another program (a sync client) put back meanwhile fails with
+    // EEXIST instead of being overwritten.
+    const placeholder = await fs.open(filePath, 'wx');
+    await placeholder.close();
+    try {
+      await atomicWriteFile(filePath, json);
+    } catch (err) {
+      await fs.unlink(filePath).catch(() => undefined);
+      throw err;
+    }
+    return;
+  }
   await atomicWriteFile(filePath, json);
 }
 

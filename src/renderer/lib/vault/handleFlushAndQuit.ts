@@ -151,7 +151,8 @@ async function drainAndQuit(deps: QuitFlushDeps): Promise<void> {
   let retrying = false;
   for (;;) {
     const failed = await runDrain(deps, retrying);
-    if (!failed && deps.saveStateState() !== 'error') {
+    const state = deps.saveStateState();
+    if (!failed && state !== 'error' && state !== 'attention') {
       // Let the queued markClean reach disk (bounded) before
       // main destroys us, or `.filo/.dirty` survives a clean quit → phantom
       // recovery next launch.

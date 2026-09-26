@@ -187,6 +187,7 @@ const boardScheduler = createScheduler<BoardWriteArgs>({
   // any of which can wedge (a never-resolving prompt, or a stalled network
   // volume). Bound it so a wedged board write can't hang `flushAll` / quit.
   writeTimeoutMs: WRITE_TIMEOUT_MS,
+  retainIoError: true,
 });
 
 /**
@@ -236,9 +237,9 @@ export async function writeBoardFile(
   // Pre-write drift check. If the on-disk mtime no longer
   // matches the baseline captured at load (or after the last successful
   // self-write), an external tool wrote to the .board.json since we last
-  // knew about it. Surface a Reload / Keep-local choice; if the user
-  // picks Reload we abort the write and let the renderer pick up the
-  // disk content on the next refresh. No baseline = no comparison
+  // knew about it. Surface a Reload / Keep-local choice; on Reload the
+  // handler reads the disk version into the cache and this write is
+  // dropped. No baseline = no comparison
   // anchor (e.g. a freshly-created board that the loader's stat probe
   // happened to miss), fall through to the unguarded write.
   const baseline = getBaseline(boardPath);
@@ -285,14 +286,16 @@ export async function writeBoardFile(
       // next write re-prompts once the handler is registered. Never silently
       // overwrite the external edit.
       const choice = handler ? await handler(boardPath) : 'defer';
-      if (choice === 'reload' || choice === 'defer') {
-        // Abort the write. On 'reload', the handler refreshed the
-        // renderer's in-memory cache against disk; on 'defer'
-        // the user dismissed the prompt and neither side was touched.
-        // Both cases skip the write and surface failure so the Ctrl+S
-        // aggregate honestly reflects "didn't save". The dirty board
-        // cache survives on 'defer' so the next debounced write
-        // re-detects drift and re-prompts.
+      // 'reload' means the handler read the disk version into the cache,
+      // cancelled the queued writes and re-stamped the baseline: disk and
+      // cache agree, so there is nothing to write and nothing failed.
+      if (choice === 'reload') return;
+      if (choice === 'defer') {
+        // The user dismissed the prompt (or the reload couldn't be done) and
+        // neither side was touched. Skip the write and surface the failure so
+        // the Ctrl+S aggregate honestly reflects "didn't save". The dirty
+        // board cache survives, so the next debounced write re-detects drift
+        // and re-prompts.
         const externalEditError = Object.assign(
           new Error(`Board "${boardPath}" was modified externally; write aborted.`),
           { code: 'EXTERNAL_EDIT' },

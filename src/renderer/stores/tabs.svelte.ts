@@ -11,6 +11,8 @@ import { noteStore } from './notes.svelte';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { runWithCloseDrain } from '../lib/editor/closeDrainGate.svelte';
 import { flushRawViews } from '../lib/notes/rawViews';
+import { unsavedWork } from '../lib/boards/writeStateTracking';
+import { closeTabDialog } from '../lib/vault/unsavedMessages';
 
 /**
  * The notes a board shows: its text tiles' paths, or a Document board's note.
@@ -59,42 +61,42 @@ function partitionNoteFailuresByTab(
 }
 
 /**
- * Builds a short, user-readable description of what failed to flush.
- * `boardOkOrUnused = true` means no .board.json write was attempted (or
- * it succeeded). `boardFailedCount` is passed for the multi-tab path.
+ * What in the closing tabs still isn't on disk after their drain: each note
+ * they show and each board file, by the name the user knows. Unsaved work in
+ * other tabs isn't counted: closing this tab doesn't touch it.
  */
-function buildFailureDetails(
-  notesFailed: number,
-  boardOk: boolean,
-  boardFailedCount: number = 0,
-): string {
-  const parts: string[] = [];
-  if (notesFailed > 0) {
-    parts.push(`${notesFailed} note${notesFailed === 1 ? '' : 's'}`);
+function unsavedInTabs(closing: TabData[], alreadyAsked: readonly string[] = []): string[] {
+  // Read-only lookups built from a non-reactive snapshot.
+  /* eslint-disable svelte/prefer-svelte-reactivity */
+  const shown = new Map<VaultPath, string>();
+  for (const t of closing) {
+    const boardPath = boardCacheStore.paths[t.boardId];
+    if (boardPath) shown.set(vaultPath(boardPath), boardPath);
+    for (const n of notesOfBoard(t.boardId)) shown.set(n, noteStore.get(n)?.relPath ?? n);
+    if (t.notePath) shown.set(vaultPath(t.notePath), t.notePath);
   }
-  const boardCount = boardFailedCount > 0 ? boardFailedCount : (boardOk ? 0 : 1);
-  if (boardCount > 0) {
-    parts.push(`${boardCount} board file${boardCount === 1 ? '' : 's'}`);
+  /* eslint-enable svelte/prefer-svelte-reactivity */
+  // A raw view's text the user already chose to leave (a copy is kept).
+  for (const p of alreadyAsked) shown.delete(vaultPath(p));
+  const work = unsavedWork();
+  const out: string[] = [];
+  for (const key of [...work.failed, ...work.pending]) {
+    const name = shown.get(key);
+    if (name !== undefined && !out.includes(name)) out.push(name);
   }
-  if (parts.length === 0) return '';
-  return ` (${parts.join(', ')})`;
+  return out;
 }
 
 /**
- * Promisifies `uiStore.openConfirm` for the save-failure confirm in `close` /
- * `closeOthers`. Duplicated from `vault.svelte.ts` to avoid a circular import.
+ * Closing a tab with unsaved changes loses nothing (the changes stay in
+ * memory and keep being retried), so the confirm only says that, and when
+ * Filo will ask again.
  */
-function confirmCloseAnyway(failedDetails: string): Promise<boolean> {
+function confirmCloseWithUnsaved(paths: string[]): Promise<boolean> {
+  const dialog = closeTabDialog(paths);
   return new Promise((resolve) => {
     uiStore.openConfirm({
-      title: 'Save failed',
-      body:
-        `Filo couldn't save the latest changes${failedDetails}. ` +
-        'Closing now will lose those edits. ' +
-        "Pick \"Close anyway\" to discard them, or \"Cancel\" to keep the tab open so you can retry.",
-      confirmLabel: 'Close anyway',
-      cancelLabel: 'Cancel',
-      danger: true,
+      ...dialog,
       onConfirm: () => resolve(true),
       onCancel: () => resolve(false),
     });
@@ -240,9 +242,11 @@ export const tabStore = {
     const proceed = await runWithCloseDrain(async () => {
       // A raw view holds its text until it saves; unmounting it with text it
       // can't write would only leave a recovery copy, so ask first.
+      let rawLeft: string[] = [];
       if (closing?.notePath) {
         const raw = await flushRawViews([closing.notePath]);
         if (raw.notSaved.length > 0 && !(await confirmCloseRawAnyway(raw.notSaved))) return false;
+        rawLeft = raw.notSaved;
       }
       // Drain pending writes before unmount, collecting failures so we can
       // confirm before destroying the editor's in-memory edits (e.g. disk full).
@@ -265,12 +269,12 @@ export const tabStore = {
           6000,
         );
       }
-      const failed = inTab.length > 0 || !boardOk;
-      if (failed) {
-        const details = buildFailureDetails(inTab.length, boardOk);
-        const ok = await confirmCloseAnyway(details);
-        if (!ok) return false;
-      }
+      // Gate on what this tab still holds unsaved, whatever the cause: a
+      // failed or held note, a board write that failed earlier or now.
+      const unsaved = closing ? unsavedInTabs([closing], rawLeft) : [];
+      if (!boardOk && closing && unsaved.length === 0) unsaved.push(boardCacheStore.paths[closing.boardId] ?? closing.name);
+      for (const path of inTab) if (!unsaved.some((u) => vaultPath(u) === vaultPath(path))) unsaved.push(path);
+      if (unsaved.length > 0 && !(await confirmCloseWithUnsaved(unsaved))) return false;
 
       // Belt-and-suspenders second pass for anything armed before the gate
       // engaged. A failure here is not re-confirmed (no loop) — the writers'
@@ -330,9 +334,11 @@ export const tabStore = {
     // debounce the bulk unmount would destroy.
     const proceed = await runWithCloseDrain(async () => {
       const closingNotes = tabs.filter((t) => t.id !== tabId && t.notePath).map((t) => t.notePath as string);
+      let rawLeft: string[] = [];
       if (closingNotes.length > 0) {
         const raw = await flushRawViews(closingNotes);
         if (raw.notSaved.length > 0 && !(await confirmCloseRawAnyway(raw.notSaved))) return false;
+        rawLeft = raw.notSaved;
       }
       // Same save-failure gate as `close()`: if any drain failed, prompt
       // before destroying the editors.
@@ -345,16 +351,10 @@ export const tabStore = {
         if (!result.ok) boardFailedCount++;
       }
 
-      const failed = noteResult.failed.length > 0 || boardFailedCount > 0;
-      if (failed) {
-        const details = buildFailureDetails(
-          noteResult.failed.length,
-          boardFailedCount === 0,
-          boardFailedCount,
-        );
-        const ok = await confirmCloseAnyway(details);
-        if (!ok) return false;
-      }
+      const unsaved = unsavedInTabs(tabs.filter((t) => t.id !== tabId), rawLeft);
+      for (const path of noteResult.failed) if (!unsaved.some((u) => vaultPath(u) === vaultPath(path))) unsaved.push(path);
+      if (boardFailedCount > 0 && unsaved.length === 0) unsaved.push(`${boardFailedCount} board file${boardFailedCount === 1 ? '' : 's'}`);
+      if (unsaved.length > 0 && !(await confirmCloseWithUnsaved(unsaved))) return false;
 
       // Belt-and-suspenders re-flush before the bulk unmount.
       await noteStore.flushAll();

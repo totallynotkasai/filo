@@ -29,7 +29,13 @@ export interface MiscWriteArgs {
   vaultRoot: string;
   path: string;
   write: () => Promise<void>;
+  /** The whole file the write puts on disk, for a rescue copy when it can't. */
+  json?: string;
 }
+
+/** Each key's latest args getter, read for rescue copies. */
+// allow-module-state: cleared by the registerResetCallback below (vault swap)
+const latestMiscArgs = new Map<string, () => MiscWriteArgs | null>();
 
 const miscScheduler = createScheduler<MiscWriteArgs>({
   name: 'miscWriteScheduler',
@@ -56,6 +62,7 @@ const miscScheduler = createScheduler<MiscWriteArgs>({
   // (tags / theme / template / viewport) that a stalled network volume can wedge.
   // Bound for uniformity so a wedged misc write can't hang `flushAll` / quit.
   writeTimeoutMs: WRITE_TIMEOUT_MS,
+  retainIoError: true,
 });
 
 // Self-register cleanup so vault swap and test reset don't leak between vaults.
@@ -64,8 +71,14 @@ const miscScheduler = createScheduler<MiscWriteArgs>({
 // timer armed against the previous vault path would fire after a new
 // vault opens — its closure carries the OLD vaultRoot and would write
 // into the wrong tree (or fail silently if the path was removed).
-registerResetCallback(() => miscScheduler.reset());
-registerTestResetCallback(() => miscScheduler.reset());
+registerResetCallback(() => {
+  miscScheduler.reset();
+  latestMiscArgs.clear();
+});
+registerTestResetCallback(() => {
+  miscScheduler.reset();
+  latestMiscArgs.clear();
+});
 
 /**
  * Schedules a debounced single-file write keyed by `key`. Subsequent calls
@@ -86,7 +99,27 @@ export function scheduleMiscWrite(
   getWriteArgs: () => MiscWriteArgs | null,
   debounceMs: number = BOARD_WRITE_DEBOUNCE_MS,
 ): void {
+  latestMiscArgs.set(key, getWriteArgs);
   miscScheduler.schedule(key, getWriteArgs, debounceMs);
+}
+
+/**
+ * The file each misc write would put on disk, for the writes not saved yet:
+ * still queued or in flight, or whose path `isUnsaved` names (a failed write).
+ */
+export function unsavedMiscPayloads(isUnsaved: (path: string) => boolean): Array<{ relPath: string; json: string }> {
+  const out: Array<{ relPath: string; json: string }> = [];
+  for (const [key, getArgs] of latestMiscArgs) {
+    let args: MiscWriteArgs | null = null;
+    try {
+      args = getArgs();
+    } catch {
+      args = null;
+    }
+    if (!args || args.json === undefined) continue;
+    if (miscScheduler.hasWork(key) || isUnsaved(args.path)) out.push({ relPath: args.path, json: args.json });
+  }
+  return out;
 }
 
 /**

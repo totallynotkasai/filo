@@ -100,6 +100,17 @@ export function flattenSnapshotName(relativePath: string): string {
 }
 
 /**
+ * Why a copy is taken:
+ *  - `'keep'`: the other version a Keep mine / Keep local or an encoding
+ *    conversion is about to overwrite. It may be the only copy left, so it
+ *    goes in a `<ts>-keep` directory the prunes skip; only the user deletes it.
+ *  - `'load-failure'`: a file that failed to load. Every vault open takes it
+ *    again, so an unchanged file is not copied twice.
+ *  - none: a best-effort copy, pruned by the caps below.
+ */
+export type SnapshotPurpose = 'keep' | 'load-failure';
+
+/**
  * Copies `<vault>/<relativePath>` into
  * `<vault>/.filo/recovery/<ts>/<flattened-rel-path>`.
  *
@@ -117,17 +128,10 @@ export function flattenSnapshotName(relativePath: string): string {
 export async function snapshotForRecovery(
   vaultRoot: string,
   relativePath: string,
+  purpose?: SnapshotPurpose,
 ): Promise<string> {
   const sourceAbs = join(vaultRoot, relativePath);
   assertWithinVault(vaultRoot, sourceAbs);
-
-  // The timestamp's `.SSS` fractional segment keeps two snapshots taken in the
-  // same second in distinct subdirectories.
-  const destDir = join(vaultRoot, RECOVERY_DIR, recoveryTimestamp());
-  await ensureDir(destDir);
-
-  // Flattened rel path, not the bare basename (see flattenSnapshotName).
-  const destAbs = join(destDir, flattenSnapshotName(relativePath));
 
   // Size check BEFORE the read so a multi-GB file isn't pulled into memory
   // just to be rejected.
@@ -139,12 +143,30 @@ export async function snapshotForRecovery(
     (err as NodeJS.ErrnoException).code = 'RECOVERY_SNAPSHOT_TOO_LARGE';
     throw err;
   }
+  const bytes = await fs.readFile(sourceAbs);
+  // Flattened rel path, not the bare basename (see flattenSnapshotName).
+  const flatName = flattenSnapshotName(relativePath);
+
+  // A file that fails to load is copied on every vault open. Without this, an
+  // unchanged broken board would fill the global cap and push out older,
+  // different copies.
+  if (purpose === 'load-failure') {
+    const same = await findIdenticalSnapshot(vaultRoot, flatName, bytes);
+    if (same !== null) return same;
+  }
+
+  // The timestamp's `.SSS` fractional segment keeps two snapshots taken in the
+  // same second in distinct subdirectories.
+  const destDir = join(vaultRoot, RECOVERY_DIR, `${recoveryTimestamp()}${purpose === 'keep' ? KEEP_SUFFIX : ''}`);
+  await ensureDir(destDir);
+  const destAbs = join(destDir, flatName);
 
   // read-then-atomicWriteFile rather than fs.copyFile so the snapshot
   // survives power loss: `copyFile` returns once data is in the kernel
   // cache, and a torn safety net would lie.
-  const bytes = await fs.readFile(sourceAbs);
   await atomicWriteFile(destAbs, bytes);
+  // A kept copy is never pruned, so it doesn't count toward the caps either.
+  if (purpose === 'keep') return destAbs;
 
   // Prune older snapshots of the same file. Best-effort, but logged so an
   // iffy-permissions vault doesn't accumulate snapshots invisibly.
@@ -312,18 +334,67 @@ async function pruneOldSnapshotsGlobal(vaultRoot: string): Promise<void> {
 
 /**
  * Rescue copies (unsaved work kept when the user closes or quits anyway) go in
- * `<timestamp>${RESCUE_SUFFIX}` directories. The prunes skip them: they hold
- * text that exists nowhere else, so only the user removes them.
+ * `<timestamp>${RESCUE_SUFFIX}` directories, and the other version a Keep mine
+ * or an encoding conversion overwrote in `<timestamp>${KEEP_SUFFIX}`. The
+ * prunes skip both: they hold bytes that exist nowhere else, so only the user
+ * removes them.
  */
 const RESCUE_SUFFIX = '-unsaved';
+const KEEP_SUFFIX = '-keep';
+/** Where the orphan-tmp sweep moves partly written files (see orphanTmpSweep.ts). */
+const ORPHAN_TMP_DIR = 'orphan-tmp';
 
 function isRescueDir(name: string): boolean {
-  return name.endsWith(RESCUE_SUFFIX);
+  return name.endsWith(RESCUE_SUFFIX) || name.endsWith(KEEP_SUFFIX);
+}
+
+/** A prunable snapshot of `flatName` holding exactly `bytes`, or null. */
+async function findIdenticalSnapshot(vaultRoot: string, flatName: string, bytes: Buffer): Promise<string | null> {
+  const recoveryRoot = join(vaultRoot, RECOVERY_DIR);
+  let dirs: string[];
+  try {
+    dirs = (await fs.readdir(recoveryRoot, { withFileTypes: true }))
+      .filter((d) => d.isDirectory() && !isRescueDir(d.name))
+      .map((d) => d.name);
+  } catch {
+    return null;
+  }
+  for (const dir of dirs) {
+    const candidate = join(recoveryRoot, dir, flatName);
+    try {
+      const stat = await fs.stat(candidate);
+      if (!stat.isFile() || stat.size !== bytes.length) continue;
+      if ((await fs.readFile(candidate)).equals(bytes)) return candidate;
+    } catch {
+      // Not in this directory.
+    }
+  }
+  return null;
 }
 
 /** Recovery-directory timestamp: ISO with ms, `:` swapped for `-` (illegal on Windows). */
 function recoveryTimestamp(): string {
   return new Date().toISOString().replace(/[:]/g, '-').replace(/Z$/, '');
+}
+
+/**
+ * Rescue folders written this session. Their vault may be closed by the time
+ * the user asks to see one (the notice outlives the swap), so "Show in
+ * folder" is allowed for exactly these as well as the open vault.
+ */
+const keptRescueDirs = new Set<string>();
+
+/** True when `fullPath` is (inside) a rescue folder written this session. */
+export function isKeptRescuePath(fullPath: string): boolean {
+  for (const dir of keptRescueDirs) {
+    try {
+      assertWithinVault(dir, fullPath);
+      return true;
+    } catch {
+      // Not under this one.
+    }
+  }
+  return false;
 }
 
 /** What {@link keepUnsavedCopies} wrote. */
@@ -358,6 +429,7 @@ export async function keepUnsavedCopies(
   };
   if (items.length === 0) return out;
   await ensureDir(destDir);
+  keptRescueDirs.add(destDir);
   const used = new Set<string>();
   for (const { relPath, text } of items) {
     try {
@@ -391,6 +463,18 @@ export interface RecoverySnapshotInfo {
   basename: string;
   /** The timestamp subdirectory name, ISO-ish: `2026-06-02T14-30-15.123`. */
   timestamp: string;
+  /**
+   * What the copy is: a load-failure or other snapshot, a rescue copy of
+   * unsaved work (`-unsaved`), a kept other version (`-keep`), or a partly
+   * written file moved aside (`orphan-tmp/<ts>/`).
+   */
+  kind: 'snapshot' | 'unsaved' | 'keep' | 'orphan-tmp';
+}
+
+function snapshotKind(dirName: string): RecoverySnapshotInfo['kind'] {
+  if (dirName.endsWith(RESCUE_SUFFIX)) return 'unsaved';
+  if (dirName.endsWith(KEEP_SUFFIX)) return 'keep';
+  return 'snapshot';
 }
 
 /**
@@ -417,9 +501,24 @@ export async function listRecoverySnapshots(vaultRoot: string): Promise<Recovery
   }
 
   const out: RecoverySnapshotInfo[] = [];
+  // `orphan-tmp/<ts>/` holds partly written files moved aside, one folder per sweep.
+  const dirs: Array<{ rel: string[]; timestamp: string; kind: RecoverySnapshotInfo['kind'] }> = [];
   for (const entry of entries) {
     if (!entry.isDirectory) continue;
-    const subdirPath = join(recoveryRoot, entry.name);
+    if (entry.name !== ORPHAN_TMP_DIR) {
+      dirs.push({ rel: [entry.name], timestamp: entry.name, kind: snapshotKind(entry.name) });
+      continue;
+    }
+    try {
+      for (const sweep of await fs.readdir(join(recoveryRoot, entry.name), { withFileTypes: true })) {
+        if (sweep.isDirectory()) dirs.push({ rel: [entry.name, sweep.name], timestamp: sweep.name, kind: 'orphan-tmp' });
+      }
+    } catch {
+      // Unreadable: nothing to list from it.
+    }
+  }
+  for (const dir of dirs) {
+    const subdirPath = join(recoveryRoot, ...dir.rel);
     let subEntries: string[];
     try {
       subEntries = await fs.readdir(subdirPath);
@@ -438,9 +537,10 @@ export async function listRecoverySnapshots(vaultRoot: string): Promise<Recovery
       // Forward-slash the vault-relative path (the convention for paths that
       // cross the IPC boundary); `RECOVERY_DIR` uses the OS separator.
       out.push({
-        relPath: [RECOVERY_DIR.split(/[\\/]/).join('/'), entry.name, name].join('/'),
+        relPath: [RECOVERY_DIR.split(/[\\/]/).join('/'), ...dir.rel, name].join('/'),
         basename: name,
-        timestamp: entry.name,
+        timestamp: dir.timestamp,
+        kind: dir.kind,
       });
     }
   }

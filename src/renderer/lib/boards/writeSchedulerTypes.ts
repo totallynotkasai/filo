@@ -25,6 +25,11 @@ export interface SchedulerSentinelInfo {
  */
 export interface PerformWriteResult {
   failed?: string[];
+  /**
+   * The error behind a partial failure, when every failure in it is one a
+   * re-fire could fix. It decides retention the way a thrown error would.
+   */
+  error?: unknown;
 }
 
 /**
@@ -149,6 +154,12 @@ export interface CreateSchedulerOptions<TArgs> {
    * not a latency budget.
    */
   writeTimeoutMs?: number;
+  /**
+   * Also keep failures coded `IO_ERROR` (an fs error main couldn't name) for
+   * a re-fire. Only for schedulers whose payload is a whole-file snapshot
+   * rebuilt at fire time, so a re-fire can't replay a stale partial change.
+   */
+  retainIoError?: boolean;
 }
 
 /** Internal — a pending (armed-timer) entry. */

@@ -193,6 +193,8 @@ const KEEP_LOCAL_CHOKEPOINTS = [
   { file: 'src/renderer/stores/notes.svelte.ts', fn: 'resolveConflict', fnKeyword: false, token: 'backupThenRead(' },
   { file: 'src/renderer/lib/vault/keepLocalBackup.ts', fn: 'backupThenRead', fnKeyword: true, token: 'backupExternalVersion(' },
   { file: 'src/renderer/components/boards/NoteRawView.svelte', fn: 'keepMine', fnKeyword: true, token: 'backupThenRead(' },
+  { file: 'src/renderer/stores/boardDrift.ts', fn: 'keepLocalVersion', fnKeyword: true, token: 'backupExternalVersion(' },
+  { file: 'src/renderer/lib/boards/configDrift.ts', fn: 'checkConfigDisk', fnKeyword: true, token: 'backupConfig(' },
 ];
 
 /** Index of the `{` enclosing `pos` (nearest unmatched), or -1. */

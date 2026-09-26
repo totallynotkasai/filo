@@ -117,7 +117,8 @@ describe('Keep mine backs up the external version first', () => {
     const write = channels.lastIndexOf('vault:write-existing-file-text');
     expect(snap).toBeGreaterThanOrEqual(0);
     expect(write).toBeGreaterThan(snap);
-    expect(calls[snap].args).toEqual(['/vault', 'Note.md']);
+    // 'keep': the other version goes where the snapshot prunes never reach.
+    expect(calls[snap].args).toEqual(['/vault', 'Note.md', 'keep']);
     // The confirmation names the backup location, vault-relative.
     expect(uiStore.toasts.some((t) => t.text.includes('.filo/recovery/2026-09-23T10-02-11.123/Note.md'))).toBe(true);
   });

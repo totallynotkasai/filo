@@ -59,6 +59,7 @@ const PAIRS: Array<[string, string, number, string]> = [
   ['--toolbar-save-ok', '--toolbar-bg', WCAG_AA_LARGE, 'save indicator "saved" on toolbar'],
   ['--toolbar-save-busy', '--toolbar-bg', WCAG_AA_LARGE, 'save indicator "saving" on toolbar'],
   ['--toolbar-save-error', '--toolbar-bg', WCAG_AA_LARGE, 'save indicator "failed" on toolbar'],
+  ['--toolbar-save-attention', '--toolbar-bg', WCAG_AA_LARGE, 'save indicator "waiting for a decision" on toolbar'],
 ];
 
 describe('WCAG AA contrast — built-in themes', () => {

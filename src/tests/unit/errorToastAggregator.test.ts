@@ -136,3 +136,57 @@ describe('createErrorToastAggregator', () => {
     expect(toasts[1].text).toBe('y: 42');
   });
 });
+
+describe('createErrorToastAggregator — several files in one toast', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function apiWithActions() {
+    const { api, toasts } = makeFakeApi();
+    const actions = new Map<string, string[]>();
+    const push = api.pushToast.bind(api);
+    api.pushToast = (opts) => {
+      const id = push(opts);
+      actions.set(id, (opts.actions ?? []).map((a) => a.label));
+      return id;
+    };
+    api.updateToastActions = (id, next) => {
+      actions.set(id, next.map((a) => a.label));
+      return true;
+    };
+    return { api, toasts, actions };
+  }
+
+  const openA = { label: 'Open A', handler: () => undefined };
+  const retry = { label: 'Retry', handler: () => undefined };
+
+  it('names every file, not only the newest, and drops the first file’s own buttons for Details', () => {
+    const { api, toasts, actions } = apiWithActions();
+    const details = vi.fn();
+    const aggregate = createErrorToastAggregator(api, { details });
+
+    aggregate({ context: 'File save failed', error: new Error('x'), message: "Filo couldn't save (A.md).", path: 'A.md', actions: [openA], sharedActions: [retry] });
+    expect(actions.get(toasts[0].id)).toEqual(['Open A', 'Retry']);
+
+    aggregate({ context: 'File save failed', error: new Error('x'), message: "Filo couldn't save (B.md).", path: 'B.md', actions: [], sharedActions: [retry] });
+    aggregate({ context: 'File save failed', error: new Error('x'), message: "Filo couldn't save (C.md).", path: 'C.md', sharedActions: [retry] });
+    aggregate({ context: 'File save failed', error: new Error('x'), message: "Filo couldn't save (D.md).", path: 'D.md', sharedActions: [retry] });
+
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].text).toBe("File save failed: 4 files couldn't be saved: A.md, B.md, C.md…");
+    expect(actions.get(toasts[0].id)).toEqual(['Retry', 'Details']);
+  });
+
+  it('the same file failing again keeps its buttons and the count badge', () => {
+    const { api, toasts, actions } = apiWithActions();
+    const aggregate = createErrorToastAggregator(api, { details: () => undefined });
+    aggregate({ context: 'Board save failed', error: new Error('x'), message: 'first', path: 'Plan.board.json', actions: [openA] });
+    aggregate({ context: 'Board save failed', error: new Error('x'), message: 'again', path: 'Plan.board.json', actions: [openA] });
+    expect(toasts[0].text).toBe('Board save failed (2×): again');
+    expect(actions.get(toasts[0].id)).toEqual(['Open A']);
+  });
+});

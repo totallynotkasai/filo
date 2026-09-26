@@ -15,6 +15,8 @@
  *   previous body back after backing the short version up.
  *
  * Each prompt is sticky and keyed per note, so one note never shows two.
+ * Conflict, Deleted and Can't save also register as held decisions, so the
+ * save indicator waits for the answer and its popover can show them again.
  */
 import { uiStore } from './ui.svelte';
 import { fileTagsStore } from './fileTags.svelte';
@@ -27,6 +29,7 @@ import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdenti
 import { backupExternalVersion } from '../lib/vault/keepLocalBackup';
 import { localNoteText } from '../lib/notes/noteFile';
 import { reportError } from '../lib/utils/errorBus';
+import { holdDecision, releaseDecision } from './heldDecisions';
 
 const conflictKey = (rel: string): string => `ext-mod:${rel}`;
 const deletedKey = (rel: string): string => `ext-deleted:${rel}`;
@@ -38,6 +41,14 @@ function recreatedText(m: NoteModel): string {
 
 function promptConflict(m: NoteModel): void {
   const rel = m.relPath;
+  const key = conflictKey(rel);
+  holdDecision({
+    key,
+    relPath: () => m.relPath,
+    text: 'Changed by another program while you were editing it: Reload or Keep mine',
+    stillHeld: () => noteStore.get(m.relPath) === m && m.status === 'conflict',
+    reopen: () => promptConflict(m),
+  });
   uiStore.pushToast({
     text: `"${noteTitle(rel)}" was changed by another program while you were editing it. Reload that version, or keep yours?`,
     type: 'warning',
@@ -48,9 +59,10 @@ function promptConflict(m: NoteModel): void {
       {
         label: 'Reload',
         handler: () => {
-          void noteStore.resolveConflict(m.relPath, 'reload').catch((err) =>
-            reportError('notePrompts.reload', err, `Couldn't reload "${m.relPath}"`),
-          );
+          void noteStore
+            .resolveConflict(m.relPath, 'reload')
+            .catch((err) => reportError('notePrompts.reload', err, `Couldn't reload "${m.relPath}"`))
+            .finally(() => releaseDecision(key));
         },
       },
       {
@@ -61,6 +73,8 @@ function promptConflict(m: NoteModel): void {
             await noteStore.resolveConflict(m.relPath, 'keep-mine');
           } catch (err) {
             reportError('notePrompts.keepMine', err, `Couldn't keep your version of "${m.relPath}"`);
+          } finally {
+            releaseDecision(key);
           }
         },
       },
@@ -108,6 +122,13 @@ export function promptNotesBoxConflict(
 
 function promptDeleted(m: NoteModel): void {
   const rel = m.relPath;
+  holdDecision({
+    key: deletedKey(rel),
+    relPath: () => m.relPath,
+    text: 'Deleted by another program while it had unsaved edits: Keep mine or Discard',
+    stillHeld: () => noteStore.get(m.relPath) === m && m.status === 'missing' && m.hasUnsavedBody,
+    reopen: () => promptDeleted(m),
+  });
   uiStore.pushToast({
     text: `"${noteTitle(rel)}" was deleted by another program, but it has edits that weren't saved. Keep your version, or discard it?`,
     type: 'warning',
@@ -152,6 +173,13 @@ function promptDeleted(m: NoteModel): void {
  * never shows both.
  */
 function promptWriteTargetMissing(rel: string, m: NoteModel | undefined): void {
+  holdDecision({
+    key: deletedKey(rel),
+    relPath: () => m?.relPath ?? rel,
+    text: 'Its file no longer exists: Save as new file or Discard change',
+    stillHeld: () => noteStore.hasPendingWrites(m?.relPath ?? rel),
+    reopen: () => promptWriteTargetMissing(m?.relPath ?? rel, m),
+  });
   const saveAsNew = m
     ? [
         {

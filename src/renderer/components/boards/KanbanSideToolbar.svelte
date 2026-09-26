@@ -13,11 +13,9 @@
    * `+ Add Tile` button inside each column body).
    */
   import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
-  import { vaultStore } from '../../stores/vault.svelte';
+  import { workspaceStore, type ToolbarPosition } from '../../stores/workspace.svelte';
   import { KANBAN_COLUMN_DEFAULTS } from '../../constants/defaults';
   import { handleListKeyNav, focusFirstItem } from '../../lib/utils/listKeyNav';
-  import { trackComponentWrite } from '../../lib/boards/boardSaver';
-  import { invokeOk } from '../../lib/utils/invokeOk';
   import { createFocusTrap, type FocusTrap } from 'focus-trap';
   import { safeDeactivateTrap } from '../../lib/utils/focusTrapSafe';
   import { tick, onDestroy } from 'svelte';
@@ -88,43 +86,17 @@
   // menu closes so reopening always starts fresh.
   let tagSearch = $state('');
 
-  // Drag state for movable toolbar. Position persists in
-  // `.filo/kanbanToolbar.json` inside the vault; reset via right-click.
-  const TOOLBAR_POS_FILE = '.filo/kanbanToolbar.json';
-
-  async function loadToolbarPos(): Promise<{ x: number; y: number } | null> {
-    const vaultPath = vaultStore.path;
-    if (!vaultPath) return null;
-    try {
-      const result = await invokeOk('vault:read-file-text', vaultPath, TOOLBAR_POS_FILE); // allow-raw-read: .filo/ position file, not a note
-      const p = JSON.parse(result.content) as { x?: unknown; y?: unknown };
-      if (typeof p.x !== 'number' || typeof p.y !== 'number') return null;
-      return { x: Math.max(0, Math.min(window.innerWidth - 60, p.x)), y: Math.max(0, Math.min(window.innerHeight - 60, p.y)) };
-    } catch { return null; }
+  // Drag state for movable toolbar. The resting position is layout state,
+  // saved in `.filo/workspace.json` by the workspace store (main refuses
+  // `.filo/` on the generic vault channels); reset via right-click.
+  function clampToWindow(p: ToolbarPosition): ToolbarPosition {
+    return { x: Math.max(0, Math.min(window.innerWidth - 60, p.x)), y: Math.max(0, Math.min(window.innerHeight - 60, p.y)) };
   }
 
-  async function saveToolbarPos(pos: { x: number; y: number } | null): Promise<void> {
-    const vaultPath = vaultStore.path;
-    if (!vaultPath) return;
-    try {
-      // allow-direct-write: `.filo/kanban-toolbar-pos.json` is per-machine
-      // UI geometry, not a `.md` file — no editor hydrates from it.
-      await trackComponentWrite(vaultPath, TOOLBAR_POS_FILE, () =>
-        invokeOk(
-          'vault:write-file-text',
-          vaultPath,
-          TOOLBAR_POS_FILE,
-          pos === null ? '{}' : JSON.stringify(pos),
-        ),
-      );
-    } catch { /* Non-fatal — toolbar position is best-effort UI state. */ }
-  }
-
+  const savedPosition = workspaceStore.kanbanToolbar;
   let isDragging = $state(false);
-  let dragPosition = $state<{ x: number; y: number } | null>(null);
+  let dragPosition = $state<ToolbarPosition | null>(savedPosition ? clampToWindow(savedPosition) : null);
   let dragOffset = $state({ x: 0, y: 0 });
-
-  $effect(() => { void loadToolbarPos().then((pos) => { if (pos) dragPosition = pos; }); });
 
   function onDragStart(e: PointerEvent) {
     if (e.button !== 0) return;
@@ -154,7 +126,7 @@
     // Persist final position so the toolbar reopens at the saved spot
     // after a reload. Drag-in-flight intermediate positions are not
     // written — only the resting position.
-    void saveToolbarPos(dragPosition);
+    workspaceStore.setKanbanToolbar(dragPosition);
   }
 
   function onContextMenu(e: MouseEvent) {
@@ -165,7 +137,7 @@
     if (tgt && tgt.closest('.toolbar-btn, .toolbar-menu, .toolbar-group')) return;
     e.preventDefault();
     dragPosition = null;
-    void saveToolbarPos(null);
+    workspaceStore.setKanbanToolbar(null);
   }
 
   let positionStyle = $derived(

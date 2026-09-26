@@ -149,6 +149,12 @@ export interface ToastMessage {
   sticky?: boolean;
   /** A newer toast with the same key silently replaces this one. */
   dedupeKey?: string;
+  /**
+   * Kept when the vault closes or another opens: a notice about the vault
+   * just left (where its rescue copies went) that the user must still see.
+   * Only for a sticky toast whose actions don't touch vault state.
+   */
+  survivesSwap?: boolean;
 }
 
 let toasts = $state<ToastMessage[]>([]);
@@ -372,6 +378,7 @@ export const uiStore = {
     acknowledgeOnly?: boolean;
     sticky?: boolean;
     dedupeKey?: string;
+    survivesSwap?: boolean;
   }): string {
     // A dedupeKey replaces the older toast for the same subject. Silent unless the old one is promise-backed (its onDismiss
     // must still resolve → 'defer', never strand).
@@ -425,6 +432,7 @@ export const uiStore = {
       acknowledgeOnly: opts.acknowledgeOnly,
       sticky,
       dedupeKey: opts.dedupeKey,
+      survivesSwap: opts.survivesSwap === true && sticky,
     };
     toasts = [...toasts, toast];
 
@@ -508,6 +516,13 @@ export const uiStore = {
     toasts = toasts.map((t, i) => (i === idx ? { ...t, text } : t));
     return true;
   },
+  /** Replaces an existing toast's buttons. False when the toast is gone. */
+  updateToastActions(id: string, actions: ToastAction[]): boolean {
+    const idx = toasts.findIndex((t) => t.id === id);
+    if (idx < 0) return false;
+    toasts = toasts.map((t, i) => (i === idx ? { ...t, actions } : t));
+    return true;
+  },
 };
 
 // Drop transient UI state when the vault swaps so a toast,
@@ -524,6 +539,7 @@ onVaultSwap('pre-swap', 'ui', () => {
   // `inFlightDriftPrompts[path]` (and its awaiters). Best-effort — a thrown
   // onDismiss must not block the rest of the swap.
   for (const toast of toasts) {
+    if (toast.survivesSwap) continue;
     // Skip `acknowledgeOnly` toasts (recovery breadcrumbs). Pre-swap runs
     // BEFORE the generation bump, so their `isStillSameVault` guard still
     // passes and the destructive `clearQuitFailureBreadcrumb` / `markClean`
@@ -534,7 +550,7 @@ onVaultSwap('pre-swap', 'ui', () => {
       }
     }
   }
-  toasts = [];
+  toasts = toasts.filter((t) => t.survivesSwap);
   contextMenu = { visible: false, x: 0, y: 0, items: [] };
   activeModal = null;
   relinkContext = null;

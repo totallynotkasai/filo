@@ -8,8 +8,11 @@
  * `.filo/recovery/<timestamp>-unsaved/` before the vault is let go:
  *  - a note: its last frontmatter with the queued change, over the local body;
  *  - a board: its in-memory file, as JSON;
- *  - a raw view's text: the whole file as typed.
- * `.filo/` config can't be copied there; it is reported as not kept.
+ *  - a raw view's text: the whole file as typed;
+ *  - Filo's own `.filo/` state (the tag registry, the only copy of attachment
+ *    tags; settings, layout, viewports, hotkeys, sidebar order): each file's
+ *    unsaved content as `_filo__<name>.json`, a name outside `.filo/` so
+ *    the rescue channel accepts it.
  */
 import { vaultPath, type VaultPath } from '@shared/vaultPath';
 import { noteStore } from './notes.svelte';
@@ -20,6 +23,32 @@ import { invokeOk } from '../lib/utils/invokeOk';
 import { unsavedWork, type UnsavedWork } from '../lib/boards/writeStateTracking';
 import type { RescueResult, UnsavedCause, UnsavedItem } from '../lib/vault/unsavedMessages';
 import { rawViewInConflict, takeRawRescueItems } from '../lib/notes/rawViews';
+import { unsavedConfigPayloads } from '../lib/boards/configWriteScheduler';
+import { unsavedMiscPayloads } from '../lib/boards/miscWriteScheduler';
+
+/** A `.filo/` file's rescue copy name: `.filo/tags.json` → `_filo__tags.json`. */
+export function filoRescueName(relPath: string): string {
+  return `_filo__${relPath.replace(/^\.filo[\\/]/, '').replace(/[\\/]+/g, '__')}`;
+}
+
+/** Unsaved `.filo/` files as rescue items, and the ledger keys they cover. */
+function filoRescueItems(unsaved: Set<VaultPath>): { items: Array<{ relPath: string; text: string }>; covers: VaultPath[] } {
+  const items: Array<{ relPath: string; text: string }> = [];
+  const covers: VaultPath[] = [];
+  try {
+    const configs = unsavedConfigPayloads();
+    for (const { name, json } of configs) items.push({ relPath: filoRescueName(`.filo/${name}`), text: `${json}\n` });
+    // A failed config write is tracked under `.filo/` as a whole.
+    if (configs.length > 0) covers.push(vaultPath('.filo/'));
+    for (const { relPath, json } of unsavedMiscPayloads((p) => unsaved.has(vaultPath(p)))) {
+      items.push({ relPath: filoRescueName(relPath), text: `${json}\n` });
+      covers.push(vaultPath(relPath));
+    }
+  } catch (err) {
+    console.error('[unsavedRescue] collecting unsaved .filo/ state failed:', err);
+  }
+  return { items, covers };
+}
 
 /** Board paths (on-disk spelling) by case-folded key. */
 function boardPathsByKey(): Map<VaultPath, { boardId: string; relPath: string }> {
@@ -94,6 +123,9 @@ export async function keepRescueCopies(work: UnsavedWork = unsavedWork()): Promi
     items.push(raw);
     covered.add(vaultPath(raw.relPath));
   }
+  const filo = filoRescueItems(new Set([...work.failed, ...work.pending]));
+  items.push(...filo.items);
+  for (const key of filo.covers) covered.add(key);
   for (const key of [...work.failed, ...work.pending]) {
     if (covered.has(key)) continue;
     covered.add(key);

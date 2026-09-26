@@ -4,12 +4,12 @@
  * permission revoked, antivirus quarantine) would otherwise drop the user's
  * last edits with zero UI feedback.
  *
- * On a failed note write the closing tab shows (or one no other tab can
- * claim), tabStore opens a confirm dialog ("Save failed — close anyway?").
- * Confirm proceeds with the close (data is lost but the user asked for it).
- * Cancel keeps the tab open so the user can retry. A failure that belongs to
- * a note another open tab shows is reported with a toast and doesn't gate
- * this close.
+ * When a note or board the closing tab shows still has unsaved changes after
+ * the drain, tabStore says so ("Unsaved changes") before closing. Closing
+ * loses nothing (the change stays in memory and is retried, and quit or close
+ * vault ask again), and the dialog says exactly that. Cancel keeps the tab
+ * open. A failure that belongs to a note another open tab shows is reported
+ * with a toast and doesn't gate this close.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -77,7 +77,13 @@ describe('tabStore.close — confirm on save failure', () => {
     await waitForConfirmDialog();
 
     expect(uiStore.confirmDialog).not.toBeNull();
-    expect(uiStore.confirmDialog?.title).toBe('Save failed');
+    expect(uiStore.confirmDialog?.title).toBe('Unsaved changes');
+    expect(uiStore.confirmDialog?.body).toBe(
+      '"Note.md" still has unsaved changes. Filo will keep trying, and will ask again when you quit or close the vault.',
+    );
+    expect(uiStore.confirmDialog?.confirmLabel).toBe('Close tab');
+    // Nothing is thrown away, so it isn't styled as destructive.
+    expect(uiStore.confirmDialog?.danger).not.toBe(true);
 
     // Cancel — tab stays open, edits preserved.
     uiStore.confirmDialog?.onCancel?.();
@@ -140,7 +146,7 @@ describe('tabStore.close — confirm on save failure', () => {
     await waitForConfirmDialog();
 
     expect(uiStore.confirmDialog).not.toBeNull();
-    expect(uiStore.confirmDialog?.title).toBe('Save failed');
+    expect(uiStore.confirmDialog?.title).toBe('Unsaved changes');
 
     // Cancel — both tabs still present.
     uiStore.confirmDialog?.onCancel?.();

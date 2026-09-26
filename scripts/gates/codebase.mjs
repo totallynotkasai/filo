@@ -15,11 +15,11 @@ const LOC_LIMIT = 1000;
 // grow; the remedy for an over-limit file is to split it, not to raise its row.
 const FILE_SIZE_ALLOWLIST = {
   'src/renderer/components/boards/TaskListBoard.svelte': 2016,
-  'src/renderer/components/boards/KanbanSideToolbar.svelte': 1503,
+  'src/renderer/components/boards/KanbanSideToolbar.svelte': 1473,
   'src/renderer/components/boards/TaskItem.svelte': 1506,
   'src/renderer/components/boards/KanbanBoard.svelte': 1450,
   'src/renderer/components/boards/KanbanColumn.svelte': 1194,
-  'src/renderer/stores/vault.svelte.ts': 1613,
+  'src/renderer/stores/vault.svelte.ts': 1611,
 };
 
 // The refactor characterisation suite: user-visible behaviour the file-model
@@ -46,6 +46,7 @@ const CHARACTERISATION_SPECS = {
   'frontmatterSafety.test.ts': 2,
   'rawViewUnsaved.test.ts': 5,
   'taskNotesBox.test.ts': 4,
+  'honestSaveState.test.ts': 6,
 };
 
 // Board format v8: a def names its file and stores only visuals. These are

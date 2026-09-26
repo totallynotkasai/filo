@@ -350,6 +350,7 @@ export function saveHotkeyOverrides(vaultRoot: string): void {
     return {
       vaultRoot,
       path: '.filo/hotkeys.json',
+      json: JSON.stringify(payload, null, 2),
       write: async () => {
         await invokeOk('config:save', vaultRoot, 'hotkeys.json', payload);
       },

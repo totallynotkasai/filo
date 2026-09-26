@@ -1,5 +1,5 @@
 // IPC contract + main-process security ratchets.
-import { fail, blank, functionBody, matchBrace, lineAt, stripCommentsKeepOffsets } from './lib.mjs';
+import { fail, blank, functionBody, matchBrace, lineAt, markerNear, stripCommentsKeepOffsets } from './lib.mjs';
 
 const MAIN_TO_RENDERER_EVENTS = new Set([
   'vault:files-changed',
@@ -93,6 +93,22 @@ const FILO_READ_EXEMPT = new Map([
   ['vault:read-file-text', "trusted text channel the app's own crash recovery + vault index read .filo/ sentinels through"],
 ]);
 const MIN_SWEPT_READ_CHANNELS = 2;
+
+// Handlers behind the renderer's write schedulers (and the other writes their
+// Retry covers): a failure here must carry a code (gate ipc-errors-carry-code).
+const WRITE_HANDLER_CHANNELS = [
+  'vault:init-config',
+  'board:save',
+  'board:create',
+  'config:save',
+  'config:save-workspace',
+  'theme:save',
+  'theme:delete',
+  'tags:save',
+  'templates:layout:write',
+  'templates:layout:rename',
+  'templates:layout:delete',
+];
 
 const VERSIONED_SCHEMAS = ['BoardFileDataSchema', 'TagsFileSchema', 'LayoutTemplateSchema'];
 const VERSION_GUARDS = ['loadVersionedFile', 'migrateBoardFile', 'migrateTagsFile', 'migrateLayoutTemplate'];
@@ -277,6 +293,85 @@ export const checks = [
         if (!/isPermittedSentinel\s*\([^)]*\baccess\b/.test(guardFn.text)) {
           out.push(fail(SEC, undefined, 'assertNotInFiloDir must route .filo/ sentinels through isPermittedSentinel(…, access)'));
         }
+      }
+      return out;
+    },
+  },
+  {
+    id: 'no-filo-path-on-vault-channels',
+    title: 'renderer invokes of a vault:* channel that refuses .filo/ never name a .filo/ path',
+    hint:
+      'Main refuses .filo/ on the generic vault channels, so the write fails and is reported as unsaved work for the ' +
+      'rest of the session. Keep app state in a .filo/ config through its own scheduler (workspace.json, config:save, ' +
+      'scheduleMiscWrite), or mark a sentinel helper with `// allow-filo-path: <reason>`.',
+    run(ctx) {
+      const out = [];
+      // The channels whose handler refuses `.filo/`, read from main itself.
+      const refusing = new Set();
+      for (const rel of ctx.files('src/main/ipc', { ext: ['.ts'] })) {
+        for (const { channel, body } of handlerSegments(ctx.read(rel))) {
+          if (channel.startsWith('vault:') && /\bassertNotInFiloDir\s*\(/.test(body)) refusing.add(channel);
+        }
+      }
+      for (const channel of ['vault:write-file-text', 'vault:write-existing-file-text', 'vault:create-file-text']) {
+        if (!refusing.has(channel)) out.push(fail('src/main/ipc', undefined, `tripwire: ${channel} no longer found refusing .filo/ — update this gate`));
+      }
+      const FILO_LITERAL = /(['"`])\.filo\//;
+      const FILO_CONST = /\bconst\s+([A-Za-z_$][\w$]*)\s*(?::\s*string\s*)?=\s*['"`]\.filo\//g;
+      const VAULT_INVOKE = /\b(?:invoke|invokeOk)\s*(?:<[^>]*>)?\(\s*['"](vault:[^'"]+)['"]/g;
+      for (const rel of ctx.files('src/renderer', { ext: ['.ts', '.svelte'] })) {
+        const src = ctx.read(rel);
+        if (!src.includes('vault:')) continue;
+        const code = stripCommentsKeepOffsets(src);
+        const lines = src.split('\n');
+        const filoConsts = [...code.matchAll(FILO_CONST)].map((m) => m[1]);
+        for (const m of code.matchAll(VAULT_INVOKE)) {
+          if (!refusing.has(m[1])) continue;
+          const open = code.indexOf('(', m.index);
+          const close = matchBrace(code, open);
+          const args = code.slice(open + 1, close < 0 ? code.length : close);
+          const named = filoConsts.find((name) => args.split(/[^\w$]+/).includes(name));
+          if (!FILO_LITERAL.test(args) && !named) continue;
+          const line = lineAt(code, m.index);
+          if (markerNear(lines, line - 1, '// allow-filo-path:', 2)) continue;
+          out.push(fail(rel, line, `${m[1]} is given a .filo/ path${named ? ` (${named})` : ''}`));
+        }
+      }
+      return out;
+    },
+  },
+  {
+    id: 'ipc-errors-carry-code',
+    title: 'write handlers answer a failure through errorEnvelope / errorResult (always with a code)',
+    hint:
+      'The renderer schedulers keep a failed write for Retry only when its failure has a code; a bare ' +
+      '`{ ok: false, error }` leaves the path failed with nothing to re-fire. Return errorEnvelope(err) ' +
+      '(or errorResult(err) on a `success` channel) from src/main/ipc/ipcErrorCode.ts.',
+    run(ctx) {
+      const out = [];
+      const seen = new Set();
+      for (const rel of ctx.files('src/main/ipc', { ext: ['.ts'] })) {
+        for (const { channel, body } of handlerSegments(ctx.read(rel))) {
+          if (!WRITE_HANDLER_CHANNELS.includes(channel)) continue;
+          seen.add(channel);
+          if (/\{\s*(?:ok|success)\s*:\s*false\b/.test(body)) {
+            out.push(fail(rel, undefined, `${channel} builds a failure literal; return errorEnvelope(err) / errorResult(err)`));
+          }
+          if (!/\berror(?:Envelope|Result)\s*\(/.test(body)) {
+            out.push(fail(rel, undefined, `${channel} never answers through errorEnvelope / errorResult`));
+          }
+        }
+      }
+      for (const channel of WRITE_HANDLER_CHANNELS) {
+        if (!seen.has(channel)) out.push(fail('src/main/ipc', undefined, `write handler '${channel}' not found`));
+      }
+      const CODE = 'src/main/ipc/ipcErrorCode.ts';
+      const raw = ctx.read(CODE);
+      const code = raw === null ? '' : blank(raw, { strings: false });
+      for (const name of ['errorEnvelope', 'errorResult']) {
+        const fn = functionBody(code, name, { fnKeyword: true });
+        if (!fn) out.push(fail(CODE, undefined, `${name}() not found`));
+        else if (!/\bcode\s*:\s*failureCode\s*\(/.test(fn.text)) out.push(fail(CODE, undefined, `${name}() must set code: failureCode(err)`));
       }
       return out;
     },

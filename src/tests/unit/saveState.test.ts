@@ -114,3 +114,40 @@ describe('saveIndicatorView: each state has its own colour and icon', () => {
     expect(new Set(views.map((v) => v.color)).size).toBe(3);
   });
 });
+
+describe('saveStateStore — a change held for a decision', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    saveStateStore.__reset();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('waiting for a decision, with nothing else unsaved, shows attention at once, not saving', () => {
+    saveStateStore.setStatus(0, 0, 0, 1);
+    expect(saveStateStore.state).toBe('attention');
+    vi.advanceTimersByTime(SAVING_SHOW_DELAY_MS * 10);
+    expect(saveStateStore.state).toBe('attention');
+  });
+
+  it('a real failure still wins, and other work still shows saving', () => {
+    saveStateStore.setStatus(0, 1, 0, 1);
+    expect(saveStateStore.state).toBe('error');
+    saveStateStore.setStatus(0, 0, 1, 1);
+    expect(saveStateStore.state).toBe('saving');
+  });
+
+  it('answered: back to saved', () => {
+    saveStateStore.setStatus(0, 0, 0, 1);
+    saveStateStore.setStatus(0, 0, 0, 0);
+    expect(saveStateStore.state).toBe('saved');
+  });
+
+  it('has its own icon, colour token and a clickable popover', () => {
+    const view = saveIndicatorView('attention');
+    expect(view.icon).toBe('help-circle');
+    expect(view.color).toContain('--toolbar-save-attention');
+    expect(view.clickable).toBe(true);
+  });
+});

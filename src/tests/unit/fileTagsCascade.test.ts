@@ -444,8 +444,10 @@ describe('fileTagsStore — rename / delete cascade', () => {
       expect(newToasts[0].actions).toBeDefined();
       expect(newToasts[0].actions?.[0].label).toContain('Retry');
 
-      // Failed path is recorded in writeStateTracking so the sentinel stays dirty.
-      expect(states[states.length - 1].failed).toBe(1);
+      // The sweep reported the failure itself (the toast above, with Retry) and
+      // keeps nothing queued, so the path is listed as reported, not left failed.
+      expect(states[states.length - 1].failed).toBe(0);
+      expect(states[states.length - 1].reportedPaths.length).toBe(1);
 
       setWriteStateListener(null);
       // Clean up the persistent toast so afterEach doesn't carry it forward.
@@ -557,8 +559,10 @@ describe('fileTagsStore — rename / delete cascade', () => {
       fileTagsStore.addTagToPath('Notes/foo.md', 'urgent');
 
       await vi.waitFor(() => expect(errors.some((e) => e.context === 'fileTagsStore')).toBe(true));
-      // The unsaved tag keeps the dirty sentinel: the path is marked failed.
-      expect(states[states.length - 1]?.failed).toBe(1);
+      // The rewrite reported the failure and keeps nothing queued: the path is
+      // listed as reported rather than failed for the session.
+      expect(states[states.length - 1]?.failed).toBe(0);
+      expect(states[states.length - 1]?.reportedPaths).toEqual(['notes/foo.md']);
 
       unsubscribe();
       setWriteStateListener(null);

@@ -251,11 +251,12 @@ img, svg {
   --toolbar-border: #3c3c5a;
   --toolbar-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
   --toolbar-divider: #3c3c5a;
-  /* Save indicator: saved / saving / failed. Each needs 3:1 on --toolbar-bg
+  /* Save indicator: saved / saving / failed / waiting for a decision. Each needs 3:1 on --toolbar-bg
      (themeContrast.test.ts), so a theme overrides any accent that falls short. */
   --toolbar-save-ok: #51cf66;
   --toolbar-save-busy: #ffd93d;
   --toolbar-save-error: #ff6b6b;
+  --toolbar-save-attention: #74b9ff;
 
   /* Tab Bar */
   --tabbar-bg: #262640;
@@ -378,6 +379,7 @@ img, svg {
   --toolbar-save-ok: #34a853;
   --toolbar-save-busy: #b87700;
   --toolbar-save-error: #ea4335;
+  --toolbar-save-attention: #1967d2;
 
   --tabbar-bg: #f8f9fa;
   --tabbar-border: #dadce0;
@@ -495,6 +497,7 @@ img, svg {
   --toolbar-save-ok: #66bb6a;
   --toolbar-save-busy: #ffca28;
   --toolbar-save-error: #ffa8a8;
+  --toolbar-save-attention: #e0c3fc;
 
   --tabbar-bg: #2c5683;
   --tabbar-border: #588db5;
@@ -611,6 +614,7 @@ img, svg {
   --toolbar-save-ok: #7ab648;
   --toolbar-save-busy: #e8c94e;
   --toolbar-save-error: #ffa8a8;
+  --toolbar-save-attention: #a8d8ff;
 
   --tabbar-bg: #5e5044;
   --tabbar-border: #8a7d6e;
@@ -727,6 +731,7 @@ img, svg {
   --toolbar-save-ok: #81c784;
   --toolbar-save-busy: #ffcc02;
   --toolbar-save-error: #ffb4b4;
+  --toolbar-save-attention: #b3dcff;
 
   --tabbar-bg: #4e6645;
   --tabbar-border: #7a9870;

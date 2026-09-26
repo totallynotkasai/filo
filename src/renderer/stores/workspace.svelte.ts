@@ -29,17 +29,33 @@ export interface PaneSplit {
 
 export type PaneNode = PaneLeaf | PaneSplit;
 
+/** Where the user dragged a floating board toolbar, in window pixels. */
+export interface ToolbarPosition {
+  x: number;
+  y: number;
+}
+
 export interface WorkspaceLayout {
   paneTree: PaneNode | null;
   activePaneId: string | null;
   sidebarWidth: number;
+  /** The Kanban side toolbar's resting position; null keeps it docked. */
+  kanbanToolbar: ToolbarPosition | null;
 }
 
 const DEFAULT_LAYOUT: WorkspaceLayout = {
   paneTree: null,
   activePaneId: null,
   sidebarWidth: 260,
+  kanbanToolbar: null,
 };
+
+function asToolbarPosition(value: unknown): ToolbarPosition | null {
+  if (!value || typeof value !== 'object') return null;
+  const { x, y } = value as { x?: unknown; y?: unknown };
+  if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x: Math.round(x), y: Math.round(y) };
+}
 
 const MAX_LEAVES = 3;
 
@@ -142,6 +158,7 @@ export const workspaceStore = {
   get sidebarWidth() { return layout.sidebarWidth; },
   get activePaneId() { return layout.activePaneId; },
   get paneTree() { return layout.paneTree; },
+  get kanbanToolbar() { return layout.kanbanToolbar; },
   get leafCount() { return countLeaves(layout.paneTree); },
   get leaves() { return collectLeaves(layout.paneTree); },
 
@@ -162,6 +179,14 @@ export const workspaceStore = {
   setSidebarWidth(width: number) {
     if (width < 120 || width > 800) return;
     layout = { ...layout, sidebarWidth: width };
+    notify();
+  },
+
+  setKanbanToolbar(position: ToolbarPosition | null) {
+    const next = asToolbarPosition(position);
+    const current = layout.kanbanToolbar;
+    if (next?.x === current?.x && next?.y === current?.y) return;
+    layout = { ...layout, kanbanToolbar: next };
     notify();
   },
 
@@ -376,6 +401,7 @@ export const workspaceStore = {
       paneTree,
       activePaneId,
       sidebarWidth: persisted.sidebarWidth ?? DEFAULT_LAYOUT.sidebarWidth,
+      kanbanToolbar: asToolbarPosition(persisted.kanbanToolbar),
     };
   },
 

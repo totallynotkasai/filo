@@ -979,7 +979,7 @@ round trip changes it opens read-only).
 
 ---
 
-## 33. Rescue copies in `.filo/recovery/` are never deleted automatically
+## 33. Rescue copies and kept versions in `.filo/recovery/` are never deleted automatically
 
 **What:** When you close the vault, open another one, or quit while some
 changes couldn't be saved, and choose **Close anyway**, **Open anyway** or
@@ -988,13 +988,20 @@ changes couldn't be saved, and choose **Close anyway**, **Open anyway** or
 - a note as its last known frontmatter plus the body you typed (with any
   queued frontmatter change applied), named after its flattened vault path
   (`Notes__Draft.md`);
-- a board whose save failed as its in-memory `.board.json`.
+- a board whose save failed as its in-memory `.board.json`;
+- Filo's own `.filo/` state that wasn't saved (the tag registry, settings,
+  layout, viewports, hotkeys, sidebar order) as `_filo__<name>.json`.
 
-These are the only copy of that text. The ordinary recovery snapshots (the
-backups behind **Keep mine**, conversions and refused boards) are pruned to 20
-per name and 100 in total, but both prunes skip any folder ending in
-`-unsaved`, so Filo never deletes a rescue copy. The copies show in the
-recovery listing offered when the vault next opens.
+These are the only copy of that text. The same goes for the other version a
+**Keep mine** / **Keep local** writes over, and a file's original bytes before
+**Convert to UTF-8**: they go in `.filo/recovery/<timestamp>-keep/`. The
+ordinary recovery snapshots (boards that failed to load, copies taken before a
+repair) are pruned to 20 per name and 100 in total, but both prunes skip any
+folder ending in `-unsaved` or `-keep`, so Filo never deletes a rescue copy or
+a kept version. A board that fails to load is copied again on the next open
+only if its bytes changed. The rescue folders written since an unfinished save
+show in the recovery modal when the vault next opens, each with **Show in
+folder**.
 
 **Where:** `keepUnsavedCopies` and the prunes in
 [src/main/services/recoverySnapshot.ts](src/main/services/recoverySnapshot.ts),
@@ -1007,10 +1014,9 @@ automatic deletion could lose it. Rescues only happen after a save failed and
 you chose to leave anyway, so they should be rare and small.
 
 **Impact:**
-- `.filo/recovery/` can grow until you delete old `…-unsaved` folders by hand
+- `.filo/recovery/` can grow until you delete old `…-unsaved` / `…-keep` folders by hand
   (any file manager; Filo doesn't need them).
 - `.filo/` syncs with the vault, so a rescue copy reaches your other machines
   too.
-- A copy isn't written for a change over 25 MB, on a disk error, or for a
-  failed `.filo/` config write (the recovery channel refuses `.filo/` paths).
-  Filo then asks once more ("… and lose them") before leaving.
+- A copy isn't written for a change over 25 MB or on a disk error. Filo then
+  asks once more ("… and lose them") before leaving.

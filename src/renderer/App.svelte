@@ -8,7 +8,6 @@
     setWriteErrorListener as setBoardWriteErrorListener,
     setWriteStateListener as setBoardWriteStateListener,
   } from './lib/boards/boardSaver';
-  import { unsavedWork } from './lib/boards/writeStateTracking';
   import { onError, reportError } from './lib/utils/errorBus';
   import { createErrorToastAggregator } from './lib/utils/errorToastAggregator';
   import { buildWriteErrorToast } from './lib/boards/writeErrorToast';
@@ -22,6 +21,8 @@
   import { workspaceStore } from './stores/workspace.svelte';
   import { registerDriftPromptHandlers } from './stores/vaultExternalDriftPrompts';
   import { registerNewNotesInTree } from './stores/newNotesInTree';
+  import { pushSaveState } from './stores/saveStateFeed';
+  import { setHeldDecisionsListener } from './stores/heldDecisions';
 
   // The markdown and board writers ask before overwriting a file another
   // program changed; without this they keep the local version silently.
@@ -53,10 +54,14 @@
   // When the atomic write preserved its tmp on ENOSPC/EIO/EACCES,
   // `buildWriteErrorToast` names that location so the user can recover the
   // bytes.
-  const writeErrorAggregator = createErrorToastAggregator({
-    pushToast: (opts) => uiStore.pushToast(opts),
-    updateToastText: (id, text) => uiStore.updateToastText(id, text),
-  });
+  const writeErrorAggregator = createErrorToastAggregator(
+    {
+      pushToast: (opts) => uiStore.pushToast(opts),
+      updateToastText: (id, text) => uiStore.updateToastText(id, text),
+      updateToastActions: (id, actions) => uiStore.updateToastActions(id, actions),
+    },
+    { details: () => saveStateStore.requestDetails() },
+  );
   setBoardWriteErrorListener((info) => {
     const { context, message, coalesceKey, retryable } = buildWriteErrorToast(info);
     // Thread the per-preserved-path coalesceKey so two same-kind failures
@@ -69,7 +74,8 @@
           if (failed.length > 0) uiStore.toast('Save still failing. Filo will try again on the next save and at quit.', 'error', 6000);
         } }]
       : undefined;
-    writeErrorAggregator({ context, error: info.error, message, coalesceKey, actions });
+    // Retry re-fires every failed write, so it fits a toast that names several files.
+    writeErrorAggregator({ context, error: info.error, message, coalesceKey, path: info.path, sharedActions: actions });
   });
 
   // On every write-state change, feed the save-state store the same answer
@@ -85,14 +91,12 @@
   // saved body's flag in the code after that write's `await`, so the last
   // notification of a save still sees the body as unsaved. One more read on
   // the next task, once those continuations have run, settles it.
-  function pushSaveState(): void {
-    const work = unsavedWork();
-    saveStateStore.setStatus(work.inflight, work.failed.length, work.pending.length);
-  }
+  // A prompt held or answered changes what the indicator shows, with or
+  // without a write.
+  setHeldDecisionsListener(() => pushSaveState());
   let saveStateRecheck: ReturnType<typeof setTimeout> | null = null;
-  setBoardWriteStateListener(({ failedPaths }) => {
+  setBoardWriteStateListener(() => {
     pushSaveState();
-    for (const path of failedPaths) saveStateStore.noteFailedPath(path);
     saveStateRecheck ??= setTimeout(() => {
       saveStateRecheck = null;
       pushSaveState();

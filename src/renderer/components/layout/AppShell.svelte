@@ -620,7 +620,7 @@
          the breadcrumb. -->
     <Modal
       id="recovery-files"
-      title="Recovered from unflushed changes"
+      title="Changes that may not have been saved"
       width="520px"
       beforeClose={() => {
         vaultStore.bypassRecoveryModalClose();

@@ -63,7 +63,7 @@ function confirmOverwriteWithoutBackup(rel: string, reason: string): Promise<boo
 
 async function runBackup(vaultRoot: string, rel: string): Promise<boolean> {
   try {
-    const snap = await invokeOk('recovery:snapshot', vaultRoot, rel);
+    const snap = await invokeOk('recovery:snapshot', vaultRoot, rel, 'keep');
     const where = typeof snap?.path === 'string' ? toVaultRelative(vaultRoot, snap.path) : '.filo/recovery/';
     uiStore.pushToast({
       text: `Kept your version of "${displayName(rel)}". The other version is saved in ${where}.`,

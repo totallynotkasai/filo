@@ -484,6 +484,102 @@ So `isRetainableWriteError` (`writeSchedulerFailures.ts:21-37`) never matches. T
 - Real app: drag the Kanban toolbar and close → no dialog.
 - Real app: with a locked board file (hold it open from a script) → Retry actually re-fires and succeeds once the lock is released.
 
+### Status: done (2026-09-26)
+
+A21-16 to A21-27 are implemented, with the deviations below. Every new test was run against the pre-fix code first (the changed source files swapped back to `HEAD`) and failed there.
+
+- **A21-16.** The Kanban side toolbar keeps its position in the workspace store (`WorkspaceLayout.kanbanToolbar`, validated on hydrate), written with `workspace.json` by the config scheduler. The component no longer reads or writes a file.
+  - Gate `no-filo-path-on-vault-channels` (`ipcSecurity`). Proven on the old toolbar (2 violations), then passing.
+  - Tests: `characterisation/honestSaveState.test.ts` (a drag: no error toast, the position in `workspace.json`, close asks nothing; the position comes back on reopen). Both failed on the old code.
+- **A21-17.** Every write handler answers a failure through `errorEnvelope(err)` / `errorResult(err)` (`src/main/ipc/ipcErrorCode.ts`), which always carries a code: the fs errno as-is (`EBUSY`, `EPERM`…), Filo's typed codes, else `IO_ERROR`. The board, config and misc schedulers also keep `IO_ERROR` for a re-fire (`retainIoError`). `writeConfigs` returns the error behind a partial failure, so a failed config save is retained too.
+  - Gate `ipc-errors-carry-code` (`ipcSecurity`). Proven by putting back the old `board:save` literal and dropping the code from `errorResult`.
+  - Tests: `unit/writeFailureRetry.test.ts`, through the real handlers with only the file write failing: every handler's failure has a code; a board save failing on `EBUSY` is kept, and Retry writes it and clears the failure; the same for a config save with an unnamed IO error. All four failed on the old code.
+- **A21-18 and A21-19.** New `lib/boards/configDrift.ts` decides each config write against the disk:
+  - Filo's own bytes with a new stamp: the baseline moves on silently.
+  - `workspace.json` changed elsewhere: a copy to `.filo/recovery/<ts>-keep/`, Filo's layout is written, one info toast.
+  - `app.json` / `defaults.json` / `appearance.json` changed elsewhere: Reload / Keep local (`stores/configDriftPrompt.ts`). Keep local copies first; Reload takes the file's settings into memory and writes nothing.
+  - Deleted: created again with `config:save … { createOnly: true }`, and one toast per file per session: *".filo/app.json was deleted outside Filo and has been recreated."*
+  - `buildWriteErrorToast` has its own text for `EXTERNAL_EDIT` (boards and settings).
+  - Tests: `unit/configExternalChanges.test.ts` (7 cases, all failed on the old scheduler), two `writeErrorToast` cases, and `configResurrectionGuard.test.ts` updated.
+- **A21-20.** New `stores/boardDrift.ts` holds the one board drift prompt, used by both the watcher and the board writer:
+  - Reload cancels the queued write, reads the board into the cache and re-stamps the baseline. The writer then drops its write without reporting a failure.
+  - Keep local copies the other version and moves the baseline to it, so the next save doesn't ask again.
+  - Test: a characterisation case (a column added right after another program changed the board; Reload shows the disk version, writes nothing over it, and asks nothing more). On the old code both columns stayed.
+- **A21-21.**
+  - `markPathReported`: a rewrite (`transform`: tag sweep, Replace All, raw view) whose write failed with nothing queued is listed as reported, not failed, so it no longer blocks save, close or the dirty sentinel.
+  - Every pending, failed and reported mark follows renames (`registerPathRenamable('writeStateTracking')`).
+  - A note write that fails because the note moved while the write was out settles the old path without a toast, since its change is already armed at the new path.
+  - Tests: `unit/writeStateReportedAndRenamed.test.ts`, and a characterisation case (a rename during the save's read: the text lands in the moved file, the card follows, close asks nothing). On the old code the phantom failure blocked the board cascade.
+- **A21-22.** The error toast aggregator tracks the distinct files per toast. Once there are two or more, it shows *"N files couldn't be saved: A, B, C…"*, drops the first file's own buttons, and keeps the shared ones (Retry) plus **Details**, which opens the save popover. Tests: two new aggregator cases.
+- **A21-23.** Rescue copies now include Filo's unsaved `.filo/` state, named `_filo__<name>.json`: the bundled configs whose in-memory content isn't what was last written (`unsavedConfigPayloads`), and each misc write still queued or failed (`unsavedMiscPayloads`; misc writes now carry their `json`). Test: `unit/unsavedRescueFiloState.test.ts`.
+- **A21-24.** `recovery:snapshot` takes a purpose:
+  - `keep` (Keep mine / Keep local, encoding conversions) writes to `<ts>-keep/`, which both prunes skip.
+  - `load-failure` (boards that fail to load at open) isn't copied again while an identical copy exists.
+  - KNOWN_LIMITATIONS #33 covers `-keep`. Test: `unit/recoverySnapshotKeep.test.ts` (all three failed on the old code).
+- **A21-25.**
+  1. The dirty sentinel names files as spelled on disk.
+  2. The recovery modal:
+     - says *"Filo didn't finish saving these files last time. Your last changes may not be in them."*;
+     - offers **Open** for notes (**Show in folder** for other files);
+     - lists the rescue and moved-aside folders written since the unfinished save, each with **Show in folder**.
+  3. The rescue notice outlives the vault switch and has **Show in folder**.
+  4. The window-close timeout runs the same bounded teardown as a normal close.
+  - Tests: a characterisation case (Close anyway → the notice is still up after the vault closed; reopening shows the new modal with Open and the rescue folder row; failed on the old code) and `unit/recoveryLocations.test.ts`.
+- **A21-26.** Closing a tab (or the others) asks only when a note or board file that tab shows still has unsaved changes, whatever the cause. The dialog says *"… still has unsaved changes. Filo will keep trying, and will ask again when you quit or close the vault."* with **Close tab** / **Cancel**, not styled as destructive. `tabCloseSaveFailure.test.ts` updated.
+- **A21-27.** A new save state, `attention`: blue, a help-circle icon, and a `--toolbar-save-attention` token in every built-in theme (contrast test extended). A change held for the user's decision is counted as neither saving nor failed:
+  - the held changes are a note in conflict, a note deleted with unsaved edits, and a change whose file no longer exists;
+  - `stores/heldDecisions.ts` holds them, filled by the note prompts, and `stores/saveStateFeed.ts` feeds the indicator;
+  - the popover lists each with **Show**, which re-opens its prompt.
+  - Tests: a characterisation case (the indicator is blue while the conflict waits; after the toast is dismissed the popover brings the prompt back; Keep mine makes it green; on the old code it was red) and four `saveState` cases.
+- **Real app** (Playwright `_electron` against the built app, a fresh vault and user-data dir; script `phase3check.mjs` in session 65f09859's scratchpad):
+  - Kanban toolbar dragged by its background: no error toast, the indicator stays green, `workspace.json` holds the position, and quitting closes the app with no dialog and no rescue folder.
+  - The board file made read-only (so the save's rename fails with `EPERM`), then a column added: the indicator turns red and the toast offers Retry. The file is made writable again and Retry is clicked: both columns are on disk and the indicator is green.
+  - Noticed: the failed attempt's preserved `.tmp` stays beside the board after the successful retry, and the toast's advice ("free up space or fix permissions") doesn't fit a file another program holds. Both are older behaviour, left for Phase 6.
+- `npm run ci:verify` is green: lint, svelte-check, `typecheck:main`, 5,734 tests passed (1 skipped), the build, and 66/66 gates. As in Phases 1 and 2, the run was on a checkout that also held the Phase 5 session's uncommitted work.
+- Docs: CLAUDE.md (gate count, the `ipcSecurity` row, the tree, rescue copies, a drift gotcha) and KNOWN_LIMITATIONS #33.
+
+### Deviations from the plan
+
+1. **A21-16: the read never failed.** `vault:read-file-text` is the trusted read channel (`FILO_READ_EXEMPT`) and doesn't refuse `.filo/`; only the write did. So the gate covers the `vault:*` channels whose main handler calls `assertNotInFiloDir`, read from main itself, with a tripwire on the three write channels. It flags a `.filo/` literal, or a constant initialised with one, in such an invoke. The sentinel helpers pass paths from `machineSentinelPath`, so none needed the `// allow-filo-path:` marker (the marker is supported).
+2. **A21-16: no component test.** The characterisation spec covers the planned component test and more (the save, no failed path, close with no dialog, the position back on reopen).
+3. **A21-17: the helper lives in main, not `shared/ipcEnvelope.ts`.** It needs main's typed errors (`NoActiveVaultError`, `PayloadTooLargeError`…). `errorResult` covers the channels whose envelope says `success`. The code keeps the fs errno as-is instead of `ipcErrorCode`'s folding (which turns `EBUSY` into `IO_ERROR` and `EPERM` into `EACCES`), because the retain rule reads it. `IO_ERROR` is admitted per scheduler (`retainIoError`) rather than added to `RETAINABLE`, so the note writer is unchanged.
+4. **A21-17: the gate names its channels.** `ipc-errors-carry-code` checks a list of write handlers (`vault:init-config`, `board:save` / `create`, `config:save` / `save-workspace`, `theme:save` / `delete`, `tags:save`, `templates:layout:*`) instead of every `{ ok: false` in `src/main/ipc/`. Read and validation handlers keep their own typed codes.
+5. **A21-17: a config failure is kept only when a re-fire can fix it.** If any target in the bundle failed on something the user must decide (a change outside Filo, a corrupt file), the write isn't retained, so a quit drain can't re-prompt.
+6. **A21-18: rules the plan left open.**
+   - A file that changed but can't be read right now fails as `EBUSY` (kept for Retry) instead of being written over.
+   - A config deleted and put back is content-checked even when its stamp matches the baseline. This keeps the existing guard for a same-size, same-second foreign recreate.
+   - Reload re-parses the slice with the parser the vault open uses (`parseSettingsSlices`, now exported); Reload of `appearance.json` also applies the theme.
+   - The planned `CONFIG_EXTERNAL_EDIT` message is the `EXTERNAL_EDIT` code with `kind: 'config'`.
+7. **A21-18: `recovery:snapshot` may copy a Filo config file.** It accepts `.filo/<config>.json` for purpose `keep` only, since the copy stays inside `.filo/`. That is how Keep local and the layout rule back up a config.
+8. **A21-19: a copy that comes back mid-create.** `config:save` reserves the name with `'wx'` before the atomic write, as `vault:create-file-text` does. An `EEXIST` is reported as a change outside Filo, and the old baseline makes the next save compare against the returned copy.
+9. **A21-20: Keep local asks once.** The old watcher prompt meant to ask a second time when the writer ran. Now both sides share one prompt, and Keep local moves the baseline to the version it just copied, so the next save writes without asking.
+10. **A21-21 (a): `markPathReported` instead of `markPathFailed(path, { retry })`.** The note writer calls it when a `transform` write fails with nothing queued for the path. `WriteStateInfo` carries `reportedPaths`, which the save popover lists.
+11. **A21-21 (c): the fix is in the note writer, not in `clearFailedPathAfterLateSuccess`.** A write that fails with a missing file after its pending entry was re-keyed settles the old path. It also skips the "File save failed" toast, which the characterisation spec showed was a false alarm too.
+12. **A21-22: nothing per-file to drop yet.** The write-error toasts only offer Retry, which acts on every failed write, so it is passed as a shared action and stays. The per-file mechanism and **Details** are in place for callers that add per-file buttons.
+13. **A21-23: names.** `pendingPayloads()` became `unsavedConfigPayloads()` and `unsavedMiscPayloads(isUnsaved)`. Main needed no change, because `_filo__<name>.json` is already a name outside `.filo/`. The tags copy is the pre-merge snapshot.
+14. **A21-24: bytes, not a hash.** The load-failure dedupe compares the flattened name, the size, then the bytes. Encoding conversions use `keep` as well.
+15. **A21-25: no change to `vault.svelte.ts`, which is at its size ceiling.**
+    - The modal reads the unfinished save's time itself (`checkRecovery`).
+    - The rescue notice is a `survivesSwap` toast that the `ui` pre-swap keeps, rather than a message `saveBeforeLeaving` returns for `openVault` / `closeVault` to post.
+    - `shell:show-item-in-folder` also accepts a rescue folder written this session, whose vault may have closed.
+    - `recovery:list` rows now carry a `kind` and include `orphan-tmp/<ts>/` files, so the vault-open "preserved snapshots" toast counts those too.
+    - The modal's title is now "Changes that may not have been saved", and **Open** doesn't dismiss it.
+16. **A21-25 (4): the teardown is bounded at 2 s.** The ready path and the timeout share `teardownAndDestroy`.
+17. **A21-26: a raw view isn't asked about twice.** Its own prompt ("Raw edits not saved") already covers it, so the new gate leaves out those paths.
+18. **A21-27: what counts as held.** Only the note prompts are held decisions. A board or settings drift prompt that is dismissed fails its write (`EXTERNAL_EDIT`), which is the red state with its own toast. Quit treats `attention` like `error`, so it asks.
+19. **Tests that pinned the old behaviour were updated:**
+    - `configResurrectionGuard` (a deleted config is now created again);
+    - `keepLocalBackup` (the `keep` purpose);
+    - `workspace` (the layout carries `kanbanToolbar`);
+    - `driftPromptDedup` (wording);
+    - `fileTagsCascade` (a failed sweep write is reported, not failed);
+    - `markdownCrashWindowSentinel` (the sentinel's spelling);
+    - `tabCloseSaveFailure` (wording);
+    - the E2E `recoveryRelaunch` (the modal title).
+20. **File sizes.** `KanbanSideToolbar.svelte` shrank to 1473 lines and `vault.svelte.ts` to 1611 (a comment tightened to make room). Their allowlist rows were lowered.
+21. **Shared checkout.** Phase 5's work was still uncommitted in the same checkout. This commit stages only Phase 3's hunks, so its CLAUDE.md says 65 gates; the working tree says 66, and Phase 5's commit brings its own gate.
+22. **Noticed, not fixed here:** the vault-open toast "preserved … from a previous failed-load window" lists every recovery file (rescue copies and kept versions too) with that wording. It belongs with the Phase 6 wording work.
+
 ---
 
 ## Phase 4: The leave / quit / teardown lifecycle

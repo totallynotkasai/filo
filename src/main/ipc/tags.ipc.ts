@@ -5,6 +5,7 @@ import { atomicWriteFile, ensureDir, LOCK_AWARE_SUPPRESS_MS } from '../vault/fil
 import { assertWithinVault } from '../utils/pathSecurity';
 import { assertActiveVault, NoActiveVaultError } from '../utils/activeVaultCheck';
 import { logMainError } from '../utils/mainLogger';
+import { errorEnvelope } from './ipcErrorCode';
 import { getActiveWatcher } from './vault.ipc';
 import { assertPayloadByteSize, PAYLOAD_LIMITS, PayloadTooLargeError } from '../utils/payloadLimits';
 
@@ -104,7 +105,7 @@ export function registerTagsHandlers(): void {
         // `assertIpcOk`, so `{ ok: false }` re-throws into the miscScheduler,
         // preserving the dirty-flag / retry behaviour.
         logMainError('tags:save', err);
-        return { ok: false, code: classifyTagsError(err), error: String(err) };
+        return errorEnvelope(err);
       }
     },
   );

@@ -14,6 +14,7 @@
 
 import { markDirty, markClean } from '../vault/dirtyFlagRecovery';
 import { vaultPath, type VaultPath } from '../../../shared/vaultPath';
+import { rebasePath, registerPathRenamable } from '../vault/renamePathKeys';
 
 // ── Recent self-write registry ──
 //
@@ -152,6 +153,33 @@ const pendingVaultPaths = new Set<VaultPath>();
 const failedVaultPaths = new Set<VaultPath>();
 
 /**
+ * Paths whose write failed where nothing is left queued to retry, and whose
+ * owner has already told the user (a tag sweep, Replace All: their own toast
+ * says what failed). Listed in the save popover, but they don't make save()
+ * fail or ask at close: there is no unsaved change behind them to lose.
+ * A later successful write to the path clears it.
+ */
+// allow-module-state: reset via resetWriteTracking called from boardSaver's pre-swap handler
+const reportedFailures = new Set<VaultPath>();
+
+// Every mark follows a rename (in-app or by another program), so a failure
+// or a queued write is never left behind on a path that no longer exists.
+registerPathRenamable('writeStateTracking', (oldRel, newRel) => {
+  let moved = false;
+  for (const set of [pendingVaultPaths, failedVaultPaths, reportedFailures]) {
+    for (const key of [...set]) {
+      const next = rebasePath(key, oldRel, newRel);
+      if (next === null) continue;
+      set.delete(key);
+      set.add(vaultPath(next));
+      spellings.set(vaultPath(next), next);
+      moved = true;
+    }
+  }
+  if (moved) notifyWriteState();
+});
+
+/**
  * Per-path write generation for COMPONENT writes (everything routed through
  * {@link trackComponentWrite}). Minted at the start of each `trackComponentWrite`
  * and threaded into the matching `endWrite`, whose success branch only clears
@@ -269,6 +297,8 @@ export interface WriteStateInfo {
    * (Set iteration order); the renderer dedups via its own queue.
    */
   failedPaths: string[];
+  /** Failures their owner already reported, with nothing queued to retry. */
+  reportedPaths: string[];
 }
 
 type WriteStateListener = (info: WriteStateInfo) => void;
@@ -286,6 +316,7 @@ function notifyWriteState(): void {
       failed: failedVaultPaths.size,
       pending: pendingVaultPaths.size,
       failedPaths: Array.from(failedVaultPaths),
+      reportedPaths: Array.from(reportedFailures),
     });
   } catch (err) {
     console.error('[boardSaver] write-state listener threw:', err);
@@ -294,11 +325,34 @@ function notifyWriteState(): void {
 
 // ── Sentinel refresh / write lifecycle ──
 
+/**
+ * The last spelling each tracked path was written under. The ledger keys are
+ * case-folded; the sentinel names files as they are on disk, so the recovery
+ * list next launch shows (and opens) the real file.
+ */
+// allow-module-state: reset via resetWriteTracking called from boardSaver's pre-swap handler
+const spellings = new Map<VaultPath, string>();
+
+function track(path: string): VaultPath {
+  const key = vaultPath(path);
+  spellings.set(key, path);
+  if (spellings.size > 4 * MAX_TRACKED_PATHS) {
+    for (const k of spellings.keys()) {
+      if (!pendingVaultPaths.has(k) && !failedVaultPaths.has(k) && !reportedFailures.has(k)) spellings.delete(k);
+    }
+  }
+  return key;
+}
+
+/** The pending and failed paths, in their on-disk spelling, for the sentinel. */
+function sentinelPaths(): string[] {
+  return Array.from(new Set<VaultPath>([...pendingVaultPaths, ...failedVaultPaths]), (k) => spellings.get(k) ?? k);
+}
+
 function refreshSentinel(vaultRoot: string | undefined): void {
   if (!vaultRoot) return;
-  const union = new Set<VaultPath>([...pendingVaultPaths, ...failedVaultPaths]);
-  if (union.size === 0 && inflightWriteCount === 0) return;
-  void markDirty(vaultRoot, Array.from(union));
+  if (pendingVaultPaths.size === 0 && failedVaultPaths.size === 0 && inflightWriteCount === 0) return;
+  void markDirty(vaultRoot, sentinelPaths());
 }
 
 /**
@@ -309,7 +363,7 @@ function refreshSentinel(vaultRoot: string | undefined): void {
  * counted by an earlier `beginWrite`, so we mustn't double-count.
  */
 export function noteAdditionalPendingPath(vaultRoot: string | undefined, path: string): void {
-  const key = vaultPath(path);
+  const key = track(path);
   if (pendingVaultPaths.has(key)) return;
   pendingVaultPaths.add(key);
   trimSetIfOverflowing(pendingVaultPaths, 'pendingVaultPaths');
@@ -494,12 +548,33 @@ export function isUnsavedWorkEmpty(work: UnsavedWork): boolean {
  */
 export function markPathFailed(vaultRoot: string | undefined, path: string): void {
   if (!path) return;
-  const key = vaultPath(path);
+  const key = track(path);
   pendingVaultPaths.delete(key);
   failedVaultPaths.add(key);
   trimSetIfOverflowing(failedVaultPaths, 'failedVaultPaths');
   refreshSentinel(vaultRoot);
   notifyWriteState();
+}
+
+/**
+ * Records a failed write that nothing will retry, whose owner has already
+ * told the user (see `reportedFailures`). Takes the path out of the failed
+ * and pending sets, so save() and the leave check don't wait on it.
+ */
+export function markPathReported(vaultRoot: string | undefined, path: string): void {
+  if (!path) return;
+  const key = vaultPath(path);
+  pendingVaultPaths.delete(key);
+  failedVaultPaths.delete(key);
+  reportedFailures.add(key);
+  trimSetIfOverflowing(reportedFailures, 'reportedFailures');
+  syncSentinelIfIdle(vaultRoot);
+  notifyWriteState();
+}
+
+/** Failures their owner already reported, with nothing queued to retry. */
+export function reportedFailedPaths(): VaultPath[] {
+  return Array.from(reportedFailures);
 }
 
 /**
@@ -524,7 +599,8 @@ export function clearFailedPathAfterLateSuccess(
 ): void {
   if (!path) return;
   const key = vaultPath(path);
-  if (!failedVaultPaths.delete(key)) return; // wasn't failed → nothing to heal
+  const wasReported = reportedFailures.delete(key);
+  if (!failedVaultPaths.delete(key) && !wasReported) return; // wasn't failed → nothing to heal
   syncSentinelIfIdle(vaultRoot);
   notifyWriteState();
 }
@@ -541,17 +617,17 @@ export function syncSentinelIfIdle(vaultRoot: string | undefined): void {
   if (failedVaultPaths.size === 0 && pendingVaultPaths.size === 0) {
     void markClean(vaultRoot);
   } else {
-    void markDirty(vaultRoot, Array.from(new Set<VaultPath>([...pendingVaultPaths, ...failedVaultPaths])));
+    void markDirty(vaultRoot, sentinelPaths());
   }
 }
 
 export function beginWrite(vaultRoot: string | undefined, pendingPath?: string): void {
   if (pendingPath) {
-    pendingVaultPaths.add(vaultPath(pendingPath));
+    pendingVaultPaths.add(track(pendingPath));
     trimSetIfOverflowing(pendingVaultPaths, 'pendingVaultPaths');
   }
   if (inflightWriteCount === 0 && vaultRoot) {
-    void markDirty(vaultRoot, Array.from(new Set<VaultPath>([...pendingVaultPaths, ...failedVaultPaths])));
+    void markDirty(vaultRoot, sentinelPaths());
   } else if (pendingPath) {
     refreshSentinel(vaultRoot);
   }
@@ -584,7 +660,7 @@ export function endWrite(
     inflightWriteCount--;
   }
   if (pendingPath) {
-    const key = vaultPath(pendingPath);
+    const key = track(pendingPath);
     if (success) {
       pendingVaultPaths.delete(key);
       // Only clear the failed mark when this write is still the newest for the
@@ -593,6 +669,7 @@ export function endWrite(
       const genCurrent = writeGen === undefined ? undefined : componentWriteGenByPath.get(key);
       if (writeGen === undefined || genCurrent === writeGen) {
         failedVaultPaths.delete(key);
+        reportedFailures.delete(key);
       }
       // Prune the generation entry on a still-newest success so the map doesn't
       // grow per distinct `.md` path. A superseded late write leaves it for the
@@ -613,7 +690,7 @@ export function endWrite(
     if (failedVaultPaths.size === 0 && pendingVaultPaths.size === 0) {
       void markClean(vaultRoot);
     } else {
-      void markDirty(vaultRoot, Array.from(new Set<VaultPath>([...pendingVaultPaths, ...failedVaultPaths])));
+      void markDirty(vaultRoot, sentinelPaths());
     }
   }
   notifyWriteState();
@@ -658,6 +735,8 @@ export function resetWriteTracking(oldVaultRoot?: string): void {
   if (oldVaultRoot) void markClean(oldVaultRoot);
   pendingVaultPaths.clear();
   failedVaultPaths.clear();
+  reportedFailures.clear();
+  spellings.clear();
   recentSelfWrites.clear();
   // Drop per-path component write generations so a stale late self-heal from
   // the outgoing vault can't match and clear.
@@ -675,6 +754,8 @@ export function __resetDirtyTrackingForTests(): void {
   inflightWriteCount = 0;
   pendingVaultPaths.clear();
   failedVaultPaths.clear();
+  reportedFailures.clear();
+  spellings.clear();
   recentSelfWrites.clear();
   componentWriteGenByPath.clear();
   writeErrorListener = null;

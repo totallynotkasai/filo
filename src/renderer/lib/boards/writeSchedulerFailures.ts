@@ -30,10 +30,15 @@ export const RETAINABLE: ReadonlySet<string> = new Set([
   'WRITE_TIMEOUT',
 ]);
 
-/** True when a performWrite rejection is a transient failure worth re-firing. */
-export function isRetainableWriteError(err: unknown): boolean {
+/**
+ * True when a performWrite rejection is a transient failure worth re-firing.
+ * `ioError` also admits `IO_ERROR`, for schedulers whose payload is a whole
+ * snapshot rebuilt at fire time.
+ */
+export function isRetainableWriteError(err: unknown, ioError = false): boolean {
   const code = (err as { code?: unknown } | null | undefined)?.code;
-  return typeof code === 'string' && RETAINABLE.has(code);
+  if (typeof code !== 'string') return false;
+  return RETAINABLE.has(code) || (ioError && code === 'IO_ERROR');
 }
 
 export interface FailureLedger<TArgs> {

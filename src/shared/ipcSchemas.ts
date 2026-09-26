@@ -113,7 +113,11 @@ export const IPC_PAYLOAD_SCHEMAS = {
   'board:list-conflicts': z.tuple([nonEmptyString]),
 
   // ── Recovery snapshot ─────────────────────────────────────────────────
-  'recovery:snapshot': z.tuple([nonEmptyString, nonEmptyString]),
+  // Optional 3rd arg: why the copy is taken (see SnapshotPurpose).
+  'recovery:snapshot': z.union([
+    z.tuple([nonEmptyString, nonEmptyString]),
+    z.tuple([nonEmptyString, nonEmptyString, z.enum(['keep', 'load-failure'])]),
+  ]),
   'recovery:list': z.tuple([nonEmptyString]),
   'recovery:list-sentinels': z.tuple([nonEmptyString]),
   // (vaultRoot, [{ relPath, text }]): the unsaved text to keep in .filo/recovery.
@@ -136,7 +140,12 @@ export const IPC_PAYLOAD_SCHEMAS = {
 
   // ── Config (.filo/) ───────────────────────────────────────────────────
   'config:load': z.tuple([nonEmptyString, nonEmptyString]),
-  'config:save': z.tuple([nonEmptyString, nonEmptyString, unknownArg]),
+  // Optional 4th arg: `{ createOnly }` recreates a config deleted outside Filo
+  // without overwriting a copy that came back meanwhile (EEXIST).
+  'config:save': z.union([
+    z.tuple([nonEmptyString, nonEmptyString, unknownArg]),
+    z.tuple([nonEmptyString, nonEmptyString, unknownArg, z.object({ createOnly: z.boolean().optional() }).strict()]),
+  ]),
   'config:load-all': z.tuple([nonEmptyString]),
   'config:save-workspace': z.tuple([nonEmptyString, unknownArg]),
 

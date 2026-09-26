@@ -17,6 +17,7 @@ import {
   loadConfig,
   saveConfig,
   isConfigFile,
+  isBackupableConfigPath,
   loadAppConfig,
   loadAppearanceConfig,
   loadDefaultsConfig,
@@ -39,9 +40,10 @@ import {
 } from '../utils/pathSecurity';
 import { assertActiveVault, isActiveVault, NoActiveVaultError } from '../utils/activeVaultCheck';
 import { logMainError } from '../utils/mainLogger';
+import { errorEnvelope } from './ipcErrorCode';
 import { vaultRegistry } from '../services/vaultRegistry';
 import { getActiveWatcher } from './vault.ipc';
-import { snapshotForRecovery, listRecoverySnapshots } from '../services/recoverySnapshot';
+import { snapshotForRecovery, listRecoverySnapshots, type SnapshotPurpose } from '../services/recoverySnapshot';
 import { sweepOrphanTmpFiles } from '../services/orphanTmpSweep';
 import { toPosix } from '../utils/pathHelpers';
 import {
@@ -144,7 +146,7 @@ export function registerBoardHandlers(): void {
       return { ok: true };
     } catch (err) {
       logMainError('vault:init-config', err);
-      return { ok: false, error: String(err) };
+      return errorEnvelope(err);
     }
   });
 
@@ -250,7 +252,7 @@ export function registerBoardHandlers(): void {
       return { ok: true };
     } catch (err) {
       logMainError(`board:save ${relativePath}`, err);
-      return { ok: false, error: String(err) };
+      return errorEnvelope(err);
     }
   });
 
@@ -295,7 +297,7 @@ export function registerBoardHandlers(): void {
       return { ok: true, path: relativePath, ...stat };
     } catch (err) {
       logMainError(`board:create ${name}`, err);
-      return { ok: false, error: String(err) };
+      return errorEnvelope(err);
     }
   });
 
@@ -325,19 +327,18 @@ export function registerBoardHandlers(): void {
   /**
    * Saves a config file to .filo/.
    */
-  ipcMain.handle('config:save', async (_event, vaultRoot: string, file: string, data: unknown) => {
+  ipcMain.handle('config:save', async (_event, vaultRoot: string, file: string, data: unknown, opts?: { createOnly?: boolean }) => {
     try {
       assertActiveVault(vaultRoot);
       if (!isConfigFile(file)) {
         throw new Error(`Unknown config file: ${file}`);
       }
       assertPayloadByteSize(jsonPayloadByteSize(data), PAYLOAD_LIMITS.CONFIG, `config:save ${file}`);
-      await saveConfig(vaultRoot, file, data);
+      await saveConfig(vaultRoot, file, data, { createOnly: opts?.createOnly === true });
       return { ok: true };
     } catch (err) {
       logMainError(`config:save ${file}`, err);
-      const code = classifyError(err);
-      return { ok: false, ...(code ? { code } : {}), error: String(err) };
+      return errorEnvelope(err);
     }
   });
 
@@ -385,8 +386,7 @@ export function registerBoardHandlers(): void {
       return { ok: true };
     } catch (err) {
       logMainError('config:save-workspace', err);
-      const code = classifyError(err);
-      return { ok: false, ...(code ? { code } : {}), error: String(err) };
+      return errorEnvelope(err);
     }
   });
 
@@ -440,8 +440,7 @@ export function registerBoardHandlers(): void {
       return { ok: true };
     } catch (err) {
       logMainError(`theme:save ${name}`, err);
-      const code = classifyError(err);
-      return { ok: false, ...(code ? { code } : {}), error: String(err) };
+      return errorEnvelope(err);
     }
   });
 
@@ -453,8 +452,7 @@ export function registerBoardHandlers(): void {
       return { ok: true };
     } catch (err) {
       logMainError(`theme:delete ${name}`, err);
-      const code = classifyError(err);
-      return { ok: false, ...(code ? { code } : {}), error: String(err) };
+      return errorEnvelope(err);
     }
   });
 
@@ -471,15 +469,17 @@ export function registerBoardHandlers(): void {
    * path is the toast surfaced via `errorBus`; the snapshot is a defensive
    * backup, not a precondition.
    */
-  ipcMain.handle('recovery:snapshot', async (_event, vaultRoot: string, relativePath: string) => {
+  ipcMain.handle('recovery:snapshot', async (_event, vaultRoot: string, relativePath: string, purpose?: SnapshotPurpose) => {
     try {
       assertActiveVault(vaultRoot);
       assertSafeRelativePath(relativePath);
       // Refuse snapshots of `.filo/` contents: copying config files into the
       // recovery directory would be an exfiltration vector for vault-internal
       // state. The dedicated tags/templates/theme channels own those files.
-      assertNotInFiloDir(relativePath);
-      const destAbs = await snapshotForRecovery(vaultRoot, relativePath);
+      // The one exception: the other version of a Filo config file that Keep
+      // local is about to overwrite, copied within `.filo/`.
+      if (!(purpose === 'keep' && isBackupableConfigPath(relativePath))) assertNotInFiloDir(relativePath);
+      const destAbs = await snapshotForRecovery(vaultRoot, relativePath, purpose);
       return { ok: true, path: destAbs };
     } catch (err) {
       logMainError(`recovery:snapshot ${relativePath}`, err);

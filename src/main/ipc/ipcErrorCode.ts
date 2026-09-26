@@ -51,3 +51,26 @@ export function ipcErrorCode(err: unknown): 'NO_ACTIVE_VAULT' | 'FILE_TOO_LARGE'
   if (code === 'ENOSPC' || code === 'EIO' || code === 'ENOMEM') return 'ENOSPC';
   return 'IO_ERROR';
 }
+
+/**
+ * The code a write handler's failure carries. The fs errno is kept as-is
+ * (EBUSY, EPERM…) rather than folded, because the renderer's write
+ * schedulers decide from it whether a failed write is kept and re-fired by
+ * Retry; a failure with no code would leave the path failed with nothing to
+ * retry. Filo's own typed errors map as in `ipcErrorCode`.
+ */
+export function failureCode(err: unknown): string {
+  const errno = (err as NodeJS.ErrnoException | null)?.code;
+  if (typeof errno === 'string' && /^E[A-Z]+$/.test(errno)) return errno;
+  return ipcErrorCode(err);
+}
+
+/** The `{ ok: false }` failure every write handler returns: always with a code. */
+export function errorEnvelope(err: unknown): { ok: false; code: string; error: string } {
+  return { ok: false, code: failureCode(err), error: String(err) };
+}
+
+/** `errorEnvelope` for the channels whose envelope says `success` rather than `ok`. */
+export function errorResult(err: unknown): { success: false; code: string; error: string } {
+  return { success: false, code: failureCode(err), error: String(err) };
+}

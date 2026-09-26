@@ -2,6 +2,9 @@
   import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { foreignSentinelsStore, machineLabel } from '../../stores/foreignSentinels.svelte';
+  import { openNoteInDocumentTab } from '../../lib/notes/openNote';
+  import { checkRecovery } from '../../lib/vault/dirtyFlagRecovery';
+  import { recoveryLocationsSince, type RecoveryLocation } from '../../lib/vault/recoveryLocations';
 
   let paths = $derived(vaultStore.recoveryPendingPaths);
   // Other machines' unclean-shutdown markers / quit-failure
@@ -12,6 +15,44 @@
   );
   function since(ms: number): string {
     return new Date(ms).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  }
+
+  // Rescue copies and moved-aside partial files from the unfinished session
+  // on: where the user's last changes may be if they aren't in the files.
+  let locations = $state<RecoveryLocation[]>([]);
+  $effect(() => {
+    const vaultRoot = vaultStore.path;
+    if (!vaultRoot) return;
+    let live = true;
+    void (async () => {
+      try {
+        const status = await checkRecovery(vaultRoot);
+        const listing = await window.filo.invoke('recovery:list', vaultRoot);
+        if (live && vaultStore.path === vaultRoot) locations = recoveryLocationsSince(listing, status.dirtyAt);
+      } catch {
+        // No listing: the modal still names the files.
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  });
+
+  function isNote(path: string): boolean {
+    return path.toLowerCase().endsWith('.md');
+  }
+
+  function showInFolder(relPath: string) {
+    const vaultRoot = vaultStore.path;
+    if (!vaultRoot) return;
+    void window.filo.invoke('shell:show-item-in-folder', `${vaultRoot.replace(/[\\/]+$/, '')}/${relPath}`);
+  }
+
+  function locationText(l: RecoveryLocation): string {
+    const what = l.kind === 'unsaved'
+      ? `Copies of unsaved work (${l.files} file${l.files === 1 ? '' : 's'})`
+      : `Partly written files moved aside (${l.files})`;
+    return `${what}, ${since(l.at)}`;
   }
 
   // Acknowledgement — drops the pending-paths list, clears the on-disk
@@ -28,18 +69,36 @@
 
 <div class="recovery-body">
   <p class="recovery-intro">
-    Filo closed with unflushed changes. Recovered — but the following files were
-    mid-write when the session ended and may need review:
+    Filo didn't finish saving these files last time. Your last changes may not be in them.
   </p>
 
   <ul class="recovery-list">
     {#each paths as path (path)}
-      <li class="recovery-item" title={path}>{path}</li>
+      <li class="recovery-item" title={path}>
+        <span class="recovery-path">{path}</span>
+        {#if isNote(path)}
+          <button type="button" class="recovery-row-btn" onclick={() => openNoteInDocumentTab(path)}>Open</button>
+        {:else}
+          <button type="button" class="recovery-row-btn" onclick={() => showInFolder(path)}>Show in folder</button>
+        {/if}
+      </li>
     {/each}
   </ul>
 
+  {#if locations.length > 0}
+    <p class="recovery-intro">If something is missing, Filo kept these:</p>
+    <ul class="recovery-list">
+      {#each locations as l (l.firstFile)}
+        <li class="recovery-item">
+          <span class="recovery-path">{locationText(l)}</span>
+          <button type="button" class="recovery-row-btn" onclick={() => showInFolder(l.firstFile)}>Show in folder</button>
+        </li>
+      {/each}
+    </ul>
+  {/if}
+
   <p class="recovery-hint">
-    Open each file, verify the content matches your intent, and save again if needed.
+    Open each file and check it. Dismiss once you're done; until then Filo asks again next time.
   </p>
 
   {#if foreign.length > 0}
@@ -87,11 +146,35 @@
   }
 
   .recovery-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     padding: 4px 0;
     color: var(--text-secondary);
+  }
+
+  .recovery-path {
+    flex: 1;
+    min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .recovery-row-btn {
+    flex-shrink: 0;
+    padding: 2px 8px;
+    border: 1px solid var(--ui-border);
+    border-radius: 4px;
+    background: var(--ui-surface);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .recovery-row-btn:hover {
+    background: var(--ui-surface-hover);
   }
 
   .recovery-hint {

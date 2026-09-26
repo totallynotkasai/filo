@@ -38,7 +38,7 @@ export function registerVaultEncodingHandlers(): void {
       if (utf16) {
         return { success: false, code: 'UTF16', error: 'UTF-16 files cannot be converted as Windows-1252' };
       }
-      const backup = await snapshotForRecovery(vaultRoot, relativePath);
+      const backup = await snapshotForRecovery(vaultRoot, relativePath, 'keep');
       const text = new TextDecoder('windows-1252').decode(bytes);
       getActiveWatcher()?.suppressWrite(relativePath, LOCK_AWARE_SUPPRESS_MS, text);
       await atomicWriteFile(fullPath, text);

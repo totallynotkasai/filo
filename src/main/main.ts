@@ -70,6 +70,8 @@ function appDocumentUrlPrefix(): string {
 // close is also in flight).
 let isFlushingForQuit = false;
 const FLUSH_TIMEOUT_MS = 5000;
+// Ceiling on the teardown before a window close destroys the window.
+const TEARDOWN_BOUND_MS = 2000;
 
 function scheduleWindowStateSave(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -222,9 +224,32 @@ async function createWindow(): Promise<void> {
 
     isFlushingForQuit = true;
 
+    // Both ends of the close (the renderer's ready, or its silence past the
+    // ceiling) tear down the same way before the window goes: the listeners,
+    // the main-side geometry debounces, the watcher, and the quit-failure
+    // breadcrumb that tells the next launch where preserved bytes are.
+    // Bounded, so a wedged volume can't keep a timed-out window alive.
+    const teardownAndDestroy = (): void => {
+      clearTimeout(timer);
+      ipcMain.removeListener('app:ready-to-quit', onReady);
+      ipcMain.removeListener('app:cancel-quit', onCancel);
+      ipcMain.removeListener('app:quit-awaiting-user', onAwaitingUser);
+      ipcMain.removeListener('app:drain-heartbeat', onHeartbeat);
+      const teardown = Promise.allSettled([
+        flushWindowStateNow(),
+        flushSidebarStateNow(),
+        stopActiveWatcher(),
+        // No-op unless a write preserved a partial this session.
+        writeQuitFailureBreadcrumb(vaultRegistry.currentVaultPath),
+      ]);
+      const bound = new Promise<void>((resolve) => setTimeout(resolve, TEARDOWN_BOUND_MS));
+      void Promise.race([teardown, bound]).finally(() => {
+        mainWindow?.destroy();
+      });
+    };
     const destroyOnTimeout = (): void => {
       console.warn('[main] flush-and-quit timed out on window close, destroying anyway');
-      mainWindow?.destroy();
+      teardownAndDestroy();
     };
     let timer = setTimeout(destroyOnTimeout, FLUSH_TIMEOUT_MS);
 
@@ -254,24 +279,7 @@ async function createWindow(): Promise<void> {
     // failure confirm; rewind isFlushingForQuit so they can keep editing).
     // Whichever fires first wins and removes the other listener.
     const onReady = (): void => {
-      clearTimeout(timer);
-      ipcMain.removeListener('app:cancel-quit', onCancel);
-      ipcMain.removeListener('app:quit-awaiting-user', onAwaitingUser);
-      ipcMain.removeListener('app:drain-heartbeat', onHeartbeat);
-      // Drain the main-side windowState + sidebarState debounces so the next
-      // launch sees the latest geometry, and stop the file watcher so its
-      // timer and OS handle are released before the window destroy.
-      void Promise.allSettled([
-        flushWindowStateNow(),
-        flushSidebarStateNow(),
-        stopActiveWatcher(),
-        // Persist any preserved-partial locations to
-        // `.filo/quit-failure.json` before the window destroys (no-op unless
-        // a write preserved a partial this session).
-        writeQuitFailureBreadcrumb(vaultRegistry.currentVaultPath),
-      ]).finally(() => {
-        mainWindow?.destroy();
-      });
+      teardownAndDestroy();
     };
     const onCancel = (): void => {
       clearTimeout(timer);

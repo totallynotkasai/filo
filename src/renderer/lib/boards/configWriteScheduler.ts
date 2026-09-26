@@ -18,7 +18,7 @@ import type {
   WorkspaceState,
 } from '../../schema/index';
 import type { WorkspaceLayout } from '../../stores/workspace.svelte';
-import { BOARD_WRITE_DEBOUNCE_MS, WRITE_TIMEOUT_MS, ENOENT_RESTAT_DELAY_MS, writtenByteLength } from './boardWriteDebounce';
+import { BOARD_WRITE_DEBOUNCE_MS, WRITE_TIMEOUT_MS, writtenByteLength } from './boardWriteDebounce';
 import {
   notifyWriteError,
   registerResetCallback,
@@ -28,7 +28,9 @@ import {
 import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { createScheduler } from './writeScheduler';
-import { baselineSeq, getBaseline, noteBaseline, hasBaselineDrifted, refreshBaselineAfterWrite } from '../vault/fileBaselineRegistry';
+import { isRetainableWriteError } from './writeSchedulerFailures';
+import { refreshBaselineAfterWrite } from '../vault/fileBaselineRegistry';
+import { checkConfigDisk, noticeConfig, type BundledConfigFile } from './configDrift';
 
 export interface ConfigWriteArgs {
   vaultRoot: string;
@@ -139,14 +141,23 @@ export function isConfigPathCorrupt(path: string): boolean {
   return false;
 }
 
+/**
+ * The args getter of the latest scheduled config write: the live settings,
+ * layout and theme. Read for rescue copies of whatever isn't on disk yet.
+ */
+// allow-module-state: reset via resetConfigWriteScheduler called from boardSaver's pre-swap handler
+let latestConfigArgs: (() => ConfigWriteArgs | null) | null = null;
+
 // Self-register cleanup so vault swap and test reset don't leak between vaults.
 registerResetCallback(() => {
+  latestConfigArgs = null;
   lastWrittenConfigs.clear();
   corruptConfigTargets.clear();
   corruptSuppressToastShown.clear();
   configScheduler.reset();
 });
 registerTestResetCallback(() => {
+  latestConfigArgs = null;
   lastWrittenConfigs.clear();
   corruptConfigTargets.clear();
   corruptSuppressToastShown.clear();
@@ -180,6 +191,7 @@ function buildConfigPayloads(
       paneTree: layout?.paneTree ?? null,
       activePaneId: layout?.activePaneId ?? null,
       sidebarWidth: layout?.sidebarWidth ?? 260,
+      kanbanToolbar: layout?.kanbanToolbar ?? null,
     }, null, 2),
     'defaults.json': JSON.stringify({
       mindmap: settings.mindmap ?? {},
@@ -263,10 +275,14 @@ export async function writeConfigs(
   theme: string,
   workspace: WorkspaceState,
   layout?: WorkspaceLayout,
-): Promise<{ failed: string[] }> {
+): Promise<{ failed: string[]; error?: unknown }> {
   const payloads = buildConfigPayloads(settings, theme, workspace, layout);
 
   const failed: string[] = [];
+  // The first failure a re-fire could fix, and whether any failure can't be
+  // fixed that way; they decide whether the scheduler keeps the write.
+  let retryError: unknown;
+  let notRetryable = false;
   for (const [target, payload] of Object.entries(payloads) as [BundledConfigTarget, string][]) {
     if (lastWrittenConfigs.get(target) === payload) continue;
     if (corruptConfigTargets.has(target)) {
@@ -283,6 +299,7 @@ export async function writeConfigs(
       //       `CONFIG_CORRUPT` code makes `buildWriteErrorToast` emit a
       //       corrupt-specific message instead of the generic disk copy.
       failed.push(target);
+      notRetryable = true;
       if (!corruptSuppressToastShown.has(target)) {
         corruptSuppressToastShown.add(target);
         const corruptError = Object.assign(
@@ -295,158 +312,42 @@ export async function writeConfigs(
       }
       continue;
     }
-    // Pre-write drift check. Compare on-disk mtime against
-    // the baseline captured at load time / after the last successful
-    // self-write. A mismatch means a process other than Filo wrote to
-    // the config file in the gap, so we abort the write to avoid
-    // silently clobbering the external edit. The user can resolve by
-    // reopening the vault (re-reads disk, re-bases) or by manually
-    // re-applying their change in-app (which re-arms the write, this
-    // time with the freshly-rebased baseline).
-    const sentinelPath = target === 'config:save-workspace'
-      ? '.filo/workspace.json'
-      : `.filo/${target}`;
-    // `let`, not `const`: the benign-reappear branch below
-    // rebases the baseline to the recreated file's stat and must re-read it
-    // so the drift check compares against the rebased value.
-    let baseline = getBaseline(sentinelPath);
-    if (baseline !== undefined) {
-      const seq = baselineSeq(sentinelPath);
-      let preWriteStat: { mtimeMs: number; size: number } | undefined;
-      try {
-        preWriteStat = await invokeOk('vault:stat', vaultRoot, sentinelPath);
-      } catch (err) {
-        // ENOENT means the `.filo/` config was deleted on disk while this write
-        // was armed. Falling through to `config:save` would resurrect it, so
-        // skip the target as a clean no-op (continue, not throw) — same
-        // rationale as `writeBoardFile`.
-        //
-        // Gated on `baseline !== undefined`: the file was known to exist, so
-        // its absence is a deletion, not a fresh seed. Initial
-        // `configOps.initVaultConfig` writes happen before any baseline.
-        if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
-          // Wait, then re-stat ONCE before treating the ENOENT as a delete: a
-          // OneDrive / AV / sync client can momentarily unlink-then-recreate a
-          // config, and reading that blip as a delete would drop the armed
-          // change. If the file reappears, fall through to the content-verify /
-          // drift check below.
-          await new Promise((resolve) => setTimeout(resolve, ENOENT_RESTAT_DELAY_MS));
-          try {
-            preWriteStat = await invokeOk('vault:stat', vaultRoot, sentinelPath);
-            // The file vanished then reappeared. The mtime+size drift check can
-            // be BLIND to a same-size, same-second recreate, so verify the
-            // file's CONTENT matches what Filo last wrote; a foreign recreate is
-            // aborted. `lastWritten === undefined` can't be verified, so fall
-            // through to the drift check.
-            const lastWritten = lastWrittenConfigs.get(target);
-            if (lastWritten !== undefined) {
-              const configFile = target === 'config:save-workspace' ? 'workspace.json' : target;
-              let reappearedIsForeign = false;
-              // True ONLY when the read succeeded AND the
-              // content provably matches our last write. Distinct from
-              // `!reappearedIsForeign`: the read-hiccup catch below is
-              // permissive (not foreign) but UNVERIFIED, and an unverified
-              // recreate must not adopt the new baseline.
-              let reappearedVerifiedOurs = false;
-              try {
-                const loaded = await window.filo.invoke('config:load', vaultRoot, configFile);
-                if (isConfigLoadFailed(loaded)) {
-                  // Unreadable right now — same as the read-hiccup catch
-                  // below: permissive (not foreign) but unverified.
-                  reappearedIsForeign = false;
-                } else if (loaded && typeof loaded === 'object' && '__corrupt' in loaded) {
-                  // Unparseable on disk — by definition not bytes Filo wrote.
-                  reappearedIsForeign = true;
-                } else {
-                  // JSON round-trips, so disk == our-last-write re-serialises
-                  // to the exact canonical 2-space form `lastWritten` holds.
-                  reappearedIsForeign = JSON.stringify(loaded, null, 2) !== lastWritten;
-                  reappearedVerifiedOurs = !reappearedIsForeign;
-                }
-              } catch {
-                // Read hiccup — can't verify. Be permissive (don't block a
-                // legit write on a transient read failure); fall through to the
-                // drift check, which still guards mtime/size.
-                reappearedIsForeign = false;
-              }
-              if (reappearedIsForeign) {
-                const externalEditError = Object.assign(
-                  new Error(`Config "${sentinelPath}" was deleted and recreated externally; write aborted.`),
-                  { code: 'EXTERNAL_EDIT' },
-                );
-                notifyWriteError({ kind: 'config', path: target, error: externalEditError });
-                failed.push(target);
-                // Mirror the drift-abort dedup clear so a later
-                // revert-to-this-payload write re-evaluates instead of being
-                // dedup-suppressed, and re-base the baseline to the reappeared
-                // file so a deliberate later change compares against IT rather
-                // than perpetually re-aborting against the stale load-time
-                // baseline.
-                lastWrittenConfigs.delete(target);
-                noteBaseline(sentinelPath, preWriteStat.mtimeMs, preWriteStat.size, { ifUnchangedSince: seq });
-                continue;
-              }
-              if (reappearedVerifiedOurs) {
-                // The recreate provably holds OUR last-written bytes (the common
-                // sync/AV unlink+recreate blip) but carries a NEW mtime; without
-                // a rebase the drift check would abort every later write for
-                // the session. The bytes are ours, so adopt the recreated stat
-                // and fall through; the armed write proceeds normally.
-                noteBaseline(sentinelPath, preWriteStat.mtimeMs, preWriteStat.size, { ifUnchangedSince: seq });
-                const rebased = getBaseline(sentinelPath);
-                if (rebased !== undefined) baseline = rebased;
-              }
-            }
-            // Reappeared content matches our last write (benign blip, baseline
-            // rebased above) or is unverifiable (lastWritten unset / read
-            // hiccup) — fall through to the drift check + write.
-          } catch (reErr) {
-            if (reErr instanceof IpcEnvelopeError && reErr.code === 'ENOENT') {
-              // Still gone ⇒ a real (intentional) delete. The dedup cache must
-              // stop asserting this payload is on disk, or a later write whose
-              // payload reverts to the cached value would be silently skipped.
-              // The baseline is kept so the ENOENT-skip keeps respecting the
-              // deletion until the file returns.
-              lastWrittenConfigs.delete(target);
-              continue;
-            }
-            // Re-stat hit a different error (EACCES/EBUSY): fall through — the
-            // save IPC below surfaces a genuine IO problem.
-          }
-        } else {
-          // Any other stat error (EACCES, transient share hiccup): fall
-          // through — the save IPC below surfaces a genuine IO problem
-          // through the failure attribution pipeline.
-        }
-      }
-      if (preWriteStat !== undefined && hasBaselineDrifted(baseline, preWriteStat)) {
-        const externalEditError = Object.assign(
-          new Error(`Config "${sentinelPath}" was modified externally; write aborted.`),
-          { code: 'EXTERNAL_EDIT' },
-        );
-        notifyWriteError({ kind: 'config', path: target, error: externalEditError });
-        failed.push(target);
-        // Mirror the ENOENT branch's dedup-cache clear: the on-disk file holds
-        // the EXTERNAL edit, not this `payload`, so a later write reverting to
-        // the cached value must re-evaluate instead of being silently skipped.
-        lastWrittenConfigs.delete(target);
-        continue;
-      }
+    // The file on disk may not be the one Filo last wrote or loaded: another
+    // program changed or deleted it. `checkConfigDisk` decides (see
+    // configDrift.ts); nothing here leaves a file blocked for the session.
+    const file: BundledConfigFile = target === 'config:save-workspace' ? 'workspace.json' : target;
+    const sentinelPath = `.filo/${file}`;
+    const verdict = await checkConfigDisk({ vaultRoot, file, payload, lastWritten: lastWrittenConfigs.get(target) });
+    if (verdict.kind === 'adopted') {
+      lastWrittenConfigs.set(target, verdict.json);
+      continue;
     }
+    if (verdict.kind === 'fail') {
+      notifyWriteError({ kind: 'config', path: target, error: verdict.error });
+      failed.push(target);
+      if (isRetainableWriteError(verdict.error, true)) retryError ??= verdict.error;
+      else notRetryable = true;
+      // The disk no longer holds the cached payload, so a later change back
+      // to it must be written rather than skipped as unchanged.
+      lastWrittenConfigs.delete(target);
+      continue;
+    }
+    const recreate = verdict.kind === 'recreate';
     try {
       // Mark suppression BEFORE the IPC; the OS watcher echo
       // can reach the renderer before the IPC promise resolves. Re-marked
       // on success to refresh the TTL.
-      if (target === 'config:save-workspace') {
-        markRecentSelfWrite('.filo/workspace.json');
+      markRecentSelfWrite(sentinelPath);
+      if (recreate) {
+        await invokeOk('config:save', vaultRoot, file, payload, { createOnly: true });
+      } else if (target === 'config:save-workspace') {
         await invokeOk('config:save-workspace', vaultRoot, payload);
-        markRecentSelfWrite('.filo/workspace.json');
       } else {
-        markRecentSelfWrite(`.filo/${target}`);
         await invokeOk('config:save', vaultRoot, target, payload);
-        markRecentSelfWrite(`.filo/${target}`);
       }
+      markRecentSelfWrite(sentinelPath);
       lastWrittenConfigs.set(target, payload);
+      if (recreate) noticeConfig(`config-recreated:${file}`, `${sentinelPath} was deleted outside Filo and has been recreated.`);
       // Refresh the baseline so the next write compares against the state we
       // just wrote. KEEP the prior baseline on an unusable stat; see
       // `refreshBaselineAfterWrite` for the trade-off.
@@ -456,14 +357,13 @@ export async function writeConfigs(
         // the save→stat gap would otherwise be adopted as Filo's baseline and
         // clobbered promptless by the next write. Stamp only when disk
         // re-serialises to EXACTLY what we wrote; otherwise keep the prior
-        // baseline so the next drift check prompts. Config files are small, so
-        // the read is cheap (the board writer stays size-only — see
+        // baseline so the next drift check looks again. Config files are small,
+        // so the read is cheap (the board writer stays size-only — see
         // KNOWN_LIMITATIONS).
         let confirmed = false;
         if (postStat.size === writtenByteLength(payload)) {
           try {
-            const configFile = target === 'config:save-workspace' ? 'workspace.json' : target;
-            const loaded = await window.filo.invoke('config:load', vaultRoot, configFile);
+            const loaded = await window.filo.invoke('config:load', vaultRoot, file);
             if (loaded && typeof loaded === 'object' && !('__corrupt' in loaded) && !isConfigLoadFailed(loaded)) {
               confirmed = JSON.stringify(loaded, null, 2) === payload;
             }
@@ -480,12 +380,22 @@ export async function writeConfigs(
         refreshBaselineAfterWrite(sentinelPath, undefined, undefined);
       }
     } catch (err) {
+      // A recreate that meets a copy put back meanwhile wrote nothing. The
+      // baseline still names the deleted file, so the next save compares
+      // against the copy that came back instead of overwriting it.
+      const error = recreate && err instanceof IpcEnvelopeError && err.code === 'EEXIST'
+        ? Object.assign(new Error(`${sentinelPath} came back while Filo was recreating it; your change wasn't saved over it.`), { code: 'EXTERNAL_EDIT' })
+        : err;
       console.error(`[config] Failed to save config file (${target}):`, err);
-      notifyWriteError({ kind: 'config', path: target, error: err });
+      notifyWriteError({ kind: 'config', path: target, error });
       failed.push(target);
+      if (isRetainableWriteError(error, true)) retryError ??= error;
+      else notRetryable = true;
     }
   }
-  return { failed };
+  // A re-fire can fix a failed save, but not a failure the user must decide
+  // (a change made outside Filo, a corrupt file), which would only ask again.
+  return { failed, error: notRetryable ? undefined : retryError };
 }
 
 /**
@@ -518,6 +428,7 @@ const configScheduler = createScheduler<ConfigWriteArgs>({
   // SMB) can still wedge those IPCs and hang `flushAll` / quit. Bound for
   // uniformity with the board / frontmatter schedulers.
   writeTimeoutMs: WRITE_TIMEOUT_MS,
+  retainIoError: true,
 });
 
 /**
@@ -526,7 +437,22 @@ const configScheduler = createScheduler<ConfigWriteArgs>({
 export function scheduleConfigWrite(
   getWriteArgs: () => ConfigWriteArgs | null,
 ): void {
+  latestConfigArgs = getWriteArgs;
   configScheduler.schedule(CONFIG_KEY, getWriteArgs);
+}
+
+/**
+ * Each bundled config file whose in-memory content isn't what Filo last wrote
+ * (or loaded), with that content: what a rescue copy keeps when the vault is
+ * left with settings unsaved.
+ */
+export function unsavedConfigPayloads(): Array<{ name: string; json: string }> {
+  const args = latestConfigArgs?.();
+  if (!args) return [];
+  const payloads = buildConfigPayloads(args.settings, args.theme, args.workspace, args.layout);
+  return (Object.entries(payloads) as [BundledConfigTarget, string][])
+    .filter(([target, json]) => lastWrittenConfigs.get(target) !== json)
+    .map(([target, json]) => ({ name: target === 'config:save-workspace' ? 'workspace.json' : target, json }));
 }
 
 /**

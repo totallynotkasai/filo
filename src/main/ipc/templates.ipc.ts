@@ -2,15 +2,15 @@ import { ipcMain } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import { assertWithinVault, assertSafeFilename } from '../utils/pathSecurity';
-import { assertActiveVault, NoActiveVaultError } from '../utils/activeVaultCheck';
+import { assertActiveVault } from '../utils/activeVaultCheck';
 import { logMainError } from '../utils/mainLogger';
+import { errorResult } from './ipcErrorCode';
 import { getActiveWatcher } from './vault.ipc';
 import { atomicWriteFile, LOCK_AWARE_SUPPRESS_MS } from '../vault/filenameUtils';
 import {
   assertPayloadByteSize,
   jsonPayloadByteSize,
   PAYLOAD_LIMITS,
-  PayloadTooLargeError,
 } from '../utils/payloadLimits';
 
 /**
@@ -126,13 +126,7 @@ export function registerTemplateHandlers(): void {
         return { success: true, filename };
       } catch (err) {
         logMainError('templates:layout:write', err);
-        const code =
-          err instanceof NoActiveVaultError
-            ? 'NO_ACTIVE_VAULT'
-            : err instanceof PayloadTooLargeError
-              ? 'FILE_TOO_LARGE'
-              : undefined;
-        return { success: false, ...(code ? { code } : {}), error: String(err) };
+        return errorResult(err);
       }
     },
   );
@@ -170,8 +164,7 @@ export function registerTemplateHandlers(): void {
         return { success: true };
       } catch (err) {
         logMainError('templates:layout:rename', err);
-        const code = err instanceof NoActiveVaultError ? 'NO_ACTIVE_VAULT' : undefined;
-        return { success: false, ...(code ? { code } : {}), error: String(err) };
+        return errorResult(err);
       }
     },
   );
@@ -199,8 +192,7 @@ export function registerTemplateHandlers(): void {
         return { success: true };
       } catch (err) {
         logMainError('templates:layout:delete', err);
-        const code = err instanceof NoActiveVaultError ? 'NO_ACTIVE_VAULT' : undefined;
-        return { success: false, ...(code ? { code } : {}), error: String(err) };
+        return errorResult(err);
       }
     },
   );

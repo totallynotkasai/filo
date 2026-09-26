@@ -13,6 +13,7 @@ import { describeUnsaved, keepRescueCopies } from './unsavedRescue';
 import { isUnsavedWorkEmpty, unsavedWork } from '../lib/boards/writeStateTracking';
 import { leaveVaultDialog, rescueFailedDialog, rescueKeptText } from '../lib/vault/unsavedMessages';
 import { reportError } from '../lib/utils/errorBus';
+import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
 
 /**
  * - `saved`: nothing was left unsaved; the vault can be let go cleanly.
@@ -56,7 +57,20 @@ export async function saveBeforeLeaving(save: () => Promise<boolean>, kind: 'clo
     const again = rescueFailedDialog(rescue.notKept, dialog.anyway);
     if (!(await goAhead(dialog.title, again.message, again.detail, again.anyway))) return 'cancelled';
   }
+  // Posted to outlive the swap: it says where the copies of the vault just
+  // left went, and the Home screen or the next vault is what shows next.
   const kept = rescueKeptText(rescue);
-  if (kept) uiStore.toast(kept, 'info', 10000);
+  const vaultRoot = getActiveVaultPath();
+  if (kept) {
+    const dir = rescue.dir && vaultRoot ? `${vaultRoot.replace(/[\\/]+$/, '')}/${rescue.dir}` : null;
+    uiStore.pushToast({
+      text: kept,
+      type: 'info',
+      duration: 0,
+      sticky: true,
+      survivesSwap: true,
+      actions: dir ? [{ label: 'Show in folder', handler: () => void window.filo.invoke('shell:show-item-in-folder', dir) }] : [],
+    });
+  }
   return 'rescued';
 }

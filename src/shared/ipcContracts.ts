@@ -242,7 +242,7 @@ export interface IpcChannelMap {
 
   // ── Recovery snapshot ────────────────────────────────────────────
   'recovery:snapshot': {
-    args: [vaultRoot: string, relPath: string];
+    args: [vaultRoot: string, relPath: string, purpose?: 'keep' | 'load-failure'];
     result: IpcOk<{ path: string }>;
   };
   // Rescue copies of unsaved work (close / quit anyway). `dir` is vault-relative.
@@ -259,7 +259,7 @@ export interface IpcChannelMap {
   // resolving to `[]`.
   'recovery:list': {
     args: [vaultRoot: string];
-    result: Array<{ relPath: string; basename: string; timestamp: string }>;
+    result: Array<{ relPath: string; basename: string; timestamp: string; kind: 'snapshot' | 'unsaved' | 'keep' | 'orphan-tmp' }>;
   };
   // Per-machine sentinels in `.filo/` (own and foreign).
   'recovery:list-sentinels': {
@@ -330,7 +330,7 @@ export interface IpcChannelMap {
     result: unknown;
   };
   'config:save': {
-    args: [vaultRoot: string, configName: string, data: unknown];
+    args: [vaultRoot: string, configName: string, data: unknown, opts?: { createOnly?: boolean }];
     result: IpcOk;
   };
   'config:load-all': {

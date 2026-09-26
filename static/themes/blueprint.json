@@ -86,6 +86,7 @@
     "--toolbar-save-ok": "#66bb6a",
     "--toolbar-save-busy": "#ffca28",
     "--toolbar-save-error": "#ffa8a8",
+    "--toolbar-save-attention": "#e0c3fc",
 
     "--tabbar-bg": "#2c5683",
     "--tabbar-border": "#588db5",

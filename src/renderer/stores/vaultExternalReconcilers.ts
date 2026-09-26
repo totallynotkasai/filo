@@ -37,8 +37,6 @@ import {
   type ExternalChangeEvent,
   type BatchedReconciler,
 } from '../lib/vault/externalChangeRegistry';
-import { boardCacheStore } from './boardCache.svelte';
-import { boardStore } from './board.svelte';
 import { fileTagsStore } from './fileTags.svelte';
 import { themeStore } from './theme.svelte';
 import { templatesStore } from './templates.svelte';
@@ -47,12 +45,10 @@ import { vaultStore } from './vault.svelte';
 import { reportError } from '../lib/utils/errorBus';
 import { assertIpcOk } from '../lib/utils/ipcEnvelope';
 import { isRecentSelfWrite, isPathPending, isPathQueuedOrInFlight } from '../lib/boards/boardSaver';
-import { loadBoard } from '../lib/boards/boardLoader';
 import { loadTagsFile } from '../lib/vault/tagsStorage';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
-import { backupExternalVersion } from '../lib/vault/keepLocalBackup';
 import { adoptBoardAtRuntime } from './boardDiscovery';
-import { samePath } from '../lib/utils/path';
+import { findBoardIdForPath, reloadBoardFromDisk, resolveBoardDrift } from './boardDrift';
 import { selfWriteDivergedFromBaseline } from './vaultExternalChanges';
 
 // ── Board JSON reconciler ─────────────────────────────────────────────
@@ -117,7 +113,7 @@ async function reconcileBoardJsonChange(event: ExternalChangeEvent): Promise<voi
   // `.board.json` write means the user has local edits the disk version
   // would clobber, so prompt rather than silently reloading.
   if (isPathPending(rel)) {
-    promptBoardChangedExternally(rel, boardId);
+    void resolveBoardDrift(rel);
     return;
   }
 
@@ -126,111 +122,9 @@ async function reconcileBoardJsonChange(event: ExternalChangeEvent): Promise<voi
   // `guardPending: true` re-checks for a write that lands DURING the read so
   // the silent reload can't clobber an edit made in that window.
   // `reloadBoardFromDisk` re-checks vault identity after its async load.
-  await reloadBoardFromDisk(rel, boardId, true);
-}
-
-function findBoardIdForPath(rel: string): string | null {
-  const paths = boardStore.paths;
-  for (const [boardId, boardPath] of Object.entries(paths)) {
-    // Case-insensitive, separator-agnostic compare: on Windows / macOS an
-    // externally-edited `.board.json` whose OS-reported casing differs from
-    // the stored casing must still match, or the event is ignored and the
-    // board may later be evicted as missing.
-    if (samePath(boardPath, rel)) return boardId;
-  }
-  return null;
-}
-
-async function reloadBoardFromDisk(
-  rel: string,
-  boardId: string,
-  // When true (the silent reconciler path), re-check for a pending write AFTER
-  // the async read. The explicit "Reload" handler passes false: the user there
-  // chose to discard local edits.
-  guardPending = false,
-): Promise<void> {
-  // Capture vault identity before the async load, so a swap during it can't
-  // merge the outgoing vault's board into the new vault's cache.
-  const captured = captureVaultIdentity();
-  const vaultRoot = vaultStore.path;
-  if (!vaultRoot) return;
-  const result = await loadBoard(vaultRoot, rel);
-  // Swap landed during the load — abandon: the loaded bytes belong to the
-  // outgoing vault and `boardStore.cache` is now the new vault's.
-  if (!isStillSameVault(captured)) return;
-  if (!result.ok) {
-    // Name the reason (a lock / offline placeholder is not a
-    // corrupt file) and say what happens next.
-    const reason =
-      result.error === 'locked' ? 'the file is locked by another program'
-        : result.error === 'offline' ? 'the file is online-only and could not be downloaded'
-          : result.error === 'not-found' ? 'the file is missing'
-            : `load failed: ${result.error}`;
-    reportError(
-      'externalChange.board',
-      new Error(`${result.error}: ${result.message}`),
-      `External change to "${rel}" couldn't be applied (${reason}). Filo's copy is unchanged; it will try again on the next change.`,
-    );
-    return;
-  }
-  // A user edit landing during loadBoard's IPC makes the pre-read pending
-  // check stale; a silent replaceCache would clobber it, so prompt instead.
-  if (guardPending && isPathPending(rel)) {
-    promptBoardChangedExternally(rel, boardId);
-    return;
-  }
-  // Rebind the stored path to the OS-reported casing. After a case-only
-  // external rename the stale casing could later make a tree reconcile treat
-  // the board as missing and evict it. `renameBoardPath` no-ops when the path
-  // is byte-identical.
-  const storedPath = boardStore.paths[boardId];
-  if (storedPath) boardCacheStore.renameBoardPath(storedPath, rel);
-  // Use the boardCache replace path: write the freshly-loaded data
-  // straight into the cache slot for this boardId. `replaceCache`
-  // accepts a full snapshot, so build one with just this entry merged
-  // over the live cache.
-  const merged = { ...boardStore.cache, [boardId]: result.data };
-  boardCacheStore.replaceCache(merged);
-}
-
-function promptBoardChangedExternally(rel: string, boardId: string): void {
-  uiStore.pushToast({
-    text: `Board file "${rel}" was modified externally while you had unsaved changes. Reload from disk (discard your edits), or keep your edits and overwrite on next save?`,
-    type: 'warning',
-    duration: 0,
-    sticky: true,
-    dedupeKey: `board-mod:${rel}`,
-    actions: [
-      {
-        label: 'Reload',
-        handler: () => {
-          // reloadBoardFromDisk re-checks vault identity across its async load.
-          void reloadBoardFromDisk(rel, boardId);
-        },
-      },
-      {
-        label: 'Keep your edits',
-        handler: async () => {
-          // Back up the external board version first (the board writer's
-          // keep-local branch dedupes against this snapshot).
-          const identity = captureVaultIdentity();
-          const vaultRoot = vaultStore.path;
-          if (!vaultRoot || !(await backupExternalVersion(vaultRoot, rel))) return;
-          if (!isStillSameVault(identity)) return;
-          // No-op — the next debounced write will overwrite the disk
-          // copy. The board writer's pre-write mtime check will catch
-          // the drift again at that point and surface its own
-          // "Reload / Keep-local" prompt; that's the second-chance
-          // confirmation before we actually overwrite.
-          uiStore.pushToast({
-            text: `External edit to "${rel}" will be overwritten on the next save.`,
-            type: 'info',
-            duration: 4000,
-          });
-        },
-      },
-    ],
-  });
+  const outcome = await reloadBoardFromDisk(rel, boardId, { guardPending: () => isPathPending(rel) });
+  // An edit landed during the read: ask rather than drop it.
+  if (outcome === 'pending') void resolveBoardDrift(rel);
 }
 
 // ── Tags JSON reconciler ──────────────────────────────────────────────

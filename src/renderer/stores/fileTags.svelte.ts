@@ -138,6 +138,7 @@ function scheduleSave(): void {
     return {
       vaultRoot: root,
       path: TAGS_PATH,
+      json: snapshot,
       write: async () => {
         // Merge on write. Another machine's tags.json can land inside the
         // self-write window (its watcher event is dropped as our echo), so a

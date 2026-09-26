@@ -163,7 +163,7 @@ test.describe('Filo E2E — crash recovery (kill mid-write → relaunch)', () =>
 
       const item = b.window.locator('.recovery-item', { hasText: 'Notes.md' });
       await expect(item).toBeVisible({ timeout: 15_000 });
-      await expect(b.window.getByText('Recovered from unflushed changes')).toBeVisible();
+      await expect(b.window.getByText('Changes that may not have been saved')).toBeVisible();
 
       // Dismiss acknowledges recovery → clears the on-disk sentinel.
       await b.window.locator('.recovery-dismiss').click();

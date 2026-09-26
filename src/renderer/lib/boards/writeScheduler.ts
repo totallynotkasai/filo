@@ -203,6 +203,7 @@ export function createScheduler<TArgs>(
             isLatestWrite: () =>
               writePathKey === undefined || writeGenByPath.get(writePathKey) === writeGen,
           });
+          if (result?.error !== undefined && (result.failed?.length ?? 0) > 0) failError = result.error;
           return result?.failed ?? [];
         } catch (err) {
           failError = err;
@@ -328,7 +329,7 @@ export function createScheduler<TArgs>(
         // flushAll (Ctrl+S, quit drain, Retry) re-fires it instead of the edit
         // living only in memory. User-deferred / validation failures carry no
         // RETAINABLE code and are not re-fired (they would re-prompt).
-        if (retainGetArgs && isRetainableWriteError(failError)) ledger.retain(key, retainGetArgs);
+        if (retainGetArgs && isRetainableWriteError(failError, opts.retainIoError === true)) ledger.retain(key, retainGetArgs);
       }
       return failureList;
     });

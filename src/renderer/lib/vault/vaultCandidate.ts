@@ -300,7 +300,7 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     }
     if (!SNAPSHOT_FAILED_BOARD_KINDS.has(failed.errorKind)) continue;
     try {
-      await invokeOk('recovery:snapshot', newVaultPath, failed.path);
+      await invokeOk('recovery:snapshot', newVaultPath, failed.path, 'load-failure');
     } catch (snapshotErr) {
       reportError(
         'vault.recovery-snapshot',
@@ -599,7 +599,7 @@ function pickObject(configs: Record<string, unknown>, key: string): Record<strin
   return v as Record<string, unknown>;
 }
 
-function parseSettingsSlices(
+export function parseSettingsSlices(
   appConfig: Record<string, unknown>,
   defaultsConfig: Record<string, unknown>,
   warnings: VaultCandidateWarning[],

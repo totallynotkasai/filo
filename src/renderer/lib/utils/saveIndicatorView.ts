@@ -7,7 +7,7 @@
  */
 import type { SaveState } from '../../stores/saveState.svelte';
 
-export type SaveIndicatorIcon = 'check-circle' | 'spinner' | 'alert-circle';
+export type SaveIndicatorIcon = 'check-circle' | 'spinner' | 'alert-circle' | 'help-circle';
 
 export interface SaveIndicatorView {
   icon: SaveIndicatorIcon;
@@ -15,7 +15,7 @@ export interface SaveIndicatorView {
   color: string;
   /** Tooltip text. */
   label: string;
-  /** Only a failure opens something (the failed-files popover). */
+  /** Only a failure or a waiting decision opens something (the save popover). */
   clickable: boolean;
 }
 
@@ -33,6 +33,13 @@ export function saveIndicatorView(state: SaveState): SaveIndicatorView {
         icon: 'alert-circle',
         color: 'var(--toolbar-save-error, var(--accent-danger))',
         label: 'Save failed — click for details',
+        clickable: true,
+      };
+    case 'attention':
+      return {
+        icon: 'help-circle',
+        color: 'var(--toolbar-save-attention, var(--accent-info))',
+        label: 'Waiting for your decision — click for details',
         clickable: true,
       };
     case 'saved':

@@ -39,6 +39,7 @@ import {
   dropRecentSelfWrite,
   endWrite,
   markPathFailed,
+  markPathReported,
   markRecentSelfWrite,
   notifyWriteError,
   trackComponentWrite,
@@ -344,7 +345,20 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
   const scheduler = createScheduler<FlushArgs>({
     name: 'noteWriter',
     debounceMs: NOTE_WRITE_DEBOUNCE_MS,
-    performWrite: (args) => onPath(args.path, () => writePending(args)),
+    performWrite: (args) => onPath(args.path, async () => {
+      const entry = pending.get(args.path);
+      try {
+        await writePending(args);
+      } catch (err) {
+        // The note was renamed while this write was out: its change moved
+        // with it and is armed at the new path, so the old path hasn't failed.
+        if (isMissingFileError(err) && entry && pending.get(args.path) !== entry) {
+          settled(entry.relPath);
+          return;
+        }
+        throw err;
+      }
+    }),
     getSentinelInfo: (args) => ({ vaultRoot: args.vaultRoot, path: args.relPath }),
     getFailureId: (args) => args.relPath,
     // The write wraps its IPC in trackComponentWrite (in-flight counter); the
@@ -464,9 +478,23 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
       if (breaksFrontmatter(fresh.text, text)) refuseFrontmatterBreak(vaultRoot, relPath);
       if (text !== fresh.text.raw) {
         rememberOwnWrite(path, noteTextHash(text));
-        const outcome = await trackComponentWrite(vaultRoot, relPath, () =>
-          writeOver(vaultRoot, relPath, text, fresh),
-        );
+        const entryWritten = entry;
+        let outcome: Awaited<ReturnType<typeof writeOver>>;
+        try {
+          outcome = await trackComponentWrite(
+            vaultRoot,
+            relPath,
+            () => writeOver(vaultRoot, relPath, text, fresh),
+            { notifyOnError: false },
+          );
+        } catch (err) {
+          // A note renamed while this write was out: its change moved with it
+          // (see performWrite), so this is no failure to report.
+          if (!(isMissingFileError(err) && pending.get(path) !== entryWritten)) {
+            notifyWriteError({ kind: 'component', path: relPath, error: err });
+          }
+          throw err;
+        }
         if (!isStillSameVault(identity)) return;
         if (outcome === 'stale') {
           // The file changed after the read: build the change again on it.
@@ -509,6 +537,16 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
    */
   function settled(relPath: string): void {
     clearFailedPathAfterLateSuccess(host.vaultRoot() ?? undefined, relPath);
+  }
+
+  /**
+   * A rewrite (`transform`) that couldn't be written. It keeps nothing queued,
+   * and its caller reports the failure with its own retry (a tag sweep, Replace
+   * All), so the path is reported rather than left failed for the session.
+   */
+  function failedRewrite(vaultRoot: string, path: VaultPath, relPath: string): void {
+    if (pending.has(path)) markPathFailed(vaultRoot, relPath);
+    else markPathReported(vaultRoot, relPath);
   }
 
   /** Keeps the change queued as failed and says why, rather than write it. */
@@ -656,9 +694,9 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
           try {
             fresh = await readNoteFresh(vaultRoot, relPath);
           } catch (err) {
-            // Present but unreadable: the change is unsaved, so say so. A note
+            // Present but unreadable: the change didn't land, so say so. A note
             // that's gone has nothing left to change.
-            if (!isMissingFileError(err) && isStillSameVault(identity)) markPathFailed(vaultRoot, relPath);
+            if (!isMissingFileError(err) && isStillSameVault(identity)) failedRewrite(vaultRoot, path, relPath);
             throw err;
           }
           if (!isStillSameVault(identity) || fresh.nonUtf8) return null;
@@ -676,12 +714,18 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
             throw err;
           }
           rememberOwnWrite(path, noteTextHash(next));
-          const outcome = await trackComponentWrite(
-            vaultRoot,
-            relPath,
-            () => writeOver(vaultRoot, relPath, next, fresh),
-            track ?? {},
-          );
+          let outcome: Awaited<ReturnType<typeof writeOver>>;
+          try {
+            outcome = await trackComponentWrite(
+              vaultRoot,
+              relPath,
+              () => writeOver(vaultRoot, relPath, next, fresh),
+              track ?? {},
+            );
+          } catch (err) {
+            if (isStillSameVault(identity)) failedRewrite(vaultRoot, path, relPath);
+            throw err;
+          }
           if (!isStillSameVault(identity)) return null;
           if (outcome === 'stale') {
             // The file changed after the read: run the rewrite again on it.

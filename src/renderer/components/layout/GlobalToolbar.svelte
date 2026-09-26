@@ -4,6 +4,7 @@
   import { historyStore } from '../../stores/history.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { saveStateStore } from '../../stores/saveState.svelte';
+  import { reopenDecision } from '../../stores/heldDecisions';
   import { vaultStore } from '../../stores/vault.svelte';
   import { safeDeactivateTrap } from '../../lib/utils/focusTrapSafe';
   import { saveIndicatorView } from '../../lib/utils/saveIndicatorView';
@@ -47,7 +48,7 @@
   let popoverTrap: FocusTrap | null = null;
 
   function toggleErrorPopover() {
-    if (saveStateStore.state !== 'error') return;
+    if (!inError) return;
     errorPopoverOpen = !errorPopoverOpen;
   }
 
@@ -88,9 +89,18 @@
     };
   });
 
+  // A toast's Details button asks for the popover.
+  let seenDetailsRequest = saveStateStore.detailsRequest;
+  $effect(() => {
+    const request = saveStateStore.detailsRequest;
+    if (request === seenDetailsRequest) return;
+    seenDetailsRequest = request;
+    if (inError) errorPopoverOpen = true;
+  });
+
   // Auto-close once the failure list drains (e.g. retry succeeded).
   $effect(() => {
-    if (errorPopoverOpen && saveStateStore.failedPaths.length === 0 && saveStateStore.state !== 'error') {
+    if (errorPopoverOpen && !inError && saveStateStore.failedPaths.length === 0 && saveStateStore.decisions.length === 0) {
       errorPopoverOpen = false;
     }
   });
@@ -138,8 +148,14 @@
     };
   });
 
+  /** Shows a held decision's prompt again (its toast may be gone). */
+  function showDecision(key: string) {
+    errorPopoverOpen = false;
+    reopenDecision(key);
+  }
+
   function handleIndicatorKeydown(e: KeyboardEvent) {
-    if (saveStateStore.state !== 'error') return;
+    if (!inError) return;
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       toggleErrorPopover();
@@ -191,6 +207,8 @@
     >
       {#if saveView.icon === 'spinner'}
         <svg class="save-icon spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+      {:else if saveView.icon === 'help-circle'}
+        <svg class="save-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
       {:else if saveView.icon === 'alert-circle'}
         <svg class="save-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
       {:else}
@@ -210,10 +228,22 @@
         aria-labelledby="save-error-popover-title"
         tabindex="-1"
       >
-        <div class="popover-title" id="save-error-popover-title">Save failed</div>
-        {#if saveStateStore.failedPaths.length === 0}
+        <div class="popover-title" class:attention={saveStateStore.state === 'attention'} id="save-error-popover-title">
+          {saveStateStore.state === 'attention' ? 'Waiting for your decision' : 'Save failed'}
+        </div>
+        {#if saveStateStore.decisions.length > 0}
+          <ul class="popover-list popover-decisions">
+            {#each saveStateStore.decisions as decision (decision.key)}
+              <li title={decision.relPath}>
+                <span class="decision-text"><span class="decision-path">{decision.relPath}</span> {decision.text}</span>
+                <button class="popover-btn decision-show" onclick={() => showDecision(decision.key)}>Show</button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+        {#if saveStateStore.failedPaths.length === 0 && saveStateStore.decisions.length === 0}
           <p class="popover-empty">The error has cleared. You can close this.</p>
-        {:else}
+        {:else if saveStateStore.failedPaths.length > 0}
           <ul class="popover-list">
             {#each saveStateStore.failedPaths.slice(0, 10) as path (path)}
               <li title={path}>{path}</li>
@@ -223,16 +253,26 @@
             {/if}
           </ul>
         {/if}
+        {#if saveStateStore.reportedPaths.length > 0}
+          <p class="popover-note">Also failed earlier, already reported (nothing left to retry):</p>
+          <ul class="popover-list">
+            {#each saveStateStore.reportedPaths.slice(0, 5) as path (path)}
+              <li title={path}>{path}</li>
+            {/each}
+          </ul>
+        {/if}
         <div class="popover-actions">
           <button class="popover-btn" onclick={() => { errorPopoverOpen = false; }}>Close</button>
-          <button
-            bind:this={retryBtn}
-            class="popover-btn primary"
-            disabled={retrying}
-            onclick={() => { void retrySave(); }}
-          >
-            {retrying ? 'Retrying…' : 'Retry save'}
-          </button>
+          {#if saveStateStore.failedPaths.length > 0 || saveStateStore.state === 'error'}
+            <button
+              bind:this={retryBtn}
+              class="popover-btn primary"
+              disabled={retrying}
+              onclick={() => { void retrySave(); }}
+            >
+              {retrying ? 'Retrying…' : 'Retry save'}
+            </button>
+          {/if}
         </div>
       </div>
     {/if}
@@ -379,6 +419,33 @@
     font-size: var(--font-size-base);
     margin-bottom: 6px;
     color: var(--accent-danger, #d32f2f);
+  }
+
+  .popover-title.attention {
+    color: var(--toolbar-save-attention, var(--accent-info));
+  }
+
+  .popover-decisions li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: normal;
+  }
+
+  .decision-text {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .decision-path {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .popover-note {
+    margin: 0 0 4px;
+    font-size: 12px;
+    color: var(--text-tertiary);
   }
 
   .popover-empty {

@@ -391,7 +391,7 @@ export const checks = [
         return fn?.text ?? null;
       };
 
-      const RECON = 'src/renderer/stores/vaultExternalReconcilers.ts';
+      const RECON = 'src/renderer/stores/boardDrift.ts';
       const find = body(RECON, 'findBoardIdForPath');
       if (find !== null) {
         out.push(

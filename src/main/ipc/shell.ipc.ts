@@ -2,6 +2,7 @@ import { ipcMain, shell } from 'electron';
 import { assertWithinVault } from '../utils/pathSecurity';
 import { getVaultRoot } from './vault.ipc';
 import { logMainError } from '../utils/mainLogger';
+import { isKeptRescuePath } from '../services/recoverySnapshot';
 
 /**
  * Shell / OS integration IPC handlers.
@@ -17,13 +18,17 @@ import { logMainError } from '../utils/mainLogger';
 export function registerShellHandlers(): void {
   ipcMain.handle('shell:show-item-in-folder', (_event, fullPath: string) => {
     if (typeof fullPath !== 'string' || fullPath.length === 0) return false;
-    const vaultRoot = getVaultRoot();
-    if (!vaultRoot) return false;
-    try {
-      assertWithinVault(vaultRoot, fullPath);
-    } catch (err) {
-      logMainError('shell:show-item-in-folder', err);
-      return false;
+    // The open vault, or a rescue folder written this session (its vault
+    // may have closed since: the notice naming it outlives the swap).
+    if (!isKeptRescuePath(fullPath)) {
+      const vaultRoot = getVaultRoot();
+      if (!vaultRoot) return false;
+      try {
+        assertWithinVault(vaultRoot, fullPath);
+      } catch (err) {
+        logMainError('shell:show-item-in-folder', err);
+        return false;
+      }
     }
     shell.showItemInFolder(fullPath);
     return true;

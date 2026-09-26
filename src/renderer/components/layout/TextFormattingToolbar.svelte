@@ -1,7 +1,7 @@
 <script lang="ts">
   import { vaultStore } from '../../stores/vault.svelte';
   import { toolbarStore } from '../../stores/toolbar.svelte';
-  import { LINE_SPACING_CHOICES } from '../../stores/noteMeta';
+  import { LINE_SPACING_CHOICES, formatLineSpacing, noteLineSpacing, projectLineSpacing } from '../../stores/noteMeta';
   import { uiStore } from '../../stores/ui.svelte';
   import { tiptapToolbar, LINK_IN_CODE_MESSAGE, LINK_REFUSED_MESSAGE } from '../../lib/editor/toolbarConfig';
   import { applyLink, linkAllowedAt, linkTargetAt, removeLink, type LinkTarget } from '../../lib/editor/insertLink';
@@ -13,10 +13,8 @@
 
   let showTextColorPicker = $state(false);
   let showHighlightColorPicker = $state(false);
-  let showLineSpacingMenu = $state(false);
   let textColorBtnRef = $state<HTMLDivElement | null>(null);
   let highlightColorBtnRef = $state<HTMLDivElement | null>(null);
-  let lineSpacingBtnRef = $state<HTMLDivElement | null>(null);
   let textColorPanelRef = $state<HTMLDivElement | null>(null);
   let highlightColorPanelRef = $state<HTMLDivElement | null>(null);
   let textColorPanelLeft = $state(0);
@@ -58,6 +56,29 @@
     // A refused change leaves the store as it was, so `value={…}` never
     // re-renders: put the block's real level back by hand.
     if (!applied) select.value = toolbarStore.heading;
+  }
+
+  // Line spacing is the note's own `lineSpacing:`, or "Default" (none: the
+  // note follows Settings → General, whose value the option shows).
+  const LINE_SPACING_DEFAULT = 'default';
+  // Read from the note itself, so an undo or another view's change shows at once.
+  let noteSpacing = $derived(toolbarStore.lineSpacingNote ? noteLineSpacing(toolbarStore.lineSpacingNote) : null);
+  let lineSpacingValue = $derived(noteSpacing === null ? LINE_SPACING_DEFAULT : String(noteSpacing));
+  // A value typed into the file by hand that the list doesn't offer still shows.
+  let lineSpacingIsCustom = $derived(
+    noteSpacing !== null && !LINE_SPACING_CHOICES.includes(noteSpacing)
+  );
+  let lineSpacingTitle = $derived(
+    toolbarStore.lineSpacingAvailable ? 'Line Spacing (whole note)' : 'Click inside a note to set line spacing'
+  );
+
+  function handleLineSpacingChange(e: Event) {
+    const select = e.target as HTMLSelectElement;
+    const value = select.value === LINE_SPACING_DEFAULT ? null : Number(select.value);
+    tiptapToolbar.setLineSpacing(value);
+    // A refused change (the note isn't editable) leaves the note as it was:
+    // put the note's real value back by hand.
+    select.value = lineSpacingValue;
   }
 
   function handleFontChange(e: Event) {
@@ -145,9 +166,6 @@
     if (showHighlightColorPicker && highlightColorBtnRef && !highlightColorBtnRef.contains(target) &&
         (!highlightColorPanelRef || !highlightColorPanelRef.contains(target))) {
       showHighlightColorPicker = false;
-    }
-    if (showLineSpacingMenu && lineSpacingBtnRef && !lineSpacingBtnRef.contains(target)) {
-      showLineSpacingMenu = false;
     }
   }
 
@@ -269,43 +287,6 @@
     <option value="justify">Justify</option>
   </select>
 
-  <div class="align-dropdown-wrapper" bind:this={lineSpacingBtnRef}>
-    <IconButton
-      title={toolbarStore.lineSpacingAvailable ? 'Line Spacing (whole note)' : 'Line Spacing (click in a note first)'}
-      size="small"
-      active={showLineSpacingMenu}
-      pressed={showLineSpacingMenu}
-      disabled={!toolbarStore.lineSpacingAvailable}
-      onclick={() => showLineSpacingMenu = !showLineSpacingMenu}
-    >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="21" y1="6" x2="11" y2="6"/><line x1="21" y1="12" x2="11" y2="12"/><line x1="21" y1="18" x2="11" y2="18"/><polyline points="4 6 7 3 7 21 4 18"/></svg>
-    </IconButton>
-    {#if showLineSpacingMenu}
-      <div class="align-panel line-spacing-panel">
-        <button
-          class="align-option"
-          class:active={toolbarStore.lineSpacing === null}
-          onmousedown={(e) => e.preventDefault()}
-          onclick={() => { tiptapToolbar.setLineSpacing(null); showLineSpacingMenu = false; }}
-          title="The view's default spacing"
-        >
-          Default
-        </button>
-        {#each LINE_SPACING_CHOICES as spacing (spacing)}
-          <button
-            class="align-option"
-            class:active={toolbarStore.lineSpacing === spacing}
-            onmousedown={(e) => e.preventDefault()}
-            onclick={() => { tiptapToolbar.setLineSpacing(spacing); showLineSpacingMenu = false; }}
-            title="Line spacing {spacing}"
-          >
-            {spacing}
-          </button>
-        {/each}
-      </div>
-    {/if}
-  </div>
-
   <div class="toolbar-divider"></div>
 
   <IconButton title="Bulleted List" size="small" onclick={() => tiptapToolbar.toggleBulletList()}>
@@ -317,6 +298,27 @@
   </IconButton>
 
   <div class="toolbar-divider"></div>
+
+  <div class="line-spacing-control" title={lineSpacingTitle}>
+    <svg class="line-spacing-glyph" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="21" y1="6" x2="11" y2="6"/><line x1="21" y1="12" x2="11" y2="12"/><line x1="21" y1="18" x2="11" y2="18"/><polyline points="4 6 7 3 7 21 4 18"/></svg>
+    <select
+      class="toolbar-select line-spacing-select"
+      title={lineSpacingTitle}
+      aria-label="Line spacing (whole note)"
+      disabled={!toolbarStore.lineSpacingAvailable}
+      value={lineSpacingValue}
+      onfocus={() => tiptapToolbar.keepActiveEditor()}
+      onchange={handleLineSpacingChange}
+    >
+      <option value={LINE_SPACING_DEFAULT}>Default ({formatLineSpacing(projectLineSpacing())})</option>
+      {#if lineSpacingIsCustom}
+        <option value={lineSpacingValue}>{lineSpacingValue}</option>
+      {/if}
+      {#each LINE_SPACING_CHOICES as spacing (spacing)}
+        <option value={String(spacing)}>{formatLineSpacing(spacing)}</option>
+      {/each}
+    </select>
+  </div>
 
   <IconButton title="Decrease Indent" size="small" onclick={() => tiptapToolbar.decreaseIndent()}>
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="12" x2="11" y2="12"/><line x1="21" y1="18" x2="11" y2="18"/><polyline points="7 15 3 12 7 9"/></svg>
@@ -540,20 +542,39 @@
     width: 105px;
   }
 
-  .align-dropdown-wrapper {
+  /* The line-spacing select keeps its icon as a leading glyph, so it reads as
+     line spacing and not as another font-size box. Wide enough for
+     "Default (1.75)". */
+  .line-spacing-control {
     position: relative;
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
   }
 
-  .line-spacing-panel .align-option {
-    width: auto;
-    padding: 4px 10px;
-    font-size: 12px;
-    font-weight: 500;
+  .line-spacing-glyph {
+    position: absolute;
+    left: 6px;
     color: var(--text-secondary);
+    pointer-events: none;
   }
 
-  .line-spacing-panel .align-option.active {
-    color: var(--accent-primary);
-    font-weight: 600;
+  .line-spacing-select {
+    width: 118px;
+    padding-left: 24px;
+  }
+
+  .toolbar-select:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  .toolbar-select:disabled:hover {
+    background-color: transparent;
+    border-color: transparent;
+  }
+
+  .line-spacing-control:has(.line-spacing-select:disabled) .line-spacing-glyph {
+    opacity: 0.45;
   }
 </style>

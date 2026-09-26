@@ -11,7 +11,7 @@
   import { vaultStore } from '../../stores/vault.svelte';
   import { boardRefIntegrityStore } from '../../stores/boardRefIntegrity.svelte';
   import { noteStore, type NoteModel } from '../../stores/notes.svelte';
-  import { noteLineSpacing } from '../../stores/noteMeta';
+  import { resolveLineSpacing } from '../../stores/noteMeta';
   import { uiStore } from '../../stores/ui.svelte';
   import { createId } from '../../lib/utils/ids';
   import type { ResolvedTileStyle } from '../../lib/styles/effectiveStyle';
@@ -55,9 +55,10 @@
   // The model at that path, whichever object it is (a rename can move another
   // one there).
   let model = $derived<NoteModel | null>(notePath ? (noteStore.get(notePath) ?? null) : null);
-  // The note's own line spacing (frontmatter `lineSpacing:`); none keeps the tile default.
-  let lineSpacing = $derived(noteLineSpacing(notePath));
-  let editorStyle = $derived(`${bodyFontStyle}${lineSpacing !== null ? `line-height: ${lineSpacing};` : ''}`);
+  // The note's line spacing: its own `lineSpacing:`, else the project default, so
+  // the tile and a Document tab of the same note always match.
+  let lineSpacing = $derived(resolveLineSpacing(notePath));
+  let editorStyle = $derived(`${bodyFontStyle}line-height: ${lineSpacing};`);
 
   $effect(() => {
     const path = notePath;

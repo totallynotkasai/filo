@@ -1,7 +1,6 @@
 import type { Editor } from '@tiptap/core';
 import { toolbarStore } from '../../stores/toolbar.svelte';
 import { uiStore } from '../../stores/ui.svelte';
-import { noteLineSpacing } from '../../stores/noteMeta';
 import { setNoteLineSpacing } from '../../stores/noteLayout';
 import { clearBlockTextStyle } from './blockTextStyle';
 
@@ -78,8 +77,7 @@ function syncStateToToolbar(editor: Editor) {
 
   const note = activeNote?.() ?? null;
   const next = {
-    lineSpacing: note ? noteLineSpacing(note.path) : null,
-    lineSpacingAvailable: note !== null,
+    lineSpacingNote: note ? note.path : null,
     bold: editor.isActive('bold'),
     italic: editor.isActive('italic'),
     underline: editor.isActive('underline'),
@@ -316,15 +314,14 @@ export const tiptapToolbar = {
   /**
    * Line spacing belongs to the whole note: it is saved in the note's
    * frontmatter (`lineSpacing:`), and every view of the note shows it.
-   * `null` goes back to each view's default. Editors that don't show a note
-   * (connection labels, titles) have no line spacing.
+   * `null` removes it, so the note follows Settings → General's default.
+   * Editors that don't show a note (connection labels, titles) have none.
    */
   setLineSpacing(value: number | null) {
     this.keepActiveEditor();
     const note = activeNote?.();
     if (!note || !activeEditor?.isEditable) return;
     setNoteLineSpacing(note.historyBoardId, note.path, value);
-    toolbarStore.updateFromEditor({ lineSpacing: value, lineSpacingAvailable: true });
     activeEditor.commands.focus();
   },
 };

@@ -239,6 +239,11 @@ export const GeneralSettingsSchema = z.object({
    */
   globalFontSize: z.number().min(10).max(20).default(GD.globalFontSize),
   /**
+   * Line spacing of a note that sets none of its own (frontmatter
+   * `lineSpacing:` wins). The same range a note's own value may take.
+   */
+  defaultLineSpacing: z.number().min(0.8).max(4).default(GD.defaultLineSpacing),
+  /**
    * Defaults for board-element text. See `DefaultBoardFontSizeSchema`.
    */
   defaultBoardFontSize: DefaultBoardFontSizeSchema,

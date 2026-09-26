@@ -9,7 +9,7 @@
   import { tabStore } from '../../stores/tabs.svelte';
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
   import { noteStore, type NoteModel } from '../../stores/notes.svelte';
-  import { noteLineSpacing } from '../../stores/noteMeta';
+  import { resolveLineSpacing } from '../../stores/noteMeta';
   import { NoteEditorView } from '../../lib/editor/noteEditorView';
   import { createId } from '../../lib/utils/ids';
   import { vaultStore } from '../../stores/vault.svelte';
@@ -86,9 +86,9 @@
   let model = $derived<NoteModel | null>(notePath ? (noteStore.get(notePath) ?? null) : null);
   // The note's path in its on-disk spelling, once acquired.
   let docPath = $derived(model?.relPath ?? '');
-  // The note's own line spacing (frontmatter `lineSpacing:`); none keeps the
-  // Document default (the `--note-line-height` fallback below).
-  let lineSpacing = $derived(noteLineSpacing(docPath));
+  // The note's line spacing: its own `lineSpacing:`, else the project default
+  // (the same value a text tile of this note uses).
+  let lineSpacing = $derived(resolveLineSpacing(docPath));
   // Reactive IME-composition flag (see onMount / the follow effect).
   let isComposing = $state(false);
 
@@ -370,7 +370,7 @@
       <div
         class="document-editor"
         class:raw-hidden={rawMode}
-        style:--note-line-height={lineSpacing ?? undefined}
+        style:--note-line-height={lineSpacing}
         bind:this={editorElement}
       ></div>
     </div>
@@ -495,7 +495,7 @@
     min-height: 400px;
     color: var(--text-primary);
     font-size: 16px;
-    line-height: var(--note-line-height, 1.75);
+    line-height: var(--note-line-height, 1.5);
     font-family: var(--font-system);
   }
 

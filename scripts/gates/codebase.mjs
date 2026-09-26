@@ -40,7 +40,7 @@ const CHARACTERISATION_SPECS = {
   'newBoards.test.ts': 4,
   'closeVault.test.ts': 5,
   'blockLayout.test.ts': 2,
-  'lineSpacing.test.ts': 3,
+  'lineSpacing.test.ts': 5,
   'newNotesInSidebar.test.ts': 3,
   'tagFilters.test.ts': 10,
   'boardShortcutsAndUndo.test.ts': 7,

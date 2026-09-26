@@ -11,6 +11,7 @@
 export const GENERAL_SETTINGS_DEFAULTS = {
   globalFont: 'Inter, system-ui, sans-serif',
   globalFontSize: 13,
+  defaultLineSpacing: 1.5,
   defaultBoardFontSize: {
     tileTitle: 14,
     tileBody: 13,

@@ -7,6 +7,7 @@
   import { applyFontDefaultsToAllExisting as applyFontDefaultsToAllExistingLib } from '../../lib/styles/applyDefaultsToAll';
   import { defaultProjectSettings, GeneralSettingsSchema } from '../../schema/index';
   import { numberBoundsAt, readNumberField } from '../../lib/settings/numberInput';
+  import { LINE_SPACING_CHOICES, formatLineSpacing } from '../../stores/noteMeta';
 
   // Local state derived from project settings
   let settings = $derived(vaultStore.project?.settings?.general ?? defaultProjectSettings().general);
@@ -324,6 +325,24 @@
     >
       {#each availableFonts as font (font)}
         <option value={font} style="font-family: {font}">{font}</option>
+      {/each}
+    </select>
+  </div>
+
+  <!-- Default line spacing: every note without its own `lineSpacing:`. -->
+  <div class="setting-row">
+    <label class="setting-label" for="default-line-spacing">Default line spacing</label>
+    <select
+      id="default-line-spacing"
+      class="setting-select"
+      value={String(settings.defaultLineSpacing)}
+      onchange={(e) => updateSetting('defaultLineSpacing', Number((e.target as HTMLSelectElement).value))}
+    >
+      {#if !LINE_SPACING_CHOICES.includes(settings.defaultLineSpacing)}
+        <option value={String(settings.defaultLineSpacing)}>{formatLineSpacing(settings.defaultLineSpacing)}</option>
+      {/if}
+      {#each LINE_SPACING_CHOICES as spacing (spacing)}
+        <option value={String(spacing)}>{formatLineSpacing(spacing)}</option>
       {/each}
     </select>
   </div>

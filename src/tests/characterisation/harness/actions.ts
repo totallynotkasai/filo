@@ -936,24 +936,47 @@ export async function indentFirstBlock(app: CharApp, ed: Editor): Promise<void> 
 }
 
 /**
- * With the cursor in `ed`, open the toolbar's Line Spacing menu and pick
- * `choice` ("Default", "1", "1.15", "1.5" or "2").
+ * With the cursor in `ed`, pick `choice` in the toolbar's Line Spacing select
+ * ("Default", or a spacing such as "1", "1.15" or "2").
  */
 export async function chooseLineSpacing(app: CharApp, ed: Editor, choice: string): Promise<void> {
   ed.commands.focus('start');
   await settle();
-  const btn = $$(app.el, 'button.icon-btn').find((b) => (b.getAttribute('aria-label') ?? '').startsWith('Line Spacing'));
-  if (!btn) throw new Error('no Line Spacing button');
-  if ((btn as HTMLButtonElement).disabled) throw new Error('Line Spacing is disabled');
-  click(btn);
-  await settle();
-  const option = findByText(app.el, '.line-spacing-panel button', choice);
-  if (!option) throw new Error(`Line Spacing menu has no "${choice}"`);
-  click(option);
+  const select = $(app.el, 'select.line-spacing-select') as unknown as HTMLSelectElement;
+  if (select.disabled) throw new Error('Line Spacing is disabled');
+  // "Default" is the option labelled "Default (1.5)"; a number matches by value, so "2" picks "2.0".
+  const option = [...select.options].find((o) =>
+    choice === 'Default' ? (o.textContent ?? '').startsWith('Default') : Number(o.value) === Number(choice));
+  if (!option) throw new Error(`Line Spacing has no "${choice}"`);
+  select.dispatchEvent(new Event('focus'));
+  select.value = option.value;
+  select.dispatchEvent(new Event('change', { bubbles: true }));
   await quiesce(600);
 }
 
-/** The line height a view applies to its note, or null when it uses its default. */
+/** The label of the toolbar's Line Spacing select as shown ("Default (1.5)", "2.0"). */
+export function toolbarLineSpacingLabel(app: CharApp): string {
+  const select = $(app.el, 'select.line-spacing-select') as unknown as HTMLSelectElement;
+  return (select.selectedOptions[0]?.textContent ?? '').trim();
+}
+
+/** Vault menu → Settings → General → Default line spacing, then close the dialog. */
+export async function setDefaultLineSpacing(app: CharApp, value: string): Promise<void> {
+  const trigger = $$(app.el, 'button.dropdown-trigger').find((b) => b.closest('.global-toolbar, header, nav') !== null) ?? $(app.el, 'button.dropdown-trigger');
+  click(trigger);
+  await settle();
+  const item = $$(document, 'button.dropdown-item').find((b) => (b.textContent ?? '').trim() === 'Settings');
+  if (!item) throw new Error('no Settings item');
+  click(item);
+  await waitFor(() => document.querySelector('#default-line-spacing') !== null, 'General settings');
+  const select = document.querySelector('#default-line-spacing') as HTMLSelectElement;
+  select.value = value;
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+  await quiesce(300);
+  await closeModal();
+}
+
+/** The line height a view applies to its note (null only if it sets none). */
 export function viewLineSpacing(editorRoot: HTMLElement): string | null {
   const doc = editorRoot.querySelector('.document-editor') as HTMLElement | null;
   if (doc) return doc.style.getPropertyValue('--note-line-height') || null;

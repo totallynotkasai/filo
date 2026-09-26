@@ -13,6 +13,8 @@
  * Reactive: a `$derived` that calls these re-runs when either source changes.
  */
 import { noteStore } from './notes.svelte';
+import { vaultStore } from './vault.svelte';
+import { GENERAL_SETTINGS_DEFAULTS } from '../../shared/generalSettingsDefaults';
 import { orderPreservingTagsField } from '../lib/utils/normalizeTagsField';
 
 const EMPTY: Readonly<Record<string, unknown>> = Object.freeze({});
@@ -74,19 +76,46 @@ export function defTitle(def: { type: string; filePath?: string; title?: string 
   return def.title ?? '';
 }
 
-/** Line spacings the toolbar offers; a note may hold any value in the sane range. */
-export const LINE_SPACING_CHOICES: readonly number[] = [1.0, 1.15, 1.5, 2.0];
+/**
+ * Line spacings the toolbar and Settings → General offer; a note may hold any
+ * value in the sane range. Every choice must sit inside that range.
+ */
+export const LINE_SPACING_CHOICES: readonly number[] = [1.0, 1.15, 1.5, 1.75, 2.0, 2.5, 3.0];
 const MIN_LINE_SPACING = 0.8;
 const MAX_LINE_SPACING = 4;
+
+/** A spacing as the pickers show it: `1.0`, `1.15`, `2.0`. */
+export function formatLineSpacing(value: number): string {
+  return Number.isInteger(value) ? value.toFixed(1) : String(value);
+}
+
+function inRange(value: number): boolean {
+  return Number.isFinite(value) && value >= MIN_LINE_SPACING && value <= MAX_LINE_SPACING;
+}
 
 /**
  * The note's line spacing from frontmatter `lineSpacing:` (a number, or a
  * numeric string written by hand), or `null` when it has none or the value is
- * out of range. `null` means every view uses its own default spacing.
+ * out of range. `null` means the note follows the project default.
  */
 export function noteLineSpacing(path: string): number | null {
   if (!path) return null;
   const raw = noteFrontmatter(path).lineSpacing;
   const value = typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() ? Number(raw) : NaN;
-  return Number.isFinite(value) && value >= MIN_LINE_SPACING && value <= MAX_LINE_SPACING ? value : null;
+  return inRange(value) ? value : null;
+}
+
+/** Settings → General "Default line spacing", or the schema default without a vault. */
+export function projectLineSpacing(): number {
+  const value = vaultStore.project?.settings?.general?.defaultLineSpacing;
+  return typeof value === 'number' && inRange(value) ? value : GENERAL_SETTINGS_DEFAULTS.defaultLineSpacing;
+}
+
+/**
+ * The spacing every view of the note uses: its own `lineSpacing:` first, else
+ * the project default. One helper, so a Document tab and a text tile of the
+ * same note never disagree.
+ */
+export function resolveLineSpacing(path: string): number {
+  return noteLineSpacing(path) ?? projectLineSpacing();
 }

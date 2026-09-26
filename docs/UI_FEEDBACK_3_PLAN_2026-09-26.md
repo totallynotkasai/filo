@@ -302,6 +302,55 @@ are disabled when nothing changed), the `components` gate group, and a real-app 
 **Tests:** resolution order (note > project > schema default), the toolbar label reflecting the
 default, the `toolbarFormattingRoundTrip` save → reload case, and the settings schema default.
 
+### Item 3: done (2026-09-27). Deviations from the plan
+
+- **Width.** The select is 118px, not about 72px. The closed select shows the chosen option's
+  text, and "Default (1.75)" plus the leading glyph and the arrow doesn't fit in 72px. The glyph
+  is an absolutely placed SVG inside a `.line-spacing-control` wrapper; the select has left
+  padding for it.
+- **Option values.** "Default" is the value `default` (it removes `lineSpacing:`); the numbers
+  are shown as `1.0`, `1.15`, … (`formatLineSpacing`). A note whose file holds a value the list
+  doesn't offer (say `1.3`, typed by hand) gets an extra option with that value, so the select
+  never shows the wrong one. Settings → General does the same for its own value.
+- **Disabled tooltip.** "Click inside a note to set line spacing" is on both the select and its
+  wrapper, so hovering still shows it if the browser gives a disabled control no tooltip. A disabled
+  toolbar select is now dimmed (`.toolbar-select:disabled`), which also covers any future one.
+- **Where the project default is read.** `projectLineSpacing()` in `noteMeta.ts` reads
+  `vaultStore.project` directly (a module cycle through `fileTags.svelte.ts`, but only used at
+  call time). Without a vault, or with an unusable value, it falls back to the shared default.
+  `DocumentEditor` keeps a `1.5` fallback in its CSS `var()`, only so the `components` gate's
+  "every `var()` without a fallback is defined" rule holds; the inline value is always set.
+- **Round-trip test.** There is no `toolbarFormattingRoundTrip` case. Line spacing isn't an
+  editor command (it writes frontmatter through `SetLineSpacingCommand`, never through
+  `chainIfEditable`), so the `toolbar-formatting-saved` gate doesn't ask for one. Its save →
+  reopen case is the characterisation spec `lineSpacing.test.ts` ("is saved in the note, and is
+  still there after reopening"), which already existed.
+- **Characterisation spec changed.** The existing "Default removes it" case expected the
+  Document view to have *no* line height after Default. Now it has the project default, so the
+  case starts from `lineSpacing: 2` and expects `1.5` after Default (this is the behaviour the
+  plan asked for, not a harness change). Two cases were added (project default in the Document
+  tab, the toolbar label and a tile, with the note file untouched; a note's own value wins), and
+  the gate's minimum for the spec went from 3 to 5. The harness's `chooseLineSpacing` now drives
+  the select, and it gained `toolbarLineSpacingLabel` and `setDefaultLineSpacing`.
+- **Found on the way and fixed: the toolbar kept a copy.** `toolbarStore` held a snapshot of
+  the note's spacing, taken when the editor's selection changed, so an undo or a change from
+  another view left the old value showing. It now holds the note's path (`lineSpacingNote`), and
+  the select reads `noteLineSpacing(path)` reactively. `lineSpacingAvailable` is derived from it.
+- **Tests added:** in `noteLineSpacing.test.ts`, resolution order (note, then project, then
+  schema default, including an out-of-range project value), the schema default and range, and
+  the option labels. The inline Zod default-tree snapshots (`zodDefaultsSnapshot.test.ts`) gained
+  `defaultLineSpacing: 1.5` in their three `general` trees; nothing else in them changed.
+- **Checks:** lint, svelte-check, typecheck:main, build and all 68 gates pass. In
+  `test:unit:strict`, 5940 of 5941 tests pass. The one failure is the known flaky `tagFilters`
+  case from Item 1 (the popup lists "Other" before "Loose"). It failed in both full runs and
+  passes alone (12/12); it isn't related to line spacing. Real app (fresh vault, Playwright
+  `_electron`): with no note focused the select is disabled with the "Click inside a note…"
+  title; it is 118px, has the glyph, and sits just before Decrease Indent. In a note without its own
+  spacing it reads "Default (1.5)" and the text is 24px at 16px (1.5). Choosing 2.0 writes
+  `lineSpacing: 2` (32px); Default removes the key again. Settings → General → 2.5 is saved to
+  `app.json`, and the note shows "Default (2.5)" at 40px. A note with `lineSpacing: 1.15` stays
+  at 1.15. There were no console errors.
+
 ---
 
 ## Item 4: Default font, Arial Rounded MT

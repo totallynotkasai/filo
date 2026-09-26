@@ -8,7 +8,6 @@
   import type { Editor } from '@tiptap/core';
   import { getContext } from 'svelte';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
-  import { boardCacheStore } from '../../stores/boardCache.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { normalizePath } from '../../lib/utils/path';
@@ -372,36 +371,6 @@
     }
   }
 
-  async function syncTile() {
-    // A locked text tile is still safe to sync (lock blocks drag/resize, not
-    // disk I/O), but for non-text tiles there's no markdown to write — only
-    // the board JSON is flushed. We surface that case explicitly so the
-    // user doesn't see a misleading "Synced" toast on, e.g., an image tile.
-    try {
-      const result = await boardCacheStore.syncTile(tile.id);
-      if (result.skippedReason) {
-        uiStore.toast(`Sync skipped: ${result.skippedReason}`, 'warning');
-      } else if (!result.wrote && tile.type !== 'text') {
-        uiStore.toast(
-          `Nothing to write — ${tile.type} tiles have no markdown body. Board state flushed.`,
-          'info',
-          3000,
-        );
-      } else if (!result.wrote) {
-        uiStore.toast(
-          'Sync skipped — backing document not loaded. Open the tile first.',
-          'warning',
-          3500,
-        );
-      } else {
-        uiStore.toast('Synced', 'success');
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Sync failed';
-      uiStore.toast(message, 'error');
-    }
-  }
-
   async function performDeleteTile(deleteWithFile: boolean) {
     // Snapshot id + reference up-front: `boardStore.removeTile` triggers the
     // parent's reactive each-block to unmount this component, which nulls
@@ -582,15 +551,6 @@
         </svg>
       </button>
     {/if}
-
-    <!-- Sync -->
-    <button class="header-btn" title="Sync to disk" aria-label="Sync tile to vault file" onclick={syncTile}>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <polyline points="23 4 23 10 17 10"/>
-        <polyline points="1 20 1 14 7 14"/>
-        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-      </svg>
-    </button>
 
     <!-- Delete -->
     <button class="header-btn danger" title="Delete" aria-label="Delete tile" onclick={deleteTile}>

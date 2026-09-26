@@ -7,7 +7,6 @@ import type {
   Connection,
   Frame,
 } from '../schema/index';
-import { noteStore } from './notes.svelte';
 import { vaultStore } from './vault.svelte';
 import {
   type BoardFileData,
@@ -688,27 +687,6 @@ export const boardCacheStore = {
 
   // ── Connection + frame persistence (slice) ──
   ...connectionsFramesSlice,
-
-  // ── Manual sync (recovery path when autosave silently failed) ──
-
-  /**
-   * Writes a text tile's note now (whatever it has queued), then commits any
-   * pending placement edits to disk. For non-text tiles, just flushes the
-   * pending board JSON write.
-   *
-   * Returns `{ wrote, skippedReason? }`. Throws when no vault is open.
-   */
-  async syncTile(tileId: string): Promise<{ wrote: boolean; skippedReason?: string }> {
-    const boardId = findBoardIdForTile(tileId);
-    if (!boardId) throw new Error(`Tile ${tileId} not found on any loaded board`);
-
-    const cached = boardCache[boardId];
-    const def = cached?.tileDefs?.[tileId];
-
-    const result = await syncTileMarkdown(def);
-    await flushBoardWrite(boardId, () => getBoardWriteArgs(boardId));
-    return result;
-  },
 };
 
 // Vault-swap reset: drops the per-board cache + paths + the unresolved-warn coalesce state
@@ -716,26 +694,3 @@ export const boardCacheStore = {
 onVaultSwap('pre-swap', 'boardCache', () => {
   boardCacheStore.clear();
 });
-
-/**
- * Writes whatever the tile's note has queued now (the note writer applies it
- * to a fresh read of the file, and asks before overwriting a body another
- * program changed). A missing note is never written here: saying "saved"
- * would hide that the file is gone, and putting it back is the tile's
- * Recreate backing file.
- *
- * Returns `{ wrote }` when the note is on disk as the app shows it (or the
- * tile has no note). Returns `{ wrote: false, skippedReason }` when the
- * write didn't land.
- */
-async function syncTileMarkdown(
-  def: TileDefinition | undefined,
-): Promise<{ wrote: boolean; skippedReason?: string }> {
-  if (!def || def.type !== 'text') return { wrote: false };
-  if (!vaultStore.path) throw new Error('No vault open');
-  const model = noteStore.get(def.filePath);
-  if (!model) return { wrote: false };
-  if (model.status === 'missing') return { wrote: false, skippedReason: 'the file is missing' };
-  const ok = await noteStore.flush(def.filePath);
-  return ok ? { wrote: true } : { wrote: false, skippedReason: 'the change could not be saved' };
-}

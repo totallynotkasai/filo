@@ -29,8 +29,8 @@ export type IpcChannel =
   // Create-exclusive new-file seed (O_EXCL), typed EEXIST on a clash.
   | 'vault:create-file-text'
   | 'vault:file-exists'
-  // Returns stat shape with success, optional mtimeMs and size for an
-  // external-edit guard during manual sync (syncTileMarkdown).
+  // Returns stat shape with success, optional mtimeMs and size, for the
+  // drift checks around board loads and writes.
   | 'vault:stat'
   | 'vault:init-config'
   | 'vault:get-launch-preference'

@@ -4,9 +4,8 @@
  *
  * A board that can't be opened says why and where the copy is; a note
  * deleted under an open Document tab says so and can come back from the
- * trash; a text tile whose note is gone can have it recreated (and is never
- * told "Synced" meanwhile); a media tile whose file is gone says "File not
- * found"; a file tile can be re-linked to a file of any type.
+ * trash; a text tile whose note is gone can have it recreated; a media tile
+ * whose file is gone says "File not found"; a file tile can be re-linked to a file of any type.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { startApp, stopApp, waitFor, quiesce } from './harness/app';
@@ -30,7 +29,6 @@ import {
   brokenBadgeShown,
   brokenTileMenuLabels,
   chooseBrokenTileAction,
-  syncTileToDisk,
   mediaFailsToLoad,
   mediaErrorShown,
   relinkChoices,
@@ -97,7 +95,7 @@ describe('a Document tab whose note is gone', () => {
 });
 
 describe('a text tile whose note is gone', () => {
-  it('Sync never says "Synced", and Recreate backing file puts the note back with its title', async () => {
+  it('Recreate backing file puts the note back with its title', async () => {
     const app = await startApp({ 'Plan.md': '---\ntitle: Plan\ntags: [work]\n---\nBody\n' });
     await createBoard(app, 'mindmap');
     await placeNoteOnBoard(app, 'mindmap', 'Plan.md');
@@ -105,8 +103,6 @@ describe('a text tile whose note is gone', () => {
     app.deleteExternally('Plan.md');
     await waitFor(() => brokenBadgeShown(tile), 'the broken badge', 25000);
 
-    await syncTileToDisk(tile);
-    expect(toastTexts()).not.toContain('Synced');
     expect(app.exists('Plan.md')).toBe(false);
 
     await chooseBrokenTileAction(app, tile, 'Recreate backing file');

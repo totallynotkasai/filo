@@ -51,12 +51,6 @@ export async function relinkChoices(): Promise<string[]> {
   return $$(document, '.relink-list .relink-item').map((b) => (b.textContent ?? '').trim());
 }
 
-/** The tile's header Sync button ("Sync to disk"). */
-export async function syncTileToDisk(tileRoot: HTMLElement): Promise<void> {
-  click(tileRoot.querySelector('button[aria-label="Sync tile to vault file"]') as HTMLElement);
-  await quiesce(600);
-}
-
 /** The browser fails to load a media tile's file, as it does for a file that isn't there. */
 export async function mediaFailsToLoad(tileRoot: HTMLElement): Promise<void> {
   const media = tileRoot.querySelector('img, video, audio');

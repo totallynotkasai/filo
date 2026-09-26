@@ -38,6 +38,7 @@
   import { isEditableTextTarget } from '../../lib/utils/editableTarget';
   import { tiptapToolbar } from '../../lib/editor/toolbarConfig';
   import { installLinkClickHandling } from '../../lib/editor/linkClicks';
+  import { loadVaultFonts } from '../../lib/fonts/importedFonts';
   import { pendingSettingsStore } from '../../stores/pendingSettings.svelte';
   import { confirmDiscardSettings } from '../../lib/settings/confirmDiscardSettings';
   import { pickAndOpenVault } from '../../stores/vaultOpen';
@@ -158,6 +159,12 @@
     if (font) {
       document.documentElement.style.setProperty('--font-system', font);
     }
+  });
+
+  // Register the open vault's imported fonts; a vault swap drops them again.
+  $effect(() => {
+    const path = vaultStore.path;
+    if (path) void loadVaultFonts(path);
   });
 
   // Expose the Global Toolbar and Tab Bar heights as CSS custom properties

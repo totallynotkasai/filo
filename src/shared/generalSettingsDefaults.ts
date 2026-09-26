@@ -1,3 +1,5 @@
+import { DEFAULT_FONT, fontStack } from './fontStack';
+
 /**
  * Default values of the General settings (`.filo/app.json`).
  *
@@ -9,7 +11,7 @@
  * without it.
  */
 export const GENERAL_SETTINGS_DEFAULTS = {
-  globalFont: 'Inter, system-ui, sans-serif',
+  globalFont: fontStack(DEFAULT_FONT),
   globalFontSize: 13,
   defaultLineSpacing: 1.5,
   defaultBoardFontSize: {
@@ -25,7 +27,7 @@ export const GENERAL_SETTINGS_DEFAULTS = {
     taskItemBody: 12,
     taskSectionTitle: 14,
   },
-  systemFonts: ['Inter', 'Arial', 'Georgia', 'Courier New', 'Verdana'],
+  systemFonts: [DEFAULT_FONT, 'Arial', 'Georgia', 'Courier New', 'Verdana'],
   globalToolbarScale: 1,
   boardToolbarScale: 1,
   tabBarScale: 1,

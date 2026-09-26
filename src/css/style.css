@@ -3,6 +3,25 @@
    Vanilla CSS with custom properties for theming.
    ============================================================ */
 
+/* --- Default font ---
+   Windows installs Arial Rounded MT's Regular and Bold files as two separate
+   families, so a stack naming only the Regular one would fake its bold. These
+   faces join both files under the Regular family's own name: bold text gets the
+   real Bold file wherever that name is used (settings, a note's font mark), and
+   a note file still names a font other apps know. `local()` reads the installed
+   files, so nothing is loaded by path and the CSP needs no change. Without the
+   font, both faces fail and the stack falls through to Arial. */
+@font-face {
+  font-family: 'Arial Rounded MT';
+  font-weight: 400;
+  src: local('Arial Rounded MT'), local('ArialRoundedMT');
+}
+@font-face {
+  font-family: 'Arial Rounded MT';
+  font-weight: 700;
+  src: local('Arial Rounded MT Bold'), local('ArialRoundedMTBold');
+}
+
 /* --- CSS Reset --- */
 *,
 *::before,
@@ -63,8 +82,9 @@ img, svg {
 
 /* --- System Font Stack & Global Design Tokens --- */
 :root {
-  --font-system: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
-    sans-serif;
+  /* The default `globalFont` stack (`src/shared/fontStack.ts`), so the first
+     paint before a vault's settings load is already in the default font. */
+  --font-system: 'Arial Rounded MT', 'Arial', system-ui, sans-serif;
   --font-mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'SF Mono', Consolas, monospace;
 
   /* Font sizes (px). Written by App.svelte from

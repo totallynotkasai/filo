@@ -115,6 +115,7 @@ export type IpcChannel =
   // Font operations
   | 'font:list-system'
   | 'font:import'
+  | 'font:list-imported'
   // Shell / OS operations
   | 'shell:show-item-in-folder'
   // App lifecycle (main -> renderer)

@@ -234,7 +234,7 @@ describe('Zod Schema Validation', () => {
   describe('ProjectSettingsSchema', () => {
     it('creates valid settings with all defaults', () => {
       const settings = ProjectSettingsSchema.parse({});
-      expect(settings.general.globalFont).toBe('Inter, system-ui, sans-serif');
+      expect(settings.general.globalFont).toBe("'Arial Rounded MT', 'Arial', system-ui, sans-serif");
       expect(settings.general.globalToolbarScale).toBe(1.0);
       expect(settings.mindmap.backgroundPattern).toBe('grid');
       expect(settings.kanban.accentColor).toBe('');

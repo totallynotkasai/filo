@@ -10,6 +10,8 @@
   import IconButton from '../shared/IconButton.svelte';
   import ColorPicker from '../shared/ColorPicker.svelte';
   import LinkInsertPopup from './LinkInsertPopup.svelte';
+  import { fontFromStack } from '../../../shared/fontStack';
+  import { GENERAL_SETTINGS_DEFAULTS } from '../../../shared/generalSettingsDefaults';
 
   let showTextColorPicker = $state(false);
   let showHighlightColorPicker = $state(false);
@@ -24,10 +26,16 @@
 
   let systemFonts = $state<string[]>([]);
   let projectFonts = $derived(
-    vaultStore.project?.settings?.general?.systemFonts ?? ['Inter', 'Arial', 'Georgia', 'Courier New', 'Verdana']
+    vaultStore.project?.settings?.general?.systemFonts ?? GENERAL_SETTINGS_DEFAULTS.systemFonts
   );
+  // The font the selection is shown in: its own font mark, else the global font.
+  let shownFont = $derived(fontFromStack(
+    toolbarStore.fontFamily || (vaultStore.project?.settings?.general?.globalFont ?? GENERAL_SETTINGS_DEFAULTS.globalFont)
+  ));
+  // The shown font is always listed, so the box never goes blank for a font
+  // the lists don't name (a mark pasted in, or a font typed into a file).
   let availableFonts = $derived(
-    [...new Set([...systemFonts, ...projectFonts])].sort()
+    [...new Set([...systemFonts, ...projectFonts, shownFont].filter(Boolean))].sort()
   );
 
   $effect(() => {
@@ -181,7 +189,7 @@
     class="toolbar-select font-select"
     title="Font Family"
     aria-label="Font family"
-    value={toolbarStore.fontFamily}
+    value={shownFont}
     onfocus={() => tiptapToolbar.keepActiveEditor()}
     onchange={handleFontChange}
   >
@@ -427,8 +435,9 @@
     outline: none;
   }
 
+  /* Wide enough for the default font's name, "Arial Rounded MT", in full. */
   .font-select {
-    width: 100px;
+    width: 136px;
   }
 
   .style-select {

@@ -74,8 +74,8 @@ export interface SidebarState {
   floating: boolean;
   floatingBounds?: { x: number; y: number; width: number; height: number };
 }
-// Shape of imported font entries returned by `font:import`. Matches the
-// handler in `src/main/ipc/fonts.ipc.ts:80`.
+// Shape of imported font entries returned by `font:import` and
+// `font:list-imported` (`src/main/ipc/fonts.ipc.ts`).
 export interface FontData {
   name: string;
   path: string;
@@ -466,6 +466,10 @@ export interface IpcChannelMap {
   };
   'font:import': {
     args: [] | [vaultRoot: string | undefined];
+    result: IpcSuccess<{ fonts: FontData[] }>;
+  };
+  'font:list-imported': {
+    args: [vaultRoot: string];
     result: IpcSuccess<{ fonts: FontData[] }>;
   };
 

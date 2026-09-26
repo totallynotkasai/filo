@@ -191,6 +191,7 @@ export const IPC_PAYLOAD_SCHEMAS = {
   // ── Fonts ─────────────────────────────────────────────────────────────
   'font:list-system': z.tuple([]),
   'font:import': z.tuple([]).rest(optionalString),
+  'font:list-imported': z.tuple([nonEmptyString]),
 
   // ── Shell / OS ────────────────────────────────────────────────────────
   'shell:show-item-in-folder': z.tuple([nonEmptyString]),

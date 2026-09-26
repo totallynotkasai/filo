@@ -409,6 +409,60 @@ directly, `'Arial Rounded MT', 'Arial Rounded MT Bold'`, and accept faux bold fo
 test (mock IPC), and a real-app screenshot of the sidebar, a note and a Kanban board showing the
 rounded font with real bold.
 
+### Item 4: done (2026-09-27). Deviations from the plan
+
+- **4a, the family name.** The `@font-face` pair uses the Regular family's own name,
+  `'Arial Rounded MT'`, not a new `'Filo Rounded'`. An Electron test showed that both work:
+  `local()` finds the per-user Regular file and the system Bold file, and bold text measures as
+  the real Bold file, not faux bold. The same name has three advantages. The pickers need no
+  mapping from `'Filo Rounded'` back to a font name. A note's font mark set from the toolbar
+  (`font-family: Arial Rounded MT`) also gets the real bold. And a note file never names a font
+  that exists only inside Filo. The faces declared in CSS take priority over the installed
+  family of the same name. `'Arial Rounded MT Bold'` as a family name doesn't match anything in
+  Chromium, so there was no simpler fallback anyway. On a machine without the font, both faces
+  fail and the stack moves on to Arial. The app CSP (`font-src 'self' data:`) needed no change,
+  as the real-app check confirmed.
+- **4b, the stack.** The default is `'Arial Rounded MT', 'Arial', system-ui, sans-serif`,
+  built by `fontStack()` in the new `src/shared/fontStack.ts` (so main's `app.json` /
+  `appearance.json` seed uses it too). `--font-system` in `style.css` holds the same string, and
+  a test checks that they match.
+- **4b, Inter.** It is removed from the `systemFonts` default and also from the fixed list in
+  `font:list-system`, because it isn't bundled and only ever rendered as a fallback. A vault
+  whose settings still name Inter keeps it in both pickers (the current value is always listed).
+- **4c.2.** The toolbar store now holds the selection's own font mark, or `''` when it has none.
+  The font box shows the mark's font, otherwise the global font (`fontFromStack(globalFont)`).
+  The shown font is always listed, so the box never goes blank for a mark whose font the lists
+  don't name (for example, pasted text). The box is 136px wide instead of 100px, so "Arial Rounded
+  MT" fits without being cut to "Arial Round". Both toolbar fallback lists now come from
+  `GENERAL_SETTINGS_DEFAULTS.systemFonts`, not a hard-coded list.
+- **4c.3.** New IPC channel `font:list-imported` (active vault only, same extension, size
+  and magic checks as the import) returns the bytes of every font in `.filo/fonts/`.
+  `lib/fonts/importedFonts.ts` registers them (`loadVaultFonts`, called from an `AppShell`
+  effect on `vaultStore.path`, because `vault.svelte.ts` is allowlisted at its size and may only
+  shrink). It drops them on the `pre-swap` vault event, and it removes its own faces if the vault
+  swapped while they loaded. The import handler in General settings uses the same
+  `registerImportedFonts`. As before, only fonts that loaded are added to the font list.
+- **4c.4.** `fontStack(font)` builds the stack for any choice (the font, then `'Arial'`,
+  `system-ui`, `sans-serif`, without naming Arial twice), and `fontFromStack(stack)` reads the
+  first family back for the pickers, including older stacks such as `Inter, system-ui, sans-serif`.
+- **Tests added:** `fontStack` (the helpers, the schema default, `style.css` matching),
+  `importedFonts` (register on open, drop on swap, a swap during the load, a font that fails to
+  load, a refused vault), `fontListImported` (the main handler) and the component test
+  `toolbarFontBox`. The inline Zod default-tree snapshots changed only in `globalFont` and the
+  first `systemFonts` entry.
+- **Checks:** `npm run ci:verify` passes (5965 tests, 68/68 gates), and so does
+  `ci:test-typecheck`. A second full run, after the font box width and the Inter removal, failed
+  only the known flaky `tagFilters` case from Item 1. It passes alone (12/12), and build and
+  gates pass after it. Real app (scratch vault plus a font copied into `.filo/fonts/`, Playwright
+  `_electron`): the Home screen's first paint is already in Arial Rounded MT. After open, both
+  faces are `loaded`. Bold measures 339.1 against 324.4 for regular, so it is the real Bold file,
+  not faux bold. The imported font is registered on open. The sidebar, a note (with `**bold**`)
+  and a Kanban board all compute `"Arial Rounded MT", Arial, …`. The toolbar box reads "Arial
+  Rounded MT" and no longer offers Inter. In Settings → General, choosing Georgia saves
+  `'Georgia', 'Arial', system-ui, sans-serif` to `app.json`, and choosing Arial Rounded MT again
+  saves the default. There were no console errors. Your own vault still names Inter: choose
+  Arial Rounded MT in Settings → General once (no migration, as decided).
+
 ---
 
 ## Item 5 (optional polish): blank flash on first board open

@@ -84,7 +84,7 @@ function syncStateToToolbar(editor: Editor) {
     link: editor.isActive('link'),
     textColor: editor.getAttributes('textStyle').color || '#ffffff',
     highlightColor: editor.getAttributes('highlight').color || 'transparent',
-    fontFamily: editor.getAttributes('textStyle').fontFamily || 'Inter',
+    fontFamily: editor.getAttributes('textStyle').fontFamily || '',
     fontSize: parseInt(editor.getAttributes('textStyle').fontSize) || 14,
     textAlign,
     heading,

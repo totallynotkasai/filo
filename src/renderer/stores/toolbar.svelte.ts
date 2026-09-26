@@ -10,7 +10,11 @@ let underline = $state(false);
 let link = $state(false);
 let textColor = $state('#ffffff');
 let highlightColor = $state('transparent');
-let fontFamily = $state('Inter');
+/**
+ * The selection's own font mark, or '' when it has none: its text is then in
+ * the global font, which the toolbar shows instead.
+ */
+let fontFamily = $state('');
 let fontSize = $state(14);
 let textAlign = $state<'left' | 'center' | 'right' | 'justify'>('left');
 let heading = $state<'normal' | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6'>('normal');
@@ -83,7 +87,7 @@ export const toolbarStore = {
     link = false;
     textColor = '#ffffff';
     highlightColor = 'transparent';
-    fontFamily = 'Inter';
+    fontFamily = '';
     fontSize = 14;
     textAlign = 'left';
     heading = 'normal';

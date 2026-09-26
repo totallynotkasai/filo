@@ -8,6 +8,9 @@
   import { defaultProjectSettings, GeneralSettingsSchema } from '../../schema/index';
   import { numberBoundsAt, readNumberField } from '../../lib/settings/numberInput';
   import { LINE_SPACING_CHOICES, formatLineSpacing } from '../../stores/noteMeta';
+  import { fontFromStack, fontStack } from '../../../shared/fontStack';
+  import { GENERAL_SETTINGS_DEFAULTS } from '../../../shared/generalSettingsDefaults';
+  import { registerImportedFonts } from '../../lib/fonts/importedFonts';
 
   // Local state derived from project settings
   let settings = $derived(vaultStore.project?.settings?.general ?? defaultProjectSettings().general);
@@ -98,7 +101,7 @@
       const fonts = await window.filo.invoke('font:list-system');
       systemFonts = fonts;
     } catch {
-      systemFonts = ['Inter', 'Arial', 'Georgia', 'Courier New', 'Verdana'];
+      systemFonts = [...GENERAL_SETTINGS_DEFAULTS.systemFonts];
     }
     loadingFonts = false;
   }
@@ -110,7 +113,7 @@
   // settings.systemFonts only, so a fresh project with no saved fonts
   // showed an empty list even though OS fonts were loaded.
   let availableFonts = $derived.by(() => {
-    const selected = ((settings.globalFont ?? '').split(',')[0] ?? '').trim();
+    const selected = fontFromStack(settings.globalFont ?? '');
     const merged = new SvelteSet<string>();
     for (const f of systemFonts) if (f) merged.add(f);
     for (const f of settings.systemFonts ?? []) if (f) merged.add(f);
@@ -217,37 +220,14 @@
 
       if (!result.success || result.fonts.length === 0) return;
 
-      let loaded = 0;
-      for (const font of result.fonts) {
-        try {
-          // Decode base64 font data into an ArrayBuffer for the FontFace API
-          const binaryStr = atob(font.dataBase64);
-          const bytes = new Uint8Array(binaryStr.length);
-          for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-          const fontFace = new FontFace(font.name, bytes.buffer);
-          await fontFace.load();
-          document.fonts.add(fontFace);
-          loaded++;
-
-          // Add to project's system fonts if not already present
-          if (!vaultStore.project!.settings.general.systemFonts.includes(font.name)) {
-            vaultStore.project!.settings.general.systemFonts = [
-              ...vaultStore.project!.settings.general.systemFonts,
-              font.name,
-            ];
-          }
-        } catch (err) {
-          reportError(
-            'GeneralSettings.font-load',
-            err,
-            `Failed to register font "${font.name}" with the browser font registry`,
-          );
-        }
-      }
-      if (loaded > 0) {
-        vaultStore.markMetaDirty();
-        uiStore.toast(`Imported ${loaded} font(s)`, 'success');
-      }
+      const loaded = await registerImportedFonts(result.fonts);
+      if (loaded.length === 0 || !vaultStore.project) return;
+      // Only fonts that loaded are listed, so the pickers never offer one that can't render.
+      const names = vaultStore.project.settings.general.systemFonts;
+      const added = loaded.map((font) => font.name).filter((name) => !names.includes(name));
+      if (added.length > 0) vaultStore.project.settings.general.systemFonts = [...names, ...added];
+      vaultStore.markMetaDirty();
+      uiStore.toast(`Imported ${loaded.length} font(s)`, 'success');
     } catch (err) {
       reportError('GeneralSettings.font-import', err, 'Font import failed');
     }
@@ -317,10 +297,10 @@
     <select
       id="global-font"
       class="setting-select"
-      value={(settings.globalFont.split(',')[0] ?? '').trim()}
+      value={fontFromStack(settings.globalFont)}
       onchange={(e) => {
         const font = (e.target as HTMLSelectElement).value;
-        updateSetting('globalFont', `${font}, system-ui, sans-serif`);
+        updateSetting('globalFont', fontStack(font));
       }}
     >
       {#each availableFonts as font (font)}

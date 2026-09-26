@@ -84,6 +84,7 @@ const SUCCESS_DISCRIMINATED: readonly string[] = [
   'media:open-external',
   'link:fetch-metadata',
   'font:import',
+  'font:list-imported',
   'templates:layout:write',
   'templates:layout:rename',
   'templates:layout:delete',

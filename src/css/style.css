@@ -988,6 +988,14 @@ select:focus:not(:focus-visible) {
   white-space: pre-wrap;
   word-wrap: break-word;
 }
+/* A typed tab (`tabNode.ts`): a non-editable span holding a tab character.
+   Tab stops every 3em, near a word processor's half inch at note sizes.
+   `span.` outranks ProseMirror's `.ProseMirror [contenteditable="false"]
+   { white-space: normal }`, which would collapse the tab to nothing. */
+.ProseMirror span.filo-tab {
+  white-space: pre;
+  tab-size: 3em;
+}
 .tiptap {
   outline: none;
   min-height: 100%;

@@ -4,8 +4,9 @@ import { createTiptapEditor } from '../../renderer/lib/editor/createEditor';
 import { editorMarkdown, loadMarkdownIntoEditor } from '../../renderer/lib/editor/markdownSync';
 
 /**
- * Tab and Shift+Tab in a note never let the key fall through to the browser
- * (which moved focus off the note), and what they do survives save → reload.
+ * Tab, Shift+Tab and Backspace in a note behave as in a word processor, never
+ * let Tab fall through to the browser (which moved focus off the note), and
+ * every tab survives save → reload byte for byte.
  */
 
 const editors: Editor[] = [];
@@ -28,45 +29,113 @@ function press(ed: Editor, key: string, shiftKey = false): boolean {
   return ed.view.someProp('handleKeyDown', (f) => f(ed.view, event)) ?? false;
 }
 
-/** Put the caret inside the first occurrence of `text`. */
-function caretIn(ed: Editor, text: string): void {
+/** Put the caret `offset` characters into the first occurrence of `text`. */
+function caretAt(ed: Editor, text: string, offset = 0): number {
   let at = -1;
   ed.state.doc.descendants((node, pos) => {
-    if (at < 0 && node.isText && node.text!.includes(text)) at = pos + node.text!.indexOf(text) + 1;
+    if (at < 0 && node.isText && node.text!.includes(text)) at = pos + node.text!.indexOf(text) + offset;
   });
   if (at < 0) throw new Error(`no "${text}" in the note`);
   ed.commands.setTextSelection(at);
+  return at;
 }
 
-function reloads(ed: Editor): void {
+/** Saves, reloads into a fresh editor, and checks the reload is exact. */
+function reloads(ed: Editor): Editor {
   const disk = editorMarkdown(ed);
-  const ed2 = makeEditor(disk);
+  const ed2 = makeEditor('');
+  const { lossy } = loadMarkdownIntoEditor(ed2, disk);
+  expect(lossy).toBe(false);
+  expect(ed2.getJSON()).toEqual(ed.getJSON());
   expect(editorMarkdown(ed2)).toBe(disk);
+  return ed2;
 }
 
-describe('Tab in a paragraph or heading', () => {
-  it('indents, and Shift+Tab outdents; saved and reloaded', () => {
-    const ed = makeEditor('Alpha\n\nBeta');
-    caretIn(ed, 'Beta');
+describe('Tab types a tab at the caret', () => {
+  it('mid-line: a tab character in the file; Backspace deletes it', () => {
+    const ed = makeEditor('Alpha');
+    caretAt(ed, 'Alpha', 2);
     expect(press(ed, 'Tab')).toBe(true);
-    expect(press(ed, 'Tab')).toBe(true);
-    expect(editorMarkdown(ed)).toBe('Alpha\n\n<p style="margin-left: 48px;">Beta</p>');
+    expect(editorMarkdown(ed)).toBe('Al\tpha');
     reloads(ed);
 
-    expect(press(ed, 'Tab', true)).toBe(true);
-    expect(editorMarkdown(ed)).toBe('Alpha\n\n<p style="margin-left: 24px;">Beta</p>');
-    press(ed, 'Tab', true);
-    expect(editorMarkdown(ed)).toBe('Alpha\n\nBeta');
+    press(ed, 'Backspace');
+    expect(editorMarkdown(ed)).toBe('Alpha');
   });
 
-  it('Shift+Tab at no indent keeps the key (focus stays on the note)', () => {
+  it('at the start of a line: saved as &#9; so it stays a paragraph, not a code block', () => {
     const ed = makeEditor('Alpha');
-    caretIn(ed, 'Alpha');
+    caretAt(ed, 'Alpha');
+    press(ed, 'Tab');
+    press(ed, 'Tab');
+    expect(editorMarkdown(ed)).toBe('&#9;&#9;Alpha');
+    const back = reloads(ed);
+    expect(back.state.doc.firstChild!.type.name).toBe('paragraph');
+  });
+
+  it('at the end of a line, in a heading, and after a line break', () => {
+    const end = makeEditor('Alpha');
+    caretAt(end, 'Alpha', 5);
+    press(end, 'Tab');
+    expect(editorMarkdown(end)).toBe('Alpha&#9;');
+    reloads(end);
+
+    const heading = makeEditor('## Title');
+    caretAt(heading, 'Title');
+    press(heading, 'Tab');
+    expect(editorMarkdown(heading)).toBe('## &#9;Title');
+    reloads(heading);
+
+    const broken = makeEditor('One\\\nTwo');
+    caretAt(broken, 'Two');
+    press(broken, 'Tab');
+    expect(editorMarkdown(broken)).toBe('One\\\n&#9;Two');
+    reloads(broken);
+  });
+
+  it('replaces a selection within the line', () => {
+    const ed = makeEditor('Alpha beta');
+    const from = caretAt(ed, 'Alpha', 5);
+    ed.commands.setTextSelection({ from, to: from + 1 });
+    press(ed, 'Tab');
+    expect(editorMarkdown(ed)).toBe('Alpha\tbeta');
+  });
+
+  it('a note that already holds tabs opens editable and saves the same bytes', () => {
+    for (const md of ['Col a\tCol b\tCol c', '&#9;Indented start', '**Bold\tspaced** and\ttext']) {
+      const ed = makeEditor('');
+      const { lossy } = loadMarkdownIntoEditor(ed, md);
+      expect({ md, lossy, saved: editorMarkdown(ed) }).toEqual({ md, lossy: false, saved: md });
+    }
+  });
+
+  it('a tab in an aligned paragraph is a tab character in its HTML line', () => {
+    const ed = makeEditor('Alpha');
+    caretAt(ed, 'Alpha', 2);
+    press(ed, 'Tab');
+    ed.chain().setTextAlign('center').run();
+    expect(editorMarkdown(ed)).toBe('<p style="text-align: center;">Al\tpha</p>');
+    reloads(ed);
+  });
+});
+
+describe('Shift+Tab and Backspace', () => {
+  it('Shift+Tab removes the tab before the caret', () => {
+    const ed = makeEditor('Alpha');
+    caretAt(ed, 'Alpha', 2);
+    press(ed, 'Tab');
     expect(press(ed, 'Tab', true)).toBe(true);
     expect(editorMarkdown(ed)).toBe('Alpha');
   });
 
-  it('indents every selected block', () => {
+  it('Shift+Tab with nothing to remove keeps the key (focus stays on the note)', () => {
+    const ed = makeEditor('Alpha');
+    caretAt(ed, 'Alpha');
+    expect(press(ed, 'Tab', true)).toBe(true);
+    expect(editorMarkdown(ed)).toBe('Alpha');
+  });
+
+  it('with several lines selected, Tab indents them all and Shift+Tab outdents', () => {
     const ed = makeEditor('One\n\nTwo\n\nThree');
     ed.commands.setTextSelection({ from: 2, to: ed.state.doc.child(0).nodeSize + 3 });
     press(ed, 'Tab');
@@ -74,21 +143,31 @@ describe('Tab in a paragraph or heading', () => {
       '<p style="margin-left: 24px;">One</p>\n\n<p style="margin-left: 24px;">Two</p>\n\nThree',
     );
     reloads(ed);
+    press(ed, 'Tab', true);
+    expect(editorMarkdown(ed)).toBe('One\n\nTwo\n\nThree');
   });
 
-  it('indents a heading', () => {
-    const ed = makeEditor('## Title');
-    caretIn(ed, 'Title');
-    press(ed, 'Tab');
-    expect(editorMarkdown(ed)).toContain('margin-left: 24px');
-    reloads(ed);
+  it('Backspace at the start of an indented paragraph removes one indent step', () => {
+    const ed = makeEditor('<p style="margin-left: 48px;">Alpha</p>');
+    caretAt(ed, 'Alpha');
+    expect(press(ed, 'Backspace')).toBe(true);
+    expect(editorMarkdown(ed)).toBe('<p style="margin-left: 24px;">Alpha</p>');
+    press(ed, 'Backspace');
+    expect(editorMarkdown(ed)).toBe('Alpha');
+  });
+
+  it('Backspace anywhere else is ordinary', () => {
+    const ed = makeEditor('Alpha\n\nBeta');
+    caretAt(ed, 'Beta');
+    press(ed, 'Backspace');
+    expect(editorMarkdown(ed)).toBe('AlphaBeta');
   });
 });
 
 describe('Tab in lists and code', () => {
   it('nests a list item, and Shift+Tab un-nests it; saved as Markdown nesting', () => {
     const ed = makeEditor('- one\n- two');
-    caretIn(ed, 'two');
+    caretAt(ed, 'two', 1);
     expect(press(ed, 'Tab')).toBe(true);
     expect(editorMarkdown(ed)).toBe('- one\n  - two');
     reloads(ed);
@@ -98,32 +177,34 @@ describe('Tab in lists and code', () => {
 
   it('on a first list item (nothing to nest under) keeps the key and changes nothing', () => {
     const ed = makeEditor('- one\n- two');
-    caretIn(ed, 'one');
+    caretAt(ed, 'one', 1);
     expect(press(ed, 'Tab')).toBe(true);
     expect(editorMarkdown(ed)).toBe('- one\n- two');
   });
 
   it('nests a task item', () => {
     const ed = makeEditor('- [ ] one\n- [ ] two');
-    caretIn(ed, 'two');
+    caretAt(ed, 'two', 1);
     expect(press(ed, 'Tab')).toBe(true);
     expect(editorMarkdown(ed)).toBe('- [ ] one\n  - [ ] two');
     reloads(ed);
   });
 
-  it('inserts a tab character in a code block', () => {
+  it('inserts a tab character in a code block, and Shift+Tab takes it out', () => {
     const ed = makeEditor('```\ncode\n```');
-    caretIn(ed, 'code');
+    caretAt(ed, 'code', 1);
     expect(press(ed, 'Tab')).toBe(true);
     expect(editorMarkdown(ed)).toBe('```\nc\tode\n```');
     reloads(ed);
+    press(ed, 'Tab', true);
+    expect(editorMarkdown(ed)).toBe('```\ncode\n```');
   });
 });
 
 describe('read-only and Escape', () => {
   it('a read-only note leaves Tab to the browser', () => {
     const ed = makeEditor('Alpha');
-    caretIn(ed, 'Alpha');
+    caretAt(ed, 'Alpha');
     ed.setEditable(false);
     expect(press(ed, 'Tab')).toBe(false);
   });

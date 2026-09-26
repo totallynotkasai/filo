@@ -48,5 +48,10 @@ export function blockLayoutHtml(node: ProseMirrorNode): string {
   for (const a of Array.from(body.querySelectorAll('a'))) {
     for (const attr of ['target', 'rel', 'class']) a.removeAttribute(attr);
   }
+  // A tab is a plain tab character in the file; loading turns it back into
+  // the editor's tab item (`tabNode.ts`).
+  for (const tab of Array.from(body.querySelectorAll('span[data-filo-tab]'))) {
+    tab.replaceWith(body.ownerDocument.createTextNode('\t'));
+  }
   return body.innerHTML.replace(/\r?\n/g, ' ');
 }

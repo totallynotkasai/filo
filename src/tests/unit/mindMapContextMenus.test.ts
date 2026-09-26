@@ -141,7 +141,7 @@ describe('buildFrameContextMenu', () => {
   });
 });
 
-describe('Style entries use the shared palette-and-brush icon', () => {
+describe('Style entries use the shared palette icon', () => {
   it('tile, frame and selection menus all carry STYLE_ICON_PATH', () => {
     const tile = buildTileContextMenu({
       selectedCount: 1, anyUnlocked: true,

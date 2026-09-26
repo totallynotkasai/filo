@@ -611,7 +611,7 @@ filo/
 ### Icons
 
 - **All icons must be SVG.** No emojis as icons, ever.
-- Most SVG icons are inline `<svg>` markup in the component that uses them. An icon that stands for the same action in several places is shared, so it always looks the same: its single-path `d` string lives in `src/renderer/constants/` (`icons.ts`: `STYLE_ICON_PATH`; `boardIcons.ts`: board types), which a context-menu item's `icon` can carry, and a button renders it through a small component (`components/shared/StyleIcon.svelte`). Every Style button and menu entry uses the palette-and-brush Style icon; the gear is for Settings only.
+- Most SVG icons are inline `<svg>` markup in the component that uses them. An icon that stands for the same action in several places is shared, so it always looks the same: its single-path `d` string lives in `src/renderer/constants/` (`icons.ts`: `STYLE_ICON_PATH`; `boardIcons.ts`: board types), which a context-menu item's `icon` can carry, and a button renders it through a small component (`components/shared/StyleIcon.svelte`). Every Style button and menu entry uses the palette Style icon; the gear is for Settings only.
 - Use lucide-style icons for consistency. If adding custom icons, match the 24×24 viewBox, 2px stroke convention.
 - **Exception — waypoint icons.** Mind Map waypoint icons are user-selectable content (a label the user picks for their own waypoint), not UI chrome, so they remain emoji. See `src/renderer/components/canvas/WaypointMarker.svelte`. Do not flag these in icon audits.
 

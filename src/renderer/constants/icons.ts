@@ -7,12 +7,11 @@
  */
 
 /**
- * Style: a palette with a brush. Every "Style" button and menu entry uses it
- * (buttons through `StyleIcon.svelte`), so the same action always looks the
- * same.
+ * Style: a painter's palette (lucide "palette"). No brush: at the 14px the
+ * buttons draw it, a brush beside the palette is too small to read. Every
+ * "Style" button and menu entry uses it (buttons through `StyleIcon.svelte`),
+ * so the same action always looks the same.
  */
 export const STYLE_ICON_PATH =
-  'M8.74 22.44a.72.72 0 0 1 0-14.4 7.2 6.48 0 0 1 7.2 6.48 3.6 3.6 0 0 1-3.6 3.6h-1.62a1.26 1.26 0 0 0-1.008 2.016l.216.288a1.26 1.26 0 0 1-1.008 2.016z' +
-  'M9.82 11.28h.01M4.78 15.6h.01M6.22 12h.01' +
-  'M16.768 5.174l3.712-3.708a1.311 1.311 0 1 1 1.854 1.854l-3.708 3.717' +
-  'M15.852 6.572c-.764 0-1.38.621-1.38 1.389 0 .612-1.15.699-.92.929.497.506 1.145.929 1.84.929 1.012 0 1.84-.828 1.84-1.858a1.385 1.385 0 0 0-1.38-1.389z';
+  'M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z' +
+  'M13.5 6.5h.01M17.5 10.5h.01M6.5 12.5h.01M8.5 7.5h.01';

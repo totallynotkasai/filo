@@ -9,7 +9,7 @@
   let { size = 14 }: Props = $props();
 </script>
 
-<!-- The Style glyph (palette and brush) for every Style button. Decorative:
+<!-- The Style glyph (a palette) for every Style button. Decorative:
      the button carries the accessible name. -->
 <svg
   width={size}

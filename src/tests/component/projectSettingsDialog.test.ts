@@ -1,7 +1,9 @@
 /**
- * The Settings dialog: tabs are labelled for assistive tech, Apply / Cancel
- * are enabled only when their tab has changes, and a typed number outside
- * the schema's range is clamped in the field before it reaches the copy.
+ * The Settings dialog: tabs are labelled for assistive tech, the Apply /
+ * Revert bar sits above the scrolling page and is enabled only when its tab
+ * has changes, the bulk actions are at the end of the page, and a typed
+ * number outside the schema's range is clamped in the field before it
+ * reaches the copy.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mount, unmount } from 'svelte';
@@ -33,7 +35,7 @@ function makeProject(): Project {
 }
 
 function button(label: string): HTMLButtonElement {
-  const found = [...document.querySelectorAll<HTMLButtonElement>('.settings-footer button')]
+  const found = [...document.querySelectorAll<HTMLButtonElement>('.settings-action-bar button')]
     .find((b) => b.textContent?.trim() === label);
   if (!found) throw new Error(`no ${label} button`);
   return found;
@@ -74,12 +76,12 @@ describe('Settings dialog', () => {
     expect(panel?.getAttribute('aria-labelledby')).toBe('settings-tab-general');
   });
 
-  it('enables Apply / Cancel only while Global Defaults has changes', async () => {
+  it('enables Apply / Revert only while Global Defaults has changes', async () => {
     document.getElementById('settings-tab-defaults')?.click();
     await settle();
     expect(document.getElementById('settings-tabpanel')?.getAttribute('aria-labelledby')).toBe('settings-tab-defaults');
     expect(button('Apply').disabled).toBe(true);
-    expect(button('Cancel').disabled).toBe(true);
+    expect(button('Revert').disabled).toBe(true);
 
     const width = document.getElementById('mm-border-width') as HTMLInputElement;
     width.value = '50';
@@ -90,9 +92,50 @@ describe('Settings dialog', () => {
     expect(pendingSettingsStore.pending?.mindmap.tile.borderWidth).toBe(10);
     expect(button('Apply').disabled).toBe(false);
 
-    button('Cancel').click();
+    button('Revert').click();
     await settle();
     expect(button('Apply').disabled).toBe(true);
+  });
+
+  it('pins the action bar above the scrolling page and puts the bulk actions at its end', async () => {
+    expect(document.querySelector('.settings-action-bar')).toBeNull();
+
+    document.getElementById('settings-tab-defaults')?.click();
+    await settle();
+    const panel = document.getElementById('settings-tabpanel');
+    const bar = panel?.querySelector('.settings-action-bar');
+    const scroll = panel?.querySelector('.settings-scroll');
+    expect(bar).not.toBeNull();
+    expect(scroll).not.toBeNull();
+    expect(scroll?.contains(bar ?? null)).toBe(false);
+    // The bar comes before the page, so it reads first and stays on top.
+    expect(bar?.nextElementSibling).toBe(scroll);
+    expect(bar?.textContent).toContain('No changes');
+
+    const zone = scroll?.querySelector('.danger-zone');
+    expect(zone?.querySelector('h3')?.textContent).toBe('Danger zone');
+    expect(zone?.previousElementSibling?.classList.contains('board-defaults')).toBe(true);
+    const bulk = [...(zone?.querySelectorAll('button') ?? [])].map((b) => b.textContent?.trim());
+    expect(bulk).toEqual(['Apply Current Global Defaults to all Boards', 'Apply Theme Defaults to all Boards']);
+
+    const width = document.getElementById('mm-border-width') as HTMLInputElement;
+    width.value = '4';
+    width.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    expect(bar?.textContent).toContain('Unsaved changes');
+  });
+
+  it('opens each tab at the top of its page', async () => {
+    document.getElementById('settings-tab-defaults')?.click();
+    await settle();
+    const first = document.querySelector<HTMLElement>('.settings-scroll');
+    if (!first) throw new Error('no scroll area');
+    first.scrollTop = 500;
+    document.getElementById('settings-tab-general')?.click();
+    await settle();
+    const next = document.querySelector<HTMLElement>('.settings-scroll');
+    expect(next).not.toBe(first);
+    expect(next?.scrollTop).toBe(0);
   });
 
   it('puts a blank required number back to its last value', async () => {

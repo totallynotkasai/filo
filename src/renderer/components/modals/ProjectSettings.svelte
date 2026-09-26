@@ -6,6 +6,7 @@
   import ThemeManager from '../settings/ThemeManager.svelte';
   import TrashSettings from '../settings/TrashSettings.svelte';
   import LivePreview from '../settings/LivePreview.svelte';
+  import SettingsActionBar from '../settings/SettingsActionBar.svelte';
   import { pendingSettingsStore } from '../../stores/pendingSettings.svelte';
   import { boardStore } from '../../stores/board.svelte';
   import { uiStore } from '../../stores/ui.svelte';
@@ -20,9 +21,17 @@
   // Current Board tab is only meaningful when a board is active.
   let hasActiveBoard = $derived(boardStore.current !== null);
 
-  // ── Per-tab Apply / Cancel ──
+  // ── Layout ──
   //
-  // Each tab re-arms only its own copy after Apply / Cancel: `start()` would
+  // A fixed tab rail on the left; on the right, the active tab's page is the
+  // only thing that scrolls. Global Defaults and Current Board save on Apply:
+  // their Revert / Apply bar is pinned above the page (outside the scroll),
+  // and the "Apply … to all Boards" actions sit at the end of the Global
+  // Defaults page, under "Danger zone". The other tabs save as they change.
+  //
+  // ── Per-tab Apply / Revert ──
+  //
+  // Each tab re-arms only its own copy after Apply / Revert: `start()` would
   // re-copy both and drop the other tab's unapplied edits. The re-arm runs in
   // `untrack` so its reads of the live settings don't subscribe the caller.
   //
@@ -168,7 +177,7 @@
   }
 
   // The `saveMode` chip flags each tab's commit semantics — auto-save vs
-  // explicit Apply/Cancel — a user-visible cue, since the modal mixes save
+  // explicit Apply / Revert — a user-visible cue, since the modal mixes save
   // behaviours and a small helper line isn't loud enough.
   const SAVE_MODE_HINT = {
     auto: 'Saves automatically as you change values.',
@@ -183,10 +192,9 @@
   ];
 
   // Begin a pending-edit session on mount; cancel anything still in
-  // flight when the modal closes. Apply/Cancel are now per-tab inside
-  // BoardDefaults / CurrentBoardSettings, so the modal-level lifecycle
-  // only needs to bootstrap the session and discard any uncommitted
-  // edits when the user dismisses the modal.
+  // flight when the modal closes. Apply / Revert are per tab (the action
+  // bar above), so the dialog-level lifecycle only starts the session and
+  // discards any unapplied edits when the dialog is dismissed.
   //
   // CRITICAL: wrap in `untrack` so the tracked reads inside `start()`
   // (vaultStore.project.settings, boardStore.current.settings) don't
@@ -246,66 +254,68 @@
     {/each}
   </div>
 
-  <div class="settings-body">
-    <div
-      id="settings-tabpanel"
-      class="settings-panel"
-      role="tabpanel"
-      aria-labelledby={`settings-tab-${activeTab}`}
-    >
-      {#if activeTab === 'defaults' || activeTab === 'current-board'}
-        <LivePreview
-          settings={pendingSettingsStore.effective}
-          board={boardStore.current}
-          boardSettings={pendingSettingsStore.effectiveBoardSettings}
-          activeTab={activeTab}
-        />
-      {/if}
-
-      {#if activeTab === 'general'}
-        <GeneralSettings />
-      {:else if activeTab === 'defaults'}
-        <BoardDefaults />
-      {:else if activeTab === 'current-board'}
-        <CurrentBoardSettings />
-      {:else if activeTab === 'themes'}
-        <ThemeManager />
-      {:else if activeTab === 'trash'}
-        <TrashSettings />
-      {/if}
-    </div>
-
+  <div
+    id="settings-tabpanel"
+    class="settings-body"
+    role="tabpanel"
+    aria-labelledby={`settings-tab-${activeTab}`}
+  >
     {#if activeTab === 'defaults'}
-      <footer class="settings-footer">
-        <div class="footer-row">
-          <button class="footer-btn cancel" onclick={cancelGlobal} disabled={!globalDirty || applying}>Cancel</button>
-          <button class="footer-btn apply" onclick={applyGlobal} disabled={!globalDirty || applying}>Apply</button>
-        </div>
-        <div class="footer-row danger-row">
-          <button class="footer-btn danger" onclick={confirmApplyGlobalToAll} disabled={applying}>
-            Apply Current Global Defaults to all Boards
-          </button>
-          <button class="footer-btn danger" onclick={confirmApplyThemeToAll} disabled={applying}>
-            Apply Theme Defaults to all Boards
-          </button>
-        </div>
-      </footer>
+      <SettingsActionBar dirty={globalDirty} busy={applying} onApply={applyGlobal} onRevert={cancelGlobal} />
     {:else if activeTab === 'current-board'}
-      <footer class="settings-footer">
-        <div class="footer-row">
-          <button class="footer-btn cancel" onclick={cancelBoard} disabled={!boardDirty || applying}>Cancel</button>
-          <button class="footer-btn apply" onclick={applyBoard} disabled={!boardDirty || applying}>Apply</button>
-        </div>
-      </footer>
+      <SettingsActionBar dirty={boardDirty} busy={applying} onApply={applyBoard} onRevert={cancelBoard} />
     {/if}
+
+    <!-- Keyed by tab, so each tab's page opens at its top rather than at
+         the previous tab's scroll position. -->
+    {#key activeTab}
+      <div class="settings-scroll">
+        {#if activeTab === 'defaults' || activeTab === 'current-board'}
+          <LivePreview
+            settings={pendingSettingsStore.effective}
+            board={boardStore.current}
+            boardSettings={pendingSettingsStore.effectiveBoardSettings}
+            activeTab={activeTab}
+          />
+        {/if}
+
+        {#if activeTab === 'general'}
+          <GeneralSettings />
+        {:else if activeTab === 'defaults'}
+          <BoardDefaults />
+          <section class="danger-zone" aria-labelledby="settings-danger-zone">
+            <h3 class="danger-zone-title" id="settings-danger-zone">Danger zone</h3>
+            <p class="danger-zone-hint">These overwrite the style settings of every board and can't be undone.</p>
+            <div class="danger-zone-buttons">
+              <button class="danger-btn" onclick={confirmApplyGlobalToAll} disabled={applying}>
+                Apply Current Global Defaults to all Boards
+              </button>
+              <button class="danger-btn" onclick={confirmApplyThemeToAll} disabled={applying}>
+                Apply Theme Defaults to all Boards
+              </button>
+            </div>
+          </section>
+        {:else if activeTab === 'current-board'}
+          <CurrentBoardSettings />
+        {:else if activeTab === 'themes'}
+          <ThemeManager />
+        {:else if activeTab === 'trash'}
+          <TrashSettings />
+        {/if}
+      </div>
+    {/key}
   </div>
 </div>
 
 <style>
+  /* A set height, so switching tabs doesn't resize the dialog. The modal
+     body is a shrinking flex column, so in a short window this shrinks to
+     fit and the page scrolls instead. */
   .settings-container {
     display: flex;
     gap: 0;
-    min-height: 420px;
+    height: 680px;
+    min-height: 0;
   }
 
   .settings-tabs {
@@ -314,8 +324,11 @@
     gap: 2px;
     padding: 4px;
     border-right: 1px solid var(--ui-border);
-    min-width: 140px;
+    /* A set width: the active tab's heavier label must not nudge the page. */
+    width: 210px;
+    box-sizing: border-box;
     flex-shrink: 0;
+    overflow-y: auto;
   }
 
   .settings-tab {
@@ -383,78 +396,68 @@
     display: flex;
     flex-direction: column;
     min-width: 0;
+    min-height: 0;
   }
 
-  .settings-panel {
+  .settings-scroll {
     flex: 1;
+    min-height: 0;
     padding: 4px 16px 16px;
     overflow-y: auto;
-    min-width: 0;
   }
 
-  .settings-footer {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 10px 16px;
+  .danger-zone {
+    margin-top: 24px;
+    padding-top: 16px;
     border-top: 1px solid var(--ui-border);
-    background: var(--ui-bg-secondary, var(--ui-surface));
-    flex-shrink: 0;
   }
 
-  .footer-row {
+  .danger-zone-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #c0392b;
+    margin: 0 0 4px;
+  }
+
+  .danger-zone-hint {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin: 0 0 10px;
+  }
+
+  .danger-zone-buttons {
     display: flex;
-    justify-content: flex-end;
+    flex-wrap: wrap;
     gap: 8px;
   }
 
-  .danger-row {
-    flex-wrap: wrap;
-  }
-
-  .footer-btn {
+  .danger-btn {
     padding: 6px 14px;
     border-radius: 6px;
     font-size: 12px;
     font-weight: 500;
     cursor: pointer;
-    border: 1px solid transparent;
+    background: transparent;
+    color: #c0392b;
+    border: 1px solid #c0392b;
     transition: background-color 0.1s ease, opacity 0.1s ease;
     font-family: var(--font-system);
   }
 
-  .footer-btn:disabled {
+  .danger-btn:hover {
+    background: rgba(192, 57, 43, 0.08);
+  }
+
+  .danger-btn:disabled {
     opacity: 0.5;
     cursor: default;
     pointer-events: none;
   }
 
-  .footer-btn.cancel {
-    background: var(--ui-surface);
-    color: var(--text-primary);
-    border-color: var(--ui-border);
-  }
-
-  .footer-btn.cancel:hover {
-    background: var(--ui-surface-hover);
-  }
-
-  .footer-btn.apply {
-    background: var(--accent-primary);
-    color: var(--text-inverse, #fff);
-  }
-
-  .footer-btn.apply:hover {
-    opacity: 0.88;
-  }
-
-  .footer-btn.danger {
-    background: transparent;
-    color: #c0392b;
-    border-color: #c0392b;
-  }
-
-  .footer-btn.danger:hover {
-    background: rgba(192, 57, 43, 0.08);
+  @media (prefers-reduced-motion: reduce) {
+    .settings-tab,
+    .danger-btn {
+      transition: none;
+    }
   }
 </style>

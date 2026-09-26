@@ -227,6 +227,44 @@ session, or block board switching while the dialog is open.
 are disabled when nothing changed), the `components` gate group, and a real-app screenshot at
 900×600 and at a normal window size.
 
+### Item 2: done (2026-09-26). Deviations from the plan
+
+- **Modal props.** `Modal.svelte` got two props rather than one: `maxHeight` (default `80vh`;
+  the Settings dialog passes `85vh`, so other dialogs keep 80vh) and `flush`. `flush` removes the
+  body's padding and scrolling and makes the body a shrinking flex column.
+- **"Fixed height".** `.settings-container` is `height: 680px` with `min-height: 0`. Because the
+  modal body is a shrinking flex column, in a short window the container shrinks to fit (447px at
+  900×600) and the page scrolls instead of the dialog. The old `min-height: 420px` is gone,
+  because it would have stopped that shrink.
+- **Tab panel.** The `role="tabpanel"` element is now the right-hand column (`.settings-body`).
+  It holds the action bar and the scrolling page (`.settings-scroll`), so the bar is still
+  inside its tab's panel for assistive tech.
+- **Action bar component.** It is `components/settings/SettingsActionBar.svelte` (props `dirty`,
+  `busy`, `onApply`, `onRevert`). The "Unsaved changes" / "No changes" text is a
+  `role="status"`, so a screen reader hears it change. ProjectSettings is 463 lines, well under
+  the limit, so the split is for tidiness rather than size.
+- **Danger zone.** It has a one-line hint under the heading ("These overwrite the style settings
+  of every board and can't be undone.").
+- **Found on the way and fixed:**
+  - Once the tabs shared one scroll area, switching tabs kept the previous tab's scroll
+    position (General opened scrolled 1454px down). The page is now `{#key activeTab}`, so each
+    tab opens at its top. One side effect: LivePreview remounts when switching between Global
+    Defaults and Current Board. It holds no state of its own, so this is harmless.
+  - The rail was sized to its content, so the active tab's heavier label moved the page 3px
+    when switching tabs. The rail now has a fixed width of 210px.
+  - Stale "Apply/Cancel" / "modal-level footer" comments in `BoardDefaults.svelte` and
+    `CurrentBoardMindMap.svelte` now say Apply / Revert and point at the dialog's bar.
+- **Tests:** `projectSettingsDialog` now uses the action bar and Revert. It also checks that the
+  bar is outside and before the scroll area, that the Danger zone is last on the page with both
+  bulk buttons, that the status text changes with an edit, and that a tab opens at its top.
+- **Checks:** `npm run ci:verify` passes (602 test files), including all 68 gates. On an earlier run, the known
+  flaky `tagFilters` spec (see Item 1) failed once. It passed when run alone. Real app (scratch
+  vault, Playwright `_electron`): at 1440×900 the dialog is 900px wide and the container is
+  680px high. At 900×600 it shrinks to 781×510, within 85vh. In both, the modal body never
+  scrolls, the rail stays in place, and the bar stays at the top while the page scrolls to the
+  Danger zone. An edit turns the bar to "Unsaved changes" with Revert / Apply enabled. Revert
+  restores the value and leaves the dialog open. There were no console errors.
+
 ---
 
 ## Item 3: Line spacing

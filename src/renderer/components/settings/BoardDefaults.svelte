@@ -24,7 +24,7 @@
   ];
 
   // Reads route through `pendingSettingsStore.effective`, which returns
-  // the editable copy during an Apply/Cancel session and otherwise the
+  // the editable copy during an Apply / Revert session and otherwise the
   // live project settings.
   let settings = $derived(pendingSettingsStore.effective);
   let mindmapDefaults = $derived(settings?.mindmap);
@@ -35,8 +35,8 @@
   /**
    * Writes a settings field into the pending copy. The pending session
    * is started by `ProjectSettings.svelte` on modal mount, so this
-   * always has somewhere to write. Apply/Cancel buttons live in the
-   * modal-level footer (see `ProjectSettings.svelte`).
+   * always has somewhere to write. The Apply / Revert bar is the
+   * dialog's (see `ProjectSettings.svelte`).
    */
   function update(path: string, value: unknown) {
     pendingSettingsStore.update(path, value);

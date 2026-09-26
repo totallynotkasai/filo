@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * Per-board overrides for Mind Map boards. Reads/writes through
-   * pendingSettingsStore.updateBoard so the modal's Apply/Cancel still
+   * pendingSettingsStore.updateBoard so the dialog's Apply / Revert still
    * govern commit behaviour.
    */
   import { pendingSettingsStore } from '../../stores/pendingSettings.svelte';

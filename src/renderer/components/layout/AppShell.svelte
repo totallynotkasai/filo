@@ -574,7 +574,9 @@
     <Modal
       id="project-settings"
       title="Settings"
-      width="680px"
+      width="900px"
+      maxHeight="85vh"
+      flush
       isolateShortcuts
       beforeClose={() => confirmDiscardSettings(pendingSettingsStore, uiStore)}
     >

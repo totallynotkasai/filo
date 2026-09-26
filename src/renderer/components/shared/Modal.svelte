@@ -36,10 +36,19 @@
      * it. Plain keys still reach the dialog's own controls.
      */
     isolateShortcuts?: boolean;
+    /** The dialog's tallest size, as a CSS length. */
+    maxHeight?: string;
+    /**
+     * Drops the body's padding and scrolling, for a dialog that lays out its
+     * own scroll areas (a fixed rail beside a scrolling page). The body is a
+     * flex column that can shrink, so a child with a set height shrinks to
+     * fit a short window instead of overflowing it.
+     */
+    flush?: boolean;
     children: Snippet;
   }
 
-  let { id, title, width = '480px', showKeyHints = true, beforeClose, isolateShortcuts = false, children }: Props = $props();
+  let { id, title, width = '480px', showKeyHints = true, beforeClose, isolateShortcuts = false, maxHeight = '80vh', flush = false, children }: Props = $props();
 
   let dialogEl = $state<HTMLDialogElement | null>(null);
 
@@ -133,7 +142,7 @@
     aria-modal="true"
     aria-labelledby={`modal-title-${id}`}
   >
-    <div class="modal-content" style="max-width: {width};">
+    <div class="modal-content" style="max-width: {width}; max-height: {maxHeight};">
       <div class="modal-header">
         <h2 class="modal-title" id={`modal-title-${id}`}>{title}</h2>
         <button
@@ -152,7 +161,7 @@
           </svg>
         </button>
       </div>
-      <div class="modal-body">
+      <div class="modal-body" class:flush>
         {@render children()}
       </div>
     </div>
@@ -182,7 +191,6 @@
 
   .modal-content {
     width: 90%;
-    max-height: 80vh;
     background: var(--modal-bg);
     border: 1px solid var(--ui-border);
     border-radius: 12px;
@@ -246,6 +254,14 @@
     padding: 20px;
     overflow-y: auto;
     flex: 1;
+  }
+
+  .modal-body.flush {
+    padding: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
   }
 
   @media (prefers-reduced-motion: reduce) {

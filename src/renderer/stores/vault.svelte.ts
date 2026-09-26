@@ -1204,7 +1204,7 @@ export const vaultStore = {
     // Misc writes: tags / themes / templates / viewports / sidebar order.
     const miscResult = await flushAllMisc();
     return (
-      noteResult.failed.length === 0 &&
+      noteResult.failed.length + noteResult.rawNotSaved.length === 0 &&
       flushResult.boardFailed.length === 0 &&
       flushResult.configFailed.length === 0 &&
       miscResult.failed.length === 0 &&

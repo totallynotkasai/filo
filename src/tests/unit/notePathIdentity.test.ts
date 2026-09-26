@@ -120,7 +120,7 @@ describe('a rename re-keys the note store', () => {
     renameOnDisk('Notes/Old.md', 'Notes/New.md');
     expect(noteStore.frontmatter('Notes/New.md').status).toBe('done');
     expect(noteStore.hasPendingWrites('Notes/Old.md')).toBe(false);
-    expect(await noteStore.flushAll()).toEqual({ failed: [] });
+    expect(await noteStore.flushAll()).toEqual({ failed: [], rawNotSaved: [] });
     expect(vault.read('Notes/New.md')).toBe('---\ntitle: T\nstatus: done\n---\nbody\n');
   });
 

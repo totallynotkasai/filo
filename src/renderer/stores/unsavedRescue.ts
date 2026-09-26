@@ -7,7 +7,8 @@
  * dialog), and on "Close anyway" / "Quit anyway" copied to
  * `.filo/recovery/<timestamp>-unsaved/` before the vault is let go:
  *  - a note: its last frontmatter with the queued change, over the local body;
- *  - a board: its in-memory file, as JSON.
+ *  - a board: its in-memory file, as JSON;
+ *  - a raw view's text: the whole file as typed.
  * `.filo/` config can't be copied there; it is reported as not kept.
  */
 import { vaultPath, type VaultPath } from '@shared/vaultPath';
@@ -18,6 +19,7 @@ import { isNonUtf8 } from '../lib/vault/nonUtf8Paths.svelte';
 import { invokeOk } from '../lib/utils/invokeOk';
 import { unsavedWork, type UnsavedWork } from '../lib/boards/writeStateTracking';
 import type { RescueResult, UnsavedCause, UnsavedItem } from '../lib/vault/unsavedMessages';
+import { rawViewInConflict, takeRawRescueItems } from '../lib/notes/rawViews';
 
 /** Board paths (on-disk spelling) by case-folded key. */
 function boardPathsByKey(): Map<VaultPath, { boardId: string; relPath: string }> {
@@ -43,7 +45,7 @@ async function fileExists(vaultRoot: string, relPath: string): Promise<boolean> 
 }
 
 async function causeOf(key: VaultPath, relPath: string, vaultRoot: string | null): Promise<UnsavedCause> {
-  if (noteStore.get(key)?.status === 'conflict') return 'conflict';
+  if (noteStore.get(key)?.status === 'conflict' || rawViewInConflict(relPath)) return 'conflict';
   if (isNonUtf8(relPath)) return 'non-utf8';
   if (vaultRoot && !(await fileExists(vaultRoot, relPath))) return 'missing';
   return 'write-failed';
@@ -61,7 +63,8 @@ export async function describeUnsaved(work: UnsavedWork = unsavedWork()): Promis
   for (const key of work.pending) {
     const path = displayPath(key, boards);
     // A held body shows as pending to the ledger; say what holds it.
-    items.push({ path, cause: noteStore.get(key)?.status === 'conflict' ? 'conflict' : 'pending' });
+    const conflict = noteStore.get(key)?.status === 'conflict' || rawViewInConflict(path);
+    items.push({ path, cause: conflict ? 'conflict' : 'pending' });
   }
   return items;
 }
@@ -84,6 +87,12 @@ export async function keepRescueCopies(work: UnsavedWork = unsavedWork()): Promi
     }
   } catch (err) {
     console.error('[unsavedRescue] collecting unsaved notes failed:', err);
+  }
+  // A raw view's text is the user's latest version of the whole file. It is
+  // kept even when the note also has a copy above (the two are numbered apart).
+  for (const raw of takeRawRescueItems()) {
+    items.push(raw);
+    covered.add(vaultPath(raw.relPath));
   }
   for (const key of [...work.failed, ...work.pending]) {
     if (covered.has(key)) continue;

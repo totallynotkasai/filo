@@ -38,6 +38,7 @@ import {
   readNoteFresh,
   type FreshRead,
   type NoteWriter,
+  type TransformOptions,
 } from '../lib/notes/noteWriter';
 import {
   noteTextHash,
@@ -52,6 +53,7 @@ import {
   type NoteText,
 } from '../lib/notes/noteFile';
 import { looksTorn } from '../lib/notes/noteWriter';
+import { flushRawViews } from '../lib/notes/rawViews';
 import { decideDiskChange } from '../lib/notes/noteDiskChange';
 import { backupThenRead } from '../lib/vault/keepLocalBackup';
 import {
@@ -127,10 +129,21 @@ const models = new SvelteMap<VaultPath, NoteModel>();
 /** `writeBody` calls still waiting for their note to load (settled promises leave). */
 // allow-module-state: transient; each entry settles with its note's first read
 // eslint-disable-next-line svelte/prefer-svelte-reactivity
-const bodiesLoading = new Set<Promise<void>>();
+const bodiesLoading = new Set<Promise<unknown>>();
 const loadingBodyPaths = new SvelteSet<VaultPath>();
 /** Queued frontmatter changes of notes no model holds, for display. */
 const overlays = new SvelteMap<VaultPath, FrontmatterDelta>();
+
+/**
+ * What became of a body handed to the note store:
+ * - `queued`: it will be written (or already matches what is held);
+ * - `read-only`: the note isn't UTF-8, or can't round-trip, so it is never written;
+ * - `unreadable`: the note couldn't be read, so there is nothing to build on;
+ * - `loading`: the note hasn't been read yet;
+ * - `not-open`: the view doesn't hold this note (left over from a closed vault);
+ * - `vault-changed`: another vault opened while the note loaded.
+ */
+export type SetBodyStatus = 'queued' | 'read-only' | 'unreadable' | 'loading' | 'not-open' | 'vault-changed';
 
 /** Conflict and deletion prompts, installed by `notePrompts.ts`. */
 export interface NotePromptHandlers {
@@ -448,25 +461,30 @@ export const noteStore = {
   },
 
   /** A view's editor produced `markdown` as the note's body. */
-  setBody(relPath: string, markdown: string, viewId: ViewId): void {
+  setBody(relPath: string, markdown: string, viewId: ViewId): SetBodyStatus {
     const m = models.get(vaultPath(relPath));
     // Only a view that holds this model may write through it: a view left
     // over from a closed vault must not reach a same-named note in the next.
-    if (!m || !m.views.has(viewId)) return;
-    if (m.readOnly || m.status === 'loading' || m.status === 'unreadable') return;
-    if (m.body === markdown && !m.hasUnsavedBody) return;
+    if (!m || !m.views.has(viewId)) return 'not-open';
+    if (m.readOnly) return 'read-only';
+    if (m.status === 'loading') return 'loading';
+    if (m.status === 'unreadable') return 'unreadable';
+    if (m.body === markdown && !m.hasUnsavedBody) return 'queued';
     m.editorOwner = viewId;
     setModelBody(m, markdown, viewId);
     m.localBodyVersion++;
     m.hasUnsavedBody = true;
     writer.queueBody(m.relPath, markdown, m.localBodyVersion);
+    return 'queued';
   },
 
   /**
    * Sets the note's body from a view that isn't an editor (the Task List
    * notes box): loads the note first, so the drift check has its base.
+   * Anything but `queued` means the body was not taken, and the caller still
+   * holds the only copy of it.
    */
-  async writeBody(relPath: string, body: string): Promise<void> {
+  async writeBody(relPath: string, body: string): Promise<SetBodyStatus> {
     const viewId = `body:${vaultPath(relPath)}`;
     const identity = captureVaultIdentity();
     const vaultRoot = getActiveVaultPath() || undefined;
@@ -474,14 +492,15 @@ export const noteStore = {
     // Until the note has loaded nothing is queued, yet the text is unsaved:
     // save and quit wait for it, and the crash sentinel names the path.
     noteAdditionalPendingPath(vaultRoot, relPath);
-    const done = (async () => {
+    const done = (async (): Promise<SetBodyStatus> => {
       await m.loaded;
-      if (isStillSameVault(identity)) noteStore.setBody(m.relPath, body, viewId);
+      if (!isStillSameVault(identity)) return 'vault-changed';
+      return noteStore.setBody(m.relPath, body, viewId);
     })();
     bodiesLoading.add(done);
     loadingBodyPaths.add(vaultPath(relPath));
     try {
-      await done;
+      return await done;
     } finally {
       bodiesLoading.delete(done);
       loadingBodyPaths.delete(vaultPath(relPath));
@@ -511,11 +530,15 @@ export const noteStore = {
     return (await writer.flush(relPath)).ok;
   },
 
-  /** Writes every queued change now (save, quit, before a rename). */
-  async flushAll(): Promise<{ failed: string[] }> {
+  /**
+   * Writes every queued change now (save, quit, before a rename). Raw views
+   * save first: quit never unmounts one, so its text reaches disk only here.
+   */
+  async flushAll(): Promise<{ failed: string[]; rawNotSaved: string[] }> {
+    const raw = await flushRawViews();
     await Promise.all([...bodiesLoading]);
     serializeViews();
-    return writer.flushAll();
+    return { ...(await writer.flushAll()), rawNotSaved: raw.notSaved };
   },
 
   /** True while anything for `path` is queued, being written or failed. */
@@ -828,9 +851,10 @@ export const noteStore = {
     relPath: string,
     fn: (fresh: NoteText) => string | null,
     track?: TrackComponentWriteOptions,
+    options?: TransformOptions,
   ): Promise<string | null> {
     serializeViews(vaultPath(relPath));
-    return writer.transform(relPath, fn, track);
+    return writer.transform(relPath, fn, track, options);
   },
 
   /**
@@ -866,7 +890,7 @@ export const noteStore = {
         return null;
       }
       return rawTextForDisk(text, fresh);
-    });
+    }, undefined, { userAuthored: true });
     if (conflict) return 'conflict';
     return written === null ? 'unchanged' : 'written';
   },

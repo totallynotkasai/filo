@@ -86,7 +86,7 @@ describe('Keep mine on a note deleted by another program', () => {
     const recreated = vault.read('Notes.md');
     expect(noteStore.hasPendingWrites('Notes.md')).toBe(false);
     expect(m.hasUnsavedBody).toBe(false);
-    expect(await noteStore.flushAll()).toEqual({ failed: [] });
+    expect(await noteStore.flushAll()).toEqual({ failed: [], rawNotSaved: [] });
     expect(vault.read('Notes.md')).toBe(recreated);
   });
 
@@ -124,7 +124,7 @@ describe('Discard on a note deleted by another program', () => {
     expect(m.status).toBe('missing');
     expect(m.hasUnsavedBody).toBe(false);
     expect(noteStore.hasPendingWrites('Notes.md')).toBe(false);
-    expect(await noteStore.flushAll()).toEqual({ failed: [] });
+    expect(await noteStore.flushAll()).toEqual({ failed: [], rawNotSaved: [] });
     expect(vault.read('Notes.md')).toBeUndefined();
     expect(writesTo('Notes.md')).toEqual([]);
   });

@@ -38,11 +38,20 @@ independent oracle).
 source to preserve, or can't safely patch the source, it emits a full dump
 (`new Document(fm).toString()` — the `yaml` package, no js-yaml). This fires for:
 a brand-new file, or the first keys added to a file with no frontmatter (there
-are no comments to lose); a block the engine can't parse as a block mapping; or a CHANGED /
-DELETED key carrying a YAML anchor/alias (the engine refuses the splice rather
-than dangle an alias — L27, and the dump expands the anchor to a concrete value).
-In each case there is either nothing to preserve, or the structure is expanded
-while the DATA stays exact.
+are no comments to lose); a FLOW mapping root (`{title: X}`), which the engine
+can't patch as a block mapping; or a CHANGED / DELETED key carrying a YAML
+anchor/alias (the engine refuses the splice rather than dangle an alias — L27,
+and the dump expands the anchor to a concrete value). In each case there is
+either nothing to preserve, or the structure is expanded while the DATA stays
+exact.
+
+**Refused instead of dumped:** a block that doesn't parse, one with a
+non-scalar key, and one that parses but isn't a mapping (a paragraph between
+two leading `---` rules reads as a scalar; a list) are kept byte-for-byte and
+the metadata edit is refused with a toast, because a dump would delete what
+they hold. A comment-only block is patched normally (the comment stays). The
+note writer also refuses any write that would turn a block that parses into
+one that doesn't (gate `frontmatter-parse-preserved`).
 
 **Remaining narrow formatting losses (documented, regression-pinned, never data
 loss):**
@@ -875,7 +884,8 @@ they showed are still in the vault.
 
 **What:** The Document tab's **Raw** toggle shows the note's full text,
 frontmatter included, and saves it as one whole-file replacement (on blur,
-Ctrl+S, switching back, or closing). A save lands only if the file still holds
+Ctrl+S, switching back, closing the tab, and the save that close, open another
+vault and quit run first: text typed there is unsaved work to all of them). A save lands only if the file still holds
 exactly the bytes the raw view started from. If another program (or another
 Filo view) changed the file meanwhile, nothing is written and a banner offers
 **Show the new version** or **Keep mine**. Keep mine first backs the other
@@ -892,6 +902,12 @@ conflicting change is never overwritten unseen, and Keep mine keeps a copy. The
 file's BOM and line endings are re-applied on save. Because the text never
 passes through the rich editor, the raw view is also allowed on lossy notes
 (#17); it is read-only for non-UTF-8 notes (#21).
+
+Switching back to the formatted view waits for the save's answer and stays in
+Raw, with the banner, unless the text is on disk. Closing a tab (or leaving
+the vault anyway) with raw text that can't be written keeps it as a copy in
+`.filo/recovery/<timestamp>-unsaved/` and says so. Frontmatter typed here is
+the user's own, so it is written even if it no longer parses.
 
 **Impact:** Choosing Keep mine replaces the other version in the note itself;
 it survives only as the backup in `.filo/recovery/`.

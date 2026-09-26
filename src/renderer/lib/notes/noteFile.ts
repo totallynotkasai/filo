@@ -15,7 +15,8 @@
  * No IPC, store or DOM access, so the writer and the disk-change handler share
  * one definition of "what the file says".
  */
-import { assembleMarkdownFile, parseMarkdownFile } from '../editor/markdownSync';
+import { assembleMarkdownFile, parseMarkdownFile, type FrontmatterRefusal } from '../editor/markdownSync';
+import { frontmatterSourceParses } from '../vault/frontmatterCstModel';
 import {
   applyFrontmatterDelta,
   isEmptyFrontmatterDelta,
@@ -140,13 +141,14 @@ export interface NoteChange {
 
 /**
  * The bytes to write for `change` applied to the fresh read `fresh`.
- * `onFrontmatterRefused` fires when the disk YAML can't be parsed, so the
+ * `onFrontmatterRefused` fires when the disk block can't be patched safely
+ * (YAML that doesn't parse, or a block that isn't properties), so the
  * frontmatter part of the change is dropped (the block is kept verbatim).
  */
 export function assembleNoteText(
   fresh: NoteText,
   change: NoteChange,
-  onFrontmatterRefused?: () => void,
+  onFrontmatterRefused?: (reason: FrontmatterRefusal) => void,
 ): string {
   const delta = change.delta;
   const fmChanged = delta !== undefined && !isEmptyFrontmatterDelta(delta);
@@ -174,6 +176,19 @@ export function assembleNoteText(
     text = text.slice(0, -eol.length);
   }
   return text;
+}
+
+/**
+ * True when writing `next` over `fresh` would turn a frontmatter block that
+ * parses into one that doesn't. Every reader would then lose the note's
+ * title, tags and fields, and later metadata edits would be refused, so no
+ * write path may do it. A block that was already broken is not this check's
+ * concern (the assembler keeps it verbatim).
+ */
+export function breaksFrontmatter(fresh: NoteText, next: string): boolean {
+  if (!fresh.hasFrontmatter || !frontmatterSourceParses(fresh.rawFrontmatter)) return false;
+  const after = parseMarkdownFile(next);
+  return after.hasFrontmatter && !frontmatterSourceParses(after.rawFrontmatter);
 }
 
 function endsWithNewline(text: string): boolean {

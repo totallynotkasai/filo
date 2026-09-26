@@ -4,7 +4,7 @@ import type {
 } from '../../schema/index';
 import { historyStore, type Command } from '../../stores/history.svelte';
 import { uiStore } from '../../stores/ui.svelte';
-import { noteStore } from '../../stores/notes.svelte';
+import { noteStore, type SetBodyStatus } from '../../stores/notes.svelte';
 import { BatchCommand, UpdateTaskFieldCommand } from '../../commands/index';
 import { nextDueDate, recurrenceAnchorToRecord } from '../tasks/recurrence';
 import type { Priority } from '../tasks/frontmatterReaders';
@@ -114,7 +114,7 @@ export interface FrontmatterWriter {
   setDueDate(row: TaskRow, dueDate: string): Promise<void>;
   setDueTime(row: TaskRow, dueTime: string): Promise<void>;
   setStartDate(row: TaskRow, startDate: string): Promise<void>;
-  setNotesBody(row: TaskRow, body: string): Promise<void>;
+  setNotesBody(row: TaskRow, body: string): Promise<SetBodyStatus>;
   markAllIncomplete(rows: TaskRow[]): Promise<void>;
 }
 
@@ -218,11 +218,15 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
     return updateRowField(row, { startDate });
   }
 
-  /** The notes box: sets the task note's body (a row with no note has none). */
-  async function setNotesBody(row: TaskRow, body: string): Promise<void> {
+  /**
+   * The notes box: sets the task note's body (a row with no note has none).
+   * Anything but `queued` means the body wasn't taken; the box keeps it.
+   */
+  async function setNotesBody(row: TaskRow, body: string): Promise<SetBodyStatus> {
     const path = resolveTextTileVaultPath(row.tile);
-    if (path) await noteStore.writeBody(path, body);
+    const status = path ? await noteStore.writeBody(path, body) : 'not-open';
     bumpCacheVersion();
+    return status;
   }
 
   async function markAllIncomplete(rows: TaskRow[]): Promise<void> {

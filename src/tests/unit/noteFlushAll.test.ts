@@ -41,7 +41,7 @@ afterEach(() => {
 
 describe('noteStore.flushAll', () => {
   it('reports nothing failed when nothing is queued', async () => {
-    expect(await noteStore.flushAll()).toEqual({ failed: [] });
+    expect(await noteStore.flushAll()).toEqual({ failed: [], rawNotSaved: [] });
     expect(vault.writes).toEqual([]);
   });
 
@@ -49,7 +49,7 @@ describe('noteStore.flushAll', () => {
     for (const rel of ['a.md', 'b.md', 'c.md']) {
       noteStore.patchFrontmatter(rel, { set: { done: true }, unset: [] });
     }
-    expect(await noteStore.flushAll()).toEqual({ failed: [] });
+    expect(await noteStore.flushAll()).toEqual({ failed: [], rawNotSaved: [] });
     for (const rel of ['a.md', 'b.md', 'c.md']) expect(vault.read(rel)).toContain('done: true');
   });
 
@@ -87,7 +87,7 @@ describe('noteStore.flushAll', () => {
     expect(vault.read('a.md')).not.toContain('slow');
 
     release();
-    expect(await done).toEqual({ failed: [] });
+    expect(await done).toEqual({ failed: [], rawNotSaved: [] });
     expect(vault.read('a.md')).toContain('slow: true');
   });
 

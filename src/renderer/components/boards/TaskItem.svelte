@@ -17,7 +17,9 @@
   import type { ResolvedTaskStyle } from '../../lib/styles/effectiveStyle';
   import { isEditableTextTarget } from '../../lib/utils/editableTarget';
   import { getAnchorBelow } from '../../lib/utils/popupAnchor';
-  import { getBodyPreview, stripFrontmatter } from '../../lib/tasks/taskBodyText';
+  import { getBodyPreview } from '../../lib/tasks/taskBodyText';
+  import { NotesBox } from '../../lib/tasklist/notesBox.svelte';
+  import type { SetBodyStatus } from '../../stores/notes.svelte';
   import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
   import TaskDatePicker from './TaskDatePicker.svelte';
   import TagBadge from '../tags/TagBadge.svelte';
@@ -97,7 +99,7 @@
     onSetDueTime?: (dueTime: string) => void;
     onSetStartDate?: (startDate: string) => void;
     onSetRecurrence?: (recurrence: string) => void;
-    onSetNotes?: (body: string) => void;
+    onSetNotes?: (body: string) => Promise<SetBodyStatus>;
     onRename: (title: string) => void;
     onDelete: (anchor?: { x: number; y: number }) => void;
     /** Opt-in delete that also removes the backing .md file. */
@@ -153,8 +155,8 @@
   // ── Inline notes (body preview + edit) ──
   //
   // The body comes from the note's model when it is open (it reflects edits
-  // the watcher hasn't seen yet), else from the vault index. The strip is
-  // defensive: the preview must never show frontmatter lines.
+  // the watcher hasn't seen yet), else from the vault index. Both hold the
+  // body without its frontmatter.
 
   let backingPath = $derived(resolveTextTileVaultPath(tile) ?? '');
 
@@ -165,11 +167,10 @@
     return vaultIndexStore.getMetadata(backingPath)?.content ?? '';
   });
 
-  let bodyOnly = $derived(stripFrontmatter(rawBody));
   let notesPreview = $derived(getBodyPreview(rawBody, 120));
 
-  let isExpanded = $state(false);
-  let draftNotes = $state('');
+  const notes = new NotesBox({ path: () => backingPath, body: () => rawBody, write: (b) => onSetNotes ? onSetNotes(b) : Promise.resolve('not-open') });
+  let isExpanded = $derived(notes.expanded);
   let notesEl: HTMLTextAreaElement | undefined = $state();
 
   // True when the user has switched the "Tasks" hover-buttons toggle Off in
@@ -185,11 +186,10 @@
   function toggleExpanded(e?: Event) {
     e?.stopPropagation();
     if (!isExpanded) {
-      draftNotes = bodyOnly;
-      isExpanded = true;
+      notes.open();
       queueMicrotask(() => notesEl?.focus());
     } else {
-      commitNotes();
+      void notes.save(true);
     }
   }
 
@@ -204,30 +204,15 @@
     }
   }
 
-  function commitNotes() {
-    isExpanded = false;
-    if (!onSetNotes) return;
-    if (draftNotes === bodyOnly) return;
-    onSetNotes(draftNotes);
-  }
-
-  // Persist the draft without collapsing the panel — used on textarea blur so
-  // edits flush to disk when focus moves elsewhere, but the panel itself only
-  // closes via the note button or Escape.
-  function saveNotesIfChanged() {
-    if (!onSetNotes) return;
-    if (draftNotes === bodyOnly) return;
-    onSetNotes(draftNotes);
-  }
-
+  // Blur saves the draft without collapsing the panel; only the note button,
+  // Ctrl+Enter and Escape close it.
   function onNotesKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       e.preventDefault(); e.stopPropagation(); // keep Escape off the global app:cancel
-      isExpanded = false;
-      draftNotes = bodyOnly;
+      notes.cancel();
     } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
-      commitNotes();
+      void notes.save(true);
     }
   }
 
@@ -878,14 +863,18 @@
       {#if isExpanded}
         <textarea
           bind:this={notesEl}
-          bind:value={draftNotes}
+          bind:value={notes.draft}
+          readonly={notes.readOnlyReason !== null}
+          oninput={() => notes.typed()}
+          onfocus={() => notes.focused()}
           class="task-notes-textarea"
           style={bodyFontSize != null ? `font-size: ${bodyFontSize}px;` : ''}
           placeholder="Add a task note — Ctrl+Enter to save, Esc to cancel"
           rows="3"
           onkeydown={onNotesKeydown}
-          onblur={saveNotesIfChanged}
+          onblur={() => void notes.save(false)}
         ></textarea>
+        {#if notes.readOnlyReason}<p class="task-notes-readonly">{notes.readOnlyReason}</p>{/if}
       {/if}
       {#if tile.tags.length > 0}
         <ul class="task-notes-tags" aria-label="Tags for {tile.title}">
@@ -1112,6 +1101,12 @@
     .task-notes-panel {
       transition: none;
     }
+  }
+
+  .task-notes-readonly {
+    margin: 4px 0 0;
+    color: var(--text-secondary);
+    font-size: 11px;
   }
 
   .task-notes-textarea {

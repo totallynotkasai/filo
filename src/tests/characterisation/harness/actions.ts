@@ -189,6 +189,38 @@ export async function editRawText(app: CharApp, text: string): Promise<void> {
   await quiesce(800);
 }
 
+/** The title and body of the in-app confirm on screen, or '' when none is up. */
+export function confirmText(): string {
+  const title = document.querySelector('.confirm-dialog .confirm-title')?.textContent ?? '';
+  const body = document.querySelector('.confirm-dialog .confirm-body')?.textContent ?? '';
+  return `${title}\n${body}`.trim();
+}
+
+/** Type into the raw view without leaving the field (so nothing has saved it yet). */
+export async function typeInRawView(app: CharApp, text: string): Promise<void> {
+  const ta = await rawTextArea(app);
+  ta.focus();
+  ta.value = text;
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+  await settle();
+}
+
+/**
+ * Click the Raw / Formatted toggle straight from the raw text: the click blurs
+ * the field first, which starts a save the toggle then races.
+ */
+export async function leaveRawFieldAndToggle(app: CharApp): Promise<void> {
+  const ta = await rawTextArea(app);
+  ta.blur();
+  click($(app.el, '.document-board .raw-toggle'));
+  await quiesce(800);
+}
+
+/** True while the open Document tab shows the raw view. */
+export function rawViewShown(app: CharApp): boolean {
+  return app.el.querySelector('.document-board .raw-text') !== null;
+}
+
 /** The raw view's "the note changed elsewhere" banner. */
 export function rawConflictShown(app: CharApp): boolean {
   return app.el.querySelector('.document-board .raw-banner') !== null;
@@ -449,6 +481,43 @@ export async function addTag(app: CharApp, tileRoot: HTMLElement, tag: string): 
 export async function toggleTask(row: HTMLElement): Promise<void> {
   click($(row, '.task-checkbox'));
   await quiesce(600);
+}
+
+/** The notes box of a Task List row, once its note button has opened it. */
+function taskNotesBox(row: HTMLElement): HTMLTextAreaElement {
+  const wrap = row.closest('.tasklist-row-wrap') ?? row;
+  return $(wrap, 'textarea.task-notes-textarea') as HTMLTextAreaElement;
+}
+
+/** Open a task's notes box with its note button. */
+export async function openTaskNotes(row: HTMLElement): Promise<void> {
+  click($(row, 'button.task-note-btn'));
+  await settle(50);
+}
+
+/** The text in a task's open notes box. */
+export function taskNotesText(row: HTMLElement): string {
+  return taskNotesBox(row).value;
+}
+
+/** Whether a task's open notes box refuses typing. */
+export function taskNotesReadOnly(row: HTMLElement): boolean {
+  return taskNotesBox(row).readOnly;
+}
+
+/** Type into a task's open notes box (replacing its text) without leaving it. */
+export async function typeTaskNotes(row: HTMLElement, text: string): Promise<void> {
+  const box = taskNotesBox(row);
+  box.focus();
+  box.value = text;
+  box.dispatchEvent(new Event('input', { bubbles: true }));
+  await settle();
+}
+
+/** Leave a task's notes box (focus moves elsewhere), which saves what was typed. */
+export async function leaveTaskNotes(row: HTMLElement): Promise<void> {
+  taskNotesBox(row).blur();
+  await quiesce(800);
 }
 
 // ── Sidebar ──────────────────────────────────────────────────────────────────

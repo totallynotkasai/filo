@@ -2,20 +2,15 @@
  * taskBodyText — extract a short plain-text preview from a Markdown body for
  * the Task List's inline-notes affordance.
  *
- * Strips frontmatter, leading headings, blank lines, and common Markdown
- * decoration (bold/italic/link wrappers) so the preview is comparable to the
- * non-decorated text a user would read.
+ * Takes a note BODY (the model and the vault index both hold the body
+ * without its frontmatter) and skips headings, rules, blank lines, and common
+ * Markdown decoration (bold/italic/link wrappers) so the preview is
+ * comparable to the non-decorated text a user would read. A body that opens
+ * with `---` is a rule, not frontmatter, so nothing is stripped as if it were.
  */
 
-const FRONTMATTER_RE = /^---\n[\s\S]*?\n---\n?/;
-
-/**
- * Returns the markdown content with the leading YAML frontmatter block
- * removed. Idempotent if no frontmatter is present.
- */
-export function stripFrontmatter(markdown: string): string {
-  return markdown.replace(FRONTMATTER_RE, '');
-}
+/** A thematic break line (`---`, `***`, `___`). */
+const RULE_RE = /^([-*_])(?:\s*\1){2,}$/;
 
 /**
  * Returns the first non-empty, non-heading line of the body as plain text,
@@ -34,13 +29,13 @@ export function stripFrontmatter(markdown: string): string {
  */
 export function getBodyPreview(markdown: string, maxChars: number): string {
   if (maxChars <= 0) return '';
-  const body = stripFrontmatter(markdown);
-  const lines = body.split(/\r?\n/);
+  const lines = markdown.split(/\r?\n/);
 
   for (const raw of lines) {
     let line = raw.trim();
     if (!line) continue;
     if (line.startsWith('#')) continue;
+    if (RULE_RE.test(line)) continue;
 
     // Strip bullet / blockquote prefixes.
     line = line.replace(/^[-*+]\s+(\[[xX ]?\]\s+)?/, '');

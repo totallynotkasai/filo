@@ -216,8 +216,9 @@ function itemUnsafeForLinePath(rawItem: string): boolean {
  *  - Empty: `tags:` with no follow-up items
  *
  * Returns null on shapes the rewriter can't handle (e.g. tags pointed at by
- * a YAML anchor `tags: *xref`, nested mapping under tags). The load → patch
- * fallback covers those.
+ * a YAML anchor `tags: *xref`, nested mapping under tags, a flow list that
+ * wraps onto further lines, a flow mapping). The load → patch fallback covers
+ * those.
  */
 function locateTagsField(yamlSource: string): LocatedTagsField | null {
   const lines = yamlSource.split('\n');
@@ -230,6 +231,11 @@ function locateTagsField(yamlSource: string): LocatedTagsField | null {
     // Reject anchored / aliased fields — too risky to rewrite via line edit.
     if (/[&*]/.test(headerRest)) return null;
     const rest = headerRest.trim();
+    // A flow collection that doesn't close on this line (Prettier wraps long
+    // lists) continues on lines this rewriter would leave behind, and any flow
+    // mapping is beyond the comma-split. Both go to the CST fallback.
+    if (rest.includes('{')) return null;
+    if (rest.startsWith('[') && !rest.endsWith(']')) return null;
     if (rest === '') {
       const blockItems: string[] = [];
       let end = i + 1;
@@ -419,7 +425,32 @@ function applyTagsLineRewrite(
   const head = lines.slice(0, loc.startLine);
   const tail = lines.slice(loc.endLine);
   const replacement = renderTagsField(loc, nextTags);
-  return [...head, ...replacement, ...tail].join('\n');
+  const candidate = [...head, ...replacement, ...tail].join('\n');
+  // The line tokenizer can't see every YAML shape (a plain scalar folded onto
+  // the next line, a block item that continues). Accept its edit only when the
+  // result parses to exactly the intended tags with every other key unchanged;
+  // otherwise the CST fallback, which parses the real structure, takes over.
+  return lineRewriteHolds(yamlSource, candidate, nextTags) ? candidate : null;
+}
+
+function lineRewriteHolds(before: string, after: string, nextTags: string[]): boolean {
+  const now = loadYamlObject(after);
+  if (!now) return false;
+  // A block that didn't parse before (`[#tag]`: a `#` that YAML reads as a
+  // comment) has no other keys any reader saw; an edit that leaves it parsing
+  // with the intended tags only repairs it.
+  const was = loadYamlObject(before);
+  // Every item counts, whatever type it parses as: the line path re-emits a
+  // `2024` item as the string '2024', which is still the same tag.
+  const raw = now.tags;
+  const tags = Array.isArray(raw)
+    ? raw.map((t) => String(t))
+    : typeof raw === 'string' ? normaliseTagsField(raw)?.tags : undefined;
+  if (!tags || tags.length !== nextTags.length) return false;
+  if (!tags.every((t, i) => t === nextTags[i])) return false;
+  const others = (o: Record<string, unknown>): string =>
+    JSON.stringify(Object.entries(o).filter(([k]) => k !== 'tags'));
+  return !was || others(was) === others(now);
 }
 
 /**

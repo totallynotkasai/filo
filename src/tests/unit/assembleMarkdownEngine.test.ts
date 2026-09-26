@@ -51,14 +51,15 @@ describe('assembleMarkdownFile — source-preserving dirty path (4.8)', () => {
     expect(yaml.load(fmOf(out))).toEqual({ title: 'New' });
   });
 
-  it('falls back to a dump when the baseline is not a parseable mapping', () => {
-    // A top-level sequence baseline → engine returns null → dump path.
+  it('falls back to a dump when the baseline is a flow mapping', () => {
+    // Not a block mapping → engine returns null → dump path, which keeps every
+    // key because a mapping's keys are all in the object.
     const out = assembleMarkdownFile(
-      { title: 'X' },
+      { a: 1, title: 'X' },
       'Body\n',
-      { originalFrontmatter: '- a\n- b', frontmatterDirty: true },
+      { originalFrontmatter: '{a: 1}', frontmatterDirty: true },
     );
-    expect(yaml.load(fmOf(out))).toEqual({ title: 'X' });
+    expect(yaml.load(fmOf(out))).toEqual({ a: 1, title: 'X' });
   });
 });
 
@@ -122,13 +123,44 @@ describe('assembleMarkdownFile — unparseable frontmatter is preserved, not dum
     warnSpy.mockRestore();
   });
 
-  it('still DUMPS for a valid non-mapping (sequence) baseline — unchanged', () => {
+  // A block that parses but isn't a mapping holds text no key carries: a dump
+  // of the delta would delete it. Kept verbatim, edit refused, reason given.
+  it.each([
+    ['a paragraph between two leading --- rules (scalar root)', 'Just a paragraph of text'],
+    ['a sequence root', '- a\n- b'],
+  ])('keeps %s verbatim and refuses the edit', (_label, original) => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const onFrontmatterRefused = vi.fn();
     const out = assembleMarkdownFile(
       { title: 'X' },
       'Body\n',
-      { originalFrontmatter: '- a\n- b', frontmatterDirty: true },
+      { originalFrontmatter: original, rawFrontmatter: original, frontmatterDirty: true, onFrontmatterRefused },
     );
-    expect(yaml.load(fmOf(out))).toEqual({ title: 'X' });
+    expect(out).toBe(`---\n${original}\n---\nBody\n`);
+    expect(onFrontmatterRefused).toHaveBeenCalledWith('not-properties');
+    warnSpy.mockRestore();
+  });
+
+  it('an empty root with only a comment keeps the comment and takes the key', () => {
+    const onFrontmatterRefused = vi.fn();
+    const out = assembleMarkdownFile(
+      { title: 'X' },
+      'Body\n',
+      { originalFrontmatter: '# a note to self', frontmatterDirty: true, onFrontmatterRefused },
+    );
+    expect(out).toBe('---\n# a note to self\ntitle: X\n---\nBody\n');
+    expect(onFrontmatterRefused).not.toHaveBeenCalled();
+  });
+
+  it('a flow-mapping root still takes the dump (every key is in the object)', () => {
+    const onFrontmatterRefused = vi.fn();
+    const out = assembleMarkdownFile(
+      { title: 'X', a: 1 },
+      'Body\n',
+      { originalFrontmatter: '{a: 1}', frontmatterDirty: true, onFrontmatterRefused },
+    );
+    expect(yaml.load(fmOf(out))).toEqual({ title: 'X', a: 1 });
+    expect(onFrontmatterRefused).not.toHaveBeenCalled();
   });
 
   it('Audit-11 N1 — invokes onFrontmatterRefused when the edit is dropped over unparseable YAML', () => {
@@ -377,14 +409,14 @@ describe('assembleMarkdownFile — line-ending preservation on the dirty FM path
   });
 
   it('CRLF baseline that the engine refuses (dump fallback) → fences still CRLF', () => {
-    // A top-level sequence isn't a block mapping → patchFrontmatterSourceCst
+    // A flow mapping isn't a block mapping → patchFrontmatterSourceCst
     // returns null → dump path; the eol re-apply still runs off the CRLF source.
     const out = assembleMarkdownFile(
-      { title: 'X' },
+      { a: 1, title: 'X' },
       'Body.\r\n',
-      { originalFrontmatter: '- a\r\n- b', frontmatterDirty: true },
+      { originalFrontmatter: '{a: 1}', frontmatterDirty: true },
     );
-    expect(out).toBe('---\r\ntitle: X\r\n---\r\nBody.\r\n');
+    expect(out).toBe('---\r\na: 1\r\ntitle: X\r\n---\r\nBody.\r\n');
     expect(isAllCrlf(out)).toBe(true);
   });
 });

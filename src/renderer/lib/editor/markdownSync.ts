@@ -12,6 +12,7 @@ import {
   frontmatterSourceParses,
   frontmatterSourceKeys,
   frontmatterSourceHasNonScalarKey,
+  frontmatterSourceRootIsMapping,
 } from '../vault/frontmatterCstModel';
 
 /**
@@ -342,6 +343,9 @@ export function editorMarkdown(editor: Editor): string {
   return '';
 }
 
+/** Why the assembler kept a frontmatter block verbatim instead of applying an edit. */
+export type FrontmatterRefusal = 'unparseable' | 'not-properties';
+
 export interface AssembleMarkdownOptions {
   /**
    * Re-emit a leading UTF-8 BOM (`﻿`) before the frontmatter / body.
@@ -391,13 +395,14 @@ export interface AssembleMarkdownOptions {
    */
   eol?: '\r\n' | '\n';
   /**
-   * Invoked when the assembler REFUSES a frontmatter edit because the on-disk
-   * YAML is genuinely unparseable (the keep-raw branch below). The edit is
-   * dropped to protect the existing YAML; this hook lets the note writer surface a
-   * toast instead of the edit vanishing as a silent success. Pure-assemble
-   * callers omit it.
+   * Invoked when the assembler REFUSES a frontmatter edit (the keep-raw branch
+   * below): `'unparseable'` when the on-disk YAML doesn't parse or can't be
+   * modelled, `'not-properties'` when it parses but isn't a mapping (text
+   * between two leading `---` rules). The edit is dropped to protect the
+   * block; this hook lets the note writer surface a toast instead of the edit
+   * vanishing as a silent success. Pure-assemble callers omit it.
    */
-  onFrontmatterRefused?: () => void;
+  onFrontmatterRefused?: (reason: FrontmatterRefusal) => void;
 }
 
 /**
@@ -515,24 +520,33 @@ export function assembleMarkdownFile(
     // discard it — total frontmatter loss. Refuse the metadata edit instead and
     // keep the raw bytes verbatim (the body still saves).
     //
-    // A refusal on VALID YAML (flow-mapping root, anchor/alias on a touched key,
-    // non-mapping root) keeps the dump fallback, which preserves the data.
+    // A refusal on a valid MAPPING (flow-mapping root, anchor/alias on a touched
+    // key) keeps the dump fallback: every key the block held is in `fm`.
     //
-    // A NON-SCALAR mapping key (`[a, b]: x`) is the second keep-raw case: it
-    // parses, but `toJS()` stringifies the key, so a dump would change the key's
-    // meaning.
+    // A root that parses but isn't a mapping (a paragraph between two leading
+    // `---` rules reads as a scalar; a list; only comments) is the second
+    // keep-raw case: `fm` holds none of its text, so a dump would delete it.
+    //
+    // A NON-SCALAR mapping key (`[a, b]: x`) is the third: it parses, but
+    // `toJS()` stringifies the key, so a dump would change the key's meaning.
     const original = options.originalFrontmatter;
     if (
       patched === null &&
       original &&
       original.trim().length > 0 &&
-      (!frontmatterSourceParses(original) || frontmatterSourceHasNonScalarKey(original))
+      (!frontmatterSourceParses(original) ||
+        !frontmatterSourceRootIsMapping(original) ||
+        frontmatterSourceHasNonScalarKey(original))
     ) {
       console.warn(
         '[markdownSync] Refusing to overwrite unparseable/unmodelable frontmatter; metadata edit not applied. Fix the YAML on disk to re-enable property writes.',
       );
       // Surface the dropped edit to the user (the note writer wires a toast).
-      options.onFrontmatterRefused?.();
+      options.onFrontmatterRefused?.(
+        frontmatterSourceParses(original) && !frontmatterSourceRootIsMapping(original)
+          ? 'not-properties'
+          : 'unparseable',
+      );
       return emitWithRawFrontmatter(bomPrefix, original, body, detectFrontmatterEol(options, body));
     }
     // The full-dump fallback also uses the `yaml` package (single parser).

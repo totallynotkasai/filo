@@ -20,7 +20,7 @@ import { uiStore } from './ui.svelte';
 import { fileTagsStore } from './fileTags.svelte';
 import { boardCacheStore } from './boardCache.svelte';
 import { promptClosedBoardFileMissing } from './vaultExternalPrompts';
-import { noteStore, setNotePromptHandlers, type NoteModel } from './notes.svelte';
+import { noteStore, setNotePromptHandlers, type NoteModel, type SetBodyStatus } from './notes.svelte';
 import { noteTitle } from './noteMeta';
 import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
@@ -64,6 +64,44 @@ function promptConflict(m: NoteModel): void {
           }
         },
       },
+    ],
+  });
+}
+
+/**
+ * The Task List notes box met a note whose body changed since the box opened
+ * (a Document tab, another program). Its draft is not written until the user
+ * picks. "Keep mine" writes the pending other version to disk first, backs it
+ * up to `.filo/recovery/`, then writes the draft; "Use theirs" drops the draft.
+ */
+export function promptNotesBoxConflict(
+  rel: string,
+  draft: string,
+  handlers: { onKept(status: SetBodyStatus): void; onUseTheirs(): void },
+): void {
+  uiStore.pushToast({
+    text: `"${noteTitle(rel)}" changed somewhere else while its task notes were open. Keep your notes, or use the other version?`,
+    type: 'warning',
+    duration: 0,
+    sticky: true,
+    dedupeKey: `notes-box:${rel}`,
+    actions: [
+      {
+        label: 'Keep mine',
+        handler: async () => {
+          const vaultRoot = getActiveVaultPath();
+          const identity = captureVaultIdentity();
+          if (!vaultRoot) return;
+          try {
+            await noteStore.flush(rel);
+            if (!(await backupExternalVersion(vaultRoot, rel)) || !isStillSameVault(identity)) return;
+            handlers.onKept(await noteStore.writeBody(rel, draft));
+          } catch (err) {
+            reportError('notePrompts.notesBox', err, `Couldn't keep your notes for "${rel}"`);
+          }
+        },
+      },
+      { label: 'Use theirs', handler: () => handlers.onUseTheirs() },
     ],
   });
 }

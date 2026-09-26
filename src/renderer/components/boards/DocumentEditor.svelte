@@ -243,8 +243,11 @@
 
   async function toggleRaw(): Promise<void> {
     if (rawMode) {
-      await rawView?.save();
-      rawMode = false;
+      // Leave only once the typed text is on disk. On a conflict or a failed
+      // write the view stays, with its banner, so the text stays in front of
+      // the user instead of vanishing with the unmount.
+      const result = rawView ? await rawView.save() : 'clean';
+      if (result === 'clean' || result === 'saved') rawMode = false;
       return;
     }
     // Hand the model every keystroke, so the raw text includes them.

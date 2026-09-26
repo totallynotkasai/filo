@@ -1,33 +1,21 @@
 import { describe, it, expect } from 'vitest';
-import { stripFrontmatter, getBodyPreview } from '@renderer/lib/tasks/taskBodyText';
-
-describe('stripFrontmatter', () => {
-  it('strips a complete frontmatter block', () => {
-    const md = '---\ntitle: T\ncompleted: false\n---\nBody here';
-    expect(stripFrontmatter(md)).toBe('Body here');
-  });
-
-  it('leaves non-frontmatter content untouched', () => {
-    expect(stripFrontmatter('Just body\n')).toBe('Just body\n');
-  });
-
-  it('does not strip --- that appears mid-body', () => {
-    const md = 'Intro\n---\nMore body';
-    expect(stripFrontmatter(md)).toBe('Intro\n---\nMore body');
-  });
-});
+import { getBodyPreview } from '@renderer/lib/tasks/taskBodyText';
 
 describe('getBodyPreview', () => {
   it('returns empty for empty input', () => {
     expect(getBodyPreview('', 80)).toBe('');
   });
 
-  it('returns empty when only frontmatter is present', () => {
-    expect(getBodyPreview('---\ntitle: T\n---\n', 80)).toBe('');
+  it('returns empty when the body holds only rules and headings', () => {
+    expect(getBodyPreview('---\n# Heading\n***\n', 80)).toBe('');
+  });
+
+  it('a body that opens with text between two rules shows that text', () => {
+    expect(getBodyPreview('---\nBetween the rules\n---\nAfter', 80)).toBe('Between the rules');
   });
 
   it('returns the first non-empty line of body', () => {
-    const md = '---\ntitle: T\n---\n# Heading\n\nThis is the body.';
+    const md = '# Heading\n\nThis is the body.';
     expect(getBodyPreview(md, 80)).toBe('This is the body.');
   });
 

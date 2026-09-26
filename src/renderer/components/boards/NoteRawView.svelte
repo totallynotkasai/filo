@@ -9,6 +9,10 @@
    * view started from; if the note changed elsewhere meanwhile, nothing is
    * written and the user chooses between the new version and theirs (theirs
    * backs the other version up to `.filo/recovery/` first).
+   *
+   * While mounted the view is in the raw-view registry, so text typed here is
+   * unsaved work to close, open-another-vault and quit. Text it closes with
+   * and can't write (a conflict, a failure) is copied to `.filo/recovery/`.
    */
   import { onMount, onDestroy, untrack } from 'svelte';
   import { noteStore } from '../../stores/notes.svelte';
@@ -16,6 +20,7 @@
   import { rawTextForView } from '../../lib/notes/noteFile';
   import { backupThenRead } from '../../lib/vault/keepLocalBackup';
   import { reportError } from '../../lib/utils/errorBus';
+  import { keepRawRescueCopy, registerRawView, type RawSaveResult } from '../../lib/notes/rawViews';
 
   let {
     path,
@@ -39,6 +44,10 @@
   let saving = $state(false);
   let followTimer: ReturnType<typeof setTimeout> | null = null;
   let destroyed = false;
+  /** The save running now, which a second save waits for. */
+  let inFlight: Promise<RawSaveResult> | null = null;
+  /** A leave-anyway already kept this text in `.filo/recovery/`. */
+  let rescued = false;
 
   let dirty = $derived(baseHash !== null && text !== baseText);
   let model = $derived(noteStore.get(path));
@@ -58,26 +67,61 @@
     conflict = false;
   }
 
-  /** Writes what's typed, if anything. Safe to call at any time. */
-  export async function save(): Promise<void> {
-    if (!dirty || readOnly || conflict || saving || baseHash === null) return;
+  /** Text typed here that isn't on disk. Plain reads, so it still works after unmount. */
+  function hasUnsavedText(): boolean {
+    return !readOnly && baseHash !== null && text !== baseText;
+  }
+
+  /**
+   * Writes what's typed, if anything, and says whether it is on disk. Safe to
+   * call at any time: a call made while a save runs waits for it and then
+   * looks again, so the answer is never about a save still in flight (a blur
+   * starts one just before the Raw toggle asks).
+   */
+  export async function save(): Promise<RawSaveResult> {
+    for (let round = 0; round < 3; round++) {
+      while (inFlight) await inFlight.catch(() => undefined);
+      if (!hasUnsavedText()) return 'clean';
+      if (conflict) return 'conflict';
+      const run = writeTyped();
+      inFlight = run;
+      let result: RawSaveResult;
+      try {
+        result = await run;
+      } finally {
+        if (inFlight === run) inFlight = null;
+      }
+      // Text typed while the write ran is still unsaved: go round again.
+      if (result !== 'saved') return result;
+    }
+    return hasUnsavedText() ? 'failed' : 'saved';
+  }
+
+  async function writeTyped(): Promise<RawSaveResult> {
+    const hash = baseHash;
+    if (hash === null) return 'failed';
     saving = true;
     const sent = text;
     try {
-      const result = await noteStore.writeRaw(path, sent, baseHash);
-      if (destroyed) return;
+      const result = await noteStore.writeRaw(path, sent, hash);
       if (result === 'conflict') {
         conflict = true;
-        return;
+        return 'conflict';
       }
       const after = await noteStore.readRaw(path);
-      if (destroyed || !after) return;
+      if (!after) {
+        // On disk, but the view can't tell which bytes it now stands on.
+        baseText = sent;
+        return 'saved';
+      }
       baseHash = after.hash;
       // Typing that went on during the save stays unsaved.
       baseText = text === sent ? rawTextForView(after.raw) : sent;
       if (text === sent) text = baseText;
+      return 'saved';
     } catch (err) {
       reportError('NoteRawView.save', err, `Couldn't save "${path}"`);
+      return 'failed';
     } finally {
       saving = false;
     }
@@ -106,20 +150,38 @@
     }
   }
 
+  const unregister = registerRawView({
+    path: () => path,
+    isDirty: hasUnsavedText,
+    inConflict: () => conflict,
+    text: () => text,
+    flush: save,
+    markRescued: () => {
+      rescued = true;
+    },
+  });
+
   onMount(() => {
     void load();
   });
 
   onDestroy(() => {
     destroyed = true;
+    unregister();
     if (followTimer) clearTimeout(followTimer);
     followTimer = null;
+    if (rescued || (!hasUnsavedText() && !inFlight)) return;
     // Closing the view saves what was typed; the write outlives the view.
-    if (dirty && !readOnly && !conflict && baseHash !== null) {
-      void noteStore.writeRaw(path, text, baseHash).catch((err: unknown) => {
-        reportError('NoteRawView.close', err, `Couldn't save "${path}"`);
-      });
-    }
+    // Text that can't land (the note changed elsewhere, the write failed,
+    // or a save already running comes back with a conflict) is copied to
+    // .filo/recovery/ rather than dropped.
+    const closedPath = path;
+    const typed = text;
+    void (async () => {
+      const result = await save();
+      if (result === 'clean' || result === 'saved' || rescued) return;
+      await keepRawRescueCopy(closedPath, typed, result);
+    })();
   });
 
   // Follow a change made elsewhere (another view, another program) while

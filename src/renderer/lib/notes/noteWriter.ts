@@ -45,6 +45,7 @@ import { noteReadEncoding } from '../vault/nonUtf8Paths.svelte';
 import { mergeFrontmatterDelta, type FrontmatterDelta } from '../vault/frontmatterDelta';
 import {
   assembleNoteText,
+  breaksFrontmatter,
   noteTextHash,
   readNoteText,
   sameBody,
@@ -112,6 +113,27 @@ export class NameExhaustedError extends Error {
     super(`Could not find a free file name for "${base}"`);
     this.name = 'NameExhaustedError';
   }
+}
+
+/**
+ * Thrown instead of writing bytes whose frontmatter no longer parses when the
+ * file's did: every view would lose the note's properties.
+ */
+export class FrontmatterBreakError extends Error {
+  constructor(relPath: string) {
+    super(`Filo stopped a change that would have broken the properties of "${relPath}"`);
+    this.name = 'FrontmatterBreakError';
+  }
+}
+
+/** Options for {@link NoteWriter.transform}. */
+export interface TransformOptions {
+  /**
+   * The new text is the user's own whole file (the raw view), so frontmatter
+   * they typed is theirs to leave broken. Every generated rewrite is refused
+   * when it would break a block that parsed.
+   */
+  userAuthored?: boolean;
 }
 
 /** A body waiting to be written, and the local version it carries. */
@@ -203,6 +225,7 @@ export interface NoteWriter {
     relPath: string,
     fn: (fresh: NoteText) => string | null,
     track?: TrackComponentWriteOptions,
+    options?: TransformOptions,
   ): Promise<string | null>;
   /** Creates `relPath` with `text` only if nothing is there. */
   createExclusive(relPath: string, text: string): Promise<'created' | 'exists'>;
@@ -342,13 +365,16 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
           return;
         }
       }
-      const text = assembleNoteText(fresh.text, { body: body?.markdown, delta }, () => {
+      const text = assembleNoteText(fresh.text, { body: body?.markdown, delta }, (reason) => {
         reportError(
           'frontmatter.unparseable',
           null,
-          `Couldn't update metadata for "${relPath}": its YAML frontmatter is malformed, so the change wasn't saved. Fix the frontmatter in that file to re-enable metadata edits.`,
+          reason === 'not-properties'
+            ? `"${relPath}" starts with a --- block Filo can't read as properties, so this change wasn't saved.`
+            : `Couldn't update metadata for "${relPath}": its YAML frontmatter is malformed, so the change wasn't saved. Fix the frontmatter in that file to re-enable metadata edits.`,
         );
       });
+      if (breaksFrontmatter(fresh.text, text)) refuseFrontmatterBreak(vaultRoot, relPath);
       if (text !== fresh.text.raw) {
         // A write that landed after our read would be overwritten unseen.
         // Re-check the file's identity and start over if it moved.
@@ -388,6 +414,14 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
    */
   function settled(relPath: string): void {
     clearFailedPathAfterLateSuccess(host.vaultRoot() ?? undefined, relPath);
+  }
+
+  /** Keeps the change queued as failed and says why, rather than write it. */
+  function refuseFrontmatterBreak(vaultRoot: string, relPath: string): never {
+    const err = new FrontmatterBreakError(relPath);
+    reportError('frontmatter.wouldBreak', err, `${err.message}, so it wasn't saved.`);
+    markPathFailed(vaultRoot, relPath);
+    throw err;
   }
 
   function failHeldBody(vaultRoot: string, relPath: string): never {
@@ -505,7 +539,7 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
       if (pending.has(key)) arm(key);
     },
 
-    async transform(relPath, fn, track) {
+    async transform(relPath, fn, track, options) {
       const path = vaultPath(relPath);
       if (pending.has(path) || scheduler.hasWork(path)) await this.flush(relPath);
       return onPath(path, async () => {
@@ -527,6 +561,11 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
         }
         const next = fn(fresh.text);
         if (next === null || next === fresh.text.raw) return null;
+        if (!options?.userAuthored && breaksFrontmatter(fresh.text, next)) {
+          const err = new FrontmatterBreakError(relPath);
+          reportError('frontmatter.wouldBreak', err, `${err.message}, so it wasn't saved.`);
+          throw err;
+        }
         rememberOwnWrite(path, noteTextHash(next));
         await trackComponentWrite(
           vaultRoot,

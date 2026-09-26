@@ -11,6 +11,7 @@
  * `SectionView`-keyed view) used by the extracted <TaskListSection>.
  */
 import type { TaskRow } from '../../lib/tasks/taskListModel';
+import type { SetBodyStatus } from '../../stores/notes.svelte';
 import type { SectionView } from '../../lib/tasklist/taskListViewModel.svelte';
 import type { DndEvent } from 'svelte-dnd-action';
 import type {
@@ -63,7 +64,7 @@ export interface TaskListRowControllers {
     setDueTime: (row: TaskRow, hhmm: string) => void;
     setStartDate: (row: TaskRow, iso: string) => void;
     setRecurrence: (row: TaskRow, rule: string) => void;
-    setNotesBody: (row: TaskRow, body: string) => void;
+    setNotesBody: (row: TaskRow, body: string) => Promise<SetBodyStatus>;
   };
 }
 

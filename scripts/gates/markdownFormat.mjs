@@ -112,6 +112,7 @@ const TOOLBAR_CONFIG = 'src/renderer/lib/editor/toolbarConfig.ts';
 const TOOLBAR_ROUNDTRIP_TEST = 'src/tests/unit/toolbarFormattingRoundTrip.test.ts';
 
 const INVARIANT_TEST = 'src/tests/unit/frontmatterInvariant.test.ts';
+const NOTE_WRITER = 'src/renderer/lib/notes/noteWriter.ts';
 
 /** Editor-body views: `code` (comments + strings blanked) and `text` (comments blanked); svelte = scripts only. */
 function editorViews(ctx, cache, rel) {
@@ -394,6 +395,37 @@ export const checks = [
           if (!new RegExp(`\\.${name}\\(`).test(toolbarTest)) {
             out.push(fail(TOOLBAR_ROUNDTRIP_TEST, undefined, `no save → reload case runs the toolbar command ${name}()`));
           }
+        }
+      }
+      return out;
+    },
+  },
+  {
+    id: 'frontmatter-parse-preserved',
+    title: 'the note writer checks a write keeps a parsing frontmatter block parsing before it sends the bytes',
+    hint:
+      'A tokenizer gap (a wrapped `tags:` flow list, say) can turn valid YAML invalid vault-wide: every view loses the ' +
+      "note's properties. Call breaksFrontmatter(fresh, next) and refuse before each note write IPC.",
+    run(ctx) {
+      const raw = ctx.read(NOTE_WRITER);
+      if (raw === null) return [fail(NOTE_WRITER, undefined, 'missing')];
+      const code = blank(raw);
+      const withStrings = blank(raw, { strings: false });
+      const out = [];
+      const writes = [...withStrings.matchAll(/['"]vault:write-existing-file-text['"]/g)].map((m) => m.index);
+      if (writes.length === 0) out.push(fail(NOTE_WRITER, undefined, 'tripwire: no vault:write-existing-file-text invoke found'));
+      const guarded = [];
+      for (const name of ['writePending', 'transform']) {
+        const fn = functionBody(code, name);
+        if (!fn) out.push(fail(NOTE_WRITER, undefined, `no ${name}() definition found`));
+        else guarded.push(fn);
+      }
+      for (const at of writes) {
+        const fn = guarded.find((f) => f.start <= at && at < f.end);
+        if (!fn) {
+          out.push(fail(NOTE_WRITER, lineAt(raw, at), 'a note write outside writePending / transform: guard it and add it to this check'));
+        } else if (!/\bbreaksFrontmatter\s*\(/.test(withStrings.slice(fn.start, at))) {
+          out.push(fail(NOTE_WRITER, lineAt(raw, at), 'this note write is not preceded by a breaksFrontmatter(…) check'));
         }
       }
       return out;

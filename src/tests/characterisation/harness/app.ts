@@ -11,7 +11,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, readdi
 import { dirname, join, relative, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mainBridge, type MainBridge } from './mainBridge';
-import { messageBoxes, type MessageBoxCall } from './electronFake';
+import { mainListeners, messageBoxes, rendererSink, type MessageBoxCall } from './electronFake';
 
 export interface CharApp {
   /** Absolute vault root. */
@@ -198,6 +198,39 @@ export async function quitApp(app: CharApp): Promise<number> {
   const started = Date.now();
   if (!(await vaultStore.closeVault())) throw new Error('closeVault refused');
   return Date.now() - started;
+}
+
+/**
+ * Quit from the window (its close button, Alt+F4): main asks the renderer to
+ * save, and nothing is unmounted. Resolves with the renderer's answer:
+ * `ready` (main may quit now) or `awaiting-user` (a "Save failed" confirm is
+ * up; answer it with `answerConfirm`, then await `quitDone`).
+ */
+export async function quitFromWindow(app: CharApp): Promise<{ answer: 'ready' | 'awaiting-user'; quitDone: Promise<'ready' | 'cancel'> }> {
+  app.bridge.attach();
+  const listen = (channel: string, fn: () => void): void => {
+    const list = mainListeners.get(channel) ?? [];
+    const once = (): void => {
+      mainListeners.set(channel, (mainListeners.get(channel) ?? []).filter((l) => l !== once));
+      fn();
+    };
+    list.push(once);
+    mainListeners.set(channel, list);
+  };
+  let settleDone!: (v: 'ready' | 'cancel') => void;
+  const quitDone = new Promise<'ready' | 'cancel'>((r) => { settleDone = r; });
+  const answer = await new Promise<'ready' | 'awaiting-user'>((resolve) => {
+    listen('app:ready-to-quit', () => {
+      resolve('ready');
+      settleDone('ready');
+    });
+    listen('app:quit-awaiting-user', () => {
+      resolve('awaiting-user');
+      listen('app:cancel-quit', () => settleDone('cancel'));
+    });
+    rendererSink.send('app:flush-and-quit');
+  });
+  return { answer, quitDone };
 }
 
 /** What happened when the user closed the vault or opened another one. */

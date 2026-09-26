@@ -10,6 +10,7 @@ import { uiStore } from './ui.svelte';
 import { noteStore } from './notes.svelte';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { runWithCloseDrain } from '../lib/editor/closeDrainGate.svelte';
+import { flushRawViews } from '../lib/notes/rawViews';
 
 /**
  * The notes a board shows: its text tiles' paths, or a Document board's note.
@@ -91,6 +92,28 @@ function confirmCloseAnyway(failedDetails: string): Promise<boolean> {
         `Filo couldn't save the latest changes${failedDetails}. ` +
         'Closing now will lose those edits. ' +
         "Pick \"Close anyway\" to discard them, or \"Cancel\" to keep the tab open so you can retry.",
+      confirmLabel: 'Close anyway',
+      cancelLabel: 'Cancel',
+      danger: true,
+      onConfirm: () => resolve(true),
+      onCancel: () => resolve(false),
+    });
+  });
+}
+
+/**
+ * The raw view of a closing Document tab couldn't write its text (the note
+ * changed elsewhere, or the write failed). Closing keeps a copy of it in
+ * `.filo/recovery/`, so the choice is between that and staying to resolve it.
+ */
+function confirmCloseRawAnyway(paths: string[]): Promise<boolean> {
+  const names = paths.map((p) => `"${p}"`).join(', ');
+  return new Promise((resolve) => {
+    uiStore.openConfirm({
+      title: 'Raw edits not saved',
+      body:
+        `Your raw edits to ${names} aren't saved: the note changed somewhere else, or the write failed. ` +
+        'Close anyway keeps a copy of them in .filo/recovery/. Cancel keeps the tab open so you can choose which version to keep.',
       confirmLabel: 'Close anyway',
       cancelLabel: 'Cancel',
       danger: true,
@@ -215,6 +238,12 @@ export const tabStore = {
     // unmount below destroys. While raised, editors are read-only.
     // `runWithCloseDrain` lowers the gate on every exit.
     const proceed = await runWithCloseDrain(async () => {
+      // A raw view holds its text until it saves; unmounting it with text it
+      // can't write would only leave a recovery copy, so ask first.
+      if (closing?.notePath) {
+        const raw = await flushRawViews([closing.notePath]);
+        if (raw.notSaved.length > 0 && !(await confirmCloseRawAnyway(raw.notSaved))) return false;
+      }
       // Drain pending writes before unmount, collecting failures so we can
       // confirm before destroying the editor's in-memory edits (e.g. disk full).
       const noteResult = await noteStore.flushAll();
@@ -300,6 +329,11 @@ export const tabStore = {
     // drain → confirm → re-drain window so no keystroke can re-arm a
     // debounce the bulk unmount would destroy.
     const proceed = await runWithCloseDrain(async () => {
+      const closingNotes = tabs.filter((t) => t.id !== tabId && t.notePath).map((t) => t.notePath as string);
+      if (closingNotes.length > 0) {
+        const raw = await flushRawViews(closingNotes);
+        if (raw.notSaved.length > 0 && !(await confirmCloseRawAnyway(raw.notSaved))) return false;
+      }
       // Same save-failure gate as `close()`: if any drain failed, prompt
       // before destroying the editors.
       const noteResult = await noteStore.flushAll();

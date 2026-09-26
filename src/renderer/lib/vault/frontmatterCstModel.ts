@@ -358,10 +358,12 @@ export function patchFrontmatterSourceCst(
  *  - `false` → genuinely UNPARSEABLE (tabs, duplicate keys, a stray `---`). A
  *    full dump would DISCARD the broken-but-present block entirely, so the
  *    caller keeps the raw bytes instead.
- *  - `true` → valid YAML; the engine refused for a reason where the dump is
- *    DATA-PRESERVING (flow-mapping root, anchor/alias expansion, dropped
- *    `!!tag`) or replaces a non-mapping root never treated as metadata. The
- *    caller's full dump proceeds.
+ *  - `true` → valid YAML. The engine refused for a reason where the dump may
+ *    be DATA-PRESERVING (flow-mapping root, anchor/alias expansion, dropped
+ *    `!!tag`), but a valid block whose root is NOT a mapping (a scalar such as
+ *    a paragraph between two leading `---` rules, a sequence, only comments)
+ *    would be replaced wholesale by a dump of the delta keys, so the caller
+ *    also checks {@link frontmatterSourceRootIsMapping}.
  *
  * `errors.length === 0` is not sufficient: a dangling alias / missing-anchor
  * `<<` merge parses cleanly yet THROWS in `toJS()`. We force the resolution
@@ -375,6 +377,21 @@ export function frontmatterSourceParses(source: string): boolean {
     // below maps that to `false` so the assemble path keeps the raw bytes.
     doc.toJS();
     return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when `source` parses and its root is a mapping (block or flow). Any
+ * other root holds text that isn't properties, which a dump of the delta keys
+ * would delete, so the assemble path keeps such a block verbatim and refuses
+ * the metadata edit.
+ */
+export function frontmatterSourceRootIsMapping(source: string): boolean {
+  try {
+    const doc = parseDocument(source.replace(/\r\n/g, '\n'), { uniqueKeys: true, logLevel: 'error' });
+    return doc.errors.length === 0 && isMap(doc.contents);
   } catch {
     return false;
   }

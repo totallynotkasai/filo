@@ -37,6 +37,7 @@ import { Markdown } from 'tiptap-markdown';
 import { common, createLowlight } from 'lowlight';
 import { Tag } from './tagExtension';
 import { FiloListTight, FiloTaskListTight } from './taskListTight';
+import { TabKeys } from './tabKeys';
 import { isFiloLink } from '../../schema/link';
 import { blockLayoutHtml, hasBlockLayout } from './blockLayout';
 
@@ -90,18 +91,22 @@ const Indent = Extension.create({
   },
 
   addCommands() {
+    // Every paragraph and heading the selection touches moves together, so
+    // Tab over several lines indents them all, as in a word processor.
     const indentDelta = (delta: 1 | -1) =>
       () =>
       ({ tr, state, dispatch }: CommandProps): boolean => {
-        const { $from } = state.selection;
-        const node = $from.parent;
-        if (node.type.name !== 'paragraph' && node.type.name !== 'heading') return false;
-        const min = 0;
-        const max = 8;
-        const next = Math.max(min, Math.min(max, (node.attrs.indent || 0) + delta));
-        if (dispatch)
-          dispatch(tr.setNodeMarkup($from.before(), undefined, { ...node.attrs, indent: next }));
-        return true;
+        const { from, to } = state.selection;
+        let found = false;
+        state.doc.nodesBetween(from, to, (node, pos) => {
+          if (node.type.name !== 'paragraph' && node.type.name !== 'heading') return true;
+          found = true;
+          const next = Math.max(0, Math.min(8, (node.attrs.indent || 0) + delta));
+          if (next !== (node.attrs.indent || 0)) tr.setNodeMarkup(pos, undefined, { ...node.attrs, indent: next });
+          return false;
+        });
+        if (found && dispatch) dispatch(tr);
+        return found;
       };
     return {
       increaseIndent: indentDelta(1),
@@ -307,6 +312,7 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
       // After Markdown: replaces its list `tight` parse rule (see taskListTight.ts).
       FiloListTight,
       Tag,
+      TabKeys,
     ],
 
     onUpdate: ({ editor: e }) => {

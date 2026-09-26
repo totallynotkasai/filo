@@ -50,6 +50,8 @@ export interface CanvasScope {
   toggleSnap(): void;
   toggleWaypointsVisible(): void;
   setWaypointsVisible(v: boolean): void;
+  /** Writes a camera move still inside its idle window to the board now (save, leave). */
+  flushViewport(): void;
   /** Pane-teardown hook: cancels the in-flight fly and flushes the viewport. */
   destroy(): void;
 }
@@ -303,6 +305,10 @@ export function createCanvasScope(): CanvasScope {
 
     setWaypointsVisible(v: boolean) {
       waypointsVisible = v;
+    },
+
+    flushViewport() {
+      flushPendingViewport();
     },
 
     destroy() {

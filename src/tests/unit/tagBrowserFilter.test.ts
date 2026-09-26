@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { filterTagNames, countTagUsage } from '@renderer/lib/tags/tagBrowserFilter';
+import { filterTagNames, countTagUsage, tagBrowserRows } from '@renderer/lib/tags/tagBrowserFilter';
 
 const NAMES = ['home', 'misc', 'personal', 'personal/projects', 'work', 'work/project', 'work/project/q1'];
 
@@ -31,14 +31,42 @@ describe('filterTagNames', () => {
 });
 
 describe('countTagUsage', () => {
-  it('counts files and tiles per exact tag, once per carrier', () => {
+  it('counts files and tiles per tag, once per carrier', () => {
     const counts = countTagUsage(
       [{ tags: ['a', 'b'] }, { tags: ['a', 'a'] }, { tags: [] }],
       [{ tags: ['b'] }, { tags: ['c', 'a'] }],
     );
-    expect(counts.get('a')).toEqual({ files: 2, tiles: 1 });
-    expect(counts.get('b')).toEqual({ files: 1, tiles: 1 });
-    expect(counts.get('c')).toEqual({ files: 0, tiles: 1 });
+    expect(counts.get('a')).toMatchObject({ files: 2, tiles: 1 });
+    expect(counts.get('b')).toMatchObject({ files: 1, tiles: 1 });
+    expect(counts.get('c')).toMatchObject({ files: 0, tiles: 1 });
     expect(counts.get('a/x')).toBeUndefined();
+  });
+
+  it('counts `Project` and `project` as one tag, once per carrier', () => {
+    const counts = countTagUsage(
+      [{ tags: ['Project'] }, { tags: ['project', 'Project'] }, { tags: ['project'] }],
+      [{ tags: ['PROJECT'] }],
+    );
+    expect(counts.size).toBe(1);
+    expect(counts.get('project')).toMatchObject({ files: 3, tiles: 1 });
+  });
+});
+
+describe('tagBrowserRows', () => {
+  it('shows one row per tag whatever its case, under the registered spelling', () => {
+    const usage = countTagUsage([{ tags: ['project'] }, { tags: ['project'] }, { tags: ['Project'] }], []);
+    expect(tagBrowserRows(['Project'], usage)).toEqual([{ name: 'Project', files: 3, tiles: 0 }]);
+  });
+
+  it('an unregistered tag shows the spelling most carriers use', () => {
+    const usage = countTagUsage([{ tags: ['Idea'] }, { tags: ['idea'] }, { tags: ['idea'] }], [{ tags: ['IDEA'] }]);
+    expect(tagBrowserRows([], usage)).toEqual([{ name: 'idea', files: 3, tiles: 1 }]);
+  });
+
+  it('keeps registered tags nobody uses, sorted by name', () => {
+    expect(tagBrowserRows(['zeta', 'Alpha'], new Map())).toEqual([
+      { name: 'Alpha', files: 0, tiles: 0 },
+      { name: 'zeta', files: 0, tiles: 0 },
+    ]);
   });
 });

@@ -172,9 +172,13 @@ describe('Audit-18 5.1 — lastView persist debounce restored', () => {
   });
 
   it('source: KanbanBoard onDestroy flushes the pending lastView for the hydrated id (the unmount path the cleanup no longer covers)', () => {
-    const idx = KANBAN_SRC.indexOf('if (hydratedForBoardId) {');
+    const destroy = KANBAN_SRC.indexOf('onDestroy(() => {');
+    expect(destroy).toBeGreaterThan(-1);
+    expect(KANBAN_SRC.slice(destroy, destroy + 800)).toContain('flushLastView();');
+    const idx = KANBAN_SRC.indexOf('function flushLastView(): void {');
     expect(idx).toBeGreaterThan(-1);
-    const region = KANBAN_SRC.slice(idx, idx + 320);
+    const region = KANBAN_SRC.slice(idx, idx + 400);
+    expect(region).toContain('if (!hydratedForBoardId) return;');
     expect(region).toContain('flushLastViewForBoard(hydratedForBoardId');
   });
 });

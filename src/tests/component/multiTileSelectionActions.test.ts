@@ -111,7 +111,8 @@ describe('createSelectionActions (tile and canvas menus)', () => {
     const styleCalls: unknown[][] = [];
     const a = createSelectionActions({
       board: boardStore,
-      selection: { selectedIds: new Set(selected), clear: () => {} },
+      selection: { selectedIds: new Set(selected), selectedConnectionIds: new Set<string>(), clear: () => {}, clearConnections: () => {} },
+      vaultPath: () => null,
       openTileStyle: (...args) => { styleCalls.push(args); },
       openTagEditor: () => {},
     });

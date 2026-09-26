@@ -213,7 +213,8 @@ describe('Audit-17 4.1 — a teardown title commit resolves through the home boa
 
 describe('Audit-17 4.1 — TileHeader teardown commits instead of cancelling (source shape)', () => {
   /** The unmount `$effect` cleanup region of TileHeader. */
-  const teardownStart = TILE_HEADER_SRC.indexOf('const snap = blurCommitTimer !== null ? snapshotEditorTitle() : null;');
+  // A title typed but not committed is committed whether or not the blur window is open.
+  const teardownStart = TILE_HEADER_SRC.indexOf('const snap = uncommittedTitle();');
 
   it('snapshots the editor BEFORE destroy, clears the timer, and commits', () => {
     expect(teardownStart).toBeGreaterThan(-1);
@@ -247,7 +248,7 @@ describe('Audit-17 4.2 — Frame title blur timer is tracked and commits on unmo
   });
 
   it('the unmount teardown snapshots then commits via the teardown-safe path', () => {
-    const idx = FRAME_SRC.indexOf('const snap = blurCommitTimer !== null ? snapshotEditorTitle() : null;');
+    const idx = FRAME_SRC.indexOf('const snap = uncommittedTitle();');
     expect(idx).toBeGreaterThan(-1);
     const region = FRAME_SRC.slice(idx, idx + 400);
     expect(region).toContain('clearTimeout(blurCommitTimer)');

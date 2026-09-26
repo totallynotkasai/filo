@@ -9,6 +9,8 @@ import { cloneTile } from '../lib/utils/cloneTile';
 import { reportError } from '../lib/utils/errorBus';
 import { fileTagsStore } from '../stores/fileTags.svelte';
 import { restoreFiles, retargetPath, trashFiles, type TrashedItem } from './trashedFiles';
+import { DeleteCardCommand } from './kanbanCommands';
+import { DeleteTaskCommand } from './taskCommands';
 
 /**
  * Opens the inconsistent-state modal when one or more rollback children threw
@@ -268,7 +270,21 @@ export class CascadeDeleteCommand extends Command {
   private itemRel: string | null;
   private fileTags: Record<string, string[]>; // allow-string-path-key: tags.json fileTags keys, put back verbatim
   private hasRun = false;
+  /**
+   * Kanban cards and Task List tasks, one placement-only delete each, in the
+   * order undo puts them back. `addTile` on those boards restores only the
+   * definition (the `Tile` shape has no column, section or order), so these
+   * snapshots carry each card's column, neighbour, style and cover, and each
+   * task's position, style and lock.
+   */
+  private placements: Array<DeleteCardCommand | DeleteTaskCommand> = [];
+  /** Boards whose tiles come back through `placements`, not `addTile`. */
+  private placementBoards = new Set<string>();
 
+  /**
+   * Must run before the cascade touches the cache (style clears included),
+   * so the placement snapshots hold the card's cover and position.
+   */
   constructor(
     byBoard: Record<string, Tile[]>,
     connections: Connection[],
@@ -282,6 +298,7 @@ export class CascadeDeleteCommand extends Command {
       // cloneTile shares large string references but detaches every nested
       // object — the snapshot contract we want here.
       this.byBoard[boardId] = tiles.map((t) => cloneTile(t));
+      this.snapshotPlacements(boardId, tiles);
     }
     this.connections = this.snapshot(connections);
     // Capture the vault root so undo/redo can refuse to run against a
@@ -299,6 +316,28 @@ export class CascadeDeleteCommand extends Command {
     this.description = this.itemRel
       ? `Delete "${this.itemRel}"`
       : `Cascade-delete ${totalTiles} tile(s)`;
+  }
+
+  private snapshotPlacements(boardId: string, tiles: Tile[]): void {
+    const board = boardCacheStore.cache[boardId]?.board;
+    const ids = new Set(tiles.map((t) => t.id));
+    if (board?.type === 'kanban') {
+      // Last card first: each card's anchor is the sibling that followed it,
+      // which may itself be one of the deleted cards.
+      const order: string[] = [];
+      for (const col of board.columns ?? []) {
+        for (const p of col.tilePlacements ?? []) if (ids.has(p.tileId)) order.push(p.tileId);
+      }
+      for (const tileId of order.reverse()) this.placements.push(new DeleteCardCommand(boardId, tileId));
+      this.placementBoards.add(boardId);
+    } else if (board?.type === 'tasklist') {
+      // First task first: each goes back at its old index, which is right
+      // once every earlier one is back.
+      for (const p of board.tasks ?? []) {
+        if (ids.has(p.tileId)) this.placements.push(new DeleteTaskCommand(boardId, p.tileId));
+      }
+      this.placementBoards.add(boardId);
+    }
   }
 
   private vaultChanged(verb: string): boolean {
@@ -350,7 +389,9 @@ export class CascadeDeleteCommand extends Command {
     // empty note over the path.
     if (this.trashed) {
       const [restored] = await restoreFiles(this.vaultRoot, [this.trashed], 'cascadeDelete.undo');
-      this.trashed = null;
+      // Still in the trash when the restore failed: keep its id, so a redo
+      // doesn't try to trash it again and the next undo retries it.
+      if (restored) this.trashed = null;
       if (restored && restored.restoredPath !== restored.rel) {
         // Restored beside a file that took its old name: the tiles, the tags
         // and a later redo all follow the restored copy.
@@ -361,10 +402,10 @@ export class CascadeDeleteCommand extends Command {
       fileTagsStore.setFileTags(path, tags);
     }
 
-    // Restore the style fields BEFORE the placements so a restored kanban
-    // card sees its coverImage back at the same time as the rest of its
-    // placement.
-    boardCacheStore.restoreCascadeStyleClears(this.styleClears);
+    // Cards and tasks go back into their column or section from their own
+    // snapshot. They carry no seed, so a note that did not come back shows
+    // as a broken reference.
+    for (const placement of this.placements) void placement.undo();
 
     // `skipEmptySeed: true` so a text tile whose file did NOT come back
     // doesn't get a blank `.md` seeded under it; the placement comes back
@@ -372,6 +413,7 @@ export class CascadeDeleteCommand extends Command {
     // allow-board-store-current: active-vs-cache pivot, mirror of execute()
     const activeId = boardStore.current?.id ?? null;
     for (const [boardId, tiles] of Object.entries(this.byBoard)) {
+      if (this.placementBoards.has(boardId)) continue;
       for (const tile of tiles) {
         if (boardId === activeId) {
           void boardStore.addTile(tile, { skipEmptySeed: true });
@@ -382,6 +424,10 @@ export class CascadeDeleteCommand extends Command {
         }
       }
     }
+    // Style fields come back once the placements they live on exist again: a
+    // cover image on a card deleted with its folder has nowhere to land
+    // before its card is back.
+    boardCacheStore.restoreCascadeStyleClears(this.styleClears);
     for (const conn of this.connections) {
       // Skip a restored connection whose endpoint tile no longer exists (e.g.
       // independently removed after this cascade). The tile-restore loop above
@@ -410,6 +456,7 @@ export class CascadeDeleteCommand extends Command {
     for (const [boardId, tiles] of Object.entries(this.byBoard)) {
       this.byBoard[boardId] = tiles.map((t) => retargetTile(t, retarget));
     }
+    for (const placement of this.placements) placement.renamePath(from, to);
     const tags: Record<string, string[]> = {}; // allow-string-path-key: tags.json fileTags keys
     for (const [path, list] of Object.entries(this.fileTags)) tags[retarget(path)] = list;
     this.fileTags = tags;

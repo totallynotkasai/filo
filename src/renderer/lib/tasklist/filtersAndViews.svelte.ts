@@ -19,6 +19,7 @@ import { createId } from '../utils/ids';
 import { historyStore } from '../../stores/history.svelte';
 import { UpdateSavedViewsCommand } from '../../commands/index';
 import { flushLastViewForBoard } from '../boards/lastViewFlush';
+import { registerComponentFlush } from '../boards/componentFlush';
 import type { Priority } from '../tasks/frontmatterReaders';
 import type { GroupBy, SortBy, SmartListId } from '../tasks/taskListModel';
 
@@ -107,6 +108,12 @@ export class TaskListFiltersAndViews {
   lastViewPersistTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
+   * A save or a leave writes the view state now: it runs before the host
+   * unmounts, and the swap that unmounts it cancels anything queued later.
+   */
+  private readonly unregisterFlush = registerComponentFlush('task list view', () => this.flushLastView());
+
+  /**
    * Clears the pending lastView debounce so a host unmount mid-window doesn't
    * fire `updateSettings` + push a history entry against a board that's
    * already torn down. Called from `TaskListBoard.svelte`'s `onDestroy`.
@@ -134,6 +141,11 @@ export class TaskListFiltersAndViews {
     // no-op, and buildLastView() is unmount-safe (no next-board hydrate
     // re-seeds the filters on a true teardown — the board-switch late-build
     // hazard is owned by the effect cleanup's arm-time snapshot).
+    this.flushLastView();
+    this.unregisterFlush();
+  }
+
+  private flushLastView(): void {
     if (this.hydratedForBoardId) {
       flushLastViewForBoard(this.hydratedForBoardId, this.buildLastView());
     }

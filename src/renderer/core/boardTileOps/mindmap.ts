@@ -86,29 +86,16 @@ export const mindmapTileOps: BoardTileOps<MindMapBoard> = {
     const mm = cached.board as MindMapBoard;
     const isInline = !!(mm.inlineTiles ?? {})[tileId];
 
-    if (isInline) {
-      delete (cached.board as Record<string, Record<string, unknown> | undefined>).inlineTiles?.[
-        tileId
-      ];
-      const { [tileId]: _d, ...restDefs } = cached.tileDefs;
-      void _d;
-      // Refresh the board's identity alongside the def update: the in-place
-      // `delete` above doesn't change the `board` reference, so spread a fresh
-      // copy for identity-comparison consumers (cache-identity convention).
-      ctx.updateEntry(boardId, { board: { ...mm }, tileDefs: restDefs });
-      ctx.markDirty(boardId);
-      return;
-    }
-
     // NOTE: deleting the backing .md file is a UI-layer decision (gated by
     // the "Delete file too" checkbox in TileHeader.confirmDelete and
     // AppShell.confirmDelete). The persistence layer must NOT delete files
     // — doing so makes Ctrl+Z unrecoverable and ignores user intent.
     const { [tileId]: _removed, ...restDefs } = cached.tileDefs;
     void _removed;
-    delete (cached.board as Record<string, Record<string, unknown> | undefined>).placements?.[
-      tileId
-    ];
+    // An inline tile (link, iframe, timer) can be a connection endpoint too,
+    // so both kinds go through the connection sweep below.
+    const slot = isInline ? 'inlineTiles' : 'placements';
+    delete (cached.board as Record<string, Record<string, unknown> | undefined>)[slot]?.[tileId];
 
     const updatedConns = { ...cached.connections };
     for (const [key, c] of Object.entries(updatedConns)) {
@@ -116,8 +103,8 @@ export const mindmapTileOps: BoardTileOps<MindMapBoard> = {
         delete updatedConns[key];
       }
     }
-    // Fresh `board` ref alongside the in-place `delete` of the
-    // placement above (cache-identity convention).
+    // Fresh `board` ref alongside the in-place `delete` above
+    // (cache-identity convention).
     ctx.updateEntry(boardId, { board: { ...mm }, tileDefs: restDefs, connections: updatedConns });
 
     ctx.updateProjectConnectionsFrames(({ connections: projConns }) => {

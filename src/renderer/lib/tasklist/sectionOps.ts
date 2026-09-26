@@ -28,12 +28,26 @@ import type {
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { historyStore } from '../../stores/history.svelte';
 import { createId } from '../utils/ids';
+import { defaultTaskSectionFontSizes } from '../styles/defaultFontSizes';
 import {
   AddSectionCommand,
   DeleteSectionCommand,
   RenameSectionCommand,
   ReorderSectionCommand,
 } from '../../commands/index';
+
+/**
+ * A new section, with the Settings default for its header size baked in as
+ * its own style (as a new task gets its font sizes): changing the default
+ * later never rewrites existing sections.
+ */
+function newSection(id: string, title: string, position: number): TaskListSection {
+  const { fontSizeTitle } = defaultTaskSectionFontSizes();
+  return {
+    id, title, position, collapsed: false,
+    ...(fontSizeTitle !== undefined && { style: { fontSizeTitle } }),
+  } as TaskListSection;
+}
 
 export interface SectionOpsDeps {
   getBoard: () => TaskListBoardType | null;
@@ -87,7 +101,7 @@ export function makeSectionOps(deps: SectionOpsDeps): SectionOps {
     // make Ctrl+Z replay an unexpected default-section creation, so we
     // persist it directly without pushing a Command — the parent op's own
     // Command captures the materialised state in its before-snapshot.
-    persistSections([{ id, title: initialTitle, position: 0, collapsed: false }]);
+    persistSections([newSection(id, initialTitle, 0)]);
     return id;
   }
 
@@ -104,13 +118,13 @@ export function makeSectionOps(deps: SectionOpsDeps): SectionOps {
     const before = deps.snapshotSections();
     const wasEmpty = before.sections.length === 0;
     const autoDefault: TaskListSection | null = wasEmpty
-      ? { id: `sec_${createId()}`, title: 'Task List', position: 0, collapsed: false }
+      ? newSection(`sec_${createId()}`, 'Task List', 0)
       : null;
     const id = `sec_${createId()}`;
     const placements = deps.getPlacements();
     const baseSections = autoDefault ? [autoDefault] : before.sections;
     const after = {
-      sections: [...baseSections, { id, title, position: placements.length, collapsed: false }],
+      sections: [...baseSections, newSection(id, title, placements.length)],
       tasks: before.tasks,
     };
     historyStore.execute(new AddSectionCommand(board.id, before, after, title, autoDefault));

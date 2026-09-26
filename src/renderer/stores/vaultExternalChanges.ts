@@ -192,13 +192,13 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
       // (note models and their write queues, tabs, undo history, baselines)
       // BEFORE the drain: a note's queued edit then lands in the moved file,
       // on the base it was built on, instead of failing on the old path.
-      renameAllPathKeys(oldRel, newRel);
+      const pathKeysOk = renameAllPathKeys(oldRel, newRel);
 
       // Drain pending writers before the cascade, so the board and tag
       // rewrites below don't race a write still in flight.
       try {
         await withDrainedWrites(
-          () => runExternalRenameCascade(ctx, oldRel, newRel, captured),
+          () => runExternalRenameCascade(ctx, oldRel, newRel, pathKeysOk, captured),
           { paths: [oldRel, newRel] },
         );
       } catch (err) {
@@ -306,11 +306,15 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
  * The cascade mirrors the in-app rename's post-IPC follow-up (renameBoardPath,
  * propagateRename, tags, doc filename, activeRootFolder, defaultFolder pins,
  * sentinel breadcrumb, flushAllDirty + failed-paths toast).
+ *
+ * `pathKeysOk` is false when a path-keyed sweep threw: the rename is then
+ * recorded in the sentinel, and kept there, even if every write succeeds.
  */
 async function runExternalRenameCascade(
   ctx: VaultContext,
   oldRel: string,
   newRel: string,
+  pathKeysOk: boolean,
   captured?: VaultIdentity,
 ): Promise<void> {
   await boardCacheStore.ensureAllLoaded();
@@ -429,11 +433,12 @@ async function runExternalRenameCascade(
     renamedBoardIds.length > 0 ||
     defaultFolderBoardIds.length > 0;
   if (!hasCascadeWork) {
-    // If the tag flush above failed, a tags-only rename has no board cascade
-    // to carry a recovery sentinel. Lay down a minimal tags-only sentinel so
-    // reopen re-asserts the tag rename (`renameCascadeRepair` always
-    // re-asserts tags.json keys, independently of `affectedBoardIds`).
-    if (!tagsFlushOk && vaultRoot && oldRel && newRel) {
+    // If the tag flush above failed (or a path-keyed sweep threw), there is no
+    // board cascade to carry a recovery sentinel. Lay down a minimal one so
+    // reopen replays the rename (`renameCascadeRepair` always re-asserts
+    // tags.json keys and the path-keyed sweeps, independently of
+    // `affectedBoardIds`).
+    if ((!tagsFlushOk || !pathKeysOk) && vaultRoot && oldRel && newRel) {
       try {
         await writePendingRenameCascade(vaultRoot, {
           oldPath: oldRel,
@@ -492,7 +497,7 @@ async function runExternalRenameCascade(
         );
       });
     }
-  } else if (vaultRoot && sentinelId) {
+  } else if (vaultRoot && sentinelId && pathKeysOk) {
     await clearPendingRenameCascade(vaultRoot, sentinelId).catch((err) => {
       reportError(
         'vault.handleRename.sentinel',

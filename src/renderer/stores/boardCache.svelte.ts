@@ -310,6 +310,8 @@ const deleteSlice = makeBoardDeleteSlice({
   setCache: (next) => { boardCache = next; },
   getPaths: () => boardPaths,
   setPaths: (next) => { boardPaths = next; },
+  flushWrite: (boardId) => flushBoardWrite(boardId, () => getBoardWriteArgs(boardId)),
+  markDirty,
 });
 
 export const boardCacheStore = {
@@ -538,6 +540,19 @@ export const boardCacheStore = {
     // no transient window where the map points at the old entry with changed
     // settings, and identity-comparison consumers see a real change.
     const nextBoard = { ...cached.board, settings } as typeof cached.board;
+    boardCache = { ...boardCache, [boardId]: { ...cached, board: nextBoard } };
+    this.markDirty(boardId);
+  },
+
+  /**
+   * Sets the board's name and/or emoji and schedules its write. They live in
+   * the `.board.json`, so this is the change that lasts; the project list and
+   * tab labels are copies (`stores/boardIdentity.ts` updates those too).
+   */
+  updateBoardIdentity(boardId: string, patch: { name?: string; emoji?: string }) {
+    const cached = boardCache[boardId];
+    if (!cached) return;
+    const nextBoard = { ...cached.board, ...patch } as typeof cached.board;
     boardCache = { ...boardCache, [boardId]: { ...cached, board: nextBoard } };
     this.markDirty(boardId);
   },

@@ -70,7 +70,7 @@ export function isStillSameVault(captured: VaultIdentity): boolean {
 
 /**
  * The live generation token. For callers that key transient state per
- * generation (e.g. `withDrainedWrites`'s re-entrancy guard) rather than
+ * generation (e.g. `withDrainedWrites`' per-vault queue and drain tokens) rather than
  * capturing a full identity.
  */
 export function currentVaultGeneration(): number {

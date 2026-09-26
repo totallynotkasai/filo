@@ -108,12 +108,14 @@ describe('rename-cascade recovery — Retry repoints open notes', () => {
   /** Where the note's file is on disk; the rename already happened before the crash. */
   let notePathOnDisk: string;
   let noteWrites: string[];
+  let deletes: string[];
 
   beforeEach(() => {
     resetAll();
     vaultStore.setPath('/vault');
     notePathOnDisk = 'Notes/old.md';
     noteWrites = [];
+    deletes = [];
     installFiloMock((channel: string, ...args: unknown[]) => {
       if (channel === 'vault:read-file-text') {
         const p = String(args[1]);
@@ -128,6 +130,8 @@ describe('rename-cascade recovery — Retry repoints open notes', () => {
       if (channel === 'vault:stat') {
         return String(args[1]) === notePathOnDisk ? { success: true, mtimeMs: 1, size: 25 } : { success: false, code: 'ENOENT' };
       }
+      if (channel === 'vault:file-exists') return String(args[1]) === notePathOnDisk;
+      if (channel === 'vault:delete') deletes.push(String(args[1]));
       if (channel === 'vault:write-existing-file-text') noteWrites.push(String(args[1]));
       if (channel === 'tags:load') return null;
       if (channel === 'vault:read-tree') return { ok: true, tree: [] };
@@ -164,33 +168,44 @@ describe('rename-cascade recovery — Retry repoints open notes', () => {
     expect(noteWrites).toEqual(['Notes/new.md']);
   });
 
-  // "Discard" repairs too (the renamed file is already on
-  // disk; abandoning the cascade would strand boards with broken refs).
-  it('repairs board refs + open notes and confirms on Discard', async () => {
+  // Discard means "leave things as they are": it only drops the breadcrumb.
+  it('Discard clears the sentinel and changes nothing else', async () => {
     boardCacheStore.hydrate({ b1: boardWithFileRef('b1', 'Notes/old.md') }, { b1: 'b1.board.json' });
     await openNoteThenMoveFile();
+    const saves: string[] = [];
+    const flushSpy = vi.spyOn(boardCacheStore, 'flushAllDirty').mockImplementation(async () => {
+      saves.push('flush');
+      return { failed: [] };
+    });
 
-    const toastsBefore = uiStore.toasts.length;
     const seq = __runRecoverySequencerForTests('/vault');
     await fireDialog('cancel');
     await seq;
-    // The confirmation toast is the last observable step of the repair IIFE,
-    // so waiting for it guarantees the board + note repairs already ran.
-    await waitFor(() => uiStore.toasts.some((t) => /[Rr]epair/.test(t.text)));
+    expect(await waitFor(() => deletes.some((p) => p.includes('rename-cascade-pending.')))).toBe(true);
 
-    // Open note repointed (Discard ran the same repair as Retry).
-    expect(noteStore.get('Notes/new.md')?.relPath).toBe('Notes/new.md');
-    expect(noteStore.get('Notes/old.md')).toBeUndefined();
-
-    // Board file-ref rewritten old → new.
     const def = boardCacheStore.cache.b1.tileDefs.t1 as unknown as { filePath: string };
-    expect(def.filePath).toBe('Notes/new.md');
+    expect(def.filePath).toBe('Notes/old.md');
+    expect(noteStore.get('Notes/old.md')).toBeDefined();
+    expect(noteStore.get('Notes/new.md')).toBeUndefined();
+    expect(saves).toEqual([]);
+    flushSpy.mockRestore();
+  });
 
-    // A repair-confirmation toast was surfaced (the new Discard feedback).
-    const newToasts = uiStore.toasts.slice(toastsBefore);
-    expect(newToasts.some((t) => /[Rr]epair/.test(t.text))).toBe(true);
+  // Replaying old → new when the disk doesn't show that rename would point
+  // boards and open notes at a file that isn't there.
+  it('Retry leaves an entry alone when the old path is still on disk', async () => {
+    boardCacheStore.hydrate({ b1: boardWithFileRef('b1', 'Notes/old.md') }, { b1: 'b1.board.json' });
+    const m = noteStore.acquire('Notes/old.md', 'doc');
+    await m.loaded;
 
-    for (const t of newToasts) uiStore.dismissToast(t.id);
+    const seq = __runRecoverySequencerForTests('/vault');
+    await fireDialog('confirm');
+    await seq;
+
+    const def = boardCacheStore.cache.b1.tileDefs.t1 as unknown as { filePath: string };
+    expect(def.filePath).toBe('Notes/old.md');
+    expect(noteStore.get('Notes/old.md')).toBe(m);
+    expect(noteStore.get('Notes/new.md')).toBeUndefined();
   });
 });
 

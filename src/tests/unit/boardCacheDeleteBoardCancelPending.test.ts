@@ -9,9 +9,11 @@ import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard } from '@renderer/schema/index';
 
 /**
- * deleteBoard cancels any pending debounced write BEFORE the board file moves
- * to Filo's trash. Otherwise a 300ms-old write would fire after the move
- * and recreate the file on disk.
+ * deleteBoard writes any pending debounced change BEFORE the board file moves
+ * to Filo's trash, so the trashed copy (what Undo brings back) holds it, and
+ * then cancels anything armed since. Otherwise a 300ms-old write would fire
+ * after the move and recreate the file on disk. A move that fails keeps the
+ * board's changes tracked for the next save.
  */
 
 type InvokeHandler = (...args: unknown[]) => unknown | Promise<unknown>;
@@ -63,7 +65,7 @@ describe('boardCacheStore.deleteBoard cancels pending write', () => {
     boardCacheStore.clear();
   });
 
-  it('does not fire a board:save when the debounce window elapses mid-delete', async () => {
+  it('writes the pending change before the move, and none after it', async () => {
     // Hold the trash move in-flight until we manually resolve it, so the
     // 300ms debounce can fire DURING the await — this is the exact race
     // the resurrection bug exploits.
@@ -108,9 +110,24 @@ describe('boardCacheStore.deleteBoard cancels pending write', () => {
     // Final flush — also covers any stray write scheduled after the cancel.
     await vi.advanceTimersByTimeAsync(500);
 
-    const saveCalls = calls.filter((c) => c.channel === 'board:save');
-    expect(saveCalls.length).toBe(0);
+    const channels = calls.map((c) => c.channel).filter((c) => c === 'board:save' || c === 'vault:trash-move');
+    expect(channels).toEqual(['board:save', 'vault:trash-move']);
     const moves = calls.filter((c) => c.channel === 'vault:trash-move');
     expect(moves.map((c) => c.args)).toEqual([['/vault', 'tasks.board.json']]);
+  });
+
+  it('a move that fails leaves the board with a write armed for its changes', async () => {
+    const { calls } = installFiloStub({
+      'board:save': async () => ({ success: true }),
+      'vault:trash-move': async () => ({ success: false, code: 'EBUSY', error: 'busy' }),
+    });
+    boardCacheStore.hydrate({ kb: makeKanbanFixture() }, { kb: 'tasks.board.json' });
+
+    const deleted = await boardCacheStore.deleteBoard('kb');
+    expect(deleted).toBeNull();
+    expect(boardCacheStore.cache.kb).toBeDefined();
+    const before = calls.filter((c) => c.channel === 'board:save').length;
+    await vi.advanceTimersByTimeAsync(500);
+    expect(calls.filter((c) => c.channel === 'board:save').length).toBe(before + 1);
   });
 });

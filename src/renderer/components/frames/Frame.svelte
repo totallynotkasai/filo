@@ -28,6 +28,7 @@
   import { boardCacheStore } from '../../stores/boardCache.svelte';
   import FrameStylePopup from './FrameStylePopup.svelte';
   import { historyStore } from '../../stores/history.svelte';
+  import { registerComponentFlush } from '../../lib/boards/componentFlush';
   import { UpdateFrameCommand, MoveFrameCommand } from '../../commands/index';
 
   let {
@@ -183,6 +184,17 @@
     return resolveTitleCommitValues(titleEditor.getText(), titleEditor.getHTML(), 'Frame');
   }
 
+  /** The editor's value when it differs from the committed title, else null. */
+  function uncommittedTitle(): ResolvedTitleCommit | null {
+    const snap = snapshotEditorTitle();
+    if (!snap) return null;
+    const prevHtml = (frame as FrameType & { titleHtml?: string }).titleHtml ?? '';
+    return snap.plain !== frame.title || prevHtml !== (snap.titleHtml ?? '') ? snap : null;
+  }
+
+  // A save or a leave commits a title typed but not yet committed.
+  $effect(() => registerComponentFlush('frame title', () => { if (uncommittedTitle()) commitTitle(); }));
+
   function commitTitle() {
     const snap = snapshotEditorTitle();
     destroyTitleEditor();
@@ -271,14 +283,14 @@
     }
   });
 
-  // Commit-on-unmount: an armed blur→commit at teardown means the user
-  // finished editing and the 200 ms window was still open (clicking another
-  // tab/board blurs AND unmounts within ms). Snapshot before the editor is destroyed,
+  // Commit-on-unmount: a title typed but not committed (the 200 ms blur
+  // window still open, or the view closed while editing) is committed rather
+  // than dropped. Snapshot before the editor is destroyed,
   // clear the timer (inline so `gates:component-timer-cleanup` recognises it),
   // then commit through the teardown-safe path.
   $effect(() => {
     return () => {
-      const snap = blurCommitTimer !== null ? snapshotEditorTitle() : null;
+      const snap = uncommittedTitle();
       if (blurCommitTimer) clearTimeout(blurCommitTimer);
       blurCommitTimer = null;
       destroyTitleEditor();

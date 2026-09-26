@@ -13,6 +13,7 @@ import {
   CaseRenameStrandedError,
 } from '../vault/fileOps';
 import { atomicWriteFile, uniqueFolderPath, withOnDiskSpelling, LOCK_AWARE_SUPPRESS_MS } from '../vault/filenameUtils';
+import { createExclusiveFile } from '../vault/exclusiveCreate';
 import { FileWatcher } from '../services/fileWatcher';
 import {
   assertWithinVault,
@@ -625,9 +626,9 @@ export function registerVaultHandlers(): void {
    * (Kanban card / task / Task-List OS drop). Reserves the name with an
    * `O_EXCL` open (`'wx'`, case-insensitive on NTFS/APFS) and returns a typed
    * `EEXIST` instead of overwriting a user's existing file; the renderer bumps
-   * to ` (n)` and retries. Watcher suppression runs only AFTER the name is ours,
-   * so a losing attempt never masks a real external edit of the existing file.
-   * Mirrors `copyFileToVault`'s reserve-then-replace.
+   * to ` (n)` and retries. The watcher window only hides a file holding the
+   * placeholder's or Filo's own bytes, so a losing attempt can't mask a real
+   * external edit of the existing file. See `createExclusiveFile`.
    */
   ipcMain.handle(
     'vault:create-file-text',
@@ -644,23 +645,20 @@ export function registerVaultHandlers(): void {
         const fullPath = join(vaultRoot, relativePath);
         assertWithinVault(vaultRoot, fullPath);
         await fsPromises.mkdir(dirname(fullPath), { recursive: true });
+        // Before the reservation: the 0-byte placeholder's create event would
+        // otherwise reach the renderer as an external change (an empty note).
+        // Both the placeholder and the final bytes count as Filo's; an event
+        // for a file holding anything else still gets through.
+        activeWatcher?.suppressWrite(relativePath, LOCK_AWARE_SUPPRESS_MS, '');
+        activeWatcher?.suppressWrite(relativePath, LOCK_AWARE_SUPPRESS_MS, content);
         try {
-          const placeholder = await fsPromises.open(fullPath, 'wx');
-          await placeholder.close();
-        } catch (openErr) {
-          if ((openErr as NodeJS.ErrnoException).code === 'EEXIST') {
+          await createExclusiveFile(fullPath, content);
+        } catch (createErr) {
+          if ((createErr as NodeJS.ErrnoException).code === 'EEXIST') {
             // Expected outcome (the renderer bumps the name) — not an error log.
             return { success: false, code: 'EEXIST', error: 'file already exists' };
           }
-          throw openErr;
-        }
-        activeWatcher?.suppressWrite(relativePath, LOCK_AWARE_SUPPRESS_MS, content);
-        try {
-          await atomicWriteFile(fullPath, content);
-        } catch (writeErr) {
-          // Drop only OUR 0-byte placeholder so a retry can reuse the name.
-          await fsPromises.unlink(fullPath).catch(() => undefined);
-          throw writeErr;
+          throw createErr;
         }
         noteOwnWrite(relativePath, content);
         return { success: true, path: fullPath };

@@ -67,7 +67,7 @@ export class NoteEditorView {
       if (old && vaultPath(old.relPath) === vaultPath(this.path)) noteStore.release(this.path, this.viewId);
     }
     this.path = relPath;
-    if (relPath) noteStore.acquire(relPath, this.viewId, { serialize: () => this.serialize() });
+    if (relPath) noteStore.acquire(relPath, this.viewId, { serialize: () => this.serialize(), unserialised: () => this.unserialised });
   }
 
   /** Stops showing the note (component destroy). Unsaved keystrokes are kept. */

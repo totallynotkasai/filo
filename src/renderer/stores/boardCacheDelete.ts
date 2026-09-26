@@ -15,6 +15,10 @@ export interface BoardDeleteContext {
   setCache(next: Record<string, BoardFileData>): void;
   getPaths(): Record<string, string>;
   setPaths(next: Record<string, string>): void;
+  /** Writes the board's pending change now. */
+  flushWrite(boardId: string): Promise<{ ok: boolean }>;
+  /** Arms a write of the board's cached state. */
+  markDirty(boardId: string): void;
 }
 
 /** A board file the delete moved into Filo's trash. */
@@ -73,8 +77,12 @@ export function makeBoardDeleteSlice(ctx: BoardDeleteContext) {
       const boardPath = ctx.getPaths()[boardId];
       if (!boardPath) return null;
 
-      // Cancel any pending debounced write BEFORE the move, else a
-      // 300ms-old timer fires after it and recreates the file.
+      // The trashed copy is what Undo and Settings → Trash bring back, so the
+      // last edits (up to 300 ms old) are written first. A failed write has
+      // already said so; the delete still goes ahead.
+      await ctx.flushWrite(boardId);
+      // Then cancel anything armed since, else a timer fires after the move
+      // and recreates the file.
       cancelBoardWrite(boardId, boardPath);
 
       // cancelBoardWrite only reaches pending/parked timers; an IN-FLIGHT
@@ -96,6 +104,8 @@ export function makeBoardDeleteSlice(ctx: BoardDeleteContext) {
         return { boardPath, trashId: result.trashId };
       } catch (err) {
         clearBoardPathDeleting(boardPath); // the move failed — re-enable writes
+        // The board stays, so its changes stay tracked for the next save.
+        ctx.markDirty(boardId);
         reportError('boardCache.delete', err, `Couldn't move the board file ${boardPath} to Filo's trash; it was not deleted.`);
         return null;
       }

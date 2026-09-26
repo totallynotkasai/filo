@@ -94,6 +94,9 @@ export function makeTaskListSlice(ctx: CacheContext) {
       position: number,
       style?: PartialTaskStyle,
       targetSectionId?: string,
+      // The whole placement a delete snapshotted (lock, and any field this
+      // version doesn't know), so an undo puts all of it back.
+      restoreFrom?: TaskPlacement | null,
     ): void {
       const parsed = TileDefinitionSchema.safeParse(def);
       if (!parsed.success) {
@@ -120,7 +123,7 @@ export function makeTaskListSlice(ctx: CacheContext) {
       const placements = [...((tl.tasks ?? []) as TaskPlacement[])];
       const oldLength = placements.length;
       const insertAt = Math.min(Math.max(position, 0), oldLength);
-      const placement: TaskPlacement = { tileId: validDef.id, position };
+      const placement: TaskPlacement = { ...restoreFrom, tileId: validDef.id, position };
       if (style) placement.style = style;
       placements.splice(insertAt, 0, placement);
       (tl as Record<string, unknown>).tasks = placements.map((p, i) => ({ ...p, position: i }));

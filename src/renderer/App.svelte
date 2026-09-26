@@ -14,6 +14,7 @@
   import { retryAllFailedWrites } from './lib/boards/writeSchedulerFailures';
   import { listenForSyncConflicts } from './lib/vault/syncConflictNotices';
   import { handleFlushAndQuit } from './lib/vault/handleFlushAndQuit';
+  import { releaseFocusedField } from './lib/boards/componentFlush';
   import { describeUnsaved, keepRescueCopies, preservedTmpCount } from './stores/unsavedRescue';
   import { flushDirtyFlagSentinel } from './lib/vault/dirtyFlagRecovery';
   import { historyStore } from './stores/history.svelte';
@@ -128,7 +129,11 @@
   window.filo.on('app:flush-and-quit', () => {
     void handleFlushAndQuit({
       saveStateState: () => saveStateStore.state,
-      save: () => vaultStore.save(),
+      // A field that saves on blur hands its text over first (see releaseFocusedField).
+      save: () => {
+        releaseFocusedField();
+        return vaultStore.save();
+      },
       send: (channel) => window.filo.send(channel),
       reportError,
       // Drain the dirty-flag sentinel mutex so the markClean queued by save()

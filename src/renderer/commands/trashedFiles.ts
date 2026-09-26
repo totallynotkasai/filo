@@ -7,7 +7,7 @@
 import { noteStore } from '../stores/notes.svelte';
 import { uiStore } from '../stores/ui.svelte';
 import { reindexUnder, syncAfterRestore } from '../stores/trash.svelte';
-import { restoreTrashed, trashVaultPath } from '../lib/vault/vaultOperations';
+import { restoreTrashed, trashVaultPath, type DrainToken } from '../lib/vault/vaultOperations';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { reportError } from '../lib/utils/errorBus';
 
@@ -27,15 +27,21 @@ export interface RestoredItem {
 /**
  * Moves each path into Filo's trash, one after the other. A path already gone
  * is skipped silently (the goal, "not here any more", holds); any other
- * failure is reported and the path stays where it is.
+ * failure is reported and the path stays where it is. `within` is the token of
+ * the drained op this runs inside, if any.
  */
-export async function trashFiles(vaultRoot: string, rels: string[], context: string): Promise<TrashedItem[]> {
+export async function trashFiles(
+  vaultRoot: string,
+  rels: string[],
+  context: string,
+  within?: DrainToken,
+): Promise<TrashedItem[]> {
   const identity = captureVaultIdentity();
   const trashed: TrashedItem[] = [];
   for (const rel of rels) {
     if (!isStillSameVault(identity)) break;
     try {
-      const result = await trashVaultPath(vaultRoot, rel);
+      const result = await trashVaultPath(vaultRoot, rel, within);
       if (result.success) {
         trashed.push({ rel, trashId: result.trashId });
         continue;
@@ -98,6 +104,16 @@ export async function restoreFiles(vaultRoot: string, items: TrashedItem[], cont
     );
   }
   return restored;
+}
+
+/**
+ * The items `restoreFiles` did not bring back. A command keeps their trash ids,
+ * so the file is still findable by a later undo (after a redo) instead of
+ * being forgotten while it waits in the trash.
+ */
+export function stillTrashed(items: TrashedItem[], restored: RestoredItem[]): TrashedItem[] {
+  const back = new Set(restored.map((r) => r.rel));
+  return items.filter((item) => !back.has(item.rel));
 }
 
 /** `path` with its `from` prefix (a file, or a folder above it) replaced by `to`. */

@@ -659,6 +659,89 @@ Related findings folded in: #31 and #34 (editors stay editable during the save, 
 - The real app's quit with the window X during typing, a title edit and a raw edit → everything is on disk.
 - A re-run of the concurrency-stores audit dimension on the changed files finds nothing new.
 
+### Status: done (2026-09-26)
+
+A21-28 to A21-35 are implemented, with the deviations below. Every new test was run against the old behaviour first (the fix taken out again) and failed there, except where noted.
+
+- **A21-28.** New `src/renderer/lib/boards/componentFlush.ts`: `registerComponentFlush(id, flush)` and `flushAllComponents()`. A flush hands what a mounted view holds to its writer; one that throws is reported and the rest still run.
+  - `vaultStore.save()` runs `flushAllComponents()` first, before the command chain settles, so Ctrl+S, close, open-another-vault and the quit drain all see it.
+  - Registered: tile and frame titles (A21-29), the timer tile (A21-30), each pane's canvas viewport (A21-31), the Kanban `lastView` (`flushLastView` in `KanbanBoard.svelte`) and the Task List one (`TaskListFiltersAndViews` registers itself and unregisters in `dispose()`).
+  - `saveBeforeLeaving` raises the close-drain gate (`holdCloseDrainUntilSwap`) for the whole leave, so the editors stay read-only from the save until the swap has unmounted them. The gate's pre-swap reset now runs after `tabs`, and staying (Cancel) lowers it again. It saves, flushes the components again, saves once more if that left anything, and only then checks `unsavedWork()`. The raw view's textarea is frozen by the gate too.
+  - `unsavedWork()` counts a note whose editor holds keys it hasn't serialised yet (a new `unserialised` view hook).
+  - Last line: the `noteStore` pre-swap handler (now ordered after `tabs`) checks for a note change still queued when the vault is let go as saved. Such a change is copied to `.filo/recovery/<ts>-unsaved/`, the sentinel is set again, and it is logged (`lib/notes/leftBehind.ts`), instead of being reset away. A leave with rescue copies already kept adds no second copy.
+  - Leaving, and the window-close quit, first take focus off a focused input or textarea (`releaseFocusedField`), so a field that saves only on blur hands its text over before the save. Ctrl+S doesn't, so it never takes the caret away.
+  - Gate `teardown-saves-registered` (`components`): a component whose `onDestroy` or effect cleanup calls a persist / commit / save / flush function must call `registerComponentFlush` (or `registerRawView`); a note-store call is exempt, and a line can carry `// allow-teardown-save: <reason>`. Proven by removing the timer tile's registration: the gate failed at its `onDestroy` line; restored. Gate count is 67 in the working tree.
+  - Tests: `src/tests/characterisation/leavingKeepsHeldChanges.test.ts` (harness `harness/leaving.ts`), six cases:
+    - a tile title typed but not committed, then Close vault;
+    - a title typed and clicked away from (the 200 ms blur window open), then Close vault;
+    - a Task List smart-list change, then Close vault inside 300 ms;
+    - a canvas pan, then quit from the window inside 1.5 s;
+    - the editor is read-only while the leave's save is out, and keys that got in anyway are saved with no dialog;
+    - a running timer's progress when another board replaces it;
+    - notes typed in a Task List task's notes box and not yet left, then quit from the window (added after the review below).
+    The first five and the last failed with the fixes taken out (no component flush, the old teardown rule, no second save, no freeze). `src/tests/unit/leaveLastLine.test.ts`: the registry, and the last-line copy (failed without it).
+- **A21-29.** `TileHeader` and `Frame` commit on teardown whenever the editor's text differs from the committed title (`uncommittedTitle()`), not only while the blur timer is armed, and register a flush that commits it. Three older source-shape tests were updated to the new teardown text.
+- **A21-30.** The timer's unmount save goes through `boardStore.persistUpdateTile(tile.id, { remaining }, tile.boardId)` and is registered as a flush. The progress was also lost for a second reason, see deviation 5.
+- **A21-31.** The canvas scope has `flushViewport()`; each `PaneView` registers it.
+- **A21-32.** `deleteBoard` writes the board's pending change (`ctx.flushWrite`) before the move, then cancels anything armed since. A move that fails arms a write again (`ctx.markDirty`), so the board's changes stay tracked. `boardCacheDeleteBoardCancelPending.test.ts` now pins "written before the move, never after", plus the failed-move case; both failed on the old code.
+- **A21-33.** `withDrainedWrites(op, { paths, within })`: `op` receives a `DrainToken`. A call that passes a live token for the current vault runs at once under the outer drain, judged against its own `paths`. Any other call waits its turn in a per-vault-generation queue, re-checks the vault, and drains for itself. A token counts only while its op (and the nested calls it started) run. A dev-mode watchdog warns when a queued call waits over 30 s. `renameVaultPath`, `trashVaultPath` and `restoreTrashed` take the token as an optional last argument. Callers that now pass it: `vaultFolderOps.runRename`, `vaultDeleteOps.performDelete`, `trashFiles` (through `DeleteTilesCommand` / `DeleteTaskCommand` options) from `selectionActions`, `TileHeader` and `taskDeletion`. Test: `src/tests/unit/withDrainedWritesToken.test.ts` (8 cases; the sibling-drains-after-the-op, wait-for-unawaited-nested and watchdog cases failed on the old code). `vaultOperationsDrain.test.ts` and `vaultIdentityGuard.test.ts` pass the token in their nested cases.
+- **A21-34.**
+  - #24: `renameAllPathKeys` returns false and reports (`reportError`) a sweep that throws; the history sweep throws once, naming the undo steps that couldn't follow. The in-app rename (`vaultFolderOps`) and the external rename (`runExternalRenameCascade`) keep the rename-cascade sentinel when that happens.
+  - #30: `repairRenameCascade` replays an entry only when the old path is missing and the new one exists (`vault:file-exists` on both); **Discard** calls the new `discardRenameCascade`, which clears the sentinel and changes nothing.
+  - #22: the tag sweep records renames made while it runs (`registerPathRenamable('tagRewriteSweep', …)`) and retries a missing note at its new path; a note with no new path is listed in `skippedMissing`, named in a warning toast, and keeps the sentinel.
+  - Tests (9 failed on the old code): `renamePathKeys`, `commandRenamePath`, `vaultFolderOpsRename`, `renameCascadeTagsFlush`, `renameCascadeRecovery` and `tagRewriteSweep` cases. `tagsSaveReloadAndSwapBookkeeping.test.ts`'s mock now answers `vault:file-exists`.
+- **A21-35.** New `src/main/vault/exclusiveCreate.ts` (`createExclusiveFile`), used by `vault:create-file-text` and by `config:save … { createOnly }`, which had the same unlink. It reserves the name with `'wx'`, records the placeholder's `ino` and `mtimeMs` from the handle, writes with `expectStat` on the placeholder, and on a failure unlinks only a file that is still that 0-byte placeholder. The handler registers `suppressWrite` before the open. Test: `src/tests/unit/exclusiveCreatePlaceholder.test.ts` (9 cases, 6 failed on the old code). KNOWN_LIMITATIONS #31 has a line for the empty-file echo.
+- Docs: CLAUDE.md (gate count, the `components` row, the tree, the leave rule, the drain token) and KNOWN_LIMITATIONS #31.
+- **Real app** (Playwright `_electron` against the built app, a fresh vault and user-data dir; script `phase4check.mjs` in session c77695's scratchpad). Each case closes the window with its close button straight after the edit, so main asks the renderer to save and nothing unmounts:
+  - keys typed at the end of a note in a Document tab: on disk;
+  - a new mind-map text tile's title typed after F2, not committed: `title: Quit while naming` on disk;
+  - text typed in the raw view: on disk.
+  - Every quit closed with no dialog (three runs); there is no `.filo/recovery/` folder and no dirty sentinel afterwards, and there were no console errors.
+- **Concurrency review** (exit criterion 3: a read-only adversarial pass of the concurrency / stores dimension over every file this phase changed). No HIGH findings, no deadlock on the new drain queue, no way for the editors to stay frozen. Acted on:
+  - MEDIUM: fields that save only on blur (the Task List notes box and task title, a Kanban column title) weren't handed over by a window-close quit, Ctrl+S or a keyboard-driven leave. Fixed for leaving and quitting with `releaseFocusedField`, with the spec case above (it failed first).
+  - LOW: the last line's `markDirty` relied on module order to come after `writeStateTracking`'s `markClean`. The `noteStore` handler now declares `runAfter: ['tabs', 'writeStateTracking']`.
+  - Left as noted (LOW): see deviation 14.
+- `npm run ci:verify` is green: lint, svelte-check (0 errors, 772 files), `typecheck:main`, 5,770 tests passed (1 skipped), the build, and 67/67 gates. As in Phases 1 to 3, the run was on a checkout that also held the Phase 5 session's uncommitted work.
+
+### Deviations from the plan
+
+1. **Raw views stay on their own registry.** `noteStore.flushAll()` already saves them first (Phase 1) and reports which couldn't be saved; the component registry only hands changes over and has no result to give. The editors' `NoteEditorView.serialize` is likewise already run by `noteStore.flushAll()` (each view registers it when it acquires the note), so the new piece there is counting unserialised keys in `unsavedWork()`.
+2. **The freeze lasts until the unmount, not only through the save.** The plan had `saveBeforeLeaving` run inside `runWithCloseDrain`, which lowers the gate when it returns: the editors would be editable again between the check and the swap's unmount, the very gap the finding is about. `holdCloseDrainUntilSwap` keeps it raised until the swap resets it (after `tabs`), and Cancel lowers it.
+3. **The second save runs only when something is left.** After the first save the components are flushed again; `save()` runs a second time only if `unsavedWork()` isn't empty, so a clean close costs one save.
+4. **The last line copies, it doesn't write.** It runs only for a leave that ended `saved` (after "Close anyway" the copies already exist). It doesn't try a late write into a vault being closed; a copy plus the sentinel makes the next open offer it, which also shows the regression.
+5. **A21-30: the progress was lost for a different reason.** At a board switch the tile comes in as a new object with the same values, and the re-seed `$effect` rewound the live countdown to the last saved value just before the unmount save compared them, so the save never ran. The re-seed now compares mode, duration, remaining and running state by value. With that fixed, the spec also passes with the old write through the pane's board: in the harness the tile unmounts before the pane's board changes. The write through `tile.boardId` is kept, as planned, since it doesn't depend on that order.
+6. **"Keys typed during a slow save" was not a loss on the old code.** The note writer's `flushAll` already picked up keys serialised during its own read. What the old code got wrong was the editor still taking keys after the check; the spec asserts the freeze instead (it failed on the old code), and that keys which got in anyway are saved without a dialog.
+7. **The gate works by name.** `teardown-saves-registered` looks for calls named `*persist*`, `*commit*`, `*save*` or `*flush*` in `onDestroy` bodies and effect cleanups, exempts `noteStore.*` (the save covers the note store itself), and accepts `registerRawView`. The Task List's board-switch flush carries `// allow-teardown-save:`, because its registration lives in the `TaskListFiltersAndViews` object it belongs to (and `TaskListBoard.svelte` is at its size ceiling).
+8. **A21-32: a failed flush doesn't stop the delete.** Its toast has already been shown, and the user asked for the board to go.
+9. **A21-33 (drain token):**
+   - Queued callers still share a failed drain's result when no op has run since they queued, so a drain parked on a failed write (up to ~60 s) isn't repeated, and toasted, per caller. Once an op has run, the next call drains afresh.
+   - The queue is released only after the op and every nested call it started have settled, including ones it didn't await.
+   - Queues are per vault generation, so a call for a newly opened vault never waits behind the outgoing vault's op.
+   - `taskDeletion` no longer awaits `historyStore.execute` inside the drained op; it starts the command there and awaits it after. An op that awaits the history chain can deadlock: an undo already running on the chain may have its restore queued behind that op. CLAUDE.md now says so.
+   - In the tile-delete paths the command's trash move usually starts a few microtasks after the op returned, so it drains for itself rather than under the outer drain. That's one extra drain, never a deadlock.
+10. **A21-34:**
+    - A Retry that finds an entry the disk doesn't confirm (the old path still there, or the new one missing) doesn't replay it, but still clears it: there is nothing to repair, and keeping it would bring the prompt back on every open. An entry whose check throws is kept.
+    - A path-key sweep that fails during the Retry keeps the sentinel too.
+    - The missing-note toast comes from the sweep itself, next to its non-UTF-8 toast; `skippedMissing` is also on the result, which no caller reads yet.
+    - The rename map is one sweep registered at module load, recording only while a tag sweep runs (sweeps are serialised). It covers the write phase; a note already missing when the sweep starts only means the index was behind, and is still skipped quietly.
+    - The history sweep throws once at the end and `renameAllPathKeys` reports it, so the failure isn't reported twice.
+11. **A21-35:**
+    - The placeholder's empty bytes are registered with `suppressWrite` too, or its own 0-byte event would get through. KNOWN_LIMITATIONS #31 notes the cost.
+    - The write carries the placeholder's stat as `expectStat`, so a file another program puts at the name during the write now makes the create fail with `EEXIST` (the note writer then picks another name; the config scheduler keeps the other copy) instead of being overwritten.
+    - The helper is shared by `vault:create-file-text` and `config:save … { createOnly }`.
+12. **File sizes.** `vault.svelte.ts` is 1596 lines (the Discard block shrank; a comment was tightened for the flush call), and its ceiling is lowered to that. `KanbanBoard.svelte` and `TaskListBoard.svelte` are unchanged in length. The new spec is registered with the `characterisation-suite` gate (7 cases).
+13. **Blur-only fields are handed over by focus, not registered.** The review found text fields that save only on blur. Rather than registering each (`TaskItem.svelte` and `KanbanColumn.svelte` are at their size ceilings), leaving and the window quit blur whichever field has focus; only one can hold unsaved typing at a time. Ctrl+S still doesn't hand such a field over.
+14. **Review findings left as they are (LOW):**
+    - The tag sweep now holds the drain queue for its whole loop, so an external rename during a sweep waits for it. Notes moved by a second rename in that time are reported as missing by the sweep (its sentinel is kept, nothing is lost), and edits to them wait for the rename to be applied.
+    - With one Kanban or Task List board open in two panes, each pane flushes its own filter state on a save, and the last one wins. View state only.
+    - `deleteBoard`'s flush can raise the board drift prompt, and the delete waits for the answer; edits made during that wait aren't in the trashed copy.
+    - The empty-bytes echo window of a new note (deviation 11) also hides an external truncate of that note for about 7 s; the next write's fresh read turns it into the conflict prompt.
+15. **Shared checkout, not committed.** Phase 5's work is still uncommitted in the same checkout, and several Phase 4 changes sit inside it: the drain token passes through code Phase 5 moved (`selectionActions.ts` `requestDeleteSelected`, the delete commands' options), and both phases edit `KanbanBoard.svelte`, `TaskListBoard.svelte`, `boardCache.svelte.ts`, `history.svelte.ts`, `vaultDeleteOps.ts`, the `components` and `codebase` gate modules and CLAUDE.md. Phase 4 can't be committed on its own without Phase 5 underneath, so neither is committed yet.
+16. **Found while doing this, not fixed here:**
+    - `board:create` checks `pathExists` and then writes, so a same-named board created in between is overwritten; `createExclusiveFile` with a ` (n)` retry would fix it.
+    - `copyFileToVault` (`src/main/vault/fileOps.ts`) unlinks its `wx` placeholder unconditionally on failure, the same shape as A21-35.
+    - In the real app, a key typed the instant after F2 opens a tile title editor can be lost: the editor selects all on a microtask after it mounts, so a key that lands first is replaced (one run saved "uit while naming"). A Phase 6 item.
+
 ---
 
 ## Phase 5: Kanban / Task List correctness, undo, shortcuts

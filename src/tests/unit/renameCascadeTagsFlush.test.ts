@@ -11,6 +11,7 @@ import { uiStore } from '@renderer/stores/ui.svelte';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
 import { __resetRenameCascadeSentinelForTests } from '@renderer/lib/vault/renameCascadeSentinel';
 import type { VaultContext } from '@renderer/stores/vaultStoreTypes';
+import { registerPathRenamable } from '@renderer/lib/vault/renamePathKeys';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
@@ -217,6 +218,35 @@ describe('rename cascade — synchronous tags.json flush (F3)', () => {
     expect(entry.newPath).toBe('New.md');
 
     tagsFlushSpy.mockRestore();
+  });
+
+  // A path-keyed sweep that threw left some state under the old path; the
+  // sentinel lets the next open replay the rename.
+  it('a throwing path-keyed sweep writes a recovery sentinel even with no board cascade', async () => {
+    const sentinelWrites: string[] = [];
+    installFiloMock((channel: string, ...args: unknown[]) => {
+      if (channel === 'tags:load') return null;
+      if (channel === 'tags:save') return undefined;
+      if (channel === 'vault:read-file-text') return { success: false, code: 'ENOENT' };
+      if (channel === 'vault:write-file-text' && String(args[1]).includes('rename-cascade-pending.')) {
+        sentinelWrites.push(String(args[2]));
+      }
+      return { success: true };
+    });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const off = registerPathRenamable('test.thrower', () => {
+      throw new Error('sweep failed');
+    });
+    try {
+      await makeExternalChangesSlice(ctxFor()).handleExternalRename('Old.md', 'New.md');
+    } finally {
+      off();
+      errSpy.mockRestore();
+    }
+
+    expect(sentinelWrites.length).toBeGreaterThanOrEqual(1);
+    const payload = JSON.parse(sentinelWrites[sentinelWrites.length - 1]);
+    expect(payload.entries.at(-1)).toMatchObject({ oldPath: 'Old.md', newPath: 'New.md' });
   });
 
   // Contrast: a SUCCESSFUL tags-only flush keeps the C-A5-4 skip — no sentinel

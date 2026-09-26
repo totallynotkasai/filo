@@ -42,6 +42,7 @@ function buildBaseTileStyle() {
   return {
     ...defaultTileStyleSnapshot(),
     ...(fs.fontSizeTitle !== undefined && { fontSizeTitle: fs.fontSizeTitle }),
+    ...(fs.fontSizeBody !== undefined && { fontSizeBody: fs.fontSizeBody }),
   };
 }
 

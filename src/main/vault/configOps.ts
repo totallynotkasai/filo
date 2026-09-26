@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { atomicWriteFile, ensureDir, pathExists } from './filenameUtils';
+import { createExclusiveFile } from './exclusiveCreate';
 import { assertSafeFilename } from '../utils/pathSecurity';
 import { PAYLOAD_LIMITS } from '../utils/payloadLimits';
 
@@ -377,14 +378,7 @@ export async function saveConfig(
     // Recreating a config deleted outside Filo: reserve the name first, so a
     // copy another program (a sync client) put back meanwhile fails with
     // EEXIST instead of being overwritten.
-    const placeholder = await fs.open(filePath, 'wx');
-    await placeholder.close();
-    try {
-      await atomicWriteFile(filePath, json);
-    } catch (err) {
-      await fs.unlink(filePath).catch(() => undefined);
-      throw err;
-    }
+    await createExclusiveFile(filePath, json);
     return;
   }
   await atomicWriteFile(filePath, json);

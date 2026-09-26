@@ -6,6 +6,7 @@
   import { uiStore } from '../../stores/ui.svelte';
   import { UpdateTimerConfigCommand, type TimerMode } from '../../commands/index';
   import { createCoarsePersistGate } from '../../lib/utils/coarsePersistGate';
+  import { registerComponentFlush } from '../../lib/boards/componentFlush';
 
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
   const boardStore = scope.board;
@@ -75,9 +76,18 @@
   // user sees would otherwise be stale: mode swap (hms ↔ ms ↔ s ↔ clock),
   // reset, or preset-duration change. Without this, `lastDisplaySecond`
   // could equal the next computed second and the display would lag a tick.
+  //
+  // Compared by value: a board switch hands the tile in as a new object with
+  // the same values, and re-seeding then would rewind a running countdown to
+  // its last saved value just before the unmount save reads it.
+  // A reset while running may leave `remaining` as saved, so `isRunning`
+  // is compared too.
+  const seedKey = (t: TimerTile): string => `${t.mode}|${t.duration}|${t.remaining}|${t.isRunning}`;
+  let seeded = untrack(() => seedKey(tile));
   $effect(() => {
-    void tile.mode;
-    void tile.duration;
+    const next = seedKey(tile);
+    if (next === seeded) return;
+    seeded = next;
     // Re-seed the local countdown whenever the persisted value changes from
     // outside our tick — mode swap, duration set, reset, or external reload.
     // A running countdown writes tile.remaining only via the 45 s coarse
@@ -268,11 +278,18 @@
     // paused timer has no unpersisted drift. Dropping the gate would let unmount
     // overwrite the canonical paused `remaining` with `liveRemaining`, which is
     // only authoritative while the countdown runs.
+    persistRunningProgress();
+  });
+
+  // Written to the tile's own board: by unmount the pane's scope may already
+  // show the board that replaced it. A save or a leave writes it too.
+  function persistRunningProgress(): void {
     if (tile.isRunning && liveRemaining !== tile.remaining) {
       // allow-direct-mutation: persist countdown progress on unmount.
-      boardStore.updateTile(tile.id, { remaining: liveRemaining });
+      boardStore.persistUpdateTile(tile.id, { remaining: liveRemaining }, tile.boardId);
     }
-  });
+  }
+  $effect(() => registerComponentFlush('timer tile', persistRunningProgress));
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->

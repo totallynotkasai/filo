@@ -5,13 +5,14 @@
  *
  *   Phase 1 — pre-flight + plan: read each candidate file, compute its
  *   rewritten content, and build an in-memory list of `(path, content)`
- *   pairs to write. Files that no longer exist on disk are silently
- *   dropped from the plan (the rename intent is moot); files that exist
- *   but fail to read are recorded as failed so the caller can surface a
- *   toast.
+ *   pairs to write. Files that no longer exist on disk are dropped from
+ *   the plan (the index was behind); files that exist but fail to read
+ *   are recorded as failed so the caller can surface a toast.
  *
  *   Phase 2 — commit writes: execute each planned write, catching per-write
- *   failures locally so the loop reaches every file before reporting.
+ *   failures locally so the loop reaches every file before reporting. A
+ *   planned note renamed meanwhile is written at its new path; one that is
+ *   simply gone keeps the sentinel and is named in a toast.
  *
  * Splitting the phases lets `fileTagsStore.renameTagEverywhere` /
  * `removeTagEverywhere` decide whether to commit their `.filo/tags.json`
@@ -42,6 +43,7 @@ import { isMissingFileError, NoteBusyError } from '../notes/noteWriter';
 import { isNonUtf8 } from './nonUtf8Paths.svelte';
 import { getActiveVaultPath } from './activeVaultPath';
 import type { FileMetadata } from './vaultIndex';
+import { rebasePath, registerPathRenamable } from './renamePathKeys';
 
 /**
  * Full-function mutex. Two rapid tag renames (`#draft` → `#review`, then
@@ -57,13 +59,33 @@ import type { FileMetadata } from './vaultIndex';
  */
 let sweepInflight: Promise<MarkdownRewriteResult> | null = null;
 
+/**
+ * Renames seen while a sweep runs (sweeps are serialised, so at most one
+ * list), in order. A planned note that moved meanwhile is rewritten where it
+ * is now instead of being taken for deleted.
+ */
+let sweepRenames: Array<[string, string]> | null = null;
+
+registerPathRenamable('tagRewriteSweep', (oldRel, newRel) => {
+  sweepRenames?.push([oldRel, newRel]);
+});
+
 onVaultSwap('pre-swap', 'tagRewriteSweep', () => {
   sweepInflight = null;
+  sweepRenames = null;
 });
+
+/** Where `path` is after the renames recorded so far, or null if none touched it. */
+function movedTo(path: string): string | null {
+  let now = path;
+  for (const [oldRel, newRel] of sweepRenames ?? []) now = rebasePath(now, oldRel, newRel) ?? now;
+  return now === path ? null : now;
+}
 
 /** Test-only — drops the in-memory sweep mutex chain. */
 export function __resetTagRewriteSweepForTests(): void {
   sweepInflight = null;
+  sweepRenames = null;
 }
 
 /**
@@ -72,14 +94,16 @@ export function __resetTagRewriteSweepForTests(): void {
  * short-circuit); `succeeded` lists paths that hit disk; `failed` lists
  * paths whose read or write raised an error.
  *
- * Files that no longer exist on disk are silently dropped from all three
- * counters because the rewrite intent is moot — the caller should not
- * treat a missing file as a failure that blocks the commit.
+ * A file already gone at the scan is dropped (the index was behind). A
+ * planned file gone by the time its write runs, and not moved by a rename
+ * seen during the sweep, is listed in `skippedMissing`: it doesn't block the
+ * caller's commit, but it keeps the sentinel and is named in a toast.
  */
 export interface MarkdownRewriteResult {
   attempted: number;
   succeeded: string[];
   failed: string[];
+  skippedMissing?: string[];
 }
 
 /**
@@ -127,6 +151,15 @@ function emptySweepResult(): MarkdownRewriteResult {
 }
 
 async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResult> {
+  sweepRenames = [];
+  try {
+    return await runSweepRecordingRenames(args);
+  } finally {
+    sweepRenames = null;
+  }
+}
+
+async function runSweepRecordingRenames(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResult> {
   const { vaultRoot, metadata, oldName, newName, applyChanges, pathFilter } = args;
   if (!vaultRoot) return { attempted: 0, succeeded: [], failed: [] };
 
@@ -140,6 +173,9 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
   // decoded text would persist U+FFFD for every non-ASCII byte, so they are
   // skipped (and main refuses the write anyway) and named in one toast.
   const skippedNonUtf8: string[] = [];
+  // Planned notes gone by the time their write ran, with no recorded rename
+  // to follow: named in a toast, and the sentinel stays.
+  const skippedMissing: string[] = [];
 
   for (const md of metadata) {
     // Case-insensitive match: the index preserves the file's authored casing
@@ -239,31 +275,41 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
           // Recompute the rewrite from the note's fresh bytes inside its queue
           // (after anything queued for it, including an editor body, has
           // landed), never from the Phase-1 snapshot. Tag rewrites edit EXISTING
-          // files: a file deleted since the scan throws ENOENT instead of being
-          // resurrected. An open view of the note follows the new bytes and
-          // keeps any keystrokes typed meanwhile. `notifyOnError: false` avoids
-          // one toast per file; the caller shows an aggregate retry toast.
-          let written: string | null;
-          try {
-            written = await noteStore.transform(
-              item.path,
-              (fresh) => (newName === null
-                ? removeTagFromMarkdown(fresh.raw, oldName)
-                : rewriteTagInMarkdown(fresh.raw, oldName, newName)),
-              { notifyOnError: false },
-            );
-          } catch (err) {
-            // Gone since the scan: the rewrite intent is moot.
-            if (isMissingFileError(err)) continue;
-            throw err;
+          // files: a file gone since the scan throws ENOENT instead of being
+          // resurrected. If a rename recorded during the sweep moved it, the
+          // rewrite follows it there. An open view of the note follows the new
+          // bytes and keeps any keystrokes typed meanwhile. `notifyOnError:
+          // false` avoids one toast per file; the caller shows an aggregate
+          // retry toast.
+          let target = item.path;
+          let written: string | null | undefined;
+          while (written === undefined) {
+            try {
+              written = await noteStore.transform(
+                target,
+                (fresh) => (newName === null
+                  ? removeTagFromMarkdown(fresh.raw, oldName)
+                  : rewriteTagInMarkdown(fresh.raw, oldName, newName)),
+                { notifyOnError: false },
+              );
+            } catch (err) {
+              if (!isMissingFileError(err)) throw err;
+              const now = movedTo(item.path);
+              if (now === null || now === target) break;
+              target = now;
+            }
+          }
+          if (written === undefined) {
+            skippedMissing.push(item.path);
+            continue;
           }
           if (written === null) {
             // Already without the old tag, or no longer UTF-8 (never rewritten
             // from decoded text).
-            if (isNonUtf8(item.path)) skippedNonUtf8.push(item.path);
+            if (isNonUtf8(target)) skippedNonUtf8.push(target);
             continue;
           }
-          succeeded.push(item.path);
+          succeeded.push(target);
           // For REMOVALS, persist the per-path commit breadcrumb
           // incrementally so a crash mid-sweep leaves the partial state
           // detectable on reopen (renames detect partial state from the index
@@ -272,14 +318,14 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
           // committedPaths list short by one — harmless, because recovery
           // converges forward idempotently regardless of the exact list.
           if (newName === null) {
-            sentinelPayload.committedPaths.push(item.path);
+            sentinelPayload.committedPaths.push(target);
             try {
               await writePendingRewrite(vaultRoot, sentinelPayload);
             } catch (breadcrumbErr) {
               reportError(
                 'tagRewriteSweep',
                 breadcrumbErr,
-                `Failed to update tag-removal progress breadcrumb after ${item.path}`,
+                `Failed to update tag-removal progress breadcrumb after ${target}`,
               );
             }
           }
@@ -314,18 +360,27 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
       duration: 12000,
     });
   }
+  if (skippedMissing.length > 0) {
+    const names = skippedMissing.slice(0, 5).join(', ') + (skippedMissing.length > 5 ? `, +${skippedMissing.length - 5} more` : '');
+    uiStore.pushToast({
+      text: `Tag ${newName === null ? 'removal' : 'rename'} skipped ${skippedMissing.length} note${skippedMissing.length === 1 ? '' : 's'} that could no longer be found: ${names}. Filo will offer to finish it the next time this vault opens.`,
+      type: 'warning',
+      duration: 12000,
+    });
+  }
 
-  // Only clear the sentinel when EVERY planned path succeeded. On partial
-  // failure we leave it so the next vault open can replay the rewrite via the
-  // recovery prompt (idempotent — already-rewritten files are no-ops).
+  // Only clear the sentinel when EVERY planned path succeeded; a note that
+  // went missing counts as not done. Otherwise we leave it so the next vault
+  // open can replay the rewrite via the recovery prompt (idempotent —
+  // already-rewritten files are no-ops).
   //
   // The caller's retry toast in fileTagsStore still re-lays a fresh
   // sentinel covering just the still-failed paths when the user clicks
   // "Retry" inside the session; the next-open recovery is the safety
   // net for users who close the app before the toast retry fires.
-  if (plan.length > 0 && failed.length === 0) {
+  if (plan.length > 0 && failed.length === 0 && skippedMissing.length === 0) {
     await clearPendingRewrite(vaultRoot);
   }
 
-  return { attempted: plan.length + failed.length, succeeded, failed };
+  return { attempted: plan.length + failed.length, succeeded, failed, skippedMissing };
 }

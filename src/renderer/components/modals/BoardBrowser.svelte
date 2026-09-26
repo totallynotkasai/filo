@@ -6,6 +6,7 @@
   import { uiStore } from '../../stores/ui.svelte';
   import { workspaceStore } from '../../stores/workspace.svelte';
   import { boardStore } from '../../stores/board.svelte';
+  import { renameBoard } from '../../stores/boardIdentity';
   import { createId } from '../../lib/utils/ids';
   import { computeKeyboardReorder } from '../../lib/boards/boardReorder';
   import type { BoardType } from '../../../shared/types';
@@ -208,14 +209,7 @@
       renamingBoardId = null;
       return;
     }
-    const board = vaultStore.project.boards.find(b => b.id === renamingBoardId);
-    if (board) {
-      board.name = renameValue;
-      vaultStore.markMetaDirty();
-      // Update any open tab for this board
-      const tab = tabStore.tabs.find(t => t.boardId === renamingBoardId);
-      if (tab) tabStore.rename(tab.id, renameValue);
-    }
+    renameBoard(renamingBoardId, renameValue);
     renamingBoardId = null;
   }
 

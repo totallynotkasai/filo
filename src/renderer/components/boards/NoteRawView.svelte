@@ -21,6 +21,7 @@
   import { backupThenRead } from '../../lib/vault/keepLocalBackup';
   import { reportError } from '../../lib/utils/errorBus';
   import { keepRawRescueCopy, registerRawView, type RawSaveResult } from '../../lib/notes/rawViews';
+  import { closeDrainGate } from '../../lib/editor/closeDrainGate.svelte';
 
   let {
     path,
@@ -218,7 +219,7 @@
       aria-label="Raw Markdown of {path}"
       spellcheck="false"
       disabled={loading}
-      readonly={readOnly}
+      readonly={readOnly || closeDrainGate.draining}
       bind:value={text}
       onblur={() => void save()}
       onkeydown={onKeydown}

@@ -7,7 +7,8 @@
  * item to its original path), and the user's own frontmatter values are never
  * rewritten.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { onError, type ReportedError } from '@renderer/lib/utils/errorBus';
 import { Command } from '@renderer/commands/Command';
 import { UpdateCardFieldCommand } from '@renderer/commands/index';
 import { RenameFileCommand } from '@renderer/commands/renameFileCommand';
@@ -132,6 +133,29 @@ describe('history follows renames', () => {
     expect(toast?.actions?.map((a) => a.label)).toEqual(['Skip this step']);
     toast!.actions![0].handler();
     expect(historyStore.canUndo).toBe(false);
+  });
+
+  it("a command that can't follow the rename is reported, the rest still follow, and the sweep fails", () => {
+    historyStore.setActiveBoard('kb');
+    const broken = new Holder();
+    broken.renamePath = () => {
+      throw new Error('cannot follow');
+    };
+    const fine = new Holder();
+    historyStore.pushWithoutExecute(broken);
+    historyStore.pushWithoutExecute(fine);
+    const reported: ReportedError[] = [];
+    const off = onError((e) => reported.push(e));
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      // The failure reaches the rename cascade, which then keeps its recovery sentinel.
+      expect(renameAllPathKeys('Card.md', 'Renamed.md')).toBe(false);
+      expect(fine.relPath).toBe('Renamed.md');
+      expect(reported.some((r) => /holder/.test(`${r.message ?? ''} ${String(r.error)}`))).toBe(true);
+    } finally {
+      off();
+      errSpy.mockRestore();
+    }
   });
 
   it('NoteGoneError names the path', () => {

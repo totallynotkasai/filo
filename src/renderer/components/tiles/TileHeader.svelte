@@ -19,6 +19,7 @@
   import { getAnchorBelow } from '../../lib/utils/popupAnchor';
   import { resolveTitleCommitValues, visibleTitleHtml, type ResolvedTitleCommit } from '../../lib/editor/titleCommit';
   import { historyStore } from '../../stores/history.svelte';
+  import { registerComponentFlush } from '../../lib/boards/componentFlush';
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
   import { UpdateTitleCommand, ToggleFramelessCommand, textTileNotePaths } from '../../commands/index';
   import {
@@ -116,6 +117,17 @@
     return resolveTitleCommitValues(titleEditor.getText(), titleEditor.getHTML(), 'New Tile');
   }
 
+  /** The editor's value when it differs from the committed title, else null. */
+  function uncommittedTitle(): ResolvedTitleCommit | null {
+    const snap = snapshotEditorTitle();
+    if (!snap) return null;
+    const changed = snap.plain !== tile.title || (visibleHtml ?? '') !== (snap.titleHtml ?? '');
+    return changed ? snap : null;
+  }
+
+  // A save or a leave commits a title typed but not yet committed.
+  $effect(() => registerComponentFlush('tile title', () => (uncommittedTitle() ? commitTitleEdit() : undefined)));
+
   async function commitTitleEdit() {
     const snap = snapshotEditorTitle();
     destroyTitleEditor();
@@ -211,10 +223,9 @@
     }
   });
 
-  // Guard against unmount during edit. An armed blur→commit timer at teardown
-  // means the user finished editing inside the 200 ms blur window (clicking
-  // another tab/board blurs AND unmounts within ms), so commit rather than
-  // drop the rename: snapshot the editor's
+  // Guard against unmount during edit. A title typed but not committed (the
+  // 200 ms blur window still open, or the view closed while editing) is
+  // committed rather than dropped: snapshot the editor's
   // value BEFORE tearing it down, clear the timer (kept inline so
   // `gates:component-timer-cleanup` sees it in a recognised `$effect` teardown;
   // `destroyTitleEditor` also clears it for the commit/cancel paths), then
@@ -228,7 +239,7 @@
   // synchronously (before destroy), so the deferred call uses the right value.
   $effect(() => {
     return () => {
-      const snap = blurCommitTimer !== null ? snapshotEditorTitle() : null;
+      const snap = uncommittedTitle();
       if (blurCommitTimer) clearTimeout(blurCommitTimer);
       blurCommitTimer = null;
       destroyTitleEditor();
@@ -405,10 +416,10 @@
     // Only a failed write to the note being trashed blocks the delete.
     const filePaths = deleteWithFile && hasVaultFile ? textTileNotePaths([tileRef]) : [];
     try {
-      await withDrainedWrites(async () => {
+      await withDrainedWrites(async (drain) => {
         const vaultRoot = filePaths.length > 0 ? normalizePath(vaultStore.path) : undefined;
         selectionStore.deselect(tileId);
-        boardStore.removeTilesWithHistory([tileId], { filePaths, vaultRoot });
+        boardStore.removeTilesWithHistory([tileId], { filePaths, vaultRoot, drain });
       }, { paths: filePaths });
     } catch (err) {
       if (err instanceof PendingWritesFailedError) {

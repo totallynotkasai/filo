@@ -210,11 +210,11 @@ describe('withDrainedWrites — drain ordering', () => {
     });
 
     let outerRan = false;
-    await withDrainedWrites(async () => {
+    await withDrainedWrites(async (drain) => {
       outerRan = true;
-      // Re-entry: the convenience helper drains again, but the guard
-      // short-circuits to the inner op directly.
-      await renameVaultPath('/vault', 'a.md', 'b.md');
+      // Re-entry: given the outer op's token, the convenience helper runs
+      // under the outer drain instead of draining again.
+      await renameVaultPath('/vault', 'a.md', 'b.md', drain);
       await innerOp();
     });
 

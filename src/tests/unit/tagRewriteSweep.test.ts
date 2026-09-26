@@ -23,6 +23,8 @@ import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import type { FileMetadata } from '@renderer/lib/vault/vaultIndex';
+import { renameAllPathKeys } from '@renderer/lib/vault/renamePathKeys';
+import { uiStore } from '@renderer/stores/ui.svelte';
 
 type InvokeRoute = (...args: unknown[]) => unknown | Promise<unknown>;
 
@@ -354,6 +356,95 @@ describe('rewriteTagInAllMarkdown — sweep mutex (polish phase 4.3)', () => {
     expect(applied).toContain('note.md');
     expect(fs.files.get('note.md')).toMatch(/- done/);
     expect(fs.files.get('note.md')).not.toMatch(/Project/);
+  });
+});
+
+// ── A planned note that is gone by the time its write runs ───────────────────
+//
+// A note renamed while the sweep runs is rewritten at its new path. A note that
+// is simply gone keeps the sentinel (so the next open offers the rewrite again)
+// and is named in a toast, instead of being dropped as if it never needed it.
+describe('rewriteTagInAllMarkdown — a planned note that went missing', () => {
+  const SENTINEL = '.filo/tag-rewrite-pending.a1b2c3d4e5f6.json';
+  let fs: FakeFs;
+  let deletes: string[];
+
+  /** Runs `between` right after the sentinel is laid, i.e. between the plan and the writes. */
+  function wrapInvoke(between: () => void): void {
+    const filo = (window as unknown as { filo: { invoke: (c: string, ...a: unknown[]) => Promise<unknown> } }).filo;
+    const base = filo.invoke;
+    let fired = false;
+    filo.invoke = async (channel: string, ...args: unknown[]) => {
+      if (channel === 'vault:delete') deletes.push(String(args[1]));
+      const out = await base(channel, ...args);
+      if (!fired && channel === 'vault:write-file-text' && args[1] === SENTINEL) {
+        fired = true;
+        between();
+      }
+      return out;
+    };
+  }
+
+  beforeEach(() => {
+    fs = { files: new Map(), writeLog: [], writeDelayMs: 0 };
+    deletes = [];
+    installFiloStub(fs);
+    resetNoteStore();
+    __resetTagRewriteSweepForTests();
+    __resetTagRewriteSentinelForTests();
+    for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
+  });
+  afterEach(() => {
+    noteStore.__resetForTests();
+    uninstallFiloStub();
+    __resetTagRewriteSweepForTests();
+    __resetTagRewriteSentinelForTests();
+    for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
+  });
+
+  it('rewrites a note renamed during the sweep at its new path, and clears the sentinel', async () => {
+    fs.files.set('Old.md', '---\ntags:\n  - draft\n---\nbody\n');
+    wrapInvoke(() => {
+      const text = fs.files.get('Old.md')!;
+      fs.files.delete('Old.md');
+      fs.files.set('Moved/Old.md', text);
+      renameAllPathKeys('Old.md', 'Moved/Old.md');
+    });
+
+    const res = await rewriteTagInAllMarkdown({
+      vaultRoot: '/vault',
+      metadata: makeMetadata(['Old.md'], 'draft'),
+      oldName: 'draft',
+      newName: 'review',
+      applyChanges: async () => {},
+    });
+
+    expect(res.succeeded).toEqual(['Moved/Old.md']);
+    expect(res.failed).toEqual([]);
+    expect(fs.files.get('Moved/Old.md')).toMatch(/- review/);
+    expect(deletes.some((p) => p.includes('tag-rewrite-pending.'))).toBe(true);
+  });
+
+  it('keeps the sentinel and names a note deleted during the sweep', async () => {
+    fs.files.set('Gone.md', '---\ntags:\n  - draft\n---\nbody\n');
+    fs.files.set('Kept.md', '---\ntags:\n  - draft\n---\nbody\n');
+    wrapInvoke(() => {
+      fs.files.delete('Gone.md');
+    });
+
+    const res = await rewriteTagInAllMarkdown({
+      vaultRoot: '/vault',
+      metadata: makeMetadata(['Gone.md', 'Kept.md'], 'draft'),
+      oldName: 'draft',
+      newName: 'review',
+      applyChanges: async () => {},
+    });
+
+    expect(res.succeeded).toEqual(['Kept.md']);
+    expect(res.skippedMissing).toEqual(['Gone.md']);
+    expect(deletes.some((p) => p.includes('tag-rewrite-pending.'))).toBe(false);
+    expect(fs.files.has(SENTINEL)).toBe(true);
+    expect(uiStore.toasts.some((t) => t.text.includes('Gone.md'))).toBe(true);
   });
 });
 

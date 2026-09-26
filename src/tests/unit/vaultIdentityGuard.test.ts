@@ -75,9 +75,9 @@ describe('withDrainedWrites — generation-scoped re-entrancy (G1)', () => {
     const drainSpy = vi
       .spyOn(boardCacheStore, 'flushAllDirty')
       .mockResolvedValue({ failed: [] });
-    await withDrainedWrites(async () => {
-      // Nested call, same generation → re-entrancy guard short-circuits.
-      await withDrainedWrites(async () => 'inner');
+    await withDrainedWrites(async (drain) => {
+      // Nested call with the outer token, same generation → no second drain.
+      await withDrainedWrites(async () => 'inner', { within: drain });
     });
     expect(drainSpy).toHaveBeenCalledTimes(1);
   });
@@ -87,12 +87,12 @@ describe('withDrainedWrites — generation-scoped re-entrancy (G1)', () => {
     const drainSpy = vi
       .spyOn(boardCacheStore, 'flushAllDirty')
       .mockResolvedValue({ failed: [] });
-    await withDrainedWrites(async () => {
+    await withDrainedWrites(async (drain) => {
       // A vault swap lands during the outer op. The nested call now belongs
-      // to a different generation, so it must NOT be treated as re-entrant —
-      // it has to drain the NEW vault's writers itself.
+      // to a different generation, so even with the outer token it must NOT
+      // be treated as re-entrant — it has to drain the NEW vault's writers.
       beginVaultGeneration('/vaultB');
-      await withDrainedWrites(async () => 'inner-after-swap');
+      await withDrainedWrites(async () => 'inner-after-swap', { within: drain });
     });
     expect(drainSpy).toHaveBeenCalledTimes(2);
   });

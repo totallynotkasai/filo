@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { onError, type ReportedError } from '@renderer/lib/utils/errorBus';
 import {
   registerPathRenamable,
   renameAllPathKeys,
@@ -156,6 +157,30 @@ describe('renameAllPathKeys helper', () => {
     });
     renameAllPathKeys('Old.md', 'New.md');
     expect(log).toEqual(['first', 'after']);
+  });
+
+  it('reports a throwing sweep and returns false, so the cascade keeps its recovery sentinel', () => {
+    const reported: ReportedError[] = [];
+    const off = onError((e) => reported.push(e));
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      registerPathRenamable('fine', () => undefined);
+      registerPathRenamable('thrower', () => {
+        throw new Error('boom');
+      });
+      expect(renameAllPathKeys('Old.md', 'New.md')).toBe(false);
+      expect(reported).toHaveLength(1);
+      expect(reported[0]?.message).toMatch(/thrower/);
+    } finally {
+      off();
+      errSpy.mockRestore();
+    }
+  });
+
+  it('returns true when every sweep ran (and for a no-op rename)', () => {
+    registerPathRenamable('fine', () => undefined);
+    expect(renameAllPathKeys('Old.md', 'New.md')).toBe(true);
+    expect(renameAllPathKeys('Same.md', 'Same.md')).toBe(true);
   });
 
   it('unsubscribe removes the sweep from the registry', () => {

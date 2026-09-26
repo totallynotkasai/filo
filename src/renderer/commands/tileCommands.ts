@@ -8,7 +8,8 @@ import { framesStore } from '../stores/frames.svelte';
 import type { Tile, Connection } from '../schema/index';
 import { cloneTile } from '../lib/utils/cloneTile';
 import { DeleteCardCommand } from './kanbanCommands';
-import { restoreFiles, retargetPath, trashFiles, type RestoredItem, type TrashedItem } from './trashedFiles';
+import { restoreFiles, retargetPath, stillTrashed, trashFiles, type RestoredItem, type TrashedItem } from './trashedFiles';
+import type { DrainToken } from '../lib/vault/vaultOperations';
 
 // ── Tile Commands ──
 
@@ -135,6 +136,11 @@ export interface DeleteTilesOptions {
   filePaths?: string[];
   /** Required if `filePaths` is non-empty. */
   vaultRoot?: string;
+  /**
+   * The drained op the first execute runs inside, if any: its trash moves
+   * then run under that drain instead of waiting for the op to finish.
+   */
+  drain?: DrainToken;
 }
 
 /** The vault-relative note paths behind the text tiles among `tiles`, once each. */
@@ -166,6 +172,8 @@ export class DeleteTilesCommand extends Command {
   /** What the last execute moved into Filo's trash (empty after an undo). */
   private trashed: TrashedItem[] = [];
   private vaultRoot: string | undefined;
+  /** For the first execute only; see `DeleteTilesOptions.drain`. */
+  private drain: DrainToken | undefined;
   /**
    * On a Kanban board, one card snapshot per tile (column, neighbour anchor,
    * card style). Kanban's addTile restores only the definition, so undo goes
@@ -179,6 +187,7 @@ export class DeleteTilesCommand extends Command {
     // allow-shallow: primitive strings.
     this.filePaths = options.filePaths ? [...options.filePaths] : [];
     this.vaultRoot = options.vaultRoot;
+    this.drain = options.drain;
     this.targetBoardId = boardStore.current?.id ?? '';
     // Snapshot tiles using cloneTile (shares large string references to save memory)
     for (const id of tileIds) {
@@ -238,9 +247,14 @@ export class DeleteTilesCommand extends Command {
     // rejects.
     if (this.vaultRoot && this.filePaths.length > 0) {
       const vaultRoot = this.vaultRoot;
+      const drain = this.drain;
+      this.drain = undefined;
       const prior = Promise.allSettled([this.lastExecuteCompletion, this.lastUndoCompletion]);
       this.lastExecuteCompletion = prior.then(async () => {
-        this.trashed = await trashFiles(vaultRoot, this.filePaths, 'deleteTiles.execute');
+        // Items an earlier undo couldn't bring back are still in the trash;
+        // keep their ids so the next undo tries them again.
+        const moved = await trashFiles(vaultRoot, this.filePaths, 'deleteTiles.execute', drain);
+        this.trashed = [...this.trashed, ...moved];
       });
     } else {
       this.lastExecuteCompletion = Promise.resolve();
@@ -265,7 +279,7 @@ export class DeleteTilesCommand extends Command {
       let restored: RestoredItem[] = [];
       if (this.vaultRoot && this.trashed.length > 0) {
         restored = await restoreFiles(this.vaultRoot, this.trashed, 'deleteTiles.undo');
-        this.trashed = [];
+        this.trashed = stillTrashed(this.trashed, restored);
         // A redo must trash the restored copy, not a newer file that took
         // the old name meanwhile.
         this.filePaths = this.filePaths.map((p) => {
@@ -303,8 +317,10 @@ export class DeleteTilesCommand extends Command {
         }
       }
     } else {
+      // A file that didn't come back (purged from the trash, or its restore
+      // failed) shows as a broken reference rather than a blank new note.
       for (const tile of this.tiles) {
-        boardStore.addTile(tile);
+        void boardStore.addTile(tile, { skipEmptySeed: true });
       }
     }
     for (const conn of this.connections) {

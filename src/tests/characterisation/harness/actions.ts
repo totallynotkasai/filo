@@ -897,3 +897,57 @@ export function viewLineSpacing(editorRoot: HTMLElement): string | null {
   const tile = editorRoot.querySelector('.editor-container') as HTMLElement | null;
   return tile?.style.lineHeight || null;
 }
+
+// ── Keyboard shortcuts ───────────────────────────────────────────────────────
+
+/**
+ * Key chords that more than one enabled command answers right now, as
+ * `"Ctrl+N: tile:new, kanban:new-card"`. The first match wins, so any entry
+ * here is a shortcut whose action depends on registration order.
+ */
+export async function clashingShortcuts(): Promise<string[]> {
+  const { getAllShortcuts, formatShortcut } = await import('@renderer/core/hotkeys');
+  const byChord = new Map<string, string[]>();
+  for (const s of getAllShortcuts()) {
+    if (s.enabled && !s.enabled()) continue;
+    const chord = formatShortcut(s);
+    byChord.set(chord, [...(byChord.get(chord) ?? []), s.commandId ?? s.description]);
+  }
+  return [...byChord].filter(([, names]) => names.length > 1).map(([chord, names]) => `${chord}: ${names.join(', ')}`);
+}
+
+/** Which new-card picker options are showing (Kanban "Add Card" / Ctrl+N). */
+export function newCardPickerShown(app: CharApp): boolean {
+  return $$(app.el, 'button.kn-option').length > 0;
+}
+
+/** Kanban cards grouped by column, by title. */
+export function kanbanColumns(app: CharApp): string[][] {
+  return $$(app.el, '.kanban-column').map((col) =>
+    $$(col, '.kanban-card-shell').map((el) => (el.querySelector('.tile-title')?.textContent ?? '').trim()));
+}
+
+// ── Tab menu ─────────────────────────────────────────────────────────────────
+
+/** The labels the active tab's context menu offers. */
+export async function activeTabMenuLabels(app: CharApp): Promise<string[]> {
+  contextMenu($(app.el, '.tab.active, .tab[aria-selected="true"]'));
+  await settle();
+  const labels = $$(app.el, '.context-menu .menu-item, .context-menu [role="menuitem"]')
+    .map((e) => (e.textContent ?? '').trim())
+    .filter(Boolean);
+  pressShortcut('Escape');
+  await settle();
+  return labels;
+}
+
+/** Right-click the active tab → Rename Board, type `name`, press Enter. */
+export async function renameActiveTab(app: CharApp, name: string): Promise<void> {
+  contextMenu($(app.el, '.tab.active, .tab[aria-selected="true"]'));
+  await settle();
+  await chooseMenuItem(app, 'Rename Board');
+  const input = $(app.el, '.tab input') as HTMLInputElement;
+  typeInto(input, name);
+  key(input, 'Enter');
+  await quiesce(600);
+}

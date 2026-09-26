@@ -26,7 +26,7 @@ Package:        npm run package
 
 `npm run ci:verify` mirrors the GitHub Actions `verify` job: **lint → check (svelte-check) → typecheck:main → test:unit:strict → build → ci:gates**. A second job, `verify-windows`, runs `test:unit:strict` and `typecheck:main` on `windows-latest`.
 
-`ci:gates` runs `node scripts/gates/run.mjs`: 65 small static checks that pin invariants which past data-loss bugs broke. They share one helper module ([scripts/gates/lib.mjs](scripts/gates/lib.mjs)) and are grouped by subsystem. `--list` shows every check, `--only <id,id>` / `--group <name>` narrow a run, and each failure prints `file:line` plus a fix hint.
+`ci:gates` runs `node scripts/gates/run.mjs`: 67 small static checks that pin invariants which past data-loss bugs broke. They share one helper module ([scripts/gates/lib.mjs](scripts/gates/lib.mjs)) and are grouped by subsystem. `--list` shows every check, `--only <id,id>` / `--group <name>` narrow a run, and each failure prints `file:line` plus a fix hint.
 
 | Group | Protects |
 |---|---|
@@ -35,7 +35,7 @@ Package:        npm run package
 | `vaultIdentity` | A vault swap mid-`await` can't apply the outgoing vault's data to the new one (`isStillSameVault`); vault-scoped state resets on swap; path-keyed stores use `VaultPath` keys, case-fold compares, and follow renames; crash sentinels are per-machine; disk-shape IPC goes through `vaultOperations.ts`. |
 | `ipcSecurity` | Every `ipcMain` channel is in the `IpcChannel` union (and vice versa); envelope usage; untrusted values pass an `asSafe*` validator before a sink; `vault:copy-file` only copies approved sources; renderer reads can't reach `.filo/`, and no renderer write names a `.filo/` path on a `vault:*` channel that refuses it (Filo's own state goes through its config / misc schedulers); every write handler answers a failure through `errorEnvelope` / `errorResult`, so it always carries a code and Retry can re-fire it; config loaders migrate before parsing. |
 | `commands` | Undo/redo: high-value mutations go through Commands, which snapshot their slice, carry a `targetBoardId`, and have an execute→undo round-trip test; no command keeps a copy of a note body; every path a command holds follows renames; Task List section positions are clamped. |
-| `components` | Component timers are cleared, `flush*` functions are actually called, no dead `$derived`, DocumentEditor / drag-drop are pane-scoped, pointer capture + spatial batches handle `pointercancel`, z-index tokens, every `var(--x)` without a fallback is defined, every focus trap has a `fallbackFocus` and is released in an effect cleanup even when its host is already detached, and views read notes from the note store (nothing keeps its own copy of a note). |
+| `components` | Component timers are cleared, `flush*` functions are actually called, no dead `$derived`, DocumentEditor / drag-drop are pane-scoped, pointer capture + spatial batches handle `pointercancel`, z-index tokens, every `var(--x)` without a fallback is defined, every focus trap has a `fallbackFocus` and is released in an effect cleanup even when its host is already detached, views read notes from the note store (nothing keeps its own copy of a note), every global `tile:` shortcut says which board it is for (`enabled`), so it never shadows a Kanban or Task List command, and a component that saves on teardown also registers that save with `registerComponentFlush`, so the save before leaving runs it while it still counts. |
 | `codebase` | No file in `src/main` / `src/renderer` over 1000 lines except the allowlisted ones, which may only shrink (**split an over-limit file, don't raise its ceiling**); no `as any` / `as unknown as`; test sources type-check under `tsconfig.tests.json`, with a per-file error baseline (`scripts/gates/testTypecheckBaseline.json`) that may only go down; board tile defs never store a note's title, tags or body; the board loader accepts only the current format; a note is named only by its vault path (no `contentId` / `docId`); the characterisation suite stays whole, un-skipped and black-box. |
 
 **Escape hatches** are same-line comments with a reason, e.g. `// allow-cast: <reason>`, `// allow-direct-write: <reason>`, `// allow-module-state: <reason>`. Keep the marker text exact; the checks look for it.
@@ -121,6 +121,7 @@ filo/
 │   │   │   ├── boardFileOps.ts
 │   │   │   ├── configOps.ts
 │   │   │   ├── trashOps.ts            # .filo/trash/<id>/ entries: move in, restore, purge to Recycle Bin
+│   │   │   ├── exclusiveCreate.ts     # createExclusiveFile: `wx` reserve, write over only our placeholder, unlink only ours
 │   │   │   └── filenameUtils.ts       # atomicWriteFile, tmpSiblingPath
 │   │   └── utils/
 │   │       ├── pathSecurity.ts        # assertWithinVault, assertSafeRelativePath (depth/length caps), assertSafeFilename
@@ -181,6 +182,7 @@ filo/
 │   │   │   ├── boardTiles.ts          # Active-board tiles facade
 │   │   │   ├── boardWaypointsGroups.ts
 │   │   │   ├── boardFrontmatterSync.ts  # Rename propagation + cascade delete (history dispatch)
+│   │   │   ├── boardIdentity.ts       # Board rename / emoji: the .board.json, project list and tabs together
 │   │   │   ├── boardHistory.ts        # Per-board history facade for boardStore
 │   │   │   ├── boardRefIntegrity.svelte.ts  # Broken file-reference tracking
 │   │   │   ├── boardStoreTypes.ts
@@ -259,6 +261,7 @@ filo/
 │   │   │   │   ├── noteFile.ts        # Pure parse/assemble: frontmatter, body, BOM, EOL, content hash
 │   │   │   │   ├── noteDiskChange.ts  # decideDiskChange: what a watcher event does to a loaded note
 │   │   │   │   ├── rawViews.ts        # Mounted raw views: unsaved text for close / quit, flush, rescue copies
+│   │   │   │   ├── leftBehind.ts      # keepLeftBehind: a note change queued after a clean leave is copied, not reset away
 │   │   │   │   ├── renameGrace.ts     # askUnlessMoved: wait out a rename before "deleted" / "couldn't save"
 │   │   │   │   ├── unsavedNoteTexts.ts # The text a rescue copy holds for each unsaved note
 │   │   │   │   ├── createNote.ts      # createNoteFile: exclusive create with `title:`, ` (n)` on collision
@@ -304,6 +307,7 @@ filo/
 │   │   │   │   ├── textTilePath.ts
 │   │   │   │   ├── viewportCache.ts
 │   │   │   │   ├── toggleLockSelection.ts # Ctrl+L rule (lock all if any unlocked), one undo step
+│   │   │   │   ├── componentFlush.ts  # registerComponentFlush: what a mounted view holds, handed over by a save or a leave
 │   │   │   │   └── writeStateTracking.ts # trackComponentWrite + counters
 │   │   │   ├── canvas/                # Canvas engine (custom pointer events)
 │   │   │   │   ├── coordinates.ts     # screenToCanvas, getCanvasPointFromEvent
@@ -341,7 +345,7 @@ filo/
 │   │   │   ├── tasks/                 # Task-frontmatter helpers, recurrence, quickAddParser (shared)
 │   │   │   ├── mindmap/               # Mind-map keyboard + selection
 │   │   │   │   ├── mindMapContextMenus.ts # Tile / frame / canvas menus ("N tiles selected" group)
-│   │   │   │   └── selectionActions.ts # Lock / Tags / Style / Delete on the selection
+│   │   │   │   └── selectionActions.ts # Lock / Tags / Style / Delete on the selection (the Delete key too)
 │   │   │   ├── settings/              # Settings cascade helpers
 │   │   │   ├── styles/                # Override-cascade resolver
 │   │   │   │   ├── effectiveStyle.ts  # Tile / column / card / task / document style cascade
@@ -587,7 +591,7 @@ The only state that lives in Electron `userData` (i.e. outside any vault) is the
 
 Anything else — including overlay positions (Kanban side toolbar etc.), open tabs, viewports, themes, defaults — goes in `.filo/`.
 
-**Close, open-another-vault and quit never drop unsaved work silently.** `closeVault` / `openVault` call `saveBeforeLeaving` (`stores/vaultLeaveGuard.ts`): it saves, and goes ahead with no dialog when `unsavedWork()` (`lib/boards/writeStateTracking.ts`: pending, failed, in-flight, plus note bodies from the note store's registered source and text in an open raw view, `lib/notes/rawViews.ts`) is then empty. `noteStore.flushAll` saves raw views first, since quit never unmounts them. Otherwise it asks *"N changes couldn't be saved"*, naming each file and its cause, with **Close anyway** / **Open anyway** and **Cancel** (the default). There is no "Don't Save". Leaving anyway, and the quit dialog's **Quit anyway**, first write **rescue copies** (`stores/unsavedRescue.ts` → IPC `recovery:keep-unsaved`) to `.filo/recovery/<timestamp>-unsaved/<flattened path>`: each unsaved note as its last frontmatter plus the local body, each raw view's text as typed, each unsaved board as JSON, and Filo's own unsaved `.filo/` state (tags, settings, layout…) as `_filo__<name>.json`. The notice naming the folder outlives the vault switch and offers **Show in folder**. The `-unsaved` suffix makes the snapshot prunes skip these folders, so only the user deletes them (KNOWN_LIMITATIONS #33). A copy that can't be written triggers a second confirm ("… and lose them"). Leaving anyway keeps `.filo/.dirty.<machineId>`, so reopening the vault offers recovery. All the wording lives in `lib/vault/unsavedMessages.ts`. Gate `close-keeps-rescue-copy`.
+**Close, open-another-vault and quit never drop unsaved work silently.** `closeVault` / `openVault` call `saveBeforeLeaving` (`stores/vaultLeaveGuard.ts`). It takes focus off a text field (`releaseFocusedField`, so a field that saves on blur hands its text over; the window-close quit does the same), freezes the editors (`closeDrainGate`, held until the swap has unmounted them), saves, and saves once more if a view handed anything over meanwhile. `save()` first runs every **component flush** (`lib/boards/componentFlush.ts`): a title typed but not committed, a Kanban / Task List filter or a camera move inside its debounce, a running timer. Views unmount later, in the swap, where their teardown saves would be cancelled. It goes ahead with no dialog when `unsavedWork()` (`lib/boards/writeStateTracking.ts`: pending, failed, in-flight, plus note bodies from the note store's registered source, keys an editor hasn't serialised yet, and text in an open raw view, `lib/notes/rawViews.ts`) is then empty. As a last line, a note change still queued when the vault is let go as saved is copied to `.filo/recovery/` and the sentinel is set again (`lib/notes/leftBehind.ts`), never reset away. `noteStore.flushAll` saves raw views first, since quit never unmounts them. Otherwise it asks *"N changes couldn't be saved"*, naming each file and its cause, with **Close anyway** / **Open anyway** and **Cancel** (the default). There is no "Don't Save". Leaving anyway, and the quit dialog's **Quit anyway**, first write **rescue copies** (`stores/unsavedRescue.ts` → IPC `recovery:keep-unsaved`) to `.filo/recovery/<timestamp>-unsaved/<flattened path>`: each unsaved note as its last frontmatter plus the local body, each raw view's text as typed, each unsaved board as JSON, and Filo's own unsaved `.filo/` state (tags, settings, layout…) as `_filo__<name>.json`. The notice naming the folder outlives the vault switch and offers **Show in folder**. The `-unsaved` suffix makes the snapshot prunes skip these folders, so only the user deletes them (KNOWN_LIMITATIONS #33). A copy that can't be written triggers a second confirm ("… and lose them"). Leaving anyway keeps `.filo/.dirty.<machineId>`, so reopening the vault offers recovery. All the wording lives in `lib/vault/unsavedMessages.ts`. Gate `close-keeps-rescue-copy`.
 
 **Tag persistence — note for attachments.** A note's tags live only in its YAML frontmatter (`tags: [...]`). Attachment tags (image / video / audio / generic file) have nowhere to write into the file itself, so they live only in `.filo/tags.json:fileTags[mediaPath]`. The trade-off: tags on attachments are **vault-local** — copying or moving an attachment outside the vault without `.filo/` will lose its tags, whereas text-tile tags travel with the `.md` file. This is a deliberate consequence of the open-format principle (no sidecar files next to media). Don't add a sidecar without a separate design discussion.
 
@@ -611,7 +615,13 @@ Boundary").
   the `.md` write or create channels.
 - **Disk-shape mutations** (rename / trash / restore / create-folder /
   copy-file) go through `lib/vault/vaultOperations.ts`. `withDrainedWrites(op)`
-  first drains every writer pipeline, then runs the op. `renameVaultPath`,
+  first drains every writer pipeline, then runs the op. Such ops run one at a
+  time: `op` receives a `DrainToken`, and a call made from inside it passes
+  the token on (`{ within: token }`, or the helpers' last argument) to run under
+  the same drain. Any other call waits for the running op, then drains for
+  itself. A nested call without the token would wait for its own op (a dev
+  watchdog warns after 30 s), so an op must never await the history chain
+  (an undo's restore may be queued behind it). `renameVaultPath`,
   `trashVaultPath` and `restoreTrashed` also hold the affected notes' write
   queues (`noteStore.hold`) so no write can land on the old path mid-move.
   Gate `no-raw-disk-shape-ipc` forbids raw renderer invokes of these channels

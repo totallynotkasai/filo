@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { registerPathRenamable } from '@renderer/lib/vault/renamePathKeys';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
@@ -275,6 +276,34 @@ describe('vaultStore.rename — transactional flow', () => {
     // Inactive board's cache also restored — the snapshot revert covers
     // every board the forward cascade touched.
     expect((boardStore.cache['mm-b'].tileDefs['i1-b'] as { src?: string }).src).toBe(oldRel);
+  });
+
+  it('keeps the rename-cascade sentinel when a path-keyed sweep throws, and clears it when none does', async () => {
+    const isSentinelDelete = (c: InvokeRecord): boolean =>
+      c.channel === 'vault:delete' && String(c.args[1]).includes('rename-cascade-pending.');
+    const routes = {
+      'vault:rename': moveFile,
+      'vault:read-tree': async () => ({ ok: true, tree: [] }),
+      'board:save': async () => null,
+      'vault:delete': async () => ({ success: true }),
+      'shell:path-join': async (...segs: unknown[]) => (segs as string[]).join('/'),
+    };
+    const clean = installFiloStub(routes, { 'a.md': 'A\n' });
+    expect((await vaultStore.rename('/vault/a.md', '/vault/b.md')).success).toBe(true);
+    expect(clean.some(isSentinelDelete)).toBe(true);
+
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const off = registerPathRenamable('test.thrower', () => {
+      throw new Error('sweep failed');
+    });
+    try {
+      const calls = installFiloStub(routes, { 'c.md': 'C\n' });
+      expect((await vaultStore.rename('/vault/c.md', '/vault/d.md')).success).toBe(true);
+      expect(calls.some(isSentinelDelete)).toBe(false);
+    } finally {
+      off();
+      errSpy.mockRestore();
+    }
   });
 
   it('a queued note write that fails blocks the rename and surfaces an IO_ERROR', async () => {

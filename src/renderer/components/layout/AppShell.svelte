@@ -33,17 +33,11 @@
   import { initKeyboardShortcuts, loadHotkeyOverrides } from '../../core/hotkeys';
   import { registerCommandWithShortcut } from '../../core/commandRegistry';
   import { createTile } from '../../stores/tiles.svelte';
-  import { type TextTile } from '../../schema/index';
   import { toggleLockSelection } from '../../lib/boards/toggleLockSelection';
-  import { textTileNotePaths } from '../../commands/index';
+  import { requestDeleteSelected, type DeleteSelectionDeps } from '../../lib/mindmap/selectionActions';
   import { isEditableTextTarget } from '../../lib/utils/editableTarget';
-  import { normalizePath } from '../../lib/utils/path';
   import { tiptapToolbar } from '../../lib/editor/toolbarConfig';
   import { installLinkClickHandling } from '../../lib/editor/linkClicks';
-  import {
-    PendingWritesFailedError,
-    withDrainedWrites,
-  } from '../../lib/vault/vaultOperations';
   import { pendingSettingsStore } from '../../stores/pendingSettings.svelte';
   import { confirmDiscardSettings } from '../../lib/settings/confirmDiscardSettings';
 
@@ -82,86 +76,22 @@
     return () => safeDeactivateTrap(trap, { name: 'AppShell' });
   });
 
-  // ── Multi-tile delete confirmation ──
+  // ── Shortcuts that act on the Mind Map canvas ──
   //
-  // True if any selected tile names a note in the vault.
-  function selectionHasVaultFiles(): boolean {
-    if (vaultStore.project === null) return false;
-    for (const id of selectionStore.selectedIds) {
-      const tile = boardStore.getTile(id);
-      if (!tile || tile.type !== 'text') continue;
-      if ((tile as TextTile).filePath) return true;
-    }
-    return false;
+  // `boardStore` still names the board a pane showed before it switched to a
+  // Document tab, so the tab's own type is checked too. On Kanban and Task
+  // List these keys belong to the board's own commands (Ctrl+N adds a card or
+  // task, Ctrl+A selects its rows), which the global handler reaches only
+  // when these are skipped.
+  function onMindMap(): boolean {
+    return tabStore.activeTab?.boardType === 'mindmap' && boardStore.boardType === 'mindmap';
   }
 
-  function requestDeleteSelected() {
-    // Delete applies to connections as well as tiles.
-    // Connection deletes are undoable and not file-backed, so they don't
-    // need the heavyweight tile-confirm gate. We do three things in turn:
-    //
-    //   1. If any connections are selected, fire DeleteConnectionCommand
-    //      for each (no confirm — matches the context-menu "Delete
-    //      Connection" entry which has never had one).
-    //   2. If any tiles are also selected, fall through to the existing
-    //      tile-confirm gate (which may surface the file-delete checkbox).
-    //   3. If only connections were selected, we're done; clear selection.
-    const connIds = [...selectionStore.selectedConnectionIds];
-    if (connIds.length > 0) {
-      for (const id of connIds) {
-        boardStore.removeConnectionWithHistory(id);
-      }
-      selectionStore.clearConnections();
-    }
-    if (selectionStore.selectedIds.size === 0) return;
-    const count = selectionStore.selectedIds.size;
-    const showFileOption = selectionHasVaultFiles();
-    uiStore.openConfirm({
-      title: 'Delete Tiles',
-      body: `Are you sure you want to delete ${count} tile${count !== 1 ? 's' : ''}?`,
-      confirmLabel: 'Delete',
-      danger: true,
-      extraOption: showFileOption
-        ? {
-            label: 'Delete associated files from vault as well?',
-            hint: 'The files move to Filo\'s trash. Ctrl+Z restores the tiles and their files, or restore the files from Settings → Trash.',
-            initial: false,
-          }
-        : undefined,
-      onConfirm: (deleteWithFile) => { void performDeleteSelected(deleteWithFile === true); },
-    });
-  }
-
-  async function performDeleteSelected(deleteWithFile: boolean) {
-    const selectedIds = [...selectionStore.selectedIds];
-
-    // Drain pending writes first, so a debounced keystroke can't land after
-    // its note moved to the trash (recreating the file there).
-    // The notes behind the selected text tiles move to Filo's trash with them
-    // (DeleteTilesCommand owns the move and its undo). Only a failed write to
-    // one of those notes blocks the delete.
-    const filePaths = deleteWithFile && selectionHasVaultFiles()
-      ? textTileNotePaths(
-          selectedIds
-            .map((id) => boardStore.getTile(id))
-            .filter((t): t is NonNullable<typeof t> => !!t),
-        )
-      : [];
-    try {
-      await withDrainedWrites(async () => {
-        const vaultRoot = filePaths.length > 0 ? normalizePath(vaultStore.path) : undefined;
-        boardStore.removeTilesWithHistory(selectedIds, { filePaths, vaultRoot });
-        selectionStore.clear();
-      }, { paths: filePaths });
-    } catch (err) {
-      if (err instanceof PendingWritesFailedError) {
-        // Drain already pushed its own toast; bail without removing
-        // anything so the user can fix the save errors and retry.
-        return;
-      }
-      throw err;
-    }
-  }
+  const deleteSelectionDeps: DeleteSelectionDeps = {
+    board: boardStore,
+    selection: selectionStore,
+    vaultPath: () => (vaultStore.project === null ? null : vaultStore.path),
+  };
 
   function goHome() {
     showHome = true;
@@ -260,6 +190,8 @@
       registerCommandWithShortcut({
         name: 'template:open', label: 'Insert Template', description: 'Insert Template',
         binding: { key: 't', ctrl: true },
+        // A layout template inserts tiles on the canvas.
+        enabled: onMindMap,
         execute: () => uiStore.openModal('template-picker'),
       }),
       registerCommandWithShortcut({
@@ -292,6 +224,7 @@
       registerCommandWithShortcut({
         name: 'tile:group', label: 'Group / Ungroup', description: 'Group / Ungroup',
         binding: { key: 'g', ctrl: true },
+        enabled: onMindMap,
         execute: () => {
           const ids = [...selectionStore.selectedIds];
           if (ids.length < 2) return;
@@ -322,6 +255,7 @@
       registerCommandWithShortcut({
         name: 'tile:new', label: 'New Tile', description: 'New Tile',
         binding: { key: 'n', ctrl: true },
+        enabled: onMindMap,
         execute: () => {
           if (!boardStore.current) return;
           const vp = canvasStore.viewportRect;
@@ -340,6 +274,7 @@
       registerCommandWithShortcut({
         name: 'tile:select-all', label: 'Select All', description: 'Select All',
         binding: { key: 'a', ctrl: true },
+        enabled: onMindMap,
         execute: () => {
           if (!boardStore.current) return;
           const allIds = Object.values(boardStore.tiles).map(t => t.id);
@@ -351,13 +286,16 @@
       registerCommandWithShortcut({
         name: 'tile:delete', label: 'Remove Selected', description: 'Remove Selected',
         binding: { key: 'Delete' },
-        execute: () => requestDeleteSelected(),
+        enabled: onMindMap,
+        execute: () => requestDeleteSelected(deleteSelectionDeps),
       }),
 
       // ── Lock / Unlock selected tiles ──
       registerCommandWithShortcut({
         name: 'tile:toggle-lock', label: 'Lock / Unlock Selected', description: 'Lock / Unlock Selected',
         binding: { key: 'l', ctrl: true },
+        // Kanban and Task List keep their lock on the card or row itself.
+        enabled: onMindMap,
         execute: () => { toggleLockSelection(boardStore, selectionStore.selectedIds); },
       }),
 

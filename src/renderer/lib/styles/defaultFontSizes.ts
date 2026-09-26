@@ -31,6 +31,8 @@ function getDefaultBoardFontSize(): {
   kanbanCardBody?: number;
   taskListTitle?: number;
   taskItem?: number;
+  taskItemBody?: number;
+  taskSectionTitle?: number;
 } | undefined {
   return vaultStore.project?.settings?.general?.defaultBoardFontSize;
 }
@@ -53,9 +55,15 @@ export function defaultKanbanCardFontSizes(): { fontSizeTitle?: number; fontSize
   };
 }
 
-/** Task List task body (rendered as a row). */
-export function defaultTaskFontSizes(): { fontSizeTitle?: number } {
-  return { fontSizeTitle: getDefaultBoardFontSize()?.taskItem };
+/** Task List task title + body (Settings → "Task Item" / "Task Body"). */
+export function defaultTaskFontSizes(): { fontSizeTitle?: number; fontSizeBody?: number } {
+  const bfs = getDefaultBoardFontSize();
+  return { fontSizeTitle: bfs?.taskItem, fontSizeBody: bfs?.taskItemBody };
+}
+
+/** Task List section header (Settings → "Task Section Title"). */
+export function defaultTaskSectionFontSizes(): { fontSizeTitle?: number } {
+  return { fontSizeTitle: getDefaultBoardFontSize()?.taskSectionTitle };
 }
 
 /**
@@ -70,8 +78,8 @@ export function defaultFontSizesForBoard(boardId: string): { fontSizeTitle?: num
     case 'kanban':
       return defaultKanbanCardFontSizes();
     case 'tasklist':
-      // Tasks render as a single body row; title and body both seed from `taskItem`.
-      return { fontSizeTitle: getDefaultBoardFontSize()?.taskItem, fontSizeBody: getDefaultBoardFontSize()?.taskItem };
+      // The same defaults a new task gets from the Task List itself.
+      return defaultTaskFontSizes();
     case 'mindmap':
     default:
       return defaultTileFontSizes();

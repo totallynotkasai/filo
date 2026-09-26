@@ -948,6 +948,10 @@ new name and removal of the old one can be further apart.
   write to the note is not reported at once (the echo window can't tell the
   two spellings apart). Filo's next write keeps the new spelling on disk, and
   the app shows it after the next reconcile pass (at most 30 s).
+- A new note's create reserves the name with an empty file first, so its echo
+  window also hides an empty file. Another program emptying that note within
+  about 7 s of Filo creating it is not reported at once; the next reconcile
+  pass shows it.
 
 ---
 

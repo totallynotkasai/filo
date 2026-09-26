@@ -239,12 +239,19 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
       // recreate it after it moved to the trash.
       // Only a failed write to the note being trashed blocks the delete.
       const filePath = tile.type === 'text' && tile.filePath ? tile.filePath : undefined;
-      await withDrainedWrites(async () => {
-        await historyStore.execute(new DeleteTaskCommand(boardId, tileId, filePath ? { filePath, vaultRoot } : {}));
-        tickAndPersist();
-        pruneSelection?.([tileId]);
-        announce(`Task removed: ${tile.title || 'task'}`);
+      let executed: Promise<void> = Promise.resolve();
+      await withDrainedWrites(async (drain) => {
+        // Started here but awaited outside: the history chain may still be
+        // running an earlier undo whose restore waits for this op to finish,
+        // so awaiting the chain inside the op would deadlock. The trash move
+        // runs under this drain if it starts while the op still holds it, and
+        // drains for itself otherwise.
+        executed = historyStore.execute(new DeleteTaskCommand(boardId, tileId, filePath ? { filePath, vaultRoot, drain } : {}));
       }, { paths: filePath ? [filePath] : [] });
+      await executed;
+      tickAndPersist();
+      pruneSelection?.([tileId]);
+      announce(`Task removed: ${tile.title || 'task'}`);
     } catch (err) {
       if (err instanceof PendingWritesFailedError) return;
       throw err;

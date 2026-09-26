@@ -55,6 +55,7 @@ import { looksTorn } from '../lib/notes/noteWriter';
 import { flushRawViews } from '../lib/notes/rawViews';
 import { askUnlessMoved, dropGraceChecks, settleGraceChecksNow } from '../lib/notes/renameGrace';
 import { unsavedNoteTexts } from '../lib/notes/unsavedNoteTexts';
+import { keepLeftBehind } from '../lib/notes/leftBehind';
 import { decideDiskChange } from '../lib/notes/noteDiskChange';
 import { backupThenRead } from '../lib/vault/keepLocalBackup';
 import {
@@ -79,6 +80,8 @@ export type NoteStatus = 'loading' | 'ready' | 'missing' | 'unreadable' | 'confl
 export interface ViewHooks {
   /** Push any keystrokes the view hasn't serialised yet into the model, now. */
   serialize?: () => void;
+  /** True while the view holds keystrokes it hasn't serialised yet. */
+  unserialised?: () => boolean;
 }
 
 /** One open note. Reactive fields re-render every view that reads them. */
@@ -353,6 +356,11 @@ function evictIfIdle(m: NoteModel): void {
   if (m.views.size > 0) return;
   if (m.hasUnsavedBody || writer.hasWork(m.relPath)) return;
   if (models.get(m.path) === m) models.delete(m.path);
+}
+
+/** True when a view of `m` holds keystrokes not yet in the model. */
+function viewsUnserialised(m: NoteModel): boolean {
+  return [...m.views.values()].some((hooks) => hooks.unserialised?.() === true);
 }
 
 /** Pulls every view's unserialised keystrokes into the models. */
@@ -964,16 +972,23 @@ registerPathRenamable('noteStore', renameNotePaths);
 
 // A body held in memory with no write armed (a conflict waiting for its
 // answer) is unsaved work the write ledger can't see.
-registerUnsavedSource(() => [
-  ...[...models.values()].filter((m) => m.hasUnsavedBody || writer.hasPendingBody(m.path)).map((m) => m.relPath),
-  ...writer.queuedPaths(),
-  ...loadingBodyPaths,
-]);
+function unsavedNotePaths(): string[] {
+  return [
+    ...[...models.values()].filter((m) => m.hasUnsavedBody || writer.hasPendingBody(m.path) || viewsUnserialised(m)).map((m) => m.relPath),
+    ...writer.queuedPaths(),
+    ...loadingBodyPaths,
+  ];
+}
+registerUnsavedSource(unsavedNotePaths);
 
-onVaultSwap('pre-swap', 'noteStore', () => {
+onVaultSwap('pre-swap', 'noteStore', async (event) => {
+  // Leaving as saved means nothing was left; a change queued since is kept, not reset away.
+  if (event.saveOutgoing && event.previousVault && unsavedNotePaths().length > 0) {
+    await keepLeftBehind(event.previousVault, await noteStore.unsavedTexts());
+  }
   writer.reset();
   models.clear();
   overlays.clear();
   loadingBodyPaths.clear();
   dropGraceChecks();
-});
+}, { runAfter: ['tabs', 'writeStateTracking'] });

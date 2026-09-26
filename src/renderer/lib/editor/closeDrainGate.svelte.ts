@@ -10,7 +10,9 @@
  * interactive confirm can sit open for minutes).
  *
  * So the re-arm window is removed instead: while a close drain is in progress the editors go READ-ONLY (a visual
- * "saving…" freeze). No keystroke is accepted, so none can be stranded.
+ * "saving…" freeze). No keystroke is accepted, so none can be stranded. Closing
+ * the vault or opening another one freezes them the same way, from the save
+ * before leaving until the swap has unmounted them.
  *
  * One global flag (not per-tab): a close drain is brief in the no-failure case,
  * and during a failed-drain confirm freezing every open editor is exactly the
@@ -28,13 +30,19 @@ import { onVaultSwap } from '../../core/vaultLifecycle';
 let draining = $state(false);
 let depth = 0; // reentrancy / overlapping closes — only the outermost clears.
 
-// A vault swap landing mid-close-drain (rare) must not strand the editors of the
-// NEW vault read-only — reset the gate to idle. (`runWithCloseDrain`'s try/finally
-// already covers the in-process path; this is the cross-vault backstop.)
-onVaultSwap('pre-swap', 'closeDrainGate', () => {
-  depth = 0;
-  draining = false;
-});
+// The swap unmounts the outgoing vault's editors (the `tabs` handler), then
+// resets the gate so the NEW vault's editors aren't stranded read-only. Leaving
+// holds the gate across that gap (`holdCloseDrainUntilSwap`), so no keystroke
+// lands between the save before leaving and the unmount.
+onVaultSwap(
+  'pre-swap',
+  'closeDrainGate',
+  () => {
+    depth = 0;
+    draining = false;
+  },
+  { runAfter: ['tabs'] },
+);
 
 export const closeDrainGate = {
   /** True while a tab-close drain (drain → confirm → re-drain → unmount) is in flight. */
@@ -48,6 +56,23 @@ export const closeDrainGate = {
  * settles (success, early return, or throw). Nested/overlapping closes share
  * the flag; only the outermost release clears it.
  */
+/**
+ * Raises the gate for leaving the vault. The returned release lowers it (the
+ * user chose to stay); when the vault is let go, the swap resets the gate
+ * after the editors have unmounted, so they never thaw in between.
+ */
+export function holdCloseDrainUntilSwap(): () => void {
+  depth++;
+  draining = true;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    depth = Math.max(0, depth - 1);
+    if (depth === 0) draining = false;
+  };
+}
+
 export async function runWithCloseDrain<T>(fn: () => Promise<T>): Promise<T> {
   depth++;
   draining = true;

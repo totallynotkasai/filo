@@ -21,6 +21,7 @@ import {
   createVaultFolder,
   renameVaultPath,
   withDrainedWrites,
+  type DrainToken,
 } from '../lib/vault/vaultOperations';
 import { performDelete } from './vaultDeleteOps';
 import type { BoardFileData } from '../lib/boards/boardSaver';
@@ -159,7 +160,7 @@ export function makeFolderOpsSlice(ctx: VaultContext) {
       beginRenameInFlight();
       try {
         return await withDrainedWrites(
-          () => runRename(ctx, vaultPath, oldPath, newPath, oldRel, newRel),
+          (drain) => runRename(ctx, vaultPath, oldPath, newPath, oldRel, newRel, drain),
           { paths: [oldRel ?? oldPath, newRel ?? newPath] },
         );
       } catch (err) {
@@ -220,6 +221,7 @@ async function runRename(
   newPath: string,
   oldRel: string | null,
   newRel: string | null,
+  drain: DrainToken,
 ): Promise<VaultRenameResult> {
       // Run the in-memory cascade BEFORE the IPC rename, so a re-render between
       // the IPC and the post-IPC cascade can't observe a half-renamed state.
@@ -330,10 +332,10 @@ async function runRename(
       // The cast narrows `code?: string` to the tight `VaultRenameResult` enum.
       //
       // Route through `renameVaultPath` so the disk-shape IPC is the *only*
-      // sanctioned site. The outer `withDrainedWrites`
-      // already drained; this re-entrant call short-circuits its own
-      // drain via the module-level guard.
-      const result = (await renameVaultPath(vaultPath, oldPath, newPath)) as VaultRenameResult;
+      // sanctioned site. The outer `withDrainedWrites` already drained; the
+      // token runs this call under that drain instead of queueing it behind
+      // the op it is part of.
+      const result = (await renameVaultPath(vaultPath, oldPath, newPath, drain)) as VaultRenameResult;
       if (!result.success) {
         // IPC failed — revert the in-memory cascade so the cache, the
         // sidebar tree, and the disk all agree on the OLD path again.
@@ -380,7 +382,8 @@ async function runRename(
         // peer state.
         // The peer calls (renameFile, renameKey, propagateRename, …) aren't
         // migrated to the registry; the gate's EXEMPT_OWNERS list documents them.
-        renameAllPathKeys(oldRel, newRel);
+        // A sweep that threw left state under the old path: keep the sentinel.
+        const pathKeysOk = renameAllPathKeys(oldRel, newRel);
         // Media tags live in `.filo/tags.json` keyed by path, so they follow
         // the rename here. A note's title and tags are in its frontmatter and
         // move with the bytes: a rename never writes the note. The exact-match
@@ -485,7 +488,7 @@ async function runRename(
               reportError('vault.rename.sentinel', err, "Couldn't update rename-cascade sentinel with failed paths");
             });
           }
-        } else if (sentinelId && tagsFlushOk) {
+        } else if (sentinelId && tagsFlushOk && pathKeysOk) {
           // Full success path: drop the sentinel so the recovery prompt
           // doesn't surface on next open. Gated on `tagsFlushOk`: if the
           // board cascade flushed cleanly but the tag-membership flush above

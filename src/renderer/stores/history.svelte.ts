@@ -485,6 +485,19 @@ export const historyStore = {
   },
 
   /**
+   * Runs a command body (an execute, or the undo a toast offers) in the same
+   * chain as every stack command, without touching any stack. For a change no
+   * stack the user can reach would hold: its undo lives on a toast, and must
+   * still not interleave with a Ctrl+Z already in flight. A failure is
+   * reported, never silent; the promise resolves either way.
+   */
+  runOffStack(op: () => Promise<void> | void, label: string): Promise<void> {
+    return runChained(op).catch((err) => {
+      reportError('historyStore', err, `"${label}" failed.`);
+    });
+  },
+
+  /**
    * Executes a command and pushes it onto the active board's undo stack.
    * Clears the redo stack (new action invalidates redo history). Also
    * marks the project as dirty.
@@ -785,16 +798,21 @@ export const historyStore = {
 // tabs alike) follows it, so an undo after the rename reaches the file at its
 // new path instead of failing on the old one. Both the in-app rename and the
 // external-rename cascade fire this sweep.
+// One command that can't follow doesn't stop the rest; the throw at the end
+// reaches `renameAllPathKeys`, which reports it and keeps the rename sentinel.
 registerPathRenamable('history', (oldRel, newRel) => {
+  const stuck: string[] = [];
   for (const stack of Object.values(stacks)) {
     for (const command of [...stack.undoStack, ...stack.redoStack]) {
       try {
         command.renamePath(oldRel, newRel);
       } catch (err) {
         console.error(`[historyStore] "${command.description}" couldn't follow the rename of "${oldRel}":`, err);
+        stuck.push(command.description);
       }
     }
   }
+  if (stuck.length > 0) throw new Error(`Undo steps couldn't follow the rename: ${stuck.join(', ')}`);
 });
 
 // Vault-swap reset: drops every per-board undo/redo stack so a Ctrl+Z in the

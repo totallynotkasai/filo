@@ -48,6 +48,7 @@
   import { makeKanbanTileCreator } from '../../lib/kanban/kanbanTileCreation';
   import { computeKanbanInsertIndex } from '../../lib/kanban/kanbanInsertPosition';
   import { flushLastViewForBoard } from '../../lib/boards/lastViewFlush';
+  import { registerComponentFlush } from '../../lib/boards/componentFlush';
   import {
     KanbanFiltersAndSort,
     type KanbanLastView,
@@ -57,6 +58,7 @@
   import { KanbanDragController } from '../../lib/kanban/kanbanDragController.svelte';
   import { isEditableTextTarget } from '../../lib/utils/editableTarget';
   import { registerCommandWithShortcut } from '../../core/commandRegistry';
+  import type { ShortcutBinding } from '../../core/hotkeys';
   import KanbanFindBar from './KanbanFindBar.svelte';
   import KanbanTemplatePicker from './KanbanTemplatePicker.svelte';
   import TagEditor from '../tags/TagEditor.svelte';
@@ -576,7 +578,9 @@
   function handleBoardKeydown(e: KeyboardEvent) {
     // Scope to this instance's DOM subtree — a multi-tab layout can mount
     // more than one Kanban board, and a window-level listener would fire
-    // every mounted handler on every keypress.
+    // every mounted handler on every keypress. A key a global shortcut
+    // already handled (it called preventDefault) must not act twice.
+    if (e.defaultPrevented) return;
     const tgt = e.target as Node | null;
     if (!boardRootEl || !tgt || !boardRootEl.contains(tgt)) return;
     if (e.key === '/' && !findBarOpen && !isEditableTextTarget(e.target)) {
@@ -770,11 +774,11 @@
   // ── Kanban-scoped keyboard shortcuts ──
   //
   // Registered on mount and unregistered on destroy so the shortcuts only
-  // fire while a Kanban board is the active surface. Both commands have
-  // commandIds so they show up in the Keyboard Shortcuts settings panel
-  // and can be rebound by the user.
-  let unregisterAddTile: (() => void) | null = null;
-  let unregisterAddColumn: (() => void) | null = null;
+  // fire while a Kanban board is the active surface. Each has a commandId, so
+  // it shows up in the Keyboard Shortcuts settings panel and can be rebound.
+  // Ctrl+N is the Mind Map's New Tile; that command stands aside off the
+  // Mind Map, so here it adds a card like `n` does.
+  let unregisterShortcuts: Array<() => void> = [];
 
   // Active-pane guard for the board-scoped shortcuts below: a split view can
   // mount two boards sharing a bare key (`n` is also Task List's), so gating on
@@ -789,56 +793,40 @@
     openNewTilePicker(targetId);
   }
 
-  function shortcutAddColumn() {
-    addColumn();
-  }
-
   onMount(() => {
     window.addEventListener('keydown', handleBoardKeydown);
-    unregisterAddTile = registerCommandWithShortcut({
-      name: 'kanban:add-tile',
-      label: 'Kanban: Add tile',
-      description: 'Kanban: Add tile',
-      binding: { key: 'n' },
-      enabled: isActivePane,
-      execute: shortcutAddTile,
-    });
-    unregisterAddColumn = registerCommandWithShortcut({
-      name: 'kanban:add-column',
-      label: 'Kanban: Add column',
-      description: 'Kanban: Add column',
-      binding: { key: 'n', shift: true },
-      enabled: isActivePane,
-      execute: shortcutAddColumn,
-    });
+    const shortcuts: Array<[string, string, ShortcutBinding, () => void]> = [
+      ['kanban:add-tile', 'Kanban: Add tile', { key: 'n' }, shortcutAddTile],
+      ['kanban:new-card', 'Kanban: New card', { key: 'n', ctrl: true }, shortcutAddTile],
+      ['kanban:add-column', 'Kanban: Add column', { key: 'n', shift: true }, () => addColumn()],
+    ];
+    unregisterShortcuts = shortcuts.map(([name, label, binding, execute]) =>
+      registerCommandWithShortcut({ name, label, description: label, binding, enabled: isActivePane, execute }));
   });
 
   onDestroy(() => {
     window.removeEventListener('keydown', handleBoardKeydown);
-    unregisterAddTile?.();
-    unregisterAddTile = null;
-    unregisterAddColumn?.();
-    unregisterAddColumn = null;
+    for (const unregister of unregisterShortcuts) unregister();
+    unregisterShortcuts = [];
     dragController.dispose();
     announcer.dispose();
     // Drain any queued frontmatter writes so a board close during the
     // 300ms debounce window doesn't lose the user's last field edit.
     void noteStore.flushAll();
-    // Flush the pending lastView on a true unmount. The persist $effect
-    // cleanup flushes only on a real board switch, so without this the last
-    // filter/sort change within the 300 ms window before a board close / vault
-    // swap would be dropped. Keyed by the CAPTURED hydrated id through the
-    // cache (teardown-safe; a no-change flush is a no-op).
-    if (hydratedForBoardId) {
-      flushLastViewForBoard(hydratedForBoardId, {
-        sortBy: filtersAndSort.activeSortBy,
-        filterTags: [...filtersAndSort.activeFilterTags],
-        filterProp: filtersAndSort.activeFilterProp
-          ? { ...filtersAndSort.activeFilterProp }
-          : null,
-      });
-    }
+    flushLastView();
   });
+
+  // Writes the filter/sort state now: on a true unmount (the persist $effect
+  // cleanup flushes only on a real board switch) and from a save or a leave,
+  // which run before the unmount. Keyed by the hydrated id through the cache
+  // (teardown-safe; a no-change flush is a no-op).
+  function flushLastView(): void {
+    if (!hydratedForBoardId) return;
+    const prop = filtersAndSort.activeFilterProp;
+    const view = { sortBy: filtersAndSort.activeSortBy, filterTags: [...filtersAndSort.activeFilterTags], filterProp: prop ? { ...prop } : null };
+    flushLastViewForBoard(hydratedForBoardId, view);
+  }
+  $effect(() => registerComponentFlush('kanban view', flushLastView));
 
   // ── Filtering / sorting (applied per column at render time) ──
   //

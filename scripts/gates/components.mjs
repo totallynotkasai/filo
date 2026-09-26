@@ -17,26 +17,31 @@ function depthMap(code) {
   return depth;
 }
 
-/** Text of every teardown region: `onDestroy(…)` bodies and `return () => …` cleanups. */
-function teardownText(code) {
-  let acc = '';
+/** Every teardown region, with its offset: `onDestroy(…)` bodies and `return () => …` cleanups. */
+function teardownRegions(code) {
+  const regions = [];
   for (const m of code.matchAll(/\bonDestroy\s*\(/g)) {
     const paren = code.indexOf('(', m.index);
     const close = matchBrace(code, paren, '(', ')');
-    acc += '\n' + code.slice(paren, close < 0 ? code.length : close + 1);
+    regions.push({ start: paren, text: code.slice(paren, close < 0 ? code.length : close + 1) });
   }
   for (const m of code.matchAll(/\breturn\s*\(\s*\)\s*=>/g)) {
     let j = m.index + m[0].length;
     while (j < code.length && /\s/.test(code[j])) j++;
     if (code[j] === '{') {
       const close = matchBrace(code, j, '{', '}');
-      acc += '\n' + code.slice(j, close < 0 ? code.length : close + 1);
+      regions.push({ start: j, text: code.slice(j, close < 0 ? code.length : close + 1) });
     } else {
       const semi = code.indexOf(';', j);
-      acc += '\n' + code.slice(j, semi === -1 ? Math.min(code.length, j + 200) : semi);
+      regions.push({ start: j, text: code.slice(j, semi === -1 ? Math.min(code.length, j + 200) : semi) });
     }
   }
-  return acc;
+  return regions;
+}
+
+/** Text of every teardown region. */
+function teardownText(code) {
+  return teardownRegions(code).map((r) => '\n' + r.text).join('');
 }
 
 // `$derived(<literal>)` / `$derived(() => <literal>)` forms that can never change.
@@ -393,6 +398,65 @@ export const checks = [
           });
         }
       }
+      return out;
+    },
+  },
+  {
+    id: 'teardown-saves-registered',
+    title: 'a component that saves on teardown also registers that change with the component-flush registry',
+    hint:
+      'Leaving the vault checks for unsaved work before the views unmount, and the swap cancels what their teardown ' +
+      'queues. Register the same save with `registerComponentFlush` (lib/boards/componentFlush.ts) so the save runs ' +
+      'it first. A note store call is covered by the save itself; annotate anything else `// allow-teardown-save: <reason>`.',
+    run(ctx) {
+      const out = [];
+      const saveCall = /(?<![\w.])((?:\w+\.)*)(\w*(?:[Pp]ersist|[Cc]ommit|[Ss]ave|[Ff]lush)\w*)\s*\(/g;
+      let seen = 0;
+      for (const rel of ctx.files(COMPONENTS, { ext: ['.svelte'] })) {
+        const raw = ctx.read(rel);
+        const rawLines = raw.split(/\r?\n/);
+        const code = blank(scriptOnly(raw));
+        const registers = /\bregister(?:ComponentFlush|RawView)\s*\(/.test(code);
+        for (const region of teardownRegions(code)) {
+          for (const m of region.text.matchAll(saveCall)) {
+            const receiver = m[1];
+            if (receiver.startsWith('noteStore.')) continue;
+            seen++;
+            if (registers) continue;
+            const line = lineAt(code, region.start + m.index);
+            if (markerNear(rawLines, line - 1, /\/\/\s*allow-teardown-save:\s*\S+/)) continue;
+            out.push(fail(rel, line, `teardown calls ${receiver}${m[2]}() but the component never calls registerComponentFlush`));
+          }
+        }
+      }
+      if (seen < 5) out.push(fail(COMPONENTS, undefined, `tripwire: only ${seen} teardown saves found (expected >= 5)`));
+      return out;
+    },
+  },
+  {
+    id: 'hotkeys-board-gated',
+    title: "every global `tile:` shortcut in AppShell says which board it is for (`enabled`)",
+    hint:
+      'The global key handler runs the first matching shortcut, and AppShell registers before any board. An ungated ' +
+      'Mind Map shortcut (Ctrl+N, Ctrl+A, Delete…) fires on Kanban / Task List / Document tabs too and hides the ' +
+      "board's own command. Add `enabled: onMindMap` (or the right board check) to the registration.",
+    run(ctx) {
+      const rel = `${COMPONENTS}/layout/AppShell.svelte`;
+      const raw = ctx.read(rel);
+      if (raw === null) return [fail(rel, undefined, 'missing')];
+      const code = blank(scriptOnly(raw), { strings: false });
+      const out = [];
+      let seen = 0;
+      for (const m of code.matchAll(/\bregisterCommandWithShortcut\s*\(/g)) {
+        const open = code.indexOf('(', m.index);
+        const close = matchBrace(code, open, '(', ')');
+        const call = code.slice(open, close < 0 ? code.length : close + 1);
+        const name = /\bname\s*:\s*['"]([^'"]+)['"]/.exec(call)?.[1] ?? '';
+        if (!name.startsWith('tile:')) continue;
+        seen++;
+        if (!/\benabled\s*:/.test(call)) out.push(fail(rel, lineAt(code, m.index), `${name} has no \`enabled\` board check`));
+      }
+      if (seen < 4) out.push(fail(rel, undefined, `tripwire: only ${seen} tile: shortcuts found (expected >= 4)`));
       return out;
     },
   },

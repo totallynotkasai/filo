@@ -27,6 +27,7 @@
     type BoardScope,
   } from '../../lib/boards/boardScope.svelte';
   import { createBoardScope } from '../../lib/boards/boardScopeFactory';
+  import { registerComponentFlush } from '../../lib/boards/componentFlush';
 
   interface Props {
     paneId: string;
@@ -40,6 +41,8 @@
   // lifetime — closing the pane drops the reference (GC reclaims it).
   const scope: BoardScope = createBoardScope();
   setContext(BOARD_SCOPE_KEY, scope);
+  // A camera move inside its 1.5 s idle window is written by a save or a leave.
+  $effect(() => registerComponentFlush('canvas viewport', () => scope.canvas.flushViewport()));
 
   let isActive = $derived(workspaceStore.activePaneId === paneId);
   // The blue active-pane outline only carries information when there is

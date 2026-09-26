@@ -138,6 +138,7 @@ export class DeleteCardCommand extends Command {
       this.snapshotPlacement.style,
       this.snapshotPlacement.coverImage,
       this.beforeTileId, // anchor over the stale absolute index
+      this.snapshotPlacement,
     );
   }
 }

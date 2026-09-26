@@ -28,7 +28,14 @@ export function makeFrontmatterSyncSlice(_ctx: BoardContext) {
 
     cascadeDeleteByVaultPath(
       deletedRelPath: string,
-      opts: Omit<CascadeDeleteOptions, 'styleClears'> = {},
+      opts: Omit<CascadeDeleteOptions, 'styleClears'> & {
+        /**
+         * Keep the command off every undo stack: no stack the user can reach
+         * would undo it (no board open, or a Document tab's own stack), so
+         * the caller offers the undo on a toast instead.
+         */
+        offStack?: boolean;
+      } = {},
     ): {
       removedTileIds: string[]; changedBoardIds: string[];
       /** The undoable command, when there was anything to undo. */
@@ -87,13 +94,18 @@ export function makeFrontmatterSyncSlice(_ctx: BoardContext) {
       // so undo can restore them. JSON round-trip rather than structuredClone because boardCache entries
       // are Svelte 5 $state proxies.
       const styleClearsSnapshot = JSON.parse(JSON.stringify(targets.styleClears));
+      // Built before the clears land: it snapshots each Kanban card's and
+      // Task List task's placement, cover image included.
+      const { offStack, ...commandOpts } = opts;
+      const command = new CascadeDeleteCommand(byBoardTiles, conns, { ...commandOpts, styleClears: styleClearsSnapshot });
       if (hasStyleClears) {
         boardCacheStore.applyCascadeStyleClears(targets.styleClears);
       }
 
-      // Dispatch through history so Ctrl+Z restores the file, placements and styles.
-      const command = new CascadeDeleteCommand(byBoardTiles, conns, { ...opts, styleClears: styleClearsSnapshot });
-      historyStore.execute(command);
+      // Dispatch through history so Ctrl+Z restores the file, placements and
+      // styles. Off the stack, the caller offers the undo itself (a toast).
+      if (offStack) void historyStore.runOffStack(() => command.execute(), command.description);
+      else historyStore.execute(command);
       for (const arr of Object.values(byBoardTiles)) {
         for (const t of arr) removedTileIds.push(t.id);
       }

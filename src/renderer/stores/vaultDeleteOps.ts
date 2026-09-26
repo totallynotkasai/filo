@@ -95,7 +95,7 @@ export async function performDelete(ctx: VaultContext, itemPath: string): Promis
   const deleteIdentity = captureVaultIdentity();
 
   try {
-    return await withDrainedWrites(async () => {
+    return await withDrainedWrites(async (drain) => {
       const vaultRoot = ctx.getVaultPath();
       const rel = toVaultRelative(itemPath, vaultRoot);
       if (!rel) return false;
@@ -110,7 +110,7 @@ export async function performDelete(ctx: VaultContext, itemPath: string): Promis
       markRecentSelfWrite(rel);
       for (const path of filesOf(node, vaultRoot)) markRecentSelfWrite(path);
 
-      const result = await trashVaultPath(vaultRoot, rel);
+      const result = await trashVaultPath(vaultRoot, rel, drain);
       if (!result.success) {
         uiStore.pushToast({
           text: `Couldn't move "${itemName}" to Filo's trash${result.error ? `: ${result.error}` : ''}. Nothing was deleted; a file inside may be open in another program.`,
@@ -132,12 +132,17 @@ export async function performDelete(ctx: VaultContext, itemPath: string): Promis
       // leaving a phantom tab until the watcher reconcile.
       const relLower = toPosix(rel).toLowerCase();
       const relPrefix = relLower.endsWith('/') ? relLower : `${relLower}/`;
-      // Board undo lives on the active board's stack. With no board open, or
-      // when the active board's own file goes with the item, no stack the user
-      // can reach holds the delete: the toast offers the same undo.
+      // Board undo lives on the active board's stack. With no board open, a
+      // Document tab active (its stack is the note's text history, keyed by a
+      // tab id no board file carries), or the active board's own file going
+      // with the item, no board stack the user can reach holds the delete:
+      // the toast offers the undo instead.
       const activeId = historyStore.activeBoardId;
       const activePath = activeId ? toPosix(boardStore.paths[activeId] ?? '').toLowerCase() : '';
-      const noBoardUndo = !activeId || activePath === relLower || activePath.startsWith(relPrefix);
+      const noBoardUndo = !activeId
+        || !boardCacheStore.cache[activeId]
+        || activePath === relLower
+        || activePath.startsWith(relPrefix);
       const cleanupPromises: Array<Promise<unknown>> = [];
       for (const [boardId, bp] of Object.entries(boardStore.paths)) {
         if (!bp) continue;
@@ -153,7 +158,9 @@ export async function performDelete(ctx: VaultContext, itemPath: string): Promis
       if (!isStillSameVault(deleteIdentity)) return true;
 
       const fileTags = fileTagsUnder(rel);
-      const { command } = boardStore.cascadeDeleteByVaultPath(rel, { vaultRoot, trashed, fileTags });
+      const { command } = boardStore.cascadeDeleteByVaultPath(rel, {
+        vaultRoot, trashed, fileTags, offStack: noBoardUndo,
+      });
       // Drop tag associations for the item (exact match for a file, prefix
       // for a folder; both are safe either way). Undo puts them back.
       fileTagsStore.dropFile(rel);
@@ -212,7 +219,9 @@ export async function performDelete(ctx: VaultContext, itemPath: string): Promis
       }
       await ctx.refreshTree();
       ctx.clearSelection();
-      if (noBoardUndo && command) toastMovedToTrash(itemName, () => command.undo());
+      if (noBoardUndo && command) {
+        toastMovedToTrash(itemName, () => historyStore.runOffStack(() => command.undo(), `Undo ${command.description}`));
+      }
       return true;
     }, { paths: [itemPath] });
   } catch (err) {

@@ -19,10 +19,13 @@
  * rename and delete cascades) wrap their full sequence in
  * `withDrainedWrites(async () => { ... })`.
  *
- * Re-entrancy: a nested `withDrainedWrites` call short-circuits its own
- * drain (the outer drain already covers it). The convenience IPC helpers
- * are therefore safe to call from inside a `withDrainedWrites` callback
- * — no double-drain cost, no risk of a stale flush.
+ * Nesting is explicit: `op` receives a `DrainToken`, and a call made from
+ * inside it passes the token on (`{ within: token }`, or the helpers' last
+ * argument) to run at once under the outer drain. Any other call made while a
+ * drained op runs waits for that op to finish, then drains for itself, so it
+ * never runs undrained alongside a long op. A nested call that forgets the
+ * token waits for the op that is waiting for it: a deadlock, which a dev-mode
+ * watchdog reports after 30 s.
  *
  * CI gate: `scripts/gates:no-raw-disk-shape-ipc` forbids raw renderer
  * invokes of the disk-shape channels (vault rename / delete / create-folder /
@@ -87,39 +90,60 @@ export class PendingWritesFailedError extends Error {
 }
 
 /**
- * Re-entrancy guard. Nested calls reuse the outer drain instead of running
- * their own — every IPC convenience helper calls `withDrainedWrites`, so a
- * complex sequence like `vaultFolderOps.delete` can wrap itself once and
- * still call `trashVaultPath` for the IPC without paying a second drain.
- *
- * Keyed by the vault GENERATION rather than a bare boolean: otherwise a call
- * against a NEWLY-swapped vault (while an outer drain for the OLD vault is
- * still awaiting) would skip its own drain as "re-entrant" and run the new
- * vault's disk-shape op without draining its writers.
- *
- * `drainPromise` distinguishes a genuinely NESTED call (op() invoking a
- * convenience helper — runs only after the drain settled) from a CONCURRENT
- * sibling arriving while the drain is still in flight (e.g. an external
- * rename landing while a delete is parked behind a drift prompt for up to
- * ~60 s). Siblings await the in-flight drain instead of running un-drained;
- * a nested call sees it already resolved and proceeds immediately.
+ * Handed to a drained op. Passing it to a nested `withDrainedWrites` (or an
+ * IPC helper) runs that call inside the op's drain. It counts only while the
+ * op (or a nested call it started) runs, and only in the vault it was issued
+ * for: a kept token is ignored later, and the call then drains for itself.
  */
-/**
- * The in-flight drain's outcome, carried IN `drainPromise` so a parked
- * sibling can react without re-running its own full drain:
- *  - `{ detail }` — every writer pipeline drained; `detail` lists what failed
- *    (maybe nothing). Each call then decides for its own scope whether a
- *    failure blocks it (see `blockingFailures`), so a sibling never re-drains
- *    (up to ~60 s each).
- *  - `{ detail: null }` — an UNEXPECTED drain/op rejection (a flush threw);
- *    the sibling bails too.
- * Carrying the verdict in the promise (rather than a separate module var) makes
- * it immune to the finally-clears-it-before-the-await-resolves race.
- */
-type DrainOutcome = { detail: PendingWritesFailedDetail | null };
+export interface DrainToken {
+  readonly generation: number;
+}
 
-let drainingGeneration: number | null = null;
-let drainPromise: Promise<DrainOutcome> | null = null;
+/** What a live token stands for. */
+interface HeldToken {
+  /** The drain's result, which each nested call judges against its own scope. */
+  detail: PendingWritesFailedDetail;
+  /** Nested calls still running: the next op waits for them too. */
+  nested: Set<Promise<unknown>>;
+}
+
+// allow-module-state: each entry lives only while its op runs, and a token counts only in its own vault generation
+const liveTokens = new Map<DrainToken, HeldToken>();
+
+/**
+ * One drain and the op(s) run on it. A call arriving while the drain is still
+ * in flight shares its result once its turn comes, as long as no op has run
+ * since: re-draining would only re-fire the same failed writes (up to ~60 s
+ * each) and toast again. Once an op has run, a later call drains afresh.
+ */
+interface DrainRun {
+  /** Null until the drain finished, and for a drain that threw. */
+  detail: PendingWritesFailedDetail | null;
+  opStarted: boolean;
+}
+
+/**
+ * The calls of one vault generation, one at a time. Per generation, so a call
+ * for a newly opened vault never waits behind the outgoing vault's op (which
+ * stops on its own vault checks).
+ */
+interface DrainQueue {
+  generation: number;
+  /** Settles when the last queued call is done. */
+  tail: Promise<void>;
+  /** Calls queued or running. */
+  depth: number;
+  /** The drain of the running call. */
+  run: DrainRun | null;
+}
+
+let queue: DrainQueue | null = null;
+
+/**
+ * A queued call that waits this long is almost certainly a nested call that
+ * didn't pass its token and waits for the op that waits for it.
+ */
+const QUEUE_WAIT_WARN_MS = 30_000;
 
 function summariseFailedPaths(results: PendingWritesFailedDetail): string[] {
   const out: string[] = [];
@@ -143,6 +167,12 @@ export interface DrainScope {
    * failure blocks.
    */
   paths?: string[];
+  /**
+   * The token of the drained op this call is made from. It then runs at once
+   * under that op's drain; without it, it would wait for that op to finish,
+   * and the op for it.
+   */
+  within?: DrainToken;
 }
 
 /** `p` as a case-folded vault-relative key; an absolute path under the vault is made relative. */
@@ -211,92 +241,143 @@ function refuseIfBlocked(detail: PendingWritesFailedDetail, scope: DrainScope): 
  * caught — that's a design call: keystrokes during a rename are rare
  * enough that re-arming a 300 ms debounce mid-rename is acceptable.
  */
-export async function withDrainedWrites<T>(op: () => Promise<T>, scope: DrainScope = {}): Promise<T> {
+export async function withDrainedWrites<T>(
+  op: (token: DrainToken) => Promise<T>,
+  scope: DrainScope = {},
+): Promise<T> {
   const generation = currentVaultGeneration();
-  if (drainingGeneration === generation && drainPromise) {
-    // Already covered by an outer drain for THIS vault generation. Two cases:
-    //  - NESTED call (op() invoking a convenience helper): the outer drain has
-    //    already settled (op only runs post-drain), so the await below
-    //    resolves immediately and we just run the op with no second drain.
-    //  - CONCURRENT sibling: the outer drain is still in flight (possibly
-    //    parked behind an interactive drift prompt for up to ~60 s). Await it
-    //    rather than running the op un-drained.
-    const outcome = await drainPromise;
-    if (!outcome.detail) {
-      throw new Error('Pending writes drain failed — refusing the disk-shape op.');
-    }
-    // Share the outer drain's result rather than re-draining, judged against
+  const within = scope.within;
+  const held = within && within.generation === generation ? liveTokens.get(within) : undefined;
+  if (within && held) {
+    // Made from inside a running op: that op's drain covers it, judged against
     // this call's own scope.
-    refuseIfBlocked(outcome.detail, scope);
-    // Re-validate AFTER the park: a vault swap during it would otherwise run
-    // this op's stale captured inputs against the NEW vault. Main's
-    // `assertActiveVault` gates the disk IPC, but the in-memory half of a
-    // cascade op is not gated — bail loudly.
-    if (currentVaultGeneration() !== generation) {
-      throw new Error(
-        'Vault changed during write drain — refusing the disk-shape op (stale generation).',
-      );
+    refuseIfBlocked(held.detail, scope);
+    const nested = op(within);
+    held.nested.add(nested);
+    try {
+      return await nested;
+    } finally {
+      held.nested.delete(nested);
     }
-    return op();
   }
-  drainingGeneration = generation;
-  // `drainPromise` carries the drain outcome (see `DrainOutcome`), settled
-  // before op runs. Never rejects, so a parked sibling can't crash on an error
-  // the outer call already surfaced.
-  let settleDrain: (outcome: DrainOutcome) => void = () => {};
-  drainPromise = new Promise<DrainOutcome>((resolve) => { settleDrain = resolve; });
+
+  if (!queue || queue.generation !== generation) {
+    queue = { generation, tail: Promise.resolve(), depth: 0, run: null };
+  }
+  const q = queue;
+  const mustWait = q.depth > 0;
+  const shared = q.run && !q.run.opStarted ? q.run : null;
+  const prev = q.tail;
+  let done: () => void = () => {};
+  q.tail = new Promise<void>((resolve) => { done = resolve; });
+  q.depth++;
   try {
-    // Misc + config schedulers must drain alongside md/fm/board.
-    // Without them, a debounced sidebar-order / viewports / tags.json /
-    // workspace.json write fires AFTER the disk-shape op lands, racing the
-    // rename or resurrecting a path the IPC just removed.
-    //
-    // `flushScheduledConfig`'s param is a vestigial getter — the underlying
-    // scheduler captures args at schedule time. We pass `() => null` so the
-    // signature stays satisfied without coupling this module to the project
-    // store's `getConfigWriteArgs`.
-    const [noteResult, boardDrain, miscResult, configResult] =
-      await Promise.all([
-        noteStore.flushAll(),
-        boardCacheStore.flushAllDirty(),
-        flushAllMisc(),
-        flushScheduledConfig(() => null),
-      ]);
-
-    // A HELD board write (its file vanished on disk, e.g. an
-    // external folder rename, and the re-check is pending) fails by design.
-    // It must not block the disk-shape op: the external-rename cascade that
-    // REBINDS that very board runs inside this drain, and aborting it would
-    // strand the board at its old path. The write stays retained + failed.
-    const boardResult = { ...boardDrain, failed: boardDrain.failed.filter((p) => !isBoardPathHeld(p)) };
-    const detail: PendingWritesFailedDetail = {
-      notes: noteResult,
-      board: boardResult,
-      misc: miscResult,
-      config: { failed: configResult?.failed ?? [] },
-    };
-
-    // Release any concurrent siblings parked above BEFORE the op runs (their
-    // ops were never serialised behind the outer op, only behind the drain).
-    // Each judges the result against its own scope.
-    settleDrain({ detail });
-    refuseIfBlocked(detail, scope);
-    return await op();
-  } finally {
-    // Only clear if we're still the generation that set it. A swap mid-drain
-    // bumps `currentVaultGeneration()`; if a newer-generation drain set the
-    // flag in the meantime, this stale `finally` must not clear ITS flag
-    // (or its drainPromise).
-    if (drainingGeneration === generation) {
-      drainingGeneration = null;
-      drainPromise = null;
+    if (mustWait) {
+      await waitForTurn(prev);
+      // A vault swap while this call waited: its captured inputs belong to the
+      // previous vault. Main's `assertActiveVault` gates the disk IPC, but the
+      // in-memory half of a cascade op is not gated, so refuse.
+      if (currentVaultGeneration() !== generation) {
+        throw new Error(
+          'Vault changed while waiting for another disk-shape op — refusing this one (stale generation).',
+        );
+      }
+      if (shared && !shared.opStarted) {
+        if (!shared.detail) {
+          throw new Error('Pending writes drain failed — refusing the disk-shape op.');
+        }
+        q.run = shared;
+        refuseIfBlocked(shared.detail, scope);
+        shared.opStarted = true;
+        return await runHolding(op, generation, shared.detail);
+      }
     }
-    // Idempotent (first settle wins): a no-op once the drain settled above.
-    // Catches an UNEXPECTED drain rejection (a flush threw) →
-    // `{ detail: null }` so parked siblings bail rather than hang on a
-    // promise that never resolves.
-    settleDrain({ detail: null });
+    const run: DrainRun = { detail: null, opStarted: false };
+    q.run = run;
+    const detail = await drainWriters();
+    run.detail = detail;
+    refuseIfBlocked(detail, scope);
+    run.opStarted = true;
+    return await runHolding(op, generation, detail);
+  } finally {
+    q.depth--;
+    if (q.depth === 0) q.run = null;
+    done();
   }
+}
+
+/** Waits for the call ahead; in dev, says so when that takes suspiciously long. */
+async function waitForTurn(prev: Promise<void>): Promise<void> {
+  if (!import.meta.env.DEV) {
+    await prev;
+    return;
+  }
+  const queuedAt = new Error('The waiting withDrainedWrites call');
+  const timer = setTimeout(() => {
+    console.warn(
+      `[vaultOperations] A disk-shape operation has waited over ${QUEUE_WAIT_WARN_MS / 1000} s for the one before it. If that one is waiting for this one, a nested call is missing its DrainToken ({ within: token }).`,
+      queuedAt,
+    );
+  }, QUEUE_WAIT_WARN_MS);
+  try {
+    await prev;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Runs `op` with a live token. The next queued call starts only once the op
+ * and every nested call it started have settled, even ones it didn't await,
+ * so no drain runs alongside them.
+ */
+async function runHolding<T>(
+  op: (token: DrainToken) => Promise<T>,
+  generation: number,
+  detail: PendingWritesFailedDetail,
+): Promise<T> {
+  const token: DrainToken = Object.freeze({ generation });
+  const held: HeldToken = { detail, nested: new Set() };
+  liveTokens.set(token, held);
+  try {
+    return await op(token);
+  } finally {
+    while (held.nested.size > 0) await Promise.allSettled([...held.nested]);
+    liveTokens.delete(token);
+  }
+}
+
+/** Every writer pipeline, flushed in parallel; what failed. */
+async function drainWriters(): Promise<PendingWritesFailedDetail> {
+  // Misc + config schedulers must drain alongside md/fm/board.
+  // Without them, a debounced sidebar-order / viewports / tags.json /
+  // workspace.json write fires AFTER the disk-shape op lands, racing the
+  // rename or resurrecting a path the IPC just removed.
+  //
+  // `flushScheduledConfig`'s param is a vestigial getter — the underlying
+  // scheduler captures args at schedule time. We pass `() => null` so the
+  // signature stays satisfied without coupling this module to the project
+  // store's `getConfigWriteArgs`.
+  const [noteResult, boardDrain, miscResult, configResult] =
+    await Promise.all([
+      noteStore.flushAll(),
+      boardCacheStore.flushAllDirty(),
+      flushAllMisc(),
+      flushScheduledConfig(() => null),
+    ]);
+
+  // A HELD board write (its file vanished on disk, e.g. an
+  // external folder rename, and the re-check is pending) fails by design.
+  // It must not block the disk-shape op: the external-rename cascade that
+  // REBINDS that very board runs inside this drain, and aborting it would
+  // strand the board at its old path. The write stays retained + failed.
+  const boardResult = { ...boardDrain, failed: boardDrain.failed.filter((p) => !isBoardPathHeld(p)) };
+  return {
+    notes: noteResult,
+    board: boardResult,
+    misc: miscResult,
+    config: { failed: configResult?.failed ?? [] },
+  };
 }
 
 // ── Thin IPC wrappers (drain + invoke) ────────────────────────────────
@@ -308,8 +389,8 @@ export async function withDrainedWrites<T>(op: () => Promise<T>, scope: DrainSco
 //
 // Complex call sites that need pre-IPC reads (e.g. snapshot the .md body
 // for an undoable delete) wrap their full sequence in `withDrainedWrites`
-// directly. The helpers are still callable inside that block — the
-// re-entrancy guard collapses the inner drain into a no-op.
+// directly. The helpers are still callable inside that block when given the
+// block's `DrainToken` (their last argument): they then run under its drain.
 
 /**
  * Renames or moves a vault file/folder. Drains pending writers first so
@@ -323,6 +404,7 @@ export async function renameVaultPath(
   vaultRoot: string,
   oldPath: string,
   newPath: string,
+  within?: DrainToken,
 ): Promise<ChannelResult<'vault:rename'>> {
   return withDrainedWrites(async () => {
     // A note's write queue stays idle while its file moves: a write that
@@ -330,7 +412,7 @@ export async function renameVaultPath(
     return noteStore.hold(notePathsOf(vaultRoot, [oldPath, newPath]), async () => {
       return window.filo.invoke('vault:rename', vaultRoot, oldPath, newPath);
     });
-  }, { paths: [oldPath, newPath] });
+  }, { paths: [oldPath, newPath], within });
 }
 
 /** The vault-relative paths of `absPaths` that name notes (`.md`). */
@@ -357,12 +439,13 @@ function notePathsOfRel(rels: string[]): string[] {
 export async function trashVaultPath(
   vaultRoot: string,
   relPath: string,
+  within?: DrainToken,
 ): Promise<ChannelResult<'vault:trash-move'>> {
   return withDrainedWrites(async () => {
     return noteStore.hold(notePathsOfRel([relPath]), async () => {
       return window.filo.invoke('vault:trash-move', vaultRoot, relPath);
     });
-  }, { paths: [relPath] });
+  }, { paths: [relPath], within });
 }
 
 /**
@@ -374,12 +457,13 @@ export async function restoreTrashed(
   vaultRoot: string,
   trashId: string,
   originalPath: string,
+  within?: DrainToken,
 ): Promise<ChannelResult<'vault:trash-restore'>> {
   return withDrainedWrites(async () => {
     return noteStore.hold(notePathsOfRel([originalPath]), async () => {
       return window.filo.invoke('vault:trash-restore', vaultRoot, trashId);
     });
-  }, { paths: [originalPath] });
+  }, { paths: [originalPath], within });
 }
 
 /** What is in Filo's trash, newest first. */
@@ -446,11 +530,11 @@ function copyTarget(sourcePath: string, destFolder: string): string {
 // ── Test-only helpers ─────────────────────────────────────────────────
 
 /**
- * Resets the re-entrancy guard. Used by unit tests that throw mid-drain
- * and need to start the next case from a clean slate. Production code
- * should never need this — the `finally` block always clears the flag.
+ * Forgets the queue and every live token. Used by unit tests that leave an op
+ * parked and need to start the next case from a clean slate. Production code
+ * should never need this: each call releases its turn in a `finally`.
  */
 export function __resetDrainGuardForTests(): void {
-  drainingGeneration = null;
-  drainPromise = null;
+  queue = null;
+  liveTokens.clear();
 }

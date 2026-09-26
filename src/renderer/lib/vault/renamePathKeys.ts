@@ -22,6 +22,7 @@
 
 import { normalizeVaultRelative } from '@shared/vaultPath';
 import { stripLeadingSlash, toPosix } from '../utils/path';
+import { reportError } from '../utils/errorBus';
 
 type RenameSweep = (oldRel: string, newRel: string) => void;
 
@@ -75,30 +76,35 @@ export function registerPathRenamable(name: string, fn: RenameSweep): () => void
 /**
  * Fire every registered sweep against the rename `(oldRel, newRel)`.
  * Each sweep runs in registration order; a throw from one sweep is
- * captured and reported but does NOT abort the remaining sweeps — a
- * rename cascade that bails mid-way leaves the codebase in a worse
- * state than the original error.
+ * reported but does NOT abort the remaining sweeps — a rename cascade
+ * that bails mid-way leaves the codebase in a worse state than the
+ * original error.
+ *
+ * Returns false when any sweep threw. Some state is then still keyed by
+ * the old path, so the caller keeps its rename-cascade sentinel and the
+ * next vault open replays the rename.
  *
  * `oldRel` and `newRel` are vault-relative paths in canonical
  * (forward-slash, no leading slash) form. Callers that have a mixed
  * shape should normalise via `normalizePath` / `stripLeadingSlash`
  * first.
  */
-export function renameAllPathKeys(oldRel: string, newRel: string): void {
-  if (!oldRel || !newRel || oldRel === newRel) return;
-  const failures: Array<{ name: string; err: unknown }> = [];
+export function renameAllPathKeys(oldRel: string, newRel: string): boolean {
+  if (!oldRel || !newRel || oldRel === newRel) return true;
+  let ok = true;
   for (const { name, fn } of sweeps) {
     try {
       fn(oldRel, newRel);
     } catch (err) {
-      failures.push({ name, err });
+      ok = false;
+      reportError(
+        'renameAllPathKeys',
+        err,
+        `Couldn't move "${name}" state from "${oldRel}" to "${newRel}"; the rename will be retried when the vault is next opened.`,
+      );
     }
   }
-  if (failures.length > 0) {
-    for (const { name, err } of failures) {
-      console.error(`[renameAllPathKeys] sweep "${name}" threw:`, err);
-    }
-  }
+  return ok;
 }
 
 /**

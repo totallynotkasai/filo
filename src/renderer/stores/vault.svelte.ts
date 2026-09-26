@@ -27,7 +27,7 @@ import {
   hasPartialTagRemovalState,
 } from '../lib/vault/tagRewriteSentinel';
 import { readPendingRenameCascades } from '../lib/vault/renameCascadeSentinel';
-import { repairRenameCascade } from '../lib/vault/renameCascadeRepair';
+import { discardRenameCascade, repairRenameCascade } from '../lib/vault/renameCascadeRepair';
 import { assertBaselinesSeeded } from '../lib/vault/fileBaselineRegistry';
 import {
   sortTree,
@@ -76,6 +76,7 @@ import { setActiveVaultPath } from '../lib/vault/activeVaultPath';
 import { reportError } from '../lib/utils/errorBus';
 import { invokeOk } from '../lib/utils/invokeOk';
 import { createTrailingDebounce } from '../lib/utils/trailingDebounce';
+import { flushAllComponents } from '../lib/boards/componentFlush';
 import { fileTagsStore } from './fileTags.svelte';
 import { emptyTagsFile } from '../lib/vault/tagsStorage';
 import { fireVaultSwap, isVaultTearingDown, onVaultSwap } from '../core/vaultLifecycle';
@@ -801,22 +802,8 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
           // mid-repair) bails instead of contaminating the new vault's cache.
           await repairRenameCascade(entries, newVaultPath, 'Retry', captured);
         },
-        // "Discard" repairs too: the renamed file is already on disk, so
-        // clearing the breadcrumb without repairing would strand any board
-        // still pointing at the old path. Run the same repair as Retry, then
-        // report what changed.
-        onCancel: async () => {
-          const repaired = await repairRenameCascade(entries, newVaultPath, 'Discard', captured);
-          if (repaired === null) return; // a flush failed or the vault swapped; toast suppressed
-          uiStore.pushToast({
-            text:
-              repaired > 0
-                ? `Repaired ${repaired} board reference${repaired === 1 ? '' : 's'} from the unfinished rename.`
-                : 'Unfinished rename resolved — no board references needed repair.',
-            type: 'info',
-            duration: 4000,
-          });
-        },
+        // "Discard" leaves everything as it is and only drops the breadcrumb.
+        onCancel: () => discardRenameCascade(entries, newVaultPath, captured),
       });
     } else if (res.unreadable) {
       uiStore.pushToast({
@@ -1161,10 +1148,8 @@ export const vaultStore = {
   },
 
   /**
-   * Flushes all pending debounced writes immediately. Drains per-file
-   * markdown/frontmatter timers (TextTile / DocumentEditor / TaskListBoard)
-   * first so any board-JSON write below sees the same
-   * on-disk state the user just produced.
+   * Flushes all pending debounced writes immediately: what components hold,
+   * then notes, so any board-JSON write below sees what the user produced.
    *
    * Returns false if any flush failed so the Ctrl+S toast can honestly
    * report "Save failed" instead of flashing the success copy while a
@@ -1192,10 +1177,10 @@ export const vaultStore = {
         /* swap-window errors are handled in openVault; just stop deferring */
       }
     }
-    // Drain the async command chain FIRST. An async command (e.g.
-    // UpdateCardFieldCommand) queues its note write only after its body runs
-    // on `runChained`; flushing earlier would miss it and report a premature
-    // "saved".
+    // Components hand over what they hold (an uncommitted title, a debounced
+    // filter or camera move); then the async command chain settles, since a
+    // command queues its note write only once its body has run on `runChained`.
+    await flushAllComponents();
     await historyStore.whenChainSettled();
     const noteResult = await noteStore.flushAll();
     const flushResult = await flushAll(getBoardWriteArgs, getConfigWriteArgs);

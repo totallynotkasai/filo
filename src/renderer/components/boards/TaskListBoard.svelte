@@ -70,6 +70,7 @@
   import { createAriaAnnouncer } from '../../lib/utils/ariaAnnouncer.svelte';
   import { dndzone, type DndEvent } from 'svelte-dnd-action';
   import { registerCommandWithShortcut } from '../../core/commandRegistry';
+  import type { ShortcutBinding } from '../../core/hotkeys';
   import { moveTaskBlock } from '../../lib/tasks/taskMove';
   import { sectionIdForPlacementIndex } from '../../lib/tasklist/sectionMath';
   import {
@@ -1039,7 +1040,7 @@
         clearTimeout(filters.lastViewPersistTimer);
         filters.lastViewPersistTimer = null;
         if (board?.id !== id) {
-          flushLastViewForBoard(id, nextLastView);
+          flushLastViewForBoard(id, nextLastView); // allow-teardown-save: `filters` registers this view's flush for a save or a leave
         }
       }
     };
@@ -1056,8 +1057,6 @@
   //     data-task-id. Routing them through the global registry would race
   //     with text-input typing because the registry's guard skips inputs.
 
-  let unregisterFocusQuickAdd: (() => void) | null = null;
-  let unregisterSelectAll: (() => void) | null = null;
   let unregisterTaskListCommands: (() => void)[] = [];
   let sectionDragCancelCleanup: (() => void) | null = null;
 
@@ -1139,66 +1138,21 @@
   });
 
   onMount(() => {
-    unregisterFocusQuickAdd = registerCommandWithShortcut({
-      name: 'tasklist:focus-quick-add',
-      label: 'Task List: Focus quick-add input',
-      description: 'Task List: Focus quick-add input',
-      binding: { key: 'n' },
-      enabled: isActivePane,
-      execute: () => {
-        quickAddInputEl?.focus();
-      },
-    });
-    unregisterSelectAll = registerCommandWithShortcut({
-      name: 'tasklist:select-all',
-      label: 'Task List: Select all visible',
-      description: 'Task List: Select all visible',
-      binding: { key: 'a', ctrl: true },
-      enabled: isActivePane,
-      execute: () => {
-        if (!board) return;
-        multiSelect.selectAllVisible();
-      },
-    });
-
-    // ── Shortcut commands ──
-    //
-    // Three shortcut-bound commands: Ctrl+Enter creates a blank task,
-    // Alt+Up / Alt+Down reorder within the section. Lock / style / collapse
-    // have no shortcut registration — they're invoked directly via row props (`onToggleLocked` / `onToggleSubtaskCollapsed`).
-    unregisterTaskListCommands.push(
-      registerCommandWithShortcut({
-        name: 'tasklist:add-task',
-        label: 'Task List: Add task',
-        description: 'Task List: Add task',
-        binding: { key: 'Enter', ctrl: true },
-        enabled: isActivePane,
-        execute: () => {
-          if (!board) return;
-          void addTask();
-        },
-      }),
-    );
-    unregisterTaskListCommands.push(
-      registerCommandWithShortcut({
-        name: 'tasklist:move-up',
-        label: 'Task List: Move task up',
-        description: 'Task List: Move task up within section',
-        binding: { key: 'ArrowUp', alt: true },
-        enabled: isActivePane,
-        execute: () => keyboardNav.moveFocusedRow(-1),
-      }),
-    );
-    unregisterTaskListCommands.push(
-      registerCommandWithShortcut({
-        name: 'tasklist:move-down',
-        label: 'Task List: Move task down',
-        description: 'Task List: Move task down within section',
-        binding: { key: 'ArrowDown', alt: true },
-        enabled: isActivePane,
-        execute: () => keyboardNav.moveFocusedRow(1),
-      }),
-    );
+    // Ctrl+Enter and Ctrl+N (the Mind Map's New Tile, which stands aside off
+    // the Mind Map) create a blank task; Alt+Up / Alt+Down reorder within the
+    // section. Lock / style / collapse have no shortcut: they're invoked via
+    // row props (`onToggleLocked` / `onToggleSubtaskCollapsed`).
+    const newTask = (): void => { if (board) void addTask(); };
+    const shortcuts: Array<[string, string, string, ShortcutBinding, () => void]> = [
+      ['tasklist:focus-quick-add', 'Task List: Focus quick-add input', '', { key: 'n' }, () => quickAddInputEl?.focus()],
+      ['tasklist:select-all', 'Task List: Select all visible', '', { key: 'a', ctrl: true }, () => { if (board) multiSelect.selectAllVisible(); }],
+      ['tasklist:add-task', 'Task List: Add task', '', { key: 'Enter', ctrl: true }, newTask],
+      ['tasklist:new-task', 'Task List: New task', '', { key: 'n', ctrl: true }, newTask],
+      ['tasklist:move-up', 'Task List: Move task up', 'Task List: Move task up within section', { key: 'ArrowUp', alt: true }, () => keyboardNav.moveFocusedRow(-1)],
+      ['tasklist:move-down', 'Task List: Move task down', 'Task List: Move task down within section', { key: 'ArrowDown', alt: true }, () => keyboardNav.moveFocusedRow(1)],
+    ];
+    unregisterTaskListCommands = shortcuts.map(([name, label, description, binding, execute]) =>
+      registerCommandWithShortcut({ name, label, description: description || label, binding, enabled: isActivePane, execute }));
     // Recover from aborted section drags (Esc, Alt-Tab, window blur). The
     // gate flip alone is enough — the resync $effect tracks
     // `sectionDragDisabled` so flipping it true triggers a re-evaluation
@@ -1241,10 +1195,6 @@
     // dispose() cancels the lastView debounce and FLUSHES the pending slice
     // (cache write keyed by the hydrated board id) instead of dropping it.
     filters.dispose();
-    unregisterFocusQuickAdd?.();
-    unregisterFocusQuickAdd = null;
-    unregisterSelectAll?.();
-    unregisterSelectAll = null;
     for (const fn of unregisterTaskListCommands) fn();
     unregisterTaskListCommands = [];
     sectionDragCancelCleanup?.();

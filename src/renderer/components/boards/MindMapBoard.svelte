@@ -14,6 +14,7 @@
   import { BOARD_SCOPE_KEY, isActiveScope, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { connectionsStore } from '../../stores/connections.svelte';
   import { uiStore } from '../../stores/ui.svelte';
+  import { vaultStore } from '../../stores/vault.svelte';
   import { TILE_DEFAULTS, FRAME_DEFAULTS, defaultTileStyleSnapshot, defaultFrameStyleSnapshot } from '../../constants/defaults';
   import { screenToCanvas } from '../../lib/canvas/coordinates';
 
@@ -201,6 +202,7 @@
   const selectionActions = createSelectionActions({
     board: boardStore,
     selection: selectionStore,
+    vaultPath: () => (vaultStore.project === null ? null : vaultStore.path),
     openTileStyle: (tile, x, y, tileIds) => popups?.openTileStyle(tile, x, y, tileIds),
     openTagEditor: (args) => popups?.openTagEditor(args),
   });

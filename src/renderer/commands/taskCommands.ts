@@ -11,7 +11,8 @@ import type {
   PartialTaskStyle,
 } from '../schema/placement';
 import { NoteFieldCommand } from './noteFieldCommand';
-import { restoreFiles, trashFiles, type TrashedItem } from './trashedFiles';
+import { restoreFiles, stillTrashed, trashFiles, type TrashedItem } from './trashedFiles';
+import type { DrainToken } from '../lib/vault/vaultOperations';
 
 // ── Task List Commands ──
 //
@@ -180,6 +181,11 @@ export interface DeleteTaskFileOptions {
   filePath?: string;
   /** Vault root; required when `filePath` is set. */
   vaultRoot?: string;
+  /**
+   * The drained op the first execute runs inside, if any: its trash move then
+   * runs under that drain instead of waiting for the op to finish.
+   */
+  drain?: DrainToken;
 }
 
 /**
@@ -205,6 +211,8 @@ export class DeleteTaskCommand extends Command {
   private filePath: string | null;
   private trashed: TrashedItem[] = [];
   private vaultRoot: string | undefined;
+  /** For the first execute only; see `DeleteTaskFileOptions.drain`. */
+  private drain: DrainToken | undefined;
   /** Last execute()'s move into the trash (resolves at once on the
    *  placement-only path). Awaited by tests / redo. */
   lastExecuteCompletion: Promise<unknown> = Promise.resolve();
@@ -219,6 +227,7 @@ export class DeleteTaskCommand extends Command {
     this.description = fileOpts.filePath ? `Delete task and file` : `Delete task`;
     this.filePath = fileOpts.filePath ?? null;
     this.vaultRoot = fileOpts.vaultRoot;
+    this.drain = fileOpts.drain;
     const cached = boardCacheStore.cache[boardId];
     this.snapshotDef = null;
     this.snapshotPlacement = null;
@@ -245,13 +254,15 @@ export class DeleteTaskCommand extends Command {
     if (this.vaultRoot && this.filePath) {
       const vaultRoot = this.vaultRoot;
       const rel = this.filePath;
+      const drain = this.drain;
+      this.drain = undefined;
       // Sequence behind any prior execute/undo so a rapid Ctrl+Y / Ctrl+Z
       // can't let this move race the prior undo's restore (the same guard
       // DeleteTilesCommand uses). Both priors are allSettled wrappers, so
       // awaiting them never rejects.
       const prior = Promise.allSettled([this.lastExecuteCompletion, this.lastUndoCompletion]);
       this.lastExecuteCompletion = prior.then(async () => {
-        this.trashed = await trashFiles(vaultRoot, [rel], 'deleteTask.execute');
+        this.trashed = [...this.trashed, ...await trashFiles(vaultRoot, [rel], 'deleteTask.execute', drain)];
       });
       await this.lastExecuteCompletion;
     } else {
@@ -273,7 +284,7 @@ export class DeleteTaskCommand extends Command {
     this.lastUndoCompletion = prior.then(async () => {
       if (this.vaultRoot && this.trashed.length > 0) {
         const restored = await restoreFiles(this.vaultRoot, this.trashed, 'deleteTask.undo');
-        this.trashed = [];
+        this.trashed = stillTrashed(this.trashed, restored);
         const moved = restored.find((r) => r.restoredPath !== r.rel);
         if (moved) {
           // The task follows the restored copy, and a redo trashes it, not a
@@ -296,6 +307,8 @@ export class DeleteTaskCommand extends Command {
       this.snapshotDef,
       this.snapshotPlacement.position,
       this.snapshotPlacement.style,
+      undefined,
+      this.snapshotPlacement,
     );
     if (this.sectionsBefore) {
       boardCacheStore.persistTaskListStructure(

@@ -240,6 +240,8 @@ export class TaskListKeyboardNav {
    * boards racing for the same keystroke.
    */
   handleBoardKeydown = (e: KeyboardEvent): void => {
+    // A key something else already handled must not act twice.
+    if (e.defaultPrevented) return;
     // Skip while the user is typing into an editor field.
     if (isEditableTextTarget(e.target)) {
       if (e.key === 'Escape') {

@@ -7,7 +7,7 @@
   import TagsPopupMenu from './TagsPopupMenu.svelte';
   import { isSafeNewTagName } from '../../lib/vault/tagsStorage';
   import { deleteTagWithConfirm, renameTagWithConfirm } from '../../lib/tags/tagEditConfirm';
-  import { filterTagNames } from '../../lib/tags/tagBrowserFilter';
+  import { filterTagNames, tagBrowserRows } from '../../lib/tags/tagBrowserFilter';
 
   let activeColorPicker = $state<string | null>(null);
   let editingTagName = $state<string | null>(null);
@@ -21,10 +21,9 @@
 
   // Registered tags plus every tag in use: a tag typed into a note's
   // frontmatter outside Filo has no registry entry until it's edited here,
-  // and it still has to be listed (and found by the search).
-  const knownTagNames = $derived(
-    [...new Set([...fileTagsStore.allTagNames(), ...counts.keys()])].sort((a, b) => a.localeCompare(b)),
-  );
+  // and it still has to be listed (and found by the search). One row per
+  // tag whatever its case, as rename and delete treat it.
+  const tagRows = $derived(tagBrowserRows(fileTagsStore.allTagNames(), counts));
 
   function colorFor(name: string): string {
     return fileTagsStore.getDefinition(name).color;
@@ -54,14 +53,8 @@
   }
 
   const scopedTags = $derived.by(() => {
-    return knownTagNames
-      .map((name) => ({
-        name,
-        files: counts.get(name)?.files ?? 0,
-        tiles: counts.get(name)?.tiles ?? 0,
-        depth: depthOf(name),
-        leaf: leafOf(name),
-      }))
+    return tagRows
+      .map((row) => ({ ...row, depth: depthOf(row.name), leaf: leafOf(row.name) }))
       .filter((t) => {
         if (scope === 'files') return t.files > 0;
         if (scope === 'tiles') return t.tiles > 0;

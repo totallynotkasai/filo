@@ -14,12 +14,12 @@ const LOC_LIMIT = 1000;
 // Files over LOC_LIMIT, each pinned at its current LOC. They may shrink, not
 // grow; the remedy for an over-limit file is to split it, not to raise its row.
 const FILE_SIZE_ALLOWLIST = {
-  'src/renderer/components/boards/TaskListBoard.svelte': 2016,
+  'src/renderer/components/boards/TaskListBoard.svelte': 1966,
   'src/renderer/components/boards/KanbanSideToolbar.svelte': 1473,
   'src/renderer/components/boards/TaskItem.svelte': 1506,
-  'src/renderer/components/boards/KanbanBoard.svelte': 1450,
+  'src/renderer/components/boards/KanbanBoard.svelte': 1438,
   'src/renderer/components/boards/KanbanColumn.svelte': 1194,
-  'src/renderer/stores/vault.svelte.ts': 1611,
+  'src/renderer/stores/vault.svelte.ts': 1596,
 };
 
 // The refactor characterisation suite: user-visible behaviour the file-model
@@ -43,9 +43,11 @@ const CHARACTERISATION_SPECS = {
   'lineSpacing.test.ts': 3,
   'newNotesInSidebar.test.ts': 3,
   'tagFilters.test.ts': 8,
+  'boardShortcutsAndUndo.test.ts': 7,
   'frontmatterSafety.test.ts': 2,
   'rawViewUnsaved.test.ts': 5,
   'taskNotesBox.test.ts': 4,
+  'leavingKeepsHeldChanges.test.ts': 7,
   'honestSaveState.test.ts': 6,
 };
 

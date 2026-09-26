@@ -245,6 +245,32 @@ describe('DeleteTilesCommand — files go to the trash and come back on undo', (
     expect(h.vault.read('Foo.md')).toBe('kept');
   });
 
+  it('a restore that fails keeps the trash id, seeds no blank note, and a later undo brings the bytes back', async () => {
+    setupActiveBoardWithTiles([makeTextTile('t1', 'Foo')]);
+    const h = installVault({ 'Foo.md': 'body' });
+    const cmd = new DeleteTilesCommand(['t1'], { vaultRoot: '/vault', filePaths: ['Foo.md'] });
+    await cmd.execute();
+
+    let failRestore = true;
+    h.setHook((channel) => {
+      if (channel === 'vault:trash-restore' && failRestore) {
+        failRestore = false;
+        throw new Error('EBUSY');
+      }
+    });
+    await cmd.undo();
+    await new Promise((r) => setTimeout(r, 50));
+    // The tile is back as a broken reference, not over a new empty note.
+    expect(boardStore.getTile('t1')).toBeDefined();
+    expect(h.vault.read('Foo.md')).toBeUndefined();
+    expect(h.vault.trash.size).toBe(1);
+
+    await cmd.execute();
+    await cmd.undo();
+    expect(h.vault.read('Foo.md')).toBe('body');
+    expect(h.vault.trash.size).toBe(0);
+  });
+
   it('a restore that fails still brings the tile back and reports the error', async () => {
     setupActiveBoardWithTiles([makeTextTile('t1', 'Foo')]);
     const h = installVault({ 'Foo.md': 'body' });

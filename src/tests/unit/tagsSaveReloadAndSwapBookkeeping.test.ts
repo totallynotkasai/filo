@@ -177,15 +177,19 @@ describe('A9-L8 — post-write index bookkeeping is skipped after a mid-write va
 // ── A9-L9 — recovery re-applies the moved board's own path key ──
 
 describe('A9-L9 — repairRenameCascade re-applies the moved board path key', () => {
+  const movedTo = new Set(['sub/b1.board.json', 'img/b.png', 'Assets']);
+
   beforeEach(() => {
     __resetRenameCascadeSentinelForTests();
     noteStore.__resetForTests();
     boardCacheStore.clear();
     boardStore.clearBoard();
     vaultStore.setPath('/vault');
-    installFiloMock((channel: string) => {
+    installFiloMock((channel: string, ...args: unknown[]) => {
       // clearPendingRenameCascade reads the sentinel; ENOENT → nothing to clear.
       if (channel === 'vault:read-file-text') return { success: false, code: 'ENOENT' };
+      // Each rename below already happened on disk: only the new path exists.
+      if (channel === 'vault:file-exists') return movedTo.has(String(args[1]));
       if (channel === 'tags:load') return null;
       return { success: true };
     });

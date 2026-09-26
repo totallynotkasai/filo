@@ -1,12 +1,14 @@
 <script lang="ts">
   import { tabStore, type TabData } from '../../stores/tabs.svelte';
   import { workspaceStore } from '../../stores/workspace.svelte';
-  import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import EmojiPicker from '../shared/EmojiPicker.svelte';
   import { getContextMenuKeyPosition } from '../../lib/utils/contextMenuKey';
   import { noteTitle } from '../../stores/noteMeta';
   import { setNoteTitle } from '../../lib/notes/setNoteTitle';
+  import { renameBoard, setBoardEmoji } from '../../stores/boardIdentity';
+
+  const RENAME_ICON = 'M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z';
 
   interface Props {
     tab: TabData;
@@ -89,7 +91,7 @@
     isRenaming = false;
     if (!renameValue || renameValue === displayName) return;
     if (notePath) void setNoteTitle(notePath, renameValue, tab.boardId);
-    else tabStore.rename(tab.id, renameValue);
+    else renameBoard(tab.boardId, renameValue);
   }
 
   function handleRenameKeydown(e: KeyboardEvent) {
@@ -126,9 +128,16 @@
 
   function openContextMenuAt(x: number, y: number, evX: number, evY: number) {
     const canSplit = workspaceStore.leafCount < 3;
+    // A Document tab's name is its note's title, and it has no board file to
+    // keep an emoji in.
+    const identityItems = notePath
+      ? [{ id: 'rename', label: 'Rename Note Title', icon: RENAME_ICON, action: startRename }]
+      : [
+          { id: 'rename', label: 'Rename Board', icon: RENAME_ICON, action: startRename },
+          { id: 'emoji', label: 'Set Board Emoji', icon: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01', action: () => { showEmojiPicker = true; emojiPickerPos = { x: evX, y: evY }; } },
+        ];
     uiStore.showContextMenu(x, y, [
-      { id: 'rename', label: 'Rename Board', icon: 'M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z', action: startRename },
-      { id: 'emoji', label: 'Set Board Emoji', icon: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01', action: () => { showEmojiPicker = true; emojiPickerPos = { x: evX, y: evY }; } },
+      ...identityItems,
       { id: 'div-split', label: '', divider: true },
       { id: 'split-right', label: 'Split Right', icon: 'M3 3h18v18H3zM12 3v18', disabled: !canSplit, action: () => splitPane('right') },
       { id: 'split-down', label: 'Split Down', icon: 'M3 3h18v18H3zM3 12h18', disabled: !canSplit, action: () => splitPane('down') },
@@ -168,13 +177,7 @@
 
   function selectEmoji(emoji: string) {
     showEmojiPicker = false;
-    tabStore.setEmoji(tab.id, emoji);
-    // Also update the board
-    if (vaultStore.project) {
-      const board = vaultStore.project.boards.find(b => b.id === tab.boardId);
-      if (board) board.emoji = emoji;
-      vaultStore.markMetaDirty();
-    }
+    setBoardEmoji(tab.boardId, emoji);
   }
 
   const boardTypeLabels: Record<string, string> = {

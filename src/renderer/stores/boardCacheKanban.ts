@@ -366,6 +366,10 @@ export function makeKanbanSlice(ctx: CacheContext) {
       // `position`. `undefined`/`null` or a missing anchor falls back to the
       // clamped `position`.
       beforeTileId?: string | null,
+      // The whole placement a delete snapshotted. An undo puts back every
+      // field it held (including ones this version doesn't know), not only
+      // the style and cover.
+      restoreFrom?: KanbanTilePlacement | null,
     ): void {
       // Zod-validate the def before it enters the cache (as updateTile does):
       // a corrupt def would otherwise persist to disk silently.
@@ -397,7 +401,7 @@ export function makeKanbanSlice(ctx: CacheContext) {
       (kb as Record<string, unknown>).columns = (kb.columns ?? []).map((c) => {
         if (c.id !== columnId) return c;
         const placements = [...(c.tilePlacements ?? [])];
-        const placement: KanbanTilePlacement = { tileId: validDef.id, position };
+        const placement: KanbanTilePlacement = { ...restoreFrom, tileId: validDef.id, position };
         if (style) placement.style = style;
         // Restore a snapshotted coverImage atomically as part of the
         // placement add (used by DeleteCardCommand.undo). Set directly: the value

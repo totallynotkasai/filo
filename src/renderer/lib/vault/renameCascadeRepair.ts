@@ -8,20 +8,56 @@ import { isStillSameVault, type VaultIdentity } from './vaultIdentity';
 import { renameAllPathKeys } from './renamePathKeys';
 
 /**
- * Shared repair for the rename-cascade recovery
- * sentinel. Re-applies the path rewrites (board refs, path-keyed stores,
- * media tags in `.filo/tags.json`) for every pending entry and clears the
- * breadcrumb on full success.
- *
- * Both the recovery prompt's Retry and Discard handlers run this. Discard
- * repairs too rather than abandoning the boards with broken refs — the
- * renamed file is already on disk, so the only honest outcomes are "repair
- * the pointers" or "leave them broken"; we repair, then the caller confirms
- * what was fixed. `verb` only flavours the failure toasts.
+ * Where a pending rename stands on disk: `moved` when the old path is gone and
+ * the new one exists (the rename happened, so its rewrites can be replayed),
+ * `other` when the disk shows something else, `unknown` when a probe failed.
+ */
+async function renameOnDisk(vaultPath: string, entry: RenameCascadeEntry): Promise<'moved' | 'other' | 'unknown'> {
+  try {
+    const [oldExists, newExists] = await Promise.all([
+      window.filo.invoke('vault:file-exists', vaultPath, entry.oldPath),
+      window.filo.invoke('vault:file-exists', vaultPath, entry.newPath),
+    ]);
+    return oldExists !== true && newExists === true ? 'moved' : 'other';
+  } catch {
+    return 'unknown';
+  }
+}
+
+async function clearEntries(vaultPath: string, entries: readonly RenameCascadeEntry[]): Promise<void> {
+  for (const entry of entries) {
+    await clearPendingRenameCascade(vaultPath, entry.id).catch((err) => {
+      reportError('vault.rename-cascade-recovery', err, 'Failed to clear the rename-cascade sentinel');
+    });
+  }
+}
+
+/**
+ * The recovery prompt's Discard: drop the breadcrumb and change nothing else.
+ */
+export async function discardRenameCascade(
+  entries: readonly RenameCascadeEntry[],
+  vaultPath: string,
+  captured: VaultIdentity,
+): Promise<void> {
+  if (!isStillSameVault(captured)) return;
+  await clearEntries(vaultPath, entries);
+}
+
+/**
+ * The recovery prompt's Retry. Re-applies the path rewrites (board refs,
+ * path-keyed stores, media tags in `.filo/tags.json`) for every pending entry
+ * whose rename the disk confirms, and clears the breadcrumb on full success.
+ * An entry whose old path still exists, or whose new path doesn't, is not
+ * replayed: rewriting old → new then would point boards and open notes at a
+ * file that isn't there. Its breadcrumb is cleared, since there is nothing to
+ * repair; one whose probe failed stays for the next open.
+ * `verb` only flavours the failure toasts.
  *
  * Returns the number of board references repaired on success (sentinel
- * cleared), or `null` if a board/tags flush failed (sentinel kept so the next
- * vault open retries the whole cascade) OR the vault swapped mid-repair.
+ * cleared), or `null` if a board/tags flush or a path-keyed sweep failed, a
+ * probe failed (sentinel kept so the next vault open retries) OR the vault
+ * swapped mid-repair.
  *
  * The recovery modal that invokes this is PARKED awaiting a click, and the
  * repair mutates in-memory state across awaits, so the vault can swap before
@@ -31,15 +67,20 @@ import { renameAllPathKeys } from './renamePathKeys';
  * `assertActiveVault`; the in-memory mutations are not.
  */
 export async function repairRenameCascade(
-  entries: RenameCascadeEntry[],
+  allEntries: RenameCascadeEntry[],
   vaultPath: string,
-  verb: 'Retry' | 'Discard',
+  verb: 'Retry',
   captured: VaultIdentity,
 ): Promise<number | null> {
   await boardCacheStore.ensureAllLoaded();
   // A swap during the load would apply the outgoing vault's entries to
   // the new vault's cache; bail before any in-memory mutation.
   if (!isStillSameVault(captured)) return null;
+  const states = await Promise.all(allEntries.map((e) => renameOnDisk(vaultPath, e)));
+  if (!isStillSameVault(captured)) return null;
+  const entries = allEntries.filter((_, i) => states[i] === 'moved');
+  const notOnDisk = allEntries.filter((_, i) => states[i] === 'other');
+  const probeFailed = states.includes('unknown');
   const repairedBoards = new Set<string>();
   for (const entry of entries) {
     try {
@@ -68,8 +109,9 @@ export async function repairRenameCascade(
   // tabs), mirroring the normal rename path. The board loop above only fixes
   // `.board.json` references; without this an editor already open when an
   // in-session repair fires keeps writing to the OLD path.
+  let pathKeysOk = true;
   for (const entry of entries) {
-    renameAllPathKeys(entry.oldPath, entry.newPath);
+    if (!renameAllPathKeys(entry.oldPath, entry.newPath)) pathKeysOk = false;
   }
   const flush = await boardCacheStore.flushAllDirty();
   // Re-check after the flush await, before the tag-store mutations below
@@ -107,14 +149,10 @@ export async function repairRenameCascade(
   // during the tag flush, so keep the breadcrumb (the next open of that vault
   // retries) rather than clearing it from the new vault's context.
   if (!isStillSameVault(captured)) return null;
-  for (const entry of entries) {
-    await clearPendingRenameCascade(vaultPath, entry.id).catch((err) => {
-      reportError(
-        'vault.rename-cascade-recovery',
-        err,
-        'Failed to clear rename-cascade sentinel after a successful repair',
-      );
-    });
-  }
+  await clearEntries(vaultPath, notOnDisk);
+  // A sweep that threw (already reported) left state under an old path, and a
+  // failed probe left an entry undecided: keep those breadcrumbs for the next open.
+  if (!pathKeysOk || probeFailed) return null;
+  await clearEntries(vaultPath, entries);
   return repairedBoards.size;
 }

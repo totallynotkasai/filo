@@ -39,9 +39,21 @@ const EOL_CHECKS = [
   {
     file: 'src/renderer/lib/notes/noteFile.ts',
     required: [
-      { token: /eol:\s*raw\.includes\(\s*'\\r\\n'\s*\)/, why: "a note's line ending is sniffed from the whole raw file" },
-      { token: /\bfresh\.eol\b/, why: "every write re-applies the fresh read's line ending" },
+      { token: /eol:\s*fileLineEnding\(\s*raw\s*\)/, why: "a note's line ending is read from the whole raw file (by majority)" },
+      { token: /\bfresh\.eol\b/, why: "a body write re-applies the fresh read's line ending" },
+      { token: /frontmatterLineEnding\(\s*fresh\.raw\s*\)/, why: 'a change without a body writes the block in the ending its fence already has' },
+      { token: /change\.body\s*===\s*undefined\)\s*text\s*=\s*withDiskBody\(\s*text\s*,\s*fresh\s*\)/, why: 'a change without a body keeps the disk body byte-exact (a mixed-ending body included)' },
     ],
+  },
+  {
+    // The tag rewriter and the note writer pick line endings with one rule.
+    file: 'src/renderer/lib/vault/tagRewriter.ts',
+    required: [{ token: /frontmatterLineEnding\(\s*text\s*\)/, why: 'the rewriter uses the shared line-ending rule' }],
+    forbidden: [{ token: /function\s+detectEol\b/, why: 'a second line-ending detector can disagree with the note writer about the same file' }],
+  },
+  {
+    file: 'src/tests/unit/noteLineEndingsKept.test.ts',
+    required: [{ token: /a frontmatter change leaves every body byte as it was/, why: 'the mixed-line-ending case exists' }],
   },
   {
     file: 'src/tests/unit/noteFile.test.ts',
@@ -412,8 +424,20 @@ export const checks = [
       const code = blank(raw);
       const withStrings = blank(raw, { strings: false });
       const out = [];
-      const writes = [...withStrings.matchAll(/['"]vault:write-existing-file-text['"]/g)].map((m) => m.index);
-      if (writes.length === 0) out.push(fail(NOTE_WRITER, undefined, 'tripwire: no vault:write-existing-file-text invoke found'));
+      // The IPC is sent only from writeOver(); each writeOver( call is then a note write.
+      const sender = functionBody(code, 'writeOver', { fnKeyword: true });
+      if (!sender) out.push(fail(NOTE_WRITER, undefined, 'no writeOver() definition found'));
+      const ipcAt = [...withStrings.matchAll(/['"]vault:write-existing-file-text['"]/g)].map((m) => m.index);
+      if (ipcAt.length === 0) out.push(fail(NOTE_WRITER, undefined, 'tripwire: no vault:write-existing-file-text invoke found'));
+      for (const at of ipcAt) {
+        if (sender && !(sender.start <= at && at < sender.end)) {
+          out.push(fail(NOTE_WRITER, lineAt(raw, at), 'a note write IPC outside writeOver(): send it through writeOver'));
+        }
+      }
+      const writes = [...code.matchAll(/\bwriteOver\s*\(/g)]
+        .map((m) => m.index)
+        .filter((at) => !/function\s+$/.test(code.slice(Math.max(0, at - 20), at)));
+      if (writes.length === 0) out.push(fail(NOTE_WRITER, undefined, 'tripwire: no writeOver( call found'));
       const guarded = [];
       for (const name of ['writePending', 'transform']) {
         const fn = functionBody(code, name);
@@ -423,7 +447,7 @@ export const checks = [
       for (const at of writes) {
         const fn = guarded.find((f) => f.start <= at && at < f.end);
         if (!fn) {
-          out.push(fail(NOTE_WRITER, lineAt(raw, at), 'a note write outside writePending / transform: guard it and add it to this check'));
+          out.push(fail(NOTE_WRITER, lineAt(raw, at), 'a writeOver( call outside writePending / transform: guard it and add it to this check'));
         } else if (!/\bbreaksFrontmatter\s*\(/.test(withStrings.slice(fn.start, at))) {
           out.push(fail(NOTE_WRITER, lineAt(raw, at), 'this note write is not preceded by a breaksFrontmatter(…) check'));
         }

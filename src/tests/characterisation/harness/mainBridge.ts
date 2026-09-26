@@ -27,6 +27,19 @@ export interface MainBridge {
   resetLog(): void;
   /** (Re)install this bridge as `window.filo`. */
   attach(): void;
+  /** Holds every read of `rel` (`vault:read-file-text`), as a slow disk would, until let go. */
+  holdReads(rel: string): ReadHold;
+}
+
+export interface ReadHold {
+  /** Reads held so far (including ones let go). */
+  count(): number;
+  /** Lets every held read go except the newest. */
+  releaseEarlier(): void;
+  /** Lets the newest held read go (holding continues for later reads). */
+  releaseNewest(): void;
+  /** Lets every held read go and stops holding. */
+  release(): void;
 }
 
 let bridge: MainBridge | null = null;
@@ -38,6 +51,7 @@ export function mainBridge(): MainBridge {
   const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
   const calls: IpcCall[] = [];
   let pending = 0;
+  let held: { rel: string; waiting: Array<() => void>; count: number } | null = null;
   const sender = { id: 1, send: (channel: string, ...args: unknown[]) => rendererSink.send(channel, ...args) };
 
   rendererSink.send = (channel, ...args) => {
@@ -56,6 +70,11 @@ export function mainBridge(): MainBridge {
       pending++;
       try {
         const result = await handler({ sender }, ...structuredClone(args));
+        const hold = held;
+        if (hold && channel === 'vault:read-file-text' && args[1] === hold.rel) {
+          hold.count++;
+          await new Promise<void>((go) => hold.waiting.push(go));
+        }
         return result === undefined ? undefined : structuredClone(result);
       } finally {
         pending--;
@@ -82,6 +101,23 @@ export function mainBridge(): MainBridge {
     },
     attach: () => {
       (window as unknown as { filo: unknown }).filo = filo;
+    },
+    holdReads: (rel) => {
+      const hold = { rel, waiting: [] as Array<() => void>, count: 0 };
+      held = hold;
+      return {
+        count: () => hold.count,
+        releaseEarlier: () => {
+          for (const go of hold.waiting.splice(0, Math.max(0, hold.waiting.length - 1))) go();
+        },
+        releaseNewest: () => {
+          hold.waiting.pop()?.();
+        },
+        release: () => {
+          if (held === hold) held = null;
+          for (const go of hold.waiting.splice(0)) go();
+        },
+      };
     },
   };
   bridge.attach();

@@ -40,7 +40,7 @@ export function registerVaultEncodingHandlers(): void {
       }
       const backup = await snapshotForRecovery(vaultRoot, relativePath);
       const text = new TextDecoder('windows-1252').decode(bytes);
-      getActiveWatcher()?.suppressWrite(relativePath, LOCK_AWARE_SUPPRESS_MS);
+      getActiveWatcher()?.suppressWrite(relativePath, LOCK_AWARE_SUPPRESS_MS, text);
       await atomicWriteFile(fullPath, text);
       noteOwnWrite(relativePath, text);
       clearNonUtf8(fullPath);

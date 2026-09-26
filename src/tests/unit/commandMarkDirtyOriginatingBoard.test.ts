@@ -52,6 +52,10 @@ interface BoardSaveCapture {
 }
 
 function installFiloWithBoardSaveSpy(capture: BoardSaveCapture): void {
+  // The note keeps what was last written to it, so undo finds the value the
+  // command set (not an external edit).
+  let note = '---\ntitle: A\n---\nbody\n';
+  let mtimeMs = 1;
   installFiloMock((channel: string, ...args: unknown[]) => {
     if (channel === 'board:save') {
       capture.paths.push(args[1] as string);
@@ -59,7 +63,11 @@ function installFiloWithBoardSaveSpy(capture: BoardSaveCapture): void {
     }
     if (channel === 'vault:stat') return { ok: true, mtimeMs: 1, size: 1 };
     if (channel === 'vault:read-file-text') {
-      return { success: true, content: '---\ntitle: A\n---\nbody\n', mtimeMs: 1, size: 100 };
+      return { success: true, content: note, mtimeMs, size: new TextEncoder().encode(note).length };
+    }
+    if (channel === 'vault:write-existing-file-text') {
+      note = args[2] as string;
+      mtimeMs++;
     }
     return { ok: true, success: true };
   });

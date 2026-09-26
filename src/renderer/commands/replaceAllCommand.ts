@@ -32,7 +32,7 @@ import { runVaultSearch, type SearchMatch } from '../lib/search/runSearch';
 import { invokeOk } from '../lib/utils/invokeOk';
 import { reportError } from '../lib/utils/errorBus';
 import { noteStore } from '../stores/notes.svelte';
-import { isMissingFileError } from '../lib/notes/noteWriter';
+import { isMissingFileError, NoteBusyError } from '../lib/notes/noteWriter';
 import { splitFrontmatterSource } from '../lib/vault/frontmatterRead';
 import { noteTextHash } from '../lib/notes/noteFile';
 
@@ -218,6 +218,7 @@ export class ReplaceAllCommand extends Command {
    */
   private async swapAll(forward: boolean): Promise<string[]> {
     const skipped: string[] = [];
+    const busy: string[] = [];
     const failed: string[] = [];
     for (const plan of this.plans) {
       let matched = false;
@@ -239,9 +240,22 @@ export class ReplaceAllCommand extends Command {
           skipped.push(plan.path);
           continue;
         }
+        if (err instanceof NoteBusyError) {
+          busy.push(plan.path);
+          continue;
+        }
         reportError('replaceAll.write', err, `Failed to write ${plan.path}`);
         failed.push(plan.path);
       }
+    }
+    if (busy.length > 0) {
+      const sample = busy.slice(0, 3).join(', ');
+      const more = busy.length > 3 ? `, +${busy.length - 3} more` : '';
+      uiStore.toast(
+        `Left ${busy.length} file(s) alone because an edit to them isn't saved yet (${sample}${more}). Save or resolve it, then run Replace All again.`,
+        'warning',
+        8000,
+      );
     }
     if (failed.length > 0) {
       const sample = failed.slice(0, 3).join(', ');

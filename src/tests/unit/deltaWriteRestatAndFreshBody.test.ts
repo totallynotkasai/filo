@@ -9,8 +9,9 @@ import { restoreFiloDefault } from '../helpers/filoBridge';
 /**
  * Note writer torn/stale-read guards.
  *
- *   - After its fresh read the writer re-stats the file and starts over if it
- *     moved: an external write landing between the read and our write would
+ *   - The write names the stat its fresh read saw, and the main process
+ *     refuses it (STALE) if the file moved since; the writer then starts
+ *     over. An external write landing between the read and our write would
  *     otherwise be overwritten unseen (its bytes replaced by a delta applied
  *     to the stale read). A file that keeps moving is never written and the
  *     failure is attributed.
@@ -27,20 +28,17 @@ const mdWrites = (): string[] => vault.writes.filter(([, rel]) => rel.endsWith('
 
 /**
  * Makes an external program rewrite `rel` just before each of the writer's
- * post-read stats (the read→write gap), `times` times.
+ * writes lands (the read→write gap), `times` times.
  */
 function externalWriteInGap(rel: string, times: number): void {
-  const invoke = window.filo.invoke;
   let left = times;
   let n = 0;
-  window.filo.invoke = (async (channel: string, ...args: unknown[]) => {
-    if (channel === 'vault:stat' && args[1] === rel && left > 0) {
-      left--;
-      n++;
-      vault.writeExternally(rel, `---\ntitle: t\n---\nexternal body ${n}\n`);
-    }
-    return (invoke as (c: string, ...a: unknown[]) => Promise<unknown>)(channel, ...args);
-  }) as typeof window.filo.invoke;
+  vault.beforeWrite = (r) => {
+    if (r !== rel || left <= 0) return;
+    left--;
+    n++;
+    vault.writeExternally(rel, `---\ntitle: t\n---\nexternal body ${n}\n`);
+  };
 }
 
 beforeEach(() => {

@@ -155,7 +155,9 @@ export interface IpcChannelMap {
     result: IpcSuccess<{ path: string }>;
   };
   'vault:write-existing-file-text': {
-    args: [vaultRoot: string, relPath: string, content: string];
+    // `expect`: the file's stat when the renderer read it. The write fails
+    // with code 'STALE' (nothing written) when the file changed since.
+    args: [vaultRoot: string, relPath: string, content: string, expect?: { mtimeMs: number; size: number }];
     result: IpcSuccess<{ path: string }>;
   };
   /** Create-exclusive; fails with code 'EEXIST' instead of overwriting. */

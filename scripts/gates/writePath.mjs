@@ -469,7 +469,9 @@ export const checks = [
     hint:
       'The .md write handlers in vault.ipc.ts suppress with suppressWrite (never a plain suppress, which also drops a delete or ' +
       'rename of the file for ~7 s) and call noteOwnWrite so the watcher knows the bytes on disk; the two overwrite handlers ' +
-      'write through withOnDiskSpelling. The watcher passes whether the file exists into isSuppressed.',
+      'write through withOnDiskSpelling. Each passes the bytes it writes to suppressWrite, and the watcher passes whether ' +
+      'the file exists and a probe of its bytes into isSuppressed, so another program saving the note inside the window ' +
+      'is still reported.',
     run(ctx) {
       const out = [];
       const IPC = 'src/main/ipc/vault.ipc.ts';
@@ -484,6 +486,9 @@ export const checks = [
         const line = lineAt(raw, start);
         if (/\.suppress\s*\(/.test(body)) out.push(fail(IPC, line, `'${ch}' uses a plain suppress(); use suppressWrite()`));
         if (!/\.suppressWrite\s*\(/.test(body)) out.push(fail(IPC, line, `'${ch}' must suppressWrite() before the write`));
+        else if (!/\.suppressWrite\s*\([^;]*,\s*content\s*\)/.test(body)) {
+          out.push(fail(IPC, line, `'${ch}' must pass the bytes it writes to suppressWrite(path, ms, content)`));
+        }
         if (!/\bnoteOwnWrite\s*\(/.test(body)) out.push(fail(IPC, line, `'${ch}' must call noteOwnWrite() after the write`));
         if (ch !== 'vault:create-file-text' && !/atomicWriteFile\s*\(\s*await\s+withOnDiskSpelling\s*\(/.test(body)) {
           out.push(fail(IPC, line, `'${ch}' must write through withOnDiskSpelling()`));
@@ -493,11 +498,68 @@ export const checks = [
       const wRaw = ctx.read(W);
       if (wRaw === null) return [...out, fail(W, undefined, 'file missing')];
       const w = stripComments(wRaw);
-      if (!/isSuppressed\(\s*c\.filename\s*,\s*exists\(\s*c\.filename\s*\)\s*\)/.test(w)) {
-        out.push(fail(W, undefined, 'the live notify pass must pass exists(c.filename) into isSuppressed'));
+      if (!/isSuppressed\(\s*c\.filename\s*,\s*exists\(\s*c\.filename\s*\)\s*,\s*this\.probeFile\s*\)/.test(w)) {
+        out.push(fail(W, undefined, 'the live notify pass must pass exists(c.filename) and this.probeFile into isSuppressed'));
       }
       if ((w.match(/isSuppressed\(\s*path\s*,\s*false\s*\)/g) ?? []).length < 2) {
         out.push(fail(W, undefined, 'the reconcile pass must treat a vanished path as not present (isSuppressed(path, false)) in both delete loops'));
+      }
+      return out;
+    },
+  },
+  {
+    id: 'note-write-expects-stat',
+    title: 'a note overwrite names the stat of the read it builds on, and the main process refuses it (STALE) if the file changed since',
+    hint:
+      'A sync client or editor can replace a note between the note writer\'s read and its write (the rename retries for ' +
+      'seconds on a Windows lock). Pass the fresh read\'s { mtimeMs, size } as the fourth argument of ' +
+      "'vault:write-existing-file-text'; the handler hands it to atomicWriteFile as expectStat, which re-checks it before " +
+      'every rename attempt and throws StaleWriteError (code STALE).',
+    run(ctx) {
+      const out = [];
+      const raw = ctx.read(NOTE_WRITER);
+      if (raw === null) return [fail(NOTE_WRITER, undefined, 'file missing')];
+      const code = blank(raw, { strings: false });
+      const sends = [...code.matchAll(/\binvoke(?:Ok)?\s*\(\s*['"`]vault:write-existing-file-text['"`]/g)];
+      if (sends.length === 0) out.push(fail(NOTE_WRITER, undefined, "tripwire: no 'vault:write-existing-file-text' invoke found"));
+      for (const m of sends) {
+        const open = code.indexOf('(', m.index);
+        const close = matchBrace(code, open, '(', ')');
+        if (close < 0) { out.push(fail(NOTE_WRITER, lineAt(raw, m.index), 'unbalanced invoke(')); continue; }
+        let depth = 0;
+        let args = 1;
+        for (let i = open + 1; i < close; i++) {
+          const c = code[i];
+          if ('([{'.includes(c)) depth++;
+          else if (')]}'.includes(c)) depth--;
+          else if (c === ',' && depth === 0) args++;
+        }
+        if (args < 5) out.push(fail(NOTE_WRITER, lineAt(raw, m.index), 'this note write passes no expected stat (vaultRoot, relPath, text, expect)'));
+      }
+      const IPC = 'src/main/ipc/vault.ipc.ts';
+      const ipc = ctx.read(IPC);
+      if (ipc === null) return [...out, fail(IPC, undefined, 'file missing')];
+      const ipcCode = blank(ipc, { strings: false });
+      const start = ipcCode.indexOf("'vault:write-existing-file-text'");
+      const end = ipcCode.indexOf('ipcMain.handle(', start);
+      const handler = start < 0 ? '' : ipcCode.slice(start, end < 0 ? ipcCode.length : end);
+      if (!/expectStat\s*:\s*expect\b/.test(handler)) {
+        out.push(fail(IPC, start < 0 ? undefined : lineAt(ipc, start), "the 'vault:write-existing-file-text' handler must pass its expect argument to atomicWriteFile as expectStat"));
+      }
+      const FU = 'src/main/vault/filenameUtils.ts';
+      const fu = ctx.read(FU);
+      if (fu === null) return [...out, fail(FU, undefined, 'file missing')];
+      // From the function to the next top-level export (its signature defeats functionBody).
+      const awStart = fu.indexOf('export async function atomicWriteFile(');
+      const awEnd = awStart < 0 ? -1 : fu.indexOf('\nexport ', awStart + 1);
+      const awBody = awStart < 0 ? '' : stripComments(fu.slice(awStart, awEnd < 0 ? fu.length : awEnd));
+      if (!/beforeAttempt[\s\S]*expectStat[\s\S]*throw new StaleWriteError/.test(awBody)) {
+        out.push(fail(FU, undefined, 'atomicWriteFile must re-check expectStat before every rename attempt (beforeAttempt) and throw StaleWriteError'));
+      }
+      const EC = 'src/main/ipc/ipcErrorCode.ts';
+      const ec = ctx.read(EC);
+      if (ec === null || !/instanceof StaleWriteError\)\s*return 'STALE'/.test(ec)) {
+        out.push(fail(EC, undefined, "ipcErrorCode must map StaleWriteError to 'STALE'"));
       }
       return out;
     },

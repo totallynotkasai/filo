@@ -1,4 +1,4 @@
-import { watch, type FSWatcher, statSync, promises as fsPromises } from 'fs';
+import { watch, type FSWatcher, readFileSync, statSync, promises as fsPromises } from 'fs';
 import { BrowserWindow } from 'electron';
 import { join } from 'path';
 import { correlateRenames } from './renameCorrelation';
@@ -18,7 +18,14 @@ import {
   type WatcherState,
 } from './watcherSupervisor';
 import { shouldIgnorePath, classifyChange } from './fileWatcherClassify';
-import { SuppressionWindows } from './watcherSuppression';
+import { SuppressionWindows, type FileProbe } from './watcherSuppression';
+
+/**
+ * Largest file the watcher hashes synchronously to tell Filo's own write from
+ * another program's inside a write window. A bigger file whose size matches
+ * the write is taken as ours.
+ */
+const OWN_WRITE_COMPARE_MAX_BYTES = 2 * 1024 * 1024;
 
 export { correlateRenames } from './renameCorrelation';
 export type { FileChangeEvent, FileChangeType } from './fileWatcherTypes';
@@ -201,10 +208,37 @@ export class FileWatcher {
    * the write's own echo always finds it there, whereas another program's
    * rename or delete of it right after our write must still get through. A
    * plain `suppress` of the same path in the window wins.
+   *
+   * With `content` (the bytes about to be written), or once
+   * {@link recordOwnWrite} has run, only an event for a file holding those
+   * bytes is dropped: another program saving the note inside the window is
+   * still reported.
    */
-  suppressWrite(relativePath: string, durationMs: number): void {
-    this.suppression.suppressWrite(relativePath, durationMs);
+  suppressWrite(relativePath: string, durationMs: number, content?: string | Buffer): void {
+    this.suppression.suppressWrite(relativePath, durationMs, content);
   }
+
+  /** What the file holds now, for telling our own write's echo from someone else's save. */
+  private readonly probeFile: FileProbe = (relativePath) => {
+    const abs = join(this.vaultPath, relativePath);
+    let size: number;
+    try {
+      size = statSync(abs).size;
+    } catch {
+      return null;
+    }
+    return {
+      size,
+      sha1: () => {
+        if (size > OWN_WRITE_COMPARE_MAX_BYTES) return null;
+        try {
+          return sha1Hex(readFileSync(abs));
+        } catch {
+          return null;
+        }
+      },
+    };
+  };
 
   /**
    * Records the bytes Filo just wrote to `relativePath` as its last-known size
@@ -217,8 +251,10 @@ export class FileWatcher {
     const key = vaultPath(relativePath);
     if (!key) return;
     this.lastKnownSizes.set(key, bytes.length);
-    if (bytes.length <= WATCHER_HASH_MAX_BYTES) this.lastKnownHashes.set(key, sha1Hex(bytes));
+    const sha1 = sha1Hex(bytes);
+    if (bytes.length <= WATCHER_HASH_MAX_BYTES) this.lastKnownHashes.set(key, sha1);
     else this.lastKnownHashes.delete(key);
+    this.suppression.recordOwnBytes(relativePath, { size: bytes.length, sha1 });
   }
 
   /**
@@ -451,7 +487,7 @@ export class FileWatcher {
           && this.suppression.any()
         ) {
           for (const path of [...current.keys()]) {
-            if (!this.suppression.isSuppressed(path)) continue;
+            if (!this.suppression.isSuppressed(path, true, this.probeFile)) continue;
             const priorEntry = previous.get(path);
             if (priorEntry !== undefined) current.set(path, priorEntry);
             else current.delete(path);
@@ -487,7 +523,7 @@ export class FileWatcher {
         for (const [path, entry] of current) {
           if (this.aborted) return;
           if (shouldIgnorePath(path)) continue;
-          if (this.suppression.isSuppressed(path)) continue;
+          if (this.suppression.isSuppressed(path, true, this.probeFile)) continue;
           const prior = previous.get(path);
           if (prior === undefined) {
             synthesised.push({
@@ -762,7 +798,7 @@ export class FileWatcher {
       const key = `${c.type}:${c.filename}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      if (this.suppression.isSuppressed(c.filename, exists(c.filename))) continue;
+      if (this.suppression.isSuppressed(c.filename, exists(c.filename), this.probeFile)) continue;
       unique.push(c);
     }
     const sizeOf = (relPath: string): number | null => {

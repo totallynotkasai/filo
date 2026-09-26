@@ -13,8 +13,13 @@
  *     the body or keep the disk body;
  *  4. assemble with the fresh BOM and line ending, and skip the write when the
  *     bytes are unchanged;
- *  5. write atomically, then report the bytes to the store, which moves the
- *     note's base to them and refreshes the vault index.
+ *  5. write atomically, naming the stat the read saw: the main process refuses
+ *     (STALE) if the file changed since, and the flush starts over from a new
+ *     read. Then report the bytes to the store, which moves the note's base to
+ *     them and refreshes the vault index.
+ *
+ * A read that looks cut short (another program's non-atomic save caught half
+ * way) is read again before anything is built on it.
  *
  * Creates are exclusive (an existing file is never overwritten; the name is
  * bumped to ` (n)` instead). `transform` rewrites a note from its fresh bytes
@@ -31,6 +36,7 @@ import { WRITE_TIMEOUT_MS } from '../boards/boardWriteDebounce';
 import {
   beginWrite,
   clearFailedPathAfterLateSuccess,
+  dropRecentSelfWrite,
   endWrite,
   markPathFailed,
   markRecentSelfWrite,
@@ -42,7 +48,11 @@ import { invokeOk } from '../utils/invokeOk';
 import { reportError } from '../utils/errorBus';
 import { captureVaultIdentity, isStillSameVault } from '../vault/vaultIdentity';
 import { noteReadEncoding } from '../vault/nonUtf8Paths.svelte';
-import { mergeFrontmatterDelta, type FrontmatterDelta } from '../vault/frontmatterDelta';
+import {
+  mergeFrontmatterDelta,
+  subtractWrittenDelta,
+  type FrontmatterDelta,
+} from '../vault/frontmatterDelta';
 import {
   assembleNoteText,
   breaksFrontmatter,
@@ -62,6 +72,17 @@ export const NOTE_WRITE_TIMEOUT_MS = WRITE_TIMEOUT_MS;
 
 /** Delays before re-reading a file whose read raced another writer. */
 const READ_RETRY_MS = [40, 120, 300];
+
+/**
+ * Rounds of read, build and write one flush may take: a read that looks cut
+ * short, or a write the main process refused because the file changed after
+ * the read, starts a new round.
+ */
+const FLUSH_ROUNDS = READ_RETRY_MS.length + 1;
+
+/** A read this much smaller than the last known size, this recent, may be cut short. */
+const SHRINK_RATIO = 0.5;
+const RECENT_WRITE_MS = 2000;
 
 /** Upper bound on ` (n)` bumps when creating a note. */
 const MAX_CREATE_ATTEMPTS = 100;
@@ -105,6 +126,17 @@ export interface NoteWriterHost {
   onTargetMissing(path: VaultPath, relPath: string, hasBody: boolean): void;
   /** The active vault root. */
   vaultRoot(): string | null;
+  /**
+   * What is known about the note's size when no model holds its base (the
+   * vault index), for telling a cut-short read from a real one.
+   */
+  lastKnown?(path: VaultPath): KnownShape | undefined;
+}
+
+/** The last known size of a note, and whether its body was empty. */
+export interface KnownShape {
+  size: number;
+  bodyEmpty: boolean;
 }
 
 /** Thrown when every candidate name up to ` (MAX_CREATE_ATTEMPTS)` exists. */
@@ -123,6 +155,19 @@ export class FrontmatterBreakError extends Error {
   constructor(relPath: string) {
     super(`Filo stopped a change that would have broken the properties of "${relPath}"`);
     this.name = 'FrontmatterBreakError';
+  }
+}
+
+/**
+ * `transform` didn't run: something queued for the note couldn't be written
+ * (a conflict holds its body, or the write failed). Rewriting the file now
+ * would move the note on under that edit, which would later land over the
+ * rewrite. The caller reports the note as skipped.
+ */
+export class NoteBusyError extends Error {
+  constructor(readonly relPath: string) {
+    super(`"${relPath}" has an edit that isn't saved yet, so it was left alone`);
+    this.name = 'NoteBusyError';
   }
 }
 
@@ -162,6 +207,11 @@ function errorCode(err: unknown): string | undefined {
   return err instanceof IpcEnvelopeError ? err.code : (err as { code?: string } | null)?.code;
 }
 
+/** `snapshot` as a read of the file, for a conflict against bytes already in hand. */
+export function readOfSnapshot(snapshot: DiskSnapshot): FreshRead {
+  return { text: readNoteText(snapshot.rawText), mtimeMs: snapshot.mtimeMs, size: snapshot.size, nonUtf8: false };
+}
+
 /** Reads `relPath` fresh, retrying a read that overlapped another writer. */
 export async function readNoteFresh(vaultRoot: string, relPath: string): Promise<FreshRead> {
   for (let attempt = 0; ; attempt++) {
@@ -189,6 +239,21 @@ export function looksTorn(fresh: NoteText, hadFrontmatter: boolean): boolean {
   if (fresh.hasFrontmatter || !hadFrontmatter) return false;
   const raw = fresh.hadBom ? fresh.raw.slice(1) : fresh.raw;
   return /^---[ \t]*\r?\n/.test(raw);
+}
+
+/**
+ * A read that may be another program's truncate-then-write caught part way:
+ * the file is empty though it wasn't, or it is under half its last known
+ * size and was written in the last two seconds. Writing a change onto it
+ * would keep only what that program had written so far. It is read again; if
+ * it stays that way it is taken as the file (the user may really have
+ * emptied it).
+ */
+export function looksCutShort(fresh: FreshRead, known: KnownShape | undefined, now = Date.now()): boolean {
+  if (!known || fresh.size === undefined) return false;
+  if (fresh.size === 0) return known.size > 0;
+  const recent = fresh.mtimeMs !== undefined && now - fresh.mtimeMs < RECENT_WRITE_MS;
+  return recent && fresh.size < known.size * SHRINK_RATIO;
 }
 
 export interface NoteWriter {
@@ -310,10 +375,20 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
     return { path, entry };
   }
 
+  /** The note's last known size and body, from its base or (no model) the host. */
+  function knownShape(path: VaultPath): KnownShape | undefined {
+    const base = host.baseOf(path);
+    if (base) return { size: byteLength(base.rawText), bodyEmpty: snapshotBody(base).trim() === '' };
+    return host.lastKnown?.(path);
+  }
+
   async function writePending(args: FlushArgs): Promise<void> {
     const { path, vaultRoot } = args;
     const identity = captureVaultIdentity();
-    for (let attempt = 0; attempt < 3; attempt++) {
+    let lastFresh: FreshRead | null = null;
+    let stale = false;
+    for (let round = 0; round < FLUSH_ROUNDS; round++) {
+      const lastRound = round === FLUSH_ROUNDS - 1;
       const entry = pending.get(path);
       if (!entry) return;
       const relPath = entry.relPath;
@@ -340,6 +415,8 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
         throw err;
       }
       if (!isStillSameVault(identity)) return;
+      lastFresh = fresh;
+      stale = false;
       if (fresh.nonUtf8) {
         reportError(
           'note.nonUtf8',
@@ -350,8 +427,18 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
         throw new Error(`noteWriter: "${relPath}" is not UTF-8`);
       }
       const base = host.baseOf(path);
-      if (looksTorn(fresh.text, host.hadFrontmatter(path))) {
-        await sleep(READ_RETRY_MS[attempt] ?? 300);
+      const known = knownShape(path);
+      // Nothing is written without the stat the read saw: the main process
+      // needs it to refuse a write over a version that replaced this one.
+      const unstable = fresh.mtimeMs === undefined || fresh.size === undefined;
+      const cutShort = !lastRound && (
+        looksCutShort(fresh, known)
+        // A frontmatter-only change never looks at the body, so an emptied
+        // body would be kept as it is; make sure it really is empty.
+        || (!body && fresh.text.body.trim() === '' && known !== undefined && !known.bodyEmpty)
+      );
+      if (unstable || cutShort || looksTorn(fresh.text, host.hadFrontmatter(path))) {
+        await sleep(READ_RETRY_MS[round] ?? 300);
         continue;
       }
       let heldBody = false;
@@ -376,24 +463,25 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
       });
       if (breaksFrontmatter(fresh.text, text)) refuseFrontmatterBreak(vaultRoot, relPath);
       if (text !== fresh.text.raw) {
-        // A write that landed after our read would be overwritten unseen.
-        // Re-check the file's identity and start over if it moved.
-        if (fresh.mtimeMs !== undefined) {
-          const now = await invokeOk('vault:stat', vaultRoot, relPath).catch(() => undefined);
-          if (!isStillSameVault(identity)) return;
-          if (now && (now.mtimeMs !== fresh.mtimeMs || now.size !== fresh.size)) continue;
-        }
         rememberOwnWrite(path, noteTextHash(text));
-        await trackComponentWrite(vaultRoot, relPath, () =>
-          invokeOk('vault:write-existing-file-text', vaultRoot, relPath, text),
+        const outcome = await trackComponentWrite(vaultRoot, relPath, () =>
+          writeOver(vaultRoot, relPath, text, fresh),
         );
         if (!isStillSameVault(identity)) return;
+        if (outcome === 'stale') {
+          // The file changed after the read: build the change again on it.
+          dropRecentSelfWrite(relPath);
+          stale = true;
+          continue;
+        }
       }
-      // Drop what landed, unless a newer change replaced it meanwhile.
+      // Drop what landed, unless a newer change replaced it meanwhile. A
+      // frontmatter change merged in while this one was written keeps only
+      // the keys this write didn't already carry.
       const now = pending.get(path);
       if (now) {
         if (body && now.body === body) now.body = undefined;
-        if (delta && now.delta === delta) now.delta = undefined;
+        if (delta && now.delta) now.delta = now.delta === delta ? undefined : (subtractWrittenDelta(now.delta, delta) ?? undefined);
         if (!now.body && !now.delta) pending.delete(path);
       }
       const written = text === fresh.text.raw ? fresh.text : readNoteText(text);
@@ -403,6 +491,13 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
       });
       if (heldBody || (pending.get(path)?.body && !host.canWriteBody(path))) failHeldBody(vaultRoot, relPath);
       return;
+    }
+    // A body that keeps meeting a newer version on disk is held for the
+    // user's decision (Reload / Keep mine) rather than retried blind.
+    const entry = pending.get(path);
+    if (stale && lastFresh && entry?.body && isStillSameVault(identity)) {
+      host.onBodyConflict(path, entry.relPath, lastFresh);
+      failHeldBody(vaultRoot, entry.relPath);
     }
     markPathFailed(vaultRoot, args.relPath);
     throw new Error(`noteWriter: "${args.relPath}" kept changing on disk; not overwriting it`);
@@ -521,7 +616,11 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
       const key = vaultPath(path);
       if (!pending.has(key) && !scheduler.hasWork(key)) return { ok: true };
       if (pending.has(key)) arm(key);
-      return scheduler.flush(key, () => argsFor(key));
+      const { ok } = await scheduler.flush(key, () => argsFor(key));
+      // The re-armed fire finds nothing to write when a write already in
+      // flight took the whole queue; the scheduler counts that as a miss.
+      // A failed or held change stays queued, so an empty queue means saved.
+      return { ok: ok || !pending.has(key) };
     },
 
     async flushAll() {
@@ -541,42 +640,59 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
 
     async transform(relPath, fn, track, options) {
       const path = vaultPath(relPath);
-      if (pending.has(path) || scheduler.hasWork(path)) await this.flush(relPath);
+      if (pending.has(path) || scheduler.hasWork(path)) {
+        const { ok } = await this.flush(relPath);
+        if (!ok) throw new NoteBusyError(relPath);
+      }
       return onPath(path, async () => {
         const vaultRoot = host.vaultRoot();
         if (!vaultRoot) return null;
+        // A body queued meanwhile was built on the bytes this would replace.
+        if (pending.get(path)?.body) throw new NoteBusyError(relPath);
         const identity = captureVaultIdentity();
-        let fresh: FreshRead;
-        try {
-          fresh = await readNoteFresh(vaultRoot, relPath);
-        } catch (err) {
-          // Present but unreadable: the change is unsaved, so say so. A note
-          // that's gone has nothing left to change.
-          if (!isMissingFileError(err) && isStillSameVault(identity)) markPathFailed(vaultRoot, relPath);
-          throw err;
+        for (let round = 0; round < FLUSH_ROUNDS; round++) {
+          const lastRound = round === FLUSH_ROUNDS - 1;
+          let fresh: FreshRead;
+          try {
+            fresh = await readNoteFresh(vaultRoot, relPath);
+          } catch (err) {
+            // Present but unreadable: the change is unsaved, so say so. A note
+            // that's gone has nothing left to change.
+            if (!isMissingFileError(err) && isStillSameVault(identity)) markPathFailed(vaultRoot, relPath);
+            throw err;
+          }
+          if (!isStillSameVault(identity) || fresh.nonUtf8) return null;
+          const unstable = fresh.mtimeMs === undefined || fresh.size === undefined;
+          if (unstable || looksTorn(fresh.text, host.hadFrontmatter(path)) || (!lastRound && looksCutShort(fresh, knownShape(path)))) {
+            if (lastRound) throw new Error(`noteWriter: "${relPath}" was mid-write by another program; try again`);
+            await sleep(READ_RETRY_MS[round] ?? 300);
+            continue;
+          }
+          const next = fn(fresh.text);
+          if (next === null || next === fresh.text.raw) return null;
+          if (!options?.userAuthored && breaksFrontmatter(fresh.text, next)) {
+            const err = new FrontmatterBreakError(relPath);
+            reportError('frontmatter.wouldBreak', err, `${err.message}, so it wasn't saved.`);
+            throw err;
+          }
+          rememberOwnWrite(path, noteTextHash(next));
+          const outcome = await trackComponentWrite(
+            vaultRoot,
+            relPath,
+            () => writeOver(vaultRoot, relPath, next, fresh),
+            track ?? {},
+          );
+          if (!isStillSameVault(identity)) return null;
+          if (outcome === 'stale') {
+            // The file changed after the read: run the rewrite again on it.
+            dropRecentSelfWrite(relPath);
+            continue;
+          }
+          const written = readNoteText(next);
+          host.onWritten(path, relPath, written, snapshotOf(written), {});
+          return next;
         }
-        if (!isStillSameVault(identity) || fresh.nonUtf8) return null;
-        if (looksTorn(fresh.text, host.hadFrontmatter(path))) {
-          throw new Error(`noteWriter: "${relPath}" was mid-write by another program; try again`);
-        }
-        const next = fn(fresh.text);
-        if (next === null || next === fresh.text.raw) return null;
-        if (!options?.userAuthored && breaksFrontmatter(fresh.text, next)) {
-          const err = new FrontmatterBreakError(relPath);
-          reportError('frontmatter.wouldBreak', err, `${err.message}, so it wasn't saved.`);
-          throw err;
-        }
-        rememberOwnWrite(path, noteTextHash(next));
-        await trackComponentWrite(
-          vaultRoot,
-          relPath,
-          () => invokeOk('vault:write-existing-file-text', vaultRoot, relPath, next),
-          track ?? {},
-        );
-        if (!isStillSameVault(identity)) return null;
-        const written = readNoteText(next);
-        host.onWritten(path, relPath, written, snapshotOf(written), {});
-        return next;
+        throw new Error(`noteWriter: "${relPath}" kept changing on disk; not overwriting it`);
       });
     },
 
@@ -699,4 +815,34 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
 /** True when `err` means the file isn't there. */
 export function isMissingFileError(err: unknown): boolean {
   return errorCode(err) === 'ENOENT';
+}
+
+/** True when the main process refused a write because the file changed after it was read. */
+export function isStaleWriteError(err: unknown): boolean {
+  return errorCode(err) === 'STALE';
+}
+
+/**
+ * Writes `text` over the version `fresh` read. `stale` (nothing written) when
+ * the file no longer has the stat that read saw; the caller reads again. It
+ * resolves rather than throws, so a retry isn't reported as a failed save.
+ */
+async function writeOver(vaultRoot: string, relPath: string, text: string, fresh: FreshRead): Promise<'written' | 'stale'> {
+  if (fresh.mtimeMs === undefined || fresh.size === undefined) {
+    throw new Error('noteWriter: a write needs the stat of the read it builds on');
+  }
+  const expect = { mtimeMs: fresh.mtimeMs, size: fresh.size };
+  try {
+    await invokeOk('vault:write-existing-file-text', vaultRoot, relPath, text, expect);
+    return 'written';
+  } catch (err) {
+    if (isStaleWriteError(err)) return 'stale';
+    throw err;
+  }
+}
+
+const utf8 = new TextEncoder();
+
+function byteLength(text: string): number {
+  return utf8.encode(text).length;
 }

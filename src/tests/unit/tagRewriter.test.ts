@@ -14,7 +14,7 @@ import {
  * assert the output round-trips cleanly.
  */
 function frontmatterObjectOf(md: string): Record<string, unknown> {
-  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(md);
+  const m = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---/.exec(md);
   if (!m) throw new Error('no frontmatter fence found');
   const loaded = yaml.load(m[1]);
   if (!loaded || typeof loaded !== 'object' || Array.isArray(loaded)) {
@@ -44,6 +44,9 @@ describe('tagRewriter — fence with trailing whitespace (6.4.M9)', () => {
     expect(fm.title).toBe('Foo');
     expect(fm.tags).toContain('newtag');
     expect(out).toContain('body');
+    // The file's own fence lines are kept as they were.
+    expect(out.startsWith('--- \n')).toBe(true);
+    expect(out.endsWith('\n--- \nbody')).toBe(true);
   });
 
   it('rewriteTagInMarkdown sees the existing tags through a trailing-ws fence', () => {
@@ -178,7 +181,7 @@ describe('addTagToMarkdown', () => {
   it('inserts the tags block additively without reformatting other keys', () => {
     const input = ['---', 'title: X', '---', 'body'].join('\n');
     const out = addTagToMarkdown(input, 'a');
-    expect(out).toBe(['---', 'title: X', 'tags:', '  - a', '---', 'body', ''].join('\n'));
+    expect(out).toBe(['---', 'title: X', 'tags:', '  - a', '---', 'body'].join('\n'));
   });
 
   // 3.2 (Audit-18) — the fresh tags block now APPENDS after every existing
@@ -189,7 +192,7 @@ describe('addTagToMarkdown', () => {
     const input = ['---', 'title: X', '', '---', 'body'].join('\n');
     const out = addTagToMarkdown(input, 'a');
     // The blank line the file carried is preserved (no value/structure drift).
-    expect(out).toBe(['---', 'title: X', '', 'tags:', '  - a', '---', 'body', ''].join('\n'));
+    expect(out).toBe(['---', 'title: X', '', 'tags:', '  - a', '---', 'body'].join('\n'));
   });
 
   // 3.2 (Audit-18) — leg (b): `splitFrontmatter`/`reassemble` used to collapse
@@ -204,7 +207,7 @@ describe('addTagToMarkdown', () => {
     // The blank line after `hello` is the keep-chomped trailing newline `|+`
     // owns; it survives byte-for-byte (the pre-fix reassemble collapsed it).
     expect(out).toBe(
-      ['---', 'tags:', '  - x', 'notes: |+', '  hello', '', '---', 'body', ''].join('\n'),
+      ['---', 'tags:', '  - x', 'notes: |+', '  hello', '', '---', 'body'].join('\n'),
     );
   });
 
@@ -213,7 +216,7 @@ describe('addTagToMarkdown', () => {
   it('preserves a cosmetic FM trailing blank line on a tag remove (3.2)', () => {
     const input = ['---', 'tags:', '  - x', '  - y', '', '---', 'body'].join('\n');
     const out = removeTagFromMarkdown(input, 'y');
-    expect(out).toBe(['---', 'tags:', '  - x', '', '---', 'body', ''].join('\n'));
+    expect(out).toBe(['---', 'tags:', '  - x', '', '---', 'body'].join('\n'));
   });
 
   // 3.1 (Audit-18) — a zero-interior fence pair (`---\n---\n`, a common empty
@@ -223,7 +226,7 @@ describe('addTagToMarkdown', () => {
   it('adds a tag into an EMPTY frontmatter block instead of prepending a duplicate (3.1)', () => {
     const input = ['---', '---', 'body'].join('\n');
     const out = addTagToMarkdown(input, 'a');
-    expect(out).toBe(['---', 'tags:', '  - a', '---', 'body', ''].join('\n'));
+    expect(out).toBe(['---', 'tags:', '  - a', '---', 'body'].join('\n'));
     // Exactly one frontmatter fence pair — no orphaned second block.
     expect(out.match(/^---$/gm)?.length).toBe(2);
   });

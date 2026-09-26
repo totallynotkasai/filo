@@ -14,6 +14,7 @@ import { noteReadEncoding } from '../lib/vault/nonUtf8Paths.svelte';
 import { stripLeadingSlash, toPosix } from '../lib/utils/path';
 import type { FileTreeNode } from '../../shared/types';
 import { onVaultSwap } from '../core/vaultLifecycle';
+import { vaultPath, type VaultPath } from '../../shared/vaultPath';
 
 /**
  * Reactive wrapper around the VaultIndex. Rebuilds the index on vault open,
@@ -72,12 +73,36 @@ async function readFileText(vaultRoot: string, relativePath: string): Promise<Re
 const TRANSIENT_RETRY_MS = 2000;
 const pendingRetries = new SvelteMap<string, ReturnType<typeof setTimeout>>();
 
+/**
+ * Per path, bumped by every change to its entry. A read that started before
+ * a newer entry landed (Filo's own write stores its bytes straight away, and
+ * its watcher echo is hidden) must not put the older bytes back.
+ */
+// allow-module-state: cleared by the vaultIndex pre-swap handler
+// eslint-disable-next-line svelte/prefer-svelte-reactivity
+const entrySeq = new Map<VaultPath, number>();
+const READS_PER_PATH = 3;
+
+function bumpEntry(relativePath: string): void {
+  const key = vaultPath(relativePath);
+  entrySeq.set(key, (entrySeq.get(key) ?? 0) + 1);
+}
+
 async function indexOnePath(relativePath: string): Promise<void> {
   const root = vaultStore.path;
   if (!root) return;
   const identity = captureVaultIdentity();
   const rel = normaliseRel(relativePath);
-  const res = await readFileText(root, rel);
+  const key = vaultPath(rel);
+  let res: ReadFileResult;
+  for (let read = 1; ; read++) {
+    const seq = entrySeq.get(key) ?? 0;
+    res = await readFileText(root, rel);
+    if (!isStillSameVault(identity)) break;
+    if ((entrySeq.get(key) ?? 0) === seq) break;
+    // The entry changed during the read: read again, or leave the newer entry.
+    if (read >= READS_PER_PATH) return;
+  }
   // Re-check vault identity after the read: a swap (or close → reopen of the
   // same path) during it would graft the old vault's file (or a phantom retry
   // timer) onto the new vault's metadata.
@@ -88,6 +113,7 @@ async function indexOnePath(relativePath: string): Promise<void> {
     // truncation through the retry path.
     const metadata = parseMarkdown(relativePath, res.content, res.mtimeMs ?? Date.now());
     index.upsert(metadata);
+    bumpEntry(rel);
     noteReadEncoding(rel, res.encoding); // a non-UTF-8 note opens non-editable
     // Cancel any pending retry — the read succeeded this pass.
     const pending = pendingRetries.get(relativePath);
@@ -103,6 +129,7 @@ async function indexOnePath(relativePath: string): Promise<void> {
   const code = res.code ?? 'ENOENT';
   if (code === 'ENOENT') {
     index.remove(relativePath);
+    bumpEntry(rel);
     return;
   }
   // Transient — leave the existing index entry in place and retry in 2 s.
@@ -149,6 +176,13 @@ export const vaultIndexStore = {
   getMetadata(path: string): FileMetadata | null {
     void version;
     return index.get(path);
+  },
+
+  /** The note's last indexed size, and whether its body was empty (a cut-short read check). */
+  knownShape(path: string): { size: number; bodyEmpty: boolean } | undefined {
+    const meta = index.get(path);
+    if (!meta) return undefined;
+    return { size: meta.rawByteSize ?? meta.content.length, bodyEmpty: meta.content.trim() === '' };
   },
 
   allMetadata(): FileMetadata[] {
@@ -262,6 +296,7 @@ export const vaultIndexStore = {
    * the entry (mirrors `removePath`).
    */
   restoreMetadata(relativePath: string, metadata: FileMetadata | null): void {
+    bumpEntry(normaliseRel(relativePath));
     if (metadata === null) {
       index.remove(relativePath);
     } else {
@@ -297,6 +332,7 @@ export const vaultIndexStore = {
 onVaultSwap('pre-swap', 'vaultIndex', () => {
   for (const timer of pendingRetries.values()) clearTimeout(timer);
   pendingRetries.clear();
+  entrySeq.clear();
   index.clear();
   bump();
 });

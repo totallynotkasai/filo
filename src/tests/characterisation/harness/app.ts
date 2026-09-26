@@ -172,6 +172,37 @@ export async function startApp(
 }
 
 /**
+ * Runs `during` while an open note is reading the version of `rel` that
+ * `start()` wrote, as a slow disk would let a user keep typing then: every
+ * read of `rel` is held until the one it is meant for.
+ *
+ * Adapter knowledge: a change to a note is read twice, first by the search
+ * index, then (once that is done) by the open note. `during` runs inside the
+ * second. Keys typed earlier reach the note before its read starts, which is
+ * a different case.
+ */
+export async function whileReading(
+  app: CharApp,
+  rel: string,
+  start: () => void,
+  during: () => Promise<void>,
+): Promise<void> {
+  const NOTE_READ = 2;
+  const hold = app.bridge.holdReads(rel);
+  try {
+    start();
+    for (let n = 1; n <= NOTE_READ; n++) {
+      await waitFor(() => hold.count() >= n, `read ${n} of ${rel}`);
+      if (n === NOTE_READ) await during();
+      hold.releaseNewest();
+    }
+  } finally {
+    hold.release();
+  }
+  await settle();
+}
+
+/**
  * Quit and relaunch on the same vault: close it (saving, as a normal quit
  * does), then open it again. The log is cleared, so what follows is only what
  * the next session does.

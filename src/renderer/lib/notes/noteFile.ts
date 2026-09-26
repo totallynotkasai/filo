@@ -7,9 +7,10 @@
  * emits the bytes to write:
  *  - the frontmatter source is patched key by key (CST engine), so untouched
  *    keys, comments and quoting survive, including keys another program added;
- *  - without a new body the disk body is kept byte-exact;
- *  - the fresh read's BOM and line ending are re-applied, and a CRLF note's
- *    body is written as CRLF throughout;
+ *  - without a new body the disk body is kept byte-exact (line endings
+ *    included) and the frontmatter block keeps the ending it already has;
+ *  - a new body gets the file's line ending (by majority) throughout, and the
+ *    fresh read's BOM is re-applied;
  *  - a note without frontmatter keeps its final newline.
  *
  * No IPC, store or DOM access, so the writer and the disk-change handler share
@@ -17,6 +18,7 @@
  */
 import { assembleMarkdownFile, parseMarkdownFile, type FrontmatterRefusal } from '../editor/markdownSync';
 import { frontmatterSourceParses } from '../vault/frontmatterCstModel';
+import { fileLineEnding, frontmatterLineEnding } from '../utils/lineEnding';
 import {
   applyFrontmatterDelta,
   isEmptyFrontmatterDelta,
@@ -60,7 +62,7 @@ export function readNoteText(raw: string): NoteText {
     hasFrontmatter: parsed.hasFrontmatter,
     body: parsed.body,
     hadBom: parsed.hadBom,
-    eol: raw.includes('\r\n') ? '\r\n' : '\n',
+    eol: fileLineEnding(raw),
   };
 }
 
@@ -154,8 +156,15 @@ export function assembleNoteText(
   const fmChanged = delta !== undefined && !isEmptyFrontmatterDelta(delta);
   const nextFm = fmChanged ? applyFrontmatterDelta(fresh.frontmatter, delta) : fresh.frontmatter;
   const body = change.body ?? fresh.body;
-  // An empty file carries no line-ending signal; the body then decides.
-  const eol: Eol = fresh.raw.length === 0 ? (body.includes('\r\n') ? '\r\n' : '\n') : fresh.eol;
+  // An empty file carries no line-ending signal; the body then decides. A
+  // change that keeps the body only writes the frontmatter block, which keeps
+  // its own ending even in a file whose lines are mixed.
+  const eol: Eol =
+    fresh.raw.length === 0
+      ? (body.includes('\r\n') ? '\r\n' : '\n')
+      : change.body === undefined
+        ? frontmatterLineEnding(fresh.raw)
+        : fresh.eol;
   let text = assembleMarkdownFile(nextFm, body, {
     bom: fresh.hadBom,
     rawFrontmatter: fresh.rawFrontmatter,
@@ -169,13 +178,18 @@ export function assembleNoteText(
   if (change.body !== undefined && endsWithNewline(fresh.raw) && !endsWithNewline(text) && text.length > 0) {
     text += eol;
   }
-  // Without a new body the disk body is kept byte-exact: the assembler ends
-  // a frontmatter note with a newline, which a body without one (or an empty
-  // body) must not gain.
-  if (change.body === undefined && !endsWithNewline(fresh.body) && text.endsWith(fresh.body + eol)) {
-    text = text.slice(0, -eol.length);
-  }
+  // Without a new body the disk body is kept byte-exact: the assembler
+  // re-applies one line ending to the body and ends a frontmatter note with a
+  // newline, neither of which the disk body may gain.
+  if (change.body === undefined) text = withDiskBody(text, fresh);
   return text;
+}
+
+/** `text` with whatever follows its frontmatter block replaced by `fresh`'s body, verbatim. */
+function withDiskBody(text: string, fresh: NoteText): string {
+  const out = parseMarkdownFile(text);
+  if (!out.hasFrontmatter) return (out.hadBom ? text.charAt(0) : '') + fresh.body;
+  return text.slice(0, text.length - out.body.length) + fresh.body;
 }
 
 /**

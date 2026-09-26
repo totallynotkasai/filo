@@ -922,16 +922,17 @@ is held for `MISSING_NOTE_HOLD_MS` (1.5 s) so a partner that arrives in a later
 batch can still pair with it; after that it is reported as deleted. In the
 renderer, a note with a change not yet on disk waits `NOTE_RENAME_GRACE_MS`
 (3 s) before the "deleted" or "couldn't save" prompt, and asks nothing if a
-rename re-points it meanwhile. A note write hides only its own echo: a rename
-or delete of the file straight after Filo wrote it is still reported
-(`FileWatcher.suppressWrite`), and the watcher's hash cache is updated with the
+rename re-points it meanwhile. A note write hides only its own echo: a rename,
+delete or save of the file by another program straight after Filo wrote it is
+still reported (`FileWatcher.suppressWrite` drops an event only while the file
+holds the bytes Filo wrote), and the watcher's hash cache is updated with the
 bytes Filo wrote so the pair still matches.
 
 **Where:** [src/main/services/fileWatcher.ts](src/main/services/fileWatcher.ts)
 (`MISSING_NOTE_HOLD_MS`, `suppressWrite`, `recordOwnWrite`),
 [src/renderer/lib/vault/externalChangeWindows.ts](src/renderer/lib/vault/externalChangeWindows.ts)
 (`NOTE_RENAME_GRACE_MS`), `askUnlessMoved` in
-[src/renderer/stores/notes.svelte.ts](src/renderer/stores/notes.svelte.ts).
+[src/renderer/lib/notes/renameGrace.ts](src/renderer/lib/notes/renameGrace.ts).
 
 **Why accepted:** Holding every delete longer would make a real delete slower
 to show. 1.5 s covers Explorer and `git mv`, which move a file in one

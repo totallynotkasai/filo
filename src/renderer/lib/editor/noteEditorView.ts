@@ -12,7 +12,10 @@
  *   changes never load back into it, so the caret and undo history stay put.
  * - Every other change to the model's body (another view typed, the disk
  *   changed, a reload) loads into the editor, unless this view is mid-IME
- *   composition or holds keystrokes it hasn't serialised yet.
+ *   composition or holds keystrokes it hasn't serialised yet. Those
+ *   keystrokes were typed into the body the model has since replaced, so
+ *   when they are serialised the store holds them in conflict with it (the
+ *   one prompt) rather than writing them over the change.
  * - A load that turns out lossy (the editor can't reproduce the Markdown)
  *   marks the note read-only.
  *
@@ -36,6 +39,8 @@ export class NoteEditorView {
   /** The model object and body revision the editor shows. */
   private shownModel: NoteModel | null = null;
   private shownRevision = -1;
+  /** The model body at `shownRevision`: what the editor's text was built on. */
+  private shownBody = '';
   /** Keystrokes typed since the last serialise. */
   private unserialised = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -95,11 +100,13 @@ export class NoteEditorView {
     const m = this.model;
     if (!this.unserialised || !editor || editor.isDestroyed || !m) return;
     this.unserialised = false;
-    noteStore.setBody(m.relPath, editorMarkdown(editor), this.viewId);
-    if (m.bodySource === this.viewId) {
-      this.shownModel = m;
-      this.shownRevision = m.bodyRevision;
-    }
+    const markdown = editorMarkdown(editor);
+    // The body changed underneath (disk, reload, rewrite) since the editor
+    // last showed the model: the text was built on the old one.
+    const superseded = m === this.shownModel && this.shownRevision >= 0 && m.diskRevision > this.shownRevision;
+    if (superseded) noteStore.setBodyBuiltOn(m.relPath, markdown, this.viewId, this.shownBody);
+    else noteStore.setBody(m.relPath, markdown, this.viewId);
+    if (m.bodySource === this.viewId) this.markShown(m);
   }
 
   /** True while keystrokes wait to be serialised. */
@@ -123,7 +130,7 @@ export class NoteEditorView {
     const revision = m.bodyRevision;
     if (revision === this.shownRevision) return;
     if (m.bodySource === this.viewId) {
-      this.shownRevision = revision;
+      this.markShown(m);
       return;
     }
     if (this.unserialised || opts.composing) return;
@@ -135,6 +142,12 @@ export class NoteEditorView {
     } finally {
       this.loading = false;
     }
-    this.shownRevision = revision;
+    this.markShown(m);
+  }
+
+  private markShown(m: NoteModel): void {
+    this.shownModel = m;
+    this.shownRevision = m.bodyRevision;
+    this.shownBody = m.body;
   }
 }

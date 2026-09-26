@@ -27,7 +27,6 @@ import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { registerPathRenamable } from '../lib/vault/renamePathKeys';
-import { NOTE_RENAME_GRACE_MS } from '../lib/vault/externalChangeWindows';
 import { vaultIndexStore } from './vaultIndex.svelte';
 import { parseMarkdown } from '../lib/vault/vaultIndex';
 import { isNonUtf8 } from '../lib/vault/nonUtf8Paths.svelte';
@@ -35,7 +34,9 @@ import { applyFrontmatterDelta, type FrontmatterDelta } from '../lib/vault/front
 import {
   createNoteWriter,
   isMissingFileError,
+  NoteBusyError,
   readNoteFresh,
+  readOfSnapshot,
   type FreshRead,
   type NoteWriter,
   type TransformOptions,
@@ -47,13 +48,13 @@ import {
   snapshotOf,
   readNoteText,
   rawTextForDisk,
-  localNoteText,
-  newNoteText,
   type DiskSnapshot,
   type NoteText,
 } from '../lib/notes/noteFile';
 import { looksTorn } from '../lib/notes/noteWriter';
 import { flushRawViews } from '../lib/notes/rawViews';
+import { askUnlessMoved, dropGraceChecks, settleGraceChecksNow } from '../lib/notes/renameGrace';
+import { unsavedNoteTexts } from '../lib/notes/unsavedNoteTexts';
 import { decideDiskChange } from '../lib/notes/noteDiskChange';
 import { backupThenRead } from '../lib/vault/keepLocalBackup';
 import {
@@ -92,6 +93,8 @@ export class NoteModel {
   /** Bumps whenever `body` changes; `bodySource` says who changed it. */
   bodyRevision = $state(0);
   bodySource: ViewId | 'disk' = 'disk';
+  /** The revision at which the body last changed without a view typing it (disk, reload, rewrite). */
+  diskRevision = 0;
   /** True while an edited body hasn't reached disk. */
   hasUnsavedBody = $state(false);
   /** The view typing in the note (D7). */
@@ -193,6 +196,7 @@ const writer: NoteWriter = createNoteWriter({
   onWritten: (path, relPath, written, snapshot, consumed) => {
     afterWrite(path, relPath, written, snapshot, consumed);
   },
+  lastKnown: (path) => vaultIndexStore.knownShape(path),
   onTargetMissing: (path, relPath, hasBody) => {
     askUnlessMoved(
       relPath,
@@ -205,49 +209,6 @@ const writer: NoteWriter = createNoteWriter({
     );
   },
 });
-
-/**
- * A note whose file just vanished may be mid-rename by another program: the
- * rename arrives as its own event, after the note's write already failed on
- * the old path or its "missing" event was handled. Waits the grace, then asks
- * only if `stillHere()` (the note hasn't been re-keyed, discarded or saved)
- * and the file is still gone; if it came back, `onBack` runs instead.
- */
-function askUnlessMoved(relPath: string, stillHere: () => boolean, ask: () => void, onBack: () => void): void {
-  const identity = captureVaultIdentity();
-  const check = async (): Promise<void> => {
-    if (!isStillSameVault(identity) || !stillHere()) return;
-    const vaultRoot = getActiveVaultPath();
-    if (!vaultRoot) return;
-    let back = false;
-    try {
-      back = (await window.filo.invoke('vault:file-exists', vaultRoot, relPath)) === true;
-    } catch {
-      back = false;
-    }
-    if (!isStillSameVault(identity) || !stillHere()) return;
-    if (back) onBack();
-    else ask();
-  };
-  const entry = {
-    timer: setTimeout(() => {
-      graceChecks.delete(entry);
-      void check();
-    }, NOTE_RENAME_GRACE_MS),
-    check,
-  };
-  graceChecks.add(entry);
-}
-
-/** Checks waiting out `NOTE_RENAME_GRACE_MS`; dropped on a vault swap. */
-// allow-module-state: cleared by the noteStore pre-swap handler and __resetForTests
-// eslint-disable-next-line svelte/prefer-svelte-reactivity
-const graceChecks = new Set<{ timer: ReturnType<typeof setTimeout>; check: () => Promise<void> }>();
-
-function dropGraceChecks(): void {
-  for (const e of graceChecks) clearTimeout(e.timer);
-  graceChecks.clear();
-}
 
 function afterWrite(
   path: VaultPath,
@@ -265,6 +226,19 @@ function afterWrite(
   const m = models.get(path);
   if (!m) return;
   m.relPath = relPath;
+  if (
+    consumed.bodyVersion === undefined
+    && (m.hasUnsavedBody || writer.hasPendingBody(path))
+    && m.base
+    && !sameBody(written.body, snapshotBody(m.base))
+  ) {
+    // A rewrite (Replace All, the raw view) changed the body under an edit
+    // built on the old one. Moving the base on would let that edit land over
+    // the rewrite unseen; it becomes the one prompt instead.
+    m.frontmatter = withQueued(path, written.frontmatter);
+    enterConflict(m, readOfSnapshot(snapshot));
+    return;
+  }
   m.base = snapshot;
   m.frontmatter = withQueued(path, written.frontmatter);
   if (consumed.bodyVersion !== undefined) {
@@ -305,6 +279,7 @@ function setModelBody(m: NoteModel, body: string, source: ViewId | 'disk'): void
   m.body = body;
   m.bodySource = source;
   m.bodyRevision++;
+  if (source === 'disk') m.diskRevision = m.bodyRevision;
 }
 
 function enterConflict(m: NoteModel, disk: FreshRead): void {
@@ -479,6 +454,31 @@ export const noteStore = {
   },
 
   /**
+   * A view's editor produced `markdown` from a body the model has since
+   * replaced (the disk changed, or a rewrite landed, while it held unsaved
+   * keystrokes). Writing it would erase that change, so it is kept as an
+   * unsaved body in conflict with what the model now holds: the one prompt
+   * (Reload / Keep mine, which backs the other version up first) decides.
+   */
+  setBodyBuiltOn(relPath: string, markdown: string, viewId: ViewId, builtOn: string): SetBodyStatus {
+    const m = models.get(vaultPath(relPath));
+    if (!m || !m.views.has(viewId) || m.readOnly || m.status === 'loading' || m.status === 'unreadable') {
+      return noteStore.setBody(relPath, markdown, viewId);
+    }
+    // Nothing of the other change is lost when the editor's text already
+    // matches it, or when that change put back the very body it was built on.
+    if (sameBody(markdown, m.body) || sameBody(builtOn, m.body)) return noteStore.setBody(relPath, markdown, viewId);
+    const shown = m.base ? readOfSnapshot(m.base) : null;
+    m.editorOwner = viewId;
+    setModelBody(m, markdown, viewId);
+    m.localBodyVersion++;
+    m.hasUnsavedBody = true;
+    writer.queueBody(m.relPath, markdown, m.localBodyVersion);
+    if (shown) enterConflict(m, shown);
+    return 'queued';
+  },
+
+  /**
    * Sets the note's body from a view that isn't an editor (the Task List
    * notes box): loads the note first, so the drift check has its base.
    * Anything but `queued` means the body was not taken, and the caller still
@@ -554,32 +554,7 @@ export const noteStore = {
    */
   async unsavedTexts(): Promise<Array<{ relPath: string; text: string }>> {
     serializeViews();
-    const out: Array<{ relPath: string; text: string }> = [];
-    // A local scratch set, never read reactively.
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity
-    const seen = new Set<VaultPath>();
-    for (const m of models.values()) {
-      if (!m.hasUnsavedBody && !writer.hasPendingBody(m.path)) continue;
-      seen.add(m.path);
-      out.push({ relPath: m.relPath, text: localNoteText(m.base, m.frontmatter, m.body, writer.pendingDelta(m.path)) });
-    }
-    const vaultRoot = getActiveVaultPath();
-    for (const relPath of writer.queuedPaths()) {
-      const key = vaultPath(relPath);
-      const delta = writer.pendingDelta(key);
-      if (seen.has(key) || !delta) continue;
-      let text = newNoteText(applyFrontmatterDelta({}, delta), '');
-      if (vaultRoot) {
-        try {
-          const fresh = await readNoteFresh(vaultRoot, relPath);
-          if (!fresh.nonUtf8) text = localNoteText(snapshotOf(fresh.text), {}, undefined, delta);
-        } catch {
-          // Gone or unreadable: the copy holds the changed keys alone.
-        }
-      }
-      out.push({ relPath, text });
-    }
-    return out;
+    return unsavedNoteTexts(models.values(), writer, getActiveVaultPath() || null);
   },
 
   /** The editor found the body can't round-trip; it's shown but not written. */
@@ -619,6 +594,9 @@ export const noteStore = {
       if (!isMissingFileError(err)) return;
     }
     if (models.get(key) !== m || !isStillSameVault(identity)) return;
+    // Keys typed while the read was out must count as unsaved, or the disk
+    // version would replace the body they were typed into.
+    serializeViews(key);
     const hash = fresh ? noteTextHash(fresh.text.raw) : null;
     const action = decideDiskChange({
       exists: fresh !== null,
@@ -879,7 +857,8 @@ export const noteStore = {
    * Replaces the whole file with `text` from the raw view. It lands only if
    * the file still holds the bytes the raw view started from (`basedOnHash`);
    * otherwise nothing is written and the result is `conflict`, so a change
-   * made elsewhere meanwhile is never overwritten unseen. The file's BOM and
+   * made elsewhere meanwhile is never overwritten unseen (as it is while
+   * another view's edit of the note can't be saved). The file's BOM and
    * line ending are kept. A note that isn't UTF-8 is never written.
    */
   async writeRaw(relPath: string, text: string, basedOnHash: string): Promise<'written' | 'unchanged' | 'conflict'> {
@@ -890,7 +869,12 @@ export const noteStore = {
         return null;
       }
       return rawTextForDisk(text, fresh);
-    }, undefined, { userAuthored: true });
+    }, undefined, { userAuthored: true }).catch((err: unknown) => {
+      // An edit elsewhere in the note isn't saved yet: the raw text waits too.
+      if (!(err instanceof NoteBusyError)) throw err;
+      conflict = true;
+      return null;
+    });
     if (conflict) return 'conflict';
     return written === null ? 'unchanged' : 'written';
   },
@@ -920,12 +904,7 @@ export const noteStore = {
    * waits for the ones a disk change or failed write is still about to start.
    */
   async __settleGraceChecksForTests(): Promise<void> {
-    for (let round = 0; round < 5; round++) {
-      await new Promise((r) => setTimeout(r, 0));
-      const due = [...graceChecks];
-      dropGraceChecks();
-      await Promise.all(due.map((e) => e.check()));
-    }
+    await settleGraceChecksNow();
   },
 };
 

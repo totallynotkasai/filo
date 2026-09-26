@@ -366,6 +366,8 @@ describe('fileTagsStore — rename / delete cascade', () => {
         'vault:read-file-text': async () => ({
           success: true,
           content: makeMarkdown('urgent'),
+          mtimeMs: 1,
+          size: makeMarkdown('urgent').length,
         }),
         // Phase 31 A4.5 — tag-rewrite-sweep now uses write-existing for
         // edits to existing .md files. Sentinel writes still use the
@@ -410,6 +412,8 @@ describe('fileTagsStore — rename / delete cascade', () => {
         'vault:read-file-text': async () => ({
           success: true,
           content: makeMarkdown('urgent'),
+          mtimeMs: 1,
+          size: makeMarkdown('urgent').length,
         }),
         // Sprint B / B3 — allow `.filo/` writes (including the new
         // tag-rewrite recovery sentinel) but make .md writes fail. This
@@ -468,6 +472,8 @@ describe('fileTagsStore — rename / delete cascade', () => {
         'vault:read-file-text': async () => ({
           success: true,
           content: makeMarkdown('urgent'),
+          mtimeMs: 1,
+          size: makeMarkdown('urgent').length,
         }),
         // Sprint B / B3 — allow `.filo/` writes (sentinel) but fail .md
         // writes to isolate the per-file rewrite failure.

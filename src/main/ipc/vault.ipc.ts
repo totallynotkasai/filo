@@ -67,8 +67,9 @@ export function getActiveWatcher(): FileWatcher | null {
  */
 export function noteOwnWrite(relativePath: string, content: string): void {
   if (!activeWatcher) return;
+  const bytes = Buffer.from(content, 'utf-8');
   activeWatcher.suppressWrite(relativePath, 1000);
-  activeWatcher.recordOwnWrite(relativePath, Buffer.from(content, 'utf-8'));
+  activeWatcher.recordOwnWrite(relativePath, bytes);
 }
 
 /**
@@ -608,7 +609,7 @@ export function registerVaultHandlers(): void {
         assertWithinVault(vaultRoot, fullPath);
         if (isRegisteredNonUtf8(fullPath)) return notUtf8Refusal(relativePath);
         await fsPromises.mkdir(dirname(fullPath), { recursive: true });
-        activeWatcher?.suppressWrite(relativePath, LOCK_AWARE_SUPPRESS_MS);
+        activeWatcher?.suppressWrite(relativePath, LOCK_AWARE_SUPPRESS_MS, content);
         await atomicWriteFile(await withOnDiskSpelling(fullPath), content);
         noteOwnWrite(relativePath, content);
         return { success: true, path: fullPath };
@@ -653,7 +654,7 @@ export function registerVaultHandlers(): void {
           }
           throw openErr;
         }
-        activeWatcher?.suppressWrite(relativePath, LOCK_AWARE_SUPPRESS_MS);
+        activeWatcher?.suppressWrite(relativePath, LOCK_AWARE_SUPPRESS_MS, content);
         try {
           await atomicWriteFile(fullPath, content);
         } catch (writeErr) {
@@ -684,7 +685,13 @@ export function registerVaultHandlers(): void {
    */
   ipcMain.handle(
     'vault:write-existing-file-text',
-    async (_event, vaultRoot: string, relativePath: string, content: string) => {
+    async (
+      _event,
+      vaultRoot: string,
+      relativePath: string,
+      content: string,
+      expect?: { mtimeMs: number; size: number },
+    ) => {
       try {
         assertActiveVault(vaultRoot);
         assertSafeRelativePath(relativePath);
@@ -709,13 +716,17 @@ export function registerVaultHandlers(): void {
         // Never overwrite a file whose bytes aren't UTF-8 with text decoded
         // from them (every non-ASCII byte would become U+FFFD).
         if (isRegisteredNonUtf8(fullPath)) return notUtf8Refusal(relativePath);
-        activeWatcher?.suppressWrite(relativePath, LOCK_AWARE_SUPPRESS_MS);
+        activeWatcher?.suppressWrite(relativePath, LOCK_AWARE_SUPPRESS_MS, content);
         // `expectExisting` re-verifies the destination right
         // before the rename so a delete landing in the stat-precheck→rename
         // gap aborts (ENOENT) instead of resurrecting the file with stale
         // editor bytes. The pre-stat above still short-circuits the common
-        // already-deleted case before staging a tmp.
-        await atomicWriteFile(await withOnDiskSpelling(fullPath), content, { expectExisting: true });
+        // already-deleted case before staging a tmp. `expectStat` does the
+        // same for a file replaced since the renderer read it (STALE).
+        await atomicWriteFile(await withOnDiskSpelling(fullPath), content, {
+          expectExisting: true,
+          expectStat: expect,
+        });
         noteOwnWrite(relativePath, content);
         return { success: true, path: fullPath };
       } catch (err) {

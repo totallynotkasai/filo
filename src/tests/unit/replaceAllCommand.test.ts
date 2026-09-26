@@ -258,6 +258,32 @@ describe('ReplaceAllCommand — atomicity', () => {
     expect(uiStore.toasts.some((t) => t.text.includes('Replace skipped'))).toBe(true);
   });
 
+  it('leaves a note alone while an edit to it can\'t be saved, and names it', async () => {
+    // The edit was built on the body before a change made elsewhere; a
+    // rewrite now would move the note on under it, and the edit would later
+    // land over the rewrite.
+    const filesystem: FileMap = { 'a.md': '# A\nfind frodo here' };
+    const { writes } = installFiloStub(filesystem);
+    const m = noteStore.acquire('a.md', 'view');
+    await m.loaded;
+    filesystem['a.md'] = '# A\nfind frodo here, and theirs';
+    vaultIndexStore.restoreMetadata('a.md', parseMarkdown('a.md', filesystem['a.md']));
+    noteStore.setBody('a.md', '# A\nmine', 'view');
+    expect(await noteStore.flush('a.md')).toBe(false);
+    boardCacheStore.hydrate(
+      { mm: makeMindMap('Board', 'mm', { ta: makeTextDef('ta', 'A', 'a.md') }) },
+      { mm: 'a.board.json' },
+    );
+    searchStore.setQuery('frodo');
+    searchStore.setReplaceText('sam');
+
+    await runReplaceAllCommand();
+    expect(writes.filter((w) => w.path === 'a.md')).toEqual([]);
+    expect(filesystem['a.md']).toBe('# A\nfind frodo here, and theirs');
+    expect(uiStore.toasts.some((t) => t.text.includes("isn't saved yet (a.md)"))).toBe(true);
+    noteStore.release('a.md', 'view');
+  });
+
   it('aborts when any file is unreadable (pre-flight failure → no writes)', async () => {
     const filesystem: FileMap = {
       'a.md': '# A\nfrodo here',

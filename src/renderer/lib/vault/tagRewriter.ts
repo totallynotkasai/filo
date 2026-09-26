@@ -1,6 +1,7 @@
 import { Document, parseDocument, isSeq } from 'yaml';
 import { parseTagsField } from '../utils/normalizeTagsField';
 import { patchFrontmatterSourceCst, frontmatterSourceHasNonScalarKey } from './frontmatterCstModel';
+import { frontmatterLineEnding } from '../utils/lineEnding';
 
 /**
  * Frontmatter-only tag rewriter.
@@ -26,7 +27,9 @@ import { patchFrontmatterSourceCst, frontmatterSourceHasNonScalarKey } from './f
 // duplicate block. The interior group is OPTIONAL so a zero-interior fence
 // pair (`---\n---\n`) parses as an EMPTY frontmatter block, for the same
 // reason. Mirrors `parseMarkdownFile` (markdownSync.ts).
-const FRONTMATTER_FENCE = /^---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)?---[ \t]*\r?\n?([\s\S]*)$/;
+// The fence lines (with any trailing whitespace) and the closing fence's line
+// break are captured so a rewrite re-emits them exactly.
+const FRONTMATTER_FENCE = /^(---[ \t]*)\r?\n(?:([\s\S]*?)\r?\n)?(---[ \t]*)(\r?\n)?([\s\S]*)$/;
 
 /**
  * Case-insensitive tag-identity equality. Folds via
@@ -61,49 +64,45 @@ function dedupeTags(tags: string[]): string[] {
   return out;
 }
 
-/**
- * Detects a file's line ending from its first line break. The rewriter
- * re-applies this to the frontmatter block on assembly so a CRLF file (the
- * Windows / Notepad / VS Code / Obsidian default) round-trips as CRLF rather
- * than being silently flipped to LF.
- */
-function detectEol(raw: string): '\r\n' | '\n' {
-  const m = /\r\n|\n/.exec(raw);
-  return m && m[0] === '\r\n' ? '\r\n' : '\n';
-}
-
-function splitFrontmatter(raw: string): {
+/** A note split for a frontmatter rewrite: everything but the YAML is re-emitted verbatim. */
+interface SplitNote {
   yamlSource: string;
   body: string;
   hasFrontmatter: boolean;
+  /** The ending the frontmatter block's lines get (the note writer's rule). */
   eol: '\r\n' | '\n';
   hadBom: boolean;
-} {
+  /** The file's own fence lines; null when it has no block yet. */
+  fences: { open: string; close: string; closeEnd: string } | null;
+}
+
+function splitFrontmatter(raw: string): SplitNote {
   // Strip a leading UTF-8 BOM before the `^---`-anchored fence match (mirrors
   // parseMarkdownFile); otherwise a BOM file reads as "no frontmatter" and
   // addTagToMarkdown prepends a second block, demoting the real frontmatter
   // into the body. `hadBom` is re-emitted by `reassemble`.
   const hadBom = raw.charCodeAt(0) === 0xfeff;
   const text = hadBom ? raw.slice(1) : raw;
-  const eol = detectEol(text);
+  const eol = frontmatterLineEnding(text);
   const fenced = FRONTMATTER_FENCE.exec(text);
   if (!fenced) {
-    return { yamlSource: '', body: text, hasFrontmatter: false, eol, hadBom };
+    return { yamlSource: '', body: text, hasFrontmatter: false, eol, hadBom, fences: null };
   }
   // Normalise the captured YAML source to LF so the line-level matchers match
   // uniformly (JS `.`/`$` don't cross `\r`, so a CRLF `tags:` line would never
   // match and fall to the lossy path). `eol` is re-applied to the frontmatter block at
-  // assembly time; the body (`fenced[2]`) is kept byte-verbatim — the rewriter
+  // assembly time; the body (`fenced[5]`) is kept byte-verbatim — the rewriter
   // never edits it.
   // DECISION: a frontmatter block with internally-mixed endings normalises to
   // the detected `eol`; the body's own (possibly mixed) endings are untouched.
-  const yamlSource = (fenced[1] ?? '').replace(/\r\n/g, '\n');
+  const yamlSource = (fenced[2] ?? '').replace(/\r\n/g, '\n');
   return {
     yamlSource,
-    body: fenced[2] ?? '',
+    body: fenced[5] ?? '',
     hasFrontmatter: true,
     eol,
     hadBom,
+    fences: { open: fenced[1] ?? '---', close: fenced[3] ?? '---', closeEnd: fenced[4] ?? '' },
   };
 }
 
@@ -136,26 +135,25 @@ function dumpYaml(fm: Record<string, unknown>): string {
 
 /**
  * Rebuilds a `.md` file from an edited (LF) frontmatter block plus the original
- * body. The frontmatter region (fences + YAML) is emitted with `eol`; the body
- * is written byte-verbatim.
+ * body. The YAML lines get `eol`; the fence lines, the closing fence's line
+ * break and the body are the file's own, byte-verbatim (a new block gets bare
+ * `---` fences).
  *
  * Emits EXACTLY one separator newline before the closing `---`: the fence
  * regex strips precisely one `\n` off the interior, so adding it back
  * reconstructs the interior byte-for-byte — preserving trailing blank lines,
  * which are part of the VALUE of a `notes: |+` keep-chomped block scalar.
  */
-function reassemble(
-  fmTextLf: string,
-  body: string,
-  eol: '\r\n' | '\n',
-  hadBom: boolean,
-): string {
-  const fmRegion = `---\n${fmTextLf}\n---\n`.replace(/\n/g, eol);
-  const bodyTrailing = body.length === 0 || body.endsWith('\n') ? '' : eol;
+function reassemble(fmTextLf: string, note: SplitNote): string {
+  const { eol, fences } = note;
+  const open = fences?.open ?? '---';
+  const close = fences?.close ?? '---';
+  const closeEnd = fences ? fences.closeEnd : eol;
+  const fmRegion = `${open}\n${fmTextLf}\n${close}`.replace(/\n/g, eol) + closeEnd;
   // Re-emit the leading UTF-8 BOM the source carried so a Notepad-saved
   // file's encoding round-trips.
-  const bomPrefix = hadBom ? '﻿' : '';
-  return `${bomPrefix}${fmRegion}${body}${bodyTrailing}`;
+  const bomPrefix = note.hadBom ? String.fromCharCode(0xfeff) : '';
+  return `${bomPrefix}${fmRegion}${note.body}`;
 }
 
 function normaliseTagsField(value: unknown): { tags: string[]; wasString: boolean } | null {
@@ -464,7 +462,8 @@ export function rewriteTagInMarkdown(
 ): string {
   if (!oldTag || !newTag || oldTag === newTag) return rawContent;
 
-  const { yamlSource, body, hasFrontmatter, eol, hadBom } = splitFrontmatter(rawContent);
+  const note = splitFrontmatter(rawContent);
+  const { yamlSource, hasFrontmatter } = note;
   if (!hasFrontmatter) return rawContent;
 
   // Preferred path: rewrite only the `tags:` line range,
@@ -485,7 +484,7 @@ export function rewriteTagInMarkdown(
   });
   if (lineRewrite !== null) {
     if (lineRewrite === yamlSource) return rawContent;
-    return reassemble(lineRewrite, body, eol, hadBom);
+    return reassemble(lineRewrite, note);
   }
 
   // An anchored/aliased tags field can't be line-edited; rather than
@@ -519,7 +518,7 @@ export function rewriteTagInMarkdown(
   // The engine refuses a non-scalar mapping key (`[a, b]: x`); the dump would
   // rewrite that key as its stringified twin. Skip instead.
   if (patchedRename === null && frontmatterSourceHasNonScalarKey(yamlSource)) return rawContent;
-  return reassemble(patchedRename ?? dumpYaml(fm), body, eol, hadBom);
+  return reassemble(patchedRename ?? dumpYaml(fm), note);
 }
 
 /**
@@ -528,7 +527,8 @@ export function rewriteTagInMarkdown(
 export function removeTagFromMarkdown(rawContent: string, tag: string): string {
   if (!tag) return rawContent;
 
-  const { yamlSource, body, hasFrontmatter, eol, hadBom } = splitFrontmatter(rawContent);
+  const note = splitFrontmatter(rawContent);
+  const { yamlSource, hasFrontmatter } = note;
   if (!hasFrontmatter) return rawContent;
 
   // Line-level rewrite preserves all other YAML lines verbatim.
@@ -539,7 +539,7 @@ export function removeTagFromMarkdown(rawContent: string, tag: string): string {
   });
   if (lineRewrite !== null) {
     if (lineRewrite === yamlSource) return rawContent;
-    return reassemble(lineRewrite, body, eol, hadBom);
+    return reassemble(lineRewrite, note);
   }
 
   // Skip an anchored/aliased tags field instead of expanding it.
@@ -560,7 +560,7 @@ export function removeTagFromMarkdown(rawContent: string, tag: string): string {
   const patchedRemove = patchFrontmatterSourceCst(yamlSource, fm);
   // Non-scalar mapping key: refuse rather than dump (see rename).
   if (patchedRemove === null && frontmatterSourceHasNonScalarKey(yamlSource)) return rawContent;
-  return reassemble(patchedRemove ?? dumpYaml(fm), body, eol, hadBom);
+  return reassemble(patchedRemove ?? dumpYaml(fm), note);
 }
 
 /**
@@ -572,10 +572,11 @@ export function addTagToMarkdown(rawContent: string, tag: string): string {
   const bareTag = tag.replace(/^#/, '').trim();
   if (!bareTag) return rawContent;
 
-  const { yamlSource, body, hasFrontmatter, eol, hadBom } = splitFrontmatter(rawContent);
+  const note = splitFrontmatter(rawContent);
+  const { yamlSource, hasFrontmatter } = note;
 
   if (!hasFrontmatter) {
-    return reassemble(`tags:\n  - ${emitTagScalar(bareTag)}`, body, eol, hadBom);
+    return reassemble(`tags:\n  - ${emitTagScalar(bareTag)}`, note);
   }
 
   // Frontmatter present but no `tags:` field: insert a fresh block via a
@@ -593,7 +594,7 @@ export function addTagToMarkdown(rawContent: string, tag: string): string {
     // (`{title: X}`) would become invalid YAML. Only take the insert when the
     // result still parses; otherwise fall through to the load→patch path.
     if (loadYamlObject(candidate)) {
-      return reassemble(candidate, body, eol, hadBom);
+      return reassemble(candidate, note);
     }
   }
 
@@ -619,5 +620,5 @@ export function addTagToMarkdown(rawContent: string, tag: string): string {
   const patchedAdd = patchFrontmatterSourceCst(yamlSource, fm);
   // Non-scalar mapping key: refuse rather than dump (see rename).
   if (patchedAdd === null && frontmatterSourceHasNonScalarKey(yamlSource)) return rawContent;
-  return reassemble(patchedAdd ?? dumpYaml(fm), body, eol, hadBom);
+  return reassemble(patchedAdd ?? dumpYaml(fm), note);
 }

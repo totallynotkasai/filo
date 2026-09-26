@@ -2,8 +2,9 @@
  * An in-memory vault behind `window.filo.invoke`, for the note writer and
  * store unit tests. It answers the `.md` text channels the way the main
  * process does: reads carry mtime and size, `write-existing` refuses a
- * missing file, `create` refuses an existing one, and every write bumps the
- * mtime. Tests reach in to change a file "from another program", count
+ * missing file (and, given the stat its caller read, a file that changed
+ * since, with STALE), `create` refuses an existing one, and every write bumps
+ * the mtime. Tests reach in to change a file "from another program", count
  * writes, or hold a write open.
  *
  * It also keeps a Filo trash: `vault:trash-move` takes a file (or every file
@@ -81,11 +82,22 @@ export function installMemoryVault(initial: Record<string, string> = {}, root = 
     return `${rel.slice(0, slash + 1)}${stem} (restored)${ext}`;
   };
 
-  const write = async (channel: string, rel: string, text: string, mode: 'existing' | 'any' | 'create') => {
+  const statMatches = (k: string, expect: { mtimeMs: number; size: number } | undefined): boolean =>
+    !expect || (mtimes.get(k) === expect.mtimeMs && enc.encode(files.get(k) ?? '').length === expect.size);
+
+  const write = async (
+    channel: string,
+    rel: string,
+    text: string,
+    mode: 'existing' | 'any' | 'create',
+    expect?: { mtimeMs: number; size: number },
+  ) => {
     const k = key(rel);
     if (mode === 'existing' && !files.has(k)) return { success: false, code: 'ENOENT', error: 'ENOENT' };
     if (mode === 'create' && files.has(k)) return { success: false, code: 'EEXIST', error: 'EEXIST' };
     await vault.beforeWrite?.(rel, text);
+    // Checked after the hook too: the main process re-checks right before the rename.
+    if (!statMatches(k, expect)) return { success: false, code: 'STALE', error: 'STALE' };
     const fail = failures.get(k);
     if (fail) {
       failures.delete(k);
@@ -116,7 +128,7 @@ export function installMemoryVault(initial: Record<string, string> = {}, root = 
         if (!files.has(k)) return { success: false, code: 'ENOENT', error: 'ENOENT' };
         return { success: true, mtimeMs: mtimes.get(k), size: enc.encode(files.get(k) ?? '').length };
       case 'vault:write-existing-file-text':
-        return write(channel, rel, args[2] as string, 'existing');
+        return write(channel, rel, args[2] as string, 'existing', args[3] as { mtimeMs: number; size: number } | undefined);
       case 'vault:write-file-text':
         return write(channel, rel, args[2] as string, 'any');
       case 'vault:create-file-text':

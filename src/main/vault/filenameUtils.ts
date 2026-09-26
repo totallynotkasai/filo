@@ -219,11 +219,17 @@ export async function withOnDiskSpelling(fullPath: string): Promise<string> {
  * destination is re-verified immediately before each rename attempt and the
  * write aborts with ENOENT if it's gone, leaving only the microsecond
  * check→rename gap.
+ *
+ * `opts.expectStat` is the destination's stat when the caller read it. It is
+ * re-checked before every rename attempt too: a sync client or editor that
+ * replaced the file meanwhile (including during a lock backoff) makes the
+ * write fail with {@link StaleWriteError} instead of overwriting that
+ * version unseen. The caller re-reads and applies its change again.
  */
 export async function atomicWriteFile(
   filePath: string,
   content: string | Buffer,
-  opts?: { expectExisting?: boolean },
+  opts?: { expectExisting?: boolean; expectStat?: { mtimeMs: number; size: number } },
 ): Promise<void> {
   const nonce = randomBytes(6).toString('hex');
   const tmpPath = tmpSiblingPath(filePath, nonce);
@@ -290,6 +296,12 @@ export async function atomicWriteFile(
           );
           gone.code = 'ENOENT';
           throw gone;
+        }
+        if (opts?.expectStat) {
+          const now = await fs.stat(filePath).catch(() => null);
+          if (now && (now.mtimeMs !== opts.expectStat.mtimeMs || now.size !== opts.expectStat.size)) {
+            throw new StaleWriteError(filePath);
+          }
         }
       },
     });
@@ -405,6 +417,18 @@ export function lockRetryBudgetMs(): number {
     return override;
   }
   return process.platform === 'win32' ? 5000 : 310;
+}
+
+/**
+ * The destination no longer holds the version the caller read, so the write
+ * was not made. Code `STALE` crosses IPC in the error envelope.
+ */
+export class StaleWriteError extends Error {
+  readonly code = 'STALE';
+  constructor(filePath: string) {
+    super(`atomicWriteFile: "${filePath}" changed since it was read; not overwriting it`);
+    this.name = 'StaleWriteError';
+  }
 }
 
 /**

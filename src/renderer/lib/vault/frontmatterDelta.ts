@@ -135,6 +135,25 @@ export function mergeFrontmatterDelta(a: FrontmatterDelta, b: FrontmatterDelta):
 }
 
 /**
+ * What is left of the queued delta `queued` once `written` has landed: every
+ * key `written` already set to the same value, or already removed, is
+ * dropped. Keys set again with a new value (or newly named) stay. Re-applying
+ * a landed key would overwrite a value another program gave it since. Null
+ * when nothing is left.
+ */
+export function subtractWrittenDelta(queued: FrontmatterDelta, written: FrontmatterDelta): FrontmatterDelta | null {
+  const set: Record<string, unknown> = {};
+  for (const key of Object.keys(queued.set)) {
+    const landed = Object.prototype.hasOwnProperty.call(written.set, key)
+      && valuesShallowEqual(written.set[key], queued.set[key]);
+    if (!landed) set[key] = queued.set[key];
+  }
+  const unset = queued.unset.filter((key) => !written.unset.includes(key));
+  const rest = { set, unset };
+  return isEmptyFrontmatterDelta(rest) ? null : rest;
+}
+
+/**
  * Conservative structural equality for the popup diff. Object key order is not
  * semantically meaningful in YAML so it is ignored; arrays compare
  * order-sensitively (a reordered list IS a user edit in the popup). Anything

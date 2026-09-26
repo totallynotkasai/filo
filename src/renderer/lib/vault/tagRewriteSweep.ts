@@ -38,7 +38,7 @@ import { onVaultSwap } from '../../core/vaultLifecycle';
 import { uiStore } from '../../stores/ui.svelte';
 import { PendingWritesFailedError, withDrainedWrites } from './vaultOperations';
 import { noteStore } from '../../stores/notes.svelte';
-import { isMissingFileError } from '../notes/noteWriter';
+import { isMissingFileError, NoteBusyError } from '../notes/noteWriter';
 import { isNonUtf8 } from './nonUtf8Paths.svelte';
 import { getActiveVaultPath } from './activeVaultPath';
 import type { FileMetadata } from './vaultIndex';
@@ -284,7 +284,9 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
             }
           }
         } catch (err) {
-          reportError('tagRewriteSweep', err, `Failed to rewrite tag in ${item.path}`);
+          // A note with an edit that can't be saved yet is left for the
+          // retry; the caller's toast names it with the other failures.
+          if (!(err instanceof NoteBusyError)) reportError('tagRewriteSweep', err, `Failed to rewrite tag in ${item.path}`);
           failed.push(item.path);
         }
       }

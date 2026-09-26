@@ -2,6 +2,7 @@ import { NoActiveVaultError } from '../utils/activeVaultCheck';
 import { PayloadTooLargeError } from '../utils/payloadLimits';
 import { FiloDirForbiddenError } from '../utils/pathSecurity';
 import { RenameTargetExistsError } from '../vault/fileOps';
+import { StaleWriteError } from '../vault/filenameUtils';
 
 /**
  * Maps a Node fs error to a stable, renderer-friendly error code. Renderer
@@ -11,7 +12,7 @@ import { RenameTargetExistsError } from '../vault/fileOps';
  * `NO_ACTIVE_VAULT` takes precedence so handlers gated by `assertActiveVault`
  * can return a single combined code through this helper.
  */
-export function ipcErrorCode(err: unknown): 'NO_ACTIVE_VAULT' | 'FILE_TOO_LARGE' | 'INVALID_FILENAME' | 'FORBIDDEN' | 'TARGET_EXISTS' | 'ENOENT' | 'EACCES' | 'ENOSPC' | 'IO_ERROR' {
+export function ipcErrorCode(err: unknown): 'NO_ACTIVE_VAULT' | 'FILE_TOO_LARGE' | 'INVALID_FILENAME' | 'FORBIDDEN' | 'TARGET_EXISTS' | 'ENOENT' | 'EACCES' | 'ENOSPC' | 'STALE' | 'IO_ERROR' {
   if (err instanceof NoActiveVaultError) return 'NO_ACTIVE_VAULT';
   if (err instanceof PayloadTooLargeError) return 'FILE_TOO_LARGE';
   // Generic vault channels can't write to `.filo/`. FORBIDDEN lets the
@@ -21,6 +22,9 @@ export function ipcErrorCode(err: unknown): 'NO_ACTIVE_VAULT' | 'FILE_TOO_LARGE'
   // From the `renameItem` pre-flight on POSIX, so the renderer can prompt
   // for overwrite confirmation rather than silently losing the destination.
   if (err instanceof RenameTargetExistsError) return 'TARGET_EXISTS';
+  // A note write whose file changed since the renderer read it: the renderer
+  // reads again and re-applies its change rather than overwrite that version.
+  if (err instanceof StaleWriteError) return 'STALE';
   // Surface assertSafeFilename rejections (Windows
   // reserved names, control chars, path separators) as a distinct code
   // so the renderer's rename-fail toast can mention the rule instead of

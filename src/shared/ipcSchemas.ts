@@ -80,7 +80,14 @@ export const IPC_PAYLOAD_SCHEMAS = {
   'vault:read-file-text': z.tuple([nonEmptyString, nonEmptyString]),
   // Third arg `content` stays plain z.string(): empty Markdown is legal.
   'vault:write-file-text': z.tuple([nonEmptyString, nonEmptyString, z.string()]),
-  'vault:write-existing-file-text': z.tuple([nonEmptyString, nonEmptyString, z.string()]),
+  // Optional fourth arg: the stat of the version the renderer read. The write
+  // is refused with code STALE when the file no longer matches it.
+  'vault:write-existing-file-text': z.tuple([
+    nonEmptyString,
+    nonEmptyString,
+    z.string(),
+    z.object({ mtimeMs: z.number().finite(), size: z.number().int().nonnegative() }).strict().optional(),
+  ]),
   // Create-exclusive seed; same shape as write-file-text.
   'vault:create-file-text': z.tuple([nonEmptyString, nonEmptyString, z.string()]),
   // `(vaultRoot, relativePath, base64Data)`. The base64

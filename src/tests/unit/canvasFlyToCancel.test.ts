@@ -103,7 +103,6 @@ describe('Audit 3.2 — flyTo RAF is cancelled on board switch / pane destroy', 
   afterEach(() => {
     vi.useRealTimers();
     canvasStore.setBoard(null);
-    canvasStore.setExportMode(false);
     boardCacheStore.clear();
     clearViewportsCache();
     __resetDirtyTrackingForTests();

@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * the culled `visibleTileIds` (O(on-screen)) instead of filtering every tile on
  * the board (O(total) per pan frame). These tests pin the observable contract
  * the refactor must preserve: correct viewport culling, frame-hidden exclusion,
- * export-mode behaviour, and — critically — insertion-order stacking, so
+ * and — critically — insertion-order stacking, so
  * overlapping tiles sharing the `--z-tile` z-index keep their DOM-order paint
  * order even though the spatial index returns ids in tree-traversal order.
  *
@@ -31,13 +31,11 @@ function tile(id: string): Tile {
 function makeViewModel(
   tiles: Record<string, Tile>,
   visibleIds: string[],
-  exportMode = false,
 ): VisibleTilesViewModel {
   const deps = {
     board: { tiles, current: { type: 'mindmap' }, frames: [] },
     canvas: {
       viewportRect: { left: 0, top: 0, right: 1000, bottom: 1000 },
-      exportMode,
     },
     spatial: { queryViewport: () => visibleIds },
   };
@@ -75,13 +73,5 @@ describe('VisibleTilesViewModel.visibleTiles (Audit-10 M6)', () => {
     const tiles = { a: tile('a') };
     const vm = makeViewModel(tiles, ['a', 'ghost']);
     expect(vm.visibleTiles.map((t) => t.id)).toEqual(['a']);
-  });
-
-  it('export mode renders every tile (culling disabled), minus frame-hidden', () => {
-    mockHidden.add('b');
-    const tiles = { a: tile('a'), b: tile('b'), c: tile('c') };
-    // Empty visible set is ignored in export mode — all tiles render.
-    const vm = makeViewModel(tiles, [], true);
-    expect(vm.visibleTiles.map((t) => t.id)).toEqual(['a', 'c']);
   });
 });

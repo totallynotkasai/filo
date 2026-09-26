@@ -15,7 +15,7 @@
  *  - groupAndBoardCommands — BatchCommand, ToggleGroupCommand,
  *                            CascadeDeleteCommand, UpdateBoardSettingsCommand
  *  - styleCommands         — style-popup commands
- *  - propertiesCommands    — UpdatePropertiesCommand
+ *  - propertiesCommands    — UpdatePropertiesCommand (tag-row frontmatter delta)
  *  - attachmentSrcCommand  — Image/Video/Audio/File source swap
  *  - updateTitleCommand    — tile title edit (note frontmatter or board title)
  *  - renameFileCommand     — undo of "Rename file to match title" (the reverse rename)

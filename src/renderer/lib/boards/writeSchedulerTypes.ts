@@ -245,8 +245,8 @@ export interface Scheduler<TArgs> {
    *
    * Pass `pendingOnly: true` to cancel ONLY an armed-but-unfired
    * timer and leave any parked/in-flight fire untouched. A teardown caller that
-   * has ALREADY flushed (PropertiesPopup.onDestroy: `flushIfPending()` then
-   * cancel, same tick) owns the parked fire — `flush` drains it and lands its
+   * has ALREADY flushed (flush, then cancel in the same tick) owns the parked
+   * fire — `flush` drains it and lands its
    * newest payload. Cancelling the parked fire there would make its closure bail,
    * dropping the freshest edit while the flush still reports success.
    */

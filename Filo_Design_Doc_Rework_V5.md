@@ -25,7 +25,7 @@ Filo is a highly customizable, PKM (Personal Knowledge Management) tool. It util
 
 * **Tile** — A tile is a container for content that can be placed on any board. A tile can be moved, resized, and deleted. A tile can be of any type, such as a Text Tile, Image Tile, Video Tile, Audio Tile, File Tile, Link Tile or Iframe(Embed) Tile. Tiles default to the Text type, which is a rich Markdown editor and also corresponds to the Document board type — meaning the user can expand any text tile into a full Document board if necessary. Most tile types are backed by a file in the vault; the exceptions are Link, Iframe, and Timer tiles, which store their data entirely in the board JSON (see **Tile Storage** in the Data Model section for how each tile type maps to vault files). See **File Deletion Handling** in the Architecture section for how tile and file deletions propagate.
 
-* **Properties (Frontmatter)** — Every text tile's underlying Markdown file supports YAML frontmatter enclosed in `---` delimiters. Properties store structured metadata: tags, custom fields (status, priority, due date, etc.). Properties are indexed by the VaultIndex and are queryable via search operators and the Tags Browser. Properties defined in frontmatter are the canonical source of truth for tile metadata — the UI reads from and writes to this frontmatter. For non-text tile types that lack a Markdown file (Link, Iframe, Timer) or that have a non-Markdown vault file (Image, Video, Audio, File), metadata is stored in the board JSON tile entry under a `metadata` object and is indexed identically by the VaultIndex. (Tags are the exception for Image, Video, Audio and File tiles: they live in `.filo/tags.json`, so they follow the file onto every board.) Properties can be edited directly in the Markdown frontmatter or via the Properties popup accessible from the tile header (see Tiles section).
+* **Properties (Frontmatter)** — Every text tile's underlying Markdown file supports YAML frontmatter enclosed in `---` delimiters. Properties store structured metadata: tags, custom fields (status, priority, due date, etc.). Properties are indexed by the VaultIndex and are queryable via search operators and the Tags Browser. Properties defined in frontmatter are the canonical source of truth for tile metadata — the UI reads from and writes to this frontmatter. Tiles without a Markdown file have no properties beyond their tags: Image, Video, Audio and File tiles keep their tags in `.filo/tags.json`, so they follow the file onto every board, and Link, Iframe and Timer tiles keep theirs in the board file. Each property is edited through its own control (the title, the Tags button, the task and card controls, the Document tab's tag row), or by hand in the Markdown file. There is no generic properties form: a new frontmatter field gets its own control.
 
 * **Tags** — A tag is a label on a note, a media file or a board-only tile. A note's tags live in its frontmatter `tags:` list; `#tag` written in body text is styled as a chip but is decorative (see **Tag System** in the Data Model). Tags support nesting (`#project/active`). Tags can be used to organize tiles, filter views, and navigate between related content across all boards.
 
@@ -42,7 +42,7 @@ Filo is a highly customizable, PKM (Personal Knowledge Management) tool. It util
 Every tile on a board is either backed by a file in the vault or stores its data directly in the board JSON. The board JSON references file-backed tiles via a `filePath` field (a vault-relative path) and stores data for non-file tiles inline. How that storage works depends on the tile type:
 
 * **Text Tile** — Stored as a Markdown file (`.md`) in the vault. The same `.md` file can be opened as a standalone Document board (see Text Tile / Document Board relationship below). Its title, tags and properties are YAML frontmatter in that file; the board stores only `filePath` and visuals.
-* **Image Tile** — The image file (`.png`, `.jpg`, `.gif`, `.webp`, etc.) is stored as-is in the vault. The board JSON `filePath` field points to the image path. No sidecar `.md` file is created. Its tags live in `.filo/tags.json` (`fileTags[path]`), so they follow the file onto every board; other properties are stored in the board JSON's tile entry under a `metadata` object.
+* **Image Tile** — The image file (`.png`, `.jpg`, `.gif`, `.webp`, etc.) is stored as-is in the vault. The board JSON `filePath` field points to the image path. No sidecar `.md` file is created. Its tags live in `.filo/tags.json` (`fileTags[path]`), so they follow the file onto every board.
 * **Video Tile** — The video file (`.mp4`, `.webm`, etc.) is stored as-is in the vault. The board JSON `filePath` field points to the local file.
 * **Audio Tile** — Recordings are stored as `.mp3` files in the vault. The board JSON `filePath` field points to the audio file path.
 * **File Tile** — The original file is stored as-is in the vault in whatever format it was provided (`.pdf`, `.docx`, `.zip`, etc.). The board JSON `filePath` field points to the file path; the displayed name and extension come from that path. Opening a File Tile hands the file to the OS default app only for document, image, audio and video types. Scripts, macro-enabled Office files, archives, disk images and HTML-like files are never launched. For those, and for unknown types, Filo offers **Show in folder** instead.
@@ -332,7 +332,7 @@ This split is intentional. Body chips give users the freedom to mention a tag in
 
 Tags are global to the vault (their colour definitions live in `.filo/tags.json:tags`) and may be hierarchical (`parent/child`). Renaming a parent does *not* cascade to children — the tag browser warns the user when a rename would orphan child tags so they can decide explicitly.
 
-**Editing a note's tags.** A note's tags can be edited from the tile header's Tags popup, a card or task row, the Properties popup, or the **tag row** at the top of the note in its Document tab. The tag row shows the tags as chips (click a chip for the tag menu, × to remove it) followed by an input that takes comma-separated tags with autocomplete from the tag registry; Enter, a comma or leaving the field adds them, and Backspace in the empty input removes the last tag. Every one of these writes the note's frontmatter `tags:` and is one board-undo step; removing the last tag removes the `tags:` key.
+**Editing a note's tags.** A note's tags can be edited from the tile header's Tags popup, a card or task row, or the **tag row** at the top of the note in its Document tab. The tag row shows the tags as chips (click a chip for the tag menu, × to remove it) followed by an input that takes comma-separated tags with autocomplete from the tag registry; Enter, a comma or leaving the field adds them, and Backspace in the empty input removes the last tag. Every one of these writes the note's frontmatter `tags:` and is one board-undo step; removing the last tag removes the `tags:` key.
 
 **Vault-wide delete and rename (Tags Browser).** Deleting a tag removes it from every note, attachment, board-only tile and saved filter; renaming rewrites it everywhere. Both are confirmed first, and both can be undone from the **Undo** button on the toast that reports them (15 seconds). They are not on a board's Ctrl+Z stack, because they touch many files and belong to no board. Undoing a delete puts the tag back in exactly the places it was removed from, re-reading each note first so edits made in between are kept (in a note it comes back at the end of the list). Undoing a rename renames it back, unless a tag with the old name exists again. Renaming a tag into one that already exists **merges** them; the confirm warns that a merge can't be undone, and no Undo is offered.
 
@@ -506,7 +506,7 @@ Filo uses a **command pattern** for undo/redo. Every undoable action is encapsul
 
 **Per-board stacks:** Each board maintains its own independent undo and redo stack. Switching tabs changes which stack is active. This means undoing on Board A never affects Board B. A Document tab has its own stack too, so a title or tag edit made there is undone there.
 
-**What board undo covers:** layout (tiles, connections, frames, columns, sections, styles, settings) **plus edits to note metadata** (title, tags, task and card fields, Properties). A metadata edit is undone by applying the *opposite change* to the note's frontmatter, on a fresh read of the file, so edits made to other keys in between are kept. If another program changed the same key since, undo keeps that value and offers "Apply anyway". Board undo never restores a note's body from a saved copy: undo of a delete moves the file back out of Filo's trash, and Replace All undoes only the text it replaced, and only while the file is unchanged since.
+**What board undo covers:** layout (tiles, connections, frames, columns, sections, styles, settings) **plus edits to note metadata** (title, tags, task and card fields). A metadata edit is undone by applying the *opposite change* to the note's frontmatter, on a fresh read of the file, so edits made to other keys in between are kept. If another program changed the same key since, undo keeps that value and offers "Apply anyway". Board undo never restores a note's body from a saved copy: undo of a delete moves the file back out of Filo's trash, and Replace All undoes only the text it replaced, and only while the file is unchanged since.
 
 **Outside board history:** vault-wide tag delete and rename are undone from their toast (see **Tag System**), and a board delete from its toast or Settings → Trash.
 
@@ -519,7 +519,7 @@ Filo uses a **command pattern** for undo/redo. Every undoable action is encapsul
 * `AlignTilesCommand` — Aligning selected tiles (left, right, top, bottom)
 * `LayoutTilesCommand` — Auto-layout (tree horizontal, tree vertical, radial)
 * Style change commands — Tile, connection, and frame style modifications
-* `UpdateTitleCommand`, the tag commands, the card/task field commands and `UpdatePropertiesCommand` — note metadata, undone as the opposite frontmatter change
+* `UpdateTitleCommand`, the tag commands, the card/task field commands and `UpdatePropertiesCommand` (the Document tab's tag row) — note metadata, undone as the opposite frontmatter change
 * `RenameFileCommand` — undo of "Rename file to match title" (renames back)
 * `CascadeDeleteCommand` — a sidebar delete and the tiles it removed; undo restores both from Filo's trash
 
@@ -576,11 +576,6 @@ The Global Toolbar consists of the following buttons:
 * **Home** — Takes the user to the home screen where they can manage their vaults and choose to create a new vault or open an existing vault.
 
 * **Manage Filo (Dropdown)**
-    * **Export Options (Side-Menu)**
-        * PNG — Exports Current Board to PNG.
-        * SVG — Exports Current Board to SVG.
-        * PDF — Exports Current Board to PDF.
-        * Markdown — Exports Current Board to Markdown.
     * **Settings (Button)** — Takes the user into the Filo settings page. Settings are split into two scopes: **Global Settings** (vault-wide defaults stored in `.filo/`) and **Current Board Settings** (per-board overrides stored in the active board's `.board.json`). The override cascade is: **per-element style** (e.g., Tile Style popup) > **Current Board Settings** > **Global Defaults**. If a value is not set at a higher level, the next level down is used. Applying a Theme overwrites Global Defaults — themes are a convenient way to bulk-set Global Defaults rather than a separate cascade layer. Once applied, the user can further customise Global Defaults as they wish; those customised values become the new Global Defaults.
 
         * **Settings Live Preview** — Both the Global Settings and Current Board Settings panels include a live preview area displayed alongside the settings controls. As the user adjusts any style value (colours, borders, shapes, shadows, patterns, fonts), the preview renders a representative sample of the affected element (e.g., a mock tile for Tile Defaults, a mock column for Column Defaults, a mock connection for Connection Path Defaults) using the new value in real time. Changes are not committed until the user confirms — the preview is non-destructive. If the user is editing Current Board Settings, the preview uses the active board's content as context. For Global Settings, the preview uses a generic sample.
@@ -815,7 +810,6 @@ Tiles are the main way that the user interacts with the tool. Tiles can be creat
 
 * Tile Title (Text)
 * Tags (Button)
-* Properties (Menu Pop-up)
 * Tile Lock (Button)
 * Tile Style (Menu Pop-up)
 * Expand to Document (Button(Text Tile Exclusive))
@@ -825,8 +819,6 @@ Tiles are the main way that the user interacts with the tool. Tiles can be creat
 
 * **Tags (Button)** — When the tags button is clicked by the user it opens a pop-up with a text field where the user can input the tags they want a tile to have this is comma separated. For a text tile, tags are written to the note's frontmatter `tags:`; for a media or file tile, to `.filo/tags.json`; for a Link, Iframe or Timer tile, to the tile in the board file. When submitted tags are put in the bottom left corner of a tile, they can be clicked which opens the **Tag Context Menu**.
     * **Tag Context Menu** — Clicking a tag displayed on a tile opens a contextual menu showing all other tiles that share that tag. The menu lists each tile's Title, Board Name, and all tags on that tile. Clicking an entry navigates directly to that tile. This is a lightweight, contextual version of the full Tags Browser (accessible from the Side Toolbar's View dropdown), which offers additional management features such as renaming, recolouring, fading, and deleting tags across the entire vault.
-
-* **Properties (Menu Pop-up)** — Opens a form view for editing the tile's YAML frontmatter. Shows all properties with type-appropriate inputs (text, date picker, tag selector, dropdown for status, etc.). Users can add custom properties, remove existing ones, and see all metadata at a glance. Changes are written directly to the tile's `.md` file frontmatter. For non-text tile types without a Markdown file, properties are stored in the board JSON's tile entry under a `metadata` object.
 
 * **Tile Lock (Button)** — This button locks the tile in place on the board. When a tile is locked it cannot be moved or resized. It can be unlocked by clicking the button again.
 
@@ -923,7 +915,7 @@ Tabs are used to organize the user's boards. Each tab represents a different boa
 * **Dynamic Contrast Text** — When enabled, Filo automatically calculates the perceived brightness of a tile's (or column's, task's, event's) background colour using relative luminance and swaps the text colour to white (for dark backgrounds) or black (for light backgrounds). This ensures WCAG AA contrast compliance without manual intervention. The setting is toggleable at three levels following the override cascade: Global Defaults, Current Board Settings, and per-element Tile Style popup. Defaults to on.
 * **Smart Guides** — When the user drags a tile on the Mind Map canvas, real-time visual alignment guides appear showing when the tile's edges or centre align with other tiles' edges or centres. Guide lines are rendered as thin coloured lines spanning the relevant axis. When a tile is within a configurable snap distance (default: 8px at current zoom) of an alignment, it snaps to the guide position. Smart guides make it easy to create visually tidy layouts without enabling snap-to-grid. *(Mind Map only)*
 * **Orphan Catcher / Canvas Cleanup** — See Side Toolbar — Mind Map > Orphan Catcher for full description. Also accessible from the canvas right-click menu. *(Mind Map only)*
-* **Toast Notifications** — Non-blocking notification messages used for confirmations (save, export), errors, and user prompts (e.g., external edit conflicts). Toasts display at the top centre of the board workspace, directly below the Global Toolbar. Every toast closes on its own after **at most 15 seconds** (a shorter duration can be set; a longer one is capped), with two exceptions that stay until the user acts:
+* **Toast Notifications** — Non-blocking notification messages used for confirmations (e.g. save), errors, and user prompts (e.g., external edit conflicts). Toasts display at the top centre of the board workspace, directly below the Global Toolbar. Every toast closes on its own after **at most 15 seconds** (a shorter duration can be set; a longer one is capped), with two exceptions that stay until the user acts:
     * **Sticky decision prompts** that aren't holding up a write — the note prompts ("Reload" / "Keep mine" on a changed note, "Keep mine" / "Discard" on a deleted one). A newer prompt for the same file replaces the older one, so they can't stack.
     * **Error toasts** without an explicit duration (e.g. a failed save, or where a recovery copy was put), because the failure outlasts any timer.
 
@@ -1062,7 +1054,6 @@ Right-clicking on a **tile** (or with tiles selected):
 |---|---|---|---|
 | Style | `icon-palette` | — | Opens the tile style popup (colours, shape, border) |
 | Tags | `icon-tag` | — | Opens the tag editor for the selected tile |
-| Properties | `icon-settings` | — | Opens the Properties editor for the tile's frontmatter |
 | ─── | Divider | | |
 | Save as Template | `icon-bookmark` | — | Saves the current selection as a Layout Template (captures type, size, position, style — strips content, tags, lock, and file references) |
 | Lock / Unlock | `icon-lock` | — | Toggles tile position lock (text changes dynamically) |
@@ -1109,7 +1100,7 @@ Column reordering is performed by drag (pointer) or **Alt+ArrowLeft / Alt+ArrowR
 
 ### Menu Items — Kanban Board (Tile)
 
-The Kanban tile right-click menu is intentionally minimal in the V7 implementation. Style, Tags, Properties, lock, and Sync-to-disk live on the tile's own TileHeader (visible on hover/focus) — duplicating them in the right-click menu would just be noise. The Mind Map context menu is richer because canvas tiles support actions (auto-layout, copy/paste, connection mode) that don't apply to a column-bound flow layout.
+The Kanban tile right-click menu is intentionally minimal in the V7 implementation. Style, Tags and lock live on the tile's own TileHeader (visible on hover/focus) — duplicating them in the right-click menu would just be noise. The Mind Map context menu is richer because canvas tiles support actions (auto-layout, copy/paste, connection mode) that don't apply to a column-bound flow layout.
 
 Right-clicking on a **text tile within a Kanban column**:
 
@@ -1129,7 +1120,6 @@ Right-clicking on a **task row**:
 |---|---|---|
 | Open as Document | `icon-expand` | Opens the task's `.md` file as a Document board in a new tab |
 | Tags | `icon-tag` | Opens the tag editor for the task |
-| Properties | `icon-settings` | Opens the Properties editor for the task's frontmatter |
 | ─── | Divider | |
 | Toggle Complete | `icon-check` | Toggles the task's completed state |
 | ─── | Divider | |
@@ -1209,7 +1199,6 @@ Right-clicking on a **tab**:
 * **Metadata Indexing:** Custom VaultIndex with Zod schema validation
 * **Utilities:** nanoid (ID generation), focus-trap (modal focus management)
 * **Editor Extensions:** Custom Tiptap extension for `#tags`
-* **Export:** html-to-image, jspdf
 * **Module System:** TypeScript interfaces with registry pattern for tiles, boards, and commands
 * **Testing:** Vitest (unit, jsdom env), Playwright (E2E + a11y axe-core scan)
 

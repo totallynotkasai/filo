@@ -172,11 +172,6 @@ export const IPC_PAYLOAD_SCHEMAS = {
   // ── Link metadata ─────────────────────────────────────────────────────
   'link:fetch-metadata': z.tuple([nonEmptyString]),
 
-  // ── Export ────────────────────────────────────────────────────────────
-  // Second arg `data` may be a base64 binary blob, plain text, or JSON; an
-  // empty string is unusual but legal for "export a board with no content".
-  'export:save': z.tuple([nonEmptyString, z.string()]).rest(optionalString),
-
   // ── Fonts ─────────────────────────────────────────────────────────────
   'font:list-system': z.tuple([]),
   'font:import': z.tuple([]).rest(optionalString),

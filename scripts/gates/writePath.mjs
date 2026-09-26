@@ -164,13 +164,6 @@ const NOTE_WRITER_CONTRACT = [
   },
   { file: 'src/renderer/commands/propertiesCommands.ts', required: [{ token: /applyDeltaChecked\s*\(/, why: 'UpdatePropertiesCommand sends a checked delta' }] },
   {
-    file: 'src/renderer/components/tiles/PropertiesPopup.svelte',
-    required: [
-      { token: /diffToFrontmatterDelta\s*\(/, why: 'the popup sends only what changed' },
-      { token: /noteStore\.patchFrontmatter\s*\(/, why: 'through the note store' },
-    ],
-  },
-  {
     file: NOTE_STORE,
     within: 'recreate',
     required: [{ token: /writer\.createExclusive\s*\(/, why: 'a note deleted on disk is written back exclusively (never over a file that came back)' }],

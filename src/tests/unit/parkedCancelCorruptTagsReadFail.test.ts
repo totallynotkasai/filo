@@ -27,7 +27,7 @@ import type { ProjectSettings, WorkspaceState } from '@renderer/schema/index';
  * primitive facts those guards depend on.
  */
 
-// ── H1 — PropertiesPopup parked-write cancel (pendingOnly) ───────────────────
+// ── H1 — teardown parked-write cancel (pendingOnly) ─────────────────────────
 //
 // onDestroy fires a fire-and-forget flush THEN a synchronous cancel. The plain
 // cancel marks a PARKED fire cancelled (Audit-16 4.4), so its closure bails and

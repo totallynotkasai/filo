@@ -675,7 +675,7 @@ export function registerVaultHandlers(): void {
    * if the target file does not exist (does NOT create parent directories,
    * does NOT seed a new file).
    *
-   * Used by editor write paths (TextTile, DocumentEditor, PropertiesPopup)
+   * Used by editor write paths (TextTile, DocumentEditor)
    * so that a dirty editor's 300ms debounce cannot resurrect a file the
    * user just deleted in OS Explorer / git checkout. Separate channel
    * rather than an "expectExisting" flag so file-creation call sites

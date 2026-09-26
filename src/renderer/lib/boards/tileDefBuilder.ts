@@ -65,8 +65,6 @@ export function buildTileDefinition(tile: Tile): TileDefinition {
     updatedAt: tile.updatedAt,
     ...(tile.titleHtml !== undefined ? { titleHtml: tile.titleHtml } : {}),
   };
-  const meta = (tile as { metadata?: Record<string, unknown> }).metadata;
-  const metadata = meta !== undefined ? { metadata: meta } : {};
   switch (tile.type) {
     case 'text': {
       if (!tile.filePath) {
@@ -76,14 +74,13 @@ export function buildTileDefinition(tile: Tile): TileDefinition {
     }
     case 'image': {
       const alt = tile.alt !== undefined ? { alt: tile.alt } : {};
-      return { ...base, ...metadata, type: 'image', title: tile.title, src: tile.src, ...alt };
+      return { ...base, type: 'image', title: tile.title, src: tile.src, ...alt };
     }
     case 'video':
-      return { ...base, ...metadata, type: 'video', title: tile.title, src: tile.src, isPlaying: tile.isPlaying };
+      return { ...base, type: 'video', title: tile.title, src: tile.src, isPlaying: tile.isPlaying };
     case 'audio':
       return {
         ...base,
-        ...metadata,
         type: 'audio',
         title: tile.title,
         src: tile.src,
@@ -91,14 +88,13 @@ export function buildTileDefinition(tile: Tile): TileDefinition {
         isRecording: tile.isRecording,
       };
     case 'file':
-      return { ...base, ...metadata, type: 'file', title: tile.title, filePath: tile.filePath };
+      return { ...base, type: 'file', title: tile.title, filePath: tile.filePath };
     case 'link':
     case 'iframe':
-      return { ...base, ...metadata, type: tile.type, title: tile.title, tags: tile.tags, url: tile.url };
+      return { ...base, type: tile.type, title: tile.title, tags: tile.tags, url: tile.url };
     case 'timer':
       return {
         ...base,
-        ...metadata,
         type: 'timer',
         title: tile.title,
         tags: tile.tags,
@@ -132,9 +128,6 @@ export function buildInlineTileFromTile(tile: Tile): InlineTile {
     faded: tile.faded,
     createdAt: tile.createdAt,
     updatedAt: tile.updatedAt,
-    ...((tile as { metadata?: Record<string, unknown> }).metadata !== undefined
-      ? { metadata: (tile as { metadata?: Record<string, unknown> }).metadata }
-      : {}),
   };
   switch (tile.type) {
     case 'link':
@@ -165,13 +158,13 @@ export function buildInlineTileFromTile(tile: Tile): InlineTile {
 // allow-module-state: immutable lookup table
 const DEF_FIELDS: Record<TileDefinition['type'], ReadonlySet<string>> = {
   text: new Set(['titleHtml', 'style', 'filePath']),
-  image: new Set(['title', 'titleHtml', 'style', 'metadata', 'src', 'alt']),
-  video: new Set(['title', 'titleHtml', 'style', 'metadata', 'src', 'isPlaying']),
-  audio: new Set(['title', 'titleHtml', 'style', 'metadata', 'src', 'isPlaying', 'isRecording']),
-  file: new Set(['title', 'titleHtml', 'style', 'metadata', 'filePath']),
-  link: new Set(['title', 'titleHtml', 'style', 'metadata', 'tags', 'url']),
-  iframe: new Set(['title', 'titleHtml', 'style', 'metadata', 'tags', 'url']),
-  timer: new Set(['title', 'titleHtml', 'style', 'metadata', 'tags', 'duration', 'remaining', 'mode', 'isRunning']),
+  image: new Set(['title', 'titleHtml', 'style', 'src', 'alt']),
+  video: new Set(['title', 'titleHtml', 'style', 'src', 'isPlaying']),
+  audio: new Set(['title', 'titleHtml', 'style', 'src', 'isPlaying', 'isRecording']),
+  file: new Set(['title', 'titleHtml', 'style', 'filePath']),
+  link: new Set(['title', 'titleHtml', 'style', 'tags', 'url']),
+  iframe: new Set(['title', 'titleHtml', 'style', 'tags', 'url']),
+  timer: new Set(['title', 'titleHtml', 'style', 'tags', 'duration', 'remaining', 'mode', 'isRunning']),
 };
 
 /**

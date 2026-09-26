@@ -40,8 +40,8 @@
   // Surface any failed debounced write to the user. The lib layer cannot
   // import the toast store directly (architecture layering), so it emits
   // through a listener wired here. 'component' covers per-component
-  // markdown/frontmatter writers (TextTile, DocumentEditor, PropertiesPopup,
-  // TaskListBoard); 'board' covers .board.json; 'config' covers .filo/
+  // markdown/frontmatter writers (TextTile, DocumentEditor, TaskListBoard);
+  // 'board' covers .board.json; 'config' covers .filo/
   // config files.
   //
   // Route through a DEDICATED coalescing aggregator (keyed by write kind) so a

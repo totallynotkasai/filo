@@ -68,7 +68,6 @@
     isDragging = false,
     dragCount = 0,
     onDragHandlePointerDown,
-    onShowProperties,
     onEditTags,
   }: {
     tile: Tile;
@@ -124,8 +123,6 @@
     /** Drag-handle pointerdown hook. Parent uses this to arm its section's
      *  svelte-dnd-action zone for the next gesture. */
     onDragHandlePointerDown?: (e: PointerEvent) => void;
-    /** Context-menu "Properties…" handler. Opens the read-only inspector. */
-    onShowProperties?: () => void;
     /** Context-menu "Edit tags" handler. Opens the existing TagEditor popup
      *  via the parent's `tagEditorPopup` state. Anchored at the cursor when
      *  driven by right-click; the parent anchors it elsewhere if called
@@ -452,12 +449,6 @@
           : []),
         ...(moveItems.length > 0
           ? [{ id: 'move-sep', label: '', divider: true }, ...moveItems]
-          : []),
-        ...(onShowProperties
-          ? [
-              { id: 'props-sep', label: '', divider: true },
-              { id: 'properties', label: 'Properties…', icon: 'M12 8v4l3 3M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z', action: onShowProperties },
-            ]
           : []),
         { id: 'div', label: '', divider: true },
         { id: 'delete', label: 'Delete Task', icon: 'M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2', danger: true, action: onDelete },

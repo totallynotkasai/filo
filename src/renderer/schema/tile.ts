@@ -253,23 +253,15 @@ const TileDefinitionBase = z.object({
   updatedAt: z.number().finite(),
 });
 
-/**
- * Properties set on a tile that has no frontmatter of its own (the Properties
- * panel on a media or board-only tile). A note's properties live in its file.
- */
-const TileMetadataSchema = z.record(z.string(), z.unknown()).optional();
-
 /** Base for tiles backed by a media file: the def carries a caption title. */
 const MediaTileDefinitionBase = TileDefinitionBase.extend({
   title: z.string().default(''),
-  metadata: TileMetadataSchema,
 });
 
-/** Base for board-only tiles, which own their title, tags and properties. */
+/** Base for board-only tiles, which own their title and tags. */
 const InlineTileDefinitionBase = TileDefinitionBase.extend({
   title: z.string().default(''),
   tags: z.array(z.string()).default(() => []),
-  metadata: TileMetadataSchema,
 });
 
 /**

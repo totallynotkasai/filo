@@ -64,7 +64,6 @@ The a11y axe-core scan and full Electron E2E are manual-only (Actions tab → CI
 | List drag-and-drop | svelte-dnd-action                                                      |
 | IDs                | nanoid                                                                 |
 | Focus management   | focus-trap                                                             |
-| Export             | html-to-image, jspdf                                                   |
 | Testing            | Vitest (unit, jsdom env), Playwright (E2E + a11y axe-core)             |
 | CSS                | Vanilla CSS only. CSS custom properties for theming.                   |
 
@@ -103,7 +102,6 @@ filo/
 │   │   │   ├── tags.ipc.ts            # .filo/tags.json load/save
 │   │   │   ├── templates.ipc.ts       # .filo/templates/ CRUD
 │   │   │   ├── sidebar.ipc.ts         # Sidebar geometry (userData)
-│   │   │   ├── export.ipc.ts          # PNG/SVG/PDF/Markdown export
 │   │   │   └── recovery.ipc.ts        # recovery:keep-unsaved (rescue copies) / recovery:preserved-tmp
 │   │   ├── services/                  # Main-process-only services
 │   │   │   ├── fileWatcher.ts         # fs.watch wrapper, debounced events
@@ -241,7 +239,7 @@ filo/
 │   │   │   ├── waypointCommands.ts    # Mind Map waypoint add/remove/rename/move/icon/lock
 │   │   │   ├── groupAndBoardCommands.ts # BatchCommand, ToggleGroupCommand, CascadeDeleteCommand, UpdateBoardSettingsCommand
 │   │   │   ├── styleCommands.ts       # Style-popup commands (Frame/Card/Column/Task/Section/Connection)
-│   │   │   ├── propertiesCommands.ts  # UpdatePropertiesCommand
+│   │   │   ├── propertiesCommands.ts  # UpdatePropertiesCommand: the Document tab's tag-row frontmatter delta
 │   │   │   ├── attachmentSrcCommand.ts# Image/Video/Audio/File swap
 │   │   │   ├── replaceAllCommand.ts   # Vault-wide find-and-replace (keeps splices + hashes, never whole notes)
 │   │   │   └── savedViewsCommand.ts   # UpdateSavedViewsCommand
@@ -347,8 +345,6 @@ filo/
 │   │   │   │   └── defaultFontSizes.ts
 │   │   │   ├── themes/                # Theme loading + CSS variable injection
 │   │   │   │   └── themeManager.ts
-│   │   │   ├── export/                # PNG, SVG, PDF, Markdown export
-│   │   │   │   └── exportService.ts
 │   │   │   ├── templates/             # Layout templates
 │   │   │   │   ├── templateService.ts
 │   │   │   │   ├── layoutCapture.ts
@@ -431,7 +427,6 @@ filo/
 │   │       │   ├── TileContainer.svelte
 │   │       │   ├── TileHeader.svelte  # Title, tags, lock, style, delete
 │   │       │   ├── TileStylePopup.svelte
-│   │       │   ├── PropertiesPopup.svelte # Frontmatter form (writes deltas via UpdatePropertiesCommand)
 │   │       │   ├── TextTile.svelte
 │   │       │   ├── ImageTile.svelte
 │   │       │   ├── VideoTile.svelte
@@ -453,7 +448,6 @@ filo/
 │   │       │   ├── BoardBrowser.svelte
 │   │       │   ├── TemplateBrowser.svelte
 │   │       │   ├── SaveTemplateModal.svelte
-│   │       │   ├── TaskPropertiesModal.svelte
 │   │       │   ├── OrphanCatcher.svelte
 │   │       │   └── RecoveryFiles.svelte
 │   │       └── tags/                  # Tag UI
@@ -536,7 +530,7 @@ filo/
 - CSS variables: `--ui-{category}-{property}` (e.g., `--ui-surface`, `--ui-border`, `--ui-text-primary`).
 - IPC channels: `vault:read`, `vault:write`, `dialog:open`, `window:minimize` (namespace:action).
 - Store exports: named exports, not default. e.g., `export const boardStore = ...`.
-- Command names: `verb:noun` format (e.g., `tile:add`, `connection:delete`, `board:export-png`).
+- Command names: `verb:noun` format (e.g., `tile:add`, `connection:delete`, `tile:toggle-lock`).
 
 ### Icons
 
@@ -672,7 +666,7 @@ When adding a new tile type or board type: register it, implement the interface,
 
 - Uses command pattern. Every undoable action implements `{ execute(): void; undo(): void }`.
 - Each board has its own independent undo/redo stack. A Document tab has its own stack too, keyed by the tab's id (PaneView makes it the active history board); `boardCacheStore.markDirty` ignores such ids, since no board file carries them.
-- **Board undo covers layout plus inverse frontmatter deltas.** A command that changes a note (title, tags, task/card fields, Properties) records a forward and an inverse `FrontmatterDelta`. Undo sends the inverse through `noteStore.patchFrontmatter`, so it lands on a fresh read of the file and keeps unrelated edits made in between. If another program changed the same key since, undo keeps that value and offers "Apply anyway" on a toast (`applyDeltaChecked`), because a blind inverse would overwrite the newer value.
+- **Board undo covers layout plus inverse frontmatter deltas.** A command that changes a note (title, tags, task/card fields) records a forward and an inverse `FrontmatterDelta`. Undo sends the inverse through `noteStore.patchFrontmatter`, so it lands on a fresh read of the file and keeps unrelated edits made in between. If another program changed the same key since, undo keeps that value and offers "Apply anyway" on a toast (`applyDeltaChecked`), because a blind inverse would overwrite the newer value.
 - **Commands follow renames.** Every command on every stack (Document-tab stacks included) is re-pointed when a file or folder is renamed, in-app or by another program: `stores/history.svelte.ts` registers a `'history'` rename sweep that calls `Command.renamePath(old, new)`. The default (`rebaseCommandFields` in `commands/commandPaths.ts`) rewrites every string held under a name in `PATH_FIELDS`, including snapshots, arrays and child commands; it never walks the user's own data (`CONTENT_FIELDS`: frontmatter, deltas, splices), and paths under a trashed item stay pinned, because restore puts the item back at its original path first. A new path-like field name must go in `PATH_FIELDS` (gate `commands-follow-renames`). Only `RenameFileCommand` overrides `renamePath`.
 - **Undo on a note that's gone doesn't queue a write.** `applyDeltaChecked` throws `NoteGoneError` when the file no longer exists; the history store puts the command back where it was and shows *Couldn't undo: "Card.md" no longer exists.* with **Skip this step** (drops it so earlier steps can still be undone).
 - **No command keeps a note body.** Delete undo is a restore from `.filo/trash` (a rename back); Replace All keeps only the replaced snippets and before/after hashes, and applies only while the file's bytes match. Gate `no-note-body-in-commands`.

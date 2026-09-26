@@ -157,9 +157,8 @@ export function makeKanbanSlice(ctx: CacheContext) {
      * (out-of-band re-add / redo after partial undo).
      *
      * Positions are renormalised to array index afterwards — the invariant
-     * `reorderKanbanColumns` maintains — so a restored column keeps export
-     * order (`exportService` sorts columns by `position`) consistent with the
-     * on-screen array order even if a sibling column was added/reordered in the
+     * `reorderKanbanColumns` maintains — so a restored column keeps its
+     * `position` consistent with the on-screen array order even if a sibling column was added/reordered in the
      * interval. Only the `position` scalar is rewritten; every content field on
      * sibling columns is left as-is.
      *

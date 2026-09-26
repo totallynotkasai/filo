@@ -70,18 +70,14 @@ export class VisibleTilesViewModel {
   });
 
   /**
-   * In interactive mode, build the visible set by mapping over the culled
+   * Builds the visible set by mapping over the culled
    * `visibleTileIds` (size = on-screen tiles) instead of filtering EVERY tile on
    * the board. A pan re-derives this on every viewport change, so this is
    * O(visible) rather than O(total tiles) per frame. Re-sorted into insertion order so overlapping
-   * same-z-index tiles keep their current DOM-order stacking. Export mode still
-   * walks every tile — viewport culling is intentionally disabled there.
+   * same-z-index tiles keep their current DOM-order stacking.
    */
   visibleTiles = $derived.by(() => {
     const tiles = this.deps.board.tiles;
-    if (this.deps.canvas.exportMode) {
-      return Object.values(tiles).filter((t) => !this.hiddenByFrame.has(t.id));
-    }
     const order = this.tileOrder;
     const out: Tile[] = [];
     for (const id of this.visibleTileIds) {

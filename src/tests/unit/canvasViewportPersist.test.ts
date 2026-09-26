@@ -96,7 +96,6 @@ describe('canvas viewport persistence', () => {
   afterEach(() => {
     boardCacheStore.clear();
     canvasStore.setBoard(null);
-    canvasStore.setExportMode(false);
     clearViewportsCache();
     __resetDirtyTrackingForTests();
     vi.useRealTimers();
@@ -176,22 +175,6 @@ describe('canvas viewport persistence', () => {
     expect(vp?.x).toBe(30);
     expect(vp?.y).toBe(0);
     expect(vp?.scale).toBe(1);
-  });
-
-  it('skips persistence while exportMode is true', () => {
-    boardCacheStore.hydrate(
-      { mm: makeMindMapFixture() },
-      { mm: 'map.board.json' },
-    );
-    canvasStore.setBoard('mm');
-    canvasStore.setExportMode(true);
-
-    canvasStore.panBy(-200, -100);
-    canvasStore.zoomTo(2.5, 0, 0);
-    vi.advanceTimersByTime(2000);
-
-    // Export-mode transforms must not contaminate the user's saved camera.
-    expect(getViewportFromCache('mm')).toBeNull();
   });
 
   it('no-ops when currentBoardId is null (no active mind-map board)', () => {

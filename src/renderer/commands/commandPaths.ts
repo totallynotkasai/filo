@@ -41,8 +41,8 @@ export const PATH_FIELDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Fields holding the user's own data (a note's frontmatter, a tile's
- * properties, a delta or splice built from them). Never walked: a frontmatter
+ * Fields holding the user's own data (a note's frontmatter or index
+ * metadata, a delta or splice built from them). Never walked: a frontmatter
  * key that happens to be called `path` or `src` is content, and a rename must
  * not rewrite what an undo writes back into the file.
  */

@@ -1,5 +1,5 @@
 // Undo/redo (command pattern) ratchets.
-import { fail, blank, functionBody, lineAt, stripCommentsKeepLines, tokenChecks } from './lib.mjs';
+import { fail, blank, functionBody, lineAt, stripCommentsKeepLines } from './lib.mjs';
 
 const COMMANDS = 'src/renderer/commands';
 
@@ -247,18 +247,6 @@ export const checks = [
           }
         });
       }
-      // PropertiesPopup's deferred command must target the popup's pane (captured at mount).
-      const POPUP = 'src/renderer/components/tiles/PropertiesPopup.svelte';
-      const popup = ctx.read(POPUP);
-      if (popup === null) return [...out, fail(POPUP, undefined, 'required file missing')];
-      out.push(
-        ...tokenChecks(POPUP, stripCommentsKeepLines(popup), {
-          required: [
-            { token: /mountBoardId\s*=\s*boardStore\.current\?\.id/, why: 'captures the board id at popup mount' },
-            { token: /new UpdatePropertiesCommand\([^;]*\bmountBoardId\b/, why: 'passes the mount-time board id to UpdatePropertiesCommand' },
-          ],
-        }),
-      );
       return out;
     },
   },

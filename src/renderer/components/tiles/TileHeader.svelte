@@ -452,15 +452,6 @@
     // highlighted when the TagEditor's focus trap returns focus on close.
     target.blur();
   }
-
-  function toggleProperties(e: MouseEvent) {
-    e.stopPropagation();
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    (e.currentTarget as HTMLElement).dispatchEvent(new CustomEvent('tile-properties', {
-      bubbles: true,
-      detail: { tileId: tile.id, x: rect.left, y: rect.bottom + 4 },
-    }));
-  }
 </script>
 
 <div class="tile-header" style="background: {headerBg};{headerTextColor ? ` --header-text-color: ${headerTextColor};` : ''}">
@@ -527,18 +518,6 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
         <line x1="7" y1="7" x2="7.01" y2="7"/>
-      </svg>
-    </button>
-
-    <!-- Properties -->
-    <button class="header-btn" title="Properties" aria-label="Edit properties" onclick={toggleProperties}>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <line x1="4" y1="6" x2="20" y2="6"/>
-        <line x1="4" y1="12" x2="20" y2="12"/>
-        <line x1="4" y1="18" x2="20" y2="18"/>
-        <circle cx="9" cy="6" r="1.5" fill="currentColor"/>
-        <circle cx="15" cy="12" r="1.5" fill="currentColor"/>
-        <circle cx="9" cy="18" r="1.5" fill="currentColor"/>
       </svg>
     </button>
 

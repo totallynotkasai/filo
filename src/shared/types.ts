@@ -112,8 +112,6 @@ export type IpcChannel =
   | 'media:open-external'
   // Link metadata
   | 'link:fetch-metadata'
-  // Export operations
-  | 'export:save'
   // Font operations
   | 'font:list-system'
   | 'font:import'

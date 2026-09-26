@@ -446,20 +446,6 @@ export interface IpcChannelMap {
     }>;
   };
 
-  // ── Export ───────────────────────────────────────────────────────
-  'export:save': {
-    args:
-      | [filename: string, data: string]
-      | [filename: string, data: string, mimeType: string | undefined];
-    // The failure branch carries an optional `canceled` flag so
-    // the renderer can tell a save-dialog dismissal (no-op) from a real write
-    // failure (error toast). Spelled out rather than `IpcSuccess<…>` so the
-    // discriminator is part of the contract.
-    result:
-      | { success: true; path: string }
-      | { success: false; canceled?: boolean; code?: string; error?: string };
-  };
-
   // ── Fonts ────────────────────────────────────────────────────────
   'font:list-system': {
     args: [];

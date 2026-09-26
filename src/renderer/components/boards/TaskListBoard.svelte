@@ -5,7 +5,7 @@
    * Each entry in `board.tasks` is a placement that points at a `text` tile
    * def in `boardCacheStore.cache[boardId].tileDefs`. The task's reactive
    * fields (completed / priority / dueDate / status / tags) all live in the
-   * backing `.md`'s YAML frontmatter and come through `vaultIndexStore`,
+   * backing `.md`'s YAML frontmatter and come through `noteFrontmatter`,
    * not the board JSON.
    *
    * Group / sort / filter happens at render time. The active board's
@@ -17,7 +17,6 @@
   import { BOARD_SCOPE_KEY, isActiveScope, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { boardCacheStore } from '../../stores/boardCache.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
-  import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { ACCENT_COLOR } from '../../constants/defaults';
   import type {
@@ -45,8 +44,6 @@
   import TaskItemStylePopup from './TaskItemStylePopup.svelte';
   import TaskSectionStylePopup from './TaskSectionStylePopup.svelte';
   import TagEditor from '../tags/TagEditor.svelte';
-  import Modal from '../shared/Modal.svelte';
-  import TaskPropertiesModal from '../modals/TaskPropertiesModal.svelte';
   import TaskQuickAddInput from './TaskQuickAddInput.svelte';
   import SmartListTabs from './SmartListTabs.svelte';
   import TaskBulkActionBar from './TaskBulkActionBar.svelte';
@@ -1082,37 +1079,6 @@
   // MindMapBoard.
   let tagEditorPopup = $state<{ tileId: string; x: number; y: number } | null>(null);
   let taskItemStylePopup = $state<{ tileId: string; style?: PartialTaskStyle; x: number; y: number } | null>(null);
-  // Read-only Properties inspector. The modal mounts with this context; an
-  // explicit `null` keeps the {#if} guard cheap while no row is being
-  // inspected. Cleared on Modal close.
-  let taskPropertiesContext = $state<{
-    tile: Tile;
-    placement: TaskPlacement;
-    filePath: string;
-    frontmatter: Record<string, unknown>;
-  } | null>(null);
-
-  function openTaskProperties(tileId: string) {
-    const tile = tilesById[tileId];
-    if (!tile) return;
-    const placement = placements.find((p) => p.tileId === tileId);
-    if (!placement) return;
-    const filePath = vaultPathForTile(tile);
-    const frontmatter = (vaultIndexStore.getMetadata(filePath)?.frontmatter ?? {}) as Record<string, unknown>;
-    taskPropertiesContext = { tile, placement, filePath, frontmatter };
-    uiStore.openModal('task-properties');
-  }
-
-  // Mirror Modal's open state into the local context so closing via Esc /
-  // backdrop / the close button (none of which call openTaskProperties)
-  // drops the captured snapshot. Stops a stale tile reference from
-  // ghosting back if the user reopens via the next row.
-  $effect(() => {
-    if (!uiStore.isModalOpen('task-properties') && taskPropertiesContext !== null) {
-      taskPropertiesContext = null;
-    }
-  });
-
   $effect(() => {
     const el = scrollContainerEl;
     if (!el) return;
@@ -1339,7 +1305,6 @@
       onToggleLocked: toggleTaskLocked,
       onMoveToSection: moveTaskToSection,
       onToggleSubtaskCollapsed: toggleSubtaskCollapsed,
-      onShowProperties: openTaskProperties,
       onEditTags: (tileId, anchor) => {
         tagEditorPopup = { tileId, x: anchor.x, y: anchor.y };
       },
@@ -1375,7 +1340,6 @@
       onToggleLocked: toggleTaskLocked,
       onMoveToSection: moveTaskToSection,
       onToggleSubtaskCollapsed: toggleSubtaskCollapsed,
-      onShowProperties: openTaskProperties,
       onEditTags: (tileId, anchor) => {
         tagEditorPopup = { tileId, x: anchor.x, y: anchor.y };
       },
@@ -1642,23 +1606,6 @@
       />
     </div>
   {/if}
-
-  <!--
-    Task Properties inspector. Read-only v1 — shows tile id, vault path,
-    timestamps, frontmatter, and the placement JSON for triage. The Modal
-    component handles focus trap, backdrop, and Esc; clearing the context
-    on close keeps the {#if} guard tight.
-  -->
-  <Modal id="task-properties" title="Task Properties" width="520px">
-    {#if taskPropertiesContext}
-      <TaskPropertiesModal
-        tile={taskPropertiesContext.tile}
-        placement={taskPropertiesContext.placement}
-        filePath={taskPropertiesContext.filePath}
-        frontmatter={taskPropertiesContext.frontmatter}
-      />
-    {/if}
-  </Modal>
 
   <!--
     Screen-reader-only live region. Adds (or aria-presence-bumps) text on

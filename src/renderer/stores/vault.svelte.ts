@@ -1164,8 +1164,8 @@ export const vaultStore = {
 
   /**
    * Flushes all pending debounced writes immediately. Drains per-file
-   * markdown/frontmatter timers (TextTile / DocumentEditor / PropertiesPopup
-   * / TaskListBoard) first so any board-JSON write below sees the same
+   * markdown/frontmatter timers (TextTile / DocumentEditor / TaskListBoard)
+   * first so any board-JSON write below sees the same
    * on-disk state the user just produced.
    *
    * Returns false if any flush failed so the Ctrl+S toast can honestly

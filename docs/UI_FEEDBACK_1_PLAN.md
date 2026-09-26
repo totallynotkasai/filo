@@ -444,6 +444,37 @@ Delete:
 
 **Keep:** `syncTileMarkdown` and `syncTile`. The broken-link **Recreate backing file** action uses them (`TileHeader.svelte:313`).
 
+### Status: done (2026-09-26)
+
+5a, 5b and 5c are implemented as written, with the deviations below. Everything listed under **Delete** is gone, everything under **Keep** is still there, and each **Update** item is done.
+
+**Tests.** This phase adds no behaviour, so it adds no tests. The tests that covered removed code were deleted or trimmed:
+- deleted: `propertyRowTypes.test.ts`, `propertiesPopupBoardScope.test.ts`, `propertiesPopupNestedFrontmatter.test.ts`, `exportSaveCap.test.ts`;
+- trimmed: the `metadata`-kind cases in `updatePropertiesCommand.test.ts` and `commandMarkDirtyOriginatingBoard.test.ts` (deviation 1), the export-mode case in `visibleTilesViewModel.test.ts`, and the export-mode case and resets in `canvasViewportPersist.test.ts` and `canvasFlyToCancel.test.ts`.
+- `dragPaneScopeAndPropertiesUndoRead.test.ts` and `undoNeverOpenedNoteAndPropertiesConflict.test.ts` were left alone. Neither mounts the popup; both drive `UpdatePropertiesCommand` directly with frontmatter snapshots, which the plan says to keep.
+- No E2E, component or characterisation test referenced a removed control.
+
+**Real app.** A Playwright script drove the built Electron app against the scratch vault (`npm run scratch-vault`: a Mind Map with six notes and an image, a Kanban board and a Task List). It checked the following:
+- The Mind Map's tile headers offer Tags, Lock, Style, Expand to document, Sync tile, Delete and (on the image) the media-only toggle. There is no Properties button, and the Tags button still opens the tag editor.
+- The project dropdown reads Name Project / New Vault, Open Vault, Save / Project Settings, with one divider between each group. There is no Export submenu and no "Sync All Tiles on this Board".
+- A Task List row's context menu reads Open as Document, Rename Task, Add Subtask, Mark Complete, Cycle Priority, Edit tags, Delete Task and Delete Task & File…. There is no "Properties…".
+- After Ctrl+S, none of the three board files contains a `metadata` key.
+
+The console had no errors or warnings.
+
+`npm run ci:verify` passes (558 test files, 5572 tests; 61/61 gates).
+
+### Deviations from the plan
+
+1. **`UpdatePropertiesCommand` lost its `metadata` snapshot kind.** That kind wrote `tile.metadata` through `boardStore.updateTile` and existed only for the popup on media and board-only tiles, so it went with the field. `PropertiesSnapshot` is now a single frontmatter shape (the `kind: 'frontmatter'` tag is kept so `NoteTagRow` and the tests didn't change). The two test cases that built a `metadata` snapshot were removed. `commandMarkDirtyOriginatingBoard.test.ts` still pins "dirty the originating board" through `UpdateCardFieldCommand`.
+2. **Two more files carried the Task List inspector's callback:** `TaskListRow.svelte` and `taskListRowProps.ts` passed `onShowProperties` down to `TaskItem`. Both were cleaned. `TaskListBoard` also dropped the `Modal` and `vaultIndexStore` imports that only the inspector used.
+3. **Both Task List allowlist ceilings dropped,** not just TaskListBoard's: TaskListBoard 2069 → 2016 and TaskItem 1522 → 1513.
+4. **The submenu CSS went, plus two unused global classes.** `.dropdown-submenu-wrapper`, `.dropdown-submenu`, `.submenu-arrow` and the global `.dropdown-item-submenu` were used only by the Export submenu. The global `.dropdown-item-muted` was used nowhere and went too. The dropdown no longer shows two dividers in a row where the Export and Sync groups were.
+5. **`export:save` was also listed twice in the `ipcSecurity` gate** (`scripts/gates/ipcSecurity.mjs`), which the plan didn't name. Both entries were removed.
+6. **The Design Doc was updated too.** It is the authoritative spec and still described the Properties popup, the `metadata` object on media and board-only tiles, the Task List "Properties" menu entry, the Export submenu and the `html-to-image` / `jspdf` stack line. It now says each property has its own control and there is no generic form. Stale mentions in `vitest.config.mts` (coverage gap `lib/export`), `payloadLimits.ts`, `boardCacheKanban.ts`, `ConnectionLayer.svelte`, `visibleTilesViewModel.svelte.ts`, `commandPaths.ts`, `commands/index.ts` and two test headers were fixed as well.
+7. **`CONTENT_FIELDS` keeps `metadata`** (`commands/commandPaths.ts`). No command holds a tile's `metadata` any more, but the name also covers vault-index metadata. It only stops a rename from walking user data, so keeping it is harmless; its comment was updated.
+8. **Left in place, worth a follow-up:** `diffToFrontmatterDelta` (`lib/vault/frontmatterDelta.ts`) no longer has a production caller; the popup was its only one. The `writePath` gate still requires it to be exported and it has unit tests, so removing it is a small separate change (the helper, its tests and the gate row).
+
 ---
 
 ## Phase 6: Visual polish

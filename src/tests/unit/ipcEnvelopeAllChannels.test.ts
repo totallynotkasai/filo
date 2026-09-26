@@ -83,7 +83,6 @@ const SUCCESS_DISCRIMINATED: readonly string[] = [
   'media:read-file',
   'media:open-external',
   'link:fetch-metadata',
-  'export:save',
   'font:import',
   'templates:layout:write',
   'templates:layout:rename',

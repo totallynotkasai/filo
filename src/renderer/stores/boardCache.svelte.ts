@@ -694,37 +694,6 @@ export const boardCacheStore = {
     await flushBoardWrite(boardId, () => getBoardWriteArgs(boardId));
     return result;
   },
-
-  /**
-   * Syncs every tile on the given board, then flushes any pending board
-   * JSON write. Returns counts so the caller can summarise.
-   */
-  async syncAllOnBoard(boardId: string): Promise<{ ok: number; skipped: number; failed: number }> {
-    const cached = boardCache[boardId];
-    if (!cached) return { ok: 0, skipped: 0, failed: 0 };
-
-    let ok = 0;
-    let skipped = 0;
-    let failed = 0;
-
-    for (const [tileId, def] of Object.entries(cached.tileDefs ?? {})) {
-      try {
-        const result = await syncTileMarkdown(def);
-        if (result.skippedReason) skipped++;
-        else ok++;
-      } catch (err) {
-        reportError(
-          'boardCache.sync-tile',
-          err,
-          `Failed to sync tile ${tileId} — its backing file may be out of date`,
-        );
-        failed++;
-      }
-    }
-
-    await flushBoardWrite(boardId, () => getBoardWriteArgs(boardId));
-    return { ok, skipped, failed };
-  },
 };
 
 // Vault-swap reset: drops the per-board cache + paths + the unresolved-warn coalesce state

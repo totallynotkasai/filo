@@ -11,7 +11,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
  * Phase 1 (P0-3) regression guard: the editor write sites (TextTile,
- * DocumentEditor, PropertiesPopup) now route through the new
+ * DocumentEditor) now route through the new
  * `vault:write-existing-file-text` IPC channel. When the channel reports
  * ENOENT the writers must:
  *

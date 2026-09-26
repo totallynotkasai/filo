@@ -9,7 +9,6 @@
   import TileHeader from './TileHeader.svelte';
   import TagBadge from '../tags/TagBadge.svelte';
   import TagsPopupMenu from '../tags/TagsPopupMenu.svelte';
-  import PropertiesPopup from './PropertiesPopup.svelte';
   import { getContext, setContext } from 'svelte';
   import { RESOLVED_TILE_STYLE_KEY } from '../../lib/styles/resolvedTileStyleContext';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
@@ -224,26 +223,6 @@
     tagPopup = null;
   }
 
-  // Properties popup — opens when TileHeader dispatches `tile-properties`.
-  let propertiesPopup = $state<{ x: number; y: number } | null>(null);
-
-  $effect(() => {
-    const el = containerElement;
-    if (!el) return;
-    const handler = (raw: Event) => {
-      const e = raw as CustomEvent<{ tileId: string; x: number; y: number }>;
-      if (e.detail?.tileId !== tile.id) return;
-      e.stopPropagation();
-      propertiesPopup = propertiesPopup ? null : { x: e.detail.x, y: e.detail.y };
-    };
-    el.addEventListener('tile-properties', handler);
-    return () => el.removeEventListener('tile-properties', handler);
-  });
-
-  function closePropertiesPopup() {
-    propertiesPopup = null;
-  }
-
   /**
    * Keyboard a11y for canvas tiles:
    *   Tab        — focus reaches the tile via the wrapper div (tabindex=0)
@@ -381,19 +360,6 @@
         ></div>
         <div use:portal class="tag-popup-anchor" style="position: fixed; left: {tagPopup.x}px; top: {tagPopup.y}px; z-index: var(--z-tile-popup);">
           <TagsPopupMenu tagName={tagPopup.tagName} onClose={closeTagPopup} />
-        </div>
-      {/if}
-
-      {#if propertiesPopup}
-        <div
-          use:portal
-          class="tag-popup-overlay"
-          onclick={closePropertiesPopup}
-          onkeydown={(e) => { if (e.key === 'Escape') closePropertiesPopup(); }}
-          role="presentation"
-        ></div>
-        <div use:portal class="tag-popup-anchor" style="position: fixed; left: {propertiesPopup.x}px; top: {propertiesPopup.y}px; z-index: var(--z-tile-popup);">
-          <PropertiesPopup {tile} onClose={closePropertiesPopup} />
         </div>
       {/if}
     {:else}

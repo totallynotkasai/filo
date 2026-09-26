@@ -58,7 +58,7 @@ export default defineConfig({
       // shell, not jsdom. The branch floor of 70 is the first MEASURED one
       // (an earlier 80 was never actually run). Ratchet up only: raise a
       // threshold whenever new tests push coverage past it, never lower one.
-      // Known gaps: lib/export, lib/editor (TipTap), most of lib/canvas
+      // Known gaps: lib/editor (TipTap), most of lib/canvas
       // gesture handlers, and the lib/**/persistence helpers that the
       // renderer can't currently exercise without a vault on disk.
       provider: 'v8',

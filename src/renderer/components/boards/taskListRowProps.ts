@@ -81,7 +81,6 @@ export interface TaskListRowCallbacks {
   onToggleLocked: (tileId: string) => void;
   onMoveToSection: (tileId: string, sectionId: string) => void;
   onToggleSubtaskCollapsed: (tileId: string) => void;
-  onShowProperties: (tileId: string) => void;
   onEditTags: (tileId: string, anchor: { x: number; y: number }) => void;
 }
 

@@ -56,18 +56,9 @@ export const PAYLOAD_LIMITS = {
   /** `media:save-audio` — base64-decoded audio bytes. */
   AUDIO: 100 * MB,
   /**
-   * Single-file binary IPC cap for `export:save` (PNG/SVG/PDF export
-   * payloads). 200 MB allows a 4K screen capture or a long high-bitrate
-   * recording to survive an export round-trip without false rejection.
-   *
-   * NOTE: this is NOT the cap used by `media:read-file` — that uses
-   * `MEDIA_READ_INLINE` below.
-   */
-  MEDIA: 200 * MB,
-  /**
    * `media:read-file` — disk file size for inline media reads. The inline
    * IPC path keeps the whole base64 string in renderer memory, so it needs
-   * a tighter ceiling than MEDIA. 25 MB covers every legitimate inline-use
+   * a tight ceiling. 25 MB covers every legitimate inline-use
    * image / audio while blocking accidental multi-GB raw video.
    */
   MEDIA_READ_INLINE: 25 * MB,

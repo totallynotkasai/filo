@@ -84,8 +84,7 @@
    * and their paths aren't computed at all, which matters on large boards)
    * and computes each visible path ONCE here, shared by ConnectionPath and
    * the label's measurement path. Uses the cascade-resolved pathType, so the
-   * label rides the same route the path actually draws. Export mode renders
-   * everything (no cull).
+   * label rides the same route the path actually draws.
    *
    * Each visible path routes through `pathMemo`, so a pan (which re-runs
    * this derived via `viewportRect`) reuses the cached `d` instead of
@@ -97,7 +96,6 @@
    */
   let renderableConnections = $derived.by((): Array<{ conn: Connection; pathD: string }> => {
     const vp = canvasScope.viewportRect;
-    const exportMode = canvasScope.exportMode;
     const smartRevision = untrack(() => spatialScope.revision);
     const out: Array<{ conn: Connection; pathD: string }> = [];
     for (const conn of Object.values(connections)) {
@@ -106,7 +104,7 @@
       if (!fromTile || !toTile) continue; // drop stale connections
       const fromRect = { x: fromTile.position.x, y: fromTile.position.y, width: fromTile.size.width, height: fromTile.size.height };
       const toRect = { x: toTile.position.x, y: toTile.position.y, width: toTile.size.width, height: toTile.size.height };
-      if (!exportMode && !connectionIntersectsViewport(fromRect, toRect, vp, VIEWPORT_CULL_BUFFER)) {
+      if (!connectionIntersectsViewport(fromRect, toRect, vp, VIEWPORT_CULL_BUFFER)) {
         continue;
       }
       const resolved = effectiveConnectionPathStyle(conn, vaultStore.project?.settings, boardStore.current);

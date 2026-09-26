@@ -160,7 +160,6 @@
       // need to replay the missed pointerdown.
       controllers.drag.armRow(sectionId, row.tile.id, e.clientX, e.clientY);
     }}
-    onShowProperties={() => callbacks.onShowProperties(row.tile.id)}
     onEditTags={(anchor: { x: number; y: number }) =>
       callbacks.onEditTags(row.tile.id, anchor)}
     {isDragging}

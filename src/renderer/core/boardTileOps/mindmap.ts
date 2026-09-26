@@ -163,7 +163,6 @@ export const mindmapTileOps: BoardTileOps<MindMapBoard> = {
       if (t.remaining !== undefined) patch.remaining = t.remaining;
       if (t.mode !== undefined) patch.mode = t.mode;
       if (t.isRunning !== undefined) patch.isRunning = t.isRunning;
-      if (t.metadata !== undefined) patch.metadata = t.metadata;
       (cached.board as { inlineTiles: Record<string, Record<string, unknown>> }).inlineTiles[tileId] = {
         ...inlineTile,
         ...patch,

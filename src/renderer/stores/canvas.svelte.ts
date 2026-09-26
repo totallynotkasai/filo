@@ -34,7 +34,6 @@ export interface CanvasScope {
   readonly semanticZoomEnabled: boolean;
   readonly snapEnabled: boolean;
   readonly waypointsVisible: boolean;
-  readonly exportMode: boolean;
   readonly isSemanticZoomActive: boolean;
   readonly lodLevel: 'full' | 'simplified' | 'block';
   readonly viewportRect: ViewportRect;
@@ -47,7 +46,6 @@ export interface CanvasScope {
   setViewportSize(width: number, height: number): void;
   flyTo(target: CanvasTransform, durationMs?: number): void;
   toggleMinimap(): void;
-  setExportMode(v: boolean): void;
   setSemanticZoomEnabled(v: boolean): void;
   toggleSnap(): void;
   toggleWaypointsVisible(): void;
@@ -69,7 +67,6 @@ export function createCanvasScope(): CanvasScope {
   let semanticZoomEnabled = $state(true);
   let snapEnabled = $state(false);
   let waypointsVisible = $state(true);
-  let exportMode = $state(false);
 
   // Active camera-fly animation (null when idle).
   let flyToRaf: number | null = null;
@@ -99,7 +96,6 @@ export function createCanvasScope(): CanvasScope {
   const VIEWPORT_PERSIST_DEBOUNCE_MS = 1500;
 
   function schedulePersistViewport(): void {
-    if (exportMode) return;
     if (!currentBoardId) return;
     if (persistTimer) clearTimeout(persistTimer);
     persistTimer = setTimeout(() => {
@@ -117,7 +113,6 @@ export function createCanvasScope(): CanvasScope {
     if (!persistTimer) return;
     clearTimeout(persistTimer);
     persistTimer = null;
-    if (exportMode) return;
     if (!currentBoardId) return;
     boardCacheStore.updateViewport(currentBoardId, {
       x: transform.x,
@@ -137,7 +132,6 @@ export function createCanvasScope(): CanvasScope {
     get semanticZoomEnabled() { return semanticZoomEnabled; },
     get snapEnabled() { return snapEnabled; },
     get waypointsVisible() { return waypointsVisible; },
-    get exportMode() { return exportMode; },
 
     get isSemanticZoomActive(): boolean {
       return semanticZoomEnabled && transform.scale < CANVAS_DEFAULTS.semanticZoomThreshold;
@@ -293,10 +287,6 @@ export function createCanvasScope(): CanvasScope {
 
     toggleMinimap() {
       minimapVisible = !minimapVisible;
-    },
-
-    setExportMode(v: boolean) {
-      exportMode = v;
     },
 
     setSemanticZoomEnabled(v: boolean) {

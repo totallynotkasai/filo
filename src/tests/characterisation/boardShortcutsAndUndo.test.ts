@@ -24,6 +24,7 @@ import {
   toastActions,
   pressShortcut,
   clashingShortcuts,
+  goHome,
   newCardPickerShown,
   addKanbanColumn,
   renameActiveTab,
@@ -115,14 +116,18 @@ describe('renaming a board from its tab', () => {
 });
 
 describe('global shortcuts follow the board type', () => {
-  it('no key chord has two enabled commands on any board type', async () => {
-    const app = await startApp({});
+  it('no key chord has two enabled commands on any board type, a Document tab or Home', async () => {
+    const app = await startApp({ 'Plan.md': note('Plan') });
     for (const kind of ['mindmap', 'kanban', 'tasklist'] as const) {
       await createBoard(app, kind);
       expect(await clashingShortcuts(), kind).toEqual([]);
     }
     await showBoard(app, 'mindmap');
     expect(await clashingShortcuts(), 'mindmap again').toEqual([]);
+    await openNoteFromSidebar(app, 'Plan.md');
+    expect(await clashingShortcuts(), 'document').toEqual([]);
+    await goHome(app);
+    expect(await clashingShortcuts(), 'home').toEqual([]);
   });
 
   it('Ctrl+N adds a tile on the Mind Map, opens the card picker on Kanban, and adds a task on Task List', async () => {

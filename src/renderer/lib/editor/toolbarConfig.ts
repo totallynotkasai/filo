@@ -8,6 +8,9 @@ import { clearBlockTextStyle } from './blockTextStyle';
 /** Shown when TipTap's Link URI allowlist refuses a link. */
 export const LINK_REFUSED_MESSAGE = "That link couldn't be added. Use https://, mailto: or a filo:// link.";
 
+/** Shown when the link's place takes no link, whatever its URL. */
+export const LINK_IN_CODE_MESSAGE = "Links can't go in a code block.";
+
 /**
  * Tiptap ↔ GlobalToolbar bridge.
  * Tracks the active editor, syncs formatting state to the toolbar store,
@@ -206,16 +209,18 @@ export const tiptapToolbar = {
    * A heading level (or Normal text, 0) also clears the blocks' font size,
    * family and colour, so the level's own size shows: an inline font size
    * would otherwise override it.
+   *
+   * Returns false when nothing changed (no editor, a read-only note, a title
+   * or label editor, or a block that can't become a heading), so the dropdown
+   * can put back the level the block really has.
    */
-  setHeading(level: 0 | 1 | 2 | 3 | 4 | 5 | 6) {
+  setHeading(level: 0 | 1 | 2 | 3 | 4 | 5 | 6): boolean {
     this.keepActiveEditor();
     // Title and label editors have no headings (nor a setHeading command).
-    if (!activeEditor?.schema.nodes.heading) return;
-    if (level === 0) {
-      chainIfEditable()?.focus().command(clearBlockTextStyle).setParagraph().run();
-    } else {
-      chainIfEditable()?.focus().command(clearBlockTextStyle).setHeading({ level }).run();
-    }
+    if (!activeEditor?.schema.nodes.heading) return false;
+    const chain = chainIfEditable()?.focus().command(clearBlockTextStyle);
+    if (!chain) return false;
+    return level === 0 ? chain.setParagraph().run() : chain.setHeading({ level }).run();
   },
 
   toggleBulletList() {

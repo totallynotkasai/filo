@@ -10,6 +10,7 @@ import {
   MoveCardsCommand,
   UpdateCardFieldCommand,
 } from '../../commands/index';
+import { buildBulkCardContextMenu } from './kanbanContextMenus';
 
 export interface KanbanMultiSelectDeps {
   /** The pane's selection scope. Bulk actions and the click-toggle both
@@ -222,31 +223,15 @@ export class KanbanMultiSelect {
 
   openBulkContextMenu(e: MouseEvent, _tileId: string): void {
     void _tileId;
-    const count = this.deps.selection.count;
-    const columns = this.deps.getColumns();
-    const moveItems = columns.map((c) => ({
-      id: `move-to-${c.id}`,
-      label: c.title,
-      action: () => this.moveSelectedTilesToColumn(c.id),
-    }));
-    // Compose a flat menu with the move targets inline. uiStore.showContextMenu
-    // doesn't support submenus, so we prefix the move items with a label and
-    // append delete / tag at the end. This matches how the Mind Map bulk
-    // menu renders today.
-    const items = [
-      { id: 'count', label: `${count} card(s) selected`, disabled: true },
-      { id: 'div1', label: '', divider: true },
-      { id: 'move-header', label: 'Move to column', disabled: true },
-      ...moveItems,
-      { id: 'div2', label: '', divider: true },
-      { id: 'tag', label: 'Add Tag…', action: () => this.tagSelectedTiles() },
-      {
-        id: 'delete',
-        label: count > 1 ? `Remove ${count} Cards` : 'Remove Card',
-        danger: true,
-        action: () => this.deleteSelectedTiles(),
-      },
-    ];
+    // The menu has no submenus, so the move targets sit inline under their
+    // own heading.
+    const items = buildBulkCardContextMenu({
+      count: this.deps.selection.count,
+      columns: this.deps.getColumns(),
+      onAddTag: () => { void this.tagSelectedTiles(); },
+      onRemove: () => this.deleteSelectedTiles(),
+      onMoveTo: (columnId) => this.moveSelectedTilesToColumn(columnId),
+    });
     uiStore.showContextMenu(e.clientX, e.clientY, items);
   }
 }

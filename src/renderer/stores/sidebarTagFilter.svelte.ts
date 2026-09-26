@@ -76,7 +76,43 @@ export const sidebarTagFilter = {
     if (collapsedFolders.has(path)) collapsedFolders.delete(path);
     else collapsedFolders.add(path);
   },
+
+  /**
+   * The folders the sidebar shows right now. Expand / Collapse All work on
+   * these: while filtering, the user's own expanded set isn't what's on
+   * screen, and changing it would only show once the filter clears.
+   */
+  get hasFolders(): boolean {
+    return folderPaths(this.apply(vaultStore.tree)).length > 0;
+  },
+
+  get anyFolderExpanded(): boolean {
+    if (activeTag === null) return vaultStore.expandedFolders.size > 0;
+    return folderPaths(this.apply(vaultStore.tree)).some((p) => !collapsedFolders.has(p));
+  },
+
+  expandAll(): void {
+    if (activeTag === null) vaultStore.expandAll();
+    else collapsedFolders.clear();
+  },
+
+  collapseAll(): void {
+    if (activeTag === null) {
+      vaultStore.collapseAll();
+      return;
+    }
+    for (const p of folderPaths(this.apply(vaultStore.tree))) collapsedFolders.add(p);
+  },
 };
+
+function folderPaths(nodes: readonly FileTreeNode[], out: string[] = []): string[] {
+  for (const n of nodes) {
+    if (!n.isDirectory) continue;
+    out.push(n.path);
+    folderPaths(n.children ?? [], out);
+  }
+  return out;
+}
 
 // Both sidebar filters are view state for one vault: a search or tag left
 // over from the last vault would hide the next one's files.

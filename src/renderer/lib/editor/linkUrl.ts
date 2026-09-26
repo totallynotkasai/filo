@@ -1,20 +1,38 @@
 import { isFiloLink } from '../../schema/link';
+import { asSafeOpenExternal } from '../../../shared/untrusted';
+
+/** Schemes a click hands to the OS: browser, mail client, dialler. */
+const EXTERNAL_RE = /^(https?:\/\/|mailto:|tel:)/i;
+
+/**
+ * True when a click can open this href: a `filo://` link inside the app, or
+ * https, http, mailto or tel through the OS. The one scheme list for both the
+ * Insert Link popup and the click handler, so a link the popup accepts is
+ * always one a click opens.
+ */
+export function isOpenable(href: string): boolean {
+  return isFiloLink(href) || (EXTERNAL_RE.test(href) && asSafeOpenExternal(href) !== null);
+}
 
 /**
  * What the user typed into the Insert Link popup's URL field, made into an
  * href that can actually be opened. A bare domain (`example.com`,
  * `www.example.com/page`) gets `https://`, and a bare address (`a@b.com`)
- * gets `mailto:`. Without this a scheme-less href is saved as-is, and the click
- * handler only opens `https:`, `mailto:`, `tel:` and `filo:`, so the link is
- * dead.
+ * gets `mailto:`. Without this a scheme-less href is saved as-is and the link
+ * is dead.
  *
  * Returns null when nothing openable can be made of it: an empty field, a
  * note file name (`Notes.md` looks like a domain, but it is a file; link a
- * note with a `filo://` link), or text that is neither a domain nor has a
- * scheme. Schemes the editor refuses (`javascript:` …) come back unchanged;
- * the Link extension's validator turns them down.
+ * note with a `filo://` link), text that is neither a domain nor has a
+ * scheme, or a scheme a click wouldn't open (`ftp:`, `sms:`, `javascript:` …):
+ * such a link would be saved but do nothing when clicked.
  */
 export function normaliseLinkUrl(input: string): string | null {
+  const href = candidateHref(input);
+  return href !== null && isOpenable(href) ? href : null;
+}
+
+function candidateHref(input: string): string | null {
   const url = input.trim();
   if (!url || /\s/.test(url)) return null;
   if (isFiloLink(url)) return url;

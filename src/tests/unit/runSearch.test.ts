@@ -126,6 +126,19 @@ describe('runVaultSearch — operator filtering', () => {
     expect(result.matches[0].filePath).toBe('a.md');
   });
 
+  it('never returns a match for a note on no board, so every match has a tile to jump to', () => {
+    vaultIndexStore.restoreMetadata('placed.md', parseMarkdown('placed.md', 'frodo here'));
+    vaultIndexStore.restoreMetadata('loose.md', parseMarkdown('loose.md', 'frodo there'));
+    boardCacheStore.hydrate(
+      { mm: makeMindMap('Mind Map A', 'mm', { t1: makeTextDef('t1', 'A', 'placed.md') }) },
+      { mm: 'a.board.json' },
+    );
+
+    const result = runVaultSearch(parseQuery('frodo'));
+    expect(result.matches.map((m) => m.filePath)).toEqual(['placed.md']);
+    expect(result.matches.every((m) => typeof m.tileId === 'string' && m.tileId !== '')).toBe(true);
+  });
+
   it('finds matches in tile titles even when there is no body hit', () => {
     boardCacheStore.hydrate(
       {

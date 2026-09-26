@@ -6,6 +6,7 @@
   import { uiStore } from '../../stores/ui.svelte';
   import { tabStore } from '../../stores/tabs.svelte';
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
+  import { buildSidebarFileMenu } from '../../lib/vault/sidebarFileMenu';
   import { renameNoteFileToTitle } from '../../lib/notes/renameToTitle';
   import { renameVaultEntry } from '../../lib/vault/renameVaultEntry';
   import { fileNameProblem } from '@shared/fileNames';
@@ -433,47 +434,22 @@
     e.preventDefault();
     e.stopPropagation();
     const cursor = { x: e.clientX, y: e.clientY };
-    const items = [
-      ...(node.isDirectory
-        ? []
-        : [{
-            id: 'edit-tags',
-            label: 'Edit tags',
-            action: () => {
-              // Match the icon button dispatch so the TagEditor mounts via
-              // VaultSidebar's single shared host instead of an inline popover.
-              document.dispatchEvent(new CustomEvent('vault-file-tag-editor', {
-                bubbles: true,
-                detail: { filePath: vaultRelativePath(), x: cursor.x, y: cursor.y },
-              }));
-            },
-          }]),
-      {
-        id: 'rename',
-        label: 'Rename',
-        action: () => startRename(),
+    uiStore.showContextMenu(e.clientX, e.clientY, buildSidebarFileMenu({
+      isDirectory: node.isDirectory,
+      isNote: isNoteFile,
+      onTags: () => {
+        // Match the icon button dispatch so the TagEditor mounts via
+        // VaultSidebar's single shared host instead of an inline popover.
+        document.dispatchEvent(new CustomEvent('vault-file-tag-editor', {
+          bubbles: true,
+          detail: { filePath: vaultRelativePath(), x: cursor.x, y: cursor.y },
+        }));
       },
-      ...(isNoteFile
-        ? [{
-            id: 'rename-to-title',
-            label: 'Rename file to match title',
-            action: () => { void renameNoteFileToTitle(vaultRelativePath()); },
-          }]
-        : []),
-      {
-        id: 'reveal',
-        label: 'Reveal in File Explorer',
-        action: () => { void revealInExplorer(); },
-      },
-      { id: 'sep', divider: true, label: '' },
-      {
-        id: 'delete',
-        label: node.isDirectory ? 'Delete folder' : 'Delete file',
-        danger: true,
-        action: () => { void handleDelete(); },
-      },
-    ];
-    uiStore.showContextMenu(e.clientX, e.clientY, items);
+      onRename: () => startRename(),
+      onRenameToTitle: () => { void renameNoteFileToTitle(vaultRelativePath()); },
+      onReveal: () => { void revealInExplorer(); },
+      onDelete: () => { void handleDelete(); },
+    }));
   }
 
 </script>

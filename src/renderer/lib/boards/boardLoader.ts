@@ -777,21 +777,11 @@ export async function loadAllBoards(
   for (const relPath of relList) {
     const result = await loadBoard(vaultRoot, relPath);
     if (!result.ok) {
+      // No toast here: vaultCandidate shows one per failed board after the
+      // open, once it knows whether a recovery copy was kept (a Retry notice
+      // for a transient failure, a what-to-do-next notice otherwise).
       failedBoards.push({ path: relPath, errorKind: result.error, message: result.message });
-      // A transient failure (lock / offline / IO) gets an actionable sticky
-      // Retry toast from vaultCandidate after the open, not a one-shot error here.
-      if (isTransientBoardLoadError(result.error)) continue;
-      // These kinds already carry a precise user-facing message; route it
-      // through verbatim instead of wrapping it in a generic prefix.
-      const hasUserFacingMessage =
-        result.error === 'from-future' ||
-        result.error === 'snapshot-failed' ||
-        result.error === 'no-migration-path' ||
-        result.error === 'too-large';
-      const userMessage = hasUserFacingMessage
-        ? `${relPath}: ${result.message}`
-        : `Filo couldn't load ${relPath}: ${result.error}`;
-      reportError('board-load', result.message, userMessage);
+      console.warn(`[boardLoader] ${relPath} not loaded (${result.error}): ${result.message}`);
       continue;
     }
     loaded.push({ relPath, index: loaded.length, result });

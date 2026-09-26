@@ -125,7 +125,7 @@
     uiStore.showContextMenu(e.clientX, e.clientY, [
       {
         id: 'style',
-        label: 'Style',
+        label: 'Style…',
         icon: STYLE_ICON_PATH,
         action: () => {
           onstyleopen?.(conn, e.clientX, e.clientY);
@@ -133,7 +133,7 @@
       },
       {
         id: 'edit-label',
-        label: 'Edit Label',
+        label: 'Edit label',
         action: () => {
           editingLabelId = conn.id;
         },
@@ -141,7 +141,7 @@
       { id: 'div1', label: '', divider: true },
       {
         id: 'delete',
-        label: 'Delete Connection',
+        label: 'Delete connection',
         danger: true,
         action: () => {
           boardStore.removeConnectionWithHistory(conn.id);

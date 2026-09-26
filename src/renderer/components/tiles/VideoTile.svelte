@@ -10,6 +10,8 @@
   import IconButton from '../shared/IconButton.svelte';
   import { historyStore } from '../../stores/history.svelte';
   import { UpdateAttachmentSrcCommand } from '../../commands/index';
+  import { boardRefIntegrityStore } from '../../stores/boardRefIntegrity.svelte';
+  import { mediaErrorText } from '../../lib/utils/mediaErrorText';
 
   let { tile }: { tile: VideoTile } = $props();
 
@@ -17,12 +19,18 @@
   // Surface a fallback when the video fails to load (broken/missing
   // vault path, dead URL) instead of leaving an empty black box.
   let loadFailed = $state(false);
+  let errorCode = $state<number | null>(null);
+  // Derived, so the message becomes "File not found" once the missing file is detected.
+  let loadErrorText = $derived(
+    mediaErrorText('video', { missing: boardRefIntegrityStore.isBrokenTile(tile.id), code: errorCode }),
+  );
 
   function handleVideoLoad() {
     loadFailed = false;
   }
 
-  function handleVideoError() {
+  function handleVideoError(e: Event) {
+    errorCode = (e.currentTarget as HTMLVideoElement).error?.code ?? null;
     loadFailed = true;
   }
 
@@ -82,7 +90,7 @@
             <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
             <line x1="1" y1="5" x2="23" y2="19"/>
           </svg>
-          <span>Video could not be loaded</span>
+          <span>{loadErrorText}</span>
           {#if tile.src}<span class="load-error-path">{tile.src}</span>{/if}
         </div>
       {/if}

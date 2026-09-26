@@ -18,6 +18,37 @@
   const hasCheckable = $derived(menu.items.some((item) => item.checked !== undefined));
   // One item with an icon gives every item an icon slot, so the labels line up.
   const hasIcons = $derived(actionItems.some((item) => item.icon));
+  const blocks = $derived(menuBlocks(menu.items));
+
+  type MenuBlock =
+    | { kind: 'divider'; item: ContextMenuItem }
+    | { kind: 'item'; item: ContextMenuItem }
+    | { kind: 'group'; heading: ContextMenuItem; items: ContextMenuItem[] };
+
+  /**
+   * A heading names the items under it, up to the next divider or heading.
+   * They render as a `group` labelled by the heading, so a screen reader says
+   * "3 cards selected" on entering them, while the heading itself is never a
+   * focus stop.
+   */
+  function menuBlocks(items: ContextMenuItem[]): MenuBlock[] {
+    const out: MenuBlock[] = [];
+    let group: { kind: 'group'; heading: ContextMenuItem; items: ContextMenuItem[] } | null = null;
+    for (const item of items) {
+      if (item.heading) {
+        group = { kind: 'group', heading: item, items: [] };
+        out.push(group);
+      } else if (item.divider) {
+        group = null;
+        out.push({ kind: 'divider', item });
+      } else if (group) {
+        group.items.push(item);
+      } else {
+        out.push({ kind: 'item', item });
+      }
+    }
+    return out;
+  }
 
   function handleItemClick(item: ContextMenuItem) {
     if (item.disabled) return;
@@ -161,43 +192,52 @@
     onkeydown={handleKeydown}
     style="left: {posX}px; top: {posY}px;"
   >
-    {#each menu.items as item, i (`${item.id}_${i}`)}
-      {#if item.divider}
+    {#snippet menuItem(item: ContextMenuItem)}
+      {@const actionIdx = actionItems.indexOf(item)}
+      {@const isCheckable = item.checked !== undefined}
+      <button
+        class="menu-item"
+        class:danger={item.danger}
+        class:disabled={item.disabled}
+        class:focused={actionIdx === focusedIndex}
+        role={isCheckable ? 'menuitemcheckbox' : 'menuitem'}
+        aria-checked={isCheckable ? item.checked : undefined}
+        aria-disabled={item.disabled}
+        onclick={() => handleItemClick(item)}
+      >
+        {#if hasCheckable}
+          <span class="menu-check" aria-hidden="true">
+            {#if item.checked}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+            {/if}
+          </span>
+        {/if}
+        {#if item.icon}
+          <svg class="menu-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d={item.icon}/>
+          </svg>
+        {:else if hasIcons}
+          <span class="menu-icon-slot" aria-hidden="true"></span>
+        {/if}
+        <span class="menu-label">{item.label}</span>
+        {#if item.shortcut}
+          <span class="menu-shortcut">{item.shortcut}</span>
+        {/if}
+      </button>
+    {/snippet}
+    {#each blocks as block, i (`${block.kind === 'group' ? block.heading.id : block.item.id}_${i}`)}
+      {#if block.kind === 'divider'}
         <div class="menu-divider" role="separator"></div>
-      {:else if item.heading}
-        <div class="menu-heading" role="presentation">{item.label}</div>
+      {:else if block.kind === 'group'}
+        {@const headingId = `context-menu-heading-${i}`}
+        <div class="menu-group" role="group" aria-labelledby={headingId}>
+          <div class="menu-heading" id={headingId} role="presentation">{block.heading.label}</div>
+          {#each block.items as item, j (`${item.id}_${j}`)}
+            {@render menuItem(item)}
+          {/each}
+        </div>
       {:else}
-        {@const actionIdx = actionItems.indexOf(item)}
-        {@const isCheckable = item.checked !== undefined}
-        <button
-          class="menu-item"
-          class:danger={item.danger}
-          class:disabled={item.disabled}
-          class:focused={actionIdx === focusedIndex}
-          role={isCheckable ? 'menuitemcheckbox' : 'menuitem'}
-          aria-checked={isCheckable ? item.checked : undefined}
-          aria-disabled={item.disabled}
-          onclick={() => handleItemClick(item)}
-        >
-          {#if hasCheckable}
-            <span class="menu-check" aria-hidden="true">
-              {#if item.checked}
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-              {/if}
-            </span>
-          {/if}
-          {#if item.icon}
-            <svg class="menu-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d={item.icon}/>
-            </svg>
-          {:else if hasIcons}
-            <span class="menu-icon-slot" aria-hidden="true"></span>
-          {/if}
-          <span class="menu-label">{item.label}</span>
-          {#if item.shortcut}
-            <span class="menu-shortcut">{item.shortcut}</span>
-          {/if}
-        </button>
+        {@render menuItem(block.item)}
       {/if}
     {/each}
   </div>

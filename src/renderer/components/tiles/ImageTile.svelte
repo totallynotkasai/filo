@@ -5,6 +5,8 @@
   import IconButton from '../shared/IconButton.svelte';
   import { historyStore } from '../../stores/history.svelte';
   import { UpdateAttachmentSrcCommand, UpdateImageAltCommand } from '../../commands/index';
+  import { boardRefIntegrityStore } from '../../stores/boardRefIntegrity.svelte';
+  import { mediaErrorText } from '../../lib/utils/mediaErrorText';
 
   let { tile }: { tile: ImageTile } = $props();
 
@@ -14,6 +16,7 @@
   // Surface a fallback when the image fails to load (broken/missing
   // vault path, dead URL) instead of leaving the OS broken-image glyph.
   let loadFailed = $state(false);
+  let loadErrorText = $derived(mediaErrorText('image', { missing: boardRefIntegrityStore.isBrokenTile(tile.id) }));
 
   function handleImageLoad() {
     loadFailed = false;
@@ -103,7 +106,7 @@
             <polyline points="21 15 16 10 5 21"/>
             <line x1="3" y1="3" x2="21" y2="21"/>
           </svg>
-          <span>Image could not be loaded</span>
+          <span>{loadErrorText}</span>
           {#if tile.src}<span class="load-error-path">{tile.src}</span>{/if}
         </div>
       {/if}

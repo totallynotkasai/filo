@@ -16,6 +16,7 @@
   import { isNonUtf8 } from '../../lib/vault/nonUtf8Paths.svelte';
   import { confirmConvertToUtf8 } from '../../lib/vault/convertToUtf8';
   import { uiStore } from '../../stores/ui.svelte';
+  import { trashStore } from '../../stores/trash.svelte';
   import { boardCacheStore } from '../../stores/boardCache.svelte';
   import { tiptapToolbar } from '../../lib/editor/toolbarConfig';
   import { createTiptapEditor } from '../../lib/editor/createEditor';
@@ -224,6 +225,12 @@
   // overwrite the unread file with an empty editor.
   let unreadable = $derived(model?.status === 'unreadable');
   let missing = $derived(model?.status === 'missing');
+  // A note deleted in Filo sits in its trash: find it, so the banner can offer
+  // it back. Read again each time the note goes missing.
+  $effect(() => {
+    if (missing) untrack(() => void trashStore.refresh());
+  });
+  let trashed = $derived(missing && docPath ? trashStore.entryHolding(docPath) : undefined);
 
   // Freeze the editor while a tab-close drain is in flight (a keystroke would
   // be stranded by the unmount), while the note can't be written (lossy, not
@@ -253,6 +260,14 @@
     // Hand the model every keystroke, so the raw text includes them.
     view.serialize();
     rawMode = true;
+  }
+
+  function closeThisTab(): void {
+    void tabStore.close(tabId);
+  }
+
+  function restoreFromTrash(): void {
+    if (trashed) void trashStore.restore(trashed);
   }
 
   function retryRead(): void {
@@ -298,6 +313,16 @@
         <div class="readonly-banner" role="alert">
           <span class="readonly-text">Filo couldn't read this file{docPath ? ` ("${docPath}")` : ''}. Editing is paused so your changes can't overwrite it — retry once the file is readable.</span>
           <button class="readonly-action" onclick={retryRead}>Retry</button>
+        </div>
+      {/if}
+      {#if missing}
+        <!-- The file is gone, so there is nothing to edit or save into. -->
+        <div class="readonly-banner missing-banner" role="alert">
+          <span class="readonly-text">This note was deleted or moved.</span>
+          {#if trashed}
+            <button class="readonly-action" onclick={restoreFromTrash} disabled={trashStore.busy}>Restore from Trash</button>
+          {/if}
+          <button class="readonly-action" onclick={closeThisTab}>Close tab</button>
         </div>
       {/if}
       {#if nonUtf8}

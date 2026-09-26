@@ -159,7 +159,7 @@ export function dragDropAction(node: HTMLElement, scope: BoardScope) {
     const targetDir = getActiveContentFolderAbs(scope.board.current) || vaultDir;
 
     if (!vaultDir) {
-      uiStore.toast('Save the project first to enable file drops', 'info', 2000);
+      uiStore.toast('Open a vault first to enable file drops', 'info', 2000);
       return;
     }
 

@@ -12,7 +12,7 @@
    * `settings.groupBy` and `settings.sortBy` are persisted; the filter
    * panel's transient state is local.
    */
-  import { STYLE_ICON_PATH } from '../../constants/icons';
+  import { buildSectionContextMenu } from '../../lib/tasklist/taskContextMenus';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { getContext } from 'svelte';
   import { BOARD_SCOPE_KEY, isActiveScope, type BoardScope } from '../../lib/boards/boardScope.svelte';
@@ -486,20 +486,15 @@
     const menuY = e.clientY;
     // The synthetic default isn't persisted, so it can only be renamed.
     const isDefault = sid === DEFAULT_SECTION_ID;
-    const items: Array<{ id: string; label: string; icon?: string; action?: () => void; divider?: boolean; danger?: boolean }> = [
-      { id: 'rename', label: 'Rename section', action: () => { editingSectionId = sid; editingSectionTitle = section.title; } },
-    ];
-    if (!isDefault) {
-      items.push(
-        { id: 'style', label: 'Style', icon: STYLE_ICON_PATH, action: () => openSectionStylePopup(sid, menuX, menuY) },
-        { id: 'move-up', label: 'Move up', action: () => moveSection(sid, -1) },
-        { id: 'move-down', label: 'Move down', action: () => moveSection(sid, 1) },
-        { id: 'div', label: '', divider: true },
-        { id: 'delete-keep', label: 'Delete section (keep tasks)', action: () => deleteSection(sid, 'keep-tasks') },
-        { id: 'delete-all', label: 'Delete section + tasks', danger: true, action: () => deleteSection(sid, 'delete-tasks') },
-      );
-    }
-    uiStore.showContextMenu(menuX, menuY, items);
+    uiStore.showContextMenu(menuX, menuY, buildSectionContextMenu({
+      isDefault,
+      onRename: () => { editingSectionId = sid; editingSectionTitle = section.title; },
+      onStyle: () => openSectionStylePopup(sid, menuX, menuY),
+      onMoveUp: () => moveSection(sid, -1),
+      onMoveDown: () => moveSection(sid, 1),
+      onDeleteKeepTasks: () => deleteSection(sid, 'keep-tasks'),
+      onDeleteWithTasks: () => deleteSection(sid, 'delete-tasks'),
+    }));
   }
 
   // ── Subtask collapse state (persisted to the board JSON) ──

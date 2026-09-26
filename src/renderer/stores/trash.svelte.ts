@@ -23,6 +23,7 @@ import {
 import { captureVaultIdentity, isStillSameVault, type VaultIdentity } from '../lib/vault/vaultIdentity';
 import { reportError } from '../lib/utils/errorBus';
 import { normalizePath, toPosix } from '../lib/utils/path';
+import { vaultPath } from '../../shared/vaultPath';
 
 let entries = $state<TrashEntryInfo[]>([]);
 let thisMachine = $state('');
@@ -174,6 +175,22 @@ export const trashStore = {
   /** This machine's id: entries from other machines are purged only there. */
   get thisMachine(): string { return thisMachine; },
   get busy(): boolean { return busy; },
+
+  /**
+   * The newest trashed item that holds `rel` (the file itself, or a folder
+   * it was in), if it's still in the trash. Case-folded, like every path key.
+   */
+  entryHolding(rel: string): TrashEntryInfo | undefined {
+    const key = vaultPath(rel);
+    let best: TrashEntryInfo | undefined;
+    for (const e of entries) {
+      if (!e.present) continue;
+      const at = vaultPath(e.originalPath);
+      if (at !== key && !key.startsWith(`${at}/`)) continue;
+      if (!best || Date.parse(e.deletedAt) > Date.parse(best.deletedAt)) best = e;
+    }
+    return best;
+  },
 
   async refresh(): Promise<void> {
     const vaultRoot = vaultStore.path;

@@ -21,6 +21,7 @@
   import { NotesBox } from '../../lib/tasklist/notesBox.svelte';
   import type { SetBodyStatus } from '../../stores/notes.svelte';
   import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
+  import { buildTaskContextMenu } from '../../lib/tasklist/taskContextMenus';
   import TaskDatePicker from './TaskDatePicker.svelte';
   import TagBadge from '../tags/TagBadge.svelte';
   import TagsPopupMenu from '../tags/TagsPopupMenu.svelte';
@@ -396,52 +397,26 @@
     if (isEditableTextTarget(e.target)) return;
     e.preventDefault();
     e.stopPropagation();
-    // Build "Move to section…" entries from the parent's section list.
-    // Flat — uiStore.showContextMenu doesn't support submenus, so each section
-    // is its own item. Hidden when there's no choice (single section or no
-    // move callback). Skipping the current section avoids no-op moves.
-    //
-    // When the right-clicked row is part of a multi-selection (selectionSize
-    // > 1), the labels switch to bulk wording. The parent's
-    // `onMoveToSection` callback inspects the selection state itself and
-    // routes to bulk vs single — we don't need a separate callback prop.
-    const isBulkMove = selected && selectionSize > 1;
-    const moveItems = (onMoveToSection && availableSections.length > 1)
-      ? availableSections
-          .filter((s) => s.id !== currentSectionId)
-          .map((s) => ({
-            id: `move-to-${s.id}`,
-            label: isBulkMove
-              ? `Move ${selectionSize} tasks to: ${s.title}`
-              : `Move to: ${s.title}`,
-            icon: 'M5 12h14M13 5l7 7-7 7',
-            action: () => onMoveToSection?.(s.id),
-          }))
-      : [];
+    // Move targets are flat items (the menu has no submenus), hidden when
+    // there's no other section. Part of a multi-selection, the labels count
+    // the selection; `onMoveToSection` itself routes to the bulk move.
     const cursor = { x: e.clientX, y: e.clientY };
-    uiStore.showContextMenu(
-      e.clientX,
-      e.clientY,
-      [
-        { id: 'open', label: 'Open as Document', icon: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z', action: onOpen },
-        { id: 'edit', label: 'Rename Task', icon: 'M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z', action: () => startEdit() },
-        ...(onAddSubtask && canAddSubtask
-          ? [{ id: 'add-subtask', label: 'Add Subtask', icon: 'M12 5v14M5 12h14', action: onAddSubtask }]
-          : []),
-        { id: 'toggle', label: completed ? 'Mark Incomplete' : 'Mark Complete', icon: 'M20 6L9 17l-5-5', action: onToggleComplete },
-        { id: 'priority', label: 'Cycle Priority', icon: 'M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3', action: onCyclePriority },
-        ...(onEditTags
-          ? [{ id: 'edit-tags', label: 'Edit tags', icon: 'M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z', action: () => onEditTags?.(cursor) }]
-          : []),
-        ...(moveItems.length > 0
-          ? [{ id: 'move-sep', label: '', divider: true }, ...moveItems]
-          : []),
-        { id: 'div', label: '', divider: true },
-        { id: 'delete', label: 'Delete Task', icon: 'M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2', danger: true, action: onDelete },
-        ...(onDeleteWithFile ? [{ id: 'delete-with-file', label: 'Delete Task & File…', icon: 'M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2', danger: true, action: onDeleteWithFile }] : []),
-      ],
-      tile.id,
-    );
+    uiStore.showContextMenu(e.clientX, e.clientY, buildTaskContextMenu({
+      completed,
+      onOpenAsDocument: onOpen,
+      onRename: () => startEdit(),
+      onAddSubtask: onAddSubtask && canAddSubtask ? onAddSubtask : undefined,
+      onToggleComplete,
+      onCyclePriority,
+      onTags: onEditTags ? () => onEditTags?.(cursor) : undefined,
+      moveTargets: onMoveToSection && availableSections.length > 1
+        ? availableSections.filter((s) => s.id !== currentSectionId)
+        : [],
+      moveCount: selected ? selectionSize : 1,
+      onMoveTo: (sectionId) => onMoveToSection?.(sectionId),
+      onRemove: () => onDelete(),
+      onDeleteFromVault: onDeleteWithFile,
+    }), tile.id);
   }
 
   function handleRowClick(e: MouseEvent) {

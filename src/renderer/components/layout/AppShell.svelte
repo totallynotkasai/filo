@@ -40,10 +40,11 @@
   import { installLinkClickHandling } from '../../lib/editor/linkClicks';
   import { pendingSettingsStore } from '../../stores/pendingSettings.svelte';
   import { confirmDiscardSettings } from '../../lib/settings/confirmDiscardSettings';
+  import { pickAndOpenVault } from '../../stores/vaultOpen';
 
   let showHome = $state(false);
 
-  // Show home when there's no project
+  // Show home when no vault is open
   let shouldShowHome = $derived(vaultStore.project === null || showHome);
 
   // ── Board Browser focus trap (non-Modal slide-up panel) ──
@@ -87,6 +88,8 @@
     return tabStore.activeTab?.boardType === 'mindmap' && boardStore.boardType === 'mindmap';
   }
 
+  const vaultIsOpen = (): boolean => vaultStore.project !== null;
+
   const deleteSelectionDeps: DeleteSelectionDeps = {
     board: boardStore,
     selection: selectionStore,
@@ -97,11 +100,11 @@
     showHome = true;
   }
 
-  // When a project is loaded, hide home
+  // A vault that opens replaces Home, however it was opened (Home's own
+  // buttons, the vault menu, Ctrl+O).
   $effect(() => {
-    if (vaultStore.project !== null && showHome) {
-      // Keep showing home until user explicitly navigates away
-    }
+    void vaultStore.path;
+    showHome = false;
   });
 
   // Hide home when tabs are opened
@@ -187,6 +190,38 @@
         binding: { key: 'y', ctrl: true },
         execute: () => historyStore.redo(),
       }),
+      // A second name, so each chord can be rebound on its own.
+      registerCommandWithShortcut({
+        name: 'history:redo-alt', label: 'Redo (alternative)', description: 'Redo (alternative)',
+        binding: { key: 'z', ctrl: true, shift: true },
+        execute: () => historyStore.redo(),
+      }),
+
+      // ── Vault and Settings ──
+      //
+      // There is no native menu, so these are the keyboard way in. Opening
+      // and closing go through the vault store's own open / close, which save
+      // first and ask before leaving anything unsaved behind.
+      registerCommandWithShortcut({
+        name: 'vault:open', label: 'Open Vault', description: 'Open Vault',
+        binding: { key: 'o', ctrl: true },
+        allowInEditor: true,
+        execute: async () => { await pickAndOpenVault(); },
+      }),
+      registerCommandWithShortcut({
+        name: 'vault:close', label: 'Close Vault', description: 'Close Vault',
+        binding: { key: 'w', ctrl: true, shift: true },
+        allowInEditor: true,
+        enabled: vaultIsOpen,
+        execute: async () => { await vaultStore.closeVault(); },
+      }),
+      registerCommandWithShortcut({
+        name: 'settings:open', label: 'Open Settings', description: 'Open Settings',
+        binding: { key: ',', ctrl: true },
+        allowInEditor: true,
+        enabled: vaultIsOpen,
+        execute: () => uiStore.openModal('project-settings'),
+      }),
       registerCommandWithShortcut({
         name: 'template:open', label: 'Insert Template', description: 'Insert Template',
         binding: { key: 't', ctrl: true },
@@ -200,7 +235,7 @@
         execute: () => uiStore.openModal('tags-browser'),
       }),
       registerCommandWithShortcut({
-        name: 'vault:save', label: 'Save Project', description: 'Save Project',
+        name: 'vault:save', label: 'Save', description: 'Save',
         binding: { key: 's', ctrl: true },
         // Fires even when focus is in a TipTap editor.
         // Without this, Ctrl+S inside a TextTile or DocumentEditor is
@@ -415,7 +450,7 @@
 
     <main id="main-workspace" class="workspace" aria-label="Board workspace">
       {#if shouldShowHome}
-        <HomeScreen onReturnToProject={() => showHome = false} />
+        <HomeScreen onReturnToVault={() => showHome = false} />
       {:else if tabStore.count > 0}
         <div class="board-viewport">
           {#if workspaceStore.paneTree}
@@ -425,13 +460,13 @@
         </div>
       {:else if vaultStore.project !== null}
         <div class="empty-workspace">
-          <button class="empty-workspace-btn" onclick={() => uiStore.openModal('board-browser')} aria-label="Open Board Browser">
+          <button class="empty-workspace-btn" onclick={() => uiStore.openModal('board-browser')}>
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
               <rect x="3" y="3" width="18" height="18" rx="2"/>
               <line x1="12" y1="8" x2="12" y2="16"/>
               <line x1="8" y1="12" x2="16" y2="12"/>
             </svg>
-            <span>Open a Tab to get started</span>
+            <span>Create or open a board</span>
           </button>
         </div>
       {/if}
@@ -538,7 +573,7 @@
   {#if uiStore.isModalOpen('project-settings')}
     <Modal
       id="project-settings"
-      title="Project Settings"
+      title="Settings"
       width="680px"
       beforeClose={() => confirmDiscardSettings(pendingSettingsStore, uiStore)}
     >

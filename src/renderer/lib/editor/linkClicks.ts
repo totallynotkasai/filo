@@ -2,20 +2,14 @@ import { isMacOS } from '@tiptap/core';
 import { isFiloLink } from '../../schema/link';
 import { linksStore } from '../../stores/links.svelte';
 import { asSafeOpenExternal } from '../../../shared/untrusted';
+import { isOpenable } from './linkUrl';
 
 /** The tooltip line on a link that can be opened. */
 export const LINK_OPEN_HINT = isMacOS() ? 'Cmd+click to open' : 'Ctrl+click to open';
 
-/** Schemes a click hands to the OS: browser, mail client, dialler. */
-const EXTERNAL_RE = /^(https?:\/\/|mailto:|tel:)/i;
-
 function editableEditorOf(el: Element): HTMLElement | null {
   const pm = el.closest('.ProseMirror');
   return pm instanceof HTMLElement && pm.getAttribute('contenteditable') === 'true' ? pm : null;
-}
-
-function isOpenable(href: string): boolean {
-  return isFiloLink(href) || (EXTERNAL_RE.test(href) && asSafeOpenExternal(href) !== null);
 }
 
 /**
@@ -30,7 +24,7 @@ function openLink(href: string): boolean {
     linksStore.handleLinkClick(href);
     return true;
   }
-  if (!EXTERNAL_RE.test(href)) return false;
+  if (!isOpenable(href)) return false;
   const safe = asSafeOpenExternal(href);
   if (!safe) return false;
   // allow-envelope-bare: fire-and-forget click handler; failure is

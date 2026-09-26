@@ -24,6 +24,10 @@ import {
   searchTagsBrowser,
   escInTagsBrowserSearch,
   tagsBrowserEmptyText,
+  clickSidebarNewFolder,
+  sidebarRenameValue,
+  sidebarExpandCollapseLabel,
+  clickSidebarExpandCollapse,
   $$,
 } from './harness/actions';
 
@@ -123,6 +127,34 @@ describe('sidebar tag filter', () => {
     expect(done).toBe(true);
     expect(sidebarTagFilterPill(app)).toBeNull();
     expect(sidebarListing(app).sort()).toEqual(['A.md', 'B.md']);
+  });
+});
+
+describe('sidebar toolbar while a tag filter is on', () => {
+  it('New Folder clears the filter, so the new folder shows and its rename starts', async () => {
+    const app = await startApp(VAULT);
+    await clickSidebarTagChip(app, 'Loose.md', 'project');
+    await clickSidebarNewFolder(app);
+    expect(sidebarTagFilterPill(app)).toBeNull();
+    expect(listing(app)).toContain('New Folder');
+    expect(sidebarRenameValue(app)).toBe('New Folder');
+  });
+
+  it('Collapse All and Expand All act on the folders the filter shows', async () => {
+    const app = await startApp(VAULT);
+    await clickSidebarTagChip(app, 'Loose.md', 'project');
+    expect(sidebarExpandCollapseLabel(app)).toBe('Collapse All');
+
+    await clickSidebarExpandCollapse(app);
+    expect(listing(app)).toEqual(['Loose.md', 'Media', 'Work']);
+    expect(sidebarExpandCollapseLabel(app)).toBe('Expand All');
+
+    await clickSidebarExpandCollapse(app);
+    expect(listing(app)).toEqual(PROJECT_FILTERED);
+
+    // The user's own folder state was never touched: nothing was expanded.
+    await clearSidebarTagFilter(app);
+    expect(listing(app)).toEqual(UNFILTERED);
   });
 });
 

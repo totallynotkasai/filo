@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normaliseLinkUrl } from '@renderer/lib/editor/linkUrl';
+import { isOpenable, normaliseLinkUrl } from '@renderer/lib/editor/linkUrl';
 
 describe('normaliseLinkUrl', () => {
   it.each([
@@ -19,6 +19,7 @@ describe('normaliseLinkUrl', () => {
   it.each([
     'https://example.com',
     'http://example.com',
+    'HTTPS://EXAMPLE.COM',
     'mailto:someone@example.com',
     'tel:+441234567890',
     'tel:01234567890',
@@ -28,14 +29,42 @@ describe('normaliseLinkUrl', () => {
     expect(normaliseLinkUrl(input)).toBe(input);
   });
 
-  it('passes a refused scheme through unchanged, for the editor to refuse', () => {
-    expect(normaliseLinkUrl('javascript:alert(1)')).toBe('javascript:alert(1)');
-  });
+  // A link the editor would accept but a click wouldn't open is saved dead.
+  it.each(['ftp://files.example.com/a.zip', 'sms:+441234567890', 'javascript:alert(1)', 'data:text/html,x', 'file:///C:/x.txt'])(
+    'refuses %s, which a click would not open',
+    (input) => {
+      expect(normaliseLinkUrl(input)).toBeNull();
+    },
+  );
 
   it.each(['', '   ', 'Notes.md', 'folder/Notes.markdown', 'just words', 'nodot', 'two words.com'])(
     'makes nothing openable of %j',
     (input) => {
       expect(normaliseLinkUrl(input)).toBeNull();
+    },
+  );
+
+  it('everything it returns is openable', () => {
+    for (const input of ['example.com', 'a@b.com', '//x.example', 'tel:1', 'filo://note/A.md', 'http://x.example']) {
+      const href = normaliseLinkUrl(input);
+      expect(href).not.toBeNull();
+      expect(isOpenable(href ?? '')).toBe(true);
+    }
+  });
+});
+
+describe('isOpenable', () => {
+  it.each(['https://example.com', 'http://example.com', 'mailto:a@b.com', 'tel:123', 'filo://note/A.md'])(
+    'opens %s',
+    (href) => {
+      expect(isOpenable(href)).toBe(true);
+    },
+  );
+
+  it.each(['ftp://example.com', 'sms:123', 'javascript:alert(1)', 'example.com', 'Notes.md', ''])(
+    'does not open %j',
+    (href) => {
+      expect(isOpenable(href)).toBe(false);
     },
   );
 });

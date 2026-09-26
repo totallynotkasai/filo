@@ -54,9 +54,11 @@ export function requestDeleteSelected(deps: DeleteSelectionDeps): void {
   const count = tiles.length;
   const notePaths = deps.vaultPath() ? textTileNotePaths(tiles) : [];
   uiStore.openConfirm({
-    title: count === 1 ? 'Delete tile?' : `Delete ${count} tiles?`,
-    body: `Are you sure you want to delete ${count} tile${count !== 1 ? 's' : ''}? You can undo this.`,
-    confirmLabel: 'Delete',
+    // Worded like the menus' "Remove from board": the files stay unless the
+    // extra option below is ticked.
+    title: count === 1 ? 'Remove tile from board?' : `Remove ${count} tiles from board?`,
+    body: `${count === 1 ? 'The tile is' : `${count} tiles are`} removed from this board. You can undo this.`,
+    confirmLabel: 'Remove',
     danger: true,
     extraOption: notePaths.length > 0
       ? {

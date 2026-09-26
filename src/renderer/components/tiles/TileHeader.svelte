@@ -21,6 +21,9 @@
   import { historyStore } from '../../stores/history.svelte';
   import { registerComponentFlush } from '../../lib/boards/componentFlush';
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
+  import { recreateMissingNote } from '../../lib/notes/recreateNote';
+  import { reportError } from '../../lib/utils/errorBus';
+  import { relinkTargets } from '../../lib/vault/relinkTargets';
   import { UpdateTitleCommand, ToggleFramelessCommand, textTileNotePaths } from '../../commands/index';
   import {
     PendingWritesFailedError,
@@ -288,54 +291,37 @@
   }
 
   /**
-   * Returns the set of file extensions that would satisfy this tile's
-   * type when re-linking. Mirrors the keying in `UpdateTilePathCommand`.
-   */
-  function expectedRelinkExtensions(): string[] {
-    switch (tile.type) {
-      case 'text':
-        return ['md', 'markdown'];
-      case 'image':
-        return ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'];
-      case 'video':
-        return ['mp4', 'webm', 'ogv', 'mov', 'avi', 'mkv'];
-      case 'audio':
-        return ['mp3', 'wav', 'ogg', 'aac', 'flac', 'wma', 'm4a'];
-      case 'file':
-        return ['pdf', 'txt', 'csv', 'xlsx', 'docx', 'zip'];
-      default:
-        return [];
-    }
-  }
-
-  /**
    * Opens a context-menu-style quick-action popup anchored to the broken-ref
-   * badge. Offers Sync (writes local state to a new file at the expected
-   * path), Re-link (pick a different vault file via the modal picker) and
-   * Remove (drops the placement).
+   * badge. Offers Recreate backing file (a text tile only: puts the note back
+   * at its path), Re-link (pick a different vault file via the modal picker)
+   * and Remove (drops the placement). A media file can't be recreated from
+   * anything Filo holds, so it gets no Recreate.
    */
   function openBrokenRefMenu(e: MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const recreate = tile.type === 'text'
+      ? [{
+          id: 'broken-recreate',
+          label: 'Recreate backing file',
+          icon: 'M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15',
+          action: () => { void recreateBackingFile(); },
+        }]
+      : [];
     uiStore.showContextMenu(rect.left, rect.bottom + 4, [
-      {
-        id: 'broken-sync',
-        label: 'Recreate backing file',
-        icon: 'M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15',
-        action: () => { void syncTile(); },
-      },
+      ...recreate,
       {
         id: 'broken-relink',
-        label: 'Re-link to another file...',
+        label: 'Re-link to another file…',
         icon: 'M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71',
         action: () => {
-          const exts = expectedRelinkExtensions();
-          if (exts.length === 0) {
+          const targets = relinkTargets(tile.type);
+          if (!targets) {
             uiStore.toast('Re-link not supported for this tile type.', 'warning', 3000);
             return;
           }
-          uiStore.openRelinkModal(tile.id, exts);
+          uiStore.openRelinkModal(tile.id, targets);
         },
       },
       {
@@ -372,6 +358,18 @@
         : undefined,
       onConfirm: (deleteWithFile) => { void performDeleteTile(deleteWithFile === true); },
     });
+  }
+
+  async function recreateBackingFile(): Promise<void> {
+    const path = tile.type === 'text' ? tile.filePath : undefined;
+    if (!path) return;
+    try {
+      const outcome = await recreateMissingNote(path);
+      if (outcome === 'created') uiStore.toast(`Recreated "${path}".`, 'success', 3500);
+      else uiStore.toast(`A file is back at "${path}"; nothing was overwritten.`, 'info', 3500);
+    } catch (err) {
+      reportError('TileHeader.recreate', err, `Couldn't recreate "${path}".`);
+    }
   }
 
   async function syncTile() {

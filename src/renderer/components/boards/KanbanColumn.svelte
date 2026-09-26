@@ -7,7 +7,7 @@
    * `TileContainer`. Drag/drop reorders placements between columns; the
    * Add-Tile button opens the type-picker modal upstream.
    */
-  import { STYLE_ICON_PATH } from '../../constants/icons';
+  import { buildCardContextMenu, buildColumnContextMenu } from '../../lib/kanban/kanbanContextMenus';
   import { untrack, getContext } from 'svelte';
   import {
     dndzone,
@@ -394,15 +394,16 @@
     e.stopPropagation();
     const menuX = e.clientX;
     const menuY = e.clientY;
-    uiStore.showContextMenu(menuX, menuY, [
-      { id: 'add-tile', label: 'Add Card', icon: 'M12 5v14M5 12h14', action: onAddTile },
-      { id: 'rename', label: 'Rename Column', icon: 'M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z', action: startEditTitle },
-      { id: 'style', label: 'Style', icon: STYLE_ICON_PATH, action: () => onOpenColumnStyle?.(menuX, menuY) },
-      { id: 'collapse', label: column.collapsed ? 'Expand' : 'Collapse', icon: column.collapsed ? 'M9 18l6-6-6-6' : 'M6 9l6 6 6-6', action: onToggleCollapse },
-      { id: 'wip', label: wipActive ? `WIP Limit: ${wipLimit}` : 'Set WIP Limit…', action: startEditWip },
-      { id: 'div', label: '', divider: true },
-      { id: 'delete', label: 'Delete Column', icon: 'M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2', danger: true, action: onDelete },
-    ], column.id);
+    uiStore.showContextMenu(menuX, menuY, buildColumnContextMenu({
+      collapsed: !!column.collapsed,
+      wipLimit: wipActive ? wipLimit : null,
+      onAddCard: onAddTile,
+      onRename: startEditTitle,
+      onStyle: () => onOpenColumnStyle?.(menuX, menuY),
+      onToggleCollapse,
+      onEditWip: startEditWip,
+      onDelete,
+    }), column.id);
   }
 
   function handleTileContextMenu(e: MouseEvent, tileId: string) {
@@ -420,37 +421,13 @@
     }
     e.preventDefault();
     e.stopPropagation();
-    // DESIGN: the Kanban tile right-click menu is intentionally minimal.
-    // Tag editing, properties, style, locking, and sync-to-disk all live on
-    // the tile's own TileHeader (visible on hover/focus), so duplicating
-    // them here would just be noise. The Mind Map context menu is richer
-    // because canvas tiles support actions (auto-layout, copy/paste,
-    // connection mode) that don't apply to a column-bound flow layout.
-    //
-    // The one spec affordance kept: Open as Document, since TileHeader does
-    // NOT provide it (it's a tab-level navigation, not a tile-level edit).
-    const items: Array<{ id: string; label: string; icon?: string; danger?: boolean; divider?: boolean; action?: () => void }> = [];
-    const t = tilesById[tileId];
-    if (t?.type === 'text') {
-      items.push({
-        id: 'open-as-document',
-        label: 'Open as Document',
-        icon: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8',
-        action: () => onOpenAsDocument(tileId),
-      });
-      items.push({ id: 'div', label: '', divider: true });
-    }
     const menuX = e.clientX;
     const menuY = e.clientY;
-    items.push({ id: 'card-style', label: 'Card Style', icon: STYLE_ICON_PATH, action: () => onOpenCardStyle?.(tileId, menuX, menuY) });
-    items.push({
-      id: 'delete',
-      label: 'Remove from Column',
-      icon: 'M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2',
-      danger: true,
-      action: () => onDeleteTile(tileId),
-    });
-    uiStore.showContextMenu(menuX, menuY, items, tileId);
+    uiStore.showContextMenu(menuX, menuY, buildCardContextMenu({
+      onOpenAsDocument: tilesById[tileId]?.type === 'text' ? () => onOpenAsDocument(tileId) : undefined,
+      onStyle: () => onOpenCardStyle?.(tileId, menuX, menuY),
+      onRemove: () => onDeleteTile(tileId),
+    }), tileId);
   }
 
   /**

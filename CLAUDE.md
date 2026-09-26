@@ -153,6 +153,7 @@ filo/
 │   │   │   ├── vaultExternalChanges.ts  # Watcher events → vault index + noteStore.onDiskChanged
 │   │   │   ├── vaultRecovery.ts       # `.filo/.dirty.<machineId>` sentinel + recovery modal
 │   │   │   ├── vaultLeaveGuard.ts     # saveBeforeLeaving: close / open another vault save first, ask only if work is left
+│   │   │   ├── vaultOpen.ts           # pickAndOpenVault: folder picker → openVault → Recent vaults (Home, vault menu, Ctrl+O)
 │   │   │   ├── unsavedRescue.ts       # keepRescueCopies → `.filo/recovery/<ts>-unsaved/` (notes, boards, `_filo__*.json` for `.filo/` state)
 │   │   │   ├── heldDecisions.ts       # Changes held for a Reload / Keep mine answer (the save popover re-opens each prompt)
 │   │   │   ├── saveStateFeed.ts       # unsavedWork() + held decisions + reported failures → the save indicator
@@ -253,6 +254,7 @@ filo/
 │   │   ├── constants/
 │   │   │   ├── defaults.ts            # TILE_DEFAULTS, FRAME_DEFAULTS, ACCENT_COLOR
 │   │   │   ├── styleOptions.ts        # Shared style option lists (shape/border/pattern/path/arrow)
+│   │   │   ├── menuVocabulary.ts      # Context-menu labels, icons, plural headings; order Open, Style, Tags, Lock, Remove, Delete
 │   │   │   └── taskPriorities.ts      # Task / Kanban priority display metadata (color + label)
 │   │   │
 │   │   ├── lib/                       # Pure logic, no UI
@@ -266,6 +268,7 @@ filo/
 │   │   │   │   ├── unsavedNoteTexts.ts # The text a rescue copy holds for each unsaved note
 │   │   │   │   ├── createNote.ts      # createNoteFile: exclusive create with `title:`, ` (n)` on collision
 │   │   │   │   ├── openNote.ts        # openNoteInDocumentTab
+│   │   │   │   ├── recreateNote.ts    # recreateMissingNote: a broken text tile's "Recreate backing file" (exclusive create)
 │   │   │   │   ├── renameToTitle.ts   # "Rename file to match title"
 │   │   │   │   └── setNoteTitle.ts    # Document-tab title edit → frontmatter `title:`
 │   │   │   ├── vault/                 # Vault-side helpers (renderer)
@@ -288,11 +291,14 @@ filo/
 │   │   │   │   ├── fileBaselineRegistry.ts # Pre-write drift baselines (mtime/size) for board + `.filo/` files
 │   │   │   │   ├── externalChangeWindows.ts # Self-write / attachment-delete / note-rename grace windows
 │   │   │   │   ├── keepLocalBackup.ts # backupThenRead: back up, read, re-stat (Keep mine overwrites only what it backed up)
+│   │   │   │   ├── relinkTargets.ts   # Which files a broken tile may be re-linked to (a file tile: any)
 │   │   │   │   ├── unsavedMessages.ts # Close / open / quit wording for unsaved work, by cause
 │   │   │   │   ├── sidebarTagFilter.ts # Files a tag (or child tag) selects; tree cut down to them
+│   │   │   │   ├── sidebarFileMenu.ts # The sidebar file / folder context menu
 │   │   │   │   └── vaultTreeSort.ts   # Sidebar sort/group helpers
 │   │   │   ├── boards/                # Board file load/save logic
 │   │   │   │   ├── boardLoader.ts
+│   │   │   │   ├── boardLoadFailedNotice.ts # An unusable board: what is wrong, the .filo/recovery copy, Show in folder
 │   │   │   │   ├── boardSaver.ts      # File-write helpers
 │   │   │   │   ├── boardScope.svelte.ts
 │   │   │   │   ├── boardScopeFactory.ts
@@ -330,8 +336,8 @@ filo/
 │   │   │   │   ├── blockLayout.ts     # Aligned / indented paragraph or heading → one HTML line
 │   │   │   │   ├── noteEditorView.ts  # Editor ↔ noteStore bridge (150 ms idle serialise; never reloads its own body)
 │   │   │   │   ├── toolbarConfig.ts   # Formatting toolbar ↔ active editor bridge (every command runs via chainIfEditable)
-│   │   │   │   ├── insertLink.ts      # Insert Link popup target + apply/remove (bare caret inserts the text as a link)
-│   │   │   │   ├── linkUrl.ts         # normaliseLinkUrl: bare domain → https://, address → mailto:
+│   │   │   │   ├── insertLink.ts      # Insert Link popup target + apply/remove (a caret inside or right after a link edits it; else inserts)
+│   │   │   │   ├── linkUrl.ts         # normaliseLinkUrl: bare domain → https://, address → mailto:; isOpenable (the one scheme list)
 │   │   │   │   ├── linkClicks.ts      # Link clicks: plain click edits in a focused editor, Ctrl/Cmd+click opens
 │   │   │   │   ├── blockTextStyle.ts  # Heading / Normal text clears the blocks' inline font size, family, colour
 │   │   │   │   └── tagExtension.ts
@@ -340,8 +346,8 @@ filo/
 │   │   │   │   ├── tagEditConfirm.ts  # Tags-browser delete/rename confirms → tagUndo
 │   │   │   │   ├── tagRowInput.ts     # Tag-row parsing: comma list, autocomplete
 │   │   │   │   └── tagBrowserFilter.ts # Tags Browser search (keeps parent rows) + one-pass tag counts
-│   │   │   ├── kanban/                # Kanban-board logic
-│   │   │   ├── tasklist/              # Task List logic (notesBox.svelte.ts: the row notes box draft)
+│   │   │   ├── kanban/                # Kanban-board logic (kanbanContextMenus.ts: card / column / bulk menus)
+│   │   │   ├── tasklist/              # Task List logic (notesBox.svelte.ts: the row notes box draft; taskContextMenus.ts)
 │   │   │   ├── tasks/                 # Task-frontmatter helpers, recurrence, quickAddParser (shared)
 │   │   │   ├── mindmap/               # Mind-map keyboard + selection
 │   │   │   │   ├── mindMapContextMenus.ts # Tile / frame / canvas menus ("N tiles selected" group)
@@ -374,6 +380,7 @@ filo/
 │   │   │       ├── errorToastAggregator.ts
 │   │   │       ├── listKeyNav.ts
 │   │   │       ├── mediaUrl.ts
+│   │   │       ├── mediaErrorText.ts  # A media tile's load error ("File not found" before any format error)
 │   │   │       ├── normalizeTagsField.ts
 │   │   │       ├── path.ts
 │   │   │       ├── popupAnchor.ts
@@ -387,7 +394,7 @@ filo/
 │   │       ├── shared/                # Shared UI primitives
 │   │       │   ├── Modal.svelte
 │   │       │   ├── ConfirmDialog.svelte
-│   │       │   ├── ContextMenu.svelte
+│   │       │   ├── ContextMenu.svelte # A heading and its items render as a labelled role="group"
 │   │       │   ├── Toast.svelte
 │   │       │   ├── ColorPicker.svelte
 │   │       │   ├── EmojiPicker.svelte

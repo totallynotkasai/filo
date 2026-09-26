@@ -54,6 +54,8 @@
   import { MarqueeSelectionController } from '../../lib/mindmap/marqueeSelectionController.svelte';
   import { confirmRemoveFrame } from '../../lib/frames/confirmRemoveFrame';
   import { createSelectionActions } from '../../lib/mindmap/selectionActions';
+  import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
+  import { openNoteInDocumentTab } from '../../lib/notes/openNote';
   import type { Frame } from '../../schema/index';
 
   import SmartGuides from '../canvas/SmartGuides.svelte';
@@ -231,16 +233,19 @@
       if (!selectionStore.isSelected(tileId)) {
         selectionStore.select(tileId);
       }
+      const selectedIds = selectionActions.tileIds();
+      const hitTile = boardStore.getTile(tileId);
+      const notePath = hitTile ? resolveTextTileVaultPath(hitTile) : null;
       const items = buildTileContextMenu({
         selectedCount: selectionStore.selectedIds.size,
-        hasBrokenTiles: false,
-        brokenCount: 0,
+        anyUnlocked: selectedIds.some((id) => !boardStore.getTile(id)?.locked),
+        onOpenAsDocument: notePath ? () => openNoteInDocumentTab(notePath) : undefined,
         onStyle: () => selectionActions.openStyle(tileId, e.clientX, e.clientY),
         onTags: () => selectionActions.openTags(e.clientX, e.clientY),
         onSaveTemplate: () => uiStore.openModal('save-template'),
         // The right-clicked tile is always selected (above), so this covers it.
         onToggleLock: selectionActions.toggleLock,
-        onDelete: selectionActions.confirmDelete,
+        onRemove: selectionActions.confirmDelete,
       });
       uiStore.showContextMenu(e.clientX, e.clientY, items, tileId);
       return;
@@ -267,7 +272,7 @@
             onToggleLock: selectionActions.toggleLock,
             onTags: () => selectionActions.openTags(e.clientX, e.clientY),
             onStyle: () => selectionActions.openStyle(null, e.clientX, e.clientY),
-            onDelete: selectionActions.confirmDelete,
+            onRemove: selectionActions.confirmDelete,
           }
         : undefined,
       brokenCount,
@@ -368,7 +373,7 @@
       // Context-menu delete shares the same confirm
       // gate as the Frame.svelte trash button so neither entry point
       // can rip out a frame without a stop-the-world confirmation.
-      onDelete: () => confirmRemoveFrame({
+      onRemove: () => confirmRemoveFrame({
         tileCount: frame.tileIds.length,
         openConfirm: uiStore.openConfirm,
         onConfirmed: () => boardStore.removeFrameWithHistory(frame.id),

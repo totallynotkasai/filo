@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mount, unmount } from 'svelte';
 import TextFormattingToolbar from '@renderer/components/layout/TextFormattingToolbar.svelte';
 import { tiptapToolbar } from '@renderer/lib/editor/toolbarConfig';
-import { LINK_REFUSED_MESSAGE } from '@renderer/lib/editor/toolbarConfig';
+import { LINK_IN_CODE_MESSAGE, LINK_REFUSED_MESSAGE } from '@renderer/lib/editor/toolbarConfig';
 import {
   recordingFilo,
   mountTextTile,
@@ -118,6 +118,44 @@ describe('Insert Link from the toolbar', () => {
     expect(document.querySelector('.link-popup')).toBe(popup);
     expect(popup.querySelector('[role="alert"]')?.textContent).toBe(LINK_REFUSED_MESSAGE);
     expect(files.get('Note.md')).toBe('Alpha beta gamma\n');
+  });
+
+  it('refuses a scheme a click would not open (ftp:), and writes nothing', async () => {
+    const { m, files } = await setUp('Alpha beta gamma\n');
+    m.editor().commands.setTextSelection({ from: 7, to: 11 });
+    const { popup, url } = await openPopup();
+    type(url, 'ftp://files.example.com');
+    pressEnter(url);
+    await drainDebounce();
+    expect(document.querySelector('.link-popup')).toBe(popup);
+    expect(popup.querySelector('[role="alert"]')?.textContent).toBe(LINK_REFUSED_MESSAGE);
+    expect(files.get('Note.md')).toBe('Alpha beta gamma\n');
+  });
+
+  it('says a link cannot go in a code block, not that the URL is wrong', async () => {
+    const { m, files } = await setUp('```\ncode here\n```\n');
+    m.editor().commands.setTextSelection({ from: 1, to: 5 });
+    const { popup, url } = await openPopup();
+    type(url, 'https://example.com');
+    pressEnter(url);
+    await drainDebounce();
+    expect(document.querySelector('.link-popup')).toBe(popup);
+    expect(popup.querySelector('[role="alert"]')?.textContent).toBe(LINK_IN_CODE_MESSAGE);
+    expect(files.get('Note.md')).toBe('```\ncode here\n```\n');
+  });
+
+  it('a caret right before a link inserts a new link and leaves that one alone', async () => {
+    const { m, files } = await setUp('See [old](https://old.example) now\n');
+    m.editor().commands.setTextSelection(5);
+    const { popup, text, url } = await openPopup();
+    expect(text.value).toBe('');
+    expect(url.value).toBe('');
+    expect(popup.textContent).not.toContain('Remove');
+    type(text, 'new');
+    type(url, 'https://new.example');
+    pressEnter(url);
+    await drainDebounce();
+    expect(files.get('Note.md')).toBe('See [new](https://new.example)[old](https://old.example) now\n');
   });
 
   it("Enter and Escape don't reach window key handlers (a board's Enter renames the selected tile)", async () => {

@@ -36,16 +36,18 @@ import { defTitle, mediaTags, noteTags } from '../../stores/noteMeta';
 
 /** Single match record surfaced to the Search panel + ReplaceAll command. */
 export interface SearchMatch {
-  /** Owning board ID. Tile-less file matches use `null`. */
+  /** Owning board ID. */
   boardId: string;
   /** Owning board name (resolved at query time for the Find All popup). */
   boardName: string;
-  /** Tile that exposes this match. Null for files not yet placed on any board. */
-  tileId: string | null;
-  /** Tile title (or file basename when tileId is null). */
+  /**
+   * Tile that exposes this match. Search walks the tiles on loaded boards,
+   * so every match has one; a note on no board is never a match.
+   */
+  tileId: string;
+  /** Tile title. */
   tileTitle: string;
-  /** Tile type, or null for unplaced files. */
-  tileType: TileType | null;
+  tileType: TileType;
   /** Vault-relative .md path when the match lives in file content; null for inline tiles. */
   filePath: string | null;
   /**

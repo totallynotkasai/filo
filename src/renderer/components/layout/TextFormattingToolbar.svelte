@@ -3,8 +3,8 @@
   import { toolbarStore } from '../../stores/toolbar.svelte';
   import { LINE_SPACING_CHOICES } from '../../stores/noteMeta';
   import { uiStore } from '../../stores/ui.svelte';
-  import { tiptapToolbar, LINK_REFUSED_MESSAGE } from '../../lib/editor/toolbarConfig';
-  import { applyLink, linkTargetAt, removeLink, type LinkTarget } from '../../lib/editor/insertLink';
+  import { tiptapToolbar, LINK_IN_CODE_MESSAGE, LINK_REFUSED_MESSAGE } from '../../lib/editor/toolbarConfig';
+  import { applyLink, linkAllowedAt, linkTargetAt, removeLink, type LinkTarget } from '../../lib/editor/insertLink';
   import { normaliseLinkUrl } from '../../lib/editor/linkUrl';
   import type { Editor } from '@tiptap/core';
   import IconButton from '../shared/IconButton.svelte';
@@ -53,8 +53,11 @@
   ];
 
   function handleStyleChange(e: Event) {
-    const value = (e.target as HTMLSelectElement).value;
-    tiptapToolbar.setHeading(HEADING_OPTIONS.find((o) => o.value === value)?.level ?? 0);
+    const select = e.target as HTMLSelectElement;
+    const applied = tiptapToolbar.setHeading(HEADING_OPTIONS.find((o) => o.value === select.value)?.level ?? 0);
+    // A refused change leaves the store as it was, so `value={…}` never
+    // re-renders: put the block's real level back by hand.
+    if (!applied) select.value = toolbarStore.heading;
   }
 
   function handleFontChange(e: Event) {
@@ -115,6 +118,9 @@
   function handleApplyLink(text: string, url: string): string | null {
     const editor = linkSavedEditor;
     if (!editor || !editor.isEditable) return "This note can't be edited right now.";
+    // Where the link goes is checked apart from its URL: no URL would help in
+    // a code block, so the message must not ask for a different one.
+    if (!linkAllowedAt(editor, linkTarget)) return LINK_IN_CODE_MESSAGE;
     const href = normaliseLinkUrl(url);
     // A refused href is said, never dropped silently.
     if (!href || !applyLink(editor, linkTarget, text, href)) return LINK_REFUSED_MESSAGE;

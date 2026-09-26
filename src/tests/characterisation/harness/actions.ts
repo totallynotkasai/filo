@@ -587,12 +587,11 @@ export async function deleteTileAndFile(app: CharApp, tileRoot: HTMLElement): Pr
 
 // ── Sidebar delete and Filo's trash ──────────────────────────────────────────
 
-/** Sidebar: right-click a file or folder → Delete → confirm. */
+/** Sidebar: right-click a file or folder → Delete from vault… → confirm. */
 export async function deleteInSidebar(app: CharApp, rel: string): Promise<void> {
   contextMenu(await revealInSidebar(app, rel));
   await settle();
-  const folder = findByText(app.el, '.context-menu .menu-item, .context-menu [role="menuitem"]', 'Delete folder');
-  await chooseMenuItem(app, folder ? 'Delete folder' : 'Delete file');
+  await chooseMenuItem(app, 'Delete from vault…');
   await answerConfirm(app, { confirm: true });
   await quiesce(800);
 }
@@ -615,13 +614,13 @@ export function boardFilesText(app: CharApp): string[] {
   return app.userFiles().filter((rel) => rel.endsWith('.board.json')).map((rel) => app.read(rel));
 }
 
-/** Project menu → Project Settings → Trash. */
+/** Vault menu → Settings → Trash. */
 export async function openTrashSettings(app: CharApp): Promise<void> {
   const trigger = $$(app.el, 'button.dropdown-trigger').find((b) => b.closest('.global-toolbar, header, nav') !== null) ?? $(app.el, 'button.dropdown-trigger');
   click(trigger);
   await settle();
-  const item = $$(document, 'button.dropdown-item').find((b) => (b.textContent ?? '').trim() === 'Project Settings');
-  if (!item) throw new Error('no Project Settings item');
+  const item = $$(document, 'button.dropdown-item').find((b) => (b.textContent ?? '').trim() === 'Settings');
+  if (!item) throw new Error('no Settings item');
   click(item);
   await waitFor(() => $$(document, '.settings-tab').length > 0, 'settings modal');
   const tab = $$(document, '.settings-tab').find((b) => (b.textContent ?? '').includes('Trash'));
@@ -764,6 +763,29 @@ export function sidebarMessage(app: CharApp): string | null {
   return app.el.querySelector('.file-tree .tree-message')?.textContent?.trim() ?? null;
 }
 
+/** Click the sidebar toolbar's New Folder; resolves once a rename box shows (or after a wait). */
+export async function clickSidebarNewFolder(app: CharApp): Promise<void> {
+  click($(app.el, '.sidebar-actions button[aria-label="New Folder"]'));
+  await quiesce(300);
+}
+
+/** The text in the sidebar's rename box, or null when no row is being renamed. */
+export function sidebarRenameValue(app: CharApp): string | null {
+  const input = app.el.querySelector('.vault-file-item .rename-input') as HTMLInputElement | null;
+  return input ? input.value : null;
+}
+
+/** The sidebar toolbar's Expand / Collapse All button's label ("Expand All" or "Collapse All"). */
+export function sidebarExpandCollapseLabel(app: CharApp): string {
+  return $(app.el, '.sidebar-actions button[aria-label$="all folders"]').getAttribute('title') ?? '';
+}
+
+/** Click the sidebar toolbar's Expand / Collapse All button. */
+export async function clickSidebarExpandCollapse(app: CharApp): Promise<void> {
+  click($(app.el, '.sidebar-actions button[aria-label$="all folders"]'));
+  await settle(50);
+}
+
 // ── Canvas ───────────────────────────────────────────────────────────────────
 
 /** Drag the empty canvas by (dx, dy), then wheel-zoom once. */
@@ -899,6 +921,34 @@ export function viewLineSpacing(editorRoot: HTMLElement): string | null {
 }
 
 // ── Keyboard shortcuts ───────────────────────────────────────────────────────
+
+/** Click the toolbar's Home button (the vault stays open behind it). */
+export async function goHome(app: CharApp): Promise<void> {
+  click($(app.el, 'button[aria-label="Home screen"]'));
+  await settle(100);
+}
+
+export function homeShown(app: CharApp): boolean {
+  return app.el.querySelector('.home-screen') !== null;
+}
+
+/** The title of the open modal dialog, or null when none is open. */
+export function openModalTitle(): string | null {
+  return document.querySelector('.modal-title')?.textContent?.trim() ?? null;
+}
+
+/**
+ * The Mind Map side toolbar's Help → Shortcuts list, as "label: keys" rows,
+ * then close it again.
+ */
+export async function shortcutsListed(app: CharApp): Promise<string[]> {
+  click($(app.el, '.side-btn[title="Help"]'));
+  await waitFor(() => document.querySelector('.shortcut-row') !== null, 'the shortcuts list');
+  const rows = $$(document, '.shortcut-row').map((r) =>
+    `${(r.querySelector('.shortcut-desc')?.textContent ?? '').trim()}: ${(r.querySelector('.shortcut-key-btn, .shortcut-key')?.textContent ?? '').trim()}`);
+  await closeModal();
+  return rows;
+}
 
 /**
  * Key chords that more than one enabled command answers right now, as

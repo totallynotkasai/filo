@@ -844,6 +844,77 @@ Deviations:
 
 Tests: one component test per changed state or message. Update the `toolbarFormattingRoundTrip` link cases for A21-49 to 51.
 
+### Status: done (2026-09-26)
+
+All fourteen items (A21-43 to A21-56) are implemented. `npm run ci:verify` passes: lint, svelte-check (0 errors across 781 files), `typecheck:main`, 591 test files (5,850 passed, 1 skipped), the build, and 67/67 gates. The new tests fail on the old code. The seven `characterisation/errorStates.test.ts` cases were run in a worktree at `0d2c929` with only the spec and harness copied in, and all seven failed. Every other fix was reverted on its own to watch its test fail, except where noted below.
+
+New tests:
+- `characterisation/errorStates.test.ts` (7 cases, A21-43 to 47) and `unit/errorStateMessages.test.ts`.
+- `characterisation/vaultShortcuts.test.ts` (9 cases, A21-48 / 55), two new `tagFilters` cases (A21-53), and `clashingShortcuts()` now also checked on a Document tab and on Home.
+- `unit/contextMenuVocabulary.test.ts`, `component/contextMenuHeadings.test.ts`, and the updated `mindMapContextMenus` cases (A21-54).
+- Link cases in `linkUrl`, `insertLink`, `insertLinkToolbar` and `toolbarFormattingRoundTrip`, plus `component/headingDropdown.test.ts` (A21-49 to 52).
+- `runSearch` cases (A21-56).
+
+Both new characterisation specs have rows in the `characterisation-suite` case-count registry; the new row was proven to bite. The real-app checks move to the Phase 8 checklist, as in Phases 1 to 5.
+
+New modules:
+- `lib/boards/boardLoadFailedNotice.ts`, `lib/notes/recreateNote.ts`, `lib/vault/relinkTargets.ts`, `lib/utils/mediaErrorText.ts`.
+- `constants/menuVocabulary.ts`, `lib/kanban/kanbanContextMenus.ts`, `lib/tasklist/taskContextMenus.ts`, `lib/vault/sidebarFileMenu.ts`.
+- `stores/vaultOpen.ts`.
+
+Moving the menu builders out lowered three allowlist ceilings: TaskListBoard 1961, TaskItem 1481, KanbanColumn 1170.
+
+### Deviations from the plan
+
+- **A21-43.** The loader no longer raises its own toast for a board it can't use. The vault-open candidate raises one sticky notice per failed board after it has tried the recovery snapshot, so the notice knows whether a copy exists. Show in folder selects the copy, or the board file itself when no copy was made; the notice then doesn't mention `.filo/recovery`. The next step depends on the failure:
+  - Broken JSON gets plain words.
+  - A field Filo doesn't understand names the field.
+  - A newer board says *"Update Filo, then reopen the vault."*
+  - An older board gets the same *"Fix the file in a text editor…"* step as broken JSON.
+  - A size-limit failure and a failed snapshot keep their own message, which already carries a next step.
+  - A duplicate board id keeps the notice it already had.
+
+  Two leftover "project" strings were reworded while here: the settings-validation warning in `vaultCandidate.ts` and the FileTile "open a vault first" toast.
+- **A21-44.** "Restore from Trash" appears when an entry in Filo's trash holds the note: the file itself, or a folder it was in (`trashStore.entryHolding`, case-folded, newest first). A note deleted by another program gets only **Close tab**. The trash list is re-read each time the note goes missing.
+- **A21-45.**
+  - The recreate (`recreateMissingNote`) uses `noteStore.recreate`, so it is exclusive. If a file is back at the path, nothing is overwritten and the toast says so.
+  - A note this session read keeps the frontmatter it last had on disk and any local body. One it never read starts as `title: <file name>`.
+  - Open views of the note are then re-read.
+  - The header Sync button now reports "the file is missing" instead of "Synced" when the note's model is missing.
+  - The Sync All leftover comment was replaced by one that says why a missing note is never written there.
+- **A21-46.** Image tiles also show *"File not found"*. The message is derived from the element's error code and the broken-reference state, so it corrects itself once the missing file is detected, even if the load error arrived first.
+- **A21-47.** Every relink target list moved to `lib/vault/relinkTargets.ts`. A file tile accepts any file except a `.board.json`: a board isn't a file a tile should open.
+- **A21-48.**
+  - "Project Settings" is now "Settings", "Name Project" is "Rename Vault", Ctrl+S is labelled "Save", and the Help glossary's "Project" entry is gone.
+  - Home's action cards keep their title-case "New Vault" / "Open Vault".
+  - Code names (`vaultStore.project`, the `project-settings` modal id, the `ProjectDropdown` / `ProjectSettings` file names) are unchanged.
+  - The vault menu's Open Vault now also adds the vault to Recent vaults, through the same helper as Home (`pickAndOpenVault`).
+  - Opening any vault now replaces Home. Without that, Ctrl+O from Home left Home over the new vault.
+- **A21-49 to 51.**
+  - `isOpenable` lives in `linkUrl.ts` and is the one scheme list; external links must also pass `asSafeOpenExternal`.
+  - The code-block check is `linkAllowedAt(editor, target)`, a dry-run `setMark('link')` at the popup's saved target, not `can().setLink`. `setLink` would mix the URL check back in, and `can()` reads the current selection, which can move while the popup is open. It runs before the URL check, and it also refuses inline code (the message still says "code block"). `applyLink`'s URL check moved to the target for the same reason.
+  - A caret between two adjacent links edits the one before it.
+  - A bare caret outside a link no longer pre-fills the href from a neighbouring link.
+- **A21-52.** `tiptapToolbar.setHeading` returns whether the change was applied. The dropdown is reset only when it wasn't: resetting after every change would flash the old level for a microtask.
+- **A21-53.** The New Folder rename never started on Windows, filter or not. The tree keeps backslash paths and the toolbar joined the new path with `/`. The toolbar now takes the path from the refreshed tree.
+- **A21-54.**
+  - The Mind Map has no separate **Delete from vault…** item. **Remove from board** opens the existing confirm, whose unticked box still offers to trash the files. That confirm now says "Remove" instead of "Delete".
+  - The Kanban bulk menu says **Add tag…** (it asks for one tag for every card), not **Tags…**.
+  - Kanban cards keep Tags and Lock on the card header; nothing new was added to Kanban or the sidebar.
+  - Labels that promised a delete but only removed placements now say what they do: Task List "Delete Task", Kanban "Remove N Cards", "Delete section + tasks", "Delete task and N subtasks", and Mind Map "Delete Frame".
+  - The menus use sentence case, keeping the proper names ("Orphan Catcher…", "Reveal in File Explorer", "WIP").
+  - A heading and the items under it, up to the next divider, render as a labelled `role="group"`. The heading is never a menu item or a focus stop.
+  - The menu builders moved out of the big components into `lib/` so they can be unit-tested.
+  - The broken-tile quick menu's "Re-link to another file…" now uses `…`.
+  - `Tab.svelte`'s menu was not reviewed.
+- **A21-55.**
+  - There is no "Settings → Keyboard Shortcuts" panel. The shortcuts are listed in the Help modal's Shortcuts tab, which lists every registered command.
+  - Ctrl+Shift+Z is its own command (`history:redo-alt`), since a command has one binding.
+  - Ctrl+O moved from Home's own listener to the command registry, so Home doesn't handle it twice. Ctrl+N (New Vault) stays Home-only.
+  - Ctrl+, and Ctrl+Shift+W work only while a vault is open.
+  - For A21-72: the design doc's table needs Ctrl+O, Ctrl+Shift+W, Ctrl+, and both redo keys. Help's "Other" list still shows the non-existent Ctrl+Shift+Arrow "Add / Select Neighbour".
+- **A21-56.** `SearchMatch.tileId` is now a `string` (every match comes from a tile on a loaded board), so the branch was dead. Its `runSearch` case pins that and passes with or without the removal. Likewise, the Ctrl+N-on-Home case confirms behaviour that was already right.
+
 ---
 
 ## Phase 7: Hygiene, dead code, duplicates, docs

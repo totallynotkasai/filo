@@ -4,6 +4,7 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { reportError } from '../lib/utils/errorBus';
+import type { RelinkTargets } from '../lib/vault/relinkTargets';
 
 // ── Sidebar ──
 let sidebarOpen = $state(true);
@@ -33,7 +34,7 @@ let activeModal = $state<string | null>(null); // 'keyboard-shortcuts', 'board-b
 // Side-channel context for the Re-link modal so the
 // keyless `openModal('relink-tile')` API doesn't need to thread the tile
 // id + compatible extension list through its argument shape.
-interface RelinkContext { tileId: string; expectedTypes: string[] }
+interface RelinkContext { tileId: string; targets: RelinkTargets }
 let relinkContext = $state<RelinkContext | null>(null);
 
 // ── Confirm dialog ──
@@ -268,8 +269,8 @@ export const uiStore = {
 
   // Relink modal context.
   get relinkContext() { return relinkContext; },
-  openRelinkModal(tileId: string, expectedTypes: string[]) {
-    relinkContext = { tileId, expectedTypes };
+  openRelinkModal(tileId: string, targets: RelinkTargets) {
+    relinkContext = { tileId, targets };
     activeModal = 'relink-tile';
   },
 

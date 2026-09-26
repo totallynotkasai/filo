@@ -14,11 +14,11 @@ const LOC_LIMIT = 1000;
 // Files over LOC_LIMIT, each pinned at its current LOC. They may shrink, not
 // grow; the remedy for an over-limit file is to split it, not to raise its row.
 const FILE_SIZE_ALLOWLIST = {
-  'src/renderer/components/boards/TaskListBoard.svelte': 1966,
+  'src/renderer/components/boards/TaskListBoard.svelte': 1961,
   'src/renderer/components/boards/KanbanSideToolbar.svelte': 1473,
-  'src/renderer/components/boards/TaskItem.svelte': 1506,
+  'src/renderer/components/boards/TaskItem.svelte': 1481,
   'src/renderer/components/boards/KanbanBoard.svelte': 1438,
-  'src/renderer/components/boards/KanbanColumn.svelte': 1194,
+  'src/renderer/components/boards/KanbanColumn.svelte': 1170,
   'src/renderer/stores/vault.svelte.ts': 1596,
 };
 
@@ -42,13 +42,15 @@ const CHARACTERISATION_SPECS = {
   'blockLayout.test.ts': 2,
   'lineSpacing.test.ts': 3,
   'newNotesInSidebar.test.ts': 3,
-  'tagFilters.test.ts': 8,
+  'tagFilters.test.ts': 10,
   'boardShortcutsAndUndo.test.ts': 7,
   'frontmatterSafety.test.ts': 2,
   'rawViewUnsaved.test.ts': 5,
   'taskNotesBox.test.ts': 4,
   'leavingKeepsHeldChanges.test.ts': 7,
   'honestSaveState.test.ts': 6,
+  'vaultShortcuts.test.ts': 9,
+  'errorStates.test.ts': 7,
 };
 
 // Board format v8: a def names its file and stores only visuals. These are

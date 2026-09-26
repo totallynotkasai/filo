@@ -2,50 +2,35 @@
   import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { invokeOk } from '../../lib/utils/invokeOk';
+  import { pickAndOpenVault, rememberOpenVault, type RecentVault } from '../../stores/vaultOpen';
   import FiloLogo from '../shared/FiloLogo.svelte';
   interface Props {
-    onReturnToProject?: () => void;
+    onReturnToVault?: () => void;
   }
 
-  let { onReturnToProject }: Props = $props();
+  let { onReturnToVault }: Props = $props();
 
-  // Bind the Ctrl+N / Ctrl+O shortcuts the welcome screen
-  // already advertises in its footer. The global hotkeys registry isn't
-  // initialised until a vault is open (AppShell.svelte runs `initKeyboardShortcuts`
-  // in an $effect there), so the welcome screen gets a scoped, mount-tied
-  // window listener that tears down when the component unmounts.
+  // Ctrl+N (New Vault), which the footer advertises, belongs to this screen
+  // only: elsewhere Ctrl+N adds to the board. Ctrl+O is the global `vault:open`
+  // command (AppShell), so it isn't handled here as well.
   $effect(() => {
     function onKeydown(e: KeyboardEvent) {
       const target = e.target as HTMLElement | null;
-      // Skip when typing in an input/textarea (we never use those on this
-      // screen today, but defence-in-depth keeps the shortcut from stealing
-      // a future search box's Ctrl+O).
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
       if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
-      const key = e.key.toLowerCase();
-      if (key === 'n') {
+      if (e.key.toLowerCase() === 'n') {
         e.preventDefault();
         void handleNewVault();
-      } else if (key === 'o') {
-        e.preventDefault();
-        void handleOpenVault();
       }
     }
     window.addEventListener('keydown', onKeydown);
     return () => window.removeEventListener('keydown', onKeydown);
   });
 
-  interface RecentProject {
-    name: string;
-    path: string;
-    lastOpened: number;
-    pinned?: boolean;
-  }
-
-  let recentProjects = $state<RecentProject[]>([]);
+  let recentVaults = $state<RecentVault[]>([]);
   let autoOpenAttempted = $state(false);
 
-  // Load recent projects from the main-process userData store, then attempt
+  // Load recent vaults from the main-process userData store, then attempt
   // auto-open if the user has the "Open last vault on launch" preference
   // enabled. The auto-open runs at most once per HomeScreen mount.
   $effect(() => {
@@ -59,14 +44,14 @@
   async function loadRecents(): Promise<void> {
     try {
       const list = await window.filo.invoke('vault:list-recents');
-      recentProjects = Array.isArray(list) ? list : [];
+      recentVaults = Array.isArray(list) ? list : [];
     } catch {
-      recentProjects = [];
+      recentVaults = [];
     }
   }
 
   async function maybeAutoOpenLastVault(): Promise<void> {
-    // Skip when a project is already open (e.g. HomeScreen revisited from a
+    // Skip when a vault is already open (e.g. HomeScreen revisited from a
     // running session).
     if (vaultStore.project !== null) return;
     try {
@@ -75,15 +60,15 @@
     } catch {
       return;
     }
-    // Pick the most-recently-opened project. Pinned-ness is irrelevant for
+    // Pick the most-recently-opened vault. Pinned-ness is irrelevant for
     // auto-open — last-use wins so the user lands where they left off.
-    const candidate = [...recentProjects].sort((a, b) => b.lastOpened - a.lastOpened)[0];
+    const candidate = [...recentVaults].sort((a, b) => b.lastOpened - a.lastOpened)[0];
     if (!candidate) return;
     try {
       const loaded = await vaultStore.openVault(candidate.path);
       if (loaded) {
         await recordOpen(candidate.path, candidate.name);
-        onReturnToProject?.();
+        onReturnToVault?.();
       } else {
         uiStore.toast(
           `Last vault "${candidate.name}" could not be opened — it may have been moved or deleted.`,
@@ -97,8 +82,8 @@
   }
 
   // Pinned-first, then by most-recently-opened.
-  let sortedRecentProjects = $derived(
-    [...recentProjects].sort((a, b) => {
+  let sortedRecentVaults = $derived(
+    [...recentVaults].sort((a, b) => {
       if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
       return b.lastOpened - a.lastOpened;
     }),
@@ -111,7 +96,7 @@
       // displayed list is left INTACT rather than wiped on a transient stat
       // miss (e.g. a network-share vault briefly offline).
       const { recents } = await invokeOk('vault:add-recent', path, name);
-      recentProjects = recents;
+      recentVaults = recents;
     } catch {
       // Best-effort — recent list is non-critical UI state. Leave the
       // currently-shown list untouched rather than clearing it on a failed add.
@@ -121,46 +106,40 @@
   async function removeRecent(path: string): Promise<void> {
     try {
       const updated = await window.filo.invoke('vault:remove-recent', path);
-      if (Array.isArray(updated)) recentProjects = updated;
+      if (Array.isArray(updated)) recentVaults = updated;
     } catch { /* non-critical */ }
   }
 
   async function togglePin(path: string): Promise<void> {
-    const current = recentProjects.find((p) => p.path === path);
+    const current = recentVaults.find((p) => p.path === path);
     if (!current) return;
     try {
       const updated = await window.filo.invoke('vault:pin-recent', path, !current.pinned);
-      if (Array.isArray(updated)) recentProjects = updated;
+      if (Array.isArray(updated)) recentVaults = updated;
     } catch { /* non-critical */ }
   }
 
   function clearAllRecent() {
-    const pinnedCount = recentProjects.filter((p) => p.pinned).length;
-    const unpinnedCount = recentProjects.length - pinnedCount;
+    const pinnedCount = recentVaults.filter((p) => p.pinned).length;
+    const unpinnedCount = recentVaults.length - pinnedCount;
     uiStore.openConfirm({
-      title: 'Clear recent projects',
+      title: 'Clear recent vaults',
       body: pinnedCount > 0
-        ? `Remove all ${unpinnedCount} unpinned recent project${unpinnedCount === 1 ? '' : 's'}? Pinned vaults are kept.`
-        : `Remove all ${recentProjects.length} recent project${recentProjects.length === 1 ? '' : 's'}?`,
+        ? `Remove all ${unpinnedCount} unpinned recent vault${unpinnedCount === 1 ? '' : 's'}? Pinned vaults are kept.`
+        : `Remove all ${recentVaults.length} recent vault${recentVaults.length === 1 ? '' : 's'}?`,
       confirmLabel: 'Clear',
       danger: true,
       onConfirm: async () => {
         try {
           const updated = await window.filo.invoke('vault:clear-recents');
-          if (Array.isArray(updated)) recentProjects = updated;
+          if (Array.isArray(updated)) recentVaults = updated;
         } catch { /* non-critical */ }
       },
     });
   }
 
   async function handleOpenVault() {
-    const vaultPath = await window.filo.invoke('vault:select');
-    if (!vaultPath) return;
-    const loaded = await vaultStore.openVault(vaultPath);
-    if (loaded) {
-      await saveRecentProject();
-      onReturnToProject?.();
-    }
+    if (await pickAndOpenVault()) onReturnToVault?.();
   }
 
   async function handleNewVault() {
@@ -169,17 +148,17 @@
     const name = vaultPath.split(/[\\/]/).pop() || 'Vault';
     const loaded = await vaultStore.newVault(vaultPath, name);
     if (loaded) {
-      await saveRecentProject();
-      onReturnToProject?.();
+      await saveRecentVault();
+      onReturnToVault?.();
     }
   }
 
-  async function handleOpenRecent(recent: RecentProject) {
+  async function handleOpenRecent(recent: RecentVault) {
     try {
       const loaded = await vaultStore.openVault(recent.path);
       if (loaded) {
         await recordOpen(recent.path, recent.name);
-        onReturnToProject?.();
+        onReturnToVault?.();
       } else {
         uiStore.toast('Could not open vault. It may have been moved or deleted.', 'warning');
         await removeRecent(recent.path);
@@ -190,10 +169,9 @@
     }
   }
 
-  async function saveRecentProject(): Promise<void> {
-    const savePath = vaultStore.path;
-    if (!savePath || !vaultStore.projectName) return;
-    await recordOpen(savePath, vaultStore.projectName);
+  async function saveRecentVault(): Promise<void> {
+    const recents = await rememberOpenVault();
+    if (recents) recentVaults = recents;
   }
 
   function formatDate(ts: number): string {
@@ -218,18 +196,19 @@
       </div>
       <h1 class="home-title">Filo</h1>
       <p class="home-subtitle">Personal Knowledge Management</p>
+      <p class="home-explainer">A vault is a folder of your Markdown notes and board files.</p>
     </div>
 
-    <!-- Return to current project -->
+    <!-- Return to the open vault -->
     {#if vaultStore.project !== null}
-      <button class="action-card return-card" onclick={onReturnToProject}>
+      <button class="action-card return-card" onclick={onReturnToVault}>
         <div class="action-icon return-icon">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
             <polyline points="15 18 9 12 15 6"/>
           </svg>
         </div>
-        <span class="action-title">Return to Project</span>
-        <span class="action-desc">{vaultStore.projectName || 'Untitled Project'}</span>
+        <span class="action-title">Return to vault</span>
+        <span class="action-desc">{vaultStore.projectName || 'Untitled vault'}</span>
       </button>
     {/if}
 
@@ -263,25 +242,25 @@
       <span>Ctrl+N</span> New Vault &nbsp;&middot;&nbsp; <span>Ctrl+O</span> Open Vault
     </div>
 
-    <!-- Recent Projects -->
-    {#if recentProjects.length > 0}
+    <!-- Recent vaults -->
+    {#if recentVaults.length > 0}
       <div class="recent-section">
         <div class="recent-header">
-          <h2 class="recent-title">Recent Projects</h2>
+          <h2 class="recent-title">Recent vaults</h2>
           <button
             class="recent-clear-all"
             onclick={clearAllRecent}
-            title="Clear all unpinned recent projects"
-            aria-label="Clear all recent projects"
+            title="Clear all unpinned recent vaults"
+            aria-label="Clear all recent vaults"
           >Clear all</button>
         </div>
         <div class="recent-list">
-          {#each sortedRecentProjects as project, i (project.path)}
+          {#each sortedRecentVaults as recent, i (recent.path)}
             <!-- A non-button row with sibling buttons: a <button> wrapping the
                  pin/remove controls would be invalid HTML (interactive
                  descendants) and break AT. -->
-            <div class="recent-item" class:pinned={project.pinned} style="animation-delay: {i * 0.04}s">
-              <button class="recent-open" onclick={() => handleOpenRecent(project)} aria-label="Open {project.name}">
+            <div class="recent-item" class:pinned={recent.pinned} style="animation-delay: {i * 0.04}s">
+              <button class="recent-open" onclick={() => handleOpenRecent(recent)} aria-label="Open {recent.name}">
                 <span class="recent-icon">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -289,19 +268,19 @@
                   </svg>
                 </span>
                 <span class="recent-info">
-                  <span class="recent-name">{project.name}</span>
-                  <span class="recent-path" title={project.path}>{project.path}</span>
+                  <span class="recent-name">{recent.name}</span>
+                  <span class="recent-path" title={recent.path}>{recent.path}</span>
                 </span>
-                <span class="recent-date">{formatDate(project.lastOpened)}</span>
+                <span class="recent-date">{formatDate(recent.lastOpened)}</span>
               </button>
               <button
                 class="recent-pin"
-                class:active={project.pinned}
-                onclick={() => togglePin(project.path)}
-                title={project.pinned ? 'Unpin' : 'Pin to top'}
-                aria-label={project.pinned ? `Unpin ${project.name}` : `Pin ${project.name} to top`}
+                class:active={recent.pinned}
+                onclick={() => togglePin(recent.path)}
+                title={recent.pinned ? 'Unpin' : 'Pin to top'}
+                aria-label={recent.pinned ? `Unpin ${recent.name}` : `Pin ${recent.name} to top`}
               >
-                {#if project.pinned}
+                {#if recent.pinned}
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M12 17v5"/>
                     <path d="M9 10.76V6h6v4.76l3 3.24v3H6v-3z"/>
@@ -315,9 +294,9 @@
               </button>
               <button
                 class="recent-remove"
-                onclick={() => removeRecent(project.path)}
+                onclick={() => removeRecent(recent.path)}
                 title="Remove from recent"
-                aria-label="Remove {project.name} from recent projects"
+                aria-label="Remove {recent.name} from recent vaults"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                   <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -333,8 +312,8 @@
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
           <polyline points="14 2 14 8 20 8"/>
         </svg>
-        <p class="empty-text">No recent projects</p>
-        <p class="empty-subtext">Create a new project or open an existing one to get started</p>
+        <p class="empty-text">No recent vaults</p>
+        <p class="empty-subtext">Create a new vault or open an existing one to get started</p>
       </div>
     {/if}
 
@@ -396,6 +375,12 @@
     color: var(--text-tertiary);
     margin: 0;
     letter-spacing: 0.5px;
+  }
+
+  .home-explainer {
+    font-size: var(--font-size-base);
+    color: var(--text-secondary);
+    margin: 8px 0 0;
   }
 
   .home-actions {

@@ -66,11 +66,6 @@
     const jump = searchStore.pendingJump;
     if (!jump) return;
     const m = jump.match;
-    if (!m.tileId) {
-      uiStore.toast('Match is not placed on any board.', 'info', 2500);
-      searchStore.consumeJump();
-      return;
-    }
     navigateToTile(m.boardId, m.tileId);
     searchStore.consumeJump();
   });

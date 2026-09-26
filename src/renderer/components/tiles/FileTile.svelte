@@ -39,7 +39,7 @@
     if (picking) return;
     const vaultDir = vaultStore.path;
     if (!vaultDir) {
-      uiStore.toast('Save the project first to enable file import', 'info', 2000);
+      uiStore.toast('Open a vault first to enable file import', 'info', 2000);
       return;
     }
 

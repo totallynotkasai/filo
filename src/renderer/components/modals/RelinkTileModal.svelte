@@ -7,6 +7,7 @@
   import { historyStore } from '../../stores/history.svelte';
   import { UpdateTilePathCommand } from '../../commands/index';
   import { flattenTreePaths } from '../../lib/vault/vaultTreeSort';
+  import { relinkAccepts, relinkTargetsLabel } from '../../lib/vault/relinkTargets';
 
   /**
    * Re-link picker. Surfaces a flat list of vault files
@@ -48,12 +49,9 @@
   const candidates = $derived.by(() => {
     if (!ctx || !vaultStore.path) return [] as string[];
     const all = Array.from(flattenTreePaths(vaultStore.rawTree, vaultStore.path));
-    const expected = ctx.expectedTypes.map((e) => e.toLowerCase());
+    const targets = ctx.targets;
     return all
-      .filter((rel) => {
-        const ext = rel.split('.').pop()?.toLowerCase() ?? '';
-        return expected.includes(ext);
-      })
+      .filter((rel) => relinkAccepts(rel, targets))
       .filter((rel) => filter === '' || rel.toLowerCase().includes(filter.toLowerCase()))
       .sort((a, b) => a.localeCompare(b));
   });
@@ -96,7 +94,7 @@
       <p class="relink-empty">No tile selected.</p>
     {:else}
       <p class="relink-hint">
-        Pick a {ctx.expectedTypes.join(' / ')} file to replace the broken reference. Undo restores the previous path.
+        Pick {relinkTargetsLabel(ctx.targets)} to replace the broken reference. Undo restores the previous path.
       </p>
       <input
         type="text"

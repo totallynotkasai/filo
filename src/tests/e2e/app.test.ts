@@ -62,16 +62,16 @@ test.describe('Filo E2E — App Shell', () => {
     await expect(workspace).toBeVisible();
   });
 
-  test('can open project settings', async () => {
-    // Click project dropdown
+  test('can open settings', async () => {
+    // Click the vault menu
     const dropdown = window.locator('.dropdown-trigger').first();
     await dropdown.click();
 
-    // Audit-14 7.6 — the Project Settings entry must be reachable. The prior
+    // Audit-14 7.6 — the Settings entry must be reachable. The prior
     // `if (await settingsBtn.isVisible())` guard made the whole test vacuous: it
     // silently passed when the dropdown never rendered the entry. Assert it
     // exists, then drive the open/close flow with real assertions.
-    const settingsBtn = window.locator('text=Project Settings').first();
+    const settingsBtn = window.locator('.dropdown-item', { hasText: /^\s*Settings\s*$/ }).first();
     await expect(settingsBtn).toBeVisible({ timeout: 3000 });
     await settingsBtn.click();
 

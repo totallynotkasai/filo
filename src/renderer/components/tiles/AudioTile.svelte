@@ -8,6 +8,8 @@
   import IconButton from '../shared/IconButton.svelte';
   import { historyStore } from '../../stores/history.svelte';
   import { UpdateAttachmentSrcCommand } from '../../commands/index';
+  import { boardRefIntegrityStore } from '../../stores/boardRefIntegrity.svelte';
+  import { mediaErrorText } from '../../lib/utils/mediaErrorText';
 
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
   const boardStore = scope.board;
@@ -20,6 +22,13 @@
   let audioEl = $state<HTMLAudioElement | null>(null);
   let recordingError = $state<string | null>(null);
   let playbackError = $state<string | null>(null);
+  // The element's load failure (its MediaError code). The message is derived,
+  // so it turns into "File not found" once the missing file is detected.
+  let loadError = $state<{ code: number | null } | null>(null);
+  let isMissing = $derived(boardRefIntegrityStore.isBrokenTile(tile.id));
+  let shownError = $derived(
+    loadError ? mediaErrorText('audio', { missing: isMissing, code: loadError.code }) : playbackError,
+  );
 
   // Custom player state
   let playing = $state(false);
@@ -68,6 +77,7 @@
   async function startRecording() {
     recordingError = null;
     playbackError = null;
+    loadError = null;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mimeType = pickRecorderMimeType();
@@ -184,6 +194,7 @@
     if (!audioEl) return;
     duration = audioEl.duration;
     playbackError = null;
+    loadError = null;
   }
 
   function handleEnded() {
@@ -196,18 +207,7 @@
 
   function handleAudioError() {
     if (!audioEl) return;
-    const err = audioEl.error;
-    if (!err) {
-      playbackError = 'Audio could not be played.';
-      return;
-    }
-    switch (err.code) {
-      case err.MEDIA_ERR_ABORTED: playbackError = 'Playback aborted.'; break;
-      case err.MEDIA_ERR_NETWORK: playbackError = 'Network error loading audio.'; break;
-      case err.MEDIA_ERR_DECODE: playbackError = 'Audio file is corrupt or in an unsupported format.'; break;
-      case err.MEDIA_ERR_SRC_NOT_SUPPORTED: playbackError = 'Audio format not supported by this build.'; break;
-      default: playbackError = 'Audio could not be played.';
-    }
+    loadError = { code: audioEl.error?.code ?? null };
     playing = false;
   }
 
@@ -372,8 +372,8 @@
         />
       </div>
 
-      {#if playbackError}
-        <div class="playback-error" role="alert">{playbackError}</div>
+      {#if shownError}
+        <div class="playback-error" role="alert">{shownError}</div>
       {/if}
 
       <!-- Remove -->

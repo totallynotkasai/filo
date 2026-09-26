@@ -43,6 +43,7 @@ import {
 import { ProjectSchema } from '../../schema/project';
 import { loadAllBoards, isTransientBoardLoadError } from '../boards/boardLoader';
 import { boardLoadRetryToast } from '../boards/boardLoadRetryPrompt';
+import { boardLoadFailedToast } from '../boards/boardLoadFailedNotice';
 import { syncConflictToast, groupByCanonical } from './syncConflictNotices';
 import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError, assertIpcOk } from '@shared/ipcEnvelope';
@@ -285,10 +286,7 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
 
   // Snapshot every failed board's bytes into `.filo/recovery/<ts>/` so
   // the originals survive any subsequent write Filo might do in this
-  // session. Best-effort: the user already saw a toast from
-  // `loadAllBoards` via the errorBus; this is the defensive backup
-  // that lets them recover the file content even if they edit + save
-  // adjacent boards before realising one didn't load.
+  // session, then tell the user what went wrong and where the copy is.
   for (const failed of failedBoards) {
     // A locked / offline / transient-IO board is NOT
     // snapshotted (the snapshot would fail, or hydrate an online-only
@@ -298,16 +296,21 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
       warnings.push(boardLoadRetryToast(newVaultPath, failed.path, failed.message));
       continue;
     }
-    if (!SNAPSHOT_FAILED_BOARD_KINDS.has(failed.errorKind)) continue;
-    try {
-      await invokeOk('recovery:snapshot', newVaultPath, failed.path, 'load-failure');
-    } catch (snapshotErr) {
-      reportError(
-        'vault.recovery-snapshot',
-        snapshotErr,
-        `Failed to snapshot unloadable board ${failed.path} into .filo/recovery/`,
-      );
+    // A duplicate board id already raised its own notice in the loader.
+    const duplicate = failed.errorKind === 'duplicate-board-id' || failed.errorKind === 'sync-conflict-copy';
+    let snapshotAbs: string | null = null;
+    if (SNAPSHOT_FAILED_BOARD_KINDS.has(failed.errorKind)) {
+      try {
+        snapshotAbs = (await invokeOk('recovery:snapshot', newVaultPath, failed.path, 'load-failure')).path;
+      } catch (snapshotErr) {
+        reportError(
+          'vault.recovery-snapshot',
+          snapshotErr,
+          `Failed to snapshot unloadable board ${failed.path} into .filo/recovery/`,
+        );
+      }
     }
+    if (!duplicate) warnings.push(boardLoadFailedToast(newVaultPath, failed, snapshotAbs));
   }
 
   // Board files a sync client forked
@@ -355,7 +358,7 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     : (virtualProjectInput as Project);
   if (!parsed.success) {
     warnings.push({
-      text: 'Project metadata failed schema validation; using best-effort defaults. Check `.filo/` config files.',
+      text: 'The vault settings failed validation, so Filo is using defaults. Check `.filo/` config files.',
       type: 'warning',
       duration: 0,
     });

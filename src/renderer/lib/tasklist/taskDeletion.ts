@@ -12,6 +12,7 @@ import {
   UpdateTaskFieldCommand,
 } from '../../commands/index';
 import { collectDescendantIds } from './blockMove';
+import { buildRemoveWithSubtasksMenu } from './taskContextMenus';
 import { withDrainedWrites, PendingWritesFailedError } from '../vault/vaultOperations';
 import { normalizePath } from '../utils/path';
 import type { TaskRow } from '../tasks/taskListModel';
@@ -123,49 +124,39 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
     }
     const x = anchor?.x ?? Math.round(window.innerWidth / 2);
     const y = anchor?.y ?? Math.round(window.innerHeight / 2);
-    uiStore.showContextMenu(x, y, [
-      {
-        id: 'delete-all',
-        label: `Delete task and ${childCount} subtask${childCount === 1 ? '' : 's'}`,
-        danger: true,
-        action: () => {
-          const b = getBoard();
-          if (!b) return;
-          // Descending position (see orderForBatchDelete), bundled into one
-          // Command so Ctrl+Z reverses the whole cascade.
-          const ordered = orderForBatchDelete(b.id, descendants);
-          const cmds = ordered.map((id) => new DeleteTaskCommand(b.id, id));
-          historyStore.execute(new BatchCommand(`Delete task + ${childCount} subtasks`, cmds));
-          tickAndPersist();
-          pruneSelection?.(descendants); // parent + every removed subtask
-          announce(`Task and ${childCount} subtask${childCount === 1 ? '' : 's'} removed`);
-        },
+    uiStore.showContextMenu(x, y, buildRemoveWithSubtasksMenu({
+      childCount,
+      onRemoveAll: () => {
+        const b = getBoard();
+        if (!b) return;
+        // Descending position (see orderForBatchDelete), bundled into one
+        // Command so Ctrl+Z reverses the whole cascade.
+        const ordered = orderForBatchDelete(b.id, descendants);
+        const cmds = ordered.map((id) => new DeleteTaskCommand(b.id, id));
+        historyStore.execute(new BatchCommand(`Delete task + ${childCount} subtasks`, cmds));
+        tickAndPersist();
+        pruneSelection?.(descendants); // parent + every removed subtask
+        announce(`Task and ${childCount} subtask${childCount === 1 ? '' : 's'} removed`);
       },
-      {
-        id: 'keep-subtasks',
-        label: 'Delete task, keep subtasks as top-level',
-        action: () => {
-          const b = getBoard();
-          if (!b) return;
-          const liveRows = getRows();
-          const directKids = liveRows.filter((r) => r.parent === tileId);
-          const cmds: Command[] = [];
-          for (const child of directKids) {
-            const cmd = buildTaskFieldCommand(child, { parent: '' }, 'Unparent subtask');
-            if (cmd) cmds.push(cmd);
-          }
-          cmds.push(new DeleteTaskCommand(b.id, tileId));
-          historyStore.execute(new BatchCommand(`Delete task (keep subtasks)`, cmds));
-          tickAndPersist();
-          pruneSelection?.([tileId]); // only the parent is removed; kids stay
-          announce(
-            `Task removed; ${directKids.length} subtask${directKids.length === 1 ? '' : 's'} kept`,
-          );
-        },
+      onKeepSubtasks: () => {
+        const b = getBoard();
+        if (!b) return;
+        const liveRows = getRows();
+        const directKids = liveRows.filter((r) => r.parent === tileId);
+        const cmds: Command[] = [];
+        for (const child of directKids) {
+          const cmd = buildTaskFieldCommand(child, { parent: '' }, 'Unparent subtask');
+          if (cmd) cmds.push(cmd);
+        }
+        cmds.push(new DeleteTaskCommand(b.id, tileId));
+        historyStore.execute(new BatchCommand(`Delete task (keep subtasks)`, cmds));
+        tickAndPersist();
+        pruneSelection?.([tileId]); // only the parent is removed; kids stay
+        announce(
+          `Task removed; ${directKids.length} subtask${directKids.length === 1 ? '' : 's'} kept`,
+        );
       },
-      { id: 'sep', label: '', divider: true },
-      { id: 'cancel', label: 'Cancel', action: () => {} },
-    ]);
+    }));
   }
 
   function deleteAllCompleted(): void {

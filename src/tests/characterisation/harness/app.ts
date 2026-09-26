@@ -11,7 +11,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, readdi
 import { dirname, join, relative, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mainBridge, type MainBridge } from './mainBridge';
-import { mainListeners, messageBoxes, rendererSink, type MessageBoxCall } from './electronFake';
+import { folderPicks, mainListeners, messageBoxes, rendererSink, type MessageBoxCall } from './electronFake';
 
 export interface CharApp {
   /** Absolute vault root. */
@@ -311,6 +311,65 @@ export async function openOtherVault(
   extraRoots.push(other);
   const result = await leaveVault(answer ? [answer] : [], () => vaultStore.openVault(other));
   return { ...result, other };
+}
+
+/** A Ctrl-chord pressed where the focus is (nothing focused: the page). */
+function pressChord(key: string, init: KeyboardEventInit): void {
+  const target = (document.activeElement as HTMLElement | null) ?? document.body;
+  target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }));
+}
+
+const sameFolder = (a: string, b: string): boolean =>
+  a.replace(/[\\/]+$/, '').toLowerCase() === b.replace(/[\\/]+$/, '').toLowerCase();
+
+/**
+ * Ctrl+O, choosing a second, new vault seeded with `files` in the folder
+ * picker. `pickers` counts the folder pickers the one key press showed.
+ */
+export async function openVaultByShortcut(
+  _app: CharApp,
+  files: Record<string, string> = {},
+  answer?: string,
+): Promise<LeaveVaultResult & { other: string; pickers: number }> {
+  const other = mkdtempSync(join(tmpdir(), 'filo-char-vault-'));
+  for (const [rel, text] of Object.entries(files)) {
+    const p = join(other, rel);
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, text);
+  }
+  extraRoots.push(other);
+  const { vaultStore } = await import('@renderer/stores/vault.svelte');
+  folderPicks.shown = 0;
+  folderPicks.answers.splice(0, folderPicks.answers.length, other);
+  try {
+    const result = await leaveVault(answer ? [answer] : [], async () => {
+      pressChord('o', { ctrlKey: true });
+      try {
+        await waitFor(() => vaultStore.project !== null && sameFolder(vaultStore.path, other), 'the other vault open', 10000);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    await settle(200);
+    return { ...result, other, pickers: folderPicks.shown };
+  } finally {
+    folderPicks.answers.length = 0;
+  }
+}
+
+/** Ctrl+Shift+W. A dialog, if one appears, is answered with `answer` (its first button when none is given). */
+export async function closeVaultByShortcut(_app: CharApp, answer?: string): Promise<LeaveVaultResult> {
+  const { vaultStore } = await import('@renderer/stores/vault.svelte');
+  return leaveVault(answer ? [answer] : [], async () => {
+    pressChord('W', { ctrlKey: true, shiftKey: true });
+    try {
+      await waitFor(() => vaultStore.project === null, 'the vault closed', 10000);
+      return true;
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** Second vaults a test opened, removed by `stopApp` with the first. */

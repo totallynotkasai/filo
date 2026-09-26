@@ -1,6 +1,7 @@
 <script lang="ts">
   import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
+  import { pickAndOpenVault } from '../../stores/vaultOpen';
   import Dropdown from './Dropdown.svelte';
 
   let projectDropdownOpen = $state(false);
@@ -22,10 +23,7 @@
 
   async function handleOpenVault() {
     projectDropdownOpen = false;
-    const vaultPath = await window.filo.invoke('vault:select');
-    if (!vaultPath) return;
-    const ok = await vaultStore.openVault(vaultPath);
-    if (ok) uiStore.toast('Vault opened', 'success');
+    if (await pickAndOpenVault()) uiStore.toast('Vault opened', 'success');
   }
 
   async function handleSave() {
@@ -63,10 +61,10 @@
   }
 </script>
 
-<Dropdown label={vaultStore.projectName || 'Project'} bind:open={projectDropdownOpen}>
+<Dropdown label={vaultStore.projectName || 'Vault'} bind:open={projectDropdownOpen}>
   {#if showRenameInput}
     <div class="rename-project-row">
-      <label class="rename-label" for="rename-project">Project Name:</label>
+      <label class="rename-label" for="rename-project">Vault name:</label>
       <input
         id="rename-project"
         class="rename-input"
@@ -74,13 +72,13 @@
         bind:value={renameValue}
         onkeydown={(e) => { if (e.key === 'Enter') commitRename(); else if (e.key === 'Escape') cancelRename(); }}
         onblur={commitRename}
-        placeholder="Untitled Project"
+        placeholder="Untitled vault"
       />
     </div>
   {:else}
     <button class="dropdown-item" onclick={startRename}>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-      Name Project
+      Rename Vault
     </button>
   {/if}
   <div class="dropdown-divider"></div>
@@ -99,7 +97,7 @@
   <div class="dropdown-divider"></div>
   <button class="dropdown-item" onclick={openSettings}>
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-    Project Settings
+    Settings
   </button>
 </Dropdown>
 

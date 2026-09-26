@@ -5,7 +5,8 @@
  * so the renderer under test talks to the same file operations the app does.
  * Only the Electron shell is faked: handler registration is captured,
  * `webContents.send` is routed back to the renderer's `window.filo.on`
- * listeners, file pickers are cancelled, and a message box is recorded and
+ * listeners, file pickers are cancelled (an open picker returns a folder a
+ * test queued in `folderPicks`), and a message box is recorded and
  * takes the next scripted answer (its first button when none is scripted).
  */
 import { mkdtempSync, writeFileSync } from 'node:fs';
@@ -31,8 +32,13 @@ export interface MessageBoxCall {
   buttons: string[];
 }
 
+/** How many open pickers were shown, and the paths queued for the next ones (cancelled when none). */
+export const folderPicks: { shown: number; answers: string[] } = { shown: 0, answers: [] };
+
 /** Every message box shown, in order, and the answers (button labels) queued for the next ones. */
 export const messageBoxes: { shown: MessageBoxCall[]; answers: string[] } = { shown: [], answers: [] };
+/** Every path the app asked the OS to select in a file manager window (Show in folder). */
+export const shownInFolder: string[] = [];
 
 const userData = mkdtempSync(join(tmpdir(), 'filo-char-userdata-'));
 // This machine is the one the renderer-side test setup pins, so main and the
@@ -86,7 +92,11 @@ export const electronFake = {
     exit: () => {},
   },
   dialog: {
-    showOpenDialog: async () => ({ canceled: true, filePaths: [] }),
+    showOpenDialog: async () => {
+      folderPicks.shown++;
+      const pick = folderPicks.answers.shift();
+      return pick === undefined ? { canceled: true, filePaths: [] } : { canceled: false, filePaths: [pick] };
+    },
     showSaveDialog: async () => ({ canceled: true }),
     showMessageBox: async (_win: unknown, opts: { message: string; detail?: string; buttons?: string[] }) => {
       const buttons = opts.buttons ?? ['OK'];
@@ -100,7 +110,7 @@ export const electronFake = {
   shell: {
     openExternal: async () => {},
     openPath: async () => '',
-    showItemInFolder: () => {},
+    showItemInFolder: (fullPath: string) => { shownInFolder.push(fullPath); },
     trashItem: async () => {},
   },
   screen: {

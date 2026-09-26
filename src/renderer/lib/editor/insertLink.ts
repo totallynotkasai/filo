@@ -1,5 +1,6 @@
-import { getMarkRange, type Editor } from '@tiptap/core';
-import { TextSelection } from '@tiptap/pm/state';
+import { getMarkRange, type Editor, type Range } from '@tiptap/core';
+import type { MarkType } from '@tiptap/pm/model';
+import { TextSelection, type EditorState } from '@tiptap/pm/state';
 
 /**
  * What the Insert Link popup edits, captured when it opens: the popup's inputs
@@ -15,16 +16,17 @@ export interface LinkTarget {
 }
 
 /**
- * The popup's target at the editor's selection. A caret inside a link, or a
- * selection within one, targets the whole link so it can be edited. Any other
- * selection is the text to link; a bare caret is where a new link goes.
+ * The popup's target at the editor's selection. A caret inside a link or right
+ * after one, or a selection within one, targets the whole link so it can be
+ * edited. Any other selection is the text to link; any other bare caret
+ * (including one right before a link) is where a new link goes.
  */
 export function linkTargetAt(editor: Editor): LinkTarget {
   const { state } = editor;
   const { from, to } = state.selection;
   const linkType = state.schema.marks.link;
-  const range = linkType ? getMarkRange(state.doc.resolve(from), linkType) : undefined;
-  if (range && range.from <= from && to <= range.to) {
+  const range = linkType ? linkRangeAt(state, from, to, linkType) : undefined;
+  if (range) {
     const href: unknown = state.doc.nodeAt(range.from)?.marks.find((m) => m.type === linkType)?.attrs.href;
     return {
       from: range.from,
@@ -33,13 +35,32 @@ export function linkTargetAt(editor: Editor): LinkTarget {
       href: typeof href === 'string' ? href : '',
     };
   }
-  const href = editor.getAttributes('link').href;
+  // A bare caret here starts a new link, even where the caret's marks read as
+  // the link that begins right after it.
+  const href = from === to ? '' : editor.getAttributes('link').href;
   return {
     from,
     to,
     text: state.doc.textBetween(from, to, ' '),
     href: typeof href === 'string' ? href : '',
   };
+}
+
+/**
+ * The link the selection edits, if any. `getMarkRange` alone also matches a
+ * caret right before a link (it looks at the text after the caret first), so
+ * a new link typed there would replace the next one instead.
+ */
+function linkRangeAt(state: EditorState, from: number, to: number, linkType: MarkType): Range | undefined {
+  if (from === to) {
+    const before = state.doc.resolve(from).nodeBefore;
+    if (!before || !linkType.isInSet(before.marks)) return undefined;
+    // One step back lands inside the text before the caret, so the range is
+    // that link's, not a neighbouring one's.
+    return getMarkRange(state.doc.resolve(from - 1), linkType) ?? undefined;
+  }
+  const range = getMarkRange(state.doc.resolve(from), linkType);
+  return range && range.from <= from && to <= range.to ? range : undefined;
 }
 
 /**
@@ -52,13 +73,14 @@ export function linkTargetAt(editor: Editor): LinkTarget {
  *   link. `setLink` alone would only set a stored mark there, inserting
  *   nothing.
  *
- * Returns false, changing nothing, when the editor is read-only or refuses the
- * href (Link's URI allowlist turns down `javascript:` and the like).
+ * Returns false, changing nothing, when the editor is read-only, the target
+ * takes no link (`linkAllowedAt`), or the editor refuses the href (Link's URI
+ * allowlist turns down `javascript:` and the like).
  */
 export function applyLink(editor: Editor, target: LinkTarget, text: string, href: string): boolean {
-  // A title or label editor has no link mark, and no setLink command at all.
-  if (!editor.isEditable || !editor.schema.marks.link || !editor.can().setLink({ href })) return false;
+  if (!linkAllowedAt(editor, target)) return false;
   const { from, to } = clamped(editor, target);
+  if (!canAt(editor, { from, to }).setLink({ href }).run()) return false;
   const current = editor.state.doc.textBetween(from, to, ' ');
   if (to > from && (text === '' || text === current)) {
     return editor.chain().focus().setTextSelection({ from, to }).setLink({ href }).run();
@@ -71,6 +93,35 @@ export function applyLink(editor: Editor, target: LinkTarget, text: string, href
     // new link.
     .unsetMark('link')
     .run();
+}
+
+/**
+ * True when a link can go at `target`, whatever its href: not in a code block
+ * (which takes no marks) or inline code (which excludes them). Checked at the
+ * target, not the editor's current selection, which can move while the popup
+ * is open. Kept apart from the href check so the popup can say which of the
+ * two is wrong.
+ */
+export function linkAllowedAt(editor: Editor, target: LinkTarget): boolean {
+  // A title or label editor has no link mark, and no setLink command at all.
+  if (!editor.isEditable || !editor.schema.marks.link) return false;
+  // `setMark`, not `setLink`: the placement alone, without Link's URI check.
+  return canAt(editor, clamped(editor, target)).setMark('link').run();
+}
+
+/**
+ * A dry-run chain whose selection is `range`. `setTextSelection` does nothing
+ * in a dry run, so the selection is set on the throwaway transaction directly;
+ * the mark commands then check the target instead of the editor's selection.
+ */
+function canAt(editor: Editor, range: { from: number; to: number }): ReturnType<Editor['chain']> {
+  return editor
+    .can()
+    .chain()
+    .command(({ tr }) => {
+      tr.setSelection(TextSelection.create(tr.doc, range.from, range.to));
+      return true;
+    });
 }
 
 /** Removes the link from `target`, keeping its text. */

@@ -26,11 +26,10 @@
 
   // Keep the about content as before.
   const aboutSections = [
-    { term: 'Project', definition: 'A project is a collection of boards that can be related to each other. A project can be saved as a file on your computer or device.' },
     { term: 'Vault', definition: 'A vault is simply a standard folder on your computer or device. Filo stores all of its information within this folder. You can connect your vault to a cloud storage service such as Google Drive, Dropbox, OneDrive, etc. You can create both folders and subfolders to organize your information how you want.' },
     { term: 'Board', definition: 'A board is a canvas where you can create and manage your content. A board can be of any type, such as a Mind Map, Kanban Board, Task List, or Document. Files can be dragged onto a board — Filo creates the relevant tile type to contain the file.' },
     { term: 'Tile', definition: 'A tile is a container for content that can be placed on any board. Tiles can be moved, resized, and deleted. Types include Text, Image, Video, Audio, File, Link, Iframe (Embed), and Timer. Text tiles can be expanded into a full Document board.' },
-    { term: 'Tags', definition: 'A tag is a label that can be applied to a tile. Tags can be used to organize and filter tiles across your project.' },
+    { term: 'Tags', definition: 'A tag is a label that can be applied to a tile. Tags can be used to organize and filter tiles across your vault.' },
     { term: 'Links', definition: 'Links can navigate to another board or location on the board. They can also perform actions such as inputting text into a tile or creating a new tile with specific text.' },
     { term: 'Tabs', definition: 'Tabs are used to organize boards and switch between them. The Tab Bar is located at the bottom of the screen. Use the Board Browser button to quickly open and close tabs.' },
   ];

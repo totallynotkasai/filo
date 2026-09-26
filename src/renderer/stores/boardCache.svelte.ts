@@ -718,10 +718,11 @@ onVaultSwap('pre-swap', 'boardCache', () => {
 });
 
 /**
- * Inner sync helper used by both single-tile and bulk paths so behaviour
- * can't drift: writes whatever the tile's note has queued now (the note
- * writer applies it to a fresh read of the file, and asks before
- * overwriting a body another program changed).
+ * Writes whatever the tile's note has queued now (the note writer applies it
+ * to a fresh read of the file, and asks before overwriting a body another
+ * program changed). A missing note is never written here: saying "saved"
+ * would hide that the file is gone, and putting it back is the tile's
+ * Recreate backing file.
  *
  * Returns `{ wrote }` when the note is on disk as the app shows it (or the
  * tile has no note). Returns `{ wrote: false, skippedReason }` when the
@@ -732,7 +733,9 @@ async function syncTileMarkdown(
 ): Promise<{ wrote: boolean; skippedReason?: string }> {
   if (!def || def.type !== 'text') return { wrote: false };
   if (!vaultStore.path) throw new Error('No vault open');
-  if (!noteStore.get(def.filePath)) return { wrote: false };
+  const model = noteStore.get(def.filePath);
+  if (!model) return { wrote: false };
+  if (model.status === 'missing') return { wrote: false, skippedReason: 'the file is missing' };
   const ok = await noteStore.flush(def.filePath);
   return ok ? { wrote: true } : { wrote: false, skippedReason: 'the change could not be saved' };
 }

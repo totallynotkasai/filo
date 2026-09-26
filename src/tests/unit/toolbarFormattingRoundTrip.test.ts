@@ -3,7 +3,8 @@ import type { Editor } from '@tiptap/core';
 import { createTiptapEditor } from '../../renderer/lib/editor/createEditor';
 import { editorMarkdown, loadMarkdownIntoEditor } from '../../renderer/lib/editor/markdownSync';
 import { clearBlockTextStyle } from '../../renderer/lib/editor/blockTextStyle';
-import { applyLink, linkTargetAt } from '../../renderer/lib/editor/insertLink';
+import { applyLink, linkAllowedAt, linkTargetAt } from '../../renderer/lib/editor/insertLink';
+import { normaliseLinkUrl } from '../../renderer/lib/editor/linkUrl';
 
 /**
  * No toolbar button may produce formatting the file can't hold. Each command
@@ -131,6 +132,53 @@ const CASES: Case[] = [
       return applyLink(e, linkTargetAt(e), 'Beta!', 'https://new.example');
     },
     saved: 'Alpha [Beta!](https://new.example) gamma',
+  },
+  {
+    name: 'edit a link from a caret right after it',
+    start: 'Alpha [beta](https://old.example) gamma',
+    run: (e) => {
+      e.commands.setTextSelection(11);
+      return applyLink(e, linkTargetAt(e), 'Beta!', 'https://new.example');
+    },
+    saved: 'Alpha [Beta!](https://new.example) gamma',
+  },
+  {
+    name: 'insert link at a caret right before a link, leaving that link alone',
+    start: 'Alpha [beta](https://old.example) gamma',
+    run: (e) => {
+      e.commands.setTextSelection(7);
+      return applyLink(e, linkTargetAt(e), 'new', 'https://new.example');
+    },
+    saved: 'Alpha [new](https://new.example)[beta](https://old.example) gamma',
+  },
+  {
+    name: 'insert link to a bare domain, as the popup normalises it',
+    run: (e) => {
+      e.commands.setTextSelection({ from: 7, to: 11 });
+      const href = normaliseLinkUrl('example.com');
+      expect(href).toBe('https://example.com');
+      return applyLink(e, linkTargetAt(e), '', href ?? '');
+    },
+    saved: 'Alpha [beta](https://example.com) gamma',
+  },
+  {
+    name: 'a link a click would not open (ftp:) is refused and nothing is written',
+    run: (e) => {
+      e.commands.setTextSelection({ from: 7, to: 11 });
+      expect(normaliseLinkUrl('ftp://files.example.com')).toBeNull();
+      expect(normaliseLinkUrl('sms:+441234567890')).toBeNull();
+    },
+    saved: 'Alpha beta gamma',
+  },
+  {
+    name: 'a link in a code block is refused and nothing is written',
+    start: '```\ncode here\n```',
+    run: (e) => {
+      const target = linkTargetAt(e);
+      expect(linkAllowedAt(e, target)).toBe(false);
+      expect(applyLink(e, target, '', 'https://example.com')).toBe(false);
+    },
+    saved: '```\ncode here\n```',
   },
   {
     name: 'centred heading',

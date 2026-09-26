@@ -3,7 +3,7 @@ import type { Editor } from '@tiptap/core';
 import { createLabelEditor, createTiptapEditor } from '@renderer/lib/editor/createEditor';
 import { tiptapToolbar } from '@renderer/lib/editor/toolbarConfig';
 import { editorMarkdown, loadMarkdownIntoEditor } from '@renderer/lib/editor/markdownSync';
-import { applyLink, linkTargetAt, removeLink } from '@renderer/lib/editor/insertLink';
+import { applyLink, linkAllowedAt, linkTargetAt, removeLink } from '@renderer/lib/editor/insertLink';
 import { clearBlockTextStyle } from '@renderer/lib/editor/blockTextStyle';
 
 /**
@@ -45,6 +45,30 @@ describe('linkTargetAt', () => {
     expect(linkTargetAt(ed)).toEqual({ from: 7, to: 11, text: 'beta', href: 'https://example.com' });
   });
 
+  it('a caret right after a link targets that link', () => {
+    const ed = makeEditor('Alpha [beta](https://example.com) gamma');
+    ed.commands.setTextSelection(11);
+    expect(linkTargetAt(ed)).toEqual({ from: 7, to: 11, text: 'beta', href: 'https://example.com' });
+  });
+
+  it('a caret right before a link is where a new link goes', () => {
+    const ed = makeEditor('Alpha [beta](https://example.com) gamma');
+    ed.commands.setTextSelection(7);
+    expect(linkTargetAt(ed)).toEqual({ from: 7, to: 7, text: '', href: '' });
+  });
+
+  it('a caret before a link that opens the paragraph is where a new link goes', () => {
+    const ed = makeEditor('[beta](https://example.com) gamma');
+    ed.commands.setTextSelection(1);
+    expect(linkTargetAt(ed)).toEqual({ from: 1, to: 1, text: '', href: '' });
+  });
+
+  it('a caret between two links targets the one before it', () => {
+    const ed = makeEditor('[one](https://one.example)[two](https://two.example)');
+    ed.commands.setTextSelection(4);
+    expect(linkTargetAt(ed)).toEqual({ from: 1, to: 4, text: 'one', href: 'https://one.example' });
+  });
+
   it('a selection within a link targets the whole link', () => {
     const ed = makeEditor('Alpha [beta](https://example.com) gamma');
     ed.commands.setTextSelection({ from: 8, to: 10 });
@@ -83,6 +107,33 @@ describe('applyLink', () => {
     expect(editorMarkdown(ed)).toBe('Alpha');
   });
 
+  it('a new link at a caret right before a link leaves that link alone', () => {
+    const ed = makeEditor('Alpha [beta](https://example.com) gamma');
+    ed.commands.setTextSelection(7);
+    expect(applyLink(ed, linkTargetAt(ed), 'new ', 'https://new.example')).toBe(true);
+    expect(editorMarkdown(ed)).toBe('Alpha [new ](https://new.example)[beta](https://example.com) gamma');
+  });
+
+  it('refuses a code block, changing nothing', () => {
+    const ed = makeEditor('```\ncode here\n```');
+    ed.commands.setTextSelection({ from: 1, to: 5 });
+    const target = linkTargetAt(ed);
+    expect(linkAllowedAt(ed, target)).toBe(false);
+    expect(applyLink(ed, target, '', 'https://example.com')).toBe(false);
+    expect(editorMarkdown(ed)).toBe('```\ncode here\n```');
+  });
+
+  it('checks the place at the target, not wherever the selection moved to', () => {
+    const ed = makeEditor('Alpha beta\n\n```\ncode\n```');
+    ed.commands.setTextSelection({ from: 7, to: 11 });
+    const target = linkTargetAt(ed);
+    // The selection moves into the code block while the popup is open.
+    ed.commands.setTextSelection(14);
+    expect(linkAllowedAt(ed, target)).toBe(true);
+    expect(applyLink(ed, target, '', 'https://example.com')).toBe(true);
+    expect(editorMarkdown(ed)).toBe('Alpha [beta](https://example.com)\n\n```\ncode\n```');
+  });
+
   it('changes nothing in a read-only editor', () => {
     const ed = makeEditor('Alpha');
     ed.setEditable(false, false);
@@ -118,8 +169,8 @@ describe('title and label editors', () => {
   it('the heading dropdown does nothing, rather than throwing on the missing setHeading command', () => {
     const ed = makeLabelEditor();
     tiptapToolbar.setActiveEditor(ed);
-    expect(() => tiptapToolbar.setHeading(2)).not.toThrow();
-    expect(() => tiptapToolbar.setHeading(0)).not.toThrow();
+    expect(tiptapToolbar.setHeading(2)).toBe(false);
+    expect(tiptapToolbar.setHeading(0)).toBe(false);
     expect(ed.getHTML()).toBe('<p>Label</p>');
     tiptapToolbar.clearActiveEditor();
   });

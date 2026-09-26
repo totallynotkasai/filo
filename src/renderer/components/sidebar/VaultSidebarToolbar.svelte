@@ -19,6 +19,8 @@
    */
   import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
+  import { sidebarTagFilter } from '../../stores/sidebarTagFilter.svelte';
+  import { pathsEqual } from '../../lib/utils/path';
   import type {
     VaultSortField,
     VaultSortDirection,
@@ -149,13 +151,14 @@
   // ── Expand / Collapse toggle ──
   //
   // Single button: shows "Collapse All" when any folder is expanded;
-  // otherwise "Expand All". Disabled when the vault has no folders.
-  const anyExpanded = $derived(vaultStore.expandedFolders.size > 0);
-  const hasFolders = $derived(vaultStore.tree.some((n) => n.isDirectory));
+  // otherwise "Expand All". Disabled when the sidebar shows no folders.
+  // While a tag filter is on, both act on the folders it shows.
+  const anyExpanded = $derived(sidebarTagFilter.anyFolderExpanded);
+  const hasFolders = $derived(sidebarTagFilter.hasFolders);
 
   function toggleExpandCollapse() {
-    if (anyExpanded) vaultStore.collapseAll();
-    else vaultStore.expandAll();
+    if (anyExpanded) sidebarTagFilter.collapseAll();
+    else sidebarTagFilter.expandAll();
   }
 
   // ── New Folder (silent create) ──
@@ -167,6 +170,9 @@
   // real name without a second click.
   async function handleNewFolderClick() {
     if (!vaultStore.path) return;
+    // An empty folder matches no tag, so under a tag filter its row (and the
+    // rename it starts) would never show.
+    sidebarTagFilter.clear();
     const name = await vaultStore.suggestFolderName(vaultStore.path, 'New Folder');
     const result = await vaultStore.createFolder(vaultStore.path, name);
     if (!result.success) {
@@ -180,10 +186,12 @@
       );
       return;
     }
-    // Path-join in the same shape the tree uses (forward-slash absolute,
-    // because the renderer normalises tree paths to POSIX).
+    // The row matches on its exact tree path, and the tree keeps the
+    // platform's separators (backslashes on Windows), so take the spelling
+    // from the refreshed tree rather than joining one here.
     const newAbs = `${vaultStore.path.replace(/[\\/]+$/, '')}/${name}`;
-    uiStore.setPendingSidebarRenameId(newAbs);
+    const node = vaultStore.tree.find((n) => n.isDirectory && pathsEqual(n.path, newAbs));
+    uiStore.setPendingSidebarRenameId(node?.path ?? newAbs);
   }
 
   // ── Float / Dock ──

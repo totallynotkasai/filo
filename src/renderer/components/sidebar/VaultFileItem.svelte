@@ -13,7 +13,7 @@
   import { boardStore } from '../../stores/board.svelte';
   import { normalizePath, pathsEqual, stripLeadingSlash, toPosix } from '../../lib/utils/path';
   import { getAnchorBelow } from '../../lib/utils/popupAnchor';
-  import { fileTagsStore } from '../../stores/fileTags.svelte';
+  import { sidebarTagFilter } from '../../stores/sidebarTagFilter.svelte';
   import { reportError } from '../../lib/utils/errorBus';
   import { copyFileIntoVault } from '../../lib/vault/vaultOperations';
   import { adoptAndFindBoard } from '../../stores/boardDiscovery';
@@ -21,7 +21,7 @@
     basenameOf,
     describeMoveIntoFolderFailure,
   } from '../../lib/vault/moveIntoFolderFeedback';
-  import TagBadge from '../tags/TagBadge.svelte';
+  import FileTagChips from './FileTagChips.svelte';
   import FileIcon from './FileIcon.svelte';
   import VaultFileItem from './VaultFileItem.svelte';
 
@@ -85,17 +85,6 @@
     return abs;
   }
 
-  // Sidebar tag chips: show up to two tags after the filename for non-folder
-  // rows, with `+N` overflow when more are present. Clicking a chip opens the
-  // tag editor at the chip's anchor so the user can edit without first
-  // opening the file. Folder rows skip the chip cluster.
-  const SIDEBAR_TAG_VISIBLE = 2;
-  const sidebarTags = $derived(
-    node.isDirectory ? [] : fileTagsStore.tagsForFile(vaultRelativePath()),
-  );
-  const sidebarTagsVisible = $derived(sidebarTags.slice(0, SIDEBAR_TAG_VISIBLE));
-  const sidebarTagsOverflow = $derived(Math.max(0, sidebarTags.length - SIDEBAR_TAG_VISIBLE));
-
   // ── Per-board "Default Folder" pin ──
   // The bookmark sibling button next to the "Use as Root Directory" tree-icon
   // pins this folder as the destination for the *currently active* board only.
@@ -135,7 +124,14 @@
     }));
   }
 
-  const isExpanded = $derived(vaultStore.expandedFolders.has(node.path));
+  // Folder open/closed state goes through the tag filter, which shows every
+  // folder holding a match open without touching the user's own expansion.
+  const isExpanded = $derived(sidebarTagFilter.isFolderExpanded(node.path));
+  // Reordering a cut-down list would drop the hidden rows' ranks.
+  const reorderDisabled = $derived(
+    vaultStore.sortField !== 'none' || vaultStore.search !== '' || sidebarTagFilter.active,
+  );
+
   const isSelected = $derived(vaultStore.isSelected(node.path));
 
   // Local mirror of children for svelte-dnd-action. The library expects to
@@ -167,7 +163,7 @@
 
   function toggleExpand() {
     if (node.isDirectory) {
-      vaultStore.toggleFolder(node.path);
+      sidebarTagFilter.toggleFolder(node.path);
     }
   }
 
@@ -180,6 +176,16 @@
     }
     vaultStore.selectOnly(node.path);
     toggleExpand();
+  }
+
+  // The row is a focusable treeitem, not a <button> (its tag chips are
+  // buttons, which can't nest in one), so it takes Enter / Space itself.
+  // Keys from the chips or the rename input are theirs.
+  function handleRowKeydown(e: KeyboardEvent) {
+    if (e.target !== e.currentTarget) return;
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    handleRowClick(new MouseEvent('click', { ctrlKey: e.ctrlKey, metaKey: e.metaKey }));
   }
 
   // Normalised descendant check — used to forbid dropping a folder into its
@@ -209,7 +215,7 @@
     if (!isExpanded && autoExpandTimer == null) {
       autoExpandTimer = setTimeout(() => {
         autoExpandTimer = null;
-        if (!isExpanded) vaultStore.toggleFolder(node.path);
+        if (!isExpanded) sidebarTagFilter.toggleFolder(node.path);
       }, 600);
     }
   }
@@ -476,19 +482,21 @@
   <!-- Sidebar reorder uses this explicit handle (svelte-dnd-action);
        native HTML5 drag stays on `.file-row` so canvas/column/section
        drops keep firing. See `.drag-handle` CSS below for rationale. -->
-  {#if vaultStore.sortField === 'none' && vaultStore.search === ''}
+  {#if !reorderDisabled}
     <span class="drag-handle" use:dragHandle aria-label="Drag to reorder {displayName}" title="Drag to reorder">
       <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" aria-hidden="true"><circle cx="3" cy="3" r="1.2" /><circle cx="7" cy="3" r="1.2" /><circle cx="3" cy="7" r="1.2" /><circle cx="7" cy="7" r="1.2" /><circle cx="3" cy="11" r="1.2" /><circle cx="7" cy="11" r="1.2" /></svg>
     </span>
   {/if}
-  <button
+  <div
     class="file-row"
     class:is-directory={node.isDirectory}
     role="treeitem"
+    tabindex="0"
     aria-level={depth + 1}
     aria-selected={isSelected}
     aria-expanded={node.isDirectory ? isExpanded : undefined}
     onclick={handleRowClick}
+    onkeydown={handleRowKeydown}
     ondblclick={handleDoubleClick}
     oncontextmenu={openContextMenu}
     title={node.path}
@@ -562,21 +570,14 @@
         <span class="rename-problem" id={'rename-problem-' + node.path} role="alert">{renameProblem}</span>
       {/if}
     {:else}
-      <span class="file-name">{displayName}</span>
-      {#if sidebarTagsVisible.length > 0}
-        <span class="file-tag-chips" aria-label="Tags on {displayName}">
-          {#each sidebarTagsVisible as t (t)}
-            <TagBadge tagName={t} size="sm" variant="outline" as="span" />
-          {/each}
-          {#if sidebarTagsOverflow > 0}
-            <span class="file-tag-overflow" title={`+${sidebarTagsOverflow} more tags`}
-              >+{sidebarTagsOverflow}</span
-            >
-          {/if}
-        </span>
-      {/if}
+      <span class="file-label">
+        <span class="file-name">{displayName}</span>
+        {#if !node.isDirectory}
+          <FileTagChips filePath={vaultRelativePath()} />
+        {/if}
+      </span>
     {/if}
-  </button>
+  </div>
 
   <div
     class="file-actions"
@@ -671,9 +672,9 @@
     use:dragHandleZone={{
       items: childDndItems,
       type: `vault-order:${node.path}`,
-      // Disabled when search is active for the same reason as the root zone
+      // Disabled while search or a tag filter is on, for the same reason as the root zone
       // (see VaultSidebar.svelte) — partial item lists would clobber ranks.
-      dragDisabled: vaultStore.sortField !== 'none' || vaultStore.search !== '',
+      dragDisabled: reorderDisabled,
       flipDurationMs: 150,
       dropTargetStyle: {},
     }}
@@ -775,8 +776,18 @@
     transition: background-color 0.08s ease;
   }
 
+  /* A file row has three action buttons (3 × 22px + gaps), a folder four. */
+  .file-row:not(.is-directory) {
+    padding-right: 78px;
+  }
+
   .file-row:hover {
     background: var(--ui-surface-hover);
+  }
+
+  .file-row:focus-visible {
+    outline: 2px solid var(--ui-border-focus);
+    outline-offset: -2px;
   }
 
   .file-row:active {
@@ -801,28 +812,24 @@
     color: var(--accent-primary);
   }
 
+  /* Name and chips share one clipped box inside the row's content area, so
+     a chip that doesn't fit is cut off rather than sliding under the hover
+     actions in the reserved right padding. */
+  .file-label {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  /* The chips shrink first (to their minimum); only then does the name. */
   .file-name {
+    flex: 0 1 auto;
+    min-width: 0;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-  }
-
-  /* Tag chips after the filename. Sized like compact outline TagBadges so
-     they sit alongside the row text without crowding it; overflow chips
-     drop entirely when the row gets narrow. */
-  .file-tag-chips {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--tag-gap);
-    margin-left: 6px;
-    flex-shrink: 0;
-  }
-  .file-tag-overflow {
-    font-size: var(--tag-font-size-sm);
-    color: var(--text-tertiary);
-    padding: 0 4px;
-    border-radius: 4px;
-    background: var(--ui-surface-hover);
   }
 
   .rename-input {

@@ -11,6 +11,8 @@
     size = 'md',
     variant = 'solid',
     as = 'button',
+    ariaLabel,
+    pressed,
   }: {
     tagName: string;
     onClick?: (e: MouseEvent) => void;
@@ -18,11 +20,15 @@
     variant?: Variant;
     /**
      * Render as a `<span>` when the badge is mounted inside another
-     * interactive ancestor (e.g. the sidebar's `<button class="file-row">`),
+     * interactive ancestor (e.g. a tile's clickable tag row),
      * where a nested `<button>` would be invalid HTML and break click
      * dispatch in some browsers.
      */
     as?: AsElement;
+    /** Accessible name when the button does something other than show the tag. */
+    ariaLabel?: string;
+    /** Set for a badge that toggles something on (`aria-pressed`). */
+    pressed?: boolean;
   } = $props();
 
   let color = $derived(fileTagsStore.getDefinition(tagName).color);
@@ -48,9 +54,12 @@
     class:size-sm={size === 'sm'}
     class:size-md={size === 'md'}
     class:variant-outline={variant === 'outline'}
+    class:pressed
     style="--tag-color: {color}"
     onclick={onClick}
-    title={tagName}
+    title={ariaLabel ?? tagName}
+    aria-label={ariaLabel}
+    aria-pressed={pressed}
   >
     {#if variant === 'solid'}
       <span class="color-dot"></span>
@@ -99,6 +108,14 @@
   .tag-badge.variant-outline:hover {
     background: color-mix(in srgb, var(--tag-color) 8%, transparent);
     border-color: var(--tag-color);
+  }
+  .tag-badge.variant-outline.pressed {
+    background: color-mix(in srgb, var(--tag-color) 18%, transparent);
+    border-color: var(--tag-color);
+  }
+  .tag-badge:focus-visible {
+    outline: 2px solid var(--ui-border-focus);
+    outline-offset: 1px;
   }
 
   .color-dot {

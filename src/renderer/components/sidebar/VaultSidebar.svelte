@@ -3,6 +3,7 @@
   import type { FileTreeNode } from '../../../shared/types';
   import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
+  import { sidebarTagFilter } from '../../stores/sidebarTagFilter.svelte';
   import { reportError } from '../../lib/utils/errorBus';
   import {
     basenameOf,
@@ -26,9 +27,25 @@
    * sort change, external file edit) while still permitting the library to
    * reassign the array during a drag.
    */
+  // The tree after the name search (in the store) and the tag filter.
+  const visibleTree = $derived(sidebarTagFilter.apply(vaultStore.tree));
   let rootDndItems: DndNode[] = $derived(
-    vaultStore.tree.map((n) => ({ id: n.path, node: n })),
+    visibleTree.map((n) => ({ id: n.path, node: n })),
   );
+  // Reordering a cut-down list would drop the hidden rows' ranks.
+  const reorderDisabled = $derived(
+    vaultStore.sortField !== 'none' || vaultStore.search !== '' || sidebarTagFilter.active,
+  );
+
+  // Esc in the search box clears the tag filter first, then the typed text.
+  function handleSearchKeydown(e: KeyboardEvent) {
+    if (e.key !== 'Escape') return;
+    if (sidebarTagFilter.active) sidebarTagFilter.clear();
+    else if (vaultStore.search !== '') vaultStore.setSearch('');
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+  }
 
   function onRootConsider(e: CustomEvent<DndEvent<DndNode>>) {
     rootDndItems = e.detail.items;
@@ -312,7 +329,7 @@
    *   Home / End          → first / last visible treeitem
    *
    * The selector `[role="treeitem"]` is set on each VaultFileItem's
-   * `<button class="file-row">`; children render as DOM siblings of their
+   * `<div class="file-row">`; children render as DOM siblings of their
    * parent (the tree is flat in markup) so a single querySelectorAll across
    * the `.file-tree` root sees every visible row.
    */
@@ -355,7 +372,7 @@
         if (isFolder && !isExpanded) {
           e.preventDefault();
           const path = findFolderPathFor(active);
-          if (path) vaultStore.toggleFolder(path);
+          if (path) sidebarTagFilter.toggleFolder(path);
         } else if (isFolder && isExpanded) {
           // Already expanded → move focus to first child (the next DOM row).
           step(1);
@@ -368,7 +385,7 @@
         if (isExpanded) {
           e.preventDefault();
           const path = findFolderPathFor(active);
-          if (path) vaultStore.toggleFolder(path);
+          if (path) sidebarTagFilter.toggleFolder(path);
         }
         // Else: leaf or collapsed folder — stepping to parent without DOM
         // parent links is unreliable, so leave focus put (user can ArrowUp).
@@ -408,12 +425,31 @@
           <circle cx="11" cy="11" r="8"/>
           <line x1="21" y1="21" x2="16.65" y2="16.65"/>
         </svg>
+        {#if sidebarTagFilter.tag !== null}
+          <span class="tag-filter-pill">
+            <span class="tag-filter-name" title="Showing files tagged #{sidebarTagFilter.tag}">#{sidebarTagFilter.tag}</span>
+            <button
+              type="button"
+              class="tag-filter-clear"
+              aria-label="Clear tag filter {sidebarTagFilter.tag}"
+              title="Clear tag filter"
+              onclick={() => sidebarTagFilter.clear()}
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </span>
+        {/if}
         <input
           class="search-input"
           type="text"
           placeholder="Search vault..."
+          aria-label="Search vault"
           value={vaultStore.search}
           oninput={(e) => vaultStore.setSearch((e.target as HTMLInputElement).value)}
+          onkeydown={handleSearchKeydown}
         />
       </div>
 
@@ -421,7 +457,7 @@
         bind:this={fileTreeEl}
         class="file-tree"
         class:root-drop-active={rootDropActive}
-        class:sort-active={vaultStore.sortField !== 'none' || vaultStore.search !== ''}
+        class:sort-active={reorderDisabled}
         role="tree"
         aria-label="Vault files"
         tabindex={-1}
@@ -432,9 +468,13 @@
       >
         {#if vaultStore.loading}
           <p class="tree-message">Loading...</p>
-        {:else if vaultStore.tree.length === 0}
+        {:else if visibleTree.length === 0}
           <p class="tree-message">
-            {vaultStore.search ? 'No matches found' : 'Empty vault'}
+            {#if sidebarTagFilter.tag !== null && vaultStore.search === ''}
+              No files tagged #{sidebarTagFilter.tag}
+            {:else}
+              {vaultStore.search || sidebarTagFilter.active ? 'No matches found' : 'Empty vault'}
+            {/if}
           </p>
         {:else}
           <!--
@@ -459,10 +499,9 @@
             use:dragHandleZone={{
               items: rootDndItems,
               type: `vault-order:${vaultStore.path}`,
-              // Search filters items out of view; reordering with a partial
-              // list would erase the hidden items' ranks. Re-enable once
-              // the search input is empty.
-              dragDisabled: vaultStore.sortField !== 'none' || vaultStore.search !== '',
+              // Search and the tag filter take items out of view; reordering
+              // a partial list would erase the hidden items' ranks.
+              dragDisabled: reorderDisabled,
               flipDurationMs: 150,
               dropTargetStyle: {},
             }}
@@ -646,6 +685,52 @@
 
   .search-input::placeholder {
     color: var(--text-tertiary);
+  }
+
+  .tag-filter-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 1;
+    min-width: 0;
+    max-width: 60%;
+    padding: 1px 2px 1px 6px;
+    border: 1px solid var(--accent-primary);
+    border-radius: 999px;
+    background: var(--ui-surface-active);
+    color: var(--text-primary);
+    font-size: var(--font-size-sm, 11px);
+  }
+
+  .tag-filter-name {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .tag-filter-clear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  .tag-filter-clear:hover {
+    background: var(--ui-surface-hover);
+    color: var(--text-primary);
+  }
+
+  .tag-filter-clear:focus-visible {
+    outline: 2px solid var(--ui-border-focus);
+    outline-offset: 1px;
   }
 
   .file-tree {

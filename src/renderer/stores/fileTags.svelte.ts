@@ -81,6 +81,7 @@ import { reportError } from '../lib/utils/errorBus';
 import { uiStore } from './ui.svelte';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { cloneTagsFile, sameJson, mergeTagsThreeWay } from '../lib/vault/tagsFileMerge';
+import { countTagUsage, type TagCounts } from '../lib/tags/tagBrowserFilter';
 
 let file = $state<TagsFile>(emptyTagsFile());
 let isHydrated = $state(false);
@@ -446,6 +447,22 @@ export const fileTagsStore = {
       out.push({ path, title, tags: this.tagsForFile(path) });
     }
     return out;
+  },
+
+  /**
+   * Every tag's file and tile counts in one walk of the vault index and the
+   * boards — the per-tag `filesForTag` / `getTilesWithTag` each walk them all.
+   */
+  tagUsageCounts(): Map<string, TagCounts> {
+    const files: Array<{ tags: readonly string[] }> = vaultIndexStore.allMetadata().map((m) => ({ tags: noteTags(m.path) }));
+    for (const [path, tags] of Object.entries(file.fileTags)) {
+      if (!isNotePath(path)) files.push({ tags });
+    }
+    const tiles: Tile[] = [];
+    for (const boardId of Object.keys(boardCacheStore.cache)) {
+      tiles.push(...Object.values(boardCacheStore.getFullTilesForBoard(boardId)));
+    }
+    return countTagUsage(files, tiles);
   },
 
   getTagUsageCount(tagName: string): number {

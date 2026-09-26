@@ -156,6 +156,7 @@ filo/
 │   │   │   ├── vaultLeaveGuard.ts     # saveBeforeLeaving: close / open another vault save first, ask only if work is left
 │   │   │   ├── unsavedRescue.ts       # keepRescueCopies → `.filo/recovery/<ts>-unsaved/`
 │   │   │   ├── newNotesInTree.ts      # Every created note re-reads the sidebar tree
+│   │   │   ├── sidebarTagFilter.svelte.ts # Sidebar tag-chip filter (view state; folder open/closed while filtering)
 │   │   │   ├── noteLayout.ts          # setNoteLineSpacing
 │   │   │   ├── vaultFolderOps.ts      # In-app rename/move
 │   │   │   ├── vaultDeleteOps.ts      # Sidebar delete → .filo/trash + tile cascade (undoable)
@@ -280,6 +281,7 @@ filo/
 │   │   │   │   ├── externalChangeWindows.ts # Self-write / attachment-delete / note-rename grace windows
 │   │   │   │   ├── keepLocalBackup.ts # backupThenRead: back up, read, re-stat (Keep mine overwrites only what it backed up)
 │   │   │   │   ├── unsavedMessages.ts # Close / open / quit wording for unsaved work, by cause
+│   │   │   │   ├── sidebarTagFilter.ts # Files a tag (or child tag) selects; tree cut down to them
 │   │   │   │   └── vaultTreeSort.ts   # Sidebar sort/group helpers
 │   │   │   ├── boards/                # Board file load/save logic
 │   │   │   │   ├── boardLoader.ts
@@ -326,7 +328,8 @@ filo/
 │   │   │   ├── tags/                  # Tag editing helpers
 │   │   │   │   ├── noteTagWriter.ts   # Tile/path tag add/remove on a note (fresh-read rewrite)
 │   │   │   │   ├── tagEditConfirm.ts  # Tags-browser delete/rename confirms → tagUndo
-│   │   │   │   └── tagRowInput.ts     # Tag-row parsing: comma list, autocomplete
+│   │   │   │   ├── tagRowInput.ts     # Tag-row parsing: comma list, autocomplete
+│   │   │   │   └── tagBrowserFilter.ts # Tags Browser search (keeps parent rows) + one-pass tag counts
 │   │   │   ├── kanban/                # Kanban-board logic
 │   │   │   ├── tasklist/              # Task List logic
 │   │   │   ├── tasks/                 # Task-frontmatter helpers, recurrence, quickAddParser (shared)
@@ -393,7 +396,8 @@ filo/
 │   │       │   └── PaneDropOverlay.svelte
 │   │       ├── sidebar/               # Vault sidebar
 │   │       │   ├── VaultSidebar.svelte
-│   │       │   └── VaultFileItem.svelte
+│   │       │   ├── VaultFileItem.svelte
+│   │       │   └── FileTagChips.svelte # A row's tag chips; a click filters the tree by that tag
 │   │       ├── boards/                # Board-type root components
 │   │       │   ├── BoardRouter.svelte
 │   │       │   ├── MindMapBoard.svelte

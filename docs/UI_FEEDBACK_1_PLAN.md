@@ -312,6 +312,60 @@ Markdown is not a limitation here. A link is stored as `[text](https://…)`, wh
 
 **Tests:** filtering, parents kept, and Esc behaviour.
 
+### Status: done (2026-09-26)
+
+4a fix steps 1–5 and 4b fix steps 1–3 are implemented, with the deviations below.
+
+**Tests.**
+- `src/tests/characterisation/tagFilters.test.ts` (8 cases, registered in the `characterisation-suite` gate) drives the whole app against a real temp vault:
+  - a chip shows the files with that tag or a child tag, media included (`.filo/tags.json`), with their folders open; `projects` is not a child of `project`;
+  - the filter combines with the name search;
+  - it clears on the same chip, on the pill's ×, and on Esc in the search box, and the user's own folder state comes back;
+  - a different chip replaces it, and a chip click neither selects nor opens the file;
+  - it is dropped, with the name search, when another vault opens;
+  - the Tags Browser search has focus on open, matches the full path, keeps parent rows, and shows "No tags match 'x'";
+  - it lists and finds a note tag that `.filo/tags.json` never registered (deviation 7);
+  - Esc clears the search first, and a second Esc closes the browser.
+  
+  Harness actions were added for these, and `sidebarRow` now finds `.file-row` rather than `button.file-row` (deviation 1). The swap reset and the unregistered-tag case were proven to fail with the fix planted out, then restored.
+- `src/tests/unit/sidebarTagFilter.test.ts` covers hierarchical, case-insensitive matching and the tree cut. `src/tests/unit/tagBrowserFilter.test.ts` covers the query filter (parents kept, never invented) and the one-pass counts.
+
+**Real app.** A Playwright script drove the built Electron app against a vault of notes in nested folders plus a tagged image. It checked the following at the default 240 px sidebar:
+- Clicking a `project` chip showed Media/pic, Work/Deep/Sub (`project/a`), Work/Plan and Loose, with the folders open, a `#project` pill and the chip pressed. No row was selected and no tab was opened.
+- Collapsing Deep under the filter worked.
+- Typing `plan` left Work/Plan.
+- The first Esc dropped the filter and kept the text; the second cleared the text.
+- A `misc` chip on a nested row was clickable. The pill's × restored the folders the user had open.
+- Enter on a focused folder row toggled it.
+- The Tags Browser opened with its search focused and listed all four tags in use, with the right counts. `a` showed `project` (as parent) and `project/a`, and `zzz` showed the empty state. The first Esc cleared the search and the second closed the browser.
+
+The console had no errors or warnings.
+
+`npm run ci:verify` passes. One existing spec, `undoAcrossRenames.test.ts` ("undo on a note that is gone"), timed out waiting for its toast in 2 of 6 full runs during this phase. It passes on its own and in every characterisation-only run, and nothing on its path changed. The likely cause is extra CPU load from the new whole-app spec running in parallel. It is worth a follow-up.
+
+### Deviations from the plan
+
+1. **The sidebar file row is no longer a `<button>`.** A chip must be a real button (step 5), and a button can't be nested in another. The row is now a focusable `div role="treeitem"` that handles Enter and Space itself; keys from its chips and the rename input are left to them. Drag, drop, double-click, the context menu and tree arrow-key navigation are unchanged. `TagBadge` gained `ariaLabel` and `pressed` props (the chip for the active filter shows pressed). The chips moved into their own component, `components/sidebar/FileTagChips.svelte`, which keeps `VaultFileItem` under the 1000-line gate.
+2. **"Auto-expanded" doesn't touch the user's expanded folders.** While a filter is on, every folder left in the cut-down tree holds a match, so all of them show open. A folder the user collapses during the filter is remembered only for that filter. When the filter clears, the folders the user had open before come back as they were. The rule is in `sidebarTagFilter.isFolderExpanded` / `toggleFolder`, which the row, drag-hover auto-expand and the tree's arrow keys all use.
+3. **Where the filter lives.** The filter is a new store, `stores/sidebarTagFilter.svelte.ts`, with a pure half in `lib/vault/sidebarTagFilter.ts`. `VaultSidebar` applies it on top of `vaultStore.tree`, rather than inside `vault.svelte.ts`, because that file is on the 1000-line allowlist and may only shrink.
+   - `fileTagsStore.filesForTag` does cover notes (through the vault index), but it matches exact names only. The filter therefore reads the same two sources itself (note frontmatter, and `.filo/tags.json` for non-notes) and matches case-insensitively and hierarchically.
+4. **Esc in the sidebar search box clears the tag filter first, then the typed text.** The plan only said Esc clears the filter; a second Esc now also clears the name search.
+5. **The name search is now reset on vault swap too.** The new tests found it leaking: `vaultStore.search` was never cleared, so a search typed in one vault hid files in the next. It is cleared in the same swap hook as the tag filter.
+6. **Other sidebar details:**
+   - Manual drag-to-reorder is off while a tag filter is on, as it already was during a name search, because a partial list would erase the hidden rows' ranks.
+   - An empty result reads "No files tagged #x", or "No matches found" when a name search is also applied.
+   - A double-click on a chip doesn't open the file.
+   - **Found in the real app: chips could leave the filename unreadable.** At the default 240 px width a filename shrank to one letter or disappeared, and a chip on a nested row slid under the hover action buttons, where it couldn't be clicked. The reason is that every row reserved 100 px on the right for folders' four action buttons.
+     - File rows now reserve 78 px for their three buttons.
+     - The name and chips share one clipped box, and the chips shrink (to about 2.5em, with an ellipsis) before the name does.
+     - A chip that still doesn't fit is cut off, rather than sitting under the actions. On a deeply nested row in a narrow sidebar, the second chip may not be reachable until the sidebar is widened.
+7. **Found in the real app: the Tags Browser lists every tag in use, not only registered ones.** The registry in `.filo/tags.json` is only seeded from frontmatter when the file is empty. A tag typed into a note outside Filo was therefore missing from the browser and could not be found by its search. The rows are now the registered tags plus every tag the counts map finds.
+   - Remaining edge: if a note's tag differs only in letter case from a registered one, the two show as separate rows.
+8. **Counts** come from `fileTagsStore.tagUsageCounts()`, one walk of the vault index and the boards per change, using `countTagUsage` in `lib/tags/tagBrowserFilter.ts`. They count exact names, as before.
+9. **Small extras in the Tags Browser:**
+   - The search ignores a leading `#`.
+   - Esc in a tag's rename field now cancels only the rename. It used to bubble up and close the whole browser.
+
 ---
 
 ## Phase 5: Removals

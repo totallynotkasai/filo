@@ -42,6 +42,7 @@ const CHARACTERISATION_SPECS = {
   'blockLayout.test.ts': 2,
   'lineSpacing.test.ts': 3,
   'newNotesInSidebar.test.ts': 3,
+  'tagFilters.test.ts': 8,
 };
 
 // Board format v8: a def names its file and stores only visuals. These are

@@ -111,7 +111,7 @@ export async function showBoard(app: CharApp, kind: BoardKind): Promise<void> {
 /** The file row for `rel` in the sidebar (vault-root files are always listed). */
 export function sidebarRow(app: CharApp, rel: string): HTMLElement {
   const abs = app.abs(rel);
-  const row = $$(app.el, 'button.file-row').find((b) => b.getAttribute('title') === abs);
+  const row = $$(app.el, '.file-row').find((b) => b.getAttribute('title') === abs);
   if (!row) throw new Error(`sidebar has no row for ${rel}`);
   return row;
 }
@@ -609,6 +609,90 @@ export async function deleteTagEverywhere(app: CharApp, tag: string): Promise<vo
   await answerConfirm(app, { confirm: true });
   await quiesce(1500);
   await closeModal();
+}
+
+/** Ctrl+Shift+T → Tags browser; resolves once it is open. */
+export async function openTagsBrowser(): Promise<void> {
+  pressShortcut('T', { ctrlKey: true, shiftKey: true });
+  await waitFor(() => document.querySelector('.tags-browser') !== null, 'tags browser');
+  await settle(50);
+}
+
+export function tagsBrowserOpen(): boolean {
+  return document.querySelector('.tags-browser') !== null;
+}
+
+/** The full tag name of every row the Tags browser shows, top to bottom. */
+export function tagsBrowserRows(): string[] {
+  return $$(document, '.tag-row .tag-name').map((b) => (b.textContent ?? '').trim());
+}
+
+/** The Tags browser's search box (the one that has focus when it opens). */
+export function tagsBrowserSearch(): HTMLInputElement {
+  return $(document, '.tags-browser input[aria-label="Search tags"]') as HTMLInputElement;
+}
+
+export async function searchTagsBrowser(text: string): Promise<void> {
+  typeInto(tagsBrowserSearch(), text);
+  await settle(50);
+}
+
+/** Esc in the Tags browser's search box. */
+export async function escInTagsBrowserSearch(): Promise<void> {
+  key(tagsBrowserSearch(), 'Escape');
+  await settle(100);
+}
+
+export function tagsBrowserEmptyText(): string | null {
+  return document.querySelector('.tags-browser .empty-state')?.textContent?.trim() ?? null;
+}
+
+// ── Sidebar tag filter ───────────────────────────────────────────────────────
+
+/** Vault-relative paths of every row the sidebar shows, top to bottom. */
+export function sidebarListing(app: CharApp): string[] {
+  const prefix = app.abs('');
+  return $$(app.el, '.file-row')
+    .map((r) => r.getAttribute('title') ?? '')
+    .map((abs) => abs.slice(prefix.length).replace(/^[\\/]+/, '').split(/[\\/]/).join('/'));
+}
+
+/** Click the tag chip `tag` on the sidebar row for `rel`. */
+export async function clickSidebarTagChip(app: CharApp, rel: string, tag: string): Promise<void> {
+  const row = await revealInSidebar(app, rel);
+  click($(row, `button[aria-label="Filter by tag ${tag}"]`));
+  await settle(50);
+}
+
+/** The tag the sidebar is filtered by, as its pill shows it (`#tag`), or null. */
+export function sidebarTagFilterPill(app: CharApp): string | null {
+  return app.el.querySelector('.tag-filter-pill .tag-filter-name')?.textContent?.trim() ?? null;
+}
+
+/** Click the × on the sidebar's tag-filter pill. */
+export async function clearSidebarTagFilter(app: CharApp): Promise<void> {
+  click($(app.el, '.tag-filter-pill button'));
+  await settle(50);
+}
+
+function sidebarSearch(app: CharApp): HTMLInputElement {
+  return $(app.el, '.search-bar input.search-input') as HTMLInputElement;
+}
+
+export async function typeSidebarSearch(app: CharApp, text: string): Promise<void> {
+  typeInto(sidebarSearch(app), text);
+  await settle(50);
+}
+
+/** Esc in the sidebar's search box. */
+export async function escInSidebarSearch(app: CharApp): Promise<void> {
+  key(sidebarSearch(app), 'Escape');
+  await settle(50);
+}
+
+/** The message the sidebar shows in place of an empty tree, or null. */
+export function sidebarMessage(app: CharApp): string | null {
+  return app.el.querySelector('.file-tree .tree-message')?.textContent?.trim() ?? null;
 }
 
 // ── Canvas ───────────────────────────────────────────────────────────────────

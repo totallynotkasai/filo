@@ -7,24 +7,24 @@
   import TagsPopupMenu from './TagsPopupMenu.svelte';
   import { isSafeNewTagName } from '../../lib/vault/tagsStorage';
   import { deleteTagWithConfirm, renameTagWithConfirm } from '../../lib/tags/tagEditConfirm';
+  import { filterTagNames } from '../../lib/tags/tagBrowserFilter';
 
   let activeColorPicker = $state<string | null>(null);
   let editingTagName = $state<string | null>(null);
   let editName = $state('');
   let activeTagMenu = $state<{ tagName: string; x: number; y: number } | null>(null);
   let scope = $state<'all' | 'files' | 'tiles'>('all');
+  let query = $state('');
 
+  // One walk of the vault and boards per change, not one per row.
+  const counts = $derived(fileTagsStore.tagUsageCounts());
+
+  // Registered tags plus every tag in use: a tag typed into a note's
+  // frontmatter outside Filo has no registry entry until it's edited here,
+  // and it still has to be listed (and found by the search).
   const knownTagNames = $derived(
-    [...fileTagsStore.allTagNames()].sort((a, b) => a.localeCompare(b)),
+    [...new Set([...fileTagsStore.allTagNames(), ...counts.keys()])].sort((a, b) => a.localeCompare(b)),
   );
-
-  function fileCount(name: string): number {
-    return fileTagsStore.filesForTag(name).length;
-  }
-
-  function tileCount(name: string): number {
-    return fileTagsStore.getTilesWithTag(name).length;
-  }
 
   function colorFor(name: string): string {
     return fileTagsStore.getDefinition(name).color;
@@ -53,12 +53,12 @@
     return idx === -1 ? name : name.slice(idx + 1);
   }
 
-  const visibleTags = $derived.by(() => {
+  const scopedTags = $derived.by(() => {
     return knownTagNames
       .map((name) => ({
         name,
-        files: fileCount(name),
-        tiles: tileCount(name),
+        files: counts.get(name)?.files ?? 0,
+        tiles: counts.get(name)?.tiles ?? 0,
         depth: depthOf(name),
         leaf: leafOf(name),
       }))
@@ -68,6 +68,19 @@
         return true;
       });
   });
+
+  const visibleTags = $derived.by(() => {
+    const shown = new Set(filterTagNames(scopedTags.map((t) => t.name), query));
+    return scopedTags.filter((t) => shown.has(t.name));
+  });
+
+  // Esc clears the search first; only an empty search lets the Modal close.
+  function handleSearchKeydown(e: KeyboardEvent) {
+    if (e.key !== 'Escape' || query === '') return;
+    e.preventDefault();
+    e.stopPropagation();
+    query = '';
+  }
 
   function openTagMenu(tagName: string, e: MouseEvent | KeyboardEvent) {
     fileTagsStore.ensureTag(tagName, colorFor(tagName));
@@ -135,6 +148,23 @@
 
 <Modal id="tags-browser" title="Tags Browser" width="540px">
   <div class="tags-browser">
+    <div class="search-row">
+      <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <circle cx="11" cy="11" r="8"/>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      <!-- svelte-ignore a11y_autofocus -->
+      <input
+        class="search-input"
+        type="text"
+        placeholder="Search tags..."
+        aria-label="Search tags"
+        bind:value={query}
+        onkeydown={handleSearchKeydown}
+        autofocus
+      />
+    </div>
+
     <div class="filter-chips" role="tablist" aria-label="Tag scope">
       <button
         type="button"
@@ -193,7 +223,14 @@
               <input
                 type="text"
                 bind:value={editName}
-                onkeydown={(e) => { if (e.key === 'Enter') saveEdit(); else if (e.key === 'Escape') editingTagName = null; }}
+                onkeydown={(e) => {
+                  if (e.key === 'Enter') saveEdit();
+                  else if (e.key === 'Escape') {
+                    // Cancels the rename only; the browser stays open.
+                    e.stopPropagation();
+                    editingTagName = null;
+                  }
+                }}
                 onblur={saveEdit}
                 autofocus
               />
@@ -234,7 +271,9 @@
 
       {#if visibleTags.length === 0}
         <div class="empty-state">
-          {#if scope === 'all'}
+          {#if query.trim() !== '' && scopedTags.length > 0}
+            No tags match '{query.trim()}'
+          {:else if scope === 'all'}
             <p>No tags exist in this vault yet.</p>
             <p class="empty-hint">
               Add a tag from any tile's menu, type <code>#tag</code> in note
@@ -304,6 +343,41 @@
   .col-name { flex: 1; display: flex; align-items: center; gap: 12px; }
   .col-count { width: 160px; text-align: right; margin-right: 16px; }
   .col-actions { display: flex; gap: 4px; width: 64px; justify-content: flex-end; }
+
+  .search-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 12px 16px 0;
+    padding: 0 8px;
+    border: 1px solid var(--ui-border);
+    border-radius: 6px;
+    background: var(--ui-surface);
+  }
+  .search-row:focus-within {
+    border-color: var(--ui-border-focus);
+  }
+  .search-icon {
+    flex-shrink: 0;
+    color: var(--text-tertiary);
+  }
+  .search-row .search-input {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    padding: 6px 0;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 13px;
+  }
+  .search-row .search-input:focus {
+    outline: none;
+  }
+  .search-row .search-input::placeholder {
+    color: var(--text-tertiary);
+  }
 
   .filter-chips {
     display: flex;

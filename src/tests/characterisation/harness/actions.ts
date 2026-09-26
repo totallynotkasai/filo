@@ -715,6 +715,47 @@ export function tagsBrowserEmptyText(): string | null {
   return document.querySelector('.tags-browser .empty-state')?.textContent?.trim() ?? null;
 }
 
+/** Click a tag's name in the Tags browser (opens its popup of tiles and files). */
+export async function clickTagInTagsBrowser(tag: string): Promise<void> {
+  const btn = $$(document, '.tags-browser .tag-row button.tag-name').find((b) => b.getAttribute('aria-label') === tag);
+  if (!btn) throw new Error(`Tags browser has no tag ${tag}`);
+  click(btn);
+  await settle(100);
+}
+
+/** The open tag popup's items by section, or null when no popup is shown. */
+export function tagPopupItems(): { tiles: string[]; files: string[] } | null {
+  const popup = document.querySelector('.tags-popup');
+  if (!popup) return null;
+  const tiles: string[] = [];
+  const files: string[] = [];
+  let section: string[] | null = null;
+  for (const el of Array.from(popup.querySelectorAll('.section-header, .tile-item'))) {
+    if (el.classList.contains('section-header')) {
+      section = (el.textContent ?? '').trim() === 'Tiles' ? tiles : files;
+    } else {
+      section?.push((el.querySelector('.tile-title')?.textContent ?? '').trim());
+    }
+  }
+  return { tiles, files };
+}
+
+/** Click an item (tile or file) in the open tag popup by the title it shows. */
+export async function clickTagPopupItem(title: string): Promise<void> {
+  const item = $$(document, '.tags-popup .tile-item').find(
+    (b) => (b.querySelector('.tile-title')?.textContent ?? '').trim() === title,
+  );
+  if (!item) throw new Error(`tag popup has no item "${title}"`);
+  click(item);
+  await settle(400);
+}
+
+/** The board type the active tab shows (`mindmap`, `kanban`, `tasklist`, `document`). */
+export function activeTabKind(app: CharApp): string {
+  const active = $(app.el, '.tab.active, .tab[aria-selected="true"]');
+  return /\(([a-z]+)\)/.exec(active.getAttribute('title') ?? '')?.[1] ?? '';
+}
+
 // ── Sidebar tag filter ───────────────────────────────────────────────────────
 
 /** Vault-relative paths of every row the sidebar shows, top to bottom. */

@@ -236,6 +236,16 @@ function tagFileOfTile(tile: Tile): string | null {
  * stopped before changing the registry and boards (a failed flush or sweep,
  * which offers its own retry); `writtenPaths` are the notes it rewrote.
  */
+/** A tile carrying a tag, with the board it sits on (so a click can go there). */
+export interface TaggedTile {
+  id: string;
+  boardId: string;
+  type: string;
+  title: string;
+  tags: string[];
+  path: string | null;
+}
+
 export interface TagSweepOutcome {
   committed: boolean;
   writtenPaths: string[];
@@ -416,12 +426,12 @@ export const fileTagsStore = {
    * Returns every tile on every loaded board that carries the given tag name,
    * read from wherever the tile's tags live.
    */
-  getTilesWithTag(tagName: string): Array<{ id: string; type: string; title: string; tags: string[]; path: string | null }> {
-    const results: Array<{ id: string; type: string; title: string; tags: string[]; path: string | null }> = [];
+  getTilesWithTag(tagName: string): TaggedTile[] {
+    const results: TaggedTile[] = [];
     for (const boardId of Object.keys(boardCacheStore.cache)) {
       for (const tile of Object.values(boardCacheStore.getFullTilesForBoard(boardId))) {
         if (tile.tags.includes(tagName)) {
-          results.push({ id: tile.id, type: tile.type, title: tile.title, tags: tile.tags, path: tagFileOfTile(tile) });
+          results.push({ id: tile.id, boardId, type: tile.type, title: tile.title, tags: tile.tags, path: tagFileOfTile(tile) });
         }
       }
     }

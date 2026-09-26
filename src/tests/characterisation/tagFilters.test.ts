@@ -28,6 +28,13 @@ import {
   sidebarRenameValue,
   sidebarExpandCollapseLabel,
   clickSidebarExpandCollapse,
+  clickTagInTagsBrowser,
+  tagPopupItems,
+  clickTagPopupItem,
+  activeTabKind,
+  createBoard,
+  placeNoteOnBoard,
+  openNoteFromSidebar,
   $$,
 } from './harness/actions';
 
@@ -203,5 +210,34 @@ describe('Tags browser search', () => {
 
     await escInTagsBrowserSearch();
     expect(tagsBrowserOpen()).toBe(false);
+  });
+});
+
+describe('Tags browser popup', () => {
+  it('a tag with no board open shows its files, and a file opens as a document', async () => {
+    const app = await startApp(VAULT);
+    await openTagsBrowser();
+    await clickTagInTagsBrowser('misc');
+    expect(tagPopupItems()).toEqual({ tiles: [], files: ['Loose', 'Other'] });
+
+    await clickTagPopupItem('Other');
+    expect(tagsBrowserOpen()).toBe(false);
+    expect(activeTabKind(app)).toBe('document');
+  });
+
+  it('a placed tile is listed under Tiles and opens its board, even from a Document tab', async () => {
+    const app = await startApp(VAULT);
+    await createBoard(app, 'mindmap');
+    await placeNoteOnBoard(app, 'mindmap', 'Loose.md');
+    await openNoteFromSidebar(app, 'Untagged.md');
+    expect(activeTabKind(app)).toBe('document');
+
+    await openTagsBrowser();
+    await clickTagInTagsBrowser('misc');
+    expect(tagPopupItems()).toEqual({ tiles: ['Loose'], files: ['Other'] });
+
+    await clickTagPopupItem('Loose');
+    expect(tagsBrowserOpen()).toBe(false);
+    expect(activeTabKind(app)).toBe('mindmap');
   });
 });

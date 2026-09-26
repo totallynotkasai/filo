@@ -52,12 +52,13 @@ export function navigateToTile(boardId: string, tileId: string): void {
   // close → reopen of the SAME path between scheduling and the retry firing.
   const startVault = captureVaultIdentity();
 
-  // If on a different board, switch first
-  const currentBoardId = boardStore.current?.id;
-  if (currentBoardId !== boardId) {
+  // If on a different board, switch first. The active tab decides, not
+  // `boardStore.current`: a Document tab leaves `boardStore` naming the board
+  // its pane showed before, which would skip the switch.
+  if (tabStore.activeTab?.boardId !== boardId) {
     const board = project.boards.find((b: Board) => b.id === boardId);
     if (board) {
-      tabStore.open(board.id, board.name || 'Untitled', board.type, '');
+      tabStore.open(board.id, board.name || 'Untitled', board.type, board.emoji);
     }
   }
 

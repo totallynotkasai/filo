@@ -1,17 +1,13 @@
 <script lang="ts">
+  // No board scope here: the Tags Browser opens this popup from the app shell,
+  // outside every board pane. Going to a tile goes through the shared
+  // navigateToTile, which opens the tile's board and acts on that pane.
   import { SvelteSet } from 'svelte/reactivity';
-  import { getContext } from 'svelte';
-  import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { fileTagsStore } from '../../stores/fileTags.svelte';
-  import { tabStore } from '../../stores/tabs.svelte';
-
-  const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
-  const boardStore = scope.board;
-  const canvasStore = scope.canvas;
-  const selectionStore = scope.selection;
   import { vaultStore } from '../../stores/vault.svelte';
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
   import { isMarkdownExtension } from '../../lib/vault/extension';
+  import { navigateToTile } from '../../lib/utils/navigation.svelte';
 
   import TagBadge from './TagBadge.svelte';
 
@@ -27,36 +23,13 @@
   });
   let files = $derived(fileTagsStore.getFilesWithTag(tagName, placedPaths));
 
-  function getBoardName(tileId: string): string {
-    const boardId = boardStore.findTileBoardId(tileId);
-    if (!boardId) return 'Unknown Board';
+  function getBoardName(boardId: string): string {
     const board = vaultStore.project?.boards.find((b) => b.id === boardId);
     return board?.name || 'Unknown Board';
   }
 
-  function navigateToTile(tileId: string) {
-    const project = vaultStore.project;
-    if (!project) return;
-
-    const targetBoardId = boardStore.findTileBoardId(tileId);
-    if (!targetBoardId) return;
-
-    if (targetBoardId !== boardStore.current?.id) {
-      const board = project.boards.find((b) => b.id === targetBoardId);
-      if (board) {
-        tabStore.open(board.id, board.name, board.type, board.emoji);
-      }
-    }
-
-    const placement = boardStore.getTilePlacement(tileId, targetBoardId);
-    if (placement) {
-      setTimeout(() => {
-        canvasStore.centerOn(placement.x + placement.width / 2, placement.y + placement.height / 2);
-        selectionStore.clear();
-        selectionStore.select(tileId);
-      }, 100);
-    }
-
+  function goToTile(boardId: string, tileId: string) {
+    navigateToTile(boardId, tileId);
     onClose();
   }
 
@@ -86,8 +59,8 @@
     {#if tiles.length > 0}
       <div class="section-header">Tiles</div>
     {/if}
-    {#each tiles as tile (tile.id)}
-      <button class="tile-item" onclick={() => navigateToTile(tile.id)}>
+    {#each tiles as tile (`${tile.boardId}/${tile.id}`)}
+      <button class="tile-item" onclick={() => goToTile(tile.boardId, tile.id)}>
         <span class="tile-icon" aria-hidden="true">
           {#if tile.type === 'text'}
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="17" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="17" y1="18" x2="3" y2="18"/></svg>
@@ -101,7 +74,7 @@
         </span>
         <div class="tile-details">
           <div class="tile-title">{tile.title || 'Untitled'}</div>
-              <div class="tile-board">{getBoardName(tile.id)}</div>
+          <div class="tile-board">{getBoardName(tile.boardId)}</div>
           <div class="tile-tags">
             {#each tile.tags as other (other)}
               {#if other !== tagName}

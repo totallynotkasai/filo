@@ -6,6 +6,7 @@
   import { saveStateStore } from '../../stores/saveState.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
   import { safeDeactivateTrap } from '../../lib/utils/focusTrapSafe';
+  import { saveIndicatorView } from '../../lib/utils/saveIndicatorView';
   import IconButton from '../shared/IconButton.svelte';
   import FiloLogo from '../shared/FiloLogo.svelte';
   import ProjectDropdown from './ProjectDropdown.svelte';
@@ -25,19 +26,12 @@
     onGoHome?.();
   }
 
-  let saveLabel = $derived.by(() => {
-    switch (saveStateStore.state) {
-      case 'saving': return 'Saving…';
-      case 'saved': return 'Saved';
-      case 'error': return 'Save failed';
-      default: return 'All changes saved';
-    }
-  });
+  let saveView = $derived(saveIndicatorView(saveStateStore.state));
 
   // `inError` is read in many spots in the template;
   // a $derived avoids the otherwise-invalid `{@const inError = …}`
   // placement inside a `.toolbar-section` div.
-  let inError = $derived(saveStateStore.state === 'error');
+  let inError = $derived(saveView.clickable);
 
   // Clickable error popover anchored to the indicator.
   // Open state is local to the toolbar; the popover dismisses on click-
@@ -167,38 +161,40 @@
     <!--
       Ambient save indicator. Lives in the toolbar (rather than inside the
       ProjectDropdown menu) so the state is visible without opening the
-      dropdown. aria-live announces transitions; aria-label gives screen
-      readers the full state text on demand.
+      dropdown. Colour carries the state (green saved, yellow saving, red
+      failed) and each state has its own icon, so it never relies on colour
+      alone. None of the icons looks like a Save button. aria-live announces
+      transitions; aria-label gives screen readers the full state text.
 
-      When state === 'error' the surface becomes a
-      role=button, accepts pointer + keyboard activation, and opens a
-      popover listing failed paths + a Retry button. In all other
-      states it remains a status surface with pointer-events disabled.
+      Only when the save failed does the surface become a role=button,
+      accepting pointer + keyboard activation, and open a popover listing
+      failed paths + a Retry button. Otherwise it is a status surface with
+      pointer-events disabled.
     -->
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <div
       class="save-indicator save-{saveStateStore.state}"
       class:clickable={inError}
+      style:color={saveView.color}
       bind:this={saveIndicatorEl}
       role={inError ? 'button' : undefined}
       tabindex={inError ? 0 : undefined}
       aria-live={inError ? 'assertive' : 'polite'}
       aria-atomic="true"
-      aria-label={inError ? `${saveLabel} — click for details` : `Save status: ${saveLabel}`}
+      aria-label={inError ? saveView.label : `Save status: ${saveView.label}`}
       aria-haspopup={inError ? 'dialog' : undefined}
       aria-expanded={inError ? errorPopoverOpen : undefined}
-      title={saveLabel}
+      title={saveView.label}
+      data-icon={saveView.icon}
       onclick={inError ? toggleErrorPopover : undefined}
       onkeydown={handleIndicatorKeydown}
     >
-      {#if saveStateStore.state === 'saving'}
-        <svg class="save-icon spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-      {:else if saveStateStore.state === 'saved'}
-        <svg class="save-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-      {:else if saveStateStore.state === 'error'}
-        <svg class="save-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      {#if saveView.icon === 'spinner'}
+        <svg class="save-icon spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+      {:else if saveView.icon === 'alert-circle'}
+        <svg class="save-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
       {:else}
-        <svg class="save-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        <svg class="save-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
       {/if}
     </div>
 
@@ -337,7 +333,6 @@
     width: 22px;
     height: 22px;
     border-radius: 4px;
-    color: var(--text-tertiary);
     pointer-events: none;
     user-select: none;
     flex-shrink: 0;
@@ -360,10 +355,6 @@
     outline: 2px solid var(--accent-primary);
     outline-offset: 1px;
   }
-
-  .save-indicator.save-saving { color: var(--text-secondary); }
-  .save-indicator.save-saved { color: var(--accent-primary); }
-  .save-indicator.save-error { color: var(--accent-danger, #d32f2f); }
 
   /* Popover anchored below the indicator. position: absolute
      keeps it inside the global toolbar (which already sets z-index: --z-toolbar),

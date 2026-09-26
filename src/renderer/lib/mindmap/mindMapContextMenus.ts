@@ -1,7 +1,7 @@
 import type { ContextMenuItem } from '../../stores/ui.svelte';
 import type { Frame, Tile } from '../../schema/index';
+import { STYLE_ICON_PATH } from '../../constants/icons';
 
-const STYLE_ICON = 'M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z';
 const TAGS_ICON = 'M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82zM7 7h.01';
 const LOCK_ICON = 'M19 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2zM7 11V7a5 5 0 0 1 10 0v4';
 const DELETE_ICON = 'M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2';
@@ -34,7 +34,7 @@ export function buildTileContextMenu(opts: BuildTileMenuOpts): ContextMenuItem[]
     {
       id: 'style',
       label: `Style${suffix}`,
-      icon: STYLE_ICON,
+      icon: STYLE_ICON_PATH,
       action: opts.onStyle,
     },
     {
@@ -83,7 +83,7 @@ export function buildFrameContextMenu(opts: BuildFrameMenuOpts): ContextMenuItem
     {
       id: 'style',
       label: 'Style',
-      icon: STYLE_ICON,
+      icon: STYLE_ICON_PATH,
       action: opts.onStyle,
     },
     {
@@ -149,7 +149,7 @@ function buildSelectionGroup(sel: CanvasSelectionActions): ContextMenuItem[] {
       action: sel.onToggleLock,
     },
     { id: 'selection-tags', label: `Tags${n}`, icon: TAGS_ICON, action: sel.onTags },
-    { id: 'selection-style', label: `Style${n}`, icon: STYLE_ICON, action: sel.onStyle },
+    { id: 'selection-style', label: `Style${n}`, icon: STYLE_ICON_PATH, action: sel.onStyle },
     {
       id: 'selection-delete',
       label: `Delete${n}`,

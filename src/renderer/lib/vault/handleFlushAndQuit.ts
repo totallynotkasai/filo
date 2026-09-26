@@ -1,4 +1,5 @@
 import { uiStore } from '../../stores/ui.svelte';
+import type { SaveState } from '../../stores/saveState.svelte';
 import { quitFailureBody, rescueFailedDialog, type RescueResult, type UnsavedItem } from './unsavedMessages';
 
 /**
@@ -18,7 +19,7 @@ import { quitFailureBody, rescueFailedDialog, type RescueResult, type UnsavedIte
  * without mocking the whole renderer.
  */
 export interface QuitFlushDeps {
-  saveStateState: () => 'idle' | 'saving' | 'saved' | 'error';
+  saveStateState: () => SaveState;
   save: () => Promise<boolean>;
   send: (
     channel:

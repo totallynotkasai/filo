@@ -1,9 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   buildCanvasContextMenu,
+  buildFrameContextMenu,
   buildTileContextMenu,
   type CanvasSelectionActions,
 } from '@renderer/lib/mindmap/mindMapContextMenus';
+import { STYLE_ICON_PATH } from '@renderer/constants/icons';
+import type { Frame } from '@renderer/schema/index';
 
 /**
  * The canvas menu gains a "N tiles selected" group when two or more tiles are
@@ -103,5 +106,26 @@ describe('buildTileContextMenu', () => {
   it('uses plain labels for one tile', () => {
     const labels = tileMenu(1).filter((i) => !i.divider).map((i) => i.label);
     expect(labels).toEqual(['Style', 'Tags', 'Save as Template', 'Lock / Unlock', 'Delete']);
+  });
+});
+
+describe('Style entries use the shared palette-and-brush icon', () => {
+  it('tile, frame and selection menus all carry STYLE_ICON_PATH', () => {
+    const noop = (): void => {};
+    const tile = buildTileContextMenu({
+      selectedCount: 1, hasBrokenTiles: false, brokenCount: 0,
+      onStyle: noop, onTags: noop, onSaveTemplate: noop, onToggleLock: noop, onDelete: noop,
+    });
+    const frame = buildFrameContextMenu({
+      frame: { id: 'f1', title: 'F', position: { x: 0, y: 0 }, size: { width: 100, height: 100 } } as Frame,
+      onStyle: noop, onToggleCollapse: noop, onSelectAll: noop, onDelete: noop,
+    });
+    const canvas = canvasMenu(selection(2));
+    const styleIcons = [
+      tile.find((i) => i.id === 'style')?.icon,
+      frame.find((i) => i.id === 'style')?.icon,
+      canvas.find((i) => i.id === 'selection-style')?.icon,
+    ];
+    expect(styleIcons).toEqual([STYLE_ICON_PATH, STYLE_ICON_PATH, STYLE_ICON_PATH]);
   });
 });

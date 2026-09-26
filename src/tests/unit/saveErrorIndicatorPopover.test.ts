@@ -66,6 +66,7 @@ describe('saveStateStore failed-paths tracking (Phase C / C.10)', () => {
 
   it('saving (inflight>0) preserves the prior failed list', () => {
     saveStateStore.noteFailedPath('A');
+    saveStateStore.setStatus(0, 1);
     saveStateStore.setStatus(1, 0); // new save started; old failure preserved
     expect(saveStateStore.failedPaths).toEqual(['A']);
     expect(saveStateStore.state).toBe('saving');

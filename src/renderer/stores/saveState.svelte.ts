@@ -1,28 +1,39 @@
 /**
- * Save-state store — reflects whether any debounced write is in flight,
- * whether the last batch failed, and the timestamp of the most recent
- * successful flush. Drives the toolbar's save indicator.
+ * Save-state store: drives the toolbar's save indicator.
  *
- * Updated via `boardSaver.setWriteStateListener` — the lib layer pushes
- * raw `{ inflight, failed }` counts and this store derives the user-
- * visible state machine on top.
+ * App.svelte feeds it the write ledger's counts (`unsavedWork()`) on every
+ * write-state change, and the store derives what the indicator shows:
+ *   - 'saved'  (green): nothing pending, in flight or failed.
+ *   - 'saving' (yellow): something is queued or being written.
+ *   - 'error'  (red): a write failed; clickable, lists the failed paths.
  *
- * Also tracks the most recent failed paths (capped + dedup'd) so the toolbar
- * can surface a popover listing them with a Retry button. `trackComponentWrite`
- * callsites push paths through `noteFailedPath`; success drains them via
- * `clearFailedPaths`.
+ * Also tracks the most recent failed paths (capped + dedup'd) for the error
+ * popover's list and Retry button. A clean drain clears them.
  */
 
 import { onVaultSwap } from '../core/vaultLifecycle';
 
-export type SaveState = 'idle' | 'saving' | 'saved' | 'error';
+export type SaveState = 'saving' | 'saved' | 'error';
 
 const MAX_TRACKED_FAILED_PATHS = 50;
 
-let state = $state<SaveState>('idle');
+/**
+ * How long work must stay unsaved before the indicator turns yellow. A save
+ * that lands within it never flickers the indicator away from green.
+ */
+export const SAVING_SHOW_DELAY_MS = 150;
+
+let state = $state<SaveState>('saved');
 let failedPaths = $state<string[]>([]);
 
-let savedDecayTimer: ReturnType<typeof setTimeout> | null = null;
+let showSavingTimer: ReturnType<typeof setTimeout> | null = null;
+
+function cancelShowSaving(): void {
+  if (showSavingTimer) {
+    clearTimeout(showSavingTimer);
+    showSavingTimer = null;
+  }
+}
 
 export const saveStateStore = {
   get state() { return state; },
@@ -30,13 +41,13 @@ export const saveStateStore = {
   get failedPaths() { return failedPaths; },
 
   /**
-   * Push a raw status from boardSaver. The store derives the UX state:
-   *   failed > 0                        → 'error' (sticky until next clean drain)
-   *   inflight > 0 OR pending > 0       → 'saving'
-   *   idle, no fail                     → 'saved' for 2s, then 'idle'
+   * Push the ledger's counts:
+   *   failed > 0                   → 'error' at once (sticky until a clean drain)
+   *   inflight > 0 OR pending > 0  → 'saving', once it has lasted SAVING_SHOW_DELAY_MS
+   *   nothing left                 → 'saved'
    *
-   * `pending` (debounced-but-not-yet-inflight writes, e.g. a keystroke inside
-   * its 300 ms debounce) also counts as "saving", so the indicator never reads
+   * `pending` counts queued-but-not-yet-fired writes (a keystroke inside its
+   * debounce) and note bodies held in memory, so the indicator never reads
    * "saved" while text is unwritten. Defaults to 0 for two-arg callers.
    *
    * `failed > 0` is checked BEFORE inflight/pending: a write that wedges past
@@ -46,35 +57,29 @@ export const saveStateStore = {
    */
   setStatus(inflight: number, failed: number, pending: number = 0): void {
     if (failed > 0) {
-      if (savedDecayTimer) {
-        clearTimeout(savedDecayTimer);
-        savedDecayTimer = null;
-      }
+      cancelShowSaving();
       state = 'error';
       return;
     }
     if (inflight > 0 || pending > 0) {
-      if (savedDecayTimer) {
-        clearTimeout(savedDecayTimer);
-        savedDecayTimer = null;
+      if (state === 'saving' || showSavingTimer) return;
+      // Leaving red: the failure has cleared, but work remains, so there is
+      // no green moment to wait for.
+      if (state === 'error') {
+        state = 'saving';
+        return;
       }
-      state = 'saving';
+      showSavingTimer = setTimeout(() => {
+        showSavingTimer = null;
+        state = 'saving';
+      }, SAVING_SHOW_DELAY_MS);
       return;
     }
-    // inflight === 0 && failed === 0: a clean drain. Show "saved" briefly
-    // so the user sees the indicator transition (otherwise rapid edits
-    // never give the UI a chance to communicate success).
+    cancelShowSaving();
     state = 'saved';
-    // A clean drain wipes the recorded failures so the
-    // popover doesn't stay populated after the next successful save.
+    // A clean drain wipes the recorded failures so the popover doesn't stay
+    // populated after the next successful save.
     if (failedPaths.length > 0) failedPaths = [];
-    if (savedDecayTimer) clearTimeout(savedDecayTimer);
-    savedDecayTimer = setTimeout(() => {
-      // Only decay if the state is still "saved" — another save may have
-      // started in the meantime and we don't want to clobber that.
-      if (state === 'saved') state = 'idle';
-      savedDecayTimer = null;
-    }, 2000);
   },
 
   /**
@@ -100,21 +105,17 @@ export const saveStateStore = {
 
   /** Test-only reset. */
   __reset(): void {
-    if (savedDecayTimer) clearTimeout(savedDecayTimer);
-    savedDecayTimer = null;
-    state = 'idle';
+    cancelShowSaving();
+    state = 'saved';
     failedPaths = [];
   },
 };
 
-// Vault-swap reset: clears the failed-paths list and forces the indicator back to idle so a
-// stale "error" badge from the outgoing vault can't leak into the new
-// vault's toolbar before the first save completes.
+// Vault-swap reset: clears the failed-paths list and forces the indicator back
+// to green so a stale "error" badge from the outgoing vault can't leak into the
+// new vault's toolbar before the first save completes.
 onVaultSwap('pre-swap', 'saveState', () => {
-  if (savedDecayTimer) {
-    clearTimeout(savedDecayTimer);
-    savedDecayTimer = null;
-  }
-  state = 'idle';
+  cancelShowSaving();
+  state = 'saved';
   if (failedPaths.length > 0) failedPaths = [];
 });

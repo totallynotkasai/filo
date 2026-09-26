@@ -16,9 +16,9 @@ const LOC_LIMIT = 1000;
 const FILE_SIZE_ALLOWLIST = {
   'src/renderer/components/boards/TaskListBoard.svelte': 2016,
   'src/renderer/components/boards/KanbanSideToolbar.svelte': 1503,
-  'src/renderer/components/boards/TaskItem.svelte': 1513,
+  'src/renderer/components/boards/TaskItem.svelte': 1512,
   'src/renderer/components/boards/KanbanBoard.svelte': 1450,
-  'src/renderer/components/boards/KanbanColumn.svelte': 1197,
+  'src/renderer/components/boards/KanbanColumn.svelte': 1194,
   'src/renderer/stores/vault.svelte.ts': 1613,
 };
 

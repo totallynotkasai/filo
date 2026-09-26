@@ -92,7 +92,7 @@ describe('Audit-11 WC-1 (half 2) / QC-3 / QC-4 — quit drain cap', () => {
     // or an unbounded await. Pre-fix the heartbeat re-armed main's destroy timer
     // forever and quit froze.
     const promise = handleFlushAndQuit({
-      saveStateState: () => 'idle',
+      saveStateState: () => 'saved',
       save: () => new Promise<boolean>(() => {}),
       send: (c) => sent.push(c),
       reportError: () => {},
@@ -127,7 +127,7 @@ describe('Audit-11 WC-1 (half 2) / QC-3 / QC-4 — quit drain cap', () => {
     vi.useFakeTimers();
     const sent: string[] = [];
     const promise = handleFlushAndQuit({
-      saveStateState: () => 'idle',
+      saveStateState: () => 'saved',
       save: async () => true,
       send: (c) => sent.push(c),
       reportError: () => {},
@@ -147,7 +147,7 @@ describe('Audit-11 WC-1 (half 2) / QC-3 / QC-4 — quit drain cap', () => {
       resolveSave = r;
     });
     const deps = {
-      saveStateState: (): 'idle' => 'idle',
+      saveStateState: (): 'saved' => 'saved',
       save: (): Promise<boolean> => {
         saveCalls++;
         return savePromise;

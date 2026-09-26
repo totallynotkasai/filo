@@ -36,7 +36,7 @@ describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
   it('happy path: save succeeds → sends ready-to-quit immediately, no Confirm', async () => {
     let sentChannel: string | null = null;
     await handleFlushAndQuit({
-      saveStateState: () => 'idle',
+      saveStateState: () => 'saved',
       save: async () => true,
       send: (c) => {
         sentChannel = c;
@@ -50,7 +50,7 @@ describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
   it('save fails (returns false): opens Confirm with Quit anyway / Stay open labels', async () => {
     const sent: string[] = [];
     const promise = handleFlushAndQuit({
-      saveStateState: () => 'idle',
+      saveStateState: () => 'saved',
       save: async () => false,
       send: (c) => {
         sent.push(c);
@@ -85,7 +85,7 @@ describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
     let saves = 0;
     const retryFailed = vi.fn(async () => ({ failed: [] }));
     const promise = handleFlushAndQuit({
-      saveStateState: () => 'idle',
+      saveStateState: () => 'saved',
       save: async () => ++saves > 1, // first drain fails (locked), the retry succeeds
       send: (c) => { sent.push(c); },
       reportError: () => {},
@@ -106,7 +106,7 @@ describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
   it('Audit-19 EXT-5: Retry now that fails again re-shows the confirm; Stay open cancels', async () => {
     const sent: string[] = [];
     const promise = handleFlushAndQuit({
-      saveStateState: () => 'idle',
+      saveStateState: () => 'saved',
       save: async () => false,
       send: (c) => { sent.push(c); },
       reportError: () => {},
@@ -132,7 +132,7 @@ describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
     // user's choice + edits.
     const order: string[] = [];
     const promise = handleFlushAndQuit({
-      saveStateState: () => 'idle',
+      saveStateState: () => 'saved',
       save: async () => false,
       send: (c) => {
         if (c === 'app:quit-awaiting-user') {
@@ -160,7 +160,7 @@ describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
   it('save fails + Stay open: sends app:cancel-quit (no ready-to-quit)', async () => {
     let sentChannel: string | null = null;
     const promise = handleFlushAndQuit({
-      saveStateState: () => 'idle',
+      saveStateState: () => 'saved',
       save: async () => false,
       send: (c) => {
         sentChannel = c;
@@ -180,7 +180,7 @@ describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
     let sentChannel: string | null = null;
     const reported: Array<[string, unknown, string]> = [];
     const promise = handleFlushAndQuit({
-      saveStateState: () => 'idle',
+      saveStateState: () => 'saved',
       save: async () => {
         throw new Error('disk full');
       },
@@ -232,7 +232,7 @@ describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
       resolveSave = res;
     });
     const promise = handleFlushAndQuit({
-      saveStateState: () => 'idle',
+      saveStateState: () => 'saved',
       save: () => savePromise,
       send: (c) => {
         sent.push(c);
@@ -274,7 +274,7 @@ describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
     });
 
     const promise = handleFlushAndQuit({
-      saveStateState: () => 'idle',
+      saveStateState: () => 'saved',
       save: async () => true,
       send: (c) => {
         order.push(`send:${c}`);
@@ -308,7 +308,7 @@ describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
     // next launch's recovery prompt accurate.
     const order: string[] = [];
     const promise = handleFlushAndQuit({
-      saveStateState: () => 'idle',
+      saveStateState: () => 'saved',
       save: async () => false,
       send: (c) => {
         order.push(`send:${c}`);

@@ -520,6 +520,42 @@ The Settings gears (`ProjectDropdown.svelte:196`, `ProjectSettings.svelte:118`) 
 
 Update CLAUDE.md's Icons note (it says there is no shared icon location).
 
+### Status: done (2026-09-26)
+
+6a steps 1–5 and 6b are implemented, with the deviations below.
+
+**6a.** `saveStateStore` now has three states, `saved | saving | error`. `saved` (green, check-circle, "All changes saved") is also the starting state, and it no longer decays. `saving` (yellow, spinner, "Saving…") shows once work has stayed unsaved for `SAVING_SHOW_DELAY_MS` (150 ms). `error` (red, alert-circle, "Save failed — click for details") shows at once and is the only clickable state, with the pointer cursor and the existing popover. `lib/utils/saveIndicatorView.ts` maps each state to its icon, colour, label and clickability, and the toolbar renders from it. App.svelte feeds the store from `unsavedWork()`, the same answer close and quit use, on every write-state change.
+
+**6b.** `STYLE_ICON_PATH` (`src/renderer/constants/icons.ts`) is a lucide-style palette with three paint dots and a brush, in one path so context menus can carry it. `components/shared/StyleIcon.svelte` renders it with a `size` prop. It replaces the gear on the tile header, frame header, connection label, task row and task section Style buttons. It replaces the pencil glyph on the tile, frame and multi-selection context menus, and the old brush glyph on the Kanban column and card menus. It is new on the connection and Task List section context menus. The Settings gears are unchanged. CLAUDE.md's Icons note now describes the shared location.
+
+**Tests.**
+- `saveState.test.ts` covers: it starts green; unsaved work turns yellow only after the show delay; a save that lands inside the delay never flickers; repeated pushes don't restart the delay; green stays green; red shows at once and cancels a pending yellow; red is sticky until a clean drain; leaving red with work pending goes straight to yellow. It also pins the state → icon / colour / label / clickable mapping, and that no two states share an icon or colour.
+- `themeContrast.test.ts` checks each of the three indicator colours at 3:1 or better against `--toolbar-bg` in every built-in theme.
+- `mindMapContextMenus.test.ts` checks the tile, frame and selection Style entries carry `STYLE_ICON_PATH`.
+- `markdownCrashWindowSentinel.test.ts`, `saveErrorIndicatorPopover.test.ts`, `handleFlushAndQuit.test.ts`, `quitFailureMessage.test.ts` and `noteWriteTimeoutAndQuitCap.test.ts` were updated for the delay and the removed `idle` state.
+
+**Real app.** A Playwright script drove the built Electron app against the scratch vault (light theme). It checked the following:
+- On open, the indicator was a green check-circle titled "All changes saved", with no button role and the default cursor.
+- Typing into a text tile turned it into a yellow spinner (`#b87700`), then back to the green check once the write landed.
+- With every note made read-only, the next edit turned it into a red alert-circle with the button role and the pointer cursor. Clicking it opened the popover listing `new tile.md`. With the files writable again, **Retry save** closed the popover and the indicator went back to green.
+- The tile header's Style button and the tile context menu's Style entry drew `STYLE_ICON_PATH`, as did the Task List row and section Style buttons.
+- The Kanban column menu showed the Style icon, and "Set WIP Limit…", which has no icon, lined up with the others.
+
+The console had no errors or warnings.
+
+`npm run ci:verify` passes (558 test files, 5594 tests; 61/61 gates).
+
+### Deviations from the plan
+
+1. **The indicator re-reads once more after each write-state change.** Feeding the store from `unsavedWork()` as step 3 says left it stuck on yellow after every save in the real app. The ledger's last notification fires inside `trackComponentWrite`, and the note store clears the note's unsaved-body flag in the code after that write's `await`. So App.svelte also re-reads `unsavedWork()` once on the next task (`setTimeout` 0, coalesced), by which point those continuations have run.
+2. **`idle` is gone from `SaveState`,** not just visually merged: green is `saved` from the start. `handleFlushAndQuit`'s dependency now takes `SaveState`, and the tests that stubbed `'idle'` stub `'saved'`.
+3. **The colours are themed tokens, `--toolbar-save-ok / -busy / -error`,** defined in `style.css` and every built-in theme, with the `--accent-success / -warning / -danger` tokens as the fallback for a custom theme. Four accents failed 3:1 on the toolbar, so those themes override them: Light Mode's yellow (`#f9ab00`, 1.93:1 on white → `#b87700`, 3.70:1), and the red on Blueprint (2.74 → `#ffa8a8`, 4.13), Retro (2.80 → `#ffa8a8`, 4.22) and Nature (2.61 → `#ffb4b4`, 3.76). A user's own toolbar colour (Settings → General) can still defeat any of them; each state keeps its own icon for that reason.
+4. **The error tooltip is the full "Save failed — click for details"** from the table, and the indicator's icon grew from 14 to 16 px, the size of the toolbar's other icons.
+5. **Context menus now keep an icon slot.** When any item in a menu has an icon, items without one get a blank 14 px slot so the labels line up (`ContextMenu.svelte`). Without it, adding the Style icon to the connection and section menus, where no other item had one, would have indented only "Style". The Kanban column menu's "Set WIP Limit…" already had this misalignment and is fixed by the same change.
+6. **The Kanban column's "⋮" dropdown (`KanbanColumn.svelte:610`) keeps text only.** It is a separate button menu where no item has an icon, so an icon on Style alone would stand out rather than match. The same column's right-click menu, which does use icons, has the Style icon.
+7. **Allowlist ceilings.** The new imports would have grown two allowlisted files by a line. KanbanColumn's card-style menu item became one line (matching the column items), and a two-line comment in TaskListBoard became one, so neither grew. Ceilings dropped: KanbanColumn 1197 → 1194, TaskItem 1513 → 1512.
+8. **Comments that still said "gear"** for a Style button were updated (`KanbanBoard.svelte`, `TaskListSection.svelte`, `taskListRowProps.ts`).
+
 ---
 
 ## Out of scope / not changed

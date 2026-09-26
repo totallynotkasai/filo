@@ -8,6 +8,7 @@
     setWriteErrorListener as setBoardWriteErrorListener,
     setWriteStateListener as setBoardWriteStateListener,
   } from './lib/boards/boardSaver';
+  import { unsavedWork } from './lib/boards/writeStateTracking';
   import { onError, reportError } from './lib/utils/errorBus';
   import { createErrorToastAggregator } from './lib/utils/errorToastAggregator';
   import { buildWriteErrorToast } from './lib/boards/writeErrorToast';
@@ -71,15 +72,31 @@
     writeErrorAggregator({ context, error: info.error, message, coalesceKey, actions });
   });
 
-  // Feed boardSaver's begin/end counts into the save-state store so the
-  // global toolbar can render an idle / saving / saved / error indicator.
+  // On every write-state change, feed the save-state store the same answer
+  // close and quit use (`unsavedWork()`), so the toolbar indicator reads
+  // yellow while anything at all is unsaved, including a note body held in
+  // memory with no write armed, not only while a write is in flight.
   //
   // Also forward the concrete failed paths so the
   // toolbar popover can list them and offer a Retry button. setStatus
   // clears the path list on a clean drain (inflight=0, failed=0).
-  setBoardWriteStateListener(({ inflight, failed, pending, failedPaths }) => {
-    saveStateStore.setStatus(inflight, failed, pending);
+  //
+  // The ledger notifies from inside a write, and the note store clears a
+  // saved body's flag in the code after that write's `await`, so the last
+  // notification of a save still sees the body as unsaved. One more read on
+  // the next task, once those continuations have run, settles it.
+  function pushSaveState(): void {
+    const work = unsavedWork();
+    saveStateStore.setStatus(work.inflight, work.failed.length, work.pending.length);
+  }
+  let saveStateRecheck: ReturnType<typeof setTimeout> | null = null;
+  setBoardWriteStateListener(({ failedPaths }) => {
+    pushSaveState();
     for (const path of failedPaths) saveStateStore.noteFailedPath(path);
+    saveStateRecheck ??= setTimeout(() => {
+      saveStateRecheck = null;
+      pushSaveState();
+    }, 0);
   });
 
   // Generic error bus subscription. Surfaces failures from non-write

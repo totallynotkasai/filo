@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { saveStateStore } from '@renderer/stores/saveState.svelte';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { saveStateStore, SAVING_SHOW_DELAY_MS } from '@renderer/stores/saveState.svelte';
 import { noteStore } from '@renderer/stores/notes.svelte';
 import {
   noteAdditionalPendingPath,
@@ -27,16 +27,22 @@ import { restoreFiloDefault } from '../helpers/filoBridge';
  */
 
 describe('saveState — pending writes show "saving"', () => {
-  beforeEach(() => saveStateStore.__reset());
+  beforeEach(() => {
+    vi.useFakeTimers();
+    saveStateStore.__reset();
+  });
+  afterEach(() => vi.useRealTimers());
 
   it('treats a pending (debounced-but-not-inflight) write as "saving"', () => {
     // inflight 0, failed 0, but a debounce is armed → text is unwritten.
     saveStateStore.setStatus(0, 0, 1);
+    vi.advanceTimersByTime(SAVING_SHOW_DELAY_MS);
     expect(saveStateStore.state).toBe('saving');
   });
 
   it('returns to "saved" only once nothing is pending or inflight', () => {
     saveStateStore.setStatus(0, 0, 1);
+    vi.advanceTimersByTime(SAVING_SHOW_DELAY_MS);
     expect(saveStateStore.state).toBe('saving');
     saveStateStore.setStatus(0, 0, 0);
     expect(saveStateStore.state).toBe('saved');

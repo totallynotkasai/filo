@@ -3,6 +3,7 @@
    * ConnectionLayer — SVG overlay that renders all connection paths, labels,
    * bubbles (in connection mode), and the in-progress drawing line.
    */
+  import { STYLE_ICON_PATH } from '../../constants/icons';
   import { getContext, untrack } from 'svelte';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { connectionsStore } from '../../stores/connections.svelte';
@@ -125,6 +126,7 @@
       {
         id: 'style',
         label: 'Style',
+        icon: STYLE_ICON_PATH,
         action: () => {
           onstyleopen?.(conn, e.clientX, e.clientY);
         },

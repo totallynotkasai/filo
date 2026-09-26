@@ -164,7 +164,7 @@ export interface TaskListSectionCallbacks {
   commitSectionRename: () => void;
   cancelSectionRename: () => void;
   openSectionContextMenu: (e: MouseEvent, section: SectionView) => void;
-  /** Opens TaskSectionStylePopup anchored at (x, y). Driven by the gear
+  /** Opens TaskSectionStylePopup anchored at (x, y). Driven by the Style
    *  icon in the section header — the same popup is also reachable via
    *  the section context menu's "Style" entry. */
   openSectionStylePopup: (sectionId: string, x: number, y: number) => void;

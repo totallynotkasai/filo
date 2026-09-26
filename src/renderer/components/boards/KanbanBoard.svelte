@@ -740,7 +740,7 @@
 
   // ── Style popup event wiring ──
   //
-  // The gear icon in TileHeader dispatches `tile-style-popup` with the tile
+  // The Style button in TileHeader dispatches `tile-style-popup` with the tile
   // and anchor coords. Without this listener the click on every Kanban card's
   // Style button was a no-op (the MindMap board has the matching listener).
   // Resolve the card's placement so its per-card style override travels into

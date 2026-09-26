@@ -83,6 +83,9 @@
     "--toolbar-border": "#588db5",
     "--toolbar-shadow": "0 2px 6px rgba(0, 0, 0, 0.3)",
     "--toolbar-divider": "#588db5",
+    "--toolbar-save-ok": "#66bb6a",
+    "--toolbar-save-busy": "#ffca28",
+    "--toolbar-save-error": "#ffa8a8",
 
     "--tabbar-bg": "#2c5683",
     "--tabbar-border": "#588db5",

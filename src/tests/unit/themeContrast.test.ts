@@ -54,6 +54,11 @@ const PAIRS: Array<[string, string, number, string]> = [
   ['--priority-high', '--ui-surface', WCAG_AA_LARGE, 'priority-high on card surface'],
   ['--priority-medium', '--ui-surface', WCAG_AA_LARGE, 'priority-medium on card surface'],
   ['--priority-low', '--ui-surface', WCAG_AA_LARGE, 'priority-low on card surface'],
+  // The toolbar's save indicator: colour carries the state (an icon too), so
+  // each colour must read against the toolbar.
+  ['--toolbar-save-ok', '--toolbar-bg', WCAG_AA_LARGE, 'save indicator "saved" on toolbar'],
+  ['--toolbar-save-busy', '--toolbar-bg', WCAG_AA_LARGE, 'save indicator "saving" on toolbar'],
+  ['--toolbar-save-error', '--toolbar-bg', WCAG_AA_LARGE, 'save indicator "failed" on toolbar'],
 ];
 
 describe('WCAG AA contrast — built-in themes', () => {

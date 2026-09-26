@@ -16,6 +16,8 @@
   const menu = $derived(uiStore.contextMenu);
   const actionItems = $derived(menu.items.filter((item) => !item.divider && !item.heading));
   const hasCheckable = $derived(menu.items.some((item) => item.checked !== undefined));
+  // One item with an icon gives every item an icon slot, so the labels line up.
+  const hasIcons = $derived(actionItems.some((item) => item.icon));
 
   function handleItemClick(item: ContextMenuItem) {
     if (item.disabled) return;
@@ -188,6 +190,8 @@
             <svg class="menu-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d={item.icon}/>
             </svg>
+          {:else if hasIcons}
+            <span class="menu-icon-slot" aria-hidden="true"></span>
           {/if}
           <span class="menu-label">{item.label}</span>
           {#if item.shortcut}
@@ -276,6 +280,12 @@
   .menu-icon {
     flex-shrink: 0;
     opacity: 0.7;
+  }
+
+  .menu-icon-slot {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
   }
 
   .menu-check {

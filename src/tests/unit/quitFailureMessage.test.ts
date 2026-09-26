@@ -101,7 +101,7 @@ describe('handleFlushAndQuit — worded by cause, rescue copies before "Quit any
   it('the dialog body comes from the unsaved causes and the .tmp count', async () => {
     const sent: string[] = [];
     const promise = handleFlushAndQuit({
-      saveStateState: () => 'idle',
+      saveStateState: () => 'saved',
       save: async () => false,
       send: (c) => { sent.push(c); },
       reportError: () => {},
@@ -125,7 +125,7 @@ describe('handleFlushAndQuit — worded by cause, rescue copies before "Quit any
       return { dir: '.filo/recovery/x-unsaved', kept: ['Gone.md'], notKept: [] };
     });
     const promise = handleFlushAndQuit({
-      saveStateState: () => 'idle',
+      saveStateState: () => 'saved',
       save: async () => false,
       send: (c) => { if (c !== 'app:drain-heartbeat') order.push(c); },
       reportError: () => {},
@@ -143,7 +143,7 @@ describe('handleFlushAndQuit — worded by cause, rescue copies before "Quit any
   it('a copy that could not be written asks again; "Stay open" cancels the quit', async () => {
     const sent: string[] = [];
     const promise = handleFlushAndQuit({
-      saveStateState: () => 'idle',
+      saveStateState: () => 'saved',
       save: async () => false,
       send: (c) => { sent.push(c); },
       reportError: () => {},
@@ -165,7 +165,7 @@ describe('handleFlushAndQuit — worded by cause, rescue copies before "Quit any
   it('a rescue that throws is treated as not kept, and the user decides', async () => {
     const sent: string[] = [];
     const promise = handleFlushAndQuit({
-      saveStateState: () => 'idle',
+      saveStateState: () => 'saved',
       save: async () => false,
       send: (c) => { sent.push(c); },
       reportError: () => {},

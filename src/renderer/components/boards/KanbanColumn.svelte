@@ -7,6 +7,7 @@
    * `TileContainer`. Drag/drop reorders placements between columns; the
    * Add-Tile button opens the type-picker modal upstream.
    */
+  import { STYLE_ICON_PATH } from '../../constants/icons';
   import { untrack, getContext } from 'svelte';
   import {
     dndzone,
@@ -396,7 +397,7 @@
     uiStore.showContextMenu(menuX, menuY, [
       { id: 'add-tile', label: 'Add Card', icon: 'M12 5v14M5 12h14', action: onAddTile },
       { id: 'rename', label: 'Rename Column', icon: 'M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z', action: startEditTitle },
-      { id: 'style', label: 'Style', icon: 'M12 19l7-7 3 3-7 7-3-3z M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z', action: () => onOpenColumnStyle?.(menuX, menuY) },
+      { id: 'style', label: 'Style', icon: STYLE_ICON_PATH, action: () => onOpenColumnStyle?.(menuX, menuY) },
       { id: 'collapse', label: column.collapsed ? 'Expand' : 'Collapse', icon: column.collapsed ? 'M9 18l6-6-6-6' : 'M6 9l6 6 6-6', action: onToggleCollapse },
       { id: 'wip', label: wipActive ? `WIP Limit: ${wipLimit}` : 'Set WIP Limit…', action: startEditWip },
       { id: 'div', label: '', divider: true },
@@ -441,12 +442,7 @@
     }
     const menuX = e.clientX;
     const menuY = e.clientY;
-    items.push({
-      id: 'card-style',
-      label: 'Card Style',
-      icon: 'M12 19l7-7 3 3-7 7-3-3z M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z',
-      action: () => onOpenCardStyle?.(tileId, menuX, menuY),
-    });
+    items.push({ id: 'card-style', label: 'Card Style', icon: STYLE_ICON_PATH, action: () => onOpenCardStyle?.(tileId, menuX, menuY) });
     items.push({
       id: 'delete',
       label: 'Remove from Column',
